@@ -494,12 +494,13 @@
                 
                 <p style="color: var(--text-secondary); margin-bottom: 16px;">
                     Receives the root warrant and creates a <strong style="color: var(--accent-cyan);">narrower</strong> warrant for the worker. 
-                    Capabilities can only shrink, never expand.
+                    Also <strong style="color: var(--accent-purple);">binds to worker's public key</strong> (Proof-of-Possession).
                 </p>
                 
                 <div class="warrant">
                     <div class="warrant-header">
                         <span class="warrant-badge attenuated">Attenuated</span>
+                        <span style="background: rgba(168, 85, 247, 0.3); padding: 2px 8px; border-radius: 4px; margin-left: 8px;">Holder-Bound</span>
                         <span>depth: 1</span>
                     </div>
                     <div class="warrant-field">
@@ -521,6 +522,14 @@
                     <div class="warrant-field">
                         <span class="warrant-key">ttl:</span>
                         <span class="warrant-value narrowed">10 minutes ← shortened</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">holder:</span>
+                        <span class="warrant-value" style="color: var(--accent-purple);">worker_pubkey ← bound</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">agent_id:</span>
+                        <span class="warrant-value" style="color: var(--accent-yellow);">agt_worker_001</span>
                     </div>
                 </div>
                 
@@ -546,17 +555,17 @@
                     <div class="agent-icon worker">⚙️</div>
                     <div>
                         <div class="agent-title">Worker Agent</div>
-                        <div class="agent-subtitle">Only Has Control Plane PUBLIC Key • Verifies Offline</div>
+                        <div class="agent-subtitle">Has Own Keypair • Signs Requests (PoP) • Verifies Offline</div>
                     </div>
                 </div>
                 
                 <p style="color: var(--text-secondary); margin-bottom: 16px;">
-                    Verifies the complete chain cryptographically. Does NOT need the orchestrator's key — 
-                    the chain proves authority back to the trusted root.
+                    Verifies the chain and <strong style="color: var(--accent-purple);">signs each request</strong> with its private key 
+                    to prove it's the authorized holder. Stolen warrants are useless without the key.
                 </p>
                 
                 <div class="verification-badge">
-                    ✓ Chain Verified • Root signed by trusted issuer • Constraints only narrow • All signatures valid
+                    ✓ Chain Verified • ✓ PoP Signature • Constraints only narrow • All signatures valid
                 </div>
                 
                 <div class="actions">
@@ -624,6 +633,10 @@
                 <div class="insight-item">
                     <div class="insight-icon">⬇️</div>
                     <div class="insight-label"><strong>Monotonic</strong><br>Capabilities only shrink</div>
+                </div>
+                <div class="insight-item">
+                    <div class="insight-icon">🔐</div>
+                    <div class="insight-label"><strong>Holder-Bound</strong><br>Stolen warrants useless</div>
                 </div>
                 <div class="insight-item">
                     <div class="insight-icon">⚡</div>

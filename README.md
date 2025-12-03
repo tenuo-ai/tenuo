@@ -164,7 +164,10 @@ The `warrant` field is a **Base64-encoded CBOR blob** (~200-500 bytes). It's:
 │       ├── expires_at: 1701617400                               │
 │       ├── depth: 0                                             │
 │       ├── parent_id: null                                      │
+│       ├── session_id: "sess_abc123" (optional)                 │
+│       ├── agent_id: "agt_xyz789" (optional)                    │
 │       ├── issuer: <32-byte public key>                         │
+│       ├── authorized_holder: <32-byte public key> (optional)   │
 │       └── signature: <64-byte Ed25519 signature>               │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -173,11 +176,11 @@ The `warrant` field is a **Base64-encoded CBOR blob** (~200-500 bytes). It's:
 
 Tenuo supports multiple integration patterns:
 
-| Mode | Use Case | Example |
-|------|----------|---------|
-| **Library** | Embed directly in your Rust/Python app | `use tenuo_core::Authorizer` |
-| **Sidecar** | Kubernetes pod with shared localhost | `localhost:9090/authorize` |
-| **Gateway** | Centralized auth at ingress | Envoy/Nginx filter |
+| Mode | Use Case | Latency | Example |
+|------|----------|---------|---------|
+| **Library** | Embed directly in your Rust/Python app | ~20μs | `use tenuo_core::Authorizer` |
+| **Sidecar** | Kubernetes pod with shared localhost | ~100μs | `localhost:9090/authorize` |
+| **Gateway** | Centralized auth at ingress | ~1ms | Envoy/Nginx filter |
 
 ### Library (Recommended for Performance)
 
@@ -188,7 +191,7 @@ use tenuo_core::{Authorizer, Warrant};
 let authorizer = Authorizer::from_bytes(&public_key_bytes)?;
 
 // Check every request (< 100μs)
-authorizer.check(&warrant, "upgrade_cluster", &args)?;
+authorizer.check(&warrant, "upgrade_cluster", &args, signature.as_ref())?;
 ```
 
 ### Sidecar (Kubernetes)
@@ -210,6 +213,30 @@ containers:
 
 Your agent calls `localhost:9090/authorize` - no cross-network latency.
 
+### Gateway (Centralized)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           GATEWAY PATTERN                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Client/Agent ──▶ Gateway (Envoy/Nginx) ──▶ Backend Service               │
+│        │               │                                                    │
+│        │               │ 1. Extract warrant from header                    │
+│        ├── Warrant     │ 2. Extract PoP signature (if holder-bound)        │
+│        ├── PoP Sig     │ 3. Verify chain + authorize action                │
+│        └── Request     │ 4. Forward or reject (401/403)                    │
+│                        │                                                    │
+│                        └── Trusted public key (baked in config)            │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+The gateway pattern is useful when:
+- You want centralized authorization policy
+- Backend services shouldn't know about Tenuo
+- You need request-level audit logging at the edge
+
 ## The Key Insight
 
 A **warrant** is a cryptographically-signed token that says:
@@ -227,6 +254,42 @@ Worker:              { cluster: "staging-web" } ← Only this ONE cluster
 ```
 
 The worker **cannot** widen its scope. This is cryptographically enforced - the signature covers the constraints, so any modification invalidates the warrant.
+
+## Holder Binding (Proof-of-Possession)
+
+Warrants can be **bearer tokens** (anyone with the warrant can use it) or **holder-bound** (requires proof of key ownership):
+
+```rust
+// Orchestrator binds warrant to worker's public key
+let worker_keypair = Keypair::generate();
+let worker_warrant = root_warrant.attenuate()
+    .constraint("cluster", Exact::new("staging-web"))
+    .authorized_holder(worker_keypair.public_key())  // ← BINDING
+    .agent_id("agt_a1b2c3d4")                        // ← TRACEABILITY
+    .build(&orchestrator_keypair)?;
+
+// Worker MUST sign each request to prove possession
+let signature = warrant.create_pop_signature(&my_keypair, tool, &args);
+warrant.authorize(tool, &args, Some(&signature))?;
+```
+
+**Why this matters:** If an attacker steals a holder-bound warrant, they can't use it without also stealing the corresponding private key. This prevents warrant theft from becoming a security breach.
+
+| Mode | Security | Use Case |
+|------|----------|----------|
+| **Bearer** (`authorized_holder: None`) | Token = access | Short-lived tokens, internal services |
+| **Holder-bound** (`authorized_holder: Some(pk)`) | Token + key = access | Delegated agents, external workers |
+
+## Traceability
+
+Every warrant includes UUIDs for audit trails:
+
+| Field | Format | Purpose |
+|-------|--------|---------|
+| `warrant.id` | `tnu_wrt_<uuid>` | Unique warrant identifier |
+| `warrant.agent_id` | `agt_<uuid>` or custom | Agent instance identifier |
+| `warrant.session_id` | User-defined | Request/session grouping |
+| `warrant.parent_id` | `tnu_wrt_<uuid>` | Delegation chain linkage |
 
 ## API Reference
 
@@ -286,7 +349,9 @@ let chain = vec![root_warrant, worker_warrant];
 authorizer.verify_chain(&chain)?;
 
 // Authorize action against the leaf warrant
-authorizer.check_chain(&chain, "upgrade_cluster", &args)?;
+// If holder-bound, provide PoP signature; otherwise None
+let signature = warrant.create_pop_signature(&my_keypair, "upgrade_cluster", &args);
+authorizer.check_chain(&chain, "upgrade_cluster", &args, Some(&signature))?;
 ```
 
 ## Constraint Types

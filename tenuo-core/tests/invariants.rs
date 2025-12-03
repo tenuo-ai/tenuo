@@ -159,10 +159,11 @@ proptest! {
         let args = HashMap::new();
 
         // Same tool should succeed
-        prop_assert!(warrant.authorize(&tool1, &args).is_ok());
+        let res = warrant.authorize("test", &args, None);
+        prop_assert!(res.is_ok());
 
         // Different tool should fail
-        prop_assert!(warrant.authorize(&tool2, &args).is_err());
+        prop_assert!(warrant.authorize(&tool2, &args).is_err(, None), None);
     }
 
     /// Authorization fails when pattern constraint doesn't match.
@@ -186,7 +187,7 @@ proptest! {
             "cluster".to_string(),
             ConstraintValue::String(format!("{}-{}", prefix, suffix)),
         );
-        prop_assert!(warrant.authorize("test", &matching_args).is_ok());
+        prop_assert!(warrant.authorize("test", &matching_args).is_ok(, None), None);
 
         // Non-matching value should fail
         let mut non_matching_args = HashMap::new();
@@ -194,7 +195,7 @@ proptest! {
             "cluster".to_string(),
             ConstraintValue::String(format!("other-{}", suffix)),
         );
-        prop_assert!(warrant.authorize("test", &non_matching_args).is_err());
+        prop_assert!(warrant.authorize("test", &non_matching_args).is_err(, None), None);
     }
 
     /// Authorization fails when range constraint exceeds bound.
@@ -218,7 +219,7 @@ proptest! {
             "amount".to_string(),
             ConstraintValue::Float(max_val - delta.min(max_val - 1.0)),
         );
-        prop_assert!(warrant.authorize("transfer", &within_args).is_ok());
+        prop_assert!(warrant.authorize("transfer", &within_args).is_ok(, None), None);
 
         // Exceeding range should fail
         let mut exceeding_args = HashMap::new();
@@ -226,7 +227,7 @@ proptest! {
             "amount".to_string(),
             ConstraintValue::Float(max_val + delta),
         );
-        prop_assert!(warrant.authorize("transfer", &exceeding_args).is_err());
+        prop_assert!(warrant.authorize("transfer", &exceeding_args).is_err(, None), None);
     }
 }
 
