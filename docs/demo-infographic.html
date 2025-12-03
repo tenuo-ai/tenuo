@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tenuo - Capability Delegation Flow</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+        
+        :root {
+            --bg-dark: #0a0e17;
+            --bg-card: #121a2a;
+            --bg-card-hover: #1a2540;
+            --accent-cyan: #00d4ff;
+            --accent-green: #00ff88;
+            --accent-red: #ff4466;
+            --accent-yellow: #ffcc00;
+            --accent-purple: #a855f7;
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --border: #1e293b;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        
+        /* Background pattern */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(circle at 20% 20%, rgba(0, 212, 255, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 80% 80%, rgba(168, 85, 247, 0.05) 0%, transparent 40%);
+            pointer-events: none;
+            z-index: 0;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            position: relative;
+            z-index: 1;
+        }
+        
+        /* Header */
+        header {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+        
+        .logo {
+            font-size: 3rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 12px;
+        }
+        
+        .tagline {
+            font-size: 1.25rem;
+            color: var(--text-secondary);
+            font-weight: 400;
+        }
+        
+        /* Flow container */
+        .flow-container {
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            position: relative;
+        }
+        
+        /* Agent cards */
+        .agent-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 32px;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+        
+        .agent-card:hover {
+            background: var(--bg-card-hover);
+            transform: translateY(-2px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        }
+        
+        .agent-header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        
+        .agent-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+        
+        .agent-icon.control { background: linear-gradient(135deg, var(--accent-purple), #6366f1); }
+        .agent-icon.orchestrator { background: linear-gradient(135deg, var(--accent-cyan), #0ea5e9); }
+        .agent-icon.worker { background: linear-gradient(135deg, var(--accent-green), #22c55e); }
+        
+        .agent-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+        
+        .agent-subtitle {
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+        
+        /* Warrant display */
+        .warrant {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            margin: 16px 0;
+        }
+        
+        .warrant-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            color: var(--text-secondary);
+        }
+        
+        .warrant-badge {
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .warrant-badge.root { background: var(--accent-purple); color: white; }
+        .warrant-badge.attenuated { background: var(--accent-cyan); color: black; }
+        
+        .warrant-field {
+            display: flex;
+            margin: 8px 0;
+        }
+        
+        .warrant-key {
+            color: var(--accent-cyan);
+            min-width: 100px;
+        }
+        
+        .warrant-value {
+            color: var(--text-primary);
+        }
+        
+        .warrant-value.narrowed {
+            color: var(--accent-green);
+        }
+        
+        .warrant-value.unchanged {
+            color: var(--text-muted);
+        }
+        
+        /* Arrow connectors */
+        .connector {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px 0;
+            position: relative;
+        }
+        
+        .connector-line {
+            width: 3px;
+            height: 60px;
+            background: linear-gradient(to bottom, var(--accent-cyan), var(--accent-purple));
+            position: relative;
+        }
+        
+        .connector-arrow {
+            position: absolute;
+            bottom: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 10px solid transparent;
+            border-right: 10px solid transparent;
+            border-top: 12px solid var(--accent-purple);
+        }
+        
+        .connector-label {
+            position: absolute;
+            left: 50%;
+            transform: translateX(20px);
+            background: var(--bg-card);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            white-space: nowrap;
+        }
+        
+        /* Action results */
+        .actions {
+            margin-top: 24px;
+        }
+        
+        .actions-title {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--text-secondary);
+        }
+        
+        .action-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 12px;
+        }
+        
+        .action-item {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+        
+        .action-status {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+        
+        .action-status.allowed {
+            background: rgba(0, 255, 136, 0.2);
+            color: var(--accent-green);
+        }
+        
+        .action-status.blocked {
+            background: rgba(255, 68, 102, 0.2);
+            color: var(--accent-red);
+        }
+        
+        .action-content {
+            flex: 1;
+        }
+        
+        .action-name {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+        }
+        
+        .action-reason {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+        
+        /* Key insight box */
+        .insight-box {
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(168, 85, 247, 0.1));
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            border-radius: 16px;
+            padding: 32px;
+            margin-top: 48px;
+            text-align: center;
+        }
+        
+        .insight-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--accent-cyan);
+        }
+        
+        .insight-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 24px;
+            margin-top: 24px;
+        }
+        
+        .insight-item {
+            text-align: center;
+        }
+        
+        .insight-icon {
+            font-size: 2rem;
+            margin-bottom: 8px;
+        }
+        
+        .insight-label {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+        
+        /* Chain visualization */
+        .chain-viz {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin: 24px 0;
+            flex-wrap: wrap;
+        }
+        
+        .chain-block {
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            border: 2px solid;
+        }
+        
+        .chain-block.root {
+            background: rgba(168, 85, 247, 0.2);
+            border-color: var(--accent-purple);
+            color: var(--accent-purple);
+        }
+        
+        .chain-block.child {
+            background: rgba(0, 212, 255, 0.2);
+            border-color: var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+        
+        .chain-arrow {
+            color: var(--text-muted);
+            font-size: 1.25rem;
+        }
+        
+        /* Verification badge */
+        .verification-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: rgba(0, 255, 136, 0.1);
+            border: 1px solid var(--accent-green);
+            border-radius: 8px;
+            color: var(--accent-green);
+            font-size: 0.875rem;
+            margin-top: 16px;
+        }
+        
+        /* Animations */
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .agent-card {
+            animation: fadeInUp 0.6s ease forwards;
+        }
+        
+        .agent-card:nth-child(1) { animation-delay: 0.1s; }
+        .agent-card:nth-child(3) { animation-delay: 0.3s; }
+        .agent-card:nth-child(5) { animation-delay: 0.5s; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .connector-line {
+            animation: pulse 2s ease-in-out infinite;
+        }
+        
+        /* Footer */
+        footer {
+            text-align: center;
+            margin-top: 60px;
+            padding: 24px;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+        
+        footer a {
+            color: var(--accent-cyan);
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">Tenuo</div>
+            <div class="tagline">Capability Delegation Flow</div>
+        </header>
+        
+        <div class="flow-container">
+            <!-- Control Plane -->
+            <div class="agent-card">
+                <div class="agent-header">
+                    <div class="agent-icon control">🏛️</div>
+                    <div>
+                        <div class="agent-title">Control Plane</div>
+                        <div class="agent-subtitle">Secure Environment • Holds Private Key</div>
+                    </div>
+                </div>
+                
+                <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                    Issues a broad warrant for infrastructure management across all staging clusters.
+                </p>
+                
+                <div class="warrant">
+                    <div class="warrant-header">
+                        <span class="warrant-badge root">Root Warrant</span>
+                        <span>depth: 0</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">tool:</span>
+                        <span class="warrant-value">"manage_infrastructure"</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">cluster:</span>
+                        <span class="warrant-value">staging-*</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">action:</span>
+                        <span class="warrant-value">*</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">budget:</span>
+                        <span class="warrant-value">≤ $10,000</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">ttl:</span>
+                        <span class="warrant-value">1 hour</span>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Connector 1 -->
+            <div class="connector">
+                <div class="connector-line">
+                    <div class="connector-arrow"></div>
+                </div>
+                <div class="connector-label">Delegates to Orchestrator</div>
+            </div>
+            
+            <!-- Orchestrator -->
+            <div class="agent-card">
+                <div class="agent-header">
+                    <div class="agent-icon orchestrator">🎭</div>
+                    <div>
+                        <div class="agent-title">Orchestrator Agent</div>
+                        <div class="agent-subtitle">Has Own Keypair • Attenuates Warrants</div>
+                    </div>
+                </div>
+                
+                <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                    Receives the root warrant and creates a <strong style="color: var(--accent-cyan);">narrower</strong> warrant for the worker. 
+                    Capabilities can only shrink, never expand.
+                </p>
+                
+                <div class="warrant">
+                    <div class="warrant-header">
+                        <span class="warrant-badge attenuated">Attenuated</span>
+                        <span>depth: 1</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">tool:</span>
+                        <span class="warrant-value unchanged">"manage_infrastructure"</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">cluster:</span>
+                        <span class="warrant-value narrowed">staging-web ← narrowed</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">action:</span>
+                        <span class="warrant-value narrowed">upgrade | restart ← narrowed</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">budget:</span>
+                        <span class="warrant-value narrowed">≤ $1,000 ← narrowed</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">ttl:</span>
+                        <span class="warrant-value narrowed">10 minutes ← shortened</span>
+                    </div>
+                </div>
+                
+                <div class="chain-viz">
+                    <div class="chain-block root">Root Warrant</div>
+                    <span class="chain-arrow">→</span>
+                    <div class="chain-block child">Worker Warrant</div>
+                    <span style="color: var(--text-muted); margin-left: 12px;">= Chain</span>
+                </div>
+            </div>
+            
+            <!-- Connector 2 -->
+            <div class="connector">
+                <div class="connector-line">
+                    <div class="connector-arrow"></div>
+                </div>
+                <div class="connector-label">Sends Chain (JSON)</div>
+            </div>
+            
+            <!-- Worker -->
+            <div class="agent-card">
+                <div class="agent-header">
+                    <div class="agent-icon worker">⚙️</div>
+                    <div>
+                        <div class="agent-title">Worker Agent</div>
+                        <div class="agent-subtitle">Only Has Control Plane PUBLIC Key • Verifies Offline</div>
+                    </div>
+                </div>
+                
+                <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                    Verifies the complete chain cryptographically. Does NOT need the orchestrator's key — 
+                    the chain proves authority back to the trusted root.
+                </p>
+                
+                <div class="verification-badge">
+                    ✓ Chain Verified • Root signed by trusted issuer • Constraints only narrow • All signatures valid
+                </div>
+                
+                <div class="actions">
+                    <div class="actions-title">Authorization Tests</div>
+                    <div class="action-grid">
+                        <div class="action-item">
+                            <div class="action-status allowed">✓</div>
+                            <div class="action-content">
+                                <div class="action-name">upgrade staging-web ($500)</div>
+                                <div class="action-reason">Within all constraints</div>
+                            </div>
+                        </div>
+                        <div class="action-item">
+                            <div class="action-status allowed">✓</div>
+                            <div class="action-content">
+                                <div class="action-name">restart staging-web</div>
+                                <div class="action-reason">Action is permitted</div>
+                            </div>
+                        </div>
+                        <div class="action-item">
+                            <div class="action-status blocked">✗</div>
+                            <div class="action-content">
+                                <div class="action-name">upgrade staging-db</div>
+                                <div class="action-reason">Only staging-web allowed</div>
+                            </div>
+                        </div>
+                        <div class="action-item">
+                            <div class="action-status blocked">✗</div>
+                            <div class="action-content">
+                                <div class="action-name">upgrade prod-web</div>
+                                <div class="action-reason">No production access</div>
+                            </div>
+                        </div>
+                        <div class="action-item">
+                            <div class="action-status blocked">✗</div>
+                            <div class="action-content">
+                                <div class="action-name">delete staging-web</div>
+                                <div class="action-reason">Delete not in allowed actions</div>
+                            </div>
+                        </div>
+                        <div class="action-item">
+                            <div class="action-status blocked">✗</div>
+                            <div class="action-content">
+                                <div class="action-name">upgrade ($5,000)</div>
+                                <div class="action-reason">Exceeds $1,000 budget limit</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Key Insights -->
+        <div class="insight-box">
+            <div class="insight-title">Why This Matters</div>
+            <div class="insight-grid">
+                <div class="insight-item">
+                    <div class="insight-icon">🔒</div>
+                    <div class="insight-label"><strong>Cryptographic</strong><br>Constraints can't be forged</div>
+                </div>
+                <div class="insight-item">
+                    <div class="insight-icon">📴</div>
+                    <div class="insight-label"><strong>Offline</strong><br>No runtime network calls</div>
+                </div>
+                <div class="insight-item">
+                    <div class="insight-icon">⬇️</div>
+                    <div class="insight-label"><strong>Monotonic</strong><br>Capabilities only shrink</div>
+                </div>
+                <div class="insight-item">
+                    <div class="insight-icon">⚡</div>
+                    <div class="insight-label"><strong>Fast</strong><br>&lt;100μs verification</div>
+                </div>
+            </div>
+        </div>
+        
+        <footer>
+            <p>Built with <a href="https://github.com/tenuo/tenuo">Tenuo</a> — Agent Capability Flow Control</p>
+            <p style="margin-top: 8px;">Run the demo: <code style="background: var(--bg-card); padding: 4px 8px; border-radius: 4px;">docker compose up orchestrator worker</code></p>
+        </footer>
+    </div>
+</body>
+</html>
+
