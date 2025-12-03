@@ -128,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             // Check authorization
-            let result = authorizer.check(&w, &tool, &args);
+            let result = authorizer.check(&w, &tool, &args, None);
 
             match output.as_str() {
                 "exit-code" => {

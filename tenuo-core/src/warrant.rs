@@ -74,8 +74,18 @@ pub struct WarrantPayload {
     pub parent_id: Option<WarrantId>,
     /// Session ID for session binding.
     pub session_id: Option<String>,
-    /// Public key of the issuer.
+    /// Agent ID for traceability (e.g., UUID of the agent software/instance).
+    pub agent_id: Option<String>,
+    /// Public key of the issuer (who signed this warrant).
     pub issuer: PublicKey,
+    /// Public key of the authorized holder (Proof-of-Possession).
+    /// 
+    /// If set, the holder must prove they control this key when using the warrant.
+    /// This prevents stolen warrants from being used by attackers.
+    /// 
+    /// When `None`, the warrant is a bearer token (anyone with it can use it).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authorized_holder: Option<PublicKey>,
 }
 
 /// A signed warrant - the complete token of authority.
@@ -133,9 +143,51 @@ impl Warrant {
         self.payload.session_id.as_deref()
     }
 
+    /// Get the agent ID.
+    pub fn agent_id(&self) -> Option<&str> {
+        self.payload.agent_id.as_deref()
+    }
+
     /// Get the issuer's public key.
     pub fn issuer(&self) -> &PublicKey {
         &self.payload.issuer
+    }
+
+    /// Get the authorized holder's public key (if set).
+    /// 
+    /// When set, the holder must prove possession of the corresponding
+    /// private key to use this warrant (Proof-of-Possession).
+    pub fn authorized_holder(&self) -> Option<&PublicKey> {
+        self.payload.authorized_holder.as_ref()
+    }
+
+    /// Check if this warrant requires Proof-of-Possession.
+    pub fn requires_pop(&self) -> bool {
+        self.payload.authorized_holder.is_some()
+    }
+
+    /// Verify that a holder signature proves possession.
+    /// 
+    /// The holder must sign a challenge (typically the action being performed)
+    /// to prove they control the `authorized_holder` key.
+    /// 
+    /// # Arguments
+    /// * `challenge` - The data that was signed (e.g., action + timestamp + nonce)
+    /// * `signature` - The holder's signature over the challenge
+    /// 
+    /// # Returns
+    /// * `Ok(())` if no PoP required OR signature is valid
+    /// * `Err` if PoP required but signature invalid or missing holder
+    pub fn verify_holder(&self, challenge: &[u8], signature: &Signature) -> Result<()> {
+        match &self.payload.authorized_holder {
+            None => Ok(()), // Bearer token, no PoP required
+            Some(holder_key) => {
+                holder_key.verify(challenge, signature)
+                    .map_err(|_| Error::SignatureInvalid(
+                        "holder proof-of-possession failed".to_string()
+                    ))
+            }
+        }
     }
 
     /// Check if the warrant has expired.
@@ -173,7 +225,13 @@ impl Warrant {
     /// 1. Warrant is not expired
     /// 2. Tool name matches
     /// 3. All constraints are satisfied
-    pub fn authorize(&self, tool: &str, args: &HashMap<String, ConstraintValue>) -> Result<()> {
+    /// 4. Proof-of-Possession (if authorized_holder is set)
+    pub fn authorize(
+        &self,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+        signature: Option<&Signature>,
+    ) -> Result<()> {
         // Check expiration
         if self.is_expired() {
             return Err(Error::WarrantExpired(self.payload.expires_at));
@@ -191,7 +249,51 @@ impl Warrant {
         }
 
         // Check constraints
-        self.payload.constraints.matches(args)
+        self.payload.constraints.matches(args)?;
+
+        // Check Proof-of-Possession
+        if let Some(holder_key) = &self.payload.authorized_holder {
+            let signature = signature.ok_or_else(|| {
+                Error::MissingSignature("Proof-of-Possession required".to_string())
+            })?;
+
+            // Create deterministic challenge: (tool, sorted_args)
+            let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
+            sorted_args.sort_by_key(|(k, _)| *k);
+
+            let challenge_data = (tool, sorted_args);
+            let mut challenge_bytes = Vec::new();
+            ciborium::ser::into_writer(&challenge_data, &mut challenge_bytes)
+                .map_err(|e| Error::SerializationError(e.to_string()))?;
+
+            holder_key.verify(&challenge_bytes, signature)
+                .map_err(|_| Error::SignatureInvalid("Proof-of-Possession failed".to_string()))?;
+        }
+
+        Ok(())
+    }
+
+    /// Create a Proof-of-Possession signature for a request.
+    ///
+    /// This helper generates the correct challenge (tool + sorted args) and signs it
+    /// using the provided keypair. Use this when making a request with a warrant
+    /// that requires Proof-of-Possession.
+    pub fn create_pop_signature(
+        &self,
+        keypair: &Keypair,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+    ) -> Result<Signature> {
+        // Create deterministic challenge: (tool, sorted_args)
+        let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
+        sorted_args.sort_by_key(|(k, _)| *k);
+
+        let challenge_data = (tool, sorted_args);
+        let mut challenge_bytes = Vec::new();
+        ciborium::ser::into_writer(&challenge_data, &mut challenge_bytes)
+            .map_err(|e| Error::SerializationError(e.to_string()))?;
+
+        Ok(keypair.sign(&challenge_bytes))
     }
 
     /// Create a builder for attenuating this warrant.
@@ -207,6 +309,8 @@ pub struct WarrantBuilder {
     constraints: ConstraintSet,
     ttl: Option<Duration>,
     session_id: Option<String>,
+    agent_id: Option<String>,
+    authorized_holder: Option<PublicKey>,
 }
 
 impl WarrantBuilder {
@@ -217,6 +321,8 @@ impl WarrantBuilder {
             constraints: ConstraintSet::new(),
             ttl: None,
             session_id: None,
+            agent_id: None,
+            authorized_holder: None,
         }
     }
 
@@ -244,6 +350,18 @@ impl WarrantBuilder {
         self
     }
 
+    /// Set the agent ID.
+    pub fn agent_id(mut self, agent_id: impl Into<String>) -> Self {
+        self.agent_id = Some(agent_id.into());
+        self
+    }
+
+    /// Set the authorized holder (Proof-of-Possession).
+    pub fn authorized_holder(mut self, public_key: PublicKey) -> Self {
+        self.authorized_holder = Some(public_key);
+        self
+    }
+
     /// Build and sign the warrant.
     pub fn build(self, keypair: &Keypair) -> Result<Warrant> {
         let tool = self.tool.ok_or(Error::MissingField("tool".to_string()))?;
@@ -259,7 +377,9 @@ impl WarrantBuilder {
             depth: 0,
             parent_id: None,
             session_id: self.session_id,
+            agent_id: self.agent_id,
             issuer: keypair.public_key(),
+            authorized_holder: self.authorized_holder,
         };
 
         let mut payload_bytes = Vec::new();
@@ -283,6 +403,8 @@ pub struct AttenuationBuilder<'a> {
     constraints: ConstraintSet,
     ttl: Option<Duration>,
     session_id: Option<String>,
+    agent_id: Option<String>,
+    authorized_holder: Option<PublicKey>,
 }
 
 impl<'a> AttenuationBuilder<'a> {
@@ -293,6 +415,8 @@ impl<'a> AttenuationBuilder<'a> {
             constraints: parent.payload.constraints.clone(),
             ttl: None,
             session_id: parent.payload.session_id.clone(),
+            agent_id: parent.payload.agent_id.clone(),
+            authorized_holder: parent.payload.authorized_holder.clone(),
         }
     }
 
@@ -311,6 +435,18 @@ impl<'a> AttenuationBuilder<'a> {
     /// Set or change the session ID.
     pub fn session_id(mut self, session_id: impl Into<String>) -> Self {
         self.session_id = Some(session_id.into());
+        self
+    }
+
+    /// Set or change the agent ID.
+    pub fn agent_id(mut self, agent_id: impl Into<String>) -> Self {
+        self.agent_id = Some(agent_id.into());
+        self
+    }
+
+    /// Set or change the authorized holder (Proof-of-Possession).
+    pub fn authorized_holder(mut self, public_key: PublicKey) -> Self {
+        self.authorized_holder = Some(public_key);
         self
     }
 
@@ -350,7 +486,9 @@ impl<'a> AttenuationBuilder<'a> {
             depth: new_depth,
             parent_id: Some(self.parent.payload.id.clone()),
             session_id: self.session_id,
+            agent_id: self.agent_id,
             issuer: keypair.public_key(),
+            authorized_holder: self.authorized_holder,
         };
 
         let mut payload_bytes = Vec::new();
@@ -419,14 +557,16 @@ mod tests {
         args.insert("cluster".to_string(), ConstraintValue::String("staging-web".to_string()));
         args.insert("version".to_string(), ConstraintValue::String("1.28.5".to_string()));
 
-        assert!(warrant.authorize("upgrade_cluster", &args).is_ok());
+        args.insert("version".to_string(), ConstraintValue::String("1.28.5".to_string()));
+
+        assert!(warrant.authorize("upgrade_cluster", &args, None).is_ok());
 
         // Wrong tool
-        assert!(warrant.authorize("delete_cluster", &args).is_err());
+        assert!(warrant.authorize("delete_cluster", &args, None).is_err());
 
         // Wrong cluster
         args.insert("cluster".to_string(), ConstraintValue::String("prod-web".to_string()));
-        assert!(warrant.authorize("upgrade_cluster", &args).is_err());
+        assert!(warrant.authorize("upgrade_cluster", &args, None).is_err());
     }
 
     #[test]

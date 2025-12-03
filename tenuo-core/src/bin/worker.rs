@@ -5,7 +5,7 @@
 //! 2. Verifies the complete chain back to a trusted root
 //! 3. Attempts various actions (some allowed, some blocked)
 
-use tenuo_core::{Authorizer, Warrant, PublicKey, ConstraintValue};
+use tenuo_core::{Authorizer, Warrant, PublicKey, Keypair, ConstraintValue};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -76,6 +76,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("    [{}] {} (depth={}, signed by {})", 
             i, warrant.id(), warrant.depth(), signer);
     }
+
+    // =========================================================================
+    // Step 2b: Load Worker Keypair (for PoP)
+    // =========================================================================
+    let worker_key_path = env::var("TENUO_WORKER_KEY_INPUT")
+        .unwrap_or_else(|_| "/data/worker.key".to_string());
+    
+    println!("  Waiting for worker key at: {}", worker_key_path);
+    // Simple wait loop (similar to chain)
+    let worker_key_hex = loop {
+        if Path::new(&worker_key_path).exists() {
+            break fs::read_to_string(&worker_key_path)?;
+        }
+        thread::sleep(Duration::from_secs(1));
+    };
+    let worker_key_bytes: [u8; 32] = hex::decode(worker_key_hex.trim())?
+        .try_into()
+        .map_err(|_| "Worker key must be 32 bytes")?;
+    let worker_keypair = Keypair::from_bytes(&worker_key_bytes);
+    println!("  ✓ Worker keypair loaded");
 
     // =========================================================================
     // Step 3: Verify the complete delegation chain
@@ -196,7 +216,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map(|(k, v)| (k.to_string(), v))
             .collect();
         
-        let result = leaf_warrant.authorize(tool, &args);
+        // Sign the request (Proof-of-Possession)
+        let signature = leaf_warrant.create_pop_signature(&worker_keypair, tool, &args)?;
+        
+        let result = leaf_warrant.authorize(tool, &args, Some(&signature));
         let allowed = result.is_ok();
         let status = if allowed == expected { "✓" } else { "✗" };
         let action_status = if allowed { "ALLOWED" } else { "BLOCKED" };
@@ -228,8 +251,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("║  Key Observations:                                               ║");
     println!("║  • Chain verification proves authority without network calls     ║");
     println!("║  • Constraints are enforced exactly as specified                 ║");
-    println!("║  • Capability attenuation prevents privilege escalation          ║");
-    println!("║  • The worker never needed the orchestrator's private key        ║");
+    println!("  • Capability attenuation prevents privilege escalation          ║");
+    println!("  • Proof-of-Possession prevents stolen warrant usage             ║");
+    println!("  • The worker never needed the orchestrator's private key        ║");
     println!("╚══════════════════════════════════════════════════════════════════╝\n");
 
     if failed > 0 {

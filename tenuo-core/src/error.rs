@@ -12,6 +12,10 @@ pub enum Error {
     #[error("signature verification failed: {0}")]
     SignatureInvalid(String),
 
+    /// Missing signature for Proof-of-Possession.
+    #[error("missing signature: {0}")]
+    MissingSignature(String),
+
     /// Warrant has expired.
     #[error("warrant expired at {0}")]
     WarrantExpired(chrono::DateTime<chrono::Utc>),

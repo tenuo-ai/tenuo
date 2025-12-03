@@ -65,6 +65,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Generated Orchestrator Keypair");
     println!("    Public Key: {}", hex::encode(orchestrator_keypair.public_key().to_bytes()));
 
+    // Generate worker keypair (for PoP)
+    let worker_keypair = Keypair::generate();
+    println!("  Generated Worker Keypair (for PoP)");
+    println!("    Public Key: {}", hex::encode(worker_keypair.public_key().to_bytes()));
+
+    // Save worker key for the worker agent
+    let worker_key_path = env::var("TENUO_WORKER_KEY_OUTPUT")
+        .unwrap_or_else(|_| "/data/worker.key".to_string());
+    std::fs::write(&worker_key_path, hex::encode(worker_keypair.secret_key_bytes()))?;
+    println!("    Saved to: {}", worker_key_path);
+
     // =========================================================================
     // Step 3: Attenuate warrant for the Worker
     // =========================================================================
@@ -83,6 +94,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .constraint("action", Pattern::new("upgrade|restart")?)
         .constraint("budget", Range::max(1000.0))
         .ttl(Duration::from_secs(600)) // 10 minutes
+        .authorized_holder(worker_keypair.public_key()) // PoP
+        .agent_id("worker-agent-01") // Traceability
         .build(&orchestrator_keypair)?;
 
     println!("\n  ✓ Worker Warrant Created:");

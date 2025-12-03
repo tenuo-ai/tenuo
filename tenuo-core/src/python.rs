@@ -318,7 +318,16 @@ impl PyWarrant {
     }
 
     /// Authorize an action against this warrant.
-    fn authorize(&self, tool: &str, args: &Bound<'_, PyDict>) -> PyResult<bool> {
+    /// 
+    /// Args:
+    ///     tool: Tool name to authorize
+    ///     args: Dictionary of argument name -> value
+    ///     signature: Optional signature bytes for Proof-of-Possession (64 bytes)
+    /// 
+    /// Returns:
+    ///     True if authorized, False if constraint not satisfied
+    #[pyo3(signature = (tool, args, signature=None))]
+    fn authorize(&self, tool: &str, args: &Bound<'_, PyDict>, signature: Option<&[u8]>) -> PyResult<bool> {
         let mut rust_args = HashMap::new();
         for (key, value) in args.iter() {
             let field: String = key.extract()?;
@@ -326,9 +335,22 @@ impl PyWarrant {
             rust_args.insert(field, cv);
         }
 
-        match self.inner.authorize(tool, &rust_args) {
+        // Convert signature bytes to Signature if provided
+        let sig = match signature {
+            Some(bytes) => {
+                if bytes.len() != 64 {
+                    return Err(PyValueError::new_err("signature must be 64 bytes"));
+                }
+                let arr: [u8; 64] = bytes.try_into().unwrap();
+                Some(crate::crypto::Signature::from_bytes(&arr).map_err(to_py_err)?)
+            }
+            None => None,
+        };
+
+        match self.inner.authorize(tool, &rust_args, sig.as_ref()) {
             Ok(()) => Ok(true),
             Err(crate::error::Error::ConstraintNotSatisfied { .. }) => Ok(false),
+            Err(crate::error::Error::MissingSignature(_)) => Ok(false),
             Err(e) => Err(to_py_err(e)),
         }
     }
@@ -345,6 +367,31 @@ impl PyWarrant {
             Ok(()) => Ok(true),
             Err(_) => Ok(false),
         }
+    }
+
+    /// Create a Proof-of-Possession signature.
+    /// 
+    /// Use this when making a request with a warrant that requires PoP.
+    /// The keypair should match the authorized_holder on the warrant.
+    /// 
+    /// Args:
+    ///     keypair: The PyKeypair to sign with
+    ///     tool: Tool name being called
+    ///     args: Dictionary of argument name -> value
+    /// 
+    /// Returns:
+    ///     64-byte signature as bytes
+    fn create_pop_signature(&self, keypair: &PyKeypair, tool: &str, args: &Bound<'_, PyDict>) -> PyResult<Vec<u8>> {
+        let mut rust_args = HashMap::new();
+        for (key, value) in args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_args.insert(field, cv);
+        }
+
+        let sig = self.inner.create_pop_signature(&keypair.inner, tool, &rust_args)
+            .map_err(to_py_err)?;
+        Ok(sig.to_bytes().to_vec())
     }
 
     /// Encode the warrant to base64 (for HTTP headers).

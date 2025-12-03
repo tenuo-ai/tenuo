@@ -387,12 +387,13 @@ impl DataPlane {
         chain: &[Warrant],
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
+        signature: Option<&crate::crypto::Signature>,
     ) -> Result<ChainVerificationResult> {
         let result = self.verify_chain(chain)?;
         
         // Authorize against the leaf warrant
         if let Some(leaf) = chain.last() {
-            self.authorize(leaf, tool, args)?;
+            self.authorize(leaf, tool, args, signature)?;
         }
         
         Ok(result)
@@ -408,8 +409,9 @@ impl DataPlane {
         warrant: &Warrant,
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
+        signature: Option<&crate::crypto::Signature>,
     ) -> Result<()> {
-        warrant.authorize(tool, args)
+        warrant.authorize(tool, args, signature)
     }
 
     /// Convenience: verify and authorize in one call.
@@ -418,9 +420,10 @@ impl DataPlane {
         warrant: &Warrant,
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
+        signature: Option<&crate::crypto::Signature>,
     ) -> Result<()> {
         self.verify(warrant)?;
-        self.authorize(warrant, tool, args)
+        self.authorize(warrant, tool, args, signature)
     }
 
     /// Attenuate a warrant for a sub-agent.
@@ -517,6 +520,7 @@ impl Authorizer {
         warrant: &Warrant,
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
+        signature: Option<&crate::crypto::Signature>,
     ) -> Result<()> {
         // Check expiration with clock tolerance
         if warrant.is_expired_with_tolerance(self.clock_tolerance) {
@@ -536,7 +540,7 @@ impl Authorizer {
         warrant.verify(issuer)?;
 
         // Authorize the action
-        warrant.authorize(tool, args)
+        warrant.authorize(tool, args, signature)
     }
 
     /// Verify a complete delegation chain.
@@ -660,11 +664,12 @@ impl Authorizer {
         chain: &[Warrant],
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
+        signature: Option<&crate::crypto::Signature>,
     ) -> Result<ChainVerificationResult> {
         let result = self.verify_chain(chain)?;
         
         if let Some(leaf) = chain.last() {
-            leaf.authorize(tool, args)?;
+            leaf.authorize(tool, args, signature)?;
         }
         
         Ok(result)
@@ -705,7 +710,7 @@ mod tests {
             "cluster".to_string(),
             ConstraintValue::String("staging-web".to_string()),
         );
-        assert!(data_plane.authorize(&warrant, "upgrade_cluster", &args).is_ok());
+        assert!(data_plane.authorize(&warrant, "upgrade_cluster", &args, None).is_ok());
     }
 
     #[test]
@@ -742,7 +747,7 @@ mod tests {
         let authorizer = Authorizer::new(control_plane.public_key());
 
         // Check in one call
-        assert!(authorizer.check(&warrant, "test", &HashMap::new()).is_ok());
+        assert!(authorizer.check(&warrant, "test", &HashMap::new(), None).is_ok());
     }
 
     // =========================================================================
@@ -868,7 +873,7 @@ mod tests {
         );
 
         let result = data_plane
-            .check_chain(&[root, agent_warrant], "upgrade_cluster", &args)
+            .check_chain(&[root, agent_warrant], "upgrade_cluster", &args, None)
             .unwrap();
 
         assert_eq!(result.chain_length, 2);
@@ -964,7 +969,7 @@ mod tests {
         let mut args = HashMap::new();
         args.insert("key".to_string(), ConstraintValue::String("value".to_string()));
         
-        let result = authorizer.check_chain(&[root, child], "test", &args).unwrap();
+        let result = authorizer.check_chain(&[root, child], "test", &args, None).unwrap();
         assert_eq!(result.chain_length, 2);
     }
 
