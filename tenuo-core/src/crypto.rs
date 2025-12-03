@@ -1,0 +1,268 @@
+//! Cryptographic primitives for Tenuo.
+//!
+//! Uses Ed25519 with context strings to prevent cross-protocol attacks.
+
+use crate::error::{Error, Result};
+use crate::SIGNATURE_CONTEXT;
+use ed25519_dalek::{
+    Signature as DalekSignature, Signer, SigningKey, Verifier, VerifyingKey,
+};
+use rand::rngs::OsRng;
+use serde::{Deserialize, Serialize};
+
+/// A keypair for signing warrants.
+#[derive(Debug)]
+pub struct Keypair {
+    signing_key: SigningKey,
+}
+
+impl Keypair {
+    /// Generate a new random keypair.
+    pub fn generate() -> Self {
+        let signing_key = SigningKey::generate(&mut OsRng);
+        Self { signing_key }
+    }
+
+    /// Create a keypair from a secret key bytes.
+    pub fn from_bytes(bytes: &[u8; 32]) -> Self {
+        let signing_key = SigningKey::from_bytes(bytes);
+        Self { signing_key }
+    }
+
+    /// Get the public key.
+    pub fn public_key(&self) -> PublicKey {
+        PublicKey {
+            verifying_key: self.signing_key.verifying_key(),
+        }
+    }
+
+    /// Sign a message with context prefix.
+    pub fn sign(&self, message: &[u8]) -> Signature {
+        let prefixed = Self::prefix_message(message);
+        let sig = self.signing_key.sign(&prefixed);
+        Signature { inner: sig }
+    }
+
+    /// Get the secret key bytes.
+    pub fn secret_key_bytes(&self) -> [u8; 32] {
+        self.signing_key.to_bytes()
+    }
+
+    /// Prefix a message with the context string for domain separation.
+    fn prefix_message(message: &[u8]) -> Vec<u8> {
+        let mut prefixed = Vec::with_capacity(SIGNATURE_CONTEXT.len() + message.len());
+        prefixed.extend_from_slice(SIGNATURE_CONTEXT);
+        prefixed.extend_from_slice(message);
+        prefixed
+    }
+}
+
+impl Clone for Keypair {
+    fn clone(&self) -> Self {
+        Self {
+            signing_key: SigningKey::from_bytes(&self.signing_key.to_bytes()),
+        }
+    }
+}
+
+/// A public key for verifying warrant signatures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublicKey {
+    verifying_key: VerifyingKey,
+}
+
+impl PublicKey {
+    /// Create a public key from bytes.
+    pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self> {
+        let verifying_key = VerifyingKey::from_bytes(bytes)
+            .map_err(|e| Error::CryptoError(e.to_string()))?;
+        Ok(Self { verifying_key })
+    }
+
+    /// Get the public key as bytes.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.verifying_key.to_bytes()
+    }
+
+    /// Verify a signature against a message.
+    pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<()> {
+        let prefixed = Keypair::prefix_message(message);
+        self.verifying_key
+            .verify(&prefixed, &signature.inner)
+            .map_err(|e| Error::SignatureInvalid(e.to_string()))
+    }
+}
+
+impl Serialize for PublicKey {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let bytes = self.to_bytes();
+        if serializer.is_human_readable() {
+            serializer.serialize_str(&base64::Engine::encode(
+                &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+                bytes,
+            ))
+        } else {
+            serializer.serialize_bytes(&bytes)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for PublicKey {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            let s = String::deserialize(deserializer)?;
+            let bytes = base64::Engine::decode(
+                &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+                &s,
+            )
+            .map_err(serde::de::Error::custom)?;
+            let arr: [u8; 32] = bytes
+                .try_into()
+                .map_err(|_| serde::de::Error::custom("invalid public key length"))?;
+            PublicKey::from_bytes(&arr).map_err(serde::de::Error::custom)
+        } else {
+            let bytes: Vec<u8> = serde_bytes::deserialize(deserializer)?;
+            let arr: [u8; 32] = bytes
+                .try_into()
+                .map_err(|_| serde::de::Error::custom("invalid public key length"))?;
+            PublicKey::from_bytes(&arr).map_err(serde::de::Error::custom)
+        }
+    }
+}
+
+/// An Ed25519 signature.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Signature {
+    inner: DalekSignature,
+}
+
+impl Signature {
+    /// Create a signature from bytes.
+    pub fn from_bytes(bytes: &[u8; 64]) -> Result<Self> {
+        let inner = DalekSignature::from_bytes(bytes);
+        Ok(Self { inner })
+    }
+
+    /// Get the signature as bytes.
+    pub fn to_bytes(&self) -> [u8; 64] {
+        self.inner.to_bytes()
+    }
+}
+
+impl Serialize for Signature {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let bytes = self.to_bytes();
+        if serializer.is_human_readable() {
+            serializer.serialize_str(&base64::Engine::encode(
+                &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+                bytes,
+            ))
+        } else {
+            serializer.serialize_bytes(&bytes)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Signature {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            let s = String::deserialize(deserializer)?;
+            let bytes = base64::Engine::decode(
+                &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+                &s,
+            )
+            .map_err(serde::de::Error::custom)?;
+            let arr: [u8; 64] = bytes
+                .try_into()
+                .map_err(|_| serde::de::Error::custom("invalid signature length"))?;
+            Signature::from_bytes(&arr).map_err(serde::de::Error::custom)
+        } else {
+            let bytes: Vec<u8> = serde_bytes::deserialize(deserializer)?;
+            let arr: [u8; 64] = bytes
+                .try_into()
+                .map_err(|_| serde::de::Error::custom("invalid signature length"))?;
+            Signature::from_bytes(&arr).map_err(serde::de::Error::custom)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_keypair_generation() {
+        let keypair = Keypair::generate();
+        let public_key = keypair.public_key();
+        assert_eq!(public_key.to_bytes().len(), 32);
+    }
+
+    #[test]
+    fn test_sign_and_verify() {
+        let keypair = Keypair::generate();
+        let message = b"test message";
+        let signature = keypair.sign(message);
+
+        assert!(keypair.public_key().verify(message, &signature).is_ok());
+    }
+
+    #[test]
+    fn test_verify_wrong_message_fails() {
+        let keypair = Keypair::generate();
+        let message = b"test message";
+        let signature = keypair.sign(message);
+
+        let wrong_message = b"wrong message";
+        assert!(keypair.public_key().verify(wrong_message, &signature).is_err());
+    }
+
+    #[test]
+    fn test_verify_wrong_key_fails() {
+        let keypair1 = Keypair::generate();
+        let keypair2 = Keypair::generate();
+        let message = b"test message";
+        let signature = keypair1.sign(message);
+
+        assert!(keypair2.public_key().verify(message, &signature).is_err());
+    }
+
+    #[test]
+    fn test_keypair_from_bytes() {
+        let keypair = Keypair::generate();
+        let bytes = keypair.secret_key_bytes();
+        let restored = Keypair::from_bytes(&bytes);
+
+        assert_eq!(
+            keypair.public_key().to_bytes(),
+            restored.public_key().to_bytes()
+        );
+    }
+
+    #[test]
+    fn test_context_prefix_prevents_cross_protocol() {
+        let keypair = Keypair::generate();
+        let message = b"test message";
+        let signature = keypair.sign(message);
+
+        // Manually create a signature without context prefix
+        // This should fail verification
+        let raw_sig = keypair.signing_key.sign(message);
+        let wrong_signature = Signature { inner: raw_sig };
+
+        assert!(keypair.public_key().verify(message, &wrong_signature).is_err());
+        assert!(keypair.public_key().verify(message, &signature).is_ok());
+    }
+}
+

@@ -1,0 +1,41 @@
+# Tenuo Authorizer Docker Image
+#
+# This is a minimal image for the data plane authorizer.
+# Designed to be small and fast for sidecar deployment.
+#
+# Build:
+#   docker build -f deploy/docker/Dockerfile.authorizer -t tenuo/authorizer:latest .
+#
+# Run:
+#   docker run -e TENUO_TRUSTED_KEYS=<hex> tenuo/authorizer:latest info
+
+# ============================================================================
+# Build stage
+# ============================================================================
+FROM rust:1.75-bookworm as builder
+
+WORKDIR /build
+
+# Cache dependencies
+COPY Cargo.toml Cargo.lock* ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN cargo fetch
+
+# Build the actual binary
+COPY . .
+RUN cargo build --release --bin tenuo-authorizer --features "data-plane"
+
+# ============================================================================
+# Runtime stage - minimal image
+# ============================================================================
+FROM gcr.io/distroless/cc-debian12
+
+# Copy binary
+COPY --from=builder /build/target/release/tenuo-authorizer /tenuo-authorizer
+
+# Run as non-root
+USER 1000
+
+# Entry point
+ENTRYPOINT ["/tenuo-authorizer"]
+

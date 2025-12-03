@@ -1,0 +1,25 @@
+FROM rust:1.75-bookworm as builder
+
+WORKDIR /build
+COPY Cargo.toml Cargo.lock* ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN cargo fetch
+
+COPY . .
+# Build both agent binaries
+RUN cargo build --release --bin tenuo-orchestrator --bin tenuo-worker --features "control-plane,data-plane"
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/target/release/tenuo-orchestrator /usr/local/bin/
+COPY --from=builder /build/target/release/tenuo-worker /usr/local/bin/
+
+# Create a directory for shared data
+RUN mkdir -p /data && chmod 777 /data
+
+USER 1000

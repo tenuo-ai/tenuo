@@ -1,0 +1,123 @@
+[package]
+name = "tenuo-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["Tenuo Contributors"]
+description = "Agent Capability Flow Control - Rust core library"
+license = "Apache-2.0"
+repository = "https://github.com/tenuo/tenuo"
+keywords = ["authorization", "capabilities", "agents", "security", "warrants"]
+categories = ["authentication", "cryptography", "ai", "security"]
+
+[lib]
+name = "tenuo_core"
+crate-type = ["cdylib", "rlib"]
+
+# ============================================================================
+# Feature Flags for Deployment Flexibility
+# ============================================================================
+[features]
+default = ["control-plane", "data-plane"]
+
+# Control Plane - for the central authority service
+control-plane = []
+
+# Data Plane - for edge agents and verifiers  
+data-plane = []
+
+# Python bindings
+python = ["pyo3"]
+
+# Server features (adds HTTP/gRPC dependencies)
+server = ["tokio", "axum", "tower"]
+
+# ============================================================================
+# Binary Targets
+# ============================================================================
+
+# Control Plane server (issues warrants, manages approvals)
+[[bin]]
+name = "tenuo-control"
+path = "src/bin/control.rs"
+required-features = ["control-plane", "server"]
+
+# Data Plane / Authorizer (embeddable verifier)
+[[bin]]
+name = "tenuo-authorizer"
+path = "src/bin/authorizer.rs"
+required-features = ["data-plane"]
+
+# CLI for development and debugging (needs both planes for full functionality)
+[[bin]]
+name = "tenuo"
+path = "src/bin/cli.rs"
+required-features = ["control-plane", "data-plane"]
+
+[[bin]]
+name = "tenuo-orchestrator"
+path = "src/bin/orchestrator.rs"
+required-features = ["control-plane", "data-plane"]
+
+[[bin]]
+name = "tenuo-worker"
+path = "src/bin/worker.rs"
+required-features = ["data-plane"]
+
+# ============================================================================
+# Dependencies
+# ============================================================================
+[dependencies]
+# Cryptography
+ed25519-dalek = { version = "2.1", features = ["rand_core", "serde"] }
+rand = "0.8"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = "1.0"
+ciborium = "0.2"
+base64 = "0.22"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Pattern matching (glob-style)
+glob = "0.3"
+regex = "1.10"
+
+# CEL expression evaluation
+cel-interpreter = "0.8"
+
+# Caching for CEL compiled programs
+moka = { version = "0.12", features = ["sync"] }
+
+# Error handling
+thiserror = "1.0"
+
+# UUID for warrant IDs
+uuid = { version = "1.6", features = ["v4", "serde"] }
+
+# Python bindings (optional)
+pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
+
+# Server dependencies (optional)
+tokio = { version = "1.35", features = ["full"], optional = true }
+axum = { version = "0.7", optional = true }
+tower = { version = "0.4", optional = true }
+
+# CLI dependencies
+clap = { version = "4.4", features = ["derive", "env"] }
+hex = "0.4"
+
+[dev-dependencies]
+proptest = "1.4"
+criterion = "0.5"
+tokio = { version = "1.35", features = ["full", "test-util"] }
+
+[[bench]]
+name = "warrant_benchmarks"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1

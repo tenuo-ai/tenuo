@@ -1,0 +1,38 @@
+# Rust build artifacts
+target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment files (contain secrets!)
+.env
+.env.local
+.env.*.local
+
+# Development keypairs
+*.pem
+*-key.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.eggs/
+*.so
+
+# Test artifacts
+*.profraw
+coverage/
+
