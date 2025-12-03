@@ -41,6 +41,7 @@ pub mod error;
 pub mod planes;
 pub mod warrant;
 pub mod wire;
+pub mod revocation;
 
 #[cfg(feature = "python")]
 pub mod python;

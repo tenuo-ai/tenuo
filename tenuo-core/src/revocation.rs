@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use crate::error::{Error, Result};
+
 
 /// A list of revoked warrant IDs.
 ///

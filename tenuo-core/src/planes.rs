@@ -172,6 +172,8 @@ impl ControlPlane {
 /// while still providing security against replay attacks.
 pub const DEFAULT_CLOCK_TOLERANCE_SECS: i64 = 30;
 
+use crate::revocation::RevocationList;
+
 #[derive(Debug)]
 pub struct DataPlane {
     /// Trusted issuer public keys, keyed by name.
@@ -180,17 +182,20 @@ pub struct DataPlane {
     own_keypair: Option<Keypair>,
     /// Clock skew tolerance for expiration checks.
     clock_tolerance: chrono::Duration,
+    /// List of revoked warrant IDs.
+    revocation_list: RevocationList,
 }
 
 impl DataPlane {
     /// Create a new data plane with no trusted issuers.
-    /// 
+    ///
     /// Uses the default clock tolerance of 30 seconds.
     pub fn new() -> Self {
         Self {
             trusted_issuers: HashMap::new(),
             own_keypair: None,
             clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
+            revocation_list: RevocationList::new(),
         }
     }
 
@@ -200,17 +205,18 @@ impl DataPlane {
             trusted_issuers: HashMap::new(),
             own_keypair: Some(keypair),
             clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
+            revocation_list: RevocationList::new(),
         }
     }
 
     /// Set the clock skew tolerance.
-    /// 
+    ///
     /// In distributed systems, clocks on different machines can drift apart.
     /// This tolerance allows a grace period when checking warrant expiration.
-    /// 
+    ///
     /// # Arguments
     /// * `tolerance` - Grace period (e.g., 30 seconds). Use 0 for strict checking.
-    /// 
+    ///
     /// # Example
     /// ```rust,ignore
     /// let mut data_plane = DataPlane::new();
@@ -219,6 +225,11 @@ impl DataPlane {
     pub fn set_clock_tolerance(&mut self, tolerance: std::time::Duration) {
         self.clock_tolerance = chrono::Duration::from_std(tolerance)
             .unwrap_or(chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS));
+    }
+
+    /// Set the revocation list.
+    pub fn set_revocation_list(&mut self, list: RevocationList) {
+        self.revocation_list = list;
     }
 
     /// Add a trusted issuer.
@@ -241,6 +252,11 @@ impl DataPlane {
     ///
     /// This is an **offline operation** - no network calls.
     pub fn verify(&self, warrant: &Warrant) -> Result<()> {
+        // Check revocation first
+        if self.revocation_list.is_revoked(warrant.id().as_str()) {
+            return Err(Error::WarrantRevoked(warrant.id().to_string()));
+        }
+
         // Check expiration first (fast path), with clock tolerance
         if warrant.is_expired_with_tolerance(self.clock_tolerance) {
             return Err(Error::WarrantExpired(warrant.expires_at()));
@@ -279,6 +295,8 @@ impl DataPlane {
     /// 4. **Expiration**: chain[i+1].expires_at <= chain[i].expires_at
     /// 5. **Monotonicity**: chain[i+1].constraints ⊆ chain[i].constraints
     /// 6. **Signatures**: Each warrant has a valid signature
+    /// 7. **No Cycles**: Each warrant ID appears exactly once
+    /// 8. **Session Binding** (optional): All warrants in same session
     ///
     /// # Example
     ///
@@ -288,10 +306,46 @@ impl DataPlane {
     /// data_plane.verify_chain(&chain)?;
     /// ```
     pub fn verify_chain(&self, chain: &[Warrant]) -> Result<ChainVerificationResult> {
+        self.verify_chain_with_options(chain, false)
+    }
+    
+    /// Verify chain with session binding enforcement.
+    /// 
+    /// Same as `verify_chain`, but also verifies that all warrants in the chain
+    /// have the same `session_id`. Use this when warrants should be isolated
+    /// per-session (e.g., per HTTP request, per task).
+    /// 
+    /// # Example
+    /// 
+    /// ```rust,ignore
+    /// // All warrants must have session_id = "sess_123"
+    /// data_plane.verify_chain_strict(&chain)?;
+    /// ```
+    pub fn verify_chain_strict(&self, chain: &[Warrant]) -> Result<ChainVerificationResult> {
+        self.verify_chain_with_options(chain, true)
+    }
+    
+    fn verify_chain_with_options(
+        &self, 
+        chain: &[Warrant], 
+        enforce_session: bool
+    ) -> Result<ChainVerificationResult> {
         if chain.is_empty() {
             return Err(Error::ChainVerificationFailed(
                 "chain cannot be empty".to_string(),
             ));
+        }
+
+        // CYCLE DETECTION: Track seen warrant IDs
+        let mut seen_ids: HashSet<String> = HashSet::new();
+        for warrant in chain {
+            let id = warrant.id().to_string();
+            if !seen_ids.insert(id.clone()) {
+                return Err(Error::ChainVerificationFailed(format!(
+                    "cycle detected: warrant ID '{}' appears multiple times in chain",
+                    id
+                )));
+            }
         }
 
         let mut result = ChainVerificationResult {
@@ -304,21 +358,34 @@ impl DataPlane {
         // Step 1: Verify the root warrant
         let root = &chain[0];
         self.verify(root)?;
-        
+
         result.root_issuer = Some(root.issuer().to_bytes());
         result.verified_steps.push(ChainStep {
             warrant_id: root.id().to_string(),
             depth: root.depth(),
             issuer: root.issuer().to_bytes(),
         });
+        
+        // SESSION BINDING: Track session from root
+        let expected_session = if enforce_session { root.session_id() } else { None };
 
         // Step 2: Walk the chain, verifying each link
         for i in 1..chain.len() {
             let parent = &chain[i - 1];
             let child = &chain[i];
-            
+
             self.verify_chain_link(parent, child)?;
             
+            // Check session binding if enforced
+            if enforce_session {
+                if child.session_id() != expected_session {
+                    return Err(Error::ChainVerificationFailed(format!(
+                        "session mismatch: expected {:?}, got {:?} at depth {}",
+                        expected_session, child.session_id(), child.depth()
+                    )));
+                }
+            }
+
             result.verified_steps.push(ChainStep {
                 warrant_id: child.id().to_string(),
                 depth: child.depth(),
@@ -340,7 +407,7 @@ impl DataPlane {
                 "child warrant has no parent_id".to_string()
             )
         })?;
-        
+
         if parent_id != parent.id() {
             return Err(Error::ChainVerificationFailed(format!(
                 "chain broken: child's parent_id '{}' != parent's id '{}'",
@@ -390,12 +457,12 @@ impl DataPlane {
         signature: Option<&crate::crypto::Signature>,
     ) -> Result<ChainVerificationResult> {
         let result = self.verify_chain(chain)?;
-        
+
         // Authorize against the leaf warrant
         if let Some(leaf) = chain.last() {
             self.authorize(leaf, tool, args, signature)?;
         }
-        
+
         Ok(result)
     }
 
@@ -465,28 +532,30 @@ impl Default for DataPlane {
 /// A minimal authorizer for embedding in services.
 ///
 /// This is the smallest possible data plane - just a set of trusted
-/// public keys and verification/authorization logic.
-///
-/// Use this when you want to add Tenuo verification to an existing
-/// service with minimal overhead.
-///
-/// Supports both single-warrant and chain verification modes.
+/// This is the smallest possible data plane - just a set of trusted
+
 #[derive(Debug, Clone)]
 pub struct Authorizer {
     trusted_keys: Vec<PublicKey>,
-    /// Clock skew tolerance for expiration checks.
     clock_tolerance: chrono::Duration,
+    revocation_list: RevocationList,
 }
 
 impl Authorizer {
     /// Create an authorizer with a single trusted key.
-    /// 
+    ///
     /// Uses the default clock tolerance of 30 seconds.
     pub fn new(root_public_key: PublicKey) -> Self {
         Self {
             trusted_keys: vec![root_public_key],
-            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
+            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS as i64),
+            revocation_list: RevocationList::new(),
         }
+    }
+
+    /// Set the revocation list.
+    pub fn set_revocation_list(&mut self, list: RevocationList) {
+        self.revocation_list = list;
     }
 
     /// Create an authorizer from raw key bytes.
@@ -499,22 +568,49 @@ impl Authorizer {
         self.trusted_keys.push(key);
     }
 
-    /// Set the clock skew tolerance.
-    /// 
-    /// In distributed systems, clocks on different machines can drift apart.
-    /// This tolerance allows a grace period when checking warrant expiration.
-    /// 
-    /// # Arguments
-    /// * `tolerance` - Grace period (e.g., 30 seconds). Use 0 for strict checking.
-    pub fn set_clock_tolerance(&mut self, tolerance: std::time::Duration) {
-        self.clock_tolerance = chrono::Duration::from_std(tolerance)
-            .unwrap_or(chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS));
+    /// Verify a warrant.
+    ///
+    /// This checks:
+    /// 1. The warrant is signed by a trusted issuer
+    /// 2. The warrant has not expired
+    /// 3. The warrant is not revoked
+    pub fn verify(&self, warrant: &Warrant) -> Result<()> {
+        // Check revocation first
+        if self.revocation_list.is_revoked(warrant.id().as_str()) {
+            return Err(Error::WarrantRevoked(warrant.id().to_string()));
+        }
+
+        // Check expiration first (fast path), with clock tolerance
+        if warrant.is_expired_with_tolerance(self.clock_tolerance) {
+            return Err(Error::WarrantExpired(warrant.expires_at()));
+        }
+
+        // Check if issuer is trusted
+        let issuer = warrant.issuer();
+        if !self.trusted_keys.iter().any(|pk| pk == issuer) {
+            return Err(Error::SignatureInvalid(
+                "warrant issuer is not trusted".to_string(),
+            ));
+        }
+
+        // Verify the signature
+        warrant.verify(issuer)
     }
 
-    /// Check a warrant and authorize an action.
+    /// Authorize an action.
     ///
-    /// This is the main entry point for data plane verification.
-    /// Completely offline - no network calls.
+    /// This checks that the warrant permits the given tool call with the given arguments.
+    pub fn authorize(
+        &self,
+        warrant: &Warrant,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+        signature: Option<&crate::crypto::Signature>,
+    ) -> Result<()> {
+        warrant.authorize(tool, args, signature)
+    }
+
+    /// Convenience: verify and authorize in one call.
     pub fn check(
         &self,
         warrant: &Warrant,
@@ -522,46 +618,66 @@ impl Authorizer {
         args: &HashMap<String, ConstraintValue>,
         signature: Option<&crate::crypto::Signature>,
     ) -> Result<()> {
-        // Check expiration with clock tolerance
-        if warrant.is_expired_with_tolerance(self.clock_tolerance) {
-            return Err(Error::WarrantExpired(warrant.expires_at()));
-        }
-
-        // Verify signature (any trusted key or the embedded issuer for delegations)
-        let issuer = warrant.issuer();
-        if warrant.depth() == 0 {
-            // Root warrant must be from a trusted key
-            if !self.trusted_keys.iter().any(|k| k == issuer) {
-                return Err(Error::SignatureInvalid(
-                    "root warrant issuer not trusted".to_string(),
-                ));
-            }
-        }
-        warrant.verify(issuer)?;
-
-        // Authorize the action
-        warrant.authorize(tool, args, signature)
+        self.verify(warrant)?;
+        self.authorize(warrant, tool, args, signature)
     }
 
     /// Verify a complete delegation chain.
     ///
-    /// For delegated warrants (depth > 0), this provides the strongest
-    /// verification by validating the complete path from root to leaf.
+    /// This is the most thorough verification method, validating the entire
+    /// path from a trusted root to the leaf warrant.
     ///
     /// # Arguments
     ///
     /// * `chain` - Ordered list of warrants from root (index 0) to leaf (last)
     ///
-    /// # Returns
+    /// # Chain Invariants Verified
     ///
-    /// `ChainVerificationResult` with details about the verified chain.
+    /// 1. **Root Trust**: chain[0] must be signed by a trusted issuer
+    /// 2. **Linkage**: chain[i+1].parent_id == chain[i].id
+    /// 3. **Depth**: chain[i+1].depth == chain[i].depth + 1
+    /// 4. **Expiration**: chain[i+1].expires_at <= chain[i].expires_at
+    /// 5. **Monotonicity**: chain[i+1].constraints ⊆ chain[i].constraints
+    /// 6. **Signatures**: Each warrant has a valid signature
+    /// 7. **No Cycles**: Each warrant ID appears exactly once
+    /// 8. **Session Binding** (optional): All warrants in same session
     pub fn verify_chain(&self, chain: &[Warrant]) -> Result<ChainVerificationResult> {
+        self.verify_chain_with_options(chain, false)
+    }
+    
+    /// Verify chain with session binding enforcement.
+    /// 
+    /// Same as `verify_chain`, but also verifies that all warrants in the chain
+    /// have the same `session_id`. Use this when warrants should be isolated
+    /// per-session (e.g., per HTTP request, per task).
+    pub fn verify_chain_strict(&self, chain: &[Warrant]) -> Result<ChainVerificationResult> {
+        self.verify_chain_with_options(chain, true)
+    }
+    
+    fn verify_chain_with_options(
+        &self, 
+        chain: &[Warrant],
+        enforce_session: bool
+    ) -> Result<ChainVerificationResult> {
         if chain.is_empty() {
             return Err(Error::ChainVerificationFailed(
                 "chain cannot be empty".to_string(),
             ));
         }
+        
+        // CYCLE DETECTION: Track seen warrant IDs
+        let mut seen_ids: HashSet<String> = HashSet::new();
+        for warrant in chain {
+            let id = warrant.id().to_string();
+            if !seen_ids.insert(id.clone()) {
+                return Err(Error::ChainVerificationFailed(format!(
+                    "cycle detected: warrant ID '{}' appears multiple times in chain",
+                    id
+                )));
+            }
+        }
 
+        let root = &chain[0];
         let mut result = ChainVerificationResult {
             root_issuer: None,
             chain_length: chain.len(),
@@ -569,14 +685,6 @@ impl Authorizer {
             verified_steps: Vec::new(),
         };
 
-        // Verify the root warrant
-        let root = &chain[0];
-        
-        // Check expiration with clock tolerance
-        if root.is_expired_with_tolerance(self.clock_tolerance) {
-            return Err(Error::WarrantExpired(root.expires_at()));
-        }
-        
         // Root must be from a trusted key
         let issuer = root.issuer();
         if !self.trusted_keys.iter().any(|k| k == issuer) {
@@ -585,21 +693,34 @@ impl Authorizer {
             ));
         }
         root.verify(issuer)?;
-        
+
         result.root_issuer = Some(issuer.to_bytes());
         result.verified_steps.push(ChainStep {
             warrant_id: root.id().to_string(),
             depth: root.depth(),
             issuer: issuer.to_bytes(),
         });
+        
+        // SESSION BINDING: Track session from root
+        let expected_session = if enforce_session { root.session_id() } else { None };
 
         // Walk the chain, verifying each link
         for i in 1..chain.len() {
             let parent = &chain[i - 1];
             let child = &chain[i];
-            
+
             self.verify_link(parent, child)?;
             
+            // Check session binding if enforced
+            if enforce_session {
+                if child.session_id() != expected_session {
+                    return Err(Error::ChainVerificationFailed(format!(
+                        "session mismatch: expected {:?}, got {:?} at depth {}",
+                        expected_session, child.session_id(), child.depth()
+                    )));
+                }
+            }
+
             result.verified_steps.push(ChainStep {
                 warrant_id: child.id().to_string(),
                 depth: child.depth(),
@@ -613,13 +734,18 @@ impl Authorizer {
 
     /// Verify a single link in a delegation chain.
     fn verify_link(&self, parent: &Warrant, child: &Warrant) -> Result<()> {
+        // Check revocation
+        if self.revocation_list.is_revoked(child.id().as_str()) {
+            return Err(Error::WarrantRevoked(child.id().to_string()));
+        }
+
         // Check parent_id linkage
         let parent_id = child.parent_id().ok_or_else(|| {
             Error::ChainVerificationFailed(
                 "child warrant has no parent_id".to_string()
             )
         })?;
-        
+
         if parent_id != parent.id() {
             return Err(Error::ChainVerificationFailed(format!(
                 "chain broken: child parent_id '{}' != parent id '{}'",

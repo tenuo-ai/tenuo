@@ -19,12 +19,28 @@ use std::time::Duration;
 use uuid::Uuid;
 
 /// A unique identifier for a warrant.
+/// 
+/// Uses UUIDv7 (time-ordered) which provides:
+/// - 48 bits of millisecond timestamp
+/// - 74 bits of random data
+/// - Monotonically increasing within the same millisecond
+/// - Collision probability: 1 in 2^74 per millisecond (effectively zero)
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WarrantId(String);
 
 impl WarrantId {
-    /// Generate a new random warrant ID.
+    /// Generate a new time-ordered warrant ID (UUIDv7).
+    /// 
+    /// UUIDv7 provides both uniqueness and chronological ordering,
+    /// making it ideal for debugging and audit trails.
     pub fn new() -> Self {
+        Self(format!("tnu_wrt_{}", Uuid::now_v7().simple()))
+    }
+    
+    /// Generate a random warrant ID (UUIDv4).
+    /// 
+    /// Use this when you don't want IDs to reveal timing information.
+    pub fn new_random() -> Self {
         Self(format!("tnu_wrt_{}", Uuid::new_v4().simple()))
     }
 

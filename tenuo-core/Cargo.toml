@@ -94,8 +94,8 @@ moka = { version = "0.12", features = ["sync"] }
 # Error handling
 thiserror = "1.0"
 
-# UUID for warrant IDs
-uuid = { version = "1.6", features = ["v4", "serde"] }
+# UUID for warrant IDs (v4 for random, v7 for time-ordered)
+uuid = { version = "1.6", features = ["v4", "v7", "serde"] }
 
 # Python bindings (optional)
 pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
