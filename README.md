@@ -33,46 +33,58 @@ The demo runs two containerized agents that demonstrate the complete Tenuo workf
 │  │    • action: * (any action)                                            ││
 │  │    • budget: ≤$10,000                                                  ││
 │  │                                                                         ││
-│  │ 2. Creates its own keypair (identity for signing delegations)          ││
+│  │ 2. Creates WORKER's keypair (for holder binding)                       ││
 │  │                                                                         ││
-│  │ 3. Attenuates the warrant for a worker with narrower scope:            ││
-│  │    • cluster: staging-web (only this one cluster)                      ││
-│  │    • action: upgrade|restart (limited actions)                         ││
-│  │    • budget: ≤$1,000 (reduced budget)                                  ││
-│  │    • TTL: 10 minutes (shorter than parent's 1 hour)                    ││
+│  │ 3. Attenuates the warrant for the worker:                              ││
+│  │    • cluster: staging-web (narrowed)                                   ││
+│  │    • action: upgrade|restart (limited)                                 ││
+│  │    • budget: ≤$1,000 (reduced)                                         ││
+│  │    • authorized_holder: worker's public key (holder-bound)             ││
+│  │    • agent_id: agt_worker_001 (traceability)                           ││
 │  │                                                                         ││
-│  │ 4. Writes the chain [root_warrant, worker_warrant] to /data/chain.json ││
+│  │ 4. Writes chain + worker keypair to shared volume                      ││
 │  └─────────────────────────────────────────────────────────────────────────┘│
 │                                    │                                        │
 │                     (shared Docker volume)                                  │
 │                                    ▼                                        │
 │  WORKER (tenuo-worker binary)                                               │
 │  ┌─────────────────────────────────────────────────────────────────────────┐│
-│  │ 1. Configured with ONLY the Control Plane's PUBLIC key                 ││
-│  │    (does NOT have orchestrator's key - chain proves authority)         ││
+│  │ 1. Loads chain.json and worker.key (its private key)                   ││
 │  │                                                                         ││
-│  │ 2. Loads chain.json and verifies the complete delegation path:         ││
+│  │ 2. Verifies the complete delegation chain:                             ││
 │  │    • Root signed by trusted issuer? ✓                                  ││
-│  │    • Each warrant linked to parent? ✓                                  ││
 │  │    • Constraints only narrow? ✓                                        ││
 │  │    • All signatures valid? ✓                                           ││
 │  │                                                                         ││
-│  │ 3. Attempts actions and shows authorization results:                   ││
-│  │    ✓ upgrade staging-web ($500)  → ALLOWED (within constraints)        ││
-│  │    ✓ restart staging-web         → ALLOWED (restart is permitted)     ││
-│  │    ✗ upgrade staging-db          → BLOCKED (only staging-web allowed) ││
-│  │    ✗ upgrade prod-web            → BLOCKED (no production access)     ││
-│  │    ✗ delete staging-web          → BLOCKED (delete not in actions)    ││
-│  │    ✗ upgrade with $5,000         → BLOCKED (exceeds $1k budget)       ││
+│  │ 3. Signs each request (Proof-of-Possession):                           ││
+│  │    signature = sign(tool + args) with worker.key                       ││
+│  │                                                                         ││
+│  │ 4. Authorization results:                                              ││
+│  │    ✓ upgrade staging-web ($500)  → ALLOWED                             ││
+│  │    ✗ upgrade staging-db          → BLOCKED (wrong cluster)            ││
+│  │    ✗ upgrade with $5,000         → BLOCKED (exceeds budget)           ││
+│  │    ✗ stolen warrant              → BLOCKED (no private key for PoP)   ││
 │  └─────────────────────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Why this matters:**
-- The worker **never contacts** the Control Plane at runtime
-- The orchestrator's private key is **not needed** by the worker
-- Authority is proven **cryptographically** through the chain
-- All verification happens **locally** in ~microseconds
+- **Holder binding**: Stolen warrants are useless without the worker's private key
+- **Offline verification**: Worker never contacts Control Plane
+- **Cryptographic authority**: Chain proves delegation path
+- **Full traceability**: Every action has `warrant_id`, `agent_id`, `session_id`
+
+### Multi-Agent Patterns
+
+Tenuo supports arbitrary delegation depth (max 16 levels):
+
+```
+Control Plane → Orchestrator → Worker A → Sub-Agent A1
+                            ↘ Worker B → Sub-Agent B1
+                            ↘ Worker C
+```
+
+Each level can only **narrow** capabilities. Worker A cannot grant Sub-Agent A1 permissions it doesn't have.
 
 ## Architecture
 

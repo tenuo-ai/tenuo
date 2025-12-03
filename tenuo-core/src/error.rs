@@ -16,6 +16,10 @@ pub enum Error {
     #[error("missing signature: {0}")]
     MissingSignature(String),
 
+    /// Warrant has been revoked.
+    #[error("warrant revoked: {0}")]
+    WarrantRevoked(String),
+
     /// Warrant has expired.
     #[error("warrant expired at {0}")]
     WarrantExpired(chrono::DateTime<chrono::Utc>),

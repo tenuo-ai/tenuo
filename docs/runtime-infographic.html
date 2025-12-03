@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tenuo - Runtime Scenario with Gateway</title>
+    <title>Tenuo - Runtime Scenarios</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
         
@@ -18,17 +18,14 @@
             --accent-purple: #a855f7;
             --accent-orange: #ff8c00;
             --accent-pink: #f472b6;
+            --accent-blue: #3b82f6;
             --text-primary: #e2e8f0;
             --text-secondary: #94a3b8;
             --text-muted: #64748b;
             --border: #1e293b;
         }
         
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         
         body {
             font-family: 'Space Grotesk', sans-serif;
@@ -41,10 +38,7 @@
         body::before {
             content: '';
             position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
+            top: 0; left: 0; right: 0; bottom: 0;
             background: 
                 radial-gradient(circle at 15% 30%, rgba(168, 85, 247, 0.08) 0%, transparent 40%),
                 radial-gradient(circle at 85% 70%, rgba(0, 212, 255, 0.08) 0%, transparent 40%),
@@ -87,172 +81,352 @@
             color: var(--text-muted);
         }
         
-        /* Timeline */
-        .timeline {
-            position: relative;
-            padding: 20px 0;
+        .section-title {
+            font-size: 1.75rem;
+            font-weight: 600;
+            text-align: center;
+            margin: 48px 0 32px;
+            color: var(--text-primary);
         }
         
-        .timeline::before {
-            content: '';
-            position: absolute;
-            left: 50%;
-            top: 0;
-            bottom: 0;
-            width: 4px;
-            background: linear-gradient(to bottom, var(--accent-purple), var(--accent-cyan), var(--accent-green));
-            transform: translateX(-50%);
-            border-radius: 2px;
+        .section-subtitle {
+            text-align: center;
+            color: var(--text-muted);
+            margin-top: -20px;
+            margin-bottom: 32px;
+            font-size: 0.95rem;
         }
         
-        .phase {
+        /* Tabs */
+        .tabs {
             display: flex;
-            align-items: flex-start;
-            margin-bottom: 40px;
-            position: relative;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 32px;
         }
         
-        .phase:nth-child(odd) {
-            flex-direction: row;
+        .tab {
+            padding: 12px 24px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 500;
         }
         
-        .phase:nth-child(even) {
-            flex-direction: row-reverse;
+        .tab:hover {
+            background: var(--bg-card-hover);
         }
         
-        .phase-content {
-            width: calc(50% - 40px);
+        .tab.active {
+            background: var(--accent-cyan);
+            color: var(--bg-dark);
+            border-color: var(--accent-cyan);
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        /* Integration Mode Cards */
+        .mode-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 32px;
+            margin-bottom: 48px;
+        }
+        
+        .mode-card {
+            background: var(--bg-card);
+            border: 2px solid var(--border);
+            border-radius: 16px;
+            padding: 32px;
+            transition: all 0.3s ease;
+        }
+        
+        .mode-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+        }
+        
+        .mode-card.gateway { border-color: var(--accent-orange); }
+        .mode-card.sidecar { border-color: var(--accent-blue); }
+        
+        .mode-header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        
+        .mode-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+        }
+        
+        .mode-icon.gateway { background: linear-gradient(135deg, var(--accent-orange), #f59e0b); }
+        .mode-icon.sidecar { background: linear-gradient(135deg, var(--accent-blue), #0ea5e9); }
+        
+        .mode-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+        
+        .mode-desc {
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+            line-height: 1.6;
+        }
+        
+        /* Diagram */
+        .diagram-box {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            overflow-x: auto;
+        }
+        
+        .diagram-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            margin: 12px 0;
+            flex-wrap: wrap;
+        }
+        
+        .diagram-node {
+            padding: 12px 16px;
+            border-radius: 8px;
+            text-align: center;
+            min-width: 100px;
+        }
+        
+        .node-control { background: rgba(168, 85, 247, 0.2); border: 1px solid var(--accent-purple); }
+        .node-orch { background: rgba(0, 212, 255, 0.2); border: 1px solid var(--accent-cyan); }
+        .node-worker { background: rgba(0, 255, 136, 0.2); border: 1px solid var(--accent-green); }
+        .node-gateway { background: rgba(255, 140, 0, 0.2); border: 1px solid var(--accent-orange); }
+        .node-sidecar { background: rgba(59, 130, 246, 0.2); border: 1px solid var(--accent-blue); }
+        .node-backend { background: rgba(244, 114, 182, 0.2); border: 1px solid var(--accent-pink); }
+        
+        .diagram-arrow {
+            color: var(--text-muted);
+            font-size: 1.25rem;
+        }
+        
+        .diagram-label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+        
+        /* Multi-Agent Scenario */
+        .scenario-card {
             background: var(--bg-card);
             border: 1px solid var(--border);
             border-radius: 16px;
-            padding: 24px;
-            position: relative;
+            padding: 32px;
+            margin-bottom: 32px;
         }
         
-        .phase:nth-child(odd) .phase-content {
-            margin-right: 40px;
-        }
-        
-        .phase:nth-child(even) .phase-content {
-            margin-left: 40px;
-        }
-        
-        .phase-marker {
-            position: absolute;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 48px;
-            height: 48px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-            font-weight: 700;
-            z-index: 2;
-            border: 3px solid var(--bg-dark);
-        }
-        
-        .marker-purple { background: linear-gradient(135deg, var(--accent-purple), #6366f1); }
-        .marker-cyan { background: linear-gradient(135deg, var(--accent-cyan), #0ea5e9); }
-        .marker-orange { background: linear-gradient(135deg, var(--accent-orange), #f59e0b); }
-        .marker-green { background: linear-gradient(135deg, var(--accent-green), #22c55e); }
-        .marker-pink { background: linear-gradient(135deg, var(--accent-pink), #ec4899); }
-        
-        .phase-header {
+        .scenario-header {
             display: flex;
             align-items: center;
             gap: 12px;
-            margin-bottom: 16px;
+            margin-bottom: 24px;
         }
         
-        .phase-icon {
-            width: 40px;
-            height: 40px;
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 18px;
+        .scenario-badge {
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
         }
         
-        .icon-purple { background: rgba(168, 85, 247, 0.2); }
-        .icon-cyan { background: rgba(0, 212, 255, 0.2); }
-        .icon-orange { background: rgba(255, 140, 0, 0.2); }
-        .icon-green { background: rgba(0, 255, 136, 0.2); }
-        .icon-pink { background: rgba(244, 114, 182, 0.2); }
+        .badge-demo { background: var(--accent-green); color: var(--bg-dark); }
+        .badge-enterprise { background: var(--accent-purple); color: white; }
         
-        .phase-title {
+        .scenario-title {
             font-size: 1.25rem;
             font-weight: 600;
         }
         
-        .phase-subtitle {
-            font-size: 0.875rem;
+        /* Chain visualization */
+        .chain-visual {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin: 20px 0;
+            padding: 16px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 8px;
+        }
+        
+        .chain-warrant {
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        
+        .chain-warrant.root {
+            background: rgba(168, 85, 247, 0.2);
+            border: 1px solid var(--accent-purple);
+        }
+        
+        .chain-warrant.level1 {
+            background: rgba(0, 212, 255, 0.2);
+            border: 1px solid var(--accent-cyan);
+        }
+        
+        .chain-warrant.level2 {
+            background: rgba(0, 255, 136, 0.2);
+            border: 1px solid var(--accent-green);
+        }
+        
+        .chain-warrant.level3 {
+            background: rgba(255, 204, 0, 0.2);
+            border: 1px solid var(--accent-yellow);
+        }
+        
+        .chain-arrow {
+            color: var(--text-muted);
+            font-size: 1.25rem;
+        }
+        
+        .warrant-id {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .warrant-scope {
+            color: var(--text-muted);
+            font-size: 0.65rem;
+        }
+        
+        /* Agent grid */
+        .agent-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin: 24px 0;
+        }
+        
+        .agent-card {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
+            text-align: center;
+        }
+        
+        .agent-card.control { border-color: var(--accent-purple); }
+        .agent-card.orchestrator { border-color: var(--accent-cyan); }
+        .agent-card.researcher { border-color: var(--accent-green); }
+        .agent-card.writer { border-color: var(--accent-yellow); }
+        .agent-card.reviewer { border-color: var(--accent-pink); }
+        
+        .agent-emoji {
+            font-size: 2rem;
+            margin-bottom: 8px;
+        }
+        
+        .agent-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+        
+        .agent-perms {
+            font-size: 0.75rem;
             color: var(--text-muted);
         }
         
-        .phase-description {
-            color: var(--text-secondary);
-            margin-bottom: 16px;
-            line-height: 1.6;
-        }
-        
-        /* Code blocks */
+        /* Code snippet */
         .code-block {
-            background: rgba(0, 0, 0, 0.3);
+            background: rgba(0, 0, 0, 0.4);
             border: 1px solid var(--border);
             border-radius: 8px;
             padding: 16px;
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             overflow-x: auto;
-            margin: 12px 0;
+            margin: 16px 0;
         }
         
-        .code-comment {
+        .code-comment { color: var(--text-muted); }
+        .code-key { color: var(--accent-cyan); }
+        .code-string { color: var(--accent-green); }
+        .code-highlight { color: var(--accent-yellow); font-weight: 600; }
+        
+        /* Verification modes */
+        .verify-modes {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin-top: 24px;
+        }
+        
+        .verify-option {
+            padding: 16px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: rgba(0, 0, 0, 0.2);
+        }
+        
+        .verify-option.selected {
+            border-color: var(--accent-green);
+            background: rgba(0, 255, 136, 0.1);
+        }
+        
+        .verify-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        
+        .verify-desc {
+            font-size: 0.8rem;
             color: var(--text-muted);
         }
         
-        .code-key {
-            color: var(--accent-cyan);
+        /* Insights */
+        .insights {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 20px;
+            margin-top: 40px;
         }
         
-        .code-string {
-            color: var(--accent-green);
+        .insight-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            text-align: center;
         }
         
-        .code-highlight {
-            color: var(--accent-yellow);
-            font-weight: 600;
-        }
-        
-        /* HTTP Request visualization */
-        .http-request {
-            background: rgba(0, 0, 0, 0.4);
-            border-radius: 8px;
-            padding: 16px;
-            margin: 12px 0;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.75rem;
-        }
-        
-        .http-method {
-            color: var(--accent-yellow);
-            font-weight: 600;
-        }
-        
-        .http-path {
-            color: var(--accent-cyan);
-        }
-        
-        .http-header {
-            color: var(--accent-purple);
-        }
-        
-        .http-value {
-            color: var(--text-secondary);
-        }
+        .insight-icon { font-size: 2rem; margin-bottom: 12px; }
+        .insight-title { font-weight: 600; margin-bottom: 8px; }
+        .insight-text { font-size: 0.875rem; color: var(--text-secondary); line-height: 1.5; }
         
         /* Security badge */
         .security-badge {
@@ -266,152 +440,10 @@
             margin: 4px;
         }
         
-        .badge-pop {
-            background: rgba(168, 85, 247, 0.2);
-            border: 1px solid var(--accent-purple);
-            color: var(--accent-purple);
-        }
+        .badge-verified { background: rgba(0, 255, 136, 0.2); border: 1px solid var(--accent-green); color: var(--accent-green); }
+        .badge-blocked { background: rgba(255, 68, 102, 0.2); border: 1px solid var(--accent-red); color: var(--accent-red); }
+        .badge-pop { background: rgba(168, 85, 247, 0.2); border: 1px solid var(--accent-purple); color: var(--accent-purple); }
         
-        .badge-verified {
-            background: rgba(0, 255, 136, 0.2);
-            border: 1px solid var(--accent-green);
-            color: var(--accent-green);
-        }
-        
-        .badge-blocked {
-            background: rgba(255, 68, 102, 0.2);
-            border: 1px solid var(--accent-red);
-            color: var(--accent-red);
-        }
-        
-        .badge-chain {
-            background: rgba(0, 212, 255, 0.2);
-            border: 1px solid var(--accent-cyan);
-            color: var(--accent-cyan);
-        }
-        
-        /* Arrow indicators */
-        .arrow {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            color: var(--text-muted);
-            font-size: 0.875rem;
-            margin: 8px 0;
-        }
-        
-        .arrow-icon {
-            font-size: 1.25rem;
-        }
-        
-        /* Scenario section */
-        .scenario-section {
-            margin-top: 60px;
-        }
-        
-        .section-title {
-            font-size: 1.75rem;
-            font-weight: 600;
-            text-align: center;
-            margin-bottom: 32px;
-            color: var(--text-primary);
-        }
-        
-        /* Network diagram */
-        .network-diagram {
-            display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            gap: 20px;
-            margin: 40px 0;
-            padding: 40px;
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 16px;
-        }
-        
-        .network-node {
-            text-align: center;
-            padding: 20px;
-            border-radius: 12px;
-            border: 2px solid var(--border);
-            position: relative;
-        }
-        
-        .node-icon {
-            font-size: 2rem;
-            margin-bottom: 8px;
-        }
-        
-        .node-name {
-            font-weight: 600;
-            margin-bottom: 4px;
-        }
-        
-        .node-detail {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-        }
-        
-        .node-control { border-color: var(--accent-purple); background: rgba(168, 85, 247, 0.1); }
-        .node-orchestrator { border-color: var(--accent-cyan); background: rgba(0, 212, 255, 0.1); }
-        .node-gateway { border-color: var(--accent-orange); background: rgba(255, 140, 0, 0.1); }
-        .node-worker { border-color: var(--accent-green); background: rgba(0, 255, 136, 0.1); }
-        .node-backend { border-color: var(--accent-pink); background: rgba(244, 114, 182, 0.1); }
-        
-        /* Flow arrows */
-        .flow-row {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 16px;
-            margin: 24px 0;
-        }
-        
-        .flow-arrow {
-            color: var(--accent-cyan);
-            font-size: 1.5rem;
-        }
-        
-        .flow-label {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            text-align: center;
-            max-width: 120px;
-        }
-        
-        /* Key insights */
-        .insights {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 20px;
-            margin-top: 40px;
-        }
-        
-        .insight-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 24px;
-            text-align: center;
-        }
-        
-        .insight-icon {
-            font-size: 2rem;
-            margin-bottom: 12px;
-        }
-        
-        .insight-title {
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
-        
-        .insight-text {
-            font-size: 0.875rem;
-            color: var(--text-secondary);
-            line-height: 1.5;
-        }
-        
-        /* Footer */
         footer {
             text-align: center;
             margin-top: 60px;
@@ -420,71 +452,11 @@
             font-size: 0.875rem;
         }
         
-        footer a {
-            color: var(--accent-cyan);
-            text-decoration: none;
-        }
-        
-        /* Animations */
-        @keyframes fadeInUp {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        .phase-content {
-            animation: fadeInUp 0.6s ease forwards;
-        }
-        
-        .phase:nth-child(1) .phase-content { animation-delay: 0.1s; }
-        .phase:nth-child(2) .phase-content { animation-delay: 0.2s; }
-        .phase:nth-child(3) .phase-content { animation-delay: 0.3s; }
-        .phase:nth-child(4) .phase-content { animation-delay: 0.4s; }
-        .phase:nth-child(5) .phase-content { animation-delay: 0.5s; }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.6; }
-        }
-        
-        .live-indicator {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            color: var(--accent-green);
-            font-size: 0.75rem;
-        }
-        
-        .live-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: var(--accent-green);
-            animation: pulse 2s ease-in-out infinite;
-        }
+        footer a { color: var(--accent-cyan); text-decoration: none; }
         
         /* Responsive */
-        @media (max-width: 1024px) {
-            .timeline::before {
-                left: 30px;
-            }
-            
-            .phase {
-                flex-direction: column !important;
-                padding-left: 70px;
-            }
-            
-            .phase-content {
-                width: 100% !important;
-                margin: 0 !important;
-            }
-            
-            .phase-marker {
-                left: 30px !important;
-            }
-            
-            .network-diagram {
-                grid-template-columns: 1fr;
-            }
+        @media (max-width: 768px) {
+            .mode-grid, .verify-modes { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -492,304 +464,358 @@
     <div class="container">
         <header>
             <div class="logo">Tenuo</div>
-            <div class="tagline">Runtime Scenario: Gateway Integration</div>
-            <div class="subtitle">How warrants flow from Control Plane to Backend Services</div>
+            <div class="tagline">Runtime Scenarios</div>
+            <div class="subtitle">Gateway, Sidecar, and Multi-Agent Patterns</div>
         </header>
         
-        <!-- Network Overview -->
-        <section>
-            <h2 class="section-title">System Overview</h2>
-            <div class="network-diagram">
-                <div class="network-node node-control">
-                    <div class="node-icon">🏛️</div>
-                    <div class="node-name">Control Plane</div>
-                    <div class="node-detail">Issues root warrants</div>
-                    <div class="node-detail">Holds private key</div>
+        <!-- Integration Modes -->
+        <h2 class="section-title">Where Does Verification Happen?</h2>
+        <p class="section-subtitle">Choose Gateway for centralized control, Sidecar for distributed verification</p>
+        
+        <div class="mode-grid">
+            <!-- Gateway Pattern -->
+            <div class="mode-card gateway">
+                <div class="mode-header">
+                    <div class="mode-icon gateway">🚪</div>
+                    <div>
+                        <div class="mode-title">Gateway Pattern</div>
+                        <div style="color: var(--text-muted); font-size: 0.875rem;">Centralized at ingress</div>
+                    </div>
                 </div>
-                <div class="network-node node-orchestrator">
-                    <div class="node-icon">🎭</div>
-                    <div class="node-name">Orchestrator</div>
-                    <div class="node-detail">Attenuates warrants</div>
-                    <div class="node-detail">Binds to workers</div>
+                <p class="mode-desc">
+                    Verification happens at the API Gateway (Envoy, Nginx, Kong). Backend services are <strong>Tenuo-unaware</strong>.
+                    Best for: microservices, legacy backends, centralized audit logging.
+                </p>
+                <div class="diagram-box">
+                    <div class="diagram-row">
+                        <div class="diagram-node node-worker">
+                            <div>Worker</div>
+                            <div class="diagram-label">Sends warrant + PoP</div>
+                        </div>
+                        <span class="diagram-arrow">→</span>
+                        <div class="diagram-node node-gateway" style="border-width: 3px;">
+                            <div><strong>Gateway</strong></div>
+                            <div class="diagram-label">Verifies chain</div>
+                            <div class="diagram-label">Checks PoP</div>
+                        </div>
+                        <span class="diagram-arrow">→</span>
+                        <div class="diagram-node node-backend">
+                            <div>Backend</div>
+                            <div class="diagram-label">Clean request</div>
+                        </div>
+                    </div>
                 </div>
-                <div class="network-node node-worker">
-                    <div class="node-icon">⚙️</div>
-                    <div class="node-name">Worker Agent</div>
-                    <div class="node-detail">Signs requests (PoP)</div>
-                    <div class="node-detail">Constrained scope</div>
-                </div>
-                <div class="network-node node-gateway">
-                    <div class="node-icon">🚪</div>
-                    <div class="node-name">Gateway</div>
-                    <div class="node-detail">Verifies chain</div>
-                    <div class="node-detail">Checks PoP signature</div>
-                </div>
-                <div class="network-node node-backend">
-                    <div class="node-icon">🖥️</div>
-                    <div class="node-name">Backend Service</div>
-                    <div class="node-detail">Executes action</div>
-                    <div class="node-detail">Tenuo-unaware</div>
+                <div style="margin-top: 16px;">
+                    <span class="security-badge badge-verified">~1ms latency</span>
+                    <span class="security-badge badge-pop">Centralized logs</span>
                 </div>
             </div>
-        </section>
-        
-        <!-- Runtime Timeline -->
-        <section class="scenario-section">
-            <h2 class="section-title">Runtime Flow <span class="live-indicator"><span class="live-dot"></span> Live Scenario</span></h2>
             
-            <div class="timeline">
-                <!-- Phase 1: Bootstrap -->
-                <div class="phase">
-                    <div class="phase-marker marker-purple">1</div>
-                    <div class="phase-content">
-                        <div class="phase-header">
-                            <div class="phase-icon icon-purple">🏛️</div>
-                            <div>
-                                <div class="phase-title">Bootstrap: Control Plane Issues Warrant</div>
-                                <div class="phase-subtitle">One-time setup at session start</div>
-                            </div>
-                        </div>
-                        <p class="phase-description">
-                            Control Plane issues a root warrant to the Orchestrator for infrastructure management.
-                            This happens once per session, not per-request.
-                        </p>
-                        <div class="code-block">
-<span class="code-comment">// Control Plane (secure environment)</span>
-<span class="code-key">let</span> root_warrant = control.issue_warrant(
-    <span class="code-string">"manage_infrastructure"</span>,
-    &[(<span class="code-string">"cluster"</span>, Pattern::new(<span class="code-string">"staging-*"</span>)?),
-      (<span class="code-string">"budget"</span>, Range::max(<span class="code-highlight">10000.0</span>))],
-    Duration::from_secs(<span class="code-highlight">3600</span>), <span class="code-comment">// 1 hour</span>
-)?;
-                        </div>
-                        <div class="security-badge badge-chain">Warrant ID: tnu_wrt_a1b2c3d4</div>
+            <!-- Sidecar Pattern -->
+            <div class="mode-card sidecar">
+                <div class="mode-header">
+                    <div class="mode-icon sidecar">📦</div>
+                    <div>
+                        <div class="mode-title">Sidecar Pattern</div>
+                        <div style="color: var(--text-muted); font-size: 0.875rem;">Per-pod verification</div>
                     </div>
                 </div>
-                
-                <!-- Phase 2: Delegation -->
-                <div class="phase">
-                    <div class="phase-marker marker-cyan">2</div>
-                    <div class="phase-content">
-                        <div class="phase-header">
-                            <div class="phase-icon icon-cyan">🎭</div>
-                            <div>
-                                <div class="phase-title">Delegation: Orchestrator Attenuates for Worker</div>
-                                <div class="phase-subtitle">Narrows scope + binds to worker identity</div>
+                <p class="mode-desc">
+                    Each agent pod has a Tenuo sidecar container. Verification is <strong>co-located</strong> with the service.
+                    Best for: Kubernetes, service mesh, ultra-low latency requirements.
+                </p>
+                <div class="diagram-box">
+                    <div class="diagram-row">
+                        <div class="diagram-node node-worker">
+                            <div>Worker</div>
+                            <div class="diagram-label">Sends warrant + PoP</div>
+                        </div>
+                        <span class="diagram-arrow">→</span>
+                        <div style="border: 2px dashed var(--border); border-radius: 12px; padding: 12px;">
+                            <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 8px;">Same Pod</div>
+                            <div class="diagram-row" style="margin: 0; gap: 8px;">
+                                <div class="diagram-node node-sidecar" style="border-width: 3px;">
+                                    <div><strong>Sidecar</strong></div>
+                                    <div class="diagram-label">localhost:9090</div>
+                                </div>
+                                <span class="diagram-arrow">→</span>
+                                <div class="diagram-node node-backend">
+                                    <div>App</div>
+                                </div>
                             </div>
                         </div>
-                        <p class="phase-description">
-                            Orchestrator creates a narrower warrant for the Worker. Critically, it <strong>binds the warrant 
-                            to the worker's public key</strong> (holder binding). This prevents stolen warrants from being used.
-                        </p>
-                        <div class="code-block">
-<span class="code-comment">// Orchestrator generates worker's keypair</span>
-<span class="code-key">let</span> worker_keypair = Keypair::generate();
-
-<span class="code-key">let</span> worker_warrant = root_warrant.attenuate()
-    .constraint(<span class="code-string">"cluster"</span>, Exact::new(<span class="code-string">"staging-web"</span>))
-    .constraint(<span class="code-string">"budget"</span>, Range::max(<span class="code-highlight">1000.0</span>))
-    <span class="code-highlight">.authorized_holder(worker_keypair.public_key())</span> <span class="code-comment">// PoP binding!</span>
-    .agent_id(<span class="code-string">"agt_worker_001"</span>)
-    .ttl(Duration::from_secs(<span class="code-highlight">600</span>)) <span class="code-comment">// 10 min</span>
+                    </div>
+                </div>
+                <div style="margin-top: 16px;">
+                    <span class="security-badge badge-verified">~100μs latency</span>
+                    <span class="security-badge badge-pop">No network hop</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Multi-Agent Scenarios -->
+        <h2 class="section-title">Multi-Agent Scenarios</h2>
+        <p class="section-subtitle">Real-world delegation chains with multiple specialized agents</p>
+        
+        <!-- Scenario 1: Research Pipeline -->
+        <div class="scenario-card">
+            <div class="scenario-header">
+                <span class="scenario-badge badge-demo">Demo</span>
+                <span class="scenario-title">Scenario 1: Research Pipeline</span>
+            </div>
+            
+            <p style="color: var(--text-secondary); margin-bottom: 20px;">
+                An orchestrator coordinates multiple specialized agents, each with progressively narrower permissions.
+            </p>
+            
+            <div class="agent-grid">
+                <div class="agent-card control">
+                    <div class="agent-emoji">🏛️</div>
+                    <div class="agent-name">Control Plane</div>
+                    <div class="agent-perms">Issues root warrant</div>
+                </div>
+                <div class="agent-card orchestrator">
+                    <div class="agent-emoji">🎭</div>
+                    <div class="agent-name">Orchestrator</div>
+                    <div class="agent-perms">web_search, file_write, llm_call</div>
+                </div>
+                <div class="agent-card researcher">
+                    <div class="agent-emoji">🔍</div>
+                    <div class="agent-name">Researcher</div>
+                    <div class="agent-perms">web_search only</div>
+                </div>
+                <div class="agent-card writer">
+                    <div class="agent-emoji">✍️</div>
+                    <div class="agent-name">Writer</div>
+                    <div class="agent-perms">file_write (output/* only)</div>
+                </div>
+                <div class="agent-card reviewer">
+                    <div class="agent-emoji">👀</div>
+                    <div class="agent-name">Reviewer</div>
+                    <div class="agent-perms">llm_call (review model only)</div>
+                </div>
+            </div>
+            
+            <div class="chain-visual">
+                <div class="chain-warrant root">
+                    <span class="warrant-id">Root</span>
+                    <span class="warrant-scope">all tools, all domains</span>
+                </div>
+                <span class="chain-arrow">→</span>
+                <div class="chain-warrant level1">
+                    <span class="warrant-id">Orchestrator</span>
+                    <span class="warrant-scope">web_search, file_write, llm_call</span>
+                </div>
+                <span class="chain-arrow">→</span>
+                <div class="chain-warrant level2">
+                    <span class="warrant-id">Researcher</span>
+                    <span class="warrant-scope">web_search: arxiv.org only</span>
+                </div>
+            </div>
+            
+            <div class="code-block">
+<span class="code-comment">// Orchestrator delegates to Researcher with narrow scope</span>
+<span class="code-key">let</span> researcher_warrant = orchestrator_warrant.attenuate()
+    .constraint(<span class="code-string">"tool"</span>, Exact::new(<span class="code-string">"web_search"</span>))
+    .constraint(<span class="code-string">"domain"</span>, Pattern::new(<span class="code-string">"*.arxiv.org"</span>)?)
+    .constraint(<span class="code-string">"max_results"</span>, Range::max(<span class="code-highlight">100</span>))
+    <span class="code-highlight">.authorized_holder(researcher_keypair.public_key())</span>
+    .agent_id(<span class="code-string">"agt_researcher_001"</span>)
     .build(&orchestrator_keypair)?;
-                        </div>
-                        <div class="security-badge badge-pop">Holder-Bound</div>
-                        <div class="security-badge badge-chain">Agent: agt_worker_001</div>
-                    </div>
+            </div>
+            
+            <div class="verify-modes">
+                <div class="verify-option selected">
+                    <div class="verify-label">🚪 Gateway Verification</div>
+                    <div class="verify-desc">All agents call through central gateway. Gateway verifies chain + PoP before routing to backend.</div>
                 </div>
-                
-                <!-- Phase 3: Worker Request -->
-                <div class="phase">
-                    <div class="phase-marker marker-green">3</div>
-                    <div class="phase-content">
-                        <div class="phase-header">
-                            <div class="phase-icon icon-green">⚙️</div>
-                            <div>
-                                <div class="phase-title">Request: Worker Calls Backend via Gateway</div>
-                                <div class="phase-subtitle">Worker signs the action (Proof-of-Possession)</div>
-                            </div>
-                        </div>
-                        <p class="phase-description">
-                            Worker wants to upgrade staging-web. Since the warrant is holder-bound, the worker must 
-                            <strong>sign the request</strong> to prove it controls the authorized key.
-                        </p>
-                        <div class="code-block">
-<span class="code-comment">// Worker creates PoP signature</span>
-<span class="code-key">let</span> args = hashmap!{
-    <span class="code-string">"cluster"</span> => <span class="code-string">"staging-web"</span>,
-    <span class="code-string">"version"</span> => <span class="code-string">"1.28.5"</span>,
-    <span class="code-string">"budget"</span>  => <span class="code-highlight">500.0</span>
-};
-
-<span class="code-key">let</span> pop_signature = warrant.create_pop_signature(
-    &my_keypair, <span class="code-string">"manage_infrastructure"</span>, &args
-);
-                        </div>
-                        <div class="http-request">
-                            <span class="http-method">POST</span> <span class="http-path">/api/v1/infrastructure/upgrade</span><br>
-                            <span class="http-header">X-Tenuo-Chain:</span> <span class="http-value">[base64(root), base64(worker)]</span><br>
-                            <span class="http-header">X-Tenuo-PoP:</span> <span class="http-value">base64(signature)</span><br>
-                            <span class="http-header">Content-Type:</span> <span class="http-value">application/json</span><br><br>
-                            {"cluster": "staging-web", "version": "1.28.5"}
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Phase 4: Gateway Verification -->
-                <div class="phase">
-                    <div class="phase-marker marker-orange">4</div>
-                    <div class="phase-content">
-                        <div class="phase-header">
-                            <div class="phase-icon icon-orange">🚪</div>
-                            <div>
-                                <div class="phase-title">Verification: Gateway Checks Everything</div>
-                                <div class="phase-subtitle">Offline verification - no Control Plane calls</div>
-                            </div>
-                        </div>
-                        <p class="phase-description">
-                            Gateway extracts the warrant chain and PoP signature, then performs <strong>complete offline 
-                            verification</strong>. No network calls to Control Plane!
-                        </p>
-                        <div class="code-block">
-<span class="code-comment">// Gateway verification (< 100μs)</span>
-<span class="code-key">let</span> authorizer = Authorizer::new(trusted_root_key);
-
-<span class="code-comment">// 1. Verify chain integrity</span>
-authorizer.verify_chain(&chain)?;  <span class="code-comment">// ✓ Signatures valid</span>
-                                    <span class="code-comment">// ✓ Constraints only narrow</span>
-                                    <span class="code-comment">// ✓ Not expired</span>
-
-<span class="code-comment">// 2. Authorize action + check PoP</span>
-authorizer.check_chain(
-    &chain, 
-    <span class="code-string">"manage_infrastructure"</span>, 
-    &args,
-    <span class="code-highlight">Some(&pop_signature)</span>  <span class="code-comment">// ✓ Holder proof</span>
-)?;
-                        </div>
-                        <div class="security-badge badge-verified">Chain Verified</div>
-                        <div class="security-badge badge-verified">PoP Valid</div>
-                        <div class="security-badge badge-verified">Constraints Satisfied</div>
-                    </div>
-                </div>
-                
-                <!-- Phase 5: Backend Execution -->
-                <div class="phase">
-                    <div class="phase-marker marker-pink">5</div>
-                    <div class="phase-content">
-                        <div class="phase-header">
-                            <div class="phase-icon icon-pink">🖥️</div>
-                            <div>
-                                <div class="phase-title">Execution: Backend Receives Clean Request</div>
-                                <div class="phase-subtitle">Backend is Tenuo-unaware</div>
-                            </div>
-                        </div>
-                        <p class="phase-description">
-                            Gateway strips the auth headers and forwards a clean request. Backend service doesn't 
-                            need to know about Tenuo - it just receives an authorized request.
-                        </p>
-                        <div class="http-request">
-                            <span class="http-method">POST</span> <span class="http-path">/api/v1/infrastructure/upgrade</span><br>
-                            <span class="http-header">X-Request-ID:</span> <span class="http-value">req_xyz789</span><br>
-                            <span class="http-header">X-Agent-ID:</span> <span class="http-value">agt_worker_001</span><br>
-                            <span class="http-header">X-Warrant-ID:</span> <span class="http-value">tnu_wrt_...</span><br>
-                            <span class="http-header">Content-Type:</span> <span class="http-value">application/json</span><br><br>
-                            {"cluster": "staging-web", "version": "1.28.5"}
-                        </div>
-                        <div class="arrow">
-                            <span class="arrow-icon">→</span>
-                            <span>Backend executes upgrade on staging-web</span>
-                        </div>
-                    </div>
+                <div class="verify-option">
+                    <div class="verify-label">📦 Sidecar Verification</div>
+                    <div class="verify-desc">Each agent has its own sidecar. Verification happens at localhost with no network hop.</div>
                 </div>
             </div>
-        </section>
+        </div>
         
-        <!-- Attack Scenarios -->
-        <section class="scenario-section">
-            <h2 class="section-title">Security: What Gets Blocked</h2>
-            <div class="insights">
-                <div class="insight-card">
-                    <div class="insight-icon">🚫</div>
-                    <div class="insight-title">Stolen Warrant</div>
-                    <div class="insight-text">
-                        Attacker steals worker's warrant from logs/traffic.
-                        <br><br>
-                        <span class="security-badge badge-blocked">BLOCKED</span>
-                        <br><br>
-                        Warrant is holder-bound. Without the worker's private key, attacker can't create valid PoP signature.
-                    </div>
+        <!-- Scenario 2: Infrastructure Management -->
+        <div class="scenario-card">
+            <div class="scenario-header">
+                <span class="scenario-badge badge-demo">Demo</span>
+                <span class="scenario-title">Scenario 2: Infrastructure Management (3-Level Chain)</span>
+            </div>
+            
+            <p style="color: var(--text-secondary); margin-bottom: 20px;">
+                A DevOps orchestrator manages multiple cluster-specific workers, each bound to a single environment.
+            </p>
+            
+            <div class="chain-visual">
+                <div class="chain-warrant root">
+                    <span class="warrant-id">Root</span>
+                    <span class="warrant-scope">cluster: *, budget: $10k</span>
                 </div>
-                <div class="insight-card">
-                    <div class="insight-icon">🚫</div>
-                    <div class="insight-title">Scope Escalation</div>
-                    <div class="insight-text">
-                        Worker tries to upgrade prod-web instead of staging-web.
-                        <br><br>
-                        <span class="security-badge badge-blocked">BLOCKED</span>
-                        <br><br>
-                        Constraint check fails: "staging-web" != "prod-web". Gateway returns 403.
-                    </div>
+                <span class="chain-arrow">→</span>
+                <div class="chain-warrant level1">
+                    <span class="warrant-id">DevOps Orch</span>
+                    <span class="warrant-scope">cluster: staging-*, budget: $5k</span>
                 </div>
-                <div class="insight-card">
-                    <div class="insight-icon">🚫</div>
-                    <div class="insight-title">Budget Override</div>
-                    <div class="insight-text">
-                        Worker requests $5,000 budget action (limit: $1,000).
-                        <br><br>
-                        <span class="security-badge badge-blocked">BLOCKED</span>
-                        <br><br>
-                        Range constraint violated: 5000 > max(1000). Gateway returns 403.
-                    </div>
-                </div>
-                <div class="insight-card">
-                    <div class="insight-icon">🚫</div>
-                    <div class="insight-title">Forged Chain</div>
-                    <div class="insight-text">
-                        Attacker creates fake warrant with wider permissions.
-                        <br><br>
-                        <span class="security-badge badge-blocked">BLOCKED</span>
-                        <br><br>
-                        Ed25519 signature invalid. Only Control Plane's key can sign valid root warrants.
-                    </div>
+                <span class="chain-arrow">→</span>
+                <div class="chain-warrant level2">
+                    <span class="warrant-id">Web Worker</span>
+                    <span class="warrant-scope">cluster: staging-web, budget: $1k</span>
                 </div>
             </div>
-        </section>
+            
+            <div style="display: flex; gap: 16px; margin: 20px 0; flex-wrap: wrap;">
+                <div class="chain-warrant level2" style="flex: 1; min-width: 150px;">
+                    <span class="warrant-id">Worker A</span>
+                    <span class="warrant-scope">staging-web</span>
+                    <span class="security-badge badge-pop" style="margin-top: 8px;">holder: pk_A</span>
+                </div>
+                <div class="chain-warrant level2" style="flex: 1; min-width: 150px;">
+                    <span class="warrant-id">Worker B</span>
+                    <span class="warrant-scope">staging-db</span>
+                    <span class="security-badge badge-pop" style="margin-top: 8px;">holder: pk_B</span>
+                </div>
+                <div class="chain-warrant level2" style="flex: 1; min-width: 150px;">
+                    <span class="warrant-id">Worker C</span>
+                    <span class="warrant-scope">staging-cache</span>
+                    <span class="security-badge badge-pop" style="margin-top: 8px;">holder: pk_C</span>
+                </div>
+            </div>
+            
+            <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                <strong>Key insight:</strong> Each worker has a <em>holder-bound</em> warrant. Even if Worker A's warrant is stolen, it can't be used without Worker A's private key. Workers are isolated from each other by cluster.
+            </p>
+        </div>
         
-        <!-- Key Benefits -->
-        <section class="scenario-section">
-            <h2 class="section-title">Why This Architecture Works</h2>
-            <div class="insights">
-                <div class="insight-card">
-                    <div class="insight-icon">⚡</div>
-                    <div class="insight-title">Zero Runtime Latency</div>
-                    <div class="insight-text">
-                        Gateway verifies in ~100μs. No network calls to Control Plane at request time.
+        <!-- Scenario 3: Nested Sub-Delegation -->
+        <div class="scenario-card">
+            <div class="scenario-header">
+                <span class="scenario-badge badge-enterprise" style="background: var(--accent-cyan);">Advanced</span>
+                <span class="scenario-title">Scenario 3: Nested Sub-Delegation (4-Level Chain)</span>
+            </div>
+            
+            <p style="color: var(--text-secondary); margin-bottom: 20px;">
+                A worker further delegates to specialized sub-agents. The chain grows but capabilities only shrink.
+            </p>
+            
+            <div class="chain-visual" style="flex-direction: column; align-items: stretch;">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                    <div class="chain-warrant root">
+                        <span class="warrant-id">Root (depth: 0)</span>
+                        <span class="warrant-scope">all: *</span>
                     </div>
-                </div>
-                <div class="insight-card">
-                    <div class="insight-icon">🔐</div>
-                    <div class="insight-title">Defense in Depth</div>
-                    <div class="insight-text">
-                        Warrant + PoP signature = two factors. Stealing one isn't enough.
+                    <span class="chain-arrow">→</span>
+                    <div class="chain-warrant level1">
+                        <span class="warrant-id">Manager (d: 1)</span>
+                        <span class="warrant-scope">region: us-*</span>
                     </div>
-                </div>
-                <div class="insight-card">
-                    <div class="insight-icon">📊</div>
-                    <div class="insight-title">Full Traceability</div>
-                    <div class="insight-text">
-                        Every action has: warrant_id, agent_id, session_id. Complete audit trail.
+                    <span class="chain-arrow">→</span>
+                    <div class="chain-warrant level2">
+                        <span class="warrant-id">Lead (d: 2)</span>
+                        <span class="warrant-scope">region: us-west</span>
                     </div>
-                </div>
-                <div class="insight-card">
-                    <div class="insight-icon">🛡️</div>
-                    <div class="insight-title">Backend Isolation</div>
-                    <div class="insight-text">
-                        Backend services don't need Tenuo. Security handled at the edge.
+                    <span class="chain-arrow">→</span>
+                    <div class="chain-warrant level3">
+                        <span class="warrant-id">Worker (d: 3)</span>
+                        <span class="warrant-scope">region: us-west-2</span>
                     </div>
                 </div>
             </div>
-        </section>
+            
+            <div style="margin-top: 20px; padding: 16px; background: rgba(255, 68, 102, 0.1); border-radius: 8px; border: 1px solid var(--accent-red);">
+                <strong style="color: var(--accent-red);">Maximum Depth: 16</strong>
+                <p style="color: var(--text-secondary); font-size: 0.85rem; margin-top: 8px;">
+                    Tenuo enforces a maximum delegation depth to prevent unbounded chains. Each level must narrow capabilities. 
+                    Worker at depth 3 <strong>cannot</strong> create a warrant for region: us-east (outside their scope).
+                </p>
+            </div>
+        </div>
+        
+        <!-- Runtime Verification Flow -->
+        <h2 class="section-title">Runtime Verification (Gateway OR Sidecar)</h2>
+        
+        <div class="scenario-card">
+            <div class="diagram-box" style="font-size: 0.75rem;">
+                <pre style="color: var(--text-secondary); line-height: 1.8;">
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│  WORKER AGENT                                                                       │
+│  ┌───────────────────────────────────────────────────────────────────────────────┐  │
+│  │  1. Load warrant chain from orchestrator                                      │  │
+│  │  2. Create PoP signature: sign(tool + args) with my_keypair                  │  │
+│  │  3. Send request with headers:                                                │  │
+│  │     X-Tenuo-Chain: [root_warrant, my_warrant]                                │  │
+│  │     X-Tenuo-PoP: &lt;signature&gt;                                                  │  │
+│  └───────────────────────────────────────────────────────────────────────────────┘  │
+│                                         │                                           │
+│                                         ▼                                           │
+│  ┌─────────────────────────────┐   OR   ┌─────────────────────────────┐            │
+│  │  🚪 GATEWAY                 │        │  📦 SIDECAR                  │            │
+│  │  ─────────────────────────  │        │  ─────────────────────────   │            │
+│  │  Centralized verification   │        │  localhost:9090              │            │
+│  │  At cluster ingress         │        │  Same pod as backend         │            │
+│  │                             │        │                              │            │
+│  │  ✓ Verify chain             │        │  ✓ Verify chain              │            │
+│  │  ✓ Check PoP signature      │        │  ✓ Check PoP signature       │            │
+│  │  ✓ Check constraints        │        │  ✓ Check constraints         │            │
+│  │  ✓ Check expiration         │        │  ✓ Check expiration          │            │
+│  │                             │        │                              │            │
+│  │  Latency: ~1ms              │        │  Latency: ~100μs             │            │
+│  └─────────────────────────────┘        └─────────────────────────────┘            │
+│                    │                                  │                             │
+│                    └────────────┬─────────────────────┘                             │
+│                                 ▼                                                   │
+│  ┌───────────────────────────────────────────────────────────────────────────────┐  │
+│  │  🖥️  BACKEND SERVICE (Tenuo-unaware)                                          │  │
+│  │  Receives clean request with metadata:                                        │  │
+│  │    X-Warrant-ID: tnu_wrt_...                                                  │  │
+│  │    X-Agent-ID: agt_worker_001                                                 │  │
+│  │    X-Session-ID: sess_abc123                                                  │  │
+│  └───────────────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+                </pre>
+            </div>
+        </div>
+        
+        <!-- Key Security Properties -->
+        <h2 class="section-title">Security Properties</h2>
+        
+        <div class="insights">
+            <div class="insight-card">
+                <div class="insight-icon">🔐</div>
+                <div class="insight-title">Holder Binding</div>
+                <div class="insight-text">
+                    Stolen warrants are useless. Each request requires a signature from the bound keypair.
+                </div>
+            </div>
+            <div class="insight-card">
+                <div class="insight-icon">⬇️</div>
+                <div class="insight-title">Monotonic Attenuation</div>
+                <div class="insight-text">
+                    Child warrants can only narrow scope. Cryptographically impossible to escalate.
+                </div>
+            </div>
+            <div class="insight-card">
+                <div class="insight-icon">📴</div>
+                <div class="insight-title">Offline Verification</div>
+                <div class="insight-text">
+                    Gateway/Sidecar verifies locally. No runtime calls to Control Plane.
+                </div>
+            </div>
+            <div class="insight-card">
+                <div class="insight-icon">🔗</div>
+                <div class="insight-title">Chain Integrity</div>
+                <div class="insight-text">
+                    Every delegation is cryptographically linked. Breaks are detected immediately.
+                </div>
+            </div>
+            <div class="insight-card">
+                <div class="insight-icon">📊</div>
+                <div class="insight-title">Full Traceability</div>
+                <div class="insight-text">
+                    warrant_id, agent_id, session_id on every request. Complete audit trail.
+                </div>
+            </div>
+        </div>
         
         <footer>
             <p>Built with <a href="https://github.com/tenuo/tenuo">Tenuo</a> - Agent Capability Flow Control</p>
@@ -800,4 +826,3 @@ authorizer.check_chain(
     </div>
 </body>
 </html>
-

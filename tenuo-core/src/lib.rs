@@ -56,6 +56,7 @@ pub use planes::{
     Authorizer, ChainStep, ChainVerificationResult, ControlPlane, DataPlane,
     DEFAULT_CLOCK_TOLERANCE_SECS,
 };
+pub use revocation::RevocationList;
 pub use warrant::{Warrant, WarrantBuilder, WarrantId};
 
 /// Maximum delegation depth to prevent unbounded chains
