@@ -220,7 +220,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut passed = 0;
     let mut failed = 0;
-    let mut total_auth_time = Duration::ZERO;
+    let mut allowed_time = Duration::ZERO;
+    let mut allowed_count = 0u32;
+    let mut blocked_time = Duration::ZERO;
+    let mut blocked_count = 0u32;
 
     for (name, tool, args_vec, expected, explanation) in test_cases {
         let args: HashMap<String, ConstraintValue> = args_vec.into_iter()
@@ -233,9 +236,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let start = Instant::now();
         let result = leaf_warrant.authorize(tool, &args, Some(&signature));
         let elapsed = start.elapsed();
-        total_auth_time += elapsed;
         
         let allowed = result.is_ok();
+        if allowed {
+            allowed_time += elapsed;
+            allowed_count += 1;
+        } else {
+            blocked_time += elapsed;
+            blocked_count += 1;
+        }
+        
         let status = if allowed == expected { "✓" } else { "✗" };
         let action_status = if allowed { "ALLOWED" } else { "BLOCKED" };
         
@@ -255,9 +265,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!();
     }
     
-    let avg_time = total_auth_time / (passed + failed) as u32;
     println!("  ───────────────────────────────────────────────────────────────");
-    println!("  Authorization performance: {:.0?} avg per check", avg_time);
+    println!("  Performance Metrics:");
+    if allowed_count > 0 {
+        let avg_allowed = allowed_time / allowed_count;
+        println!("    • Allowed: ~{:.0?} avg (full verification)", avg_allowed);
+    }
+    if blocked_count > 0 {
+        let avg_blocked = blocked_time / blocked_count;
+        println!("    • Blocked: ~{:.0?} avg (short-circuit)", avg_blocked);
+    }
+    println!("  ───────────────────────────────────────────────────────────────");
 
     // =========================================================================
     // Step 5: Demonstrate delegation depth limits (max_depth)
