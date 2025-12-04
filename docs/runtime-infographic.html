@@ -1,12 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tenuo - Runtime Scenarios</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
-        
+
         :root {
             --bg-dark: #0a0e17;
             --bg-card: #121a2a;
@@ -24,9 +25,13 @@
             --text-muted: #64748b;
             --border: #1e293b;
         }
-        
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
         body {
             font-family: 'Space Grotesk', sans-serif;
             background: var(--bg-dark);
@@ -34,19 +39,22 @@
             min-height: 100vh;
             overflow-x: hidden;
         }
-        
+
         body::before {
             content: '';
             position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: 
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background:
                 radial-gradient(circle at 15% 30%, rgba(168, 85, 247, 0.08) 0%, transparent 40%),
                 radial-gradient(circle at 85% 70%, rgba(0, 212, 255, 0.08) 0%, transparent 40%),
                 radial-gradient(circle at 50% 90%, rgba(0, 255, 136, 0.05) 0%, transparent 30%);
             pointer-events: none;
             z-index: 0;
         }
-        
+
         .container {
             max-width: 1600px;
             margin: 0 auto;
@@ -54,12 +62,12 @@
             position: relative;
             z-index: 1;
         }
-        
+
         header {
             text-align: center;
             margin-bottom: 48px;
         }
-        
+
         .logo {
             font-size: 3rem;
             font-weight: 700;
@@ -69,18 +77,18 @@
             background-clip: text;
             margin-bottom: 12px;
         }
-        
+
         .tagline {
             font-size: 1.25rem;
             color: var(--text-secondary);
             margin-bottom: 8px;
         }
-        
+
         .subtitle {
             font-size: 1rem;
             color: var(--text-muted);
         }
-        
+
         .section-title {
             font-size: 1.75rem;
             font-weight: 600;
@@ -88,7 +96,7 @@
             margin: 48px 0 32px;
             color: var(--text-primary);
         }
-        
+
         .section-subtitle {
             text-align: center;
             color: var(--text-muted);
@@ -96,7 +104,7 @@
             margin-bottom: 32px;
             font-size: 0.95rem;
         }
-        
+
         /* Tabs */
         .tabs {
             display: flex;
@@ -104,7 +112,7 @@
             gap: 8px;
             margin-bottom: 32px;
         }
-        
+
         .tab {
             padding: 12px 24px;
             border-radius: 8px;
@@ -114,25 +122,25 @@
             transition: all 0.3s ease;
             font-weight: 500;
         }
-        
+
         .tab:hover {
             background: var(--bg-card-hover);
         }
-        
+
         .tab.active {
             background: var(--accent-cyan);
             color: var(--bg-dark);
             border-color: var(--accent-cyan);
         }
-        
+
         .tab-content {
             display: none;
         }
-        
+
         .tab-content.active {
             display: block;
         }
-        
+
         /* Integration Mode Cards */
         .mode-grid {
             display: grid;
@@ -140,7 +148,7 @@
             gap: 32px;
             margin-bottom: 48px;
         }
-        
+
         .mode-card {
             background: var(--bg-card);
             border: 2px solid var(--border);
@@ -148,22 +156,27 @@
             padding: 32px;
             transition: all 0.3s ease;
         }
-        
+
         .mode-card:hover {
             transform: translateY(-4px);
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
         }
-        
-        .mode-card.gateway { border-color: var(--accent-orange); }
-        .mode-card.sidecar { border-color: var(--accent-blue); }
-        
+
+        .mode-card.gateway {
+            border-color: var(--accent-orange);
+        }
+
+        .mode-card.sidecar {
+            border-color: var(--accent-blue);
+        }
+
         .mode-header {
             display: flex;
             align-items: center;
             gap: 16px;
             margin-bottom: 20px;
         }
-        
+
         .mode-icon {
             width: 56px;
             height: 56px;
@@ -173,21 +186,26 @@
             justify-content: center;
             font-size: 28px;
         }
-        
-        .mode-icon.gateway { background: linear-gradient(135deg, var(--accent-orange), #f59e0b); }
-        .mode-icon.sidecar { background: linear-gradient(135deg, var(--accent-blue), #0ea5e9); }
-        
+
+        .mode-icon.gateway {
+            background: linear-gradient(135deg, var(--accent-orange), #f59e0b);
+        }
+
+        .mode-icon.sidecar {
+            background: linear-gradient(135deg, var(--accent-blue), #0ea5e9);
+        }
+
         .mode-title {
             font-size: 1.5rem;
             font-weight: 600;
         }
-        
+
         .mode-desc {
             color: var(--text-secondary);
             margin-bottom: 24px;
             line-height: 1.6;
         }
-        
+
         /* Diagram */
         .diagram-box {
             background: rgba(0, 0, 0, 0.3);
@@ -198,7 +216,7 @@
             font-size: 0.8rem;
             overflow-x: auto;
         }
-        
+
         .diagram-row {
             display: flex;
             align-items: center;
@@ -207,32 +225,55 @@
             margin: 12px 0;
             flex-wrap: wrap;
         }
-        
+
         .diagram-node {
             padding: 12px 16px;
             border-radius: 8px;
             text-align: center;
             min-width: 100px;
         }
-        
-        .node-control { background: rgba(168, 85, 247, 0.2); border: 1px solid var(--accent-purple); }
-        .node-orch { background: rgba(0, 212, 255, 0.2); border: 1px solid var(--accent-cyan); }
-        .node-worker { background: rgba(0, 255, 136, 0.2); border: 1px solid var(--accent-green); }
-        .node-gateway { background: rgba(255, 140, 0, 0.2); border: 1px solid var(--accent-orange); }
-        .node-sidecar { background: rgba(59, 130, 246, 0.2); border: 1px solid var(--accent-blue); }
-        .node-backend { background: rgba(244, 114, 182, 0.2); border: 1px solid var(--accent-pink); }
-        
+
+        .node-control {
+            background: rgba(168, 85, 247, 0.2);
+            border: 1px solid var(--accent-purple);
+        }
+
+        .node-orch {
+            background: rgba(0, 212, 255, 0.2);
+            border: 1px solid var(--accent-cyan);
+        }
+
+        .node-worker {
+            background: rgba(0, 255, 136, 0.2);
+            border: 1px solid var(--accent-green);
+        }
+
+        .node-gateway {
+            background: rgba(255, 140, 0, 0.2);
+            border: 1px solid var(--accent-orange);
+        }
+
+        .node-sidecar {
+            background: rgba(59, 130, 246, 0.2);
+            border: 1px solid var(--accent-blue);
+        }
+
+        .node-backend {
+            background: rgba(244, 114, 182, 0.2);
+            border: 1px solid var(--accent-pink);
+        }
+
         .diagram-arrow {
             color: var(--text-muted);
             font-size: 1.25rem;
         }
-        
+
         .diagram-label {
             font-size: 0.7rem;
             color: var(--text-muted);
             margin-top: 4px;
         }
-        
+
         /* Multi-Agent Scenario */
         .scenario-card {
             background: var(--bg-card);
@@ -241,29 +282,36 @@
             padding: 32px;
             margin-bottom: 32px;
         }
-        
+
         .scenario-header {
             display: flex;
             align-items: center;
             gap: 12px;
             margin-bottom: 24px;
         }
-        
+
         .scenario-badge {
             padding: 6px 12px;
             border-radius: 6px;
             font-size: 0.75rem;
             font-weight: 600;
         }
-        
-        .badge-demo { background: var(--accent-green); color: var(--bg-dark); }
-        .badge-enterprise { background: var(--accent-purple); color: white; }
-        
+
+        .badge-demo {
+            background: var(--accent-green);
+            color: var(--bg-dark);
+        }
+
+        .badge-enterprise {
+            background: var(--accent-purple);
+            color: white;
+        }
+
         .scenario-title {
             font-size: 1.25rem;
             font-weight: 600;
         }
-        
+
         /* Chain visualization */
         .chain-visual {
             display: flex;
@@ -275,7 +323,7 @@
             background: rgba(0, 0, 0, 0.2);
             border-radius: 8px;
         }
-        
+
         .chain-warrant {
             padding: 8px 12px;
             border-radius: 6px;
@@ -285,42 +333,42 @@
             flex-direction: column;
             gap: 4px;
         }
-        
+
         .chain-warrant.root {
             background: rgba(168, 85, 247, 0.2);
             border: 1px solid var(--accent-purple);
         }
-        
+
         .chain-warrant.level1 {
             background: rgba(0, 212, 255, 0.2);
             border: 1px solid var(--accent-cyan);
         }
-        
+
         .chain-warrant.level2 {
             background: rgba(0, 255, 136, 0.2);
             border: 1px solid var(--accent-green);
         }
-        
+
         .chain-warrant.level3 {
             background: rgba(255, 204, 0, 0.2);
             border: 1px solid var(--accent-yellow);
         }
-        
+
         .chain-arrow {
             color: var(--text-muted);
             font-size: 1.25rem;
         }
-        
+
         .warrant-id {
             font-weight: 600;
             color: var(--text-primary);
         }
-        
+
         .warrant-scope {
             color: var(--text-muted);
             font-size: 0.65rem;
         }
-        
+
         /* Agent grid */
         .agent-grid {
             display: grid;
@@ -328,7 +376,7 @@
             gap: 16px;
             margin: 24px 0;
         }
-        
+
         .agent-card {
             background: rgba(0, 0, 0, 0.2);
             border: 1px solid var(--border);
@@ -336,28 +384,42 @@
             padding: 16px;
             text-align: center;
         }
-        
-        .agent-card.control { border-color: var(--accent-purple); }
-        .agent-card.orchestrator { border-color: var(--accent-cyan); }
-        .agent-card.researcher { border-color: var(--accent-green); }
-        .agent-card.writer { border-color: var(--accent-yellow); }
-        .agent-card.reviewer { border-color: var(--accent-pink); }
-        
+
+        .agent-card.control {
+            border-color: var(--accent-purple);
+        }
+
+        .agent-card.orchestrator {
+            border-color: var(--accent-cyan);
+        }
+
+        .agent-card.researcher {
+            border-color: var(--accent-green);
+        }
+
+        .agent-card.writer {
+            border-color: var(--accent-yellow);
+        }
+
+        .agent-card.reviewer {
+            border-color: var(--accent-pink);
+        }
+
         .agent-emoji {
             font-size: 2rem;
             margin-bottom: 8px;
         }
-        
+
         .agent-name {
             font-weight: 600;
             margin-bottom: 4px;
         }
-        
+
         .agent-perms {
             font-size: 0.75rem;
             color: var(--text-muted);
         }
-        
+
         /* Code snippet */
         .code-block {
             background: rgba(0, 0, 0, 0.4);
@@ -369,12 +431,24 @@
             overflow-x: auto;
             margin: 16px 0;
         }
-        
-        .code-comment { color: var(--text-muted); }
-        .code-key { color: var(--accent-cyan); }
-        .code-string { color: var(--accent-green); }
-        .code-highlight { color: var(--accent-yellow); font-weight: 600; }
-        
+
+        .code-comment {
+            color: var(--text-muted);
+        }
+
+        .code-key {
+            color: var(--accent-cyan);
+        }
+
+        .code-string {
+            color: var(--accent-green);
+        }
+
+        .code-highlight {
+            color: var(--accent-yellow);
+            font-weight: 600;
+        }
+
         /* Verification modes */
         .verify-modes {
             display: grid;
@@ -382,19 +456,19 @@
             gap: 16px;
             margin-top: 24px;
         }
-        
+
         .verify-option {
             padding: 16px;
             border-radius: 8px;
             border: 1px solid var(--border);
             background: rgba(0, 0, 0, 0.2);
         }
-        
+
         .verify-option.selected {
             border-color: var(--accent-green);
             background: rgba(0, 255, 136, 0.1);
         }
-        
+
         .verify-label {
             display: flex;
             align-items: center;
@@ -402,12 +476,12 @@
             font-weight: 600;
             margin-bottom: 8px;
         }
-        
+
         .verify-desc {
             font-size: 0.8rem;
             color: var(--text-muted);
         }
-        
+
         /* Insights */
         .insights {
             display: grid;
@@ -415,7 +489,7 @@
             gap: 20px;
             margin-top: 40px;
         }
-        
+
         .insight-card {
             background: var(--bg-card);
             border: 1px solid var(--border);
@@ -423,11 +497,23 @@
             padding: 24px;
             text-align: center;
         }
-        
-        .insight-icon { font-size: 2rem; margin-bottom: 12px; }
-        .insight-title { font-weight: 600; margin-bottom: 8px; }
-        .insight-text { font-size: 0.875rem; color: var(--text-secondary); line-height: 1.5; }
-        
+
+        .insight-icon {
+            font-size: 2rem;
+            margin-bottom: 12px;
+        }
+
+        .insight-title {
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .insight-text {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
         /* Security badge */
         .security-badge {
             display: inline-flex;
@@ -439,11 +525,25 @@
             font-weight: 600;
             margin: 4px;
         }
-        
-        .badge-verified { background: rgba(0, 255, 136, 0.2); border: 1px solid var(--accent-green); color: var(--accent-green); }
-        .badge-blocked { background: rgba(255, 68, 102, 0.2); border: 1px solid var(--accent-red); color: var(--accent-red); }
-        .badge-pop { background: rgba(168, 85, 247, 0.2); border: 1px solid var(--accent-purple); color: var(--accent-purple); }
-        
+
+        .badge-verified {
+            background: rgba(0, 255, 136, 0.2);
+            border: 1px solid var(--accent-green);
+            color: var(--accent-green);
+        }
+
+        .badge-blocked {
+            background: rgba(255, 68, 102, 0.2);
+            border: 1px solid var(--accent-red);
+            color: var(--accent-red);
+        }
+
+        .badge-pop {
+            background: rgba(168, 85, 247, 0.2);
+            border: 1px solid var(--accent-purple);
+            color: var(--accent-purple);
+        }
+
         footer {
             text-align: center;
             margin-top: 60px;
@@ -451,15 +551,23 @@
             color: var(--text-muted);
             font-size: 0.875rem;
         }
-        
-        footer a { color: var(--accent-cyan); text-decoration: none; }
-        
+
+        footer a {
+            color: var(--accent-cyan);
+            text-decoration: none;
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
-            .mode-grid, .verify-modes { grid-template-columns: 1fr; }
+
+            .mode-grid,
+            .verify-modes {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <header>
@@ -467,11 +575,11 @@
             <div class="tagline">Runtime Scenarios</div>
             <div class="subtitle">Gateway, Sidecar, and Multi-Agent Patterns</div>
         </header>
-        
+
         <!-- Integration Modes -->
         <h2 class="section-title">Where Does Verification Happen?</h2>
         <p class="section-subtitle">Choose Gateway for centralized control, Sidecar for distributed verification</p>
-        
+
         <div class="mode-grid">
             <!-- Gateway Pattern -->
             <div class="mode-card gateway">
@@ -479,64 +587,65 @@
                     <div class="mode-icon gateway">🚪</div>
                     <div>
                         <div class="mode-title">Gateway Pattern</div>
-                        <div style="color: var(--text-muted); font-size: 0.875rem;">Centralized at ingress</div>
+                        <div style="color: var(--text-muted); font-size: 0.875rem;">Centralized Verification</div>
                     </div>
                 </div>
                 <p class="mode-desc">
-                    Verification happens at the API Gateway (Envoy, Nginx, Kong). Backend services are <strong>Tenuo-unaware</strong>.
-                    Best for: microservices, legacy backends, centralized audit logging.
+                    The <strong>Worker Agent</strong> sends the warrant chain + PoP signature in headers.
+                    The <strong>API Gateway</strong> intercepts and verifies everything before the request reaches the
+                    backend.
                 </p>
                 <div class="diagram-box">
                     <div class="diagram-row">
                         <div class="diagram-node node-worker">
-                            <div>Worker</div>
-                            <div class="diagram-label">Sends warrant + PoP</div>
+                            <div>Worker Agent</div>
+                            <div class="diagram-label">Sign(Request)</div>
                         </div>
                         <span class="diagram-arrow">→</span>
                         <div class="diagram-node node-gateway" style="border-width: 3px;">
                             <div><strong>Gateway</strong></div>
-                            <div class="diagram-label">Verifies chain</div>
-                            <div class="diagram-label">Checks PoP</div>
+                            <div class="diagram-label">Verify(Chain, PoP)</div>
                         </div>
                         <span class="diagram-arrow">→</span>
                         <div class="diagram-node node-backend">
                             <div>Backend</div>
-                            <div class="diagram-label">Clean request</div>
+                            <div class="diagram-label">Trusted Request</div>
                         </div>
                     </div>
                 </div>
                 <div style="margin-top: 16px;">
                     <span class="security-badge badge-verified">~1ms latency</span>
-                    <span class="security-badge badge-pop">Centralized logs</span>
+                    <span class="security-badge badge-pop">Centralized Policy</span>
                 </div>
             </div>
-            
+
             <!-- Sidecar Pattern -->
             <div class="mode-card sidecar">
                 <div class="mode-header">
                     <div class="mode-icon sidecar">📦</div>
                     <div>
                         <div class="mode-title">Sidecar Pattern</div>
-                        <div style="color: var(--text-muted); font-size: 0.875rem;">Per-pod verification</div>
+                        <div style="color: var(--text-muted); font-size: 0.875rem;">Distributed Verification</div>
                     </div>
                 </div>
                 <p class="mode-desc">
-                    Each agent pod has a Tenuo sidecar container. Verification is <strong>co-located</strong> with the service.
-                    Best for: Kubernetes, service mesh, ultra-low latency requirements.
+                    The <strong>Worker Agent</strong> and <strong>Tenuo Sidecar</strong> run in the same pod.
+                    Verification happens over localhost, offering ultra-low latency and zero-trust networking.
                 </p>
                 <div class="diagram-box">
                     <div class="diagram-row">
                         <div class="diagram-node node-worker">
-                            <div>Worker</div>
-                            <div class="diagram-label">Sends warrant + PoP</div>
+                            <div>Worker Agent</div>
+                            <div class="diagram-label">Sign(Request)</div>
                         </div>
                         <span class="diagram-arrow">→</span>
                         <div style="border: 2px dashed var(--border); border-radius: 12px; padding: 12px;">
-                            <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 8px;">Same Pod</div>
+                            <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 8px;">Same Pod /
+                                Host</div>
                             <div class="diagram-row" style="margin: 0; gap: 8px;">
                                 <div class="diagram-node node-sidecar" style="border-width: 3px;">
                                     <div><strong>Sidecar</strong></div>
-                                    <div class="diagram-label">localhost:9090</div>
+                                    <div class="diagram-label">Verify(Chain, PoP)</div>
                                 </div>
                                 <span class="diagram-arrow">→</span>
                                 <div class="diagram-node node-backend">
@@ -548,26 +657,26 @@
                 </div>
                 <div style="margin-top: 16px;">
                     <span class="security-badge badge-verified">~100μs latency</span>
-                    <span class="security-badge badge-pop">No network hop</span>
+                    <span class="security-badge badge-pop">Zero Trust</span>
                 </div>
             </div>
         </div>
-        
+
         <!-- Multi-Agent Scenarios -->
         <h2 class="section-title">Multi-Agent Scenarios</h2>
         <p class="section-subtitle">Real-world delegation chains with multiple specialized agents</p>
-        
+
         <!-- Scenario 1: Research Pipeline -->
         <div class="scenario-card">
             <div class="scenario-header">
                 <span class="scenario-badge badge-demo">Demo</span>
                 <span class="scenario-title">Scenario 1: Research Pipeline</span>
             </div>
-            
+
             <p style="color: var(--text-secondary); margin-bottom: 20px;">
                 An orchestrator coordinates multiple specialized agents, each with progressively narrower permissions.
             </p>
-            
+
             <div class="agent-grid">
                 <div class="agent-card control">
                     <div class="agent-emoji">🏛️</div>
@@ -595,7 +704,7 @@
                     <div class="agent-perms">llm_call (review model only)</div>
                 </div>
             </div>
-            
+
             <div class="chain-visual">
                 <div class="chain-warrant root">
                     <span class="warrant-id">Root</span>
@@ -612,41 +721,46 @@
                     <span class="warrant-scope">web_search: arxiv.org only</span>
                 </div>
             </div>
-            
+
             <div class="code-block">
-<span class="code-comment">// Orchestrator delegates to Researcher with narrow scope</span>
-<span class="code-key">let</span> researcher_warrant = orchestrator_warrant.attenuate()
-    .constraint(<span class="code-string">"tool"</span>, Exact::new(<span class="code-string">"web_search"</span>))
-    .constraint(<span class="code-string">"domain"</span>, Pattern::new(<span class="code-string">"*.arxiv.org"</span>)?)
-    .constraint(<span class="code-string">"max_results"</span>, Range::max(<span class="code-highlight">100</span>))
-    <span class="code-highlight">.authorized_holder(researcher_keypair.public_key())</span>
-    .agent_id(<span class="code-string">"agt_researcher_001"</span>)
-    .build(&orchestrator_keypair)?;
+                <span class="code-comment">// Orchestrator delegates to Researcher with narrow scope</span>
+                <span class="code-key">let</span> researcher_warrant = orchestrator_warrant.attenuate()
+                .constraint(<span class="code-string">"tool"</span>, Exact::new(<span
+                    class="code-string">"web_search"</span>))
+                .constraint(<span class="code-string">"domain"</span>, Pattern::new(<span
+                    class="code-string">"*.arxiv.org"</span>)?)
+                .constraint(<span class="code-string">"max_results"</span>, Range::max(<span
+                    class="code-highlight">100</span>))
+                <span class="code-highlight">.authorized_holder(researcher_keypair.public_key())</span>
+                .agent_id(<span class="code-string">"agt_researcher_001"</span>)
+                .build(&orchestrator_keypair)?;
             </div>
-            
+
             <div class="verify-modes">
                 <div class="verify-option selected">
                     <div class="verify-label">🚪 Gateway Verification</div>
-                    <div class="verify-desc">All agents call through central gateway. Gateway verifies chain + PoP before routing to backend.</div>
+                    <div class="verify-desc">All agents call through central gateway. Gateway verifies chain + PoP
+                        before routing to backend.</div>
                 </div>
                 <div class="verify-option">
                     <div class="verify-label">📦 Sidecar Verification</div>
-                    <div class="verify-desc">Each agent has its own sidecar. Verification happens at localhost with no network hop.</div>
+                    <div class="verify-desc">Each agent has its own sidecar. Verification happens at localhost with no
+                        network hop.</div>
                 </div>
             </div>
         </div>
-        
+
         <!-- Scenario 2: Infrastructure Management -->
         <div class="scenario-card">
             <div class="scenario-header">
                 <span class="scenario-badge badge-demo">Demo</span>
                 <span class="scenario-title">Scenario 2: Infrastructure Management (3-Level Chain)</span>
             </div>
-            
+
             <p style="color: var(--text-secondary); margin-bottom: 20px;">
                 A DevOps orchestrator manages multiple cluster-specific workers, each bound to a single environment.
             </p>
-            
+
             <div class="chain-visual">
                 <div class="chain-warrant root">
                     <span class="warrant-id">Root</span>
@@ -663,7 +777,7 @@
                     <span class="warrant-scope">cluster: staging-web, budget: $1k</span>
                 </div>
             </div>
-            
+
             <div style="display: flex; gap: 16px; margin: 20px 0; flex-wrap: wrap;">
                 <div class="chain-warrant level2" style="flex: 1; min-width: 150px;">
                     <span class="warrant-id">Worker A</span>
@@ -681,23 +795,25 @@
                     <span class="security-badge badge-pop" style="margin-top: 8px;">holder: pk_C</span>
                 </div>
             </div>
-            
+
             <p style="color: var(--text-secondary); font-size: 0.9rem;">
-                <strong>Key insight:</strong> Each worker has a <em>holder-bound</em> warrant. Even if Worker A's warrant is stolen, it can't be used without Worker A's private key. Workers are isolated from each other by cluster.
+                <strong>Key insight:</strong> Each worker has a <em>holder-bound</em> warrant. Even if Worker A's
+                warrant is stolen, it can't be used without Worker A's private key. Workers are isolated from each other
+                by cluster.
             </p>
         </div>
-        
+
         <!-- Scenario 3: Nested Sub-Delegation -->
         <div class="scenario-card">
             <div class="scenario-header">
                 <span class="scenario-badge badge-enterprise" style="background: var(--accent-cyan);">Advanced</span>
                 <span class="scenario-title">Scenario 3: Nested Sub-Delegation (4-Level Chain)</span>
             </div>
-            
+
             <p style="color: var(--text-secondary); margin-bottom: 20px;">
                 A worker further delegates to specialized sub-agents. The chain grows but capabilities only shrink.
             </p>
-            
+
             <div class="chain-visual" style="flex-direction: column; align-items: stretch;">
                 <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                     <div class="chain-warrant root">
@@ -721,29 +837,32 @@
                     </div>
                 </div>
             </div>
-            
-            <div style="margin-top: 20px; padding: 16px; background: rgba(255, 68, 102, 0.1); border-radius: 8px; border: 1px solid var(--accent-red);">
+
+            <div
+                style="margin-top: 20px; padding: 16px; background: rgba(255, 68, 102, 0.1); border-radius: 8px; border: 1px solid var(--accent-red);">
                 <strong style="color: var(--accent-red);">Maximum Depth: 16</strong>
                 <p style="color: var(--text-secondary); font-size: 0.85rem; margin-top: 8px;">
-                    Tenuo enforces a maximum delegation depth to prevent unbounded chains. Each level must narrow capabilities. 
-                    Worker at depth 3 <strong>cannot</strong> create a warrant for region: us-east (outside their scope).
+                    Tenuo enforces a maximum delegation depth to prevent unbounded chains. Each level must narrow
+                    capabilities.
+                    Worker at depth 3 <strong>cannot</strong> create a warrant for region: us-east (outside their
+                    scope).
                 </p>
             </div>
         </div>
-        
+
         <!-- Runtime Verification Flow -->
         <h2 class="section-title">Runtime Verification (Gateway OR Sidecar)</h2>
-        
+
         <div class="scenario-card">
             <div class="diagram-box" style="font-size: 0.75rem;">
                 <pre style="color: var(--text-secondary); line-height: 1.8;">
 ┌─────────────────────────────────────────────────────────────────────────────────────┐
-│  WORKER AGENT                                                                       │
+│  WORKER AGENT (The "Holder")                                                        │
 │  ┌───────────────────────────────────────────────────────────────────────────────┐  │
-│  │  1. Load warrant chain from orchestrator                                      │  │
-│  │  2. Create PoP signature: sign(tool + args) with my_keypair                  │  │
+│  │  1. Load warrant chain (Root -> Orchestrator -> Worker)                       │  │
+│  │  2. Create PoP signature: sign(tool + args) with worker_private_key          │  │
 │  │  3. Send request with headers:                                                │  │
-│  │     X-Tenuo-Chain: [root_warrant, my_warrant]                                │  │
+│  │     X-Tenuo-Chain: [warrant_1, warrant_2, warrant_3]                         │  │
 │  │     X-Tenuo-PoP: &lt;signature&gt;                                                  │  │
 │  └───────────────────────────────────────────────────────────────────────────────┘  │
 │                                         │                                           │
@@ -751,13 +870,11 @@
 │  ┌─────────────────────────────┐   OR   ┌─────────────────────────────┐            │
 │  │  🚪 GATEWAY                 │        │  📦 SIDECAR                  │            │
 │  │  ─────────────────────────  │        │  ─────────────────────────   │            │
-│  │  Centralized verification   │        │  localhost:9090              │            │
-│  │  At cluster ingress         │        │  Same pod as backend         │            │
+│  │  Centralized Checkpoint     │        │  Localhost (Same Pod)        │            │
 │  │                             │        │                              │            │
-│  │  ✓ Verify chain             │        │  ✓ Verify chain              │            │
-│  │  ✓ Check PoP signature      │        │  ✓ Check PoP signature       │            │
-│  │  ✓ Check constraints        │        │  ✓ Check constraints         │            │
-│  │  ✓ Check expiration         │        │  ✓ Check expiration          │            │
+│  │  ✓ Verify Chain Integrity   │        │  ✓ Verify Chain Integrity    │            │
+│  │  ✓ Verify PoP Signature     │        │  ✓ Verify PoP Signature      │            │
+│  │  ✓ Enforce Constraints      │        │  ✓ Enforce Constraints       │            │
 │  │                             │        │                              │            │
 │  │  Latency: ~1ms              │        │  Latency: ~100μs             │            │
 │  └─────────────────────────────┘        └─────────────────────────────┘            │
@@ -766,19 +883,18 @@
 │                                 ▼                                                   │
 │  ┌───────────────────────────────────────────────────────────────────────────────┐  │
 │  │  🖥️  BACKEND SERVICE (Tenuo-unaware)                                          │  │
-│  │  Receives clean request with metadata:                                        │  │
+│  │  Receives clean request. Trust is established by the Gateway/Sidecar.         │  │
 │  │    X-Warrant-ID: tnu_wrt_...                                                  │  │
 │  │    X-Agent-ID: agt_worker_001                                                 │  │
-│  │    X-Session-ID: sess_abc123                                                  │  │
 │  └───────────────────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────────────────┘
                 </pre>
             </div>
         </div>
-        
+
         <!-- Key Security Properties -->
         <h2 class="section-title">Security Properties</h2>
-        
+
         <div class="insights">
             <div class="insight-card">
                 <div class="insight-icon">🔐</div>
@@ -816,7 +932,7 @@
                 </div>
             </div>
         </div>
-        
+
         <footer>
             <p>Built with <a href="https://github.com/tenuo/tenuo">Tenuo</a> - Agent Capability Flow Control</p>
             <p style="margin-top: 8px; font-family: 'JetBrains Mono', monospace;">
@@ -825,4 +941,5 @@
         </footer>
     </div>
 </body>
+
 </html>

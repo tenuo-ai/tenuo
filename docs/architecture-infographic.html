@@ -623,7 +623,7 @@
                     </li>
                     <li>
                         <span class="icon">⚡</span>
-                        <div><strong>&lt;100μs Latency</strong> — Pure cryptographic check</div>
+                        <div><strong>~25μs Allowed / ~150ns Blocked</strong> — Fast rejection short-circuits</div>
                     </li>
                     <li>
                         <span class="icon">🔗</span>
@@ -644,70 +644,249 @@
             </div>
         </section>
         
-        <!-- Request Flow -->
+        <!-- Key Value Proposition -->
+        <section style="margin-bottom: 48px;">
+            <div style="background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(168, 85, 247, 0.1)); border: 1px solid rgba(0, 212, 255, 0.3); border-radius: 16px; padding: 24px; text-align: center;">
+                <div style="font-size: 1.25rem; font-weight: 600; color: var(--text-primary); margin-bottom: 12px;">
+                    Why Tenuo?
+                </div>
+                <div style="display: flex; justify-content: center; gap: 32px; flex-wrap: wrap; margin-bottom: 16px;">
+                    <div style="text-align: center;">
+                        <div style="font-size: 1.5rem;">📴</div>
+                        <div style="font-size: 0.85rem; color: var(--accent-cyan); font-weight: 600;">100% Offline</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">No runtime network calls</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 1.5rem;">⬇️</div>
+                        <div style="font-size: 0.85rem; color: var(--accent-green); font-weight: 600;">Monotonic</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">Capabilities only shrink</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 1.5rem;">🔐</div>
+                        <div style="font-size: 0.85rem; color: var(--accent-purple); font-weight: 600;">Holder-Bound</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">Stolen warrants useless</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 1.5rem;">⚡</div>
+                        <div style="font-size: 0.85rem; color: var(--accent-yellow); font-weight: 600;">~25μs / ~150ns</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted);">Allow / Block latency</div>
+                    </div>
+                </div>
+                <div style="font-size: 0.85rem; color: var(--text-secondary);">
+                    Unlike IAM ("Who are you?"), Tenuo asks: <strong style="color: var(--text-primary);">"Do you hold a valid, scoped token for this action?"</strong>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Unified Flow -->
         <section class="flow-section">
-            <h2 class="section-title">Request <span>Flow</span></h2>
-            <div class="flow-diagram">
-                <div class="flow-node">
-                    <div class="flow-node-icon user">👤</div>
-                    <div class="flow-node-label">User/System</div>
-                    <div class="flow-node-sub">Requests task</div>
+            <h2 class="section-title">Complete <span>Flow</span></h2>
+            <div class="flow-diagram" style="flex-direction: column; gap: 32px; padding: 48px 32px;">
+                
+                <!-- Phase 1: Registration & Issuance -->
+                <div style="width: 100%;">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+                        <span style="background: var(--accent-purple); color: white; padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">STEP 1</span>
+                        <span style="color: var(--text-secondary); font-size: 0.9rem;">Agent Registration & Warrant Issuance (Control Plane)</span>
+                    </div>
+                    <div style="display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap;">
+                        <div class="flow-node">
+                            <div class="flow-node-icon user">👤</div>
+                            <div class="flow-node-label">User/System</div>
+                            <div class="flow-node-sub">Initiates deployment</div>
+                        </div>
+                        <div class="flow-arrow">
+                            <div class="flow-arrow-line">→</div>
+                            <div class="flow-arrow-label">POST /v1/warrants</div>
+                        </div>
+                        <div class="flow-node">
+                            <div class="flow-node-icon cp">🏛️</div>
+                            <div class="flow-node-label">Control Plane</div>
+                            <div class="flow-node-sub">Signs root warrant</div>
+                        </div>
+                        <div class="flow-arrow">
+                            <div class="flow-arrow-line">→</div>
+                            <div class="flow-arrow-label" style="background: rgba(168, 85, 247, 0.3);">root warrant</div>
+                        </div>
+                        <div class="flow-node">
+                            <div class="flow-node-icon agent">🎭</div>
+                            <div class="flow-node-label">Orchestrator</div>
+                            <div class="flow-node-sub">Receives capability</div>
+                        </div>
+                    </div>
+                    <!-- Connecting Arrow -->
+                    <div style="display: flex; justify-content: center; margin-top: 16px;">
+                        <div style="display: flex; flex-direction: column; align-items: center;">
+                            <div style="width: 2px; height: 24px; background: linear-gradient(to bottom, var(--accent-purple), var(--accent-cyan));"></div>
+                            <div style="color: var(--accent-cyan); font-size: 1.25rem;">▼</div>
+                        </div>
+                    </div>
                 </div>
                 
-                <div class="flow-arrow">
-                    <div class="flow-arrow-line">→</div>
-                    <div class="flow-arrow-label">task request</div>
+                <!-- Step 2: Orchestrator's Perspective -->
+                <div style="width: 100%; border-top: 1px dashed var(--border); padding-top: 32px;">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+                        <span style="background: var(--accent-cyan); color: black; padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">STEP 2</span>
+                        <span style="color: var(--text-secondary); font-size: 0.9rem;">Orchestrator's Perspective: Attenuate & Delegate</span>
+                    </div>
+                    <div style="display: flex; align-items: flex-start; justify-content: center; gap: 24px; flex-wrap: wrap;">
+                        <!-- Orchestrator receives -->
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 12px;">
+                            <div style="font-size: 0.75rem; color: var(--text-muted);">1. Receives Root Warrant</div>
+                            <div style="background: rgba(168, 85, 247, 0.2); padding: 8px 12px; border-radius: 8px; font-size: 0.75rem; color: var(--accent-purple);">
+                                root warrant<br>max_depth: 3
+                            </div>
+                        </div>
+                        <div class="flow-arrow">
+                            <div class="flow-arrow-line">→</div>
+                            <div class="flow-arrow-label">2. Attenuates</div>
+                        </div>
+                        <!-- Orchestrator -->
+                        <div class="flow-node" style="background: rgba(0, 212, 255, 0.1); border-radius: 12px; padding: 20px;">
+                            <div class="flow-node-icon agent">🎭</div>
+                            <div class="flow-node-label">Orchestrator</div>
+                            <div class="flow-node-sub">Creates narrower warrant</div>
+                            <div class="flow-node-sub" style="color: var(--accent-cyan);">binds to worker pubkey</div>
+                        </div>
+                        <div class="flow-arrow">
+                            <div class="flow-arrow-line">→</div>
+                            <div class="flow-arrow-label">3. Delegates</div>
+                        </div>
+                        <!-- Delegates to workers -->
+                        <div style="display: flex; flex-direction: column; gap: 12px;">
+                            <div style="background: rgba(0, 255, 136, 0.15); padding: 10px 14px; border-radius: 8px;">
+                                <div style="font-size: 0.8rem; color: var(--accent-green); font-weight: 600;">⚙️ Worker A</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">action: [upgrade, restart]</div>
+                            </div>
+                            <div style="background: rgba(255, 204, 0, 0.15); padding: 10px 14px; border-radius: 8px; border: 1px dashed var(--accent-yellow);">
+                                <div style="font-size: 0.8rem; color: var(--accent-yellow); font-weight: 600;">🔐 Worker B</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">action: [delete] + multi-sig</div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Connecting Arrow -->
+                    <div style="display: flex; justify-content: center; margin-top: 16px;">
+                        <div style="display: flex; flex-direction: column; align-items: center;">
+                            <div style="width: 2px; height: 24px; background: linear-gradient(to bottom, var(--accent-cyan), var(--accent-green));"></div>
+                            <div style="color: var(--accent-green); font-size: 1.25rem;">▼</div>
+                        </div>
+                    </div>
                 </div>
                 
-                <div class="flow-node">
-                    <div class="flow-node-icon cp">🏛️</div>
-                    <div class="flow-node-label">Control Plane</div>
-                    <div class="flow-node-sub">Issues warrant</div>
+                <!-- Step 3: Worker's Perspective -->
+                <div style="width: 100%; border-top: 1px dashed var(--border); padding-top: 32px;">
+                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+                        <span style="background: var(--accent-green); color: black; padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">STEP 3</span>
+                        <span style="color: var(--text-secondary); font-size: 0.9rem;">Worker's Perspective: Verify Chain & Execute (100% Offline)</span>
+                    </div>
+                    <div style="display: flex; gap: 32px; flex-wrap: wrap; justify-content: center; align-items: flex-start;">
+                        <!-- Routine Worker Flow -->
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 220px; background: rgba(0, 255, 136, 0.05); padding: 20px; border-radius: 12px;">
+                            <div style="font-size: 0.85rem; color: var(--accent-green); font-weight: 600;">⚙️ Worker A (Routine Actions)</div>
+                            <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 8px;">action: [upgrade, restart]</div>
+                            <div style="display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%;">
+                                <div style="display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.2); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
+                                    <span style="font-size: 0.75rem; color: var(--text-muted);">1.</span>
+                                    <span style="font-size: 0.75rem; color: var(--text-secondary);">Receive warrant chain</span>
+                                </div>
+                                <div style="color: var(--text-muted);">↓</div>
+                                <div style="display: flex; align-items: center; gap: 8px; background: rgba(0,212,255,0.1); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
+                                    <span style="font-size: 0.75rem; color: var(--accent-cyan);">2.</span>
+                                    <span style="font-size: 0.75rem; color: var(--accent-cyan);">Verify chain offline (~18μs)</span>
+                                </div>
+                                <div style="color: var(--text-muted);">↓</div>
+                                <div style="display: flex; align-items: center; gap: 8px; background: rgba(168,85,247,0.1); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
+                                    <span style="font-size: 0.75rem; color: var(--accent-purple);">3.</span>
+                                    <span style="font-size: 0.75rem; color: var(--accent-purple);">Sign request (PoP)</span>
+                                </div>
+                                <div style="color: var(--text-muted);">↓</div>
+                                <div style="background: rgba(0, 255, 136, 0.3); padding: 8px 16px; border-radius: 8px; width: 100%; text-align: center;">
+                                    <div style="font-size: 0.8rem; color: var(--accent-green); font-weight: 600;">4. ✓ Execute Tool</div>
+                                </div>
+                            </div>
+                            <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 8px; width: 100%; text-align: center;">
+                                Can delegate further to sub-agents (depth +1)
+                            </div>
+                        </div>
+                        
+                        <!-- Sensitive Worker Flow -->
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 220px; background: rgba(255, 204, 0, 0.05); padding: 20px; border-radius: 12px; border: 1px dashed var(--accent-yellow);">
+                            <div style="font-size: 0.85rem; color: var(--accent-yellow); font-weight: 600;">🔐 Worker B (Sensitive Actions)</div>
+                            <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 8px;">action: [delete] + requires approval</div>
+                            <div style="display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%;">
+                                <div style="display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.2); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
+                                    <span style="font-size: 0.75rem; color: var(--text-muted);">1.</span>
+                                    <span style="font-size: 0.75rem; color: var(--text-secondary);">Receive warrant chain</span>
+                                </div>
+                                <div style="color: var(--text-muted);">↓</div>
+                                <div style="display: flex; align-items: center; gap: 8px; background: rgba(0,212,255,0.1); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
+                                    <span style="font-size: 0.75rem; color: var(--accent-cyan);">2.</span>
+                                    <span style="font-size: 0.75rem; color: var(--accent-cyan);">Verify chain offline (~18μs)</span>
+                                </div>
+                                <div style="color: var(--text-muted);">↓</div>
+                                <div style="display: flex; align-items: center; gap: 8px; background: rgba(255,204,0,0.2); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
+                                    <span style="font-size: 0.75rem; color: var(--accent-yellow);">3.</span>
+                                    <span style="font-size: 0.75rem; color: var(--accent-yellow);">Check: multi-sig required</span>
+                                </div>
+                                <div style="color: var(--text-muted);">↓</div>
+                                <div style="background: rgba(255, 204, 0, 0.3); padding: 8px 16px; border-radius: 8px; width: 100%; text-align: center;">
+                                    <div style="font-size: 0.8rem; color: var(--accent-yellow); font-weight: 600;">4. ✍️ Get Admin Signature</div>
+                                    <div style="font-size: 0.6rem; color: var(--text-muted);">Admin signs (warrant_id, tool, args, holder)</div>
+                                </div>
+                                <div style="color: var(--text-muted);">↓</div>
+                                <div style="background: rgba(0, 255, 136, 0.3); padding: 8px 16px; border-radius: 8px; width: 100%; text-align: center;">
+                                    <div style="font-size: 0.8rem; color: var(--accent-green); font-weight: 600;">5. ✓ Execute Tool</div>
+                                </div>
+                            </div>
+                            <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 8px; width: 100%; text-align: center;">
+                                Approval bound to holder — theft protected
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 
-                <div class="flow-arrow">
-                    <div class="flow-arrow-line">→</div>
-                    <div class="flow-arrow-label">warrant (signed)</div>
+                <!-- Verification Checks Summary -->
+                <div style="width: 100%; border-top: 1px dashed var(--border); padding-top: 24px; margin-top: 8px;">
+                    <div style="text-align: center; margin-bottom: 16px;">
+                        <span style="color: var(--text-muted); font-size: 0.8rem;">What gets verified at each step (all offline, ~25μs)</span>
+                    </div>
+                    <div style="display: flex; justify-content: center; gap: 16px; flex-wrap: wrap;">
+                        <div style="background: rgba(0, 0, 0, 0.2); padding: 10px 16px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 1rem;">🔗</div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary);">Chain</div>
+                        </div>
+                        <div style="background: rgba(0, 0, 0, 0.2); padding: 10px 16px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 1rem;">✍️</div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary);">Signatures</div>
+                        </div>
+                        <div style="background: rgba(0, 0, 0, 0.2); padding: 10px 16px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 1rem;">⬇️</div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary);">Monotonicity</div>
+                        </div>
+                        <div style="background: rgba(0, 0, 0, 0.2); padding: 10px 16px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 1rem;">🔐</div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary);">Holder PoP</div>
+                        </div>
+                        <div style="background: rgba(0, 0, 0, 0.2); padding: 10px 16px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 1rem;">⏱️</div>
+                            <div style="font-size: 0.75rem; color: var(--text-secondary);">Expiration</div>
+                        </div>
+                    </div>
                 </div>
                 
-                <div class="flow-node">
-                    <div class="flow-node-icon agent">🤖</div>
-                    <div class="flow-node-label">AI Agent</div>
-                    <div class="flow-node-sub">Holds warrant</div>
-                </div>
-                
-                <div class="flow-arrow">
-                    <div class="flow-arrow-line">→</div>
-                    <div class="flow-arrow-label">action + warrant</div>
-                </div>
-                
-                <div class="flow-node">
-                    <div class="flow-node-icon tool">🔧</div>
-                    <div class="flow-node-label">Tool/API</div>
-                    <div class="flow-node-sub">Verifies locally</div>
-                </div>
             </div>
         </section>
         
         <!-- Integrations -->
         <section class="integrations">
             <h2 class="section-title">Integration <span>Points</span></h2>
-            <div class="integration-grid">
-                <div class="integration-card sdk">
-                    <div class="integration-header">
-                        <div class="integration-icon">🐍</div>
-                        <div class="integration-title">Python SDK</div>
-                        <div class="integration-badge">Coming Soon</div>
-                    </div>
-                    <div class="integration-desc">
-                        Native Python bindings via PyO3. Drop-in integration for LangChain, AutoGPT, CrewAI, and custom agents.
-                    </div>
-                    <div class="integration-code">
-                        pip install tenuo<br>
-                        from tenuo import Authorizer
-                    </div>
-                </div>
-                
+            
+            <!-- Control Plane Integrations -->
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+                <span style="background: var(--accent-purple); color: white; padding: 4px 12px; border-radius: 8px; font-size: 0.75rem; font-weight: 600;">CONTROL PLANE</span>
+                <span style="color: var(--text-muted); font-size: 0.85rem;">Warrant issuance, policy management</span>
+            </div>
+            <div class="integration-grid" style="margin-bottom: 32px;">
                 <div class="integration-card http">
                     <div class="integration-header">
                         <div class="integration-icon">🌐</div>
@@ -723,21 +902,28 @@
                     </div>
                 </div>
                 
-                <div class="integration-card sidecar">
+                <div class="integration-card" style="border-top: 3px solid var(--accent-purple);">
                     <div class="integration-header">
-                        <div class="integration-icon">🚢</div>
-                        <div class="integration-title">Kubernetes Sidecar</div>
+                        <div class="integration-icon">🔑</div>
+                        <div class="integration-title">Notary Registry</div>
                         <div class="integration-badge">Available</div>
                     </div>
                     <div class="integration-desc">
-                        Deploy as a sidecar container. Your agent calls localhost:9090 — zero cross-network latency.
+                        Map external identities (AWS IAM, Okta, OIDC) to Ed25519 keys for multi-sig approvals.
                     </div>
                     <div class="integration-code">
-                        containers:<br>
-                        &nbsp;&nbsp;- name: tenuo-authorizer
+                        registry.bind("admin@company.com",<br>
+                        &nbsp;&nbsp;admin_pubkey, "okta")
                     </div>
                 </div>
-                
+            </div>
+            
+            <!-- Data Plane Integrations -->
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
+                <span style="background: var(--accent-cyan); color: black; padding: 4px 12px; border-radius: 8px; font-size: 0.75rem; font-weight: 600;">DATA PLANE</span>
+                <span style="color: var(--text-muted); font-size: 0.85rem;">Offline verification, authorization</span>
+            </div>
+            <div class="integration-grid">
                 <div class="integration-card library">
                     <div class="integration-header">
                         <div class="integration-icon">🦀</div>
@@ -750,6 +936,36 @@
                     <div class="integration-code">
                         tenuo-core = "0.1"<br>
                         use tenuo_core::Authorizer;
+                    </div>
+                </div>
+                
+                <div class="integration-card sdk">
+                    <div class="integration-header">
+                        <div class="integration-icon">🐍</div>
+                        <div class="integration-title">Python SDK</div>
+                        <div class="integration-badge">Coming Soon</div>
+                    </div>
+                    <div class="integration-desc">
+                        Native Python bindings via PyO3. Drop-in integration for LangChain, AutoGPT, CrewAI.
+                    </div>
+                    <div class="integration-code">
+                        pip install tenuo<br>
+                        from tenuo import Authorizer
+                    </div>
+                </div>
+                
+                <div class="integration-card sidecar">
+                    <div class="integration-header">
+                        <div class="integration-icon">🚢</div>
+                        <div class="integration-title">Kubernetes Sidecar</div>
+                        <div class="integration-badge">Available</div>
+                    </div>
+                    <div class="integration-desc">
+                        Deploy as a sidecar container. Your agent calls localhost:9090 — zero cross-network latency.
+                    </div>
+                    <div class="integration-code">
+                        containers:<br>
+                        &nbsp;&nbsp;- name: tenuo-authorizer
                     </div>
                 </div>
                 
@@ -771,7 +987,7 @@
                 <div class="integration-card infra">
                     <div class="integration-header">
                         <div class="integration-icon">☁️</div>
-                        <div class="integration-title">Cloud/Infra</div>
+                        <div class="integration-title">Gateway / Envoy</div>
                         <div class="integration-badge">Planned</div>
                     </div>
                     <div class="integration-desc">
@@ -804,17 +1020,24 @@
                     </div>
                 </div>
                 <div class="use-case">
+                    <div class="use-case-title">🔐 Multi-Sig Approvals</div>
+                    <div class="use-case-desc">
+                        Sensitive actions require M-of-N human approval.
+                        "Delete requires 2-of-3 admins. Approvals bound to holder."
+                    </div>
+                </div>
+                <div class="use-case">
+                    <div class="use-case-title">🤖 Multi-Agent Orchestration</div>
+                    <div class="use-case-desc">
+                        Orchestrator → Worker A (routine) → Sub-Agent A1<br>
+                        Orchestrator → Worker B (sensitive) → requires approval
+                    </div>
+                </div>
+                <div class="use-case">
                     <div class="use-case-title">🏗️ Infrastructure Access</div>
                     <div class="use-case-desc">
                         Kubernetes cluster operations, cloud resource management. 
                         "Upgrade staging-web only, not production."
-                    </div>
-                </div>
-                <div class="use-case">
-                    <div class="use-case-title">📧 Communication Scope</div>
-                    <div class="use-case-desc">
-                        Limit which external services an agent can contact. 
-                        "Can email @company.com but not external domains."
                     </div>
                 </div>
                 <div class="use-case">
@@ -824,12 +1047,28 @@
                         10-minute window for a specific operation.
                     </div>
                 </div>
-                <div class="use-case">
-                    <div class="use-case-title">🔗 Multi-Agent Delegation</div>
-                    <div class="use-case-desc">
-                        Orchestrators delegate to workers with attenuated capabilities. 
-                        Full audit trail of the delegation chain.
-                    </div>
+            </div>
+        </section>
+        
+        <!-- Performance -->
+        <section class="use-cases" style="margin-bottom: 48px;">
+            <h2 class="section-title">Performance <span>Metrics</span></h2>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px;">
+                <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
+                    <div style="font-size: 2.5rem; font-weight: 700; color: var(--accent-green);">~25μs</div>
+                    <div style="color: var(--text-secondary); margin-top: 8px;">Allowed actions</div>
+                </div>
+                <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
+                    <div style="font-size: 2.5rem; font-weight: 700; color: var(--accent-red);">~150ns</div>
+                    <div style="color: var(--text-secondary); margin-top: 8px;">Blocked (short-circuit)</div>
+                </div>
+                <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
+                    <div style="font-size: 2.5rem; font-weight: 700; color: var(--accent-cyan);">18μs</div>
+                    <div style="color: var(--text-secondary); margin-top: 8px;">Chain verify (3-hop)</div>
+                </div>
+                <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
+                    <div style="font-size: 2.5rem; font-weight: 700; color: var(--accent-purple);">0</div>
+                    <div style="color: var(--text-secondary); margin-top: 8px;">Network calls</div>
                 </div>
             </div>
         </section>
@@ -842,11 +1081,11 @@
                     <div class="roadmap-phase now">Now</div>
                     <div class="roadmap-title">v0.1 - Core</div>
                     <ul class="roadmap-list">
-                        <li>Warrant issuance & verification</li>
-                        <li>Chain verification</li>
-                        <li>Constraint types (10+)</li>
-                        <li>Specific error types</li>
-                        <li>Docker demo</li>
+                        <li>Warrant issuance & chain verification</li>
+                        <li>Holder binding (PoP)</li>
+                        <li>Multi-sig approvals (M-of-N)</li>
+                        <li>Notary Registry (identity mapping)</li>
+                        <li>10+ constraint types</li>
                     </ul>
                 </div>
                 <div class="roadmap-item">

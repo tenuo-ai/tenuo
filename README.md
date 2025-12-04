@@ -648,7 +648,10 @@ Approvals are cryptographically bound to prevent theft:
 | **Replay attack** | Hash includes `warrant_id + tool + args` - approvals are request-specific |
 | **Expired approvals** | `expires_at` checked with clock tolerance |
 | **DoS via flood** | Approval count limited to `2 × required_approvers.len()` |
+| **Duplicate approvals** | Same approver counted only once via `HashSet` deduplication |
 | **Bypass multi-sig** | Unified `authorize()` API - no code path skips approval check |
+
+**Why Independent Signatures?** We use independent Ed25519 signatures (similar to Bitcoin multi-sig) rather than threshold schemes like Shamir or FROST. This ensures no secret is ever reconstructed, no interactive coordination is required between approvers, verification stays 100% offline, and each approver is individually traceable for audit. The trade-off is signature size (M × 64 bytes vs. a single aggregated signature), which is acceptable for our use case.
 
 ### Notary Registry (Identity Mapping)
 

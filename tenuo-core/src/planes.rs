@@ -85,12 +85,18 @@ fn verify_approvals_with_tolerance(
 
     // Count valid approvals from required approvers
     let mut valid_count = 0u32;
+    let mut seen_approvers = std::collections::HashSet::new();
     let now = chrono::Utc::now();
 
     for approval in approvals {
         // Check if approver is in the required set
         if !required_approvers.contains(&approval.approver_key) {
             continue; // Not a required approver, skip
+        }
+
+        // Check if we've already counted this approver
+        if seen_approvers.contains(&approval.approver_key) {
+            continue; // Duplicate approval from same approver
         }
 
         // Check expiration (with clock tolerance)
@@ -106,6 +112,7 @@ fn verify_approvals_with_tolerance(
         // Verify signature
         if approval.verify().is_ok() {
             valid_count = valid_count.saturating_add(1);
+            seen_approvers.insert(approval.approver_key.clone());
             
             // Early exit: we have enough
             if valid_count >= threshold {

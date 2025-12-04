@@ -103,6 +103,12 @@ impl PublicKey {
     }
 }
 
+impl std::hash::Hash for PublicKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.to_bytes().hash(state);
+    }
+}
+
 /// Batch verify multiple signatures in a single pass.
 /// 
 /// This is significantly faster than verifying each signature individually

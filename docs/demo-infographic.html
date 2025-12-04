@@ -1,12 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tenuo - Capability Delegation Flow (with Depth Limits)</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
-        
+
         :root {
             --bg-dark: #0a0e17;
             --bg-card: #121a2a;
@@ -21,13 +22,13 @@
             --text-muted: #64748b;
             --border: #1e293b;
         }
-        
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-        
+
         body {
             font-family: 'Space Grotesk', sans-serif;
             background: var(--bg-dark);
@@ -35,7 +36,7 @@
             min-height: 100vh;
             overflow-x: hidden;
         }
-        
+
         /* Background pattern */
         body::before {
             content: '';
@@ -44,13 +45,13 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background: 
+            background:
                 radial-gradient(circle at 20% 20%, rgba(0, 212, 255, 0.05) 0%, transparent 40%),
                 radial-gradient(circle at 80% 80%, rgba(168, 85, 247, 0.05) 0%, transparent 40%);
             pointer-events: none;
             z-index: 0;
         }
-        
+
         .container {
             max-width: 1400px;
             margin: 0 auto;
@@ -58,13 +59,13 @@
             position: relative;
             z-index: 1;
         }
-        
+
         /* Header */
         header {
             text-align: center;
             margin-bottom: 60px;
         }
-        
+
         .logo {
             font-size: 3rem;
             font-weight: 700;
@@ -74,13 +75,13 @@
             background-clip: text;
             margin-bottom: 12px;
         }
-        
+
         .tagline {
             font-size: 1.25rem;
             color: var(--text-secondary);
             font-weight: 400;
         }
-        
+
         /* Flow container */
         .flow-container {
             display: flex;
@@ -88,7 +89,7 @@
             gap: 0;
             position: relative;
         }
-        
+
         /* Agent cards */
         .agent-card {
             background: var(--bg-card);
@@ -98,20 +99,20 @@
             position: relative;
             transition: all 0.3s ease;
         }
-        
+
         .agent-card:hover {
             background: var(--bg-card-hover);
             transform: translateY(-2px);
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
         }
-        
+
         .agent-header {
             display: flex;
             align-items: center;
             gap: 16px;
             margin-bottom: 24px;
         }
-        
+
         .agent-icon {
             width: 56px;
             height: 56px;
@@ -121,21 +122,29 @@
             justify-content: center;
             font-size: 24px;
         }
-        
-        .agent-icon.control { background: linear-gradient(135deg, var(--accent-purple), #6366f1); }
-        .agent-icon.orchestrator { background: linear-gradient(135deg, var(--accent-cyan), #0ea5e9); }
-        .agent-icon.worker { background: linear-gradient(135deg, var(--accent-green), #22c55e); }
-        
+
+        .agent-icon.control {
+            background: linear-gradient(135deg, var(--accent-purple), #6366f1);
+        }
+
+        .agent-icon.orchestrator {
+            background: linear-gradient(135deg, var(--accent-cyan), #0ea5e9);
+        }
+
+        .agent-icon.worker {
+            background: linear-gradient(135deg, var(--accent-green), #22c55e);
+        }
+
         .agent-title {
             font-size: 1.5rem;
             font-weight: 600;
         }
-        
+
         .agent-subtitle {
             color: var(--text-muted);
             font-size: 0.875rem;
         }
-        
+
         /* Warrant display */
         .warrant {
             background: rgba(0, 0, 0, 0.3);
@@ -146,7 +155,7 @@
             font-size: 0.85rem;
             margin: 16px 0;
         }
-        
+
         .warrant-header {
             display: flex;
             align-items: center;
@@ -154,7 +163,7 @@
             margin-bottom: 12px;
             color: var(--text-secondary);
         }
-        
+
         .warrant-badge {
             padding: 4px 10px;
             border-radius: 6px;
@@ -162,32 +171,39 @@
             font-weight: 600;
             text-transform: uppercase;
         }
-        
-        .warrant-badge.root { background: var(--accent-purple); color: white; }
-        .warrant-badge.attenuated { background: var(--accent-cyan); color: black; }
-        
+
+        .warrant-badge.root {
+            background: var(--accent-purple);
+            color: white;
+        }
+
+        .warrant-badge.attenuated {
+            background: var(--accent-cyan);
+            color: black;
+        }
+
         .warrant-field {
             display: flex;
             margin: 8px 0;
         }
-        
+
         .warrant-key {
             color: var(--accent-cyan);
             min-width: 100px;
         }
-        
+
         .warrant-value {
             color: var(--text-primary);
         }
-        
+
         .warrant-value.narrowed {
             color: var(--accent-green);
         }
-        
+
         .warrant-value.unchanged {
             color: var(--text-muted);
         }
-        
+
         /* Arrow connectors */
         .connector {
             display: flex;
@@ -196,14 +212,14 @@
             padding: 20px 0;
             position: relative;
         }
-        
+
         .connector-line {
             width: 3px;
             height: 60px;
             background: linear-gradient(to bottom, var(--accent-cyan), var(--accent-purple));
             position: relative;
         }
-        
+
         .connector-arrow {
             position: absolute;
             bottom: -10px;
@@ -215,7 +231,7 @@
             border-right: 10px solid transparent;
             border-top: 12px solid var(--accent-purple);
         }
-        
+
         .connector-label {
             position: absolute;
             left: 50%;
@@ -228,25 +244,25 @@
             border: 1px solid var(--border);
             white-space: nowrap;
         }
-        
+
         /* Action results */
         .actions {
             margin-top: 24px;
         }
-        
+
         .actions-title {
             font-size: 1rem;
             font-weight: 600;
             margin-bottom: 16px;
             color: var(--text-secondary);
         }
-        
+
         .action-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
             gap: 12px;
         }
-        
+
         .action-item {
             display: flex;
             align-items: center;
@@ -256,7 +272,7 @@
             border-radius: 8px;
             border: 1px solid var(--border);
         }
-        
+
         .action-status {
             width: 28px;
             height: 28px;
@@ -267,32 +283,32 @@
             font-size: 14px;
             flex-shrink: 0;
         }
-        
+
         .action-status.allowed {
             background: rgba(0, 255, 136, 0.2);
             color: var(--accent-green);
         }
-        
+
         .action-status.blocked {
             background: rgba(255, 68, 102, 0.2);
             color: var(--accent-red);
         }
-        
+
         .action-content {
             flex: 1;
         }
-        
+
         .action-name {
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.85rem;
         }
-        
+
         .action-reason {
             font-size: 0.75rem;
             color: var(--text-muted);
             margin-top: 2px;
         }
-        
+
         /* Key insight box */
         .insight-box {
             background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(168, 85, 247, 0.1));
@@ -302,35 +318,35 @@
             margin-top: 48px;
             text-align: center;
         }
-        
+
         .insight-title {
             font-size: 1.25rem;
             font-weight: 600;
             margin-bottom: 16px;
             color: var(--accent-cyan);
         }
-        
+
         .insight-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 24px;
             margin-top: 24px;
         }
-        
+
         .insight-item {
             text-align: center;
         }
-        
+
         .insight-icon {
             font-size: 2rem;
             margin-bottom: 8px;
         }
-        
+
         .insight-label {
             font-size: 0.875rem;
             color: var(--text-secondary);
         }
-        
+
         /* Chain visualization */
         .chain-viz {
             display: flex;
@@ -340,7 +356,7 @@
             margin: 24px 0;
             flex-wrap: wrap;
         }
-        
+
         .chain-block {
             padding: 8px 16px;
             border-radius: 8px;
@@ -348,24 +364,24 @@
             font-size: 0.75rem;
             border: 2px solid;
         }
-        
+
         .chain-block.root {
             background: rgba(168, 85, 247, 0.2);
             border-color: var(--accent-purple);
             color: var(--accent-purple);
         }
-        
+
         .chain-block.child {
             background: rgba(0, 212, 255, 0.2);
             border-color: var(--accent-cyan);
             color: var(--accent-cyan);
         }
-        
+
         .chain-arrow {
             color: var(--text-muted);
             font-size: 1.25rem;
         }
-        
+
         /* Verification badge */
         .verification-badge {
             display: inline-flex;
@@ -379,36 +395,52 @@
             font-size: 0.875rem;
             margin-top: 16px;
         }
-        
+
         /* Animations */
         @keyframes fadeInUp {
             from {
                 opacity: 0;
                 transform: translateY(20px);
             }
+
             to {
                 opacity: 1;
                 transform: translateY(0);
             }
         }
-        
+
         .agent-card {
             animation: fadeInUp 0.6s ease forwards;
         }
-        
-        .agent-card:nth-child(1) { animation-delay: 0.1s; }
-        .agent-card:nth-child(3) { animation-delay: 0.3s; }
-        .agent-card:nth-child(5) { animation-delay: 0.5s; }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
+
+        .agent-card:nth-child(1) {
+            animation-delay: 0.1s;
         }
-        
+
+        .agent-card:nth-child(3) {
+            animation-delay: 0.3s;
+        }
+
+        .agent-card:nth-child(5) {
+            animation-delay: 0.5s;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
         .connector-line {
             animation: pulse 2s ease-in-out infinite;
         }
-        
+
         /* Footer */
         footer {
             text-align: center;
@@ -417,35 +449,37 @@
             color: var(--text-muted);
             font-size: 0.875rem;
         }
-        
+
         footer a {
             color: var(--accent-cyan);
             text-decoration: none;
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <header>
             <div class="logo">Tenuo</div>
             <div class="tagline">Capability Delegation with Depth Limits</div>
         </header>
-        
+
         <div class="flow-container">
             <!-- Control Plane -->
             <div class="agent-card">
                 <div class="agent-header">
-                    <div class="agent-icon control">🏛️</div>
+                    <div class="agent-icon control">1</div>
                     <div>
-                        <div class="agent-title">Control Plane</div>
-                        <div class="agent-subtitle">Secure Environment • Holds Private Key</div>
+                        <div class="agent-title">Control Plane (Root Authority)</div>
+                        <div class="agent-subtitle">Step 1: Issuance • Secure Environment • Holds Private Key</div>
                     </div>
                 </div>
-                
+
                 <p style="color: var(--text-secondary); margin-bottom: 16px;">
-                    Issues a broad warrant for infrastructure management across all staging clusters.
+                    The Control Plane issues a <strong>broad, high-level warrant</strong> for infrastructure management.
+                    This is the "Root of Trust". It defines the maximum possible scope for this task tree.
                 </p>
-                
+
                 <div class="warrant">
                     <div class="warrant-header">
                         <span class="warrant-badge root">Root Warrant</span>
@@ -481,7 +515,7 @@
                     </div>
                 </div>
             </div>
-            
+
             <!-- Connector 1 -->
             <div class="connector">
                 <div class="connector-line">
@@ -489,26 +523,29 @@
                 </div>
                 <div class="connector-label">Delegates to Orchestrator</div>
             </div>
-            
+
             <!-- Orchestrator -->
             <div class="agent-card">
                 <div class="agent-header">
-                    <div class="agent-icon orchestrator">🎭</div>
+                    <div class="agent-icon orchestrator">2</div>
                     <div>
                         <div class="agent-title">Orchestrator Agent</div>
-                        <div class="agent-subtitle">Has Own Keypair • Attenuates Warrants</div>
+                        <div class="agent-subtitle">Step 2: Attenuation • Has Own Keypair • Binds to Worker</div>
                     </div>
                 </div>
-                
+
                 <p style="color: var(--text-secondary); margin-bottom: 16px;">
-                    Receives the root warrant and creates a <strong style="color: var(--accent-cyan);">narrower</strong> warrant for the worker. 
-                    Also <strong style="color: var(--accent-purple);">binds to worker's public key</strong> (Proof-of-Possession).
+                    The Orchestrator receives the root warrant and creates a <strong
+                        style="color: var(--accent-cyan);">narrower</strong> warrant for the specific worker.
+                    It <strong>attenuates</strong> (reduces) the scope and <strong
+                        style="color: var(--accent-purple);">binds it to the worker's public key</strong>.
                 </p>
-                
+
                 <div class="warrant">
                     <div class="warrant-header">
                         <span class="warrant-badge attenuated">Attenuated</span>
-                        <span style="background: rgba(168, 85, 247, 0.3); padding: 2px 8px; border-radius: 4px; margin-left: 8px;">Holder-Bound</span>
+                        <span
+                            style="background: rgba(168, 85, 247, 0.3); padding: 2px 8px; border-radius: 4px; margin-left: 8px;">Holder-Bound</span>
                         <span>depth: 1 / 3</span>
                     </div>
                     <div class="warrant-field">
@@ -548,7 +585,7 @@
                         <span class="warrant-value" style="color: var(--accent-yellow);">agt_worker_001</span>
                     </div>
                 </div>
-                
+
                 <div class="chain-viz">
                     <div class="chain-block root">Root (d=0)</div>
                     <span class="chain-arrow">→</span>
@@ -556,12 +593,15 @@
                     <span class="chain-arrow">→</span>
                     <div class="chain-block child">Sub-Agent (d=2)</div>
                     <span class="chain-arrow">→</span>
-                    <div class="chain-block child" style="background: rgba(0, 255, 136, 0.2); border-color: var(--accent-green);">d=3 ✓</div>
+                    <div class="chain-block child"
+                        style="background: rgba(0, 255, 136, 0.2); border-color: var(--accent-green);">d=3 ✓</div>
                     <span class="chain-arrow" style="color: var(--accent-red);">✗</span>
-                    <div class="chain-block" style="background: rgba(255, 68, 102, 0.2); border-color: var(--accent-red); color: var(--accent-red);">d=4 ✗</div>
+                    <div class="chain-block"
+                        style="background: rgba(255, 68, 102, 0.2); border-color: var(--accent-red); color: var(--accent-red);">
+                        d=4 ✗</div>
                 </div>
             </div>
-            
+
             <!-- Connector 2 -->
             <div class="connector">
                 <div class="connector-line">
@@ -569,75 +609,122 @@
                 </div>
                 <div class="connector-label">Sends Chain (JSON)</div>
             </div>
-            
+
             <!-- Worker -->
             <div class="agent-card">
                 <div class="agent-header">
-                    <div class="agent-icon worker">⚙️</div>
+                    <div class="agent-icon worker">3</div>
                     <div>
-                        <div class="agent-title">Worker Agent</div>
-                        <div class="agent-subtitle">Has Own Keypair • Signs Requests (PoP) • Verifies Offline</div>
+                        <div class="agent-title">Worker Agent (The Holder)</div>
+                        <div class="agent-subtitle">Step 3: Action • Signs Requests (PoP) • Presents Chain</div>
                     </div>
                 </div>
-                
+
                 <p style="color: var(--text-secondary); margin-bottom: 16px;">
-                    Verifies the chain and <strong style="color: var(--accent-purple);">signs each request</strong> with its private key 
-                    to prove it's the authorized holder. Can delegate further up to max_depth.
+                    The Worker receives the chain. To perform an action, it <strong
+                        style="color: var(--accent-purple);">signs the request</strong>
+                    with its private key and sends the chain to the system.
                 </p>
-                
-                <div class="verification-badge">
-                    ✓ Chain Verified • ✓ PoP Signature • Constraints only narrow • All signatures valid
+
+                <div
+                    style="background: rgba(0, 0, 0, 0.3); border: 1px dashed var(--text-muted); border-radius: 8px; padding: 12px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-muted);">
+                    &gt; POST /api/v1/cluster/staging-web/upgrade<br>
+                    &gt; X-Tenuo-Chain: [Root, Orchestrator, Worker]<br>
+                    &gt; X-Tenuo-PoP: sig_worker_123...
                 </div>
-                
+            </div>
+
+            <!-- Connector 3 -->
+            <div class="connector">
+                <div class="connector-line">
+                    <div class="connector-arrow"></div>
+                </div>
+                <div class="connector-label">Request Sent to Authorizer</div>
+            </div>
+
+            <!-- Authorizer / Enforcement Point -->
+            <div class="agent-card"
+                style="border-color: var(--accent-green); background: linear-gradient(135deg, rgba(10, 14, 23, 1), rgba(0, 255, 136, 0.05));">
+                <div class="agent-header">
+                    <div class="agent-icon" style="background: linear-gradient(135deg, var(--accent-green), #059669);">
+                        🛡️</div>
+                    <div>
+                        <div class="agent-title">Authorizer (Enforcement Point)</div>
+                        <div class="agent-subtitle">Step 4: Verification • Gateway or Sidecar • Zero Trust</div>
+                    </div>
+                </div>
+
+                <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                    The <strong>Authorizer</strong> (running in a Sidecar or Gateway) intercepts the request.
+                    It verifies the chain signatures, checks expiration, enforces constraints, and validates the PoP
+                    signature.
+                </p>
+
+                <div class="verification-badge">
+                    ✓ Chain Verified (18μs) • ✓ PoP Signature Valid • ✓ Constraints Checked
+                </div>
+
                 <div class="actions">
-                    <div class="actions-title">Authorization Tests</div>
+                    <div class="actions-title">Authorization Decisions (Policy Enforcement)</div>
                     <div class="action-grid">
                         <div class="action-item">
                             <div class="action-status allowed">✓</div>
                             <div class="action-content">
-                                <div class="action-name">upgrade staging-web ($500)</div>
-                                <div class="action-reason">Within all constraints</div>
+                                <div class="action-name">upgrade staging-web ($500) <span
+                                        style="color: var(--accent-cyan); font-size: 0.7rem;">~25μs</span></div>
+                                <div class="action-reason">Allowed: Within all constraints</div>
                             </div>
                         </div>
                         <div class="action-item">
                             <div class="action-status allowed">✓</div>
                             <div class="action-content">
-                                <div class="action-name">restart staging-web</div>
-                                <div class="action-reason">Action is permitted</div>
+                                <div class="action-name">restart staging-web <span
+                                        style="color: var(--accent-cyan); font-size: 0.7rem;">~22μs</span></div>
+                                <div class="action-reason">Allowed: Action is permitted</div>
                             </div>
                         </div>
                         <div class="action-item">
                             <div class="action-status blocked">✗</div>
                             <div class="action-content">
-                                <div class="action-name">upgrade staging-db</div>
-                                <div class="action-reason">Only staging-web allowed</div>
+                                <div class="action-name">upgrade staging-db <span
+                                        style="color: var(--accent-red); font-size: 0.7rem;">~150ns</span></div>
+                                <div class="action-reason">Denied: Only staging-web allowed</div>
                             </div>
                         </div>
                         <div class="action-item">
                             <div class="action-status blocked">✗</div>
                             <div class="action-content">
-                                <div class="action-name">upgrade prod-web</div>
-                                <div class="action-reason">No production access</div>
+                                <div class="action-name">upgrade prod-web <span
+                                        style="color: var(--accent-red); font-size: 0.7rem;">~120ns</span></div>
+                                <div class="action-reason">Denied: No production access</div>
                             </div>
                         </div>
                         <div class="action-item">
                             <div class="action-status blocked">✗</div>
                             <div class="action-content">
-                                <div class="action-name">delete staging-web</div>
-                                <div class="action-reason">Delete not in allowed actions</div>
+                                <div class="action-name">delete staging-web <span
+                                        style="color: var(--accent-red); font-size: 0.7rem;">~180ns</span></div>
+                                <div class="action-reason">Denied: Delete not in allowed actions</div>
                             </div>
                         </div>
                         <div class="action-item">
                             <div class="action-status blocked">✗</div>
                             <div class="action-content">
-                                <div class="action-name">upgrade ($5,000)</div>
-                                <div class="action-reason">Exceeds $1,000 budget limit</div>
+                                <div class="action-name">upgrade ($5,000) <span
+                                        style="color: var(--accent-red); font-size: 0.7rem;">~200ns</span></div>
+                                <div class="action-reason">Denied: Exceeds $1,000 budget limit</div>
                             </div>
                         </div>
                     </div>
+                    <div
+                        style="margin-top: 16px; padding: 12px; background: rgba(0,212,255,0.1); border-radius: 8px; font-size: 0.85rem;">
+                        <strong style="color: var(--accent-cyan);">Performance:</strong>
+                        <span style="color: var(--text-secondary);">Allowed ~25μs (full verify) • Blocked ~150ns
+                            (short-circuit)</span>
+                    </div>
                 </div>
             </div>
-            
+
             <!-- Connector 3 -->
             <div class="connector">
                 <div class="connector-line">
@@ -645,7 +732,7 @@
                 </div>
                 <div class="connector-label">Delegates to Sub-Agent (depth 2)</div>
             </div>
-            
+
             <!-- Sub-Agent -->
             <div class="agent-card" style="border-color: var(--accent-green);">
                 <div class="agent-header">
@@ -655,7 +742,7 @@
                         <div class="agent-subtitle">Depth 2/3 • Can delegate one more time</div>
                     </div>
                 </div>
-                
+
                 <div class="warrant">
                     <div class="warrant-header">
                         <span class="warrant-badge attenuated">Attenuated</span>
@@ -674,44 +761,117 @@
                         <span class="warrant-value unchanged">sess_abc123... (same session)</span>
                     </div>
                 </div>
-                
+
                 <p style="color: var(--text-secondary); margin: 16px 0;">
                     Sub-agent can delegate one more level (to depth 3)...
                 </p>
             </div>
-            
+
             <!-- Connector 4 - Blocked -->
             <div class="connector">
-                <div class="connector-line" style="background: linear-gradient(to bottom, var(--accent-green), var(--accent-red));">
+                <div class="connector-line"
+                    style="background: linear-gradient(to bottom, var(--accent-green), var(--accent-red));">
                     <div class="connector-arrow" style="border-top-color: var(--accent-red);"></div>
                 </div>
                 <div class="connector-label" style="border-color: var(--accent-red); color: var(--accent-red);">
                     ✗ Depth 4 BLOCKED (exceeds max_depth)
                 </div>
             </div>
-            
+
             <!-- Depth Exceeded -->
             <div class="agent-card" style="border-color: var(--accent-red); opacity: 0.6;">
                 <div class="agent-header">
-                    <div class="agent-icon" style="background: linear-gradient(135deg, var(--accent-red), #dc2626);">🚫</div>
+                    <div class="agent-icon" style="background: linear-gradient(135deg, var(--accent-red), #dc2626);">🚫
+                    </div>
                     <div>
                         <div class="agent-title" style="color: var(--accent-red);">Depth Exceeded!</div>
                         <div class="agent-subtitle">Cannot delegate beyond max_depth(3)</div>
                     </div>
                 </div>
-                
-                <div style="background: rgba(255, 68, 102, 0.1); border: 1px dashed var(--accent-red); border-radius: 8px; padding: 16px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;">
+
+                <div
+                    style="background: rgba(255, 68, 102, 0.1); border: 1px dashed var(--accent-red); border-radius: 8px; padding: 16px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;">
                     <span style="color: var(--accent-red);">Error:</span> DepthExceeded(4, 3)<br>
                     <span style="color: var(--text-muted);">// Tried to create depth 4, but max_depth is 3</span>
                 </div>
-                
+
                 <p style="color: var(--text-muted); margin-top: 16px; font-size: 0.875rem;">
-                    The Control Plane's <code style="background: var(--bg-card); padding: 2px 6px; border-radius: 4px;">max_depth(3)</code> policy 
+                    The Control Plane's <code
+                        style="background: var(--bg-card); padding: 2px 6px; border-radius: 4px;">max_depth(3)</code>
+                    policy
                     prevents unbounded delegation chains. This is cryptographically enforced.
                 </p>
             </div>
         </div>
-        
+
+        <!-- Multi-Sig Section -->
+        <div class="agent-card" style="margin-top: 48px; border-color: var(--accent-yellow); border-width: 2px;">
+            <div class="agent-header">
+                <div class="agent-icon" style="background: linear-gradient(135deg, var(--accent-yellow), #f59e0b);">🔐
+                </div>
+                <div>
+                    <div class="agent-title">Multi-Sig Approval (Sensitive Actions)</div>
+                    <div class="agent-subtitle">Human-in-the-Loop • M-of-N Approval Schemes</div>
+                </div>
+            </div>
+
+            <p style="color: var(--text-secondary); margin-bottom: 20px;">
+                Dangerous actions like <code
+                    style="background: var(--bg-card); padding: 2px 6px; border-radius: 4px;">delete</code> require
+                cryptographic approval from designated administrators. Approvals are bound to the specific request.
+            </p>
+
+            <div class="warrant" style="border-color: var(--accent-yellow);">
+                <div class="warrant-header">
+                    <span class="warrant-badge" style="background: var(--accent-yellow); color: black;">Multi-Sig</span>
+                    <span>1-of-1 Admin Approval</span>
+                </div>
+                <div class="warrant-field">
+                    <span class="warrant-key">action:</span>
+                    <span class="warrant-value">[delete, scale-down] ← dangerous!</span>
+                </div>
+                <div class="warrant-field">
+                    <span class="warrant-key">required_approvers:</span>
+                    <span class="warrant-value" style="color: var(--accent-yellow);">[admin_pubkey]</span>
+                </div>
+                <div class="warrant-field">
+                    <span class="warrant-key">min_approvals:</span>
+                    <span class="warrant-value" style="color: var(--accent-yellow);">1</span>
+                </div>
+            </div>
+
+            <div class="action-grid" style="margin-top: 20px;">
+                <div class="action-item" style="border-color: var(--accent-red);">
+                    <div class="action-status blocked">✗</div>
+                    <div class="action-content">
+                        <div class="action-name">delete staging-web (no approval) <span
+                                style="color: var(--accent-red); font-size: 0.7rem;">~8μs</span></div>
+                        <div class="action-reason">InsufficientApprovals: required 1, received 0</div>
+                    </div>
+                </div>
+                <div class="action-item" style="border-color: var(--accent-green);">
+                    <div class="action-status allowed">✓</div>
+                    <div class="action-content">
+                        <div class="action-name">delete staging-web (with approval) <span
+                                style="color: var(--accent-green); font-size: 0.7rem;">~45μs</span></div>
+                        <div class="action-reason">Admin signed request_hash → 1/1 approvals</div>
+                    </div>
+                </div>
+            </div>
+
+            <div
+                style="margin-top: 20px; padding: 16px; background: rgba(255, 204, 0, 0.1); border-radius: 8px; border: 1px dashed var(--accent-yellow);">
+                <strong style="color: var(--accent-yellow);">Multi-Agent Pattern:</strong>
+                <p style="color: var(--text-secondary); margin-top: 8px; font-size: 0.9rem;">
+                    Orchestrator → Worker A (routine ops) → Sub-Agent A1<br>
+                    Orchestrator → Worker B (with multi-sig) → requires Admin approval for delete<br>
+                    <br>
+                    <em>Approvals are cryptographically bound to (warrant_id, tool, args, holder_key). Stolen approvals
+                        are useless.</em>
+                </p>
+            </div>
+        </div>
+
         <!-- Key Insights -->
         <div class="insight-box">
             <div class="insight-title">Security Properties Demonstrated</div>
@@ -740,48 +900,67 @@
                     <div class="insight-icon">🔗</div>
                     <div class="insight-label"><strong>Session Binding</strong><br>Warrants linked by session</div>
                 </div>
+                <div class="insight-item">
+                    <div class="insight-icon">✍️</div>
+                    <div class="insight-label"><strong>Multi-Sig</strong><br>M-of-N approval for sensitive ops</div>
+                </div>
+                <div class="insight-item">
+                    <div class="insight-icon">⚡</div>
+                    <div class="insight-label"><strong>Fast Rejection</strong><br>~150ns short-circuit blocks</div>
+                </div>
             </div>
         </div>
-        
+
         <!-- Error Types -->
-        <div class="insight-box" style="margin-top: 24px; background: linear-gradient(135deg, rgba(255, 68, 102, 0.1), rgba(168, 85, 247, 0.1)); border-color: rgba(255, 68, 102, 0.3);">
+        <div class="insight-box"
+            style="margin-top: 24px; background: linear-gradient(135deg, rgba(255, 68, 102, 0.1), rgba(168, 85, 247, 0.1)); border-color: rgba(255, 68, 102, 0.3);">
             <div class="insight-title" style="color: var(--accent-red);">Specific Error Types (DX)</div>
             <p style="color: var(--text-secondary); margin-bottom: 20px; font-size: 0.9rem;">
                 Clear, actionable errors help developers debug issues at mint-time, not runtime.
             </p>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; text-align: left;">
-                <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
-                    <span style="color: var(--accent-red);">DepthExceeded</span><span style="color: var(--text-muted);">(4, 3)</span><br>
+            <div
+                style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; text-align: left;">
+                <div
+                    style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
+                    <span style="color: var(--accent-red);">DepthExceeded</span><span
+                        style="color: var(--text-muted);">(4, 3)</span><br>
                     <span style="color: var(--text-secondary);">delegation depth 4 exceeds max 3</span>
                 </div>
-                <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
+                <div
+                    style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
                     <span style="color: var(--accent-red);">RangeExpanded</span><br>
                     <span style="color: var(--text-secondary);">child max (200) exceeds parent (100)</span>
                 </div>
-                <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
+                <div
+                    style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
                     <span style="color: var(--accent-red);">PatternExpanded</span><br>
                     <span style="color: var(--text-secondary);">child "*" is broader than "staging-*"</span>
                 </div>
-                <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
+                <div
+                    style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
                     <span style="color: var(--accent-red);">EmptyResultSet</span><br>
                     <span style="color: var(--text-secondary);">NotOneOf excludes all from OneOf</span>
                 </div>
-                <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
+                <div
+                    style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
                     <span style="color: var(--accent-red);">IncompatibleConstraintTypes</span><br>
                     <span style="color: var(--text-secondary);">cannot attenuate Range to Pattern</span>
                 </div>
-                <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
+                <div
+                    style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
                     <span style="color: var(--accent-red);">WildcardExpansion</span><br>
                     <span style="color: var(--text-secondary);">cannot attenuate Pattern to Wildcard</span>
                 </div>
             </div>
         </div>
-        
+
         <footer>
             <p>Built with <a href="https://github.com/tenuo/tenuo">Tenuo</a> — Agent Capability Flow Control</p>
-            <p style="margin-top: 8px;">Run the demo: <code style="background: var(--bg-card); padding: 4px 8px; border-radius: 4px;">docker compose up orchestrator worker</code></p>
+            <p style="margin-top: 8px;">Run the demo: <code
+                    style="background: var(--bg-card); padding: 4px 8px; border-radius: 4px;">docker compose up orchestrator worker</code>
+            </p>
         </footer>
     </div>
 </body>
-</html>
 
+</html>
