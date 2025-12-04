@@ -15,7 +15,7 @@ use std::fs;
 use std::path::Path;
 use std::collections::HashMap;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n╔══════════════════════════════════════════════════════════════════╗");
@@ -119,9 +119,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    • Depth within max_depth limit");
     println!("    • All signatures valid");
 
+    let start = Instant::now();
     match authorizer.verify_chain(&chain) {
         Ok(result) => {
-            println!("\n  ✓ Chain verification PASSED");
+            let elapsed = start.elapsed();
+            println!("\n  ✓ Chain verification PASSED ({:.0?})", elapsed);
             println!("    • Chain length:  {}", result.chain_length);
             println!("    • Leaf depth:    {}", result.leaf_depth);
             println!("    • Root issuer:   {}", hex::encode(result.root_issuer.unwrap()));
@@ -218,6 +220,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut passed = 0;
     let mut failed = 0;
+    let mut total_auth_time = Duration::ZERO;
 
     for (name, tool, args_vec, expected, explanation) in test_cases {
         let args: HashMap<String, ConstraintValue> = args_vec.into_iter()
@@ -227,7 +230,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Sign the request (Proof-of-Possession)
         let signature = leaf_warrant.create_pop_signature(&worker_keypair, tool, &args)?;
         
+        let start = Instant::now();
         let result = leaf_warrant.authorize(tool, &args, Some(&signature));
+        let elapsed = start.elapsed();
+        total_auth_time += elapsed;
+        
         let allowed = result.is_ok();
         let status = if allowed == expected { "✓" } else { "✗" };
         let action_status = if allowed { "ALLOWED" } else { "BLOCKED" };
@@ -238,7 +245,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             failed += 1;
         }
         
-        println!("  {} {} → {}", status, name, action_status);
+        println!("  {} {} → {} ({:.0?})", status, name, action_status, elapsed);
         println!("      {}", explanation);
         if !allowed {
             if let Err(e) = result {
@@ -247,6 +254,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         println!();
     }
+    
+    let avg_time = total_auth_time / (passed + failed) as u32;
+    println!("  ───────────────────────────────────────────────────────────────");
+    println!("  Authorization performance: {:.0?} avg per check", avg_time);
 
     // =========================================================================
     // Step 5: Demonstrate delegation depth limits (max_depth)
@@ -374,6 +385,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let holder_sig = sensitive_warrant.create_pop_signature(&worker_keypair, "manage_infrastructure", &args_no_approval)?;
         
         // Try authorization with NO approvals
+        let start = Instant::now();
         let result = authorizer.authorize(
             sensitive_warrant,
             "manage_infrastructure",
@@ -381,11 +393,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(&holder_sig),
             &[], // No approvals!
         );
+        let elapsed = start.elapsed();
         
         match result {
             Ok(()) => println!("  ✗ UNEXPECTED: Action was allowed without approval!"),
             Err(e) => {
-                println!("  ✓ BLOCKED: {}", e);
+                println!("  ✓ BLOCKED ({:.0?}): {}", elapsed, e);
                 println!("    → Multi-sig approval is required for sensitive actions!");
             }
         }
@@ -431,6 +444,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("    ✓ Expires at: {}", approval.expires_at);
             
             // Now authorize with the approval
+            let start = Instant::now();
             let result = authorizer.authorize(
                 sensitive_warrant,
                 "manage_infrastructure",
@@ -438,10 +452,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Some(&holder_sig),
                 &[approval],
             );
+            let elapsed = start.elapsed();
             
             match result {
                 Ok(()) => {
-                    println!("\n  ✓ ALLOWED: Delete action authorized with admin approval");
+                    println!("\n  ✓ ALLOWED ({:.0?}): Delete action authorized with admin approval", elapsed);
                     println!("    → Multi-sig verification complete!");
                 }
                 Err(e) => println!("  ✗ UNEXPECTED ERROR: {}", e),
