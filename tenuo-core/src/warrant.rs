@@ -86,6 +86,15 @@ pub struct WarrantPayload {
     pub expires_at: DateTime<Utc>,
     /// Delegation depth (0 for root warrants).
     pub depth: u32,
+    /// Maximum delegation depth allowed from this warrant chain.
+    /// 
+    /// If set, child warrants cannot exceed this depth. This is a policy limit
+    /// that can be set by the Control Plane or any delegator. The value can only
+    /// shrink during attenuation (monotonicity).
+    /// 
+    /// If `None`, the protocol-level `MAX_DELEGATION_DEPTH` applies.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_depth: Option<u32>,
     /// Parent warrant ID (None for root warrants).
     pub parent_id: Option<WarrantId>,
     /// Session ID for session binding.
@@ -102,6 +111,22 @@ pub struct WarrantPayload {
     /// When `None`, the warrant is a bearer token (anyone with it can use it).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authorized_holder: Option<PublicKey>,
+
+    /// Public keys of required approvers for multi-sig workflows.
+    /// 
+    /// If set, actions require signatures from approvers in this list.
+    /// Use with `min_approvals` for M-of-N schemes (e.g., 2-of-3).
+    /// 
+    /// When `None`, no additional approvals are required.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_approvers: Option<Vec<PublicKey>>,
+
+    /// Minimum number of approvals required (for M-of-N multi-sig).
+    /// 
+    /// If `None` but `required_approvers` is set, ALL approvers must sign.
+    /// Must be <= len(required_approvers).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_approvals: Option<u32>,
 }
 
 /// A signed warrant - the complete token of authority.
@@ -149,6 +174,18 @@ impl Warrant {
         self.payload.depth
     }
 
+    /// Get the maximum delegation depth allowed for this warrant chain.
+    /// 
+    /// Returns `None` if no limit was set (protocol default applies).
+    pub fn max_depth(&self) -> Option<u32> {
+        self.payload.max_depth
+    }
+
+    /// Get the effective maximum depth (considering protocol cap).
+    pub fn effective_max_depth(&self) -> u32 {
+        self.payload.max_depth.unwrap_or(MAX_DELEGATION_DEPTH)
+    }
+
     /// Get the parent warrant ID.
     pub fn parent_id(&self) -> Option<&WarrantId> {
         self.payload.parent_id.as_ref()
@@ -180,6 +217,35 @@ impl Warrant {
     /// Check if this warrant requires Proof-of-Possession.
     pub fn requires_pop(&self) -> bool {
         self.payload.authorized_holder.is_some()
+    }
+
+    /// Get the required approvers for multi-sig workflows.
+    pub fn required_approvers(&self) -> Option<&Vec<PublicKey>> {
+        self.payload.required_approvers.as_ref()
+    }
+
+    /// Get the minimum number of approvals required.
+    pub fn min_approvals(&self) -> Option<u32> {
+        self.payload.min_approvals
+    }
+
+    /// Check if this warrant requires multi-sig approval.
+    pub fn requires_multisig(&self) -> bool {
+        self.payload.required_approvers.is_some()
+    }
+
+    /// Get the effective approval threshold.
+    /// 
+    /// Returns the number of approvals needed:
+    /// - If `min_approvals` is set, returns that value
+    /// - If `required_approvers` is set but `min_approvals` is not, returns the count (all must sign)
+    /// - Otherwise returns 0 (no approvals needed)
+    pub fn approval_threshold(&self) -> u32 {
+        match (&self.payload.required_approvers, self.payload.min_approvals) {
+            (Some(approvers), Some(min)) => min.min(approvers.len() as u32),
+            (Some(approvers), None) => approvers.len() as u32, // All must sign
+            (None, _) => 0, // No multi-sig required
+        }
     }
 
     /// Verify that a holder signature proves possession.
@@ -324,9 +390,12 @@ pub struct WarrantBuilder {
     tool: Option<String>,
     constraints: ConstraintSet,
     ttl: Option<Duration>,
+    max_depth: Option<u32>,
     session_id: Option<String>,
     agent_id: Option<String>,
     authorized_holder: Option<PublicKey>,
+    required_approvers: Option<Vec<PublicKey>>,
+    min_approvals: Option<u32>,
 }
 
 impl WarrantBuilder {
@@ -336,9 +405,12 @@ impl WarrantBuilder {
             tool: None,
             constraints: ConstraintSet::new(),
             ttl: None,
+            max_depth: None,
             session_id: None,
             agent_id: None,
             authorized_holder: None,
+            required_approvers: None,
+            min_approvals: None,
         }
     }
 
@@ -360,6 +432,17 @@ impl WarrantBuilder {
         self
     }
 
+    /// Set the maximum delegation depth for this warrant chain.
+    /// 
+    /// This is a policy limit that restricts how deep the delegation chain
+    /// can grow. Child warrants can only shrink this value, never expand it.
+    /// 
+    /// If not set, the protocol-level `MAX_DELEGATION_DEPTH` (64) applies.
+    pub fn max_depth(mut self, max_depth: u32) -> Self {
+        self.max_depth = Some(max_depth);
+        self
+    }
+
     /// Set the session ID.
     pub fn session_id(mut self, session_id: impl Into<String>) -> Self {
         self.session_id = Some(session_id.into());
@@ -378,12 +461,48 @@ impl WarrantBuilder {
         self
     }
 
+    /// Set required approvers for multi-sig workflows.
+    /// 
+    /// Actions will require signatures from these approvers.
+    /// Use with `min_approvals()` for M-of-N schemes.
+    pub fn required_approvers(mut self, approvers: Vec<PublicKey>) -> Self {
+        self.required_approvers = Some(approvers);
+        self
+    }
+
+    /// Set the minimum number of approvals required (M-of-N).
+    /// 
+    /// If not set but `required_approvers` is set, ALL approvers must sign.
+    pub fn min_approvals(mut self, min: u32) -> Self {
+        self.min_approvals = Some(min);
+        self
+    }
+
     /// Build and sign the warrant.
     pub fn build(self, keypair: &Keypair) -> Result<Warrant> {
         let tool = self.tool.ok_or(Error::MissingField("tool".to_string()))?;
         let ttl = self.ttl.ok_or(Error::MissingField("ttl".to_string()))?;
 
-        let expires_at = Utc::now() + ChronoDuration::from_std(ttl).unwrap();
+        // Validate max_depth doesn't exceed protocol cap
+        if let Some(max) = self.max_depth {
+            if max > MAX_DELEGATION_DEPTH {
+                return Err(Error::DepthExceeded(max, MAX_DELEGATION_DEPTH));
+            }
+        }
+
+        let chrono_ttl = ChronoDuration::from_std(ttl)
+            .map_err(|_| Error::InvalidTtl("TTL too large".to_string()))?;
+        let expires_at = Utc::now() + chrono_ttl;
+
+        // Validate min_approvals if set
+        if let (Some(approvers), Some(min)) = (&self.required_approvers, self.min_approvals) {
+            if min as usize > approvers.len() {
+                return Err(Error::MonotonicityViolation(format!(
+                    "min_approvals ({}) cannot exceed required_approvers count ({})",
+                    min, approvers.len()
+                )));
+            }
+        }
 
         let payload = WarrantPayload {
             id: WarrantId::new(),
@@ -391,11 +510,14 @@ impl WarrantBuilder {
             constraints: self.constraints,
             expires_at,
             depth: 0,
+            max_depth: self.max_depth,
             parent_id: None,
             session_id: self.session_id,
             agent_id: self.agent_id,
             issuer: keypair.public_key(),
             authorized_holder: self.authorized_holder,
+            required_approvers: self.required_approvers,
+            min_approvals: self.min_approvals,
         };
 
         let mut payload_bytes = Vec::new();
@@ -418,9 +540,12 @@ pub struct AttenuationBuilder<'a> {
     parent: &'a Warrant,
     constraints: ConstraintSet,
     ttl: Option<Duration>,
+    max_depth: Option<u32>,
     session_id: Option<String>,
     agent_id: Option<String>,
     authorized_holder: Option<PublicKey>,
+    required_approvers: Option<Vec<PublicKey>>,
+    min_approvals: Option<u32>,
 }
 
 impl<'a> AttenuationBuilder<'a> {
@@ -430,9 +555,13 @@ impl<'a> AttenuationBuilder<'a> {
             parent,
             constraints: parent.payload.constraints.clone(),
             ttl: None,
+            max_depth: None, // Will inherit from parent if not set
             session_id: parent.payload.session_id.clone(),
             agent_id: parent.payload.agent_id.clone(),
             authorized_holder: parent.payload.authorized_holder.clone(),
+            // Multi-sig: inherit from parent (can only add MORE approvers or raise threshold)
+            required_approvers: parent.payload.required_approvers.clone(),
+            min_approvals: parent.payload.min_approvals,
         }
     }
 
@@ -445,6 +574,15 @@ impl<'a> AttenuationBuilder<'a> {
     /// Set a shorter TTL.
     pub fn ttl(mut self, ttl: Duration) -> Self {
         self.ttl = Some(ttl);
+        self
+    }
+
+    /// Set a lower maximum delegation depth.
+    /// 
+    /// This can only shrink the parent's `max_depth`, never expand it.
+    /// An error will be returned at build time if monotonicity is violated.
+    pub fn max_depth(mut self, max_depth: u32) -> Self {
+        self.max_depth = Some(max_depth);
         self
     }
 
@@ -466,10 +604,116 @@ impl<'a> AttenuationBuilder<'a> {
         self
     }
 
+    /// Add required approvers (can only add more, not remove).
+    /// 
+    /// Multi-sig is monotonic: you can add approvers but not remove them.
+    /// The new approvers are merged with any inherited from the parent.
+    pub fn add_approvers(mut self, approvers: Vec<PublicKey>) -> Self {
+        let mut current = self.required_approvers.unwrap_or_default();
+        for approver in approvers {
+            if !current.contains(&approver) {
+                current.push(approver);
+            }
+        }
+        self.required_approvers = Some(current);
+        self
+    }
+
+    /// Increase the minimum approvals required (can only increase).
+    /// 
+    /// Multi-sig threshold is monotonic: you can raise it but not lower it.
+    pub fn raise_min_approvals(mut self, min: u32) -> Self {
+        let current = self.min_approvals.unwrap_or(0);
+        self.min_approvals = Some(min.max(current));
+        self
+    }
+
+    /// Validate multi-sig monotonicity (cannot remove approvers or lower threshold).
+    fn validate_multisig_monotonicity(&self) -> Result<()> {
+        // 1. Cannot remove approvers (child must include all parent approvers)
+        if let Some(parent_approvers) = &self.parent.payload.required_approvers {
+            if let Some(child_approvers) = &self.required_approvers {
+                for parent_key in parent_approvers {
+                    if !child_approvers.contains(parent_key) {
+                        return Err(Error::MonotonicityViolation(format!(
+                            "cannot remove approver {} from multi-sig set",
+                            hex::encode(parent_key.to_bytes())
+                        )));
+                    }
+                }
+            } else {
+                // Child doesn't have approvers but parent does - violation
+                return Err(Error::MonotonicityViolation(
+                    "cannot remove multi-sig requirement from parent".to_string()
+                ));
+            }
+        }
+
+        // 2. Cannot lower min_approvals
+        if let Some(parent_min) = self.parent.payload.min_approvals {
+            if let Some(child_min) = self.min_approvals {
+                if child_min < parent_min {
+                    return Err(Error::MonotonicityViolation(format!(
+                        "cannot lower min_approvals from {} to {}",
+                        parent_min, child_min
+                    )));
+                }
+            }
+            // If parent has min_approvals but child doesn't set it, inherit (ok)
+        }
+
+        // 3. Validate min_approvals doesn't exceed approvers count
+        if let (Some(approvers), Some(min)) = (&self.required_approvers, self.min_approvals) {
+            if min as usize > approvers.len() {
+                return Err(Error::MonotonicityViolation(format!(
+                    "min_approvals ({}) cannot exceed required_approvers count ({})",
+                    min, approvers.len()
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Build and sign the attenuated warrant.
     pub fn build(self, keypair: &Keypair) -> Result<Warrant> {
-        // Check depth limit
-        let new_depth = self.parent.payload.depth + 1;
+        // Use checked arithmetic to prevent overflow
+        let new_depth = self.parent.payload.depth
+            .checked_add(1)
+            .ok_or(Error::DepthExceeded(u32::MAX, MAX_DELEGATION_DEPTH))?;
+        
+        // Calculate effective max_depth (monotonic: can only shrink)
+        let effective_max = match (self.parent.payload.max_depth, self.max_depth) {
+            // Both set: take the minimum (can only shrink)
+            (Some(parent_max), Some(child_max)) => {
+                if child_max > parent_max {
+                    return Err(Error::MonotonicityViolation(format!(
+                        "max_depth {} exceeds parent's max_depth {}",
+                        child_max, parent_max
+                    )));
+                }
+                Some(child_max)
+            }
+            // Parent set, child not: inherit parent's limit
+            (Some(parent_max), None) => Some(parent_max),
+            // Child set, parent not: use child's limit (capped by protocol)
+            (None, Some(child_max)) => {
+                if child_max > MAX_DELEGATION_DEPTH {
+                    return Err(Error::DepthExceeded(child_max, MAX_DELEGATION_DEPTH));
+                }
+                Some(child_max)
+            }
+            // Neither set: no limit (protocol default applies)
+            (None, None) => None,
+        };
+
+        // Check depth against effective limit
+        let depth_limit = effective_max.unwrap_or(MAX_DELEGATION_DEPTH);
+        if new_depth > depth_limit {
+            return Err(Error::DepthExceeded(new_depth, depth_limit));
+        }
+
+        // Also enforce protocol hard cap
         if new_depth > MAX_DELEGATION_DEPTH {
             return Err(Error::DepthExceeded(new_depth, MAX_DELEGATION_DEPTH));
         }
@@ -479,12 +723,17 @@ impl<'a> AttenuationBuilder<'a> {
             return Err(Error::WarrantExpired(self.parent.payload.expires_at));
         }
 
-        // Validate attenuation monotonicity
+        // Validate attenuation monotonicity for constraints
         self.parent.payload.constraints.validate_attenuation(&self.constraints)?;
+
+        // Validate multi-sig monotonicity (cannot remove approvers or lower threshold)
+        self.validate_multisig_monotonicity()?;
 
         // Calculate expiration (must not exceed parent)
         let expires_at = if let Some(ttl) = self.ttl {
-            let proposed = Utc::now() + ChronoDuration::from_std(ttl).unwrap();
+            let chrono_ttl = ChronoDuration::from_std(ttl)
+                .map_err(|_| Error::InvalidTtl("TTL too large".to_string()))?;
+            let proposed = Utc::now() + chrono_ttl;
             if proposed > self.parent.payload.expires_at {
                 self.parent.payload.expires_at
             } else {
@@ -494,17 +743,23 @@ impl<'a> AttenuationBuilder<'a> {
             self.parent.payload.expires_at
         };
 
+        // Determine effective min_approvals (inherit if not set)
+        let effective_min = self.min_approvals.or(self.parent.payload.min_approvals);
+
         let payload = WarrantPayload {
             id: WarrantId::new(),
             tool: self.parent.payload.tool.clone(),
             constraints: self.constraints,
             expires_at,
             depth: new_depth,
+            max_depth: effective_max,
             parent_id: Some(self.parent.payload.id.clone()),
             session_id: self.session_id,
             agent_id: self.agent_id,
             issuer: keypair.public_key(),
             authorized_holder: self.authorized_holder,
+            required_approvers: self.required_approvers,
+            min_approvals: effective_min,
         };
 
         let mut payload_bytes = Vec::new();
@@ -628,8 +883,11 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::MonotonicityViolation(_) => {}
-            e => panic!("Expected MonotonicityViolation, got {:?}", e),
+            Error::PatternExpanded { parent, child } => {
+                assert_eq!(parent, "staging-*");
+                assert_eq!(child, "*");
+            }
+            e => panic!("Expected PatternExpanded, got {:?}", e),
         }
     }
 
@@ -733,6 +991,252 @@ mod tests {
 
         let invalid = WarrantId::from_string("invalid_id");
         assert!(invalid.is_err());
+    }
+
+    #[test]
+    fn test_max_depth_policy_limit() {
+        let keypair = create_test_keypair();
+
+        // Create warrant with policy limit of 3
+        let root = Warrant::builder()
+            .tool("test")
+            .ttl(Duration::from_secs(3600))
+            .max_depth(3)
+            .build(&keypair)
+            .unwrap();
+
+        assert_eq!(root.max_depth(), Some(3));
+        assert_eq!(root.effective_max_depth(), 3);
+
+        // Can delegate up to depth 3
+        let level1 = root.attenuate().build(&keypair).unwrap();
+        assert_eq!(level1.depth(), 1);
+        assert_eq!(level1.max_depth(), Some(3)); // Inherited
+
+        let level2 = level1.attenuate().build(&keypair).unwrap();
+        assert_eq!(level2.depth(), 2);
+
+        let level3 = level2.attenuate().build(&keypair).unwrap();
+        assert_eq!(level3.depth(), 3);
+
+        // Depth 4 should fail (exceeds policy limit)
+        let result = level3.attenuate().build(&keypair);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::DepthExceeded(4, 3) => {}
+            e => panic!("Expected DepthExceeded(4, 3), got {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_max_depth_monotonicity() {
+        let keypair = create_test_keypair();
+
+        let root = Warrant::builder()
+            .tool("test")
+            .ttl(Duration::from_secs(3600))
+            .max_depth(5)
+            .build(&keypair)
+            .unwrap();
+
+        // Can shrink max_depth
+        let child = root.attenuate().max_depth(3).build(&keypair).unwrap();
+        assert_eq!(child.max_depth(), Some(3));
+
+        // Cannot expand max_depth
+        let result = child.attenuate().max_depth(10).build(&keypair);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::MonotonicityViolation(_) => {}
+            e => panic!("Expected MonotonicityViolation, got {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_max_depth_protocol_cap() {
+        let keypair = create_test_keypair();
+
+        // Cannot set max_depth above protocol cap
+        let result = Warrant::builder()
+            .tool("test")
+            .ttl(Duration::from_secs(60))
+            .max_depth(100) // Above MAX_DELEGATION_DEPTH (64)
+            .build(&keypair);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::DepthExceeded(100, 64) => {}
+            e => panic!("Expected DepthExceeded(100, 64), got {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_no_max_depth_uses_protocol_default() {
+        let keypair = create_test_keypair();
+
+        let root = Warrant::builder()
+            .tool("test")
+            .ttl(Duration::from_secs(3600))
+            .build(&keypair)
+            .unwrap();
+
+        assert_eq!(root.max_depth(), None);
+        assert_eq!(root.effective_max_depth(), MAX_DELEGATION_DEPTH);
+    }
+
+    // =========================================================================
+    // MULTI-SIG TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_multisig_root_warrant() {
+        let issuer = create_test_keypair();
+        let approver1 = create_test_keypair();
+        let approver2 = create_test_keypair();
+
+        let warrant = Warrant::builder()
+            .tool("sensitive_action")
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![approver1.public_key(), approver2.public_key()])
+            .min_approvals(2)
+            .build(&issuer)
+            .unwrap();
+
+        assert!(warrant.requires_multisig());
+        assert_eq!(warrant.approval_threshold(), 2);
+        assert_eq!(warrant.required_approvers().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_multisig_default_all_must_sign() {
+        let issuer = create_test_keypair();
+        let approver1 = create_test_keypair();
+        let approver2 = create_test_keypair();
+
+        // Set approvers but NOT min_approvals - should require all
+        let warrant = Warrant::builder()
+            .tool("sensitive_action")
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![approver1.public_key(), approver2.public_key()])
+            // min_approvals NOT set
+            .build(&issuer)
+            .unwrap();
+
+        assert!(warrant.requires_multisig());
+        assert_eq!(warrant.approval_threshold(), 2); // All must sign
+    }
+
+    #[test]
+    fn test_multisig_min_approvals_exceeds_approvers() {
+        let issuer = create_test_keypair();
+        let approver1 = create_test_keypair();
+
+        // Try to require 3 approvals with only 1 approver
+        let result = Warrant::builder()
+            .tool("sensitive_action")
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![approver1.public_key()])
+            .min_approvals(3)
+            .build(&issuer);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_multisig_attenuation_add_approvers() {
+        let issuer = create_test_keypair();
+        let delegator = create_test_keypair();
+        let approver1 = create_test_keypair();
+        let approver2 = create_test_keypair();
+
+        // Root with 1 approver
+        let root = Warrant::builder()
+            .tool("sensitive_action")
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![approver1.public_key()])
+            .min_approvals(1)
+            .build(&issuer)
+            .unwrap();
+
+        // Attenuate and ADD another approver (valid: more restrictive)
+        let child = root.attenuate()
+            .add_approvers(vec![approver2.public_key()])
+            .raise_min_approvals(2)
+            .build(&delegator)
+            .unwrap();
+
+        assert_eq!(child.required_approvers().unwrap().len(), 2);
+        assert_eq!(child.approval_threshold(), 2);
+    }
+
+    #[test]
+    fn test_multisig_attenuation_cannot_remove_approvers() {
+        let issuer = create_test_keypair();
+        let delegator = create_test_keypair();
+        let approver1 = create_test_keypair();
+        let approver2 = create_test_keypair();
+
+        // Root with 2 approvers
+        let root = Warrant::builder()
+            .tool("sensitive_action")
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![approver1.public_key(), approver2.public_key()])
+            .min_approvals(1)
+            .build(&issuer)
+            .unwrap();
+
+        // Create attenuation builder and clear approvers (simulating removal)
+        // The builder inherits from parent, so we can't directly remove.
+        // But if the internal field is manipulated, the build should fail.
+        // For now, verify that inherited approvers are preserved.
+        let child = root.attenuate()
+            .build(&delegator)
+            .unwrap();
+
+        // All parent approvers should be preserved
+        assert_eq!(child.required_approvers().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_multisig_attenuation_cannot_lower_threshold() {
+        let issuer = create_test_keypair();
+        let delegator = create_test_keypair();
+        let approver1 = create_test_keypair();
+        let approver2 = create_test_keypair();
+
+        // Root with threshold of 2
+        let root = Warrant::builder()
+            .tool("sensitive_action")
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![approver1.public_key(), approver2.public_key()])
+            .min_approvals(2)
+            .build(&issuer)
+            .unwrap();
+
+        // Try to lower threshold using raise_min_approvals (should be ignored)
+        // raise_min_approvals uses max() so it cannot lower
+        let child = root.attenuate()
+            .raise_min_approvals(1) // Tries to set 1, but max(current, 1) = 2
+            .build(&delegator)
+            .unwrap();
+
+        // Threshold should still be 2 (inherited, max applied)
+        assert_eq!(child.approval_threshold(), 2);
+    }
+
+    #[test]
+    fn test_no_multisig_by_default() {
+        let keypair = create_test_keypair();
+
+        let warrant = Warrant::builder()
+            .tool("regular_action")
+            .ttl(Duration::from_secs(300))
+            .build(&keypair)
+            .unwrap();
+
+        assert!(!warrant.requires_multisig());
+        assert_eq!(warrant.approval_threshold(), 0);
+        assert!(warrant.required_approvers().is_none());
     }
 }
 

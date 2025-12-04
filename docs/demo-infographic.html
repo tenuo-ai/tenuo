@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tenuo - Capability Delegation Flow</title>
+    <title>Tenuo - Capability Delegation Flow (with Depth Limits)</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
         
@@ -428,7 +428,7 @@
     <div class="container">
         <header>
             <div class="logo">Tenuo</div>
-            <div class="tagline">Capability Delegation Flow</div>
+            <div class="tagline">Capability Delegation with Depth Limits</div>
         </header>
         
         <div class="flow-container">
@@ -449,7 +449,7 @@
                 <div class="warrant">
                     <div class="warrant-header">
                         <span class="warrant-badge root">Root Warrant</span>
-                        <span>depth: 0</span>
+                        <span>depth: 0 / 3</span>
                     </div>
                     <div class="warrant-field">
                         <span class="warrant-key">tool:</span>
@@ -461,11 +461,19 @@
                     </div>
                     <div class="warrant-field">
                         <span class="warrant-key">action:</span>
-                        <span class="warrant-value">*</span>
+                        <span class="warrant-value">* (Wildcard)</span>
                     </div>
                     <div class="warrant-field">
                         <span class="warrant-key">budget:</span>
                         <span class="warrant-value">≤ $10,000</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">max_depth:</span>
+                        <span class="warrant-value" style="color: var(--accent-yellow);">3 ← policy limit</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">session_id:</span>
+                        <span class="warrant-value" style="color: var(--accent-cyan);">sess_abc123...</span>
                     </div>
                     <div class="warrant-field">
                         <span class="warrant-key">ttl:</span>
@@ -501,7 +509,7 @@
                     <div class="warrant-header">
                         <span class="warrant-badge attenuated">Attenuated</span>
                         <span style="background: rgba(168, 85, 247, 0.3); padding: 2px 8px; border-radius: 4px; margin-left: 8px;">Holder-Bound</span>
-                        <span>depth: 1</span>
+                        <span>depth: 1 / 3</span>
                     </div>
                     <div class="warrant-field">
                         <span class="warrant-key">tool:</span>
@@ -513,11 +521,19 @@
                     </div>
                     <div class="warrant-field">
                         <span class="warrant-key">action:</span>
-                        <span class="warrant-value narrowed">upgrade | restart ← narrowed</span>
+                        <span class="warrant-value narrowed">[upgrade, restart] ← narrowed from * (OneOf)</span>
                     </div>
                     <div class="warrant-field">
                         <span class="warrant-key">budget:</span>
                         <span class="warrant-value narrowed">≤ $1,000 ← narrowed</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">max_depth:</span>
+                        <span class="warrant-value unchanged">3 (inherited)</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">session_id:</span>
+                        <span class="warrant-value unchanged">sess_abc123... (inherited)</span>
                     </div>
                     <div class="warrant-field">
                         <span class="warrant-key">ttl:</span>
@@ -534,10 +550,15 @@
                 </div>
                 
                 <div class="chain-viz">
-                    <div class="chain-block root">Root Warrant</div>
+                    <div class="chain-block root">Root (d=0)</div>
                     <span class="chain-arrow">→</span>
-                    <div class="chain-block child">Worker Warrant</div>
-                    <span style="color: var(--text-muted); margin-left: 12px;">= Chain</span>
+                    <div class="chain-block child">Worker (d=1)</div>
+                    <span class="chain-arrow">→</span>
+                    <div class="chain-block child">Sub-Agent (d=2)</div>
+                    <span class="chain-arrow">→</span>
+                    <div class="chain-block child" style="background: rgba(0, 255, 136, 0.2); border-color: var(--accent-green);">d=3 ✓</div>
+                    <span class="chain-arrow" style="color: var(--accent-red);">✗</span>
+                    <div class="chain-block" style="background: rgba(255, 68, 102, 0.2); border-color: var(--accent-red); color: var(--accent-red);">d=4 ✗</div>
                 </div>
             </div>
             
@@ -561,7 +582,7 @@
                 
                 <p style="color: var(--text-secondary); margin-bottom: 16px;">
                     Verifies the chain and <strong style="color: var(--accent-purple);">signs each request</strong> with its private key 
-                    to prove it's the authorized holder. Stolen warrants are useless without the key.
+                    to prove it's the authorized holder. Can delegate further up to max_depth.
                 </p>
                 
                 <div class="verification-badge">
@@ -616,11 +637,84 @@
                     </div>
                 </div>
             </div>
+            
+            <!-- Connector 3 -->
+            <div class="connector">
+                <div class="connector-line">
+                    <div class="connector-arrow"></div>
+                </div>
+                <div class="connector-label">Delegates to Sub-Agent (depth 2)</div>
+            </div>
+            
+            <!-- Sub-Agent -->
+            <div class="agent-card" style="border-color: var(--accent-green);">
+                <div class="agent-header">
+                    <div class="agent-icon" style="background: linear-gradient(135deg, #22c55e, #16a34a);">🔧</div>
+                    <div>
+                        <div class="agent-title">Sub-Agent (Tool Handler)</div>
+                        <div class="agent-subtitle">Depth 2/3 • Can delegate one more time</div>
+                    </div>
+                </div>
+                
+                <div class="warrant">
+                    <div class="warrant-header">
+                        <span class="warrant-badge attenuated">Attenuated</span>
+                        <span>depth: 2 / 3</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">budget:</span>
+                        <span class="warrant-value narrowed">≤ $500 ← further narrowed</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">max_depth:</span>
+                        <span class="warrant-value unchanged">3 (inherited)</span>
+                    </div>
+                    <div class="warrant-field">
+                        <span class="warrant-key">session_id:</span>
+                        <span class="warrant-value unchanged">sess_abc123... (same session)</span>
+                    </div>
+                </div>
+                
+                <p style="color: var(--text-secondary); margin: 16px 0;">
+                    Sub-agent can delegate one more level (to depth 3)...
+                </p>
+            </div>
+            
+            <!-- Connector 4 - Blocked -->
+            <div class="connector">
+                <div class="connector-line" style="background: linear-gradient(to bottom, var(--accent-green), var(--accent-red));">
+                    <div class="connector-arrow" style="border-top-color: var(--accent-red);"></div>
+                </div>
+                <div class="connector-label" style="border-color: var(--accent-red); color: var(--accent-red);">
+                    ✗ Depth 4 BLOCKED (exceeds max_depth)
+                </div>
+            </div>
+            
+            <!-- Depth Exceeded -->
+            <div class="agent-card" style="border-color: var(--accent-red); opacity: 0.6;">
+                <div class="agent-header">
+                    <div class="agent-icon" style="background: linear-gradient(135deg, var(--accent-red), #dc2626);">🚫</div>
+                    <div>
+                        <div class="agent-title" style="color: var(--accent-red);">Depth Exceeded!</div>
+                        <div class="agent-subtitle">Cannot delegate beyond max_depth(3)</div>
+                    </div>
+                </div>
+                
+                <div style="background: rgba(255, 68, 102, 0.1); border: 1px dashed var(--accent-red); border-radius: 8px; padding: 16px; font-family: 'JetBrains Mono', monospace; font-size: 0.85rem;">
+                    <span style="color: var(--accent-red);">Error:</span> DepthExceeded(4, 3)<br>
+                    <span style="color: var(--text-muted);">// Tried to create depth 4, but max_depth is 3</span>
+                </div>
+                
+                <p style="color: var(--text-muted); margin-top: 16px; font-size: 0.875rem;">
+                    The Control Plane's <code style="background: var(--bg-card); padding: 2px 6px; border-radius: 4px;">max_depth(3)</code> policy 
+                    prevents unbounded delegation chains. This is cryptographically enforced.
+                </p>
+            </div>
         </div>
         
         <!-- Key Insights -->
         <div class="insight-box">
-            <div class="insight-title">Why This Matters</div>
+            <div class="insight-title">Security Properties Demonstrated</div>
             <div class="insight-grid">
                 <div class="insight-item">
                     <div class="insight-icon">🔒</div>
@@ -639,8 +733,46 @@
                     <div class="insight-label"><strong>Holder-Bound</strong><br>Stolen warrants useless</div>
                 </div>
                 <div class="insight-item">
-                    <div class="insight-icon">⚡</div>
-                    <div class="insight-label"><strong>Fast</strong><br>&lt;100μs verification</div>
+                    <div class="insight-icon">📏</div>
+                    <div class="insight-label"><strong>Depth Limits</strong><br>max_depth prevents runaway</div>
+                </div>
+                <div class="insight-item">
+                    <div class="insight-icon">🔗</div>
+                    <div class="insight-label"><strong>Session Binding</strong><br>Warrants linked by session</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Error Types -->
+        <div class="insight-box" style="margin-top: 24px; background: linear-gradient(135deg, rgba(255, 68, 102, 0.1), rgba(168, 85, 247, 0.1)); border-color: rgba(255, 68, 102, 0.3);">
+            <div class="insight-title" style="color: var(--accent-red);">Specific Error Types (DX)</div>
+            <p style="color: var(--text-secondary); margin-bottom: 20px; font-size: 0.9rem;">
+                Clear, actionable errors help developers debug issues at mint-time, not runtime.
+            </p>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; text-align: left;">
+                <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
+                    <span style="color: var(--accent-red);">DepthExceeded</span><span style="color: var(--text-muted);">(4, 3)</span><br>
+                    <span style="color: var(--text-secondary);">delegation depth 4 exceeds max 3</span>
+                </div>
+                <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
+                    <span style="color: var(--accent-red);">RangeExpanded</span><br>
+                    <span style="color: var(--text-secondary);">child max (200) exceeds parent (100)</span>
+                </div>
+                <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
+                    <span style="color: var(--accent-red);">PatternExpanded</span><br>
+                    <span style="color: var(--text-secondary);">child "*" is broader than "staging-*"</span>
+                </div>
+                <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
+                    <span style="color: var(--accent-red);">EmptyResultSet</span><br>
+                    <span style="color: var(--text-secondary);">NotOneOf excludes all from OneOf</span>
+                </div>
+                <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
+                    <span style="color: var(--accent-red);">IncompatibleConstraintTypes</span><br>
+                    <span style="color: var(--text-secondary);">cannot attenuate Range to Pattern</span>
+                </div>
+                <div style="background: rgba(0,0,0,0.3); padding: 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;">
+                    <span style="color: var(--accent-red);">WildcardExpansion</span><br>
+                    <span style="color: var(--text-secondary);">cannot attenuate Pattern to Wildcard</span>
                 </div>
             </div>
         </div>

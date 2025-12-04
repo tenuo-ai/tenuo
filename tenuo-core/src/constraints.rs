@@ -8,28 +8,34 @@
 //!
 //! | Type | Description | Example |
 //! |------|-------------|---------|
+//! | `Wildcard` | Matches anything | `*` (unconstrained) |
 //! | `Pattern` | Glob matching | `staging-*` |
 //! | `Regex` | Regular expression | `^prod-[a-z]+$` |
 //! | `Exact` | Exact value | `"staging-web"` or `42` |
 //! | `OneOf` | Value in set | `["a", "b", "c"]` |
+//! | `NotOneOf` | Value NOT in set | `!["prod", "secure"]` |
 //! | `Range` | Numeric/date bounds | `0..10000` |
 //! | `Contains` | List contains value | `["admin"] ⊆ roles` |
 //! | `Subset` | List is subset | `requested ⊆ allowed` |
 //! | `All` | All constraints must match | `AND(a, b, c)` |
 //! | `Any` | At least one must match | `OR(a, b, c)` |
-//! | `Not` | Negation | `NOT(pattern)` |
+//! | `Not` | Negation (unsafe) | `NOT(pattern)` - avoid |
 //! | `Cel` | CEL expression | `amount < 10000` |
 
 use crate::error::{Error, Result};
 use glob::Pattern as GlobPattern;
 use regex::Regex as RegexPattern;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// A constraint on an argument value.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "value")]
 pub enum Constraint {
+    /// Wildcard - matches anything. The universal superset.
+    /// Can be attenuated to any other constraint type.
+    Wildcard(Wildcard),
+    
     /// Glob-style pattern matching (e.g., "staging-*").
     Pattern(Pattern),
     
@@ -41,6 +47,16 @@ pub enum Constraint {
     
     /// One of a set of allowed values.
     OneOf(OneOf),
+    
+    /// Value must NOT be in the excluded set ("carving holes").
+    /// 
+    /// Use this to exclude specific values from a broader allowlist.
+    /// Must be combined with a positive constraint (Wildcard, Pattern, etc.)
+    /// in a parent warrant.
+    /// 
+    /// **Security Rule**: Never start with negation! Always start with
+    /// a positive allowlist and use NotOneOf to "carve holes" in children.
+    NotOneOf(NotOneOf),
     
     /// Numeric range constraint.
     Range(Range),
@@ -68,10 +84,12 @@ impl Constraint {
     /// Check if this constraint is satisfied by the given value.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
         match self {
+            Constraint::Wildcard(_) => Ok(true), // Wildcard matches everything
             Constraint::Pattern(p) => p.matches(value),
             Constraint::Regex(r) => r.matches(value),
             Constraint::Exact(e) => e.matches(value),
             Constraint::OneOf(o) => o.matches(value),
+            Constraint::NotOneOf(n) => n.matches(value),
             Constraint::Range(r) => r.matches(value),
             Constraint::Contains(c) => c.matches(value),
             Constraint::Subset(s) => s.matches(value),
@@ -88,6 +106,14 @@ impl Constraint {
     /// Returns `Err` if the child would expand capabilities.
     pub fn validate_attenuation(&self, child: &Constraint) -> Result<()> {
         match (self, child) {
+            // Wildcard can attenuate to ANYTHING (it's the universal superset)
+            (Constraint::Wildcard(_), _) => Ok(()),
+            
+            // Nothing can attenuate TO Wildcard (would expand permissions)
+            (_, Constraint::Wildcard(_)) => Err(Error::WildcardExpansion {
+                parent_type: self.type_name().to_string(),
+            }),
+            
             // Pattern can narrow to Pattern or Exact
             (Constraint::Pattern(parent), Constraint::Pattern(child_pat)) => {
                 parent.validate_attenuation(child_pat)
@@ -96,10 +122,9 @@ impl Constraint {
                 if parent.matches(&child_exact.value)? {
                     Ok(())
                 } else {
-                    Err(Error::MonotonicityViolation(format!(
-                        "exact value '{:?}' does not match parent pattern '{}'",
-                        child_exact.value, parent.pattern
-                    )))
+                    Err(Error::ValueNotInParentSet {
+                        value: format!("{:?}", child_exact.value),
+                    })
                 }
             }
             
@@ -111,10 +136,9 @@ impl Constraint {
                 if parent.matches(&child_exact.value)? {
                     Ok(())
                 } else {
-                    Err(Error::MonotonicityViolation(format!(
-                        "exact value '{:?}' does not match parent regex '{}'",
-                        child_exact.value, parent.pattern
-                    )))
+                    Err(Error::ValueNotInParentSet {
+                        value: format!("{:?}", child_exact.value),
+                    })
                 }
             }
             
@@ -123,10 +147,10 @@ impl Constraint {
                 if parent.value == child.value {
                     Ok(())
                 } else {
-                    Err(Error::MonotonicityViolation(format!(
-                        "exact value '{:?}' differs from parent '{:?}'",
-                        child.value, parent.value
-                    )))
+                    Err(Error::ExactValueMismatch {
+                        parent: format!("{:?}", parent.value),
+                        child: format!("{:?}", child.value),
+                    })
                 }
             }
             
@@ -138,11 +162,29 @@ impl Constraint {
                 if parent.contains(&child.value) {
                     Ok(())
                 } else {
-                    Err(Error::MonotonicityViolation(format!(
-                        "exact value '{:?}' not in parent set",
-                        child.value
-                    )))
+                    Err(Error::ValueNotInParentSet {
+                        value: format!("{:?}", child.value),
+                    })
                 }
+            }
+            // OneOf can narrow to NotOneOf (carving holes from the allowed set)
+            (Constraint::OneOf(parent), Constraint::NotOneOf(child)) => {
+                // Warn if this would result in an empty set (paradox)
+                let remaining: Vec<_> = parent.values.iter()
+                    .filter(|v| !child.excluded.contains(v))
+                    .collect();
+                if remaining.is_empty() {
+                    return Err(Error::EmptyResultSet {
+                        parent_type: "OneOf".to_string(),
+                        count: parent.values.len(),
+                    });
+                }
+                Ok(())
+            }
+            
+            // NotOneOf can add more exclusions (carving more holes)
+            (Constraint::NotOneOf(parent), Constraint::NotOneOf(child)) => {
+                parent.validate_attenuation(child)
             }
             
             // Range can narrow to smaller Range
@@ -171,11 +213,29 @@ impl Constraint {
             }
             
             // Any other combination is invalid
-            _ => Err(Error::MonotonicityViolation(format!(
-                "incompatible constraint types for attenuation: {:?} -> {:?}",
-                std::mem::discriminant(self),
-                std::mem::discriminant(child)
-            ))),
+            _ => Err(Error::IncompatibleConstraintTypes {
+                parent_type: self.type_name().to_string(),
+                child_type: child.type_name().to_string(),
+            }),
+        }
+    }
+    
+    /// Get the type name of this constraint for error messages.
+    pub fn type_name(&self) -> &'static str {
+        match self {
+            Constraint::Wildcard(_) => "Wildcard",
+            Constraint::Pattern(_) => "Pattern",
+            Constraint::Regex(_) => "Regex",
+            Constraint::Exact(_) => "Exact",
+            Constraint::OneOf(_) => "OneOf",
+            Constraint::NotOneOf(_) => "NotOneOf",
+            Constraint::Range(_) => "Range",
+            Constraint::Contains(_) => "Contains",
+            Constraint::Subset(_) => "Subset",
+            Constraint::All(_) => "All",
+            Constraint::Any(_) => "Any",
+            Constraint::Not(_) => "Not",
+            Constraint::Cel(_) => "Cel",
         }
     }
 }
@@ -185,6 +245,9 @@ impl Constraint {
 // ============================================================================
 
 /// Value that can be matched against constraints.
+/// 
+/// Note: Object uses BTreeMap for deterministic serialization order.
+/// This ensures canonical CBOR encoding for consistent warrant IDs.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum ConstraintValue {
@@ -193,7 +256,7 @@ pub enum ConstraintValue {
     Float(f64),
     Boolean(bool),
     List(Vec<ConstraintValue>),
-    Object(HashMap<String, ConstraintValue>),
+    Object(BTreeMap<String, ConstraintValue>),
     Null,
 }
 
@@ -299,6 +362,46 @@ impl std::fmt::Display for ConstraintValue {
 }
 
 // ============================================================================
+// Wildcard Constraint (Universal Superset)
+// ============================================================================
+
+/// Wildcard constraint - matches any value.
+///
+/// This is the universal superset. It can be attenuated to ANY other
+/// constraint type, making it ideal for root warrants where you want
+/// to leave a field unconstrained but allow children to restrict it.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // Root warrant: allow any action
+/// .constraint("action", Wildcard)
+///
+/// // Child warrant: narrow to specific actions
+/// .constraint("action", OneOf::new(vec!["upgrade", "restart"]))
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct Wildcard;
+
+impl Wildcard {
+    /// Create a new wildcard constraint.
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Wildcard matches any value.
+    pub fn matches(&self, _value: &ConstraintValue) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+impl From<Wildcard> for Constraint {
+    fn from(w: Wildcard) -> Self {
+        Constraint::Wildcard(w)
+    }
+}
+
+// ============================================================================
 // Pattern Constraint (Glob)
 // ============================================================================
 
@@ -360,18 +463,18 @@ impl Pattern {
             && !child_parts.is_empty()
             && !child_parts[0].starts_with(parent_parts[0])
         {
-            return Err(Error::MonotonicityViolation(format!(
-                "pattern '{}' is not a subset of '{}'",
-                child.pattern, self.pattern
-            )));
+            return Err(Error::PatternExpanded {
+                parent: self.pattern.clone(),
+                child: child.pattern.clone(),
+            });
         }
 
         // Child should have same or fewer wildcards
         if child.pattern.matches('*').count() > self.pattern.matches('*').count() {
-            return Err(Error::MonotonicityViolation(format!(
-                "pattern '{}' has more wildcards than parent '{}'",
-                child.pattern, self.pattern
-            )));
+            return Err(Error::PatternExpanded {
+                parent: self.pattern.clone(),
+                child: child.pattern.clone(),
+            });
         }
 
         Ok(())
@@ -522,10 +625,9 @@ impl OneOf {
     pub fn validate_attenuation(&self, child: &OneOf) -> Result<()> {
         for v in &child.values {
             if !self.contains(v) {
-                return Err(Error::MonotonicityViolation(format!(
-                    "value '{:?}' in child is not in parent set",
-                    v
-                )));
+                return Err(Error::ValueNotInParentSet {
+                    value: format!("{:?}", v),
+                });
             }
         }
         Ok(())
@@ -535,6 +637,93 @@ impl OneOf {
 impl From<OneOf> for Constraint {
     fn from(o: OneOf) -> Self {
         Constraint::OneOf(o)
+    }
+}
+
+// ============================================================================
+// NotOneOf Constraint (Exclusion / "Carving Holes")
+// ============================================================================
+
+/// Exclusion constraint - value must NOT be in the excluded set.
+///
+/// This is the safe way to do negation. Use it to "carve holes" from a
+/// broader allowlist defined in a parent warrant.
+///
+/// # Security Rule: Never Start with Negation
+///
+/// **Bad (Blacklisting)**:
+/// ```rust,ignore
+/// // Root: Exclude prod-db
+/// .constraint("cluster", NotOneOf::new(vec!["prod-db"]))
+/// // Risk: New cluster "secure-vault" is automatically allowed!
+/// ```
+///
+/// **Good (Whitelisting with Exceptions)**:
+/// ```rust,ignore
+/// // Root: Allow all staging clusters
+/// .constraint("cluster", Pattern::new("staging-*")?)
+///
+/// // Child: Exclude the DB cluster
+/// .constraint("cluster", NotOneOf::new(vec!["staging-db"]))
+/// // Safety: Only staging clusters are ever considered
+/// ```
+///
+/// # Attenuation
+///
+/// Child can exclude MORE values (grow the exclusion set).
+/// This shrinks the effective allowed set, maintaining monotonicity.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct NotOneOf {
+    /// Values to exclude.
+    pub excluded: Vec<ConstraintValue>,
+}
+
+impl NotOneOf {
+    /// Create a new exclusion constraint.
+    pub fn new(excluded: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            excluded: excluded.into_iter()
+                .map(|s| ConstraintValue::String(s.into()))
+                .collect(),
+        }
+    }
+
+    /// Create from any constraint values.
+    pub fn from_values(excluded: impl IntoIterator<Item = impl Into<ConstraintValue>>) -> Self {
+        Self {
+            excluded: excluded.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    /// Check if a value is excluded.
+    pub fn is_excluded(&self, value: &ConstraintValue) -> bool {
+        self.excluded.contains(value)
+    }
+
+    /// Check if a value passes (is NOT excluded).
+    pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
+        Ok(!self.is_excluded(value))
+    }
+
+    /// Validate attenuation: child can exclude MORE values.
+    ///
+    /// More exclusions = smaller allowed set = valid attenuation.
+    pub fn validate_attenuation(&self, child: &NotOneOf) -> Result<()> {
+        // Child must exclude everything parent excludes (can add more)
+        for v in &self.excluded {
+            if !child.excluded.contains(v) {
+                return Err(Error::ExclusionRemoved {
+                    value: format!("{:?}", v),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+impl From<NotOneOf> for Constraint {
+    fn from(n: NotOneOf) -> Self {
+        Constraint::NotOneOf(n)
     }
 }
 
@@ -553,7 +742,17 @@ pub struct Range {
 
 impl Range {
     /// Create a new range constraint with inclusive bounds.
+    /// 
+    /// # Panics
+    /// Panics if min or max is NaN (NaN causes non-deterministic serialization).
     pub fn new(min: Option<f64>, max: Option<f64>) -> Self {
+        // NaN values cause non-deterministic serialization and comparison issues
+        if let Some(m) = min {
+            assert!(!m.is_nan(), "Range min cannot be NaN");
+        }
+        if let Some(m) = max {
+            assert!(!m.is_nan(), "Range max cannot be NaN");
+        }
         Self {
             min,
             max,
@@ -563,16 +762,25 @@ impl Range {
     }
 
     /// Create a range with only a maximum value.
+    /// 
+    /// # Panics
+    /// Panics if max is NaN.
     pub fn max(max: f64) -> Self {
         Self::new(None, Some(max))
     }
 
     /// Create a range with only a minimum value.
+    /// 
+    /// # Panics
+    /// Panics if min is NaN.
     pub fn min(min: f64) -> Self {
         Self::new(Some(min), None)
     }
 
     /// Create a range between min and max.
+    /// 
+    /// # Panics
+    /// Panics if min or max is NaN.
     pub fn between(min: f64, max: f64) -> Self {
         Self::new(Some(min), Some(max))
     }
@@ -616,16 +824,18 @@ impl Range {
         // Child min must be >= parent min
         match (self.min, child.min) {
             (Some(parent_min), Some(child_min)) if child_min < parent_min => {
-                return Err(Error::MonotonicityViolation(format!(
-                    "child min {} is less than parent min {}",
-                    child_min, parent_min
-                )));
+                return Err(Error::RangeExpanded {
+                    bound: "min".to_string(),
+                    parent_value: parent_min,
+                    child_value: child_min,
+                });
             }
             (Some(parent_min), None) => {
-                return Err(Error::MonotonicityViolation(format!(
-                    "child has no min but parent requires >= {}",
-                    parent_min
-                )));
+                return Err(Error::RangeExpanded {
+                    bound: "min".to_string(),
+                    parent_value: parent_min,
+                    child_value: f64::NEG_INFINITY,
+                });
             }
             _ => {}
         }
@@ -633,16 +843,18 @@ impl Range {
         // Child max must be <= parent max
         match (self.max, child.max) {
             (Some(parent_max), Some(child_max)) if child_max > parent_max => {
-                return Err(Error::MonotonicityViolation(format!(
-                    "child max {} is greater than parent max {}",
-                    child_max, parent_max
-                )));
+                return Err(Error::RangeExpanded {
+                    bound: "max".to_string(),
+                    parent_value: parent_max,
+                    child_value: child_max,
+                });
             }
             (Some(parent_max), None) => {
-                return Err(Error::MonotonicityViolation(format!(
-                    "child has no max but parent requires <= {}",
-                    parent_max
-                )));
+                return Err(Error::RangeExpanded {
+                    bound: "max".to_string(),
+                    parent_value: parent_max,
+                    child_value: f64::INFINITY,
+                });
             }
             _ => {}
         }
@@ -691,10 +903,9 @@ impl Contains {
         // Child must contain all parent's required values (can add more)
         for v in &self.required {
             if !child.required.contains(v) {
-                return Err(Error::MonotonicityViolation(format!(
-                    "child must still require {:?}",
-                    v
-                )));
+                return Err(Error::RequiredValueRemoved {
+                    value: format!("{:?}", v),
+                });
             }
         }
         Ok(())
@@ -990,9 +1201,12 @@ impl From<CelConstraint> for Constraint {
 // ============================================================================
 
 /// A set of constraints keyed by field name.
+/// 
+/// Uses BTreeMap for deterministic serialization order (canonical CBOR).
+/// This ensures consistent warrant IDs regardless of insertion order.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ConstraintSet {
-    constraints: HashMap<String, Constraint>,
+    constraints: BTreeMap<String, Constraint>,
 }
 
 impl ConstraintSet {
@@ -1234,6 +1448,214 @@ mod tests {
         child.insert("cluster", Exact::new("staging-web"));
         child.insert("version", Pattern::new("1.28.5").unwrap());
 
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_cross_type_attenuation_pattern_to_exact() {
+        // Valid: Pattern can narrow to Exact if value matches
+        let parent = Constraint::Pattern(Pattern::new("staging-*").unwrap());
+        let child = Constraint::Exact(Exact::new("staging-web"));
+        assert!(parent.validate_attenuation(&child).is_ok());
+
+        // Invalid: Exact value doesn't match pattern
+        let invalid_child = Constraint::Exact(Exact::new("prod-web"));
+        assert!(parent.validate_attenuation(&invalid_child).is_err());
+    }
+
+    #[test]
+    fn test_cross_type_attenuation_oneof_to_exact() {
+        // Valid: OneOf can narrow to Exact if value is in set
+        let parent = Constraint::OneOf(OneOf::new(vec!["upgrade", "restart", "scale"]));
+        let child = Constraint::Exact(Exact::new("upgrade"));
+        assert!(parent.validate_attenuation(&child).is_ok());
+
+        // Invalid: Exact value not in OneOf set
+        let invalid_child = Constraint::Exact(Exact::new("delete"));
+        assert!(parent.validate_attenuation(&invalid_child).is_err());
+    }
+
+    #[test]
+    fn test_cross_type_attenuation_incompatible_types() {
+        // Pattern cannot narrow to OneOf (different types)
+        let parent = Constraint::Pattern(Pattern::new("*").unwrap());
+        let child = Constraint::OneOf(OneOf::new(vec!["upgrade", "restart"]));
+        let result = parent.validate_attenuation(&child);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("incompatible constraint types"));
+
+        // Range cannot narrow to Pattern
+        let parent = Constraint::Range(Range::max(1000.0));
+        let child = Constraint::Pattern(Pattern::new("*").unwrap());
+        let result = parent.validate_attenuation(&child);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_adding_new_constraint_to_unconstrained_field() {
+        // When parent doesn't have a field, child can add any constraint
+        let mut parent = ConstraintSet::new();
+        parent.insert("cluster", Pattern::new("staging-*").unwrap());
+        // parent has no "action" constraint
+
+        let mut child = ConstraintSet::new();
+        child.insert("cluster", Exact::new("staging-web"));
+        child.insert("action", OneOf::new(vec!["upgrade", "restart"])); // NEW field
+
+        // This should work - child can add new constraints
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_wildcard_matches_everything() {
+        let wildcard = Wildcard::new();
+        
+        assert!(wildcard.matches(&ConstraintValue::String("anything".to_string())).unwrap());
+        assert!(wildcard.matches(&ConstraintValue::Integer(42)).unwrap());
+        assert!(wildcard.matches(&ConstraintValue::Float(3.14)).unwrap());
+        assert!(wildcard.matches(&ConstraintValue::Boolean(true)).unwrap());
+        assert!(wildcard.matches(&ConstraintValue::List(vec![])).unwrap());
+    }
+
+    #[test]
+    fn test_wildcard_can_attenuate_to_anything() {
+        let parent = Constraint::Wildcard(Wildcard::new());
+        
+        // Wildcard -> Pattern
+        let child = Constraint::Pattern(Pattern::new("staging-*").unwrap());
+        assert!(parent.validate_attenuation(&child).is_ok());
+        
+        // Wildcard -> OneOf
+        let child = Constraint::OneOf(OneOf::new(vec!["upgrade", "restart"]));
+        assert!(parent.validate_attenuation(&child).is_ok());
+        
+        // Wildcard -> Range
+        let child = Constraint::Range(Range::max(1000.0));
+        assert!(parent.validate_attenuation(&child).is_ok());
+        
+        // Wildcard -> Exact
+        let child = Constraint::Exact(Exact::new("specific"));
+        assert!(parent.validate_attenuation(&child).is_ok());
+        
+        // Wildcard -> Contains
+        let child = Constraint::Contains(Contains::new(vec!["admin"]));
+        assert!(parent.validate_attenuation(&child).is_ok());
+        
+        // Wildcard -> Wildcard (same, OK)
+        let child = Constraint::Wildcard(Wildcard::new());
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_cannot_attenuate_to_wildcard() {
+        // Nothing can attenuate TO Wildcard (would expand permissions)
+        
+        let parent = Constraint::Pattern(Pattern::new("staging-*").unwrap());
+        let child = Constraint::Wildcard(Wildcard::new());
+        let result = parent.validate_attenuation(&child);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot attenuate to Wildcard"));
+        
+        let parent = Constraint::OneOf(OneOf::new(vec!["a", "b"]));
+        let child = Constraint::Wildcard(Wildcard::new());
+        assert!(parent.validate_attenuation(&child).is_err());
+    }
+
+    #[test]
+    fn test_wildcard_in_constraint_set() {
+        // Parent has Wildcard for action
+        let mut parent = ConstraintSet::new();
+        parent.insert("cluster", Pattern::new("staging-*").unwrap());
+        parent.insert("action", Wildcard::new());
+
+        // Child narrows Wildcard -> OneOf (should work!)
+        let mut child = ConstraintSet::new();
+        child.insert("cluster", Exact::new("staging-web"));
+        child.insert("action", OneOf::new(vec!["upgrade", "restart"]));
+
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    // =========================================================================
+    // NotOneOf Tests
+    // =========================================================================
+
+    #[test]
+    fn test_notoneof_matches() {
+        let constraint = NotOneOf::new(vec!["prod", "secure"]);
+        
+        // Values NOT in the excluded set should match
+        assert!(constraint.matches(&ConstraintValue::String("staging".to_string())).unwrap());
+        assert!(constraint.matches(&ConstraintValue::String("dev".to_string())).unwrap());
+        
+        // Values IN the excluded set should NOT match
+        assert!(!constraint.matches(&ConstraintValue::String("prod".to_string())).unwrap());
+        assert!(!constraint.matches(&ConstraintValue::String("secure".to_string())).unwrap());
+    }
+
+    #[test]
+    fn test_notoneof_attenuation_can_add_exclusions() {
+        // Child can exclude MORE values (stricter)
+        let parent = NotOneOf::new(vec!["prod"]);
+        let child = NotOneOf::new(vec!["prod", "secure"]); // Excludes more
+        
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_notoneof_attenuation_cannot_remove_exclusions() {
+        // Child cannot exclude FEWER values (would be more permissive)
+        let parent = NotOneOf::new(vec!["prod", "secure"]);
+        let child = NotOneOf::new(vec!["prod"]); // Missing "secure"
+        
+        let result = parent.validate_attenuation(&child);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("must still exclude"));
+    }
+
+    #[test]
+    fn test_oneof_to_notoneof_carving_holes() {
+        // Parent allows: [a, b, c, d]
+        // Child excludes: [b] -> effectively allows [a, c, d]
+        let parent = Constraint::OneOf(OneOf::new(vec!["a", "b", "c", "d"]));
+        let child = Constraint::NotOneOf(NotOneOf::new(vec!["b"]));
+        
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_oneof_to_notoneof_paradox_detection() {
+        // Parent allows: [a, b]
+        // Child excludes: [a, b] -> empty set (paradox!)
+        let parent = Constraint::OneOf(OneOf::new(vec!["a", "b"]));
+        let child = Constraint::NotOneOf(NotOneOf::new(vec!["a", "b"]));
+        
+        let result = parent.validate_attenuation(&child);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::EmptyResultSet { parent_type, count } => {
+                assert_eq!(parent_type, "OneOf");
+                assert_eq!(count, 2);
+            }
+            e => panic!("Expected EmptyResultSet, got {:?}", e),
+        }
+    }
+
+    #[test]
+    fn test_wildcard_to_notoneof() {
+        // Wildcard can attenuate to NotOneOf (carving holes from everything)
+        let parent = Constraint::Wildcard(Wildcard::new());
+        let child = Constraint::NotOneOf(NotOneOf::new(vec!["prod", "secure"]));
+        
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_notoneof_to_notoneof() {
+        // NotOneOf -> NotOneOf works if child excludes more
+        let parent = Constraint::NotOneOf(NotOneOf::new(vec!["prod"]));
+        let child = Constraint::NotOneOf(NotOneOf::new(vec!["prod", "secure"]));
+        
         assert!(parent.validate_attenuation(&child).is_ok());
     }
 }

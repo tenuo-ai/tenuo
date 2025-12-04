@@ -1,10 +1,22 @@
-FROM rust:1.75-bookworm as builder
+FROM rust:1.85-bookworm as builder
 
 WORKDIR /build
 COPY Cargo.toml Cargo.lock* ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs
+
+# Create dummy source files to satisfy cargo fetch
+# Library, binaries, and benchmarks (all defined in Cargo.toml)
+RUN mkdir -p src/bin benches && \
+    echo "// dummy" > src/lib.rs && \
+    echo "fn main() {}" > src/bin/orchestrator.rs && \
+    echo "fn main() {}" > src/bin/worker.rs && \
+    echo "fn main() {}" > src/bin/cli.rs && \
+    echo "fn main() {}" > src/bin/control.rs && \
+    echo "fn main() {}" > src/bin/authorizer.rs && \
+    echo "fn main() {}" > benches/warrant_benchmarks.rs
+
 RUN cargo fetch
 
+# Now copy the real source
 COPY . .
 # Build both agent binaries
 RUN cargo build --release --bin tenuo-orchestrator --bin tenuo-worker --features "control-plane,data-plane"

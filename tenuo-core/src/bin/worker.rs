@@ -4,8 +4,12 @@
 //! 1. Receives a delegation chain from an orchestrator
 //! 2. Verifies the complete chain back to a trusted root
 //! 3. Attempts various actions (some allowed, some blocked)
+//! 4. Delegates to a sub-agent (showing depth limits)
+//! 5. Tries to exceed max_depth (shows error)
+//! 6. **Multi-sig approval** for sensitive actions
 
-use tenuo_core::{Authorizer, Warrant, PublicKey, Keypair, ConstraintValue};
+use tenuo_core::{Authorizer, Warrant, PublicKey, Keypair, ConstraintValue, Range};
+use tenuo_core::approval::{Approval, compute_request_hash};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -73,8 +77,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n  ✓ Chain loaded with {} warrant(s):", chain.len());
     for (i, warrant) in chain.iter().enumerate() {
         let signer = if i == 0 { "Control Plane" } else { "Orchestrator" };
-        println!("    [{}] {} (depth={}, signed by {})", 
-            i, warrant.id(), warrant.depth(), signer);
+        println!("    [{}] {} (depth={}/{}, signed by {})", 
+            i, warrant.id(), warrant.depth(), warrant.effective_max_depth(), signer);
+        if let Some(session) = warrant.session_id() {
+            println!("        session: {}", session);
+        }
     }
 
     // =========================================================================
@@ -109,6 +116,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    • Each delegation properly linked (parent_id matches)");
     println!("    • Constraints only narrow (never expand)");
     println!("    • Expiration times only shorten");
+    println!("    • Depth within max_depth limit");
     println!("    • All signatures valid");
 
     match authorizer.verify_chain(&chain) {
@@ -134,7 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let leaf_warrant = chain.last().unwrap();
     println!("\n  Leaf warrant constraints:");
     println!("    • cluster: staging-web (exact)");
-    println!("    • action:  upgrade|restart");
+    println!("    • action:  [upgrade, restart] (OneOf)");
     println!("    • budget:  ≤$1,000\n");
 
     // Test cases
@@ -241,19 +249,237 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // =========================================================================
+    // Step 5: Demonstrate delegation depth limits (max_depth)
+    // =========================================================================
+    println!("\n┌─────────────────────────────────────────────────────────────────┐");
+    println!("│ STEP 5: Demonstrating Depth Limits (max_depth Policy)           │");
+    println!("└─────────────────────────────────────────────────────────────────┘");
+
+    let leaf_warrant = chain.last().unwrap();
+    println!("\n  Current depth: {} / {}", leaf_warrant.depth(), leaf_warrant.effective_max_depth());
+    
+    // Worker can create sub-agent warrants up to max_depth
+    let sub_agent_keypair = Keypair::generate();
+    
+    // Try to create depth 2 warrant (should work if max_depth >= 2)
+    println!("\n  Attempting to delegate to Sub-Agent (depth {})...", leaf_warrant.depth() + 1);
+    
+    match leaf_warrant.attenuate()
+        .constraint("budget", Range::max(500.0))  // Further restrict
+        .ttl(Duration::from_secs(300))            // 5 minutes
+        .authorized_holder(sub_agent_keypair.public_key())
+        .agent_id("sub-agent-tool-handler")
+        .build(&worker_keypair) 
+    {
+        Ok(sub_warrant) => {
+            println!("  ✓ Sub-Agent warrant created (depth {})", sub_warrant.depth());
+            println!("    • ID: {}", sub_warrant.id());
+            println!("    • Budget: ≤$500 (narrowed from ≤$1,000)");
+            
+            // Now try to go even deeper
+            println!("\n  Attempting to delegate from Sub-Agent (depth {})...", sub_warrant.depth() + 1);
+            
+            match sub_warrant.attenuate()
+                .constraint("budget", Range::max(100.0))
+                .ttl(Duration::from_secs(60))
+                .build(&sub_agent_keypair)
+            {
+                Ok(deep_warrant) => {
+                    println!("  ✓ Deep warrant created (depth {})", deep_warrant.depth());
+                    
+                    // Try one more level (should fail at max_depth=3)
+                    println!("\n  Attempting depth {} (should hit max_depth limit)...", deep_warrant.depth() + 1);
+                    
+                    let another_keypair = Keypair::generate();
+                    match deep_warrant.attenuate()
+                        .constraint("budget", Range::max(50.0))
+                        .build(&another_keypair)
+                    {
+                        Ok(w) => {
+                            println!("  ✓ Created warrant at depth {} (max_depth allows it)", w.depth());
+                        }
+                        Err(e) => {
+                            println!("  ✗ BLOCKED: {}", e);
+                            println!("    → max_depth policy enforced!");
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("  ✗ BLOCKED: {}", e);
+                    println!("    → max_depth policy enforced!");
+                }
+            }
+        }
+        Err(e) => {
+            println!("  ✗ Cannot create Sub-Agent warrant: {}", e);
+        }
+    }
+
+    // =========================================================================
+    // Step 6: Multi-Sig Approval Demo (Sensitive Actions)
+    // =========================================================================
+    println!("\n┌─────────────────────────────────────────────────────────────────┐");
+    println!("│ STEP 6: Multi-Sig Approval (Sensitive Actions)                  │");
+    println!("└─────────────────────────────────────────────────────────────────┘");
+
+    // Load the sensitive warrant chain
+    let sensitive_chain_path = input_path.replace(".json", "_sensitive.json");
+    if Path::new(&sensitive_chain_path).exists() {
+        println!("\n  Loading sensitive chain (requires multi-sig approval)...");
+        
+        let sensitive_chain_json = fs::read_to_string(&sensitive_chain_path)?;
+        let sensitive_chain: Vec<Warrant> = serde_json::from_str(&sensitive_chain_json)?;
+        
+        // Verify the sensitive chain
+        authorizer.verify_chain(&sensitive_chain)?;
+        println!("  ✓ Sensitive chain verified");
+        
+        let sensitive_warrant = sensitive_chain.last().unwrap();
+        
+        // Display multi-sig requirements
+        let threshold = sensitive_warrant.approval_threshold();
+        let approvers_count = sensitive_warrant.required_approvers()
+            .map(|a| a.len())
+            .unwrap_or(0);
+        
+        println!("\n  Sensitive Warrant Requirements:");
+        println!("    • cluster:    staging-web");
+        println!("    • action:     [delete, scale-down]");
+        println!("    • approvals:  {} required ({} registered)", threshold, approvers_count);
+        println!("    • threshold:  {}-of-{}", threshold, approvers_count);
+        
+        // Load admin keypair for multi-sig
+        let admin_key_path = env::var("TENUO_ADMIN_KEY_INPUT")
+            .unwrap_or_else(|_| "/data/admin.key".to_string());
+        
+        let admin_keypair = if Path::new(&admin_key_path).exists() {
+            let admin_key_hex = fs::read_to_string(&admin_key_path)?;
+            let admin_key_bytes: [u8; 32] = hex::decode(admin_key_hex.trim())?
+                .try_into()
+                .map_err(|_| "Admin key must be 32 bytes")?;
+            Some(Keypair::from_bytes(&admin_key_bytes))
+        } else {
+            println!("  ⚠ Admin key not found at {}", admin_key_path);
+            None
+        };
+        
+        // Test 1: Try to delete WITHOUT approval
+        println!("\n  TEST 1: Attempt 'delete' WITHOUT multi-sig approval...");
+        
+        let mut args_no_approval: HashMap<String, ConstraintValue> = HashMap::new();
+        args_no_approval.insert("cluster".to_string(), ConstraintValue::String("staging-web".to_string()));
+        args_no_approval.insert("action".to_string(), ConstraintValue::String("delete".to_string()));
+        args_no_approval.insert("budget".to_string(), ConstraintValue::Float(100.0));
+        
+        let holder_sig = sensitive_warrant.create_pop_signature(&worker_keypair, "manage_infrastructure", &args_no_approval)?;
+        
+        // Try authorization with NO approvals
+        let result = authorizer.authorize(
+            sensitive_warrant,
+            "manage_infrastructure",
+            &args_no_approval,
+            Some(&holder_sig),
+            &[], // No approvals!
+        );
+        
+        match result {
+            Ok(()) => println!("  ✗ UNEXPECTED: Action was allowed without approval!"),
+            Err(e) => {
+                println!("  ✓ BLOCKED: {}", e);
+                println!("    → Multi-sig approval is required for sensitive actions!");
+            }
+        }
+        
+        // Test 2: Try to delete WITH admin approval
+        if let Some(ref admin_kp) = admin_keypair {
+            println!("\n  TEST 2: Attempt 'delete' WITH admin approval...");
+            println!("    Simulating admin signature over request...");
+            
+            // Compute the request hash that will be approved (includes holder for theft protection)
+            let request_hash = compute_request_hash(
+                sensitive_warrant.id().as_str(),
+                "manage_infrastructure",
+                &args_no_approval,
+                sensitive_warrant.authorized_holder(),
+            );
+            
+            // Admin creates an approval signature
+            let now = chrono::Utc::now();
+            let expires = now + chrono::Duration::seconds(300);
+            
+            // Create signable bytes (same as Approval::signable_bytes)
+            let mut signable = Vec::new();
+            signable.extend_from_slice(&request_hash);
+            signable.extend_from_slice("arn:aws:iam::123456789:user/admin".as_bytes());
+            signable.extend_from_slice(&now.timestamp().to_le_bytes());
+            signable.extend_from_slice(&expires.timestamp().to_le_bytes());
+            
+            let approval_sig = admin_kp.sign(&signable);
+            
+            let approval = Approval {
+                request_hash,
+                approver_key: admin_kp.public_key(),
+                external_id: "arn:aws:iam::123456789:user/admin".to_string(),
+                provider: "aws-iam".to_string(),
+                approved_at: now,
+                expires_at: expires,
+                reason: Some("Approved for staging cleanup".to_string()),
+                signature: approval_sig,
+            };
+            
+            println!("    ✓ Approval created by: {}", &approval.external_id);
+            println!("    ✓ Expires at: {}", approval.expires_at);
+            
+            // Now authorize with the approval
+            let result = authorizer.authorize(
+                sensitive_warrant,
+                "manage_infrastructure",
+                &args_no_approval,
+                Some(&holder_sig),
+                &[approval],
+            );
+            
+            match result {
+                Ok(()) => {
+                    println!("\n  ✓ ALLOWED: Delete action authorized with admin approval");
+                    println!("    → Multi-sig verification complete!");
+                }
+                Err(e) => println!("  ✗ UNEXPECTED ERROR: {}", e),
+            }
+        }
+        
+        println!("\n  ╭────────────────────────────────────────────────────────────╮");
+        println!("  │  MULTI-SIG APPROVAL PATTERN                                │");
+        println!("  ├────────────────────────────────────────────────────────────┤");
+        println!("  │  1. Orchestrator creates warrant with required_approvers:  │");
+        println!("  │     [admin_public_key] with min_approvals=1                │");
+        println!("  │                                                            │");
+        println!("  │  2. Worker cannot execute without valid Approval objects   │");
+        println!("  │                                                            │");
+        println!("  │  3. Admin signs an Approval over request_hash:             │");
+        println!("  │     H(warrant_id || tool || sorted(args))                  │");
+        println!("  │                                                            │");
+        println!("  │  4. Worker submits request with Approval → ALLOWED         │");
+        println!("  ╰────────────────────────────────────────────────────────────╯");
+    } else {
+        println!("\n  (Sensitive chain not found - skipping multi-sig demo)");
+    }
+
+    // =========================================================================
     // Summary
     // =========================================================================
-    println!("╔══════════════════════════════════════════════════════════════════╗");
+    println!("\n╔══════════════════════════════════════════════════════════════════╗");
     println!("║                        WORKER COMPLETE                           ║");
     println!("╠══════════════════════════════════════════════════════════════════╣");
     println!("║  Test Results: {} passed, {} failed                                ║", passed, failed);
     println!("║                                                                  ║");
-    println!("║  Key Observations:                                               ║");
-    println!("║  • Chain verification proves authority without network calls     ║");
-    println!("║  • Constraints are enforced exactly as specified                 ║");
-    println!("  • Capability attenuation prevents privilege escalation          ║");
-    println!("  • Proof-of-Possession prevents stolen warrant usage             ║");
-    println!("  • The worker never needed the orchestrator's private key        ║");
+    println!("║  Features Demonstrated:                                          ║");
+    println!("║  • Chain verification proves authority (offline)                ║");
+    println!("║  • Constraints enforced exactly as specified                    ║");
+    println!("║  • Proof-of-Possession prevents stolen warrant usage            ║");
+    println!("║  • max_depth limits how deep delegation can go                  ║");
+    println!("║  • session_id links all warrants for traceability               ║");
+    println!("║  • MULTI-SIG approval for sensitive actions                    ║");
     println!("╚══════════════════════════════════════════════════════════════════╝\n");
 
     if failed > 0 {

@@ -68,8 +68,9 @@ required-features = ["data-plane"]
 # ============================================================================
 [dependencies]
 # Cryptography
-ed25519-dalek = { version = "2.1", features = ["rand_core", "serde"] }
+ed25519-dalek = { version = "2.1", features = ["rand_core", "serde", "batch"] }
 rand = "0.8"
+sha2 = "0.10"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

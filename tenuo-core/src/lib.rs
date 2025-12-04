@@ -34,6 +34,7 @@
 //!     .build(&worker_keypair)?;
 //! ```
 
+pub mod approval;
 pub mod cel;
 pub mod constraints;
 pub mod crypto;
@@ -49,7 +50,7 @@ pub mod python;
 // Re-exports for convenience
 pub use constraints::{
     All, Any, CelConstraint, Constraint, ConstraintSet, ConstraintValue,
-    Contains, Exact, Not, OneOf, Pattern, Range, RegexConstraint, Subset,
+    Contains, Exact, Not, NotOneOf, OneOf, Pattern, Range, RegexConstraint, Subset, Wildcard,
 };
 pub use crypto::{Keypair, PublicKey, Signature};
 pub use error::{Error, Result};
@@ -60,10 +61,17 @@ pub use planes::{
 pub use revocation::RevocationList;
 pub use warrant::{Warrant, WarrantBuilder, WarrantId};
 
-/// Maximum delegation depth to prevent unbounded chains
-pub const MAX_DELEGATION_DEPTH: u32 = 16;
+/// Maximum delegation depth to prevent unbounded chains (protocol-level hard cap).
+/// 
+/// Individual warrants can set a lower limit via `max_depth` in the payload.
+/// This constant prevents DoS attacks from extremely deep chains.
+pub const MAX_DELEGATION_DEPTH: u32 = 64;
 
-/// Context string for Ed25519 signatures (prevents cross-protocol attacks)
+/// Context string for Ed25519 signatures (prevents cross-protocol attacks).
+/// 
+/// All signatures are computed over: `SIGNATURE_CONTEXT || payload`
+/// 
+/// This prevents a signature from one protocol being valid in another.
 pub const SIGNATURE_CONTEXT: &[u8] = b"tenuo-warrant-v1";
 
 /// Current wire format version

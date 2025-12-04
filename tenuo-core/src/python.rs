@@ -165,10 +165,9 @@ impl PyKeypair {
 
     #[staticmethod]
     fn from_bytes(bytes: &[u8]) -> PyResult<Self> {
-        if bytes.len() != 32 {
-            return Err(PyValueError::new_err("secret key must be 32 bytes"));
-        }
-        let arr: [u8; 32] = bytes.try_into().unwrap();
+        let arr: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| PyValueError::new_err("secret key must be exactly 32 bytes"))?;
         Ok(Self {
             inner: RustKeypair::from_bytes(&arr),
         })
@@ -338,10 +337,9 @@ impl PyWarrant {
         // Convert signature bytes to Signature if provided
         let sig = match signature {
             Some(bytes) => {
-                if bytes.len() != 64 {
-                    return Err(PyValueError::new_err("signature must be 64 bytes"));
-                }
-                let arr: [u8; 64] = bytes.try_into().unwrap();
+                let arr: [u8; 64] = bytes
+                    .try_into()
+                    .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
                 Some(crate::crypto::Signature::from_bytes(&arr).map_err(to_py_err)?)
             }
             None => None,
@@ -357,10 +355,9 @@ impl PyWarrant {
 
     /// Verify the warrant signature.
     fn verify(&self, public_key_bytes: &[u8]) -> PyResult<bool> {
-        if public_key_bytes.len() != 32 {
-            return Err(PyValueError::new_err("public key must be 32 bytes"));
-        }
-        let arr: [u8; 32] = public_key_bytes.try_into().unwrap();
+        let arr: [u8; 32] = public_key_bytes
+            .try_into()
+            .map_err(|_| PyValueError::new_err("public key must be exactly 32 bytes"))?;
         let pk = crate::crypto::PublicKey::from_bytes(&arr).map_err(to_py_err)?;
 
         match self.inner.verify(&pk) {

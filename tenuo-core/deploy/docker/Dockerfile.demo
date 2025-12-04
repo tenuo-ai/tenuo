@@ -5,7 +5,7 @@
 # 2. Uses the warrant to authorize actions
 # 3. Attenuates warrants for sub-tasks
 
-FROM rust:1.75-bookworm as builder
+FROM rust:1.85-bookworm as builder
 
 WORKDIR /build
 COPY Cargo.toml Cargo.lock* ./

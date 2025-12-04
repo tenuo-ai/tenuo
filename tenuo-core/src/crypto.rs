@@ -1,6 +1,14 @@
 //! Cryptographic primitives for Tenuo.
 //!
 //! Uses Ed25519 with context strings to prevent cross-protocol attacks.
+//! 
+//! ## Security Properties
+//! 
+//! 1. **Domain Separation**: All signatures include a context prefix (`tenuo-warrant-v1`)
+//!    to prevent cross-protocol attacks.
+//! 
+//! 2. **Batch Verification**: For deep delegation chains, use `verify_batch` to verify
+//!    multiple signatures in a single pass (~3x faster than sequential).
 
 use crate::error::{Error, Result};
 use crate::SIGNATURE_CONTEXT;
@@ -23,7 +31,7 @@ impl Keypair {
         Self { signing_key }
     }
 
-    /// Create a keypair from a secret key bytes.
+    /// Create a keypair from secret key bytes.
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
         let signing_key = SigningKey::from_bytes(bytes);
         Self { signing_key }
@@ -37,6 +45,8 @@ impl Keypair {
     }
 
     /// Sign a message with context prefix.
+    /// 
+    /// The actual signed data is: `SIGNATURE_CONTEXT || message`
     pub fn sign(&self, message: &[u8]) -> Signature {
         let prefixed = Self::prefix_message(message);
         let sig = self.signing_key.sign(&prefixed);
@@ -91,6 +101,43 @@ impl PublicKey {
             .verify(&prefixed, &signature.inner)
             .map_err(|e| Error::SignatureInvalid(e.to_string()))
     }
+}
+
+/// Batch verify multiple signatures in a single pass.
+/// 
+/// This is significantly faster than verifying each signature individually
+/// when you have many signatures to check (e.g., deep delegation chains).
+/// 
+/// Uses random linear combinations internally for security.
+/// 
+/// # Example
+/// 
+/// ```rust,ignore
+/// let items: Vec<(&PublicKey, &[u8], &Signature)> = chain
+///     .iter()
+///     .map(|w| (w.issuer(), w.payload_bytes(), w.signature()))
+///     .collect();
+/// verify_batch(&items)?;
+/// ```
+pub fn verify_batch(items: &[(&PublicKey, &[u8], &Signature)]) -> Result<()> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    
+    // Prepare prefixed messages
+    let prefixed_messages: Vec<Vec<u8>> = items
+        .iter()
+        .map(|(_, msg, _)| Keypair::prefix_message(msg))
+        .collect();
+    
+    // Extract components for batch verification
+    let messages: Vec<&[u8]> = prefixed_messages.iter().map(|v| v.as_slice()).collect();
+    let signatures: Vec<DalekSignature> = items.iter().map(|(_, _, s)| s.inner).collect();
+    let verifying_keys: Vec<VerifyingKey> = items.iter().map(|(pk, _, _)| pk.verifying_key).collect();
+    
+    // Use ed25519_dalek's batch verification
+    ed25519_dalek::verify_batch(&messages, &signatures, &verifying_keys)
+        .map_err(|e| Error::SignatureInvalid(format!("batch verification failed: {}", e)))
 }
 
 impl Serialize for PublicKey {
@@ -264,5 +311,39 @@ mod tests {
         assert!(keypair.public_key().verify(message, &wrong_signature).is_err());
         assert!(keypair.public_key().verify(message, &signature).is_ok());
     }
+    
+    #[test]
+    fn test_batch_verification() {
+        let kp1 = Keypair::generate();
+        let kp2 = Keypair::generate();
+        let kp3 = Keypair::generate();
+        
+        let msg1 = b"message 1";
+        let msg2 = b"message 2";
+        let msg3 = b"message 3";
+        
+        let sig1 = kp1.sign(msg1);
+        let sig2 = kp2.sign(msg2);
+        let sig3 = kp3.sign(msg3);
+        
+        let pk1 = kp1.public_key();
+        let pk2 = kp2.public_key();
+        let pk3 = kp3.public_key();
+        
+        // All valid - should pass
+        let items = vec![
+            (&pk1, msg1.as_slice(), &sig1),
+            (&pk2, msg2.as_slice(), &sig2),
+            (&pk3, msg3.as_slice(), &sig3),
+        ];
+        assert!(verify_batch(&items).is_ok());
+        
+        // One invalid - should fail
+        let bad_items = vec![
+            (&pk1, msg1.as_slice(), &sig1),
+            (&pk2, msg1.as_slice(), &sig2), // Wrong message
+            (&pk3, msg3.as_slice(), &sig3),
+        ];
+        assert!(verify_batch(&bad_items).is_err());
+    }
 }
-

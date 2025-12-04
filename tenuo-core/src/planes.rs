@@ -38,6 +38,89 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 // ============================================================================
+// SHARED HELPERS
+// ============================================================================
+
+/// Verify multi-sig approvals for a request.
+///
+/// Returns Ok(()) if:
+/// - Warrant has no `required_approvers`, OR
+/// - Enough valid approvals are provided (>= threshold)
+///
+/// Checks: approver in required list, not expired, hash matches, signature valid.
+fn verify_approvals_with_tolerance(
+    warrant: &Warrant,
+    tool: &str,
+    args: &HashMap<String, ConstraintValue>,
+    approvals: &[crate::approval::Approval],
+    clock_tolerance: chrono::Duration,
+) -> Result<()> {
+    // Check if multi-sig is required
+    let required_approvers = match warrant.required_approvers() {
+        Some(approvers) if !approvers.is_empty() => approvers,
+        _ => return Ok(()), // No multi-sig required
+    };
+
+    let threshold = warrant.approval_threshold();
+    if threshold == 0 {
+        return Ok(()); // Defensive: no threshold means no requirement
+    }
+
+    // DoS protection: limit approval count
+    let max_approvals = required_approvers.len().saturating_mul(2);
+    if approvals.len() > max_approvals {
+        return Err(Error::InvalidApproval(format!(
+            "too many approvals: {} provided, max {}",
+            approvals.len(), max_approvals
+        )));
+    }
+
+    // Compute the request hash for verification (includes authorized_holder to prevent theft)
+    let request_hash = crate::approval::compute_request_hash(
+        warrant.id().as_str(),
+        tool,
+        args,
+        warrant.authorized_holder(),
+    );
+
+    // Count valid approvals from required approvers
+    let mut valid_count = 0u32;
+    let now = chrono::Utc::now();
+
+    for approval in approvals {
+        // Check if approver is in the required set
+        if !required_approvers.contains(&approval.approver_key) {
+            continue; // Not a required approver, skip
+        }
+
+        // Check expiration (with clock tolerance)
+        if approval.expires_at + clock_tolerance < now {
+            continue; // Expired approval
+        }
+
+        // Verify request hash matches
+        if approval.request_hash != request_hash {
+            continue; // Wrong request
+        }
+
+        // Verify signature
+        if approval.verify().is_ok() {
+            valid_count = valid_count.saturating_add(1);
+            
+            // Early exit: we have enough
+            if valid_count >= threshold {
+                return Ok(());
+            }
+        }
+    }
+
+    Err(Error::InsufficientApprovals {
+        required: threshold,
+        received: valid_count,
+    })
+}
+
+// ============================================================================
 // CHAIN VERIFICATION TYPES
 // ============================================================================
 
@@ -377,13 +460,11 @@ impl DataPlane {
             self.verify_chain_link(parent, child)?;
             
             // Check session binding if enforced
-            if enforce_session {
-                if child.session_id() != expected_session {
-                    return Err(Error::ChainVerificationFailed(format!(
-                        "session mismatch: expected {:?}, got {:?} at depth {}",
-                        expected_session, child.session_id(), child.depth()
-                    )));
-                }
+            if enforce_session && child.session_id() != expected_session {
+                return Err(Error::ChainVerificationFailed(format!(
+                    "session mismatch: expected {:?}, got {:?} at depth {}",
+                    expected_session, child.session_id(), child.depth()
+                )));
             }
 
             result.verified_steps.push(ChainStep {
@@ -401,6 +482,11 @@ impl DataPlane {
     ///
     /// Validates that `child` is a valid delegation from `parent`.
     fn verify_chain_link(&self, parent: &Warrant, child: &Warrant) -> Result<()> {
+        // Check revocation
+        if self.revocation_list.is_revoked(child.id().as_str()) {
+            return Err(Error::WarrantRevoked(child.id().to_string()));
+        }
+
         // 1. Check parent_id linkage
         let parent_id = child.parent_id().ok_or_else(|| {
             Error::ChainVerificationFailed(
@@ -415,8 +501,9 @@ impl DataPlane {
             )));
         }
 
-        // 2. Check depth increment
-        if child.depth() != parent.depth() + 1 {
+        // 2. Check depth increment (use saturating_add to prevent overflow)
+        let expected_depth = parent.depth().saturating_add(1);
+        if child.depth() != expected_depth {
             return Err(Error::ChainVerificationFailed(format!(
                 "depth mismatch: child depth {} != parent depth {} + 1",
                 child.depth(), parent.depth()
@@ -455,12 +542,13 @@ impl DataPlane {
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
         signature: Option<&crate::crypto::Signature>,
+        approvals: &[crate::approval::Approval],
     ) -> Result<ChainVerificationResult> {
         let result = self.verify_chain(chain)?;
 
         // Authorize against the leaf warrant
         if let Some(leaf) = chain.last() {
-            self.authorize(leaf, tool, args, signature)?;
+            self.authorize(leaf, tool, args, signature, approvals)?;
         }
 
         Ok(result)
@@ -469,6 +557,7 @@ impl DataPlane {
     /// Authorize an action.
     ///
     /// This checks that the warrant permits the given tool call with the given arguments.
+    /// If the warrant requires multi-sig, approvals must be provided.
     ///
     /// This is an **offline operation** - no network calls.
     pub fn authorize(
@@ -477,8 +566,16 @@ impl DataPlane {
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
         signature: Option<&crate::crypto::Signature>,
+        approvals: &[crate::approval::Approval],
     ) -> Result<()> {
-        warrant.authorize(tool, args, signature)
+        // Standard constraint authorization
+        warrant.authorize(tool, args, signature)?;
+        
+        // Multi-sig verification
+        verify_approvals_with_tolerance(
+            warrant, tool, args, approvals,
+            chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
+        )
     }
 
     /// Convenience: verify and authorize in one call.
@@ -488,9 +585,10 @@ impl DataPlane {
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
         signature: Option<&crate::crypto::Signature>,
+        approvals: &[crate::approval::Approval],
     ) -> Result<()> {
         self.verify(warrant)?;
-        self.authorize(warrant, tool, args, signature)
+        self.authorize(warrant, tool, args, signature, approvals)
     }
 
     /// Attenuate a warrant for a sub-agent.
@@ -548,7 +646,7 @@ impl Authorizer {
     pub fn new(root_public_key: PublicKey) -> Self {
         Self {
             trusted_keys: vec![root_public_key],
-            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS as i64),
+            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
             revocation_list: RevocationList::new(),
         }
     }
@@ -597,29 +695,58 @@ impl Authorizer {
         warrant.verify(issuer)
     }
 
-    /// Authorize an action.
+    /// Authorize an action against a warrant.
     ///
-    /// This checks that the warrant permits the given tool call with the given arguments.
+    /// This is the main authorization entry point. It checks:
+    /// 1. Tool name matches
+    /// 2. All constraints are satisfied
+    /// 3. Holder signature (if warrant has `authorized_holder`)
+    /// 4. Multi-sig approvals (if warrant has `required_approvers`)
+    ///
+    /// # Arguments
+    ///
+    /// * `warrant` - The warrant authorizing the action
+    /// * `tool` - The tool being invoked
+    /// * `args` - The arguments to the tool
+    /// * `holder_signature` - PoP signature (required if holder-bound)
+    /// * `approvals` - Approval attestations (required if multi-sig)
     pub fn authorize(
         &self,
         warrant: &Warrant,
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
-        signature: Option<&crate::crypto::Signature>,
+        holder_signature: Option<&crate::crypto::Signature>,
+        approvals: &[crate::approval::Approval],
     ) -> Result<()> {
-        warrant.authorize(tool, args, signature)
+        // 1. Standard constraint authorization
+        warrant.authorize(tool, args, holder_signature)?;
+
+        // 2. Multi-sig verification (if required)
+        self.verify_approvals(warrant, tool, args, approvals)
     }
 
-    /// Convenience: verify and authorize in one call.
+    /// Convenience: verify warrant and authorize in one call.
     pub fn check(
         &self,
         warrant: &Warrant,
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
-        signature: Option<&crate::crypto::Signature>,
+        holder_signature: Option<&crate::crypto::Signature>,
+        approvals: &[crate::approval::Approval],
     ) -> Result<()> {
         self.verify(warrant)?;
-        self.authorize(warrant, tool, args, signature)
+        self.authorize(warrant, tool, args, holder_signature, approvals)
+    }
+
+    /// Verify multi-sig approvals against a warrant.
+    fn verify_approvals(
+        &self,
+        warrant: &Warrant,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+        approvals: &[crate::approval::Approval],
+    ) -> Result<()> {
+        verify_approvals_with_tolerance(warrant, tool, args, approvals, self.clock_tolerance)
     }
 
     /// Verify a complete delegation chain.
@@ -712,13 +839,11 @@ impl Authorizer {
             self.verify_link(parent, child)?;
             
             // Check session binding if enforced
-            if enforce_session {
-                if child.session_id() != expected_session {
-                    return Err(Error::ChainVerificationFailed(format!(
-                        "session mismatch: expected {:?}, got {:?} at depth {}",
-                        expected_session, child.session_id(), child.depth()
-                    )));
-                }
+            if enforce_session && child.session_id() != expected_session {
+                return Err(Error::ChainVerificationFailed(format!(
+                    "session mismatch: expected {:?}, got {:?} at depth {}",
+                    expected_session, child.session_id(), child.depth()
+                )));
             }
 
             result.verified_steps.push(ChainStep {
@@ -791,11 +916,12 @@ impl Authorizer {
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
         signature: Option<&crate::crypto::Signature>,
+        approvals: &[crate::approval::Approval],
     ) -> Result<ChainVerificationResult> {
         let result = self.verify_chain(chain)?;
         
         if let Some(leaf) = chain.last() {
-            leaf.authorize(tool, args, signature)?;
+            self.authorize(leaf, tool, args, signature, approvals)?;
         }
         
         Ok(result)
@@ -836,7 +962,7 @@ mod tests {
             "cluster".to_string(),
             ConstraintValue::String("staging-web".to_string()),
         );
-        assert!(data_plane.authorize(&warrant, "upgrade_cluster", &args, None).is_ok());
+        assert!(data_plane.authorize(&warrant, "upgrade_cluster", &args, None, &[]).is_ok());
     }
 
     #[test]
@@ -873,7 +999,7 @@ mod tests {
         let authorizer = Authorizer::new(control_plane.public_key());
 
         // Check in one call
-        assert!(authorizer.check(&warrant, "test", &HashMap::new(), None).is_ok());
+        assert!(authorizer.check(&warrant, "test", &HashMap::new(), None, &[]).is_ok());
     }
 
     // =========================================================================
@@ -999,7 +1125,7 @@ mod tests {
         );
 
         let result = data_plane
-            .check_chain(&[root, agent_warrant], "upgrade_cluster", &args, None)
+            .check_chain(&[root, agent_warrant], "upgrade_cluster", &args, None, &[])
             .unwrap();
 
         assert_eq!(result.chain_length, 2);
@@ -1095,7 +1221,7 @@ mod tests {
         let mut args = HashMap::new();
         args.insert("key".to_string(), ConstraintValue::String("value".to_string()));
         
-        let result = authorizer.check_chain(&[root, child], "test", &args, None).unwrap();
+        let result = authorizer.check_chain(&[root, child], "test", &args, None, &[]).unwrap();
         assert_eq!(result.chain_length, 2);
     }
 
@@ -1109,6 +1235,209 @@ mod tests {
         let result = data_plane.verify_chain(&[]);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("empty"));
+    }
+
+    // =========================================================================
+    // MULTI-SIG AUTHORIZATION TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_authorize_with_approvals_no_multisig() {
+        let control_plane = ControlPlane::generate();
+        
+        // Create warrant WITHOUT multi-sig
+        let warrant = control_plane
+            .issue_warrant("test", &[], Duration::from_secs(60))
+            .unwrap();
+
+        let authorizer = Authorizer::new(control_plane.public_key());
+        
+        let args = HashMap::new();
+        
+        // Should pass without any approvals
+        let result = authorizer.authorize(&warrant, "test", &args, None, &[]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_authorize_requires_approval_when_multisig() {
+        let issuer_keypair = Keypair::generate();
+        let admin_keypair = Keypair::generate();
+        
+        // Create warrant WITH multi-sig requirement
+        let warrant = Warrant::builder()
+            .tool("sensitive_action")
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![admin_keypair.public_key()])
+            .min_approvals(1)
+            .build(&issuer_keypair)
+            .unwrap();
+
+        let authorizer = Authorizer::new(issuer_keypair.public_key());
+        let args = HashMap::new();
+        
+        // Should FAIL without approval
+        let result = authorizer.authorize(&warrant, "sensitive_action", &args, None, &[]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("insufficient"));
+    }
+
+    #[test]
+    fn test_authorize_valid_approval() {
+        use crate::approval::{Approval, compute_request_hash};
+        use chrono::{Duration as ChronoDuration, Utc};
+        
+        let issuer_keypair = Keypair::generate();
+        let admin_keypair = Keypair::generate();
+        
+        // Create warrant WITH multi-sig requirement
+        let warrant = Warrant::builder()
+            .tool("sensitive_action")
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![admin_keypair.public_key()])
+            .min_approvals(1)
+            .build(&issuer_keypair)
+            .unwrap();
+
+        let authorizer = Authorizer::new(issuer_keypair.public_key());
+        let args = HashMap::new();
+        
+        // Create valid approval
+        let now = Utc::now();
+        let expires = now + ChronoDuration::seconds(300);
+        let request_hash = compute_request_hash(warrant.id().as_str(), "sensitive_action", &args, warrant.authorized_holder());
+        
+        // Create signable bytes
+        let mut signable = Vec::new();
+        signable.extend_from_slice(&request_hash);
+        signable.extend_from_slice("admin@test.com".as_bytes());
+        signable.extend_from_slice(&now.timestamp().to_le_bytes());
+        signable.extend_from_slice(&expires.timestamp().to_le_bytes());
+        
+        let sig = admin_keypair.sign(&signable);
+        
+        let approval = Approval {
+            request_hash,
+            approver_key: admin_keypair.public_key(),
+            external_id: "admin@test.com".to_string(),
+            provider: "test".to_string(),
+            approved_at: now,
+            expires_at: expires,
+            reason: None,
+            signature: sig,
+        };
+        
+        // Should PASS with valid approval
+        let result = authorizer.authorize(&warrant, "sensitive_action", &args, None, &[approval]);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_authorize_wrong_approver() {
+        use crate::approval::{Approval, compute_request_hash};
+        use chrono::{Duration as ChronoDuration, Utc};
+        
+        let issuer_keypair = Keypair::generate();
+        let admin_keypair = Keypair::generate();
+        let other_keypair = Keypair::generate(); // Not in required_approvers
+        
+        // Create warrant requiring admin's approval
+        let warrant = Warrant::builder()
+            .tool("sensitive_action")
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![admin_keypair.public_key()])
+            .min_approvals(1)
+            .build(&issuer_keypair)
+            .unwrap();
+
+        let authorizer = Authorizer::new(issuer_keypair.public_key());
+        let args = HashMap::new();
+        
+        // Create approval from WRONG keypair
+        let now = Utc::now();
+        let expires = now + ChronoDuration::seconds(300);
+        let request_hash = compute_request_hash(warrant.id().as_str(), "sensitive_action", &args, warrant.authorized_holder());
+        
+        let mut signable = Vec::new();
+        signable.extend_from_slice(&request_hash);
+        signable.extend_from_slice("other@test.com".as_bytes());
+        signable.extend_from_slice(&now.timestamp().to_le_bytes());
+        signable.extend_from_slice(&expires.timestamp().to_le_bytes());
+        
+        let sig = other_keypair.sign(&signable);
+        
+        let approval = Approval {
+            request_hash,
+            approver_key: other_keypair.public_key(), // Wrong approver!
+            external_id: "other@test.com".to_string(),
+            provider: "test".to_string(),
+            approved_at: now,
+            expires_at: expires,
+            reason: None,
+            signature: sig,
+        };
+        
+        // Should FAIL - approver not in required set
+        let result = authorizer.authorize(&warrant, "sensitive_action", &args, None, &[approval]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_authorize_2_of_3() {
+        use crate::approval::{Approval, compute_request_hash};
+        use chrono::{Duration as ChronoDuration, Utc};
+        
+        let issuer_keypair = Keypair::generate();
+        let admin1 = Keypair::generate();
+        let admin2 = Keypair::generate();
+        let admin3 = Keypair::generate();
+        
+        // Create warrant requiring 2-of-3 approvals
+        let warrant = Warrant::builder()
+            .tool("sensitive_action")
+            .ttl(Duration::from_secs(300))
+            .required_approvers(vec![admin1.public_key(), admin2.public_key(), admin3.public_key()])
+            .min_approvals(2)
+            .build(&issuer_keypair)
+            .unwrap();
+
+        let authorizer = Authorizer::new(issuer_keypair.public_key());
+        let args = HashMap::new();
+        
+        let now = Utc::now();
+        let expires = now + ChronoDuration::seconds(300);
+        let request_hash = compute_request_hash(warrant.id().as_str(), "sensitive_action", &args, warrant.authorized_holder());
+        
+        // Helper to create approval
+        let make_approval = |kp: &Keypair, id: &str| {
+            let mut signable = Vec::new();
+            signable.extend_from_slice(&request_hash);
+            signable.extend_from_slice(id.as_bytes());
+            signable.extend_from_slice(&now.timestamp().to_le_bytes());
+            signable.extend_from_slice(&expires.timestamp().to_le_bytes());
+            
+            Approval {
+                request_hash,
+                approver_key: kp.public_key(),
+                external_id: id.to_string(),
+                provider: "test".to_string(),
+                approved_at: now,
+                expires_at: expires,
+                reason: None,
+                signature: kp.sign(&signable),
+            }
+        };
+        
+        let approval1 = make_approval(&admin1, "admin1@test.com");
+        let approval2 = make_approval(&admin2, "admin2@test.com");
+        
+        // With 1 approval - should fail (need 2)
+        let result = authorizer.authorize(&warrant, "sensitive_action", &args, None, &[approval1.clone()]);
+        assert!(result.is_err());
+        
+        // With 2 approvals - should pass
+        let result = authorizer.authorize(&warrant, "sensitive_action", &args, None, &[approval1, approval2]);
+        assert!(result.is_ok());
     }
 }
 
