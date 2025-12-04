@@ -52,6 +52,14 @@ pub enum Error {
     #[error("invalid TTL: {0}")]
     InvalidTtl(String),
 
+    /// Constraint nesting depth exceeds maximum allowed.
+    #[error("constraint depth {depth} exceeds maximum {max}")]
+    ConstraintDepthExceeded { depth: u32, max: u32 },
+
+    /// Payload size exceeds maximum allowed.
+    #[error("payload size {size} bytes exceeds maximum {max} bytes")]
+    PayloadTooLarge { size: usize, max: usize },
+
     /// Parent warrant not provided for attenuation.
     #[error("parent warrant required for attenuation")]
     ParentRequired,

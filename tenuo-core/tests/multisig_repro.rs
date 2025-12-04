@@ -1,8 +1,7 @@
 use tenuo_core::{
     approval::{Approval, compute_request_hash},
-    constraints::ConstraintValue,
-    crypto::{Keypair, PublicKey},
-    planes::{Authorizer, DataPlane},
+    crypto::Keypair,
+    planes::Authorizer,
     warrant::Warrant,
 };
 use std::collections::HashMap;

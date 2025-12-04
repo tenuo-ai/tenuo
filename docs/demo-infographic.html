@@ -623,14 +623,15 @@
                 <p style="color: var(--text-secondary); margin-bottom: 16px;">
                     The Worker receives the chain. To perform an action, it <strong
                         style="color: var(--accent-purple);">signs the request</strong>
-                    with its private key and sends the chain to the system.
+                    with its private key. The signature is <strong style="color: var(--accent-yellow);">time-bounded (~2 min)</strong>
+                    to prevent replay attacks.
                 </p>
 
                 <div
                     style="background: rgba(0, 0, 0, 0.3); border: 1px dashed var(--text-muted); border-radius: 8px; padding: 12px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-muted);">
                     &gt; POST /api/v1/cluster/staging-web/upgrade<br>
                     &gt; X-Tenuo-Chain: [Root, Orchestrator, Worker]<br>
-                    &gt; X-Tenuo-PoP: sig_worker_123...
+                    &gt; X-Tenuo-PoP: sig(warrant_id, tool, args, timestamp)
                 </div>
             </div>
 
@@ -891,6 +892,10 @@
                 <div class="insight-item">
                     <div class="insight-icon">🔐</div>
                     <div class="insight-label"><strong>Holder-Bound</strong><br>Stolen warrants useless</div>
+                </div>
+                <div class="insight-item">
+                    <div class="insight-icon">⏱️</div>
+                    <div class="insight-label"><strong>Replay Protected</strong><br>PoP valid ~2 minutes</div>
                 </div>
                 <div class="insight-item">
                     <div class="insight-icon">📏</div>

@@ -58,7 +58,10 @@ struct IssueRequest {
     tool: String,
     constraints: std::collections::HashMap<String, String>,
     ttl_seconds: u64,
-    #[allow(dead_code)]  // TODO: Pass to warrant builder when session support is added
+    /// Optional session ID for traceability. Currently accepted but not used
+    /// by the simplified issue_warrant API - use WarrantBuilder directly for
+    /// full control over session_id, max_depth, and authorized_holder.
+    #[allow(dead_code)]
     session_id: Option<String>,
 }
 

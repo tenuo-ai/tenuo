@@ -402,6 +402,12 @@ data_plane.check_chain(&chain, "upgrade_cluster", &args, Some(&signature))?;
 | `Range` | `{min: 0, max: 10000}` | Numeric bounds (inclusive) | Supports floats |
 | `Regex` | `/^staging-\d+$/` | Full regex (use carefully) | Compiled & cached |
 | `CEL` | `amount < 1000 && approver != ''` | Complex expressions | Full CEL language |
+| `All` | `All([c1, c2])` | All nested constraints must match (AND) | Max depth: 16 |
+| `Any` | `Any([c1, c2])` | At least one must match (OR) | Max depth: 16 |
+| `Not` | `Not(c)` | Negation | Max depth: 16 |
+
+> **Composite constraint depth limit:** `All`, `Any`, and `Not` can be nested up to 16 levels deep.
+> This prevents stack overflow attacks from maliciously crafted warrants.
 
 **Attenuation rules:**
 - `Wildcard`: Can attenuate to **any** constraint type (it's the universal superset)
@@ -519,6 +525,9 @@ Measured on Apple M1:
 | **Batch Verification** | ~3x faster for deep chains (use `verify_batch()`) |
 | **Cycle Detection** | Chain verification rejects circular delegations |
 | **Session Binding** | Optional strict mode isolates warrants per-session |
+| **Constraint Depth Limit** | Recursive constraints (`All`, `Any`, `Not`) limited to 16 levels to prevent stack overflow |
+| **Payload Size Limit** | Serialized warrants limited to 1 MB to prevent memory exhaustion |
+| **ID Format Validation** | `WarrantId` deserialization enforces `tnu_wrt_` prefix to prevent ID injection |
 
 ### Environment Isolation
 
@@ -645,11 +654,20 @@ Approvals are cryptographically bound to prevent theft:
 | Attack | Protection |
 |--------|------------|
 | **Approval theft** | `request_hash` includes `authorized_holder` - stolen approvals only work for intended holder |
-| **Replay attack** | Hash includes `warrant_id + tool + args` - approvals are request-specific |
+| **Approval replay** | Hash includes `warrant_id + tool + args` - approvals are request-specific |
+| **PoP replay** | PoP signature includes `warrant_id + timestamp_window` - valid for ~2 minutes |
 | **Expired approvals** | `expires_at` checked with clock tolerance |
 | **DoS via flood** | Approval count limited to `2 × required_approvers.len()` |
 | **Duplicate approvals** | Same approver counted only once via `HashSet` deduplication |
 | **Bypass multi-sig** | Unified `authorize()` API - no code path skips approval check |
+
+**Residual Risk: PoP Replay Within Window**
+
+The PoP signature is valid for ~2 minutes (configurable via `TIMESTAMP_WINDOW_SECS`). Within this window, a captured signature can be replayed. This is an intentional trade-off:
+
+- **Why a window?** Distributed systems have clock skew. A zero-tolerance policy would cause legitimate requests to fail.
+- **Mitigation**: For high-security operations, use short-lived warrants (TTL < 2 min) so the warrant itself expires before the PoP window.
+- **Additional defense**: Implement request deduplication at the application layer using `(warrant_id, tool, args)` as a key with a 2-minute TTL cache.
 
 **Why Independent Signatures?** We use independent Ed25519 signatures (similar to Bitcoin multi-sig) rather than threshold schemes like Shamir or FROST. This ensures no secret is ever reconstructed, no interactive coordination is required between approvers, verification stays 100% offline, and each approver is individually traceable for audit. The trade-off is signature size (M × 64 bytes vs. a single aggregated signature), which is acceptable for our use case.
 

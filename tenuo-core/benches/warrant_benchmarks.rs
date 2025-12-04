@@ -76,7 +76,7 @@ fn benchmark_warrant_authorization(c: &mut Criterion) {
     c.bench_function("warrant_authorize", |b| {
         b.iter(|| {
             warrant
-                .authorize(black_box("upgrade_cluster"), black_box(&args))
+                .authorize(black_box("upgrade_cluster"), black_box(&args), None)
                 .unwrap()
         })
     });

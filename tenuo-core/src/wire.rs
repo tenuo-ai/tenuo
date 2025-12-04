@@ -3,12 +3,24 @@
 //! Uses CBOR (RFC 8949) for compact binary serialization.
 //! Warrants are typically carried in HTTP headers or gRPC metadata,
 //! so compact encoding is important.
+//!
+//! ## Security Limits
+//!
+//! - **Payload size**: Limited to [`MAX_WARRANT_SIZE`] (1MB) to prevent memory exhaustion
+//! - **Constraint depth**: Limited to 16 levels to prevent stack overflow
 
 use crate::error::{Error, Result};
 use crate::warrant::Warrant;
 use crate::WIRE_VERSION;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
+
+/// Maximum allowed size for a serialized warrant in bytes (1 MB).
+///
+/// This prevents memory exhaustion attacks from extremely large payloads.
+/// Typical warrants are a few KB; 1 MB provides ample headroom for complex
+/// policies while protecting against abuse.
+pub const MAX_WARRANT_SIZE: usize = 1024 * 1024; // 1 MB
 
 /// A versioned wire envelope for warrants.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,11 +44,19 @@ impl WireEnvelope {
     }
 
     /// Extract the warrant from the envelope.
+    /// 
+    /// This validates constraint depth to prevent stack overflow attacks
+    /// from maliciously crafted warrants with deeply nested constraints.
     pub fn extract(&self) -> Result<Warrant> {
         if self.version != WIRE_VERSION {
             return Err(Error::UnsupportedVersion(self.version));
         }
-        ciborium::de::from_reader(&self.payload[..]).map_err(Into::into)
+        let warrant: Warrant = ciborium::de::from_reader(&self.payload[..])?;
+        
+        // Validate constraint depth to prevent stack overflow attacks
+        warrant.validate_constraint_depth()?;
+        
+        Ok(warrant)
     }
 }
 
@@ -49,7 +69,17 @@ pub fn encode(warrant: &Warrant) -> Result<Vec<u8>> {
 }
 
 /// Decode a warrant from binary format.
+///
+/// Returns `PayloadTooLarge` if the input exceeds [`MAX_WARRANT_SIZE`].
 pub fn decode(data: &[u8]) -> Result<Warrant> {
+    // Check size BEFORE attempting deserialization
+    if data.len() > MAX_WARRANT_SIZE {
+        return Err(Error::PayloadTooLarge {
+            size: data.len(),
+            max: MAX_WARRANT_SIZE,
+        });
+    }
+    
     let envelope: WireEnvelope = ciborium::de::from_reader(data)?;
     envelope.extract()
 }
@@ -61,7 +91,19 @@ pub fn encode_base64(warrant: &Warrant) -> Result<String> {
 }
 
 /// Decode a warrant from a base64 string.
+///
+/// Returns `PayloadTooLarge` if the decoded bytes exceed [`MAX_WARRANT_SIZE`].
 pub fn decode_base64(s: &str) -> Result<Warrant> {
+    // Quick check: base64 encodes 3 bytes as 4 chars, so estimate decoded size
+    // This is a lower bound; actual decoded size may be slightly smaller
+    let estimated_size = (s.len() * 3) / 4;
+    if estimated_size > MAX_WARRANT_SIZE {
+        return Err(Error::PayloadTooLarge {
+            size: estimated_size,
+            max: MAX_WARRANT_SIZE,
+        });
+    }
+    
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(s)
         .map_err(|e| Error::DeserializationError(e.to_string()))?;
@@ -232,8 +274,8 @@ mod tests {
             c: Option<f64>,
         }
         
-        let s1 = TestStruct { a: 42, b: "hello".to_string(), c: Some(3.14) };
-        let s2 = TestStruct { a: 42, b: "hello".to_string(), c: Some(3.14) };
+        let s1 = TestStruct { a: 42, b: "hello".to_string(), c: Some(1.234) };
+        let s2 = TestStruct { a: 42, b: "hello".to_string(), c: Some(1.234) };
         
         let mut b1 = Vec::new();
         let mut b2 = Vec::new();

@@ -13,10 +13,23 @@ use crate::crypto::{Keypair, PublicKey, Signature};
 use crate::error::{Error, Result};
 use crate::MAX_DELEGATION_DEPTH;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 use uuid::Uuid;
+
+/// The required prefix for all warrant IDs.
+pub const WARRANT_ID_PREFIX: &str = "tnu_wrt_";
+
+/// Size of the timestamp window for PoP signatures in seconds.
+///
+/// The verifier accepts signatures from 4 consecutive windows (current ± 2),
+/// giving approximately 2 minutes of tolerance for clock skew.
+///
+/// **Security trade-off**: Larger windows tolerate more clock skew but increase
+/// the replay window. Smaller windows reduce replay risk but may cause false
+/// rejections in distributed systems.
+pub const POP_TIMESTAMP_WINDOW_SECS: i64 = 30;
 
 /// A unique identifier for a warrant.
 /// 
@@ -25,8 +38,28 @@ use uuid::Uuid;
 /// - 74 bits of random data
 /// - Monotonically increasing within the same millisecond
 /// - Collision probability: 1 in 2^74 per millisecond (effectively zero)
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// 
+/// **Validation**: IDs must start with `tnu_wrt_` prefix. This is enforced
+/// during both construction (`from_string`) and deserialization.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct WarrantId(String);
+
+impl<'de> Deserialize<'de> for WarrantId {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        if !s.starts_with(WARRANT_ID_PREFIX) {
+            return Err(serde::de::Error::custom(format!(
+                "warrant ID must start with '{}', got: {}",
+                WARRANT_ID_PREFIX,
+                if s.len() > 20 { &s[..20] } else { &s }
+            )));
+        }
+        Ok(WarrantId(s))
+    }
+}
 
 impl WarrantId {
     /// Generate a new time-ordered warrant ID (UUIDv7).
@@ -45,12 +78,16 @@ impl WarrantId {
     }
 
     /// Create a warrant ID from a string.
+    /// 
+    /// Returns `InvalidWarrantId` if the string doesn't start with `tnu_wrt_`.
     pub fn from_string(s: impl Into<String>) -> Result<Self> {
         let s = s.into();
-        if !s.starts_with("tnu_wrt_") {
-            return Err(Error::InvalidWarrantId(
-                "warrant ID must start with 'tnu_wrt_'".to_string(),
-            ));
+        if !s.starts_with(WARRANT_ID_PREFIX) {
+            return Err(Error::InvalidWarrantId(format!(
+                "warrant ID must start with '{}', got: {}",
+                WARRANT_ID_PREFIX,
+                if s.len() > 20 { &s[..20] } else { &s }
+            )));
         }
         Ok(Self(s))
     }
@@ -162,6 +199,14 @@ impl Warrant {
     /// Get the constraints.
     pub fn constraints(&self) -> &ConstraintSet {
         &self.payload.constraints
+    }
+    
+    /// Validate that constraint nesting depths are within limits.
+    /// 
+    /// Call this after deserializing warrants from untrusted sources
+    /// to prevent stack overflow attacks from deeply nested constraints.
+    pub fn validate_constraint_depth(&self) -> Result<()> {
+        self.payload.constraints.validate_depth()
     }
 
     /// Get the expiration time.
@@ -339,17 +384,36 @@ impl Warrant {
                 Error::MissingSignature("Proof-of-Possession required".to_string())
             })?;
 
-            // Create deterministic challenge: (tool, sorted_args)
+            // PoP signature covers (warrant_id, tool, sorted_args, timestamp_window)
+            // We verify against multiple recent windows to handle clock skew.
+            // 
+            // Security: This creates a ~2 minute replay window. Mitigate with:
+            // - Short-lived warrants (TTL < 2 min)
+            // - Application-layer request deduplication
+            let now = Utc::now().timestamp();
+            let max_windows = 4; // Accept signatures from last ~2 minutes
+            
             let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
             sorted_args.sort_by_key(|(k, _)| *k);
 
-            let challenge_data = (tool, sorted_args);
-            let mut challenge_bytes = Vec::new();
-            ciborium::ser::into_writer(&challenge_data, &mut challenge_bytes)
-                .map_err(|e| Error::SerializationError(e.to_string()))?;
-
-            holder_key.verify(&challenge_bytes, signature)
-                .map_err(|_| Error::SignatureInvalid("Proof-of-Possession failed".to_string()))?;
+            let mut verified = false;
+            for i in 0..max_windows {
+                // Try current and recent time windows
+                let window_ts = (now / POP_TIMESTAMP_WINDOW_SECS - i) * POP_TIMESTAMP_WINDOW_SECS;
+                let challenge_data = (self.payload.id.as_str(), tool, &sorted_args, window_ts);
+                let mut challenge_bytes = Vec::new();
+                if ciborium::ser::into_writer(&challenge_data, &mut challenge_bytes).is_err() {
+                    continue;
+                }
+                if holder_key.verify(&challenge_bytes, signature).is_ok() {
+                    verified = true;
+                    break;
+                }
+            }
+            
+            if !verified {
+                return Err(Error::SignatureInvalid("Proof-of-Possession failed or expired".to_string()));
+            }
         }
 
         Ok(())
@@ -357,20 +421,36 @@ impl Warrant {
 
     /// Create a Proof-of-Possession signature for a request.
     ///
-    /// This helper generates the correct challenge (tool + sorted args) and signs it
-    /// using the provided keypair. Use this when making a request with a warrant
-    /// that requires Proof-of-Possession.
+    /// This generates a time-bounded signature that proves you hold the private key
+    /// corresponding to the warrant's `authorized_holder`. The signature is valid
+    /// for approximately 2 minutes (to handle clock skew in distributed systems).
+    ///
+    /// The challenge includes: `(warrant_id, tool, sorted_args, timestamp_window)`
+    ///
+    /// # Security Note
+    ///
+    /// **Residual replay risk**: Within the ~2 minute window, a captured PoP signature
+    /// can be replayed. This is an intentional trade-off to handle clock skew.
+    ///
+    /// **Mitigations**:
+    /// - Use short-lived warrants (TTL < 2 min) for high-security operations
+    /// - Implement request deduplication at the application layer using
+    ///   `(warrant_id, tool, args)` as a cache key with 2-minute TTL
     pub fn create_pop_signature(
         &self,
         keypair: &Keypair,
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
     ) -> Result<Signature> {
-        // Create deterministic challenge: (tool, sorted_args)
+        // Create challenge: (warrant_id, tool, sorted_args, timestamp_window)
         let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
         sorted_args.sort_by_key(|(k, _)| *k);
 
-        let challenge_data = (tool, sorted_args);
+        // Time-bound the signature to a window for replay protection
+        let now = Utc::now().timestamp();
+        let window_ts = (now / POP_TIMESTAMP_WINDOW_SECS) * POP_TIMESTAMP_WINDOW_SECS;
+
+        let challenge_data = (self.payload.id.as_str(), tool, sorted_args, window_ts);
         let mut challenge_bytes = Vec::new();
         ciborium::ser::into_writer(&challenge_data, &mut challenge_bytes)
             .map_err(|e| Error::SerializationError(e.to_string()))?;
@@ -586,11 +666,8 @@ impl<'a> AttenuationBuilder<'a> {
         self
     }
 
-    /// Set or change the session ID.
-    pub fn session_id(mut self, session_id: impl Into<String>) -> Self {
-        self.session_id = Some(session_id.into());
-        self
-    }
+    // NOTE: session_id is inherited from parent and immutable during attenuation.
+    // This follows the monotonicity principle - sessions cannot be changed mid-chain.
 
     /// Set or change the agent ID.
     pub fn agent_id(mut self, agent_id: impl Into<String>) -> Self {

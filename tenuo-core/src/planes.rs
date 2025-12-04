@@ -1439,7 +1439,7 @@ mod tests {
         let approval2 = make_approval(&admin2, "admin2@test.com");
         
         // With 1 approval - should fail (need 2)
-        let result = authorizer.authorize(&warrant, "sensitive_action", &args, None, &[approval1.clone()]);
+        let result = authorizer.authorize(&warrant, "sensitive_action", &args, None, std::slice::from_ref(&approval1));
         assert!(result.is_err());
         
         // With 2 approvals - should pass

@@ -21,8 +21,22 @@
 //! | `Any` | At least one must match | `OR(a, b, c)` |
 //! | `Not` | Negation (unsafe) | `NOT(pattern)` - avoid |
 //! | `Cel` | CEL expression | `amount < 10000` |
+//!
+//! ## Security: Constraint Depth Limit
+//!
+//! Recursive constraint types (`All`, `Any`, `Not`) are limited to a maximum
+//! nesting depth of [`MAX_CONSTRAINT_DEPTH`] (16) to prevent stack overflow
+//! attacks from maliciously crafted warrants.
 
 use crate::error::{Error, Result};
+
+/// Maximum allowed nesting depth for recursive constraints (All, Any, Not).
+/// 
+/// This prevents stack overflow attacks from deeply nested constraints like
+/// `Not(Not(Not(...)))` or `All([All([All([...])])])`.
+/// 
+/// Depth 16 allows for complex real-world policies while preventing abuse.
+pub const MAX_CONSTRAINT_DEPTH: u32 = 16;
 use glob::Pattern as GlobPattern;
 use regex::Regex as RegexPattern;
 use serde::{Deserialize, Serialize};
@@ -81,7 +95,62 @@ pub enum Constraint {
 }
 
 impl Constraint {
+    /// Calculate the maximum nesting depth of this constraint.
+    /// 
+    /// Non-recursive constraints have depth 0.
+    /// `All`, `Any`, and `Not` add 1 to their children's depth.
+    /// 
+    /// This is used to prevent stack overflow attacks from deeply nested
+    /// constraints like `Not(Not(Not(...)))`.
+    pub fn depth(&self) -> u32 {
+        match self {
+            // Non-recursive types have depth 0
+            Constraint::Wildcard(_)
+            | Constraint::Pattern(_)
+            | Constraint::Regex(_)
+            | Constraint::Exact(_)
+            | Constraint::OneOf(_)
+            | Constraint::NotOneOf(_)
+            | Constraint::Range(_)
+            | Constraint::Contains(_)
+            | Constraint::Subset(_)
+            | Constraint::Cel(_) => 0,
+            
+            // Recursive types: 1 + max child depth
+            Constraint::All(all) => {
+                1 + all.constraints.iter().map(|c| c.depth()).max().unwrap_or(0)
+            }
+            Constraint::Any(any) => {
+                1 + any.constraints.iter().map(|c| c.depth()).max().unwrap_or(0)
+            }
+            Constraint::Not(not) => {
+                1 + not.constraint.depth()
+            }
+        }
+    }
+    
+    /// Validate that this constraint's nesting depth doesn't exceed the limit.
+    /// 
+    /// Returns `Ok(())` if depth <= `MAX_CONSTRAINT_DEPTH`.
+    /// Returns `Err(ConstraintDepthExceeded)` if depth exceeds the limit.
+    /// 
+    /// Call this after deserializing or before using untrusted constraints.
+    pub fn validate_depth(&self) -> Result<()> {
+        let depth = self.depth();
+        if depth > MAX_CONSTRAINT_DEPTH {
+            Err(Error::ConstraintDepthExceeded {
+                depth,
+                max: MAX_CONSTRAINT_DEPTH,
+            })
+        } else {
+            Ok(())
+        }
+    }
+    
     /// Check if this constraint is satisfied by the given value.
+    /// 
+    /// **Note**: This method does not check depth limits. Call `validate_depth()`
+    /// first on untrusted constraints to prevent stack overflow.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
         match self {
             Constraint::Wildcard(_) => Ok(true), // Wildcard matches everything
@@ -1225,6 +1294,17 @@ impl ConstraintSet {
         self.constraints.get(field)
     }
 
+    /// Validate that all constraints in this set have acceptable nesting depth.
+    /// 
+    /// Call this after deserialization to prevent stack overflow attacks
+    /// from deeply nested constraints.
+    pub fn validate_depth(&self) -> Result<()> {
+        for constraint in self.constraints.values() {
+            constraint.validate_depth()?;
+        }
+        Ok(())
+    }
+    
     /// Check if all constraints are satisfied by the given arguments.
     pub fn matches(&self, args: &HashMap<String, ConstraintValue>) -> Result<()> {
         for (field, constraint) in &self.constraints {
@@ -1512,7 +1592,7 @@ mod tests {
         
         assert!(wildcard.matches(&ConstraintValue::String("anything".to_string())).unwrap());
         assert!(wildcard.matches(&ConstraintValue::Integer(42)).unwrap());
-        assert!(wildcard.matches(&ConstraintValue::Float(3.14)).unwrap());
+        assert!(wildcard.matches(&ConstraintValue::Float(3.5)).unwrap());
         assert!(wildcard.matches(&ConstraintValue::Boolean(true)).unwrap());
         assert!(wildcard.matches(&ConstraintValue::List(vec![])).unwrap());
     }

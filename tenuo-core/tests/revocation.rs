@@ -61,7 +61,7 @@ fn test_chain_revocation_child() {
     // Chain invalid
     match data_plane.verify_chain(&[root.clone(), child.clone()]) {
         Err(Error::WarrantRevoked(id)) => assert_eq!(id, child.id().to_string()),
-        res => panic!("Expected WarrantRevoked, got {:?}. Child ID: {}", res, child.id().to_string()),
+        res => panic!("Expected WarrantRevoked, got {:?}. Child ID: {}", res, child.id()),
     }
 }
 

@@ -840,7 +840,7 @@
 
             <div
                 style="margin-top: 20px; padding: 16px; background: rgba(255, 68, 102, 0.1); border-radius: 8px; border: 1px solid var(--accent-red);">
-                <strong style="color: var(--accent-red);">Maximum Depth: 16</strong>
+                <strong style="color: var(--accent-red);">Maximum Depth: 64 (configurable via max_depth)</strong>
                 <p style="color: var(--text-secondary); font-size: 0.85rem; margin-top: 8px;">
                     Tenuo enforces a maximum delegation depth to prevent unbounded chains. Each level must narrow
                     capabilities.
@@ -860,7 +860,7 @@
 │  WORKER AGENT (The "Holder")                                                        │
 │  ┌───────────────────────────────────────────────────────────────────────────────┐  │
 │  │  1. Load warrant chain (Root -> Orchestrator -> Worker)                       │  │
-│  │  2. Create PoP signature: sign(tool + args) with worker_private_key          │  │
+│  │  2. Create PoP signature: sign(warrant_id, tool, args, timestamp) ~2min      │  │
 │  │  3. Send request with headers:                                                │  │
 │  │     X-Tenuo-Chain: [warrant_1, warrant_2, warrant_3]                         │  │
 │  │     X-Tenuo-PoP: &lt;signature&gt;                                                  │  │
@@ -901,6 +901,13 @@
                 <div class="insight-title">Holder Binding</div>
                 <div class="insight-text">
                     Stolen warrants are useless. Each request requires a signature from the bound keypair.
+                </div>
+            </div>
+            <div class="insight-card">
+                <div class="insight-icon">⏱️</div>
+                <div class="insight-title">Replay Protection</div>
+                <div class="insight-text">
+                    PoP signatures include timestamp. Valid for ~2 minutes. Captured signatures expire.
                 </div>
             </div>
             <div class="insight-card">

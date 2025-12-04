@@ -333,6 +333,11 @@ fn test_monotonicity_violation_rejected() {
 
     assert!(result.is_err());
     let err = result.unwrap_err();
-    assert!(err.to_string().contains("monotonicity") || err.to_string().contains("greater"));
+    assert!(
+        err.to_string().contains("monotonicity") || 
+        err.to_string().contains("exceeds") ||
+        err.to_string().contains("expanded"),
+        "Expected monotonicity error, got: {}", err
+    );
 }
 

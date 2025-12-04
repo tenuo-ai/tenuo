@@ -51,6 +51,7 @@ pub mod python;
 pub use constraints::{
     All, Any, CelConstraint, Constraint, ConstraintSet, ConstraintValue,
     Contains, Exact, Not, NotOneOf, OneOf, Pattern, Range, RegexConstraint, Subset, Wildcard,
+    MAX_CONSTRAINT_DEPTH,
 };
 pub use crypto::{Keypair, PublicKey, Signature};
 pub use error::{Error, Result};
@@ -59,7 +60,8 @@ pub use planes::{
     DEFAULT_CLOCK_TOLERANCE_SECS,
 };
 pub use revocation::RevocationList;
-pub use warrant::{Warrant, WarrantBuilder, WarrantId};
+pub use warrant::{Warrant, WarrantBuilder, WarrantId, WARRANT_ID_PREFIX, POP_TIMESTAMP_WINDOW_SECS};
+pub use wire::MAX_WARRANT_SIZE;
 
 /// Maximum delegation depth to prevent unbounded chains (protocol-level hard cap).
 /// 
