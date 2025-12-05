@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tenuo - Capability-Based Authorization for AI Agents</title>
+    <meta name="description" content="Cryptographic authorization tokens for AI agent workflows. Offline verification, monotonic attenuation, holder binding.">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+        :root {
+            --bg-dark: #0a0e17;
+            --bg-card: #121a2a;
+            --bg-card-hover: #1a2540;
+            --accent-cyan: #00d4ff;
+            --accent-green: #00ff88;
+            --accent-purple: #a855f7;
+            --accent-yellow: #ffcc00;
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --border: #1e293b;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background:
+                radial-gradient(circle at 20% 20%, rgba(168, 85, 247, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 80% 80%, rgba(0, 212, 255, 0.1) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 60px 24px;
+            position: relative;
+            z-index: 1;
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 64px;
+        }
+
+        .logo {
+            font-size: 4rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 16px;
+            letter-spacing: -2px;
+        }
+
+        .tagline {
+            font-size: 1.5rem;
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+        }
+
+        .badges {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-bottom: 32px;
+        }
+
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            border: 1px solid var(--border);
+            background: var(--bg-card);
+        }
+
+        .badge-rust {
+            border-color: rgba(222, 165, 132, 0.4);
+            color: #dea584;
+        }
+
+        .badge-offline {
+            border-color: rgba(0, 255, 136, 0.4);
+            color: var(--accent-green);
+        }
+
+        .badge-fast {
+            border-color: rgba(0, 212, 255, 0.4);
+            color: var(--accent-cyan);
+        }
+
+        .hero-description {
+            max-width: 700px;
+            margin: 0 auto;
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+        }
+
+        .cta-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            margin-top: 32px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0, 212, 255, 0.3);
+        }
+
+        .btn-secondary {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--accent-cyan);
+        }
+
+        section {
+            margin-bottom: 64px;
+        }
+
+        h2 {
+            font-size: 1.75rem;
+            margin-bottom: 24px;
+            color: var(--text-primary);
+        }
+
+        h2 span {
+            color: var(--accent-cyan);
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+        }
+
+        .feature-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            transition: all 0.2s ease;
+        }
+
+        .feature-card:hover {
+            border-color: var(--accent-cyan);
+            transform: translateY(-4px);
+        }
+
+        .feature-icon {
+            font-size: 2rem;
+            margin-bottom: 12px;
+        }
+
+        .feature-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .feature-desc {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .docs-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+        }
+
+        .doc-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 32px;
+            text-decoration: none;
+            color: inherit;
+            transition: all 0.2s ease;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .doc-card:hover {
+            border-color: var(--accent-purple);
+            transform: translateY(-4px);
+            box-shadow: 0 12px 32px rgba(168, 85, 247, 0.15);
+        }
+
+        .doc-icon {
+            font-size: 2.5rem;
+            margin-bottom: 16px;
+        }
+
+        .doc-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .doc-desc {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            flex-grow: 1;
+        }
+
+        .doc-link {
+            margin-top: 16px;
+            font-size: 0.875rem;
+            color: var(--accent-cyan);
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .code-example {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            overflow-x: auto;
+        }
+
+        pre {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin: 0;
+        }
+
+        .code-comment {
+            color: var(--text-muted);
+        }
+
+        .code-keyword {
+            color: var(--accent-purple);
+        }
+
+        .code-string {
+            color: var(--accent-green);
+        }
+
+        .code-type {
+            color: var(--accent-cyan);
+        }
+
+        footer {
+            text-align: center;
+            padding: 40px 24px;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+            border-top: 1px solid var(--border);
+        }
+
+        footer a {
+            color: var(--accent-cyan);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        .stats {
+            display: flex;
+            justify-content: center;
+            gap: 48px;
+            margin: 48px 0;
+            flex-wrap: wrap;
+        }
+
+        .stat {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-green));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .stat-label {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        @media (max-width: 600px) {
+            .logo {
+                font-size: 3rem;
+            }
+
+            .tagline {
+                font-size: 1.25rem;
+            }
+
+            .stats {
+                gap: 32px;
+            }
+
+            .stat-value {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">Tenuo</div>
+            <div class="tagline">Capability-Based Authorization for AI Agents</div>
+            
+            <div class="badges">
+                <span class="badge badge-rust">Rust Core</span>
+                <span class="badge badge-offline">100% Offline</span>
+                <span class="badge badge-fast">~25μs Verify</span>
+            </div>
+            
+            <p class="hero-description">
+                Cryptographic authorization tokens that let AI agents safely delegate capabilities.
+                Warrants can only shrink when passed between agents — mathematically guaranteed.
+            </p>
+            
+            <div class="cta-buttons">
+                <a href="https://github.com/tenuo/tenuo" class="btn btn-primary">
+                    View on GitHub
+                </a>
+                <a href="demo-infographic.html" class="btn btn-secondary">
+                    See Demo
+                </a>
+            </div>
+        </header>
+
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-value">~25μs</div>
+                <div class="stat-label">Verify Latency</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">~150ns</div>
+                <div class="stat-label">Reject Latency</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">0</div>
+                <div class="stat-label">Network Calls</div>
+            </div>
+        </div>
+
+        <section>
+            <h2>Core <span>Properties</span></h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="feature-icon">⬇️</div>
+                    <div class="feature-title">Monotonic Attenuation</div>
+                    <div class="feature-desc">
+                        Capabilities can only shrink when delegated. A $1000 budget becomes $500, never $2000.
+                        Cryptographically enforced.
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">📴</div>
+                    <div class="feature-title">Offline Verification</div>
+                    <div class="feature-desc">
+                        No runtime calls to a central server. Verify warrant chains locally with just the 
+                        root public key.
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔐</div>
+                    <div class="feature-title">Holder Binding</div>
+                    <div class="feature-desc">
+                        Warrants are bound to the holder's public key. Stolen warrants are useless without
+                        the private key.
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🔗</div>
+                    <div class="feature-title">Chain Verification</div>
+                    <div class="feature-desc">
+                        Verify entire delegation chains in one pass. Cycle detection, depth limits,
+                        and session binding included.
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">✍️</div>
+                    <div class="feature-title">Multi-Sig Approvals</div>
+                    <div class="feature-desc">
+                        Require M-of-N approvals for sensitive actions. Human-in-the-loop without
+                        breaking offline verification.
+                    </div>
+                </div>
+                <div class="feature-card">
+                    <div class="feature-icon">🛡️</div>
+                    <div class="feature-title">Security Hardened</div>
+                    <div class="feature-desc">
+                        Constraint depth limits, payload size limits, ID validation, replay protection.
+                        Defense in depth.
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section>
+            <h2>Interactive <span>Documentation</span></h2>
+            <div class="docs-grid">
+                <a href="demo-infographic.html" class="doc-card">
+                    <div class="doc-icon">🎬</div>
+                    <div class="doc-title">Demo Walkthrough</div>
+                    <div class="doc-desc">
+                        Step-by-step visualization of warrant issuance, attenuation, and enforcement.
+                        See exact constraint values and error types.
+                    </div>
+                    <div class="doc-link">View Demo →</div>
+                </a>
+                <a href="architecture-infographic.html" class="doc-card">
+                    <div class="doc-icon">🏗️</div>
+                    <div class="doc-title">Architecture Overview</div>
+                    <div class="doc-desc">
+                        Complete flow from Control Plane to Workers. Integration points, 
+                        multi-agent patterns, and the verification pipeline.
+                    </div>
+                    <div class="doc-link">View Architecture →</div>
+                </a>
+                <a href="runtime-infographic.html" class="doc-card">
+                    <div class="doc-icon">⚡</div>
+                    <div class="doc-title">Runtime Scenarios</div>
+                    <div class="doc-desc">
+                        Gateway vs Sidecar patterns. Multi-agent delegation chains.
+                        Real-world deployment configurations.
+                    </div>
+                    <div class="doc-link">View Scenarios →</div>
+                </a>
+            </div>
+        </section>
+
+        <section>
+            <h2>Quick <span>Start</span></h2>
+            <div class="code-example">
+<pre><span class="code-comment">// Add to Cargo.toml</span>
+[dependencies]
+tenuo-core = <span class="code-string">"0.1"</span>
+
+<span class="code-comment">// Issue a warrant</span>
+<span class="code-keyword">let</span> keypair = <span class="code-type">Keypair</span>::generate();
+<span class="code-keyword">let</span> warrant = <span class="code-type">Warrant</span>::builder()
+    .tool(<span class="code-string">"manage_infrastructure"</span>)
+    .constraint(<span class="code-string">"cluster"</span>, <span class="code-type">Pattern</span>::new(<span class="code-string">"staging-*"</span>)?)
+    .constraint(<span class="code-string">"budget"</span>, <span class="code-type">Range</span>::max(<span class="code-string">10000.0</span>))
+    .ttl(<span class="code-type">Duration</span>::from_secs(<span class="code-string">3600</span>))
+    .build(&keypair)?;
+
+<span class="code-comment">// Attenuate for a worker (capabilities shrink)</span>
+<span class="code-keyword">let</span> worker_warrant = warrant.attenuate()
+    .constraint(<span class="code-string">"cluster"</span>, <span class="code-type">Exact</span>::new(<span class="code-string">"staging-web"</span>))
+    .constraint(<span class="code-string">"budget"</span>, <span class="code-type">Range</span>::max(<span class="code-string">1000.0</span>))
+    .authorized_holder(worker_keypair.public_key())
+    .build(&keypair)?;
+
+<span class="code-comment">// Worker authorizes action (offline, ~25μs)</span>
+worker_warrant.authorize(<span class="code-string">"upgrade"</span>, &args, Some(&pop_signature))?;</pre>
+            </div>
+        </section>
+    </div>
+
+    <footer>
+        <p>
+            <a href="https://github.com/tenuo/tenuo">GitHub</a> · 
+            <a href="https://github.com/tenuo/tenuo/blob/main/README.md">Documentation</a> · 
+            <a href="https://crates.io/crates/tenuo-core">crates.io</a>
+        </p>
+        <p style="margin-top: 12px;">
+            Built with Rust. Licensed under MIT/Apache-2.0.
+        </p>
+    </footer>
+</body>
+
+</html>
+
