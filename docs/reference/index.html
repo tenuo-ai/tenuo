@@ -3,30 +3,338 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Reference — Tenuo</title>
+    <title>Docs — Tenuo</title>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono&display=swap');
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg: #0a0a0a;
+            --surface: #141414;
+            --border: #262626;
+            --text: #fafafa;
+            --muted: #a1a1a1;
+            --accent: #00d4ff;
+        }
+
         body {
-            font-family: -apple-system, sans-serif;
-            background: #000;
-            color: #fff;
+            font-family: 'Inter', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+        }
+
+        .layout {
+            display: flex;
             min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 260px;
+            border-right: 1px solid var(--border);
+            padding: 24px;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+        }
+
+        .sidebar-logo {
+            font-weight: 600;
+            font-size: 1.1rem;
+            margin-bottom: 32px;
             display: flex;
             align-items: center;
-            justify-content: center;
-            text-align: center;
+            gap: 8px;
         }
-        a { color: #00d4ff; }
-        h1 { font-size: 2rem; margin-bottom: 16px; }
-        p { color: #888; margin-bottom: 24px; }
+
+        .sidebar-logo a {
+            color: var(--text);
+            text-decoration: none;
+        }
+
+        .sidebar-section {
+            margin-bottom: 24px;
+        }
+
+        .sidebar-title {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--muted);
+            margin-bottom: 12px;
+        }
+
+        .sidebar-link {
+            display: block;
+            padding: 8px 12px;
+            margin: 2px 0;
+            border-radius: 6px;
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: all 0.15s;
+        }
+
+        .sidebar-link:hover {
+            background: var(--surface);
+            color: var(--text);
+        }
+
+        .sidebar-link.active {
+            background: var(--surface);
+            color: var(--accent);
+        }
+
+        /* Main content */
+        .main {
+            flex: 1;
+            margin-left: 260px;
+            padding: 48px 64px;
+            max-width: 800px;
+        }
+
+        h1 {
+            font-size: 2rem;
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+
+        h2 {
+            font-size: 1.4rem;
+            font-weight: 600;
+            margin: 48px 0 16px;
+            padding-top: 24px;
+            border-top: 1px solid var(--border);
+        }
+
+        h3 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin: 32px 0 12px;
+        }
+
+        p {
+            color: var(--muted);
+            margin-bottom: 16px;
+        }
+
+        p strong { color: var(--text); }
+
+        code {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85em;
+            background: var(--surface);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        pre {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            overflow-x: auto;
+            margin: 16px 0;
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+        }
+
+        .tip {
+            background: rgba(0, 212, 255, 0.1);
+            border-left: 3px solid var(--accent);
+            padding: 12px 16px;
+            margin: 16px 0;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .tip p { margin: 0; color: var(--text); }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+            font-size: 0.9rem;
+        }
+
+        th, td {
+            text-align: left;
+            padding: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th { color: var(--text); font-weight: 500; }
+        td { color: var(--muted); }
+
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        ul, ol {
+            margin: 16px 0;
+            padding-left: 24px;
+            color: var(--muted);
+        }
+
+        li { margin: 8px 0; }
+
+        @media (max-width: 900px) {
+            .sidebar { display: none; }
+            .main { margin-left: 0; padding: 24px; }
+        }
     </style>
 </head>
 <body>
-    <div>
-        <h1>Reference Docs</h1>
-        <p>Coming soon. For now, see the <a href="https://github.com/tenuo/tenuo/blob/main/README.md">README</a>.</p>
-        <a href="../">← Back to home</a>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="sidebar-logo">
+                <a href="../">← tenuo</a>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="sidebar-title">Getting Started</div>
+                <a href="#introduction" class="sidebar-link active">Introduction</a>
+                <a href="#quick-start" class="sidebar-link">Quick Start</a>
+                <a href="#demo" class="sidebar-link">Demo</a>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="sidebar-title">Concepts</div>
+                <a href="#warrants" class="sidebar-link">Warrants</a>
+                <a href="#attenuation" class="sidebar-link">Attenuation</a>
+                <a href="#constraints" class="sidebar-link">Constraints</a>
+                <a href="#holder-binding" class="sidebar-link">Holder Binding</a>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="sidebar-title">Security</div>
+                <a href="#multi-sig" class="sidebar-link">Multi-Sig Approvals</a>
+                <a href="#properties" class="sidebar-link">Security Properties</a>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="sidebar-title">Reference</div>
+                <a href="https://github.com/tenuo/tenuo/blob/main/README.md" class="sidebar-link">Full README</a>
+                <a href="https://docs.rs/tenuo-core" class="sidebar-link">API Docs ↗</a>
+            </div>
+        </aside>
+
+        <main class="main">
+            <h1 id="introduction">Introduction</h1>
+            <p>
+                Tenuo provides <strong>cryptographically-enforced capability attenuation</strong> for AI agent workflows. 
+                Unlike traditional IAM systems that answer "Who are you?", Tenuo answers:
+            </p>
+            <div class="tip">
+                <p>"Does this actor hold a valid, scoped, unexpired token for this specific action?"</p>
+            </div>
+            <p>
+                When an orchestrator delegates work to sub-agents, capabilities can only <strong>shrink</strong>, never expand.
+                A $1000 budget becomes $500. Access to "staging-*" narrows to "staging-web".
+                Verification happens locally in ~25μs with no network calls.
+            </p>
+
+            <h2 id="quick-start">Quick Start</h2>
+            <p>Run the multi-agent demo with Docker:</p>
+            <pre><code>docker compose up orchestrator worker</code></pre>
+            <p>Or add to your Rust project:</p>
+            <pre><code>[dependencies]
+tenuo-core = "0.1"</code></pre>
+            <pre><code>use tenuo_core::{Warrant, Keypair, Pattern, Range};
+use std::time::Duration;
+
+let keypair = Keypair::generate();
+let warrant = Warrant::builder()
+    .tool("manage_infrastructure")
+    .constraint("cluster", Pattern::new("staging-*")?)
+    .constraint("budget", Range::max(10000.0))
+    .ttl(Duration::from_secs(3600))
+    .build(&keypair)?;</code></pre>
+
+            <h2 id="demo">Demo</h2>
+            <p>
+                The demo runs two containerized agents showing the complete workflow:
+                orchestrator attenuates a warrant and delegates to a worker, 
+                which then attempts various actions (some allowed, some blocked).
+            </p>
+            <p>
+                <a href="../demo-infographic.html">View the interactive demo →</a>
+            </p>
+
+            <h2 id="warrants">Warrants</h2>
+            <p>
+                A <strong>warrant</strong> is a signed token that authorizes a specific action with specific constraints.
+                Every warrant contains:
+            </p>
+            <table>
+                <tr><th>Field</th><th>Description</th></tr>
+                <tr><td><code>id</code></td><td>Unique identifier (UUIDv7)</td></tr>
+                <tr><td><code>tool</code></td><td>What action is authorized</td></tr>
+                <tr><td><code>constraints</code></td><td>Restrictions on arguments</td></tr>
+                <tr><td><code>expires_at</code></td><td>When the warrant expires</td></tr>
+                <tr><td><code>issuer</code></td><td>Who signed this warrant</td></tr>
+                <tr><td><code>depth</code></td><td>How many delegations from root</td></tr>
+            </table>
+
+            <h2 id="attenuation">Attenuation</h2>
+            <p>
+                When you delegate a warrant, you <strong>attenuate</strong> it — making it narrower.
+                This is cryptographically enforced: child warrants cannot exceed parent capabilities.
+            </p>
+            <pre><code>let worker_warrant = parent_warrant.attenuate()
+    .constraint("cluster", Exact::new("staging-web"))  // narrowed
+    .constraint("budget", Range::max(1000.0))          // reduced
+    .authorized_holder(worker_keypair.public_key())    // bound
+    .build(&parent_keypair)?;</code></pre>
+
+            <h2 id="constraints">Constraints</h2>
+            <table>
+                <tr><th>Type</th><th>Example</th><th>Description</th></tr>
+                <tr><td><code>Wildcard</code></td><td><code>*</code></td><td>Matches anything, can narrow to any type</td></tr>
+                <tr><td><code>Pattern</code></td><td><code>staging-*</code></td><td>Glob matching</td></tr>
+                <tr><td><code>Exact</code></td><td><code>staging-web</code></td><td>Exact string match</td></tr>
+                <tr><td><code>OneOf</code></td><td><code>["a", "b"]</code></td><td>Value must be in set</td></tr>
+                <tr><td><code>Range</code></td><td><code>0..10000</code></td><td>Numeric bounds</td></tr>
+                <tr><td><code>NotOneOf</code></td><td><code>!["prod"]</code></td><td>Exclude specific values</td></tr>
+            </table>
+
+            <h2 id="holder-binding">Holder Binding</h2>
+            <p>
+                Warrants can be bound to a specific holder's public key. 
+                The holder must sign each request (Proof-of-Possession), making stolen warrants useless.
+            </p>
+            <pre><code>// Orchestrator binds warrant to worker
+.authorized_holder(worker_keypair.public_key())
+
+// Worker signs request
+let signature = warrant.create_pop_signature(&keypair, tool, &args)?;
+warrant.authorize(tool, &args, Some(&signature))?;</code></pre>
+
+            <h2 id="multi-sig">Multi-Sig Approvals</h2>
+            <p>
+                Sensitive actions can require M-of-N approvals before execution.
+                Approvals are cryptographically bound to the specific request.
+            </p>
+            <pre><code>let warrant = Warrant::builder()
+    .tool("delete_database")
+    .required_approvers(vec![admin1.public_key(), admin2.public_key()])
+    .min_approvals(2)  // require 2-of-2
+    .build(&keypair)?;</code></pre>
+
+            <h2 id="properties">Security Properties</h2>
+            <table>
+                <tr><th>Property</th><th>Description</th></tr>
+                <tr><td>Offline verification</td><td>No network calls needed</td></tr>
+                <tr><td>Monotonic attenuation</td><td>Capabilities only shrink</td></tr>
+                <tr><td>Holder binding</td><td>Stolen tokens are useless</td></tr>
+                <tr><td>Depth limits</td><td>Max 64 delegation levels</td></tr>
+                <tr><td>Constraint depth</td><td>Max 16 nesting levels</td></tr>
+                <tr><td>Payload size</td><td>Max 1MB per warrant</td></tr>
+            </table>
+        </main>
     </div>
 </body>
 </html>
-
