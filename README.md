@@ -155,6 +155,34 @@ See [examples/gateway-config.yaml](examples/gateway-config.yaml) for a complete 
 
 **Native AI Agent Support**: Tenuo integrates directly with [MCP](https://modelcontextprotocol.io), the standard protocol for AI agent tool calling. No custom middleware needed.
 
+```
+┌─────────────────┐
+│  AI Agent       │
+│  (Claude/GPT)   │
+└────────┬────────┘
+         │ MCP tool call
+         │ {tool: "filesystem_read", arguments: {...}}
+         ▼
+┌─────────────────┐
+│  MCP Server     │
+│  (Tool Handler) │
+└────────┬────────┘
+         │ Extract + Authorize
+         ▼
+┌─────────────────┐      ┌──────────────────┐
+│  Tenuo          │─────▶│  Authorizer      │
+│  extract_constraints() │  check()         │
+└─────────────────┘      └──────────────────┘
+         │                        │
+         │ Extracted values       │ ✓ Authorized
+         │                        │   or ✗ Denied
+         ▼                        ▼
+┌─────────────────┐      ┌──────────────────┐
+│  Tool Execution │      │  Response        │
+│  (if authorized)│      │  (to agent)      │
+└─────────────────┘      └──────────────────┘
+```
+
 ```yaml
 # mcp-config.yaml
 version: "1"
@@ -183,15 +211,38 @@ tools:
 - **Multi-agent workflows**: Perfect for orchestrators delegating to specialized workers with bounded capabilities
 
 ```rust
-use tenuo_core::{CompiledMcpConfig, McpConfig};
+use tenuo_core::{Authorizer, CompiledMcpConfig, McpConfig, PublicKey};
 use serde_json::json;
+use std::collections::HashMap;
 
+// Load MCP configuration
 let config = McpConfig::from_file("mcp-config.yaml")?;
 let compiled = CompiledMcpConfig::compile(config);
 
-// Extract constraints from MCP tool call
+// Initialize authorizer with trusted Control Plane key
+let control_plane_key_bytes: [u8; 32] = hex::decode("f32e74b5...")?.try_into().unwrap();
+let control_plane_key = PublicKey::from_bytes(&control_plane_key_bytes)?;
+let authorizer = Authorizer::new(control_plane_key);
+
+// MCP tool call arrives
 let arguments = json!({ "path": "/var/log/app.log", "maxSize": 1024 });
+
+// 1. Extract constraints from MCP arguments
 let result = compiled.extract_constraints("filesystem_read", &arguments)?;
+
+// 2. Decode warrant chain (from MCP request metadata)
+let warrant = wire::decode_base64(&warrant_chain_base64)?;
+
+// 3. Authorize the action
+authorizer.check(
+    &warrant,
+    "filesystem_read",
+    &result.constraints,
+    pop_signature.as_ref()
+)?;
+
+// 4. If authorized, execute the tool
+// execute_filesystem_read(arguments);
 ```
 
 See the [MCP module documentation](https://docs.rs/tenuo-core/latest/tenuo_core/mcp/index.html) for details.

@@ -1,0 +1,27 @@
+[package]
+name = "tenuo-python"
+version = "0.1.0"
+edition = "2021"
+authors = ["Tenuo Contributors"]
+description = "Capability tokens for AI agents - Python SDK"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tenuo/tenuo"
+keywords = ["authorization", "capabilities", "agents", "security", "warrants", "mcp"]
+categories = ["authentication", "cryptography", "ai", "security"]
+
+[lib]
+name = "tenuo_python"
+crate-type = ["cdylib"]
+
+[dependencies]
+tenuo-core = { path = "../tenuo-core", features = ["python"] }
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py38"] }
+
+[package.metadata.maturin]
+name = "tenuo.tenuo_core"
+classifier = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+

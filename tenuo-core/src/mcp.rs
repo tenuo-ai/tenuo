@@ -47,7 +47,7 @@
 //! ```
 //!
 //! ```rust,ignore
-//! use tenuo_core::{CompiledMcpConfig, McpConfig};
+//! use tenuo_core::{Authorizer, CompiledMcpConfig, McpConfig, PublicKey, wire};
 //! use serde_json::json;
 //!
 //! // Load and compile configuration
@@ -60,14 +60,34 @@
 //!     eprintln!("Warning: {}", warning);
 //! }
 //!
-//! // Extract constraints from MCP tool call
+//! // Initialize authorizer with trusted Control Plane key
+//! let control_plane_key_bytes: [u8; 32] = hex::decode("f32e74b5...")?.try_into().unwrap();
+//! let control_plane_key = PublicKey::from_bytes(&control_plane_key_bytes)?;
+//! let authorizer = Authorizer::new(control_plane_key);
+//!
+//! // MCP tool call arrives from AI agent
 //! let arguments = json!({
 //!     "path": "/var/log/app.log",
 //!     "maxSize": 1024
 //! });
 //!
+//! // 1. Extract constraints from MCP arguments
 //! let result = compiled.extract_constraints("filesystem_read", &arguments)?;
 //! // result.constraints contains: {"path": "String(...)", "max_size": "Integer(1024)"}
+//!
+//! // 2. Decode warrant chain (from MCP request metadata)
+//! let warrant = wire::decode_base64(&warrant_chain_base64)?;
+//!
+//! // 3. Authorize the action using extracted constraints
+//! authorizer.check(
+//!     &warrant,
+//!     "filesystem_read",
+//!     &result.constraints,
+//!     pop_signature.as_ref()  // Optional PoP signature
+//! )?;
+//!
+//! // 4. If authorized, execute the tool
+//! // execute_filesystem_read(arguments);
 //! ```
 //!
 //! # Extraction Source Compatibility

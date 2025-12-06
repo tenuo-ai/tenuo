@@ -514,8 +514,10 @@ fn constraint_value_to_py(py: Python<'_>, cv: &ConstraintValue) -> PyResult<PyOb
 }
 
 /// Tenuo Python module.
+///
+/// This function is public so it can be called from tenuo-python package.
 #[pymodule]
-fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPattern>()?;
     m.add_class::<PyExact>()?;
     m.add_class::<PyOneOf>()?;
