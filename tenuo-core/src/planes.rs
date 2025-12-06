@@ -35,7 +35,10 @@ use crate::error::{Error, Result};
 use crate::warrant::Warrant;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::RwLock;
 use std::time::Duration;
+use crate::approval::WarrantTracker;
+use crate::revocation::RevocationRequest;
 
 // ============================================================================
 // SHARED HELPERS
@@ -227,6 +230,29 @@ impl ControlPlane {
         builder.build(&self.keypair)
     }
 
+    /// Issue a warrant and automatically track it in the registry.
+    ///
+    /// This is the recommended way to issue warrants to ensure cascading revocation works.
+    pub fn issue_tracked_warrant<T: WarrantTracker>(
+        &self,
+        tool: &str,
+        constraints: &[(&str, Constraint)],
+        ttl: Duration,
+        tracker: &mut T,
+    ) -> Result<Warrant> {
+        let warrant = self.issue_warrant(tool, constraints, ttl)?;
+        
+        // Track for issuer (Control Plane)
+        tracker.track_warrant(&self.public_key(), warrant.id().as_str());
+        
+        // Track for authorized holder (if any)
+        if let Some(holder) = warrant.authorized_holder() {
+            tracker.track_warrant(holder, warrant.id().as_str());
+        }
+
+        Ok(warrant)
+    }
+
     /// Register a known delegate (for audit tracking).
     pub fn register_delegate(&mut self, public_key: &PublicKey) {
         self.known_delegates.insert(public_key.to_bytes());
@@ -262,7 +288,7 @@ impl ControlPlane {
 /// while still providing security against replay attacks.
 pub const DEFAULT_CLOCK_TOLERANCE_SECS: i64 = 30;
 
-use crate::revocation::RevocationList;
+use crate::revocation::SignedRevocationList;
 
 #[derive(Debug)]
 pub struct DataPlane {
@@ -272,8 +298,10 @@ pub struct DataPlane {
     own_keypair: Option<Keypair>,
     /// Clock skew tolerance for expiration checks.
     clock_tolerance: chrono::Duration,
-    /// List of revoked warrant IDs.
-    revocation_list: RevocationList,
+    /// Signed revocation list.
+    revocation_list: Option<crate::revocation::SignedRevocationList>,
+    /// Local cache of directly revoked warrants (Parental Revocation)
+    local_revocation_cache: RwLock<HashSet<String>>,
 }
 
 impl DataPlane {
@@ -285,7 +313,22 @@ impl DataPlane {
             trusted_issuers: HashMap::new(),
             own_keypair: None,
             clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
-            revocation_list: RevocationList::new(),
+            revocation_list: None,
+            local_revocation_cache: RwLock::new(HashSet::new()),
+        }
+    }
+
+    /// Create a new DataPlane with trusted issuers.
+    pub fn new_with_issuers(trusted_issuers: impl IntoIterator<Item = PublicKey>) -> Self {
+        Self {
+            trusted_issuers: trusted_issuers
+                .into_iter()
+                .map(|pk| (hex::encode(pk.to_bytes()), pk))
+                .collect(),
+            own_keypair: None,
+            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
+            revocation_list: None,
+            local_revocation_cache: RwLock::new(HashSet::new()),
         }
     }
 
@@ -295,7 +338,8 @@ impl DataPlane {
             trusted_issuers: HashMap::new(),
             own_keypair: Some(keypair),
             clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
-            revocation_list: RevocationList::new(),
+            revocation_list: None,
+            local_revocation_cache: RwLock::new(HashSet::new()),
         }
     }
 
@@ -317,9 +361,86 @@ impl DataPlane {
             .unwrap_or(chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS));
     }
 
-    /// Set the revocation list.
-    pub fn set_revocation_list(&mut self, list: RevocationList) {
-        self.revocation_list = list;
+    /// Set a signed revocation list.
+    ///
+    /// Verifies the signature before accepting. Returns error if verification fails.
+    ///
+    /// # Arguments
+    /// * `srl` - The signed revocation list
+    /// * `expected_issuer` - The Control Plane's public key (must match SRL issuer)
+    pub fn set_revocation_list(
+        &mut self,
+        srl: SignedRevocationList,
+        expected_issuer: &PublicKey,
+    ) -> Result<()> {
+        // Verify signature
+        srl.verify(expected_issuer)?;
+        self.revocation_list = Some(srl);
+        Ok(())
+    }
+
+    /// Check if a warrant is revoked (globally or locally).
+    pub fn is_revoked(&self, warrant: &Warrant) -> bool {
+        let id = warrant.id().as_str();
+        
+        // 1. Check global SRL
+        if let Some(srl) = &self.revocation_list {
+            if srl.is_revoked(id) {
+                return true;
+            }
+        }
+        
+        // 2. Check local cache (Parental Revocation)
+        if let Ok(cache) = self.local_revocation_cache.read() {
+            if cache.contains(id) {
+                return true;
+            }
+        }
+        
+        false
+    }
+
+    /// Submit a direct revocation request (Parental Revocation).
+    ///
+    /// This allows a parent (issuer) or holder to revoke a warrant immediately
+    /// at the Data Plane, without waiting for the Control Plane's SRL update.
+    ///
+    /// # Security
+    /// - Verifies the request signature.
+    /// - Verifies the requestor is authorized (Issuer or Holder).
+    /// - Adds to local cache if valid.
+    pub fn submit_revocation(&self, request: &RevocationRequest, warrant: &Warrant) -> Result<()> {
+        // 1. Verify signature
+        request.verify_signature()?;
+
+        // 2. Verify warrant ID matches
+        if request.warrant_id != warrant.id().as_str() {
+            return Err(Error::Unauthorized(format!(
+                "Request warrant_id '{}' does not match provided warrant '{}'",
+                request.warrant_id, warrant.id()
+            )));
+        }
+
+        // 3. Verify authorization (Issuer or Holder only for direct revocation)
+        // Note: We don't check Control Plane key here as we might not know it,
+        // and CP revocations should go through SRL anyway.
+        let is_authorized = 
+            request.requestor == *warrant.issuer() || // Parent
+            Some(&request.requestor) == warrant.authorized_holder(); // Self
+
+        if !is_authorized {
+             return Err(Error::Unauthorized(format!(
+                "Requestor {} is not authorized to revoke this warrant directly",
+                hex::encode(request.requestor.to_bytes())
+            )));
+        }
+
+        // 4. Add to local cache
+        if let Ok(mut cache) = self.local_revocation_cache.write() {
+            cache.insert(request.warrant_id.clone());
+        }
+
+        Ok(())
     }
 
     /// Add a trusted issuer.
@@ -343,7 +464,7 @@ impl DataPlane {
     /// This is an **offline operation** - no network calls.
     pub fn verify(&self, warrant: &Warrant) -> Result<()> {
         // Check revocation first
-        if self.revocation_list.is_revoked(warrant.id().as_str()) {
+        if self.is_revoked(warrant) {
             return Err(Error::WarrantRevoked(warrant.id().to_string()));
         }
 
@@ -379,11 +500,11 @@ impl DataPlane {
     ///
     /// # Chain Invariants Verified
     ///
-    /// 1. **Root Trust**: chain[0] must be signed by a trusted issuer
-    /// 2. **Linkage**: chain[i+1].parent_id == chain[i].id
-    /// 3. **Depth**: chain[i+1].depth == chain[i].depth + 1
-    /// 4. **Expiration**: chain[i+1].expires_at <= chain[i].expires_at
-    /// 5. **Monotonicity**: chain[i+1].constraints ⊆ chain[i].constraints
+    /// 1. **Root Trust**: `chain[0]` must be signed by a trusted issuer
+    /// 2. **Linkage**: `chain[i+1].parent_id == chain[i].id`
+    /// 3. **Depth**: `chain[i+1].depth == chain[i].depth + 1`
+    /// 4. **Expiration**: `chain[i+1].expires_at <= chain[i].expires_at`
+    /// 5. **Monotonicity**: `chain[i+1].constraints ⊆ chain[i].constraints`
     /// 6. **Signatures**: Each warrant has a valid signature
     /// 7. **No Cycles**: Each warrant ID appears exactly once
     /// 8. **Session Binding** (optional): All warrants in same session
@@ -408,7 +529,7 @@ impl DataPlane {
     /// # Example
     /// 
     /// ```rust,ignore
-    /// // All warrants must have session_id = "sess_123"
+    /// // All warrants must share the same session_id
     /// data_plane.verify_chain_strict(&chain)?;
     /// ```
     pub fn verify_chain_strict(&self, chain: &[Warrant]) -> Result<ChainVerificationResult> {
@@ -424,6 +545,14 @@ impl DataPlane {
             return Err(Error::ChainVerificationFailed(
                 "chain cannot be empty".to_string(),
             ));
+        }
+
+        // CASCADING REVOCATION: Check if ANY warrant in the chain is revoked
+        // This must happen before any other validation to fail fast.
+        for warrant in chain {
+            if self.is_revoked(warrant) {
+                return Err(Error::WarrantRevoked(warrant.id().to_string()));
+            }
         }
 
         // CYCLE DETECTION: Track seen warrant IDs
@@ -490,7 +619,7 @@ impl DataPlane {
     /// Validates that `child` is a valid delegation from `parent`.
     fn verify_chain_link(&self, parent: &Warrant, child: &Warrant) -> Result<()> {
         // Check revocation
-        if self.revocation_list.is_revoked(child.id().as_str()) {
+        if self.is_revoked(child) {
             return Err(Error::WarrantRevoked(child.id().to_string()));
         }
 
@@ -514,6 +643,17 @@ impl DataPlane {
             return Err(Error::ChainVerificationFailed(format!(
                 "depth mismatch: child depth {} != parent depth {} + 1",
                 child.depth(), parent.depth()
+            )));
+        }
+
+        // 2b. Check max_depth policy (defense-in-depth)
+        // The builder enforces this at creation time, but we verify here too
+        // in case someone bypasses the builder and signs manually.
+        let parent_max = parent.effective_max_depth();
+        if child.depth() > parent_max {
+            return Err(Error::ChainVerificationFailed(format!(
+                "child depth {} exceeds parent's max_depth {}",
+                child.depth(), parent_max
             )));
         }
 
@@ -637,13 +777,13 @@ impl Default for DataPlane {
 /// A minimal authorizer for embedding in services.
 ///
 /// This is the smallest possible data plane - just a set of trusted
-/// This is the smallest possible data plane - just a set of trusted
+/// This is the smallest possible data plane - just a set of trusted keys.
 
 #[derive(Debug, Clone)]
 pub struct Authorizer {
     trusted_keys: Vec<PublicKey>,
     clock_tolerance: chrono::Duration,
-    revocation_list: RevocationList,
+    revocation_list: Option<SignedRevocationList>,
 }
 
 impl Authorizer {
@@ -654,13 +794,33 @@ impl Authorizer {
         Self {
             trusted_keys: vec![root_public_key],
             clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
-            revocation_list: RevocationList::new(),
+            revocation_list: None,
         }
     }
 
-    /// Set the revocation list.
-    pub fn set_revocation_list(&mut self, list: RevocationList) {
-        self.revocation_list = list;
+    /// Set a signed revocation list.
+    ///
+    /// Verifies the signature before accepting. Returns error if verification fails.
+    ///
+    /// # Arguments
+    /// * `srl` - The signed revocation list
+    /// * `expected_issuer` - The Control Plane's public key (must match SRL issuer)
+    pub fn set_revocation_list(
+        &mut self,
+        srl: SignedRevocationList,
+        expected_issuer: &PublicKey,
+    ) -> Result<()> {
+        srl.verify(expected_issuer)?;
+        self.revocation_list = Some(srl);
+        Ok(())
+    }
+
+    /// Check if a warrant is revoked by ID.
+    fn is_revoked(&self, warrant: &Warrant) -> bool {
+        self.revocation_list
+            .as_ref()
+            .map(|srl| srl.is_revoked(warrant.id().as_str()))
+            .unwrap_or(false)
     }
 
     /// Create an authorizer from raw key bytes.
@@ -681,7 +841,7 @@ impl Authorizer {
     /// 3. The warrant is not revoked
     pub fn verify(&self, warrant: &Warrant) -> Result<()> {
         // Check revocation first
-        if self.revocation_list.is_revoked(warrant.id().as_str()) {
+        if self.is_revoked(warrant) {
             return Err(Error::WarrantRevoked(warrant.id().to_string()));
         }
 
@@ -767,11 +927,11 @@ impl Authorizer {
     ///
     /// # Chain Invariants Verified
     ///
-    /// 1. **Root Trust**: chain[0] must be signed by a trusted issuer
-    /// 2. **Linkage**: chain[i+1].parent_id == chain[i].id
-    /// 3. **Depth**: chain[i+1].depth == chain[i].depth + 1
-    /// 4. **Expiration**: chain[i+1].expires_at <= chain[i].expires_at
-    /// 5. **Monotonicity**: chain[i+1].constraints ⊆ chain[i].constraints
+    /// 1. **Root Trust**: `chain[0]` must be signed by a trusted issuer
+    /// 2. **Linkage**: `chain[i+1].parent_id == chain[i].id`
+    /// 3. **Depth**: `chain[i+1].depth == chain[i].depth + 1`
+    /// 4. **Expiration**: `chain[i+1].expires_at <= chain[i].expires_at`
+    /// 5. **Monotonicity**: `chain[i+1].constraints ⊆ chain[i].constraints`
     /// 6. **Signatures**: Each warrant has a valid signature
     /// 7. **No Cycles**: Each warrant ID appears exactly once
     /// 8. **Session Binding** (optional): All warrants in same session
@@ -787,7 +947,7 @@ impl Authorizer {
     pub fn verify_chain_strict(&self, chain: &[Warrant]) -> Result<ChainVerificationResult> {
         self.verify_chain_with_options(chain, true)
     }
-    
+
     fn verify_chain_with_options(
         &self, 
         chain: &[Warrant],
@@ -799,6 +959,14 @@ impl Authorizer {
             ));
         }
         
+        // CASCADING REVOCATION: Check if ANY warrant in the chain is revoked (from SRL)
+        // This must happen before any other validation to fail fast.
+        for warrant in chain {
+            if self.is_revoked(warrant) {
+                return Err(Error::WarrantRevoked(warrant.id().to_string()));
+            }
+        }
+
         // CYCLE DETECTION: Track seen warrant IDs
         let mut seen_ids: HashSet<String> = HashSet::new();
         for warrant in chain {
@@ -867,7 +1035,7 @@ impl Authorizer {
     /// Verify a single link in a delegation chain.
     fn verify_link(&self, parent: &Warrant, child: &Warrant) -> Result<()> {
         // Check revocation
-        if self.revocation_list.is_revoked(child.id().as_str()) {
+        if self.is_revoked(child) {
             return Err(Error::WarrantRevoked(child.id().to_string()));
         }
 
@@ -890,6 +1058,15 @@ impl Authorizer {
             return Err(Error::ChainVerificationFailed(format!(
                 "depth mismatch: child {} != parent {} + 1",
                 child.depth(), parent.depth()
+            )));
+        }
+
+        // Check max_depth policy (defense-in-depth)
+        let parent_max = parent.effective_max_depth();
+        if child.depth() > parent_max {
+            return Err(Error::ChainVerificationFailed(format!(
+                "child depth {} exceeds parent's max_depth {}",
+                child.depth(), parent_max
             )));
         }
 
@@ -1242,6 +1419,54 @@ mod tests {
         let result = data_plane.verify_chain(&[]);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("empty"));
+    }
+
+    #[test]
+    fn test_cascading_revocation() {
+        // If ANY warrant in the chain is revoked, the entire chain is invalid
+        let control_plane = ControlPlane::generate();
+        let orchestrator_keypair = Keypair::generate();
+
+        let root = control_plane
+            .issue_warrant("test", &[], Duration::from_secs(60))
+            .unwrap();
+
+        let child = root
+            .attenuate()
+            .build(&orchestrator_keypair)
+            .unwrap();
+
+        let mut data_plane = DataPlane::new();
+        data_plane.trust_issuer("root", control_plane.public_key());
+
+        // Chain should verify successfully
+        assert!(data_plane.verify_chain(&[root.clone(), child.clone()]).is_ok());
+
+        // Revoke the ROOT warrant (signed by control plane)
+        let srl = SignedRevocationList::builder()
+            .revoke(root.id().as_str())
+            .version(1)
+            .build(&control_plane.keypair)
+            .unwrap();
+        data_plane.set_revocation_list(srl, &control_plane.public_key()).unwrap();
+
+        // Now the entire chain should fail (cascading revocation)
+        let result = data_plane.verify_chain(&[root.clone(), child.clone()]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("revoked"));
+
+        // Also test with Authorizer
+        let mut authorizer = Authorizer::new(control_plane.public_key());
+        let srl = SignedRevocationList::builder()
+            .revoke(root.id().as_str())
+            .version(1)
+            .build(&control_plane.keypair)
+            .unwrap();
+        authorizer.set_revocation_list(srl, &control_plane.public_key()).unwrap();
+
+        let result = authorizer.verify_chain(&[root, child]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("revoked"));
     }
 
     // =========================================================================

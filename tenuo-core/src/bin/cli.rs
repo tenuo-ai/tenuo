@@ -5,7 +5,7 @@
 //!   tenuo keygen           - Generate a new keypair
 //!   tenuo issue            - Issue a warrant
 //!   tenuo verify           - Verify a warrant
-//!   tenuo audit <id>       - Audit a warrant chain
+//!   tenuo audit `<id>`     - Audit a warrant chain
 
 use clap::{Parser, Subcommand};
 use std::fs;

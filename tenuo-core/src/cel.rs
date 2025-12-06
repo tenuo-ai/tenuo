@@ -2,6 +2,24 @@
 //!
 //! This module provides cached CEL evaluation using the cel-interpreter crate.
 //! CEL programs are compiled once and cached for performance.
+//!
+//! ## Security Properties
+//!
+//! The CEL cache is **security-neutral**:
+//!
+//! 1. **Immutable expressions**: Warrant expressions never change after creation.
+//!    The cache key is the expression string itself.
+//!
+//! 2. **Compiled programs only**: We cache the compiled AST/bytecode, NOT
+//!    evaluation results. Each execution evaluates against fresh context.
+//!
+//! 3. **Deterministic**: Same expression + same inputs = same result.
+//!    Caching the program doesn't change behavior.
+//!
+//! 4. **Revocation independent**: Warrant revocation is checked at the warrant
+//!    level before CEL evaluation. Cached programs don't bypass revocation.
+//!
+//! Therefore, long TTLs are safe. Memory is the only constraint (bounded by max_capacity).
 
 use crate::constraints::ConstraintValue;
 use crate::error::{Error, Result};
@@ -10,15 +28,24 @@ use moka::sync::Cache;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use chrono::{DateTime, Utc};
+use ipnetwork::IpNetwork;
+use std::net::IpAddr;
 
 /// Global CEL program cache.
 /// 
-/// Programs are cached by expression hash to avoid recompilation.
-/// The cache has a 10-minute TTL and max 1000 entries.
+/// Programs are cached by expression string to avoid recompilation.
+/// 
+/// ## Configuration
+/// - **TTL**: 1 hour (expressions are immutable, no security impact)
+/// - **Max capacity**: 1000 entries (memory bound)
+/// 
+/// ## Thread Safety
+/// Uses `moka::sync::Cache` which is thread-safe and lock-free for reads.
 static CEL_CACHE: std::sync::LazyLock<Cache<String, Arc<Program>>> = std::sync::LazyLock::new(|| {
     Cache::builder()
         .max_capacity(1000)
-        .time_to_live(Duration::from_secs(600))
+        .time_to_live(Duration::from_secs(3600)) // 1 hour
         .build()
 });
 
@@ -51,8 +78,8 @@ pub fn evaluate(
 ) -> Result<bool> {
     let program = compile(expression)?;
     
-    // Build context
-    let mut context = Context::default();
+    // Build context with standard library
+    let mut context = create_context();
     
     // Add the primary value
     context.add_variable("value", constraint_value_to_cel(value)?)
@@ -88,7 +115,7 @@ pub fn evaluate_with_value_context(
 ) -> Result<bool> {
     let program = compile(expression)?;
     
-    let mut context = Context::default();
+    let mut context = create_context();
     
     match value {
         ConstraintValue::Object(map) => {
@@ -148,6 +175,93 @@ pub fn clear_cache() {
 /// Get the number of cached CEL programs.
 pub fn cache_size() -> u64 {
     CEL_CACHE.entry_count()
+}
+
+/// Create a CEL context with the standard library functions registered.
+pub fn create_context() -> Context<'static> {
+    let mut context = Context::default();
+
+    // ========================================================================
+    // Time Functions
+    // ========================================================================
+    
+    // time.now(unused) -> String (RFC3339)
+    // Note: cel-interpreter 0.8.1 requires at least one argument for custom functions
+    context.add_function("time_now", |_unused: Value| -> String {
+        Utc::now().to_rfc3339()
+    });
+
+    // time.is_expired(timestamp: String) -> bool
+    context.add_function("time_is_expired", |timestamp: Value| -> bool {
+        let ts_str = match timestamp {
+            Value::String(s) => s,
+            _ => return false,
+        };
+        match DateTime::parse_from_rfc3339(&ts_str) {
+            Ok(dt) => dt < Utc::now(),
+            Err(_) => false, 
+        }
+    });
+
+    // time.since(timestamp: String) -> i64 (seconds)
+    context.add_function("time_since", |timestamp: Value| -> i64 {
+        let ts_str = match timestamp {
+            Value::String(s) => s,
+            _ => return 0,
+        };
+        match DateTime::parse_from_rfc3339(&ts_str) {
+            Ok(dt) => (Utc::now() - dt.with_timezone(&Utc)).num_seconds(),
+            Err(_) => 0,
+        }
+    });
+
+    // ========================================================================
+    // Network Functions
+    // ========================================================================
+
+    // net.in_cidr(ip: String, cidr: String) -> bool
+    context.add_function("net_in_cidr", |ip: Value, cidr: Value| -> bool {
+        let ip_str = match ip {
+            Value::String(s) => s,
+            _ => return false,
+        };
+        let cidr_str = match cidr {
+            Value::String(s) => s,
+            _ => return false,
+        };
+
+        let ip_addr: IpAddr = match ip_str.parse() {
+            Ok(addr) => addr,
+            Err(_) => return false,
+        };
+        
+        let network: IpNetwork = match cidr_str.parse() {
+            Ok(net) => net,
+            Err(_) => return false,
+        };
+
+        network.contains(ip_addr)
+    });
+
+    // net.is_private(ip: String) -> bool
+    context.add_function("net_is_private", |ip: Value| -> bool {
+        let ip_str = match ip {
+            Value::String(s) => s,
+            _ => return false,
+        };
+
+        let ip_addr: IpAddr = match ip_str.parse() {
+            Ok(addr) => addr,
+            Err(_) => return false,
+        };
+
+        match ip_addr {
+            IpAddr::V4(addr) => addr.is_private(),
+            IpAddr::V6(addr) => (addr.segments()[0] & 0xfe00) == 0xfc00, // Unique Local
+        }
+    });
+
+    context
 }
 
 #[cfg(test)]

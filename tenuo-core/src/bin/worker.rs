@@ -85,12 +85,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // =========================================================================
-    // Step 2b: Load Worker Keypair (for PoP)
+    // Step 2b: Worker Keypair (for Proof-of-Possession)
     // =========================================================================
+    // ─────────────────────────────────────────────────────────────────────────
+    // PRODUCTION PATTERN:
+    //   1. Worker generates its own keypair: keypair = Keypair::generate()
+    //   2. Worker sends ONLY public key to orchestrator
+    //   3. Worker keeps private key locally (NEVER shared)
+    //
+    // DEMO SIMPLIFICATION:
+    //   For this demo, we load a pre-generated key from the orchestrator.
+    //   This simulates the case where the worker already has its key.
+    // ─────────────────────────────────────────────────────────────────────────
     let worker_key_path = env::var("TENUO_WORKER_KEY_INPUT")
         .unwrap_or_else(|_| "/data/worker.key".to_string());
     
-    println!("  Waiting for worker key at: {}", worker_key_path);
+    println!("\n  [DEMO] Loading pre-shared keypair from: {}", worker_key_path);
+    println!("    In production: Worker generates key locally, shares ONLY public key");
+    
     // Simple wait loop (similar to chain)
     let worker_key_hex = loop {
         if Path::new(&worker_key_path).exists() {
@@ -102,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .try_into()
         .map_err(|_| "Worker key must be 32 bytes")?;
     let worker_keypair = Keypair::from_bytes(&worker_key_bytes);
-    println!("  ✓ Worker keypair loaded");
+    println!("  ✓ Worker keypair ready (private key for PoP signing)");
 
     // =========================================================================
     // Step 3: Verify the complete delegation chain

@@ -46,9 +46,11 @@
 use clap::{Parser, Subcommand};
 use std::collections::HashMap;
 use std::io::{self, Read};
+use std::path::PathBuf;
 use tenuo_core::{
     constraints::ConstraintValue,
     planes::Authorizer,
+    revocation::SignedRevocationList,
     wire, PublicKey,
 };
 
@@ -60,6 +62,11 @@ struct Cli {
     /// Can also be set via TENUO_TRUSTED_KEYS env var
     #[arg(long, env = "TENUO_TRUSTED_KEYS")]
     trusted_keys: Option<String>,
+
+    /// Path to signed revocation list file (CBOR format)
+    /// Can also be set via TENUO_REVOCATION_LIST env var
+    #[arg(long, env = "TENUO_REVOCATION_LIST")]
+    revocation_list: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Commands,
@@ -100,8 +107,8 @@ enum Commands {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
-    // Build authorizer from trusted keys
-    let authorizer = build_authorizer(&cli.trusted_keys)?;
+    // Build authorizer from trusted keys and revocation list
+    let authorizer = build_authorizer(&cli.trusted_keys, &cli.revocation_list)?;
 
     match cli.command {
         Commands::Verify {
@@ -189,13 +196,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 println!("Trusted keys: None (will accept any issuer for delegated warrants)");
             }
+            if let Some(path) = &cli.revocation_list {
+                println!("Revocation list: {}", path.display());
+            } else {
+                println!("Revocation list: None");
+            }
         }
     }
 
     Ok(())
 }
 
-fn build_authorizer(trusted_keys: &Option<String>) -> Result<Authorizer, Box<dyn std::error::Error>> {
+fn build_authorizer(
+    trusted_keys: &Option<String>,
+    revocation_path: &Option<PathBuf>,
+) -> Result<Authorizer, Box<dyn std::error::Error>> {
     // Start with a dummy authorizer if no keys provided
     // This still validates signatures, just doesn't check the issuer
     let first_key = if let Some(keys) = trusted_keys {
@@ -217,7 +232,7 @@ fn build_authorizer(trusted_keys: &Option<String>) -> Result<Authorizer, Box<dyn
         })
     };
 
-    let mut authorizer = Authorizer::new(first_key);
+    let mut authorizer = Authorizer::new(first_key.clone());
 
     // Add remaining keys
     if let Some(keys) = trusted_keys {
@@ -230,7 +245,22 @@ fn build_authorizer(trusted_keys: &Option<String>) -> Result<Authorizer, Box<dyn
         }
     }
 
+    // Load signed revocation list if provided
+    if let Some(path) = revocation_path {
+        let srl = load_signed_revocation_list(path)?;
+        
+        // Verify against first trusted key (Control Plane key)
+        authorizer.set_revocation_list(srl, &first_key)?;
+        eprintln!("Loaded signed revocation list from: {}", path.display());
+    }
+
     Ok(authorizer)
+}
+
+fn load_signed_revocation_list(path: &PathBuf) -> Result<SignedRevocationList, Box<dyn std::error::Error>> {
+    let bytes = std::fs::read(path)?;
+    let srl = SignedRevocationList::from_bytes(&bytes)?;
+    Ok(srl)
 }
 
 fn read_warrant(warrant: Option<String>) -> Result<String, Box<dyn std::error::Error>> {

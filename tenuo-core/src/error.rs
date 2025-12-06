@@ -200,6 +200,10 @@ pub enum Error {
     /// Unknown approval provider.
     #[error("unknown approval provider: {0}")]
     UnknownProvider(String),
+
+    /// Operation unauthorized.
+    #[error("unauthorized: {0}")]
+    Unauthorized(String),
 }
 
 impl From<ciborium::ser::Error<std::io::Error>> for Error {

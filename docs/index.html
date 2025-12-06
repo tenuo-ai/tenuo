@@ -8,7 +8,11 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
         :root {
             --bg: #000;
@@ -39,8 +43,18 @@
             pointer-events: none;
             z-index: 0;
         }
-        .orb-1 { background: var(--accent); top: -200px; left: -200px; }
-        .orb-2 { background: var(--accent2); bottom: -200px; right: -200px; }
+
+        .orb-1 {
+            background: var(--accent);
+            top: -200px;
+            left: -200px;
+        }
+
+        .orb-2 {
+            background: var(--accent2);
+            bottom: -200px;
+            right: -200px;
+        }
 
         .container {
             max-width: 1000px;
@@ -77,7 +91,9 @@
             transition: color 0.2s;
         }
 
-        .nav-links a:hover { color: var(--text); }
+        .nav-links a:hover {
+            color: var(--text);
+        }
 
         /* Hero */
         .hero {
@@ -96,7 +112,9 @@
             margin-bottom: 24px;
         }
 
-        .badge span { color: var(--accent); }
+        .badge span {
+            color: var(--accent);
+        }
 
         h1 {
             font-size: clamp(2.5rem, 6vw, 4rem);
@@ -109,6 +127,7 @@
         h1 .gradient {
             background: linear-gradient(135deg, var(--accent), var(--accent2));
             -webkit-background-clip: text;
+            background-clip: text;
             -webkit-text-fill-color: transparent;
         }
 
@@ -143,7 +162,7 @@
 
         .btn-primary:hover {
             transform: translateY(-2px);
-            box-shadow: 0 8px 24px rgba(255,255,255,0.1);
+            box-shadow: 0 8px 24px rgba(255, 255, 255, 0.1);
         }
 
         .btn-secondary {
@@ -263,15 +282,24 @@
             transition: border-color 0.2s;
         }
 
-        .doc:hover { border-color: #444; }
+        .doc:hover {
+            border-color: #444;
+        }
 
         .doc-icon {
             font-size: 1.5rem;
             margin-bottom: 12px;
         }
 
-        .doc h4 { font-size: 0.95rem; margin-bottom: 4px; }
-        .doc p { font-size: 0.8rem; color: var(--muted); }
+        .doc h4 {
+            font-size: 0.95rem;
+            margin-bottom: 4px;
+        }
+
+        .doc p {
+            font-size: 0.8rem;
+            color: var(--muted);
+        }
 
         /* Footer */
         footer {
@@ -287,12 +315,25 @@
             text-decoration: none;
         }
 
-        footer a:hover { color: var(--text); }
+        footer a:hover {
+            color: var(--text);
+        }
 
         @media (max-width: 768px) {
-            .features, .steps, .docs { grid-template-columns: 1fr; }
-            .steps { flex-direction: column; }
-            .nav-links { display: none; }
+
+            .features,
+            .steps,
+            .docs {
+                grid-template-columns: 1fr;
+            }
+
+            .steps {
+                flex-direction: column;
+            }
+
+            .nav-links {
+                display: none;
+            }
         }
     </style>
 </head>
@@ -305,39 +346,39 @@
         <nav>
             <div class="nav-logo">tenuo</div>
             <div class="nav-links">
-                <a href="reference/">Docs</a>
+                <a href="guide/">Guide</a>
                 <a href="https://github.com/tenuo/tenuo">GitHub</a>
             </div>
         </nav>
 
         <section class="hero">
-            <div class="badge">Now in public beta · <span>v0.1.0</span></div>
+            <div class="badge">v0.1.0</div>
             <h1>Capability tokens<br>for <span class="gradient">AI agents</span></h1>
             <p>
-                Cryptographic authorization that shrinks as it's delegated. 
-                Your agents stay autonomous. Your systems stay safe.
+                Signed tokens that carry delegation provenance and task context.
+                Capabilities attenuate on delegation. Verify offline.
             </p>
             <div class="cta">
-                <a href="https://github.com/tenuo/tenuo" class="btn btn-primary">Get Started</a>
-                <a href="demo-infographic.html" class="btn btn-secondary">See Demo</a>
+                <a href="https://github.com/tenuo/tenuo" class="btn btn-primary">GitHub</a>
+                <a href="guide/" class="btn btn-secondary">Docs</a>
             </div>
         </section>
 
         <div class="features">
             <div class="feature">
-                <div class="feature-icon">⚡</div>
-                <h3>~25μs verification</h3>
-                <p>No network calls. Verify warrant chains locally with Ed25519 signatures.</p>
+                <div class="feature-icon">🔗</div>
+                <h3>Delegation provenance</h3>
+                <p>Cryptographically verify who authorized an action and trace the full chain.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">📋</div>
+                <h3>Task context</h3>
+                <p>Constraints carry workflow state. Tie capabilities to actions earlier in the chain.</p>
             </div>
             <div class="feature">
                 <div class="feature-icon">⬇️</div>
-                <h3>Monotonic attenuation</h3>
+                <h3>Monotonic bounds</h3>
                 <p>Capabilities can only shrink. $1000 → $500. "staging-*" → "staging-web".</p>
-            </div>
-            <div class="feature">
-                <div class="feature-icon">🔐</div>
-                <h3>Holder binding</h3>
-                <p>Warrants are bound to keys. Stolen tokens are useless without the private key.</p>
             </div>
         </div>
 
@@ -350,12 +391,14 @@
                 <div class="step">
                     <div class="step-number">1</div>
                     <h4>Issue</h4>
-                    <p>Control plane signs a root warrant with broad capabilities and constraints.</p>
+                    <p>Control Plane mints a signed root warrant defining the maximum scope of authority.</p>
                 </div>
                 <div class="step">
                     <div class="step-number">2</div>
                     <h4>Attenuate</h4>
-                    <p>Orchestrator narrows the warrant and binds it to the worker's public key.</p>
+                    <p>Orchestrator restricts capabilities and binds the warrant exclusively to the Worker Agent's
+                        public key.
+                    </p>
                 </div>
                 <div class="step">
                     <div class="step-number">3</div>
@@ -392,8 +435,8 @@
 
     <footer>
         <p>
-            <a href="https://github.com/tenuo/tenuo">GitHub</a> · 
-            <a href="https://github.com/tenuo/tenuo/blob/main/README.md">Docs</a> · 
+            <a href="https://github.com/tenuo/tenuo">GitHub</a> ·
+            <a href="https://github.com/tenuo/tenuo/blob/main/README.md">Docs</a> ·
             MIT/Apache-2.0
         </p>
     </footer>

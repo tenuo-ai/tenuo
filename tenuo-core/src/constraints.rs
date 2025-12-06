@@ -41,9 +41,43 @@ use glob::Pattern as GlobPattern;
 use regex::Regex as RegexPattern;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
+use std::cell::Cell;
+
+thread_local! {
+    static DESERIALIZATION_DEPTH: Cell<usize> = Cell::new(0);
+}
+
+struct DepthGuard;
+
+impl DepthGuard {
+    fn new<E: serde::de::Error>() -> std::result::Result<Self, E> {
+        DESERIALIZATION_DEPTH.with(|depth| {
+            let d = depth.get();
+            if d > MAX_CONSTRAINT_DEPTH as usize {
+                return Err(E::custom(format!(
+                    "constraint recursion depth exceeded maximum of {}", 
+                    MAX_CONSTRAINT_DEPTH
+                )));
+            }
+            depth.set(d + 1);
+            Ok(DepthGuard)
+        })
+    }
+}
+
+impl Drop for DepthGuard {
+    fn drop(&mut self) {
+        DESERIALIZATION_DEPTH.with(|depth| {
+            depth.set(depth.get() - 1);
+        });
+    }
+}
 
 /// A constraint on an argument value.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// 
+/// **Security**: Custom deserialization validates nesting depth to prevent
+/// stack overflow attacks from maliciously nested constraints like `Not(Not(Not(...)))`.
+#[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "type", content = "value")]
 pub enum Constraint {
     /// Wildcard - matches anything. The universal superset.
@@ -92,6 +126,66 @@ pub enum Constraint {
     
     /// CEL expression for complex logic.
     Cel(CelConstraint),
+}
+
+// Custom Deserialize to enforce constraint depth validation
+impl<'de> serde::Deserialize<'de> for Constraint {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let _guard = DepthGuard::new::<D::Error>()?;
+
+        // Helper enum for raw deserialization (same structure, no validation)
+        #[derive(serde::Deserialize)]
+        #[serde(tag = "type", content = "value")]
+        enum ConstraintRaw {
+            Wildcard(Wildcard),
+            Pattern(Pattern),
+            Regex(RegexConstraint),
+            Exact(Exact),
+            OneOf(OneOf),
+            NotOneOf(NotOneOf),
+            Range(Range),
+            Contains(Contains),
+            Subset(Subset),
+            All(AllRaw),
+            Any(AnyRaw),
+            Not(NotRaw),
+            Cel(CelConstraint),
+        }
+
+        // Raw versions of recursive types that deserialize to Constraint
+        #[derive(serde::Deserialize)]
+        struct AllRaw { constraints: Vec<Constraint> }
+        #[derive(serde::Deserialize)]
+        struct AnyRaw { constraints: Vec<Constraint> }
+        #[derive(serde::Deserialize)]
+        struct NotRaw { constraint: Box<Constraint> }
+
+        let raw = ConstraintRaw::deserialize(deserializer)?;
+
+        let constraint = match raw {
+            ConstraintRaw::Wildcard(v) => Constraint::Wildcard(v),
+            ConstraintRaw::Pattern(v) => Constraint::Pattern(v),
+            ConstraintRaw::Regex(v) => Constraint::Regex(v),
+            ConstraintRaw::Exact(v) => Constraint::Exact(v),
+            ConstraintRaw::OneOf(v) => Constraint::OneOf(v),
+            ConstraintRaw::NotOneOf(v) => Constraint::NotOneOf(v),
+            ConstraintRaw::Range(v) => Constraint::Range(v),
+            ConstraintRaw::Contains(v) => Constraint::Contains(v),
+            ConstraintRaw::Subset(v) => Constraint::Subset(v),
+            ConstraintRaw::All(v) => Constraint::All(All { constraints: v.constraints }),
+            ConstraintRaw::Any(v) => Constraint::Any(Any { constraints: v.constraints }),
+            ConstraintRaw::Not(v) => Constraint::Not(Not { constraint: v.constraint }),
+            ConstraintRaw::Cel(v) => Constraint::Cel(v),
+        };
+
+        // Validate depth after full deserialization
+        constraint.validate_depth().map_err(serde::de::Error::custom)?;
+
+        Ok(constraint)
+    }
 }
 
 impl Constraint {
@@ -517,37 +611,139 @@ impl Pattern {
     }
 
     /// Validate that `child` is a valid attenuation of this pattern.
+    ///
+    /// Tenuo supports **single-wildcard patterns** only:
+    /// - **Prefix patterns**: `"staging-*"` (wildcard at end)
+    /// - **Suffix patterns**: `"*-safe"` (wildcard at start)
+    /// - **Exact patterns**: `"staging-web"` (no wildcard)
+    ///
+    /// For attenuation to be valid, child must match a **subset** of parent:
+    /// - `"staging-*"` → `"staging-web-*"` ✓ (prefix extended)
+    /// - `"staging-*"` → `"staging-web"` ✓ (wildcard removed)
+    /// - `"*-safe"` → `"*-extra-safe"` ✓ (suffix extended)
+    /// - `"*-safe"` → `"image-safe"` ✓ (wildcard removed)
+    /// - `"*-safe"` → `"*"` ✗ (suffix removed, expands match set)
+    ///
+    /// Patterns with wildcard in the middle or multiple wildcards require
+    /// exact equality (conservative for security).
     pub fn validate_attenuation(&self, child: &Pattern) -> Result<()> {
-        // Simple case: if patterns are equal, it's valid
+        // Equal patterns always valid
         if self.pattern == child.pattern {
             return Ok(());
         }
 
-        // Extract the prefix before the first wildcard
-        let parent_parts: Vec<&str> = self.pattern.split('*').collect();
-        let child_parts: Vec<&str> = child.pattern.split('*').collect();
+        let parent_type = self.pattern_type();
+        let child_type = child.pattern_type();
 
-        // Child must start with parent's prefix
-        if !parent_parts.is_empty()
-            && !child_parts.is_empty()
-            && !child_parts[0].starts_with(parent_parts[0])
-        {
-            return Err(Error::PatternExpanded {
-                parent: self.pattern.clone(),
-                child: child.pattern.clone(),
-            });
+        match (parent_type, child_type) {
+            // Exact parent: child must be equal (already checked above)
+            (PatternType::Exact, _) => {
+                Err(Error::PatternExpanded {
+                    parent: self.pattern.clone(),
+                    child: child.pattern.clone(),
+                })
+            }
+
+            // Prefix pattern: "staging-*"
+            (PatternType::Prefix(parent_prefix), PatternType::Prefix(child_prefix)) => {
+                // Child prefix must extend parent prefix
+                if child_prefix.starts_with(parent_prefix) {
+                    Ok(())
+                } else {
+                    Err(Error::PatternExpanded {
+                        parent: self.pattern.clone(),
+                        child: child.pattern.clone(),
+                    })
+                }
+            }
+            (PatternType::Prefix(parent_prefix), PatternType::Exact) => {
+                // Child is exact, must match parent's prefix
+                if child.pattern.starts_with(parent_prefix) {
+                    Ok(())
+                } else {
+                    Err(Error::PatternExpanded {
+                        parent: self.pattern.clone(),
+                        child: child.pattern.clone(),
+                    })
+                }
+            }
+
+            // Suffix pattern: "*-safe"
+            (PatternType::Suffix(parent_suffix), PatternType::Suffix(child_suffix)) => {
+                // Child suffix must extend parent suffix
+                if child_suffix.ends_with(parent_suffix) {
+                    Ok(())
+                } else {
+                    Err(Error::PatternExpanded {
+                        parent: self.pattern.clone(),
+                        child: child.pattern.clone(),
+                    })
+                }
+            }
+            (PatternType::Suffix(parent_suffix), PatternType::Exact) => {
+                // Child is exact, must match parent's suffix
+                if child.pattern.ends_with(parent_suffix) {
+                    Ok(())
+                } else {
+                    Err(Error::PatternExpanded {
+                        parent: self.pattern.clone(),
+                        child: child.pattern.clone(),
+                    })
+                }
+            }
+
+            // Complex patterns (infix, multiple wildcards): require equality
+            (PatternType::Complex, _) | (_, PatternType::Complex) => {
+                Err(Error::PatternExpanded {
+                    parent: self.pattern.clone(),
+                    child: child.pattern.clone(),
+                })
+            }
+
+            // Prefix cannot attenuate to suffix or vice versa
+            _ => {
+                Err(Error::PatternExpanded {
+                    parent: self.pattern.clone(),
+                    child: child.pattern.clone(),
+                })
+            }
         }
-
-        // Child should have same or fewer wildcards
-        if child.pattern.matches('*').count() > self.pattern.matches('*').count() {
-            return Err(Error::PatternExpanded {
-                parent: self.pattern.clone(),
-                child: child.pattern.clone(),
-            });
-        }
-
-        Ok(())
     }
+
+    /// Classify the pattern type for attenuation validation.
+    fn pattern_type(&self) -> PatternType<'_> {
+        let star_count = self.pattern.matches('*').count();
+
+        match star_count {
+            0 => PatternType::Exact,
+            1 => {
+                if self.pattern.ends_with('*') {
+                    // "prefix-*" → Prefix pattern
+                    PatternType::Prefix(&self.pattern[..self.pattern.len() - 1])
+                } else if self.pattern.starts_with('*') {
+                    // "*-suffix" → Suffix pattern
+                    PatternType::Suffix(&self.pattern[1..])
+                } else {
+                    // "pre-*-suf" → Complex (not supported for attenuation)
+                    PatternType::Complex
+                }
+            }
+            _ => PatternType::Complex,
+        }
+    }
+}
+
+/// Pattern classification for attenuation validation.
+#[derive(Debug)]
+enum PatternType<'a> {
+    /// No wildcards: exact match only
+    Exact,
+    /// Single `*` at end: `"staging-*"`
+    Prefix(&'a str),
+    /// Single `*` at start: `"*-safe"`
+    Suffix(&'a str),
+    /// Wildcard in middle or multiple wildcards
+    Complex,
 }
 
 impl From<Pattern> for Constraint {
@@ -867,11 +1063,18 @@ impl Range {
     }
 
     /// Check if a value is within the range.
+    ///
+    /// Returns `Ok(false)` for non-numeric values or NaN.
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
         let n = match value.as_number() {
             Some(n) => n,
             None => return Ok(false),
         };
+
+        // NaN never matches any range (NaN comparisons always return false)
+        if n.is_nan() {
+            return Ok(false);
+        }
 
         let min_ok = match self.min {
             None => true,
@@ -1212,11 +1415,9 @@ impl CelConstraint {
     /// # Example
     ///
     /// ```rust,ignore
-    /// // For object: {"amount": 5000, "currency": "USD"}
-    /// // Expression can use: amount < 10000 && currency == "USD"
-    ///
-    /// // For primitive: 5000
-    /// // Expression can use: value < 10000
+    /// let cel = CelConstraint::new("amount < 10000");
+    /// let value = ConstraintValue::Object(/* {"amount": 5000} */);
+    /// assert!(cel.matches(&value)?);
     /// ```
     pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
         crate::cel::evaluate_with_value_context(&self.expression, value)
@@ -1236,16 +1437,30 @@ impl CelConstraint {
     /// Child CEL constraints must take the form: `(parent_expression) && new_predicate`
     ///
     /// This ensures monotonicity: the child can only add restrictions, not remove them.
+    /// Whitespace variations are allowed (e.g., `&&` vs ` && `).
+    ///
+    /// # Security Note on Monotonicity
+    /// Tenuo currently enforces **Syntactic Monotonicity** for CEL, not Semantic Monotonicity.
+    ///
+    /// - **Allowed**: `parent && new_check` (Syntactically stricter)
+    /// - **Rejected**: `stricter_check` (Semantically stricter but not syntactically derived)
+    ///
+    /// Example:
+    /// - Parent: `net.in_cidr(ip, '10.0.0.0/8')`
+    /// - Child: `net.in_cidr(ip, '10.1.0.0/16')` -> **REJECTED** (cannot prove subset relation easily)
+    /// - Child: `(net.in_cidr(ip, '10.0.0.0/8')) && net.in_cidr(ip, '10.1.0.0/16')` -> **ALLOWED**
     pub fn validate_attenuation(&self, child: &CelConstraint) -> Result<()> {
-        // Same expression is always valid
-        if child.expression == self.expression {
+        // Same expression is always valid (after normalizing whitespace)
+        if normalize_cel_whitespace(&child.expression) == normalize_cel_whitespace(&self.expression) {
             return Ok(());
         }
 
         // Child must be a conjunction with parent
-        let expected_prefix = format!("({}) && ", self.expression);
+        // Normalize both to handle whitespace variations
+        let child_normalized = normalize_cel_whitespace(&child.expression);
+        let expected_prefix = format!("({})&&", normalize_cel_whitespace(&self.expression));
         
-        if !child.expression.starts_with(&expected_prefix) {
+        if !child_normalized.starts_with(&expected_prefix) {
             return Err(Error::MonotonicityViolation(format!(
                 "child CEL must be '({}) && <predicate>', got '{}'",
                 self.expression, child.expression
@@ -1257,6 +1472,12 @@ impl CelConstraint {
 
         Ok(())
     }
+}
+
+/// Normalize CEL expression whitespace for comparison.
+/// Removes spaces around operators to allow flexible formatting.
+fn normalize_cel_whitespace(expr: &str) -> String {
+    expr.split_whitespace().collect::<Vec<_>>().join("")
 }
 
 impl From<CelConstraint> for Constraint {

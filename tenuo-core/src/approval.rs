@@ -4,6 +4,56 @@
 //! identities (AWS IAM ARNs, Okta users, YubiKey certificates) to Ed25519
 //! public keys. Tenuo only cares about the cryptographic signature.
 //!
+//! ## Trust Hierarchy
+//!
+//! The Control Plane is the root of trust. It certifies orchestrators, which
+//! in turn certify their child agents. Notaries are scoped to deployments.
+//!
+//! ```text
+//! Control Plane (Root of Trust)
+//!     │
+//!     ├── Certifies Orchestrator A (deployment)
+//!     │       │
+//!     │       ├── Bound Notary (scoped to this deployment)
+//!     │       │       └── Maps enterprise identities → keys
+//!     │       │
+//!     │       ├── Worker Agent 1 (delegated warrant from Orchestrator A)
+//!     │       └── Worker Agent 2 (delegated warrant from Orchestrator A)
+//!     │
+//!     └── Certifies Orchestrator B (different deployment)
+//!             └── ...
+//! ```
+//!
+//! **Verification flow:**
+//! 1. Control Plane → Orchestrator: Root warrant with deployment binding
+//! 2. Orchestrator → Worker: Attenuated warrant with holder binding
+//! 3. Chain verification proves: Control Plane → Orchestrator → Worker
+//!
+//! ## Key Generation Principle
+//!
+//! **Every agent generates its own keys locally.** This applies to:
+//! - Orchestrators registering with the Control Plane
+//! - Workers registering with their orchestrators
+//! - Notaries bound to specific deployments
+//!
+//! Only the public key is ever shared. The private key never leaves the agent.
+//!
+//! ```text
+//! Root Agent → Control Plane:
+//! ┌──────────────────┐                    ┌──────────────────┐
+//! │   ROOT AGENT     │   Send pubkey      │  CONTROL PLANE   │
+//! │  [PrivateKey]    │  ───────────────►  │  Register + Issue│
+//! │  (NEVER LEAVES)  │  ◄─── Warrant ───  │     warrant      │
+//! └──────────────────┘                    └──────────────────┘
+//!
+//! Sub-Agent → Orchestrator (same principle):
+//! ┌──────────────────┐                    ┌──────────────────┐
+//! │   SUB-AGENT      │   Send pubkey      │  ORCHESTRATOR    │
+//! │  [PrivateKey]    │  ───────────────►  │  Attenuate with  │
+//! │  (NEVER LEAVES)  │  ◄─── Warrant ───  │  holder=pubkey   │
+//! └──────────────────┘                    └──────────────────┘
+//! ```
+//!
 //! ## Philosophy
 //!
 //! ```text
@@ -44,10 +94,22 @@
 //! }
 //! ```
 //!
+//! ## Authorization Model
+//!
+//! Different operations require different authorization:
+//!
+//! | Operation | Authorization |
+//! |-----------|---------------|
+//! | `register_key` | PoP (new key signs) + Notary approval |
+//! | `rotate_key` | Self-rotation (old key signs) |
+//! | `revoke_key` | Notary signs (for compromised keys) |
+//!
 //! ## Implementation Status
 //!
 //! - [x] Approval struct (data model)
 //! - [x] NotaryRegistry (key lifecycle management)
+//! - [x] RegistrationProof (PoP for registration)
+//! - [x] Notary struct (registry administrator)
 //! - [x] KeyBinding (identity → key mapping)
 //! - [x] AuditEvent (key lifecycle auditing)
 //! - [ ] Multi-sig verification in Authorizer
@@ -161,6 +223,221 @@ pub fn compute_request_hash(
 }
 
 // ============================================================================
+// Notary Proofs (PoP for Registration and Rotation)
+// ============================================================================
+
+/// Context string for registration proof signatures.
+const REGISTRATION_PROOF_CONTEXT: &[u8] = b"tenuo-key-registration-v1";
+
+/// Context string for rotation proof signatures.
+const ROTATION_PROOF_CONTEXT: &[u8] = b"tenuo-key-rotation-v1";
+
+/// Proof of Possession for key registration.
+/// 
+/// When registering a new key, the holder must prove they control the private
+/// key by signing a payload containing their identity information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegistrationProof {
+    /// Signature by the NEW key over the registration payload.
+    pub signature: Signature,
+    /// Timestamp for replay protection (Unix timestamp).
+    pub timestamp: i64,
+}
+
+impl RegistrationProof {
+    /// Create a registration proof.
+    /// 
+    /// The signed payload is: context || provider || external_id || public_key || timestamp
+    pub fn create(
+        keypair: &crate::crypto::Keypair,
+        provider: &str,
+        external_id: &str,
+        timestamp: i64,
+    ) -> Self {
+        let payload = Self::build_payload(provider, external_id, &keypair.public_key(), timestamp);
+        let signature = keypair.sign(&payload);
+        Self { signature, timestamp }
+    }
+
+    /// Verify the registration proof against a public key.
+    pub fn verify(
+        &self,
+        public_key: &PublicKey,
+        provider: &str,
+        external_id: &str,
+    ) -> Result<()> {
+        let payload = Self::build_payload(provider, external_id, public_key, self.timestamp);
+        public_key.verify(&payload, &self.signature)
+            .map_err(|e| Error::InvalidApproval(format!("Invalid registration proof: {}", e)))
+    }
+
+    fn build_payload(provider: &str, external_id: &str, public_key: &PublicKey, timestamp: i64) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(REGISTRATION_PROOF_CONTEXT);
+        payload.extend_from_slice(b"|");
+        payload.extend_from_slice(provider.as_bytes());
+        payload.extend_from_slice(b"|");
+        payload.extend_from_slice(external_id.as_bytes());
+        payload.extend_from_slice(b"|");
+        payload.extend_from_slice(&public_key.to_bytes());
+        payload.extend_from_slice(b"|");
+        payload.extend_from_slice(&timestamp.to_le_bytes());
+        payload
+    }
+}
+
+/// Proof of authorization for key rotation.
+/// 
+/// The OLD key holder signs a payload authorizing rotation to a new key.
+/// This proves the current key holder approves the rotation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RotationProof {
+    /// Signature by the OLD key over the rotation payload.
+    pub signature: Signature,
+    /// Timestamp for replay protection (Unix timestamp).
+    pub timestamp: i64,
+}
+
+impl RotationProof {
+    /// Create a rotation proof.
+    /// 
+    /// The signed payload is: context || provider || external_id || new_key || timestamp
+    pub fn create(
+        old_keypair: &crate::crypto::Keypair,
+        provider: &str,
+        external_id: &str,
+        new_key: &PublicKey,
+        timestamp: i64,
+    ) -> Self {
+        let payload = Self::build_payload(provider, external_id, new_key, timestamp);
+        let signature = old_keypair.sign(&payload);
+        Self { signature, timestamp }
+    }
+
+    /// Verify the rotation proof against the old public key.
+    pub fn verify(
+        &self,
+        old_key: &PublicKey,
+        provider: &str,
+        external_id: &str,
+        new_key: &PublicKey,
+    ) -> Result<()> {
+        let payload = Self::build_payload(provider, external_id, new_key, self.timestamp);
+        old_key.verify(&payload, &self.signature)
+            .map_err(|e| Error::InvalidApproval(format!("Invalid rotation proof: {}", e)))
+    }
+
+    fn build_payload(provider: &str, external_id: &str, new_key: &PublicKey, timestamp: i64) -> Vec<u8> {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(ROTATION_PROOF_CONTEXT);
+        payload.extend_from_slice(b"|");
+        payload.extend_from_slice(provider.as_bytes());
+        payload.extend_from_slice(b"|");
+        payload.extend_from_slice(external_id.as_bytes());
+        payload.extend_from_slice(b"|");
+        payload.extend_from_slice(&new_key.to_bytes());
+        payload.extend_from_slice(b"|");
+        payload.extend_from_slice(&timestamp.to_le_bytes());
+        payload
+    }
+}
+
+// ============================================================================
+// Notary (Registry Administrator)
+// ============================================================================
+
+/// A Notary is an entity with administrative authority over the registry.
+/// 
+/// Notaries are required for operations that cannot be self-authorized:
+/// - **Key registration**: Approving new identity-to-key bindings
+/// - **Key revocation**: Deactivating compromised or expired keys
+/// 
+/// Unlike rotation (which is self-authorized by the old key), revocation requires
+/// a trusted third party because the key holder's key may be compromised.
+/// 
+/// ## Deployment Binding
+/// 
+/// Notaries can be scoped to a specific deployment. The Control Plane verifies
+/// that a notary is authorized for the deployment before accepting registrations.
+/// 
+/// ## Properties
+/// 
+/// - **Type safety**: Can't accidentally pass arbitrary strings
+/// - **Key association**: Each notary is tied to a cryptographic identity
+/// - **Deployment scoping**: Notary can be bound to a specific orchestrator
+/// - **Signature verification**: Operations require notary signatures
+/// 
+/// ## Example
+/// 
+/// ```rust,ignore
+/// let admin_keypair = Keypair::generate();
+/// let admin = Notary::new("admin-1", admin_keypair.public_key())
+///     .with_deployment("orchestrator-prod-us-east-1");
+/// 
+/// // Register a key (notary approves)
+/// registry.register_key(binding, &proof, &admin)?;
+/// 
+/// // Revoke a key (notary signs revocation)
+/// let sig = admin_keypair.sign(&revocation_message);
+/// registry.revoke_key(provider, external_id, reason, &sig, &admin)?;
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Notary {
+    /// Unique identifier for this notary
+    pub id: String,
+    /// Human-readable name
+    pub name: Option<String>,
+    /// The notary's public key
+    pub public_key: PublicKey,
+    /// Deployment this notary is bound to (for scoping)
+    /// If None, the notary is global (not recommended for production)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deployment_id: Option<String>,
+}
+
+impl Notary {
+    /// Create a new notary with an ID and public key.
+    pub fn new(id: impl Into<String>, public_key: PublicKey) -> Self {
+        Self {
+            id: id.into(),
+            name: None,
+            public_key,
+            deployment_id: None,
+        }
+    }
+
+    /// Bind this notary to a specific deployment.
+    /// 
+    /// In production, notaries should be scoped to prevent cross-deployment
+    /// authorization attacks.
+    pub fn with_deployment(mut self, deployment_id: impl Into<String>) -> Self {
+        self.deployment_id = Some(deployment_id.into());
+        self
+    }
+
+    /// Create a notary with a display name.
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Get the notary's ID.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Get the deployment this notary is bound to.
+    pub fn deployment_id(&self) -> Option<&str> {
+        self.deployment_id.as_deref()
+    }
+
+    /// Get the display name, falling back to ID.
+    pub fn display_name(&self) -> &str {
+        self.name.as_deref().unwrap_or(&self.id)
+    }
+}
+
+// ============================================================================
 // Key Binding (Identity → Key Mapping)
 // ============================================================================
 
@@ -168,9 +445,15 @@ pub fn compute_request_hash(
 ///
 /// This is the core data structure for the Notary Registry, mapping
 /// enterprise identities (IAM ARNs, Okta users, etc.) to Ed25519 keys.
+///
+/// ## Deployment Scoping
+///
+/// Bindings can be scoped to a specific deployment using `deployment_id`.
+/// This ensures that an identity registered for one orchestrator cannot
+/// be used to authorize actions in a different deployment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyBinding {
-    /// Unique ID for this binding (e.g., "kb_<uuid>")
+    /// Unique ID for this binding (e.g., `kb_<uuid>`)
     pub id: String,
 
     /// External identity (e.g., "arn:aws:iam::123:user/admin")
@@ -181,6 +464,13 @@ pub struct KeyBinding {
 
     /// The bound public key
     pub public_key: PublicKey,
+
+    /// Deployment this binding is scoped to (optional)
+    /// 
+    /// If set, this binding only authorizes actions within the specified
+    /// deployment. Cross-deployment use is rejected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deployment_id: Option<String>,
 
     /// Human-readable display name
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -331,6 +621,19 @@ impl AuditEvent {
 }
 
 // ============================================================================
+// Warrant Tracking
+// ============================================================================
+
+/// Trait for components that track warrant issuance (e.g., NotaryRegistry).
+///
+/// This allows the Control Plane to enforce tracking when issuing warrants,
+/// ensuring that cascading revocation works correctly.
+pub trait WarrantTracker {
+    /// Track a warrant for a specific key (issuer or holder).
+    fn track_warrant(&mut self, key: &PublicKey, warrant_id: &str);
+}
+
+// ============================================================================
 // Notary Registry
 // ============================================================================
 
@@ -374,6 +677,10 @@ pub struct NotaryRegistry {
 
     /// Key bindings: (provider, external_id) → KeyBinding
     bindings: std::collections::HashMap<(String, String), KeyBinding>,
+
+    /// Warrant index: PublicKey → Set of warrant IDs
+    /// Used for cascading revocation when a key is compromised.
+    warrant_index: std::collections::HashMap<[u8; 32], std::collections::HashSet<String>>,
 
     /// Pending audit events (drain these periodically)
     pending_events: Vec<AuditEvent>,
@@ -440,27 +747,63 @@ impl NotaryRegistry {
             .collect()
     }
 
-    /// Register a new key binding.
+    /// Register a new key binding with Proof of Possession.
+    /// 
+    /// # Security
+    /// 
+    /// This operation requires two forms of authorization:
+    /// 1. **Proof of Possession (PoP)**: The new key holder must sign a registration
+    ///    proof to prove they control the private key being registered.
+    /// 2. **Notary authorization**: A trusted notary must approve the registration.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `binding` - The key binding to register
+    /// * `proof` - RegistrationProof signed by the private key being registered
+    /// * `notary` - The notary authorizing this registration
     pub fn register_key(
         &mut self,
         binding: KeyBinding,
-        actor: impl Into<String>,
+        proof: &RegistrationProof,
+        notary: &Notary,
     ) -> Result<()> {
-        let actor = actor.into();
-
         if !self.has_provider(&binding.provider) {
             return Err(Error::UnknownProvider(binding.provider.clone()));
         }
 
+        // Verify Deployment Scoping
+        // If the notary is bound to a deployment, they can ONLY register keys for that deployment.
+        if let Some(notary_deployment) = &notary.deployment_id {
+            match &binding.deployment_id {
+                Some(binding_deployment) if binding_deployment != notary_deployment => {
+                    return Err(Error::Unauthorized(format!(
+                        "Notary scoped to '{}' cannot register key for '{}'",
+                        notary_deployment, binding_deployment
+                    )));
+                }
+                None => {
+                    return Err(Error::Unauthorized(format!(
+                        "Notary scoped to '{}' cannot register global key",
+                        notary_deployment
+                    )));
+                }
+                _ => {} // Matches
+            }
+        }
+
+        // Verify Proof of Possession
+        proof.verify(&binding.public_key, &binding.provider, &binding.external_id)?;
+
         let key = (binding.provider.clone(), binding.external_id.clone());
 
         self.pending_events.push(
-            AuditEvent::new(AuditEventType::KeyRegistered, &binding.provider, &actor)
+            AuditEvent::new(AuditEventType::KeyRegistered, &binding.provider, notary.id())
                 .with_identity(&binding.external_id)
                 .with_key(&binding.public_key)
                 .with_details(format!(
-                    "Key registered for '{}'",
-                    binding.display_name.as_deref().unwrap_or(&binding.external_id)
+                    "Key registered for '{}' by {} (PoP verified)",
+                    binding.display_name.as_deref().unwrap_or(&binding.external_id),
+                    notary.display_name()
                 )),
         );
 
@@ -469,11 +812,30 @@ impl NotaryRegistry {
     }
 
     /// Rotate a key (update the public key for an existing binding).
+    ///
+    /// # Security
+    /// 
+    /// This operation requires a signature from the **current (old) key** to prove
+    /// the key holder authorizes the rotation. This is a self-rotation model.
+    /// 
+    /// The signed message is: `provider || external_id || new_key_bytes`
+    /// 
+    /// For compromised keys where self-rotation isn't possible, use `revoke_key()`
+    /// followed by a new registration through the external provider's auth flow.
+    /// 
+    /// # Arguments
+    /// 
+    /// * `provider` - The identity provider name
+    /// * `external_id` - The external identity being rotated
+    /// * `new_key` - The new public key
+    /// * `signature` - Signature by the OLD key over the rotation message
+    /// * `actor` - Identifier for audit logging
     pub fn rotate_key(
         &mut self,
         provider: &str,
         external_id: &str,
         new_key: PublicKey,
+        signature: &Signature,
         actor: impl Into<String>,
     ) -> Result<()> {
         let actor = actor.into();
@@ -483,8 +845,18 @@ impl NotaryRegistry {
             Error::UnknownProvider(format!("{}:{}", provider, external_id))
         })?;
 
+        // 1. Verify authorization: Old key must sign the rotation request
+        let mut message = Vec::new();
+        message.extend_from_slice(provider.as_bytes());
+        message.extend_from_slice(external_id.as_bytes());
+        message.extend_from_slice(&new_key.to_bytes());
+
+        binding.public_key.verify(&message, signature)
+            .map_err(|_| Error::SignatureInvalid("Invalid rotation signature".into()))?;
+
         let old_key_hex = hex::encode(binding.public_key.to_bytes());
 
+        // 2. Perform rotation
         binding.public_key = new_key.clone();
 
         self.pending_events.push(
@@ -498,31 +870,133 @@ impl NotaryRegistry {
     }
 
     /// Revoke a key binding (deactivate it).
+    ///
+    /// Unlike rotation (which is self-authorized), revocation requires authorization
+    /// from a **Notary** (registry administrator). This handles the case where the
+    /// key holder's key is compromised or unavailable.
+    ///
+    /// # Security
+    /// 
+    /// The notary must sign the revocation request to prove authorization.
+    /// The signed message is: `provider || external_id || reason`
+    /// 
+    /// # Arguments
+    /// 
+    /// * `provider` - The identity provider name
+    /// * `external_id` - The external identity being revoked
+    /// * `reason` - Human-readable reason for revocation (for audit)
+    /// * `signature` - Signature by the notary over the revocation message
+    /// * `notary` - The notary authorizing this revocation
+    ///
+    /// # Returns
+    /// A list of warrant IDs that should be added to the Signed Revocation List.
+    /// These are warrants issued by or held by the revoked key.
     pub fn revoke_key(
         &mut self,
         provider: &str,
         external_id: &str,
         reason: impl Into<String>,
-        actor: impl Into<String>,
-    ) -> Result<()> {
-        let actor = actor.into();
+        signature: &Signature,
+        notary: &Notary,
+    ) -> Result<Vec<String>> {
         let reason = reason.into();
         let key = (provider.to_string(), external_id.to_string());
 
-        let binding = self.bindings.get_mut(&key).ok_or_else(|| {
+        // First, get the binding immutably to check deployment and get the public key
+        let binding = self.bindings.get(&key).ok_or_else(|| {
             Error::UnknownProvider(format!("{}:{}", provider, external_id))
         })?;
 
+        // Verify Deployment Scoping
+        if let Some(notary_deployment) = &notary.deployment_id {
+            match &binding.deployment_id {
+                Some(binding_deployment) if binding_deployment != notary_deployment => {
+                    return Err(Error::Unauthorized(format!(
+                        "Notary scoped to '{}' cannot revoke key for '{}'",
+                        notary_deployment, binding_deployment
+                    )));
+                }
+                None => {
+                    return Err(Error::Unauthorized(format!(
+                        "Notary scoped to '{}' cannot revoke global key",
+                        notary_deployment
+                    )));
+                }
+                _ => {} // Deployment matches
+            }
+        }
+
+        // Verify authorization: Notary must sign the revocation request
+        let mut message = Vec::new();
+        message.extend_from_slice(provider.as_bytes());
+        message.extend_from_slice(external_id.as_bytes());
+        message.extend_from_slice(reason.as_bytes());
+
+        notary.public_key.verify(&message, signature)
+            .map_err(|_| Error::SignatureInvalid("Invalid revocation signature".into()))?;
+
+        // Get affected warrants and public key before mutable borrow
+        let public_key = binding.public_key.clone();
+        let affected_warrants = self.get_warrants_for_key(&public_key);
+
+        // Now get mutable reference to deactivate
+        let binding = self.bindings.get_mut(&key).unwrap();
         binding.active = false;
 
         self.pending_events.push(
-            AuditEvent::new(AuditEventType::KeyRevoked, provider, actor)
+            AuditEvent::new(AuditEventType::KeyRevoked, provider, notary.id())
                 .with_identity(external_id)
-                .with_key(&binding.public_key)
-                .with_details(format!("Revoked: {}", reason)),
+                .with_key(&public_key)
+                .with_details(format!(
+                    "Revoked by {}: {}. Affected warrants: {}",
+                    notary.display_name(), reason, affected_warrants.len()
+                )),
         );
 
-        Ok(())
+        Ok(affected_warrants)
+    }
+
+    /// Track a warrant issued by or held by a key.
+    ///
+    /// Call this when warrants are created so that cascading revocation works.
+    /// The warrant should be tracked for both its issuer and holder (if any).
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// // Track warrant for both issuer and holder
+    /// registry.track_warrant(warrant.issuer(), warrant.id());
+    /// if let Some(holder) = warrant.authorized_holder() {
+    ///     registry.track_warrant(holder, warrant.id());
+    /// }
+    /// ```
+    pub fn track_warrant(&mut self, key: &PublicKey, warrant_id: impl Into<String>) {
+        let key_bytes = key.to_bytes();
+        self.warrant_index
+            .entry(key_bytes)
+            .or_default()
+            .insert(warrant_id.into());
+    }
+
+    /// Remove a warrant from tracking (e.g., when it expires).
+    pub fn untrack_warrant(&mut self, key: &PublicKey, warrant_id: &str) {
+        let key_bytes = key.to_bytes();
+        if let Some(warrants) = self.warrant_index.get_mut(&key_bytes) {
+            warrants.remove(warrant_id);
+            if warrants.is_empty() {
+                self.warrant_index.remove(&key_bytes);
+            }
+        }
+    }
+
+    /// Get all warrant IDs associated with a key.
+    ///
+    /// Returns warrants where this key is either the issuer or the authorized holder.
+    pub fn get_warrants_for_key(&self, key: &PublicKey) -> Vec<String> {
+        let key_bytes = key.to_bytes();
+        self.warrant_index
+            .get(&key_bytes)
+            .map(|set| set.iter().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Resolve an external identity to a public key.
@@ -563,10 +1037,10 @@ impl NotaryRegistry {
         &mut self,
         event_type: AuditEventType,
         approval: &Approval,
-        actor: impl Into<String>,
+        notary: &Notary,
         details: Option<String>,
     ) {
-        let mut event = AuditEvent::new(event_type, &approval.provider, actor)
+        let mut event = AuditEvent::new(event_type, &approval.provider, notary.id())
             .with_identity(&approval.external_id)
             .with_key(&approval.approver_key);
 
@@ -587,6 +1061,12 @@ impl NotaryRegistry {
     /// Get pending event count (for monitoring).
     pub fn pending_event_count(&self) -> usize {
         self.pending_events.len()
+    }
+}
+
+impl WarrantTracker for NotaryRegistry {
+    fn track_warrant(&mut self, key: &PublicKey, warrant_id: &str) {
+        self.track_warrant(key, warrant_id);
     }
 }
 
@@ -633,8 +1113,13 @@ mod tests {
     fn test_notary_registry_lifecycle() {
         let mut registry = NotaryRegistry::new();
 
+        // Create a notary (admin)
+        let admin_keypair = Keypair::generate();
+        let admin = Notary::new("admin-1", admin_keypair.public_key())
+            .with_name("Test Admin");
+
         // Register a provider
-        registry.register_provider("aws-iam", "AWS IAM Provider", "test");
+        registry.register_provider("aws-iam", "AWS IAM Provider", "admin-1");
         assert!(registry.has_provider("aws-iam"));
 
         // Create a key binding
@@ -644,16 +1129,25 @@ mod tests {
             external_id: "arn:aws:iam::123:user/admin".to_string(),
             provider: "aws-iam".to_string(),
             public_key: keypair.public_key(),
+            deployment_id: None,
             display_name: Some("Admin User".to_string()),
-            registered_by: "test".to_string(),
+            registered_by: admin.id().to_string(),
             registered_at: Utc::now(),
             expires_at: None,
             active: true,
             metadata: None,
         };
 
-        // Register the key
-        registry.register_key(binding, "test").unwrap();
+        // Create registration proof (PoP)
+        let proof = RegistrationProof::create(
+            &keypair,
+            "aws-iam",
+            "arn:aws:iam::123:user/admin",
+            Utc::now().timestamp(),
+        );
+
+        // Register the key with proof
+        registry.register_key(binding, &proof, &admin).unwrap();
 
         // Resolve the identity
         let resolved = registry.resolve("aws-iam", "arn:aws:iam::123:user/admin").unwrap();
@@ -669,6 +1163,11 @@ mod tests {
     #[test]
     fn test_key_rotation() {
         let mut registry = NotaryRegistry::new();
+
+        // Create notary for provider registration
+        let system_keypair = Keypair::generate();
+        let system = Notary::new("system", system_keypair.public_key());
+
         registry.register_provider("test", "Test Provider", "system");
 
         let old_keypair = Keypair::generate();
@@ -679,18 +1178,34 @@ mod tests {
             external_id: "user@example.com".to_string(),
             provider: "test".to_string(),
             public_key: old_keypair.public_key(),
+            deployment_id: None,
             display_name: None,
-            registered_by: "system".to_string(),
+            registered_by: system.id().to_string(),
             registered_at: Utc::now(),
             expires_at: None,
             active: true,
             metadata: None,
         };
 
-        registry.register_key(binding, "system").unwrap();
+        // Create registration proof
+        let reg_proof = RegistrationProof::create(
+            &old_keypair,
+            "test",
+            "user@example.com",
+            Utc::now().timestamp(),
+        );
+        registry.register_key(binding, &reg_proof, &system).unwrap();
 
-        // Rotate the key
-        registry.rotate_key("test", "user@example.com", new_keypair.public_key(), "admin").unwrap();
+        // Create rotation signature (signed by OLD key)
+        // Message format: provider || external_id || new_key_bytes
+        let mut message = Vec::new();
+        message.extend_from_slice(b"test");
+        message.extend_from_slice(b"user@example.com");
+        message.extend_from_slice(&new_keypair.public_key().to_bytes());
+        let rotation_sig = old_keypair.sign(&message);
+
+        // Rotate the key with signature
+        registry.rotate_key("test", "user@example.com", new_keypair.public_key(), &rotation_sig, "admin").unwrap();
 
         // Verify the new key is returned
         let resolved = registry.resolve("test", "user@example.com").unwrap();
@@ -704,6 +1219,12 @@ mod tests {
     #[test]
     fn test_key_revocation() {
         let mut registry = NotaryRegistry::new();
+
+        let system_keypair = Keypair::generate();
+        let system = Notary::new("system", system_keypair.public_key());
+        let security_keypair = Keypair::generate();
+        let security = Notary::new("security-team", security_keypair.public_key());
+
         registry.register_provider("test", "Test Provider", "system");
 
         let keypair = Keypair::generate();
@@ -712,18 +1233,34 @@ mod tests {
             external_id: "user@example.com".to_string(),
             provider: "test".to_string(),
             public_key: keypair.public_key(),
+            deployment_id: None,
             display_name: None,
-            registered_by: "system".to_string(),
+            registered_by: system.id().to_string(),
             registered_at: Utc::now(),
             expires_at: None,
             active: true,
             metadata: None,
         };
 
-        registry.register_key(binding, "system").unwrap();
+        let proof = RegistrationProof::create(
+            &keypair,
+            "test",
+            "user@example.com",
+            Utc::now().timestamp(),
+        );
+        registry.register_key(binding, &proof, &system).unwrap();
+
+        // Create revocation signature (signed by security notary)
+        // Message format: provider || external_id || reason
+        let reason = "Compromised";
+        let mut message = Vec::new();
+        message.extend_from_slice(b"test");
+        message.extend_from_slice(b"user@example.com");
+        message.extend_from_slice(reason.as_bytes());
+        let revoke_sig = security_keypair.sign(&message);
 
         // Revoke the key
-        registry.revoke_key("test", "user@example.com", "Compromised", "security-team").unwrap();
+        registry.revoke_key("test", "user@example.com", reason, &revoke_sig, &security).unwrap();
 
         // Verify resolution fails
         let result = registry.resolve("test", "user@example.com");
@@ -738,21 +1275,32 @@ mod tests {
     fn test_unknown_provider_fails() {
         let mut registry = NotaryRegistry::new();
 
+        let notary_keypair = Keypair::generate();
+        let notary = Notary::new("test-notary", notary_keypair.public_key());
+
         let keypair = Keypair::generate();
         let binding = KeyBinding {
             id: "kb_fail".to_string(),
             external_id: "user@example.com".to_string(),
             provider: "unknown-provider".to_string(),
             public_key: keypair.public_key(),
+            deployment_id: None,
             display_name: None,
-            registered_by: "test".to_string(),
+            registered_by: notary.id().to_string(),
             registered_at: Utc::now(),
             expires_at: None,
             active: true,
             metadata: None,
         };
 
-        let result = registry.register_key(binding, "test");
+        let proof = RegistrationProof::create(
+            &keypair,
+            "unknown-provider",
+            "user@example.com",
+            Utc::now().timestamp(),
+        );
+
+        let result = registry.register_key(binding, &proof, &notary);
         assert!(result.is_err());
     }
 }

@@ -82,6 +82,9 @@ base64 = "0.22"
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }
 
+# Network handling
+ipnetwork = "0.20"
+
 # Pattern matching (glob-style)
 glob = "0.3"
 regex = "1.10"

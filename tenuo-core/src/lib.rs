@@ -4,7 +4,8 @@
 //!
 //! Tenuo provides cryptographically-enforced capability attenuation for AI agent workflows.
 //! Unlike traditional IAM systems that answer "Who are you?", Tenuo answers
-//! "Does this actor hold a valid, scoped, unexpired token for this specific action?"
+//! "Who delegated this authority, what task context does it carry, and is this action
+//! within the delegated bounds?"
 //!
 //! ## Key Concepts
 //!
@@ -43,6 +44,7 @@ pub mod planes;
 pub mod warrant;
 pub mod wire;
 pub mod revocation;
+pub mod revocation_manager;
 
 #[cfg(feature = "python")]
 pub mod python;
@@ -59,7 +61,11 @@ pub use planes::{
     Authorizer, ChainStep, ChainVerificationResult, ControlPlane, DataPlane,
     DEFAULT_CLOCK_TOLERANCE_SECS,
 };
-pub use revocation::RevocationList;
+pub use revocation::{
+    RevocationRequest, SignedRevocationList, SrlBuilder, 
+    MAX_REVOCATION_REQUEST_AGE_SECS,
+};
+pub use revocation_manager::RevocationManager;
 pub use warrant::{Warrant, WarrantBuilder, WarrantId, WARRANT_ID_PREFIX, POP_TIMESTAMP_WINDOW_SECS};
 pub use wire::MAX_WARRANT_SIZE;
 

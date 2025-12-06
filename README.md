@@ -5,7 +5,26 @@
 [![Crate](https://img.shields.io/crates/v/tenuo-core.svg)](https://crates.io/crates/tenuo-core)
 [![Docs](https://docs.rs/tenuo-core/badge.svg)](https://docs.rs/tenuo-core)
 
-Tenuo provides cryptographically-enforced capability attenuation for AI agent workflows. Warrants can only **shrink** when delegated — a $1000 budget becomes $500, access to `staging-*` narrows to `staging-web`. Verification is 100% offline in ~25μs.
+Tenuo provides cryptographically-enforced capability attenuation for AI agent workflows. Warrants can only **shrink** when delegated : a $1000 budget becomes $500, access to `staging-*` narrows to `staging-web`. Verification is 100% offline in ~25μs.
+
+## Where Tenuo Fits
+
+Tenuo sits **above** your infrastructure IAM. It doesn't replace it.
+
+```
+┌────────────────────────────────────────────────┐
+│  Tenuo (Application Layer)                     │
+│  "Who delegated this, what context, what       │
+│   bounds?"                                     │
+└──────────────────────┬─────────────────────────┘
+                       ▼
+┌────────────────────────────────────────────────┐
+│  Infrastructure IAM (AWS / K8s / etc.)         │
+│  "Can this service call this API?"             │
+└────────────────────────────────────────────────┘
+```
+
+Your services keep their existing IAM. Tenuo adds a **delegation layer** that tracks *who* authorized the action, *what task context* it carries, and *what limits* apply. Constraints can depend on actions earlier in the workflow.
 
 ## Quick Start
 
@@ -46,6 +65,28 @@ let worker_warrant = warrant.attenuate()
 worker_warrant.authorize("upgrade", &args, Some(&pop_signature))?;
 ```
 
+### Revocation
+
+Warrants can be revoked using **Signed Revocation Lists (SRLs)**. The Control Plane signs the list; authorizers verify before trusting.
+
+```rust
+// Request revocation (issuer, holder, or admin)
+let request = RevocationRequest::new(warrant.id(), "Compromised", &keypair)?;
+
+// Control Plane validates and builds SRL
+let srl = SignedRevocationList::builder()
+    .revoke(warrant.id())
+    .version(1)
+    .build(&control_plane_keypair)?;
+
+// Authorizer loads (verifies signature)
+authorizer.set_revocation_list(srl, &control_plane_key)?;
+```
+
+**Cascading Revocation:**
+- **Surgical**: Revoke a specific warrant ID to stop one task
+- **Nuclear**: Revoke an agent's key to instantly invalidate every warrant they ever issued (kill 10,000 sub-agents with one switch)
+
 ## Key Features
 
 | Feature | Description |
@@ -54,6 +95,7 @@ worker_warrant.authorize("upgrade", &args, Some(&pop_signature))?;
 | **Offline verification** | No network calls, ~25μs latency |
 | **Holder binding** | Warrants bound to keys, stolen tokens useless |
 | **Multi-sig approvals** | M-of-N approval for sensitive actions |
+| **Cascading revocation** | Surgical (one warrant) or nuclear (entire agent swarm) |
 | **Depth limits** | Configurable delegation depth (max 64) |
 
 ## Constraint Types
@@ -80,13 +122,13 @@ Control Plane (secure)     Data Plane (distributed)
 ```
 
 The Control Plane issues root warrants. Agents attenuate and delegate. 
-The Data Plane (gateway or sidecar) verifies locally — no round-trips.
+The Data Plane (gateway or sidecar) verifies locally with no round-trips.
 
 ## Documentation
 
-- **[Website](https://tenuo.github.io/tenuo/)** — Landing page and infographics
-- **[Docs](https://tenuo.github.io/tenuo/reference/)** — Concepts, guides, and examples
-- **[API Reference](https://docs.rs/tenuo-core)** — Full Rust API documentation
+- **[Website](https://tenuo.github.io/tenuo/)**: Landing page and infographics
+- **[Guide](https://tenuo.github.io/tenuo/guide/)**: Concepts and examples
+- **[API Reference](https://docs.rs/tenuo-core)**: Rustdoc API documentation
 
 ## Security
 

@@ -66,26 +66,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("      - budget:    ≤ $10,000");
 
     // =========================================================================
-    // Step 2: Orchestrator creates its own identity
+    // Step 2: Establish Identities (Key Generation)
     // =========================================================================
     println!("\n┌─────────────────────────────────────────────────────────────────┐");
-    println!("│ STEP 2: Orchestrator Establishes Identity                       │");
+    println!("│ STEP 2: Establish Identities (Key Generation)                   │");
     println!("└─────────────────────────────────────────────────────────────────┘");
 
+    // Orchestrator generates its OWN keypair locally
     let orchestrator_keypair = Keypair::generate();
-    println!("  Generated Orchestrator Keypair");
+    println!("  Orchestrator generates its own keypair:");
     println!("    Public Key: {}", hex::encode(orchestrator_keypair.public_key().to_bytes()));
 
-    // Generate worker keypair (for PoP)
+    // ─────────────────────────────────────────────────────────────────────────
+    // DEMO SIMPLIFICATION: In production, the worker generates its own keypair
+    // and sends ONLY the public key to the orchestrator.
+    //
+    // Production flow:
+    //   1. Worker: keypair = Keypair::generate()
+    //   2. Worker: send(orchestrator, keypair.public_key())
+    //   3. Orchestrator: receives worker_public_key
+    //   4. Orchestrator: attenuate().authorized_holder(worker_public_key)
+    //
+    // For this demo, we generate on behalf of worker for simplicity.
+    // ─────────────────────────────────────────────────────────────────────────
     let worker_keypair = Keypair::generate();
-    println!("  Generated Worker Keypair (for PoP)");
-    println!("    Public Key: {}", hex::encode(worker_keypair.public_key().to_bytes()));
+    println!("\n  [DEMO] Simulating worker key registration:");
+    println!("    In production: Worker generates key, sends ONLY public key");
+    println!("    Worker Public Key: {}", hex::encode(worker_keypair.public_key().to_bytes()));
 
-    // Save worker key for the worker agent
+    // Save worker SECRET key for demo (PRODUCTION: worker keeps this locally!)
     let worker_key_path = env::var("TENUO_WORKER_KEY_OUTPUT")
         .unwrap_or_else(|_| "/data/worker.key".to_string());
     std::fs::write(&worker_key_path, hex::encode(worker_keypair.secret_key_bytes()))?;
-    println!("    Saved to: {}", worker_key_path);
+    println!("    [DEMO] Saved secret key to: {} (production: NEVER shared!)", worker_key_path);
 
     // =========================================================================
     // Step 3: Attenuate warrant for the Worker

@@ -1,0 +1,90 @@
+use tenuo_core::crypto::Keypair;
+use tenuo_core::planes::DataPlane;
+use tenuo_core::revocation::RevocationRequest;
+use tenuo_core::warrant::Warrant;
+use std::time::Duration;
+
+#[test]
+fn test_parental_revocation() {
+    // 1. Setup
+    let issuer = Keypair::generate();
+    let holder = Keypair::generate();
+    let data_plane = DataPlane::new_with_issuers(vec![issuer.public_key()]);
+
+    // 2. Issue Warrant
+    let warrant = Warrant::builder()
+        .tool("test_tool")
+        .ttl(Duration::from_secs(3600))
+        .authorized_holder(holder.public_key())
+        .build(&issuer)
+        .unwrap();
+
+    // 3. Verify Initial State (Valid)
+    assert!(data_plane.verify(&warrant).is_ok());
+    assert!(!data_plane.is_revoked(&warrant));
+
+    // 4. Submit Revocation (Parent)
+    let request = RevocationRequest::new(
+        warrant.id().as_str(),
+        "Emergency Stop",
+        &issuer,
+    ).unwrap();
+
+    data_plane.submit_revocation(&request, &warrant).expect("Revocation submission failed");
+
+    // 5. Verify Revoked State
+    assert!(data_plane.is_revoked(&warrant));
+    
+    // Verify verify() fails
+    let result = data_plane.verify(&warrant);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("revoked"));
+}
+
+#[test]
+fn test_self_revocation() {
+    // Holder surrenders warrant
+    let issuer = Keypair::generate();
+    let holder = Keypair::generate();
+    let data_plane = DataPlane::new_with_issuers(vec![issuer.public_key()]);
+
+    let warrant = Warrant::builder()
+        .tool("test_tool")
+        .ttl(Duration::from_secs(3600))
+        .authorized_holder(holder.public_key())
+        .build(&issuer)
+        .unwrap();
+
+    let request = RevocationRequest::new(
+        warrant.id().as_str(),
+        "I quit",
+        &holder,
+    ).unwrap();
+
+    data_plane.submit_revocation(&request, &warrant).expect("Self-revocation failed");
+    assert!(data_plane.is_revoked(&warrant));
+}
+
+#[test]
+fn test_unauthorized_revocation() {
+    let issuer = Keypair::generate();
+    let attacker = Keypair::generate();
+    let data_plane = DataPlane::new_with_issuers(vec![issuer.public_key()]);
+
+    let warrant = Warrant::builder()
+        .tool("test_tool")
+        .ttl(Duration::from_secs(3600))
+        .build(&issuer)
+        .unwrap();
+
+    let request = RevocationRequest::new(
+        warrant.id().as_str(),
+        "Malicious revocation",
+        &attacker,
+    ).unwrap();
+
+    let result = data_plane.submit_revocation(&request, &warrant);
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("not authorized"));
+    assert!(!data_plane.is_revoked(&warrant));
+}

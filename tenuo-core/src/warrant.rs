@@ -167,7 +167,10 @@ pub struct WarrantPayload {
 }
 
 /// A signed warrant - the complete token of authority.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 
+/// **Security**: Custom deserialization validates constraint depth to prevent
+/// stack overflow attacks from maliciously nested constraints.
+#[derive(Debug, Clone, Serialize)]
 pub struct Warrant {
     /// The warrant payload.
     payload: WarrantPayload,
@@ -178,6 +181,35 @@ pub struct Warrant {
     /// order varies between serialize/deserialize cycles.
     #[serde(with = "serde_bytes")]
     payload_bytes: Vec<u8>,
+}
+
+// Custom Deserialize to enforce constraint depth validation
+impl<'de> Deserialize<'de> for Warrant {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Helper struct for raw deserialization
+        #[derive(Deserialize)]
+        struct WarrantRaw {
+            payload: WarrantPayload,
+            signature: Signature,
+            #[serde(with = "serde_bytes")]
+            payload_bytes: Vec<u8>,
+        }
+
+        let raw = WarrantRaw::deserialize(deserializer)?;
+        
+        // Validate constraint depth before returning
+        raw.payload.constraints.validate_depth()
+            .map_err(serde::de::Error::custom)?;
+        
+        Ok(Warrant {
+            payload: raw.payload,
+            signature: raw.signature,
+            payload_bytes: raw.payload_bytes,
+        })
+    }
 }
 
 impl Warrant {
