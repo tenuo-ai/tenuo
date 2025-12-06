@@ -8,10 +8,11 @@
 use crate::constraints::{
     CelConstraint, Constraint, ConstraintValue, Exact, OneOf, Pattern, Range,
 };
-use crate::crypto::Keypair as RustKeypair;
+use crate::crypto::{Keypair as RustKeypair, PublicKey as RustPublicKey, Signature as RustSignature};
 use crate::warrant::Warrant as RustWarrant;
 use crate::wire;
 use crate::mcp::{McpConfig, CompiledMcpConfig};
+use crate::planes::Authorizer as RustAuthorizer;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -186,6 +187,13 @@ impl PyKeypair {
 
     fn secret_key_bytes(&self) -> Vec<u8> {
         self.inner.secret_key_bytes().to_vec()
+    }
+
+    /// Get the public key as a PublicKey object.
+    fn public_key(&self) -> PyPublicKey {
+        PyPublicKey {
+            inner: self.inner.public_key(),
+        }
     }
 }
 
@@ -460,8 +468,8 @@ impl PyCompiledMcpConfig {
     ///     arguments: The arguments dictionary from the MCP request
     ///
     /// Returns:
-    ///     Dictionary of extracted constraints (name -> ConstraintValue)
-    fn extract_constraints(&self, tool_name: &str, arguments: &Bound<'_, PyDict>) -> PyResult<PyObject> {
+    ///     ExtractionResult object with .constraints and .tool attributes
+    fn extract_constraints(&self, tool_name: &str, arguments: &Bound<'_, PyDict>) -> PyResult<PyExtractionResult> {
         // Convert Python dict to serde_json::Value
         let py = arguments.py();
         let json_str = {
@@ -477,14 +485,151 @@ impl PyCompiledMcpConfig {
         let result = self.inner.extract_constraints(tool_name, &args_value)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-        // Convert extracted constraints back to Python objects
+        // Convert extracted constraints to Python dict
         let dict = PyDict::new_bound(py);
         for (key, value) in result.constraints {
             let py_val = constraint_value_to_py(py, &value)?;
             dict.set_item(key, py_val)?;
         }
 
-        Ok(dict.into())
+        Ok(PyExtractionResult {
+            constraints: dict.into(),
+            tool: result.tool,
+        })
+    }
+}
+
+/// Python wrapper for ExtractionResult.
+#[pyclass(name = "ExtractionResult")]
+pub struct PyExtractionResult {
+    #[pyo3(get)]
+    constraints: PyObject,
+    #[pyo3(get)]
+    tool: String,
+}
+
+#[pymethods]
+impl PyExtractionResult {
+    fn __repr__(&self) -> String {
+        format!("ExtractionResult(tool='{}', constraints={{...}})", self.tool)
+    }
+}
+
+/// Python wrapper for PublicKey.
+#[pyclass(name = "PublicKey")]
+pub struct PyPublicKey {
+    inner: RustPublicKey,
+}
+
+#[pymethods]
+impl PyPublicKey {
+    #[staticmethod]
+    fn from_bytes(bytes: &[u8]) -> PyResult<Self> {
+        let arr: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| PyValueError::new_err("public key must be exactly 32 bytes"))?;
+        let inner = RustPublicKey::from_bytes(&arr).map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        self.inner.to_bytes().to_vec()
+    }
+
+    fn __repr__(&self) -> String {
+        let bytes = self.inner.to_bytes();
+        format!("PublicKey({:02x}{:02x}{:02x}{:02x}...)", 
+                bytes[0], bytes[1], bytes[2], bytes[3])
+    }
+}
+
+/// Python wrapper for Authorizer.
+#[pyclass(name = "Authorizer")]
+pub struct PyAuthorizer {
+    inner: RustAuthorizer,
+}
+
+#[pymethods]
+impl PyAuthorizer {
+    #[staticmethod]
+    fn new(public_key: &PyPublicKey) -> Self {
+        Self {
+            inner: RustAuthorizer::new(public_key.inner.clone()),
+        }
+    }
+
+    /// Verify a warrant (checks signature, expiration, revocation).
+    fn verify(&self, warrant: &PyWarrant) -> PyResult<()> {
+        self.inner.verify(&warrant.inner).map_err(to_py_err)
+    }
+
+    /// Authorize an action against a warrant.
+    /// 
+    /// Args:
+    ///     warrant: The warrant to check
+    ///     tool: Tool name being invoked
+    ///     args: Dictionary of argument name -> value
+    ///     signature: Optional PoP signature bytes (64 bytes)
+    /// 
+    /// Returns:
+    ///     None on success, raises exception on failure
+    #[pyo3(signature = (warrant, tool, args, signature=None))]
+    fn authorize(
+        &self,
+        warrant: &PyWarrant,
+        tool: &str,
+        args: &Bound<'_, PyDict>,
+        signature: Option<&[u8]>,
+    ) -> PyResult<()> {
+        let mut rust_args = HashMap::new();
+        for (key, value) in args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_args.insert(field, cv);
+        }
+
+        let sig = match signature {
+            Some(bytes) => {
+                let arr: [u8; 64] = bytes
+                    .try_into()
+                    .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
+                Some(RustSignature::from_bytes(&arr).map_err(to_py_err)?)
+            }
+            None => None,
+        };
+
+        self.inner.authorize(&warrant.inner, tool, &rust_args, sig.as_ref(), &[])
+            .map_err(to_py_err)
+    }
+
+    /// Convenience: verify warrant and authorize in one call.
+    #[pyo3(signature = (warrant, tool, args, signature=None))]
+    fn check(
+        &self,
+        warrant: &PyWarrant,
+        tool: &str,
+        args: &Bound<'_, PyDict>,
+        signature: Option<&[u8]>,
+    ) -> PyResult<()> {
+        let mut rust_args = HashMap::new();
+        for (key, value) in args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_args.insert(field, cv);
+        }
+
+        let sig = match signature {
+            Some(bytes) => {
+                let arr: [u8; 64] = bytes
+                    .try_into()
+                    .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
+                Some(RustSignature::from_bytes(&arr).map_err(to_py_err)?)
+            }
+            None => None,
+        };
+
+        self.inner.check(&warrant.inner, tool, &rust_args, sig.as_ref(), &[])
+            .map_err(to_py_err)
     }
 }
 
@@ -527,6 +672,9 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWarrant>()?;
     m.add_class::<PyMcpConfig>()?;
     m.add_class::<PyCompiledMcpConfig>()?;
+    m.add_class::<PyPublicKey>()?;
+    m.add_class::<PyAuthorizer>()?;
+    m.add_class::<PyExtractionResult>()?;
 
     // Constants
     m.add("MAX_DELEGATION_DEPTH", crate::MAX_DELEGATION_DEPTH)?;

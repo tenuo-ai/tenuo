@@ -8,7 +8,7 @@ Demonstrates:
 - Authorizing MCP operations
 """
 
-from tenuo import McpConfig, CompiledMcpConfig, Authorizer, PublicKey, Keypair, Warrant
+from tenuo import McpConfig, CompiledMcpConfig, Authorizer, PublicKey, Keypair, Warrant, Pattern, Range
 
 def main():
     print("=== Tenuo Python SDK - MCP Integration ===\n")
@@ -29,7 +29,8 @@ def main():
     print("\n2. Initializing authorizer...")
     control_keypair = Keypair.generate()
     authorizer = Authorizer.new(control_keypair.public_key())
-    print(f"   Control plane public key: {bytes(control_keypair.public_key().to_bytes())[:16].hex()}...")
+    pub_key_bytes = control_keypair.public_key().to_bytes()
+    print(f"   Control plane public key: {pub_key_bytes[:8].hex()}...")
     
     # 3. Create a warrant for filesystem operations
     print("\n3. Creating warrant for filesystem operations...")
@@ -56,23 +57,28 @@ def main():
     # 5. Extract constraints from MCP call
     print("\n5. Extracting constraints from MCP call...")
     result = compiled.extract_constraints("filesystem_read", mcp_arguments)
-    print(f"   Extracted constraints: {result.constraints}")
-    print(f"   All fields extracted: {result.all_extracted()}")
+    print(f"   Extracted tool: {result.tool}")
+    print(f"   Extracted constraints: {dict(result.constraints)}")
     
     # 6. Authorize the operation
     print("\n6. Authorizing operation...")
-    # Note: In real usage, you'd need a PoP signature
-    # For demo, we'll just show the extracted constraints
-    print(f"   ✓ Constraints extracted successfully")
-    print(f"   Path: {result.constraints.get('path', 'N/A')}")
-    print(f"   MaxSize: {result.constraints.get('maxSize', 'N/A')}")
+    # Convert result.constraints (PyObject) to dict for warrant.authorize
+    constraints_dict = dict(result.constraints)
     
     # Check if warrant authorizes these constraints
     authorized = warrant.authorize(
         tool="filesystem_read",
-        args=result.constraints
+        args=constraints_dict
     )
-    print(f"   Authorization result: {authorized}")
+    print(f"   ✓ Warrant authorization result: {authorized}")
+    
+    # 7. Full authorization with Authorizer (verifies signature + constraints)
+    print("\n7. Full authorization with Authorizer.check()...")
+    try:
+        authorizer.check(warrant, "filesystem_read", constraints_dict)
+        print("   ✓ Full authorization successful (signature + constraints verified)")
+    except Exception as e:
+        print(f"   ✗ Authorization failed: {e}")
     print()
     
     print("=== MCP Integration example completed! ===")

@@ -9,6 +9,8 @@ from tenuo_core import (
     # Core types
     Keypair,
     Warrant,
+    PublicKey,
+    Authorizer,
     
     # Constraints
     Pattern,
@@ -47,6 +49,8 @@ __all__ = [
     # Core types
     "Keypair",
     "Warrant",
+    "PublicKey",
+    "Authorizer",
     
     # Constraints
     "Pattern",
