@@ -8,10 +8,11 @@
 //! 5. **Multi-sig approval**: Requires human approval for sensitive actions
 //! 6. **Notary Registry**: Maps enterprise identities to cryptographic keys
 
-use tenuo_core::{Keypair, Pattern, Exact, Range, Warrant, wire, OneOf, Wildcard};
+use tenuo_core::{Keypair, Exact, Range, Warrant, wire, OneOf};
 use std::time::Duration;
 use std::env;
 use uuid::Uuid;
+use chrono::Utc;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n╔══════════════════════════════════════════════════════════════════╗");
@@ -24,41 +25,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Session ID: {}\n", session_id);
 
     // =========================================================================
-    // Step 1: Simulate receiving a root warrant from the Control Plane
+    // Step 1: Enrollment - Request Root Warrant from Control Plane
     // =========================================================================
     println!("┌─────────────────────────────────────────────────────────────────┐");
-    println!("│ STEP 1: Receiving Root Warrant from Control Plane               │");
+    println!("│ STEP 1: Enrollment - Requesting Root Warrant from Control Plane │");
     println!("└─────────────────────────────────────────────────────────────────┘");
 
-    let cp_key = env::var("TENUO_SECRET_KEY")
-        .expect("TENUO_SECRET_KEY must be set (hex-encoded 32-byte key)");
-    let cp_key_bytes: [u8; 32] = hex::decode(&cp_key)?
-        .try_into()
-        .map_err(|_| "Secret key must be 32 bytes")?;
+    // 1. Generate our OWN keypair (Orchestrator Identity)
+    let orchestrator_keypair = Keypair::generate();
+    let pubkey_hex = hex::encode(orchestrator_keypair.public_key().to_bytes());
+    println!("  Orchestrator Public Key: {}", pubkey_hex);
+
+    // 2. Get Enrollment Token from Env
+    let enrollment_token = env::var("TENUO_ENROLLMENT_TOKEN")
+        .expect("TENUO_ENROLLMENT_TOKEN must be set (copy from control plane stdout)");
     
-    let cp_keypair = Keypair::from_bytes(&cp_key_bytes);
+    let control_url = env::var("TENUO_CONTROL_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
 
-    println!("  Control Plane Public Key: {}", hex::encode(cp_keypair.public_key().to_bytes()));
+    // 3. Create Proof of Possession with timestamp (prevents replay attacks)
+    // Format: "enroll:{public_key_hex}:{timestamp}"
+    let timestamp = Utc::now().timestamp();
+    let pop_message = format!("enroll:{}:{}", pubkey_hex, timestamp);
+    let pop_signature = orchestrator_keypair.sign(pop_message.as_bytes());
+    let pop_signature_hex = hex::encode(pop_signature.to_bytes());
 
-    // The Control Plane issues a broad warrant with POLICY LIMITS
-    // action uses Wildcard - can be attenuated to any constraint type
-    let root_warrant = Warrant::builder()
-        .tool("manage_infrastructure")
-        .constraint("cluster", Pattern::new("staging-*")?)
-        .constraint("action", Wildcard::new())  // Wildcard: can narrow to anything
-        .constraint("budget", Range::max(10000.0))
-        .ttl(Duration::from_secs(3600))
-        .max_depth(3)                          // POLICY: Only 3 levels of delegation allowed!
-        .session_id(session_id.clone())        // Session binding for traceability
-        .agent_id("orchestrator-main")         // Agent ID for audit
-        .build(&cp_keypair)?;
+    // 4. Send Enrollment Request
+    println!("  Requesting enrollment from {}...", control_url);
+    let client = reqwest::blocking::Client::new();
+    let resp = client.post(format!("{}/v1/enroll", control_url))
+        .json(&serde_json::json!({
+            "enrollment_token": enrollment_token,
+            "public_key_hex": pubkey_hex,
+            "timestamp": timestamp,
+            "pop_signature_hex": pop_signature_hex
+        }))
+        .send()?;
 
-    println!("\n  ✓ Root Warrant Received:");
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text()?;
+        eprintln!("❌ Enrollment Failed: {} - {}", status, text);
+        std::process::exit(1);
+    }
+
+    let issue_resp: serde_json::Value = resp.json()?;
+    let warrant_base64 = issue_resp["warrant_base64"].as_str().unwrap();
+    let root_warrant: Warrant = wire::decode_base64(warrant_base64)?;
+
+    println!("\n  ✓ Root Warrant Received via Enrollment Protocol:");
     println!("    • ID:          {}", root_warrant.id());
     println!("    • Tool:        {}", root_warrant.tool());
     println!("    • Depth:       {} (root)", root_warrant.depth());
     println!("    • Max Depth:   {} (policy limit)", root_warrant.effective_max_depth());
-    println!("    • Session:     {}", root_warrant.session_id().unwrap_or("-"));
     println!("    • Expires:     {}", root_warrant.expires_at());
     println!("    • Constraints:");
     println!("      - cluster:   staging-*");
@@ -72,9 +91,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("│ STEP 2: Establish Identities (Key Generation)                   │");
     println!("└─────────────────────────────────────────────────────────────────┘");
 
-    // Orchestrator generates its OWN keypair locally
-    let orchestrator_keypair = Keypair::generate();
-    println!("  Orchestrator generates its own keypair:");
+    // Orchestrator already generated its keypair in Step 1 (for enrollment)
+    // We reuse the same keypair for signing delegated warrants
+    println!("  Orchestrator keypair (from enrollment):");
     println!("    Public Key: {}", hex::encode(orchestrator_keypair.public_key().to_bytes()));
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -94,11 +113,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    In production: Worker generates key, sends ONLY public key");
     println!("    Worker Public Key: {}", hex::encode(worker_keypair.public_key().to_bytes()));
 
-    // Save worker SECRET key for demo (PRODUCTION: worker keeps this locally!)
+    // ⚠️  DEMO ONLY: Writing private key to shared storage
+    // ─────────────────────────────────────────────────────────────────────────
+    // SECURITY WARNING: In production, private keys MUST NEVER leave the agent.
+    // This file-sharing approach is ONLY for demo convenience.
+    // Production: Worker generates key locally, sends only PUBLIC key to orchestrator.
+    // ─────────────────────────────────────────────────────────────────────────
     let worker_key_path = env::var("TENUO_WORKER_KEY_OUTPUT")
         .unwrap_or_else(|_| "/data/worker.key".to_string());
     std::fs::write(&worker_key_path, hex::encode(worker_keypair.secret_key_bytes()))?;
-    println!("    [DEMO] Saved secret key to: {} (production: NEVER shared!)", worker_key_path);
+    println!("    ⚠️  [DEMO ONLY] Saved secret key to: {}", worker_key_path);
+    println!("    ⚠️  PRODUCTION: Private keys MUST stay with the agent!");
 
     // =========================================================================
     // Step 3: Attenuate warrant for the Worker
@@ -148,11 +173,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    • Public Key: {}", hex::encode(&admin_keypair.public_key().to_bytes()[..16]));
     println!("    • External ID: arn:aws:iam::123456789:user/admin (simulated)\n");
 
-    // Save admin key for the worker demo
+    // ⚠️  DEMO ONLY: In production, admin keys are managed by the admin (HSM, Yubikey, etc.)
+    // This is shared here so the worker demo can simulate admin approval.
     let admin_key_path = env::var("TENUO_ADMIN_KEY_OUTPUT")
         .unwrap_or_else(|_| "/data/admin.key".to_string());
     std::fs::write(&admin_key_path, hex::encode(admin_keypair.secret_key_bytes()))?;
-    println!("    Saved admin key to: {}", admin_key_path);
+    println!("    ⚠️  [DEMO ONLY] Saved admin key to: {}", admin_key_path);
 
     // Create a warrant for sensitive operations that REQUIRES multi-sig approval
     let sensitive_warrant = root_warrant.attenuate()

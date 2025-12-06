@@ -230,6 +230,52 @@ impl ControlPlane {
         builder.build(&self.keypair)
     }
 
+    /// Issue a warrant bound to a specific holder.
+    pub fn issue_bound_warrant(
+        &self,
+        tool: &str,
+        constraints: &[(&str, Constraint)],
+        ttl: Duration,
+        holder: &PublicKey,
+    ) -> Result<Warrant> {
+        let mut builder = Warrant::builder().tool(tool).ttl(ttl).authorized_holder(holder.clone());
+
+        for (field, constraint) in constraints {
+            builder = builder.constraint(*field, constraint.clone());
+        }
+
+        builder.build(&self.keypair)
+    }
+
+    /// Issue a warrant with full configuration options.
+    /// 
+    /// This is the most flexible issuance method, allowing control over:
+    /// - Tool name
+    /// - Constraints
+    /// - TTL
+    /// - Holder binding
+    /// - Max delegation depth
+    pub fn issue_configured_warrant(
+        &self,
+        tool: &str,
+        constraints: &[(&str, Constraint)],
+        ttl: Duration,
+        holder: &PublicKey,
+        max_depth: u32,
+    ) -> Result<Warrant> {
+        let mut builder = Warrant::builder()
+            .tool(tool)
+            .ttl(ttl)
+            .authorized_holder(holder.clone())
+            .max_depth(max_depth);
+
+        for (field, constraint) in constraints {
+            builder = builder.constraint(*field, constraint.clone());
+        }
+
+        builder.build(&self.keypair)
+    }
+
     /// Issue a warrant and automatically track it in the registry.
     ///
     /// This is the recommended way to issue warrants to ensure cascading revocation works.
@@ -386,6 +432,15 @@ impl DataPlane {
         // 1. Check global SRL
         if let Some(srl) = &self.revocation_list {
             if srl.is_revoked(id) {
+                crate::audit::log_event(
+                    crate::approval::AuditEvent::new(
+                        crate::approval::AuditEventType::WarrantRevoked,
+                        "data-plane",
+                        "revocation-check",
+                    )
+                    .with_details(format!("Warrant {} is revoked in SRL", id))
+                    .with_related(vec![id.to_string()])
+                );
                 return true;
             }
         }
@@ -393,6 +448,15 @@ impl DataPlane {
         // 2. Check local cache (Parental Revocation)
         if let Ok(cache) = self.local_revocation_cache.read() {
             if cache.contains(id) {
+                crate::audit::log_event(
+                    crate::approval::AuditEvent::new(
+                        crate::approval::AuditEventType::WarrantRevoked,
+                        "data-plane",
+                        "revocation-check",
+                    )
+                    .with_details(format!("Warrant {} is locally revoked", id))
+                    .with_related(vec![id.to_string()])
+                );
                 return true;
             }
         }
@@ -716,13 +780,41 @@ impl DataPlane {
         approvals: &[crate::approval::Approval],
     ) -> Result<()> {
         // Standard constraint authorization
-        warrant.authorize(tool, args, signature)?;
-        
-        // Multi-sig verification
-        verify_approvals_with_tolerance(
-            warrant, tool, args, approvals,
-            chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
-        )
+        let result = warrant.authorize(tool, args, signature)
+            .and_then(|_| {
+                // Multi-sig verification
+                verify_approvals_with_tolerance(
+                    warrant, tool, args, approvals,
+                    chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
+                )
+            });
+
+        match &result {
+            Ok(_) => {
+                crate::audit::log_event(
+                    crate::approval::AuditEvent::new(
+                        crate::approval::AuditEventType::AuthorizationSuccess,
+                        "data-plane",
+                        "authorize",
+                    )
+                    .with_details(format!("Authorized tool '{}'", tool))
+                    .with_related(vec![warrant.id().to_string()])
+                );
+            }
+            Err(e) => {
+                crate::audit::log_event(
+                    crate::approval::AuditEvent::new(
+                        crate::approval::AuditEventType::AuthorizationFailure,
+                        "data-plane",
+                        "authorize",
+                    )
+                    .with_details(format!("Denied tool '{}': {}", tool, e))
+                    .with_related(vec![warrant.id().to_string()])
+                );
+            }
+        }
+
+        result
     }
 
     /// Convenience: verify and authorize in one call.
@@ -1670,6 +1762,36 @@ mod tests {
         // With 2 approvals - should pass
         let result = authorizer.authorize(&warrant, "sensitive_action", &args, None, &[approval1, approval2]);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_issue_bound_warrant_and_audit_serialization() {
+        let control_plane = ControlPlane::generate();
+        let holder_key = Keypair::generate().public_key();
+        
+        // 1. Issue bound warrant
+        let warrant = control_plane.issue_bound_warrant(
+            "test_tool",
+            &[],
+            Duration::from_secs(60),
+            &holder_key
+        ).expect("Failed to issue bound warrant");
+        
+        assert_eq!(warrant.authorized_holder(), Some(&holder_key));
+        
+        // 2. Create AuditEvent
+        let event = crate::approval::AuditEvent::new(
+            crate::approval::AuditEventType::EnrollmentSuccess,
+            "control-plane",
+            "test",
+        )
+        .with_key(warrant.authorized_holder().unwrap())
+        .with_details(format!("Issued warrant {}", warrant.id()))
+        .with_related(vec![warrant.id().to_string()]);
+        
+        // 3. Serialize
+        let json = serde_json::to_string(&event).expect("Failed to serialize audit event");
+        println!("Serialized event: {}", json);
     }
 }
 

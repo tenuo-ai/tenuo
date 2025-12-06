@@ -223,7 +223,7 @@
         td { color: var(--muted); }
 
         a { color: var(--accent); text-decoration: none; }
-        a:hover { text-decoration: underline; }
+        a:hover { opacity: 0.8; }
 
         ul, ol {
             margin: 16px 0;
@@ -285,6 +285,16 @@
                 <div class="sidebar-links">
                     <a href="#chain-verification" class="sidebar-link">Chain Verification</a>
                     <a href="#revocation" class="sidebar-link">Revocation</a>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="sidebar-title">Integration</div>
+                <div class="sidebar-links">
+                    <a href="#user-journey" class="sidebar-link">User Journey</a>
+                    <a href="#gateway-config" class="sidebar-link">Gateway Config</a>
+                    <a href="#extraction" class="sidebar-link">Constraint Extraction</a>
+                    <a href="#dry-run" class="sidebar-link">Testing (Dry Run)</a>
                 </div>
             </div>
 
@@ -810,6 +820,154 @@ srl.revoke(worker_warrant_id);</code></pre>
                 Authorization is synchronous and must be fast. Telemetry is async and can be eventual.
                 Coupling them means network failures block your agent swarm.</p>
             </div>
+
+            <h2 id="user-journey">User Journey</h2>
+            <p>
+                Integrating Tenuo into your agent infrastructure follows a clear path from setup to enforcement.
+                <a href="../journey-infographic.html">View the full visual guide →</a>
+            </p>
+
+            <h3>1. Deploy Control Plane</h3>
+            <p>Start the Control Plane service. It generates its root keypair and becomes your trust anchor.</p>
+            <pre><code>$ tenuo-control --bind 0.0.0.0:8080 \
+    --enrollment-token $(openssl rand -hex 32)</code></pre>
+
+            <h3>2. Configure Gateway</h3>
+            <p>Define how HTTP request fields map to warrant constraints using a YAML configuration file.</p>
+            <pre><code># gateway-config.yaml
+tools:
+  manage_cluster:
+    constraints:
+      cluster:
+        from: path
+        path: "cluster"
+        required: true
+      cost:
+        from: body
+        path: "metadata.estimatedCost"
+        type: float</code></pre>
+
+            <h3>3. Enroll Agents</h3>
+            <p>Orchestrators generate their own keypairs and enroll with the Control Plane to receive root warrants.</p>
+            <pre><code>let keypair = Keypair::generate();
+
+// Enroll with Control Plane
+POST /v1/enroll {
+  "public_key": "a1b2c3...",
+  "signature": "...",  // PoP
+  "constraints": { "cluster": "staging-*" }
+}</code></pre>
+
+            <h3>4. Attenuate & Delegate</h3>
+            <p>Parent agents attenuate warrants before delegating to children. Constraints can only shrink.</p>
+            <pre><code>let child = parent.attenuate()
+    .constraint("cluster", Exact::new("staging-web"))
+    .constraint("cost", Range::new(0.0, 100.0))
+    .build(&worker_keypair)?;</code></pre>
+
+            <h3>5. Extract & Authorize</h3>
+            <p>The gateway extracts values from incoming requests, verifies the warrant chain, and checks constraints.</p>
+            <pre><code>POST /api/v1/clusters/staging-web/scale
+X-Tenuo-Chain: &lt;base64 warrant chain&gt;
+X-Tenuo-PoP: &lt;signature&gt;
+
+// Extracted constraints:
+// cluster: "staging-web" ✓ matches Exact
+// cost: 50.0 ✓ within Range(0, 100)</code></pre>
+
+            <h2 id="gateway-config">Gateway Configuration</h2>
+            <p>
+                The gateway configuration file defines how to extract constraint values from HTTP requests
+                and map them to warrant constraints for authorization.
+            </p>
+            <p><a href="https://github.com/tenuo/tenuo/blob/main/examples/gateway-config.yaml">See full example →</a></p>
+
+            <h3>Extraction Sources</h3>
+            <table>
+                <tr><th>Source</th><th>Syntax</th><th>Example</th></tr>
+                <tr><td><code>path</code></td><td>URL path parameter</td><td><code>/api/{cluster}/action</code></td></tr>
+                <tr><td><code>query</code></td><td>Query string</td><td><code>?namespace=default</code></td></tr>
+                <tr><td><code>header</code></td><td>HTTP header</td><td><code>X-Tenant-Id</code></td></tr>
+                <tr><td><code>body</code></td><td>JSON body (dot notation)</td><td><code>spec.replicas</code></td></tr>
+            </table>
+
+            <h3 id="extraction">JSONPath Extraction</h3>
+            <p>
+                Body extraction uses dot notation to navigate nested JSON structures.
+            </p>
+            <pre><code>// Request body:
+{ "spec": { "replicas": 5 }, "items": [{ "id": "a" }, { "id": "b" }] }
+
+// Extraction paths:
+"spec.replicas"   → 5 (Integer)
+"items.0.id"      → "a" (String)
+"items.*.id"      → ["a", "b"] (List)</code></pre>
+            <div class="tip">
+                <p><strong>Wildcard extraction:</strong> Paths like <code>items.*.id</code> produce Lists.
+                Use <code>CEL</code> constraints for list operations: <code>items.all(x, x.cost < 100)</code></p>
+            </div>
+
+            <h3>Type Preservation</h3>
+            <p>
+                Integers are preserved for precision with large IDs (snowflakes, etc.).
+                Only explicitly fractional numbers become floats.
+            </p>
+            <pre><code>// Large integer ID (preserved as i64)
+{ "id": 9007199254740993 }  → Integer(9007199254740993)
+
+// Fractional number (float)
+{ "price": 19.99 }  → Float(19.99)</code></pre>
+
+            <h2 id="dry-run">Testing with Dry Run</h2>
+            <p>
+                Test your extraction rules against sample requests before deploying.
+                The <code>tenuo extract</code> command simulates constraint extraction without authorization.
+            </p>
+            <pre><code>$ tenuo extract \
+    --config gateway-config.yaml \
+    --path "/api/v1/clusters/staging-web/scale" \
+    --method POST \
+    --request '{"spec":{"replicas":5},"metadata":{"estimatedCost":150}}'
+
+┌─────────────────────────────────────────────────────────
+│ Tenuo Extraction Dry Run
+├─────────────────────────────────────────────────────────
+│ Config:  gateway-config.yaml
+│ Request: POST /api/v1/clusters/staging-web/scale
+│ Tool:    manage_infrastructure
+└─────────────────────────────────────────────────────────
+
+📋 Extraction Results:
+
+   Field                Source     Path                      Required   Result
+   ─────────────────────────────────────────────────────────────────────────────
+   ✓ cluster            path       cluster                   yes        "staging-web"
+   ✓ action             path       action                    yes        "scale"
+   ○ namespace          query      namespace                 no         (default)
+   ✓ replicas           body       spec.replicas             no         5
+   ✓ cost               body       metadata.estimatedCost    no         150.00
+
+✅ All required fields extracted successfully.</code></pre>
+            <p>
+                Use <code>--verbose</code> for detailed debugging hints when extraction fails:
+            </p>
+            <pre><code>$ tenuo extract --config gateway.yaml --path "/api/..." --verbose</code></pre>
+
+            <h3>Validate Configuration</h3>
+            <pre><code>$ tenuo validate-config --config gateway-config.yaml
+
+✅ Configuration is valid.
+
+Summary:
+  Tools:  3
+  Routes: 4
+
+  Tool 'manage_infrastructure':
+    Description: Kubernetes cluster management
+    Constraints: 5
+      - cluster [Path] cluster (required)
+      - action [Path] action (required)
+      ...</code></pre>
 
             <h2 id="planes">Control vs Data Plane</h2>
             <p>

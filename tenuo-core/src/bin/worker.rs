@@ -100,8 +100,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let worker_key_path = env::var("TENUO_WORKER_KEY_INPUT")
         .unwrap_or_else(|_| "/data/worker.key".to_string());
     
-    println!("\n  [DEMO] Loading pre-shared keypair from: {}", worker_key_path);
-    println!("    In production: Worker generates key locally, shares ONLY public key");
+    println!("\n  ⚠️  [DEMO ONLY] Loading pre-shared keypair from: {}", worker_key_path);
+    println!("    PRODUCTION: Worker generates key locally with Keypair::generate()");
+    println!("    PRODUCTION: Only PUBLIC key is sent to orchestrator");
     
     // Simple wait loop (similar to chain)
     let worker_key_hex = loop {
@@ -434,9 +435,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         
         // Test 2: Try to delete WITH admin approval
+        // ⚠️  DEMO ONLY: In production, the ADMIN signs the approval independently.
+        // The worker would request approval via a separate channel (Slack, email, UI).
+        // Here we simulate admin signing for demo purposes.
         if let Some(ref admin_kp) = admin_keypair {
             println!("\n  TEST 2: Attempt 'delete' WITH admin approval...");
-            println!("    Simulating admin signature over request...");
+            println!("    ⚠️  [DEMO] Simulating admin signature (production: admin signs independently)");
             
             // Compute the request hash that will be approved (includes holder for theft protection)
             let request_hash = compute_request_hash(

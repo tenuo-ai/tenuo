@@ -535,6 +535,24 @@ pub enum AuditEventType {
     ProviderRegistered,
     /// Provider was removed
     ProviderRemoved,
+    
+    // -- Enrollment Events --
+    /// An orchestrator successfully enrolled
+    EnrollmentSuccess,
+    /// An enrollment attempt failed
+    EnrollmentFailure,
+
+    // -- Warrant Events --
+    /// A warrant was issued
+    WarrantIssued,
+    /// A warrant was revoked
+    WarrantRevoked,
+
+    // -- Authorization Events --
+    /// An action was authorized
+    AuthorizationSuccess,
+    /// An action was denied
+    AuthorizationFailure,
 }
 
 /// An audit event for key lifecycle operations.

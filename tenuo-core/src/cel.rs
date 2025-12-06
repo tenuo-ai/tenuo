@@ -20,6 +20,84 @@
 //!    level before CEL evaluation. Cached programs don't bypass revocation.
 //!
 //! Therefore, long TTLs are safe. Memory is the only constraint (bounded by max_capacity).
+//!
+//! ## Standard Library Functions
+//!
+//! Tenuo provides several standard library functions for use in CEL expressions:
+//!
+//! ### Time Functions
+//!
+//! #### `time_now(_unused) -> String`
+//!
+//! Returns the current time in RFC3339 format (e.g., `"2024-01-15T10:30:00Z"`).
+//!
+//! **Example:**
+//! ```cel
+//! // Check if a timestamp is in the future
+//! time_is_expired(deadline) == false && time_since(deadline) < 3600
+//! ```
+//!
+//! #### `time_is_expired(timestamp: String) -> bool`
+//!
+//! Checks if an RFC3339 timestamp has passed.
+//!
+//! **Example:**
+//! ```cel
+//! // Only allow if not expired
+//! !time_is_expired(order.expires_at)
+//! ```
+//!
+//! #### `time_since(timestamp: String) -> i64`
+//!
+//! Returns the number of seconds since the given RFC3339 timestamp.
+//! Returns `0` if the timestamp is invalid or in the future.
+//!
+//! **Example:**
+//! ```cel
+//! // Allow only if created within last hour
+//! time_since(order.created_at) < 3600
+//! ```
+//!
+//! ### Network Functions
+//!
+//! #### `net_in_cidr(ip: String, cidr: String) -> bool`
+//!
+//! Checks if an IP address (IPv4 or IPv6) is within a CIDR block.
+//!
+//! **Example:**
+//! ```cel
+//! // Only allow requests from internal network
+//! net_in_cidr(request.ip, "10.0.0.0/8") || net_in_cidr(request.ip, "192.168.0.0/16")
+//! ```
+//!
+//! #### `net_is_private(ip: String) -> bool`
+//!
+//! Checks if an IP address is in a private network range (RFC 1918 for IPv4,
+//! or private IPv6 ranges).
+//!
+//! **Example:**
+//! ```cel
+//! // Block public IPs
+//! net_is_private(request.ip)
+//! ```
+//!
+//! ## Usage in Warrants
+//!
+//! These functions can be used in CEL constraints when creating warrants:
+//!
+//! ```rust,ignore
+//! use tenuo_core::{Warrant, CelConstraint};
+//!
+//! let warrant = Warrant::builder()
+//!     .tool("api_call")
+//!     .constraint("ip", CelConstraint::new(
+//!         "net_in_cidr(value, '10.0.0.0/8')"
+//!     ))
+//!     .constraint("deadline", CelConstraint::new(
+//!         "!time_is_expired(value)"
+//!     ))
+//!     .build(&keypair)?;
+//! ```
 
 use crate::constraints::ConstraintValue;
 use crate::error::{Error, Result};

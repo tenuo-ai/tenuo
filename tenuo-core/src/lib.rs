@@ -36,15 +36,30 @@
 //! ```
 
 pub mod approval;
+pub mod audit;
 pub mod cel;
 pub mod constraints;
 pub mod crypto;
 pub mod error;
+pub mod extraction;
+pub mod gateway_config;
 pub mod planes;
 pub mod warrant;
 pub mod wire;
 pub mod revocation;
 pub mod revocation_manager;
+
+// Re-export extraction types
+pub use extraction::{
+    CompiledPath, CompiledExtractionRule, CompiledExtractionRules,
+    ExtractionRule, ExtractionSource, RequestContext,
+};
+
+// Re-export gateway config types
+pub use gateway_config::{
+    CompiledGatewayConfig, CompiledRoute, GatewayConfig, GatewaySettings,
+    MethodMask, RouteConfig, RouteMatch, ToolConfig,
+};
 
 #[cfg(feature = "python")]
 pub mod python;

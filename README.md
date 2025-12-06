@@ -124,6 +124,32 @@ Control Plane (secure)     Data Plane (distributed)
 The Control Plane issues root warrants. Agents attenuate and delegate. 
 The Data Plane (gateway or sidecar) verifies locally with no round-trips.
 
+### Gateway Configuration
+
+Tenuo provides a YAML-based configuration system for extracting constraint values from HTTP requests:
+
+```yaml
+tools:
+  manage_infrastructure:
+    constraints:
+      cluster:
+        from: path
+        path: "cluster"
+        required: true
+      cost:
+        from: body
+        path: "metadata.estimatedCost"
+        type: float
+```
+
+The authorizer HTTP server automatically:
+1. Matches routes using radix trees (O(log n))
+2. Extracts values from path, query, headers, and JSON body
+3. Verifies warrant chains
+4. Authorizes actions using extracted constraints
+
+See [examples/gateway-config.yaml](examples/gateway-config.yaml) for a complete example.
+
 ## Documentation
 
 - **[Website](https://tenuo.github.io/tenuo/)**: Landing page and infographics

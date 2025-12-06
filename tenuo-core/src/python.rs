@@ -288,22 +288,19 @@ impl PyWarrant {
     }
 
     /// Attenuate this warrant with additional constraints.
-    #[pyo3(signature = (constraints, keypair, ttl_seconds=None, session_id=None))]
+    ///
+    /// Note: session_id is immutable and inherited from the parent warrant.
+    #[pyo3(signature = (constraints, keypair, ttl_seconds=None))]
     fn attenuate(
         &self,
         constraints: &Bound<'_, PyDict>,
         keypair: &PyKeypair,
         ttl_seconds: Option<u64>,
-        session_id: Option<&str>,
     ) -> PyResult<PyWarrant> {
         let mut builder = self.inner.attenuate();
 
         if let Some(ttl) = ttl_seconds {
             builder = builder.ttl(Duration::from_secs(ttl));
-        }
-
-        if let Some(sid) = session_id {
-            builder = builder.session_id(sid);
         }
 
         for (key, value) in constraints.iter() {
