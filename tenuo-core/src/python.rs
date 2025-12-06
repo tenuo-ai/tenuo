@@ -11,7 +11,7 @@ use crate::constraints::{
 use crate::crypto::Keypair as RustKeypair;
 use crate::warrant::Warrant as RustWarrant;
 use crate::wire;
-use crate::mcp::{McpConfig, CompiledMcpConfig, CompiledTool};
+use crate::mcp::{McpConfig, CompiledMcpConfig};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -22,6 +22,11 @@ use std::time::Duration;
 /// Convert a Tenuo error to a Python exception.
 fn to_py_err(e: crate::error::Error) -> PyErr {
     PyRuntimeError::new_err(e.to_string())
+}
+
+/// Convert a ConfigError to a Python exception.
+fn config_err_to_py(e: crate::gateway_config::ConfigError) -> PyErr {
+    PyValueError::new_err(e.to_string())
 }
 
 /// Python wrapper for Pattern constraint.
@@ -422,7 +427,7 @@ pub struct PyMcpConfig {
 impl PyMcpConfig {
     #[staticmethod]
     fn from_file(path: &str) -> PyResult<Self> {
-        let config = McpConfig::from_file(path).map_err(to_py_err)?;
+        let config = McpConfig::from_file(path).map_err(config_err_to_py)?;
         Ok(Self { inner: config })
     }
 }
@@ -460,7 +465,7 @@ impl PyCompiledMcpConfig {
         // Convert Python dict to serde_json::Value
         let py = arguments.py();
         let json_str = {
-            let json_mod = py.import("json")?;
+            let json_mod = py.import_bound("json")?;
             let dumps = json_mod.getattr("dumps")?;
             dumps.call1((arguments,))?.extract::<String>()?
         };
@@ -473,7 +478,7 @@ impl PyCompiledMcpConfig {
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
         // Convert extracted constraints back to Python objects
-        let dict = PyDict::new(py);
+        let dict = PyDict::new_bound(py);
         for (key, value) in result.constraints {
             let py_val = constraint_value_to_py(py, &value)?;
             dict.set_item(key, py_val)?;
@@ -492,14 +497,14 @@ fn constraint_value_to_py(py: Python<'_>, cv: &ConstraintValue) -> PyResult<PyOb
         ConstraintValue::Boolean(b) => Ok(b.into_py(py)),
         ConstraintValue::Null => Ok(py.None()),
         ConstraintValue::List(l) => {
-            let list = pyo3::types::PyList::empty(py);
+            let list = pyo3::types::PyList::empty_bound(py);
             for item in l {
                 list.append(constraint_value_to_py(py, item)?)?;
             }
             Ok(list.into())
         }
         ConstraintValue::Object(m) => {
-            let dict = PyDict::new(py);
+            let dict = PyDict::new_bound(py);
             for (k, v) in m {
                 dict.set_item(k, constraint_value_to_py(py, v)?)?;
             }
