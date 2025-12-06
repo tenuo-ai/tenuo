@@ -266,7 +266,52 @@ See the [MCP module documentation](https://docs.rs/tenuo-core/latest/tenuo_core/
 
 ## Python SDK
 
-Coming soon: [tenuo-python](https://github.com/tenuo/tenuo-python)
+Python bindings are available via PyO3:
+
+```bash
+pip install tenuo
+```
+
+```python
+from tenuo import Keypair, Warrant, Pattern, Range
+
+# Generate a keypair
+keypair = Keypair.generate()
+
+# Issue a warrant
+warrant = Warrant.create(
+    tool="manage_infrastructure",
+    constraints={
+        "cluster": Pattern("staging-*"),
+        "budget": Range.max_value(10000.0)
+    },
+    ttl_seconds=3600,
+    keypair=keypair
+)
+
+# Attenuate for a worker
+worker_keypair = Keypair.generate()
+worker_warrant = warrant.attenuate(
+    constraints={
+        "cluster": Exact("staging-web"),
+        "budget": Range.max_value(1000.0)
+    },
+    keypair=worker_keypair
+)
+
+# Authorize an action
+authorized = worker_warrant.authorize(
+    tool="manage_infrastructure",
+    args={"cluster": "staging-web", "budget": 500.0}
+)
+```
+
+**Pythonic features:**
+- `@lockdown` decorator for function-level authorization
+- ContextVar support for LangChain/FastAPI integration
+- Pythonic exceptions and error handling
+
+See [tenuo-python/](tenuo-python/) for full documentation and examples.
 
 ## License
 

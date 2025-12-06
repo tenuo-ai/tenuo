@@ -17,11 +17,3 @@ crate-type = ["cdylib"]
 tenuo-core = { path = "../tenuo-core", features = ["python"] }
 pyo3 = { version = "0.22", features = ["extension-module", "abi3-py38"] }
 
-[package.metadata.maturin]
-name = "tenuo.tenuo_core"
-classifier = [
-    "Programming Language :: Rust",
-    "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: Implementation :: PyPy",
-]
-

@@ -36,10 +36,9 @@ Repository = "https://github.com/tenuo/tenuo"
 Issues = "https://github.com/tenuo/tenuo/issues"
 
 [tool.maturin]
-features = ["python"]
-module-name = "tenuo.tenuo_core"
+module-name = "tenuo_core"
 python-source = "."
 
 [[tool.maturin.sdist]]
-include = ["README.md", "LICENSE*", "examples/**/*"]
+include = ["README.md", "LICENSE*", "examples/**/*", "tenuo/**/*.py"]
 
