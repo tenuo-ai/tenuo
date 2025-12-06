@@ -176,6 +176,17 @@ worker_warrant.authorize("upgrade", &args, Some(&pop_signature))?;
 
 See the [Architecture Deep Dive](https://tenuo.github.io/tenuo/guide/) for details on the Protocol, CBOR format, and Cryptography.
 
+### Try the Multi-Agent Demo
+
+Want to see the full architecture in action? Run the Docker demo to explore how orchestrators delegate to workers with attenuated warrants:
+
+```bash
+# Run the multi-agent demo
+docker compose up orchestrator worker
+```
+
+This demonstrates the complete flow: warrant issuance, attenuation, delegation, and offline verification. Perfect for understanding the architecture and protocol details.
+
 ## Key Features
 
 | Feature | Description |
@@ -324,13 +335,6 @@ The Data Plane (gateway or sidecar) verifies locally with no round-trips.
 - **[Guide](https://tenuo.github.io/tenuo/guide/)**: Concepts and examples
 - **[API Reference](https://docs.rs/tenuo-core)**: Rustdoc API documentation
 - **[Python SDK](tenuo-python/)**: Full Python documentation and examples
-
-## Quick Start (Docker Demo)
-
-```bash
-# Run the multi-agent demo
-docker compose up orchestrator worker
-```
 
 ## License
 
