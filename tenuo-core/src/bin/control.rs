@@ -115,8 +115,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tenuo_core::audit::set_global_logger(logger);
     eprintln!("Audit Logging: Enabled (stdout)");
 
-    // Generate Enrollment Token
-    let enrollment_token = uuid::Uuid::new_v4().to_string();
+    // Generate or load Enrollment Token
+    let enrollment_token = std::env::var("TENUO_ENROLLMENT_TOKEN")
+        .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
     println!("\n╔══════════════════════════════════════════════════════════════════╗");
     println!("║ ENROLLMENT TOKEN: {} ║", enrollment_token);
     println!("╚══════════════════════════════════════════════════════════════════╝\n");

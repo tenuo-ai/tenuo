@@ -295,6 +295,7 @@
                     <a href="#gateway-config" class="sidebar-link">Gateway Config</a>
                     <a href="#extraction" class="sidebar-link">Constraint Extraction</a>
                     <a href="#dry-run" class="sidebar-link">Testing (Dry Run)</a>
+                    <a href="#mcp-integration" class="sidebar-link">MCP Integration</a>
                 </div>
             </div>
 
@@ -968,6 +969,123 @@ Summary:
       - cluster [Path] cluster (required)
       - action [Path] action (required)
       ...</code></pre>
+
+            <h2 id="mcp-integration">MCP (Model Context Protocol) Integration</h2>
+            <p>
+                Tenuo provides native support for the <a href="https://modelcontextprotocol.io">Model Context Protocol</a>,
+                the standard protocol for AI agent tool calling. This makes Tenuo a perfect fit for securing
+                AI agent workflows without custom middleware.
+            </p>
+
+            <h3>Why MCP + Tenuo?</h3>
+            <ul>
+                <li><strong>Native AI Agent Support</strong>: MCP is the standard protocol for AI agent tool calling.
+                    Tenuo's integration means you can secure AI agent workflows without custom middleware.</li>
+                <li><strong>Tool-Centric Authorization</strong>: MCP tools map directly to Tenuo tool configurations.
+                    No HTTP routing complexity—just map tool names to constraints.</li>
+                <li><strong>Cryptographic Provenance</strong>: Every tool call is authorized by a warrant chain that proves
+                    who delegated the authority and what bounds apply. Perfect for multi-agent workflows where
+                    an orchestrator delegates to specialized workers.</li>
+            </ul>
+
+            <h3>Configuration</h3>
+            <p>
+                MCP configuration is simpler than HTTP gateway configuration because it doesn't need route matching.
+                You just map MCP tool names directly to Tenuo tool configurations:
+            </p>
+            <pre><code># mcp-config.yaml
+version: "1"
+
+settings:
+  trusted_issuers:
+    - "f32e74b5a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8"
+
+tools:
+  filesystem_read:
+    description: "Read files from the filesystem"
+    constraints:
+      path:
+        from: body
+        path: "path"
+        required: true
+        description: "File path to read"
+      
+      max_size:
+        from: body
+        path: "maxSize"
+        type: integer
+        default: 1048576
+        description: "Maximum file size in bytes"
+      
+      allowed_paths:
+        from: body
+        path: "allowedPaths"
+        description: "List of allowed path prefixes"
+  
+  database_query:
+    description: "Execute database queries"
+    constraints:
+      table:
+        from: body
+        path: "query.table"
+        required: true
+      
+      operation:
+        from: body
+        path: "query.operation"
+        required: true
+        allowed_values: ["select", "insert", "update", "delete"]
+      
+      row_limit:
+        from: body
+        path: "query.limit"
+        type: integer
+        default: 100</code></pre>
+
+            <h3>Usage</h3>
+            <pre><code>use tenuo_core::{CompiledMcpConfig, McpConfig};
+use serde_json::json;
+
+// Load and compile configuration
+let config = McpConfig::from_file("mcp-config.yaml")?;
+let compiled = CompiledMcpConfig::compile(config);
+
+// Validate configuration (warns about incompatible extraction sources)
+let warnings = compiled.validate();
+for warning in warnings {
+    eprintln!("Warning: {}", warning);
+}
+
+// Extract constraints from MCP tool call
+let arguments = json!({
+    "path": "/var/log/app.log",
+    "maxSize": 1024,
+    "allowedPaths": ["/var/log", "/tmp"]
+});
+
+let result = compiled.extract_constraints("filesystem_read", &arguments)?;
+// result.constraints contains:
+//   - "path": ConstraintValue::String("/var/log/app.log")
+//   - "max_size": ConstraintValue::Integer(1024)
+//   - "allowed_paths": ConstraintValue::List([...])
+</code></pre>
+
+            <h3>Extraction Source Compatibility</h3>
+            <p>
+                MCP tool calls only provide an <code>arguments</code> JSON object. Extraction rules should use:
+            </p>
+            <ul>
+                <li><code>from: body</code> - Extract from the arguments object (recommended)</li>
+                <li><code>from: literal</code> - Use a default/literal value</li>
+            </ul>
+            <p>
+                Rules using <code>from: path</code>, <code>from: query</code>, or <code>from: header</code> will not work
+                in MCP context and will be flagged by <code>validate()</code>.
+            </p>
+            <div class="tip">
+                <p><strong>Tip:</strong> The <code>validate()</code> method checks your configuration and warns about
+                incompatible extraction sources. Run it during development to catch configuration issues early.</p>
+            </div>
 
             <h2 id="planes">Control vs Data Plane</h2>
             <p>

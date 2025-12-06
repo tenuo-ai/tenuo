@@ -48,6 +48,7 @@ pub mod warrant;
 pub mod wire;
 pub mod revocation;
 pub mod revocation_manager;
+pub mod mcp;
 
 // Re-export extraction types
 pub use extraction::{
@@ -59,6 +60,11 @@ pub use extraction::{
 pub use gateway_config::{
     CompiledGatewayConfig, CompiledRoute, GatewayConfig, GatewaySettings,
     MethodMask, RouteConfig, RouteMatch, ToolConfig,
+};
+
+// Re-export MCP config types
+pub use mcp::{
+    CompiledMcpConfig, CompiledTool, McpConfig, McpSettings,
 };
 
 #[cfg(feature = "python")]

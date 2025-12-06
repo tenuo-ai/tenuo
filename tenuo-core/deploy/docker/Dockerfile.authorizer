@@ -18,12 +18,21 @@ WORKDIR /build
 
 # Cache dependencies
 COPY Cargo.toml Cargo.lock* ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs
+# Create dummy source files to satisfy cargo fetch
+# Library and binaries (all defined in Cargo.toml)
+RUN mkdir -p src/bin benches && \
+    echo "// dummy" > src/lib.rs && \
+    echo "fn main() {}" > src/bin/authorizer.rs && \
+    echo "fn main() {}" > src/bin/control.rs && \
+    echo "fn main() {}" > src/bin/cli.rs && \
+    echo "fn main() {}" > src/bin/orchestrator.rs && \
+    echo "fn main() {}" > src/bin/worker.rs && \
+    echo "fn main() {}" > benches/warrant_benchmarks.rs
 RUN cargo fetch
 
 # Build the actual binary
 COPY . .
-RUN cargo build --release --bin tenuo-authorizer --features "data-plane"
+RUN cargo build --release --bin tenuo-authorizer --features "data-plane,server"
 
 # ============================================================================
 # Runtime stage - minimal image

@@ -97,6 +97,7 @@ authorizer.set_revocation_list(srl, &control_plane_key)?;
 | **Multi-sig approvals** | M-of-N approval for sensitive actions |
 | **Cascading revocation** | Surgical (one warrant) or nuclear (entire agent swarm) |
 | **Depth limits** | Configurable delegation depth (max 64) |
+| **MCP integration** | Native support for Model Context Protocol (AI agent tool calling) |
 
 ## Constraint Types
 
@@ -149,6 +150,51 @@ The authorizer HTTP server automatically:
 4. Authorizes actions using extracted constraints
 
 See [examples/gateway-config.yaml](examples/gateway-config.yaml) for a complete example.
+
+### MCP (Model Context Protocol) Integration
+
+**Native AI Agent Support**: Tenuo integrates directly with [MCP](https://modelcontextprotocol.io), the standard protocol for AI agent tool calling. No custom middleware needed.
+
+```yaml
+# mcp-config.yaml
+version: "1"
+settings:
+  trusted_issuers:
+    - "f32e74b5a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8"
+
+tools:
+  filesystem_read:
+    description: "Read files from the filesystem"
+    constraints:
+      path:
+        from: body
+        path: "path"
+        required: true
+      max_size:
+        from: body
+        path: "maxSize"
+        type: integer
+        default: 1048576
+```
+
+**Why MCP + Tenuo?**
+- **Tool-centric**: MCP tools map directly to Tenuo tool configurations (no HTTP routing complexity)
+- **Cryptographic provenance**: Every tool call is authorized by a warrant chain proving who delegated authority
+- **Multi-agent workflows**: Perfect for orchestrators delegating to specialized workers with bounded capabilities
+
+```rust
+use tenuo_core::{CompiledMcpConfig, McpConfig};
+use serde_json::json;
+
+let config = McpConfig::from_file("mcp-config.yaml")?;
+let compiled = CompiledMcpConfig::compile(config);
+
+// Extract constraints from MCP tool call
+let arguments = json!({ "path": "/var/log/app.log", "maxSize": 1024 });
+let result = compiled.extract_constraints("filesystem_read", &arguments)?;
+```
+
+See the [MCP module documentation](https://docs.rs/tenuo-core/latest/tenuo_core/mcp/index.html) for details.
 
 ## Documentation
 

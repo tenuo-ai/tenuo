@@ -11,10 +11,12 @@ use crate::constraints::{
 use crate::crypto::Keypair as RustKeypair;
 use crate::warrant::Warrant as RustWarrant;
 use crate::wire;
+use crate::mcp::{McpConfig, CompiledMcpConfig, CompiledTool};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Convert a Tenuo error to a Python exception.
@@ -410,6 +412,102 @@ impl PyWarrant {
     }
 }
 
+/// Python wrapper for McpConfig.
+#[pyclass(name = "McpConfig")]
+pub struct PyMcpConfig {
+    inner: McpConfig,
+}
+
+#[pymethods]
+impl PyMcpConfig {
+    #[staticmethod]
+    fn from_file(path: &str) -> PyResult<Self> {
+        let config = McpConfig::from_file(path).map_err(to_py_err)?;
+        Ok(Self { inner: config })
+    }
+}
+
+/// Python wrapper for CompiledMcpConfig.
+#[pyclass(name = "CompiledMcpConfig")]
+pub struct PyCompiledMcpConfig {
+    inner: Arc<CompiledMcpConfig>,
+}
+
+#[pymethods]
+impl PyCompiledMcpConfig {
+    #[staticmethod]
+    fn compile(config: &PyMcpConfig) -> Self {
+        let compiled = CompiledMcpConfig::compile(config.inner.clone());
+        Self {
+            inner: Arc::new(compiled),
+        }
+    }
+
+    /// Validate the configuration.
+    fn validate(&self) -> Vec<String> {
+        self.inner.validate()
+    }
+
+    /// Extract constraints from an MCP tool call.
+    ///
+    /// Args:
+    ///     tool_name: The name of the tool being called
+    ///     arguments: The arguments dictionary from the MCP request
+    ///
+    /// Returns:
+    ///     Dictionary of extracted constraints (name -> ConstraintValue)
+    fn extract_constraints(&self, tool_name: &str, arguments: &Bound<'_, PyDict>) -> PyResult<PyObject> {
+        // Convert Python dict to serde_json::Value
+        let py = arguments.py();
+        let json_str = {
+            let json_mod = py.import("json")?;
+            let dumps = json_mod.getattr("dumps")?;
+            dumps.call1((arguments,))?.extract::<String>()?
+        };
+        
+        let args_value: serde_json::Value = serde_json::from_str(&json_str)
+            .map_err(|e| PyValueError::new_err(format!("Invalid JSON arguments: {}", e)))?;
+
+        // Extract
+        let result = self.inner.extract_constraints(tool_name, &args_value)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        // Convert extracted constraints back to Python objects
+        let dict = PyDict::new(py);
+        for (key, value) in result.constraints {
+            let py_val = constraint_value_to_py(py, &value)?;
+            dict.set_item(key, py_val)?;
+        }
+
+        Ok(dict.into())
+    }
+}
+
+/// Helper to convert ConstraintValue to Python object
+fn constraint_value_to_py(py: Python<'_>, cv: &ConstraintValue) -> PyResult<PyObject> {
+    match cv {
+        ConstraintValue::String(s) => Ok(s.into_py(py)),
+        ConstraintValue::Integer(i) => Ok(i.into_py(py)),
+        ConstraintValue::Float(f) => Ok(f.into_py(py)),
+        ConstraintValue::Boolean(b) => Ok(b.into_py(py)),
+        ConstraintValue::Null => Ok(py.None()),
+        ConstraintValue::List(l) => {
+            let list = pyo3::types::PyList::empty(py);
+            for item in l {
+                list.append(constraint_value_to_py(py, item)?)?;
+            }
+            Ok(list.into())
+        }
+        ConstraintValue::Object(m) => {
+            let dict = PyDict::new(py);
+            for (k, v) in m {
+                dict.set_item(k, constraint_value_to_py(py, v)?)?;
+            }
+            Ok(dict.into())
+        }
+    }
+}
+
 /// Tenuo Python module.
 #[pymodule]
 fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -420,6 +518,8 @@ fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCel>()?;
     m.add_class::<PyKeypair>()?;
     m.add_class::<PyWarrant>()?;
+    m.add_class::<PyMcpConfig>()?;
+    m.add_class::<PyCompiledMcpConfig>()?;
 
     // Constants
     m.add("MAX_DELEGATION_DEPTH", crate::MAX_DELEGATION_DEPTH)?;

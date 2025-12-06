@@ -20,6 +20,8 @@ x-common-env: &common-env
   TENUO_SECRET_KEY: "f07521a0719ae0a02b8acfa92e6e779f9c3ef082e6865549a6eba1dda3b3a606"
   # Corresponding public key (derived from secret key)
   TENUO_PUBLIC_KEY: "02b04e930d436f40552de8e2fd3222a9840c8343c6332908a6b0a07039a4b53e"
+  # Enrollment token for orchestrator registration (shared between control plane and orchestrator)
+  TENUO_ENROLLMENT_TOKEN: "demo-enrollment-token-2024"
 
 services:
   # ============================================================================
@@ -34,6 +36,8 @@ services:
     environment:
       <<: *common-env
       TENUO_BIND_ADDR: "0.0.0.0:8080"
+      # Enrollment token (shared with orchestrator)
+      TENUO_ENROLLMENT_TOKEN: "demo-enrollment-token-2024"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 5s
@@ -75,12 +79,17 @@ services:
       dockerfile: deploy/docker/Dockerfile.agents
     entrypoint: ["tenuo-orchestrator"]
     environment:
-      # Orchestrator simulates receiving warrant from CP (needs secret key for demo)
-      TENUO_SECRET_KEY: "f07521a0719ae0a02b8acfa92e6e779f9c3ef082e6865549a6eba1dda3b3a606"
+      # Enrollment token (must match control plane)
+      TENUO_ENROLLMENT_TOKEN: "demo-enrollment-token-2024"
+      # Control plane URL
+      TENUO_CONTROL_URL: "http://control-plane:8080"
       # Where to write the delegation chain
       TENUO_CHAIN_OUTPUT: "/data/chain.json"
     volumes:
       - demo-data:/data
+    depends_on:
+      control-plane:
+        condition: service_healthy
     networks:
       - tenuo-net
 
