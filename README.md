@@ -249,7 +249,7 @@ This demonstrates the complete flow: warrant issuance, attenuation, delegation, 
 from tenuo import McpConfig, CompiledMcpConfig, Authorizer, PublicKey
 
 # Load MCP configuration
-config = McpConfig.from_file("mcp-config.yaml")
+config = McpConfig.from_file("examples/mcp-config.yaml")
 compiled = CompiledMcpConfig.compile(config)
 
 # Initialize authorizer
