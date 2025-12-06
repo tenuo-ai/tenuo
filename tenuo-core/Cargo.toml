@@ -11,7 +11,9 @@ categories = ["authentication", "cryptography", "ai", "security"]
 
 [lib]
 name = "tenuo_core"
-crate-type = ["cdylib", "rlib"]
+# When used as a Python extension dependency, only build as rlib to avoid linking issues
+# cdylib is only needed for standalone dynamic library usage
+crate-type = ["rlib"]
 
 # ============================================================================
 # Feature Flags for Deployment Flexibility
@@ -110,7 +112,9 @@ thiserror = "1.0"
 uuid = { version = "1.6", features = ["v4", "v7", "serde"] }
 
 # Python bindings (optional)
-pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
+# Note: extension-module is only for the final Python package, not for library dependencies
+# abi3-py38 allows building without linking Python at compile time
+pyo3 = { version = "0.22", features = ["abi3-py38"], optional = true }
 
 # Server dependencies (optional)
 tokio = { version = "1.35", features = ["full"], optional = true }
