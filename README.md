@@ -53,21 +53,16 @@ Warrants can only **shrink** when delegated: a $1000 budget becomes $500, access
 
 ## Integration Patterns
 
-### 1. Python SDK (The Easy Way)
+### Python SDK (The Easy Way)
 
 Perfect for LangChain, AutoGPT, and CrewAI tools.
 
-**Python**
-
 ```python
-from tenuo import Warrant, Pattern, Exact, set_warrant_context
+from tenuo import Warrant, Pattern, set_warrant_context, lockdown
 
 # Create a restricted warrant for a sub-agent
 worker_warrant = root_warrant.attenuate(
-    constraints={
-        "db_name": Pattern("test-*"),  # Only test databases
-        "budget": 100.0                # Max $100
-    },
+    constraints={"db_name": Pattern("test-*")},
     keypair=worker_keypair
 )
 
@@ -82,74 +77,29 @@ with set_warrant_context(worker_warrant):
     # ✅ Authorized: matches Pattern("test-*")
 ```
 
-**Full Example:**
-
-```python
-from tenuo import Keypair, Warrant, Pattern, Exact, Range
-
-# Generate a keypair
-keypair = Keypair.generate()
-
-# Issue a warrant with constraints
-warrant = Warrant.create(
-    tool="manage_infrastructure",
-    constraints={
-        "cluster": Pattern("staging-*"),
-        "budget": Range.max_value(10000.0)
-    },
-    ttl_seconds=3600,
-    keypair=keypair
-)
-
-# Attenuate for a worker (capabilities shrink)
-worker_keypair = Keypair.generate()
-worker_warrant = warrant.attenuate(
-    constraints={
-        "cluster": Exact("staging-web"),
-        "budget": Range.max_value(1000.0)
-    },
-    keypair=worker_keypair
-)
-
-# Authorize an action
-authorized = worker_warrant.authorize(
-    tool="manage_infrastructure",
-    args={"cluster": "staging-web", "budget": 500.0}
-)
-print(f"Authorized: {authorized}")  # True
-```
-
-**Pythonic features:**
+**Features:**
 - `@lockdown` decorator for function-level authorization
 - ContextVar support for LangChain/FastAPI integration
 - Pythonic exceptions and error handling
 
 See [tenuo-python/](tenuo-python/) for full documentation and examples.
 
-### 2. Rust Core (The Performance Way)
+### Rust Core (The Performance Way)
 
 Building a high-performance sidecar or gateway? Use the engine directly.
 
-**Latency:** ~20μs verification.
-
-**Stack:** Pure Rust, `no_std` compatible core.
-
-**Cargo.toml**
+**Latency:** ~20μs verification. **Stack:** Pure Rust, `no_std` compatible core.
 
 ```toml
 [dependencies]
 tenuo-core = "0.1"
 ```
 
-**Rust**
-
 ```rust
 use tenuo_core::{Warrant, Keypair, Pattern, Range};
 use std::time::Duration;
 
 let keypair = Keypair::generate();
-
-// Issue a warrant
 let warrant = Warrant::builder()
     .tool("manage_infrastructure")
     .constraint("cluster", Pattern::new("staging-*")?)
@@ -163,10 +113,9 @@ let worker_warrant = warrant.attenuate()
     .constraint("budget", Range::max(1000.0))
     .authorized_holder(worker_keypair.public_key())
     .build(&keypair)?;
-
-// Worker authorizes action (~25μs, no network)
-worker_warrant.authorize("upgrade", &args, Some(&pop_signature))?;
 ```
+
+See [API Reference](https://docs.rs/tenuo-core) for full Rust documentation.
 
 ## How it Works
 
@@ -199,18 +148,6 @@ This demonstrates the complete flow: warrant issuance, attenuation, delegation, 
 | **Depth limits** | Configurable delegation depth (max 64) |
 | **MCP integration** | Native support for Model Context Protocol (AI agent tool calling) |
 
-## Constraint Types
-
-| Type | Example | Description |
-|------|---------|-------------|
-| `Wildcard` | `*` | Matches anything, can narrow to any type |
-| `Pattern` | `staging-*` | Glob matching |
-| `Exact` | `staging-web` | Exact string match |
-| `OneOf` | `["a", "b"]` | Value must be in set |
-| `Range` | `0..10000` | Numeric bounds |
-| `NotOneOf` | `!["prod"]` | Exclude specific values |
-| `CEL` | `amount < limit` | Complex expressions |
-
 ## MCP (Model Context Protocol) Integration
 
 **Native AI Agent Support**: Tenuo integrates directly with [MCP](https://modelcontextprotocol.io), the standard protocol for AI agent tool calling. No custom middleware needed.
@@ -221,13 +158,6 @@ This demonstrates the complete flow: warrant issuance, attenuation, delegation, 
 │  (Claude/GPT)   │
 └────────┬────────┘
          │ MCP tool call
-         │ {tool: "filesystem_read", arguments: {...}}
-         ▼
-┌─────────────────┐
-│  MCP Server     │
-│  (Tool Handler) │
-└────────┬────────┘
-         │ Extract + Authorize
          ▼
 ┌─────────────────┐      ┌──────────────────┐
 │  Tenuo          │─────▶│  Authorizer      │
@@ -243,47 +173,12 @@ This demonstrates the complete flow: warrant issuance, attenuation, delegation, 
 └─────────────────┘      └──────────────────┘
 ```
 
-**Python Example:**
-
-```python
-from tenuo import McpConfig, CompiledMcpConfig, Authorizer, PublicKey
-
-# Load MCP configuration
-config = McpConfig.from_file("examples/mcp-config.yaml")
-compiled = CompiledMcpConfig.compile(config)
-
-# Initialize authorizer
-control_plane_key = PublicKey.from_bytes(bytes.fromhex("f32e74b5..."))
-authorizer = Authorizer.new(control_plane_key)
-
-# Extract constraints from MCP tool call
-arguments = {"path": "/var/log/app.log", "maxSize": 1024}
-result = compiled.extract_constraints("filesystem_read", arguments)
-
-# Authorize (with warrant chain and PoP signature)
-warrant = Warrant.from_base64(warrant_chain_base64)
-authorized = authorizer.check(
-    warrant,
-    "filesystem_read",
-    result.constraints,
-    pop_signature
-)
-```
-
 **Why MCP + Tenuo?**
-- **Tool-centric**: MCP tools map directly to Tenuo tool configurations (no HTTP routing complexity)
-- **Cryptographic provenance**: Every tool call is authorized by a warrant chain proving who delegated authority
-- **Multi-agent workflows**: Perfect for orchestrators delegating to specialized workers with bounded capabilities
+- **Tool-centric**: MCP tools map directly to Tenuo tool configurations
+- **Cryptographic provenance**: Every tool call is authorized by a warrant chain
+- **Multi-agent workflows**: Perfect for orchestrators delegating to specialized workers
 
-See the [MCP module documentation](https://docs.rs/tenuo-core/latest/tenuo_core/mcp/index.html) for details.
-
-## Revocation
-
-Warrants can be revoked using **Signed Revocation Lists (SRLs)**. The Control Plane signs the list; authorizers verify before trusting.
-
-**Cascading Revocation:**
-- **Surgical**: Revoke a specific warrant ID to stop one task
-- **Nuclear**: Revoke an agent's key to instantly invalidate every warrant they ever issued (kill 10,000 sub-agents with one switch)
+See the [MCP module documentation](https://docs.rs/tenuo-core/latest/tenuo_core/mcp/index.html) and [Python SDK examples](tenuo-python/examples/mcp_integration.py) for details.
 
 ## Where Tenuo Fits
 
@@ -302,39 +197,14 @@ Tenuo sits **above** your infrastructure IAM. It doesn't replace it.
 └────────────────────────────────────────────────┘
 ```
 
-Your services keep their existing IAM. Tenuo adds a **delegation layer** that tracks *who* authorized the action, *what task context* it carries, and *what limits* apply. Constraints can depend on actions earlier in the workflow.
-
-## Architecture
-
-```
-Control Plane (secure)     Data Plane (distributed)
-┌──────────────────┐       ┌──────────────────────────┐
-│ Issue warrants   │       │ Gateway / Sidecar        │
-│ Manage keys      │──────▶│ Verify chains offline    │
-│ Policy config    │       │ Enforce constraints      │
-└──────────────────┘       └──────────────────────────┘
-```
-
-The Control Plane issues root warrants. Agents attenuate and delegate. 
-The Data Plane (gateway or sidecar) verifies locally with no round-trips.
-
-## Security
-
-| Property | Protection |
-|----------|------------|
-| Domain separation | Signatures include context prefix |
-| Canonical encoding | Deterministic serialization |
-| Constraint depth | Max 16 nesting levels |
-| Payload size | Max 1MB per warrant |
-| PoP replay | Signatures valid ~2 minutes |
-| ID validation | Prefix enforced on deserialize |
+Your services keep their existing IAM. Tenuo adds a **delegation layer** that tracks *who* authorized the action, *what task context* it carries, and *what limits* apply.
 
 ## Documentation
 
 - **[Website](https://tenuo.github.io/tenuo/)**: Landing page and infographics
-- **[Guide](https://tenuo.github.io/tenuo/guide/)**: Concepts and examples
-- **[API Reference](https://docs.rs/tenuo-core)**: Rustdoc API documentation
+- **[Guide](https://tenuo.github.io/tenuo/guide/)**: Concepts, examples, and constraint types
 - **[Python SDK](tenuo-python/)**: Full Python documentation and examples
+- **[Rust API](https://docs.rs/tenuo-core)**: Complete Rust API reference
 
 ## License
 
