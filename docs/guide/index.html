@@ -977,6 +977,36 @@ Summary:
                 AI agent workflows without custom middleware.
             </p>
 
+            <h3>Architecture Flow</h3>
+            <p>
+                Tenuo sits between the MCP server and tool execution, providing cryptographic authorization:
+            </p>
+            <pre><code>┌─────────────────┐
+│  AI Agent       │
+│  (Claude/GPT)   │
+└────────┬────────┘
+         │ MCP tool call
+         │ {tool: "filesystem_read", arguments: {...}}
+         ▼
+┌─────────────────┐
+│  MCP Server     │
+│  (Tool Handler) │
+└────────┬────────┘
+         │ Extract + Authorize
+         ▼
+┌─────────────────┐      ┌──────────────────┐
+│  Tenuo          │─────▶│  Authorizer      │
+│  extract_constraints() │  check()         │
+└─────────────────┘      └──────────────────┘
+         │                        │
+         │ Extracted values       │ ✓ Authorized
+         │                        │   or ✗ Denied
+         ▼                        ▼
+┌─────────────────┐      ┌──────────────────┐
+│  Tool Execution │      │  Response        │
+│  (if authorized)│      │  (to agent)      │
+└─────────────────┘      └──────────────────┘</code></pre>
+
             <h3>Why MCP + Tenuo?</h3>
             <ul>
                 <li><strong>Native AI Agent Support</strong>: MCP is the standard protocol for AI agent tool calling.
@@ -1043,8 +1073,9 @@ tools:
         default: 100</code></pre>
 
             <h3>Usage</h3>
-            <pre><code>use tenuo_core::{CompiledMcpConfig, McpConfig};
+            <pre><code>use tenuo_core::{Authorizer, CompiledMcpConfig, McpConfig, PublicKey, wire};
 use serde_json::json;
+use std::collections::HashMap;
 
 // Load and compile configuration
 let config = McpConfig::from_file("mcp-config.yaml")?;
@@ -1056,18 +1087,38 @@ for warning in warnings {
     eprintln!("Warning: {}", warning);
 }
 
-// Extract constraints from MCP tool call
+// Initialize authorizer with trusted Control Plane key
+let control_plane_key_bytes: [u8; 32] = hex::decode("f32e74b5...")?.try_into().unwrap();
+let control_plane_key = PublicKey::from_bytes(&control_plane_key_bytes)?;
+let authorizer = Authorizer::new(control_plane_key);
+
+// MCP tool call arrives from AI agent
 let arguments = json!({
     "path": "/var/log/app.log",
     "maxSize": 1024,
     "allowedPaths": ["/var/log", "/tmp"]
 });
 
+// 1. Extract constraints from MCP arguments
 let result = compiled.extract_constraints("filesystem_read", &arguments)?;
 // result.constraints contains:
 //   - "path": ConstraintValue::String("/var/log/app.log")
 //   - "max_size": ConstraintValue::Integer(1024)
 //   - "allowed_paths": ConstraintValue::List([...])
+
+// 2. Decode warrant chain (from MCP request metadata/headers)
+let warrant = wire::decode_base64(&warrant_chain_base64)?;
+
+// 3. Authorize the action using extracted constraints
+authorizer.check(
+    &warrant,
+    "filesystem_read",
+    &result.constraints,
+    pop_signature.as_ref()  // Optional PoP signature
+)?;
+
+// 4. If authorized, execute the tool
+// execute_filesystem_read(arguments);
 </code></pre>
 
             <h3>Extraction Source Compatibility</h3>

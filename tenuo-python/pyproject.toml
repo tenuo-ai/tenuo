@@ -1,0 +1,45 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "tenuo"
+version = "0.1.0"
+description = "Capability tokens for AI agents - Python SDK"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT OR Apache-2.0" }
+authors = [
+    { name = "Tenuo Contributors" }
+]
+keywords = ["authorization", "capabilities", "agents", "security", "warrants", "mcp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries",
+]
+
+[project.urls]
+Homepage = "https://github.com/tenuo/tenuo"
+Documentation = "https://tenuo.github.io/tenuo/"
+Repository = "https://github.com/tenuo/tenuo"
+Issues = "https://github.com/tenuo/tenuo/issues"
+
+[tool.maturin]
+features = ["python"]
+module-name = "tenuo.tenuo_core"
+python-source = "."
+
+[[tool.maturin.sdist]]
+include = ["README.md", "LICENSE*", "examples/**/*"]
+
