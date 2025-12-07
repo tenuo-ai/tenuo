@@ -45,6 +45,7 @@ use tenuo_core::{
     planes::ControlPlane,
     wire,
 };
+use sha2::{Sha256, Digest};
 use tokio::sync::RwLock;
 
 /// Application state
@@ -252,10 +253,15 @@ async fn enroll(
     let signature = tenuo_core::crypto::Signature::from_bytes(&sig_arr)
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid signature format".to_string()))?;
 
-    // PoP message format: "enroll:{public_key_hex}:{timestamp}"
+    // PoP message format: "tenuo:enroll:v1:{public_key_hex}:{timestamp}"
     // This binds the signature to both the key and the time
-    let pop_message = format!("enroll:{}:{}", req.public_key_hex, req.timestamp);
-    if public_key.verify(pop_message.as_bytes(), &signature).is_err() {
+    // IMPORTANT: We SHA-256 hash the message to get a fixed 32-byte input.
+    // This is coordinated with the Python SDK which also pre-hashes.
+    // Ed25519 will then internally hash again (SHA-512), giving us:
+    // Ed25519(SHA-512(SHA-256(message))) - this is perfectly secure.
+    let pop_message = format!("tenuo:enroll:v1:{}:{}", req.public_key_hex, req.timestamp);
+    let pop_message_hash = Sha256::digest(pop_message.as_bytes());
+    if public_key.verify(&pop_message_hash, &signature).is_err() {
         return Err((StatusCode::BAD_REQUEST, "Invalid Proof of Possession".to_string()));
     }
 

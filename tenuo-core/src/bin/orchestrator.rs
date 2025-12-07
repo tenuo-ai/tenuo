@@ -13,6 +13,7 @@ use std::time::Duration;
 use std::env;
 use uuid::Uuid;
 use chrono::Utc;
+use sha2::{Sha256, Digest};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n╔══════════════════════════════════════════════════════════════════╗");
@@ -44,10 +45,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
 
     // 3. Create Proof of Possession with timestamp (prevents replay attacks)
-    // Format: "enroll:{public_key_hex}:{timestamp}"
+    // Format: "tenuo:enroll:v1:{public_key_hex}:{timestamp}"
+    // IMPORTANT: We SHA-256 hash the message to get a fixed 32-byte input.
+    // This is coordinated with the Python SDK and Rust verifier.
+    // Ed25519 will then internally hash again (SHA-512), giving us:
+    // Ed25519(SHA-512(SHA-256(message))) - this is perfectly secure.
     let timestamp = Utc::now().timestamp();
-    let pop_message = format!("enroll:{}:{}", pubkey_hex, timestamp);
-    let pop_signature = orchestrator_keypair.sign(pop_message.as_bytes());
+    let pop_message = format!("tenuo:enroll:v1:{}:{}", pubkey_hex, timestamp);
+    let pop_message_hash = Sha256::digest(pop_message.as_bytes());
+    let pop_signature = orchestrator_keypair.sign(&pop_message_hash);
     let pop_signature_hex = hex::encode(pop_signature.to_bytes());
 
     // 4. Send Enrollment Request
