@@ -161,21 +161,27 @@ class ControlPlane:
     This is a demo class. In production, the control plane would be:
     - A separate K8s service/deployment
     - Authenticated via service account tokens
-    - Issues warrants based on agent registration/policy
+    - Issues warrants at ENROLLMENT TIME only (not per-request)
     - Stores root keypair in secure storage (K8s Secret, HSM, etc.)
+    
+    IMPORTANT: The Control Plane is only contacted during enrollment.
+    All subsequent authorization is done OFFLINE via local verification
+    and delegation/attenuation.
     """
     
     def __init__(self, keypair: Keypair):
         self.keypair = keypair
     
-    def issue_agent_warrant(
+    def issue_enrollment_warrant(
         self,
         agent_id: str,
         constraints: Dict[str, Any],
         ttl_seconds: int = 3600
     ) -> Warrant:
         """
-        [SIMULATION] Issue a warrant for a specific agent.
+        [SIMULATION] Issue a warrant during agent enrollment.
+        
+        This is called ONCE during enrollment, not per-request.
         
         In K8s, this might be called:
         - During agent pod startup (init container)
@@ -196,30 +202,66 @@ class ControlPlane:
             ttl_seconds=ttl_seconds,  # HARDCODED default: 3600. In production, use env var or config.
             keypair=self.keypair
         )
+
+
+# ============================================================================
+# API Gateway: Local Warrant Attenuation (Offline)
+# ============================================================================
+
+class APIGateway:
+    """
+    API Gateway that attenuates warrants locally per-request.
     
-    def issue_warrant_for_request(
+    This demonstrates the CORRECT pattern for per-request authorization:
+    1. Gateway enrolls ONCE with Control Plane → receives broad Root Warrant
+    2. Per-request: Gateway ATTENUATES its warrant locally (no network call)
+    3. Attenuated warrant is passed to downstream agents
+    
+    This is an OFFLINE operation - the Control Plane is never contacted
+    per-request. The gateway's keypair is used to sign the attenuated warrant.
+    """
+    
+    def __init__(self, gateway_keypair: Keypair, root_warrant: Warrant):
+        """
+        Initialize gateway with its keypair and root warrant.
+        
+        Args:
+            gateway_keypair: Gateway's own keypair (for signing attenuated warrants)
+            root_warrant: Broad warrant received during enrollment with Control Plane
+        """
+        self.keypair = gateway_keypair
+        self.root_warrant = root_warrant
+    
+    def attenuate_for_request(
         self,
         request_metadata: Dict[str, Any],
         ttl_seconds: int = 300  # Short TTL for request-scoped warrants
     ) -> Warrant:
         """
-        Issue a warrant for a specific request (e.g., from API gateway).
+        Attenuate the gateway's root warrant for a specific request.
         
-        This is useful for:
-        - Per-request authorization
-        - Dynamic constraint injection based on user/tenant
-        - Request-scoped capabilities
+        This is a LOCAL/OFFLINE operation - no Control Plane call.
+        The attenuated warrant is NARROWER than the root warrant.
+        
+        Args:
+            request_metadata: Request context (user_id, tenant, etc.)
+            ttl_seconds: Short TTL for request-scoped warrant
+        
+        Returns:
+            Attenuated warrant bound to this specific request
         """
-        # Extract constraints from request metadata (user, tenant, etc.)
-        constraints = {
+        # Narrow constraints based on request context
+        # These constraints must be SUBSET of root_warrant constraints
+        narrowed_constraints = {
             "user_id": Exact(request_metadata.get("user_id", "anonymous")),
-            "tenant": Pattern(request_metadata.get("tenant", "*")),
+            "tenant": Exact(request_metadata.get("tenant", "default")),
         }
         
-        return Warrant.create(
-            tool="agent_tools",
-            constraints=constraints,
-            ttl_seconds=ttl_seconds,
+        # Delegate (attenuate) from root warrant - this is OFFLINE
+        # The new warrant has narrower scope and shorter TTL
+        return self.root_warrant.delegate(
+            constraints=narrowed_constraints,
+            ttl_seconds=min(ttl_seconds, 300),  # Never exceed 5 min for request scope
             keypair=self.keypair
         )
 
