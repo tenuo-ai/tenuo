@@ -56,20 +56,6 @@ struct AppState {
     enrolled_agents: std::collections::HashSet<[u8; 32]>,
 }
 
-/// Request to issue a warrant
-#[derive(Debug, Deserialize)]
-struct IssueRequest {
-    tool: String,
-    constraints: std::collections::HashMap<String, String>,
-    ttl_seconds: u64,
-    /// Caller's public key (must be enrolled)
-    caller_pubkey_hex: Option<String>,
-    /// Signature over "tool:constraints_json" proving caller identity
-    signature_hex: Option<String>,
-    /// Optional session ID for traceability
-    session_id: Option<String>,
-}
-
 /// Response with issued warrant
 #[derive(Debug, Serialize)]
 struct IssueResponse {
@@ -132,7 +118,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/v1/public-key", get(get_public_key))
-        .route("/v1/warrants", post(issue_warrant))
         .route("/v1/enroll", post(enroll))
         .with_state(state);
 
@@ -311,79 +296,6 @@ async fn enroll(
         )
         .with_key(warrant.authorized_holder().unwrap())
         .with_details(format!("Issued root warrant {}", warrant.id()))
-        .with_related(vec![warrant.id().to_string()])
-    );
-
-    Ok(Json(IssueResponse {
-        warrant_id: warrant.id().to_string(),
-        warrant_base64,
-        expires_at: warrant.expires_at().to_rfc3339(),
-    }))
-}
-
-async fn issue_warrant(
-    State(state): State<Arc<RwLock<AppState>>>,
-    Json(req): Json<IssueRequest>,
-) -> Result<Json<IssueResponse>, (StatusCode, String)> {
-    let state = state.read().await;
-    
-    // Require enrollment - caller must prove identity
-    let caller_key = req.caller_pubkey_hex.as_ref()
-        .ok_or((StatusCode::UNAUTHORIZED, "Missing caller_pubkey_hex".to_string()))?;
-    let caller_bytes: [u8; 32] = hex::decode(caller_key)
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid caller public key hex".to_string()))?
-        .try_into()
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Caller key must be 32 bytes".to_string()))?;
-    
-    if !state.enrolled_agents.contains(&caller_bytes) {
-        return Err((StatusCode::UNAUTHORIZED, "Caller not enrolled".to_string()));
-    }
-    
-    // Verify PoP signature (caller signs the request body)
-    let caller_pubkey = tenuo_core::crypto::PublicKey::from_bytes(&caller_bytes)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-    let sig_hex = req.signature_hex.as_ref()
-        .ok_or((StatusCode::UNAUTHORIZED, "Missing signature_hex".to_string()))?;
-    let sig_bytes: [u8; 64] = hex::decode(sig_hex)
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid signature hex".to_string()))?
-        .try_into()
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Signature must be 64 bytes".to_string()))?;
-    let signature = tenuo_core::crypto::Signature::from_bytes(&sig_bytes)
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid signature".to_string()))?;
-    
-    // Verify signature over tool + constraints (simple PoP)
-    let signable = format!("{}:{}", req.tool, serde_json::to_string(&req.constraints).unwrap_or_default());
-    caller_pubkey.verify(signable.as_bytes(), &signature)
-        .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid signature".to_string()))?;
-
-    // Build constraints
-    let mut constraints = Vec::new();
-    for (field, pattern) in &req.constraints {
-        let p = Pattern::new(pattern).map_err(|e| {
-            (
-                StatusCode::BAD_REQUEST,
-                format!("Invalid pattern for {}: {}", field, e),
-            )
-        })?;
-        constraints.push((field.as_str(), p.into()));
-    }
-
-    // Issue warrant
-    let warrant = state
-        .control_plane
-        .issue_warrant(&req.tool, &constraints, Duration::from_secs(req.ttl_seconds))
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    let warrant_base64 =
-        wire::encode_base64(&warrant).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    tenuo_core::audit::log_event(
-        tenuo_core::approval::AuditEvent::new(
-            tenuo_core::approval::AuditEventType::WarrantIssued,
-            "control-plane",
-            "api-request",
-        )
-        .with_details(format!("Issued warrant {} for tool {}", warrant.id(), req.tool))
         .with_related(vec![warrant.id().to_string()])
     );
 
