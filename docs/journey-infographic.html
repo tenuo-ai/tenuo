@@ -340,10 +340,11 @@
                     <h3 class="phase-title">1. Deploy Control Plane</h3>
                     <p class="phase-desc">Start the Tenuo Control Plane. It generates its root keypair and becomes your trust anchor.</p>
                     <div class="code-block">
-<span class="comment"># Start Control Plane with enrollment token</span>
-$ tenuo-control \
-    --bind 0.0.0.0:8080 \
-    --enrollment-token $(openssl rand -hex 32)
+<span class="comment"># Start Control Plane with environment variables</span>
+$ export TENUO_BIND_ADDR=0.0.0.0:8080
+$ export TENUO_ENROLLMENT_TOKEN=$(openssl rand -hex 32)
+$ export TENUO_SECRET_KEY=$(openssl rand -hex 32)  <span class="comment"># Optional: use existing key</span>
+$ tenuo-control
 
 <span class="comment"># Output: Control Plane public key</span>
 <span class="string">Public Key: f32e74b5b856...</span>

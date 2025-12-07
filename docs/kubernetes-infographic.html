@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tenuo + Kubernetes Integration</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+        
+        :root {
+            --bg-dark: #0a0e17;
+            --bg-card: #121a2a;
+            --bg-card-alt: #0f1520;
+            --accent-cyan: #00d4ff;
+            --accent-green: #00ff88;
+            --accent-red: #ff4466;
+            --accent-yellow: #ffcc00;
+            --accent-purple: #a855f7;
+            --accent-orange: #ff8c00;
+            --accent-blue: #3b82f6;
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --border: #1e293b;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+        
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: 
+                radial-gradient(circle at 10% 20%, rgba(59, 130, 246, 0.08) 0%, transparent 50%),
+                radial-gradient(circle at 90% 80%, rgba(168, 85, 247, 0.08) 0%, transparent 50%),
+                radial-gradient(circle at 50% 50%, rgba(0, 212, 255, 0.03) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+        
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            position: relative;
+            z-index: 1;
+        }
+        
+        /* Header */
+        header {
+            text-align: center;
+            margin-bottom: 48px;
+        }
+        
+        .logo {
+            font-size: 3.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+        
+        .tagline {
+            font-size: 1.5rem;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+        
+        .subtitle {
+            font-size: 1rem;
+            color: var(--text-muted);
+            max-width: 700px;
+            margin: 0 auto;
+            line-height: 1.6;
+        }
+        
+        /* Section divider */
+        .section-divider {
+            margin: 64px 0;
+            text-align: center;
+            position: relative;
+        }
+        
+        .section-divider::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: var(--border);
+        }
+        
+        .section-divider-text {
+            background: var(--bg-dark);
+            padding: 0 24px;
+            position: relative;
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--accent-cyan);
+        }
+        
+        /* Pod visualization */
+        .pod-container {
+            background: var(--bg-card);
+            border: 2px solid var(--border);
+            border-radius: 16px;
+            padding: 32px;
+            margin: 32px 0;
+            position: relative;
+        }
+        
+        .pod-header {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .pod-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+        
+        .pod-icon.init {
+            background: rgba(0, 212, 255, 0.2);
+            border: 2px solid var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+        
+        .pod-icon.main {
+            background: rgba(168, 85, 247, 0.2);
+            border: 2px solid var(--accent-purple);
+            color: var(--accent-purple);
+        }
+        
+        .pod-icon.sidecar {
+            background: rgba(0, 255, 136, 0.2);
+            border: 2px solid var(--accent-green);
+            color: var(--accent-green);
+        }
+        
+        .pod-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        
+        .pod-subtitle {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+        
+        .pod-status {
+            margin-left: auto;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        
+        .pod-status.online {
+            background: rgba(0, 255, 136, 0.2);
+            color: var(--accent-green);
+            border: 1px solid var(--accent-green);
+        }
+        
+        .pod-status.offline {
+            background: rgba(0, 212, 255, 0.2);
+            color: var(--accent-cyan);
+            border: 1px solid var(--accent-cyan);
+        }
+        
+        /* Container flow */
+        .container-flow {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            margin-top: 24px;
+        }
+        
+        .container-step {
+            background: var(--bg-card-alt);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        
+        .step-number {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+        
+        .step-number.online {
+            background: rgba(0, 255, 136, 0.2);
+            border: 2px solid var(--accent-green);
+            color: var(--accent-green);
+        }
+        
+        .step-number.offline {
+            background: rgba(0, 212, 255, 0.2);
+            border: 2px solid var(--accent-cyan);
+            color: var(--accent-cyan);
+        }
+        
+        .step-content {
+            flex: 1;
+        }
+        
+        .step-title {
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+        }
+        
+        .step-desc {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+        
+        /* Code block */
+        .code-block {
+            background: var(--bg-card-alt);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            margin: 16px 0;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+        }
+        
+        .code-block .keyword {
+            color: var(--accent-purple);
+        }
+        
+        .code-block .string {
+            color: var(--accent-green);
+        }
+        
+        .code-block .comment {
+            color: var(--text-muted);
+            font-style: italic;
+        }
+        
+        /* Arrow connector */
+        .arrow {
+            text-align: center;
+            color: var(--accent-cyan);
+            font-size: 2rem;
+            margin: -8px 0;
+            position: relative;
+            z-index: 2;
+        }
+        
+        /* Context flow diagram */
+        .context-flow {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+            margin: 32px 0;
+        }
+        
+        .context-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            position: relative;
+        }
+        
+        .context-box::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            border-radius: 12px 12px 0 0;
+        }
+        
+        .context-box.request {
+            border-top: 4px solid var(--accent-blue);
+        }
+        
+        .context-box.middleware {
+            border-top: 4px solid var(--accent-purple);
+        }
+        
+        .context-box.agent {
+            border-top: 4px solid var(--accent-cyan);
+        }
+        
+        .context-box.tool {
+            border-top: 4px solid var(--accent-green);
+        }
+        
+        .context-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--text-primary);
+        }
+        
+        .context-desc {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+            margin-bottom: 16px;
+        }
+        
+        .context-var {
+            background: rgba(168, 85, 247, 0.1);
+            border: 1px dashed var(--accent-purple);
+            border-radius: 6px;
+            padding: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--accent-purple);
+            text-align: center;
+        }
+        
+        /* GitOps highlight */
+        .gitops-box {
+            background: linear-gradient(135deg, rgba(0, 212, 255, 0.15), rgba(168, 85, 247, 0.15));
+            border: 2px solid var(--accent-cyan);
+            border-radius: 12px;
+            padding: 24px;
+            margin: 32px 0;
+        }
+        
+        .gitops-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: var(--accent-cyan);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .gitops-list {
+            list-style: none;
+            padding: 0;
+        }
+        
+        .gitops-list li {
+            padding: 8px 0;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: start;
+            gap: 12px;
+        }
+        
+        .gitops-list li::before {
+            content: '✓';
+            color: var(--accent-green);
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+        
+        /* Feature grid */
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
+            margin: 48px 0;
+        }
+        
+        .feature-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            transition: all 0.3s ease;
+        }
+        
+        .feature-card:hover {
+            border-color: var(--accent-cyan);
+            transform: translateY(-4px);
+        }
+        
+        .feature-icon {
+            font-size: 2rem;
+            margin-bottom: 12px;
+        }
+        
+        .feature-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+        
+        .feature-desc {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+        
+        /* Footer */
+        footer {
+            text-align: center;
+            margin-top: 64px;
+            padding-top: 32px;
+            border-top: 1px solid var(--border);
+            color: var(--text-muted);
+        }
+        
+        footer a {
+            color: var(--accent-cyan);
+            text-decoration: none;
+        }
+        
+        footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">Tenuo + Kubernetes</div>
+            <div class="tagline">GitOps-Native Authorization for Containers</div>
+            <div class="subtitle">
+                Tenuo fits seamlessly into standard Kubernetes workflows. No daemons, no sidecars required.
+                Warrants are fetched at startup and verified 100% offline.
+            </div>
+        </header>
+
+        <!-- Lifecycle View -->
+        <div class="section-divider">
+            <div class="section-divider-text">Lifecycle View: Pod Startup & Runtime</div>
+        </div>
+
+        <!-- Init Container -->
+        <div class="pod-container">
+            <div class="pod-header">
+                <div class="pod-icon init">1</div>
+                <div>
+                    <div class="pod-title">Init Container: Fetch Warrant</div>
+                    <div class="pod-subtitle">Step 1: Online fetch from Control Plane • Runs before main container</div>
+                </div>
+                <div class="pod-status online">ONLINE</div>
+            </div>
+            <div class="container-flow">
+                <div class="container-step">
+                    <div class="step-number online">1</div>
+                    <div class="step-content">
+                        <div class="step-title">Control Plane Issues Warrant</div>
+                        <div class="step-desc">Init container authenticates (service account token) and requests warrant for this pod</div>
+                    </div>
+                </div>
+                <div class="container-step">
+                    <div class="step-number online">2</div>
+                    <div class="step-content">
+                        <div class="step-title">Warrant Written to Shared Volume</div>
+                        <div class="step-desc">Warrant (base64) saved to <code style="color: var(--accent-cyan);">/etc/tenuo/warrant.b64</code> in emptyDir volume</div>
+                    </div>
+                </div>
+            </div>
+            <div class="code-block" style="margin-top: 20px;">
+<span class="comment"># Init container (runs once at pod startup)</span>
+<span class="keyword">warrant</span> = <span class="string">control_plane</span>.<span class="string">issue_warrant</span>(
+    <span class="keyword">agent_id</span>=<span class="string">os.getenv</span>(<span class="string">"POD_NAME"</span>),
+    <span class="keyword">constraints</span>={<span class="string">"file_path"</span>: <span class="string">Pattern</span>(<span class="string">"/tmp/*"</span>)}
+)
+<span class="string">write</span>(<span class="string">"/etc/tenuo/warrant.b64"</span>, <span class="keyword">warrant</span>.<span class="string">to_base64</span>())
+            </div>
+        </div>
+
+        <div class="arrow">↓</div>
+
+        <!-- Main Container -->
+        <div class="pod-container">
+            <div class="pod-header">
+                <div class="pod-icon main">2</div>
+                <div>
+                    <div class="pod-title">Main Container: Load Warrant</div>
+                    <div class="pod-subtitle">Step 2: Offline load from volume • Runs application code</div>
+                </div>
+                <div class="pod-status offline">OFFLINE</div>
+            </div>
+            <div class="container-flow">
+                <div class="container-step">
+                    <div class="step-number offline">1</div>
+                    <div class="step-content">
+                        <div class="step-title">Read Warrant from Volume</div>
+                        <div class="step-desc">Application loads warrant from <code style="color: var(--accent-cyan);">/etc/tenuo/warrant.b64</code> at startup</div>
+                    </div>
+                </div>
+                <div class="container-step">
+                    <div class="step-number offline">2</div>
+                    <div class="step-content">
+                        <div class="step-title">Set in ContextVar</div>
+                        <div class="step-desc">Warrant stored in Python ContextVar for use by all <code style="color: var(--accent-purple);">@lockdown</code> functions</div>
+                    </div>
+                </div>
+                <div class="container-step">
+                    <div class="step-number offline">3</div>
+                    <div class="step-content">
+                        <div class="step-title">Application Ready</div>
+                        <div class="step-desc">All tool functions are now protected. No network calls needed for authorization.</div>
+                    </div>
+                </div>
+            </div>
+            <div class="code-block" style="margin-top: 20px;">
+<span class="comment"># Main container (runs application)</span>
+<span class="keyword">warrant</span> = <span class="string">load_warrant_from_file</span>(<span class="string">"/etc/tenuo/warrant.b64"</span>)
+<span class="keyword">with</span> <span class="string">set_warrant_context</span>(<span class="keyword">warrant</span>):
+    <span class="comment"># All @lockdown functions now protected</span>
+    <span class="string">app</span>.<span class="string">run</span>()
+            </div>
+        </div>
+
+        <div class="arrow">↓</div>
+
+        <!-- Sidecar (Optional) -->
+        <div class="pod-container">
+            <div class="pod-header">
+                <div class="pod-icon sidecar">3</div>
+                <div>
+                    <div class="pod-title">Sidecar: Intercept Requests (Optional)</div>
+                    <div class="pod-subtitle">Step 3: Request-level authorization • Validates per-request warrants</div>
+                </div>
+                <div class="pod-status offline">OFFLINE</div>
+            </div>
+            <div class="container-flow">
+                <div class="container-step">
+                    <div class="step-number offline">1</div>
+                    <div class="step-content">
+                        <div class="step-title">Request Arrives with Warrant Header</div>
+                        <div class="step-desc">Ingress/API gateway forwards <code style="color: var(--accent-cyan);">X-Tenuo-Warrant</code> header</div>
+                    </div>
+                </div>
+                <div class="container-step">
+                    <div class="step-number offline">2</div>
+                    <div class="step-content">
+                        <div class="step-title">Sidecar Validates Warrant</div>
+                        <div class="step-desc">Verifies signature, checks constraints, validates chain (100% offline, ~25μs)</div>
+                    </div>
+                </div>
+                <div class="container-step">
+                    <div class="step-number offline">3</div>
+                    <div class="step-content">
+                        <div class="step-title">Forward to Main Container</div>
+                        <div class="step-desc">If valid, request forwarded. If invalid, 403 returned immediately.</div>
+                    </div>
+                </div>
+            </div>
+            <div class="code-block" style="margin-top: 20px;">
+<span class="comment"># Sidecar (optional - for request-level auth)</span>
+<span class="keyword">warrant</span> = <span class="string">Warrant</span>.<span class="string">from_base64</span>(<span class="string">request</span>.<span class="string">headers</span>[<span class="string">"X-Tenuo-Warrant"</span>])
+<span class="keyword">authorizer</span>.<span class="string">check</span>(<span class="keyword">warrant</span>, <span class="string">tool</span>, <span class="keyword">args</span>)  <span class="comment"># Offline verification</span>
+            </div>
+        </div>
+
+        <!-- GitOps Box -->
+        <div class="gitops-box">
+            <div class="gitops-title">
+                🚀 GitOps-Native: No Daemons Required
+            </div>
+            <ul class="gitops-list">
+                <li>Warrants stored in K8s Secrets (managed by GitOps tools like ArgoCD, Flux)</li>
+                <li>Init containers fetch warrants at startup (standard K8s pattern)</li>
+                <li>No persistent daemons or background services needed</li>
+                <li>100% offline verification (no network calls during runtime)</li>
+                <li>Works with standard K8s deployments, StatefulSets, DaemonSets</li>
+                <li>Compatible with service meshes (Istio, Linkerd) for mTLS</li>
+            </ul>
+        </div>
+
+        <!-- Context View -->
+        <div class="section-divider">
+            <div class="section-divider-text">Context View: Async State Management</div>
+        </div>
+
+        <div style="text-align: center; margin-bottom: 32px;">
+            <p style="color: var(--text-secondary); max-width: 800px; margin: 0 auto; line-height: 1.8;">
+                Tenuo solves the "Invisible State" problem in async Python frameworks. ContextVar propagates
+                through <code style="color: var(--accent-cyan);">await</code> boundaries, making warrant context
+                available to all <code style="color: var(--accent-purple);">@lockdown</code> functions automatically.
+            </p>
+        </div>
+
+        <div class="context-flow">
+            <div class="context-box request">
+                <div class="context-title">1. Request Arrives</div>
+                <div class="context-desc">
+                    HTTP request arrives at FastAPI/LangChain application. Warrant may be in header or loaded from pod config.
+                </div>
+                <div class="context-var">
+                    ContextVar: <span style="color: var(--text-muted);">None</span>
+                </div>
+            </div>
+
+            <div class="context-box middleware">
+                <div class="context-title">2. Middleware Sets Context</div>
+                <div class="context-desc">
+                    FastAPI middleware extracts warrant and sets it in ContextVar. This propagates through all async operations.
+                </div>
+                <div class="code-block" style="font-size: 0.75rem; margin-top: 12px;">
+<span class="keyword">with</span> <span class="string">set_warrant_context</span>(<span class="keyword">warrant</span>):
+    <span class="comment"># ContextVar now set</span>
+                </div>
+                <div class="context-var" style="margin-top: 12px;">
+                    ContextVar: <span style="color: var(--accent-purple);">Warrant(id="...")</span>
+                </div>
+            </div>
+
+            <div class="context-box agent">
+                <div class="context-title">3. LangChain AgentExecutor</div>
+                <div class="context-desc">
+                    AgentExecutor processes request. ContextVar automatically propagates through <code>await</code> boundaries.
+                    No manual passing needed.
+                </div>
+                <div class="context-var">
+                    ContextVar: <span style="color: var(--accent-purple);">Warrant(id="...")</span>
+                    <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 4px;">
+                        ✓ Propagates through await
+                    </div>
+                </div>
+            </div>
+
+            <div class="context-box tool">
+                <div class="context-title">4. Tool Function Called</div>
+                <div class="context-desc">
+                    <code style="color: var(--accent-purple);">@lockdown</code> decorator retrieves warrant from ContextVar,
+                    checks authorization, then executes tool function.
+                </div>
+                <div class="code-block" style="font-size: 0.75rem; margin-top: 12px;">
+<span class="keyword">@lockdown</span>(<span class="string">tool</span>=<span class="string">"read_file"</span>)
+<span class="keyword">def</span> <span class="string">read_file</span>(<span class="keyword">file_path</span>):
+    <span class="comment"># Warrant from ContextVar ✓</span>
+                </div>
+                <div class="context-var" style="margin-top: 12px;">
+                    ContextVar: <span style="color: var(--accent-purple);">Warrant(id="...")</span>
+                    <div style="font-size: 0.7rem; color: var(--accent-green); margin-top: 4px;">
+                        ✓ Authorization checked
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div style="background: rgba(168, 85, 247, 0.1); border: 1px solid var(--accent-purple); border-radius: 12px; padding: 24px; margin: 32px 0;">
+            <div style="font-size: 1.1rem; font-weight: 600; color: var(--accent-purple); margin-bottom: 12px;">
+                🔑 Key Insight: Invisible State Made Visible
+            </div>
+            <p style="color: var(--text-secondary); line-height: 1.8;">
+                In async Python frameworks, function calls happen across <code style="color: var(--accent-cyan);">await</code> boundaries,
+                making it hard to pass context. Tenuo uses Python's <code style="color: var(--accent-purple);">ContextVar</code> which
+                automatically propagates through async operations. Set the warrant once in middleware, and all
+                <code style="color: var(--accent-purple);">@lockdown</code> functions have access to it - no manual passing required.
+            </p>
+        </div>
+
+        <!-- Features -->
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">📦</div>
+                <div class="feature-title">GitOps Compatible</div>
+                <div class="feature-desc">
+                    Warrants stored in K8s Secrets, managed by ArgoCD/Flux. No custom operators or daemons needed.
+                </div>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">⚡</div>
+                <div class="feature-title">100% Offline</div>
+                <div class="feature-desc">
+                    After init container fetches warrant, all verification happens offline. No network calls during runtime.
+                </div>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🔄</div>
+                <div class="feature-title">ContextVar Propagation</div>
+                <div class="feature-desc">
+                    Warrant context automatically propagates through async/await boundaries. Works with FastAPI, LangChain, any async framework.
+                </div>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🛡️</div>
+                <div class="feature-title">No Daemons</div>
+                <div class="feature-desc">
+                    Standard K8s patterns only: init containers, volumes, sidecars. No weird background services or daemons.
+                </div>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🎯</div>
+                <div class="feature-title">Per-Request or Pod-Level</div>
+                <div class="feature-desc">
+                    Support both patterns: pod-level warrants (from volume) or per-request warrants (from headers).
+                </div>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🔗</div>
+                <div class="feature-title">Service Mesh Ready</div>
+                <div class="feature-desc">
+                    Works with Istio, Linkerd for mTLS. Tenuo handles application-layer authorization, service mesh handles network-layer.
+                </div>
+            </div>
+        </div>
+
+        <!-- Deployment Pattern -->
+        <div class="pod-container" style="margin-top: 48px;">
+            <div class="pod-header">
+                <div class="pod-icon main" style="font-size: 1rem;">📋</div>
+                <div>
+                    <div class="pod-title">Standard K8s Deployment Pattern</div>
+                    <div class="pod-subtitle">YAML configuration showing init container, volume, and main container</div>
+                </div>
+            </div>
+            <div class="code-block" style="margin-top: 20px;">
+<span class="comment"># Standard K8s Deployment - No custom operators needed</span>
+<span class="keyword">apiVersion</span>: <span class="string">apps/v1</span>
+<span class="keyword">kind</span>: <span class="string">Deployment</span>
+<span class="keyword">spec</span>:
+  <span class="keyword">template</span>:
+    <span class="keyword">spec</span>:
+      <span class="comment"># 1. Init container fetches warrant (online)</span>
+      <span class="keyword">initContainers</span>:
+      - <span class="keyword">name</span>: <span class="string">fetch-warrant</span>
+        <span class="keyword">image</span>: <span class="string">tenuo/fetch-warrant:latest</span>
+        <span class="keyword">volumeMounts</span>:
+        - <span class="keyword">name</span>: <span class="string">warrant</span>
+          <span class="keyword">mountPath</span>: <span class="string">/etc/tenuo</span>
+      
+      <span class="comment"># 2. Main container loads warrant (offline)</span>
+      <span class="keyword">containers</span>:
+      - <span class="keyword">name</span>: <span class="string">app</span>
+        <span class="keyword">image</span>: <span class="string">my-app:latest</span>
+        <span class="keyword">volumeMounts</span>:
+        - <span class="keyword">name</span>: <span class="string">warrant</span>
+          <span class="keyword">mountPath</span>: <span class="string">/etc/tenuo</span>
+      
+      <span class="comment"># 3. Shared volume</span>
+      <span class="keyword">volumes</span>:
+      - <span class="keyword">name</span>: <span class="string">warrant</span>
+        <span class="keyword">emptyDir</span>: {}
+            </div>
+        </div>
+
+        <footer>
+            <p>
+                <a href="index.html">← Back to Home</a> ·
+                <a href="guide/">View Guide</a> ·
+                <a href="kubernetes-integration.md">K8s Integration Docs</a> ·
+                <a href="https://github.com/tenuo/tenuo">GitHub</a>
+            </p>
+        </footer>
+    </div>
+</body>
+</html>
+

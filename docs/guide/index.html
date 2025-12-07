@@ -995,8 +995,10 @@ srl.revoke(worker_warrant_id);</code></pre>
 
             <h3>1. Deploy Control Plane</h3>
             <p>Start the Control Plane service. It generates its root keypair and becomes your trust anchor.</p>
-            <pre><code>$ tenuo-control --bind 0.0.0.0:8080 \
-    --enrollment-token $(openssl rand -hex 32)</code></pre>
+            <pre><code>$ export TENUO_BIND_ADDR=0.0.0.0:8080
+$ export TENUO_ENROLLMENT_TOKEN=$(openssl rand -hex 32)
+$ export TENUO_SECRET_KEY=$(openssl rand -hex 32)  # Optional: use existing key
+$ tenuo-control</code></pre>
 
             <h3>2. Configure Gateway</h3>
             <p>Define how HTTP request fields map to warrant constraints using a YAML configuration file.</p>

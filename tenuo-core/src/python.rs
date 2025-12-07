@@ -185,6 +185,22 @@ impl PyKeypair {
         self.inner.public_key().to_bytes().to_vec()
     }
 
+    /// Get the secret key bytes.
+    /// 
+    /// # Security Warning
+    /// 
+    /// This method creates a copy of the secret key in Python's managed memory.
+    /// Python's garbage collector does not guarantee secure erasure of secrets.
+    /// The secret key may persist in memory until garbage collection occurs.
+    /// 
+    /// **Recommendations:**
+    /// - Only call this method when absolutely necessary (e.g., for key backup/export)
+    /// - Minimize the lifetime of Keypair objects
+    /// - Avoid storing the returned bytes in long-lived variables
+    /// - Consider using Rust directly for production key management
+    /// 
+    /// For most use cases, you should not need to access the secret key bytes directly.
+    /// Use the Keypair object for signing operations instead.
     fn secret_key_bytes(&self) -> Vec<u8> {
         self.inner.secret_key_bytes().to_vec()
     }

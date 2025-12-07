@@ -44,23 +44,39 @@ def process_request(cluster: str, budget: float, action: str):
 def main():
     print("=== Tenuo ContextVar Pattern (LangChain/FastAPI) ===\n")
     
-    # Create a warrant
-    keypair = Keypair.generate()
-    warrant = Warrant.create(
-        tool="upgrade_cluster",  # Note: functions can use different tools
-        constraints={
-            "cluster": Pattern("staging-*"),
-            "budget": Range.max_value(10000.0)
-        },
-        ttl_seconds=3600,
-        keypair=keypair
-    )
+    # ========================================================================
+    # STEP 1: Create Warrant (SIMULATION - In production, from control plane)
+    # ========================================================================
+    try:
+        # SIMULATION: Generate keypair for demo
+        # In production: Control plane keypair is loaded from secure storage
+        keypair = Keypair.generate()
+        
+        # SIMULATION: Create warrant with hardcoded constraints
+        # HARDCODED: Pattern("staging-*"), Range.max_value(10000.0), ttl_seconds=3600
+        # In production: Constraints come from policy engine or configuration
+        warrant = Warrant.create(
+            tool="upgrade_cluster",  # Note: functions can use different tools
+            constraints={
+                "cluster": Pattern("staging-*"),  # HARDCODED: Only staging clusters for demo
+                "budget": Range.max_value(10000.0)  # HARDCODED: $10k max budget for demo
+            },
+            ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
+            keypair=keypair
+        )
+    except Exception as e:
+        print(f"✗ Error creating warrant: {e}")
+        return
     
-    # Pattern 1: Set warrant in context and process request
+    # ========================================================================
+    # PATTERN 1: Set Warrant in Context (REAL CODE - Production-ready)
+    # ========================================================================
     print("1. Setting warrant in context and processing request...")
     try:
         with set_warrant_context(warrant):
             # All @lockdown functions in this context will use the warrant
+            # HARDCODED VALUES: cluster="staging-web", budget=5000.0, action="restart"
+            # In production: These come from request parameters
             process_request(
                 cluster="staging-web",
                 budget=5000.0,
@@ -68,26 +84,53 @@ def main():
             )
     except AuthorizationError as e:
         print(f"   ✗ Authorization failed: {e}\n")
+    except Exception as e:
+        print(f"   ✗ Unexpected error: {e}\n")
     
-    # Pattern 2: FastAPI middleware example (simulated)
-    print("2. Simulating FastAPI middleware pattern...")
+    # ========================================================================
+    # PATTERN 2: FastAPI Middleware Example (SIMULATION)
+    # ========================================================================
+    print("2. [SIMULATION] Simulating FastAPI middleware pattern...")
     def fastapi_middleware_example(request_warrant: Warrant):
-        """Simulates FastAPI middleware that sets warrant in context."""
-        with set_warrant_context(request_warrant):
-            # Process the request - all protected functions use context warrant
-            upgrade_cluster(cluster="staging-web", budget=3000.0)
-            print("   ✓ FastAPI request processed\n")
+        """
+        [SIMULATION] Simulates FastAPI middleware that sets warrant in context.
+        
+        In production, this would be actual FastAPI middleware:
+            @app.middleware("http")
+            async def tenuo_middleware(request: Request, call_next):
+                warrant = load_warrant_from_header(request.headers)
+                with set_warrant_context(warrant):
+                    return await call_next(request)
+        """
+        try:
+            with set_warrant_context(request_warrant):
+                # Process the request - all protected functions use context warrant
+                # HARDCODED VALUES: cluster="staging-web", budget=3000.0
+                upgrade_cluster(cluster="staging-web", budget=3000.0)
+                print("   ✓ FastAPI request processed\n")
+        except AuthorizationError as e:
+            print(f"   ✗ Authorization failed: {e}\n")
+        except Exception as e:
+            print(f"   ✗ Unexpected error: {e}\n")
     
-    fastapi_middleware_example(warrant)
+    try:
+        fastapi_middleware_example(warrant)
+    except Exception as e:
+        print(f"   ✗ Error in middleware example: {e}\n")
     
-    # Pattern 3: Error when no warrant in context
+    # ========================================================================
+    # PATTERN 3: Error When No Warrant in Context (REAL CODE - Production-ready)
+    # ========================================================================
     print("3. Testing error when no warrant in context...")
     try:
-        # Call without setting context
+        # Call without setting context - should raise AuthorizationError
+        # HARDCODED VALUES: cluster="staging-web", budget=5000.0
         upgrade_cluster(cluster="staging-web", budget=5000.0)
         print("   ✗ Should have raised AuthorizationError!\n")
     except AuthorizationError as e:
-        print(f"   ✓ Correctly raised: {e}\n")
+        print(f"   ✓ Correctly raised: {str(e)[:60]}...\n")
+    except Exception as e:
+        print(f"   ✗ Unexpected error (not AuthorizationError): {e}\n")
     
     # Pattern 4: Nested contexts (context inheritance)
     print("4. Testing nested contexts...")

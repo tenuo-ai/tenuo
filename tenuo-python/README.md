@@ -120,6 +120,52 @@ except AuthorizationError as e:
     print(f"Authorization failed: {e}")
 ```
 
+## LangChain Integration
+
+Tenuo integrates seamlessly with LangChain agents and tools. The key pattern is to:
+
+1. **Decorate your tool functions** with `@lockdown(tool="...")`
+2. **Set the warrant in context** before running the agent
+3. **All tool calls are automatically protected**
+
+### Simple Example
+
+```python
+from tenuo import Keypair, Warrant, Pattern, lockdown, set_warrant_context
+from langchain.tools import Tool
+from langchain.agents import AgentExecutor, create_openai_tools_agent
+from langchain_openai import ChatOpenAI
+
+# 1. Create protected tool function
+@lockdown(tool="read_file", extract_args=lambda file_path, **kwargs: {"file_path": file_path})
+def read_file(file_path: str) -> str:
+    """Read a file. Protected by Tenuo."""
+    with open(file_path, 'r') as f:
+        return f.read()
+
+# 2. Create warrant that restricts access
+keypair = Keypair.generate()
+warrant = Warrant.create(
+    tool="read_file",
+    constraints={"file_path": Pattern("/tmp/*")},  # Only /tmp/ files
+    ttl_seconds=3600,
+    keypair=keypair
+)
+
+# 3. Create LangChain tools and agent
+tools = [Tool(name="read_file", func=read_file, description="Read a file")]
+llm = ChatOpenAI(model="gpt-3.5-turbo")
+agent = create_openai_tools_agent(llm, tools)
+executor = AgentExecutor(agent=agent, tools=tools)
+
+# 4. Run agent with warrant protection
+with set_warrant_context(warrant):
+    response = executor.invoke({"input": "Read /tmp/test.txt"})
+    # Agent can only access files matching Pattern("/tmp/*")
+```
+
+See `examples/langchain_simple.py` for a complete working example, or `examples/langchain_integration.py` for an advanced example with callbacks.
+
 ## MCP Integration
 
 Tenuo provides native support for the [Model Context Protocol](https://modelcontextprotocol.io):
@@ -165,6 +211,24 @@ python examples/mcp_integration.py
 - **[Website](https://tenuo.github.io/tenuo/)**: Landing page and guides
 - **[Rust API](https://docs.rs/tenuo-core)**: Full Rust API documentation
 - **[Examples](examples/)**: Python usage examples
+
+## Security Considerations
+
+### Secret Key Management
+
+The `Keypair.secret_key_bytes()` method creates a copy of the secret key in Python's managed memory. Python's garbage collector does not guarantee secure erasure of secrets, and the key material may persist in memory until garbage collection occurs.
+
+**Best Practices:**
+- **Minimize keypair lifetime**: Create keypairs only when needed and let them go out of scope quickly
+- **Avoid `secret_key_bytes()` unless necessary**: Only call this method when absolutely required (e.g., for key backup/export)
+- **Don't store secret keys in long-lived variables**: Avoid keeping secret key bytes in variables that persist across function calls
+- **Use Rust for production key management**: For high-security deployments, consider using the Rust API directly, which provides better memory safety guarantees
+
+**For most use cases**, you should not need to access secret key bytes directly. The `Keypair` object handles signing operations internally, and you can use `public_key()` to share public keys.
+
+### Memory Safety
+
+Tenuo's Python bindings use PyO3 to wrap the Rust core, providing memory safety from corruption. However, Python's memory management model means that secret material copied into Python objects may persist in memory until garbage collection. This is a standard limitation of Python crypto bindings and is consistent with libraries like `cryptography` and `pyca/cryptography`.
 
 ## License
 
