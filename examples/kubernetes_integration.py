@@ -205,68 +205,6 @@ class ControlPlane:
 
 
 # ============================================================================
-# API Gateway: Local Warrant Attenuation (Offline)
-# ============================================================================
-
-class APIGateway:
-    """
-    API Gateway that attenuates warrants locally per-request.
-    
-    This demonstrates the CORRECT pattern for per-request authorization:
-    1. Gateway enrolls ONCE with Control Plane → receives broad Root Warrant
-    2. Per-request: Gateway ATTENUATES its warrant locally (no network call)
-    3. Attenuated warrant is passed to downstream agents
-    
-    This is an OFFLINE operation - the Control Plane is never contacted
-    per-request. The gateway's keypair is used to sign the attenuated warrant.
-    """
-    
-    def __init__(self, gateway_keypair: Keypair, root_warrant: Warrant):
-        """
-        Initialize gateway with its keypair and root warrant.
-        
-        Args:
-            gateway_keypair: Gateway's own keypair (for signing attenuated warrants)
-            root_warrant: Broad warrant received during enrollment with Control Plane
-        """
-        self.keypair = gateway_keypair
-        self.root_warrant = root_warrant
-    
-    def attenuate_for_request(
-        self,
-        request_metadata: Dict[str, Any],
-        ttl_seconds: int = 300  # Short TTL for request-scoped warrants
-    ) -> Warrant:
-        """
-        Attenuate the gateway's root warrant for a specific request.
-        
-        This is a LOCAL/OFFLINE operation - no Control Plane call.
-        The attenuated warrant is NARROWER than the root warrant.
-        
-        Args:
-            request_metadata: Request context (user_id, tenant, etc.)
-            ttl_seconds: Short TTL for request-scoped warrant
-        
-        Returns:
-            Attenuated warrant bound to this specific request
-        """
-        # Narrow constraints based on request context
-        # These constraints must be SUBSET of root_warrant constraints
-        narrowed_constraints = {
-            "user_id": Exact(request_metadata.get("user_id", "anonymous")),
-            "tenant": Exact(request_metadata.get("tenant", "default")),
-        }
-        
-        # Delegate (attenuate) from root warrant - this is OFFLINE
-        # The new warrant has narrower scope and shorter TTL
-        return self.root_warrant.delegate(
-            constraints=narrowed_constraints,
-            ttl_seconds=min(ttl_seconds, 300),  # Never exceed 5 min for request scope
-            keypair=self.keypair
-        )
-
-
-# ============================================================================
 # Protected Tool Functions
 # ============================================================================
 
@@ -590,44 +528,9 @@ def main():
         return
     
     # ========================================================================
-    # STEP 4: Demonstrate API Gateway Attenuation (OFFLINE)
+    # STEP 4: Simulate Request with Warrant in Header (SIMULATION)
     # ========================================================================
-    print("4. [SIMULATION] API Gateway: Attenuating warrant for request...")
-    try:
-        # SIMULATION: Gateway has its own keypair and a broad root warrant
-        # In production: Gateway enrolls with Control Plane ONCE at startup
-        gateway_keypair = Keypair.generate()
-        
-        # Gateway's root warrant (received during enrollment - broad scope)
-        gateway_root_warrant = Warrant.create(
-            tool="read_file",
-            constraints={
-                "file_path": Pattern("/tmp/*"),
-                "user_id": Pattern("*"),  # Broad: any user
-                "tenant": Pattern("*"),   # Broad: any tenant
-            },
-            ttl_seconds=86400,  # 24 hours - long-lived root warrant
-            keypair=control_keypair,
-            authorized_holder=gateway_keypair.public_key()  # PoP-bound to gateway
-        )
-        
-        # Create API Gateway with its root warrant
-        api_gateway = APIGateway(gateway_keypair, gateway_root_warrant)
-        
-        # Per-request: Attenuate locally (NO network call to Control Plane!)
-        request_metadata = {"user_id": "user-123", "tenant": "acme-corp"}
-        attenuated_warrant = api_gateway.attenuate_for_request(request_metadata)
-        
-        print(f"   ✓ Root warrant scope: user_id=*, tenant=*")
-        print(f"   ✓ Attenuated warrant: user_id=user-123, tenant=acme-corp")
-        print(f"   ✓ Attenuation is OFFLINE - no Control Plane call!\n")
-    except Exception as e:
-        print(f"   ✗ Error in gateway attenuation: {e}\n")
-    
-    # ========================================================================
-    # STEP 5: Simulate Request with Warrant in Header (SIMULATION)
-    # ========================================================================
-    print("5. [SIMULATION] Simulating request with warrant in header...")
+    print("4. [SIMULATION] Simulating request with warrant in header...")
     try:
         # SIMULATION: Create mock request headers
         # In production: Headers come from HTTP request (FastAPI, Flask, etc.)
@@ -644,9 +547,9 @@ def main():
         print(f"   ✗ Error loading warrant from request: {e}\n")
     
     # ========================================================================
-    # STEP 6: Demonstrate Protection (REAL CODE - Production-ready)
+    # STEP 5: Demonstrate Protection (REAL CODE - Production-ready)
     # ========================================================================
-    print("6. Testing protection with loaded warrant...")
+    print("5. Testing protection with loaded warrant...")
     try:
         with set_warrant_context(agent_warrant):
             # Test authorized access
@@ -673,18 +576,18 @@ def main():
         print(f"   ✗ Error in protection test: {e}\n")
     
     # ========================================================================
-    # STEP 7: Show Deployment Pattern (DOCUMENTATION)
+    # STEP 6: Show Deployment Pattern (DOCUMENTATION)
     # ========================================================================
-    print("7. Kubernetes Deployment Pattern:")
+    print("6. Kubernetes Deployment Pattern:")
     print("   - Control Plane issues warrant at ENROLLMENT (once)")
     print("   - Agent pods mount secret → Load warrant at startup")
-    print("   - API Gateway attenuates locally per-request (offline)")
+    print("   - Warrants passed in headers from upstream services")
     print("   - All @lockdown functions automatically protected\n")
     
     print("=== Kubernetes Integration Complete ===\n")
     print("Key Points:")
     print("  ✓ Warrants loaded from K8s Secrets/ConfigMaps")
-    print("  ✓ API Gateway attenuates warrants locally (no Control Plane call)")
+    print("  ✓ Warrants passed through in request headers")
     print("  ✓ ContextVar works across async boundaries (FastAPI)")
     print("  ✓ No network calls - 100% offline verification")
     print("  ✓ Works across multiple pods/replicas")
