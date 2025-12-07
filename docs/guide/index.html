@@ -370,42 +370,6 @@
             <h2 id="quick-start">Quick Start</h2>
             
             <h3>Python</h3>
-            <p>Add to your Rust project:</p>
-            <pre><code>[dependencies]
-tenuo-core = "0.1"</code></pre>
-
-            <p><strong>1. Create a warrant</strong></p>
-            <pre><code>use tenuo_core::{Keypair, Warrant, Pattern, Range};
-use std::time::Duration;
-
-let keypair = Keypair::generate();
-let warrant = Warrant::builder()
-    .tool("manage_infrastructure")
-    .constraint("cluster", Pattern::new("staging-*")?)
-    .constraint("budget", Range::max(1000.0))
-    .ttl(Duration::from_secs(3600))
-    .build(&keypair)?;</code></pre>
-
-            <p><strong>2. Attenuate and delegate</strong></p>
-            <pre><code>let worker_keypair = Keypair::generate();
-let worker_warrant = warrant.attenuate()
-    .constraint("cluster", Exact::new("staging-web"))
-    .constraint("budget", Range::max(100.0))
-    .authorized_holder(worker_keypair.public_key())
-    .build(&keypair)?;</code></pre>
-
-            <p><strong>3. Verify and authorize</strong></p>
-            <pre><code>use tenuo_core::Authorizer;
-
-let authorizer = Authorizer::new(keypair.public_key());
-let chain = vec![warrant, worker_warrant];
-
-// Worker signs the request (Proof-of-Possession)
-let sig = worker_warrant.create_pop_signature(
-    "manage_infrastructure", &args, &worker_keypair
-);
-
-authorizer.authorize(&chain, "manage_infrastructure", &args, Some(&sig), &[])?;</code></pre>
 
             <p>Install the Python SDK:</p>
             <pre><code>pip install tenuo</code></pre>
@@ -478,6 +442,42 @@ with set_warrant_context(warrant):
             <p>See <a href="../../tenuo-python/">tenuo-python/README.md</a> for full documentation and examples.</p>
 
             <h3>Rust</h3>
+            <p>Add to your Rust project:</p>
+            <pre><code>[dependencies]
+tenuo-core = "0.1"</code></pre>
+
+            <p><strong>1. Create a warrant</strong></p>
+            <pre><code>use tenuo_core::{Keypair, Warrant, Pattern, Range};
+use std::time::Duration;
+
+let keypair = Keypair::generate();
+let warrant = Warrant::builder()
+    .tool("manage_infrastructure")
+    .constraint("cluster", Pattern::new("staging-*")?)
+    .constraint("budget", Range::max(10000.0))
+    .ttl(Duration::from_secs(3600))
+    .build(&keypair)?;</code></pre>
+
+            <p><strong>2. Attenuate and delegate</strong></p>
+            <pre><code>let worker_keypair = Keypair::generate();
+let worker_warrant = warrant.attenuate()
+    .constraint("cluster", Exact::new("staging-web"))
+    .constraint("budget", Range::max(1000.0))
+    .authorized_holder(worker_keypair.public_key())
+    .build(&keypair)?;</code></pre>
+
+            <p><strong>3. Verify and authorize</strong></p>
+            <pre><code>use tenuo_core::Authorizer;
+
+let authorizer = Authorizer::new(keypair.public_key());
+let chain = vec![warrant, worker_warrant];
+
+// Worker signs the request (Proof-of-Possession)
+let sig = worker_warrant.create_pop_signature(
+    "manage_infrastructure", &args, &worker_keypair
+);
+
+authorizer.authorize(&chain, "manage_infrastructure", &args, Some(&sig), &[])?;</code></pre>
 
             <h2 id="demo">Demo</h2>
             <p>
