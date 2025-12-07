@@ -18,9 +18,8 @@ def main():
     # HARDCODED PATH: Try multiple locations for demo
     # In production: Use env var or config to specify path
     config_paths = [
-        "../../examples/mcp-config.yaml",  # From tenuo-python/examples/
-        "../examples/mcp-config.yaml",    # Alternative path
-        "examples/mcp-config.yaml",        # From repo root
+        "mcp-config.yaml",                 # From examples/ directory
+        "../examples/mcp-config.yaml",     # Alternative path
     ]
     
     config = None

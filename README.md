@@ -178,7 +178,7 @@ This demonstrates the complete flow: warrant issuance, attenuation, delegation, 
 - **Cryptographic provenance**: Every tool call is authorized by a warrant chain
 - **Multi-agent workflows**: Perfect for orchestrators delegating to specialized workers
 
-See the [MCP module documentation](https://docs.rs/tenuo-core/latest/tenuo_core/mcp/index.html) and [Python SDK examples](tenuo-python/examples/mcp_integration.py) for details.
+See the [MCP module documentation](https://docs.rs/tenuo-core/latest/tenuo_core/mcp/index.html) and [Python SDK examples](examples/mcp_integration.py) for details.
 
 ## Where Tenuo Fits
 

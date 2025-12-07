@@ -377,7 +377,10 @@ spec:
     spec:
       serviceAccountName: langchain-agent
       initContainers:
-      # Optional: Fetch warrant from control plane at startup
+      # Feature: Fetch initial warrant before the main app starts to ensure secure-by-default.
+      # The init container runs once at pod startup, fetches warrant from control plane (online),
+      # and writes it to a shared volume. The main container then loads it at startup (offline).
+      # This ensures the app never runs without a warrant - secure-by-default.
       - name: fetch-warrant
         image: tenuo/fetch-warrant:latest
         env:

@@ -195,6 +195,7 @@
             padding: 16px;
             overflow-x: auto;
             margin: 0;
+            white-space: pre;
         }
 
         .code-block pre code {
@@ -242,6 +243,7 @@
         pre code {
             background: none;
             padding: 0;
+            white-space: pre;
         }
 
         .tip {
@@ -994,54 +996,118 @@ srl.revoke(worker_warrant_id);</code></pre>
             </p>
 
             <h3>1. Deploy Control Plane</h3>
-            <p>Start the Control Plane service. It generates its root keypair and becomes your trust anchor.</p>
-            <pre><code>$ export TENUO_BIND_ADDR=0.0.0.0:8080
+            <p>Start the Control Plane service. It loads an existing keypair or generates a new one. The public key is derived from the secret key and must be shared with all data planes.</p>
+            <pre><code># Generate enrollment token (shared secret for agent enrollment)
 $ export TENUO_ENROLLMENT_TOKEN=$(openssl rand -hex 32)
-$ export TENUO_SECRET_KEY=$(openssl rand -hex 32)  # Optional: use existing key
-$ tenuo-control</code></pre>
+
+# Option 1: Generate NEW keypair (dev/testing)
+# Don't set TENUO_SECRET_KEY - control plane calls Keypair::generate()
+# WARNING: Ephemeral key - not for production!
+
+# Option 2: Use EXISTING keypair (production)
+# Set TENUO_SECRET_KEY to hex-encoded secret key (64 hex chars = 32 bytes)
+# Control plane uses Keypair::from_bytes() to recreate keypair
+# Public key is automatically derived from secret key via Ed25519
+$ export TENUO_SECRET_KEY=your_existing_secret_key_hex_here
+
+# Optional: Bind address (default: 0.0.0.0:8080)
+$ export TENUO_BIND_ADDR=0.0.0.0:8080
+
+$ tenuo-control
+
+# Output: Control Plane public key (derived from secret key via Ed25519)
+# Share this public key with all data planes for verification
+Public Key: f32e74b5b856...</code></pre>
 
             <h3>2. Configure Gateway</h3>
-            <p>Define how HTTP request fields map to warrant constraints using a YAML configuration file.</p>
+            <p>Define how HTTP request fields map to warrant constraints using a YAML configuration file. The gateway extracts values from requests and checks them against warrant constraints.</p>
             <pre><code># gateway-config.yaml
 tools:
   manage_cluster:
     constraints:
       cluster:
         from: path
-        path: "cluster"
+        path: "cluster"  # Extracts from /api/v1/clusters/{cluster}/scale
         required: true
+        # Used to match Pattern("staging-*") or Exact("staging-web")
       cost:
         from: body
         path: "metadata.estimatedCost"
-        type: float</code></pre>
+        type: float
+        # Used to check Range constraints (e.g., cost ≤ 100.0)
+      max_replicas:
+        from: body
+        path: "spec.replicas"
+        type: integer
+        # Used to check Range constraints (e.g., replicas ≤ 10)
+
+routes:
+  - pattern: "/api/v1/clusters/{cluster}/scale"
+    method: ["POST", "PUT"]
+    tool: "manage_cluster"</code></pre>
 
             <h3>3. Enroll Agents</h3>
-            <p>Orchestrators generate their own keypairs and enroll with the Control Plane to receive root warrants.</p>
-            <pre><code>let keypair = Keypair::generate();
+            <p>Orchestrators generate their own Ed25519 keypairs locally. Each keypair contains both a private key (for signing) and a public key (for verification). The public key is mathematically derived from the private key. They create a Proof-of-Possession (PoP) signature and enroll with the Control Plane to receive root warrants.</p>
+            <pre><code>// Generate Ed25519 keypair (creates both private and public key)
+let keypair = Keypair::generate();
+let pubkey_hex = hex::encode(keypair.public_key().to_bytes());
+
+// Create PoP signature (proves ownership of the private key)
+// The signature can be verified using the public key
+let pop_msg = format!("enroll:{}:{}", pubkey_hex, timestamp);
+let pop_sig = keypair.sign(pop_msg.as_bytes());
 
 // Enroll with Control Plane
 POST /v1/enroll {
-  "public_key": "a1b2c3...",
-  "signature": "...",  // PoP
-  "constraints": { "cluster": "staging-*" }
-}</code></pre>
+  "public_key_hex": "a1b2c3...",
+  "pop_signature_hex": "d4e5f6...",
+  "enrollment_token": "...",
+  "constraints": {
+    "cluster": "staging-*",      // Pattern: matches staging-web, staging-db, etc.
+    "cost": "*",                 // Wildcard: any cost allowed initially
+    "max_replicas": "*"          // Wildcard: any replica count allowed initially
+  }
+}
+
+// Response: Root warrant with constraints
+{ "warrant_base64": "..." }</code></pre>
 
             <h3>4. Attenuate & Delegate</h3>
-            <p>Parent agents attenuate warrants before delegating to children. Constraints can only shrink.</p>
-            <pre><code>let child = parent.attenuate()
-    .constraint("cluster", Exact::new("staging-web"))
-    .constraint("cost", Range::new(0.0, 100.0))
-    .build(&worker_keypair)?;</code></pre>
+            <p>Orchestrator creates a narrower warrant for the worker by attenuating constraints. The child warrant can only restrict (shrink) the parent's scope—never expand it. This is cryptographically enforced.</p>
+            <pre><code>// Orchestrator narrows constraints before delegating
+// Parent: cluster="staging-*", cost="*", max_replicas="*"
+// Child:  cluster="staging-web" (exact), cost≤100.0, max_replicas≤10
+let child = parent.attenuate()
+    .constraint("cluster", Exact::new("staging-web"))    // Narrowed from Pattern
+    .constraint("cost", Range::new(0.0, 100.0))          // Narrowed from Wildcard
+    .constraint("max_replicas", Range::new(0, 10))       // Narrowed from Wildcard
+    .authorized_holder(worker_keypair.public_key())
+    .build(&orchestrator_keypair)?;</code></pre>
 
             <h3>5. Extract & Authorize</h3>
-            <p>The gateway extracts values from incoming requests, verifies the warrant chain, and checks constraints.</p>
-            <pre><code>POST /api/v1/clusters/staging-web/scale
-X-Tenuo-Chain: &lt;base64 warrant chain&gt;
-X-Tenuo-PoP: &lt;signature&gt;
+            <p>Gateway uses the config to extract values from the HTTP request, verifies the warrant chain signatures, checks PoP signature, and validates that extracted values satisfy all constraints. All verification happens offline (~25μs).</p>
+            <pre><code>// Worker sends request with warrant chain
+POST /api/v1/clusters/staging-web/scale
+X-Tenuo-Chain: &lt;base64 warrant chain&gt;  // Root → Orchestrator → Worker
+X-Tenuo-PoP: &lt;signature&gt;  // Worker's Proof-of-Possession
+{ "spec": { "replicas": 5 },
+  "metadata": { "estimatedCost": 50.0 }}
 
-// Extracted constraints:
-// cluster: "staging-web" ✓ matches Exact
-// cost: 50.0 ✓ within Range(0, 100)</code></pre>
+// Gateway extracts using config (Phase 2):
+// - cluster from path parameter {cluster}
+// - cost from body.metadata.estimatedCost
+// - max_replicas from body.spec.replicas
+cluster: "staging-web"      // from path /api/v1/clusters/{cluster}/scale
+cost: 50.0                  // from body.metadata.estimatedCost
+max_replicas: 5            // from body.spec.replicas
+
+// Gateway verifies:
+// ✓ Chain signatures valid
+// ✓ PoP signature valid
+// ✓ cluster="staging-web" matches Exact("staging-web")
+// ✓ cost=50.0 within Range(0.0, 100.0)
+// ✓ max_replicas=5 within Range(0, 10)
+// → Authorized</code></pre>
 
             <h2 id="gateway-config">Gateway Configuration</h2>
             <p>

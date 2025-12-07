@@ -19,18 +19,12 @@ from tenuo import (
 from typing import Optional, Dict, Any
 import os
 
-# Try to import LangChain components
-try:
-    from langchain.tools import Tool
-    from langchain.agents import AgentExecutor, create_openai_tools_agent
-    from langchain_openai import ChatOpenAI
-    from langchain.callbacks.base import BaseCallbackHandler
-    from langchain.schema import AgentAction, AgentFinish, LLMResult
-    LANGCHAIN_AVAILABLE = True
-except ImportError:
-    LANGCHAIN_AVAILABLE = False
-    print("Warning: LangChain not installed. Install with: pip install langchain langchain-openai")
-    print("   This example will show the integration pattern without running the agent.\n")
+# LangChain imports (required for this example)
+from langchain.tools import Tool
+from langchain.agents import AgentExecutor, create_openai_tools_agent
+from langchain_openai import ChatOpenAI
+from langchain.callbacks.base import BaseCallbackHandler
+from langchain.schema import AgentAction, AgentFinish, LLMResult
 
 
 # ============================================================================
@@ -120,7 +114,7 @@ def execute_command_tool(command: str) -> str:
 # LangChain Callback to Set Warrant Context
 # ============================================================================
 
-class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else object):
+class TenuoWarrantCallback(BaseCallbackHandler):
     """
     LangChain callback that sets the warrant in context before tool execution.
     
@@ -134,28 +128,25 @@ class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else objec
     """
     
     def __init__(self, warrant: Warrant):
-        if LANGCHAIN_AVAILABLE:
-            super().__init__()
+        super().__init__()
         self.warrant = warrant
-        self.context_manager = None
+        self.context_token = None  # Store the token to reset ContextVar correctly
     
     def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs) -> None:
         """Called when a tool starts executing. Set warrant in context."""
-        if LANGCHAIN_AVAILABLE:
-            # Set warrant in context for this tool execution
-            from tenuo.decorators import _warrant_context
-            self.context_token = _warrant_context.set(self.warrant)
+        from tenuo.decorators import _warrant_context
+        self.context_token = _warrant_context.set(self.warrant)
     
     def on_tool_end(self, output: str, **kwargs) -> None:
         """Called when a tool finishes. Clean up context."""
-        if LANGCHAIN_AVAILABLE and self.context_token:
+        if self.context_token:
             from tenuo.decorators import _warrant_context
             _warrant_context.reset(self.context_token)
             self.context_token = None
     
     def on_tool_error(self, error: Exception, **kwargs) -> None:
         """Called when a tool errors. Clean up context."""
-        if LANGCHAIN_AVAILABLE and self.context_token:
+        if self.context_token:
             from tenuo.decorators import _warrant_context
             _warrant_context.reset(self.context_token)
             self.context_token = None
@@ -227,58 +218,7 @@ def main():
         print(f"   ✗ Error creating warrant: {e}")
         return
     
-    # ========================================================================
-    # STEP 2: Handle Missing LangChain (SIMULATION MODE)
-    # ========================================================================
-    if not LANGCHAIN_AVAILABLE:
-        print("2. [SIMULATION] LangChain not installed - demonstrating pattern...")
-        print("   Install with: pip install langchain langchain-openai\n")
-        
-        # Show how it would work
-        print("   With LangChain installed, you would:")
-        print("   a. Create tools from protected functions")
-        print("   b. Create agent with tools")
-        print("   c. Set warrant in callback context")
-        print("   d. Execute agent - all tool calls are automatically authorized\n")
-        
-        # Demonstrate the protection works even without LangChain
-        print("3. Demonstrating protection (without LangChain)...")
-        
-        # HARDCODED PATH: /tmp/langchain_test.txt for demo
-        # In production: Use tempfile or env-specified test directory
-        test_file = "/tmp/langchain_test.txt"
-        try:
-            with open(test_file, 'w') as f:
-                f.write("Hello from Tenuo + LangChain!")
-        except (IOError, OSError) as e:
-            print(f"   ⚠ Warning: Could not create test file: {e}")
-            print("   Continuing with authorization test...\n")
-        
-        # Test authorized access
-        with set_warrant_context(agent_warrant):
-            try:
-                result = read_file_tool(test_file)
-                print(f"   ✓ read_file('{test_file}'): Allowed (matches Pattern('/tmp/*'))")
-            except AuthorizationError as e:
-                print(f"   ✗ Unexpected authorization error: {e}")
-            except Exception as e:
-                print(f"   ✗ Unexpected error: {e}")
-        
-        # Test blocked access
-        try:
-            with set_warrant_context(agent_warrant):
-                read_file_tool("/etc/passwd")  # HARDCODED: Protected system file for demo
-            print("   ✗ Should have been blocked!")
-        except AuthorizationError as e:
-            print(f"   ✓ Correctly blocked read_file('/etc/passwd'): {str(e)[:60]}...")
-        except Exception as e:
-            print(f"   ✗ Unexpected error: {e}")
-        
-        return
-    
-    # ========================================================================
-    # STEP 3: Check for OpenAI API Key (ENV VARIABLE)
-    # ========================================================================
+    # 2. Check for OpenAI API key
     openai_api_key = os.getenv("OPENAI_API_KEY")
     if not openai_api_key:
         print("⚠️  OPENAI_API_KEY not set. Set it to run the full example.")

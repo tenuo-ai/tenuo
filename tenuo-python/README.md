@@ -105,7 +105,7 @@ with set_warrant_context(warrant):
     upgrade_cluster(cluster="staging-web", budget=5000.0)
 ```
 
-See `examples/context_pattern.py` for a complete LangChain/FastAPI integration example.
+See [`examples/context_pattern.py`](../examples/context_pattern.py) for a complete LangChain/FastAPI integration example.
 
 ### Exceptions
 
@@ -164,7 +164,7 @@ with set_warrant_context(warrant):
     # Agent can only access files matching Pattern("/tmp/*")
 ```
 
-See `examples/langchain_simple.py` for a complete working example, or `examples/langchain_integration.py` for an advanced example with callbacks.
+See [`examples/langchain_simple.py`](../examples/langchain_simple.py) for a complete working example, or [`examples/langchain_integration.py`](../examples/langchain_integration.py) for an advanced example with callbacks.
 
 ## MCP Integration
 
@@ -186,7 +186,7 @@ warrant = Warrant.from_base64(warrant_chain_base64)
 authorized = warrant.authorize("filesystem_read", result.constraints)
 ```
 
-See `examples/mcp_integration.py` for a complete example.
+See [`examples/mcp_integration.py`](../examples/mcp_integration.py) for a complete example.
 
 ## Examples
 
@@ -204,13 +204,26 @@ python examples/decorator_example.py
 
 # MCP integration
 python examples/mcp_integration.py
+
+# Constraints demonstration
+python examples/constraints.py
+
+# Control plane implementation
+python examples/control_plane.py
+
+# Kubernetes integration
+python examples/kubernetes_integration.py
+
+# LangChain integration
+python examples/langchain_simple.py
+python examples/langchain_integration.py
 ```
 
 ## Documentation
 
 - **[Website](https://tenuo.github.io/tenuo/)**: Landing page and guides
 - **[Rust API](https://docs.rs/tenuo-core)**: Full Rust API documentation
-- **[Examples](examples/)**: Python usage examples
+- **[Examples](../examples/)**: Python usage examples
 
 ## Security Considerations
 

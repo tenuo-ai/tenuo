@@ -35,6 +35,12 @@ Documentation = "https://tenuo.github.io/tenuo/"
 Repository = "https://github.com/tenuo/tenuo"
 Issues = "https://github.com/tenuo/tenuo/issues"
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
 [tool.maturin]
 module-name = "tenuo_core"
 python-source = "."

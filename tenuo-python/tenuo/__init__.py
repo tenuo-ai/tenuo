@@ -10,6 +10,7 @@ from tenuo_core import (
     Keypair,
     Warrant,
     PublicKey,
+    Signature,
     Authorizer,
     
     # Constraints
@@ -22,12 +23,15 @@ from tenuo_core import (
     # MCP integration
     McpConfig,
     CompiledMcpConfig,
+    ExtractionResult,
     
     # Constants
     MAX_DELEGATION_DEPTH,
     WIRE_VERSION,
     WARRANT_HEADER,
 )
+
+# Note: Signature is now exported from tenuo_core (added in python.rs)
 
 # Import Pythonic additions
 from .exceptions import (
@@ -41,7 +45,10 @@ from .decorators import (
     lockdown,
     get_warrant_context,
     set_warrant_context,
+    get_keypair_context,
+    set_keypair_context,
     WarrantContext,
+    KeypairContext,
 )
 
 # Re-export everything for clean imports
@@ -50,6 +57,7 @@ __all__ = [
     "Keypair",
     "Warrant",
     "PublicKey",
+    "Signature",
     "Authorizer",
     
     # Constraints
@@ -62,6 +70,7 @@ __all__ = [
     # MCP integration
     "McpConfig",
     "CompiledMcpConfig",
+    "ExtractionResult",
     
     # Constants
     "MAX_DELEGATION_DEPTH",
@@ -77,7 +86,10 @@ __all__ = [
     "lockdown",
     "get_warrant_context",
     "set_warrant_context",
+    "get_keypair_context",
+    "set_keypair_context",
     "WarrantContext",
+    "KeypairContext",
 ]
 
 __version__ = "0.1.0"

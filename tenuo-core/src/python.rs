@@ -211,6 +211,19 @@ impl PyKeypair {
             inner: self.inner.public_key(),
         }
     }
+
+    /// Sign a message with this keypair.
+    /// 
+    /// Args:
+    ///     message: The message bytes to sign
+    /// 
+    /// Returns:
+    ///     A Signature object
+    fn sign(&self, message: &[u8]) -> PySignature {
+        PySignature {
+            inner: self.inner.sign(message),
+        }
+    }
 }
 
 /// Convert a Python constraint object to a Rust Constraint.
@@ -255,15 +268,24 @@ pub struct PyWarrant {
 
 #[pymethods]
 impl PyWarrant {
-    /// Create a new warrant builder.
+    /// Create a new warrant.
+    /// 
+    /// Args:
+    ///     tool: Tool name this warrant authorizes
+    ///     constraints: Dictionary of constraint_name -> Constraint object
+    ///     ttl_seconds: Time-to-live in seconds
+    ///     keypair: Keypair to sign the warrant
+    ///     session_id: Optional session identifier
+    ///     authorized_holder: Optional public key - if set, holder must prove possession (PoP)
     #[staticmethod]
-    #[pyo3(signature = (tool, constraints, ttl_seconds, keypair, session_id=None))]
+    #[pyo3(signature = (tool, constraints, ttl_seconds, keypair, session_id=None, authorized_holder=None))]
     fn create(
         tool: &str,
         constraints: &Bound<'_, PyDict>,
         ttl_seconds: u64,
         keypair: &PyKeypair,
         session_id: Option<&str>,
+        authorized_holder: Option<&PyPublicKey>,
     ) -> PyResult<Self> {
         let mut builder = RustWarrant::builder()
             .tool(tool)
@@ -271,6 +293,10 @@ impl PyWarrant {
 
         if let Some(sid) = session_id {
             builder = builder.session_id(sid);
+        }
+
+        if let Some(holder) = authorized_holder {
+            builder = builder.authorized_holder(holder.inner.clone());
         }
 
         for (key, value) in constraints.iter() {
@@ -318,20 +344,62 @@ impl PyWarrant {
         self.inner.is_expired()
     }
 
+    /// Get the issuer's public key.
+    #[getter]
+    fn issuer(&self) -> PyPublicKey {
+        PyPublicKey {
+            inner: self.inner.issuer().clone(),
+        }
+    }
+
+    /// Get the authorized holder's public key (if set).
+    /// 
+    /// When set, the holder must prove possession of the corresponding
+    /// private key to use this warrant (Proof-of-Possession).
+    #[getter]
+    fn authorized_holder(&self) -> Option<PyPublicKey> {
+        self.inner.authorized_holder().map(|pk| PyPublicKey {
+            inner: pk.clone(),
+        })
+    }
+
+    /// Check if this warrant requires Proof-of-Possession.
+    #[getter]
+    fn requires_pop(&self) -> bool {
+        self.inner.requires_pop()
+    }
+
+    /// Get the expiration time as an RFC3339 string.
+    #[getter]
+    fn expires_at(&self) -> String {
+        self.inner.expires_at().to_rfc3339()
+    }
+
     /// Attenuate this warrant with additional constraints.
     ///
+    /// Args:
+    ///     constraints: Dictionary of constraint_name -> Constraint object
+    ///     keypair: Keypair to sign the attenuated warrant
+    ///     ttl_seconds: Optional TTL (must be <= parent's remaining TTL)
+    ///     authorized_holder: Optional public key - if set, holder must prove possession (PoP)
+    ///
     /// Note: session_id is immutable and inherited from the parent warrant.
-    #[pyo3(signature = (constraints, keypair, ttl_seconds=None))]
+    #[pyo3(signature = (constraints, keypair, ttl_seconds=None, authorized_holder=None))]
     fn attenuate(
         &self,
         constraints: &Bound<'_, PyDict>,
         keypair: &PyKeypair,
         ttl_seconds: Option<u64>,
+        authorized_holder: Option<&PyPublicKey>,
     ) -> PyResult<PyWarrant> {
         let mut builder = self.inner.attenuate();
 
         if let Some(ttl) = ttl_seconds {
             builder = builder.ttl(Duration::from_secs(ttl));
+        }
+
+        if let Some(holder) = authorized_holder {
+            builder = builder.authorized_holder(holder.inner.clone());
         }
 
         for (key, value) in constraints.iter() {
@@ -349,12 +417,12 @@ impl PyWarrant {
     /// Args:
     ///     tool: Tool name to authorize
     ///     args: Dictionary of argument name -> value
-    ///     signature: Optional signature bytes for Proof-of-Possession (64 bytes)
+    ///     signature: Optional Signature object for Proof-of-Possession
     /// 
     /// Returns:
-    ///     True if authorized, False if constraint not satisfied
+    ///     True if authorized, False if constraint not satisfied, PoP missing, or PoP invalid
     #[pyo3(signature = (tool, args, signature=None))]
-    fn authorize(&self, tool: &str, args: &Bound<'_, PyDict>, signature: Option<&[u8]>) -> PyResult<bool> {
+    fn authorize(&self, tool: &str, args: &Bound<'_, PyDict>, signature: Option<&PySignature>) -> PyResult<bool> {
         let mut rust_args = HashMap::new();
         for (key, value) in args.iter() {
             let field: String = key.extract()?;
@@ -362,33 +430,24 @@ impl PyWarrant {
             rust_args.insert(field, cv);
         }
 
-        // Convert signature bytes to Signature if provided
-        let sig = match signature {
-            Some(bytes) => {
-                let arr: [u8; 64] = bytes
-                    .try_into()
-                    .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
-                Some(crate::crypto::Signature::from_bytes(&arr).map_err(to_py_err)?)
-            }
-            None => None,
-        };
-
-        match self.inner.authorize(tool, &rust_args, sig.as_ref()) {
+        match self.inner.authorize(tool, &rust_args, signature.map(|s| &s.inner)) {
             Ok(()) => Ok(true),
             Err(crate::error::Error::ConstraintNotSatisfied { .. }) => Ok(false),
             Err(crate::error::Error::MissingSignature(_)) => Ok(false),
+            Err(crate::error::Error::SignatureInvalid(_)) => Ok(false),
             Err(e) => Err(to_py_err(e)),
         }
     }
 
-    /// Verify the warrant signature.
-    fn verify(&self, public_key_bytes: &[u8]) -> PyResult<bool> {
-        let arr: [u8; 32] = public_key_bytes
-            .try_into()
-            .map_err(|_| PyValueError::new_err("public key must be exactly 32 bytes"))?;
-        let pk = crate::crypto::PublicKey::from_bytes(&arr).map_err(to_py_err)?;
-
-        match self.inner.verify(&pk) {
+    /// Verify the warrant signature against an issuer's public key.
+    /// 
+    /// Args:
+    ///     public_key: The expected issuer's PublicKey object
+    /// 
+    /// Returns:
+    ///     True if signature is valid, False otherwise
+    fn verify(&self, public_key: &PyPublicKey) -> PyResult<bool> {
+        match self.inner.verify(&public_key.inner) {
             Ok(()) => Ok(true),
             Err(_) => Ok(false),
         }
@@ -400,13 +459,13 @@ impl PyWarrant {
     /// The keypair should match the authorized_holder on the warrant.
     /// 
     /// Args:
-    ///     keypair: The PyKeypair to sign with
+    ///     keypair: The Keypair to sign with (must match authorized_holder)
     ///     tool: Tool name being called
     ///     args: Dictionary of argument name -> value
     /// 
     /// Returns:
-    ///     64-byte signature as bytes
-    fn create_pop_signature(&self, keypair: &PyKeypair, tool: &str, args: &Bound<'_, PyDict>) -> PyResult<Vec<u8>> {
+    ///     A Signature object to pass to authorize()
+    fn create_pop_signature(&self, keypair: &PyKeypair, tool: &str, args: &Bound<'_, PyDict>) -> PyResult<PySignature> {
         let mut rust_args = HashMap::new();
         for (key, value) in args.iter() {
             let field: String = key.extract()?;
@@ -416,7 +475,7 @@ impl PyWarrant {
 
         let sig = self.inner.create_pop_signature(&keypair.inner, tool, &rust_args)
             .map_err(to_py_err)?;
-        Ok(sig.to_bytes().to_vec())
+        Ok(PySignature { inner: sig })
     }
 
     /// Encode the warrant to base64 (for HTTP headers).
@@ -533,6 +592,7 @@ impl PyExtractionResult {
 
 /// Python wrapper for PublicKey.
 #[pyclass(name = "PublicKey")]
+#[derive(Clone)]
 pub struct PyPublicKey {
     inner: RustPublicKey,
 }
@@ -555,6 +615,58 @@ impl PyPublicKey {
     fn __repr__(&self) -> String {
         let bytes = self.inner.to_bytes();
         format!("PublicKey({:02x}{:02x}{:02x}{:02x}...)", 
+                bytes[0], bytes[1], bytes[2], bytes[3])
+    }
+
+    fn __eq__(&self, other: &PyPublicKey) -> bool {
+        self.inner.to_bytes() == other.inner.to_bytes()
+    }
+
+    fn __hash__(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.inner.to_bytes().hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Verify a signature against a message.
+    /// 
+    /// Args:
+    ///     message: The message bytes that were signed
+    ///     signature: The Signature object to verify
+    /// 
+    /// Returns:
+    ///     True if signature is valid, False otherwise
+    fn verify(&self, message: &[u8], signature: &PySignature) -> bool {
+        self.inner.verify(message, &signature.inner).is_ok()
+    }
+}
+
+/// Python wrapper for Signature.
+#[pyclass(name = "Signature")]
+#[derive(Clone)]
+pub struct PySignature {
+    inner: RustSignature,
+}
+
+#[pymethods]
+impl PySignature {
+    #[staticmethod]
+    fn from_bytes(bytes: &[u8]) -> PyResult<Self> {
+        let arr: [u8; 64] = bytes
+            .try_into()
+            .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
+        let inner = RustSignature::from_bytes(&arr).map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        self.inner.to_bytes().to_vec()
+    }
+
+    fn __repr__(&self) -> String {
+        let bytes = self.inner.to_bytes();
+        format!("Signature({:02x}{:02x}{:02x}{:02x}...)", 
                 bytes[0], bytes[1], bytes[2], bytes[3])
     }
 }
@@ -585,7 +697,7 @@ impl PyAuthorizer {
     ///     warrant: The warrant to check
     ///     tool: Tool name being invoked
     ///     args: Dictionary of argument name -> value
-    ///     signature: Optional PoP signature bytes (64 bytes)
+    ///     signature: Optional PoP Signature object
     /// 
     /// Returns:
     ///     None on success, raises exception on failure
@@ -595,7 +707,7 @@ impl PyAuthorizer {
         warrant: &PyWarrant,
         tool: &str,
         args: &Bound<'_, PyDict>,
-        signature: Option<&[u8]>,
+        signature: Option<&PySignature>,
     ) -> PyResult<()> {
         let mut rust_args = HashMap::new();
         for (key, value) in args.iter() {
@@ -604,28 +716,27 @@ impl PyAuthorizer {
             rust_args.insert(field, cv);
         }
 
-        let sig = match signature {
-            Some(bytes) => {
-                let arr: [u8; 64] = bytes
-                    .try_into()
-                    .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
-                Some(RustSignature::from_bytes(&arr).map_err(to_py_err)?)
-            }
-            None => None,
-        };
-
-        self.inner.authorize(&warrant.inner, tool, &rust_args, sig.as_ref(), &[])
+        self.inner.authorize(&warrant.inner, tool, &rust_args, signature.map(|s| &s.inner), &[])
             .map_err(to_py_err)
     }
 
     /// Convenience: verify warrant and authorize in one call.
+    /// 
+    /// Args:
+    ///     warrant: The warrant to check
+    ///     tool: Tool name being invoked
+    ///     args: Dictionary of argument name -> value
+    ///     signature: Optional PoP Signature object
+    /// 
+    /// Returns:
+    ///     None on success, raises exception on failure
     #[pyo3(signature = (warrant, tool, args, signature=None))]
     fn check(
         &self,
         warrant: &PyWarrant,
         tool: &str,
         args: &Bound<'_, PyDict>,
-        signature: Option<&[u8]>,
+        signature: Option<&PySignature>,
     ) -> PyResult<()> {
         let mut rust_args = HashMap::new();
         for (key, value) in args.iter() {
@@ -634,17 +745,7 @@ impl PyAuthorizer {
             rust_args.insert(field, cv);
         }
 
-        let sig = match signature {
-            Some(bytes) => {
-                let arr: [u8; 64] = bytes
-                    .try_into()
-                    .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
-                Some(RustSignature::from_bytes(&arr).map_err(to_py_err)?)
-            }
-            None => None,
-        };
-
-        self.inner.check(&warrant.inner, tool, &rust_args, sig.as_ref(), &[])
+        self.inner.check(&warrant.inner, tool, &rust_args, signature.map(|s| &s.inner), &[])
             .map_err(to_py_err)
     }
 }
@@ -679,17 +780,25 @@ fn constraint_value_to_py(py: Python<'_>, cv: &ConstraintValue) -> PyResult<PyOb
 /// This function is public so it can be called from tenuo-python package.
 #[pymodule]
 pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Constraints
     m.add_class::<PyPattern>()?;
     m.add_class::<PyExact>()?;
     m.add_class::<PyOneOf>()?;
     m.add_class::<PyRange>()?;
     m.add_class::<PyCel>()?;
+    
+    // Crypto
     m.add_class::<PyKeypair>()?;
+    m.add_class::<PyPublicKey>()?;
+    m.add_class::<PySignature>()?;
+    
+    // Core
     m.add_class::<PyWarrant>()?;
+    m.add_class::<PyAuthorizer>()?;
+    
+    // MCP
     m.add_class::<PyMcpConfig>()?;
     m.add_class::<PyCompiledMcpConfig>()?;
-    m.add_class::<PyPublicKey>()?;
-    m.add_class::<PyAuthorizer>()?;
     m.add_class::<PyExtractionResult>()?;
 
     // Constants

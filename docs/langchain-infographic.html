@@ -679,12 +679,20 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
 <pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> lockdown, Warrant, Pattern, Keypair
 
 <span class="comment"># Decorate your tool functions with @lockdown</span>
+<span class="comment"># The decorator automatically retrieves warrant from ContextVar</span>
 <span class="decorator">@lockdown</span>(<span class="keyword">tool</span>=<span class="string">"read_file"</span>,
           <span class="function">extract_args</span>=<span class="keyword">lambda</span> file_path, **kwargs: {<span class="string">"file_path"</span>: file_path})
 <span class="keyword">def</span> <span class="function">read_file</span>(<span class="type">file_path</span>: <span class="type">str</span>) -> <span class="type">str</span>:
     <span class="string">"""Read a file. Protected by Tenuo."""</span>
-    <span class="keyword">with</span> <span class="function">open</span>(<span class="type">file_path</span>, <span class="string">'r'</span>) <span class="keyword">as</span> f:
-        <span class="keyword">return</span> f.<span class="function">read</span>()</pre>
+    <span class="comment"># Tenuo checks authorization BEFORE this code runs</span>
+    <span class="comment"># If authorized, function executes normally</span>
+    <span class="keyword">try</span>:
+        <span class="keyword">with</span> <span class="function">open</span>(<span class="type">file_path</span>, <span class="string">'r'</span>) <span class="keyword">as</span> f:
+            <span class="keyword">return</span> f.<span class="function">read</span>()
+    <span class="keyword">except</span> <span class="type">FileNotFoundError</span>:
+        <span class="keyword">return</span> <span class="function">f</span><span class="string">"Error: File not found: {file_path}"</span>
+    <span class="keyword">except</span> <span class="type">Exception</span> <span class="keyword">as</span> e:
+        <span class="keyword">return</span> <span class="function">f</span><span class="string">"Error: {str(e)}"</span></pre>
                     </div>
                 </div>
 
@@ -714,20 +722,24 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                 <div style="background: var(--bg-card-alt); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px;">
                     <h4 style="color: var(--accent-cyan); margin-bottom: 16px; font-size: 1.1rem;">Step 3: Create Warrant and Set in Context</h4>
                     <div class="code-block" style="font-size: 0.85rem;">
-<pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> set_warrant_context
+<pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> set_warrant_context, Keypair, Warrant, Pattern
 
-<span class="comment"># Create warrant (in production, from control plane)</span>
-<span class="type">keypair</span> = <span class="function">Keypair.generate</span>()
+<span class="comment"># SIMULATION: Create warrant (in production, from control plane)</span>
+<span class="comment"># HARDCODED: Pattern("/tmp/*"), ttl_seconds=3600</span>
+<span class="comment"># In production: Constraints come from policy engine or configuration</span>
+<span class="type">keypair</span> = <span class="function">Keypair.generate</span>()  <span class="comment"># SIMULATION: In production, from secure storage</span>
 <span class="type">warrant</span> = <span class="function">Warrant.create</span>(
     <span class="keyword">tool</span>=<span class="string">"read_file"</span>,
-    <span class="keyword">constraints</span>={<span class="string">"file_path"</span>: <span class="function">Pattern</span>(<span class="string">"/tmp/*"</span>)},  <span class="comment"># Only /tmp/ files</span>
-    <span class="keyword">ttl_seconds</span>=<span class="number">3600</span>,
+    <span class="keyword">constraints</span>={<span class="string">"file_path"</span>: <span class="function">Pattern</span>(<span class="string">"/tmp/*"</span>)},  <span class="comment"># HARDCODED: Only /tmp/ for demo safety</span>
+    <span class="keyword">ttl_seconds</span>=<span class="number">3600</span>,  <span class="comment"># HARDCODED: 1 hour TTL. In production, use env var or config.</span>
     <span class="keyword">keypair</span>=<span class="type">keypair</span>
 )
 
 <span class="comment"># Set warrant in context before running agent</span>
+<span class="comment"># ContextVar automatically propagates through async/await boundaries</span>
 <span class="keyword">with</span> <span class="function">set_warrant_context</span>(<span class="type">warrant</span>):
     <span class="comment"># All @lockdown functions will use this warrant</span>
+    <span class="comment"># Works across LangChain's async execution flow</span>
     <span class="type">response</span> = <span class="type">agent_executor</span>.<span class="function">invoke</span>({
         <span class="string">"input"</span>: <span class="string">"Read the file /tmp/data.txt"</span>
     })

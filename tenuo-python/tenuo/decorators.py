@@ -10,26 +10,30 @@ Example with explicit warrant:
         ...
 
 Example with ContextVar (LangChain/FastAPI pattern):
-    from tenuo import set_warrant_context
+    from tenuo import set_warrant_context, set_keypair_context
     
-    # Set warrant in context (e.g., in FastAPI middleware or LangChain callback)
-    with set_warrant_context(warrant):
+    # Set warrant and keypair in context (e.g., in FastAPI middleware)
+    with set_warrant_context(warrant), set_keypair_context(keypair):
         upgrade_cluster(cluster="staging-web", budget=5000.0)
     
     @lockdown(tool="manage_infrastructure")
     def upgrade_cluster(cluster: str, budget: float):
-        # Warrant is automatically retrieved from context
+        # Warrant and keypair are automatically retrieved from context
+        # PoP signature is created automatically if warrant.requires_pop
         ...
 """
 
 from functools import wraps
 from typing import Callable, Any, Optional, Union
 from contextvars import ContextVar
-from . import Warrant, AuthorizationError
+from . import Warrant, Keypair, AuthorizationError
 
 # Context variable for thread-local warrant storage
 # This allows warrants to be passed through async call stacks without explicit threading
 _warrant_context: ContextVar[Optional[Warrant]] = ContextVar('_warrant_context', default=None)
+
+# Context variable for thread-local keypair storage (for PoP signatures)
+_keypair_context: ContextVar[Optional[Keypair]] = ContextVar('_keypair_context', default=None)
 
 
 def get_warrant_context() -> Optional[Warrant]:
@@ -40,6 +44,16 @@ def get_warrant_context() -> Optional[Warrant]:
         The warrant in the current context, or None if not set.
     """
     return _warrant_context.get()
+
+
+def get_keypair_context() -> Optional[Keypair]:
+    """
+    Get the current keypair from context.
+    
+    Returns:
+        The keypair in the current context, or None if not set.
+    """
+    return _keypair_context.get()
 
 
 def set_warrant_context(warrant: Warrant) -> 'WarrantContext':
@@ -63,6 +77,28 @@ def set_warrant_context(warrant: Warrant) -> 'WarrantContext':
     return WarrantContext(warrant)
 
 
+def set_keypair_context(keypair: Keypair) -> 'KeypairContext':
+    """
+    Create a context manager to set a keypair in the current context.
+    
+    This is needed for PoP (Proof-of-Possession) when the warrant has
+    an authorized_holder set. The keypair will be used to automatically
+    create PoP signatures in @lockdown decorated functions.
+    
+    Args:
+        keypair: The keypair to set in context (must match warrant's authorized_holder)
+    
+    Returns:
+        A context manager that sets the keypair
+    
+    Example:
+        with set_warrant_context(warrant), set_keypair_context(keypair):
+            # @lockdown will automatically create PoP signatures
+            process_request()
+    """
+    return KeypairContext(keypair)
+
+
 class WarrantContext:
     """Context manager for setting warrant in ContextVar."""
     
@@ -80,9 +116,27 @@ class WarrantContext:
         return False
 
 
+class KeypairContext:
+    """Context manager for setting keypair in ContextVar (for PoP)."""
+    
+    def __init__(self, keypair: Keypair):
+        self.keypair = keypair
+        self.token = None
+    
+    def __enter__(self):
+        self.token = _keypair_context.set(self.keypair)
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.token is not None:
+            _keypair_context.reset(self.token)
+        return False
+
+
 def lockdown(
     warrant_or_tool: Optional[Union[Warrant, str]] = None,
     tool: Optional[str] = None,
+    keypair: Optional[Keypair] = None,
     extract_args: Optional[Callable[[Any], dict]] = None
 ):
     """
@@ -104,19 +158,27 @@ def lockdown(
         with set_warrant_context(warrant):
             upgrade_cluster(cluster="staging-web", budget=5000.0)
     
+    For PoP-bound warrants (warrant.requires_pop == True):
+        # Set keypair in context for automatic PoP signature creation
+        with set_warrant_context(warrant), set_keypair_context(keypair):
+            upgrade_cluster(cluster="staging-web", budget=5000.0)
+    
     Args:
         warrant_or_tool: If Warrant instance, use it explicitly. If str, treat as tool name.
                         If None, tool must be provided as keyword arg.
         tool: The tool name to authorize (required if warrant_or_tool is not a string)
+        keypair: Optional keypair for PoP signature (or use set_keypair_context)
         extract_args: Optional function to extract args from function arguments.
                      If None, uses the function's kwargs as args.
     
     Raises:
-        AuthorizationError: If no warrant is available or authorization fails.
+        AuthorizationError: If no warrant is available, PoP keypair is missing, 
+                           or authorization fails.
         ValueError: If tool is not provided.
     """
     # Determine warrant and tool
     active_warrant: Optional[Warrant] = None
+    active_keypair: Optional[Keypair] = keypair
     tool_name: Optional[str] = None
     
     if isinstance(warrant_or_tool, Warrant):
@@ -150,15 +212,48 @@ def lockdown(
                     "Either pass warrant explicitly or set it in context using set_warrant_context()."
                 )
             
+            # Get keypair: explicit or from context (needed for PoP)
+            keypair_to_use = active_keypair
+            if keypair_to_use is None:
+                keypair_to_use = get_keypair_context()
+            
             # Extract arguments for authorization
             if extract_args:
                 auth_args = extract_args(*args, **kwargs)
             else:
-                # Use kwargs as args (simple case)
-                auth_args = kwargs
+                # Try to infer from function signature
+                import inspect
+                sig = inspect.signature(func)
+                params = list(sig.parameters.keys())
+                auth_args = {}
+                
+                # Add kwargs first (they override positional)
+                auth_args.update(kwargs)
+                
+                # Map positional args to parameter names
+                for i, arg_val in enumerate(args):
+                    if i < len(params):
+                        param_name = params[i]
+                        # Only add if not already in kwargs
+                        if param_name not in auth_args:
+                            auth_args[param_name] = arg_val
             
-            # Check authorization
-            if not warrant_to_use.authorize(tool_name, auth_args):
+            # Create PoP signature if warrant requires it
+            pop_signature = None
+            if warrant_to_use.requires_pop:
+                if keypair_to_use is None:
+                    raise AuthorizationError(
+                        f"Warrant requires Proof-of-Possession for {tool_name}, "
+                        "but no keypair is available. "
+                        "Either pass keypair explicitly or set it in context using set_keypair_context()."
+                    )
+                # Create PoP signature automatically
+                pop_signature = warrant_to_use.create_pop_signature(
+                    keypair_to_use, tool_name, auth_args
+                )
+            
+            # Check authorization (with PoP signature if required)
+            if not warrant_to_use.authorize(tool_name, auth_args, signature=pop_signature):
                 raise AuthorizationError(
                     f"Warrant does not authorize {tool_name} with args {auth_args}"
                 )

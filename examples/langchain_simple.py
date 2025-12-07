@@ -18,15 +18,10 @@ from tenuo import (
     lockdown, set_warrant_context, AuthorizationError
 )
 
-# Try to import LangChain
-try:
-    from langchain.tools import Tool
-    from langchain.agents import AgentExecutor, create_openai_tools_agent
-    from langchain_openai import ChatOpenAI
-    LANGCHAIN_AVAILABLE = True
-except ImportError:
-    LANGCHAIN_AVAILABLE = False
-    print("Install LangChain: pip install langchain langchain-openai\n")
+# LangChain imports (required for this example)
+from langchain.tools import Tool
+from langchain.agents import AgentExecutor, create_openai_tools_agent
+from langchain_openai import ChatOpenAI
 
 
 # ============================================================================
@@ -87,47 +82,7 @@ def main():
         return
     
     # ========================================================================
-    # STEP 2: Handle Missing LangChain (SIMULATION MODE)
-    # ========================================================================
-    if not LANGCHAIN_AVAILABLE:
-        print("2. [SIMULATION] Demonstrating protection (LangChain not installed)...")
-        print("   Install with: pip install langchain langchain-openai\n")
-        
-        # Show it works without LangChain
-        try:
-            with set_warrant_context(warrant):
-                # Test authorized access
-                # HARDCODED PATH: /tmp/test.txt for demo
-                try:
-                    result = read_file("/tmp/test.txt")
-                    print(f"   ✓ read_file('/tmp/test.txt'): Allowed")
-                except AuthorizationError as e:
-                    print(f"   ✗ Unexpected authorization error: {e}")
-                except Exception as e:
-                    print(f"   ✗ Unexpected error: {e}")
-                
-                # Test blocked access
-                # HARDCODED PATH: /etc/passwd (protected system file for demo)
-                try:
-                    read_file("/etc/passwd")
-                    print("   ✗ Should have been blocked!")
-                except AuthorizationError as e:
-                    print(f"   ✓ read_file('/etc/passwd'): Blocked ({str(e)[:50]}...)\n")
-                except Exception as e:
-                    print(f"   ✗ Unexpected error (not AuthorizationError): {e}\n")
-        except Exception as e:
-            print(f"   ✗ Error in protection test: {e}\n")
-        
-        print("With LangChain installed:")
-        print("  1. Create tools: Tool(name='read_file', func=read_file, ...)")
-        print("  2. Create agent: create_openai_tools_agent(llm, tools)")
-        print("  3. Set warrant: with set_warrant_context(warrant):")
-        print("  4. Run agent: agent_executor.invoke(...)")
-        print("\nAll tool calls are automatically protected!")
-        return
-    
-    # ========================================================================
-    # STEP 3: Create LangChain Tools (REAL CODE - Production-ready)
+    # STEP 2: Create LangChain Tools
     # ========================================================================
     print("2. Creating LangChain tools...")
     try:
@@ -141,7 +96,7 @@ def main():
         return
     
     # ========================================================================
-    # STEP 4: Create LangChain Agent (REAL CODE - Production-ready)
+    # STEP 3: Create LangChain Agent
     # ========================================================================
     print("3. Creating LangChain agent...")
     try:
@@ -157,7 +112,7 @@ def main():
         return
     
     # ========================================================================
-    # STEP 5: Run Agent with Protection (REAL CODE - Production-ready)
+    # STEP 4: Run Agent with Protection
     # ========================================================================
     print("4. Running agent with Tenuo protection...")
     print("   Warrant restricts access to /tmp/* files only\n")

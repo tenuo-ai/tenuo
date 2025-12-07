@@ -430,6 +430,7 @@
             font-size: 0.75rem;
             overflow-x: auto;
             margin: 16px 0;
+            white-space: pre;
         }
 
         .code-comment {
@@ -724,16 +725,14 @@
 
             <div class="code-block">
                 <span class="code-comment">// Orchestrator delegates to Researcher with narrow scope</span>
+                <span class="code-comment">// Each constraint is narrowed: tool becomes exact, domain becomes specific pattern</span>
                 <span class="code-key">let</span> researcher_warrant = orchestrator_warrant.attenuate()
-                .constraint(<span class="code-string">"tool"</span>, Exact::new(<span
-                    class="code-string">"web_search"</span>))
-                .constraint(<span class="code-string">"domain"</span>, Pattern::new(<span
-                    class="code-string">"*.arxiv.org"</span>)?)
-                .constraint(<span class="code-string">"max_results"</span>, Range::max(<span
-                    class="code-highlight">100</span>))
-                <span class="code-highlight">.authorized_holder(researcher_keypair.public_key())</span>
-                .agent_id(<span class="code-string">"agt_researcher_001"</span>)
-                .build(&orchestrator_keypair)?;
+                    .constraint(<span class="code-string">"tool"</span>, Exact::new(<span class="code-string">"web_search"</span>))
+                    .constraint(<span class="code-string">"domain"</span>, Pattern::new(<span class="code-string">"*.arxiv.org"</span>)?)
+                    .constraint(<span class="code-string">"max_results"</span>, Range::max_value(<span class="code-highlight">100.0</span>))
+                    <span class="code-highlight">.authorized_holder(researcher_keypair.public_key())</span>
+                    .agent_id(<span class="code-string">"agt_researcher_001"</span>)
+                    .build(&orchestrator_keypair)?;
             </div>
 
             <div class="verify-modes">

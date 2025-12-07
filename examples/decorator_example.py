@@ -2,7 +2,7 @@
 """
 Example demonstrating the @lockdown decorator with explicit warrant.
 
-For LangChain/FastAPI integration using ContextVar, see examples/context_pattern.py
+For LangChain/FastAPI integration using ContextVar, see context_pattern.py
 """
 
 from tenuo import Keypair, Warrant, Pattern, Range, lockdown, AuthorizationError

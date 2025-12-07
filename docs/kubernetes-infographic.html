@@ -258,15 +258,25 @@
             background: var(--bg-card-alt);
             border: 1px solid var(--border);
             border-radius: 8px;
-            padding: 16px;
+            padding: 20px;
             margin: 16px 0;
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.85rem;
+            font-size: 0.875rem;
+            line-height: 1.6;
             overflow-x: auto;
+            position: relative;
+        }
+        
+        .code-block pre {
+            margin: 0;
+            padding: 0;
+            white-space: pre-wrap;
+            word-wrap: break-word;
         }
         
         .code-block .keyword {
             color: var(--accent-purple);
+            font-weight: 600;
         }
         
         .code-block .string {
@@ -276,6 +286,18 @@
         .code-block .comment {
             color: var(--text-muted);
             font-style: italic;
+        }
+        
+        .code-block .function {
+            color: var(--accent-cyan);
+        }
+        
+        .code-block .type {
+            color: var(--accent-yellow);
+        }
+        
+        .code-block .number {
+            color: var(--accent-orange);
         }
         
         /* Arrow connector */
@@ -463,9 +485,96 @@
             </div>
         </header>
 
+        <!-- Big Picture Overview -->
+        <div class="section-divider">
+            <div class="section-divider-text">📊 Big Picture: How It Works</div>
+        </div>
+
+        <div style="background: rgba(59, 130, 246, 0.1); border: 2px solid var(--accent-blue); border-radius: 12px; padding: 32px; margin-bottom: 48px;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-items: start;">
+                <!-- Left: Architecture Flow -->
+                <div>
+                    <div style="font-size: 1.2rem; font-weight: 600; color: var(--accent-blue); margin-bottom: 20px;">
+                        Architecture Flow
+                    </div>
+                    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 20px;">
+                        <div style="margin-bottom: 20px;">
+                            <div style="font-weight: 600; color: var(--accent-green); margin-bottom: 8px;">1. Control Plane (K8s Service)</div>
+                            <div style="font-size: 0.9rem; color: var(--text-secondary); margin-left: 16px;">
+                                Issues warrants signed with root keypair<br>
+                                <code style="color: var(--accent-cyan);">POST /v1/warrants</code>
+                            </div>
+                        </div>
+                        <div style="text-align: center; color: var(--accent-green); font-size: 1.5rem; margin: 12px 0;">↓</div>
+                        <div style="margin-bottom: 20px;">
+                            <div style="font-weight: 600; color: var(--accent-green); margin-bottom: 8px;">2. Init Container (ONLINE - one-time)</div>
+                            <div style="font-size: 0.9rem; color: var(--text-secondary); margin-left: 16px;">
+                                • Fetches warrant from control plane<br>
+                                • Writes to <code style="color: var(--accent-cyan);">/etc/tenuo/warrant.b64</code>
+                            </div>
+                        </div>
+                        <div style="text-align: center; color: var(--accent-cyan); font-size: 1.5rem; margin: 12px 0;">↓</div>
+                        <div style="margin-bottom: 20px;">
+                            <div style="font-weight: 600; color: var(--accent-cyan); margin-bottom: 8px;">3. Main Container (OFFLINE - always)</div>
+                            <div style="font-size: 0.9rem; color: var(--text-secondary); margin-left: 16px;">
+                                • Loads warrant at startup<br>
+                                • Uses for all authorization checks<br>
+                                • No network calls needed
+                            </div>
+                        </div>
+                        <div style="text-align: center; color: var(--accent-purple); font-size: 1.5rem; margin: 12px 0;">↓</div>
+                        <div>
+                            <div style="font-weight: 600; color: var(--accent-purple); margin-bottom: 8px;">4. Sidecar (Optional - OFFLINE)</div>
+                            <div style="font-size: 0.9rem; color: var(--text-secondary); margin-left: 16px;">
+                                • Validates per-request warrants<br>
+                                • All verification happens locally
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: Why This Matters -->
+                <div>
+                    <div style="font-size: 1.2rem; font-weight: 600; color: var(--accent-green); margin-bottom: 20px;">
+                        🎯 Why This Design?
+                    </div>
+                    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 20px;">
+                        <div style="margin-bottom: 16px; display: flex; align-items: start; gap: 12px;">
+                            <div style="color: var(--accent-green); font-size: 1.2rem;">✅</div>
+                            <div>
+                                <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">One-time online call</div>
+                                <div style="font-size: 0.85rem; color: var(--text-secondary);">Init container fetches warrant once at pod startup</div>
+                            </div>
+                        </div>
+                        <div style="margin-bottom: 16px; display: flex; align-items: start; gap: 12px;">
+                            <div style="color: var(--accent-cyan); font-size: 1.2rem;">✅</div>
+                            <div>
+                                <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">Runtime 100% offline</div>
+                                <div style="font-size: 0.85rem; color: var(--text-secondary);">No network dependency during request processing</div>
+                            </div>
+                        </div>
+                        <div style="margin-bottom: 16px; display: flex; align-items: start; gap: 12px;">
+                            <div style="color: var(--accent-blue); font-size: 1.2rem;">✅</div>
+                            <div>
+                                <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">GitOps-native</div>
+                                <div style="font-size: 0.85rem; color: var(--text-secondary);">Warrant in volume = standard GitOps workflow</div>
+                            </div>
+                        </div>
+                        <div style="margin-bottom: 16px; display: flex; align-items: start; gap: 12px;">
+                            <div style="color: var(--accent-purple); font-size: 1.2rem;">✅</div>
+                            <div>
+                                <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">Standard K8s patterns</div>
+                                <div style="font-size: 0.85rem; color: var(--text-secondary);">Init containers, volumes, sidecars - no daemons</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Lifecycle View -->
         <div class="section-divider">
-            <div class="section-divider-text">Lifecycle View: Pod Startup & Runtime</div>
+            <div class="section-divider-text">🔄 Lifecycle View: Pod Startup & Runtime</div>
         </div>
 
         <!-- Init Container -->
@@ -483,7 +592,10 @@
                     <div class="step-number online">1</div>
                     <div class="step-content">
                         <div class="step-title">Control Plane Issues Warrant</div>
-                        <div class="step-desc">Init container authenticates (service account token) and requests warrant for this pod</div>
+                        <div class="step-desc">
+                            Init container calls <code style="color: var(--accent-cyan);">POST /v1/warrants</code> on control plane service.
+                            Control plane verifies enrollment and issues root warrant signed with root keypair.
+                        </div>
                     </div>
                 </div>
                 <div class="container-step">
@@ -495,12 +607,34 @@
                 </div>
             </div>
             <div class="code-block" style="margin-top: 20px;">
-<span class="comment"># Init container (runs once at pod startup)</span>
-<span class="keyword">warrant</span> = <span class="string">control_plane</span>.<span class="string">issue_warrant</span>(
-    <span class="keyword">agent_id</span>=<span class="string">os.getenv</span>(<span class="string">"POD_NAME"</span>),
-    <span class="keyword">constraints</span>={<span class="string">"file_path"</span>: <span class="string">Pattern</span>(<span class="string">"/tmp/*"</span>)}
+<pre><span class="comment"># Init container: Fetch warrant from Control Plane (ONLINE)</span>
+<span class="comment"># This runs once before the main container starts</span>
+<span class="comment"># Feature: Fetch initial warrant before the main app starts to ensure secure-by-default.</span>
+<span class="comment"># The init container runs once at pod startup, fetches warrant from control plane (online),</span>
+<span class="comment"># and writes it to a shared volume. The main container then loads it at startup (offline).</span>
+
+<span class="keyword">import</span> os
+<span class="keyword">import</span> requests
+<span class="keyword">from</span> tenuo <span class="keyword">import</span> Warrant, Pattern
+
+<span class="comment"># Authenticate with Control Plane using service account token</span>
+<span class="comment"># ENV VARIABLE: CONTROL_PLANE_URL, AGENT_ID</span>
+<span class="type">control_url</span> = os.getenv(<span class="string">"CONTROL_PLANE_URL"</span>)
+<span class="type">agent_id</span> = os.getenv(<span class="string">"AGENT_ID"</span>)
+
+<span class="comment"># Request warrant for this pod</span>
+<span class="comment"># SIMULATION: In production, this would use proper authentication</span>
+<span class="type">response</span> = requests.post(
+    <span class="function">f</span><span class="string">"{control_url}/v1/warrants"</span>,
+    <span class="keyword">json</span>={<span class="string">"agent_id"</span>: <span class="type">agent_id</span>, <span class="string">"constraints"</span>: {<span class="string">"file_path"</span>: <span class="string">"/tmp/*"</span>}}
 )
-<span class="string">write</span>(<span class="string">"/etc/tenuo/warrant.b64"</span>, <span class="keyword">warrant</span>.<span class="string">to_base64</span>())
+<span class="type">warrant_b64</span> = <span class="type">response</span>.<span class="function">json</span>()[<span class="string">"warrant_base64"</span>]
+
+<span class="comment"># Write to shared volume for main container</span>
+<span class="comment"># HARDCODED PATH: /etc/tenuo/warrant.b64 (mounted from emptyDir)</span>
+<span class="comment"># In production: Use env var TENUO_WARRANT_FILE_PATH</span>
+<span class="keyword">with</span> <span class="function">open</span>(<span class="string">"/etc/tenuo/warrant.b64"</span>, <span class="string">"w"</span>) <span class="keyword">as</span> f:
+    f.<span class="function">write</span>(<span class="type">warrant_b64</span>)</pre>
             </div>
         </div>
 
@@ -540,11 +674,21 @@
                 </div>
             </div>
             <div class="code-block" style="margin-top: 20px;">
-<span class="comment"># Main container (runs application)</span>
-<span class="keyword">warrant</span> = <span class="string">load_warrant_from_file</span>(<span class="string">"/etc/tenuo/warrant.b64"</span>)
-<span class="keyword">with</span> <span class="string">set_warrant_context</span>(<span class="keyword">warrant</span>):
-    <span class="comment"># All @lockdown functions now protected</span>
-    <span class="string">app</span>.<span class="string">run</span>()
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <div style="font-weight: 600; color: var(--text-primary);">Minimal Example</div>
+                    <div style="font-size: 0.8rem; color: var(--text-muted);">Main container code</div>
+                </div>
+<pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> Warrant, set_warrant_context
+<span class="keyword">from</span> fastapi <span class="keyword">import</span> FastAPI
+
+<span class="comment"># Load warrant from volume (written by init container)</span>
+<span class="keyword">with</span> <span class="function">open</span>(<span class="string">"/etc/tenuo/warrant.b64"</span>, <span class="string">'r'</span>) <span class="keyword">as</span> f:
+    <span class="type">warrant</span> = <span class="function">Warrant</span>.<span class="function">from_base64</span>(f.<span class="function">read</span>().<span class="function">strip</span>())
+
+<span class="comment"># Set in context - all @lockdown functions now protected</span>
+<span class="keyword">with</span> <span class="function">set_warrant_context</span>(<span class="type">warrant</span>):
+    <span class="type">app</span> = <span class="function">FastAPI</span>()
+    <span class="type">app</span>.<span class="function">run</span>()</pre>
             </div>
         </div>
 
@@ -584,9 +728,40 @@
                 </div>
             </div>
             <div class="code-block" style="margin-top: 20px;">
-<span class="comment"># Sidecar (optional - for request-level auth)</span>
-<span class="keyword">warrant</span> = <span class="string">Warrant</span>.<span class="string">from_base64</span>(<span class="string">request</span>.<span class="string">headers</span>[<span class="string">"X-Tenuo-Warrant"</span>])
-<span class="keyword">authorizer</span>.<span class="string">check</span>(<span class="keyword">warrant</span>, <span class="string">tool</span>, <span class="keyword">args</span>)  <span class="comment"># Offline verification</span>
+<pre><span class="comment"># Sidecar: Validate per-request warrants (OFFLINE)</span>
+<span class="comment"># Optional - only needed for request-level authorization</span>
+<span class="comment"># The sidecar intercepts requests and validates warrants before forwarding to the main container.</span>
+<span class="comment"># All verification happens offline - no network calls to the control plane.</span>
+
+<span class="keyword">from</span> tenuo <span class="keyword">import</span> Warrant, Authorizer, PublicKey
+<span class="keyword">from</span> tenuo.exceptions <span class="keyword">import</span> AuthorizationError
+<span class="keyword">import</span> os
+
+<span class="comment"># Load trusted public key at startup (from K8s Secret)</span>
+<span class="comment"># ENV VARIABLE: TENUO_TRUSTED_PUBLIC_KEY (hex-encoded)</span>
+<span class="type">trusted_key_hex</span> = os.getenv(<span class="string">"TENUO_TRUSTED_PUBLIC_KEY"</span>)
+<span class="type">trusted_key</span> = <span class="function">PublicKey</span>.<span class="function">from_bytes</span>(<span class="function">bytes</span>.<span class="function">fromhex</span>(<span class="type">trusted_key_hex</span>))
+<span class="type">authorizer</span> = <span class="function">Authorizer</span>.<span class="function">new</span>(<span class="type">trusted_key</span>)
+
+<span class="comment"># For each incoming request</span>
+<span class="keyword">def</span> <span class="function">validate_request</span>(<span class="type">request</span>):
+    <span class="comment"># Extract warrant from header (set by ingress/API gateway)</span>
+    <span class="type">warrant_b64</span> = <span class="type">request</span>.<span class="type">headers</span>.<span class="function">get</span>(<span class="string">"X-Tenuo-Warrant"</span>)
+    <span class="keyword">if</span> <span class="keyword">not</span> <span class="type">warrant_b64</span>:
+        <span class="keyword">return</span> <span class="type">Response</span>(<span class="string">"No warrant"</span>, <span class="type">status_code</span>=<span class="number">403</span>)
+    
+    <span class="comment"># Parse and verify warrant (100% offline, ~25μs)</span>
+    <span class="type">warrant</span> = <span class="function">Warrant</span>.<span class="function">from_base64</span>(<span class="type">warrant_b64</span>)
+    <span class="keyword">try</span>:
+        <span class="comment"># Extract tool and args from request</span>
+        <span class="type">tool</span> = <span class="type">request</span>.<span class="type">path</span>.<span class="function">split</span>(<span class="string">'/'</span>)[-<span class="number">1</span>]
+        <span class="type">args</span> = <span class="type">request</span>.<span class="function">json</span>()
+        <span class="type">authorizer</span>.<span class="function">check</span>(<span class="type">warrant</span>, <span class="type">tool</span>, <span class="type">args</span>)
+        <span class="comment"># ✓ Valid - forward to main container</span>
+        <span class="keyword">return</span> <span class="function">forward_to_main</span>(<span class="type">request</span>)
+    <span class="keyword">except</span> <span class="type">AuthorizationError</span>:
+        <span class="comment"># ✗ Invalid - return 403</span>
+        <span class="keyword">return</span> <span class="type">Response</span>(<span class="string">"Unauthorized"</span>, <span class="type">status_code</span>=<span class="number">403</span>)</pre>
             </div>
         </div>
 
@@ -610,12 +785,27 @@
             <div class="section-divider-text">Context View: Async State Management</div>
         </div>
 
-        <div style="text-align: center; margin-bottom: 32px;">
-            <p style="color: var(--text-secondary); max-width: 800px; margin: 0 auto; line-height: 1.8;">
-                Tenuo solves the "Invisible State" problem in async Python frameworks. ContextVar propagates
-                through <code style="color: var(--accent-cyan);">await</code> boundaries, making warrant context
-                available to all <code style="color: var(--accent-purple);">@lockdown</code> functions automatically.
-            </p>
+        <div style="background: rgba(168, 85, 247, 0.1); border: 1px solid var(--accent-purple); border-radius: 12px; padding: 24px; margin-bottom: 32px;">
+            <div style="font-size: 1.1rem; font-weight: 600; color: var(--accent-purple); margin-bottom: 12px;">
+                🔑 Solving the "Invisible State" Problem
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 16px;">
+                <div>
+                    <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">❌ The Problem</div>
+                    <p style="color: var(--text-secondary); line-height: 1.8; font-size: 0.9rem;">
+                        In async Python (FastAPI, LangChain), function calls happen across <code style="color: var(--accent-cyan);">await</code> boundaries.
+                        Passing context (like warrants) through the call stack is hard - you'd need to manually pass it to every function.
+                    </p>
+                </div>
+                <div>
+                    <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">✅ The Solution</div>
+                    <p style="color: var(--text-secondary); line-height: 1.8; font-size: 0.9rem;">
+                        <strong>Tenuo uses Python's <code style="color: var(--accent-purple);">ContextVar</code></strong> which automatically propagates
+                        through async operations. Set the warrant once in middleware, and all <code style="color: var(--accent-purple);">@lockdown</code>
+                        functions have access to it - no manual passing required.
+                    </p>
+                </div>
+            </div>
         </div>
 
         <div class="context-flow">
@@ -634,9 +824,18 @@
                 <div class="context-desc">
                     FastAPI middleware extracts warrant and sets it in ContextVar. This propagates through all async operations.
                 </div>
-                <div class="code-block" style="font-size: 0.75rem; margin-top: 12px;">
-<span class="keyword">with</span> <span class="string">set_warrant_context</span>(<span class="keyword">warrant</span>):
-    <span class="comment"># ContextVar now set</span>
+                <div class="code-block" style="font-size: 0.8rem; margin-top: 12px;">
+<pre><span class="comment"># FastAPI middleware</span>
+<span class="keyword">from</span> tenuo <span class="keyword">import</span> set_warrant_context
+
+<span class="keyword">@app</span>.<span class="function">middleware</span>(<span class="string">"http"</span>)
+<span class="keyword">async</span> <span class="keyword">def</span> <span class="function">tenuo_middleware</span>(<span class="type">request</span>, <span class="function">call_next</span>):
+    <span class="comment"># Load warrant from header or pod config</span>
+    <span class="type">warrant</span> = <span class="function">load_warrant</span>(<span class="type">request</span>)
+    
+    <span class="comment"># Set in ContextVar - propagates through all async operations</span>
+    <span class="keyword">with</span> <span class="function">set_warrant_context</span>(<span class="type">warrant</span>):
+        <span class="keyword">return</span> <span class="keyword">await</span> <span class="function">call_next</span>(<span class="type">request</span>)</pre>
                 </div>
                 <div class="context-var" style="margin-top: 12px;">
                     ContextVar: <span style="color: var(--accent-purple);">Warrant(id="...")</span>
@@ -663,10 +862,17 @@
                     <code style="color: var(--accent-purple);">@lockdown</code> decorator retrieves warrant from ContextVar,
                     checks authorization, then executes tool function.
                 </div>
-                <div class="code-block" style="font-size: 0.75rem; margin-top: 12px;">
-<span class="keyword">@lockdown</span>(<span class="string">tool</span>=<span class="string">"read_file"</span>)
-<span class="keyword">def</span> <span class="string">read_file</span>(<span class="keyword">file_path</span>):
-    <span class="comment"># Warrant from ContextVar ✓</span>
+                <div class="code-block" style="font-size: 0.8rem; margin-top: 12px;">
+<pre><span class="comment"># Tool function - automatically protected</span>
+<span class="keyword">from</span> tenuo <span class="keyword">import</span> lockdown
+
+<span class="decorator">@lockdown</span>(<span class="keyword">tool</span>=<span class="string">"read_file"</span>,
+          <span class="function">extract_args</span>=<span class="keyword">lambda</span> file_path, **kwargs: {<span class="string">"file_path"</span>: file_path})
+<span class="keyword">def</span> <span class="function">read_file</span>(<span class="type">file_path</span>: <span class="type">str</span>) -> <span class="type">str</span>:
+    <span class="comment"># @lockdown retrieves warrant from ContextVar automatically</span>
+    <span class="comment"># No manual passing needed - works across await boundaries</span>
+    <span class="keyword">with</span> <span class="function">open</span>(<span class="type">file_path</span>, <span class="string">'r'</span>) <span class="keyword">as</span> f:
+        <span class="keyword">return</span> f.<span class="function">read</span>()</pre>
                 </div>
                 <div class="context-var" style="margin-top: 12px;">
                     ContextVar: <span style="color: var(--accent-purple);">Warrant(id="...")</span>
@@ -745,32 +951,57 @@
                 </div>
             </div>
             <div class="code-block" style="margin-top: 20px;">
-<span class="comment"># Standard K8s Deployment - No custom operators needed</span>
+<pre><span class="comment"># Standard K8s Deployment - No custom operators needed</span>
+<span class="comment"># Uses only standard Kubernetes patterns</span>
+
 <span class="keyword">apiVersion</span>: <span class="string">apps/v1</span>
 <span class="keyword">kind</span>: <span class="string">Deployment</span>
+<span class="keyword">metadata</span>:
+  <span class="keyword">name</span>: <span class="string">langchain-agent</span>
 <span class="keyword">spec</span>:
   <span class="keyword">template</span>:
     <span class="keyword">spec</span>:
-      <span class="comment"># 1. Init container fetches warrant (online)</span>
+      <span class="comment"># 1. Init container: Fetch warrant from Control Plane (ONLINE)</span>
+      <span class="comment"># Feature: Fetch initial warrant before the main app starts to ensure secure-by-default.</span>
+      <span class="comment"># The init container runs once at pod startup, fetches warrant from control plane (online),</span>
+      <span class="comment"># and writes it to a shared volume. The main container then loads it at startup (offline).</span>
       <span class="keyword">initContainers</span>:
-      - <span class="keyword">name</span>: <span class="string">fetch-warrant</span>
-        <span class="keyword">image</span>: <span class="string">tenuo/fetch-warrant:latest</span>
+      - <span class="keyword">name</span>: <span class="string">tenuo-warrant-fetcher</span>
+        <span class="keyword">image</span>: <span class="string">your-registry/tenuo-warrant-fetcher:latest</span> <span class="comment"># Replace with your actual image</span>
+        <span class="keyword">env</span>:
+        - <span class="keyword">name</span>: <span class="string">AGENT_ID</span>
+          <span class="keyword">valueFrom</span>:
+            <span class="keyword">fieldRef</span>:
+              <span class="keyword">fieldPath</span>: <span class="string">metadata.name</span> <span class="comment"># Use pod name as agent ID for traceability</span>
+        - <span class="keyword">name</span>: <span class="string">CONTROL_PLANE_URL</span>
+          <span class="comment"># ENV VARIABLE: CONTROL_PLANE_URL</span>
+          <span class="keyword">value</span>: <span class="string">"http://tenuo-control-plane.tenuo.svc.cluster.local:8080"</span> <span class="comment"># K8s service URL</span>
+        - <span class="keyword">name</span>: <span class="string">OUTPUT_PATH</span>
+          <span class="comment"># HARDCODED: Path for mounted secret</span>
+          <span class="keyword">value</span>: <span class="string">"/etc/tenuo/warrant.b64"</span>
         <span class="keyword">volumeMounts</span>:
-        - <span class="keyword">name</span>: <span class="string">warrant</span>
+        - <span class="keyword">name</span>: <span class="string">tenuo-warrant-volume</span>
           <span class="keyword">mountPath</span>: <span class="string">/etc/tenuo</span>
       
-      <span class="comment"># 2. Main container loads warrant (offline)</span>
+      <span class="comment"># 2. Main container: Load warrant from volume (OFFLINE)</span>
       <span class="keyword">containers</span>:
-      - <span class="keyword">name</span>: <span class="string">app</span>
-        <span class="keyword">image</span>: <span class="string">my-app:latest</span>
+      - <span class="keyword">name</span>: <span class="string">agent-app</span>
+        <span class="keyword">image</span>: <span class="string">my-langchain-app:latest</span>
+        <span class="keyword">env</span>:
+        - <span class="keyword">name</span>: <span class="string">OPENAI_API_KEY</span>
+          <span class="keyword">valueFrom</span>:
+            <span class="keyword">secretKeyRef</span>:
+              <span class="keyword">name</span>: <span class="string">openai-key</span>
+              <span class="keyword">key</span>: <span class="string">api_key</span>
         <span class="keyword">volumeMounts</span>:
-        - <span class="keyword">name</span>: <span class="string">warrant</span>
+        - <span class="keyword">name</span>: <span class="string">tenuo-warrant-volume</span>
           <span class="keyword">mountPath</span>: <span class="string">/etc/tenuo</span>
+          <span class="keyword">readOnly</span>: <span class="keyword">true</span>
       
-      <span class="comment"># 3. Shared volume</span>
+      <span class="comment"># 3. Shared volume (emptyDir for init→main communication)</span>
       <span class="keyword">volumes</span>:
-      - <span class="keyword">name</span>: <span class="string">warrant</span>
-        <span class="keyword">emptyDir</span>: {}
+      - <span class="keyword">name</span>: <span class="string">tenuo-warrant-volume</span>
+        <span class="keyword">emptyDir</span>: {}</pre>
             </div>
         </div>
 
