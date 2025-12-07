@@ -2,29 +2,25 @@
 """
 Kubernetes Integration Example with Tenuo
 
-This example shows how agents running in Kubernetes load and use warrants.
+This example shows how agents running in Kubernetes load, use, and delegate warrants.
 
-Production Pattern:
-    1. Control Plane issues warrant during enrollment (one-time, see control_plane.py)
-    2. Warrant stored in K8s Secret
-    3. Agent pod mounts Secret → loads warrant at startup
-    4. Agent uses warrant for all tool invocations (offline verification)
+Production Patterns:
 
-Architecture:
-    Control Plane (Issuer)
-         │
-         │ Issues warrant at enrollment (ONCE)
-         ▼
-    Kubernetes Secret
-         │
-         │ Mounted to pod or set as env var
-         ▼
-    Agent Pod
-         │
-         │ Loads warrant at startup
-         │ Uses for all @lockdown tool calls
-         ▼
-    Offline Verification (no network calls)
+1. Simple Agent (single pod):
+    Control Plane → K8s Secret → Agent Pod → @lockdown tools
+
+2. Orchestrator + Workers (delegation):
+    Control Plane → K8s Secret → Orchestrator Pod
+                                      │
+                                      │ Attenuates warrant (OFFLINE)
+                                      ▼
+                               Worker Pods (via HTTP or K8s Job)
+
+Key Concepts:
+    - Control Plane contacted ONCE at enrollment
+    - Orchestrator attenuates locally (no network call)
+    - Workers receive narrower warrants
+    - All verification is OFFLINE
 """
 
 from tenuo import (
@@ -92,6 +88,98 @@ def write_file(file_path: str, content: str) -> str:
 
 
 # ============================================================================
+# Orchestrator → Worker Delegation (Attenuation)
+# ============================================================================
+
+def attenuate_for_worker(
+    orchestrator_warrant: Warrant,
+    orchestrator_keypair: Keypair,
+    task_constraints: dict,
+    ttl_seconds: int = 300
+) -> Warrant:
+    """
+    Orchestrator attenuates its warrant for a specific worker task.
+    
+    This is an OFFLINE operation - no Control Plane call.
+    The worker's warrant is NARROWER than the orchestrator's.
+    
+    Args:
+        orchestrator_warrant: Orchestrator's root warrant (broad scope)
+        orchestrator_keypair: Orchestrator's keypair (for signing)
+        task_constraints: Narrower constraints for this specific task
+        ttl_seconds: Short TTL for task-scoped warrant
+    
+    Returns:
+        Attenuated warrant for worker
+    """
+    return orchestrator_warrant.attenuate(
+        constraints=task_constraints,
+        keypair=orchestrator_keypair,
+        ttl_seconds=ttl_seconds
+    )
+
+
+def demo_orchestrator_worker_delegation():
+    """
+    Demonstrates orchestrator delegating to worker pods.
+    
+    Scenario:
+        - Orchestrator has broad warrant: file_path=/data/*
+        - Task needs to process only /data/batch-123/*
+        - Orchestrator attenuates warrant for worker
+        - Worker can ONLY access /data/batch-123/*
+    """
+    print("\n=== Orchestrator → Worker Delegation ===\n")
+    
+    # Control Plane keypair (simulated - in production, from enrollment)
+    control_keypair = Keypair.generate()
+    
+    # Orchestrator's keypair and root warrant
+    orchestrator_keypair = Keypair.generate()
+    orchestrator_warrant = Warrant.create(
+        tool="process_file",
+        constraints={
+            "file_path": Pattern("/data/*"),  # Broad: all of /data/
+        },
+        ttl_seconds=86400,  # 24 hours
+        keypair=control_keypair,
+        authorized_holder=orchestrator_keypair.public_key()  # PoP-bound
+    )
+    print(f"1. Orchestrator warrant: file_path=/data/* (broad)")
+    print(f"   ID: {orchestrator_warrant.id[:8]}...")
+    print(f"   Expires: {orchestrator_warrant.expires_at}\n")
+    
+    # Orchestrator receives task: process batch-123
+    # Attenuate warrant for worker (OFFLINE - no Control Plane call)
+    worker_warrant = attenuate_for_worker(
+        orchestrator_warrant=orchestrator_warrant,
+        orchestrator_keypair=orchestrator_keypair,
+        task_constraints={
+            "file_path": Pattern("/data/batch-123/*"),  # Narrow: only batch-123
+        },
+        ttl_seconds=300  # 5 minutes for task
+    )
+    print(f"2. Worker warrant: file_path=/data/batch-123/* (narrow)")
+    print(f"   ID: {worker_warrant.id[:8]}...")
+    print(f"   Parent: {worker_warrant.parent_id[:8] if worker_warrant.parent_id else 'None'}...")
+    print(f"   Depth: {worker_warrant.depth}")
+    print(f"   Expires: {worker_warrant.expires_at}\n")
+    
+    # Worker receives warrant (e.g., via HTTP header or K8s Job env)
+    print("3. Worker receives attenuated warrant:")
+    print(f"   • Via HTTP: X-Tenuo-Warrant: {worker_warrant.to_base64()[:40]}...")
+    print(f"   • Via K8s Job env: TENUO_WARRANT_BASE64=...")
+    print()
+    
+    print("4. Security properties:")
+    print("   ✓ Worker can ONLY access /data/batch-123/*")
+    print("   ✓ Worker CANNOT access /data/other-batch/*")
+    print("   ✓ Warrant expires in 5 minutes (task-scoped)")
+    print("   ✓ Attenuation was OFFLINE (no Control Plane call)")
+    print("   ✓ Warrant chain: Control Plane → Orchestrator → Worker")
+
+
+# ============================================================================
 # FastAPI Integration (Production Pattern)
 # ============================================================================
 
@@ -119,6 +207,44 @@ async def run_agent(prompt: str):
         # All @lockdown tools are now protected
         result = your_agent.invoke(prompt)
         return {"result": result}
+'''
+
+
+# ============================================================================
+# Orchestrator FastAPI Example (with delegation)
+# ============================================================================
+
+ORCHESTRATOR_FASTAPI_EXAMPLE = '''
+from fastapi import FastAPI
+from tenuo import Keypair, set_warrant_context
+import httpx
+
+# Orchestrator loads its warrant and keypair at startup
+orchestrator_warrant = load_warrant()
+orchestrator_keypair = Keypair.from_bytes(load_keypair_bytes())  # From K8s Secret
+
+app = FastAPI()
+
+@app.post("/tasks/process")
+async def process_task(batch_id: str):
+    """Orchestrator delegates task to worker."""
+    
+    # Attenuate warrant for this specific batch (OFFLINE)
+    worker_warrant = orchestrator_warrant.attenuate(
+        constraints={"file_path": Pattern(f"/data/{batch_id}/*")},
+        keypair=orchestrator_keypair,
+        ttl_seconds=300
+    )
+    
+    # Send to worker with attenuated warrant
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "http://worker-service:8000/process",
+            json={"batch_id": batch_id},
+            headers={"X-Tenuo-Warrant": worker_warrant.to_base64()}
+        )
+    
+    return {"status": "delegated", "batch_id": batch_id}
 '''
 
 
@@ -223,11 +349,20 @@ def main():
         except AuthorizationError:
             print("   ✓ read_file('/etc/passwd'): Blocked (constraint violation)")
     
-    print("\n=== Summary ===")
+    print("\n=== Summary (Simple Agent) ===")
     print("  • Warrant loaded from K8s Secret at startup")
     print("  • All verification is OFFLINE (no network calls)")
     print("  • @lockdown decorator enforces constraints")
     print("  • Works across all pod replicas")
+    
+    # Also demonstrate orchestrator → worker delegation
+    demo_orchestrator_worker_delegation()
+    
+    print("\n=== Summary (Orchestrator → Worker) ===")
+    print("  • Orchestrator attenuates warrant LOCALLY (offline)")
+    print("  • Worker receives narrower, time-limited warrant")
+    print("  • Delegation chain is cryptographically verifiable")
+    print("  • No Control Plane call for attenuation")
 
 
 if __name__ == "__main__":
