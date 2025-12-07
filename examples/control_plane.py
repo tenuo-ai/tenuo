@@ -2,13 +2,17 @@
 """
 Tenuo Control Plane Implementation Example
 
-This example demonstrates how to implement a Tenuo Control Plane service
-that issues warrants to agents. The control plane:
+This example demonstrates how to implement a Tenuo Control Plane service.
+The control plane:
 
 1. Manages a root keypair (trust anchor)
 2. Enrolls agents (validates identity via Proof-of-Possession)
-3. Issues root warrants to enrolled agents
+3. Issues root warrants at enrollment time
 4. Provides public key distribution
+
+Note: Agents receive their root warrant during enrollment. Additional
+capabilities should be obtained through delegation/attenuation from
+existing warrants, not by requesting new ones from the control plane.
 
 This is a complete example using FastAPI.
 
@@ -212,80 +216,6 @@ class ControlPlaneService:
         print(f"✓ Enrolled agent: {agent_id} (public key: {public_key_hex[:16]}...)")
         
         return warrant
-    
-    def issue_warrant(
-        self,
-        caller_public_key_hex: str,
-        tool: str,
-        constraints: Dict[str, Any],
-        ttl_seconds: int,
-        signature_hex: Optional[str] = None
-    ) -> Warrant:
-        """
-        Issue a warrant to an enrolled agent.
-        
-        Args:
-            caller_public_key_hex: Public key of the requesting agent (must be enrolled)
-            tool: Tool name for the warrant
-            constraints: Constraint dictionary
-            ttl_seconds: Time-to-live in seconds
-            signature_hex: Optional PoP signature proving caller identity
-        
-        Returns:
-            Issued warrant
-        
-        Raises:
-            ValueError: If agent not enrolled or signature invalid
-        """
-        # 1. Verify agent is enrolled
-        if caller_public_key_hex not in self.enrolled_agents:
-            raise ValueError("Agent not enrolled. Call /v1/enroll first.")
-        
-        # 2. Verify PoP signature (if provided)
-        if signature_hex:
-            try:
-                sig_bytes = bytes.fromhex(signature_hex)
-                if len(sig_bytes) != 64:
-                    raise ValueError("Signature must be 64 bytes")
-                signature = Signature.from_bytes(sig_bytes)
-                
-                # Verify signature over tool + constraints
-                signable = f"{tool}:{json.dumps(constraints, sort_keys=True)}"
-                # Get the public key from enrolled agents (stored as hex string)
-                # Convert hex string to PublicKey object for verification
-                caller_public_key_obj = PublicKey.from_bytes(bytes.fromhex(caller_public_key_hex))
-                if not caller_public_key_obj.verify(signable.encode('utf-8'), signature):
-                    raise ValueError("Invalid Proof-of-Possession signature for warrant issuance")
-            except Exception as e:
-                raise ValueError(f"PoP verification failed: {e}")
-        
-        # 3. Convert constraints
-        warrant_constraints = {}
-        for key, value in constraints.items():
-            if isinstance(value, str):
-                warrant_constraints[key] = Pattern(value)
-            elif isinstance(value, (Pattern, Range, Exact)):
-                warrant_constraints[key] = value
-            else:
-                raise ValueError(f"Invalid constraint type for {key}")
-        
-        # 4. Get caller's public key for PoP binding
-        caller_public_key = PublicKey.from_bytes(bytes.fromhex(caller_public_key_hex))
-        
-        # 5. Issue warrant (PoP-bound to caller's public key)
-        # The warrant is bound to the caller's public key - only the caller
-        # with the matching private key can use it (Proof-of-Possession)
-        warrant = Warrant.create(
-            tool=tool,
-            constraints=warrant_constraints,
-            ttl_seconds=ttl_seconds,
-            keypair=self.root_keypair,
-            authorized_holder=caller_public_key,  # PoP binding!
-        )
-        
-        print(f"✓ Issued warrant {warrant.id[:8]}... for tool '{tool}' to agent {caller_public_key_hex[:16]}...")
-        
-        return warrant
 
 
 # ============================================================================
@@ -306,7 +236,7 @@ control_plane = ControlPlaneService(root_keypair, enrollment_token)
 
 app = FastAPI(
     title="Tenuo Control Plane",
-    description="Control plane service for issuing Tenuo warrants",
+    description="Control plane service for agent enrollment and root warrant issuance",
     version="0.1.0"
 )
 
@@ -414,71 +344,6 @@ async def enroll(request: EnrollRequest):
             warrant_base64=warrant.to_base64(),
             expires_at=warrant.expires_at,
             public_key_hex=pub_key_info["public_key_hex"],
-            requires_pop=warrant.requires_pop,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
-
-
-class IssueRequest(BaseModel):
-    """Request to issue a warrant."""
-    caller_public_key_hex: str
-    tool: str
-    constraints: Dict[str, Any]
-    ttl_seconds: int
-    signature_hex: Optional[str] = None  # PoP signature
-
-
-class IssueResponse(BaseModel):
-    """Response with issued warrant (PoP-bound)."""
-    warrant_id: str
-    warrant_base64: str
-    expires_at: str
-    requires_pop: bool = True  # Indicates warrant requires Proof-of-Possession
-
-
-@app.post("/v1/warrants", response_model=IssueResponse)
-async def issue_warrant(request: IssueRequest):
-    """
-    Issue a warrant to an enrolled agent.
-    
-    The agent must:
-    1. Be enrolled (via /v1/enroll)
-    2. Sign the request with their private key (PoP)
-    
-    Example CURL:
-        # First, create a signature over the request (using Python):
-        # python -c "from tenuo import Keypair; import json; kp = Keypair.generate(); tool = 'read_file'; constraints = {'file_path': '/tmp/*'}; signable = f'{tool}:{json.dumps(constraints, sort_keys=True)}'; sig = kp.sign(signable.encode()); sig_hex = bytes(sig.to_bytes()).hex(); pk_hex = bytes(kp.public_key().to_bytes()).hex(); print(f'PUBKEY={pk_hex}'); print(f'SIG={sig_hex}')"
-        
-        # Then issue warrant (replace PUBKEY and SIG with actual values from above):
-        curl -X POST http://localhost:8080/v1/warrants \\
-          -H "Content-Type: application/json" \\
-          -d '{"caller_public_key_hex":"PUBKEY","tool":"read_file","constraints":{"file_path":"/tmp/*"},"ttl_seconds":3600,"signature_hex":"SIG"}'
-    
-    Example JSON:
-        {
-            "caller_public_key_hex": "a1b2c3...",
-            "tool": "read_file",
-            "constraints": {"file_path": "/tmp/*"},
-            "ttl_seconds": 3600,
-            "signature_hex": "d4e5f6..."
-        }
-    """
-    try:
-        warrant = control_plane.issue_warrant(
-            caller_public_key_hex=request.caller_public_key_hex,
-            tool=request.tool,
-            constraints=request.constraints,
-            ttl_seconds=request.ttl_seconds,
-            signature_hex=request.signature_hex
-        )
-        
-        return IssueResponse(
-            warrant_id=warrant.id,
-            warrant_base64=warrant.to_base64(),
-            expires_at=warrant.expires_at,
             requires_pop=warrant.requires_pop,
         )
     except ValueError as e:
@@ -601,31 +466,10 @@ def example_agent_enrollment():
 #        \"ttl_seconds\": 3600
 #      }"
 #
-# 5. Issue a warrant to enrolled agent:
-#    # Generate signature for warrant request:
-#    python -c "
-#    from tenuo import Keypair
-#    import json
-#    # Use the same keypair from enrollment
-#    kp = Keypair.from_bytes(bytes.fromhex('$AGENT_SECRET_KEY'))  # Save this during enrollment
-#    tool = 'read_file'
-#    constraints = {'file_path': '/tmp/*'}
-#    signable = f'{tool}:{json.dumps(constraints, sort_keys=True)}'
-#    sig = kp.sign(signable.encode())
-#    sig_hex = bytes(sig.to_bytes()).hex()
-#    print(f'export WARRANT_SIG={sig_hex}')
-#    "
-#
-#    # Issue warrant:
-#    curl -X POST http://localhost:8080/v1/warrants \\
-#      -H "Content-Type: application/json" \\
-#      -d "{
-#        \"caller_public_key_hex\": \"$AGENT_PUBKEY\",
-#        \"tool\": \"read_file\",
-#        \"constraints\": {\"file_path\": \"/tmp/*\"},
-#        \"ttl_seconds\": 3600,
-#        \"signature_hex\": \"$WARRANT_SIG\"
-#      }"
+# 5. Delegate capabilities:
+#    Once enrolled with a root warrant, agents should DELEGATE their capabilities
+#    to sub-agents using warrant attenuation, not request new warrants.
+#    See examples/context_pattern.py for delegation examples.
 #
 # ============================================================================
 
@@ -645,7 +489,10 @@ if __name__ == "__main__":
     print("  GET  /health              - Health check")
     print("  GET  /v1/public-key       - Get control plane public key")
     print("  POST /v1/enroll           - Enroll agent and get root warrant")
-    print("  POST /v1/warrants         - Issue warrant to enrolled agent")
+    print()
+    print("Capability Model:")
+    print("  Agents receive root warrants at enrollment. Additional capabilities")
+    print("  should be obtained through delegation/attenuation, not new requests.")
     print()
     print("Security Features:")
     print("   - PoP-bound warrants: All issued warrants require Proof-of-Possession")
