@@ -228,44 +228,97 @@ async def run_agent(prompt: str):
 
 
 # ============================================================================
-# Orchestrator FastAPI Example (with delegation)
+# Orchestrator FastAPI Example (Identity-as-Config Pattern)
 # ============================================================================
 
 ORCHESTRATOR_FASTAPI_EXAMPLE = '''
 from fastapi import FastAPI
-from tenuo import Keypair, Pattern, set_warrant_context
+from tenuo import Keypair, PublicKey, Warrant, Pattern
 import httpx
+import os
 
-# Orchestrator loads its warrant and keypair at startup
-orchestrator_warrant = load_warrant()
-orchestrator_keypair = Keypair.from_bytes(load_keypair_bytes())  # From K8s Secret
+# =============================================================================
+# STARTUP: Load all identities from K8s Secrets (wired by Terraform/Helm)
+# =============================================================================
+
+# Orchestrator's own identity
+ORCHESTRATOR_KEYPAIR = Keypair.from_bytes(bytes.fromhex(os.getenv("ORCHESTRATOR_PRIVATE_KEY")))
+ROOT_WARRANT = Warrant.from_base64(os.getenv("TENUO_WARRANT_BASE64"))
+
+# Worker's identity (PUBLIC KEY ONLY - loaded at deploy time)
+# This is "Identity-as-Config" - Orchestrator knows Worker's identity statically
+SCRAPER_PUBLIC_KEY = PublicKey.from_bytes(bytes.fromhex(os.getenv("SCRAPER_PUBLIC_KEY")))
 
 app = FastAPI()
 
-@app.post("/tasks/process")
-async def process_task(batch_id: str, worker_pubkey_hex: str):
-    """Orchestrator delegates task to a specific worker."""
+@app.post("/tasks/scrape")
+async def delegate_to_scraper(url: str):
+    """Orchestrator delegates scraping task to the Scraper worker."""
     
-    # Worker's public key (from request or service discovery)
-    worker_pubkey = PublicKey.from_bytes(bytes.fromhex(worker_pubkey_hex))
-    
-    # Attenuate warrant for this specific worker and batch (OFFLINE)
-    worker_warrant = orchestrator_warrant.attenuate(
-        constraints={"file_path": Pattern(f"/data/{batch_id}/*")},
-        keypair=orchestrator_keypair,
-        ttl_seconds=300,
-        authorized_holder=worker_pubkey  # PoP-bound to THIS worker
+    # Attenuate per-request (EPHEMERAL warrant)
+    # - Scoped to this specific URL
+    # - Bound to the Scraper's static identity
+    # - Valid for only 30 seconds
+    request_warrant = ROOT_WARRANT.attenuate(
+        constraints={"url": Pattern(url)},
+        authorized_holder=SCRAPER_PUBLIC_KEY,  # Static identity, known at deploy time
+        keypair=ORCHESTRATOR_KEYPAIR,
+        ttl_seconds=30  # Ephemeral!
     )
     
-    # Send to worker - only they can use it (has matching private key)
+    # Push to worker
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            "http://worker-service:8000/process",
-            json={"batch_id": batch_id},
-            headers={"X-Tenuo-Warrant": worker_warrant.to_base64()}
+            "http://scraper-service/run",
+            json={"url": url},
+            headers={"X-Tenuo-Warrant": request_warrant.to_base64()}
         )
     
-    return {"status": "delegated", "batch_id": batch_id}
+    return response.json()
+'''
+
+
+# ============================================================================
+# Worker FastAPI Example (Long-Running Identity Pattern)
+# ============================================================================
+
+WORKER_FASTAPI_EXAMPLE = '''
+from fastapi import FastAPI, Request, HTTPException
+from tenuo import Keypair, Warrant, set_warrant_context
+import os
+
+app = FastAPI()
+
+# =============================================================================
+# STARTUP: Load long-running identity (stays in memory for days/weeks)
+# =============================================================================
+WORKER_KEYPAIR = Keypair.from_bytes(bytes.fromhex(os.getenv("WORKER_PRIVATE_KEY")))
+
+@app.middleware("http")
+async def verify_tenuo_auth(request: Request, call_next):
+    """Verify warrant is bound to THIS worker's identity."""
+    
+    # 1. Extract warrant from header
+    warrant_b64 = request.headers.get("X-Tenuo-Warrant")
+    if not warrant_b64:
+        raise HTTPException(401, "Missing Warrant")
+    
+    warrant = Warrant.from_base64(warrant_b64)
+    
+    # 2. CRITICAL: Proof-of-Possession check
+    # "Is this warrant meant for ME?"
+    # If someone stole this warrant, they can't use it - wrong key!
+    if warrant.authorized_holder != WORKER_KEYPAIR.public_key():
+        raise HTTPException(403, "Warrant not bound to my identity")
+    
+    # 3. Set context for @lockdown decorators
+    with set_warrant_context(warrant):
+        return await call_next(request)
+
+@app.post("/run")
+def run_scraper(payload: dict):
+    """Execute scraping task. @lockdown decorators check constraints."""
+    return scrape_tool(payload["url"])
 '''
 
 
@@ -273,50 +326,122 @@ async def process_task(batch_id: str, worker_pubkey_hex: str):
 # Kubernetes Manifests
 # ============================================================================
 
-K8S_DEPLOYMENT = '''
+K8S_SIMPLE_AGENT = '''
+# Simple Agent: Single pod with warrant
+apiVersion: v1
+kind: Secret
+metadata:
+  name: agent-identity
+stringData:
+  PRIVATE_KEY: <agent-private-key-hex>
+  WARRANT_BASE64: <base64-warrant-from-control-plane>
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: tenuo-agent
 spec:
   replicas: 3
-  selector:
-    matchLabels:
-      app: tenuo-agent
   template:
-    metadata:
-      labels:
-        app: tenuo-agent
     spec:
       containers:
       - name: agent
         image: your-agent:latest
         env:
-        # Option 1: Warrant from env var
+        - name: AGENT_PRIVATE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: agent-identity
+              key: PRIVATE_KEY
         - name: TENUO_WARRANT_BASE64
           valueFrom:
             secretKeyRef:
-              name: tenuo-warrant
+              name: agent-identity
               key: WARRANT_BASE64
-        # Option 2: Warrant from mounted file
-        volumeMounts:
-        - name: warrant
-          mountPath: /etc/tenuo
-          readOnly: true
-      volumes:
-      - name: warrant
-        secret:
-          secretName: tenuo-warrant
----
+'''
+
+
+# ============================================================================
+# K8s Manifests: Identity-as-Config (Orchestrator + Worker)
+# ============================================================================
+
+K8S_ORCHESTRATOR_WORKER = '''
+# =============================================================================
+# IDENTITY-AS-CONFIG PATTERN
+# =============================================================================
+# Worker's identity is a Secret with both keys.
+# - Worker gets the PRIVATE_KEY (to prove identity)
+# - Orchestrator gets the PUBLIC_KEY (to bind warrants)
+# =============================================================================
+
+# 1. Worker Identity Secret (generated by CI/CD or Terraform)
 apiVersion: v1
 kind: Secret
 metadata:
-  name: tenuo-warrant
-type: Opaque
+  name: scraper-identity
 stringData:
-  # Warrant issued by Control Plane during enrollment
-  WARRANT_BASE64: <base64-warrant-from-control-plane>
-  warrant.b64: <base64-warrant-from-control-plane>
+  PRIVATE_KEY: "a1b2c3..."  # For the Worker
+  PUBLIC_KEY: "d4e5f6..."   # For the Orchestrator
+---
+
+# 2. Orchestrator Identity Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: orchestrator-identity
+stringData:
+  PRIVATE_KEY: "x1y2z3..."
+  WARRANT_BASE64: "<root-warrant-from-control-plane>"
+---
+
+# 3. Worker Deployment (gets its PRIVATE key)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scraper-worker
+spec:
+  template:
+    spec:
+      containers:
+      - name: app
+        image: scraper:latest
+        env:
+        - name: WORKER_PRIVATE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: scraper-identity
+              key: PRIVATE_KEY
+---
+
+# 4. Orchestrator Deployment (gets Worker's PUBLIC key)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+spec:
+  template:
+    spec:
+      containers:
+      - name: app
+        image: orchestrator:latest
+        env:
+        # Orchestrator's own identity
+        - name: ORCHESTRATOR_PRIVATE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: orchestrator-identity
+              key: PRIVATE_KEY
+        - name: TENUO_WARRANT_BASE64
+          valueFrom:
+            secretKeyRef:
+              name: orchestrator-identity
+              key: WARRANT_BASE64
+        # IDENTITY-AS-CONFIG: Orchestrator knows Scraper's public key
+        - name: SCRAPER_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: scraper-identity
+              key: PUBLIC_KEY
 '''
 
 
