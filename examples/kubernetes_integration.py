@@ -94,6 +94,7 @@ def write_file(file_path: str, content: str) -> str:
 def attenuate_for_worker(
     orchestrator_warrant: Warrant,
     orchestrator_keypair: Keypair,
+    worker_public_key,  # Worker's public key for PoP binding
     task_constraints: dict,
     ttl_seconds: int = 300
 ) -> Warrant:
@@ -101,21 +102,24 @@ def attenuate_for_worker(
     Orchestrator attenuates its warrant for a specific worker task.
     
     This is an OFFLINE operation - no Control Plane call.
-    The worker's warrant is NARROWER than the orchestrator's.
+    The worker's warrant is NARROWER than the orchestrator's and
+    PoP-bound to the worker's public key.
     
     Args:
         orchestrator_warrant: Orchestrator's root warrant (broad scope)
         orchestrator_keypair: Orchestrator's keypair (for signing)
+        worker_public_key: Worker's public key (for PoP binding)
         task_constraints: Narrower constraints for this specific task
         ttl_seconds: Short TTL for task-scoped warrant
     
     Returns:
-        Attenuated warrant for worker
+        Attenuated warrant bound to worker's public key
     """
     return orchestrator_warrant.attenuate(
         constraints=task_constraints,
         keypair=orchestrator_keypair,
-        ttl_seconds=ttl_seconds
+        ttl_seconds=ttl_seconds,
+        authorized_holder=worker_public_key  # PoP-bound to worker
     )
 
 
@@ -125,9 +129,10 @@ def demo_orchestrator_worker_delegation():
     
     Scenario:
         - Orchestrator has broad warrant: file_path=/data/*
+        - Worker has its own keypair (identity)
         - Task needs to process only /data/batch-123/*
-        - Orchestrator attenuates warrant for worker
-        - Worker can ONLY access /data/batch-123/*
+        - Orchestrator attenuates warrant, PoP-bound to worker
+        - ONLY that worker can use the warrant
     """
     print("\n=== Orchestrator → Worker Delegation ===\n")
     
@@ -143,40 +148,52 @@ def demo_orchestrator_worker_delegation():
         },
         ttl_seconds=86400,  # 24 hours
         keypair=control_keypair,
-        authorized_holder=orchestrator_keypair.public_key()  # PoP-bound
+        authorized_holder=orchestrator_keypair.public_key()  # PoP-bound to orchestrator
     )
-    print(f"1. Orchestrator warrant: file_path=/data/* (broad)")
-    print(f"   ID: {orchestrator_warrant.id[:8]}...")
-    print(f"   Expires: {orchestrator_warrant.expires_at}\n")
+    print(f"1. Orchestrator warrant:")
+    print(f"   Scope: file_path=/data/* (broad)")
+    print(f"   Bound to: Orchestrator's public key")
+    print(f"   ID: {orchestrator_warrant.id[:8]}...\n")
     
-    # Orchestrator receives task: process batch-123
-    # Attenuate warrant for worker (OFFLINE - no Control Plane call)
+    # Worker has its own identity (keypair)
+    # In production: worker loads this from K8s Secret at startup
+    worker_keypair = Keypair.generate()
+    worker_pubkey = worker_keypair.public_key()
+    print(f"2. Worker identity:")
+    print(f"   Public key: {bytes(worker_pubkey.to_bytes()).hex()[:16]}...\n")
+    
+    # Orchestrator attenuates warrant for THIS SPECIFIC worker
+    # The warrant is PoP-bound to worker's public key
     worker_warrant = attenuate_for_worker(
         orchestrator_warrant=orchestrator_warrant,
         orchestrator_keypair=orchestrator_keypair,
+        worker_public_key=worker_pubkey,  # Bind to worker's identity
         task_constraints={
             "file_path": Pattern("/data/batch-123/*"),  # Narrow: only batch-123
         },
         ttl_seconds=300  # 5 minutes for task
     )
-    print(f"2. Worker warrant: file_path=/data/batch-123/* (narrow)")
+    print(f"3. Attenuated warrant for worker:")
+    print(f"   Scope: file_path=/data/batch-123/* (narrow)")
+    print(f"   Bound to: Worker's public key (PoP required)")
     print(f"   ID: {worker_warrant.id[:8]}...")
     print(f"   Parent: {worker_warrant.parent_id[:8] if worker_warrant.parent_id else 'None'}...")
     print(f"   Depth: {worker_warrant.depth}")
-    print(f"   Expires: {worker_warrant.expires_at}\n")
+    print(f"   TTL: 5 minutes\n")
     
-    # Worker receives warrant (e.g., via HTTP header or K8s Job env)
-    print("3. Worker receives attenuated warrant:")
-    print(f"   • Via HTTP: X-Tenuo-Warrant: {worker_warrant.to_base64()[:40]}...")
-    print(f"   • Via K8s Job env: TENUO_WARRANT_BASE64=...")
-    print()
+    # Worker receives warrant + uses its private key to prove possession
+    print("4. Worker usage:")
+    print("   • Receives warrant via HTTP header or K8s Job env")
+    print("   • Must sign with private key to prove identity (PoP)")
+    print("   • Other pods CANNOT use this warrant (wrong key)\n")
     
-    print("4. Security properties:")
-    print("   ✓ Worker can ONLY access /data/batch-123/*")
-    print("   ✓ Worker CANNOT access /data/other-batch/*")
-    print("   ✓ Warrant expires in 5 minutes (task-scoped)")
+    print("5. Security properties:")
+    print("   ✓ Warrant PoP-bound to worker's public key")
+    print("   ✓ Only THIS worker can use it (has private key)")
+    print("   ✓ Scope narrowed: /data/* → /data/batch-123/*")
+    print("   ✓ TTL shortened: 24h → 5 minutes")
     print("   ✓ Attenuation was OFFLINE (no Control Plane call)")
-    print("   ✓ Warrant chain: Control Plane → Orchestrator → Worker")
+    print("   ✓ Chain: Control Plane → Orchestrator → Worker")
 
 
 # ============================================================================
@@ -216,7 +233,7 @@ async def run_agent(prompt: str):
 
 ORCHESTRATOR_FASTAPI_EXAMPLE = '''
 from fastapi import FastAPI
-from tenuo import Keypair, set_warrant_context
+from tenuo import Keypair, Pattern, set_warrant_context
 import httpx
 
 # Orchestrator loads its warrant and keypair at startup
@@ -226,17 +243,21 @@ orchestrator_keypair = Keypair.from_bytes(load_keypair_bytes())  # From K8s Secr
 app = FastAPI()
 
 @app.post("/tasks/process")
-async def process_task(batch_id: str):
-    """Orchestrator delegates task to worker."""
+async def process_task(batch_id: str, worker_pubkey_hex: str):
+    """Orchestrator delegates task to a specific worker."""
     
-    # Attenuate warrant for this specific batch (OFFLINE)
+    # Worker's public key (from request or service discovery)
+    worker_pubkey = PublicKey.from_bytes(bytes.fromhex(worker_pubkey_hex))
+    
+    # Attenuate warrant for this specific worker and batch (OFFLINE)
     worker_warrant = orchestrator_warrant.attenuate(
         constraints={"file_path": Pattern(f"/data/{batch_id}/*")},
         keypair=orchestrator_keypair,
-        ttl_seconds=300
+        ttl_seconds=300,
+        authorized_holder=worker_pubkey  # PoP-bound to THIS worker
     )
     
-    # Send to worker with attenuated warrant
+    # Send to worker - only they can use it (has matching private key)
     async with httpx.AsyncClient() as client:
         response = await client.post(
             "http://worker-service:8000/process",
