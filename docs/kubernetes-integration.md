@@ -4,39 +4,127 @@ This guide shows how to deploy Tenuo-protected LangChain agents in Kubernetes.
 
 ## Architecture Overview
 
+### Simple Agent Pattern
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  Control Plane (Issuer)                                      │
-│  - Issues warrants for agents                                │
-│  - Signs with root keypair                                    │
-│  - Updates K8s Secrets/ConfigMaps                             │
-└──────────────────────┬──────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  Control Plane (Issuer)                                             │
+│  - Issues warrants at ENROLLMENT (once)                             │
+│  - Signs with root keypair                                          │
+│  - Warrant PoP-bound to agent's public key                          │
+└──────────────────────┬──────────────────────────────────────────────┘
                        │
-                       │ Updates Secret
+                       │ Stores warrant in K8s Secret
                        ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Kubernetes Secret / ConfigMap                              │
-│  - Stores base64-encoded warrant                             │
-│  - Mounted to agent pods                                     │
-└──────────────────────┬──────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  Kubernetes Secret                                                  │
+│  - TENUO_WARRANT_BASE64 (warrant)                                   │
+│  - Agent's keypair (for PoP)                                        │
+└──────────────────────┬──────────────────────────────────────────────┘
                        │
-                       │ Mounted at /etc/tenuo/warrant.b64
+                       │ Mounted to pod at startup
                        ▼
-┌─────────────────────────────────────────────────────────────┐
-│  LangChain Agent Pods (Replicas)                            │
-│  - Load warrant at startup                                   │
-│  - Set warrant in context per-request                        │
-│  - All @lockdown functions protected                        │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-                       │ Request with warrant header
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Ingress / API Gateway                                      │
-│  - Validates warrant (optional)                              │
-│  - Forwards X-Tenuo-Warrant header                          │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  Agent Pod                                                          │
+│  - Loads warrant and keypair at startup                             │
+│  - Uses keypair to prove identity (PoP)                             │
+│  - All @lockdown functions protected                                │
+│  - Verification is OFFLINE (no Control Plane calls)                 │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+### Orchestrator → Worker Delegation
+
+When an orchestrator needs to delegate tasks to workers, it **attenuates** its warrant locally (offline) and binds it to the worker's public key.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│ 1. ENROLLMENT (one-time, online)                                    │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│   Orchestrator ──────────────────────────► Control Plane            │
+│       │         "Enroll me"                     │                   │
+│       │         (PoP signature)                 │                   │
+│       │                                         │                   │
+│       │◄────────────────────────────────────────┘                   │
+│       │         Root Warrant                                        │
+│       │         (broad scope, PoP-bound to Orchestrator)            │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ 2. TASK ASSIGNMENT (per-task, OFFLINE)                              │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│   Orchestrator receives task: "Process batch-123"                   │
+│       │                                                             │
+│       │ Orchestrator decides: "Delegate to Worker-A"                │
+│       │                                                             │
+│       │ Orchestrator knows Worker-A's public key                    │
+│       │ (from service discovery, K8s API, or pre-registered)        │
+│       │                                                             │
+│       ▼                                                             │
+│   orchestrator_warrant.attenuate(                                   │
+│       constraints={"file_path": "/data/batch-123/*"},  # narrower   │
+│       keypair=orchestrator_keypair,                    # signs it   │
+│       ttl_seconds=300,                                 # shorter    │
+│       authorized_holder=worker_A_pubkey                # PoP-bound  │
+│   )                                                                 │
+│       │                                                             │
+│       │ This is LOCAL crypto - no Control Plane call!               │
+│       │                                                             │
+│       ▼                                                             │
+│   Attenuated warrant created                                        │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ 3. WARRANT DELIVERY (Orchestrator → Worker)                         │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│   Orchestrator ──────────────────────────► Worker-A                 │
+│                  HTTP request with:                                 │
+│                  - Task details (batch-123)                         │
+│                  - X-Tenuo-Warrant header (attenuated warrant)      │
+│                                                                     │
+│   OR                                                                │
+│                                                                     │
+│   Orchestrator creates K8s Job with:                                │
+│                  - TENUO_WARRANT_BASE64 env var                     │
+│                  - Task config                                      │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ 4. WORKER USES WARRANT (offline verification)                       │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│   Worker-A receives warrant                                         │
+│       │                                                             │
+│       │ Worker has its own private key (from K8s Secret)            │
+│       │                                                             │
+│       ▼                                                             │
+│   Worker calls @lockdown protected tool:                            │
+│       process_file("/data/batch-123/file.csv")                      │
+│       │                                                             │
+│       │ Tenuo checks:                                               │
+│       │   ✓ Warrant signature chain valid?                          │
+│       │   ✓ Constraints match? (/data/batch-123/* allows this)      │
+│       │   ✓ PoP valid? (Worker signs with private key)              │
+│       │   ✓ Not expired?                                            │
+│       │                                                             │
+│       ▼                                                             │
+│   Tool executes (or blocked if checks fail)                         │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Key Points:**
+- **Orchestrator initiates** - Worker never asks for a warrant
+- **Attenuation is OFFLINE** - pure crypto, no Control Plane involved
+- **Warrant pushed to worker** - via HTTP header or K8s env var
+- **Worker proves identity** - uses its private key for PoP
+- **Principle of least privilege** - Worker gets only what it needs
 
 ## Deployment Patterns
 
@@ -120,25 +208,26 @@ async def tenuo_middleware(request: Request, call_next):
     return await call_next(request)
 ```
 
-### Pattern 3: Hybrid (Pod + Request)
+### Pattern 3: Orchestrator Delegation
 
-Pod-level warrant as fallback, request header for override.
+Orchestrator attenuates its warrant for workers. See [Orchestrator → Worker Delegation](#orchestrator--worker-delegation) above.
 
-**Use Case:** Default capabilities from pod warrant, enhanced capabilities per-request.
+**Use Case:** Orchestrator delegates tasks to workers with narrowed, time-limited warrants.
 
 ```python
-class KubernetesWarrantManager:
-    def __init__(self):
-        # Load pod-level warrant at startup
-        self.pod_warrant = load_warrant_from_env() or load_warrant_from_file()
-    
-    def get_warrant_for_request(self, headers: Dict[str, str]) -> Optional[Warrant]:
-        # Try request header first (most specific)
-        if "X-Tenuo-Warrant" in headers:
-            return Warrant.from_base64(headers["X-Tenuo-Warrant"])
-        
-        # Fall back to pod-level warrant
-        return self.pod_warrant
+# Orchestrator attenuates warrant for worker
+worker_warrant = orchestrator_warrant.attenuate(
+    constraints={"file_path": f"/data/{batch_id}/*"},  # narrower scope
+    keypair=orchestrator_keypair,
+    ttl_seconds=300,  # 5 minutes
+    authorized_holder=worker_pubkey  # PoP-bound to this worker
+)
+
+# Send to worker via HTTP or K8s Job
+response = httpx.post(
+    "http://worker:8000/process",
+    headers={"X-Tenuo-Warrant": worker_warrant.to_base64()}
+)
 ```
 
 ## Control Plane Integration
@@ -196,39 +285,43 @@ Mutating webhook injects warrant into pod spec at creation time.
 Complete FastAPI example for Kubernetes:
 
 ```python
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from tenuo import set_warrant_context, Warrant, AuthorizationError
-from kubernetes_warrant_manager import KubernetesWarrantManager
+from contextlib import asynccontextmanager
+import os
 
-app = FastAPI()
-warrant_manager = KubernetesWarrantManager()
+def load_warrant():
+    """Load warrant from K8s environment."""
+    warrant_b64 = os.getenv("TENUO_WARRANT_BASE64")
+    if warrant_b64:
+        return Warrant.from_base64(warrant_b64)
+    return None
 
-@app.middleware("http")
-async def tenuo_middleware(request: Request, call_next):
-    """Set warrant in context for each request."""
-    headers = dict(request.headers)
-    warrant = warrant_manager.get_warrant_for_request(headers)
-    
-    if not warrant:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="No warrant available")
-    
-    with set_warrant_context(warrant):
-        return await call_next(request)
+# Load warrant ONCE at startup
+warrant = load_warrant()
+if not warrant:
+    raise RuntimeError("No warrant - agent cannot start")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print(f"Agent started with warrant: {warrant.id[:8]}...")
+    yield
+
+app = FastAPI(lifespan=lifespan)
 
 @app.post("/agent/run")
 async def run_agent(prompt: str):
     """Run LangChain agent with Tenuo protection."""
-    # Warrant is already in context from middleware
-    # All @lockdown functions are automatically protected
-    from langchain_agent import agent_executor
-    
-    try:
-        response = agent_executor.invoke({"input": prompt})
-        return {"output": response["output"]}
-    except AuthorizationError as e:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail=str(e))
+    with set_warrant_context(warrant):
+        # All @lockdown functions are automatically protected
+        from langchain_agent import agent_executor
+        
+        try:
+            response = agent_executor.invoke({"input": prompt})
+            return {"output": response["output"]}
+        except AuthorizationError as e:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=403, detail=str(e))
 ```
 
 ## Security Considerations
@@ -292,13 +385,14 @@ See `examples/kubernetes_integration.py` for a complete working example.
 ## Best Practices
 
 1. **Load warrant at startup** - Don't fetch on every request
-2. **Use request headers** - For dynamic per-request capabilities
-3. **Set context once** - In middleware, not in each route
-4. **Handle errors gracefully** - Return 403, not 500
-5. **Monitor warrant expiration** - Alert before TTL expires
-6. **Rotate warrants regularly** - Update secrets periodically
-7. **Use separate namespaces** - Control plane vs data plane
-8. **Enable network policies** - Restrict pod-to-pod communication
+2. **Bind warrants to holder's public key** - Always use `authorized_holder` for PoP
+3. **Orchestrators attenuate, workers consume** - Workers never request warrants
+4. **Attenuation is offline** - No Control Plane calls after enrollment
+5. **Short TTL for delegated warrants** - Task-scoped warrants should be minutes, not hours
+6. **Handle errors gracefully** - Return 403, not 500
+7. **Monitor warrant expiration** - Alert before TTL expires
+8. **Use separate namespaces** - Control plane vs data plane
+9. **Enable network policies** - Restrict pod-to-pod communication
 
 ## Troubleshooting
 
