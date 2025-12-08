@@ -8,7 +8,7 @@
 //! 5. **Multi-sig approval**: Requires human approval for sensitive actions
 //! 6. **Notary Registry**: Maps enterprise identities to cryptographic keys
 
-use tenuo_core::{Keypair, Exact, Range, Warrant, wire, OneOf};
+use tenuo_core::{Keypair, PublicKey, Exact, Range, Warrant, wire, OneOf};
 use std::time::Duration;
 use std::env;
 use uuid::Uuid;
@@ -91,10 +91,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("      - budget:    ≤ $10,000");
 
     // =========================================================================
-    // Step 2: Establish Identities (Key Generation)
+    // Step 2: Load Worker Identity (Identity-as-Config Pattern)
     // =========================================================================
     println!("\n┌─────────────────────────────────────────────────────────────────┐");
-    println!("│ STEP 2: Establish Identities (Key Generation)                   │");
+    println!("│ STEP 2: Load Worker Identity (Identity-as-Config)               │");
     println!("└─────────────────────────────────────────────────────────────────┘");
 
     // Orchestrator already generated its keypair in Step 1 (for enrollment)
@@ -103,33 +103,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    Public Key: {}", hex::encode(orchestrator_keypair.public_key().to_bytes()));
 
     // ─────────────────────────────────────────────────────────────────────────
-    // DEMO SIMPLIFICATION: In production, the worker generates its own keypair
-    // and sends ONLY the public key to the orchestrator.
+    // IDENTITY-AS-CONFIG PATTERN (Production Best Practice)
+    // ─────────────────────────────────────────────────────────────────────────
+    // In production (Kubernetes), worker identities are wired at deploy time:
+    //   - Worker gets WORKER_PRIVATE_KEY from K8s Secret
+    //   - Orchestrator gets WORKER_PUBLIC_KEY from same Secret
     //
-    // Production flow:
-    //   1. Worker: keypair = Keypair::generate()
-    //   2. Worker: send(orchestrator, keypair.public_key())
-    //   3. Orchestrator: receives worker_public_key
-    //   4. Orchestrator: attenuate().authorized_holder(worker_public_key)
-    //
-    // For this demo, we generate on behalf of worker for simplicity.
+    // This is "Identity-as-Config" - static wiring via Terraform/Helm.
+    // The orchestrator knows the worker's public key at startup, not runtime.
     // ─────────────────────────────────────────────────────────────────────────
-    let worker_keypair = Keypair::generate();
-    println!("\n  [DEMO] Simulating worker key registration:");
-    println!("    In production: Worker generates key, sends ONLY public key");
-    println!("    Worker Public Key: {}", hex::encode(worker_keypair.public_key().to_bytes()));
-
-    // ⚠️  DEMO ONLY: Writing private key to shared storage
-    // ─────────────────────────────────────────────────────────────────────────
-    // SECURITY WARNING: In production, private keys MUST NEVER leave the agent.
-    // This file-sharing approach is ONLY for demo convenience.
-    // Production: Worker generates key locally, sends only PUBLIC key to orchestrator.
-    // ─────────────────────────────────────────────────────────────────────────
-    let worker_key_path = env::var("TENUO_WORKER_KEY_OUTPUT")
-        .unwrap_or_else(|_| "/data/worker.key".to_string());
-    std::fs::write(&worker_key_path, hex::encode(worker_keypair.secret_key_bytes()))?;
-    println!("    ⚠️  [DEMO ONLY] Saved secret key to: {}", worker_key_path);
-    println!("    ⚠️  PRODUCTION: Private keys MUST stay with the agent!");
+    let worker_pubkey_hex = env::var("WORKER_PUBLIC_KEY")
+        .expect("WORKER_PUBLIC_KEY must be set (from K8s Secret or demo script)");
+    let worker_pubkey_bytes: [u8; 32] = hex::decode(&worker_pubkey_hex)?
+        .try_into()
+        .map_err(|_| "WORKER_PUBLIC_KEY must be 32 bytes hex")?;
+    let worker_public_key = PublicKey::from_bytes(&worker_pubkey_bytes)?;
+    
+    println!("\n  Worker identity loaded from environment:");
+    println!("    Public Key: {}", worker_pubkey_hex);
+    println!("    ✓ Identity-as-Config: Static wiring at deploy time");
+    println!("    ✓ Private key stays with Worker (never shared)");
 
     // =========================================================================
     // Step 3: Attenuate warrant for the Worker
@@ -149,7 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .constraint("action", OneOf::new(vec!["upgrade", "restart"]))
         .constraint("budget", Range::max(1000.0))
         .ttl(Duration::from_secs(600)) // 10 minutes
-        .authorized_holder(worker_keypair.public_key()) // PoP
+        .authorized_holder(worker_public_key.clone()) // PoP-bound to Worker's static identity
         .agent_id("worker-agent-01") // Traceability
         // Session ID is inherited from parent automatically
         .build(&orchestrator_keypair)?;
@@ -160,7 +153,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    • Depth:       {} / {} (delegated)", worker_warrant.depth(), worker_warrant.effective_max_depth());
     println!("    • Session:     {} (inherited)", worker_warrant.session_id().unwrap_or("-"));
     println!("    • Expires:     {}", worker_warrant.expires_at());
-    println!("    • Holder:      {} (PoP required)", hex::encode(&worker_keypair.public_key().to_bytes()[..8]));
+    println!("    • Holder:      {} (PoP required)", &worker_pubkey_hex[..16]);
     println!("    • Signed by:   Orchestrator");
 
     // =========================================================================
@@ -173,18 +166,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  For sensitive actions (delete, scale-down), we require human approval.");
     println!("  This is enforced via multi-sig: the warrant lists required approvers.\n");
 
-    // Create an "approver" keypair (simulates an admin mapped via Notary Registry)
-    let admin_keypair = Keypair::generate();
-    println!("  Generated Admin Keypair (simulating Notary-bound identity):");
-    println!("    • Public Key: {}", hex::encode(&admin_keypair.public_key().to_bytes()[..16]));
-    println!("    • External ID: arn:aws:iam::123456789:user/admin (simulated)\n");
-
-    // ⚠️  DEMO ONLY: In production, admin keys are managed by the admin (HSM, Yubikey, etc.)
-    // This is shared here so the worker demo can simulate admin approval.
-    let admin_key_path = env::var("TENUO_ADMIN_KEY_OUTPUT")
-        .unwrap_or_else(|_| "/data/admin.key".to_string());
-    std::fs::write(&admin_key_path, hex::encode(admin_keypair.secret_key_bytes()))?;
-    println!("    ⚠️  [DEMO ONLY] Saved admin key to: {}", admin_key_path);
+    // ─────────────────────────────────────────────────────────────────────────
+    // ADMIN IDENTITY (Identity-as-Config Pattern)
+    // ─────────────────────────────────────────────────────────────────────────
+    // In production, admin public keys come from:
+    //   - Enterprise identity provider (via Notary Registry)
+    //   - K8s ConfigMap/Secret
+    //   - Terraform/Helm configuration
+    //
+    // The admin's PRIVATE key is managed by the admin themselves (HSM, Yubikey).
+    // Only the PUBLIC key is shared with systems that need to verify approvals.
+    // ─────────────────────────────────────────────────────────────────────────
+    let admin_pubkey_hex = env::var("ADMIN_PUBLIC_KEY")
+        .expect("ADMIN_PUBLIC_KEY must be set (from K8s Secret or demo script)");
+    let admin_pubkey_bytes: [u8; 32] = hex::decode(&admin_pubkey_hex)?
+        .try_into()
+        .map_err(|_| "ADMIN_PUBLIC_KEY must be 32 bytes hex")?;
+    let admin_public_key = PublicKey::from_bytes(&admin_pubkey_bytes)?;
+    
+    println!("  Admin identity loaded from environment:");
+    println!("    • Public Key: {}", &admin_pubkey_hex[..32]);
+    println!("    • External ID: arn:aws:iam::123456789:user/admin (simulated)");
+    println!("    ✓ Private key managed by Admin (HSM/Yubikey)");
 
     // Create a warrant for sensitive operations that REQUIRES multi-sig approval
     let sensitive_warrant = root_warrant.attenuate()
@@ -192,10 +195,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .constraint("action", OneOf::new(vec!["delete", "scale-down"]))  // Dangerous actions
         .constraint("budget", Range::max(500.0))
         .ttl(Duration::from_secs(300)) // 5 minutes (short for sensitive ops)
-        .authorized_holder(worker_keypair.public_key())
+        .authorized_holder(worker_public_key) // PoP-bound to Worker
         .agent_id("worker-agent-01-sensitive")
         // MULTI-SIG: Require 1-of-1 approval from the admin
-        .add_approvers(vec![admin_keypair.public_key()])
+        .add_approvers(vec![admin_public_key])
         .raise_min_approvals(1)
         .build(&orchestrator_keypair)?;
 

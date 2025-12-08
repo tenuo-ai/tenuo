@@ -85,37 +85,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // =========================================================================
-    // Step 2b: Worker Keypair (for Proof-of-Possession)
+    // Step 2b: Worker Keypair (Identity-as-Config Pattern)
     // =========================================================================
     // ─────────────────────────────────────────────────────────────────────────
-    // PRODUCTION PATTERN:
-    //   1. Worker generates its own keypair: keypair = Keypair::generate()
-    //   2. Worker sends ONLY public key to orchestrator
-    //   3. Worker keeps private key locally (NEVER shared)
-    //
-    // DEMO SIMPLIFICATION:
-    //   For this demo, we load a pre-generated key from the orchestrator.
-    //   This simulates the case where the worker already has its key.
+    // IDENTITY-AS-CONFIG PATTERN (Production Best Practice)
     // ─────────────────────────────────────────────────────────────────────────
-    let worker_key_path = env::var("TENUO_WORKER_KEY_INPUT")
-        .unwrap_or_else(|_| "/data/worker.key".to_string());
-    
-    println!("\n  ⚠️  [DEMO ONLY] Loading pre-shared keypair from: {}", worker_key_path);
-    println!("    PRODUCTION: Worker generates key locally with Keypair::generate()");
-    println!("    PRODUCTION: Only PUBLIC key is sent to orchestrator");
-    
-    // Simple wait loop (similar to chain)
-    let worker_key_hex = loop {
-        if Path::new(&worker_key_path).exists() {
-            break fs::read_to_string(&worker_key_path)?;
-        }
-        thread::sleep(Duration::from_secs(1));
-    };
+    // In production (Kubernetes), worker identity is injected at deploy time:
+    //   - Worker gets WORKER_PRIVATE_KEY from K8s Secret
+    //   - Orchestrator gets WORKER_PUBLIC_KEY from same Secret
+    //
+    // The private key stays in memory for the lifetime of the pod.
+    // It's loaded ONCE at startup and used for PoP signing on every request.
+    // ─────────────────────────────────────────────────────────────────────────
+    let worker_key_hex = env::var("WORKER_PRIVATE_KEY")
+        .expect("WORKER_PRIVATE_KEY must be set (from K8s Secret or demo script)");
     let worker_key_bytes: [u8; 32] = hex::decode(worker_key_hex.trim())?
         .try_into()
-        .map_err(|_| "Worker key must be 32 bytes")?;
+        .map_err(|_| "WORKER_PRIVATE_KEY must be 32 bytes hex")?;
     let worker_keypair = Keypair::from_bytes(&worker_key_bytes);
-    println!("  ✓ Worker keypair ready (private key for PoP signing)");
+    
+    println!("\n  Worker identity loaded from environment:");
+    println!("    Public Key: {}", hex::encode(worker_keypair.public_key().to_bytes()));
+    println!("    ✓ Identity-as-Config: Private key injected at deploy time");
+    println!("    ✓ Long-running identity (stays in memory for pod lifetime)");
 
     // =========================================================================
     // Step 3: Verify the complete delegation chain
@@ -390,19 +382,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("    • approvals:  {} required ({} registered)", threshold, approvers_count);
         println!("    • threshold:  {}-of-{}", threshold, approvers_count);
         
-        // Load admin keypair for multi-sig
-        let admin_key_path = env::var("TENUO_ADMIN_KEY_INPUT")
-            .unwrap_or_else(|_| "/data/admin.key".to_string());
-        
-        let admin_keypair = if Path::new(&admin_key_path).exists() {
-            let admin_key_hex = fs::read_to_string(&admin_key_path)?;
-            let admin_key_bytes: [u8; 32] = hex::decode(admin_key_hex.trim())?
-                .try_into()
-                .map_err(|_| "Admin key must be 32 bytes")?;
-            Some(Keypair::from_bytes(&admin_key_bytes))
-        } else {
-            println!("  ⚠ Admin key not found at {}", admin_key_path);
-            None
+        // ─────────────────────────────────────────────────────────────────────
+        // ADMIN KEYPAIR (for multi-sig demo simulation)
+        // ─────────────────────────────────────────────────────────────────────
+        // In production, the ADMIN signs approvals independently:
+        //   - Worker requests approval via Slack/email/UI
+        //   - Admin reviews and signs with their HSM/Yubikey
+        //   - Approval is returned to Worker
+        //
+        // For this demo, we simulate admin signing by loading the admin's
+        // private key from environment. In production, this key would NEVER
+        // be accessible to the worker.
+        // ─────────────────────────────────────────────────────────────────────
+        let admin_keypair = match env::var("ADMIN_PRIVATE_KEY") {
+            Ok(admin_key_hex) => {
+                let admin_key_bytes: [u8; 32] = hex::decode(admin_key_hex.trim())?
+                    .try_into()
+                    .map_err(|_| "ADMIN_PRIVATE_KEY must be 32 bytes hex")?;
+                println!("  ⚠️  [DEMO ONLY] Admin private key loaded for approval simulation");
+                println!("     PRODUCTION: Admin signs approvals independently (HSM/Yubikey)");
+                Some(Keypair::from_bytes(&admin_key_bytes))
+            }
+            Err(_) => {
+                println!("  ⚠ ADMIN_PRIVATE_KEY not set - skipping multi-sig simulation");
+                None
+            }
         };
         
         // Test 1: Try to delete WITHOUT approval
