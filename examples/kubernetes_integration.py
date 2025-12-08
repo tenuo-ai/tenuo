@@ -327,17 +327,34 @@ stringData:
 def main():
     print("=== Kubernetes Integration Demo ===\n")
     
-    # In production: warrant comes from K8s Secret
-    # For demo: create one
+    # ========================================================================
+    # Simple Agent Pattern (with PoP binding)
+    # ========================================================================
+    
+    # In production: Control Plane issues warrant bound to agent's public key
+    # Agent's keypair is stored in K8s Secret alongside warrant
     print("1. Simulating K8s environment...")
-    demo_keypair = Keypair.generate()
-    demo_warrant = Warrant.create(
+    
+    # Control Plane keypair (issuer)
+    control_keypair = Keypair.generate()
+    
+    # Agent's own keypair (identity) - in production, from K8s Secret
+    agent_keypair = Keypair.generate()
+    agent_pubkey = agent_keypair.public_key()
+    
+    # Warrant issued by Control Plane, PoP-bound to THIS agent
+    agent_warrant = Warrant.create(
         tool="read_file",
         constraints={"file_path": Pattern("/tmp/*")},
         ttl_seconds=3600,
-        keypair=demo_keypair
+        keypair=control_keypair,
+        authorized_holder=agent_pubkey  # PoP-bound to agent
     )
-    os.environ["TENUO_WARRANT_BASE64"] = demo_warrant.to_base64()
+    
+    # In K8s: both warrant and agent keypair stored in Secret
+    os.environ["TENUO_WARRANT_BASE64"] = agent_warrant.to_base64()
+    print(f"   Agent public key: {bytes(agent_pubkey.to_bytes()).hex()[:16]}...")
+    print(f"   Warrant PoP-bound to agent's key")
     print(f"   Set TENUO_WARRANT_BASE64 (simulating K8s Secret)\n")
     
     # Load warrant (what agent does at startup)
@@ -346,13 +363,15 @@ def main():
     if warrant:
         print(f"   ✓ Loaded warrant: {warrant.id[:8]}...")
         print(f"   ✓ Tool: {warrant.tool}")
+        print(f"   ✓ PoP required: {warrant.requires_pop}")
         print(f"   ✓ Expires: {warrant.expires_at}\n")
     else:
         print("   ✗ No warrant found")
         return
     
-    # Use warrant (what agent does per-request)
+    # Use warrant (agent must prove identity with its private key)
     print("3. Using warrant (per-request)...")
+    print("   Agent uses private key to sign PoP when calling tools")
     with set_warrant_context(warrant):
         # Authorized
         try:
@@ -363,7 +382,7 @@ def main():
         except FileNotFoundError:
             print("   ✓ read_file('/tmp/test.txt'): Allowed (file doesn't exist)")
         
-        # Blocked
+        # Blocked by constraint
         try:
             read_file("/etc/passwd")
             print("   ✗ Should have been blocked!")
@@ -371,19 +390,21 @@ def main():
             print("   ✓ read_file('/etc/passwd'): Blocked (constraint violation)")
     
     print("\n=== Summary (Simple Agent) ===")
-    print("  • Warrant loaded from K8s Secret at startup")
-    print("  • All verification is OFFLINE (no network calls)")
-    print("  • @lockdown decorator enforces constraints")
-    print("  • Works across all pod replicas")
+    print("  • Agent has its own keypair (identity)")
+    print("  • Warrant PoP-bound to agent's public key")
+    print("  • Only THIS agent can use the warrant")
+    print("  • All verification is OFFLINE")
     
-    # Also demonstrate orchestrator → worker delegation
+    # ========================================================================
+    # Orchestrator → Worker Pattern
+    # ========================================================================
     demo_orchestrator_worker_delegation()
     
     print("\n=== Summary (Orchestrator → Worker) ===")
-    print("  • Orchestrator attenuates warrant LOCALLY (offline)")
-    print("  • Worker receives narrower, time-limited warrant")
-    print("  • Delegation chain is cryptographically verifiable")
-    print("  • No Control Plane call for attenuation")
+    print("  • Worker has its own keypair (identity)")
+    print("  • Attenuated warrant PoP-bound to worker's public key")
+    print("  • Only THAT worker can use the warrant")
+    print("  • Attenuation is OFFLINE (no Control Plane call)")
 
 
 if __name__ == "__main__":
