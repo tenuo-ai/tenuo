@@ -237,6 +237,12 @@ def lockdown(
                         # Only add if not already in kwargs
                         if param_name not in auth_args:
                             auth_args[param_name] = arg_val
+                
+                # SECURITY FIX: Include default values for parameters not provided
+                # This prevents bypassing constraints by relying on dangerous defaults
+                for param_name, param in sig.parameters.items():
+                    if param_name not in auth_args and param.default is not inspect.Parameter.empty:
+                        auth_args[param_name] = param.default
             
             # Create PoP signature if warrant requires it
             pop_signature = None
