@@ -605,6 +605,33 @@ impl DataPlane {
         chain: &[Warrant], 
         enforce_session: bool
     ) -> Result<ChainVerificationResult> {
+        let result = self.verify_chain_inner(chain, enforce_session);
+        
+        // Log chain verification failures
+        if let Err(ref e) = result {
+            let leaf = chain.last();
+            crate::audit::log_event(
+                crate::approval::AuditEvent::new(
+                    crate::approval::AuditEventType::ChainVerificationFailed,
+                    "tenuo-data-plane",
+                    "chain-verifier",
+                )
+                .with_warrant_id(leaf.map(|w| w.id().as_str()).unwrap_or("-"))
+                .with_action("denied")
+                .with_trace_id(leaf.and_then(|w| w.session_id()).unwrap_or("-"))
+                .with_error_code("chain_verification_failed")
+                .with_details(format!("Chain verification failed: {}", e))
+            );
+        }
+        
+        result
+    }
+    
+    fn verify_chain_inner(
+        &self, 
+        chain: &[Warrant], 
+        enforce_session: bool
+    ) -> Result<ChainVerificationResult> {
         if chain.is_empty() {
             return Err(Error::ChainVerificationFailed(
                 "chain cannot be empty".to_string(),
@@ -675,6 +702,28 @@ impl DataPlane {
         }
 
         result.leaf_depth = chain.last().map(|w| w.depth()).unwrap_or(0);
+
+        // Audit log: Chain verification success
+        let leaf = chain.last();
+        crate::audit::log_event(
+            crate::approval::AuditEvent::new(
+                crate::approval::AuditEventType::ChainVerified,
+                "tenuo-data-plane",
+                "chain-verifier",
+            )
+            .with_warrant_id(leaf.map(|w| w.id().as_str()).unwrap_or("-"))
+            .with_action("verified")
+            .with_trace_id(leaf.and_then(|w| w.session_id()).unwrap_or("-"))
+            .with_details(format!(
+                "Chain verified: length={}, leaf_depth={}, root_issuer={}",
+                result.chain_length,
+                result.leaf_depth,
+                result.root_issuer
+                    .map(|b| format!("{}...", &hex::encode(&b[..8])))
+                    .unwrap_or_else(|| "unknown".to_string())
+            ))
+        );
+
         Ok(result)
     }
 
@@ -1041,6 +1090,54 @@ impl Authorizer {
     }
 
     fn verify_chain_with_options(
+        &self, 
+        chain: &[Warrant],
+        enforce_session: bool
+    ) -> Result<ChainVerificationResult> {
+        let result = self.verify_chain_inner(chain, enforce_session);
+        
+        // Log chain verification failures
+        if let Err(ref e) = result {
+            let leaf = chain.last();
+            crate::audit::log_event(
+                crate::approval::AuditEvent::new(
+                    crate::approval::AuditEventType::ChainVerificationFailed,
+                    "tenuo-authorizer",
+                    "chain-verifier",
+                )
+                .with_warrant_id(leaf.map(|w| w.id().as_str()).unwrap_or("-"))
+                .with_action("denied")
+                .with_trace_id(leaf.and_then(|w| w.session_id()).unwrap_or("-"))
+                .with_error_code("chain_verification_failed")
+                .with_details(format!("Chain verification failed: {}", e))
+            );
+        } else if let Ok(ref res) = result {
+            // Log chain verification success
+            let leaf = chain.last();
+            crate::audit::log_event(
+                crate::approval::AuditEvent::new(
+                    crate::approval::AuditEventType::ChainVerified,
+                    "tenuo-authorizer",
+                    "chain-verifier",
+                )
+                .with_warrant_id(leaf.map(|w| w.id().as_str()).unwrap_or("-"))
+                .with_action("verified")
+                .with_trace_id(leaf.and_then(|w| w.session_id()).unwrap_or("-"))
+                .with_details(format!(
+                    "Chain verified: length={}, leaf_depth={}, root_issuer={}",
+                    res.chain_length,
+                    res.leaf_depth,
+                    res.root_issuer
+                        .map(|b| format!("{}...", &hex::encode(&b[..8])))
+                        .unwrap_or_else(|| "unknown".to_string())
+                ))
+            );
+        }
+        
+        result
+    }
+    
+    fn verify_chain_inner(
         &self, 
         chain: &[Warrant],
         enforce_session: bool

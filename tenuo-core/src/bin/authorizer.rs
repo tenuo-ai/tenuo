@@ -339,6 +339,9 @@ async fn serve_http(
     bind: &str,
     port: u16,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize audit logging (stdout JSON for K8s/container environments)
+    tenuo_core::audit::set_global_logger(Arc::new(tenuo_core::audit::StdoutLogger::new()));
+
     // Load and compile gateway configuration
     let config = GatewayConfig::from_file(config_path)?;
     let compiled = CompiledGatewayConfig::compile(config)?;
@@ -348,6 +351,7 @@ async fn serve_http(
     eprintln!("├─────────────────────────────────────────────────────────");
     eprintln!("│ Listening on: {}:{}", bind, port);
     eprintln!("│ Config: {}", config_path.display());
+    eprintln!("│ Audit: JSON to stdout (SIEM compatible)");
     eprintln!("└─────────────────────────────────────────────────────────");
     eprintln!();
 
@@ -488,7 +492,19 @@ async fn handle_request(
             }
         });
 
-    // 8. Authorize
+    // 8. Extract client IP for audit logging
+    let client_ip = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string())
+        });
+
+    // 9. Authorize
     let result = state.authorizer.check(
         &warrant,
         &extraction_result.tool,
@@ -497,6 +513,62 @@ async fn handle_request(
         &[], // No approvals in HTTP mode
     );
 
+    // 10. Emit structured audit log (SIEM-compatible JSON)
+    let constraints_json: serde_json::Value = serde_json::to_value(
+        extraction_result
+            .constraints
+            .iter()
+            .map(|(k, v)| (k.clone(), format!("{:?}", v)))
+            .collect::<std::collections::HashMap<_, _>>()
+    ).unwrap_or(serde_json::Value::Null);
+
+    match &result {
+        Ok(()) => {
+            let event = tenuo_core::approval::AuditEvent::new(
+                tenuo_core::approval::AuditEventType::AuthorizationSuccess,
+                "tenuo-authorizer",
+                warrant.agent_id().unwrap_or("unknown"),
+            )
+            .with_warrant_id(warrant.id().as_str())
+            .with_tool(&extraction_result.tool)
+            .with_action("authorized")
+            .with_constraints(constraints_json.clone())
+            .with_trace_id(warrant.session_id().unwrap_or("-"))
+            .with_details(format!("{} {} → ALLOWED", method, path));
+
+            let event = if let Some(ip) = &client_ip {
+                event.with_client_ip(ip)
+            } else {
+                event
+            };
+
+            tenuo_core::audit::log_event(event);
+        }
+        Err(e) => {
+            let event = tenuo_core::approval::AuditEvent::new(
+                tenuo_core::approval::AuditEventType::AuthorizationFailure,
+                "tenuo-authorizer",
+                warrant.agent_id().unwrap_or("unknown"),
+            )
+            .with_warrant_id(warrant.id().as_str())
+            .with_tool(&extraction_result.tool)
+            .with_action("denied")
+            .with_constraints(constraints_json.clone())
+            .with_trace_id(warrant.session_id().unwrap_or("-"))
+            .with_error_code("authorization_failed")
+            .with_details(format!("{} {} → DENIED: {}", method, path, e));
+
+            let event = if let Some(ip) = &client_ip {
+                event.with_client_ip(ip)
+            } else {
+                event
+            };
+
+            tenuo_core::audit::log_event(event);
+        }
+    }
+
+    // 11. Return response
     match result {
         Ok(()) => (
             StatusCode::OK,

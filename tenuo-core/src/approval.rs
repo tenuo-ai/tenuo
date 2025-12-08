@@ -545,30 +545,113 @@ pub enum AuditEventType {
     // -- Warrant Events --
     /// A warrant was issued
     WarrantIssued,
+    /// A warrant was attenuated (delegated)
+    WarrantAttenuated,
     /// A warrant was revoked
     WarrantRevoked,
+    /// A warrant chain was verified
+    ChainVerified,
+    /// A warrant chain verification failed
+    ChainVerificationFailed,
 
     // -- Authorization Events --
     /// An action was authorized
     AuthorizationSuccess,
     /// An action was denied
     AuthorizationFailure,
+    /// Proof-of-Possession verification succeeded
+    PopVerified,
+    /// Proof-of-Possession verification failed
+    PopFailed,
 }
 
-/// An audit event for key lifecycle operations.
+/// Severity level for audit events (SIEM compatible).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AuditSeverity {
+    /// Informational events (successful operations)
+    Info,
+    /// Warning events (unusual but not necessarily bad)
+    Warning,
+    /// Error events (failed operations, security violations)
+    Error,
+    /// Critical events (security breaches, system failures)
+    Critical,
+}
+
+/// An audit event for security-critical operations.
 ///
-/// These events should be persisted to an audit log for compliance
-/// and forensic analysis.
+/// These events are designed for SIEM integration and should be persisted
+/// to an audit log for compliance and forensic analysis.
+///
+/// # SIEM Integration
+///
+/// Events are serialized as JSON with consistent field names:
+/// - `@timestamp`: ISO8601 timestamp (Elasticsearch compatible)
+/// - `event.type`: Event type for filtering
+/// - `event.severity`: Severity level (info, warning, error, critical)
+/// - `service.name`: Service that generated the event
+/// - `trace.id`: Correlation ID for distributed tracing
+///
+/// Example JSON output:
+/// ```json
+/// {
+///   "id": "evt_01234567890abcdef",
+///   "event_type": "authorization_success",
+///   "severity": "info",
+///   "timestamp": "2024-01-15T10:30:00Z",
+///   "service": "tenuo-authorizer",
+///   "trace_id": "sess_abc123",
+///   "warrant_id": "wrt_xyz789",
+///   "tool": "manage_infrastructure",
+///   "action": "authorized",
+///   "constraints": {"cluster": "staging-web", "budget": 500.0},
+///   "client_ip": "10.0.1.50",
+///   "actor": "orchestrator-pod-abc",
+///   "details": "Request authorized with PoP"
+/// }
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
-    /// Unique event ID
+    /// Unique event ID (format: evt_{uuid})
     pub id: String,
 
-    /// Event type
+    /// Event type (snake_case for SIEM filtering)
     pub event_type: AuditEventType,
 
-    /// When this event occurred
+    /// Severity level (SIEM compatible)
+    pub severity: AuditSeverity,
+
+    /// When this event occurred (ISO8601)
+    #[serde(rename = "@timestamp")]
     pub timestamp: DateTime<Utc>,
+
+    /// Service that generated this event (e.g., "tenuo-authorizer", "tenuo-control")
+    pub service: String,
+
+    /// Trace/correlation ID for distributed tracing (session_id, request_id)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
+
+    /// Warrant ID involved in this operation
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warrant_id: Option<String>,
+
+    /// Tool being authorized
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+
+    /// Action outcome (authorized, denied, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+
+    /// Constraints that were checked (for audit trail)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub constraints: Option<serde_json::Value>,
+
+    /// Client IP address (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_ip: Option<String>,
 
     /// Which provider this relates to
     pub provider: String,
@@ -577,40 +660,129 @@ pub struct AuditEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_id: Option<String>,
 
-    /// Public key involved (hex-encoded for readability)
+    /// Public key involved (hex-encoded, truncated for readability)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_key_hex: Option<String>,
 
-    /// Who/what triggered this event
+    /// Who/what triggered this event (pod name, agent ID)
     pub actor: String,
 
-    /// Additional context
+    /// Human-readable details/reason
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
 
-    /// Related IDs (warrant_id, approval_id, etc.)
+    /// Related IDs (parent_warrant_id, approval_id, etc.)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub related_ids: Option<Vec<String>>,
+
+    /// Error code (for failures)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
 }
 
 impl AuditEvent {
-    /// Create a new audit event
+    /// Create a new audit event with automatic severity inference.
+    ///
+    /// Severity is inferred from event type:
+    /// - Success events → Info
+    /// - Failure events → Error  
+    /// - Revocation events → Warning
     pub fn new(
         event_type: AuditEventType,
-        provider: impl Into<String>,
+        service: impl Into<String>,
         actor: impl Into<String>,
     ) -> Self {
+        let severity = match &event_type {
+            AuditEventType::AuthorizationSuccess
+            | AuditEventType::EnrollmentSuccess
+            | AuditEventType::ChainVerified
+            | AuditEventType::PopVerified
+            | AuditEventType::ApprovalVerified
+            | AuditEventType::KeyRegistered
+            | AuditEventType::ProviderRegistered => AuditSeverity::Info,
+            
+            AuditEventType::AuthorizationFailure
+            | AuditEventType::EnrollmentFailure
+            | AuditEventType::ChainVerificationFailed
+            | AuditEventType::PopFailed
+            | AuditEventType::ApprovalFailed => AuditSeverity::Error,
+            
+            AuditEventType::WarrantRevoked
+            | AuditEventType::KeyRevoked
+            | AuditEventType::KeyExpired
+            | AuditEventType::ProviderRemoved => AuditSeverity::Warning,
+            
+            _ => AuditSeverity::Info,
+        };
+
         Self {
             id: format!("evt_{}", uuid::Uuid::now_v7().simple()),
             event_type,
+            severity,
             timestamp: Utc::now(),
-            provider: provider.into(),
+            service: service.into(),
+            trace_id: None,
+            warrant_id: None,
+            tool: None,
+            action: None,
+            constraints: None,
+            client_ip: None,
+            provider: String::new(),
             external_id: None,
             public_key_hex: None,
             actor: actor.into(),
             details: None,
             related_ids: None,
+            error_code: None,
         }
+    }
+
+    /// Override severity level
+    pub fn with_severity(mut self, severity: AuditSeverity) -> Self {
+        self.severity = severity;
+        self
+    }
+
+    /// Add trace/correlation ID (session_id, request_id)
+    pub fn with_trace_id(mut self, trace_id: impl Into<String>) -> Self {
+        self.trace_id = Some(trace_id.into());
+        self
+    }
+
+    /// Add warrant ID
+    pub fn with_warrant_id(mut self, warrant_id: impl Into<String>) -> Self {
+        self.warrant_id = Some(warrant_id.into());
+        self
+    }
+
+    /// Add tool being authorized
+    pub fn with_tool(mut self, tool: impl Into<String>) -> Self {
+        self.tool = Some(tool.into());
+        self
+    }
+
+    /// Add action outcome
+    pub fn with_action(mut self, action: impl Into<String>) -> Self {
+        self.action = Some(action.into());
+        self
+    }
+
+    /// Add constraints that were checked
+    pub fn with_constraints(mut self, constraints: serde_json::Value) -> Self {
+        self.constraints = Some(constraints);
+        self
+    }
+
+    /// Add client IP address
+    pub fn with_client_ip(mut self, ip: impl Into<String>) -> Self {
+        self.client_ip = Some(ip.into());
+        self
+    }
+
+    /// Add provider context
+    pub fn with_provider(mut self, provider: impl Into<String>) -> Self {
+        self.provider = provider.into();
+        self
     }
 
     /// Add external identity context
@@ -619,8 +791,15 @@ impl AuditEvent {
         self
     }
 
-    /// Add public key context
+    /// Add public key context (truncated to first 16 chars for readability)
     pub fn with_key(mut self, key: &PublicKey) -> Self {
+        let full_hex = hex::encode(key.to_bytes());
+        self.public_key_hex = Some(format!("{}...", &full_hex[..16]));
+        self
+    }
+
+    /// Add full public key (not truncated)
+    pub fn with_full_key(mut self, key: &PublicKey) -> Self {
         self.public_key_hex = Some(hex::encode(key.to_bytes()));
         self
     }
@@ -634,6 +813,12 @@ impl AuditEvent {
     /// Add related IDs
     pub fn with_related(mut self, ids: Vec<String>) -> Self {
         self.related_ids = Some(ids);
+        self
+    }
+
+    /// Add error code
+    pub fn with_error_code(mut self, code: impl Into<String>) -> Self {
+        self.error_code = Some(code.into());
         self
     }
 }

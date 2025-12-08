@@ -12,6 +12,7 @@ from tenuo_core import (
     PublicKey,
     Signature,
     Authorizer,
+    Approval,
     
     # Constraints
     Pattern,
@@ -50,6 +51,15 @@ from .decorators import (
     WarrantContext,
     KeypairContext,
 )
+from .audit import (
+    audit_logger,
+    AuditEvent,
+    AuditEventType,
+    AuditSeverity,
+    AuditLogger,
+    log_authorization_success,
+    log_authorization_failure,
+)
 
 # Re-export everything for clean imports
 __all__ = [
@@ -59,6 +69,7 @@ __all__ = [
     "PublicKey",
     "Signature",
     "Authorizer",
+    "Approval",
     
     # Constraints
     "Pattern",
@@ -90,6 +101,15 @@ __all__ = [
     "set_keypair_context",
     "WarrantContext",
     "KeypairContext",
+    
+    # Audit logging (SIEM compatible)
+    "audit_logger",
+    "AuditEvent",
+    "AuditEventType",
+    "AuditSeverity",
+    "AuditLogger",
+    "log_authorization_success",
+    "log_authorization_failure",
 ]
 
 __version__ = "0.1.0"

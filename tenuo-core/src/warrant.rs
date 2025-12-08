@@ -636,7 +636,28 @@ impl WarrantBuilder {
         ciborium::ser::into_writer(&payload, &mut payload_bytes)?;
         let signature = keypair.sign(&payload_bytes);
 
-        Ok(Warrant { payload, signature, payload_bytes })
+        let warrant = Warrant { payload, signature, payload_bytes };
+
+        // Audit log: Warrant created
+        crate::audit::log_event(
+            crate::approval::AuditEvent::new(
+                crate::approval::AuditEventType::WarrantIssued,
+                "tenuo-core",
+                "warrant-builder",
+            )
+            .with_warrant_id(warrant.id().as_str())
+            .with_tool(warrant.tool())
+            .with_action("created")
+            .with_key(&keypair.public_key())
+            .with_details(format!(
+                "Root warrant created: tool={}, ttl={}s, max_depth={:?}",
+                warrant.tool(),
+                self.ttl.map(|t| t.as_secs()).unwrap_or(0),
+                warrant.effective_max_depth()
+            ))
+        );
+
+        Ok(warrant)
     }
 }
 
@@ -875,7 +896,32 @@ impl<'a> AttenuationBuilder<'a> {
         ciborium::ser::into_writer(&payload, &mut payload_bytes)?;
         let signature = keypair.sign(&payload_bytes);
 
-        Ok(Warrant { payload, signature, payload_bytes })
+        let warrant = Warrant { payload, signature, payload_bytes };
+
+        // Audit log: Warrant attenuated
+        crate::audit::log_event(
+            crate::approval::AuditEvent::new(
+                crate::approval::AuditEventType::WarrantAttenuated,
+                "tenuo-core",
+                "attenuation-builder",
+            )
+            .with_warrant_id(warrant.id().as_str())
+            .with_tool(warrant.tool())
+            .with_action("attenuated")
+            .with_key(&keypair.public_key())
+            .with_related(vec![self.parent.id().to_string()])
+            .with_details(format!(
+                "Warrant attenuated: parent={}, depth={}/{}, holder={}",
+                self.parent.id().as_str(),
+                warrant.depth(),
+                warrant.effective_max_depth(),
+                warrant.authorized_holder()
+                    .map(|k| format!("{}...", &hex::encode(k.to_bytes())[..16]))
+                    .unwrap_or_else(|| "none".to_string())
+            ))
+        );
+
+        Ok(warrant)
     }
 }
 

@@ -21,12 +21,17 @@ Example with ContextVar (LangChain/FastAPI pattern):
         # Warrant and keypair are automatically retrieved from context
         # PoP signature is created automatically if warrant.requires_pop
         ...
+
+Audit Logging:
+    All authorization decisions are logged as structured JSON events.
+    Configure via: tenuo.audit.audit_logger.configure(service_name="my-service")
 """
 
 from functools import wraps
 from typing import Callable, Any, Optional, Union
 from contextvars import ContextVar
 from . import Warrant, Keypair, AuthorizationError
+from .audit import audit_logger, AuditEvent, AuditEventType
 
 # Context variable for thread-local warrant storage
 # This allows warrants to be passed through async call stacks without explicit threading
@@ -207,6 +212,14 @@ def lockdown(
                 warrant_to_use = get_warrant_context()
             
             if warrant_to_use is None:
+                # Log authorization failure - no warrant
+                audit_logger.log(AuditEvent(
+                    event_type=AuditEventType.AUTHORIZATION_FAILURE,
+                    tool=tool_name,
+                    action="denied",
+                    error_code="no_warrant",
+                    details=f"No warrant available for {tool_name}",
+                ))
                 raise AuthorizationError(
                     f"No warrant available for {tool_name}. "
                     "Either pass warrant explicitly or set it in context using set_warrant_context()."
@@ -248,6 +261,15 @@ def lockdown(
             pop_signature = None
             if warrant_to_use.requires_pop:
                 if keypair_to_use is None:
+                    # Log PoP failure - no keypair
+                    audit_logger.log(AuditEvent(
+                        event_type=AuditEventType.POP_FAILED,
+                        warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else None,
+                        tool=tool_name,
+                        action="denied",
+                        error_code="no_keypair_for_pop",
+                        details=f"Warrant requires PoP but no keypair available for {tool_name}",
+                    ))
                     raise AuthorizationError(
                         f"Warrant requires Proof-of-Possession for {tool_name}, "
                         "but no keypair is available. "
@@ -260,9 +282,31 @@ def lockdown(
             
             # Check authorization (with PoP signature if required)
             if not warrant_to_use.authorize(tool_name, auth_args, signature=pop_signature):
+                # Log authorization failure
+                audit_logger.log(AuditEvent(
+                    event_type=AuditEventType.AUTHORIZATION_FAILURE,
+                    warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else None,
+                    tool=tool_name,
+                    action="denied",
+                    constraints=auth_args,
+                    trace_id=warrant_to_use.session_id if hasattr(warrant_to_use, 'session_id') else None,
+                    error_code="constraint_violation",
+                    details=f"Warrant does not authorize {tool_name} with provided args",
+                ))
                 raise AuthorizationError(
                     f"Warrant does not authorize {tool_name} with args {auth_args}"
                 )
+            
+            # Log authorization success
+            audit_logger.log(AuditEvent(
+                event_type=AuditEventType.AUTHORIZATION_SUCCESS,
+                warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else None,
+                tool=tool_name,
+                action="authorized",
+                constraints=auth_args,
+                trace_id=warrant_to_use.session_id if hasattr(warrant_to_use, 'session_id') else None,
+                details=f"Authorization successful for {tool_name}",
+            ))
             
             # Execute the function
             return func(*args, **kwargs)
