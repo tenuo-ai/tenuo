@@ -204,6 +204,7 @@ Your services keep their existing IAM. Tenuo adds a **delegation layer** that tr
 - **[Website](https://tenuo.github.io/tenuo/)**: Landing page and infographics
 - **[Guide](https://tenuo.github.io/tenuo/guide/)**: Concepts, examples, and constraint types
 - **[Python SDK](tenuo-python/)**: Full Python documentation and examples
+- **[Python API Reference](docs/api-reference.md)**: Complete Python API documentation
 - **[Rust API](https://docs.rs/tenuo-core)**: Complete Rust API reference
 
 ## License
