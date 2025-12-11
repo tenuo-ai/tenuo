@@ -113,10 +113,10 @@ def test_revocation():
     manager.submit_request(
         warrant_id=warrant.id,
         reason="Key compromise",
-        warrant_issuer=issuer_kp.public_key,
+        warrant_issuer=issuer_kp.public_key(),  # Note: method call
         warrant_expires_at=expires_at,
-        control_plane_key=cp_kp.public_key,
-        revocation_keypair=issuer_kp, # Issuer revoking
+        control_plane_key=cp_kp.public_key(),   # Note: method call
+        revocation_keypair=issuer_kp,  # Issuer revoking
         warrant_holder=None
     )
     
@@ -128,19 +128,20 @@ def test_revocation():
     print("Generating SRL...")
     srl = manager.generate_srl(cp_kp, 1)
     print(f"SRL Version: {srl.version}")
-    print(f"Revoked IDs count: {len(srl.revoked_ids)}")
-    assert warrant.id in srl.revoked_ids
+    revoked = srl.revoked_ids()  # Note: method call
+    print(f"Revoked IDs count: {len(revoked)}")
+    assert warrant.id in revoked
     
     # 3. Verify Revocation with Authorizer
     print("Verifying revocation with Authorizer...")
-    authorizer = Authorizer(cp_kp.public_key)
-    authorizer.set_revocation_list(srl)
+    authorizer = Authorizer.new(cp_kp.public_key())  # Note: factory method
+    authorizer.set_revocation_list(srl, cp_kp.public_key())  # Note: needs expected_issuer
     
     # Check chain (should fail because warrant is revoked)
     try:
         authorizer.verify_chain([warrant])
         print("ERROR: Warrant should be revoked but passed verification!")
-    except RuntimeError as e:
+    except Exception as e:
         print(f"Success: Verification failed as expected: {e}")
         assert "revoked" in str(e).lower()
 
