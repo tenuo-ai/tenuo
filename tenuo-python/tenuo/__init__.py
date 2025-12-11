@@ -14,12 +14,32 @@ from tenuo_core import (
     Authorizer,
     Approval,
     
-    # Constraints
+    # Constraints - Basic
+    Wildcard,
     Pattern,
+    Regex,
     Exact,
     OneOf,
+    NotOneOf,
     Range,
+    
+    # Constraints - List operations
+    Contains,
+    Subset,
+    
+    # Constraints - Composite
+    All,
+    Any,
+    Not,
     CEL,
+    
+    # Revocation
+    SignedRevocationList,
+    SrlBuilder,
+    
+    # Chain Verification
+    ChainStep,
+    ChainVerificationResult,
     
     # MCP integration
     McpConfig,
@@ -28,6 +48,7 @@ from tenuo_core import (
     
     # Constants
     MAX_DELEGATION_DEPTH,
+    MAX_CONSTRAINT_DEPTH,
     WIRE_VERSION,
     WARRANT_HEADER,
 )
@@ -71,12 +92,32 @@ __all__ = [
     "Authorizer",
     "Approval",
     
-    # Constraints
+    # Constraints - Basic
+    "Wildcard",
     "Pattern",
+    "Regex",
     "Exact",
     "OneOf",
+    "NotOneOf",
     "Range",
+    
+    # Constraints - List operations
+    "Contains",
+    "Subset",
+    
+    # Constraints - Composite
+    "All",
+    "Any",
+    "Not",
     "CEL",
+    
+    # Revocation
+    "SignedRevocationList",
+    "SrlBuilder",
+    
+    # Chain Verification
+    "ChainStep",
+    "ChainVerificationResult",
     
     # MCP integration
     "McpConfig",
@@ -85,6 +126,7 @@ __all__ = [
     
     # Constants
     "MAX_DELEGATION_DEPTH",
+    "MAX_CONSTRAINT_DEPTH",
     "WIRE_VERSION",
     "WARRANT_HEADER",
     

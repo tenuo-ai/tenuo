@@ -7,6 +7,7 @@
 
 use crate::constraints::{
     CelConstraint, Constraint, ConstraintValue, Exact, OneOf, Pattern, Range,
+    Wildcard, NotOneOf, RegexConstraint, Contains, Subset, All, Any, Not,
 };
 use crate::crypto::{Keypair as RustKeypair, PublicKey as RustPublicKey, Signature as RustSignature};
 use crate::warrant::Warrant as RustWarrant;
@@ -14,6 +15,8 @@ use crate::wire;
 use crate::mcp::{McpConfig, CompiledMcpConfig};
 use crate::planes::Authorizer as RustAuthorizer;
 use crate::approval::{Approval as RustApproval, compute_request_hash};
+use crate::revocation::{SignedRevocationList as RustSrl, SrlBuilder as RustSrlBuilder};
+use crate::planes::{ChainVerificationResult as RustChainResult, ChainStep as RustChainStep};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -150,6 +153,250 @@ impl PyCel {
     }
 }
 
+/// Python wrapper for Wildcard constraint.
+/// 
+/// Wildcard matches any value. This is the universal superset constraint
+/// that can be attenuated to any other constraint type.
+/// 
+/// Example:
+///     # Root warrant: allow any cluster
+///     warrant = Warrant.create(
+///         tool="manage",
+///         constraints={"cluster": Wildcard()},
+///         ...
+///     )
+///     # Child can narrow to specific pattern
+///     child = warrant.attenuate(
+///         constraints={"cluster": Pattern("staging-*")},
+///         ...
+///     )
+#[pyclass(name = "Wildcard")]
+#[derive(Clone)]
+pub struct PyWildcard {
+    inner: Wildcard,
+}
+
+#[pymethods]
+impl PyWildcard {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: Wildcard::new(),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        "Wildcard()".to_string()
+    }
+}
+
+/// Python wrapper for NotOneOf constraint (exclusion / "carving holes").
+/// 
+/// Value must NOT be in the excluded set. Use this to "carve holes" from
+/// a broader allowlist defined in a parent warrant.
+/// 
+/// SECURITY: Never start with negation! Always start with a positive allowlist
+/// (Pattern, OneOf, Wildcard) and use NotOneOf in child warrants to exclude.
+/// 
+/// Example:
+///     # Parent: allow all staging clusters
+///     parent = Warrant.create(constraints={"cluster": Pattern("staging-*")}, ...)
+///     # Child: exclude the database cluster
+///     child = parent.attenuate(constraints={"cluster": NotOneOf(["staging-db"])}, ...)
+#[pyclass(name = "NotOneOf")]
+#[derive(Clone)]
+pub struct PyNotOneOf {
+    inner: NotOneOf,
+}
+
+#[pymethods]
+impl PyNotOneOf {
+    #[new]
+    fn new(excluded: Vec<String>) -> Self {
+        Self {
+            inner: NotOneOf::new(excluded),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("NotOneOf({:?})", self.inner.excluded)
+    }
+}
+
+/// Python wrapper for Regex constraint.
+/// 
+/// Regular expression matching for string values.
+/// 
+/// Example:
+///     Regex(r"^prod-[a-z]+$")  # Matches prod-web, prod-api, etc.
+#[pyclass(name = "Regex")]
+#[derive(Clone)]
+pub struct PyRegex {
+    inner: RegexConstraint,
+}
+
+#[pymethods]
+impl PyRegex {
+    #[new]
+    fn new(pattern: &str) -> PyResult<Self> {
+        let inner = RegexConstraint::new(pattern).map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Regex('{}')", self.inner.pattern)
+    }
+}
+
+/// Python wrapper for Contains constraint.
+/// 
+/// A list value must contain all specified required values.
+/// 
+/// Example:
+///     # Roles list must include "admin"
+///     Contains(["admin"])
+#[pyclass(name = "Contains")]
+#[derive(Clone)]
+pub struct PyContains {
+    inner: Contains,
+}
+
+#[pymethods]
+impl PyContains {
+    #[new]
+    fn new(required: Vec<String>) -> Self {
+        Self {
+            inner: Contains::new(required),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Contains({:?})", self.inner.required)
+    }
+}
+
+/// Python wrapper for Subset constraint.
+/// 
+/// A list value must be a subset of the allowed values.
+/// 
+/// Example:
+///     # Requested permissions must be subset of allowed
+///     Subset(["read", "write", "admin"])
+#[pyclass(name = "Subset")]
+#[derive(Clone)]
+pub struct PySubset {
+    inner: Subset,
+}
+
+#[pymethods]
+impl PySubset {
+    #[new]
+    fn new(allowed: Vec<String>) -> Self {
+        Self {
+            inner: Subset::new(allowed),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Subset({:?})", self.inner.allowed)
+    }
+}
+
+/// Python wrapper for All constraint (AND).
+/// 
+/// All nested constraints must match.
+/// 
+/// Example:
+///     All([Range.min_value(0), Range.max_value(100)])  # 0 <= value <= 100
+#[pyclass(name = "All")]
+#[derive(Clone)]
+pub struct PyAll {
+    inner: All,
+}
+
+#[pymethods]
+impl PyAll {
+    #[new]
+    fn new(py: Python<'_>, constraints: Vec<PyObject>) -> PyResult<Self> {
+        let mut rust_constraints = Vec::new();
+        for obj in constraints {
+            let bound = obj.bind(py);
+            let constraint = py_to_constraint(bound)?;
+            rust_constraints.push(constraint);
+        }
+        Ok(Self {
+            inner: All::new(rust_constraints),
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("All([{} constraints])", self.inner.constraints.len())
+    }
+}
+
+/// Python wrapper for Any constraint (OR).
+/// 
+/// At least one nested constraint must match.
+/// 
+/// Example:
+///     Any([Exact("admin"), Exact("superuser")])  # Either admin or superuser
+#[pyclass(name = "Any")]
+#[derive(Clone)]
+pub struct PyAny {
+    inner: Any,
+}
+
+#[pymethods]
+impl PyAny {
+    #[new]
+    fn new(py: Python<'_>, constraints: Vec<PyObject>) -> PyResult<Self> {
+        let mut rust_constraints = Vec::new();
+        for obj in constraints {
+            let bound = obj.bind(py);
+            let constraint = py_to_constraint(bound)?;
+            rust_constraints.push(constraint);
+        }
+        Ok(Self {
+            inner: Any::new(rust_constraints),
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Any([{} constraints])", self.inner.constraints.len())
+    }
+}
+
+/// Python wrapper for Not constraint (negation).
+/// 
+/// The inner constraint must NOT match.
+/// 
+/// WARNING: Use NotOneOf instead when possible. Negation can be dangerous
+/// for security if not used carefully (blacklisting vs allowlisting).
+/// 
+/// Example:
+///     Not(Exact("blocked"))  # Any value except "blocked"
+#[pyclass(name = "Not")]
+#[derive(Clone)]
+pub struct PyNot {
+    inner: Not,
+}
+
+#[pymethods]
+impl PyNot {
+    #[new]
+    fn new(py: Python<'_>, constraint: PyObject) -> PyResult<Self> {
+        let bound = constraint.bind(py);
+        let inner_constraint = py_to_constraint(bound)?;
+        Ok(Self {
+            inner: Not::new(inner_constraint),
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        "Not(...)".to_string()
+    }
+}
+
 /// Python wrapper for Keypair.
 #[pyclass(name = "Keypair")]
 pub struct PyKeypair {
@@ -229,19 +476,36 @@ impl PyKeypair {
 
 /// Convert a Python constraint object to a Rust Constraint.
 fn py_to_constraint(obj: &Bound<'_, PyAny>) -> PyResult<Constraint> {
-    if let Ok(p) = obj.extract::<PyPattern>() {
+    // Try each constraint type in order
+    if let Ok(w) = obj.extract::<PyWildcard>() {
+        Ok(Constraint::Wildcard(w.inner))
+    } else if let Ok(p) = obj.extract::<PyPattern>() {
         Ok(Constraint::Pattern(p.inner))
+    } else if let Ok(r) = obj.extract::<PyRegex>() {
+        Ok(Constraint::Regex(r.inner))
     } else if let Ok(e) = obj.extract::<PyExact>() {
         Ok(Constraint::Exact(e.inner))
     } else if let Ok(o) = obj.extract::<PyOneOf>() {
         Ok(Constraint::OneOf(o.inner))
+    } else if let Ok(n) = obj.extract::<PyNotOneOf>() {
+        Ok(Constraint::NotOneOf(n.inner))
     } else if let Ok(r) = obj.extract::<PyRange>() {
         Ok(Constraint::Range(r.inner))
+    } else if let Ok(c) = obj.extract::<PyContains>() {
+        Ok(Constraint::Contains(c.inner))
+    } else if let Ok(s) = obj.extract::<PySubset>() {
+        Ok(Constraint::Subset(s.inner))
+    } else if let Ok(a) = obj.extract::<PyAll>() {
+        Ok(Constraint::All(a.inner))
+    } else if let Ok(a) = obj.extract::<PyAny>() {
+        Ok(Constraint::Any(a.inner))
+    } else if let Ok(n) = obj.extract::<PyNot>() {
+        Ok(Constraint::Not(n.inner))
     } else if let Ok(c) = obj.extract::<PyCel>() {
         Ok(Constraint::Cel(c.inner))
     } else {
         Err(PyValueError::new_err(
-            "constraint must be Pattern, Exact, OneOf, Range, or CEL",
+            "constraint must be one of: Wildcard, Pattern, Regex, Exact, OneOf, NotOneOf, Range, Contains, Subset, All, Any, Not, CEL",
         ))
     }
 }
@@ -774,6 +1038,238 @@ impl PyApproval {
     }
 }
 
+// ============================================================================
+// REVOCATION SYSTEM
+// ============================================================================
+
+/// Python wrapper for SignedRevocationList.
+/// 
+/// A cryptographically signed list of revoked warrant IDs.
+/// Use SrlBuilder to create new revocation lists.
+/// 
+/// Example:
+///     # Create a revocation list
+///     srl = SrlBuilder() \
+///         .revoke("tnu_wrt_compromised_123") \
+///         .revoke("tnu_wrt_stolen_456") \
+///         .version(1) \
+///         .build(control_plane_keypair)
+///     
+///     # Set on authorizer
+///     authorizer.set_revocation_list(srl, control_plane_keypair.public_key())
+#[pyclass(name = "SignedRevocationList")]
+#[derive(Clone)]
+pub struct PySignedRevocationList {
+    inner: RustSrl,
+}
+
+#[pymethods]
+impl PySignedRevocationList {
+    /// Check if a warrant ID is revoked.
+    fn is_revoked(&self, warrant_id: &str) -> bool {
+        self.inner.is_revoked(warrant_id)
+    }
+
+    /// Get the version number.
+    #[getter]
+    fn version(&self) -> u64 {
+        self.inner.version()
+    }
+
+    /// Get the list of revoked warrant IDs.
+    fn revoked_ids(&self) -> Vec<String> {
+        self.inner.revoked_ids().iter().cloned().collect()
+    }
+
+    /// Get the number of revoked warrants.
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Serialize to bytes (CBOR).
+    fn to_bytes(&self) -> PyResult<Vec<u8>> {
+        self.inner.to_bytes().map_err(to_py_err)
+    }
+
+    /// Deserialize from bytes (CBOR).
+    #[staticmethod]
+    fn from_bytes(bytes: &[u8]) -> PyResult<Self> {
+        let inner = RustSrl::from_bytes(bytes).map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    /// Verify this list was signed by the expected issuer.
+    fn verify(&self, expected_issuer: &PyPublicKey) -> PyResult<bool> {
+        match self.inner.verify(&expected_issuer.inner) {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SignedRevocationList(version={}, count={})",
+            self.inner.version(),
+            self.inner.len()
+        )
+    }
+}
+
+/// Builder for creating SignedRevocationLists.
+/// 
+/// Example:
+///     srl = SrlBuilder() \
+///         .revoke("tnu_wrt_compromised_123") \
+///         .version(42) \
+///         .build(keypair)
+#[pyclass(name = "SrlBuilder")]
+pub struct PySrlBuilder {
+    revoked_ids: Vec<String>,
+    version: u64,
+}
+
+#[pymethods]
+impl PySrlBuilder {
+    #[new]
+    fn new() -> Self {
+        Self {
+            revoked_ids: Vec::new(),
+            version: 1,
+        }
+    }
+
+    /// Add a warrant ID to revoke.
+    fn revoke(mut slf: PyRefMut<'_, Self>, warrant_id: &str) -> PyRefMut<'_, Self> {
+        slf.revoked_ids.push(warrant_id.to_string());
+        slf
+    }
+
+    /// Add multiple warrant IDs to revoke.
+    fn revoke_all(mut slf: PyRefMut<'_, Self>, warrant_ids: Vec<String>) -> PyRefMut<'_, Self> {
+        slf.revoked_ids.extend(warrant_ids);
+        slf
+    }
+
+    /// Set the version number.
+    /// 
+    /// Version must be monotonically increasing. Authorizers should reject
+    /// lists with version < their current version (anti-rollback).
+    fn version(mut slf: PyRefMut<'_, Self>, version: u64) -> PyRefMut<'_, Self> {
+        slf.version = version;
+        slf
+    }
+
+    /// Build and sign the revocation list.
+    fn build(&self, keypair: &PyKeypair) -> PyResult<PySignedRevocationList> {
+        let mut builder = RustSrlBuilder::new().version(self.version);
+        for id in &self.revoked_ids {
+            builder = builder.revoke(id);
+        }
+        let inner = builder.build(&keypair.inner).map_err(to_py_err)?;
+        Ok(PySignedRevocationList { inner })
+    }
+
+    /// Create an empty signed revocation list.
+    #[staticmethod]
+    fn empty(keypair: &PyKeypair) -> PyResult<PySignedRevocationList> {
+        let inner = RustSrl::empty(&keypair.inner).map_err(to_py_err)?;
+        Ok(PySignedRevocationList { inner })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SrlBuilder(version={}, pending={})",
+            self.version,
+            self.revoked_ids.len()
+        )
+    }
+}
+
+// ============================================================================
+// CHAIN VERIFICATION
+// ============================================================================
+
+/// A single step in a verified delegation chain.
+#[pyclass(name = "ChainStep")]
+#[derive(Clone)]
+pub struct PyChainStep {
+    /// The warrant ID at this step.
+    #[pyo3(get)]
+    warrant_id: String,
+    /// Delegation depth at this step.
+    #[pyo3(get)]
+    depth: u32,
+    /// Public key bytes of the issuer at this step (hex-encoded).
+    #[pyo3(get)]
+    issuer_hex: String,
+}
+
+#[pymethods]
+impl PyChainStep {
+    fn __repr__(&self) -> String {
+        format!(
+            "ChainStep(warrant_id='{}', depth={}, issuer='{:.16}...')",
+            self.warrant_id, self.depth, self.issuer_hex
+        )
+    }
+}
+
+impl From<&RustChainStep> for PyChainStep {
+    fn from(step: &RustChainStep) -> Self {
+        Self {
+            warrant_id: step.warrant_id.clone(),
+            depth: step.depth,
+            issuer_hex: hex::encode(step.issuer),
+        }
+    }
+}
+
+/// Result of a successful chain verification.
+/// 
+/// Contains metadata about the verified delegation chain.
+#[pyclass(name = "ChainVerificationResult")]
+#[derive(Clone)]
+pub struct PyChainVerificationResult {
+    /// Public key bytes of the root issuer (hex-encoded).
+    #[pyo3(get)]
+    root_issuer_hex: Option<String>,
+    /// Total length of the verified chain.
+    #[pyo3(get)]
+    chain_length: usize,
+    /// Depth of the leaf warrant.
+    #[pyo3(get)]
+    leaf_depth: u32,
+    /// Details of each verified step.
+    verified_steps: Vec<PyChainStep>,
+}
+
+#[pymethods]
+impl PyChainVerificationResult {
+    /// Get the verified steps in the chain.
+    #[getter]
+    fn steps(&self) -> Vec<PyChainStep> {
+        self.verified_steps.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ChainVerificationResult(chain_length={}, leaf_depth={})",
+            self.chain_length, self.leaf_depth
+        )
+    }
+}
+
+impl From<RustChainResult> for PyChainVerificationResult {
+    fn from(result: RustChainResult) -> Self {
+        Self {
+            root_issuer_hex: result.root_issuer.map(|b| hex::encode(b)),
+            chain_length: result.chain_length,
+            leaf_depth: result.leaf_depth,
+            verified_steps: result.verified_steps.iter().map(PyChainStep::from).collect(),
+        }
+    }
+}
+
 /// Python wrapper for Authorizer.
 #[pyclass(name = "Authorizer")]
 pub struct PyAuthorizer {
@@ -787,6 +1283,27 @@ impl PyAuthorizer {
         Self {
             inner: RustAuthorizer::new(public_key.inner.clone()),
         }
+    }
+
+    /// Set a signed revocation list.
+    /// 
+    /// Verifies the signature before accepting. Returns error if verification fails.
+    /// 
+    /// Args:
+    ///     srl: The signed revocation list
+    ///     expected_issuer: The Control Plane's public key (must match SRL issuer)
+    /// 
+    /// Example:
+    ///     srl = SrlBuilder().revoke("tnu_wrt_compromised").version(1).build(cp_keypair)
+    ///     authorizer.set_revocation_list(srl, cp_keypair.public_key())
+    fn set_revocation_list(
+        &mut self,
+        srl: &PySignedRevocationList,
+        expected_issuer: &PyPublicKey,
+    ) -> PyResult<()> {
+        self.inner
+            .set_revocation_list(srl.inner.clone(), &expected_issuer.inner)
+            .map_err(to_py_err)
     }
 
     /// Verify a warrant (checks signature, expiration, revocation).
@@ -877,6 +1394,91 @@ impl PyAuthorizer {
             &rust_approvals
         ).map_err(to_py_err)
     }
+
+    /// Verify a complete delegation chain.
+    /// 
+    /// This is the most thorough verification method, validating the entire
+    /// path from a trusted root to the leaf warrant.
+    /// 
+    /// Args:
+    ///     chain: List of warrants from root (index 0) to leaf (last)
+    /// 
+    /// Chain Invariants Verified:
+    ///     1. Root Trust: chain[0] must be signed by a trusted issuer
+    ///     2. Linkage: chain[i+1].parent_id == chain[i].id
+    ///     3. Depth: chain[i+1].depth == chain[i].depth + 1
+    ///     4. Expiration: chain[i+1].expires_at <= chain[i].expires_at
+    ///     5. Monotonicity: chain[i+1].constraints ⊆ chain[i].constraints
+    ///     6. Signatures: Each warrant has a valid signature
+    ///     7. Revocation: No warrant in the chain is revoked (cascading)
+    /// 
+    /// Returns:
+    ///     ChainVerificationResult on success
+    /// 
+    /// Raises:
+    ///     RuntimeError on verification failure
+    /// 
+    /// Example:
+    ///     # Verify full delegation: control_plane -> orchestrator -> worker
+    ///     result = authorizer.verify_chain([root_warrant, orch_warrant, worker_warrant])
+    ///     print(f"Chain verified: {result.chain_length} warrants, depth {result.leaf_depth}")
+    fn verify_chain(&self, chain: Vec<PyWarrant>) -> PyResult<PyChainVerificationResult> {
+        let rust_chain: Vec<RustWarrant> = chain.into_iter().map(|w| w.inner).collect();
+        let result = self.inner.verify_chain(&rust_chain).map_err(to_py_err)?;
+        Ok(PyChainVerificationResult::from(result))
+    }
+
+    /// Verify chain and authorize an action.
+    /// 
+    /// Convenience method that verifies the full chain and then authorizes
+    /// the action against the leaf warrant (last in chain).
+    /// 
+    /// Args:
+    ///     chain: List of warrants from root to leaf
+    ///     tool: Tool name being invoked
+    ///     args: Dictionary of argument name -> value
+    ///     signature: Optional PoP Signature object
+    ///     approvals: Optional list of Approval objects (for multi-sig)
+    /// 
+    /// Returns:
+    ///     ChainVerificationResult on success
+    /// 
+    /// Raises:
+    ///     RuntimeError on verification or authorization failure
+    #[pyo3(signature = (chain, tool, args, signature=None, approvals=None))]
+    fn check_chain(
+        &self,
+        chain: Vec<PyWarrant>,
+        tool: &str,
+        args: &Bound<'_, PyDict>,
+        signature: Option<&PySignature>,
+        approvals: Option<Vec<PyApproval>>,
+    ) -> PyResult<PyChainVerificationResult> {
+        let rust_chain: Vec<RustWarrant> = chain.into_iter().map(|w| w.inner).collect();
+        
+        let mut rust_args = HashMap::new();
+        for (key, value) in args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_args.insert(field, cv);
+        }
+
+        let rust_approvals: Vec<RustApproval> = approvals
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| a.inner)
+            .collect();
+
+        let result = self.inner.check_chain(
+            &rust_chain,
+            tool,
+            &rust_args,
+            signature.map(|s| &s.inner),
+            &rust_approvals
+        ).map_err(to_py_err)?;
+        
+        Ok(PyChainVerificationResult::from(result))
+    }
 }
 
 /// Helper to convert ConstraintValue to Python object
@@ -909,11 +1511,23 @@ fn constraint_value_to_py(py: Python<'_>, cv: &ConstraintValue) -> PyResult<PyOb
 /// This function is public so it can be called from tenuo-python package.
 #[pymodule]
 pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Constraints
+    // Constraints - Basic
+    m.add_class::<PyWildcard>()?;
     m.add_class::<PyPattern>()?;
+    m.add_class::<PyRegex>()?;
     m.add_class::<PyExact>()?;
     m.add_class::<PyOneOf>()?;
+    m.add_class::<PyNotOneOf>()?;
     m.add_class::<PyRange>()?;
+    
+    // Constraints - List operations
+    m.add_class::<PyContains>()?;
+    m.add_class::<PySubset>()?;
+    
+    // Constraints - Composite
+    m.add_class::<PyAll>()?;
+    m.add_class::<PyAny>()?;
+    m.add_class::<PyNot>()?;
     m.add_class::<PyCel>()?;
     
     // Crypto
@@ -926,6 +1540,14 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAuthorizer>()?;
     m.add_class::<PyApproval>()?;
     
+    // Revocation
+    m.add_class::<PySignedRevocationList>()?;
+    m.add_class::<PySrlBuilder>()?;
+    
+    // Chain Verification
+    m.add_class::<PyChainStep>()?;
+    m.add_class::<PyChainVerificationResult>()?;
+    
     // MCP
     m.add_class::<PyMcpConfig>()?;
     m.add_class::<PyCompiledMcpConfig>()?;
@@ -933,6 +1555,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Constants
     m.add("MAX_DELEGATION_DEPTH", crate::MAX_DELEGATION_DEPTH)?;
+    m.add("MAX_CONSTRAINT_DEPTH", crate::MAX_CONSTRAINT_DEPTH)?;
     m.add("WIRE_VERSION", crate::WIRE_VERSION)?;
     m.add("WARRANT_HEADER", wire::WARRANT_HEADER)?;
 
