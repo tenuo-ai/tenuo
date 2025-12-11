@@ -29,7 +29,7 @@ from tenuo_core import (
     
     # Constraints - Composite
     All,
-    Any,
+    AnyOf,
     Not,
     CEL,
     
@@ -40,6 +40,13 @@ from tenuo_core import (
     # Chain Verification
     ChainStep,
     ChainVerificationResult,
+    
+    # Gateway Config
+    GatewayConfig,
+    CompiledGatewayConfig,
+    
+    # Revocation Manager
+    RevocationManager,
     
     # MCP integration
     McpConfig,
@@ -107,7 +114,7 @@ __all__ = [
     
     # Constraints - Composite
     "All",
-    "Any",
+    "AnyOf",
     "Not",
     "CEL",
     
@@ -118,6 +125,13 @@ __all__ = [
     # Chain Verification
     "ChainStep",
     "ChainVerificationResult",
+    
+    # Gateway Config
+    "GatewayConfig",
+    "CompiledGatewayConfig",
+    
+    # Revocation Manager
+    "RevocationManager",
     
     # MCP integration
     "McpConfig",

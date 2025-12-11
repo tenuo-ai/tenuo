@@ -25,7 +25,6 @@ from typing import Optional, Dict, Any
 import os
 
 # LangChain imports (required for this example)
-from langchain.tools import Tool
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_openai import ChatOpenAI
 from langchain.callbacks.base import BaseCallbackHandler
@@ -175,6 +174,8 @@ class TenuoWarrantCallback(BaseCallbackHandler):
 # LangChain Tools Setup
 # ============================================================================
 
+from langchain.tools import StructuredTool
+
 def create_langchain_tools():
     """
     Create LangChain Tool objects from our protected functions.
@@ -183,19 +184,19 @@ def create_langchain_tools():
     LangChain just calls the functions - Tenuo enforces authorization automatically.
     """
     tools = [
-        Tool(
-            name="read_file",
+        StructuredTool.from_function(
             func=read_file_tool,
+            name="read_file",
             description="Read a file from the filesystem. Input should be the file path as a string."
         ),
-        Tool(
+        StructuredTool.from_function(
+            func=write_file_tool,
             name="write_file",
-            func=lambda x: write_file_tool(**eval(f"dict({x})")),  # Simple parser for demo
             description="Write content to a file. Input format: file_path='path', content='text'"
         ),
-        Tool(
-            name="execute_command",
+        StructuredTool.from_function(
             func=execute_command_tool,
+            name="execute_command",
             description="Execute a shell command. Use with caution. Input should be the command to run as a string."
         ),
     ]

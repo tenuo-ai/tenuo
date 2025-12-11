@@ -15,12 +15,15 @@ use crate::wire;
 use crate::mcp::{McpConfig, CompiledMcpConfig};
 use crate::planes::Authorizer as RustAuthorizer;
 use crate::approval::{Approval as RustApproval, compute_request_hash};
-use crate::revocation::{SignedRevocationList as RustSrl, SrlBuilder as RustSrlBuilder};
+use crate::revocation::{SignedRevocationList as RustSrl, SrlBuilder as RustSrlBuilder, RevocationRequest as RustRevocationRequest};
 use crate::planes::{ChainVerificationResult as RustChainResult, ChainStep as RustChainStep};
+use crate::gateway_config::{GatewayConfig as RustGatewayConfig, CompiledGatewayConfig as RustCompiledGatewayConfig};
+use crate::revocation_manager::RevocationManager as RustRevocationManager;
+use crate::extraction::RequestContext;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -339,15 +342,15 @@ impl PyAll {
 /// At least one nested constraint must match.
 /// 
 /// Example:
-///     Any([Exact("admin"), Exact("superuser")])  # Either admin or superuser
-#[pyclass(name = "Any")]
+///     AnyOf([Exact("admin"), Exact("superuser")])  # Either admin or superuser
+#[pyclass(name = "AnyOf")]
 #[derive(Clone)]
-pub struct PyAny {
+pub struct PyAnyOf {
     inner: Any,
 }
 
 #[pymethods]
-impl PyAny {
+impl PyAnyOf {
     #[new]
     fn new(py: Python<'_>, constraints: Vec<PyObject>) -> PyResult<Self> {
         let mut rust_constraints = Vec::new();
@@ -362,7 +365,7 @@ impl PyAny {
     }
 
     fn __repr__(&self) -> String {
-        format!("Any([{} constraints])", self.inner.constraints.len())
+        format!("AnyOf([{} constraints])", self.inner.constraints.len())
     }
 }
 
@@ -497,7 +500,7 @@ fn py_to_constraint(obj: &Bound<'_, PyAny>) -> PyResult<Constraint> {
         Ok(Constraint::Subset(s.inner))
     } else if let Ok(a) = obj.extract::<PyAll>() {
         Ok(Constraint::All(a.inner))
-    } else if let Ok(a) = obj.extract::<PyAny>() {
+    } else if let Ok(a) = obj.extract::<PyAnyOf>() {
         Ok(Constraint::Any(a.inner))
     } else if let Ok(n) = obj.extract::<PyNot>() {
         Ok(Constraint::Not(n.inner))
@@ -514,19 +517,38 @@ fn py_to_constraint(obj: &Bound<'_, PyAny>) -> PyResult<Constraint> {
 fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
     if let Ok(s) = obj.extract::<String>() {
         Ok(ConstraintValue::String(s))
+    } else if let Ok(b) = obj.extract::<bool>() {
+        Ok(ConstraintValue::Boolean(b))
     } else if let Ok(i) = obj.extract::<i64>() {
         Ok(ConstraintValue::Integer(i))
     } else if let Ok(f) = obj.extract::<f64>() {
         Ok(ConstraintValue::Float(f))
-    } else if let Ok(b) = obj.extract::<bool>() {
-        Ok(ConstraintValue::Boolean(b))
+    } else if let Ok(l) = obj.downcast::<pyo3::types::PyList>() {
+        let mut vec = Vec::new();
+        for item in l.iter() {
+            vec.push(py_to_constraint_value(&item)?);
+        }
+        Ok(ConstraintValue::List(vec))
+    } else if let Ok(d) = obj.downcast::<PyDict>() {
+        let mut map = BTreeMap::new();
+        for (k, v) in d.iter() {
+            let key: String = k.extract()?;
+            let val = py_to_constraint_value(&v)?;
+            map.insert(key, val);
+        }
+        Ok(ConstraintValue::Object(map))
+    } else if obj.is_none() {
+        Ok(ConstraintValue::Null)
     } else {
-        Err(PyValueError::new_err("value must be str, int, float, or bool"))
+        Err(PyValueError::new_err(
+            "value must be str, int, float, bool, list, or dict",
+        ))
     }
 }
 
 /// Python wrapper for Warrant.
 #[pyclass(name = "Warrant")]
+#[derive(Clone)]
 pub struct PyWarrant {
     inner: RustWarrant,
 }
@@ -1123,6 +1145,7 @@ impl PySignedRevocationList {
 ///         .version(42) \
 ///         .build(keypair)
 #[pyclass(name = "SrlBuilder")]
+#[derive(Clone)]
 pub struct PySrlBuilder {
     revoked_ids: Vec<String>,
     version: u64,
@@ -1138,25 +1161,28 @@ impl PySrlBuilder {
         }
     }
 
-    /// Add a warrant ID to revoke.
-    fn revoke(mut slf: PyRefMut<'_, Self>, warrant_id: &str) -> PyRefMut<'_, Self> {
-        slf.revoked_ids.push(warrant_id.to_string());
-        slf
+    /// Add a warrant ID to revoke. Returns a new builder (immutable pattern).
+    fn revoke(&self, warrant_id: &str) -> Self {
+        let mut new = self.clone();
+        new.revoked_ids.push(warrant_id.to_string());
+        new
     }
 
-    /// Add multiple warrant IDs to revoke.
-    fn revoke_all(mut slf: PyRefMut<'_, Self>, warrant_ids: Vec<String>) -> PyRefMut<'_, Self> {
-        slf.revoked_ids.extend(warrant_ids);
-        slf
+    /// Add multiple warrant IDs to revoke. Returns a new builder.
+    fn revoke_all(&self, warrant_ids: Vec<String>) -> Self {
+        let mut new = self.clone();
+        new.revoked_ids.extend(warrant_ids);
+        new
     }
 
-    /// Set the version number.
+    /// Set the version number. Returns a new builder.
     /// 
     /// Version must be monotonically increasing. Authorizers should reject
     /// lists with version < their current version (anti-rollback).
-    fn version(mut slf: PyRefMut<'_, Self>, version: u64) -> PyRefMut<'_, Self> {
-        slf.version = version;
-        slf
+    fn version(&self, version: u64) -> Self {
+        let mut new = self.clone();
+        new.version = version;
+        new
     }
 
     /// Build and sign the revocation list.
@@ -1422,8 +1448,12 @@ impl PyAuthorizer {
     ///     # Verify full delegation: control_plane -> orchestrator -> worker
     ///     result = authorizer.verify_chain([root_warrant, orch_warrant, worker_warrant])
     ///     print(f"Chain verified: {result.chain_length} warrants, depth {result.leaf_depth}")
-    fn verify_chain(&self, chain: Vec<PyWarrant>) -> PyResult<PyChainVerificationResult> {
-        let rust_chain: Vec<RustWarrant> = chain.into_iter().map(|w| w.inner).collect();
+    fn verify_chain(&self, _py: Python<'_>, chain: &Bound<'_, pyo3::types::PyList>) -> PyResult<PyChainVerificationResult> {
+        let mut rust_chain: Vec<RustWarrant> = Vec::new();
+        for item in chain.iter() {
+            let warrant: PyWarrant = item.extract()?;
+            rust_chain.push(warrant.inner);
+        }
         let result = self.inner.verify_chain(&rust_chain).map_err(to_py_err)?;
         Ok(PyChainVerificationResult::from(result))
     }
@@ -1448,13 +1478,18 @@ impl PyAuthorizer {
     #[pyo3(signature = (chain, tool, args, signature=None, approvals=None))]
     fn check_chain(
         &self,
-        chain: Vec<PyWarrant>,
+        _py: Python<'_>,
+        chain: &Bound<'_, pyo3::types::PyList>,
         tool: &str,
         args: &Bound<'_, PyDict>,
         signature: Option<&PySignature>,
-        approvals: Option<Vec<PyApproval>>,
+        approvals: Option<&Bound<'_, pyo3::types::PyList>>,
     ) -> PyResult<PyChainVerificationResult> {
-        let rust_chain: Vec<RustWarrant> = chain.into_iter().map(|w| w.inner).collect();
+        let mut rust_chain: Vec<RustWarrant> = Vec::new();
+        for item in chain.iter() {
+            let warrant: PyWarrant = item.extract()?;
+            rust_chain.push(warrant.inner);
+        }
         
         let mut rust_args = HashMap::new();
         for (key, value) in args.iter() {
@@ -1463,11 +1498,16 @@ impl PyAuthorizer {
             rust_args.insert(field, cv);
         }
 
-        let rust_approvals: Vec<RustApproval> = approvals
-            .unwrap_or_default()
-            .into_iter()
-            .map(|a| a.inner)
-            .collect();
+        let rust_approvals: Vec<RustApproval> = if let Some(approval_list) = approvals {
+            let mut vec = Vec::new();
+            for item in approval_list.iter() {
+                let approval: PyApproval = item.extract()?;
+                vec.push(approval.inner);
+            }
+            vec
+        } else {
+            Vec::new()
+        };
 
         let result = self.inner.check_chain(
             &rust_chain,
@@ -1481,33 +1521,262 @@ impl PyAuthorizer {
     }
 }
 
-/// Helper to convert ConstraintValue to Python object
+
+/// Tenuo Python module.
+///
+// ============================================================================
+// GATEWAY CONFIGURATION
+// ============================================================================
+
+/// Python wrapper for GatewayConfig.
+/// 
+/// Represents a parsed gateway-config.yaml file.
+/// Use `CompiledGatewayConfig.compile(config)` to prepare it for use.
+#[pyclass(name = "GatewayConfig")]
+#[derive(Clone)]
+pub struct PyGatewayConfig {
+    inner: RustGatewayConfig,
+}
+
+#[pymethods]
+impl PyGatewayConfig {
+    /// Load configuration from a YAML string.
+    #[staticmethod]
+    fn from_yaml(yaml: &str) -> PyResult<Self> {
+        let inner = RustGatewayConfig::from_yaml(yaml).map_err(config_err_to_py)?;
+        Ok(Self { inner })
+    }
+
+    /// Load configuration from a file path.
+    #[staticmethod]
+    fn from_file(path: &str) -> PyResult<Self> {
+        let inner = RustGatewayConfig::from_file(path).map_err(config_err_to_py)?;
+        Ok(Self { inner })
+    }
+
+    /// Get the configuration version.
+    #[getter]
+    fn version(&self) -> String {
+        self.inner.version.clone()
+    }
+}
+
+/// Convert a ConstraintValue to a Python object.
 fn constraint_value_to_py(py: Python<'_>, cv: &ConstraintValue) -> PyResult<PyObject> {
     match cv {
         ConstraintValue::String(s) => Ok(s.into_py(py)),
         ConstraintValue::Integer(i) => Ok(i.into_py(py)),
         ConstraintValue::Float(f) => Ok(f.into_py(py)),
         ConstraintValue::Boolean(b) => Ok(b.into_py(py)),
-        ConstraintValue::Null => Ok(py.None()),
         ConstraintValue::List(l) => {
             let list = pyo3::types::PyList::empty_bound(py);
             for item in l {
                 list.append(constraint_value_to_py(py, item)?)?;
             }
-            Ok(list.into())
+            Ok(list.into_py(py))
         }
-        ConstraintValue::Object(m) => {
+        ConstraintValue::Object(o) => {
             let dict = PyDict::new_bound(py);
-            for (k, v) in m {
+            for (k, v) in o {
                 dict.set_item(k, constraint_value_to_py(py, v)?)?;
             }
-            Ok(dict.into())
+            Ok(dict.into_py(py))
         }
+        ConstraintValue::Null => Ok(py.None()),
     }
 }
 
-/// Tenuo Python module.
-///
+/// Python wrapper for CompiledGatewayConfig.
+/// 
+/// Optimized configuration for high-performance route matching and extraction.
+#[pyclass(name = "CompiledGatewayConfig")]
+pub struct PyCompiledGatewayConfig {
+    inner: Arc<RustCompiledGatewayConfig>,
+}
+
+#[pymethods]
+impl PyCompiledGatewayConfig {
+    /// Compile a GatewayConfig for use.
+    #[staticmethod]
+    fn compile(config: &PyGatewayConfig) -> PyResult<Self> {
+        let inner = RustCompiledGatewayConfig::compile(config.inner.clone())
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(Self {
+            inner: Arc::new(inner),
+        })
+    }
+
+    /// Match a route and extract constraints in one step.
+    /// 
+    /// This is the main entry point for Python Gateways (FastAPI/Flask/etc).
+    /// It takes raw request components and returns the extracted constraints
+    /// ready for authorization.
+    /// 
+    /// Args:
+    ///     method: HTTP method (GET, POST, etc.)
+    ///     path: URL path (e.g., "/api/v1/resource")
+    ///     headers: Dictionary of header name -> value
+    ///     query: Dictionary of query param name -> value
+    ///     body: Optional JSON body (as Python dict/list/primitive)
+    /// 
+    /// Returns:
+    ///     Tuple (tool_name, constraints_dict) if matched, None if no match.
+    /// 
+    /// Raises:
+    ///     ValueError if extraction fails (missing required field)
+    #[pyo3(signature = (method, path, headers, query, body=None))]
+    fn extract(
+        &self,
+        py: Python<'_>,
+        method: &str,
+        path: &str,
+        headers: &Bound<'_, PyDict>,
+        query: &Bound<'_, PyDict>,
+        body: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Option<(String, PyObject)>> {
+        // 1. Match Route
+        let route_match = match self.inner.match_route(method, path) {
+            Some(m) => m,
+            None => return Ok(None),
+        };
+
+        // 2. Build RequestContext
+        let mut ctx = RequestContext::new();
+        
+        // Add headers
+        for (k, v) in headers.iter() {
+            let key: String = k.extract()?;
+            let val: String = v.extract()?;
+            ctx = ctx.header(key, val);
+        }
+
+        // Add query params
+        for (k, v) in query.iter() {
+            let key: String = k.extract()?;
+            let val: String = v.extract()?;
+            ctx = ctx.query_param(key, val);
+        }
+
+        // Add body if present
+        if let Some(b) = body {
+            // Convert Python body to serde_json::Value
+            // This is a bit expensive but necessary for the extraction logic which works on Value
+            // Optimization: We could implement extraction directly on PyAny, but that duplicates logic
+            let json_str = b.call_method0("json")
+                .or_else(|_| {
+                    // Fallback: try json.dumps if .json() fails (e.g. it's a dict)
+                    let json_mod = b.py().import_bound("json")?;
+                    json_mod.call_method1("dumps", (b,))
+                })?;
+            let json_str: String = json_str.extract()?;
+            let value: serde_json::Value = serde_json::from_str(&json_str)
+                .map_err(|e| PyValueError::new_err(format!("Invalid JSON body: {}", e)))?;
+            ctx.body = value;
+        }
+
+        // 3. Extract Constraints
+        let result = self.inner.extract_constraints(&route_match, &ctx)
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+
+        // 4. Convert to Python Dict
+        let dict = PyDict::new_bound(py);
+        for (k, v) in result.constraints {
+            dict.set_item(k, constraint_value_to_py(py, &v)?)?;
+        }
+
+        Ok(Some((result.tool, dict.into_py(py))))
+    }
+}
+
+// ============================================================================
+// REVOCATION MANAGER
+// ============================================================================
+
+/// Python wrapper for RevocationManager.
+/// 
+/// Manages revocation requests and generates Signed Revocation Lists (SRLs).
+#[pyclass(name = "RevocationManager")]
+pub struct PyRevocationManager {
+    inner: RustRevocationManager,
+}
+
+#[pymethods]
+impl PyRevocationManager {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: RustRevocationManager::new(),
+        }
+    }
+
+    /// Submit a revocation request.
+    /// 
+    /// Validates the request and adds it to the pending list if valid.
+    /// 
+    /// Args:
+    ///     warrant_id: ID of the warrant to revoke
+    ///     reason: Reason for revocation
+    ///     warrant_issuer: Public key of the warrant issuer
+    ///     warrant_holder: Optional public key of the warrant holder
+    ///     warrant_expires_at: Expiration time of the warrant (RFC3339 string)
+    ///     control_plane_key: Public key of the Control Plane (trust anchor)
+    ///     revocation_keypair: Keypair signing the revocation request (must be issuer or holder)
+    #[pyo3(signature = (warrant_id, reason, warrant_issuer, warrant_expires_at, control_plane_key, revocation_keypair, warrant_holder=None))]
+    fn submit_request(
+        &mut self,
+        warrant_id: &str,
+        reason: &str,
+        warrant_issuer: &PyPublicKey,
+        warrant_expires_at: &str,
+        control_plane_key: &PyPublicKey,
+        revocation_keypair: &PyKeypair,
+        warrant_holder: Option<&PyPublicKey>,
+    ) -> PyResult<()> {
+        // Parse expiration time
+        let expires_at = chrono::DateTime::parse_from_rfc3339(warrant_expires_at)
+            .map_err(|e| PyValueError::new_err(format!("Invalid timestamp: {}", e)))?
+            .with_timezone(&chrono::Utc);
+
+        // Create request
+        let request = RustRevocationRequest::new(
+            warrant_id,
+            reason,
+            &revocation_keypair.inner,
+        ).map_err(to_py_err)?;
+
+        // Submit
+        self.inner.submit_request(
+            request,
+            warrant_id,
+            &warrant_issuer.inner,
+            warrant_holder.map(|h| &h.inner),
+            expires_at,
+            &control_plane_key.inner,
+        ).map_err(to_py_err)?;
+
+        Ok(())
+    }
+
+    /// Generate a Signed Revocation List (SRL) from pending requests.
+    /// 
+    /// Args:
+    ///     signer: Keypair to sign the SRL (usually Control Plane)
+    ///     version: Version number for the new SRL
+    /// 
+    /// Returns:
+    ///     SignedRevocationList object
+    fn generate_srl(&self, signer: &PyKeypair, version: u64) -> PyResult<PySignedRevocationList> {
+        let inner = self.inner.generate_srl(&signer.inner, version)
+            .map_err(to_py_err)?;
+        Ok(PySignedRevocationList { inner })
+    }
+
+    /// Get list of pending warrant IDs.
+    fn pending_ids(&self) -> Vec<String> {
+        self.inner.pending_ids().map(|s| s.to_string()).collect()
+    }
+}
+
 /// This function is public so it can be called from tenuo-python package.
 #[pymodule]
 pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -1526,7 +1795,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     
     // Constraints - Composite
     m.add_class::<PyAll>()?;
-    m.add_class::<PyAny>()?;
+    m.add_class::<PyAnyOf>()?;
     m.add_class::<PyNot>()?;
     m.add_class::<PyCel>()?;
     
@@ -1547,6 +1816,13 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Chain Verification
     m.add_class::<PyChainStep>()?;
     m.add_class::<PyChainVerificationResult>()?;
+    
+    // Gateway Config
+    m.add_class::<PyGatewayConfig>()?;
+    m.add_class::<PyCompiledGatewayConfig>()?;
+    
+    // Revocation Manager
+    m.add_class::<PyRevocationManager>()?;
     
     // MCP
     m.add_class::<PyMcpConfig>()?;
