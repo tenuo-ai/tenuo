@@ -164,56 +164,242 @@ with set_warrant_context(warrant):
     # Agent can only access files matching Pattern("/tmp/*")
 ```
 
-See [`examples/langchain_simple.py`](../examples/langchain_simple.py) for a complete working example, or [`examples/langchain_integration.py`](../examples/langchain_integration.py) for an advanced example with callbacks.
+See [`examples/langchain_integration.py`](../examples/langchain_integration.py) for a complete working example with tool protection.
 
-## MCP Integration
+### protect_tools() Pattern
 
-Tenuo provides native support for the [Model Context Protocol](https://modelcontextprotocol.io):
+For the cleanest integration, use `protect_tools()` to wrap tools at setup time:
 
 ```python
-from tenuo import McpConfig, CompiledMcpConfig, Warrant
+from tenuo.langchain import protect_tools
 
-# Load MCP configuration
-config = McpConfig.from_file("mcp-config.yaml")
-compiled = CompiledMcpConfig.compile(config)
+# Plain functions - NO Tenuo imports needed
+def read_file(file_path: str) -> str:
+    return open(file_path).read()
 
-# Extract constraints from MCP tool call
-arguments = {"path": "/var/log/app.log", "maxSize": 1024}
-result = compiled.extract_constraints("filesystem_read", arguments)
+def search(query: str) -> str:
+    return "Search results..."
 
-# Authorize (with warrant chain and PoP signature)
-warrant = Warrant.from_base64(warrant_chain_base64)
-authorized = warrant.authorize("filesystem_read", result.constraints)
+# Wrap at setup time with config-based constraints
+secure_tools = protect_tools(
+    tools=[read_file, search],
+    warrant=root_warrant,
+    keypair=keypair,
+    config={
+        "read_file": {"constraints": {"file_path": {"pattern": "/tmp/*"}}},
+        "search": {"constraints": {"query": {"pattern": "*"}}}
+    }
+)
+
+# Use with LangChain
+agent = AgentExecutor(agent=base_agent, tools=secure_tools)
 ```
 
-See [`examples/mcp_integration.py`](../examples/mcp_integration.py) for a complete example.
+## LangGraph Integration (SecureGraph)
+
+For multi-agent LangGraph workflows, use `SecureGraph` for automatic warrant management:
+
+```python
+from langgraph.graph import StateGraph
+from tenuo.langgraph import SecureGraph
+
+# Build standard LangGraph
+graph = StateGraph(AgentState)
+graph.add_node("supervisor", supervisor_fn)
+graph.add_node("researcher", researcher_fn)
+graph.add_node("writer", writer_fn)
+# ... add edges ...
+
+# Define per-node attenuation with dynamic constraints
+config = {
+    "settings": {"allow_unlisted_nodes": False},
+    "nodes": {
+        "supervisor": {"role": "supervisor"},
+        "researcher": {
+            "attenuate": {
+                "tools": ["search", "read_file"],
+                "constraints": {
+                    "file_path": {
+                        "pattern": "/data/${state.project_id}/*",
+                        "validate": "^[a-zA-Z0-9_/-]+$"  # Prevent injection
+                    }
+                }
+            }
+        },
+        "writer": {
+            "attenuate": {
+                "tools": ["write_file"],
+                "constraints": {"file_path": {"pattern": "/output/*"}}
+            }
+        }
+    }
+}
+
+# Wrap graph
+secure = SecureGraph(
+    graph=graph,
+    config=config,
+    root_warrant=root_warrant,
+    keypair=keypair
+)
+
+# State values are interpolated into constraints at runtime
+result = secure.invoke({"input": "...", "project_id": "alpha"})
+```
+
+**Key Features:**
+- Automatic warrant attenuation on node entry
+- Dynamic constraints via `${state.*}` interpolation
+- Input validation to prevent path traversal attacks
+- Stack-based warrant flow (push on delegate, pop on return)
+- Audit logging for all warrant operations
+
+See [`examples/secure_graph_example.py`](../examples/secure_graph_example.py) for a complete example.
+
+## Additional Constraint Types
+
+Beyond the basic constraints (`Pattern`, `Exact`, `Range`, `OneOf`, `CEL`), Tenuo supports:
+
+```python
+from tenuo import (
+    Wildcard,    # Match anything (*)
+    Regex,       # Regular expression matching
+    NotOneOf,    # Exclusion list
+    Contains,    # Substring matching
+    Subset,      # Value must be subset of allowed set
+    All,         # All sub-constraints must match
+    AnyOf,       # Any sub-constraint must match
+    Not,         # Negation of constraint
+)
+
+# Examples
+warrant = Warrant.create(
+    tool="process_data",
+    constraints={
+        "action": NotOneOf(["delete", "drop"]),   # Anything except these
+        "path": Regex(r"^/data/[a-z]+\.csv$"),    # Regex pattern
+        "tags": Subset(["public", "internal"]),   # Must be subset
+        "flags": Wildcard(),                       # Allow anything
+    },
+    ...
+)
+```
+
+See [`examples/constraints.py`](../examples/constraints.py) for demonstrations.
+
+## Revocation
+
+Tenuo supports warrant revocation via Signed Revocation Lists (SRLs):
+
+```python
+from tenuo import RevocationManager, Authorizer, SignedRevocationList
+
+# Create revocation manager
+manager = RevocationManager()
+
+# Submit revocation request
+manager.submit_request(
+    warrant_id=warrant.id,
+    reason="Key compromise",
+    warrant_issuer=issuer_keypair.public_key(),
+    warrant_expires_at=expires_at,
+    control_plane_key=cp_keypair.public_key(),
+    revocation_keypair=issuer_keypair,
+    warrant_holder=None
+)
+
+# Generate SRL
+srl = manager.generate_srl(cp_keypair, version=1)
+
+# Configure authorizer with SRL
+authorizer = Authorizer.new(cp_keypair.public_key())
+authorizer.set_revocation_list(srl, cp_keypair.public_key())
+
+# Revoked warrants are now rejected
+authorizer.verify_chain([warrant])  # Raises if revoked
+```
+
+See [`examples/test_gateway_revocation.py`](../examples/test_gateway_revocation.py) for a complete example.
+
+## Audit Logging
+
+Tenuo provides structured audit logging for security monitoring:
+
+```python
+from tenuo.audit import audit_logger, AuditEvent, AuditEventType
+
+# Log events manually
+audit_logger.log(AuditEvent(
+    event_type=AuditEventType.AUTHORIZATION_SUCCESS,
+    warrant_id=warrant.id,
+    tool="read_file",
+    action="authorized",
+    details="File access granted",
+))
+
+# SecureGraph logs automatically:
+# - WARRANT_ATTENUATED: When warrants are narrowed for nodes
+# - CONTEXT_SET: When warrant context is activated
+# - AUTHORIZATION_FAILURE: When validation/authorization fails
+```
+
+Audit events are JSON-formatted for SIEM integration.
+
+## Gateway / MCP Integration
+
+Tenuo provides native support for HTTP gateway routing and [Model Context Protocol](https://modelcontextprotocol.io):
+
+```python
+from tenuo import GatewayConfig, CompiledGatewayConfig, Warrant
+
+# Load gateway configuration
+config = GatewayConfig.from_yaml(yaml_content)
+compiled = CompiledGatewayConfig.compile(config)
+
+# Extract constraints from HTTP request
+result = compiled.extract("GET", "/api/users/alice", headers, query, body)
+if result:
+    tool, constraints = result
+    # Authorize (with warrant)
+    authorized = warrant.authorize(tool, constraints)
+```
+
+See [`examples/mcp_integration.py`](../examples/mcp_integration.py) for MCP examples and [`examples/test_gateway_revocation.py`](../examples/test_gateway_revocation.py) for gateway examples.
 
 ## Examples
 
 Run the examples to see Tenuo in action:
 
 ```bash
-# Basic usage (explicit warrant pattern)
+# Basic usage (warrant creation, attenuation, PoP)
 python examples/basic_usage.py
 
-# Decorator patterns (explicit, mapping, and context)
+# All constraint types (Pattern, Exact, Range, OneOf, CEL)
+python examples/constraints.py
+
+# Decorator patterns (explicit, mapping, context)
 python examples/decorator_example.py
+
+# Human-in-the-loop (M-of-N multi-sig approvals)
+python examples/human_in_the_loop.py
+
+# LangChain integration (protect_tools pattern)
+python examples/langchain_integration.py
+
+# LangGraph integration (SecureGraph with dynamic constraints)
+python examples/secure_graph_example.py
+
+# Control plane implementation (FastAPI service)
+python examples/control_plane.py
+
+# Kubernetes integration patterns
+python examples/kubernetes_integration.py
+
+# Gateway config and revocation
+python examples/test_gateway_revocation.py
 
 # MCP integration
 python examples/mcp_integration.py
-
-# Constraints demonstration
-python examples/constraints.py
-
-# Control plane implementation
-python examples/control_plane.py
-
-# Kubernetes integration
-python examples/kubernetes_integration.py
-
-# LangChain integration
-python examples/langchain_simple.py
-python examples/langchain_integration.py
 ```
 
 ## Documentation
