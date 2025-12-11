@@ -423,7 +423,8 @@ logging.getLogger("tenuo").setLevel(logging.DEBUG)
 
 ## See Also
 
-- [LangChain Integration Examples](../examples/langchain_simple.py)
+- [LangChain Integration Examples](../examples/langchain_integration.py)
+- [LangGraph SecureGraph Example](../examples/secure_graph_example.py)
 - [Decorator Patterns (including ContextVar)](../examples/decorator_example.py)
 - [Kubernetes Integration Example](../examples/kubernetes_integration.py)
 
