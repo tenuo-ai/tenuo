@@ -47,6 +47,7 @@ import logging
 
 from tenuo import Warrant, Keypair, AuthorizationError, Pattern, Exact, OneOf, Range
 from tenuo.decorators import get_warrant_context, get_keypair_context
+from tenuo.audit import audit_logger, AuditEvent, AuditEventType
 
 # Module logger
 logger = logging.getLogger("tenuo.langchain")
@@ -236,9 +237,31 @@ def protect_tool(
             
         # 4. Authorize
         if not current_warrant.authorize(tool_name, auth_args, signature):
+            # Audit log the failure
+            audit_logger.log(AuditEvent(
+                event_type=AuditEventType.AUTHORIZATION_FAILURE,
+                warrant_id=current_warrant.id,
+                tool=tool_name,
+                action="denied",
+                trace_id=current_warrant.session_id,
+                constraints=auth_args,
+                error_code="constraint_not_satisfied",
+                details=f"Warrant does not authorize tool '{tool_name}' with provided args",
+            ))
             raise AuthorizationError(
                 f"Warrant does not authorize tool '{tool_name}' with args {auth_args}"
             )
+        
+        # Audit log the success
+        audit_logger.log(AuditEvent(
+            event_type=AuditEventType.AUTHORIZATION_SUCCESS,
+            warrant_id=current_warrant.id,
+            tool=tool_name,
+            action="authorized",
+            trace_id=current_warrant.session_id,
+            constraints=auth_args,
+            details=f"Authorization successful for tool '{tool_name}'",
+        ))
             
         # 5. Execute original
         logger.debug(f"Authorized access to '{tool_name}' with args {auth_args}")
@@ -268,6 +291,30 @@ def protect_tools(
     
     This is the main entry point for protecting LangChain tools. Each tool
     will be wrapped to check authorization before execution.
+    
+    IMPORTANT: Static vs Dynamic Constraints
+    ----------------------------------------
+    Constraints are evaluated at SETUP TIME when protect_tools() is called.
+    This means ${state.*} interpolation is NOT supported here.
+    
+    For dynamic constraints that depend on runtime state, use SecureGraph:
+    
+        from tenuo.langgraph import SecureGraph
+        
+        # Dynamic constraints work in SecureGraph
+        config = {
+            "nodes": {
+                "file_reader": {
+                    "attenuate": {
+                        "tools": ["read_file"],
+                        "constraints": {
+                            "path": {"pattern": "/uploads/${state.user_id}/*"}
+                        }
+                    }
+                }
+            }
+        }
+        secure = SecureGraph(graph=graph, config=config, ...)
     
     Args:
         tools: List of tool functions to protect.

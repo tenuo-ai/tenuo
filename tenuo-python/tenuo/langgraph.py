@@ -230,7 +230,21 @@ class SecureGraph:
         return wrapped_node
     
     def _wrap_router(self, router_func: Callable, name: str) -> Callable:
-        """Wrap a router function to manage warrant stack."""
+        """
+        Wrap a router function to manage warrant stack.
+        
+        NOTE: Router state mutation behavior
+        ------------------------------------
+        LangGraph routers return the next node name, not state updates.
+        Therefore, this wrapper mutates the state dict directly:
+        
+            state[TENUO_STACK] = new_stack
+            state[TENUO_WARRANT] = restored_warrant
+        
+        This is the only way for routers to affect state in LangGraph.
+        We create new list objects (not in-place mutation) to avoid issues
+        with checkpointing and branching.
+        """
         
         def wrapped_router(state: dict, **kwargs) -> str:
             # Execute original router
@@ -458,6 +472,29 @@ class SecureGraph:
                                 },
                             ))
                             raise InterpolationValidationError(error_msg)
+                    else:
+                        # SECURITY: Missing state keys must fail, not pass through
+                        # A missing key would leave "${state.key}" in the pattern unchanged,
+                        # potentially bypassing validation (e.g., "../../../${state.nonexistent}")
+                        error_msg = (
+                            f"Security violation in node '{node_name}', "
+                            f"constraint '{constraint_name}': "
+                            f"state key '{state_key}' required for interpolation not found in state. "
+                            f"All interpolated keys must exist in state."
+                        )
+                        audit_logger.log(AuditEvent(
+                            event_type=AuditEventType.AUTHORIZATION_FAILURE,
+                            tool=node_name,
+                            action="validation_failed",
+                            error_code="missing_state_key",
+                            details=error_msg,
+                            constraints={
+                                "constraint": constraint_name,
+                                "state_key": state_key,
+                                "validation_pattern": validate_pattern,
+                            },
+                        ))
+                        raise InterpolationValidationError(error_msg)
             elif isinstance(v, dict):
                 for sub_v in v.values():
                     find_and_validate(sub_v)
