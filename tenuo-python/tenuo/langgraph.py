@@ -286,8 +286,10 @@ class SecureGraph:
                 if current_warrant:
                     # Push (current_node, current_warrant)
                     # We push 'name' (the router's source node) as the return target
-                    stack.append((name, current_warrant))
-                    state[TENUO_STACK] = stack
+                    # IMPORTANT: Create new list to avoid mutating shared state
+                    # (required for LangGraph checkpointing/branching)
+                    new_stack = stack + [(name, current_warrant)]
+                    state[TENUO_STACK] = new_stack
             
             else:
                 # Unmanaged node transition - do nothing (pass through)
@@ -459,19 +461,27 @@ class SecureGraph:
             
         return value
     
-    def _build_constraint(self, raw: dict) -> Any:
+    def _build_constraint(self, raw: Any) -> Any:
         """
         Convert config constraint to Tenuo constraint type.
         
         Supported formats:
+            "value"                  -> Exact("value")  (raw string after interpolation)
             exact: "value"           -> Exact("value")
             pattern: "/path/*"       -> Pattern("/path/*")
             enum: ["a", "b", "c"]    -> OneOf(["a", "b", "c"])
             min: 0, max: 100         -> Range(0, 100)
             
         The 'validate' field is stripped here (used earlier for security validation).
+        
+        Note: After interpolation, a config like `pattern: "${state.path}"` becomes
+        just the string "/uploads/file.txt", not a dict. Handle this case.
         """
         from tenuo import Exact, Pattern, Range, OneOf
+        
+        # After interpolation, raw might be a string (if entire value was ${state.foo})
+        if not isinstance(raw, dict):
+            return Exact(raw)
         
         if "exact" in raw:
             return Exact(raw["exact"])

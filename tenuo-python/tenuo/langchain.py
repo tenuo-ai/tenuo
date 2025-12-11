@@ -142,10 +142,33 @@ def _build_constraint(raw: Any) -> Any:
 # Core Functions
 # =============================================================================
 
+def _get_tool_name(tool: Any) -> str:
+    """
+    Get the name of a tool, handling both functions and LangChain BaseTool.
+    
+    LangChain tools (StructuredTool, BaseTool) have a 'name' attribute.
+    Regular functions have __name__.
+    """
+    return getattr(tool, 'name', getattr(tool, '__name__', str(tool)))
+
+
+def _get_callable(tool: Any) -> Callable:
+    """
+    Get the callable from a tool, handling both functions and LangChain BaseTool.
+    
+    LangChain BaseTool has a 'func' attribute or can be called directly.
+    """
+    if hasattr(tool, 'func') and tool.func is not None:
+        return tool.func
+    if hasattr(tool, '_run'):
+        return tool._run
+    return tool
+
+
 def protect_tool(
-    tool: Callable, 
+    tool: Any,  # Callable or LangChain BaseTool
     name: Optional[str] = None, 
-    extract_args: Optional[Callable] = None,
+    extract_args: Optional[Callable[..., dict]] = None,
     warrant: Optional[Warrant] = None,
     keypair: Optional[Keypair] = None
 ) -> Callable:
@@ -156,8 +179,8 @@ def protect_tool(
     If not, they are retrieved from context (SecureGraph mode).
     
     Args:
-        tool: The tool function to wrap.
-        name: Tool name (defaults to function name).
+        tool: The tool function or LangChain BaseTool to wrap.
+        name: Tool name (defaults to tool.name or function name).
         extract_args: Function to extract authorization args from tool call.
         warrant: Explicit warrant to use (optional).
         keypair: Explicit keypair to use (optional).
@@ -165,9 +188,11 @@ def protect_tool(
     Returns:
         Wrapped function that enforces authorization before execution.
     """
-    tool_name = name or tool.__name__
+    # Handle both functions and LangChain BaseTool objects
+    tool_name = name or _get_tool_name(tool)
+    callable_func = _get_callable(tool)
     
-    @wraps(tool)
+    @wraps(callable_func)
     def protected_tool(*args, **kwargs):
         # 1. Get context (or use provided)
         current_warrant = warrant or get_warrant_context()
@@ -183,14 +208,14 @@ def protect_tool(
         if extract_args:
             # Bind args to signature to handle positional/keyword mix
             import inspect
-            sig = inspect.signature(tool)
+            sig = inspect.signature(callable_func)
             bound = sig.bind(*args, **kwargs)
             bound.apply_defaults()
             auth_args = extract_args(**bound.arguments)
         else:
             # Default: use all kwargs + positional args mapped to param names
             import inspect
-            sig = inspect.signature(tool)
+            sig = inspect.signature(callable_func)
             params = list(sig.parameters.keys())
             auth_args = dict(kwargs)
             for i, arg_val in enumerate(args):
@@ -217,11 +242,17 @@ def protect_tool(
             
         # 5. Execute original
         logger.debug(f"Authorized access to '{tool_name}' with args {auth_args}")
-        return tool(*args, **kwargs)
+        return callable_func(*args, **kwargs)
     
-    # Preserve original function metadata for LangChain
-    protected_tool.__name__ = tool.__name__
-    protected_tool.__doc__ = tool.__doc__
+    # Preserve original function/tool metadata for LangChain
+    protected_tool.__name__ = getattr(callable_func, '__name__', tool_name)
+    protected_tool.__doc__ = getattr(callable_func, '__doc__', None)
+    
+    # Preserve LangChain-specific attributes if present
+    for attr in ('name', 'description', 'args_schema', 'return_direct', 
+                 'verbose', 'handle_tool_error', 'handle_validation_error'):
+        if hasattr(tool, attr):
+            setattr(protected_tool, attr, getattr(tool, attr))
     
     return protected_tool
 
@@ -279,7 +310,7 @@ def protect_tools(
     
     protected = []
     for tool in tools:
-        tool_name = tool.__name__
+        tool_name = _get_tool_name(tool)
         
         # Get tool-specific config if available
         tool_config = parsed_config.tools.get(tool_name) if parsed_config else None

@@ -142,7 +142,7 @@ def lockdown(
     warrant_or_tool: Optional[Union[Warrant, str]] = None,
     tool: Optional[str] = None,
     keypair: Optional[Keypair] = None,
-    extract_args: Optional[Callable[[Any], dict]] = None,
+    extract_args: Optional[Callable[..., dict]] = None,
     mapping: Optional[dict[str, str]] = None
 ):
     """
