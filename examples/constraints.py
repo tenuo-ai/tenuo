@@ -108,7 +108,7 @@ def main():
     print("Range constraints limit numeric values:")
     print("  - Range.min_value(x): value >= x")
     print("  - Range.max_value(x): value <= x")
-    print("  - Range.between(min, max): min <= value <= max")
+    print("  - Range(min, max): min <= value <= max")
     print("  - Useful for: budgets, quotas, resource limits")
     print()
     
@@ -116,7 +116,7 @@ def main():
         tool="allocate_resources",
         constraints={
             "budget": Range.max_value(1000.0),           # Budget <= $1000
-            "cpu_cores": Range.between(1, 8),           # 1 <= CPU cores <= 8
+            "cpu_cores": Range(1, 8),                   # 1 <= CPU cores <= 8
             "memory_gb": Range.min_value(2.0),          # Memory >= 2GB
         },
         ttl_seconds=3600,
@@ -190,9 +190,9 @@ def main():
         tool="deploy_service",
         constraints={
             # CEL expression: cluster must start with "staging" AND budget <= 1000
-            # Note: CEL expressions reference the field name directly
-            "cluster": CEL('cluster.startsWith("staging") && cluster.size() < 20'),
-            "budget": CEL('budget <= 1000.0 && budget > 0'),
+            # Note: CEL expressions reference the value as 'value'
+            "cluster": CEL('value.startsWith("staging") && size(value) < 20'),
+            "budget": CEL('value <= 1000.0 && value > 0'),
         },
         ttl_seconds=3600,
         keypair=keypair
@@ -326,6 +326,12 @@ def main():
     print("  5. CEL: Use for complex boolean expressions")
     print("  6. Mix: Combine different types for fine-grained control")
     print("  7. Attenuate: Constraints can only become more restrictive when delegating")
+    print()
+    print("SECURITY BEST PRACTICE:")
+    print("  In production, ALWAYS use PoP (Proof-of-Possession) binding:")
+    print("    warrant = Warrant.create(..., authorized_holder=agent_keypair.public_key())")
+    print("  This ensures stolen warrants are useless without the private key.")
+    print("  See examples/end_to_end_pop.py for a complete PoP demonstration.")
     print()
 
 

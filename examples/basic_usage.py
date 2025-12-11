@@ -143,6 +143,12 @@ def main():
     print()
     
     print("=== Example completed successfully! ===")
+    print()
+    print("SECURITY BEST PRACTICES:")
+    print("  1. ALWAYS use PoP binding: authorized_holder=agent_keypair.public_key()")
+    print("  2. Use short TTLs for task-scoped warrants (e.g., 30s-5min)")
+    print("  3. Attenuate constraints as narrowly as possible")
+    print("  4. Stolen warrants are useless without the matching private key")
 
 if __name__ == "__main__":
     main()

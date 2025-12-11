@@ -36,8 +36,8 @@ version: "1"
 # Global Settings
 # ============================================================
 settings:
-  # Header containing the base64-encoded warrant chain
-  chain_header: "X-Tenuo-Chain"
+  # Header containing the base64-encoded warrant
+  warrant_header: "X-Tenuo-Warrant"
   
   # Header containing the PoP signature (hex)
   pop_header: "X-Tenuo-PoP"

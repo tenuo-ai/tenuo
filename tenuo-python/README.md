@@ -105,7 +105,7 @@ with set_warrant_context(warrant):
     upgrade_cluster(cluster="staging-web", budget=5000.0)
 ```
 
-See [`examples/context_pattern.py`](../examples/context_pattern.py) for a complete LangChain/FastAPI integration example.
+See [`examples/decorator_example.py`](../examples/decorator_example.py) for a complete example of explicit binding, argument mapping, and the ContextVar pattern.
 
 ### Exceptions
 
@@ -196,10 +196,7 @@ Run the examples to see Tenuo in action:
 # Basic usage (explicit warrant pattern)
 python examples/basic_usage.py
 
-# ContextVar pattern (LangChain/FastAPI integration)
-python examples/context_pattern.py
-
-# Decorator with explicit warrant
+# Decorator patterns (explicit, mapping, and context)
 python examples/decorator_example.py
 
 # MCP integration

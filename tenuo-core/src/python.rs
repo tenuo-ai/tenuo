@@ -13,6 +13,7 @@ use crate::warrant::Warrant as RustWarrant;
 use crate::wire;
 use crate::mcp::{McpConfig, CompiledMcpConfig};
 use crate::planes::Authorizer as RustAuthorizer;
+use crate::approval::{Approval as RustApproval, compute_request_hash};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -277,8 +278,10 @@ impl PyWarrant {
     ///     keypair: Keypair to sign the warrant
     ///     session_id: Optional session identifier
     ///     authorized_holder: Optional public key - if set, holder must prove possession (PoP)
+    ///     required_approvers: Optional list of public keys that must approve actions
+    ///     min_approvals: Optional minimum number of approvals required (M-of-N)
     #[staticmethod]
-    #[pyo3(signature = (tool, constraints, ttl_seconds, keypair, session_id=None, authorized_holder=None))]
+    #[pyo3(signature = (tool, constraints, ttl_seconds, keypair, session_id=None, authorized_holder=None, required_approvers=None, min_approvals=None))]
     fn create(
         tool: &str,
         constraints: &Bound<'_, PyDict>,
@@ -286,6 +289,8 @@ impl PyWarrant {
         keypair: &PyKeypair,
         session_id: Option<&str>,
         authorized_holder: Option<&PyPublicKey>,
+        required_approvers: Option<Vec<PyPublicKey>>,
+        min_approvals: Option<u32>,
     ) -> PyResult<Self> {
         let mut builder = RustWarrant::builder()
             .tool(tool)
@@ -297,6 +302,15 @@ impl PyWarrant {
 
         if let Some(holder) = authorized_holder {
             builder = builder.authorized_holder(holder.inner.clone());
+        }
+
+        if let Some(approvers) = required_approvers {
+            let rust_approvers: Vec<RustPublicKey> = approvers.into_iter().map(|p| p.inner).collect();
+            builder = builder.required_approvers(rust_approvers);
+        }
+
+        if let Some(min) = min_approvals {
+            builder = builder.min_approvals(min);
         }
 
         for (key, value) in constraints.iter() {
@@ -382,15 +396,19 @@ impl PyWarrant {
     ///     keypair: Keypair to sign the attenuated warrant
     ///     ttl_seconds: Optional TTL (must be <= parent's remaining TTL)
     ///     authorized_holder: Optional public key - if set, holder must prove possession (PoP)
+    ///     add_approvers: Optional list of public keys to add as required approvers
+    ///     raise_min_approvals: Optional new minimum approvals count (must be >= parent's)
     ///
     /// Note: session_id is immutable and inherited from the parent warrant.
-    #[pyo3(signature = (constraints, keypair, ttl_seconds=None, authorized_holder=None))]
+    #[pyo3(signature = (constraints, keypair, ttl_seconds=None, authorized_holder=None, add_approvers=None, raise_min_approvals=None))]
     fn attenuate(
         &self,
         constraints: &Bound<'_, PyDict>,
         keypair: &PyKeypair,
         ttl_seconds: Option<u64>,
         authorized_holder: Option<&PyPublicKey>,
+        add_approvers: Option<Vec<PyPublicKey>>,
+        raise_min_approvals: Option<u32>,
     ) -> PyResult<PyWarrant> {
         let mut builder = self.inner.attenuate();
 
@@ -400,6 +418,15 @@ impl PyWarrant {
 
         if let Some(holder) = authorized_holder {
             builder = builder.authorized_holder(holder.inner.clone());
+        }
+
+        if let Some(approvers) = add_approvers {
+            let rust_approvers: Vec<RustPublicKey> = approvers.into_iter().map(|p| p.inner).collect();
+            builder = builder.add_approvers(rust_approvers);
+        }
+
+        if let Some(min) = raise_min_approvals {
+            builder = builder.raise_min_approvals(min);
         }
 
         for (key, value) in constraints.iter() {
@@ -671,6 +698,82 @@ impl PySignature {
     }
 }
 
+/// Python wrapper for Approval.
+#[pyclass(name = "Approval")]
+#[derive(Clone)]
+pub struct PyApproval {
+    inner: RustApproval,
+}
+
+#[pymethods]
+impl PyApproval {
+    /// Create a new approval.
+    ///
+    /// Args:
+    ///     warrant_id: The ID of the warrant being used
+    ///     tool: The tool name being authorized
+    ///     args: Dictionary of argument name -> value
+    ///     approver_key: Keypair of the approver
+    ///     external_id: Identity string of the approver (e.g. "admin@corp.com")
+    ///     provider: Identity provider name (e.g. "okta")
+    ///     ttl_seconds: How long the approval is valid for (default 300s)
+    ///     reason: Optional reason for approval
+    ///     authorized_holder: Optional public key of the agent using the warrant
+    #[staticmethod]
+    #[pyo3(signature = (warrant_id, tool, args, approver_key, external_id, provider, ttl_seconds=300, reason=None, authorized_holder=None))]
+    fn create(
+        warrant_id: &str,
+        tool: &str,
+        args: &Bound<'_, PyDict>,
+        approver_key: &PyKeypair,
+        external_id: &str,
+        provider: &str,
+        ttl_seconds: i64,
+        reason: Option<String>,
+        authorized_holder: Option<&PyPublicKey>,
+    ) -> PyResult<Self> {
+        let mut rust_args = HashMap::new();
+        for (key, value) in args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_args.insert(field, cv);
+        }
+
+        let holder_inner = authorized_holder.map(|h| &h.inner);
+        let request_hash = compute_request_hash(warrant_id, tool, &rust_args, holder_inner);
+        
+        let now = chrono::Utc::now();
+        let expires_at = now + chrono::Duration::seconds(ttl_seconds);
+
+        // Manually construct Approval since we don't have a builder exposed yet
+        // Ideally we'd use a builder, but constructing struct directly is fine for internal crate usage
+        let mut payload_bytes = Vec::new();
+        payload_bytes.extend_from_slice(&request_hash);
+        payload_bytes.extend_from_slice(external_id.as_bytes());
+        payload_bytes.extend_from_slice(&now.timestamp().to_le_bytes());
+        payload_bytes.extend_from_slice(&expires_at.timestamp().to_le_bytes());
+
+        let signature = approver_key.inner.sign(&payload_bytes);
+
+        let inner = RustApproval {
+            request_hash,
+            approver_key: approver_key.inner.public_key(),
+            external_id: external_id.to_string(),
+            provider: provider.to_string(),
+            approved_at: now,
+            expires_at,
+            reason,
+            signature,
+        };
+
+        Ok(Self { inner })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Approval(approver='{}', provider='{}')", self.inner.external_id, self.inner.provider)
+    }
+}
+
 /// Python wrapper for Authorizer.
 #[pyclass(name = "Authorizer")]
 pub struct PyAuthorizer {
@@ -698,16 +801,18 @@ impl PyAuthorizer {
     ///     tool: Tool name being invoked
     ///     args: Dictionary of argument name -> value
     ///     signature: Optional PoP Signature object
+    ///     approvals: Optional list of Approval objects (for multi-sig)
     /// 
     /// Returns:
     ///     None on success, raises exception on failure
-    #[pyo3(signature = (warrant, tool, args, signature=None))]
+    #[pyo3(signature = (warrant, tool, args, signature=None, approvals=None))]
     fn authorize(
         &self,
         warrant: &PyWarrant,
         tool: &str,
         args: &Bound<'_, PyDict>,
         signature: Option<&PySignature>,
+        approvals: Option<Vec<PyApproval>>,
     ) -> PyResult<()> {
         let mut rust_args = HashMap::new();
         for (key, value) in args.iter() {
@@ -716,8 +821,19 @@ impl PyAuthorizer {
             rust_args.insert(field, cv);
         }
 
-        self.inner.authorize(&warrant.inner, tool, &rust_args, signature.map(|s| &s.inner), &[])
-            .map_err(to_py_err)
+        let rust_approvals: Vec<RustApproval> = approvals
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| a.inner)
+            .collect();
+
+        self.inner.authorize(
+            &warrant.inner, 
+            tool, 
+            &rust_args, 
+            signature.map(|s| &s.inner), 
+            &rust_approvals
+        ).map_err(to_py_err)
     }
 
     /// Convenience: verify warrant and authorize in one call.
@@ -727,16 +843,18 @@ impl PyAuthorizer {
     ///     tool: Tool name being invoked
     ///     args: Dictionary of argument name -> value
     ///     signature: Optional PoP Signature object
+    ///     approvals: Optional list of Approval objects (for multi-sig)
     /// 
     /// Returns:
     ///     None on success, raises exception on failure
-    #[pyo3(signature = (warrant, tool, args, signature=None))]
+    #[pyo3(signature = (warrant, tool, args, signature=None, approvals=None))]
     fn check(
         &self,
         warrant: &PyWarrant,
         tool: &str,
         args: &Bound<'_, PyDict>,
         signature: Option<&PySignature>,
+        approvals: Option<Vec<PyApproval>>,
     ) -> PyResult<()> {
         let mut rust_args = HashMap::new();
         for (key, value) in args.iter() {
@@ -745,8 +863,19 @@ impl PyAuthorizer {
             rust_args.insert(field, cv);
         }
 
-        self.inner.check(&warrant.inner, tool, &rust_args, signature.map(|s| &s.inner), &[])
-            .map_err(to_py_err)
+        let rust_approvals: Vec<RustApproval> = approvals
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| a.inner)
+            .collect();
+
+        self.inner.check(
+            &warrant.inner, 
+            tool, 
+            &rust_args, 
+            signature.map(|s| &s.inner), 
+            &rust_approvals
+        ).map_err(to_py_err)
     }
 }
 
@@ -795,6 +924,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Core
     m.add_class::<PyWarrant>()?;
     m.add_class::<PyAuthorizer>()?;
+    m.add_class::<PyApproval>()?;
     
     // MCP
     m.add_class::<PyMcpConfig>()?;

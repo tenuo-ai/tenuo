@@ -25,7 +25,7 @@ Key Concepts:
 
 from tenuo import (
     Keypair, Warrant, Pattern,
-    lockdown, set_warrant_context, AuthorizationError
+    lockdown, set_warrant_context, set_keypair_context, AuthorizationError
 )
 from typing import Optional
 import os
@@ -497,7 +497,8 @@ def main():
     # Use warrant (agent must prove identity with its private key)
     print("3. Using warrant (per-request)...")
     print("   Agent uses private key to sign PoP when calling tools")
-    with set_warrant_context(warrant):
+    # FIX: Must set keypair context because warrant requires PoP!
+    with set_warrant_context(warrant), set_keypair_context(agent_keypair):
         # Authorized
         try:
             read_file("/tmp/test.txt")

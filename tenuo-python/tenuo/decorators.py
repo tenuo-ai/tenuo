@@ -33,11 +33,11 @@ from contextvars import ContextVar
 from . import Warrant, Keypair, AuthorizationError
 from .audit import audit_logger, AuditEvent, AuditEventType
 
-# Context variable for thread-local warrant storage
+# Context variable for warrant storage (works with both threads and asyncio)
 # This allows warrants to be passed through async call stacks without explicit threading
 _warrant_context: ContextVar[Optional[Warrant]] = ContextVar('_warrant_context', default=None)
 
-# Context variable for thread-local keypair storage (for PoP signatures)
+# Context variable for keypair storage (for PoP signatures)
 _keypair_context: ContextVar[Optional[Keypair]] = ContextVar('_keypair_context', default=None)
 
 
@@ -142,7 +142,8 @@ def lockdown(
     warrant_or_tool: Optional[Union[Warrant, str]] = None,
     tool: Optional[str] = None,
     keypair: Optional[Keypair] = None,
-    extract_args: Optional[Callable[[Any], dict]] = None
+    extract_args: Optional[Callable[[Any], dict]] = None,
+    mapping: Optional[dict[str, str]] = None
 ):
     """
     Decorator that enforces warrant authorization before function execution.
@@ -175,6 +176,8 @@ def lockdown(
         keypair: Optional keypair for PoP signature (or use set_keypair_context)
         extract_args: Optional function to extract args from function arguments.
                      If None, uses the function's kwargs as args.
+        mapping: Optional dictionary mapping function argument names to constraint names.
+                 e.g., {"target_env": "cluster"} maps arg 'target_env' to constraint 'cluster'.
     
     Raises:
         AuthorizationError: If no warrant is available, PoP keypair is missing, 
@@ -256,6 +259,15 @@ def lockdown(
                 for param_name, param in sig.parameters.items():
                     if param_name not in auth_args and param.default is not inspect.Parameter.empty:
                         auth_args[param_name] = param.default
+
+                # Apply mapping if provided
+                if mapping:
+                    mapped_args = {}
+                    for arg_name, value in auth_args.items():
+                        # If arg_name is in mapping, use the mapped name
+                        constraint_name = mapping.get(arg_name, arg_name)
+                        mapped_args[constraint_name] = value
+                    auth_args = mapped_args
             
             # Create PoP signature if warrant requires it
             pop_signature = None

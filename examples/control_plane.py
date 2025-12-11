@@ -469,7 +469,7 @@ def example_agent_enrollment():
 # 5. Delegate capabilities:
 #    Once enrolled with a root warrant, agents should DELEGATE their capabilities
 #    to sub-agents using warrant attenuation, not request new warrants.
-#    See examples/context_pattern.py for delegation examples.
+#    See examples/decorator_example.py for delegation and context pattern examples.
 #
 # ============================================================================
 

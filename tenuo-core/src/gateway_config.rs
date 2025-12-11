@@ -73,9 +73,9 @@ pub struct GatewayConfig {
 /// Global gateway settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewaySettings {
-    /// Header containing the warrant chain (base64)
-    #[serde(default = "default_chain_header")]
-    pub chain_header: String,
+    /// Header containing the warrant (base64)
+    #[serde(default = "default_warrant_header")]
+    pub warrant_header: String,
     /// Header containing the PoP signature
     #[serde(default = "default_pop_header")]
     pub pop_header: String,
@@ -87,8 +87,8 @@ pub struct GatewaySettings {
     pub trusted_issuers: Vec<String>,
 }
 
-fn default_chain_header() -> String {
-    "X-Tenuo-Chain".into()
+fn default_warrant_header() -> String {
+    "X-Tenuo-Warrant".into()
 }
 
 fn default_pop_header() -> String {
@@ -102,7 +102,7 @@ fn default_clock_tolerance() -> u64 {
 impl Default for GatewaySettings {
     fn default() -> Self {
         Self {
-            chain_header: default_chain_header(),
+            warrant_header: default_warrant_header(),
             pop_header: default_pop_header(),
             clock_tolerance_secs: default_clock_tolerance(),
             trusted_issuers: Vec::new(),
@@ -688,7 +688,7 @@ mod tests {
 version: "1"
 
 settings:
-  chain_header: "X-Tenuo-Chain"
+  warrant_header: "X-Tenuo-Warrant"
   pop_header: "X-Tenuo-PoP"
   clock_tolerance_secs: 30
   trusted_issuers:
@@ -726,7 +726,7 @@ routes:
         let config = GatewayConfig::from_yaml(SAMPLE_CONFIG).unwrap();
         
         assert_eq!(config.version, "1");
-        assert_eq!(config.settings.chain_header, "X-Tenuo-Chain");
+        assert_eq!(config.settings.warrant_header, "X-Tenuo-Warrant");
         assert!(config.tools.contains_key("manage_infrastructure"));
         assert_eq!(config.routes.len(), 1);
     }

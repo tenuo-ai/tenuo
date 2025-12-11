@@ -6,6 +6,11 @@ This example shows how to integrate Tenuo with LangChain agents and tools.
 The warrant is set in context using LangChain callbacks, and all tool
 functions are protected with @lockdown decorators.
 
+SECURITY BEST PRACTICES demonstrated:
+- PoP (Proof-of-Possession) binding: Warrants are bound to the agent's identity
+- Keypair context: Agent's keypair enables automatic PoP signatures
+- Stolen warrants are useless without the matching private key
+
 Requirements:
     pip install langchain langchain-openai tenuo
 
@@ -14,7 +19,7 @@ Note: This example uses OpenAI, but the pattern works with any LLM provider.
 
 from tenuo import (
     Keypair, Warrant, Pattern, Range, Exact,
-    lockdown, set_warrant_context, AuthorizationError
+    lockdown, set_warrant_context, set_keypair_context, AuthorizationError
 )
 from typing import Optional, Dict, Any
 import os
@@ -116,40 +121,54 @@ def execute_command_tool(command: str) -> str:
 
 class TenuoWarrantCallback(BaseCallbackHandler):
     """
-    LangChain callback that sets the warrant in context before tool execution.
+    LangChain callback that sets the warrant AND keypair in context before tool execution.
+    
+    SECURITY: Both warrant and keypair must be set for PoP-bound warrants.
+    The keypair enables automatic PoP signature creation, which proves the agent
+    holds the private key matching the warrant's authorized_holder.
     
     This ensures all @lockdown-decorated functions have access to the warrant
     via ContextVar, even when called from within LangChain's execution flow.
     
     Usage:
-        warrant = Warrant.create(...)
-        callback = TenuoWarrantCallback(warrant)
+        warrant = Warrant.create(..., authorized_holder=agent_keypair.public_key())
+        callback = TenuoWarrantCallback(warrant, agent_keypair)
         agent_executor.invoke(inputs, {"callbacks": [callback]})
     """
     
-    def __init__(self, warrant: Warrant):
+    def __init__(self, warrant: Warrant, keypair: Optional[Keypair] = None):
         super().__init__()
         self.warrant = warrant
-        self.context_token = None  # Store the token to reset ContextVar correctly
+        self.keypair = keypair  # SECURITY: Required for PoP-bound warrants
+        self.warrant_token = None
+        self.keypair_token = None
     
     def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs) -> None:
-        """Called when a tool starts executing. Set warrant in context."""
-        from tenuo.decorators import _warrant_context
-        self.context_token = _warrant_context.set(self.warrant)
+        """Called when a tool starts executing. Set warrant and keypair in context."""
+        from tenuo.decorators import _warrant_context, _keypair_context
+        self.warrant_token = _warrant_context.set(self.warrant)
+        if self.keypair:
+            self.keypair_token = _keypair_context.set(self.keypair)
     
     def on_tool_end(self, output: str, **kwargs) -> None:
         """Called when a tool finishes. Clean up context."""
-        if self.context_token:
-            from tenuo.decorators import _warrant_context
-            _warrant_context.reset(self.context_token)
-            self.context_token = None
+        from tenuo.decorators import _warrant_context, _keypair_context
+        if self.warrant_token:
+            _warrant_context.reset(self.warrant_token)
+            self.warrant_token = None
+        if self.keypair_token:
+            _keypair_context.reset(self.keypair_token)
+            self.keypair_token = None
     
     def on_tool_error(self, error: Exception, **kwargs) -> None:
         """Called when a tool errors. Clean up context."""
-        if self.context_token:
-            from tenuo.decorators import _warrant_context
-            _warrant_context.reset(self.context_token)
-            self.context_token = None
+        from tenuo.decorators import _warrant_context, _keypair_context
+        if self.warrant_token:
+            _warrant_context.reset(self.warrant_token)
+            self.warrant_token = None
+        if self.keypair_token:
+            _keypair_context.reset(self.keypair_token)
+            self.keypair_token = None
 
 
 # ============================================================================
@@ -195,25 +214,31 @@ def main():
     # ========================================================================
     print("1. Creating warrant for agent...")
     try:
-        # SIMULATION: Generate keypair for demo
+        # SIMULATION: Generate keypairs for demo
         # In production: Control plane keypair is loaded from secure storage (K8s Secret, HSM, etc.)
-        control_keypair = Keypair.generate()
+        control_keypair = Keypair.generate()  # Issuer (control plane)
+        agent_keypair = Keypair.generate()    # Agent's identity
         
         # SIMULATION: Create warrant with hardcoded constraints
         # In production: Constraints come from policy engine, user request, or configuration
         # HARDCODED PATH: /tmp/* is used for demo safety. In production, use env vars or config.
+        #
+        # SECURITY BEST PRACTICE: Always PoP-bind warrants to the agent's identity
+        # This prevents stolen warrants from being used by attackers
         agent_warrant = Warrant.create(
             tool="read_file",  # Base tool - can be used for multiple tools
             constraints={
                 "file_path": Pattern("/tmp/*"),  # HARDCODED: Only files in /tmp/ for demo safety
             },
             ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            keypair=control_keypair
+            keypair=control_keypair,
+            authorized_holder=agent_keypair.public_key()  # PoP binding! Stolen warrants are useless
         )
         
         print(f"   ✓ Warrant created with constraints:")
         print(f"     - file_path: Pattern('/tmp/*')")
-        print(f"     - TTL: 3600 seconds\n")
+        print(f"     - TTL: 3600 seconds")
+        print(f"     - PoP-bound: {agent_warrant.requires_pop} (stolen warrants are useless)\n")
     except Exception as e:
         print(f"   ✗ Error creating warrant: {e}")
         return
@@ -226,10 +251,11 @@ def main():
         print("\n   For now, demonstrating protection without LLM...\n")
         
         # Show protection works
+        # SECURITY: Set BOTH warrant and keypair context for PoP-bound warrants
         print("2. Demonstrating protection...")
         test_file = "/tmp/test.txt"  # HARDCODED: Demo test file
         try:
-            with set_warrant_context(agent_warrant):
+            with set_warrant_context(agent_warrant), set_keypair_context(agent_keypair):
                 result = read_file_tool(test_file)
                 print(f"   ✓ read_file('{test_file}') authorized")
         except AuthorizationError as e:
@@ -238,7 +264,7 @@ def main():
             print(f"   ✗ Error: {e}")
         
         try:
-            with set_warrant_context(agent_warrant):
+            with set_warrant_context(agent_warrant), set_keypair_context(agent_keypair):
                 read_file_tool("/etc/passwd")  # HARDCODED: Protected file for demo
         except AuthorizationError as e:
             print(f"   ✓ read_file('/etc/passwd') correctly blocked: {str(e)[:60]}...")
@@ -279,8 +305,10 @@ def main():
     # ========================================================================
     print("4. Setting up Tenuo warrant callback...")
     try:
-        warrant_callback = TenuoWarrantCallback(agent_warrant)
-        print("   ✓ Callback created - warrant will be set in context for all tool calls\n")
+        # SECURITY: Pass BOTH warrant and keypair for PoP-bound warrants
+        warrant_callback = TenuoWarrantCallback(agent_warrant, agent_keypair)
+        print("   ✓ Callback created - warrant + keypair will be set in context for all tool calls")
+        print("   ✓ PoP signatures will be created automatically\n")
     except Exception as e:
         print(f"   ✗ Error creating callback: {e}")
         return
@@ -341,11 +369,12 @@ def main():
         print("   (This might be due to missing OpenAI API key or other setup issues)")
     
     print("=== Integration example completed! ===")
-    print("\nKey points:")
-    print("  - Warrant is set in context via LangChain callback")
+    print("\nKey Security Points:")
+    print("  - Warrant is PoP-bound to the agent's identity (authorized_holder)")
+    print("  - Keypair context enables automatic PoP signatures")
+    print("  - Stolen warrants are useless without the matching private key")
     print("  - All tool functions are protected with @lockdown decorators")
     print("  - Authorization happens automatically - no manual checks needed")
-    print("  - Agent can only perform actions allowed by the warrant")
 
 
 if __name__ == "__main__":
