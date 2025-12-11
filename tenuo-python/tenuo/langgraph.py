@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from langgraph.graph import StateGraph, END, START
 from tenuo import Warrant, Keypair, AuthorizationError
 from tenuo.decorators import set_warrant_context, set_keypair_context
+from tenuo.audit import audit_logger, AuditEvent, AuditEventType
 import yaml
 import copy
 import re
@@ -199,6 +200,16 @@ class SecureGraph:
             node_warrant = self._attenuate(parent_warrant, name, node_config, state)
             logger.debug(f"Node '{name}' warrant: {node_warrant.id}")
             
+            # Audit log context activation
+            audit_logger.log(AuditEvent(
+                event_type=AuditEventType.CONTEXT_SET,
+                warrant_id=node_warrant.id,
+                tool=name,
+                action="node_entered",
+                trace_id=node_warrant.session_id,
+                details=f"Warrant context set for node '{name}'",
+            ))
+            
             # Set context for tools
             with set_warrant_context(node_warrant), set_keypair_context(self.keypair):
                 if hasattr(fn, "invoke"):
@@ -334,11 +345,24 @@ class SecureGraph:
         if rule.tools:
             tools_arg = ",".join(rule.tools)
             
-        return parent_warrant.attenuate(
+        attenuated = parent_warrant.attenuate(
             tool=tools_arg,
             constraints=constraints if constraints else None,
             keypair=self.keypair,
         )
+        
+        # Audit log the attenuation
+        audit_logger.log(AuditEvent(
+            event_type=AuditEventType.WARRANT_ATTENUATED,
+            warrant_id=attenuated.id,
+            tool=tools_arg or parent_warrant.tool,
+            action="attenuated",
+            trace_id=attenuated.session_id,
+            details=f"Attenuated warrant for node '{node_name}'",
+            related_ids=[parent_warrant.id],
+        ))
+        
+        return attenuated
 
     def _interpolate_and_validate(
         self, 
@@ -412,13 +436,28 @@ class SecureGraph:
                     if state_key in state:
                         state_value = str(state[state_key])
                         if not compiled.fullmatch(state_value):
-                            raise InterpolationValidationError(
+                            # Audit log the security violation
+                            error_msg = (
                                 f"Security violation in node '{node_name}', "
                                 f"constraint '{constraint_name}': "
                                 f"state value for '{state_key}' = '{state_value}' "
                                 f"fails validation pattern '{validate_pattern}'. "
                                 f"This may indicate a path traversal or injection attempt."
                             )
+                            audit_logger.log(AuditEvent(
+                                event_type=AuditEventType.AUTHORIZATION_FAILURE,
+                                tool=node_name,
+                                action="validation_failed",
+                                error_code="interpolation_validation_failed",
+                                details=error_msg,
+                                constraints={
+                                    "constraint": constraint_name,
+                                    "state_key": state_key,
+                                    "state_value": state_value,
+                                    "validation_pattern": validate_pattern,
+                                },
+                            ))
+                            raise InterpolationValidationError(error_msg)
             elif isinstance(v, dict):
                 for sub_v in v.values():
                     find_and_validate(sub_v)
