@@ -397,14 +397,17 @@ impl Warrant {
         }
 
         // Check tool name
-        if self.payload.tool != tool {
-            return Err(Error::ConstraintNotSatisfied {
-                field: "tool".to_string(),
-                reason: format!(
-                    "warrant is for tool '{}', not '{}'",
-                    self.payload.tool, tool
-                ),
-            });
+        if self.payload.tool != "*" {
+            let allowed_tools: Vec<&str> = self.payload.tool.split(',').map(|s| s.trim()).collect();
+            if !allowed_tools.contains(&tool) {
+                return Err(Error::ConstraintNotSatisfied {
+                    field: "tool".to_string(),
+                    reason: format!(
+                        "warrant is for tools '{:?}', not '{}'",
+                        allowed_tools, tool
+                    ),
+                });
+            }
         }
 
         // Check constraints
@@ -671,6 +674,7 @@ impl Default for WarrantBuilder {
 #[derive(Debug)]
 pub struct AttenuationBuilder<'a> {
     parent: &'a Warrant,
+    tool: Option<String>,
     constraints: ConstraintSet,
     ttl: Option<Duration>,
     max_depth: Option<u32>,
@@ -686,6 +690,7 @@ impl<'a> AttenuationBuilder<'a> {
     fn new(parent: &'a Warrant) -> Self {
         Self {
             parent,
+            tool: None,
             constraints: parent.payload.constraints.clone(),
             ttl: None,
             max_depth: None, // Will inherit from parent if not set
@@ -696,6 +701,15 @@ impl<'a> AttenuationBuilder<'a> {
             required_approvers: parent.payload.required_approvers.clone(),
             min_approvals: parent.payload.min_approvals,
         }
+    }
+
+    /// Set the tool name.
+    /// 
+    /// This is only allowed if the parent warrant is for the wildcard tool "*".
+    /// If parent is for a specific tool, changing it is a monotonicity violation.
+    pub fn tool(mut self, tool: impl Into<String>) -> Self {
+        self.tool = Some(tool.into());
+        self
     }
 
     /// Override a constraint with a narrower one.
@@ -856,33 +870,95 @@ impl<'a> AttenuationBuilder<'a> {
         // Validate attenuation monotonicity for constraints
         self.parent.payload.constraints.validate_attenuation(&self.constraints)?;
 
-        // Validate multi-sig monotonicity (cannot remove approvers or lower threshold)
+        // Validate multi-sig monotonicity
         self.validate_multisig_monotonicity()?;
-
-        // Calculate expiration (must not exceed parent)
+        
+        // Calculate expiration
+        let parent_expires = self.parent.payload.expires_at;
         let expires_at = if let Some(ttl) = self.ttl {
             let chrono_ttl = ChronoDuration::from_std(ttl)
                 .map_err(|_| Error::InvalidTtl("TTL too large".to_string()))?;
             let proposed = Utc::now() + chrono_ttl;
-            if proposed > self.parent.payload.expires_at {
-                self.parent.payload.expires_at
+            if proposed > parent_expires {
+                parent_expires // Cap at parent expiry
             } else {
                 proposed
             }
         } else {
-            self.parent.payload.expires_at
+            parent_expires
         };
+
+        // Calculate depth
+        let depth = self.parent.payload.depth
+            .checked_add(1)
+            .ok_or(Error::DepthExceeded(u32::MAX, MAX_DELEGATION_DEPTH))?;
+        
+        // Determine tool
+        let tool = match self.tool {
+            Some(t) => {
+                // Monotonicity check
+                if self.parent.payload.tool == "*" {
+                    // Allowed to narrow to anything
+                } else {
+                    // Parent has specific tools. Child must be a subset.
+                    let parent_tools: Vec<&str> = self.parent.payload.tool.split(',').map(|s| s.trim()).collect();
+                    let child_tools: Vec<&str> = t.split(',').map(|s| s.trim()).collect();
+                    
+                    for child_tool in child_tools {
+                        if !parent_tools.contains(&child_tool) {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "cannot expand tools from '{:?}' to include '{}'",
+                                parent_tools, child_tool
+                            )));
+                        }
+                    }
+                }
+                t
+            },
+            None => self.parent.payload.tool.clone(),
+        };
+        // Calculate max_depth
+        let max_depth = match (self.max_depth, self.parent.payload.max_depth) {
+            (Some(child_max), Some(parent_max)) => {
+                if child_max > parent_max {
+                    return Err(Error::MonotonicityViolation(format!(
+                        "cannot expand max_depth from {} to {}",
+                        parent_max, child_max
+                    )));
+                }
+                Some(child_max)
+            },
+            (Some(child_max), None) => {
+                if child_max > MAX_DELEGATION_DEPTH {
+                    return Err(Error::DepthExceeded(child_max, MAX_DELEGATION_DEPTH));
+                }
+                Some(child_max)
+            },
+            (None, Some(parent_max)) => Some(parent_max),
+            (None, None) => None,
+        };
+
+        // Check depth limit
+        let effective_max = max_depth.unwrap_or(MAX_DELEGATION_DEPTH);
+        if depth > effective_max {
+            return Err(Error::DepthExceeded(depth, effective_max));
+        }
+
+        // Also enforce protocol hard cap
+        if depth > MAX_DELEGATION_DEPTH {
+            return Err(Error::DepthExceeded(depth, MAX_DELEGATION_DEPTH));
+        }
 
         // Determine effective min_approvals (inherit if not set)
         let effective_min = self.min_approvals.or(self.parent.payload.min_approvals);
 
         let payload = WarrantPayload {
             id: WarrantId::new(),
-            tool: self.parent.payload.tool.clone(),
+            tool,
             constraints: self.constraints,
             expires_at,
-            depth: new_depth,
-            max_depth: effective_max,
+            depth,
+            max_depth,
             parent_id: Some(self.parent.payload.id.clone()),
             session_id: self.session_id,
             agent_id: self.agent_id,

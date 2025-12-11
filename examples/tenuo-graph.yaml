@@ -1,0 +1,32 @@
+# tenuo-graph.yaml
+version: "1"
+
+# Global settings
+settings:
+  # If true, nodes without explicit rules inherit parent warrant unchanged
+  # If false, nodes without rules are denied (fail-closed)
+  allow_unlisted_nodes: false
+
+# Node-level attenuation rules
+nodes:
+  supervisor:
+    # Supervisor receives the root warrant unchanged
+    role: supervisor
+    
+  researcher:
+    # When entering researcher, attenuate parent's warrant to:
+    attenuate:
+      tools:
+        - search
+        - read_file
+      constraints:
+        file_path:
+          pattern: "/tmp/research/*"
+          
+  writer:
+    attenuate:
+      tools:
+        - write_file
+      constraints:
+        file_path:
+          pattern: "/tmp/output/*"

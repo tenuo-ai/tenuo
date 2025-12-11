@@ -2,13 +2,19 @@
 """
 LangChain Integration Example with Tenuo
 
-This example shows how to integrate Tenuo with LangChain agents and tools.
-The warrant is set in context using LangChain callbacks, and all tool
-functions are protected with @lockdown decorators.
+This example demonstrates the recommended pattern for integrating Tenuo with
+LangChain agents and tools, following the principle:
+
+    "ZERO TENUO IMPORTS IN USER CODE - tools and nodes are pure business logic"
+
+The pattern:
+1. Define tools as plain Python functions (NO Tenuo imports)
+2. Wrap tools at setup time using protect_tools() from tenuo.langchain
+3. Configure per-tool constraints via config file or dict
 
 SECURITY BEST PRACTICES demonstrated:
 - PoP (Proof-of-Possession) binding: Warrants are bound to the agent's identity
-- Keypair context: Agent's keypair enables automatic PoP signatures
+- Config-based constraints: Per-tool permissions defined in config
 - Stolen warrants are useless without the matching private key
 
 Requirements:
@@ -17,95 +23,82 @@ Requirements:
 Note: This example uses OpenAI, but the pattern works with any LLM provider.
 """
 
-from tenuo import (
-    Keypair, Warrant, Pattern, Range, Exact,
-    lockdown, set_warrant_context, set_keypair_context, AuthorizationError
-)
-from typing import Optional, Dict, Any
 import os
-
-# LangChain imports (required for this example)
-from langchain.agents import AgentExecutor, create_openai_tools_agent
-from langchain_openai import ChatOpenAI
-from langchain.callbacks.base import BaseCallbackHandler
-from langchain.schema import AgentAction, AgentFinish, LLMResult
-
+from typing import Optional
 
 # ============================================================================
-# Protected Tool Functions (using ContextVar pattern)
+# STEP 1: Define Tools - PURE BUSINESS LOGIC (NO TENUO IMPORTS!)
 # ============================================================================
 
-@lockdown(tool="read_file", extract_args=lambda file_path, **kwargs: {"file_path": file_path})
-def read_file_tool(file_path: str) -> str:
+# These are plain Python functions. They know nothing about Tenuo.
+# Authorization is handled externally by the protect_tools() wrapper.
+
+def read_file(file_path: str) -> str:
     """
     Read a file from the filesystem.
-    Protected by Tenuo: only files matching the warrant's path constraint can be read.
     
-    Note: Authorization happens automatically via @lockdown decorator.
-    This function will raise AuthorizationError if the warrant doesn't allow access.
+    Args:
+        file_path: Path to the file to read
+        
+    Returns:
+        File contents as string, or error message
     """
     try:
         with open(file_path, 'r') as f:
             return f.read()
     except FileNotFoundError:
-        # File doesn't exist - return error message (not an exception)
         return f"Error: File {file_path} not found"
     except PermissionError:
-        # File exists but no permission - return error message
         return f"Error: Permission denied reading {file_path}"
     except Exception as e:
-        # Catch-all for other I/O errors
         return f"Error: {str(e)}"
 
 
-@lockdown(tool="write_file", extract_args=lambda file_path, content, **kwargs: {"file_path": file_path, "content": content})
-def write_file_tool(file_path: str, content: str) -> str:
+def write_file(file_path: str, content: str) -> str:
     """
     Write content to a file.
-    Protected by Tenuo: only files matching the warrant's path constraint can be written.
     
-    Note: Authorization happens automatically via @lockdown decorator.
-    This function will raise AuthorizationError if the warrant doesn't allow access.
+    Args:
+        file_path: Path to the file to write
+        content: Content to write
+        
+    Returns:
+        Success message or error
     """
     try:
         with open(file_path, 'w') as f:
             f.write(content)
         return f"Successfully wrote {len(content)} bytes to {file_path}"
     except PermissionError:
-        # File exists but no write permission
         return f"Error: Permission denied writing to {file_path}"
     except OSError as e:
-        # Disk full, invalid path, etc.
-        return f"Error: {str(e)}"
-    except Exception as e:
-        # Catch-all for other errors
         return f"Error: {str(e)}"
 
 
-@lockdown(tool="execute_command", extract_args=lambda command, **kwargs: {"command": command})
-def execute_command_tool(command: str) -> str:
+def execute_command(command: str) -> str:
     """
     Execute a shell command.
-    Protected by Tenuo: only commands matching the warrant's constraints can be executed.
     
-    WARNING: This is a demo function. In production, use more secure command execution
-    (e.g., whitelist of allowed commands, no shell=True, proper sanitization).
+    WARNING: This is a demo function. In production, use a whitelist
+    of allowed commands and proper sanitization.
     
-    Note: Authorization happens automatically via @lockdown decorator.
-    This function will raise AuthorizationError if the warrant doesn't allow the command.
+    Args:
+        command: Shell command to execute
+        
+    Returns:
+        Command output or error message
     """
     import subprocess
     try:
-        # HARDCODED: timeout=10 seconds. In production, use config or env var.
         result = subprocess.run(
             command,
-            shell=True,  # WARNING: shell=True is insecure. Use shell=False with explicit args in production.
+            shell=True,
             capture_output=True,
             text=True,
             timeout=10
         )
         if result.returncode == 0:
-            return result.stdout
+            return result.stdout or "(no output)"
         else:
             return f"Error (exit code {result.returncode}): {result.stderr}"
     except subprocess.TimeoutExpired:
@@ -115,269 +108,268 @@ def execute_command_tool(command: str) -> str:
 
 
 # ============================================================================
-# LangChain Callback to Set Warrant Context
+# STEP 2: Configuration Notes
 # ============================================================================
 
-class TenuoWarrantCallback(BaseCallbackHandler):
-    """
-    LangChain callback that sets the warrant AND keypair in context before tool execution.
-    
-    SECURITY: Both warrant and keypair must be set for PoP-bound warrants.
-    The keypair enables automatic PoP signature creation, which proves the agent
-    holds the private key matching the warrant's authorized_holder.
-    
-    This ensures all @lockdown-decorated functions have access to the warrant
-    via ContextVar, even when called from within LangChain's execution flow.
-    
-    Usage:
-        warrant = Warrant.create(..., authorized_holder=agent_keypair.public_key())
-        callback = TenuoWarrantCallback(warrant, agent_keypair)
-        agent_executor.invoke(inputs, {"callbacks": [callback]})
-    """
-    
-    def __init__(self, warrant: Warrant, keypair: Optional[Keypair] = None):
-        super().__init__()
-        self.warrant = warrant
-        self.keypair = keypair  # SECURITY: Required for PoP-bound warrants
-        self.warrant_token = None
-        self.keypair_token = None
-    
-    def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs) -> None:
-        """Called when a tool starts executing. Set warrant and keypair in context."""
-        from tenuo.decorators import _warrant_context, _keypair_context
-        self.warrant_token = _warrant_context.set(self.warrant)
-        if self.keypair:
-            self.keypair_token = _keypair_context.set(self.keypair)
-    
-    def on_tool_end(self, output: str, **kwargs) -> None:
-        """Called when a tool finishes. Clean up context."""
-        from tenuo.decorators import _warrant_context, _keypair_context
-        if self.warrant_token:
-            _warrant_context.reset(self.warrant_token)
-            self.warrant_token = None
-        if self.keypair_token:
-            _keypair_context.reset(self.keypair_token)
-            self.keypair_token = None
-    
-    def on_tool_error(self, error: Exception, **kwargs) -> None:
-        """Called when a tool errors. Clean up context."""
-        from tenuo.decorators import _warrant_context, _keypair_context
-        if self.warrant_token:
-            _warrant_context.reset(self.warrant_token)
-            self.warrant_token = None
-        if self.keypair_token:
-            _keypair_context.reset(self.keypair_token)
-            self.keypair_token = None
+# Per-tool constraints can be defined in two ways:
+# 1. Via config dict/file passed to protect_tools() - see file_config below
+# 2. Via constraints in the warrant itself - see cmd_warrant below
+#
+# Example tenuo.yaml file:
+#   version: "1"
+#   tools:
+#     read_file:
+#       constraints:
+#         file_path:
+#           pattern: "/tmp/*"
+#     write_file:
+#       constraints:
+#         file_path:
+#           pattern: "/tmp/output/*"
 
 
 # ============================================================================
-# LangChain Tools Setup
-# ============================================================================
-
-from langchain.tools import StructuredTool
-
-def create_langchain_tools():
-    """
-    Create LangChain Tool objects from our protected functions.
-    
-    Note: The actual authorization happens inside the functions via @lockdown.
-    LangChain just calls the functions - Tenuo enforces authorization automatically.
-    """
-    tools = [
-        StructuredTool.from_function(
-            func=read_file_tool,
-            name="read_file",
-            description="Read a file from the filesystem. Input should be the file path as a string."
-        ),
-        StructuredTool.from_function(
-            func=write_file_tool,
-            name="write_file",
-            description="Write content to a file. Input format: file_path='path', content='text'"
-        ),
-        StructuredTool.from_function(
-            func=execute_command_tool,
-            name="execute_command",
-            description="Execute a shell command. Use with caution. Input should be the command to run as a string."
-        ),
-    ]
-    return tools
-
-
-# ============================================================================
-# Main Integration Example
+# STEP 3: Main Integration
 # ============================================================================
 
 def main():
+    """
+    Main function demonstrating LangChain + Tenuo integration.
+    """
     print("=== Tenuo + LangChain Integration Example ===\n")
+    print("Pattern: 'Zero Tenuo imports in user code'\n")
     
     # ========================================================================
-    # STEP 1: Create Warrant (SIMULATION - In production, warrant comes from control plane)
+    # Import Tenuo ONLY in the setup/wiring code
     # ========================================================================
-    print("1. Creating warrant for agent...")
+    from tenuo import Keypair, Warrant, Pattern, AuthorizationError
+    from tenuo.langchain import protect_tools
+    
+    # ========================================================================
+    # Create Keypairs
+    # In production: Control plane keypair loaded from secure storage
+    # ========================================================================
+    print("1. Creating keypairs...")
+    control_keypair = Keypair.generate()  # Control plane (issuer)
+    agent_keypair = Keypair.generate()    # Agent's identity
+    print("   ✓ Control plane and agent keypairs created\n")
+    
+    # ========================================================================
+    # Create Root Warrants (one per tool type for cleaner constraint handling)
+    # In production: These come from your control plane
+    # ========================================================================
+    print("2. Creating warrants...")
+    
+    # For file operations - constrain to /tmp/
+    file_warrant = Warrant.create(
+        tool="*",  # Will be attenuated to read_file/write_file
+        constraints={"file_path": Pattern("/tmp/**")},
+        ttl_seconds=3600,
+        keypair=control_keypair,
+        authorized_holder=agent_keypair.public_key()
+    )
+    
+    # For command execution - no path constraint needed
+    from tenuo import OneOf
+    cmd_warrant = Warrant.create(
+        tool="execute_command",
+        constraints={"command": OneOf(["ls", "pwd", "date", "whoami"])},
+        ttl_seconds=3600,
+        keypair=control_keypair,
+        authorized_holder=agent_keypair.public_key()
+    )
+    
+    print(f"   ✓ File warrant created: {file_warrant.id}")
+    print(f"   ✓ Command warrant created: {cmd_warrant.id}")
+    print(f"   ✓ PoP-bound: True\n")
+    
+    # ========================================================================
+    # Wrap Tools with Tenuo Protection
+    # This is where the magic happens - tools get their specific warrants
+    # ========================================================================
+    print("3. Wrapping tools with protect_tools()...")
+    
+    # File tools share the file_warrant (attenuated per-tool via config)
+    file_config = {
+        "version": "1",
+        "tools": {
+            "read_file": {"constraints": {"file_path": {"pattern": "/tmp/*"}}},
+            "write_file": {"constraints": {"file_path": {"pattern": "/tmp/output/*"}}},
+        }
+    }
+    secure_file_tools = protect_tools(
+        tools=[read_file, write_file],
+        warrant=file_warrant,
+        keypair=agent_keypair,
+        config=file_config,
+    )
+    
+    # Command tool uses cmd_warrant directly (already has the right constraints)
+    from tenuo.langchain import protect_tool
+    secure_exec = protect_tool(
+        execute_command,
+        warrant=cmd_warrant,
+        keypair=agent_keypair,
+    )
+    
+    secure_tools = secure_file_tools + [secure_exec]
+    print(f"   ✓ {len(secure_tools)} tools wrapped with authorization\n")
+    
+    # ========================================================================
+    # Demonstrate Protection (without LLM for simplicity)
+    # ========================================================================
+    print("4. Testing authorization...")
+    
+    # Extract wrapped functions by name
+    secure_read = secure_tools[0]
+    secure_write = secure_tools[1]
+    secure_exec = secure_tools[2]
+    
+    # Test 1: Allowed read
+    print("\n   Test 1: read_file('/tmp/test.txt') - should be ALLOWED")
     try:
-        # SIMULATION: Generate keypairs for demo
-        # In production: Control plane keypair is loaded from secure storage (K8s Secret, HSM, etc.)
-        control_keypair = Keypair.generate()  # Issuer (control plane)
-        agent_keypair = Keypair.generate()    # Agent's identity
-        
-        # SIMULATION: Create warrant with hardcoded constraints
-        # In production: Constraints come from policy engine, user request, or configuration
-        # HARDCODED PATH: /tmp/* is used for demo safety. In production, use env vars or config.
-        #
-        # SECURITY BEST PRACTICE: Always PoP-bind warrants to the agent's identity
-        # This prevents stolen warrants from being used by attackers
-        agent_warrant = Warrant.create(
-            tool="read_file",  # Base tool - can be used for multiple tools
-            constraints={
-                "file_path": Pattern("/tmp/*"),  # HARDCODED: Only files in /tmp/ for demo safety
-            },
-            ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            keypair=control_keypair,
-            authorized_holder=agent_keypair.public_key()  # PoP binding! Stolen warrants are useless
-        )
-        
-        print(f"   ✓ Warrant created with constraints:")
-        print(f"     - file_path: Pattern('/tmp/*')")
-        print(f"     - TTL: 3600 seconds")
-        print(f"     - PoP-bound: {agent_warrant.requires_pop} (stolen warrants are useless)\n")
+        # Create test file first
+        with open("/tmp/test.txt", 'w') as f:
+            f.write("Hello from Tenuo!")
+        result = secure_read("/tmp/test.txt")
+        print(f"   ✓ Result: {result}")
+    except AuthorizationError as e:
+        print(f"   ✗ Blocked (unexpected): {e}")
     except Exception as e:
-        print(f"   ✗ Error creating warrant: {e}")
-        return
+        print(f"   ✗ Error: {e}")
     
-    # 2. Check for OpenAI API key
+    # Test 2: Blocked read (outside allowed path)
+    print("\n   Test 2: read_file('/etc/passwd') - should be BLOCKED")
+    try:
+        result = secure_read("/etc/passwd")
+        print(f"   ✗ Allowed (unexpected): {result}")
+    except AuthorizationError as e:
+        print(f"   ✓ Correctly blocked: {str(e)[:60]}...")
+    except Exception as e:
+        print(f"   ✗ Error: {e}")
+    
+    # Test 3: Allowed write
+    print("\n   Test 3: write_file('/tmp/output/log.txt', ...) - should be ALLOWED")
+    try:
+        os.makedirs("/tmp/output", exist_ok=True)
+        result = secure_write("/tmp/output/log.txt", "Log entry")
+        print(f"   ✓ Result: {result}")
+    except AuthorizationError as e:
+        print(f"   ✗ Blocked (unexpected): {e}")
+    except Exception as e:
+        print(f"   ✗ Error: {e}")
+    
+    # Test 4: Blocked write (outside allowed path)
+    print("\n   Test 4: write_file('/etc/malicious.txt', ...) - should be BLOCKED")
+    try:
+        result = secure_write("/etc/malicious.txt", "bad stuff")
+        print(f"   ✗ Allowed (unexpected): {result}")
+    except AuthorizationError as e:
+        print(f"   ✓ Correctly blocked: {str(e)[:60]}...")
+    except Exception as e:
+        print(f"   ✗ Error: {e}")
+    
+    # Test 5: Allowed command
+    print("\n   Test 5: execute_command('pwd') - should be ALLOWED")
+    try:
+        result = secure_exec("pwd")
+        print(f"   ✓ Result: {result.strip()}")
+    except AuthorizationError as e:
+        print(f"   ✗ Blocked (unexpected): {e}")
+    except Exception as e:
+        print(f"   ✗ Error: {e}")
+    
+    # Test 6: Blocked command
+    print("\n   Test 6: execute_command('rm -rf /') - should be BLOCKED")
+    try:
+        result = secure_exec("rm -rf /")
+        print(f"   ✗ Allowed (unexpected): {result}")
+    except AuthorizationError as e:
+        print(f"   ✓ Correctly blocked: {str(e)[:60]}...")
+    except Exception as e:
+        print(f"   ✗ Error: {e}")
+    
+    # ========================================================================
+    # LangChain Integration (if OpenAI key available)
+    # ========================================================================
+    print("\n" + "="*60)
     openai_api_key = os.getenv("OPENAI_API_KEY")
+    
     if not openai_api_key:
-        print("⚠️  OPENAI_API_KEY not set. Set it to run the full example.")
+        print("OPENAI_API_KEY not set. Skipping LangChain agent demo.")
+        print("Set it to see the full agent integration:")
         print("   export OPENAI_API_KEY='your-key-here'")
-        print("\n   For now, demonstrating protection without LLM...\n")
+    else:
+        print("5. Running LangChain agent with protected tools...\n")
         
-        # Show protection works
-        # SECURITY: Set BOTH warrant and keypair context for PoP-bound warrants
-        print("2. Demonstrating protection...")
-        test_file = "/tmp/test.txt"  # HARDCODED: Demo test file
         try:
-            with set_warrant_context(agent_warrant), set_keypair_context(agent_keypair):
-                result = read_file_tool(test_file)
-                print(f"   ✓ read_file('{test_file}') authorized")
-        except AuthorizationError as e:
-            print(f"   ✗ Authorization error: {e}")
+            from langchain.tools import StructuredTool
+            from langchain.agents import AgentExecutor, create_openai_tools_agent
+            from langchain_openai import ChatOpenAI
+            from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+            
+            # Create LangChain Tool objects from our protected functions
+            langchain_tools = [
+                StructuredTool.from_function(
+                    func=secure_read,
+                    name="read_file",
+                    description="Read a file from /tmp/ directory"
+                ),
+                StructuredTool.from_function(
+                    func=secure_write,
+                    name="write_file",
+                    description="Write content to a file in /tmp/output/"
+                ),
+                StructuredTool.from_function(
+                    func=secure_exec,
+                    name="execute_command",
+                    description="Execute a safe command (ls, pwd, date, whoami)"
+                ),
+            ]
+            
+            # Create agent
+            llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", "You are a helpful assistant. Use the tools provided to help the user."),
+                ("human", "{input}"),
+                MessagesPlaceholder(variable_name="agent_scratchpad"),
+            ])
+            agent = create_openai_tools_agent(llm, langchain_tools, prompt)
+            agent_executor = AgentExecutor(agent=agent, tools=langchain_tools, verbose=True)
+            
+            # Run agent
+            response = agent_executor.invoke({
+                "input": "What's in /tmp/test.txt? Then tell me the current directory."
+            })
+            print(f"\n   Agent response: {response['output']}")
+            
+        except ImportError as e:
+            print(f"   Missing dependency: {e}")
+            print("   Install with: pip install langchain langchain-openai")
         except Exception as e:
-            print(f"   ✗ Error: {e}")
-        
-        try:
-            with set_warrant_context(agent_warrant), set_keypair_context(agent_keypair):
-                read_file_tool("/etc/passwd")  # HARDCODED: Protected file for demo
-        except AuthorizationError as e:
-            print(f"   ✓ read_file('/etc/passwd') correctly blocked: {str(e)[:60]}...")
-        except Exception as e:
-            print(f"   ✗ Unexpected error: {e}")
-        
-        return
+            print(f"   Error: {e}")
     
     # ========================================================================
-    # STEP 4: Create LangChain Tools (REAL CODE - Production-ready)
+    # Summary
     # ========================================================================
-    print("2. Creating LangChain tools...")
-    try:
-        tools = create_langchain_tools()
-        print(f"   ✓ Created {len(tools)} tools\n")
-    except Exception as e:
-        print(f"   ✗ Error creating tools: {e}")
-        return
-    
-    # ========================================================================
-    # STEP 5: Create LangChain Agent (REAL CODE - Production-ready)
-    # ========================================================================
-    print("3. Creating LangChain agent...")
-    try:
-        # ENV VARIABLE: OPENAI_API_KEY is used here (already checked above)
-        # HARDCODED: model="gpt-3.5-turbo" - in production, use env var or config
-        llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
-        agent = create_openai_tools_agent(llm, tools)
-        agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
-        print("   ✓ Agent created\n")
-    except Exception as e:
-        print(f"   ✗ Error creating agent: {e}")
-        print("   (Check OPENAI_API_KEY and network connectivity)")
-        return
-    
-    # ========================================================================
-    # STEP 6: Set Up Warrant Callback (REAL CODE - Production-ready)
-    # ========================================================================
-    print("4. Setting up Tenuo warrant callback...")
-    try:
-        # SECURITY: Pass BOTH warrant and keypair for PoP-bound warrants
-        warrant_callback = TenuoWarrantCallback(agent_warrant, agent_keypair)
-        print("   ✓ Callback created - warrant + keypair will be set in context for all tool calls")
-        print("   ✓ PoP signatures will be created automatically\n")
-    except Exception as e:
-        print(f"   ✗ Error creating callback: {e}")
-        return
-    
-    # ========================================================================
-    # STEP 7: Run Agent with Protection (REAL CODE - Production-ready)
-    # ========================================================================
-    print("5. Running agent with Tenuo protection...")
-    print("   The agent can only access files in /tmp/ due to warrant constraints.\n")
-    
-    # HARDCODED PATH: /tmp/langchain_test.txt for demo
-    # In production: Use tempfile or env-specified test directory
-    test_file = "/tmp/langchain_test.txt"
-    
-    try:
-        # Create a test file first
-        try:
-            with open(test_file, 'w') as f:
-                f.write("Hello from LangChain + Tenuo!")
-        except (IOError, OSError) as e:
-            print(f"   ⚠ Warning: Could not create test file: {e}")
-            print("   Continuing with agent execution...\n")
-        
-        # Run agent - it should be able to read the test file
-        try:
-            response = agent_executor.invoke(
-                {
-                    "input": f"Read the file {test_file} and tell me what it says",
-                    "chat_history": []
-                },
-                {"callbacks": [warrant_callback]}
-            )
-            print(f"\n   Agent response: {response['output']}\n")
-        except AuthorizationError as e:
-            print(f"   ✗ Authorization error: {e}\n")
-        except Exception as e:
-            print(f"   ✗ Error running agent: {e}\n")
-            print("   (This might be due to OpenAI API issues or network problems)")
-        
-        # Try to make agent read a protected file
-        print("6. Testing protection - trying to read /etc/passwd...")
-        try:
-            response = agent_executor.invoke(
-                {
-                    "input": "Read the file /etc/passwd",  # HARDCODED: Protected file for demo
-                    "chat_history": []
-                },
-                {"callbacks": [warrant_callback]}
-            )
-            print("   ✗ Should have been blocked!")
-        except AuthorizationError as e:
-            print(f"   ✓ Correctly blocked: {str(e)[:60]}...\n")
-        except Exception as e:
-            print(f"   ✗ Unexpected error (not AuthorizationError): {e}\n")
-        
-    except Exception as e:
-        print(f"   ✗ Unexpected error: {e}\n")
-        print("   (This might be due to missing OpenAI API key or other setup issues)")
-    
-    print("=== Integration example completed! ===")
-    print("\nKey Security Points:")
-    print("  - Warrant is PoP-bound to the agent's identity (authorized_holder)")
-    print("  - Keypair context enables automatic PoP signatures")
-    print("  - Stolen warrants are useless without the matching private key")
-    print("  - All tool functions are protected with @lockdown decorators")
-    print("  - Authorization happens automatically - no manual checks needed")
+    print("\n" + "="*60)
+    print("=== Summary ===")
+    print("""
+Key Points:
+  1. Tool functions are PURE BUSINESS LOGIC - no Tenuo imports
+  2. protect_tools() wraps them with authorization at setup time
+  3. Config defines per-tool constraints (what each tool can access)
+  4. PoP binding prevents stolen warrant replay attacks
+  5. All authorization happens transparently - tools don't know about it
+
+Security Properties Achieved:
+  ✓ Scoped: Each tool has specific constraints
+  ✓ Temporal: Warrants expire (TTL)
+  ✓ Delegatable: Root warrant attenuated to tool-specific warrants
+  ✓ Bound: PoP prevents credential theft
+  ✓ Dynamic: Config can reference runtime state (see SecureGraph)
+""")
 
 
 if __name__ == "__main__":
     main()
-

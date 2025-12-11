@@ -712,6 +712,11 @@ impl Pattern {
 
     /// Classify the pattern type for attenuation validation.
     fn pattern_type(&self) -> PatternType<'_> {
+        // Special case: recursive wildcard at end
+        if self.pattern.ends_with("**") {
+            return PatternType::Prefix(&self.pattern[..self.pattern.len() - 2]);
+        }
+
         let star_count = self.pattern.matches('*').count();
 
         match star_count {

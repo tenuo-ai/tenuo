@@ -680,23 +680,29 @@ impl PyWarrant {
     /// Args:
     ///     constraints: Dictionary of constraint_name -> Constraint object
     ///     keypair: Keypair to sign the attenuated warrant
+    ///     tool: Optional tool name (only if parent is wildcard "*")
     ///     ttl_seconds: Optional TTL (must be <= parent's remaining TTL)
     ///     authorized_holder: Optional public key - if set, holder must prove possession (PoP)
     ///     add_approvers: Optional list of public keys to add as required approvers
     ///     raise_min_approvals: Optional new minimum approvals count (must be >= parent's)
     ///
     /// Note: session_id is immutable and inherited from the parent warrant.
-    #[pyo3(signature = (constraints, keypair, ttl_seconds=None, authorized_holder=None, add_approvers=None, raise_min_approvals=None))]
+    #[pyo3(signature = (constraints, keypair, tool=None, ttl_seconds=None, authorized_holder=None, add_approvers=None, raise_min_approvals=None))]
     fn attenuate(
         &self,
         constraints: &Bound<'_, PyDict>,
         keypair: &PyKeypair,
+        tool: Option<&str>,
         ttl_seconds: Option<u64>,
         authorized_holder: Option<&PyPublicKey>,
         add_approvers: Option<Vec<PyPublicKey>>,
         raise_min_approvals: Option<u32>,
     ) -> PyResult<PyWarrant> {
         let mut builder = self.inner.attenuate();
+
+        if let Some(t) = tool {
+            builder = builder.tool(t);
+        }
 
         if let Some(ttl) = ttl_seconds {
             builder = builder.ttl(Duration::from_secs(ttl));
