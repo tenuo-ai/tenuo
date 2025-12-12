@@ -65,23 +65,23 @@ def main():
     # Allowed: matches constraints
     args1 = {"cluster": "staging-web", "budget": 500.0}
     if check_auth(worker_warrant, "manage_infrastructure", args1, worker_keypair):
-        print(f"   ✓ Allowed: cluster=staging-web, budget=500.0 -> True")
+        print("   ✓ Allowed: cluster=staging-web, budget=500.0 -> True")
     else:
-        print(f"   ✗ Allowed: cluster=staging-web, budget=500.0 -> False (Unexpected)")
+        print("   ✗ Allowed: cluster=staging-web, budget=500.0 -> False (Unexpected)")
     
     # Denied: budget too high
     args2 = {"cluster": "staging-web", "budget": 2000.0}
     if not check_auth(worker_warrant, "manage_infrastructure", args2, worker_keypair):
-        print(f"   ✓ Denied: cluster=staging-web, budget=2000.0 -> False")
+        print("   ✓ Denied: cluster=staging-web, budget=2000.0 -> False")
     else:
-        print(f"   ✗ Denied: cluster=staging-web, budget=2000.0 -> True (Unexpected)")
+        print("   ✗ Denied: cluster=staging-web, budget=2000.0 -> True (Unexpected)")
     
     # Denied: wrong cluster
     args3 = {"cluster": "production-web", "budget": 500.0}
     if not check_auth(worker_warrant, "manage_infrastructure", args3, worker_keypair):
-        print(f"   ✓ Denied: cluster=production-web, budget=500.0 -> False")
+        print("   ✓ Denied: cluster=production-web, budget=500.0 -> False")
     else:
-        print(f"   ✗ Denied: cluster=production-web, budget=500.0 -> True (Unexpected)")
+        print("   ✗ Denied: cluster=production-web, budget=500.0 -> True (Unexpected)")
     print()
     
     # 5. Serialize warrant
@@ -91,7 +91,7 @@ def main():
     
     # Deserialize
     deserialized = Warrant.from_base64(warrant_base64)
-    print(f"   ✓ Deserialized successfully")
+    print("   ✓ Deserialized successfully")
     print(f"   Deserialized tool: {deserialized.tool}")
     print()
     

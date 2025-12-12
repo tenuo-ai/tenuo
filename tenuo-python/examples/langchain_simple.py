@@ -100,8 +100,8 @@ def main():
                 # Test authorized access
                 # HARDCODED PATH: /tmp/test.txt for demo
                 try:
-                    result = read_file("/tmp/test.txt")
-                    print(f"   ✓ read_file('/tmp/test.txt'): Allowed")
+                    read_file("/tmp/test.txt")
+                    print("   ✓ read_file('/tmp/test.txt'): Allowed")
                 except AuthorizationError as e:
                     print(f"   ✗ Unexpected authorization error: {e}")
                 except Exception as e:
@@ -139,8 +139,8 @@ def main():
             with set_warrant_context(warrant), set_keypair_context(keypair):
                 # Test authorized access
                 try:
-                    result = read_file("/tmp/test.txt")
-                    print(f"   ✓ read_file('/tmp/test.txt'): Allowed")
+                    read_file("/tmp/test.txt")
+                    print("   ✓ read_file('/tmp/test.txt'): Allowed")
                 except AuthorizationError as e:
                     print(f"   ✗ Unexpected authorization error: {e}")
                 except Exception as e:

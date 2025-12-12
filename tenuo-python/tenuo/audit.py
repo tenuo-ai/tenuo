@@ -40,7 +40,7 @@ import json
 import uuid
 import sys
 from datetime import datetime, timezone
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Dict, Any, Callable
 import logging
@@ -229,7 +229,7 @@ class AuditLogger:
                 AuditSeverity.WARNING: logging.WARNING,
                 AuditSeverity.ERROR: logging.ERROR,
                 AuditSeverity.CRITICAL: logging.CRITICAL,
-            }.get(event.severity, logging.INFO)
+            }.get(event.severity or AuditSeverity.INFO, logging.INFO)
             self._python_logger.log(level, event.to_json())
     
     def log(self, event: AuditEvent):

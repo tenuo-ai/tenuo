@@ -13,11 +13,12 @@ Note: This example uses OpenAI, but the pattern works with any LLM provider.
 """
 
 from tenuo import (
-    Keypair, Warrant, Pattern, Range, Exact,
+    Keypair, Warrant, Pattern,
     lockdown, set_warrant_context, set_keypair_context, AuthorizationError
 )
-from typing import Optional, Dict, Any
+from typing import Dict, Any, Optional
 import os
+from contextvars import Token
 
 # Try to import LangChain components
 try:
@@ -25,7 +26,7 @@ try:
     from langchain.agents import AgentExecutor, create_openai_tools_agent
     from langchain_openai import ChatOpenAI
     from langchain.callbacks.base import BaseCallbackHandler
-    from langchain.schema import AgentAction, AgentFinish, LLMResult
+    # from langchain.schema import AgentAction, AgentFinish, LLMResult
     LANGCHAIN_AVAILABLE = True
 except ImportError:
     LANGCHAIN_AVAILABLE = False
@@ -120,7 +121,7 @@ def execute_command_tool(command: str) -> str:
 # LangChain Callback to Set Warrant Context
 # ============================================================================
 
-class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else object):
+class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else object):  # type: ignore
     """
     LangChain callback that sets the warrant in context before tool execution.
     
@@ -138,8 +139,8 @@ class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else objec
             super().__init__()
         self.warrant = warrant
         self.keypair = keypair
-        self.warrant_token = None
-        self.keypair_token = None
+        self.warrant_token: Optional[Token] = None
+        self.keypair_token: Optional[Token] = None
     
     def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs) -> None:
         """Called when a tool starts executing. Set warrant and keypair in context."""
@@ -232,9 +233,9 @@ def main():
             holder=control_keypair.public_key() # Bind to self for demo
         )
         
-        print(f"   ✓ Warrant created with constraints:")
-        print(f"     - file_path: Pattern('/tmp/*')")
-        print(f"     - TTL: 3600 seconds\n")
+        print("   ✓ Warrant created with constraints:")
+        print("     - file_path: Pattern('/tmp/*')")
+        print("     - TTL: 3600 seconds\n")
     except Exception as e:
         print(f"   ✗ Error creating warrant: {e}")
         return
@@ -269,7 +270,7 @@ def main():
         # Test authorized access
         with set_warrant_context(agent_warrant), set_keypair_context(control_keypair):
             try:
-                result = read_file_tool(test_file)
+                read_file_tool(test_file)
                 print(f"   ✓ read_file('{test_file}'): Allowed (matches Pattern('/tmp/*'))")
             except AuthorizationError as e:
                 print(f"   ✗ Unexpected authorization error: {e}")
@@ -302,7 +303,7 @@ def main():
         test_file = "/tmp/test.txt"  # HARDCODED: Demo test file
         try:
             with set_warrant_context(agent_warrant), set_keypair_context(control_keypair):
-                result = read_file_tool(test_file)
+                read_file_tool(test_file)
                 print(f"   ✓ read_file('{test_file}') authorized")
         except AuthorizationError as e:
             print(f"   ✗ Authorization error: {e}")

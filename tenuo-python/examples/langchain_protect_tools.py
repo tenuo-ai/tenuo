@@ -9,8 +9,7 @@ Scenario:
     We wrap it with `protect_tools` to enforce warrant authorization.
 """
 
-import os
-from typing import Optional, Type
+from typing import Type
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
 from tenuo import Keypair, Warrant, Pattern, set_warrant_context, set_keypair_context, AuthorizationError
@@ -75,7 +74,7 @@ protected_search = protected_tools[0]
 # -----------------------------------------------------------------------------
 
 print(f"Original tool name: {original_tool.name}")
-print(f"Protected tool name: {protected_search.name}")
+print(f"Protected tool name: {protected_search.name}")  # type: ignore
 print("-" * 40)
 
 # Set the warrant context

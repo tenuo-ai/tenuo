@@ -148,7 +148,7 @@ class TenuoErrorHandler:
         self.logger = logger or print
         self.classifier = TenuoErrorClassifier()
     
-    def handle(self, error: Exception, context: dict = None) -> dict:
+    def handle(self, error: Exception, context: Optional[dict] = None) -> dict:
         """
         Handle a Tenuo error.
         
@@ -235,7 +235,7 @@ def retry_with_backoff(
 def safe_execute(
     func: Callable,
     error_handler: Optional[TenuoErrorHandler] = None,
-    context: dict = None
+    context: Optional[dict] = None
 ) -> tuple[Optional[Any], Optional[dict]]:
     """
     Safely execute a function with Tenuo error handling.
@@ -325,7 +325,7 @@ def main():
     if error_info:
         print(f"✓ Correctly handled: {error_info['category']}")
         print(f"  Recommendation: {error_info['recommendation']}")
-        print(f"  This is a security violation - should abort immediately")
+        print("  This is a security violation - should abort immediately")
     
     # ========================================================================
     # Example 3: Missing Warrant
@@ -365,7 +365,7 @@ def main():
     if error_info:
         print(f"✓ Correctly handled: {error_info['category']}")
         print(f"  Recommendation: {error_info['recommendation']}")
-        print(f"  This is a security violation - keypair mismatch")
+        print("  This is a security violation - keypair mismatch")
     
     # ========================================================================
     # Example 5: Error Classification Summary

@@ -8,7 +8,7 @@ Demonstrates:
 - Authorizing MCP operations
 """
 
-from tenuo import McpConfig, CompiledMcpConfig, Authorizer, PublicKey, Keypair, Warrant, Pattern, Range
+from tenuo import McpConfig, CompiledMcpConfig, Authorizer, Keypair, Warrant, Pattern, Range
 
 def main():
     print("=== Tenuo Python SDK - MCP Integration ===\n")
@@ -29,7 +29,7 @@ def main():
             config = McpConfig.from_file(path)
             print(f"   [OK] Configuration loaded from: {path}")
             break
-        except (FileNotFoundError, ValueError) as e:
+        except (FileNotFoundError, ValueError):
             continue
     
     if config is None:
@@ -68,7 +68,7 @@ def main():
         # Note: to_bytes() returns a list/vector, convert to bytes for hex()
         pub_key_bytes = public_key.to_bytes()
         pub_key_bytes_obj = bytes(pub_key_bytes)  # Convert list to bytes
-        print(f"   [OK] Authorizer initialized")
+        print("   [OK] Authorizer initialized")
         print(f"   Control plane public key: {pub_key_bytes_obj[:8].hex()}...")
     except Exception as e:
         print(f"   [ERR] Error initializing authorizer: {e}")
@@ -94,9 +94,9 @@ def main():
             holder=control_keypair.public_key() # Bind to self for demo
         )
         # Note: warrant.tool is a property (getter), not a method
-        print(f"   [OK] Warrant created")
+        print("   [OK] Warrant created")
         print(f"   Tool: {warrant.tool}")  # Property, not method
-        print(f"   Constraints: path=/var/log/*, max_size<=1MB")
+        print("   Constraints: path=/var/log/*, max_size<=1MB")
     except Exception as e:
         print(f"   [ERR] Error creating warrant: {e}")
         return
@@ -137,9 +137,9 @@ def main():
             signature=bytes(pop_signature)
         )
         if authorized:
-            print(f"   [OK] Warrant authorization: Allowed")
+            print("   [OK] Warrant authorization: Allowed")
         else:
-            print(f"   [ERR] Warrant authorization: Denied (constraints not satisfied)")
+            print("   [ERR] Warrant authorization: Denied (constraints not satisfied)")
     except Exception as e:
         print(f"   [ERR] Warrant authorization error: {e}")
     
@@ -157,7 +157,7 @@ def main():
         print("   ✓ Full authorization successful (signature + constraints verified)")
     except Exception as e:
         print(f"   ✗ Authorization failed: {e}")
-        print(f"   (Check: constraint names match, warrant is signed by trusted issuer)")
+        print("   (Check: constraint names match, warrant is signed by trusted issuer)")
     print()
     
     print("=== MCP Integration example completed! ===")

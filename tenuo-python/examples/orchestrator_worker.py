@@ -79,7 +79,7 @@ def orchestrator_task(warrant: Warrant, keypair: Keypair, worker_keypair: Keypai
         ttl_seconds=60  # Short-lived
     )
     print(f"  Attenuated: tools={research_warrant.tool} (inherited)")
-    print(f"  Constraints: query=*competitor*, max_results<=5, url=https://public.*, ttl=60s")
+    print("  Constraints: query=*competitor*, max_results<=5, url=https://public.*, ttl=60s")
     
     # Worker executes research phase
     worker_research(research_warrant, worker_keypair)
@@ -97,8 +97,8 @@ def orchestrator_task(warrant: Warrant, keypair: Keypair, worker_keypair: Keypai
         },
         ttl_seconds=30
     )
-    print(f"  New warrant: tool=write, path=/output/reports/*, ttl=30s")
-    print(f"  Note: This is a new warrant (not attenuated) to change tool set")
+    print("  New warrant: tool=write, path=/output/reports/*, ttl=30s")
+    print("  Note: This is a new warrant (not attenuated) to change tool set")
     
     # Worker executes write phase
     worker_write(write_warrant, worker_keypair)
@@ -127,22 +127,22 @@ def worker_research(warrant: Warrant, keypair: Keypair):
         try:
             write(path="/output/reports/research.txt", content="data")
             print("  [Worker/Research] ERROR: Write should have failed!")
-        except AuthorizationError as e:
-            print(f"  [Worker/Research] Write correctly blocked: no matching constraint")
+        except AuthorizationError:
+            print("  [Worker/Research] Write correctly blocked: no matching constraint")
         
         # NOT allowed: search outside constraint
         try:
             search(query="internal salary data", max_results=3)
             print("  [Worker/Research] ERROR: Query should have failed!")
-        except AuthorizationError as e:
-            print(f"  [Worker/Research] Query correctly blocked: constraint violation")
+        except AuthorizationError:
+            print("  [Worker/Research] Query correctly blocked: constraint violation")
         
         # NOT allowed: fetch outside constraint
         try:
             fetch(url="https://internal.example.com/secret")
             print("  [Worker/Research] ERROR: Fetch should have failed!")
-        except AuthorizationError as e:
-            print(f"  [Worker/Research] Fetch correctly blocked: URL constraint violation")
+        except AuthorizationError:
+            print("  [Worker/Research] Fetch correctly blocked: URL constraint violation")
 
 
 def worker_write(warrant: Warrant, keypair: Keypair):
@@ -153,21 +153,21 @@ def worker_write(warrant: Warrant, keypair: Keypair):
     with set_warrant_context(warrant), set_keypair_context(keypair):
         # Allowed: write to authorized path
         write(path="/output/reports/q3-analysis.txt", content="Q3 competitor analysis...")
-        print(f"  [Worker/Write] Write succeeded")
+        print("  [Worker/Write] Write succeeded")
         
         # NOT allowed: search (not in this warrant's tools)
         try:
             search(query="more data", max_results=1)
             print("  [Worker/Write] ERROR: Search should have failed!")
-        except AuthorizationError as e:
-            print(f"  [Worker/Write] Search correctly blocked: tool not authorized")
+        except AuthorizationError:
+            print("  [Worker/Write] Search correctly blocked: tool not authorized")
         
         # NOT allowed: write outside constraint
         try:
             write(path="/etc/passwd", content="malicious")
             print("  [Worker/Write] ERROR: Write should have failed!")
-        except AuthorizationError as e:
-            print(f"  [Worker/Write] Write correctly blocked: path constraint violation")
+        except AuthorizationError:
+            print("  [Worker/Write] Write correctly blocked: path constraint violation")
 
 
 # ============================================================================
@@ -201,7 +201,7 @@ def main():
         },
         ttl_seconds=3600
     )
-    print(f"  Root warrant: tools=[search, fetch, write], ttl=1h")
+    print("  Root warrant: tools=[search, fetch, write], ttl=1h")
     
     # Create Authorizer to verify delegation chain
     authorizer = Authorizer.new(control_plane_keypair.public_key())
@@ -222,11 +222,11 @@ def main():
     try:
         chain1 = [root_warrant, research_warrant]
         result1: ChainVerificationResult = authorizer.verify_chain(chain1)
-        print(f"[OK] Chain verified successfully!")
+        print("[OK] Chain verified successfully!")
         print(f"  Chain length: {result1.chain_length}")
         print(f"  Leaf depth: {result1.leaf_depth}")
         print(f"  Root issuer: {result1.root_issuer[:8].hex()}..." if result1.root_issuer else "  Root issuer: None")
-        print(f"  Verified steps:")
+        print("  Verified steps:")
         for i, step in enumerate(result1.verified_steps):
             print(f"    [{i}] ID={step.warrant_id[:16]}..., depth={step.depth}, issuer={step.issuer[:8].hex()}...")
     except Exception as e:
@@ -237,11 +237,11 @@ def main():
     try:
         chain2 = [root_warrant, write_warrant]
         result2: ChainVerificationResult = authorizer.verify_chain(chain2)
-        print(f"[OK] Chain verified successfully!")
+        print("[OK] Chain verified successfully!")
         print(f"  Chain length: {result2.chain_length}")
         print(f"  Leaf depth: {result2.leaf_depth}")
         print(f"  Root issuer: {result2.root_issuer[:8].hex()}..." if result2.root_issuer else "  Root issuer: None")
-        print(f"  Verified steps:")
+        print("  Verified steps:")
         for i, step in enumerate(result2.verified_steps):
             print(f"    [{i}] ID={step.warrant_id[:16]}..., depth={step.depth}, issuer={step.issuer[:8].hex()}...")
     except Exception as e:
@@ -258,7 +258,7 @@ def main():
             args={"query": "competitor analysis", "max_results": 3},
             signature=None  # In production, include PoP signature
         )
-        print(f"[OK] Chain verified and action authorized!")
+        print("[OK] Chain verified and action authorized!")
         print(f"  Chain length: {result.chain_length}, leaf depth: {result.leaf_depth}")
     except Exception as e:
         print(f"[ERR] Chain verification or authorization failed: {e}")

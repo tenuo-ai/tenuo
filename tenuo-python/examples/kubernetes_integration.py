@@ -28,13 +28,11 @@ Architecture:
 """
 
 from tenuo import (
-    Keypair, Warrant, Pattern, Range, Exact,
-    lockdown, set_warrant_context, AuthorizationError
+    Keypair, Warrant, Pattern, Exact,
+    lockdown, set_warrant_context, set_keypair_context, AuthorizationError
 )
 from typing import Optional, Dict, Any
 import os
-import json
-import base64
 
 
 # ============================================================================
@@ -482,7 +480,8 @@ def main():
         # SIMULATION: Generate keypair for demo
         # In production: Control plane keypair is loaded from secure storage (K8s Secret, HSM, etc.)
         control_keypair = Keypair.generate()
-        control_plane = ControlPlane(control_keypair)
+        control_keypair = Keypair.generate()
+        # control_plane = ControlPlane(control_keypair)
         
         # SIMULATION: Create warrant with hardcoded constraints
         # In production: Constraints come from policy engine, agent registration, or configuration
@@ -498,7 +497,7 @@ def main():
             holder=control_keypair.public_key() # Bind to self for demo
         )
         print(f"   ✓ Warrant issued (ID: {agent_warrant.id[:8]}...)")
-        print(f"   ✓ Constraints: file_path=/tmp/*\n")
+        print("   ✓ Constraints: file_path=/tmp/*\n")
     except Exception as e:
         print(f"   ✗ Error creating warrant: {e}")
         return
@@ -514,9 +513,9 @@ def main():
         os.environ["TENUO_WARRANT_BASE64"] = agent_warrant.to_base64()
         warrant_from_env = load_warrant_from_env()
         if warrant_from_env:
-            print(f"   ✓ Loaded from env (TENUO_WARRANT_BASE64): Success")
+            print("   ✓ Loaded from env (TENUO_WARRANT_BASE64): Success")
         else:
-            print(f"   ⚠ Loaded from env: Failed (should not happen in this demo)")
+            print("   ⚠ Loaded from env: Failed (should not happen in this demo)")
     except Exception as e:
         print(f"   ✗ Error loading from env: {e}")
     
@@ -534,7 +533,7 @@ def main():
         if warrant_from_file:
             print(f"   ✓ Loaded from file ({temp_warrant_file}): Success")
         else:
-            print(f"   ⚠ Loaded from file: Failed")
+            print("   ⚠ Loaded from file: Failed")
     except Exception as e:
         print(f"   ✗ Error creating/loading temp warrant file: {e}\n")
     
@@ -564,9 +563,9 @@ def main():
         }
         request_warrant = warrant_manager.get_warrant_for_request(request_headers)
         if request_warrant:
-            print(f"   ✓ Loaded warrant from request header: Success\n")
+            print("   ✓ Loaded warrant from request header: Success\n")
         else:
-            print(f"   ⚠ Loaded warrant from request: Failed\n")
+            print("   ⚠ Loaded warrant from request: Failed\n")
     except Exception as e:
         print(f"   ✗ Error loading warrant from request: {e}\n")
     
@@ -580,8 +579,8 @@ def main():
             # HARDCODED PATH: /tmp/test.txt for demo
             # In production: Use tempfile or env-specified test directory
             try:
-                result = read_file_tool("/tmp/test.txt")
-                print(f"   ✓ read_file('/tmp/test.txt'): Allowed (matches Pattern('/tmp/*'))")
+                read_file_tool("/tmp/test.txt")
+                print("   ✓ read_file('/tmp/test.txt'): Allowed (matches Pattern('/tmp/*'))")
             except AuthorizationError as e:
                 print(f"   ✗ Unexpected authorization error: {e}")
             except Exception as e:

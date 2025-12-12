@@ -26,7 +26,6 @@ from tenuo import (
     lockdown, set_warrant_context, set_keypair_context,
     AuthorizationError, WarrantError
 )
-from typing import Optional
 import os
 import logging
 
@@ -371,14 +370,14 @@ if __name__ == "__main__":
     print("\nExample:")
     warrants = create_demo_warrants()
     read_warrant, read_b64 = warrants["read_file"]
-    print(f"  # Read file:")
+    print("  # Read file:")
     print(f"  curl -H 'X-Tenuo-Warrant: {read_b64[:50]}...' http://localhost:8000/api/files/tmp/test.txt")
-    print(f"\n  # Write file:")
+    print("\n  # Write file:")
     write_warrant, write_b64 = warrants["write_file"]
     print(f"  curl -X POST -H 'X-Tenuo-Warrant: {write_b64[:50]}...' \\")
-    print(f"       -H 'Content-Type: application/json' \\")
-    print(f"       -d '{{\"content\":\"test\"}}' \\")
-    print(f"       http://localhost:8000/api/files/tmp/test.txt")
+    print("       -H 'Content-Type: application/json' \\")
+    print("       -d '{\"content\":\"test\"}' \\")
+    print("       http://localhost:8000/api/files/tmp/test.txt")
     print("\nStarting server on http://localhost:8000")
     print("=" * 60)
     

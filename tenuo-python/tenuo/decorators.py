@@ -28,7 +28,7 @@ Audit Logging:
 """
 
 from functools import wraps
-from typing import Callable, Any, Optional, Union
+from typing import Callable, Optional, Union
 from contextvars import ContextVar
 from . import Warrant, Keypair, AuthorizationError
 from .audit import audit_logger, AuditEvent, AuditEventType
