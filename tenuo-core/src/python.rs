@@ -604,6 +604,7 @@ impl PyWarrant {
             Ok(()) => Ok(true),
             Err(crate::error::Error::ConstraintNotSatisfied { .. }) => Ok(false),
             Err(crate::error::Error::MissingSignature(_)) => Ok(false),
+            Err(crate::error::Error::SignatureInvalid(_)) => Ok(false),
             Err(e) => Err(to_py_err(e)),
         }
     }

@@ -1,0 +1,80 @@
+
+from tenuo import Keypair, Warrant, Pattern, Exact, Range
+
+def test_full_warrant_lifecycle():
+    """
+    Test the full lifecycle of a warrant:
+    1. Key generation
+    2. Root warrant issuance
+    3. Attenuation (delegation)
+    4. Authorization (success/failure)
+    5. Serialization
+    """
+    # 1. Generate keypairs
+    control_keypair = Keypair.generate()
+    worker_keypair = Keypair.generate()
+    
+    assert len(control_keypair.public_key_bytes()) == 32
+    assert len(worker_keypair.public_key_bytes()) == 32
+    
+    # 2. Create a root warrant with constraints
+    root_warrant = Warrant.issue(
+        tool="manage_infrastructure",
+        constraints={
+            "cluster": Pattern("staging-*"),
+            "budget": Range.max_value(10000.0)
+        },
+        ttl_seconds=3600,
+        keypair=control_keypair,
+        holder=control_keypair.public_key()
+    )
+    
+    assert root_warrant.tool == "manage_infrastructure"
+    assert root_warrant.depth == 0
+    assert not root_warrant.is_expired()
+    
+    # 3. Attenuate (delegate) the warrant to a worker
+    worker_warrant = root_warrant.attenuate(
+        constraints={
+            "cluster": Exact("staging-web"),
+            "budget": Range.max_value(1000.0)
+        },
+        keypair=control_keypair, # Signed by parent (Control Plane)
+        holder=worker_keypair.public_key() # Bound to worker
+    )
+    
+    assert worker_warrant.tool == "manage_infrastructure"
+    assert worker_warrant.depth == 1
+    
+    # 4. Test authorization
+    
+    # Helper to authorize with PoP
+    def check_auth(warrant, tool, args, keypair):
+        signature = warrant.create_pop_signature(keypair, tool, args)
+        return warrant.authorize(tool, args, bytes(signature))
+
+    # Allowed: matches constraints
+    args1 = {"cluster": "staging-web", "budget": 500.0}
+    assert check_auth(worker_warrant, "manage_infrastructure", args1, worker_keypair) is True
+    
+    # Denied: budget too high
+    args2 = {"cluster": "staging-web", "budget": 2000.0}
+    assert check_auth(worker_warrant, "manage_infrastructure", args2, worker_keypair) is False
+    
+    # Denied: wrong cluster
+    args3 = {"cluster": "production-web", "budget": 500.0}
+    assert check_auth(worker_warrant, "manage_infrastructure", args3, worker_keypair) is False
+    
+    # Denied: wrong keypair (PoP failure)
+    wrong_keypair = Keypair.generate()
+    assert check_auth(worker_warrant, "manage_infrastructure", args1, wrong_keypair) is False
+    
+    # 5. Serialization
+    warrant_base64 = worker_warrant.to_base64()
+    assert isinstance(warrant_base64, str)
+    assert len(warrant_base64) > 0
+    
+    # Deserialize
+    deserialized = Warrant.from_base64(warrant_base64)
+    assert deserialized.tool == worker_warrant.tool
+    assert deserialized.id == worker_warrant.id
