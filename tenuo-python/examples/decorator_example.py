@@ -12,18 +12,20 @@ def main():
     
     # Create a warrant
     keypair = Keypair.generate()
-    warrant = Warrant.create(
+    warrant = Warrant.issue(
         tool="upgrade_cluster",
         constraints={
             "cluster": Pattern("staging-*"),
             "budget": Range.max_value(10000.0)
         },
         ttl_seconds=3600,
-        keypair=keypair
+        keypair=keypair,
+        holder=keypair.public_key() # Bind to self
     )
     
     # Define a function protected by the warrant
-    @lockdown(warrant, tool="upgrade_cluster")
+    # Note: We must pass keypair for Proof-of-Possession signing
+    @lockdown(warrant, tool="upgrade_cluster", keypair=keypair)
     def upgrade_cluster(cluster: str, budget: float):
         """This function can only be called if the warrant authorizes it."""
         print(f"✓ Upgrading cluster {cluster} with budget ${budget}")

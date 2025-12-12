@@ -237,7 +237,7 @@ def protect_tool(
         )
             
         # 5. Authorize
-        if not current_warrant.authorize(tool_name, auth_args, signature):
+        if not current_warrant.authorize(tool_name, auth_args, bytes(signature)):
             # Audit log the failure
             audit_logger.log(AuditEvent(
                 event_type=AuditEventType.AUTHORIZATION_FAILURE,
@@ -252,7 +252,7 @@ def protect_tool(
             raise AuthorizationError(
                 f"Warrant does not authorize tool '{tool_name}' with args {auth_args}"
             )
-        
+            
         # Audit log the success
         audit_logger.log(AuditEvent(
             event_type=AuditEventType.AUTHORIZATION_SUCCESS,

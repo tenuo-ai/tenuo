@@ -159,12 +159,12 @@ Self-contained capability token.
 **Operations:**
 ```python
 # Create (at gateway)
-warrant = Warrant.create(
+warrant = Warrant.issue(
     tool="search,read_file",
+    keypair=issuer_keypair,
     constraints={"path": Pattern("/data/*")},
     ttl_seconds=300,
-    keypair=issuer_keypair,
-    authorized_holder=agent_public_key,  # Mandatory PoP
+    holder=agent_public_key,  # Mandatory PoP
     session_id="sess_xyz789",
 )
 
@@ -177,7 +177,7 @@ child = warrant.attenuate(
 
 # Authorize (local)
 pop_sig = warrant.create_pop_signature(keypair, tool, args)
-authorized = warrant.authorize(tool, args, signature=pop_sig)
+authorized = warrant.authorize(tool, args, signature=bytes(pop_sig))
 ```
 
 ---

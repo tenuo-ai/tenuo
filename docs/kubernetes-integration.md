@@ -75,13 +75,19 @@ spec:
 
 **Python Code:**
 ```python
-from tenuo import load_warrant_from_env, set_warrant_context
+import os
+from tenuo import Warrant, set_warrant_context, set_keypair_context, Keypair
 
-# Load warrant at startup
-warrant = load_warrant_from_env()
+# Load warrant from environment variable
+warrant_base64 = os.getenv("TENUO_WARRANT_BASE64")
+warrant = Warrant.from_base64(warrant_base64)
+
+# Load keypair from secret (required for PoP)
+keypair_pem = os.getenv("TENUO_KEYPAIR_PEM")
+keypair = Keypair.from_pem(keypair_pem)
 
 # Use for all requests
-with set_warrant_context(warrant):
+with set_warrant_context(warrant), set_keypair_context(keypair):
     agent_executor.invoke({"input": prompt})
 ```
 
@@ -105,18 +111,24 @@ metadata:
 **Python Code (FastAPI):**
 ```python
 from fastapi import FastAPI, Request, Header
-from tenuo import set_warrant_context, Warrant
+from tenuo import set_warrant_context, set_keypair_context, Warrant, Keypair
 
 app = FastAPI()
 
 @app.middleware("http")
 async def tenuo_middleware(request: Request, call_next):
-    # Get warrant from header
+    # Get warrant and keypair from headers (or secrets)
     warrant_header = request.headers.get("X-Tenuo-Warrant")
-    if warrant_header:
+    keypair_header = request.headers.get("X-Tenuo-Keypair") # Or load from env/secret
+    
+    if warrant_header and keypair_header:
         warrant = Warrant.from_base64(warrant_header)
-        with set_warrant_context(warrant):
+        keypair = Keypair.from_pem(keypair_header)
+        
+        # Set BOTH in context
+        with set_warrant_context(warrant), set_keypair_context(keypair):
             return await call_next(request)
+            
     return await call_next(request)
 ```
 
@@ -127,10 +139,15 @@ Pod-level warrant as fallback, request header for override.
 **Use Case:** Default capabilities from pod warrant, enhanced capabilities per-request.
 
 ```python
+import os
+from typing import Dict, Optional
+from tenuo import Warrant
+
 class KubernetesWarrantManager:
     def __init__(self):
         # Load pod-level warrant at startup
-        self.pod_warrant = load_warrant_from_env() or load_warrant_from_file()
+        base64 = os.getenv("TENUO_WARRANT_BASE64")
+        self.pod_warrant = Warrant.from_base64(base64) if base64 else None
     
     def get_warrant_for_request(self, headers: Dict[str, str]) -> Optional[Warrant]:
         # Try request header first (most specific)
@@ -197,11 +214,13 @@ Complete FastAPI example for Kubernetes:
 
 ```python
 from fastapi import FastAPI, Request
-from tenuo import set_warrant_context, Warrant, AuthorizationError
-from kubernetes_warrant_manager import KubernetesWarrantManager
+from tenuo import set_warrant_context, set_keypair_context, Warrant, AuthorizationError, Keypair
+# KubernetesWarrantManager defined above
 
 app = FastAPI()
 warrant_manager = KubernetesWarrantManager()
+# Assume keypair is loaded from secret
+keypair = Keypair.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
 
 @app.middleware("http")
 async def tenuo_middleware(request: Request, call_next):
@@ -213,7 +232,8 @@ async def tenuo_middleware(request: Request, call_next):
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="No warrant available")
     
-    with set_warrant_context(warrant):
+    # Set BOTH warrant and keypair in context
+    with set_warrant_context(warrant), set_keypair_context(keypair):
         return await call_next(request)
 
 @app.post("/agent/run")
@@ -306,11 +326,19 @@ See `examples/kubernetes_integration.py` for a complete working example.
 
 ```python
 # Check environment
-warrant = load_warrant_from_env()
-if not warrant:
-    warrant = load_warrant_from_file()
-if not warrant:
+warrant_base64 = os.getenv("TENUO_WARRANT_BASE64")
+if not warrant_base64:
+    # Try loading from file
+    try:
+        with open("/etc/tenuo/warrant.b64", "r") as f:
+            warrant_base64 = f.read().strip()
+    except FileNotFoundError:
+        pass
+
+if not warrant_base64:
     raise RuntimeError("No warrant available")
+
+warrant = Warrant.from_base64(warrant_base64)
 ```
 
 ### Authorization Failures

@@ -32,6 +32,7 @@ fn demo_kubernetes_upgrade_delegation_chain() {
         .constraint("cluster", Pattern::new("*").unwrap()) // Any cluster
         .constraint("version", Pattern::new("1.28.*").unwrap())
         .ttl(Duration::from_secs(3600))
+        .authorized_holder(orchestrator_kp.public_key())
         .build(&control_plane_kp)
         .unwrap();
 
@@ -43,6 +44,7 @@ fn demo_kubernetes_upgrade_delegation_chain() {
         .attenuate()
         .constraint("cluster", Pattern::new("staging-*").unwrap())
         .ttl(Duration::from_secs(600))
+        .authorized_holder(worker_kp.public_key())
         .build(&orchestrator_kp)
         .unwrap();
 
@@ -50,9 +52,12 @@ fn demo_kubernetes_upgrade_delegation_chain() {
     assert_eq!(orchestrator_warrant.parent_id(), Some(root_warrant.id()));
 
     // Step 3: Worker attenuates to specific cluster
+    // Note: In this demo, worker binds to itself or a sub-worker. 
+    // Let's assume worker binds to itself for the final execution warrant.
     let worker_warrant = orchestrator_warrant
         .attenuate()
         .constraint("cluster", Exact::new("staging-web"))
+        .authorized_holder(worker_kp.public_key())
         .build(&worker_kp)
         .unwrap();
 
@@ -64,15 +69,18 @@ fn demo_kubernetes_upgrade_delegation_chain() {
     args.insert("cluster".to_string(), ConstraintValue::String("staging-web".to_string()));
     args.insert("version".to_string(), ConstraintValue::String("1.28.5".to_string()));
     
-    assert!(worker_warrant.authorize("upgrade_cluster", &args, None).is_ok());
+    let sig = worker_warrant.create_pop_signature(&worker_kp, "upgrade_cluster", &args).unwrap();
+    assert!(worker_warrant.authorize("upgrade_cluster", &args, Some(&sig)).is_ok());
 
     // Worker cannot upgrade other staging clusters
     args.insert("cluster".to_string(), ConstraintValue::String("staging-api".to_string()));
-    assert!(worker_warrant.authorize("upgrade_cluster", &args, None).is_err());
+    let sig = worker_warrant.create_pop_signature(&worker_kp, "upgrade_cluster", &args).unwrap();
+    assert!(worker_warrant.authorize("upgrade_cluster", &args, Some(&sig)).is_err());
 
     // Worker cannot upgrade production
     args.insert("cluster".to_string(), ConstraintValue::String("prod-web".to_string()));
-    assert!(worker_warrant.authorize("upgrade_cluster", &args, None).is_err());
+    let sig = worker_warrant.create_pop_signature(&worker_kp, "upgrade_cluster", &args).unwrap();
+    assert!(worker_warrant.authorize("upgrade_cluster", &args, Some(&sig)).is_err());
 }
 
 /// Demo 2: Delegated Budget Authority
@@ -91,6 +99,7 @@ fn demo_finance_delegation_with_budget() {
         .constraint("amount", Range::max(100_000.0))
         .constraint("currency", Exact::new("USD"))
         .ttl(Duration::from_secs(86400)) // 24 hours
+        .authorized_holder(finance_agent_kp.public_key())
         .build(&cfo_kp)
         .unwrap();
 
@@ -98,6 +107,7 @@ fn demo_finance_delegation_with_budget() {
     let finance_warrant = cfo_warrant
         .attenuate()
         .constraint("amount", Range::max(10_000.0))
+        .authorized_holder(payment_worker_kp.public_key())
         .build(&finance_agent_kp)
         .unwrap();
 
@@ -105,6 +115,7 @@ fn demo_finance_delegation_with_budget() {
     let worker_warrant = finance_warrant
         .attenuate()
         .constraint("amount", Range::max(1_000.0))
+        .authorized_holder(payment_worker_kp.public_key())
         .build(&payment_worker_kp)
         .unwrap();
 
@@ -112,21 +123,28 @@ fn demo_finance_delegation_with_budget() {
     let mut args = HashMap::new();
     args.insert("amount".to_string(), ConstraintValue::Float(500.0));
     args.insert("currency".to_string(), ConstraintValue::String("USD".to_string()));
-    assert!(worker_warrant.authorize("transfer_funds", &args, None).is_ok());
+    let sig = worker_warrant.create_pop_signature(&payment_worker_kp, "transfer_funds", &args).unwrap();
+    assert!(worker_warrant.authorize("transfer_funds", &args, Some(&sig)).is_ok());
 
     // Worker cannot exceed $1k
     args.insert("amount".to_string(), ConstraintValue::Float(5_000.0));
-    assert!(worker_warrant.authorize("transfer_funds", &args, None).is_err());
+    let sig = worker_warrant.create_pop_signature(&payment_worker_kp, "transfer_funds", &args).unwrap();
+    assert!(worker_warrant.authorize("transfer_funds", &args, Some(&sig)).is_err());
 
     // Finance agent can do $5k (but not worker)
-    assert!(finance_warrant.authorize("transfer_funds", &args, None).is_ok());
+    // Note: finance_warrant holder is payment_worker_kp, so payment_worker_kp signs
+    let sig = finance_warrant.create_pop_signature(&payment_worker_kp, "transfer_funds", &args).unwrap();
+    assert!(finance_warrant.authorize("transfer_funds", &args, Some(&sig)).is_ok());
 
     // Finance agent cannot exceed $10k
     args.insert("amount".to_string(), ConstraintValue::Float(50_000.0));
-    assert!(finance_warrant.authorize("transfer_funds", &args, None).is_err());
+    let sig = finance_warrant.create_pop_signature(&payment_worker_kp, "transfer_funds", &args).unwrap();
+    assert!(finance_warrant.authorize("transfer_funds", &args, Some(&sig)).is_err());
 
     // CFO warrant can do $50k
-    assert!(cfo_warrant.authorize("transfer_funds", &args, None).is_ok());
+    // Note: cfo_warrant holder is finance_agent_kp
+    let sig = cfo_warrant.create_pop_signature(&finance_agent_kp, "transfer_funds", &args).unwrap();
+    assert!(cfo_warrant.authorize("transfer_funds", &args, Some(&sig)).is_ok());
 }
 
 /// Demo 3: Wire Format for HTTP Transport
@@ -144,6 +162,7 @@ fn demo_http_transport() {
         .constraint("table", Pattern::new("public_*").unwrap())
         .ttl(Duration::from_secs(300))
         .session_id("session_abc123")
+        .authorized_holder(issuer_kp.public_key()) // Bind to self for demo
         .build(&issuer_kp)
         .unwrap();
 
@@ -166,11 +185,14 @@ fn demo_http_transport() {
     let mut args = HashMap::new();
     args.insert("database".to_string(), ConstraintValue::String("analytics".to_string()));
     args.insert("table".to_string(), ConstraintValue::String("public_users".to_string()));
-    assert!(received.authorize("query_database", &args, None).is_ok());
+    
+    let sig = received.create_pop_signature(&issuer_kp, "query_database", &args).unwrap();
+    assert!(received.authorize("query_database", &args, Some(&sig)).is_ok());
 
     // Cannot access private tables
     args.insert("table".to_string(), ConstraintValue::String("private_billing".to_string()));
-    assert!(received.authorize("query_database", &args, None).is_err());
+    let sig = received.create_pop_signature(&issuer_kp, "query_database", &args).unwrap();
+    assert!(received.authorize("query_database", &args, Some(&sig)).is_err());
 }
 
 /// Demo 4: Session Binding
@@ -185,6 +207,7 @@ fn demo_session_binding() {
         .tool("execute_task")
         .ttl(Duration::from_secs(600))
         .session_id("session_001")
+        .authorized_holder(kp.public_key())
         .build(&kp)
         .unwrap();
 
@@ -192,6 +215,7 @@ fn demo_session_binding() {
         .tool("execute_task")
         .ttl(Duration::from_secs(600))
         .session_id("session_002")
+        .authorized_holder(kp.public_key())
         .build(&kp)
         .unwrap();
 
@@ -201,7 +225,11 @@ fn demo_session_binding() {
     assert_eq!(session_2_warrant.session_id(), Some("session_002"));
 
     // Session is preserved through attenuation
-    let attenuated = session_1_warrant.attenuate().build(&kp).unwrap();
+    let attenuated = session_1_warrant
+        .attenuate()
+        .authorized_holder(kp.public_key())
+        .build(&kp)
+        .unwrap();
     assert_eq!(attenuated.session_id(), Some("session_001"));
 }
 
@@ -221,24 +249,28 @@ fn demo_audit_chain_reconstruction() {
         .tool("sensitive_operation")
         .constraint("scope", Pattern::new("*").unwrap())
         .ttl(Duration::from_secs(3600))
+        .authorized_holder(level1_kp.public_key())
         .build(&root_kp)
         .unwrap();
 
     let level1 = root
         .attenuate()
         .constraint("scope", Pattern::new("dept-*").unwrap())
+        .authorized_holder(level2_kp.public_key())
         .build(&level1_kp)
         .unwrap();
 
     let level2 = level1
         .attenuate()
         .constraint("scope", Pattern::new("dept-engineering-*").unwrap())
+        .authorized_holder(level3_kp.public_key())
         .build(&level2_kp)
         .unwrap();
 
     let level3 = level2
         .attenuate()
         .constraint("scope", Exact::new("dept-engineering-frontend"))
+        .authorized_holder(level3_kp.public_key())
         .build(&level3_kp)
         .unwrap();
 
@@ -285,6 +317,7 @@ fn demo_mixed_constraint_narrowing() {
         .constraint("format", Pattern::new("*").unwrap())
         .constraint("max_rows", Range::max(1_000_000.0))
         .ttl(Duration::from_secs(600))
+        .authorized_holder(child_kp.public_key())
         .build(&parent_kp)
         .unwrap();
 
@@ -294,6 +327,7 @@ fn demo_mixed_constraint_narrowing() {
         .constraint("region", OneOf::new(["us-east", "us-west"])) // Removed eu-west
         .constraint("format", Pattern::new("csv*").unwrap()) // Only CSV formats
         .constraint("max_rows", Range::max(10_000.0)) // Much smaller limit
+        .authorized_holder(child_kp.public_key())
         .build(&child_kp)
         .unwrap();
 
@@ -302,14 +336,19 @@ fn demo_mixed_constraint_narrowing() {
     args.insert("region".to_string(), ConstraintValue::String("us-east".to_string()));
     args.insert("format".to_string(), ConstraintValue::String("csv".to_string()));
     args.insert("max_rows".to_string(), ConstraintValue::Float(5_000.0));
-    assert!(child.authorize("data_export", &args, None).is_ok());
+    
+    let sig = child.create_pop_signature(&child_kp, "data_export", &args).unwrap();
+    assert!(child.authorize("data_export", &args, Some(&sig)).is_ok());
 
     // Region outside child's scope
     args.insert("region".to_string(), ConstraintValue::String("eu-west".to_string()));
-    assert!(child.authorize("data_export", &args, None).is_err());
+    let sig = child.create_pop_signature(&child_kp, "data_export", &args).unwrap();
+    assert!(child.authorize("data_export", &args, Some(&sig)).is_err());
 
     // But parent can still do eu-west
-    assert!(parent.authorize("data_export", &args, None).is_ok());
+    // Note: parent holder is child_kp
+    let sig = parent.create_pop_signature(&child_kp, "data_export", &args).unwrap();
+    assert!(parent.authorize("data_export", &args, Some(&sig)).is_ok());
 }
 
 /// Test that monotonicity violations are rejected at attenuation time.
@@ -322,6 +361,7 @@ fn test_monotonicity_violation_rejected() {
         .tool("test")
         .constraint("amount", Range::max(1000.0))
         .ttl(Duration::from_secs(600))
+        .authorized_holder(child_kp.public_key())
         .build(&parent_kp)
         .unwrap();
 
@@ -329,6 +369,7 @@ fn test_monotonicity_violation_rejected() {
     let result = parent
         .attenuate()
         .constraint("amount", Range::max(5000.0))
+        .authorized_holder(child_kp.public_key())
         .build(&child_kp);
 
     assert!(result.is_err());

@@ -14,7 +14,7 @@ Note: This example uses OpenAI, but the pattern works with any LLM provider.
 
 from tenuo import (
     Keypair, Warrant, Pattern, Range, Exact,
-    lockdown, set_warrant_context, AuthorizationError
+    lockdown, set_warrant_context, set_keypair_context, AuthorizationError
 )
 from typing import Optional, Dict, Any
 import os
@@ -128,37 +128,48 @@ class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else objec
     via ContextVar, even when called from within LangChain's execution flow.
     
     Usage:
-        warrant = Warrant.create(...)
+        warrant = Warrant.issue(...)
         callback = TenuoWarrantCallback(warrant)
         agent_executor.invoke(inputs, {"callbacks": [callback]})
     """
     
-    def __init__(self, warrant: Warrant):
+    def __init__(self, warrant: Warrant, keypair: Keypair):
         if LANGCHAIN_AVAILABLE:
             super().__init__()
         self.warrant = warrant
-        self.context_manager = None
+        self.keypair = keypair
+        self.warrant_token = None
+        self.keypair_token = None
     
     def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs) -> None:
-        """Called when a tool starts executing. Set warrant in context."""
+        """Called when a tool starts executing. Set warrant and keypair in context."""
         if LANGCHAIN_AVAILABLE:
-            # Set warrant in context for this tool execution
-            from tenuo.decorators import _warrant_context
-            self.context_token = _warrant_context.set(self.warrant)
+            # Set warrant and keypair in context for this tool execution
+            from tenuo.decorators import _warrant_context, _keypair_context
+            self.warrant_token = _warrant_context.set(self.warrant)
+            self.keypair_token = _keypair_context.set(self.keypair)
     
     def on_tool_end(self, output: str, **kwargs) -> None:
         """Called when a tool finishes. Clean up context."""
-        if LANGCHAIN_AVAILABLE and self.context_token:
-            from tenuo.decorators import _warrant_context
-            _warrant_context.reset(self.context_token)
-            self.context_token = None
+        if LANGCHAIN_AVAILABLE:
+            from tenuo.decorators import _warrant_context, _keypair_context
+            if self.warrant_token:
+                _warrant_context.reset(self.warrant_token)
+                self.warrant_token = None
+            if self.keypair_token:
+                _keypair_context.reset(self.keypair_token)
+                self.keypair_token = None
     
     def on_tool_error(self, error: Exception, **kwargs) -> None:
         """Called when a tool errors. Clean up context."""
-        if LANGCHAIN_AVAILABLE and self.context_token:
-            from tenuo.decorators import _warrant_context
-            _warrant_context.reset(self.context_token)
-            self.context_token = None
+        if LANGCHAIN_AVAILABLE:
+            from tenuo.decorators import _warrant_context, _keypair_context
+            if self.warrant_token:
+                _warrant_context.reset(self.warrant_token)
+                self.warrant_token = None
+            if self.keypair_token:
+                _keypair_context.reset(self.keypair_token)
+                self.keypair_token = None
 
 
 # ============================================================================
@@ -211,13 +222,14 @@ def main():
         # SIMULATION: Create warrant with hardcoded constraints
         # In production: Constraints come from policy engine, user request, or configuration
         # HARDCODED PATH: /tmp/* is used for demo safety. In production, use env vars or config.
-        agent_warrant = Warrant.create(
+        agent_warrant = Warrant.issue(
             tool="read_file",  # Base tool - can be used for multiple tools
             constraints={
                 "file_path": Pattern("/tmp/*"),  # HARDCODED: Only files in /tmp/ for demo safety
             },
             ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            keypair=control_keypair
+            keypair=control_keypair,
+            holder=control_keypair.public_key() # Bind to self for demo
         )
         
         print(f"   ✓ Warrant created with constraints:")
@@ -255,7 +267,7 @@ def main():
             print("   Continuing with authorization test...\n")
         
         # Test authorized access
-        with set_warrant_context(agent_warrant):
+        with set_warrant_context(agent_warrant), set_keypair_context(control_keypair):
             try:
                 result = read_file_tool(test_file)
                 print(f"   ✓ read_file('{test_file}'): Allowed (matches Pattern('/tmp/*'))")
@@ -266,7 +278,7 @@ def main():
         
         # Test blocked access
         try:
-            with set_warrant_context(agent_warrant):
+            with set_warrant_context(agent_warrant), set_keypair_context(control_keypair):
                 read_file_tool("/etc/passwd")  # HARDCODED: Protected system file for demo
             print("   ✗ Should have been blocked!")
         except AuthorizationError as e:
@@ -289,7 +301,7 @@ def main():
         print("2. Demonstrating protection...")
         test_file = "/tmp/test.txt"  # HARDCODED: Demo test file
         try:
-            with set_warrant_context(agent_warrant):
+            with set_warrant_context(agent_warrant), set_keypair_context(control_keypair):
                 result = read_file_tool(test_file)
                 print(f"   ✓ read_file('{test_file}') authorized")
         except AuthorizationError as e:
@@ -298,7 +310,7 @@ def main():
             print(f"   ✗ Error: {e}")
         
         try:
-            with set_warrant_context(agent_warrant):
+            with set_warrant_context(agent_warrant), set_keypair_context(control_keypair):
                 read_file_tool("/etc/passwd")  # HARDCODED: Protected file for demo
         except AuthorizationError as e:
             print(f"   ✓ read_file('/etc/passwd') correctly blocked: {str(e)[:60]}...")
@@ -339,7 +351,7 @@ def main():
     # ========================================================================
     print("4. Setting up Tenuo warrant callback...")
     try:
-        warrant_callback = TenuoWarrantCallback(agent_warrant)
+        warrant_callback = TenuoWarrantCallback(agent_warrant, control_keypair)
         print("   ✓ Callback created - warrant will be set in context for all tool calls\n")
     except Exception as e:
         print(f"   ✗ Error creating callback: {e}")

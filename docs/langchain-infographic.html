@@ -1,12 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tenuo + LangChain Integration</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
-        
+
         :root {
             --bg-dark: #0a0e17;
             --bg-card: #121a2a;
@@ -22,13 +23,13 @@
             --text-muted: #64748b;
             --border: #1e293b;
         }
-        
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-        
+
         body {
             font-family: 'Space Grotesk', sans-serif;
             background: var(--bg-dark);
@@ -36,7 +37,7 @@
             min-height: 100vh;
             overflow-x: hidden;
         }
-        
+
         body::before {
             content: '';
             position: fixed;
@@ -44,14 +45,14 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background: 
+            background:
                 radial-gradient(circle at 10% 20%, rgba(168, 85, 247, 0.08) 0%, transparent 50%),
                 radial-gradient(circle at 90% 80%, rgba(0, 212, 255, 0.08) 0%, transparent 50%),
                 radial-gradient(circle at 50% 50%, rgba(0, 255, 136, 0.03) 0%, transparent 70%);
             pointer-events: none;
             z-index: 0;
         }
-        
+
         .container {
             max-width: 1600px;
             margin: 0 auto;
@@ -59,13 +60,13 @@
             position: relative;
             z-index: 1;
         }
-        
+
         /* Header */
         header {
             text-align: center;
             margin-bottom: 48px;
         }
-        
+
         .logo {
             font-size: 3.5rem;
             font-weight: 700;
@@ -75,13 +76,13 @@
             background-clip: text;
             margin-bottom: 8px;
         }
-        
+
         .tagline {
             font-size: 1.5rem;
             color: var(--text-secondary);
             margin-bottom: 16px;
         }
-        
+
         .subtitle {
             font-size: 1rem;
             color: var(--text-muted);
@@ -89,7 +90,7 @@
             margin: 0 auto;
             line-height: 1.6;
         }
-        
+
         /* Flow diagram */
         .flow-diagram {
             display: flex;
@@ -97,7 +98,7 @@
             gap: 32px;
             margin: 48px 0;
         }
-        
+
         .flow-step {
             background: var(--bg-card);
             border: 1px solid var(--border);
@@ -106,20 +107,20 @@
             position: relative;
             transition: all 0.3s ease;
         }
-        
+
         .flow-step:hover {
             border-color: var(--accent-cyan);
             transform: translateY(-2px);
             box-shadow: 0 8px 32px rgba(0, 212, 255, 0.1);
         }
-        
+
         .step-header {
             display: flex;
             align-items: center;
             gap: 16px;
             margin-bottom: 20px;
         }
-        
+
         .step-number {
             width: 48px;
             height: 48px;
@@ -131,47 +132,47 @@
             font-size: 1.25rem;
             flex-shrink: 0;
         }
-        
+
         .step-number.user {
             background: rgba(59, 130, 246, 0.2);
             border: 2px solid #3b82f6;
             color: #3b82f6;
         }
-        
+
         .step-number.langchain {
             background: rgba(0, 212, 255, 0.2);
             border: 2px solid var(--accent-cyan);
             color: var(--accent-cyan);
         }
-        
+
         .step-number.tenuo {
             background: rgba(168, 85, 247, 0.2);
             border: 2px solid var(--accent-purple);
             color: var(--accent-purple);
         }
-        
+
         .step-number.tool {
             background: rgba(0, 255, 136, 0.2);
             border: 2px solid var(--accent-green);
             color: var(--accent-green);
         }
-        
+
         .step-title {
             font-size: 1.5rem;
             font-weight: 600;
             color: var(--text-primary);
         }
-        
+
         .step-subtitle {
             font-size: 0.9rem;
             color: var(--text-secondary);
             margin-top: 4px;
         }
-        
+
         .step-content {
             margin-top: 20px;
         }
-        
+
         .code-block {
             background: var(--bg-card-alt);
             border: 1px solid var(--border);
@@ -184,45 +185,45 @@
             overflow-x: auto;
             position: relative;
         }
-        
+
         .code-block pre {
             margin: 0;
             padding: 0;
             white-space: pre-wrap;
             word-wrap: break-word;
         }
-        
+
         .code-block .keyword {
             color: var(--accent-purple);
             font-weight: 600;
         }
-        
+
         .code-block .string {
             color: var(--accent-green);
         }
-        
+
         .code-block .comment {
             color: var(--text-muted);
             font-style: italic;
         }
-        
+
         .code-block .decorator {
             color: var(--accent-cyan);
             font-weight: 600;
         }
-        
+
         .code-block .function {
             color: var(--accent-cyan);
         }
-        
+
         .code-block .type {
             color: var(--accent-yellow);
         }
-        
+
         .code-block .number {
             color: var(--accent-orange);
         }
-        
+
         /* Arrow connector */
         .arrow {
             text-align: center;
@@ -232,7 +233,7 @@
             position: relative;
             z-index: 2;
         }
-        
+
         /* Highlight box for Tenuo */
         .tenuo-highlight {
             background: linear-gradient(135deg, rgba(168, 85, 247, 0.15), rgba(0, 212, 255, 0.15));
@@ -241,7 +242,7 @@
             padding: 24px;
             margin: 20px 0;
         }
-        
+
         .tenuo-highlight-title {
             font-size: 1.1rem;
             font-weight: 600;
@@ -251,7 +252,7 @@
             align-items: center;
             gap: 8px;
         }
-        
+
         /* Feature grid */
         .features-grid {
             display: grid;
@@ -259,7 +260,7 @@
             gap: 24px;
             margin: 48px 0;
         }
-        
+
         .feature-card {
             background: var(--bg-card);
             border: 1px solid var(--border);
@@ -267,30 +268,30 @@
             padding: 24px;
             transition: all 0.3s ease;
         }
-        
+
         .feature-card:hover {
             border-color: var(--accent-cyan);
             transform: translateY(-4px);
         }
-        
+
         .feature-icon {
             font-size: 2rem;
             margin-bottom: 12px;
         }
-        
+
         .feature-title {
             font-size: 1.1rem;
             font-weight: 600;
             margin-bottom: 8px;
             color: var(--text-primary);
         }
-        
+
         .feature-desc {
             font-size: 0.9rem;
             color: var(--text-secondary);
             line-height: 1.6;
         }
-        
+
         /* Comparison table */
         .comparison {
             background: var(--bg-card);
@@ -299,45 +300,45 @@
             padding: 32px;
             margin: 48px 0;
         }
-        
+
         .comparison-title {
             font-size: 1.5rem;
             font-weight: 600;
             margin-bottom: 24px;
             text-align: center;
         }
-        
+
         .comparison-table {
             width: 100%;
             border-collapse: collapse;
         }
-        
+
         .comparison-table th,
         .comparison-table td {
             padding: 16px;
             text-align: left;
             border-bottom: 1px solid var(--border);
         }
-        
+
         .comparison-table th {
             color: var(--accent-cyan);
             font-weight: 600;
         }
-        
+
         .comparison-table td {
             color: var(--text-secondary);
         }
-        
+
         .check {
             color: var(--accent-green);
             font-weight: 600;
         }
-        
+
         .cross {
             color: var(--accent-red);
             font-weight: 600;
         }
-        
+
         /* Footer */
         footer {
             text-align: center;
@@ -346,17 +347,18 @@
             border-top: 1px solid var(--border);
             color: var(--text-muted);
         }
-        
+
         footer a {
             color: var(--accent-cyan);
             text-decoration: none;
         }
-        
+
         footer a:hover {
             text-decoration: underline;
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <header>
@@ -384,7 +386,7 @@
                         The request may include a warrant (from headers, context, or session).
                     </p>
                     <div class="code-block">
-<pre><span class="comment"># User sends prompt to LangChain agent</span>
+                        <pre><span class="comment"># User sends prompt to LangChain agent</span>
 <span class="string">"Read the file /tmp/data.txt and tell me what it contains"</span>
 
 <span class="comment"># Or via API with warrant in header</span>
@@ -413,7 +415,7 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                         The agent doesn't know about Tenuo - it just calls tools normally.
                     </p>
                     <div class="code-block">
-<pre><span class="comment"># LangChain agent decides to call read_file tool</span>
+                        <pre><span class="comment"># LangChain agent decides to call read_file tool</span>
 <span class="keyword">tool_name</span>: <span class="string">"read_file"</span>
 <span class="keyword">arguments</span>: {
     <span class="string">"file_path"</span>: <span class="string">"/tmp/data.txt"</span>
@@ -442,7 +444,8 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                             🔒 Tenuo Intercepts Tool Call
                         </div>
                         <p style="color: var(--text-secondary); margin-bottom: 16px;">
-                            Before your tool function executes, Tenuo's <code style="color: var(--accent-cyan);">@lockdown</code> decorator:
+                            Before your tool function executes, Tenuo's <code
+                                style="color: var(--accent-cyan);">@lockdown</code> decorator:
                         </p>
                         <ul style="color: var(--text-secondary); margin-left: 24px; line-height: 1.8;">
                             <li>Retrieves warrant from ContextVar (set by callback/middleware)</li>
@@ -453,7 +456,7 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                         </ul>
                     </div>
                     <div class="code-block">
-<pre><span class="comment"># Your tool function - protected by @lockdown</span>
+                        <pre><span class="comment"># Your tool function - protected by @lockdown</span>
 <span class="keyword">from</span> tenuo <span class="keyword">import</span> lockdown, set_warrant_context
 
 <span class="decorator">@lockdown</span>(<span class="keyword">tool</span>=<span class="string">"read_file"</span>, 
@@ -465,8 +468,10 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
         <span class="keyword">return</span> f.<span class="function">read</span>()</pre>
                     </div>
                     <p style="color: var(--text-secondary); margin-top: 12px; font-size: 0.9rem;">
-                        <strong>How it works:</strong> The <code style="color: var(--accent-cyan);">@lockdown</code> decorator intercepts the function call,
-                        retrieves the warrant from <code style="color: var(--accent-cyan);">ContextVar</code> (set by your callback or middleware),
+                        <strong>How it works:</strong> The <code style="color: var(--accent-cyan);">@lockdown</code>
+                        decorator intercepts the function call,
+                        retrieves the warrant from <code style="color: var(--accent-cyan);">ContextVar</code> (set by
+                        your callback or middleware),
                         and checks if the warrant authorizes this specific tool call with these arguments.
                     </p>
                 </div>
@@ -477,7 +482,9 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
             <!-- Step 4: Authorization Decision -->
             <div class="flow-step">
                 <div class="step-header">
-                    <div class="step-number" style="background: rgba(0, 255, 136, 0.2); border: 2px solid var(--accent-green); color: var(--accent-green);">✓</div>
+                    <div class="step-number"
+                        style="background: rgba(0, 255, 136, 0.2); border: 2px solid var(--accent-green); color: var(--accent-green);">
+                        ✓</div>
                     <div>
                         <div class="step-title">Authorization Decision</div>
                         <div class="step-subtitle">Allowed or blocked based on warrant constraints</div>
@@ -485,8 +492,10 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                 </div>
                 <div class="step-content">
                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 20px;">
-                        <div style="background: rgba(0, 255, 136, 0.1); border: 1px solid var(--accent-green); border-radius: 8px; padding: 20px;">
-                            <div style="font-size: 1.2rem; font-weight: 600; color: var(--accent-green); margin-bottom: 12px;">
+                        <div
+                            style="background: rgba(0, 255, 136, 0.1); border: 1px solid var(--accent-green); border-radius: 8px; padding: 20px;">
+                            <div
+                                style="font-size: 1.2rem; font-weight: 600; color: var(--accent-green); margin-bottom: 12px;">
                                 ✓ Allowed
                             </div>
                             <p style="color: var(--text-secondary); font-size: 0.9rem; line-height: 1.6;">
@@ -494,23 +503,26 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                                 LangChain receives result and continues processing.
                             </p>
                             <div class="code-block" style="margin-top: 12px; font-size: 0.8rem;">
-<pre><span class="comment"># Warrant constraint: file_path = Pattern("/tmp/*")</span>
+                                <pre><span class="comment"># Warrant constraint: file_path = Pattern("/tmp/*")</span>
 <span class="comment"># Tool argument: file_path = "/tmp/data.txt"</span>
 <span class="comment"># ✓ Matches pattern → Authorization granted</span>
 <span class="comment"># → Tool function executes</span>
 <span class="comment"># → Returns file contents to LangChain</span></pre>
                             </div>
                         </div>
-                        <div style="background: rgba(255, 68, 102, 0.1); border: 1px solid var(--accent-red); border-radius: 8px; padding: 20px;">
-                            <div style="font-size: 1.2rem; font-weight: 600; color: var(--accent-red); margin-bottom: 12px;">
+                        <div
+                            style="background: rgba(255, 68, 102, 0.1); border: 1px solid var(--accent-red); border-radius: 8px; padding: 20px;">
+                            <div
+                                style="font-size: 1.2rem; font-weight: 600; color: var(--accent-red); margin-bottom: 12px;">
                                 ✗ Blocked
                             </div>
                             <p style="color: var(--text-secondary); font-size: 0.9rem; line-height: 1.6;">
-                                Warrant doesn't authorize this action. Tenuo raises <code style="color: var(--accent-red);">AuthorizationError</code>.
+                                Warrant doesn't authorize this action. Tenuo raises <code
+                                    style="color: var(--accent-red);">AuthorizationError</code>.
                                 Tool function never executes. LangChain receives error.
                             </p>
                             <div class="code-block" style="margin-top: 12px; font-size: 0.8rem;">
-<pre><span class="comment"># Warrant constraint: file_path = Pattern("/tmp/*")</span>
+                                <pre><span class="comment"># Warrant constraint: file_path = Pattern("/tmp/*")</span>
 <span class="comment"># Tool argument: file_path = "/etc/passwd"</span>
 <span class="comment"># ✗ Doesn't match pattern → Authorization denied</span>
 <span class="comment"># → AuthorizationError raised</span>
@@ -535,11 +547,13 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                 </div>
                 <div class="step-content">
                     <p style="color: var(--text-secondary); margin-bottom: 16px;">
-                        If authorized, your tool function executes normally. The <code style="color: var(--accent-cyan);">@lockdown</code>
-                        decorator is transparent - your code doesn't need to know about Tenuo. It's just a regular Python function.
+                        If authorized, your tool function executes normally. The <code
+                            style="color: var(--accent-cyan);">@lockdown</code>
+                        decorator is transparent - your code doesn't need to know about Tenuo. It's just a regular
+                        Python function.
                     </p>
                     <div class="code-block">
-<pre><span class="comment"># Your tool code (runs only if authorized)</span>
+                        <pre><span class="comment"># Your tool code (runs only if authorized)</span>
 <span class="comment"># No Tenuo-specific code needed here!</span>
 <span class="keyword">try</span>:
     <span class="keyword">with</span> <span class="function">open</span>(<span class="type">file_path</span>, <span class="string">'r'</span>) <span class="keyword">as</span> f:
@@ -578,7 +592,8 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                 <div class="feature-icon">🔒</div>
                 <div class="feature-title">Automatic Protection</div>
                 <div class="feature-desc">
-                    Decorate your tool functions with <code>@lockdown</code>. Tenuo handles authorization automatically - no manual checks needed.
+                    Decorate your tool functions with <code>@lockdown</code>. Tenuo handles authorization automatically
+                    - no manual checks needed.
                 </div>
             </div>
             <div class="feature-card">
@@ -592,21 +607,24 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                 <div class="feature-icon">🔄</div>
                 <div class="feature-title">ContextVar Integration</div>
                 <div class="feature-desc">
-                    Set warrant once in context (via callback or middleware). All <code>@lockdown</code> functions automatically use it.
+                    Set warrant once in context (via callback or middleware). All <code>@lockdown</code> functions
+                    automatically use it.
                 </div>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">🎯</div>
                 <div class="feature-title">Constraint-Based</div>
                 <div class="feature-desc">
-                    Fine-grained control: restrict by file paths, budgets, clusters, or any argument value using patterns and ranges.
+                    Fine-grained control: restrict by file paths, budgets, clusters, or any argument value using
+                    patterns and ranges.
                 </div>
             </div>
             <div class="feature-card">
                 <div class="feature-icon">🔗</div>
                 <div class="feature-title">Delegation Provenance</div>
                 <div class="feature-desc">
-                    Every authorization is cryptographically linked to a warrant chain showing who delegated the authority.
+                    Every authorization is cryptographically linked to a warrant chain showing who delegated the
+                    authority.
                 </div>
             </div>
             <div class="feature-card">
@@ -672,11 +690,13 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                 <p style="color: var(--text-secondary); margin-bottom: 24px;">
                     Adding Tenuo to your LangChain application is simple. Here's a complete example:
                 </p>
-                
-                <div style="background: var(--bg-card-alt); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px;">
-                    <h4 style="color: var(--accent-cyan); margin-bottom: 16px; font-size: 1.1rem;">Step 1: Decorate Your Tool Functions</h4>
+
+                <div
+                    style="background: var(--bg-card-alt); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px;">
+                    <h4 style="color: var(--accent-cyan); margin-bottom: 16px; font-size: 1.1rem;">Step 1: Decorate Your
+                        Tool Functions</h4>
                     <div class="code-block" style="font-size: 0.85rem;">
-<pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> lockdown, Warrant, Pattern, Keypair
+                        <pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> lockdown, Warrant, Pattern, Keypair
 
 <span class="comment"># Decorate your tool functions with @lockdown</span>
 <span class="decorator">@lockdown</span>(<span class="keyword">tool</span>=<span class="string">"read_file"</span>,
@@ -688,10 +708,12 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                     </div>
                 </div>
 
-                <div style="background: var(--bg-card-alt); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px;">
-                    <h4 style="color: var(--accent-cyan); margin-bottom: 16px; font-size: 1.1rem;">Step 2: Create LangChain Tools</h4>
+                <div
+                    style="background: var(--bg-card-alt); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px;">
+                    <h4 style="color: var(--accent-cyan); margin-bottom: 16px; font-size: 1.1rem;">Step 2: Create
+                        LangChain Tools</h4>
                     <div class="code-block" style="font-size: 0.85rem;">
-<pre><span class="keyword">from</span> langchain.tools <span class="keyword">import</span> Tool
+                        <pre><span class="keyword">from</span> langchain.tools <span class="keyword">import</span> Tool
 <span class="keyword">from</span> langchain.agents <span class="keyword">import</span> AgentExecutor, create_openai_tools_agent
 <span class="keyword">from</span> langchain_openai <span class="keyword">import</span> ChatOpenAI
 
@@ -711,22 +733,25 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                     </div>
                 </div>
 
-                <div style="background: var(--bg-card-alt); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px;">
-                    <h4 style="color: var(--accent-cyan); margin-bottom: 16px; font-size: 1.1rem;">Step 3: Create Warrant and Set in Context</h4>
+                <div
+                    style="background: var(--bg-card-alt); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px;">
+                    <h4 style="color: var(--accent-cyan); margin-bottom: 16px; font-size: 1.1rem;">Step 3: Create
+                        Warrant and Set in Context</h4>
                     <div class="code-block" style="font-size: 0.85rem;">
-<pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> set_warrant_context
+                        <pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> set_warrant_context
 
 <span class="comment"># Create warrant (in production, from control plane)</span>
 <span class="type">keypair</span> = <span class="function">Keypair.generate</span>()
-<span class="type">warrant</span> = <span class="function">Warrant.create</span>(
+<span class="type">warrant</span> = <span class="function">Warrant.issue</span>(
     <span class="keyword">tool</span>=<span class="string">"read_file"</span>,
     <span class="keyword">constraints</span>={<span class="string">"file_path"</span>: <span class="function">Pattern</span>(<span class="string">"/tmp/*"</span>)},  <span class="comment"># Only /tmp/ files</span>
     <span class="keyword">ttl_seconds</span>=<span class="number">3600</span>,
-    <span class="keyword">keypair</span>=<span class="type">keypair</span>
+    <span class="keyword">keypair</span>=<span class="type">keypair</span>,
+    <span class="keyword">holder</span>=<span class="type">keypair.public_key()</span>
 )
 
 <span class="comment"># Set warrant in context before running agent</span>
-<span class="keyword">with</span> <span class="function">set_warrant_context</span>(<span class="type">warrant</span>):
+<span class="keyword">with</span> <span class="function">set_warrant_context</span>(<span class="type">warrant</span>), <span class="function">set_keypair_context</span>(<span class="type">keypair</span>):
     <span class="comment"># All @lockdown functions will use this warrant</span>
     <span class="type">response</span> = <span class="type">agent_executor</span>.<span class="function">invoke</span>({
         <span class="string">"input"</span>: <span class="string">"Read the file /tmp/data.txt"</span>
@@ -735,12 +760,16 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                     </div>
                 </div>
 
-                <div style="background: linear-gradient(135deg, rgba(0, 255, 136, 0.1), rgba(0, 212, 255, 0.1)); border: 2px solid var(--accent-green); border-radius: 12px; padding: 24px; margin-top: 24px;">
-                    <p style="color: var(--text-primary); text-align: center; font-size: 1.1rem; font-weight: 600; margin: 0;">
-                        ✅ That's it! All tool calls are now automatically protected. No changes to your tool code needed.
+                <div
+                    style="background: linear-gradient(135deg, rgba(0, 255, 136, 0.1), rgba(0, 212, 255, 0.1)); border: 2px solid var(--accent-green); border-radius: 12px; padding: 24px; margin-top: 24px;">
+                    <p
+                        style="color: var(--text-primary); text-align: center; font-size: 1.1rem; font-weight: 600; margin: 0;">
+                        ✅ That's it! All tool calls are now automatically protected. No changes to your tool code
+                        needed.
                     </p>
                     <p style="color: var(--text-secondary); text-align: center; margin-top: 12px; font-size: 0.9rem;">
-                        The <code style="color: var(--accent-cyan);">@lockdown</code> decorator handles authorization automatically.
+                        The <code style="color: var(--accent-cyan);">@lockdown</code> decorator handles authorization
+                        automatically.
                         If the agent tries to access unauthorized files, Tenuo blocks it instantly.
                     </p>
                 </div>
@@ -756,5 +785,5 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
         </footer>
     </div>
 </body>
-</html>
 
+</html>

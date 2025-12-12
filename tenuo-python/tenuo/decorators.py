@@ -308,7 +308,8 @@ def lockdown(
             )
             
             # Check authorization (with PoP signature if required)
-            if not warrant_to_use.authorize(tool_name, auth_args, signature=pop_signature):
+            # Note: pop_signature is list[int], must convert to bytes
+            if not warrant_to_use.authorize(tool_name, auth_args, signature=bytes(pop_signature)):
                 # Log authorization failure
                 audit_logger.log(AuditEvent(
                     event_type=AuditEventType.AUTHORIZATION_FAILURE,

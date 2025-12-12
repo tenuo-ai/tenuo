@@ -343,6 +343,7 @@
                 <div class="sidebar-links">
                     <a href="#introduction" class="sidebar-link">Introduction</a>
                     <a href="#quick-start" class="sidebar-link">Quick Start</a>
+                    <a href="#cli-usage" class="sidebar-link">CLI Usage</a>
                     <a href="#demo" class="sidebar-link">Demo</a>
                 </div>
             </div>
@@ -476,14 +477,15 @@ keypair = Keypair.generate()
 
 # Create a warrant that authorizes "manage_infrastructure" tool
 # with constraints: cluster must match "staging-*" pattern, budget max $10,000
-warrant = Warrant.create(
+warrant = Warrant.issue(
     tool="manage_infrastructure",
+    keypair=keypair,  # Sign the warrant with the issuer's keypair
+    holder=keypair.public_key(),  # Bind to self initially
     constraints={
         "cluster": Pattern("staging-*"),  # Glob pattern: matches staging-web, staging-db, etc.
         "budget": Range.max_value(10000.0)  # Maximum budget of $10,000
     },
-    ttl_seconds=3600,  # Warrant expires in 1 hour
-    keypair=keypair  # Sign the warrant with the issuer's keypair
+    ttl_seconds=3600  # Warrant expires in 1 hour
 )</code></pre>
             </div>
 
@@ -514,12 +516,15 @@ worker_warrant = warrant.attenuate(
             <div class="code-block">
                 <button class="copy-button" onclick="copyCode(this)">Copy</button>
                 <pre><code># Check if the worker can perform this action
+# Create PoP signature first
+args = {"cluster": "staging-web", "budget": 500.0}
+pop_sig = worker_warrant.create_pop_signature(worker_keypair, "manage_infrastructure", args)
+
+# Check if the worker can perform this action
 authorized = worker_warrant.authorize(
     tool="manage_infrastructure",  # Must match the warrant's tool
-    args={
-        "cluster": "staging-web",  # Must match Exact("staging-web")
-        "budget": 500.0  # Must be ≤ 1000.0 (within Range.max_value(1000.0))
-    }
+    args=args,
+    signature=bytes(pop_sig)
 )
 print(f"Authorized: {authorized}")  # True - all constraints satisfied</code></pre>
             </div>
@@ -536,11 +541,12 @@ print(f"Authorized: {authorized}")  # True - all constraints satisfied</code></p
                 <pre><code>from tenuo import lockdown, Warrant, Pattern
 
 # Create a warrant (as shown in step 1 above)
-warrant = Warrant.create(
+warrant = Warrant.issue(
     tool="upgrade_cluster",
+    keypair=keypair,
+    holder=keypair.public_key(),
     constraints={"cluster": Pattern("staging-*")},
-    ttl_seconds=3600,
-    keypair=keypair
+    ttl_seconds=3600
 )
 
 # Decorate your function with the warrant
@@ -569,7 +575,7 @@ def upgrade_cluster(cluster: str, budget: float):
 
 # In your request handler (e.g., FastAPI route or LangChain callback):
 # Set the warrant in context once, use it throughout the request
-with set_warrant_context(warrant):
+with set_warrant_context(warrant), set_keypair_context(keypair):
     # All @lockdown functions in this context use the warrant
     upgrade_cluster(cluster="staging-web", budget=5000.0)
     # Context automatically cleans up when the 'with' block exits</code></pre>
@@ -583,7 +589,7 @@ with set_warrant_context(warrant):
 tenuo-core = "0.1"</code></pre>
 
             <p><strong>1. Create a warrant</strong></p>
-            <pre><code>use tenuo_core::{Keypair, Warrant, Pattern, Range};
+            <pre><code>use tenuo_core::{Keypair, Warrant, Pattern, Range, Exact};
 use std::time::Duration;
 
 let keypair = Keypair::generate();
@@ -615,83 +621,66 @@ let sig = worker_warrant.create_pop_signature(
 
 authorizer.authorize(&chain, "manage_infrastructure", &args, Some(&sig), &[])?;</code></pre>
 
-            <p>Install the Python SDK:</p>
-            <pre><code>pip install tenuo</code></pre>
 
-            <p><strong>1. Create a warrant</strong></p>
-            <pre><code>from tenuo import Keypair, Warrant, Pattern, Range
-
-keypair = Keypair.generate()
-warrant = Warrant.create(
-    tool="manage_infrastructure",
-    constraints={
-        "cluster": Pattern("staging-*"),
-        "budget": Range.max_value(10000.0)
-    },
-    ttl_seconds=3600,
-    keypair=keypair
-)</code></pre>
-
-            <p><strong>2. Attenuate and delegate</strong></p>
-            <pre><code>from tenuo import Exact
-
-worker_keypair = Keypair.generate()
-worker_warrant = warrant.attenuate(
-    constraints={
-        "cluster": Exact("staging-web"),
-        "budget": Range.max_value(1000.0)
-    },
-    keypair=worker_keypair
-)</code></pre>
-
-            <p><strong>3. Authorize an action</strong></p>
-            <pre><code>authorized = worker_warrant.authorize(
-    tool="manage_infrastructure",
-    args={"cluster": "staging-web", "budget": 500.0}
-)
-print(f"Authorized: {authorized}")  # True</code></pre>
-
-            <h3 id="python-decorators">Decorators & ContextVar</h3>
-            <p>The Python SDK includes a <code>@lockdown</code> decorator with ContextVar support for LangChain/FastAPI:
-            </p>
-
-            <p><strong>Explicit warrant pattern:</strong></p>
-            <pre><code>from tenuo import lockdown, Warrant, Pattern
-
-warrant = Warrant.create(
-    tool="upgrade_cluster",
-    constraints={"cluster": Pattern("staging-*")},
-    ttl_seconds=3600,
-    keypair=keypair
-)
-
-@lockdown(warrant, tool="upgrade_cluster")
-def upgrade_cluster(cluster: str, budget: float):
-    # This function can only be called if the warrant authorizes it
-    print(f"Upgrading {cluster} with budget {budget}")
-    # ... implementation</code></pre>
-
-            <p><strong>ContextVar pattern (LangChain/FastAPI):</strong></p>
-            <pre><code>from tenuo import lockdown, set_warrant_context
-
-# Set warrant in context (e.g., in FastAPI middleware or LangChain callback)
-@lockdown(tool="upgrade_cluster")  # No explicit warrant - uses context
-def upgrade_cluster(cluster: str, budget: float):
-    # Warrant is automatically retrieved from context
-    print(f"Upgrading {cluster} with budget {budget}")
-
-# In your request handler:
-with set_warrant_context(warrant):
-    upgrade_cluster(cluster="staging-web", budget=5000.0)</code></pre>
-
-            <p>See <a href="../../tenuo-python/">tenuo-python/README.md</a> for full documentation and examples.</p>
 
             <h3>Rust</h3>
 
+            <h2 id="cli-usage">CLI Usage</h2>
+            <p>
+                Tenuo provides a CLI for managing keys and warrants. This is useful for debugging, manual testing, and
+                scripting.
+            </p>
+
+            <p><strong>1. Generate Keys</strong></p>
+            <pre><code># Generate a keypair for the issuer (root)
+tenuo keygen --out root.pem
+
+# Generate a keypair for the worker
+tenuo keygen --out worker.pem</code></pre>
+
+            <p><strong>2. Issue a Root Warrant</strong></p>
+            <pre><code># Issue a warrant for "manage_infrastructure"
+# Constraints: cluster must match "staging-*", budget max 10000
+tenuo issue \
+  --tool manage_infrastructure \
+  --signing-key root.pem \
+  --constraint "cluster=pattern:staging-*" \
+  --constraint "budget=range:..10000" \
+  --ttl 3600 \
+  --out root.warrant</code></pre>
+
+            <p><strong>3. Attenuate (Delegate)</strong></p>
+            <pre><code># Delegate to worker with narrower constraints
+# Constraints: cluster must be exactly "staging-web"
+tenuo attenuate \
+  --warrant root.warrant \
+  --signing-key root.pem \
+  --holder worker.pem \
+  --constraint "cluster=exact:staging-web" \
+  --out worker.warrant</code></pre>
+
+            <p><strong>4. Inspect</strong></p>
+            <pre><code># View the warrant details and delegation chain
+tenuo inspect worker.warrant</code></pre>
+
             <h2 id="demo">Demo</h2>
             <p>
-                See the full flow in action with Docker:
+                The Tenuo demo simulates a real-world agent delegation flow using Docker containers. It demonstrates how
+                capabilities are attenuated and enforced across service boundaries.
             </p>
+
+            <h3>The Scenario</h3>
+            <ol>
+                <li><strong>Control Plane (Root):</strong> Issues a broad warrant (budget $10k, all staging clusters) to
+                    an Orchestrator.</li>
+                <li><strong>Orchestrator:</strong> Attenuates the warrant (budget $1k, only "staging-web") and delegates
+                    it to a specific Worker.</li>
+                <li><strong>Worker:</strong> Attempts to perform actions. It must sign requests with its private key
+                    (Proof-of-Possession).</li>
+                <li><strong>Enforcement:</strong> The system validates the entire chain and the worker's signature.</li>
+            </ol>
+
+            <h3>Run it</h3>
             <pre><code>docker compose up orchestrator worker</code></pre>
             <p>
                 <a href="../demo-infographic.html">View the interactive infographic →</a>

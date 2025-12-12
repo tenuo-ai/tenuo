@@ -70,7 +70,7 @@ required-features = ["data-plane"]
 # ============================================================================
 [dependencies]
 # Cryptography
-ed25519-dalek = { version = "2.1", features = ["rand_core", "serde", "batch"] }
+ed25519-dalek = { version = "2.1", features = ["rand_core", "serde", "batch", "pkcs8"] }
 rand = "0.8"
 sha2 = "0.10"
 
@@ -114,7 +114,7 @@ uuid = { version = "1.6", features = ["v4", "v7", "serde"] }
 # Python bindings (optional)
 # Note: extension-module is only for the final Python package, not for library dependencies
 # abi3-py38 allows building without linking Python at compile time
-pyo3 = { version = "0.22", features = ["abi3-py38"], optional = true }
+pyo3 = { version = "0.22", features = ["abi3-py38", "macros"], optional = true }
 
 # Server dependencies (optional)
 tokio = { version = "1.35", features = ["full"], optional = true }

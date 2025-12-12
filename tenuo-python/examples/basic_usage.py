@@ -24,14 +24,15 @@ def main():
     
     # 2. Create a root warrant with constraints
     print("2. Creating root warrant...")
-    root_warrant = Warrant.create(
+    root_warrant = Warrant.issue(
         tool="manage_infrastructure",
         constraints={
             "cluster": Pattern("staging-*"),
             "budget": Range.max_value(10000.0)
         },
         ttl_seconds=3600,
-        keypair=control_keypair
+        keypair=control_keypair,
+        holder=control_keypair.public_key() # Bind to control plane initially
     )
     print(f"   Tool: {root_warrant.tool}")
     print(f"   Depth: {root_warrant.depth}")
@@ -44,7 +45,8 @@ def main():
             "cluster": Exact("staging-web"),
             "budget": Range.max_value(1000.0)
         },
-        keypair=worker_keypair
+        keypair=control_keypair, # Signed by parent (Control Plane)
+        holder=worker_keypair.public_key() # Bound to worker
     )
     print(f"   Worker tool: {worker_warrant.tool}")
     print(f"   Worker depth: {worker_warrant.depth} (attenuated)")
@@ -53,26 +55,33 @@ def main():
     # 4. Test authorization
     print("4. Testing authorization...")
     
+    # Helper to authorize with PoP
+    def check_auth(warrant, tool, args, keypair):
+        # Create Proof-of-Possession signature
+        signature = warrant.create_pop_signature(keypair, tool, args)
+        # Note: signature is returned as list[int], must convert to bytes
+        return warrant.authorize(tool, args, bytes(signature))
+
     # Allowed: matches constraints
-    test1 = worker_warrant.authorize(
-        tool="manage_infrastructure",
-        args={"cluster": "staging-web", "budget": 500.0}
-    )
-    print(f"   ✓ Allowed: cluster=staging-web, budget=500.0 -> {test1}")
+    args1 = {"cluster": "staging-web", "budget": 500.0}
+    if check_auth(worker_warrant, "manage_infrastructure", args1, worker_keypair):
+        print(f"   ✓ Allowed: cluster=staging-web, budget=500.0 -> True")
+    else:
+        print(f"   ✗ Allowed: cluster=staging-web, budget=500.0 -> False (Unexpected)")
     
     # Denied: budget too high
-    test2 = worker_warrant.authorize(
-        tool="manage_infrastructure",
-        args={"cluster": "staging-web", "budget": 2000.0}
-    )
-    print(f"   ✗ Denied: cluster=staging-web, budget=2000.0 -> {test2}")
+    args2 = {"cluster": "staging-web", "budget": 2000.0}
+    if not check_auth(worker_warrant, "manage_infrastructure", args2, worker_keypair):
+        print(f"   ✓ Denied: cluster=staging-web, budget=2000.0 -> False")
+    else:
+        print(f"   ✗ Denied: cluster=staging-web, budget=2000.0 -> True (Unexpected)")
     
     # Denied: wrong cluster
-    test3 = worker_warrant.authorize(
-        tool="manage_infrastructure",
-        args={"cluster": "production-web", "budget": 500.0}
-    )
-    print(f"   ✗ Denied: cluster=production-web, budget=500.0 -> {test3}")
+    args3 = {"cluster": "production-web", "budget": 500.0}
+    if not check_auth(worker_warrant, "manage_infrastructure", args3, worker_keypair):
+        print(f"   ✓ Denied: cluster=production-web, budget=500.0 -> False")
+    else:
+        print(f"   ✗ Denied: cluster=production-web, budget=500.0 -> True (Unexpected)")
     print()
     
     # 5. Serialize warrant

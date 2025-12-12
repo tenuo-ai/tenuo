@@ -39,12 +39,12 @@ python basic_usage.py
 python decorator_example.py
 python context_pattern.py
 
-# LangChain examples (requires: pip install langchain langchain-openai)
+# LangChain examples (requires: pip install langchain langchain-openai langchain-community)
 python langchain_simple.py
 python langchain_integration.py
 python langchain_protect_tools.py
 
-# MCP example (requires MCP server setup)
+# MCP example (uses local config file, no external server needed)
 python mcp_integration.py
 
 # Kubernetes example (simulation, no actual K8s needed)

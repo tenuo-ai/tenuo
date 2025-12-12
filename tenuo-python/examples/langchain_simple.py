@@ -15,7 +15,7 @@ Requirements:
 
 from tenuo import (
     Keypair, Warrant, Pattern,
-    lockdown, set_warrant_context, AuthorizationError
+    lockdown, set_warrant_context, set_keypair_context, AuthorizationError
 )
 
 # Try to import LangChain
@@ -75,11 +75,12 @@ def main():
         # SIMULATION: Create warrant with hardcoded constraints
         # HARDCODED: Pattern("/tmp/*"), ttl_seconds=3600
         # In production: Constraints come from policy engine or configuration
-        warrant = Warrant.create(
+        warrant = Warrant.issue(
             tool="read_file",
             constraints={"file_path": Pattern("/tmp/*")},  # HARDCODED: Only /tmp/ for demo safety
             ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            keypair=keypair
+            keypair=keypair,
+            holder=keypair.public_key() # Bind to self for demo
         )
         print("   ✓ Warrant created: only /tmp/* files allowed\n")
     except Exception as e:
@@ -95,7 +96,7 @@ def main():
         
         # Show it works without LangChain
         try:
-            with set_warrant_context(warrant):
+            with set_warrant_context(warrant), set_keypair_context(keypair):
                 # Test authorized access
                 # HARDCODED PATH: /tmp/test.txt for demo
                 try:
@@ -126,6 +127,40 @@ def main():
         print("\nAll tool calls are automatically protected!")
         return
     
+    # ========================================================================
+    # STEP 2.5: Check for OpenAI API Key
+    # ========================================================================
+    import os
+    if not os.getenv("OPENAI_API_KEY"):
+        print("⚠ OPENAI_API_KEY not set. Running in simulation mode (no LLM)...\n")
+        
+        # Show it works without LangChain/LLM
+        try:
+            with set_warrant_context(warrant), set_keypair_context(keypair):
+                # Test authorized access
+                try:
+                    result = read_file("/tmp/test.txt")
+                    print(f"   ✓ read_file('/tmp/test.txt'): Allowed")
+                except AuthorizationError as e:
+                    print(f"   ✗ Unexpected authorization error: {e}")
+                except Exception as e:
+                    print(f"   ✗ Unexpected error: {e}")
+                
+                # Test blocked access
+                try:
+                    read_file("/etc/passwd")
+                    print("   ✗ Should have been blocked!")
+                except AuthorizationError as e:
+                    print(f"   ✓ read_file('/etc/passwd'): Blocked ({str(e)[:50]}...)\n")
+                except Exception as e:
+                    print(f"   ✗ Unexpected error (not AuthorizationError): {e}\n")
+        except Exception as e:
+            print(f"   ✗ Error in protection test: {e}\n")
+            
+        print("To run full LangChain agent example:")
+        print("  export OPENAI_API_KEY='your-key-here'")
+        return
+
     # ========================================================================
     # STEP 3: Create LangChain Tools (REAL CODE - Production-ready)
     # ========================================================================
@@ -174,7 +209,7 @@ def main():
     
     # Set warrant in context and run agent
     try:
-        with set_warrant_context(warrant):
+        with set_warrant_context(warrant), set_keypair_context(keypair):
             # This should work - file is in /tmp/
             try:
                 response = executor.invoke({

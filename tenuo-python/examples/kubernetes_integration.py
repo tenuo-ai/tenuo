@@ -190,11 +190,12 @@ class ControlPlane:
         Returns:
             Warrant object
         """
-        return Warrant.create(
+        return Warrant.issue(
             tool="agent_tools",  # HARDCODED: General tool name. In production, use config.
             constraints=constraints,
             ttl_seconds=ttl_seconds,  # HARDCODED default: 3600. In production, use env var or config.
-            keypair=self.keypair
+            keypair=self.keypair,
+            holder=self.keypair.public_key() # Bind to self for demo
         )
     
     def issue_warrant_for_request(
@@ -216,11 +217,12 @@ class ControlPlane:
             "tenant": Pattern(request_metadata.get("tenant", "*")),
         }
         
-        return Warrant.create(
+        return Warrant.issue(
             tool="agent_tools",
             constraints=constraints,
             ttl_seconds=ttl_seconds,
-            keypair=self.keypair
+            keypair=self.keypair,
+            holder=self.keypair.public_key() # Bind to self for demo
         )
 
 
@@ -334,7 +336,11 @@ async def tenuo_middleware(request: Request, call_next):
         raise HTTPException(status_code=403, detail="No warrant available")
     
     # Set warrant in context for this request
-    with set_warrant_context(warrant):
+    # In production, load agent keypair from secure storage
+    # with set_warrant_context(warrant), set_keypair_context(agent_keypair):
+    # For demo, we assume agent_keypair is available globally or loaded
+    # with set_warrant_context(warrant), set_keypair_context(agent_keypair): # Simplified for middleware demo
+    with set_warrant_context(warrant): # WARNING: This will fail PoP check if keypair not set!
         response = await call_next(request)
         return response
 
@@ -482,13 +488,14 @@ def main():
         # In production: Constraints come from policy engine, agent registration, or configuration
         # HARDCODED: tool="read_file", Pattern("/tmp/*"), ttl_seconds=3600
         # In production: Use env vars or config for these values
-        agent_warrant = Warrant.create(
+        agent_warrant = Warrant.issue(
             tool="read_file",  # Match the tool name used in @lockdown decorator
             constraints={
                 "file_path": Pattern("/tmp/*"),  # HARDCODED: Only /tmp/ files for demo safety
             },
             ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            keypair=control_keypair
+            keypair=control_keypair,
+            holder=control_keypair.public_key() # Bind to self for demo
         )
         print(f"   ✓ Warrant issued (ID: {agent_warrant.id[:8]}...)")
         print(f"   ✓ Constraints: file_path=/tmp/*\n")
@@ -568,7 +575,7 @@ def main():
     # ========================================================================
     print("5. Testing protection with loaded warrant...")
     try:
-        with set_warrant_context(agent_warrant):
+        with set_warrant_context(agent_warrant), set_keypair_context(control_keypair):
             # Test authorized access
             # HARDCODED PATH: /tmp/test.txt for demo
             # In production: Use tempfile or env-specified test directory

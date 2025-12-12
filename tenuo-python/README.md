@@ -36,14 +36,15 @@ from tenuo import Keypair, Warrant, Pattern, Exact, Range
 keypair = Keypair.generate()
 
 # Issue a warrant with constraints
-warrant = Warrant.create(
+warrant = Warrant.issue(
     tool="manage_infrastructure",
     constraints={
         "cluster": Pattern("staging-*"),
         "budget": Range.max_value(10000.0)
     },
     ttl_seconds=3600,
-    keypair=keypair
+    keypair=keypair,
+    holder=keypair.public_key()  # Bind to self initially
 )
 
 # Attenuate for a worker (capabilities shrink)
@@ -53,13 +54,23 @@ worker_warrant = warrant.attenuate(
         "cluster": Exact("staging-web"),
         "budget": Range.max_value(1000.0)
     },
-    keypair=worker_keypair
+    keypair=keypair,  # Parent signs the attenuation
+    holder=worker_keypair.public_key()  # Bind to worker
 )
 
-# Authorize an action
+# Authorize an action (requires Proof-of-Possession)
+# Note: For most use cases, use @lockdown decorator which handles PoP automatically.
+# This manual approach is shown for understanding the underlying mechanism.
+# 1. Create a PoP signature using the worker's private key
+args = {"cluster": "staging-web", "budget": 500.0}
+pop_signature = worker_warrant.create_pop_signature(worker_keypair, "manage_infrastructure", args)
+
+# 2. Authorize with the signature
+# Note: signature must be converted to bytes
 authorized = worker_warrant.authorize(
     tool="manage_infrastructure",
-    args={"cluster": "staging-web", "budget": 500.0}
+    args=args,
+    signature=bytes(pop_signature)
 )
 print(f"Authorized: {authorized}")  # True
 ```
@@ -94,11 +105,12 @@ Use the `@lockdown` decorator to enforce authorization. It supports two patterns
 ```python
 from tenuo import lockdown, Warrant, Pattern, Range
 
-warrant = Warrant.create(
+warrant = Warrant.issue(
     tool="upgrade_cluster",
     constraints={"cluster": Pattern("staging-*")},
     ttl_seconds=3600,
-    keypair=keypair
+    keypair=keypair,
+    holder=keypair.public_key()
 )
 
 @lockdown(warrant, tool="upgrade_cluster")
@@ -110,7 +122,7 @@ def upgrade_cluster(cluster: str, budget: float):
 
 **ContextVar pattern (LangChain/FastAPI):**
 ```python
-from tenuo import lockdown, set_warrant_context
+from tenuo import lockdown, set_warrant_context, set_keypair_context
 
 # Set warrant in context (e.g., in FastAPI middleware or LangChain callback)
 @lockdown(tool="upgrade_cluster")  # No explicit warrant - uses context
@@ -119,7 +131,8 @@ def upgrade_cluster(cluster: str, budget: float):
     print(f"Upgrading {cluster} with budget {budget}")
 
 # In your request handler:
-with set_warrant_context(warrant):
+# Set BOTH warrant and keypair in context (required for PoP)
+with set_warrant_context(warrant), set_keypair_context(keypair):
     upgrade_cluster(cluster="staging-web", budget=5000.0)
 ```
 
@@ -133,7 +146,9 @@ Pythonic exceptions for better error handling:
 from tenuo import TenuoError, AuthorizationError, WarrantError
 
 try:
-    warrant.authorize("tool", args)
+    # Create PoP signature first
+    pop_sig = warrant.create_pop_signature(keypair, "tool", args)
+    warrant.authorize("tool", args, signature=bytes(pop_sig))
 except AuthorizationError as e:
     print(f"Authorization failed: {e}")
 ```
@@ -149,7 +164,7 @@ Tenuo integrates seamlessly with LangChain agents and tools. The key pattern is 
 ### Simple Example
 
 ```python
-from tenuo import Keypair, Warrant, Pattern, lockdown, set_warrant_context
+from tenuo import Keypair, Warrant, Pattern, lockdown, set_warrant_context, set_keypair_context
 from langchain.tools import Tool
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_openai import ChatOpenAI
@@ -163,11 +178,12 @@ def read_file(file_path: str) -> str:
 
 # 2. Create warrant that restricts access
 keypair = Keypair.generate()
-warrant = Warrant.create(
+warrant = Warrant.issue(
     tool="read_file",
     constraints={"file_path": Pattern("/tmp/*")},  # Only /tmp/ files
     ttl_seconds=3600,
-    keypair=keypair
+    keypair=keypair,
+    holder=keypair.public_key()
 )
 
 # 3. Create LangChain tools and agent
@@ -177,7 +193,8 @@ agent = create_openai_tools_agent(llm, tools)
 executor = AgentExecutor(agent=agent, tools=tools)
 
 # 4. Run agent with warrant protection
-with set_warrant_context(warrant):
+# Set BOTH warrant and keypair in context (required for PoP)
+with set_warrant_context(warrant), set_keypair_context(keypair):
     response = executor.invoke({"input": "Read /tmp/test.txt"})
     # Agent can only access files matching Pattern("/tmp/*")
 ```
@@ -192,6 +209,16 @@ For tools you don't own (e.g., from `langchain_community`), use `protect_tools()
 from tenuo.langchain import protect_tools
 from langchain_community.tools import DuckDuckGoSearchRun
 
+# Create warrant and keypair first
+keypair = Keypair.generate()
+warrant = Warrant.issue(
+    tool="search",
+    keypair=keypair,
+    holder=keypair.public_key(),
+    constraints={"query": Pattern("*")},  # Or specific constraints
+    ttl_seconds=3600
+)
+
 # Wrap tools at setup time
 secure_tools = protect_tools(
     tools=[DuckDuckGoSearchRun()],
@@ -201,6 +228,7 @@ secure_tools = protect_tools(
 ```
 
 See `examples/langchain_protect_tools.py` for a complete example.
+
 ## MCP Integration
 
 Tenuo provides native support for the [Model Context Protocol](https://modelcontextprotocol.io):
@@ -217,8 +245,8 @@ arguments = {"path": "/var/log/app.log", "maxSize": 1024}
 result = compiled.extract_constraints("filesystem_read", arguments)
 
 # Authorize (with warrant chain and PoP signature)
-warrant = Warrant.from_base64(warrant_chain_base64)
-authorized = warrant.authorize("filesystem_read", result.constraints)
+# See examples/mcp_integration.py for complete PoP signature handling
+# The example demonstrates how to create the PoP signature and authorize the request
 ```
 
 See `examples/mcp_integration.py` for a complete example.
@@ -265,7 +293,7 @@ python examples/mcp_integration.py
 - **[Website](https://tenuo.github.io/tenuo/)**: Landing page and guides
 - **[CLI Specification](../docs/cli-spec.md)**: Complete CLI reference
 - **[Rust API](https://docs.rs/tenuo-core)**: Full Rust API documentation
-- **[Examples](examples/)**: Python usage examples
+- **[Examples](examples/README.md)**: Python usage examples with learning path
 
 
 ## License

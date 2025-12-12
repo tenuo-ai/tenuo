@@ -10,25 +10,35 @@ It is a cryptographically verifiable, offline authorization engine for AI Agents
 [![PyPI](https://img.shields.io/pypi/v/tenuo.svg)](https://pypi.org/project/tenuo/)
 [![Docs](https://docs.rs/tenuo-core/badge.svg)](https://docs.rs/tenuo-core)
 
-## The 5-Second Hook
-
-Stop your agent from deleting production data with one line of code.
-
+## Quick Start
+ 
+Protect your agent's tools with a single decorator.
+ 
 **Python**
-
+ 
 ```python
-from tenuo import lockdown
+from tenuo import Keypair, Warrant, Pattern, lockdown, set_warrant_context, set_keypair_context
 
-# 1. Protect dangerous tools
+# 1. Setup (normally done by control plane)
+keypair = Keypair.generate()
+warrant = Warrant.issue(
+    tool="delete_database",
+    keypair=keypair,
+    holder=keypair.public_key(),
+    constraints={"db_name": Pattern("test-*")},
+    ttl_seconds=300,
+)
+
+# 2. Protect tools
 @lockdown(tool="delete_database")
 def delete_database(db_name: str, reason: str):
     print(f"Deleting {db_name}...")
 
-# 2. Your Agent Logic
-# If the agent tries to call this without a valid Warrant for 'prod',
-# Tenuo blocks it instantly (Offline).
-delete_database(db_name="prod", reason="hallucinated")
-# ❌ PermissionError: Tenuo Authorization Failed: 'db_name' constraint violation
+# 3. Execute with authorization
+# Keypair required to sign the PoP challenge (proving you own the warrant)
+with set_warrant_context(warrant), set_keypair_context(keypair):
+    delete_database(db_name="test-users", reason="cleanup")  # ✅ Allowed
+    # delete_database(db_name="prod", reason="oops")         # ❌ Blocked (AuthorizationError)
 ```
 
 ## Installation
@@ -95,15 +105,26 @@ Warrants can only **shrink** when delegated: a $1000 budget becomes $500, access
 Perfect for LangChain, AutoGPT, and CrewAI tools.
 
 ```python
-from tenuo import Warrant, Pattern, set_warrant_context, lockdown
+from tenuo import Warrant, Keypair, Pattern, set_warrant_context, set_keypair_context, lockdown
 
-# Generate worker keypair
+# Generate keys
+root_keypair = Keypair.generate()
 worker_keypair = Keypair.generate()
 
-# Create a restricted warrant for a sub-agent
+# Issue a root warrant (Control Plane)
+root_warrant = Warrant.issue(
+    tool="delete_database",
+    keypair=root_keypair,
+    holder=root_keypair.public_key(),
+    constraints={"db_name": Pattern("*")},
+    ttl_seconds=3600
+)
+
+# Create a restricted warrant for a sub-agent (Orchestrator)
 worker_warrant = root_warrant.attenuate(
     constraints={"db_name": Pattern("test-*")},
-    keypair=worker_keypair
+    holder=worker_keypair.public_key(),
+    keypair=root_keypair  # Parent signs the attenuation
 )
 
 # Use with ContextVar (LangChain/FastAPI)
@@ -112,7 +133,8 @@ def delete_database(db_name: str, reason: str):
     # Warrant retrieved from context automatically
     print(f"Deleting {db_name}...")
 
-with set_warrant_context(worker_warrant):
+# Set BOTH warrant and keypair in context (required for PoP)
+with set_warrant_context(worker_warrant), set_keypair_context(worker_keypair):
     delete_database(db_name="test-users", reason="cleanup")
     # ✅ Authorized: matches Pattern("test-*")
 ```
@@ -123,6 +145,38 @@ with set_warrant_context(worker_warrant):
 - Pythonic exceptions and error handling
 
 See [tenuo-python/README.md](tenuo-python/README.md) and [examples](tenuo-python/examples/) for full documentation and examples.
+
+### CLI Usage (The Manual Way)
+
+Manage keys and issue warrants directly from your terminal.
+
+```bash
+# 1. Generate keys
+tenuo keygen issuer
+tenuo keygen agent
+
+# 2. Issue a root warrant (Control Plane)
+WARRANT=$(tenuo issue \
+    --signing-key issuer.key \
+    --holder agent.pub \
+    --tool "read_file" \
+    --constraint "path=pattern:/data/*" \
+    --ttl 1h \
+    --quiet)
+
+# 3. Attenuate for a worker (Orchestrator)
+WORKER_WARRANT=$(echo "$WARRANT" | tenuo attenuate - \
+    --signing-key agent.key \
+    --holder worker.pub \
+    --constraint "path=exact:/data/readme.md" \
+    --ttl 10m \
+    --quiet)
+
+# 4. Inspect the chain
+echo "$WORKER_WARRANT" | tenuo inspect - --chain
+```
+
+See the [CLI Specification](docs/cli-spec.md) for full reference.
 
 ### Rust Core (The Performance Way)
 
@@ -143,14 +197,14 @@ let keypair = Keypair::generate();
 let warrant = Warrant::builder()
     .tool("manage_infrastructure")
     .constraint("cluster", Pattern::new("staging-*")?)
-    .constraint("budget", Range::max(10000.0))
+    .constraint("budget", Range::max(10000.0))  // Note: Rust uses max(), Python uses max_value()
     .ttl(Duration::from_secs(3600))
     .build(&keypair)?;
 
 // Attenuate for a worker (capabilities shrink)
 let worker_warrant = warrant.attenuate()
     .constraint("cluster", Exact::new("staging-web"))
-    .constraint("budget", Range::max(1000.0))
+    .constraint("budget", Range::max(1000.0))  // Note: Rust uses max(), Python uses max_value()
     .authorized_holder(worker_keypair.public_key())
     .build(&keypair)?;
 ```
@@ -183,11 +237,16 @@ This demonstrates the complete flow: warrant issuance, attenuation, delegation, 
 | **Monotonic attenuation** | Capabilities only shrink, never expand |
 | **Offline verification** | No network calls, ~25μs latency |
 | **Holder binding** | Warrants bound to keys, stolen tokens useless |
-| **Multi-sig approvals** | M-of-N approval for sensitive actions |
-| **Cascading revocation** | Surgical (one warrant) or nuclear (entire agent swarm) |
 | **Depth limits** | Configurable delegation depth (max 64) |
 | **Audit logging** | SIEM-compatible structured JSON events for all authorization decisions |
 | **MCP integration** | Native support for Model Context Protocol (AI agent tool calling) |
+
+## Roadmap
+
+The following features are implemented in the core engine but not yet fully exposed in the CLI or Python SDK:
+
+- **Multi-sig approvals**: M-of-N approval for sensitive actions
+- **Cascading revocation**: Surgical (one warrant) or nuclear (entire agent swarm) revocation
 
 ## MCP (Model Context Protocol) Integration
 

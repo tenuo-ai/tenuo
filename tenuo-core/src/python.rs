@@ -7,6 +7,7 @@
 
 use crate::constraints::{
     CelConstraint, Constraint, ConstraintValue, Exact, OneOf, Pattern, Range,
+    NotOneOf, Contains, Subset, All, Any, Not,
 };
 use crate::crypto::{Keypair as RustKeypair, PublicKey as RustPublicKey, Signature as RustSignature};
 use crate::warrant::Warrant as RustWarrant;
@@ -89,6 +90,168 @@ impl PyOneOf {
 
     fn __repr__(&self) -> String {
         format!("OneOf({:?})", self.inner.values)
+    }
+}
+
+/// Python wrapper for NotOneOf constraint.
+#[pyclass(name = "NotOneOf")]
+#[derive(Clone)]
+pub struct PyNotOneOf {
+    inner: NotOneOf,
+}
+
+#[pymethods]
+impl PyNotOneOf {
+    #[new]
+    fn new(values: Vec<String>) -> Self {
+        Self {
+            inner: NotOneOf::new(values),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("NotOneOf({:?})", self.inner.excluded)
+    }
+}
+
+/// Python wrapper for Contains constraint.
+#[pyclass(name = "Contains")]
+#[derive(Clone)]
+pub struct PyContains {
+    inner: Contains,
+}
+
+#[pymethods]
+impl PyContains {
+    #[new]
+    fn new(values: Vec<PyObject>) -> PyResult<Self> {
+        let rust_values = Python::with_gil(|py| -> PyResult<Vec<ConstraintValue>> {
+            let mut vec = Vec::new();
+            for obj in values {
+                let bound = obj.into_bound(py);
+                vec.push(py_to_constraint_value(&bound)?);
+            }
+            Ok(vec)
+        })?;
+        Ok(Self {
+            inner: Contains::new(rust_values),
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Contains({:?})", self.inner.required)
+    }
+}
+
+/// Python wrapper for Subset constraint.
+#[pyclass(name = "Subset")]
+#[derive(Clone)]
+pub struct PySubset {
+    inner: Subset,
+}
+
+#[pymethods]
+impl PySubset {
+    #[new]
+    fn new(values: Vec<PyObject>) -> PyResult<Self> {
+        let rust_values = Python::with_gil(|py| -> PyResult<Vec<ConstraintValue>> {
+            let mut vec = Vec::new();
+            for obj in values {
+                let bound = obj.into_bound(py);
+                vec.push(py_to_constraint_value(&bound)?);
+            }
+            Ok(vec)
+        })?;
+        Ok(Self {
+            inner: Subset::new(rust_values),
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Subset({:?})", self.inner.allowed)
+    }
+}
+
+/// Python wrapper for All constraint.
+#[pyclass(name = "All")]
+#[derive(Clone)]
+pub struct PyAll {
+    inner: All,
+}
+
+#[pymethods]
+impl PyAll {
+    #[new]
+    fn new(constraints: Vec<PyObject>) -> PyResult<Self> {
+        let rust_constraints = Python::with_gil(|py| -> PyResult<Vec<Constraint>> {
+            let mut vec = Vec::new();
+            for obj in constraints {
+                let bound = obj.into_bound(py);
+                vec.push(py_to_constraint(&bound)?);
+            }
+            Ok(vec)
+        })?;
+        Ok(Self {
+            inner: All::new(rust_constraints),
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("All(...)")
+    }
+}
+
+/// Python wrapper for AnyOf constraint.
+#[pyclass(name = "AnyOf")]
+#[derive(Clone)]
+pub struct PyAnyOf {
+    inner: Any,
+}
+
+#[pymethods]
+impl PyAnyOf {
+    #[new]
+    fn new(constraints: Vec<PyObject>) -> PyResult<Self> {
+        let rust_constraints = Python::with_gil(|py| -> PyResult<Vec<Constraint>> {
+            let mut vec = Vec::new();
+            for obj in constraints {
+                let bound = obj.into_bound(py);
+                vec.push(py_to_constraint(&bound)?);
+            }
+            Ok(vec)
+        })?;
+        Ok(Self {
+            inner: Any::new(rust_constraints),
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("AnyOf(...)")
+    }
+}
+
+/// Python wrapper for Not constraint.
+#[pyclass(name = "Not")]
+#[derive(Clone)]
+pub struct PyNot {
+    inner: Not,
+}
+
+#[pymethods]
+impl PyNot {
+    #[new]
+    fn new(constraint: PyObject) -> PyResult<Self> {
+        let rust_constraint = Python::with_gil(|py| -> PyResult<Constraint> {
+            let bound = constraint.into_bound(py);
+            py_to_constraint(&bound)
+        })?;
+        Ok(Self {
+            inner: Not::new(rust_constraint),
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Not(...)")
     }
 }
 
@@ -211,6 +374,18 @@ impl PyKeypair {
             inner: self.inner.public_key(),
         }
     }
+
+    /// Create a Keypair from a PEM string.
+    #[staticmethod]
+    fn from_pem(pem: &str) -> PyResult<Self> {
+        let inner = RustKeypair::from_pem(pem).map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    /// Convert the Keypair to a PEM string.
+    fn to_pem(&self) -> String {
+        self.inner.to_pem()
+    }
 }
 
 /// Convert a Python constraint object to a Rust Constraint.
@@ -221,13 +396,25 @@ fn py_to_constraint(obj: &Bound<'_, PyAny>) -> PyResult<Constraint> {
         Ok(Constraint::Exact(e.inner))
     } else if let Ok(o) = obj.extract::<PyOneOf>() {
         Ok(Constraint::OneOf(o.inner))
+    } else if let Ok(n) = obj.extract::<PyNotOneOf>() {
+        Ok(Constraint::NotOneOf(n.inner))
     } else if let Ok(r) = obj.extract::<PyRange>() {
         Ok(Constraint::Range(r.inner))
+    } else if let Ok(c) = obj.extract::<PyContains>() {
+        Ok(Constraint::Contains(c.inner))
+    } else if let Ok(s) = obj.extract::<PySubset>() {
+        Ok(Constraint::Subset(s.inner))
+    } else if let Ok(a) = obj.extract::<PyAll>() {
+        Ok(Constraint::All(a.inner))
+    } else if let Ok(a) = obj.extract::<PyAnyOf>() {
+        Ok(Constraint::Any(a.inner))
+    } else if let Ok(n) = obj.extract::<PyNot>() {
+        Ok(Constraint::Not(n.inner))
     } else if let Ok(c) = obj.extract::<PyCel>() {
         Ok(Constraint::Cel(c.inner))
     } else {
         Err(PyValueError::new_err(
-            "constraint must be Pattern, Exact, OneOf, Range, or CEL",
+            "constraint must be Pattern, Exact, OneOf, NotOneOf, Range, Contains, Subset, All, AnyOf, Not, or CEL",
         ))
     }
 }
@@ -242,33 +429,48 @@ fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
         Ok(ConstraintValue::Float(f))
     } else if let Ok(b) = obj.extract::<bool>() {
         Ok(ConstraintValue::Boolean(b))
+    } else if let Ok(l) = obj.extract::<Vec<PyObject>>() {
+        // Recursively convert list items
+        let py = obj.py();
+        let mut values = Vec::new();
+        for item in l {
+            values.push(py_to_constraint_value(&item.into_bound(py))?);
+        }
+        Ok(ConstraintValue::List(values))
     } else {
-        Err(PyValueError::new_err("value must be str, int, float, or bool"))
+        Err(PyValueError::new_err("value must be str, int, float, bool, or list"))
     }
 }
 
 /// Python wrapper for Warrant.
-#[pyclass(name = "Warrant")]
+#[pyclass(name = "Warrant", subclass)]
 pub struct PyWarrant {
     inner: RustWarrant,
 }
 
 #[pymethods]
 impl PyWarrant {
-    /// Create a new warrant builder.
+    /// Issue a new warrant.
     #[staticmethod]
-    #[pyo3(signature = (tool, constraints=None, ttl_seconds=3600, keypair, session_id=None))]
-    fn create(
+    #[pyo3(signature = (tool, keypair, constraints=None, ttl_seconds=3600, holder=None, session_id=None))]
+    fn issue(
         tool: &str,
+        keypair: &PyKeypair,
         constraints: Option<&Bound<'_, PyDict>>,
         ttl_seconds: u64,
-        keypair: &PyKeypair,
+        holder: Option<&PyPublicKey>,
         session_id: Option<&str>,
     ) -> PyResult<Self> {
         let mut builder = RustWarrant::builder()
             .tool(tool)
-            .ttl(Duration::from_secs(ttl_seconds))
-            .authorized_holder(keypair.inner.public_key());
+            .ttl(Duration::from_secs(ttl_seconds));
+
+        // If holder is provided, use it. Otherwise, default to the issuer (self-signed).
+        if let Some(h) = holder {
+            builder = builder.authorized_holder(h.inner.clone());
+        } else {
+            builder = builder.authorized_holder(keypair.inner.public_key());
+        }
 
         if let Some(sid) = session_id {
             builder = builder.session_id(sid);
@@ -285,6 +487,8 @@ impl PyWarrant {
         let warrant = builder.build(&keypair.inner).map_err(to_py_err)?;
         Ok(Self { inner: warrant })
     }
+
+
 
     /// Get the warrant ID.
     #[getter]
@@ -324,17 +528,22 @@ impl PyWarrant {
     /// Attenuate this warrant with additional constraints.
     ///
     /// Note: session_id is immutable and inherited from the parent warrant.
-    #[pyo3(signature = (constraints, keypair, ttl_seconds=None))]
+    #[pyo3(signature = (constraints, keypair, ttl_seconds=None, holder=None))]
     fn attenuate(
         &self,
         constraints: &Bound<'_, PyDict>,
         keypair: &PyKeypair,
         ttl_seconds: Option<u64>,
+        holder: Option<&PyPublicKey>,
     ) -> PyResult<PyWarrant> {
         let mut builder = self.inner.attenuate();
 
         if let Some(ttl) = ttl_seconds {
             builder = builder.ttl(Duration::from_secs(ttl));
+        }
+
+        if let Some(h) = holder {
+            builder = builder.authorized_holder(h.inner.clone());
         }
 
         for (key, value) in constraints.iter() {
@@ -560,6 +769,45 @@ impl PyPublicKey {
         format!("PublicKey({:02x}{:02x}{:02x}{:02x}...)", 
                 bytes[0], bytes[1], bytes[2], bytes[3])
     }
+
+    /// Create a PublicKey from a PEM string.
+    #[staticmethod]
+    fn from_pem(pem: &str) -> PyResult<Self> {
+        let inner = RustPublicKey::from_pem(pem).map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    /// Convert the PublicKey to a PEM string.
+    fn to_pem(&self) -> String {
+        self.inner.to_pem()
+    }
+}
+
+/// Python wrapper for Signature.
+#[pyclass(name = "Signature")]
+pub struct PySignature {
+    inner: RustSignature,
+}
+
+#[pymethods]
+impl PySignature {
+    #[staticmethod]
+    fn from_bytes(bytes: &[u8]) -> PyResult<Self> {
+        let arr: [u8; 64] = bytes
+            .try_into()
+            .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
+        let inner = RustSignature::from_bytes(&arr).map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        self.inner.to_bytes().to_vec()
+    }
+
+    fn __repr__(&self) -> String {
+        let bytes = self.inner.to_bytes();
+        format!("Signature({:02x}{:02x}...)", bytes[0], bytes[1])
+    }
 }
 
 /// Python wrapper for Authorizer.
@@ -687,11 +935,18 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyOneOf>()?;
     m.add_class::<PyRange>()?;
     m.add_class::<PyCel>()?;
+    m.add_class::<PyNotOneOf>()?;
+    m.add_class::<PyContains>()?;
+    m.add_class::<PySubset>()?;
+    m.add_class::<PyAll>()?;
+    m.add_class::<PyAnyOf>()?;
+    m.add_class::<PyNot>()?;
     m.add_class::<PyKeypair>()?;
     m.add_class::<PyWarrant>()?;
     m.add_class::<PyMcpConfig>()?;
     m.add_class::<PyCompiledMcpConfig>()?;
     m.add_class::<PyPublicKey>()?;
+    m.add_class::<PySignature>()?;
     m.add_class::<PyAuthorizer>()?;
     m.add_class::<PyExtractionResult>()?;
 

@@ -17,6 +17,7 @@ use ed25519_dalek::{
 };
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
+use pkcs8::{DecodePrivateKey, EncodePrivateKey, DecodePublicKey, EncodePublicKey, LineEnding};
 
 /// A keypair for signing warrants.
 #[derive(Debug)]
@@ -65,6 +66,21 @@ impl Keypair {
         prefixed.extend_from_slice(message);
         prefixed
     }
+
+    /// Create a keypair from a PEM string.
+    pub fn from_pem(pem: &str) -> Result<Self> {
+        let signing_key = SigningKey::from_pkcs8_pem(pem)
+            .map_err(|e| Error::CryptoError(format!("Invalid PEM: {}", e)))?;
+        Ok(Self { signing_key })
+    }
+
+    /// Convert the keypair to a PEM string.
+    pub fn to_pem(&self) -> String {
+        self.signing_key
+            .to_pkcs8_pem(LineEnding::LF)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|e| format!("error generating pem: {}", e))
+    }
 }
 
 impl Clone for Keypair {
@@ -100,6 +116,21 @@ impl PublicKey {
         self.verifying_key
             .verify(&prefixed, &signature.inner)
             .map_err(|e| Error::SignatureInvalid(e.to_string()))
+    }
+
+    /// Create a public key from a PEM string.
+    pub fn from_pem(pem: &str) -> Result<Self> {
+        let verifying_key = VerifyingKey::from_public_key_pem(pem)
+            .map_err(|e| Error::CryptoError(format!("Invalid PEM: {}", e)))?;
+        Ok(Self { verifying_key })
+    }
+
+    /// Convert the public key to a PEM string.
+    pub fn to_pem(&self) -> String {
+        self.verifying_key
+            .to_public_key_pem(LineEnding::LF)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|e| format!("error generating pem: {}", e))
     }
 }
 

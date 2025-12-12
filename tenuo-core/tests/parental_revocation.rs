@@ -74,6 +74,7 @@ fn test_unauthorized_revocation() {
     let warrant = Warrant::builder()
         .tool("test_tool")
         .ttl(Duration::from_secs(3600))
+        .authorized_holder(issuer.public_key())
         .build(&issuer)
         .unwrap();
 

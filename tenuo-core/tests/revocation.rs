@@ -26,6 +26,7 @@ fn test_single_warrant_revocation() {
     let warrant = Warrant::builder()
         .tool("test")
         .ttl(Duration::from_secs(600))
+        .authorized_holder(kp.public_key())
         .build(&kp)
         .unwrap();
 
@@ -62,10 +63,11 @@ fn test_chain_revocation_child() {
     let root = Warrant::builder()
         .tool("test")
         .ttl(Duration::from_secs(600))
+        .authorized_holder(child_kp.public_key())
         .build(&root_kp)
         .unwrap();
 
-    let child = root.attenuate().build(&child_kp).unwrap();
+    let child = root.attenuate().authorized_holder(child_kp.public_key()).build(&child_kp).unwrap();
 
     let mut data_plane = DataPlane::new();
     data_plane.trust_issuer("root", root_kp.public_key());
@@ -96,10 +98,11 @@ fn test_chain_revocation_parent_cascades() {
     let root = Warrant::builder()
         .tool("test")
         .ttl(Duration::from_secs(600))
+        .authorized_holder(child_kp.public_key())
         .build(&root_kp)
         .unwrap();
 
-    let child = root.attenuate().build(&child_kp).unwrap();
+    let child = root.attenuate().authorized_holder(child_kp.public_key()).build(&child_kp).unwrap();
 
     let mut data_plane = DataPlane::new();
     data_plane.trust_issuer("root", root_kp.public_key());
@@ -132,12 +135,14 @@ fn test_cascading_revocation_multiple_warrants() {
     let warrant1 = Warrant::builder()
         .tool("test_tool_1")
         .ttl(Duration::from_secs(3600))
+        .authorized_holder(issuer_keypair.public_key())
         .build(&issuer_keypair)
         .unwrap();
 
     let warrant2 = Warrant::builder()
         .tool("test_tool_2")
         .ttl(Duration::from_secs(3600))
+        .authorized_holder(issuer_keypair.public_key())
         .build(&issuer_keypair)
         .unwrap();
 

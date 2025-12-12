@@ -83,14 +83,15 @@ def main():
         # Note: Constraint names must match what MCP config extracts
         # MCP config extracts "max_size" (snake_case), but we'll use "maxSize" (camelCase)
         # In production, ensure warrant constraint names match MCP extraction names
-        warrant = Warrant.create(
+        warrant = Warrant.issue(
             tool="filesystem_read",
             constraints={
                 "path": Pattern("/var/log/*"),  # HARDCODED: Only /var/log/ files for demo
                 "max_size": Range.max_value(1024 * 1024)  # HARDCODED: Match MCP extraction name "max_size"
             },
             ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            keypair=control_keypair
+            keypair=control_keypair,
+            holder=control_keypair.public_key() # Bind to self for demo
         )
         # Note: warrant.tool is a property (getter), not a method
         print(f"   ✓ Warrant created")
@@ -127,9 +128,13 @@ def main():
     # Check if warrant authorizes these constraints
     # Note: constraints_dict already has the correct names from MCP extraction
     try:
+        # Create PoP signature
+        pop_signature = warrant.create_pop_signature(control_keypair, "filesystem_read", constraints_dict)
+        
         authorized = warrant.authorize(
             tool="filesystem_read",
-            args=constraints_dict  # Use extracted constraints directly (names match warrant)
+            args=constraints_dict,  # Use extracted constraints directly (names match warrant)
+            signature=bytes(pop_signature)
         )
         if authorized:
             print(f"   ✓ Warrant authorization: Allowed")
@@ -148,7 +153,7 @@ def main():
         # 4. Constraint satisfaction (all constraints match)
         # Note: check() expects args as a dict - PyO3 automatically converts Python dict to PyDict
         # Note: signature parameter expects bytes (64 bytes) or None for PoP signature
-        authorizer.check(warrant, "filesystem_read", constraints_dict, None)  # None = no PoP signature
+        authorizer.check(warrant, "filesystem_read", constraints_dict, bytes(pop_signature))
         print("   ✓ Full authorization successful (signature + constraints verified)")
     except Exception as e:
         print(f"   ✗ Authorization failed: {e}")
@@ -172,14 +177,15 @@ def demo_without_config(control_keypair):
     
     # Create warrant
     try:
-        warrant = Warrant.create(
+        warrant = Warrant.issue(
             tool="filesystem_read",
             constraints={
                 "path": Pattern("/var/log/*"),
                 "maxSize": Range.max_value(1024 * 1024)
             },
             ttl_seconds=3600,
-            keypair=control_keypair
+            keypair=control_keypair,
+            holder=control_keypair.public_key()
         )
         print(f"✓ Warrant created: {warrant.tool}")
     except Exception as e:
@@ -203,14 +209,15 @@ def demo_without_config(control_keypair):
     
     # Authorize
     try:
-        authorized = warrant.authorize("filesystem_read", extracted_constraints)
+        pop_sig = warrant.create_pop_signature(control_keypair, "filesystem_read", extracted_constraints)
+        authorized = warrant.authorize("filesystem_read", extracted_constraints, bytes(pop_sig))
         print(f"\n✓ Warrant authorization: {authorized}")
         
         # Full authorization with Authorizer
         public_key = control_keypair.public_key()
         authorizer = Authorizer.new(public_key)
         try:
-            authorizer.check(warrant, "filesystem_read", extracted_constraints, None)
+            authorizer.check(warrant, "filesystem_read", extracted_constraints, bytes(pop_sig))
             print("✓ Full authorization (Authorizer.check): Success")
         except Exception as e:
             print(f"✗ Authorizer.check failed: {e}")

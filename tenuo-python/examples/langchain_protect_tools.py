@@ -13,7 +13,7 @@ import os
 from typing import Optional, Type
 from langchain.tools import BaseTool
 from pydantic import BaseModel, Field
-from tenuo import Keypair, Warrant, Pattern, set_warrant_context, AuthorizationError
+from tenuo import Keypair, Warrant, Pattern, set_warrant_context, set_keypair_context, AuthorizationError
 from tenuo.langchain import protect_tools
 
 # -----------------------------------------------------------------------------
@@ -44,13 +44,14 @@ class ThirdPartySearchTool(BaseTool):
 keypair = Keypair.generate()
 
 # Create a warrant that authorizes "search" but only for queries starting with "safe"
-warrant = Warrant.create(
+warrant = Warrant.issue(
     tool="search",
     constraints={
         "query": Pattern("safe*")  # Only allow safe queries
     },
     ttl_seconds=3600,
-    keypair=keypair
+    keypair=keypair,
+    holder=keypair.public_key()
 )
 
 # -----------------------------------------------------------------------------
@@ -62,7 +63,11 @@ original_tool = ThirdPartySearchTool()
 
 # Wrap it with Tenuo protection
 # This applies @lockdown(tool="search") dynamically
-protected_tools = protect_tools([original_tool])
+protected_tools = protect_tools(
+    tools=[original_tool],
+    warrant=warrant,
+    keypair=keypair
+)
 protected_search = protected_tools[0]
 
 # -----------------------------------------------------------------------------
@@ -74,11 +79,12 @@ print(f"Protected tool name: {protected_search.name}")
 print("-" * 40)
 
 # Set the warrant context
-with set_warrant_context(warrant):
+with set_warrant_context(warrant), set_keypair_context(keypair):
     try:
         # Allowed query
         print("Attempting: 'safe query'...")
-        result = protected_search.invoke({"query": "safe query"})
+        # protect_tools returns a callable function, not a BaseTool, so we call it directly
+        result = protected_search(query="safe query")
         print(f"✅ Success: {result}")
     except AuthorizationError as e:
         print(f"❌ Failed: {e}")
@@ -88,7 +94,7 @@ with set_warrant_context(warrant):
     try:
         # Blocked query
         print("Attempting: 'unsafe query'...")
-        result = protected_search.invoke({"query": "unsafe query"})
+        result = protected_search(query="unsafe query")
         print(f"✅ Success: {result}")
     except AuthorizationError as e:
         print(f"❌ Blocked: {e}")

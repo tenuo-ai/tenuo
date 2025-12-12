@@ -16,6 +16,7 @@ Complete API documentation for the Tenuo Python SDK.
 - [MCP Integration](#mcp-integration)
 - [Decorators & Context](#decorators--context)
 - [Exceptions](#exceptions)
+- [Audit Logging](#audit-logging)
 
 ---
 
@@ -35,6 +36,7 @@ from tenuo import Keypair
 |--------|-------------|
 | `Keypair.generate()` | Generate a new random keypair |
 | `Keypair.from_bytes(secret_key: bytes)` | Reconstruct keypair from 32-byte secret key |
+| `Keypair.from_pem(pem: str)` | Create a keypair from a PEM string |
 
 #### Instance Methods
 
@@ -44,6 +46,7 @@ from tenuo import Keypair
 | `public_key_bytes()` | `bytes` | Get public key as bytes (32 bytes) |
 | `secret_key_bytes()` | `bytes` | Get secret key as bytes (32 bytes) ⚠️ |
 | `sign(message: bytes)` | `Signature` | Sign a message |
+| `to_pem()` | `str` | Convert the keypair to a PEM string |
 
 ⚠️ **Security Warning**: `secret_key_bytes()` copies secret material to Python memory. Minimize use.
 
@@ -62,6 +65,7 @@ from tenuo import PublicKey
 | Method | Description |
 |--------|-------------|
 | `PublicKey.from_bytes(data: bytes)` | Create from 32-byte public key |
+| `PublicKey.from_pem(pem: str)` | Create a public key from a PEM string |
 
 #### Instance Methods
 
@@ -69,6 +73,7 @@ from tenuo import PublicKey
 |--------|---------|-------------|
 | `to_bytes()` | `bytes` | Get as 32-byte array |
 | `verify(message: bytes, signature: Signature)` | `bool` | Verify a signature |
+| `to_pem()` | `str` | Convert the public key to a PEM string |
 
 ---
 
@@ -106,18 +111,19 @@ from tenuo import Warrant
 
 | Method | Description |
 |--------|-------------|
-| `Warrant.create(...)` | Create a new root warrant |
+
 | `Warrant.from_base64(s: str)` | Deserialize from base64 |
+| `Warrant.issue(tool: str, constraints: dict, ttl_seconds: int, keypair: Keypair, holder: Optional[PublicKey] = None, session_id: Optional[str] = None)` | Issue a new warrant |
 
-#### `Warrant.create()` Parameters
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `tool` | `str` | Yes | - | Tool name (or `"*"` for wildcard) |
-| `constraints` | `dict[str, Constraint]` | No | `None` | Constraint mappings |
-| `ttl_seconds` | `int` | No | `3600` | Time-to-live in seconds |
-| `keypair` | `Keypair` | Yes | - | Signing keypair |
-| `session_id` | `str` | No | `None` | Session/trace identifier |
+#### `Warrant.issue()` Parameters
+
+- `tool`: The tool name to authorize (or comma-separated list like "search,read_file").
+- `constraints`: A dictionary of constraints.
+- `ttl_seconds`: Time-to-live in seconds.
+- `keypair`: The issuer's keypair.
+- `holder`: (Optional) The public key of the authorized holder. If not provided, defaults to the issuer (self-signed).
+- `session_id`: (Optional) Session ID to bind to.
 
 #### Instance Properties
 
@@ -137,7 +143,7 @@ from tenuo import Warrant
 | `attenuate(...)` | `Warrant` | Create narrower child warrant |
 | `authorize(tool, args, signature?)` | `bool` | Check if action is authorized |
 | `verify(public_key)` | `bool` | Verify signature against issuer |
-| `create_pop_signature(keypair, tool, args)` | `Signature` | Create PoP signature |
+| `create_pop_signature(keypair, tool, args)` | `list[int]` | Create PoP signature (bytes as list of ints) |
 | `to_base64()` | `str` | Serialize to base64 |
 
 #### Example
@@ -145,17 +151,15 @@ from tenuo import Warrant
 ```python
 from tenuo import Warrant, Keypair, Pattern, Exact
 
-# Create root warrant
-root_kp = Keypair.generate()
-agent_kp = Keypair.generate()
-
-root = Warrant.create(
+# Issue a new warrant
+issuer_keypair = Keypair.generate()
+worker_public_key = Keypair.generate().public_key()
+root = Warrant.issue(
     tool="manage_infrastructure",
-    constraints={
-        "cluster": Pattern("staging-*"),
-    },
+    constraints={"cluster": Pattern("staging-*")},
     ttl_seconds=3600,
-    keypair=root_kp,
+    keypair=issuer_keypair,
+    holder=worker_public_key
 )
 
 # Attenuate for sub-agent
@@ -173,7 +177,7 @@ pop_sig = child.create_pop_signature(
 result = child.authorize(
     "manage_infrastructure",
     {"cluster": "staging-web"},
-    signature=pop_sig
+    signature=bytes(pop_sig)
 )
 ```
 
@@ -403,7 +407,7 @@ def read_file(path: str) -> str:
     return open(path).read()
 
 # Use with context
-with set_warrant_context(warrant):
+with set_warrant_context(warrant), set_keypair_context(keypair):
     read_file("/tmp/test.txt")
 ```
 
@@ -420,7 +424,9 @@ from tenuo import (
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `set_warrant_context(warrant)` | Context manager | Set warrant in async-safe context |
+| `set_keypair_context(keypair)` | Context manager | Set keypair in async-safe context |
 | `get_warrant_context()` | `Warrant \| None` | Get current warrant |
+| `get_keypair_context()` | `Keypair \| None` | Get current keypair |
 
 #### Example
 
@@ -429,6 +435,31 @@ with set_warrant_context(warrant), set_keypair_context(keypair):
     # All @lockdown functions use this warrant and keypair
     result = protected_function(arg1, arg2)
 ```
+
+---
+
+## LangChain Integration
+
+### `protect_tools(tools: List[BaseTool], warrant: Optional[Warrant] = None, keypair: Optional[Keypair] = None) -> List[BaseTool]`
+
+Wrap a list of LangChain tools with Tenuo protection.
+
+- `tools`: List of tools to protect.
+- `warrant`: (Optional) Warrant to use. If not provided, must be set in context.
+- `keypair`: (Optional) Keypair for PoP. If not provided, must be set in context.
+
+Returns a new list of protected tools.
+
+```python
+from tenuo.langchain import protect_tools
+from langchain_community.tools import DuckDuckGoSearchRun
+
+protected = protect_tools([DuckDuckGoSearchRun()])
+```
+
+### `protect_tool(tool: BaseTool, warrant: Optional[Warrant] = None, keypair: Optional[Keypair] = None) -> BaseTool`
+
+Wrap a single LangChain tool.
 
 ---
 
@@ -457,6 +488,51 @@ except AuthorizationError as e:
     print(f"Authorization failed: {e}")
 except WarrantError as e:
     print(f"Warrant error: {e}")
+```
+
+---
+
+## Audit Logging
+
+Structured audit logging for authorization events.
+
+```python
+from tenuo import audit_logger, AuditEventType, AuditEvent
+```
+
+### `audit_logger`
+
+Singleton logger instance.
+
+#### Methods
+
+| Method | Description |
+|--------|-------------|
+| `configure(service_name: str, output_file: Optional[str] = None)` | Configure the logger |
+| `log(event: AuditEvent)` | Log a raw audit event |
+| `log_authorization_success(warrant_id, tool, constraints, ...)` | Log success event |
+| `log_authorization_failure(warrant_id, tool, constraints, error_code, ...)` | Log failure event |
+
+### `AuditEventType`
+
+Enum for event types:
+- `AUTHORIZATION_SUCCESS`
+- `AUTHORIZATION_FAILURE`
+- `WARRANT_CREATED`
+- `WARRANT_ATTENUATED`
+- `WARRANT_EXPIRED`
+- `POP_FAILED`
+
+### Example
+
+```python
+audit_logger.configure(service_name="payment-service")
+
+audit_logger.log_authorization_success(
+    warrant_id="wrt_123",
+    tool="process_payment",
+    constraints={"amount": 100.0}
+)
 ```
 
 ---

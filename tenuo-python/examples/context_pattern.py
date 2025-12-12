@@ -8,7 +8,7 @@ automatically used by all @lockdown-decorated functions in the call stack.
 
 from tenuo import (
     Keypair, Warrant, Pattern, Range,
-    lockdown, set_warrant_context, AuthorizationError
+    lockdown, set_warrant_context, set_keypair_context, AuthorizationError
 )
 
 
@@ -55,14 +55,15 @@ def main():
         # SIMULATION: Create warrant with hardcoded constraints
         # HARDCODED: Pattern("staging-*"), Range.max_value(10000.0), ttl_seconds=3600
         # In production: Constraints come from policy engine or configuration
-        warrant = Warrant.create(
+        warrant = Warrant.issue(
             tool="upgrade_cluster",  # Note: functions can use different tools
             constraints={
                 "cluster": Pattern("staging-*"),  # HARDCODED: Only staging clusters for demo
                 "budget": Range.max_value(10000.0)  # HARDCODED: $10k max budget for demo
             },
             ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            keypair=keypair
+            keypair=keypair,
+            holder=keypair.public_key() # Bind to self
         )
     except Exception as e:
         print(f"✗ Error creating warrant: {e}")
@@ -73,7 +74,7 @@ def main():
     # ========================================================================
     print("1. Setting warrant in context and processing request...")
     try:
-        with set_warrant_context(warrant):
+        with set_warrant_context(warrant), set_keypair_context(keypair):
             # All @lockdown functions in this context will use the warrant
             # HARDCODED VALUES: cluster="staging-web", budget=5000.0, action="restart"
             # In production: These come from request parameters
@@ -103,7 +104,8 @@ def main():
                     return await call_next(request)
         """
         try:
-            with set_warrant_context(request_warrant):
+            # In production, keypair would also be loaded (e.g. agent identity)
+            with set_warrant_context(request_warrant), set_keypair_context(keypair):
                 # Process the request - all protected functions use context warrant
                 # HARDCODED VALUES: cluster="staging-web", budget=3000.0
                 upgrade_cluster(cluster="staging-web", budget=3000.0)
@@ -134,20 +136,22 @@ def main():
     
     # Pattern 4: Nested contexts (context inheritance)
     print("4. Testing nested contexts...")
-    warrant1 = Warrant.create(
+    warrant1 = Warrant.issue(
         tool="upgrade_cluster",
         constraints={"cluster": Pattern("staging-*")},
         ttl_seconds=3600,
-        keypair=keypair
+        keypair=keypair,
+        holder=keypair.public_key()
     )
-    warrant2 = Warrant.create(
+    warrant2 = Warrant.issue(
         tool="upgrade_cluster",
         constraints={"cluster": Pattern("production-*")},
         ttl_seconds=3600,
-        keypair=keypair
+        keypair=keypair,
+        holder=keypair.public_key()
     )
     
-    with set_warrant_context(warrant1):
+    with set_warrant_context(warrant1), set_keypair_context(keypair):
         print("   Outer context: staging-*")
         upgrade_cluster(cluster="staging-web", budget=5000.0)
         

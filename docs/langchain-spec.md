@@ -23,7 +23,7 @@ pip install tenuo
 
 ## Quick Start
 ```python
-from tenuo import Keypair, Warrant, Pattern, lockdown, set_warrant_context
+from tenuo import Keypair, Warrant, Pattern, lockdown, set_warrant_context, set_keypair_context
 
 # 1. Define a protected tool
 @lockdown(tool="read_file")
@@ -34,15 +34,16 @@ def read_file(file_path: str) -> str:
 
 # 2. Create keypair and warrant
 keypair = Keypair.generate()
-warrant = Warrant.create(
+warrant = Warrant.issue(
     tool="read_file",
+    keypair=keypair,
+    holder=keypair.public_key(),
     constraints={"file_path": Pattern("/tmp/*")},
-    ttl_seconds=3600,
-    keypair=keypair
+    ttl_seconds=3600
 )
 
 # 3. Execute with warrant context
-with set_warrant_context(warrant):
+with set_warrant_context(warrant), set_keypair_context(keypair):
     content = read_file("/tmp/test.txt")  # ✅ Authorized
     content = read_file("/etc/passwd")    # ❌ Blocked by constraint
 ```
@@ -58,11 +59,14 @@ from tenuo import Keypair
 # 1. Generate keys using CLI
 # $ tenuo keygen --out agent.key
 
-# 2. Load raw bytes in Python
-with open("agent.key", "rb") as f:
-    secret_bytes = f.read()
+# 2. Load keys (PEM format recommended)
+with open("agent.key", "r") as f:
+    keypair = Keypair.from_pem(f.read())
 
-keypair = Keypair.from_bytes(secret_bytes)
+# Or load raw bytes
+# with open("agent.key", "rb") as f:
+#     secret_bytes = f.read()
+# keypair = Keypair.from_bytes(secret_bytes)
 ```
 
 Warrants issued by the CLI can be loaded:
@@ -138,8 +142,8 @@ agent = create_openai_tools_agent(llm, protected_tools)
 
 Sets the active warrant and keypair for the current execution context.
 ```python
-with set_warrant_context(warrant):
-    # All @lockdown calls use this warrant
+with set_warrant_context(warrant), set_keypair_context(keypair):
+    # All @lockdown calls use this warrant and keypair
     protected_function()
 ```
 
@@ -162,7 +166,7 @@ with set_warrant_context(warrant):
 from langchain.tools import Tool
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_openai import ChatOpenAI
-from tenuo import Keypair, Warrant, Pattern, lockdown, set_warrant_context
+from tenuo import Keypair, Warrant, Pattern, lockdown, set_warrant_context, set_keypair_context
 
 # Protected tools
 @lockdown(tool="search")
@@ -176,11 +180,12 @@ def read_file(path: str) -> str:
 
 # Warrant setup
 keypair = Keypair.generate()
-warrant = Warrant.create(
+warrant = Warrant.issue(
     tool="read_file",
+    keypair=keypair,
+    holder=keypair.public_key(),
     constraints={"file_path": Pattern("/tmp/*")},
-    ttl_seconds=3600,
-    keypair=keypair
+    ttl_seconds=3600
 )
 
 # LangChain setup
@@ -193,7 +198,7 @@ agent = create_openai_tools_agent(llm, tools)
 executor = AgentExecutor(agent=agent, tools=tools)
 
 # Run with protection
-with set_warrant_context(warrant):
+with set_warrant_context(warrant), set_keypair_context(keypair):
     response = executor.invoke({"input": "Search for Q3 results"})
 ```
 
@@ -204,7 +209,7 @@ with set_warrant_context(warrant):
 from tenuo import AuthorizationError
 
 try:
-    with set_warrant_context(warrant):
+    with set_warrant_context(warrant), set_keypair_context(keypair):
         read_file("/etc/passwd")
 except AuthorizationError as e:
     print(f"Authorization failed: {e}")

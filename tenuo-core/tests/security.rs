@@ -38,6 +38,7 @@ fn test_duplicate_approvals_rejected() {
             approver_2.public_key(),
         ])
         .min_approvals(2)
+        .authorized_holder(root_key.public_key())
         .build(&root_key)
         .unwrap();
 
@@ -77,11 +78,12 @@ fn test_duplicate_approvals_rejected() {
     // Submit SAME approval twice
     let approvals = vec![approval.clone(), approval.clone()];
 
+    let sig = warrant.create_pop_signature(&root_key, "critical_op", &args).unwrap();
     let result = authorizer.authorize(
         &warrant,
         "critical_op",
         &args,
-        None,
+        Some(&sig),
         &approvals
     );
 
