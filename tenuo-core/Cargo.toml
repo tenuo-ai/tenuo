@@ -124,6 +124,11 @@ tower = { version = "0.4", optional = true }
 # CLI dependencies
 clap = { version = "4.4", features = ["derive", "env"] }
 hex = "0.4"
+pem = "3.0"
+pkcs8 = { version = "0.10", features = ["alloc"] }
+spki = { version = "0.7", features = ["alloc"] }
+der = "0.7"
+humantime = "2.1"
 
 [dev-dependencies]
 proptest = "1.4"
