@@ -369,7 +369,7 @@
 
             <h2 id="quick-start">Quick Start</h2>
             
-            <h3>Rust</h3>
+            <h3>Python</h3>
             <p>Add to your Rust project:</p>
             <pre><code>[dependencies]
 tenuo-core = "0.1"</code></pre>
@@ -407,13 +407,8 @@ let sig = worker_warrant.create_pop_signature(
 
 authorizer.authorize(&chain, "manage_infrastructure", &args, Some(&sig), &[])?;</code></pre>
 
-            <h3>Python</h3>
             <p>Install the Python SDK:</p>
             <pre><code>pip install tenuo</code></pre>
-            <p>Or from source:</p>
-            <pre><code>pip install maturin
-cd tenuo-python
-maturin develop</code></pre>
 
             <p><strong>1. Create a warrant</strong></p>
             <pre><code>from tenuo import Keypair, Warrant, Pattern, Range
@@ -441,7 +436,7 @@ worker_warrant = warrant.attenuate(
     keypair=worker_keypair
 )</code></pre>
 
-            <p><strong>3. Authorize</strong></p>
+            <p><strong>3. Authorize an action</strong></p>
             <pre><code>authorized = worker_warrant.authorize(
     tool="manage_infrastructure",
     args={"cluster": "staging-web", "budget": 500.0}
@@ -450,18 +445,39 @@ print(f"Authorized: {authorized}")  # True</code></pre>
 
             <h3 id="python-decorators">Decorators & ContextVar</h3>
             <p>The Python SDK includes a <code>@lockdown</code> decorator with ContextVar support for LangChain/FastAPI:</p>
+
+            <p><strong>Explicit warrant pattern:</strong></p>
+            <pre><code>from tenuo import lockdown, Warrant, Pattern
+
+warrant = Warrant.create(
+    tool="upgrade_cluster",
+    constraints={"cluster": Pattern("staging-*")},
+    ttl_seconds=3600,
+    keypair=keypair
+)
+
+@lockdown(warrant, tool="upgrade_cluster")
+def upgrade_cluster(cluster: str, budget: float):
+    # This function can only be called if the warrant authorizes it
+    print(f"Upgrading {cluster} with budget {budget}")
+    # ... implementation</code></pre>
+
+            <p><strong>ContextVar pattern (LangChain/FastAPI):</strong></p>
             <pre><code>from tenuo import lockdown, set_warrant_context
 
-# ContextVar pattern (LangChain/FastAPI)
-@lockdown(tool="upgrade_cluster")
+# Set warrant in context (e.g., in FastAPI middleware or LangChain callback)
+@lockdown(tool="upgrade_cluster")  # No explicit warrant - uses context
 def upgrade_cluster(cluster: str, budget: float):
-    # Warrant retrieved from context
-    print(f"Upgrading {cluster}")
+    # Warrant is automatically retrieved from context
+    print(f"Upgrading {cluster} with budget {budget}")
 
-# Set warrant in context (e.g., FastAPI middleware)
+# In your request handler:
 with set_warrant_context(warrant):
     upgrade_cluster(cluster="staging-web", budget=5000.0)</code></pre>
-            <p>See <a href="../../tenuo-python/">tenuo-python</a> for full documentation and examples.</p>
+
+            <p>See <a href="../../tenuo-python/">tenuo-python/README.md</a> for full documentation and examples.</p>
+
+            <h3>Rust</h3>
 
             <h2 id="demo">Demo</h2>
             <p>
