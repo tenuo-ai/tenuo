@@ -38,6 +38,7 @@ dev = [
     "types-PyYAML",
     "types-requests",
     "langchain",
+    "langchain-core",
     "langchain-openai",
     "fastapi",
     "uvicorn",

@@ -282,7 +282,7 @@ def protect_tool(
 
 
 def protect_tools(
-    tools: List[Callable],
+    tools: List[Any],
     warrant: Warrant,
     keypair: Keypair,  # REQUIRED - PoP is mandatory
     config: Optional[Union[str, dict, LangChainConfig]] = None

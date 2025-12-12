@@ -10,7 +10,7 @@ Scenario:
 """
 
 from typing import Type
-from langchain.tools import BaseTool
+from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 from tenuo import Keypair, Warrant, Pattern, set_warrant_context, set_keypair_context, AuthorizationError
 from tenuo.langchain import protect_tools
