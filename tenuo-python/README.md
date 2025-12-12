@@ -371,8 +371,8 @@ See [`examples/mcp_integration.py`](../examples/mcp_integration.py) for MCP exam
 Run the examples to see Tenuo in action:
 
 ```bash
-# Basic usage (warrant creation, attenuation, PoP)
-python examples/basic_usage.py
+# Security demo - START HERE (prompt injection, TTL, PoP, delegation)
+python examples/secure_agent_demo.py
 
 # All constraint types (Pattern, Exact, Range, OneOf, CEL)
 python examples/constraints.py
@@ -386,7 +386,7 @@ python examples/human_in_the_loop.py
 # LangChain integration (protect_tools pattern)
 python examples/langchain_integration.py
 
-# LangGraph integration (SecureGraph with dynamic constraints)
+# LangGraph integration (SecureGraph with attack demo)
 python examples/secure_graph_example.py
 
 # Control plane implementation (FastAPI service)

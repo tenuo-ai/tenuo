@@ -22,7 +22,7 @@ use crate::revocation_manager::RevocationManager as RustRevocationManager;
 use crate::extraction::RequestContext;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyType};
 use std::collections::{HashMap, BTreeMap};
 use std::sync::Arc;
 use std::time::Duration;
@@ -401,7 +401,7 @@ impl PyNot {
 }
 
 /// Python wrapper for Keypair.
-#[pyclass(name = "Keypair")]
+#[pyclass(module = "tenuo", name = "Keypair")]
 pub struct PyKeypair {
     inner: RustKeypair,
 }
@@ -409,9 +409,19 @@ pub struct PyKeypair {
 #[pymethods]
 impl PyKeypair {
     #[new]
-    fn new() -> Self {
-        Self {
-            inner: RustKeypair::generate(),
+    #[pyo3(signature = (bytes=None))]
+    fn new(bytes: Option<Vec<u8>>) -> PyResult<Self> {
+        if let Some(b) = bytes {
+             let arr: [u8; 32] = b
+                .try_into()
+                .map_err(|_| PyValueError::new_err("secret key must be exactly 32 bytes"))?;
+            Ok(Self {
+                inner: RustKeypair::from_bytes(&arr),
+            })
+        } else {
+            Ok(Self {
+                inner: RustKeypair::generate(),
+            })
         }
     }
 
@@ -474,6 +484,13 @@ impl PyKeypair {
         PySignature {
             inner: self.inner.sign(message),
         }
+    }
+
+    /// Pickle support using __reduce__.
+    fn __reduce__<'a>(slf: &Bound<'a, Self>) -> PyResult<(Bound<'a, PyType>, (Vec<u8>,))> {
+        let bytes = slf.borrow().inner.secret_key_bytes().to_vec();
+        let cls = slf.get_type().clone();
+        Ok((cls, (bytes,)))
     }
 }
 
@@ -547,7 +564,7 @@ fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
 }
 
 /// Python wrapper for Warrant.
-#[pyclass(name = "Warrant")]
+#[pyclass(module = "tenuo", name = "Warrant")]
 #[derive(Clone)]
 pub struct PyWarrant {
     inner: RustWarrant,
@@ -561,33 +578,33 @@ impl PyWarrant {
     ///     tool: Tool name this warrant authorizes
     ///     constraints: Dictionary of constraint_name -> Constraint object
     ///     ttl_seconds: Time-to-live in seconds
-    ///     keypair: Keypair to sign the warrant
+    ///     keypair: Keypair to sign the warrant (issuer)
+    ///     authorized_holder: Public key of the authorized holder - REQUIRED for PoP
     ///     session_id: Optional session identifier
-    ///     authorized_holder: Optional public key - if set, holder must prove possession (PoP)
     ///     required_approvers: Optional list of public keys that must approve actions
     ///     min_approvals: Optional minimum number of approvals required (M-of-N)
+    /// 
+    /// Note: Proof-of-Possession (PoP) is MANDATORY. The authorized_holder must be
+    /// specified to ensure leaked warrants are useless without the private key.
     #[staticmethod]
-    #[pyo3(signature = (tool, constraints, ttl_seconds, keypair, session_id=None, authorized_holder=None, required_approvers=None, min_approvals=None))]
+    #[pyo3(signature = (tool, constraints, ttl_seconds, keypair, authorized_holder, session_id=None, required_approvers=None, min_approvals=None))]
     fn create(
         tool: &str,
         constraints: &Bound<'_, PyDict>,
         ttl_seconds: u64,
         keypair: &PyKeypair,
+        authorized_holder: &PyPublicKey,  // REQUIRED - PoP is mandatory
         session_id: Option<&str>,
-        authorized_holder: Option<&PyPublicKey>,
         required_approvers: Option<Vec<PyPublicKey>>,
         min_approvals: Option<u32>,
     ) -> PyResult<Self> {
         let mut builder = RustWarrant::builder()
             .tool(tool)
-            .ttl(Duration::from_secs(ttl_seconds));
+            .ttl(Duration::from_secs(ttl_seconds))
+            .authorized_holder(authorized_holder.inner.clone());  // Always set
 
         if let Some(sid) = session_id {
             builder = builder.session_id(sid);
-        }
-
-        if let Some(holder) = authorized_holder {
-            builder = builder.authorized_holder(holder.inner.clone());
         }
 
         if let Some(approvers) = required_approvers {
@@ -809,6 +826,20 @@ impl PyWarrant {
         Ok(Self { inner })
     }
 
+    /// Constructor for pickling (reconstructs from bytes).
+    #[new]
+    fn new(state: Vec<u8>) -> PyResult<Self> {
+        let inner = wire::decode(&state).map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    /// Pickle support using __reduce__.
+    fn __reduce__<'a>(slf: &Bound<'a, Self>) -> PyResult<(Bound<'a, PyType>, (Vec<u8>,))> {
+        let state = wire::encode(&slf.borrow().inner).map_err(to_py_err)?;
+        let cls = slf.get_type().clone();
+        Ok((cls, (state,)))
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "Warrant(id='{}', tool='{}', depth={})",
@@ -910,7 +941,7 @@ impl PyExtractionResult {
 }
 
 /// Python wrapper for PublicKey.
-#[pyclass(name = "PublicKey")]
+#[pyclass(module = "tenuo", name = "PublicKey")]
 #[derive(Clone)]
 pub struct PyPublicKey {
     inner: RustPublicKey,
@@ -959,10 +990,27 @@ impl PyPublicKey {
     fn verify(&self, message: &[u8], signature: &PySignature) -> bool {
         self.inner.verify(message, &signature.inner).is_ok()
     }
+
+    /// Constructor for pickling.
+    #[new]
+    fn new(bytes: Vec<u8>) -> PyResult<Self> {
+        let arr: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| PyValueError::new_err("public key must be exactly 32 bytes"))?;
+        let inner = RustPublicKey::from_bytes(&arr).map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    /// Pickle support using __reduce__.
+    fn __reduce__<'a>(slf: &Bound<'a, Self>) -> PyResult<(Bound<'a, PyType>, (Vec<u8>,))> {
+        let bytes = slf.borrow().inner.to_bytes().to_vec();
+        let cls = slf.get_type().clone();
+        Ok((cls, (bytes,)))
+    }
 }
 
 /// Python wrapper for Signature.
-#[pyclass(name = "Signature")]
+#[pyclass(module = "tenuo", name = "Signature")]
 #[derive(Clone)]
 pub struct PySignature {
     inner: RustSignature,
@@ -987,6 +1035,23 @@ impl PySignature {
         let bytes = self.inner.to_bytes();
         format!("Signature({:02x}{:02x}{:02x}{:02x}...)", 
                 bytes[0], bytes[1], bytes[2], bytes[3])
+    }
+
+    /// Constructor for pickling.
+    #[new]
+    fn new(bytes: Vec<u8>) -> PyResult<Self> {
+        let arr: [u8; 64] = bytes
+            .try_into()
+            .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
+        let inner = RustSignature::from_bytes(&arr).map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    /// Pickle support using __reduce__.
+    fn __reduce__<'a>(slf: &Bound<'a, Self>) -> PyResult<(Bound<'a, PyType>, (Vec<u8>,))> {
+        let bytes = slf.borrow().inner.to_bytes().to_vec();
+        let cls = slf.get_type().clone();
+        Ok((cls, (bytes,)))
     }
 }
 

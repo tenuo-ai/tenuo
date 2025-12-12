@@ -18,9 +18,14 @@ use ed25519_dalek::{
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 
+use zeroize::{Zeroize, ZeroizeOnDrop};
+
 /// A keypair for signing warrants.
-#[derive(Debug)]
+#[derive(Debug, Zeroize, ZeroizeOnDrop)]
 pub struct Keypair {
+    #[zeroize(skip)] // SigningKey handles its own zeroization usually, but we check dalek docs. 
+    // Actually ed25519-dalek's SigningKey implements ZeroizeOnDrop itself.
+    // However, to be safe and explicit with our wrapper:
     signing_key: SigningKey,
 }
 

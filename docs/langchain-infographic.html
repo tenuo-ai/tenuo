@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Tenuo + LangChain Integration</title>
+    <title>Tenuo + LangChain/LangGraph Integration</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
         
@@ -23,11 +23,7 @@
             --border: #1e293b;
         }
         
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         
         body {
             font-family: 'Space Grotesk', sans-serif;
@@ -40,10 +36,7 @@
         body::before {
             content: '';
             position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
+            top: 0; left: 0; right: 0; bottom: 0;
             background: 
                 radial-gradient(circle at 10% 20%, rgba(168, 85, 247, 0.08) 0%, transparent 50%),
                 radial-gradient(circle at 90% 80%, rgba(0, 212, 255, 0.08) 0%, transparent 50%),
@@ -53,21 +46,20 @@
         }
         
         .container {
-            max-width: 1600px;
+            max-width: 1400px;
             margin: 0 auto;
             padding: 40px 20px;
             position: relative;
             z-index: 1;
         }
         
-        /* Header */
         header {
             text-align: center;
             margin-bottom: 48px;
         }
         
         .logo {
-            font-size: 3.5rem;
+            font-size: 3rem;
             font-weight: 700;
             background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
             -webkit-background-clip: text;
@@ -77,7 +69,7 @@
         }
         
         .tagline {
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             color: var(--text-secondary);
             margin-bottom: 16px;
         }
@@ -90,672 +82,636 @@
             line-height: 1.6;
         }
         
-        /* Flow diagram */
-        .flow-diagram {
-            display: flex;
-            flex-direction: column;
-            gap: 32px;
-            margin: 48px 0;
+        /* Section headers */
+        .section-title {
+            font-size: 1.75rem;
+            font-weight: 600;
+            margin: 48px 0 24px;
+            text-align: center;
         }
         
-        .flow-step {
+        .section-subtitle {
+            text-align: center;
+            color: var(--text-muted);
+            margin-bottom: 32px;
+        }
+        
+        /* Pattern cards */
+        .pattern-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 24px;
+            margin-bottom: 48px;
+        }
+        
+        @media (max-width: 900px) {
+            .pattern-grid { grid-template-columns: 1fr; }
+        }
+        
+        .pattern-card {
             background: var(--bg-card);
-            border: 1px solid var(--border);
+            border: 2px solid var(--border);
             border-radius: 16px;
-            padding: 32px;
-            position: relative;
+            padding: 28px;
             transition: all 0.3s ease;
         }
         
-        .flow-step:hover {
-            border-color: var(--accent-cyan);
-            transform: translateY(-2px);
-            box-shadow: 0 8px 32px rgba(0, 212, 255, 0.1);
+        .pattern-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 40px rgba(0, 212, 255, 0.1);
         }
         
-        .step-header {
+        .pattern-card.recommended {
+            border-color: var(--accent-green);
+        }
+        
+        .pattern-header {
             display: flex;
             align-items: center;
             gap: 16px;
             margin-bottom: 20px;
         }
         
-        .step-number {
-            width: 48px;
-            height: 48px;
-            border-radius: 50%;
+        .pattern-icon {
+            width: 56px;
+            height: 56px;
+            border-radius: 12px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-weight: 700;
-            font-size: 1.25rem;
+            font-size: 1.5rem;
             flex-shrink: 0;
         }
         
-        .step-number.user {
-            background: rgba(59, 130, 246, 0.2);
-            border: 2px solid #3b82f6;
-            color: #3b82f6;
+        .pattern-icon.single {
+            background: linear-gradient(135deg, var(--accent-cyan), #0891b2);
         }
         
-        .step-number.langchain {
-            background: rgba(0, 212, 255, 0.2);
-            border: 2px solid var(--accent-cyan);
-            color: var(--accent-cyan);
+        .pattern-icon.multi {
+            background: linear-gradient(135deg, var(--accent-purple), #7c3aed);
         }
         
-        .step-number.tenuo {
-            background: rgba(168, 85, 247, 0.2);
-            border: 2px solid var(--accent-purple);
-            color: var(--accent-purple);
-        }
-        
-        .step-number.tool {
-            background: rgba(0, 255, 136, 0.2);
-            border: 2px solid var(--accent-green);
-            color: var(--accent-green);
-        }
-        
-        .step-title {
-            font-size: 1.5rem;
+        .pattern-title {
+            font-size: 1.3rem;
             font-weight: 600;
-            color: var(--text-primary);
         }
         
-        .step-subtitle {
+        .pattern-subtitle {
             font-size: 0.9rem;
-            color: var(--text-secondary);
+            color: var(--text-muted);
             margin-top: 4px;
         }
         
-        .step-content {
-            margin-top: 20px;
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
         
+        .badge.recommended {
+            background: rgba(0, 255, 136, 0.2);
+            color: var(--accent-green);
+            border: 1px solid var(--accent-green);
+        }
+        
+        .badge.advanced {
+            background: rgba(168, 85, 247, 0.2);
+            color: var(--accent-purple);
+            border: 1px solid var(--accent-purple);
+        }
+        
+        /* Code blocks */
         .code-block {
             background: var(--bg-card-alt);
             border: 1px solid var(--border);
             border-radius: 8px;
-            padding: 20px;
+            padding: 16px;
             margin: 16px 0;
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.875rem;
+            font-size: 0.8rem;
             line-height: 1.6;
             overflow-x: auto;
-            position: relative;
         }
         
-        .code-block pre {
-            margin: 0;
-            padding: 0;
-            white-space: pre-wrap;
-            word-wrap: break-word;
+        .code-block pre { margin: 0; white-space: pre-wrap; }
+        .code-block .keyword { color: var(--accent-purple); font-weight: 600; }
+        .code-block .string { color: var(--accent-green); }
+        .code-block .comment { color: var(--text-muted); font-style: italic; }
+        .code-block .function { color: var(--accent-cyan); }
+        .code-block .type { color: var(--accent-yellow); }
+        .code-block .highlight { background: rgba(0, 212, 255, 0.2); padding: 2px 4px; border-radius: 3px; }
+        
+        /* Feature list */
+        .features {
+            list-style: none;
+            margin: 16px 0;
         }
         
-        .code-block .keyword {
-            color: var(--accent-purple);
-            font-weight: 600;
-        }
-        
-        .code-block .string {
-            color: var(--accent-green);
-        }
-        
-        .code-block .comment {
-            color: var(--text-muted);
-            font-style: italic;
-        }
-        
-        .code-block .decorator {
-            color: var(--accent-cyan);
-            font-weight: 600;
-        }
-        
-        .code-block .function {
-            color: var(--accent-cyan);
-        }
-        
-        .code-block .type {
-            color: var(--accent-yellow);
-        }
-        
-        .code-block .number {
-            color: var(--accent-orange);
-        }
-        
-        /* Arrow connector */
-        .arrow {
-            text-align: center;
-            color: var(--accent-cyan);
-            font-size: 2rem;
-            margin: -16px 0;
-            position: relative;
-            z-index: 2;
-        }
-        
-        /* Highlight box for Tenuo */
-        .tenuo-highlight {
-            background: linear-gradient(135deg, rgba(168, 85, 247, 0.15), rgba(0, 212, 255, 0.15));
-            border: 2px solid var(--accent-purple);
-            border-radius: 12px;
-            padding: 24px;
-            margin: 20px 0;
-        }
-        
-        .tenuo-highlight-title {
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: var(--accent-purple);
-            margin-bottom: 12px;
+        .features li {
+            padding: 8px 0;
             display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        
-        /* Feature grid */
-        .features-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 24px;
-            margin: 48px 0;
-        }
-        
-        .feature-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 24px;
-            transition: all 0.3s ease;
-        }
-        
-        .feature-card:hover {
-            border-color: var(--accent-cyan);
-            transform: translateY(-4px);
-        }
-        
-        .feature-icon {
-            font-size: 2rem;
-            margin-bottom: 12px;
-        }
-        
-        .feature-title {
-            font-size: 1.1rem;
-            font-weight: 600;
-            margin-bottom: 8px;
-            color: var(--text-primary);
-        }
-        
-        .feature-desc {
-            font-size: 0.9rem;
+            align-items: flex-start;
+            gap: 10px;
             color: var(--text-secondary);
-            line-height: 1.6;
+            font-size: 0.9rem;
         }
         
-        /* Comparison table */
+        .features li span { color: var(--accent-green); }
+        
+        /* Comparison */
         .comparison {
             background: var(--bg-card);
             border: 1px solid var(--border);
             border-radius: 16px;
             padding: 32px;
-            margin: 48px 0;
+            margin: 32px 0;
         }
         
-        .comparison-title {
-            font-size: 1.5rem;
-            font-weight: 600;
-            margin-bottom: 24px;
-            text-align: center;
-        }
-        
-        .comparison-table {
+        .comparison table {
             width: 100%;
             border-collapse: collapse;
         }
         
-        .comparison-table th,
-        .comparison-table td {
-            padding: 16px;
+        .comparison th, .comparison td {
+            padding: 14px 16px;
             text-align: left;
             border-bottom: 1px solid var(--border);
         }
         
-        .comparison-table th {
+        .comparison th {
             color: var(--accent-cyan);
             font-weight: 600;
+            font-size: 0.9rem;
         }
         
-        .comparison-table td {
+        .comparison td {
             color: var(--text-secondary);
+            font-size: 0.85rem;
         }
         
-        .check {
-            color: var(--accent-green);
+        .check { color: var(--accent-green); font-weight: 600; }
+        .cross { color: var(--accent-red); font-weight: 600; }
+        
+        /* Flow diagram */
+        .flow-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 32px;
+            margin: 32px 0;
+        }
+        
+        .flow-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin: 24px 0;
+        }
+        
+        .flow-node {
+            padding: 16px 24px;
+            border-radius: 12px;
+            text-align: center;
+            min-width: 140px;
+        }
+        
+        .flow-node.tool { background: rgba(0, 255, 136, 0.15); border: 2px solid var(--accent-green); }
+        .flow-node.tenuo { background: rgba(168, 85, 247, 0.15); border: 2px solid var(--accent-purple); }
+        .flow-node.langchain { background: rgba(0, 212, 255, 0.15); border: 2px solid var(--accent-cyan); }
+        .flow-node.audit { background: rgba(255, 204, 0, 0.15); border: 2px solid var(--accent-yellow); }
+        
+        .flow-arrow {
+            color: var(--text-muted);
+            font-size: 1.5rem;
+        }
+        
+        /* Highlight box */
+        .highlight-box {
+            background: linear-gradient(135deg, rgba(0, 255, 136, 0.1), rgba(0, 212, 255, 0.1));
+            border: 2px solid var(--accent-green);
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+        
+        .highlight-box.warning {
+            background: linear-gradient(135deg, rgba(255, 204, 0, 0.1), rgba(255, 136, 0, 0.1));
+            border-color: var(--accent-yellow);
+        }
+        
+        .highlight-title {
             font-weight: 600;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
         
-        .cross {
-            color: var(--accent-red);
-            font-weight: 600;
+        /* Security features */
+        .security-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 20px;
+            margin: 32px 0;
         }
         
-        /* Footer */
+        .security-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+        
+        .security-card:hover {
+            border-color: var(--accent-cyan);
+            transform: translateY(-2px);
+        }
+        
+        .security-icon { font-size: 2rem; margin-bottom: 12px; }
+        .security-title { font-weight: 600; margin-bottom: 8px; }
+        .security-desc { font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5; }
+        
         footer {
             text-align: center;
             margin-top: 64px;
-            padding-top: 32px;
+            padding: 32px;
             border-top: 1px solid var(--border);
             color: var(--text-muted);
         }
         
-        footer a {
-            color: var(--accent-cyan);
-            text-decoration: none;
-        }
-        
-        footer a:hover {
-            text-decoration: underline;
-        }
+        footer a { color: var(--accent-cyan); text-decoration: none; }
+        footer a:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
     <div class="container">
         <header>
             <div class="logo">Tenuo + LangChain</div>
-            <div class="tagline">Authorization Layer for AI Agents</div>
+            <div class="tagline">Zero-Import Authorization for AI Agents</div>
             <div class="subtitle">
-                Tenuo sits between LangChain's tool execution and your actual tool functions,
-                providing cryptographically-enforced authorization with zero network calls.
+                Protect your LangChain tools and LangGraph workflows with cryptographically-enforced 
+                authorization. Your tool code stays clean — Tenuo wraps at setup time.
             </div>
         </header>
 
-        <div class="flow-diagram">
-            <!-- Step 1: User/Agent Request -->
-            <div class="flow-step">
-                <div class="step-header">
-                    <div class="step-number user">1</div>
-                    <div>
-                        <div class="step-title">User/Agent Makes Request</div>
-                        <div class="step-subtitle">Prompt or API call to LangChain agent</div>
-                    </div>
-                </div>
-                <div class="step-content">
-                    <p style="color: var(--text-secondary); margin-bottom: 16px;">
-                        A user or AI agent sends a request to your LangChain application.
-                        The request may include a warrant (from headers, context, or session).
-                    </p>
-                    <div class="code-block">
-<pre><span class="comment"># User sends prompt to LangChain agent</span>
-<span class="string">"Read the file /tmp/data.txt and tell me what it contains"</span>
-
-<span class="comment"># Or via API with warrant in header</span>
-POST /agent/run
-X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
-{<span class="string">"prompt"</span>: <span class="string">"Read /tmp/data.txt"</span>}</pre>
-                    </div>
-                </div>
+        <!-- Core Principle -->
+        <div class="highlight-box" style="text-align: center; margin-top: 32px;">
+            <div class="highlight-title" style="justify-content: center; font-size: 1.2rem;">
+                🎯 Core Principle: Zero Tenuo Imports in User Code
             </div>
-
-            <div class="arrow">↓</div>
-
-            <!-- Step 2: LangChain Agent -->
-            <div class="flow-step">
-                <div class="step-header">
-                    <div class="step-number langchain">2</div>
-                    <div>
-                        <div class="step-title">LangChain Agent Processes Request</div>
-                        <div class="step-subtitle">LLM decides which tools to call</div>
-                    </div>
-                </div>
-                <div class="step-content">
-                    <p style="color: var(--text-secondary); margin-bottom: 16px;">
-                        The LangChain agent (powered by GPT, Claude, etc.) analyzes the request
-                        and decides which tools to invoke. It prepares tool calls with arguments.
-                        The agent doesn't know about Tenuo - it just calls tools normally.
-                    </p>
-                    <div class="code-block">
-<pre><span class="comment"># LangChain agent decides to call read_file tool</span>
-<span class="keyword">tool_name</span>: <span class="string">"read_file"</span>
-<span class="keyword">arguments</span>: {
-    <span class="string">"file_path"</span>: <span class="string">"/tmp/data.txt"</span>
-}
-
-<span class="comment"># AgentExecutor.invoke() calls your tool function</span>
-<span class="function">read_file</span>(<span class="string">file_path</span>=<span class="string">"/tmp/data.txt"</span>)</pre>
-                    </div>
-                </div>
-            </div>
-
-            <div class="arrow">↓</div>
-
-            <!-- Step 3: Tenuo Authorization Layer -->
-            <div class="flow-step">
-                <div class="step-header">
-                    <div class="step-number tenuo">3</div>
-                    <div>
-                        <div class="step-title">Tenuo Authorization Layer</div>
-                        <div class="step-subtitle">@lockdown decorator checks warrant before execution</div>
-                    </div>
-                </div>
-                <div class="step-content">
-                    <div class="tenuo-highlight">
-                        <div class="tenuo-highlight-title">
-                            🔒 Tenuo Intercepts Tool Call
-                        </div>
-                        <p style="color: var(--text-secondary); margin-bottom: 16px;">
-                            Before your tool function executes, Tenuo's <code style="color: var(--accent-cyan);">@lockdown</code> decorator:
-                        </p>
-                        <ul style="color: var(--text-secondary); margin-left: 24px; line-height: 1.8;">
-                            <li>Retrieves warrant from ContextVar (set by callback/middleware)</li>
-                            <li>Extracts tool arguments for constraint checking</li>
-                            <li>Verifies warrant authorizes this specific tool + arguments</li>
-                            <li>Checks constraints (e.g., file_path matches Pattern("/tmp/*"))</li>
-                            <li>All happens <strong>offline</strong> in ~25μs</li>
-                        </ul>
-                    </div>
-                    <div class="code-block">
-<pre><span class="comment"># Your tool function - protected by @lockdown</span>
-<span class="keyword">from</span> tenuo <span class="keyword">import</span> lockdown, set_warrant_context
-
-<span class="decorator">@lockdown</span>(<span class="keyword">tool</span>=<span class="string">"read_file"</span>, 
-          <span class="function">extract_args</span>=<span class="keyword">lambda</span> file_path, **kwargs: {<span class="string">"file_path"</span>: file_path})
-<span class="keyword">def</span> <span class="function">read_file</span>(<span class="type">file_path</span>: <span class="type">str</span>) -> <span class="type">str</span>:
-    <span class="comment"># Tenuo checks authorization BEFORE this code runs</span>
-    <span class="comment"># If authorized, function executes normally</span>
-    <span class="keyword">with</span> <span class="function">open</span>(<span class="type">file_path</span>, <span class="string">'r'</span>) <span class="keyword">as</span> f:
-        <span class="keyword">return</span> f.<span class="function">read</span>()</pre>
-                    </div>
-                    <p style="color: var(--text-secondary); margin-top: 12px; font-size: 0.9rem;">
-                        <strong>How it works:</strong> The <code style="color: var(--accent-cyan);">@lockdown</code> decorator intercepts the function call,
-                        retrieves the warrant from <code style="color: var(--accent-cyan);">ContextVar</code> (set by your callback or middleware),
-                        and checks if the warrant authorizes this specific tool call with these arguments.
-                    </p>
-                </div>
-            </div>
-
-            <div class="arrow">↓</div>
-
-            <!-- Step 4: Authorization Decision -->
-            <div class="flow-step">
-                <div class="step-header">
-                    <div class="step-number" style="background: rgba(0, 255, 136, 0.2); border: 2px solid var(--accent-green); color: var(--accent-green);">✓</div>
-                    <div>
-                        <div class="step-title">Authorization Decision</div>
-                        <div class="step-subtitle">Allowed or blocked based on warrant constraints</div>
-                    </div>
-                </div>
-                <div class="step-content">
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 20px;">
-                        <div style="background: rgba(0, 255, 136, 0.1); border: 1px solid var(--accent-green); border-radius: 8px; padding: 20px;">
-                            <div style="font-size: 1.2rem; font-weight: 600; color: var(--accent-green); margin-bottom: 12px;">
-                                ✓ Allowed
-                            </div>
-                            <p style="color: var(--text-secondary); font-size: 0.9rem; line-height: 1.6;">
-                                Warrant authorizes this action. Tool function executes normally.
-                                LangChain receives result and continues processing.
-                            </p>
-                            <div class="code-block" style="margin-top: 12px; font-size: 0.8rem;">
-<pre><span class="comment"># Warrant constraint: file_path = Pattern("/tmp/*")</span>
-<span class="comment"># Tool argument: file_path = "/tmp/data.txt"</span>
-<span class="comment"># ✓ Matches pattern → Authorization granted</span>
-<span class="comment"># → Tool function executes</span>
-<span class="comment"># → Returns file contents to LangChain</span></pre>
-                            </div>
-                        </div>
-                        <div style="background: rgba(255, 68, 102, 0.1); border: 1px solid var(--accent-red); border-radius: 8px; padding: 20px;">
-                            <div style="font-size: 1.2rem; font-weight: 600; color: var(--accent-red); margin-bottom: 12px;">
-                                ✗ Blocked
-                            </div>
-                            <p style="color: var(--text-secondary); font-size: 0.9rem; line-height: 1.6;">
-                                Warrant doesn't authorize this action. Tenuo raises <code style="color: var(--accent-red);">AuthorizationError</code>.
-                                Tool function never executes. LangChain receives error.
-                            </p>
-                            <div class="code-block" style="margin-top: 12px; font-size: 0.8rem;">
-<pre><span class="comment"># Warrant constraint: file_path = Pattern("/tmp/*")</span>
-<span class="comment"># Tool argument: file_path = "/etc/passwd"</span>
-<span class="comment"># ✗ Doesn't match pattern → Authorization denied</span>
-<span class="comment"># → AuthorizationError raised</span>
-<span class="comment"># → Tool function never executes</span>
-<span class="comment"># → LangChain receives error</span></pre>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="arrow">↓</div>
-
-            <!-- Step 5: Tool Execution or Error -->
-            <div class="flow-step">
-                <div class="step-header">
-                    <div class="step-number tool">4</div>
-                    <div>
-                        <div class="step-title">Tool Execution (if authorized)</div>
-                        <div class="step-subtitle">Your actual tool function runs</div>
-                    </div>
-                </div>
-                <div class="step-content">
-                    <p style="color: var(--text-secondary); margin-bottom: 16px;">
-                        If authorized, your tool function executes normally. The <code style="color: var(--accent-cyan);">@lockdown</code>
-                        decorator is transparent - your code doesn't need to know about Tenuo. It's just a regular Python function.
-                    </p>
-                    <div class="code-block">
-<pre><span class="comment"># Your tool code (runs only if authorized)</span>
-<span class="comment"># No Tenuo-specific code needed here!</span>
-<span class="keyword">try</span>:
-    <span class="keyword">with</span> <span class="function">open</span>(<span class="type">file_path</span>, <span class="string">'r'</span>) <span class="keyword">as</span> f:
-        <span class="keyword">return</span> f.<span class="function">read</span>()
-<span class="keyword">except</span> <span class="type">FileNotFoundError</span>:
-    <span class="keyword">return</span> <span class="string">f"Error: File not found: {file_path}"</span>
-<span class="keyword">except</span> <span class="type">Exception</span> <span class="keyword">as</span> e:
-    <span class="keyword">return</span> <span class="string">f"Error: {str(e)}"</span></pre>
-                    </div>
-                </div>
-            </div>
-
-            <div class="arrow">↓</div>
-
-            <!-- Step 6: Response -->
-            <div class="flow-step">
-                <div class="step-header">
-                    <div class="step-number user">5</div>
-                    <div>
-                        <div class="step-title">Response to User/Agent</div>
-                        <div class="step-subtitle">LangChain returns result or error</div>
-                    </div>
-                </div>
-                <div class="step-content">
-                    <p style="color: var(--text-secondary); margin-bottom: 16px;">
-                        LangChain receives either the tool result (if authorized) or an error (if blocked).
-                        The agent can handle the error and explain to the user why the action wasn't allowed.
-                    </p>
-                </div>
-            </div>
+            <p style="color: var(--text-secondary); max-width: 600px; margin: 0 auto;">
+                Tools and nodes are pure business logic. Authorization is configuration.
+                Wrap once at setup, protect everywhere.
+            </p>
         </div>
 
-        <!-- Key Features -->
-        <div class="features-grid">
-            <div class="feature-card">
-                <div class="feature-icon">🔒</div>
-                <div class="feature-title">Automatic Protection</div>
-                <div class="feature-desc">
-                    Decorate your tool functions with <code>@lockdown</code>. Tenuo handles authorization automatically - no manual checks needed.
+        <!-- Two Patterns -->
+        <h2 class="section-title">Two Integration Patterns</h2>
+        <p class="section-subtitle">Choose based on your architecture</p>
+
+        <div class="pattern-grid">
+            <!-- Single Agent Pattern -->
+            <div class="pattern-card recommended">
+                <div class="pattern-header">
+                    <div class="pattern-icon single">🔧</div>
+                    <div>
+                        <div class="pattern-title">Single Agent: protect_tools()</div>
+                        <div class="pattern-subtitle">Wrap tools at setup time</div>
+                    </div>
+                    <span class="badge recommended">Recommended</span>
                 </div>
+                
+                <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                    For standard LangChain agents. Your tools are plain functions — 
+                    <code style="color: var(--accent-cyan);">protect_tools()</code> wraps them with authorization.
+                </p>
+
+                <div class="code-block">
+<pre><span class="comment"># Tools: Plain Python functions - NO Tenuo imports!</span>
+<span class="keyword">def</span> <span class="function">read_file</span>(file_path: <span class="type">str</span>) -> <span class="type">str</span>:
+    <span class="keyword">return</span> <span class="function">open</span>(file_path).<span class="function">read</span>()
+
+<span class="keyword">def</span> <span class="function">search</span>(query: <span class="type">str</span>) -> <span class="type">str</span>:
+    <span class="keyword">return</span> <span class="string">f"Results for: {query}"</span>
+
+<span class="comment"># Setup: Wrap once with authorization</span>
+<span class="keyword">from</span> tenuo.langchain <span class="keyword">import</span> protect_tools
+
+<span class="highlight">secure_tools = protect_tools(</span>
+    <span class="highlight">tools=[read_file, search],</span>
+    <span class="highlight">warrant=root_warrant,</span>
+    <span class="highlight">keypair=keypair,</span>
+    <span class="highlight">config={</span>
+        <span class="highlight">"read_file": {"constraints": {"file_path": {"pattern": "/tmp/*"}}}</span>
+    <span class="highlight">}</span>
+<span class="highlight">)</span>
+
+<span class="comment"># Use with LangChain</span>
+agent = AgentExecutor(agent=base_agent, tools=secure_tools)</pre>
+                </div>
+
+                <ul class="features">
+                    <li><span>✓</span> Tools stay pure business logic</li>
+                    <li><span>✓</span> Config-based per-tool constraints</li>
+                    <li><span>✓</span> Automatic PoP signature handling</li>
+                    <li><span>✓</span> Full audit logging</li>
+                </ul>
             </div>
-            <div class="feature-card">
-                <div class="feature-icon">⚡</div>
-                <div class="feature-title">Zero Network Calls</div>
-                <div class="feature-desc">
-                    Authorization happens 100% offline in ~25μs. No API calls, no latency, no single point of failure.
+
+            <!-- Multi-Agent Pattern -->
+            <div class="pattern-card">
+                <div class="pattern-header">
+                    <div class="pattern-icon multi">🔀</div>
+                    <div>
+                        <div class="pattern-title">Multi-Agent: SecureGraph</div>
+                        <div class="pattern-subtitle">Automatic warrant flow in LangGraph</div>
+                    </div>
+                    <span class="badge advanced">Advanced</span>
                 </div>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🔄</div>
-                <div class="feature-title">ContextVar Integration</div>
-                <div class="feature-desc">
-                    Set warrant once in context (via callback or middleware). All <code>@lockdown</code> functions automatically use it.
+                
+                <p style="color: var(--text-secondary); margin-bottom: 16px;">
+                    For LangGraph multi-agent workflows. 
+                    <code style="color: var(--accent-purple);">SecureGraph</code> automatically 
+                    attenuates warrants per-node with dynamic constraints.
+                </p>
+
+                <div class="code-block">
+<pre><span class="comment"># Graph: Standard LangGraph - NO Tenuo in nodes!</span>
+graph = StateGraph(AgentState)
+graph.add_node(<span class="string">"supervisor"</span>, supervisor_fn)
+graph.add_node(<span class="string">"researcher"</span>, researcher_fn)
+graph.add_node(<span class="string">"writer"</span>, writer_fn)
+
+<span class="comment"># Setup: Wrap with automatic warrant management</span>
+<span class="keyword">from</span> tenuo.langgraph <span class="keyword">import</span> SecureGraph
+
+<span class="highlight">secure = SecureGraph(</span>
+    <span class="highlight">graph=graph,</span>
+    <span class="highlight">config={</span>
+        <span class="highlight">"nodes": {</span>
+            <span class="highlight">"researcher": {</span>
+                <span class="highlight">"attenuate": {</span>
+                    <span class="highlight">"tools": ["search", "read_file"],</span>
+                    <span class="highlight">"constraints": {</span>
+                        <span class="highlight">"path": {"pattern": "/data/${state.project_id}/*"}</span>
+                    <span class="highlight">}</span>
+                <span class="highlight">}</span>
+            <span class="highlight">}</span>
+        <span class="highlight">}</span>
+    <span class="highlight">},</span>
+    <span class="highlight">root_warrant=warrant,</span>
+    <span class="highlight">keypair=keypair</span>
+<span class="highlight">)</span>
+
+result = secure.invoke({<span class="string">"input"</span>: <span class="string">"..."</span>, <span class="string">"project_id"</span>: <span class="string">"alpha"</span>})</pre>
                 </div>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🎯</div>
-                <div class="feature-title">Constraint-Based</div>
-                <div class="feature-desc">
-                    Fine-grained control: restrict by file paths, budgets, clusters, or any argument value using patterns and ranges.
-                </div>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🔗</div>
-                <div class="feature-title">Delegation Provenance</div>
-                <div class="feature-desc">
-                    Every authorization is cryptographically linked to a warrant chain showing who delegated the authority.
-                </div>
-            </div>
-            <div class="feature-card">
-                <div class="feature-icon">🛡️</div>
-                <div class="feature-title">Monotonic Attenuation</div>
-                <div class="feature-desc">
-                    Capabilities can only shrink when delegated. A $1000 budget becomes $500, never $2000.
-                </div>
+
+                <ul class="features">
+                    <li><span>✓</span> Dynamic <code>${state.*}</code> interpolation</li>
+                    <li><span>✓</span> Automatic warrant attenuation per-node</li>
+                    <li><span>✓</span> Stack-based delegation (push/pop)</li>
+                    <li><span>✓</span> Input validation prevents injection</li>
+                </ul>
             </div>
         </div>
 
         <!-- Comparison Table -->
         <div class="comparison">
-            <div class="comparison-title">Where Tenuo Sits in Your Stack</div>
-            <table class="comparison-table">
+            <h3 style="text-align: center; margin-bottom: 24px;">Pattern Comparison</h3>
+            <table>
                 <thead>
                     <tr>
-                        <th>Layer</th>
-                        <th>Without Tenuo</th>
-                        <th>With Tenuo</th>
+                        <th>Feature</th>
+                        <th>protect_tools()</th>
+                        <th>SecureGraph</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
-                        <td><strong>User/Agent</strong></td>
-                        <td>Makes request</td>
-                        <td>Makes request (with warrant)</td>
+                        <td>Use Case</td>
+                        <td>Single LangChain agent</td>
+                        <td>Multi-agent LangGraph</td>
                     </tr>
                     <tr>
-                        <td><strong>LangChain Agent</strong></td>
-                        <td>Processes request, calls tools</td>
-                        <td>Processes request, calls tools</td>
+                        <td>Constraint Evaluation</td>
+                        <td>At setup time (static)</td>
+                        <td>At runtime (dynamic)</td>
                     </tr>
                     <tr>
-                        <td><strong>Authorization</strong></td>
-                        <td class="cross">Manual checks in code<br>or external API calls</td>
-                        <td class="check">Automatic via @lockdown<br>100% offline</td>
+                        <td><code>${state.*}</code> Interpolation</td>
+                        <td class="cross">✗ Not supported</td>
+                        <td class="check">✓ Supported</td>
                     </tr>
                     <tr>
-                        <td><strong>Tool Functions</strong></td>
-                        <td>Execute directly</td>
-                        <td>Execute only if authorized</td>
+                        <td>Per-Node Attenuation</td>
+                        <td class="cross">✗ Same warrant for all</td>
+                        <td class="check">✓ Automatic per-node</td>
                     </tr>
                     <tr>
-                        <td><strong>Response</strong></td>
-                        <td>Result or generic error</td>
-                        <td>Result or authorization error</td>
+                        <td>Audit Logging</td>
+                        <td class="check">✓ Yes</td>
+                        <td class="check">✓ Yes (more detailed)</td>
+                    </tr>
+                    <tr>
+                        <td>Setup Complexity</td>
+                        <td class="check">Simple</td>
+                        <td>Moderate</td>
                     </tr>
                 </tbody>
             </table>
         </div>
 
-        <!-- Integration Pattern -->
-        <div class="flow-step" style="margin-top: 48px;">
-            <div class="step-header">
-                <div class="step-number langchain" style="font-size: 1rem;">💡</div>
-                <div>
-                    <div class="step-title">Integration Pattern</div>
-                    <div class="step-subtitle">How to add Tenuo to your LangChain application</div>
+        <!-- How It Works -->
+        <h2 class="section-title">How It Works</h2>
+        
+        <div class="flow-section">
+            <h3 style="text-align: center; margin-bottom: 24px;">Authorization Flow</h3>
+            
+            <div class="flow-row">
+                <div class="flow-node langchain">
+                    <strong>LLM Agent</strong><br>
+                    <small style="color: var(--text-muted);">Decides tool call</small>
+                </div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-node tenuo">
+                    <strong>Tenuo Layer</strong><br>
+                    <small style="color: var(--text-muted);">Check warrant</small>
+                </div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-node tool">
+                    <strong>Tool Function</strong><br>
+                    <small style="color: var(--text-muted);">Execute (if allowed)</small>
+                </div>
+                <span class="flow-arrow">→</span>
+                <div class="flow-node audit">
+                    <strong>Audit Log</strong><br>
+                    <small style="color: var(--text-muted);">JSON to SIEM</small>
                 </div>
             </div>
-            <div class="step-content">
-                <p style="color: var(--text-secondary); margin-bottom: 24px;">
-                    Adding Tenuo to your LangChain application is simple. Here's a complete example:
+
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 24px; margin-top: 32px;">
+                <div style="background: rgba(0, 255, 136, 0.1); border: 1px solid var(--accent-green); border-radius: 8px; padding: 20px;">
+                    <div style="font-weight: 600; color: var(--accent-green); margin-bottom: 12px;">✓ Allowed</div>
+                    <div class="code-block" style="margin: 0; font-size: 0.75rem;">
+<pre><span class="comment"># Warrant: file_path = Pattern("/tmp/*")</span>
+<span class="comment"># Tool call: read_file("/tmp/data.txt")</span>
+<span class="comment"># ✓ Pattern matches → Execute tool</span>
+
+<span class="comment"># Audit log emitted:</span>
+{<span class="string">"event_type"</span>: <span class="string">"authorization_success"</span>,
+ <span class="string">"tool"</span>: <span class="string">"read_file"</span>,
+ <span class="string">"constraints"</span>: {<span class="string">"file_path"</span>: <span class="string">"/tmp/data.txt"</span>}}</pre>
+                    </div>
+                </div>
+                <div style="background: rgba(255, 68, 102, 0.1); border: 1px solid var(--accent-red); border-radius: 8px; padding: 20px;">
+                    <div style="font-weight: 600; color: var(--accent-red); margin-bottom: 12px;">✗ Blocked</div>
+                    <div class="code-block" style="margin: 0; font-size: 0.75rem;">
+<pre><span class="comment"># Warrant: file_path = Pattern("/tmp/*")</span>
+<span class="comment"># Tool call: read_file("/etc/passwd")</span>
+<span class="comment"># ✗ Pattern fails → AuthorizationError</span>
+
+<span class="comment"># Audit log emitted:</span>
+{<span class="string">"event_type"</span>: <span class="string">"authorization_failure"</span>,
+ <span class="string">"tool"</span>: <span class="string">"read_file"</span>,
+ <span class="string">"error_code"</span>: <span class="string">"constraint_not_satisfied"</span>}</pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dynamic Constraints -->
+        <h2 class="section-title">Dynamic Constraints (SecureGraph)</h2>
+        
+        <div class="flow-section">
+            <p style="color: var(--text-secondary); text-align: center; margin-bottom: 24px;">
+                State values are interpolated into constraints at runtime with security validation.
+            </p>
+
+            <div class="code-block">
+<pre><span class="comment"># Config with dynamic constraint</span>
+config = {
+    <span class="string">"nodes"</span>: {
+        <span class="string">"file_reader"</span>: {
+            <span class="string">"attenuate"</span>: {
+                <span class="string">"constraints"</span>: {
+                    <span class="string">"path"</span>: {
+                        <span class="string">"pattern"</span>: <span class="string highlight">"/uploads/${state.user_id}/*"</span>,
+                        <span class="string">"validate"</span>: <span class="string">"^[a-zA-Z0-9_-]+$"</span>  <span class="comment"># SECURITY: Prevents injection</span>
+                    }
+                }
+            }
+        }
+    }
+}
+
+<span class="comment"># At runtime with state = {"user_id": "alice"}</span>
+<span class="comment"># Constraint becomes: Pattern("/uploads/alice/*")</span>
+
+<span class="comment"># If attacker tries state = {"user_id": "../../../etc"}</span>
+<span class="comment"># Validation fails → InterpolationValidationError</span></pre>
+            </div>
+
+            <div class="highlight-box warning">
+                <div class="highlight-title" style="color: var(--accent-yellow);">
+                    ⚠️ Security: Validation is Required
+                </div>
+                <p style="color: var(--text-secondary); font-size: 0.9rem;">
+                    Always include a <code>validate</code> regex when using <code>${state.*}</code> interpolation.
+                    Without validation, path traversal attacks like <code>../../../etc/passwd</code> are possible.
+                    Missing state keys also fail-safe with <code>InterpolationValidationError</code>.
                 </p>
-                
-                <div style="background: var(--bg-card-alt); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px;">
-                    <h4 style="color: var(--accent-cyan); margin-bottom: 16px; font-size: 1.1rem;">Step 1: Decorate Your Tool Functions</h4>
-                    <div class="code-block" style="font-size: 0.85rem;">
-<pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> lockdown, Warrant, Pattern, Keypair
+            </div>
+        </div>
 
-<span class="comment"># Decorate your tool functions with @lockdown</span>
-<span class="comment"># The decorator automatically retrieves warrant from ContextVar</span>
-<span class="decorator">@lockdown</span>(<span class="keyword">tool</span>=<span class="string">"read_file"</span>,
-          <span class="function">extract_args</span>=<span class="keyword">lambda</span> file_path, **kwargs: {<span class="string">"file_path"</span>: file_path})
-<span class="keyword">def</span> <span class="function">read_file</span>(<span class="type">file_path</span>: <span class="type">str</span>) -> <span class="type">str</span>:
-    <span class="string">"""Read a file. Protected by Tenuo."""</span>
-    <span class="comment"># Tenuo checks authorization BEFORE this code runs</span>
-    <span class="comment"># If authorized, function executes normally</span>
-    <span class="keyword">try</span>:
-        <span class="keyword">with</span> <span class="function">open</span>(<span class="type">file_path</span>, <span class="string">'r'</span>) <span class="keyword">as</span> f:
-            <span class="keyword">return</span> f.<span class="function">read</span>()
-    <span class="keyword">except</span> <span class="type">FileNotFoundError</span>:
-        <span class="keyword">return</span> <span class="function">f</span><span class="string">"Error: File not found: {file_path}"</span>
-    <span class="keyword">except</span> <span class="type">Exception</span> <span class="keyword">as</span> e:
-        <span class="keyword">return</span> <span class="function">f</span><span class="string">"Error: {str(e)}"</span></pre>
-                    </div>
+        <!-- Security Features -->
+        <h2 class="section-title">Security Features</h2>
+
+        <div class="security-grid">
+            <div class="security-card">
+                <div class="security-icon">🔐</div>
+                <div class="security-title">Proof-of-Possession</div>
+                <div class="security-desc">
+                    Warrants bound to holder's public key. Stolen warrants are useless without the private key.
                 </div>
-
-                <div style="background: var(--bg-card-alt); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px;">
-                    <h4 style="color: var(--accent-cyan); margin-bottom: 16px; font-size: 1.1rem;">Step 2: Create LangChain Tools</h4>
-                    <div class="code-block" style="font-size: 0.85rem;">
-<pre><span class="keyword">from</span> langchain.tools <span class="keyword">import</span> Tool
-<span class="keyword">from</span> langchain.agents <span class="keyword">import</span> AgentExecutor, create_openai_tools_agent
-<span class="keyword">from</span> langchain_openai <span class="keyword">import</span> ChatOpenAI
-
-<span class="comment"># Create LangChain tools from your protected functions</span>
-<span class="type">tools</span> = [
-    <span class="function">Tool</span>(
-        <span class="keyword">name</span>=<span class="string">"read_file"</span>,
-        <span class="keyword">func</span>=<span class="function">read_file</span>,
-        <span class="keyword">description</span>=<span class="string">"Read a file from the filesystem"</span>
-    )
-]
-
-<span class="comment"># Create agent</span>
-<span class="type">llm</span> = <span class="function">ChatOpenAI</span>(<span class="keyword">model</span>=<span class="string">"gpt-3.5-turbo"</span>)
-<span class="type">agent</span> = <span class="function">create_openai_tools_agent</span>(<span class="type">llm</span>, <span class="type">tools</span>)
-<span class="type">agent_executor</span> = <span class="function">AgentExecutor</span>(<span class="keyword">agent</span>=<span class="type">agent</span>, <span class="keyword">tools</span>=<span class="type">tools</span>)</pre>
-                    </div>
+            </div>
+            <div class="security-card">
+                <div class="security-icon">⚡</div>
+                <div class="security-title">Offline Verification</div>
+                <div class="security-desc">
+                    100% local verification in ~25μs. No network calls, no single point of failure.
                 </div>
+            </div>
+            <div class="security-card">
+                <div class="security-icon">📉</div>
+                <div class="security-title">Monotonic Attenuation</div>
+                <div class="security-desc">
+                    Capabilities only shrink when delegated. $1000 → $500, never $2000.
+                </div>
+            </div>
+            <div class="security-card">
+                <div class="security-icon">📋</div>
+                <div class="security-title">Audit Logging</div>
+                <div class="security-desc">
+                    JSON events for SIEM integration. Every authorization decision is logged.
+                </div>
+            </div>
+            <div class="security-card">
+                <div class="security-icon">🛡️</div>
+                <div class="security-title">Input Validation</div>
+                <div class="security-desc">
+                    Dynamic constraints validate state values before interpolation. Prevents injection.
+                </div>
+            </div>
+            <div class="security-card">
+                <div class="security-icon">⏱️</div>
+                <div class="security-title">Short TTLs</div>
+                <div class="security-desc">
+                    Task-scoped warrants expire in seconds/minutes. Limits blast radius of compromise.
+                </div>
+            </div>
+        </div>
 
-                <div style="background: var(--bg-card-alt); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px;">
-                    <h4 style="color: var(--accent-cyan); margin-bottom: 16px; font-size: 1.1rem;">Step 3: Create Warrant and Set in Context</h4>
-                    <div class="code-block" style="font-size: 0.85rem;">
-<pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> set_warrant_context, Keypair, Warrant, Pattern
+        <!-- Quick Start -->
+        <h2 class="section-title">Quick Start</h2>
+        
+        <div class="flow-section">
+            <div class="code-block">
+<pre><span class="comment"># 1. Install</span>
+pip install tenuo
 
-<span class="comment"># SIMULATION: Create warrant (in production, from control plane)</span>
-<span class="comment"># HARDCODED: Pattern("/tmp/*"), ttl_seconds=3600</span>
-<span class="comment"># In production: Constraints come from policy engine or configuration</span>
-<span class="type">keypair</span> = <span class="function">Keypair.generate</span>()  <span class="comment"># SIMULATION: In production, from secure storage</span>
-<span class="type">warrant</span> = <span class="function">Warrant.create</span>(
-    <span class="keyword">tool</span>=<span class="string">"read_file"</span>,
-    <span class="keyword">constraints</span>={<span class="string">"file_path"</span>: <span class="function">Pattern</span>(<span class="string">"/tmp/*"</span>)},  <span class="comment"># HARDCODED: Only /tmp/ for demo safety</span>
-    <span class="keyword">ttl_seconds</span>=<span class="number">3600</span>,  <span class="comment"># HARDCODED: 1 hour TTL. In production, use env var or config.</span>
-    <span class="keyword">keypair</span>=<span class="type">keypair</span>
+<span class="comment"># 2. Define tools (plain functions)</span>
+<span class="keyword">def</span> <span class="function">read_file</span>(file_path: <span class="type">str</span>) -> <span class="type">str</span>:
+    <span class="keyword">return</span> <span class="function">open</span>(file_path).<span class="function">read</span>()
+
+<span class="comment"># 3. Create warrant</span>
+<span class="keyword">from</span> tenuo <span class="keyword">import</span> Keypair, Warrant, Pattern
+
+keypair = Keypair.generate()
+warrant = Warrant.create(
+    tool=<span class="string">"read_file"</span>,
+    constraints={<span class="string">"file_path"</span>: Pattern(<span class="string">"/tmp/*"</span>)},
+    ttl_seconds=<span class="type">3600</span>,
+    keypair=keypair,
+    authorized_holder=keypair.public_key()  <span class="comment"># PoP binding!</span>
 )
 
-<span class="comment"># Set warrant in context before running agent</span>
-<span class="comment"># ContextVar automatically propagates through async/await boundaries</span>
-<span class="keyword">with</span> <span class="function">set_warrant_context</span>(<span class="type">warrant</span>):
-    <span class="comment"># All @lockdown functions will use this warrant</span>
-    <span class="comment"># Works across LangChain's async execution flow</span>
-    <span class="type">response</span> = <span class="type">agent_executor</span>.<span class="function">invoke</span>({
-        <span class="string">"input"</span>: <span class="string">"Read the file /tmp/data.txt"</span>
-    })
-    <span class="function">print</span>(<span class="type">response</span>[<span class="string">"output"</span>])</pre>
-                    </div>
-                </div>
+<span class="comment"># 4. Protect tools</span>
+<span class="keyword">from</span> tenuo.langchain <span class="keyword">import</span> protect_tools
 
-                <div style="background: linear-gradient(135deg, rgba(0, 255, 136, 0.1), rgba(0, 212, 255, 0.1)); border: 2px solid var(--accent-green); border-radius: 12px; padding: 24px; margin-top: 24px;">
-                    <p style="color: var(--text-primary); text-align: center; font-size: 1.1rem; font-weight: 600; margin: 0;">
-                        ✅ That's it! All tool calls are now automatically protected. No changes to your tool code needed.
-                    </p>
-                    <p style="color: var(--text-secondary); text-align: center; margin-top: 12px; font-size: 0.9rem;">
-                        The <code style="color: var(--accent-cyan);">@lockdown</code> decorator handles authorization automatically.
-                        If the agent tries to access unauthorized files, Tenuo blocks it instantly.
-                    </p>
-                </div>
+secure_tools = protect_tools([read_file], warrant=warrant, keypair=keypair)
+
+<span class="comment"># 5. Use with LangChain</span>
+<span class="keyword">from</span> langchain.agents <span class="keyword">import</span> AgentExecutor
+agent_executor = AgentExecutor(agent=agent, tools=secure_tools)
+response = agent_executor.invoke({<span class="string">"input"</span>: <span class="string">"Read /tmp/test.txt"</span>})</pre>
             </div>
         </div>
 
@@ -765,8 +721,11 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                 <a href="guide/">View Guide</a> ·
                 <a href="https://github.com/tenuo/tenuo">GitHub</a>
             </p>
+            <p style="margin-top: 12px; font-size: 0.8rem;">
+                See <a href="../examples/langchain_integration.py">langchain_integration.py</a> and 
+                <a href="../examples/secure_graph_example.py">secure_graph_example.py</a> for complete examples.
+            </p>
         </footer>
     </div>
 </body>
 </html>
-

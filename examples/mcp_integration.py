@@ -106,7 +106,8 @@ def run_demo():
             "max_size": Range.max_value(10 * 1024 * 1024)
         },
         ttl_seconds=86400,
-        keypair=control_plane_key
+        keypair=control_plane_key,
+        authorized_holder=orchestrator_key.public_key(),  # PoP is mandatory
     )
     
     print(f"   ✓ Root Warrant ID: {root_warrant.id}")

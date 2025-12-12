@@ -5,6 +5,7 @@ from langgraph.graph import StateGraph, END, START
 from tenuo import Warrant, Keypair, AuthorizationError
 from tenuo.decorators import set_warrant_context, set_keypair_context
 from tenuo.audit import audit_logger, AuditEvent, AuditEventType
+from tenuo.config_utils import build_constraint
 import yaml
 import copy
 import re
@@ -97,6 +98,12 @@ class SecureGraph:
     3. Restore parent warrants on node exit (pop stack)
     4. Set ContextVars so tools see the current warrant
     
+    IMPORTANT: PoP is MANDATORY
+    ---------------------------
+    The keypair parameter is required because Proof-of-Possession (PoP) is
+    mandatory. This ensures that leaked warrants are useless without the
+    corresponding private key.
+    
     Usage:
         graph = StateGraph(AgentState)
         graph.add_node("supervisor", supervisor_fn)
@@ -108,7 +115,7 @@ class SecureGraph:
             graph=graph,
             config="tenuo-graph.yaml",
             root_warrant=root_warrant,
-            keypair=keypair,
+            keypair=keypair,  # REQUIRED - PoP is mandatory
         )
         
         app = secure.compile()
@@ -120,7 +127,7 @@ class SecureGraph:
         graph: StateGraph,
         config: str | dict | SecureGraphConfig,
         root_warrant: Warrant,
-        keypair: Optional[Keypair] = None,
+        keypair: Keypair,  # REQUIRED - PoP is mandatory
     ):
         self.original_graph = graph
         self.config = self._load_config(config)
@@ -339,6 +346,22 @@ class SecureGraph:
         SECURITY: Interpolated values are validated against the 'validate' regex
         before being used in constraints. This prevents path traversal and injection.
         """
+        # Check parent warrant expiry BEFORE attenuation
+        if parent_warrant.is_expired():
+            expires_at = parent_warrant.expires_at() if hasattr(parent_warrant, 'expires_at') else "unknown"
+            audit_logger.log(AuditEvent(
+                event_type=AuditEventType.WARRANT_EXPIRED,
+                warrant_id=parent_warrant.id,
+                tool=node_name,
+                action="denied",
+                error_code="warrant_expired",
+                details=f"Parent warrant expired at {expires_at} - cannot attenuate for node '{node_name}'",
+            ))
+            raise AuthorizationError(
+                f"Parent warrant has expired (at {expires_at}). "
+                f"Cannot attenuate for node '{node_name}'."
+            )
+        
         # No config = inherit parent unchanged
         if node_config is None or node_config.attenuate is None:
             return parent_warrant
@@ -352,7 +375,7 @@ class SecureGraph:
             interpolated_value = self._interpolate_and_validate(
                 constraint_raw, state, constraint_name, node_name
             )
-            constraints[constraint_name] = self._build_constraint(interpolated_value)
+            constraints[constraint_name] = build_constraint(interpolated_value)
         
         # Attenuate FROM PARENT (not root!)
         tools_arg = None
@@ -537,39 +560,7 @@ class SecureGraph:
             
         return value
     
-    def _build_constraint(self, raw: Any) -> Any:
-        """
-        Convert config constraint to Tenuo constraint type.
-        
-        Supported formats:
-            "value"                  -> Exact("value")  (raw string after interpolation)
-            exact: "value"           -> Exact("value")
-            pattern: "/path/*"       -> Pattern("/path/*")
-            enum: ["a", "b", "c"]    -> OneOf(["a", "b", "c"])
-            min: 0, max: 100         -> Range(0, 100)
-            
-        The 'validate' field is stripped here (used earlier for security validation).
-        
-        Note: After interpolation, a config like `pattern: "${state.path}"` becomes
-        just the string "/uploads/file.txt", not a dict. Handle this case.
-        """
-        from tenuo import Exact, Pattern, Range, OneOf
-        
-        # After interpolation, raw might be a string (if entire value was ${state.foo})
-        if not isinstance(raw, dict):
-            return Exact(raw)
-        
-        if "exact" in raw:
-            return Exact(raw["exact"])
-        if "pattern" in raw:
-            return Pattern(raw["pattern"])
-        if "enum" in raw:
-            return OneOf(raw["enum"])
-        if "min" in raw or "max" in raw:
-            return Range(min_val=raw.get("min"), max_val=raw.get("max"))
-        
-        raise ValueError(f"Unknown constraint format: {raw}")
-    
+    # _build_constraint removed - now using build_constraint() from config_utils
     
     def compile(self, **kwargs):
         """Compile the secure graph."""

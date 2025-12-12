@@ -45,9 +45,10 @@ from functools import wraps
 import yaml
 import logging
 
-from tenuo import Warrant, Keypair, AuthorizationError, Pattern, Exact, OneOf, Range
+from tenuo import Warrant, Keypair, AuthorizationError
 from tenuo.decorators import get_warrant_context, get_keypair_context
 from tenuo.audit import audit_logger, AuditEvent, AuditEventType
+from tenuo.config_utils import build_constraint
 
 # Module logger
 logger = logging.getLogger("tenuo.langchain")
@@ -110,33 +111,9 @@ class LangChainConfig:
 
 
 # =============================================================================
-# Constraint Building
+# Constraint Building (imported from config_utils)
 # =============================================================================
-
-def _build_constraint(raw: Any) -> Any:
-    """
-    Convert config constraint to Tenuo constraint type.
-    
-    Supported formats:
-        exact: "value"           -> Exact("value")
-        pattern: "/path/*"       -> Pattern("/path/*")
-        enum: ["a", "b", "c"]    -> OneOf(["a", "b", "c"])
-        min: 0, max: 100         -> Range(0, 100)
-    """
-    if not isinstance(raw, dict):
-        # Raw value = exact match
-        return Exact(raw)
-    
-    if "exact" in raw:
-        return Exact(raw["exact"])
-    if "pattern" in raw:
-        return Pattern(raw["pattern"])
-    if "enum" in raw:
-        return OneOf(raw["enum"])
-    if "min" in raw or "max" in raw:
-        return Range(min_val=raw.get("min"), max_val=raw.get("max"))
-    
-    raise ValueError(f"Unknown constraint format: {raw}")
+# build_constraint() is imported from tenuo.config_utils
 
 
 # =============================================================================
@@ -179,12 +156,18 @@ def protect_tool(
     If warrant/keypair are provided, they are used (Single Agent mode).
     If not, they are retrieved from context (SecureGraph mode).
     
+    IMPORTANT: PoP is MANDATORY
+    ---------------------------
+    Keypair must always be available (either provided or in context) because
+    Proof-of-Possession is mandatory. This ensures leaked warrants are useless
+    without the corresponding private key.
+    
     Args:
         tool: The tool function or LangChain BaseTool to wrap.
         name: Tool name (defaults to tool.name or function name).
         extract_args: Function to extract authorization args from tool call.
-        warrant: Explicit warrant to use (optional).
-        keypair: Explicit keypair to use (optional).
+        warrant: Explicit warrant to use (optional, falls back to context).
+        keypair: Explicit keypair to use (optional, falls back to context).
     
     Returns:
         Wrapped function that enforces authorization before execution.
@@ -204,8 +187,32 @@ def protect_tool(
                 f"No warrant found for tool '{tool_name}'. "
                 "Either pass warrant explicitly or set it in context."
             )
+        
+        # PoP is MANDATORY - keypair must always be available
+        if not current_keypair:
+            raise AuthorizationError(
+                f"No keypair found for tool '{tool_name}'. "
+                "Proof-of-Possession is mandatory - keypair is required. "
+                "Either pass keypair explicitly or set it in context using set_keypair_context()."
+            )
+        
+        # 2. Check warrant expiry BEFORE any further processing
+        if current_warrant.is_expired():
+            expires_at = current_warrant.expires_at() if hasattr(current_warrant, 'expires_at') else "unknown"
+            audit_logger.log(AuditEvent(
+                event_type=AuditEventType.WARRANT_EXPIRED,
+                warrant_id=current_warrant.id,
+                tool=tool_name,
+                action="denied",
+                error_code="warrant_expired",
+                details=f"Warrant expired at {expires_at}",
+            ))
+            raise AuthorizationError(
+                f"Warrant has expired (at {expires_at}). "
+                f"Cannot authorize tool '{tool_name}'."
+            )
             
-        # 2. Extract args for auth check
+        # 3. Extract args for auth check
         if extract_args:
             # Bind args to signature to handle positional/keyword mix
             import inspect
@@ -223,19 +230,13 @@ def protect_tool(
                 if i < len(params):
                     auth_args[params[i]] = arg_val
             
-        # 3. Create PoP signature if needed
-        signature = None
-        if current_warrant.requires_pop:
-            if not current_keypair:
-                raise AuthorizationError(
-                    f"Warrant requires Proof-of-Possession for tool '{tool_name}', "
-                    "but no keypair is available."
-                )
-            signature = current_warrant.create_pop_signature(
-                current_keypair, tool_name, auth_args
-            )
+        # 4. Create PoP signature (ALWAYS - PoP is mandatory)
+        # Keypair is guaranteed to be present (validated above)
+        signature = current_warrant.create_pop_signature(
+            current_keypair, tool_name, auth_args
+        )
             
-        # 4. Authorize
+        # 5. Authorize
         if not current_warrant.authorize(tool_name, auth_args, signature):
             # Audit log the failure
             audit_logger.log(AuditEvent(
@@ -263,7 +264,7 @@ def protect_tool(
             details=f"Authorization successful for tool '{tool_name}'",
         ))
             
-        # 5. Execute original
+        # 6. Execute original
         logger.debug(f"Authorized access to '{tool_name}' with args {auth_args}")
         return callable_func(*args, **kwargs)
     
@@ -283,7 +284,7 @@ def protect_tool(
 def protect_tools(
     tools: List[Callable],
     warrant: Warrant,
-    keypair: Optional[Keypair] = None,
+    keypair: Keypair,  # REQUIRED - PoP is mandatory
     config: Optional[Union[str, dict, LangChainConfig]] = None
 ) -> List[Callable]:
     """
@@ -291,6 +292,12 @@ def protect_tools(
     
     This is the main entry point for protecting LangChain tools. Each tool
     will be wrapped to check authorization before execution.
+    
+    IMPORTANT: PoP is MANDATORY
+    ---------------------------
+    The keypair parameter is required because Proof-of-Possession (PoP) is
+    mandatory. This ensures that leaked warrants are useless without the
+    corresponding private key.
     
     IMPORTANT: Static vs Dynamic Constraints
     ----------------------------------------
@@ -319,7 +326,7 @@ def protect_tools(
     Args:
         tools: List of tool functions to protect.
         warrant: Root warrant to enforce.
-        keypair: Keypair for PoP (if warrant requires it).
+        keypair: Keypair for PoP (REQUIRED - Proof-of-Possession is mandatory).
         config: Optional config for per-tool constraints. Can be:
                 - Path to YAML config file
                 - Dict with config
@@ -366,7 +373,7 @@ def protect_tools(
             # Attenuate warrant for this specific tool
             constraints = {}
             for constraint_name, constraint_value in tool_config.constraints.items():
-                constraints[constraint_name] = _build_constraint(constraint_value)
+                constraints[constraint_name] = build_constraint(constraint_value)
             
             tool_warrant = warrant.attenuate(
                 tool=tool_name,

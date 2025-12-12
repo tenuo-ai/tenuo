@@ -45,7 +45,8 @@ def main():
             "region": Pattern("us-*"),        # Matches us-east, us-west, etc.
         },
         ttl_seconds=3600,
-        keypair=keypair
+        keypair=keypair,
+        authorized_holder=keypair.public_key(),  # PoP is mandatory
     )
     
     # Test pattern matching
@@ -81,7 +82,8 @@ def main():
             "environment": Exact("staging"),   # Must be exactly "staging"
         },
         ttl_seconds=3600,
-        keypair=keypair
+        keypair=keypair,
+        authorized_holder=keypair.public_key(),  # PoP is mandatory
     )
     
     test_cases = [
@@ -120,7 +122,8 @@ def main():
             "memory_gb": Range.min_value(2.0),          # Memory >= 2GB
         },
         ttl_seconds=3600,
-        keypair=keypair
+        keypair=keypair,
+        authorized_holder=keypair.public_key(),  # PoP is mandatory
     )
     
     test_cases = [
@@ -156,7 +159,8 @@ def main():
             "service": OneOf(["web", "api", "worker"]),     # Must be one of these
         },
         ttl_seconds=3600,
-        keypair=keypair
+        keypair=keypair,
+        authorized_holder=keypair.public_key(),  # PoP is mandatory
     )
     
     test_cases = [
@@ -195,7 +199,8 @@ def main():
             "budget": CEL('value <= 1000.0 && value > 0'),
         },
         ttl_seconds=3600,
-        keypair=keypair
+        keypair=keypair,
+        authorized_holder=keypair.public_key(),  # PoP is mandatory
     )
     
     test_cases = [
@@ -233,7 +238,8 @@ def main():
             "action": OneOf(["scale", "restart", "update"]),   # OneOf constraint
         },
         ttl_seconds=3600,
-        keypair=keypair
+        keypair=keypair,
+        authorized_holder=keypair.public_key(),  # PoP is mandatory
     )
     
     test_cases = [
@@ -274,7 +280,8 @@ def main():
             "budget": Range.max_value(10000.0),   # Broad: up to $10k
         },
         ttl_seconds=3600,
-        keypair=keypair
+        keypair=keypair,
+        authorized_holder=keypair.public_key(),  # PoP is mandatory
     )
     
     # Create a worker keypair
@@ -327,11 +334,11 @@ def main():
     print("  6. Mix: Combine different types for fine-grained control")
     print("  7. Attenuate: Constraints can only become more restrictive when delegating")
     print()
-    print("SECURITY BEST PRACTICE:")
-    print("  In production, ALWAYS use PoP (Proof-of-Possession) binding:")
-    print("    warrant = Warrant.create(..., authorized_holder=agent_keypair.public_key())")
-    print("  This ensures stolen warrants are useless without the private key.")
-    print("  See examples/end_to_end_pop.py for a complete PoP demonstration.")
+    print("SECURITY NOTE (PoP is MANDATORY):")
+    print("  All warrants require Proof-of-Possession (authorized_holder).")
+    print("  This ensures leaked warrants are useless without the private key.")
+    print("  Example: Warrant.create(..., authorized_holder=agent_keypair.public_key())")
+    print("  See examples/secure_agent_demo.py for a complete PoP demonstration.")
     print()
 
 

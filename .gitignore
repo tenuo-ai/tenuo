@@ -36,3 +36,8 @@ build/
 *.profraw
 coverage/
 
+
+# Python virtual environment
+.venv/
+venv/
+ENV/

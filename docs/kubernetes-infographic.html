@@ -859,20 +859,24 @@
             <div class="context-box tool">
                 <div class="context-title">4. Tool Function Called</div>
                 <div class="context-desc">
-                    <code style="color: var(--accent-purple);">@lockdown</code> decorator retrieves warrant from ContextVar,
+                    <code style="color: var(--accent-purple);">@lockdown</code> decorator or <code style="color: var(--accent-cyan);">protect_tools()</code> wrapper retrieves warrant from ContextVar,
                     checks authorization, then executes tool function.
                 </div>
                 <div class="code-block" style="font-size: 0.8rem; margin-top: 12px;">
-<pre><span class="comment"># Tool function - automatically protected</span>
+<pre><span class="comment"># Option A: @lockdown decorator (FastAPI/Flask apps)</span>
 <span class="keyword">from</span> tenuo <span class="keyword">import</span> lockdown
 
 <span class="decorator">@lockdown</span>(<span class="keyword">tool</span>=<span class="string">"read_file"</span>,
           <span class="function">extract_args</span>=<span class="keyword">lambda</span> file_path, **kwargs: {<span class="string">"file_path"</span>: file_path})
 <span class="keyword">def</span> <span class="function">read_file</span>(<span class="type">file_path</span>: <span class="type">str</span>) -> <span class="type">str</span>:
     <span class="comment"># @lockdown retrieves warrant from ContextVar automatically</span>
-    <span class="comment"># No manual passing needed - works across await boundaries</span>
     <span class="keyword">with</span> <span class="function">open</span>(<span class="type">file_path</span>, <span class="string">'r'</span>) <span class="keyword">as</span> f:
-        <span class="keyword">return</span> f.<span class="function">read</span>()</pre>
+        <span class="keyword">return</span> f.<span class="function">read</span>()
+
+<span class="comment"># Option B: protect_tools() for LangChain (preferred for agents)</span>
+<span class="keyword">from</span> tenuo.langchain <span class="keyword">import</span> protect_tools
+secure_tools = <span class="function">protect_tools</span>([read_file], warrant=warrant, keypair=keypair)
+<span class="comment"># See langchain-infographic.html for full details</span></pre>
                 </div>
                 <div class="context-var" style="margin-top: 12px;">
                     ContextVar: <span style="color: var(--accent-purple);">Warrant(id="...")</span>
@@ -891,7 +895,7 @@
                 In async Python frameworks, function calls happen across <code style="color: var(--accent-cyan);">await</code> boundaries,
                 making it hard to pass context. Tenuo uses Python's <code style="color: var(--accent-purple);">ContextVar</code> which
                 automatically propagates through async operations. Set the warrant once in middleware, and all
-                <code style="color: var(--accent-purple);">@lockdown</code> functions have access to it - no manual passing required.
+                protected functions (<code style="color: var(--accent-purple);">@lockdown</code> or <code style="color: var(--accent-cyan);">protect_tools()</code>) have access to it - no manual passing required.
             </p>
         </div>
 

@@ -95,12 +95,13 @@ def test_revocation():
     issuer_kp = Keypair.generate()
     holder_kp = Keypair.generate()
     
-    # Create a warrant
+    # Create a warrant (PoP-bound to holder)
     warrant = Warrant.create(
         tool="read_user",
         constraints={"user_id": Exact("alice")},
         ttl_seconds=3600,
-        keypair=issuer_kp
+        keypair=issuer_kp,
+        authorized_holder=holder_kp.public_key(),  # PoP is mandatory
     )
     
     # Initialize Revocation Manager

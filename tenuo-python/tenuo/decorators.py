@@ -148,10 +148,16 @@ def lockdown(
     """
     Decorator that enforces warrant authorization before function execution.
     
+    IMPORTANT: PoP is MANDATORY
+    ---------------------------
+    Keypair must always be available (either provided or in context) because
+    Proof-of-Possession is mandatory. This ensures leaked warrants are useless
+    without the corresponding private key.
+    
     Supports two usage patterns:
     
     1. Explicit warrant (simple case):
-        @lockdown(warrant, tool="manage_infrastructure")
+        @lockdown(warrant, tool="manage_infrastructure", keypair=keypair)
         def upgrade_cluster(cluster: str, budget: float):
             ...
     
@@ -160,12 +166,7 @@ def lockdown(
         def upgrade_cluster(cluster: str, budget: float):
             ...
         
-        # Warrant is set in context elsewhere (e.g., FastAPI middleware)
-        with set_warrant_context(warrant):
-            upgrade_cluster(cluster="staging-web", budget=5000.0)
-    
-    For PoP-bound warrants (warrant.requires_pop == True):
-        # Set keypair in context for automatic PoP signature creation
+        # Warrant AND keypair are set in context (BOTH required)
         with set_warrant_context(warrant), set_keypair_context(keypair):
             upgrade_cluster(cluster="staging-web", budget=5000.0)
     
@@ -173,15 +174,14 @@ def lockdown(
         warrant_or_tool: If Warrant instance, use it explicitly. If str, treat as tool name.
                         If None, tool must be provided as keyword arg.
         tool: The tool name to authorize (required if warrant_or_tool is not a string)
-        keypair: Optional keypair for PoP signature (or use set_keypair_context)
+        keypair: Keypair for PoP signature (required - or use set_keypair_context)
         extract_args: Optional function to extract args from function arguments.
                      If None, uses the function's kwargs as args.
         mapping: Optional dictionary mapping function argument names to constraint names.
                  e.g., {"target_env": "cluster"} maps arg 'target_env' to constraint 'cluster'.
     
     Raises:
-        AuthorizationError: If no warrant is available, PoP keypair is missing, 
-                           or authorization fails.
+        AuthorizationError: If no warrant/keypair is available, or authorization fails.
         ValueError: If tool is not provided.
     """
     # Determine warrant and tool
@@ -228,10 +228,42 @@ def lockdown(
                     "Either pass warrant explicitly or set it in context using set_warrant_context()."
                 )
             
-            # Get keypair: explicit or from context (needed for PoP)
+            # Check warrant expiry BEFORE any further processing
+            if warrant_to_use.is_expired():
+                expires_at = warrant_to_use.expires_at() if hasattr(warrant_to_use, 'expires_at') else "unknown"
+                audit_logger.log(AuditEvent(
+                    event_type=AuditEventType.WARRANT_EXPIRED,
+                    warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else None,
+                    tool=tool_name,
+                    action="denied",
+                    error_code="warrant_expired",
+                    details=f"Warrant expired at {expires_at}",
+                ))
+                raise AuthorizationError(
+                    f"Warrant has expired (at {expires_at}). "
+                    f"Cannot authorize {tool_name}."
+                )
+            
+            # Get keypair: explicit or from context (REQUIRED - PoP is mandatory)
             keypair_to_use = active_keypair
             if keypair_to_use is None:
                 keypair_to_use = get_keypair_context()
+            
+            # PoP is MANDATORY - keypair must always be available
+            if keypair_to_use is None:
+                audit_logger.log(AuditEvent(
+                    event_type=AuditEventType.POP_FAILED,
+                    warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else None,
+                    tool=tool_name,
+                    action="denied",
+                    error_code="no_keypair_for_pop",
+                    details=f"Proof-of-Possession is mandatory but no keypair available for {tool_name}",
+                ))
+                raise AuthorizationError(
+                    f"Proof-of-Possession is mandatory for {tool_name}, "
+                    "but no keypair is available. "
+                    "Either pass keypair explicitly or set it in context using set_keypair_context()."
+                )
             
             # Extract arguments for authorization
             if extract_args:
@@ -269,28 +301,11 @@ def lockdown(
                         mapped_args[constraint_name] = value
                     auth_args = mapped_args
             
-            # Create PoP signature if warrant requires it
-            pop_signature = None
-            if warrant_to_use.requires_pop:
-                if keypair_to_use is None:
-                    # Log PoP failure - no keypair
-                    audit_logger.log(AuditEvent(
-                        event_type=AuditEventType.POP_FAILED,
-                        warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else None,
-                        tool=tool_name,
-                        action="denied",
-                        error_code="no_keypair_for_pop",
-                        details=f"Warrant requires PoP but no keypair available for {tool_name}",
-                    ))
-                    raise AuthorizationError(
-                        f"Warrant requires Proof-of-Possession for {tool_name}, "
-                        "but no keypair is available. "
-                        "Either pass keypair explicitly or set it in context using set_keypair_context()."
-                    )
-                # Create PoP signature automatically
-                pop_signature = warrant_to_use.create_pop_signature(
-                    keypair_to_use, tool_name, auth_args
-                )
+            # Create PoP signature (ALWAYS - PoP is mandatory)
+            # Keypair is guaranteed to be present (validated above)
+            pop_signature = warrant_to_use.create_pop_signature(
+                keypair_to_use, tool_name, auth_args
+            )
             
             # Check authorization (with PoP signature if required)
             if not warrant_to_use.authorize(tool_name, auth_args, signature=pop_signature):

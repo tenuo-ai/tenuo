@@ -212,6 +212,17 @@ impl<'de> Deserialize<'de> for Warrant {
     }
 }
 
+/// Trait for a cache that tracks seen signatures to prevent replay attacks.
+/// 
+/// Implementations should store seen signatures for at least the duration
+/// of the PoP timestamp window (e.g., 2 minutes).
+pub trait ReplayCache {
+    /// Check if a signature has been seen before.
+    /// Returns true if seen, false otherwise.
+    /// Should also mark the signature as seen for future checks.
+    fn seen(&self, signature: &Signature) -> bool;
+}
+
 impl Warrant {
     /// Create a new warrant builder.
     pub fn builder() -> WarrantBuilder {
@@ -333,18 +344,36 @@ impl Warrant {
     /// # Arguments
     /// * `challenge` - The data that was signed (e.g., action + timestamp + nonce)
     /// * `signature` - The holder's signature over the challenge
+    /// * `replay_cache` - Optional cache to prevent signature reuse within the valid time window
     /// 
     /// # Returns
     /// * `Ok(())` if no PoP required OR signature is valid
     /// * `Err` if PoP required but signature invalid or missing holder
-    pub fn verify_holder(&self, challenge: &[u8], signature: &Signature) -> Result<()> {
+    pub fn verify_holder(
+        &self, 
+        challenge: &[u8], 
+        signature: &Signature,
+        replay_cache: Option<&dyn ReplayCache>
+    ) -> Result<()> {
         match &self.payload.authorized_holder {
             None => Ok(()), // Bearer token, no PoP required
             Some(holder_key) => {
+                // 1. Verify signature
                 holder_key.verify(challenge, signature)
                     .map_err(|_| Error::SignatureInvalid(
                         "holder proof-of-possession failed".to_string()
-                    ))
+                    ))?;
+                
+                // 2. Check replay cache if provided
+                if let Some(cache) = replay_cache {
+                    if cache.seen(signature) {
+                        return Err(Error::SignatureInvalid(
+                            "signature replay detected".to_string()
+                        ));
+                    }
+                }
+                
+                Ok(())
             }
         }
     }
@@ -594,9 +623,23 @@ impl WarrantBuilder {
     }
 
     /// Build and sign the warrant.
+    /// 
+    /// # Errors
+    /// - `MissingField("tool")` if tool is not set
+    /// - `MissingField("ttl")` if TTL is not set
+    /// - `MissingField("authorized_holder")` if authorized_holder is not set (PoP is mandatory)
     pub fn build(self, keypair: &Keypair) -> Result<Warrant> {
         let tool = self.tool.ok_or(Error::MissingField("tool".to_string()))?;
         let ttl = self.ttl.ok_or(Error::MissingField("ttl".to_string()))?;
+        
+        // PoP is MANDATORY - warrants must always be bound to a holder
+        // This ensures leaked warrants are useless without the private key
+        let authorized_holder = self.authorized_holder.ok_or_else(|| {
+            Error::MissingField(
+                "authorized_holder (Proof-of-Possession is mandatory - \
+                 use .authorized_holder(public_key) to bind the warrant)".to_string()
+            )
+        })?;
 
         // Validate max_depth doesn't exceed protocol cap
         if let Some(max) = self.max_depth {
@@ -630,7 +673,7 @@ impl WarrantBuilder {
             session_id: self.session_id,
             agent_id: self.agent_id,
             issuer: keypair.public_key(),
-            authorized_holder: self.authorized_holder,
+            authorized_holder: Some(authorized_holder),  // Always set (PoP mandatory)
             required_approvers: self.required_approvers,
             min_approvals: self.min_approvals,
         };
@@ -952,6 +995,15 @@ impl<'a> AttenuationBuilder<'a> {
         // Determine effective min_approvals (inherit if not set)
         let effective_min = self.min_approvals.or(self.parent.payload.min_approvals);
 
+        // PoP is MANDATORY - authorized_holder must be set
+        // It's inherited from parent by default, but validate just in case
+        let authorized_holder = self.authorized_holder.ok_or_else(|| {
+            Error::MissingField(
+                "authorized_holder (Proof-of-Possession is mandatory - \
+                 warrant must have an authorized_holder)".to_string()
+            )
+        })?;
+
         let payload = WarrantPayload {
             id: WarrantId::new(),
             tool,
@@ -963,7 +1015,7 @@ impl<'a> AttenuationBuilder<'a> {
             session_id: self.session_id,
             agent_id: self.agent_id,
             issuer: keypair.public_key(),
-            authorized_holder: self.authorized_holder,
+            authorized_holder: Some(authorized_holder),  // Always set (PoP mandatory)
             required_approvers: self.required_approvers,
             min_approvals: effective_min,
         };

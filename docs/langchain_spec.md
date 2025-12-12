@@ -15,6 +15,7 @@
 | **Delegatable** | Parent can issue narrower child warrants | `warrant.attenuate()` with signature chain |
 | **Bound** | Credential theft is useless without key | PoP signature over (tool, args, timestamp) |
 | **Dynamic** | Scope adapts to runtime context | State interpolation in constraints |
+| **Auditable** | All decisions logged | Structured audit logs (JSON) |
 
 ---
 
