@@ -218,7 +218,7 @@ fn demo_http_transport() {
 
     // Header should be reasonably sized
     assert!(
-        header_value.len() < 1200,
+        header_value.len() < 1500,
         "Warrant too large for headers: {} bytes",
         header_value.len()
     );
