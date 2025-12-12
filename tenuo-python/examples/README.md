@@ -17,7 +17,8 @@ pip install tenuo
 
 ### LangChain Integration
 - **[langchain_simple.py](langchain_simple.py)**: Minimal example of protecting LangChain tools. Shows how to wrap a tool and run an agent with a warrant.
-- **[langchain_integration.py](langchain_integration.py)**: Advanced integration using LangChain callbacks to automatically inject warrants into the execution context.
+- `langchain_integration.py`: Advanced LangChain integration with callbacks
+- `langchain_protect_tools.py`: Protecting third-party tools (e.g., from `langchain_community`)
 
 ### MCP (Model Context Protocol)
 - **[mcp_integration.py](mcp_integration.py)**: Demonstrates how to integrate Tenuo with MCP servers, extracting constraints from MCP tool calls.

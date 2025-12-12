@@ -100,6 +100,36 @@ def read_file(file_path: str) -> str:
 4. Generates PoP signature using context keypair
 5. Executes function if authorized, raises `AuthorizationError` if not
 
+5. Executes function if authorized, raises `AuthorizationError` if not
+
+---
+
+## Protecting Third-Party Tools
+
+For tools you don't own (e.g., from `langchain_community`), you cannot add decorators. Use `protect_tools` to wrap them at runtime.
+
+```python
+from tenuo.langchain import protect_tools
+from langchain_community.tools import DuckDuckGoSearchRun
+
+# 1. Instantiate original tools
+search = DuckDuckGoSearchRun()
+wiki = WikipediaQueryRun(...)
+
+# 2. Wrap them with Tenuo protection
+# This applies @lockdown(tool=tool.name) to each tool
+protected_tools = protect_tools([search, wiki])
+
+# 3. Use protected_tools in your agent
+agent = create_openai_tools_agent(llm, protected_tools)
+```
+
+**How it works:**
+- Iterates through the list of tools
+- Creates a wrapper that enforces warrant authorization
+- Preserves tool metadata (name, description, args schema)
+- Returns a new list of secure tools
+
 ---
 
 ## Context Management
