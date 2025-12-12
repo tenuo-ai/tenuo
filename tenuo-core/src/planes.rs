@@ -1367,7 +1367,7 @@ mod tests {
     #[test]
     fn test_minimal_authorizer() {
         let control_plane = ControlPlane::generate();
-        let warrant = control_plane
+        let _warrant = control_plane
             .issue_warrant("test", &[], Duration::from_secs(60))
             .unwrap();
 
@@ -1709,7 +1709,7 @@ mod tests {
         let control_plane = ControlPlane::generate();
 
         // Create warrant WITHOUT multi-sig
-        let warrant = control_plane
+        let _warrant = control_plane
             .issue_warrant("test", &[], Duration::from_secs(60))
             .unwrap();
 

@@ -262,7 +262,7 @@ mod tests {
         // Verify that ConstraintSet serialization is deterministic even with
         // composite constraints (All, Any) that contain Vec<Constraint>.
         // This is critical for warrant ID consistency and signature verification.
-        use crate::constraints::{All, Any, Constraint, Pattern, Range};
+        use crate::constraints::{All, Constraint, Pattern, Range};
 
         let keypair = Keypair::generate();
 
@@ -297,7 +297,7 @@ mod tests {
 
         // Serialize both warrants
         let bytes1 = encode(&warrant1).unwrap();
-        let bytes2 = encode(&warrant2).unwrap();
+        let _bytes2 = encode(&warrant2).unwrap();
 
         // Note: Vec<Constraint> in All/Any may serialize differently based on order
         // This is acceptable - the important thing is that the same warrant

@@ -418,7 +418,7 @@ tools:
 
         let compiled = CompiledMcpConfig::compile(config);
         let warnings = compiled.validate();
-        assert!(warnings.len() > 0); // Should warn about incompatible source
+        assert!(!warnings.is_empty()); // Should warn about incompatible source
         assert!(warnings[0].contains("path") || warnings[0].contains("Path"));
     }
 }

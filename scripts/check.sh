@@ -19,7 +19,7 @@ cd ..
 # 2. Rust Linting (Clippy)
 echo -e "\n${GREEN}[2/4] Running Clippy...${NC}"
 cd tenuo-core
-cargo clippy --all-features -- -D warnings
+cargo clippy --all-targets --all-features -- -D warnings
 cd ..
 
 # 3. Rust Tests

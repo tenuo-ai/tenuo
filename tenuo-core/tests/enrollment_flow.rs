@@ -7,7 +7,7 @@ use std::time::Duration;
 fn test_enrollment_flow() {
     // 1. Build binaries
     let status = Command::new("cargo")
-        .args(&[
+        .args([
             "build",
             "--bin",
             "tenuo-control",
@@ -33,20 +33,17 @@ fn test_enrollment_flow() {
     let stderr = control.stderr.take().expect("Failed to open stderr");
     let reader = BufReader::new(stdout);
     let err_reader = BufReader::new(stderr);
-    let mut enrollment_token = String::new();
 
     // Spawn a thread to read stdout so we don't block
     let (tx, rx) = std::sync::mpsc::channel();
     thread::spawn(move || {
-        for line in reader.lines() {
-            if let Ok(l) = line {
-                println!("[CONTROL] {}", l);
-                if l.contains("ENROLLMENT TOKEN:") {
-                    let parts: Vec<&str> = l.split("ENROLLMENT TOKEN: ").collect();
-                    if parts.len() > 1 {
-                        let token = parts[1].trim().trim_matches('║').trim();
-                        tx.send(token.to_string()).unwrap();
-                    }
+        for line in reader.lines().map_while(Result::ok) {
+            println!("[CONTROL] {}", line);
+            if line.contains("ENROLLMENT TOKEN:") {
+                let parts: Vec<&str> = line.split("ENROLLMENT TOKEN: ").collect();
+                if parts.len() > 1 {
+                    let token = parts[1].trim().trim_matches('║').trim();
+                    tx.send(token.to_string()).unwrap();
                 }
             }
         }
@@ -54,15 +51,13 @@ fn test_enrollment_flow() {
 
     // Spawn a thread to read stderr
     thread::spawn(move || {
-        for line in err_reader.lines() {
-            if let Ok(l) = line {
-                eprintln!("[CONTROL ERR] {}", l);
-            }
+        for line in err_reader.lines().map_while(Result::ok) {
+            eprintln!("[CONTROL ERR] {}", line);
         }
     });
 
     // Wait for token (timeout 10s)
-    enrollment_token = rx
+    let enrollment_token = rx
         .recv_timeout(Duration::from_secs(10))
         .expect("Timed out waiting for enrollment token");
     println!("Found Enrollment Token: {}", enrollment_token);
@@ -93,4 +88,5 @@ fn test_enrollment_flow() {
 
     // 6. Cleanup
     control.kill().ok();
+    control.wait().ok();
 }
