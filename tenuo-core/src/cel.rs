@@ -115,15 +115,21 @@ use std::net::IpAddr;
 /// Programs are cached by expression string to avoid recompilation.
 /// 
 /// ## Configuration
-/// - **TTL**: 1 hour (expressions are immutable, no security impact)
+/// - **TTL**: None (LRU eviction only) - expressions are immutable, no security impact
 /// - **Max capacity**: 1000 entries (memory bound)
 /// 
 /// ## Thread Safety
 /// Uses `moka::sync::Cache` which is thread-safe and lock-free for reads.
+/// 
+/// ## Rationale
+/// Since CEL expressions are immutable and the cache key is the expression string itself,
+/// there's no security risk from long-lived cache entries. Memory is bounded by max_capacity,
+/// so we use LRU eviction only (no TTL) to avoid unnecessary recompilation of frequently-used
+/// expressions.
 static CEL_CACHE: std::sync::LazyLock<Cache<String, Arc<Program>>> = std::sync::LazyLock::new(|| {
     Cache::builder()
         .max_capacity(1000)
-        .time_to_live(Duration::from_secs(3600)) // 1 hour
+        // No TTL - expressions are immutable, memory is bounded by max_capacity
         .build()
 });
 

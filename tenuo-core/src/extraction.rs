@@ -529,7 +529,12 @@ fn json_to_constraint_value(value: &Value) -> Option<ConstraintValue> {
                 if u > i64::MAX as u64 {
                     Some(ConstraintValue::String(u.to_string()))
                 } else {
-                    Some(ConstraintValue::Integer(u as i64))
+                    // Safe: we've verified u <= i64::MAX as u64
+                    // Using try_into for clarity, though the check above guarantees success
+                    u.try_into()
+                        .ok()
+                        .map(ConstraintValue::Integer)
+                        .or_else(|| Some(ConstraintValue::String(u.to_string())))
                 }
             } else { n.as_f64().map(ConstraintValue::Float) }
         }

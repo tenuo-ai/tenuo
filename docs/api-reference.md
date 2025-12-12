@@ -140,12 +140,15 @@ from tenuo import Warrant
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `attenuate(...)` | `Warrant` | Create narrower child warrant |
+| `attenuate(constraints, keypair, ttl_seconds=None, holder=None)` | `Warrant` | Create narrower child warrant |
 | `authorize(tool, args, signature?)` | `bool` | Check if action is authorized |
 | `verify(public_key)` | `bool` | Verify signature against issuer |
-| `create_pop_signature(keypair, tool, args)` | `list[int]` | Create PoP signature (bytes as list of ints) |
+| `create_pop_signature(keypair, tool, args)` | `list[int]` | Create PoP signature (bytes as list of ints). **⚠️ Replay Window:** PoP signatures are valid for ~2 minutes to handle clock skew. Implement request deduplication for high-security operations. |
 | `to_base64()` | `str` | Serialize to base64 |
 | `is_expired()` | `bool` | Check if warrant has expired |
+| `expires_at()` | `str` | Get expiration time (RFC3339) |
+| `tool` | `str` | **Property**: The tool(s) authorized by this warrant |
+| `session_id` | `str \| None` | **Property**: The session ID |
 
 #### Example
 
@@ -202,9 +205,11 @@ from tenuo import Authorizer
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `authorize(warrant, tool, args, signature?, approvals?)` | `None` | Authorize (raises on failure) |
-| `verify_chain(warrants: list)` | `ChainVerificationResult` | Verify delegation chain |
-| `check_chain(warrants, tool, args, signature?, approvals?)` | `ChainVerificationResult` | Verify chain + authorize |
+| `verify(warrant)` | `None` | Verify warrant (signature, expiration, revocation) - raises on failure |
+| `authorize(warrant, tool, args, signature=None)` | `None` | Authorize action (raises on failure) |
+| `check(warrant, tool, args, signature=None)` | `None` | Verify warrant and authorize in one call (raises on failure) |
+| `verify_chain(chain)` | `ChainVerificationResult` | Verify complete delegation chain from root to leaf |
+| `check_chain(chain, tool, args, signature=None)` | `ChainVerificationResult` | Verify chain and authorize action against leaf warrant |
 
 #### Example
 
@@ -214,17 +219,87 @@ from tenuo import Authorizer, Keypair
 cp_kp = Keypair.generate()
 authorizer = Authorizer.new(cp_kp.public_key())
 
-# Verify full delegation chain
-result = authorizer.verify_chain([root_warrant, child_warrant])
-print(f"Chain depth: {result.leaf_depth}")
+# Verify root warrant
+authorizer.verify(root_warrant)
 
-# Authorize with chain verification
-authorizer.check_chain(
-    [root_warrant, child_warrant],
+# Verify and authorize in one call
+pop_sig = warrant.create_pop_signature(keypair, "read_file", {"path": "/tmp/test.txt"})
+authorizer.check(
+    warrant,
     "read_file",
     {"path": "/tmp/test.txt"},
-    signature=pop_sig
+    signature=bytes(pop_sig)
 )
+
+# Verify a delegation chain
+chain = [root_warrant, child_warrant, leaf_warrant]
+result = authorizer.verify_chain(chain)
+print(f"Chain verified: {result.chain_length} warrants, depth {result.leaf_depth}")
+
+# Verify chain and authorize action
+result = authorizer.check_chain(
+    chain=chain,
+    tool="read_file",
+    args={"path": "/tmp/data.txt"},
+    signature=None
+)
+```
+
+---
+
+## Chain Verification
+
+Types and methods for verifying complete delegation chains.
+
+### ChainVerificationResult
+
+Result of a successful chain verification.
+
+```python
+from tenuo import ChainVerificationResult
+```
+
+#### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `root_issuer` | `bytes \| None` | Public key of root issuer (32 bytes), or None |
+| `chain_length` | `int` | Total number of warrants in the verified chain |
+| `leaf_depth` | `int` | Delegation depth of the leaf warrant |
+| `verified_steps` | `List[ChainStep]` | Details of each verified step in the chain |
+
+#### Example
+
+```python
+result = authorizer.verify_chain([root_warrant, child_warrant, leaf_warrant])
+print(f"Chain length: {result.chain_length}")
+print(f"Leaf depth: {result.leaf_depth}")
+for step in result.verified_steps:
+    print(f"  Step {step.depth}: {step.warrant_id[:16]}...")
+```
+
+### ChainStep
+
+A single step in a verified delegation chain.
+
+```python
+from tenuo import ChainStep
+```
+
+#### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `warrant_id` | `str` | The warrant ID at this step |
+| `depth` | `int` | Delegation depth at this step |
+| `issuer` | `bytes` | Public key of the issuer at this step (32 bytes) |
+
+#### Example
+
+```python
+result = authorizer.verify_chain(chain)
+for step in result.verified_steps:
+    print(f"Warrant {step.warrant_id[:16]}... at depth {step.depth}")
 ```
 
 ---
@@ -254,8 +329,20 @@ from tenuo import (
 Glob-style pattern matching.
 
 ```python
-Pattern("staging-*")     # Matches staging-web, staging-db
-Pattern("/tmp/**")       # Matches /tmp/foo, /tmp/foo/bar
+# Prefix patterns
+Pattern("staging-*")     # Matches staging-web, staging-db, staging-api
+Pattern("public/*")      # Matches public/file.txt, public/data.json
+                          # Does NOT match public/subdir/file.txt (use ** for recursive)
+
+# Recursive patterns (crosses path separators)
+Pattern("/tmp/**")        # Matches /tmp/foo, /tmp/foo/bar, /tmp/a/b/c/file.txt
+Pattern("public/**")      # Matches public/file.txt, public/subdir/file.txt, public/a/b/c/file.txt
+
+# Suffix patterns
+Pattern("*-safe")         # Matches image-safe, container-safe
+
+# URL patterns
+Pattern("https://public.*")  # Matches https://public.example.com, https://public.api.io
 ```
 
 ### Exact
@@ -306,13 +393,17 @@ AnyOf([Exact("admin"), Exact("superuser")])      # OR
 Not(Exact("blocked"))                             # Negation
 ```
 
-### Cel
+### CEL (CelConstraint)
 
 Common Expression Language for complex logic.
 
+**Note:** The type is `CelConstraint` in Rust, but Python exports it as `CEL` for convenience.
+
 ```python
-Cel('value.startsWith("staging") && size(value) < 20')
-Cel('value > 0 && value <= 1000')
+from tenuo import CEL
+
+CEL('value.startsWith("staging") && size(value) < 20')
+CEL('value > 0 && value <= 1000')
 ```
 
 ---
@@ -441,13 +532,14 @@ with set_warrant_context(warrant), set_keypair_context(keypair):
 
 ## LangChain Integration
 
-### `protect_tools(tools: List[BaseTool], warrant: Optional[Warrant] = None, keypair: Optional[Keypair] = None) -> List[BaseTool]`
+### `protect_tools(tools: List[BaseTool], warrant: Warrant, keypair: Keypair, config: Optional[Union[str, dict, LangChainConfig]] = None) -> List[BaseTool]`
 
 Wrap a list of LangChain tools with Tenuo protection.
 
 - `tools`: List of tools to protect.
-- `warrant`: (Optional) Warrant to use. If not provided, must be set in context.
-- `keypair`: (Optional) Keypair for PoP. If not provided, must be set in context.
+- `warrant`: Root warrant to enforce.
+- `keypair`: Keypair for PoP (Mandatory).
+- `config`: Optional configuration for per-tool constraints.
 
 Returns a new list of protected tools.
 
@@ -455,12 +547,12 @@ Returns a new list of protected tools.
 from tenuo.langchain import protect_tools
 from langchain_community.tools import DuckDuckGoSearchRun
 
-protected = protect_tools([DuckDuckGoSearchRun()])
+protected = protect_tools(
+    tools=[DuckDuckGoSearchRun()],
+    warrant=warrant,
+    keypair=keypair
+)
 ```
-
-### `protect_tool(tool: BaseTool, warrant: Optional[Warrant] = None, keypair: Optional[Keypair] = None) -> BaseTool`
-
-Wrap a single LangChain tool.
 
 ---
 
@@ -477,7 +569,9 @@ from tenuo import TenuoError, AuthorizationError, WarrantError
 ```
 TenuoError (base)
 ├── AuthorizationError    # Authorization failed
-└── WarrantError          # Warrant creation/validation failed
+├── WarrantError          # Warrant creation/validation failed
+├── ConstraintError       # Invalid constraint definition
+└── ConfigurationError    # Invalid configuration (MCP/Gateway)
 ```
 
 ### Example

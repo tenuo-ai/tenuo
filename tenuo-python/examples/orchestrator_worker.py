@@ -16,6 +16,7 @@ different authority per task phase.
 
 from tenuo import (
     Keypair, Warrant, Pattern, Range, Authorizer,
+    ChainVerificationResult,
     lockdown, set_warrant_context, set_keypair_context,
     AuthorizationError
 )
@@ -54,6 +55,9 @@ def orchestrator_task(warrant: Warrant, keypair: Keypair, worker_keypair: Keypai
     - Orchestrator holds authority for the full task
     - Each phase gets only what it needs
     - Authority is reissued (attenuated) as intent changes
+    
+    Returns:
+        Tuple of (research_warrant, write_warrant) for chain verification
     """
     print("\n[Orchestrator] Starting task: 'Research Q3 competitors'")
     print(f"[Orchestrator] My warrant allows: {warrant.tool}")
@@ -100,6 +104,8 @@ def orchestrator_task(warrant: Warrant, keypair: Keypair, worker_keypair: Keypai
     worker_write(write_warrant, worker_keypair)
     
     print("\n[Orchestrator] Task complete")
+    
+    return research_warrant, write_warrant
 
 
 def worker_research(warrant: Warrant, keypair: Keypair):
@@ -202,23 +208,60 @@ def main():
     print(f"\n[Authorizer] Created with trusted root: {control_plane_keypair.public_key().to_bytes()[:8].hex()}...")
     
     # Orchestrator executes task, delegating to Worker
-    orchestrator_task(root_warrant, orchestrator_keypair, worker_keypair)
+    research_warrant, write_warrant = orchestrator_task(root_warrant, orchestrator_keypair, worker_keypair)
     
-    # Verify the delegation chain
+    # ============================================================================
+    # Chain Verification
+    # ============================================================================
     print("\n" + "=" * 60)
-    print("Delegation Chain Verification")
+    print("Chain Verification")
     print("=" * 60)
     
-    # Verify root warrant
+    # Verify Phase 1 chain: root -> research (attenuated)
+    print("\n[Chain Verification] Phase 1: Root -> Research (attenuated)")
     try:
-        authorizer.verify(root_warrant)
-        print("✓ Root warrant verified (signed by control plane)")
+        chain1 = [root_warrant, research_warrant]
+        result1: ChainVerificationResult = authorizer.verify_chain(chain1)
+        print(f"✓ Chain verified successfully!")
+        print(f"  Chain length: {result1.chain_length}")
+        print(f"  Leaf depth: {result1.leaf_depth}")
+        print(f"  Root issuer: {result1.root_issuer[:8].hex()}..." if result1.root_issuer else "  Root issuer: None")
+        print(f"  Verified steps:")
+        for i, step in enumerate(result1.verified_steps):
+            print(f"    [{i}] ID={step.warrant_id[:16]}..., depth={step.depth}, issuer={step.issuer[:8].hex()}...")
     except Exception as e:
-        print(f"✗ Root warrant verification failed: {e}")
+        print(f"✗ Chain verification failed: {e}")
     
-    # Note: For the write phase, we issued a new warrant rather than attenuating
-    # This is a valid pattern when you want to completely change the tool set
-    # In a real system, you might attenuate and rely on authorization-time tool checking
+    # Verify Phase 2 chain: root -> write (new warrant)
+    print("\n[Chain Verification] Phase 2: Root -> Write (new warrant)")
+    try:
+        chain2 = [root_warrant, write_warrant]
+        result2: ChainVerificationResult = authorizer.verify_chain(chain2)
+        print(f"✓ Chain verified successfully!")
+        print(f"  Chain length: {result2.chain_length}")
+        print(f"  Leaf depth: {result2.leaf_depth}")
+        print(f"  Root issuer: {result2.root_issuer[:8].hex()}..." if result2.root_issuer else "  Root issuer: None")
+        print(f"  Verified steps:")
+        for i, step in enumerate(result2.verified_steps):
+            print(f"    [{i}] ID={step.warrant_id[:16]}..., depth={step.depth}, issuer={step.issuer[:8].hex()}...")
+    except Exception as e:
+        print(f"✗ Chain verification failed: {e}")
+    
+    # Demonstrate check_chain: verify chain AND authorize action
+    print("\n[Chain Verification] Using check_chain (verify + authorize)")
+    try:
+        chain1 = [root_warrant, research_warrant]
+        # This verifies the chain AND checks if search is authorized
+        result: ChainVerificationResult = authorizer.check_chain(
+            chain=chain1,
+            tool="search",
+            args={"query": "competitor analysis", "max_results": 3},
+            signature=None  # In production, include PoP signature
+        )
+        print(f"✓ Chain verified and action authorized!")
+        print(f"  Chain length: {result.chain_length}, leaf depth: {result.leaf_depth}")
+    except Exception as e:
+        print(f"✗ Chain verification or authorization failed: {e}")
     
     print("\n" + "=" * 60)
     print("Key Takeaways:")
@@ -228,7 +271,9 @@ def main():
     print("3. Worker cannot exceed what Orchestrator delegated")
     print("4. Short TTLs limit blast radius of compromised warrants")
     print("5. No identity change needed - authority tracks intent")
-    print("6. Tool narrowing: Use separate warrants or rely on constraints")
+    print("6. Tool narrowing: Use attenuation for sub-scopes, new warrants for disjoint scopes")
+    print("   - Attenuation: 'I give you a slice of my power' (inherits tools, adds constraints)")
+    print("   - New Warrant: 'I give you a different power' (requires issuer authority)")
     print("=" * 60)
 
 

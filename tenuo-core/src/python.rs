@@ -13,10 +13,10 @@ use crate::crypto::{Keypair as RustKeypair, PublicKey as RustPublicKey, Signatur
 use crate::warrant::Warrant as RustWarrant;
 use crate::wire;
 use crate::mcp::{McpConfig, CompiledMcpConfig};
-use crate::planes::Authorizer as RustAuthorizer;
+use crate::planes::{Authorizer as RustAuthorizer, ChainStep as RustChainStep, ChainVerificationResult as RustChainVerificationResult};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PySequence};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -525,6 +525,11 @@ impl PyWarrant {
         self.inner.is_expired()
     }
 
+    /// Get the expiration time (RFC3339 string).
+    fn expires_at(&self) -> String {
+        self.inner.expires_at().to_rfc3339()
+    }
+
     /// Attenuate this warrant with additional constraints.
     ///
     /// Note: session_id is immutable and inherited from the parent warrant.
@@ -810,6 +815,88 @@ impl PySignature {
     }
 }
 
+/// Python wrapper for ChainStep.
+#[pyclass(name = "ChainStep")]
+#[derive(Clone)]
+pub struct PyChainStep {
+    inner: RustChainStep,
+}
+
+#[pymethods]
+impl PyChainStep {
+    /// The warrant ID at this step.
+    #[getter]
+    fn warrant_id(&self) -> String {
+        self.inner.warrant_id.clone()
+    }
+
+    /// Delegation depth at this step.
+    #[getter]
+    fn depth(&self) -> u32 {
+        self.inner.depth
+    }
+
+    /// Public key of the issuer at this step (32 bytes).
+    #[getter]
+    fn issuer(&self) -> Vec<u8> {
+        self.inner.issuer.to_vec()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ChainStep(warrant_id='{}', depth={}, issuer={:02x}...)",
+            self.inner.warrant_id,
+            self.inner.depth,
+            self.inner.issuer[0]
+        )
+    }
+}
+
+/// Python wrapper for ChainVerificationResult.
+#[pyclass(name = "ChainVerificationResult")]
+#[derive(Clone)]
+pub struct PyChainVerificationResult {
+    inner: RustChainVerificationResult,
+}
+
+#[pymethods]
+impl PyChainVerificationResult {
+    /// Public key of the root issuer (trusted authority), or None.
+    #[getter]
+    fn root_issuer(&self) -> Option<Vec<u8>> {
+        self.inner.root_issuer.map(|arr| arr.to_vec())
+    }
+
+    /// Total length of the verified chain.
+    #[getter]
+    fn chain_length(&self) -> usize {
+        self.inner.chain_length
+    }
+
+    /// Depth of the leaf warrant.
+    #[getter]
+    fn leaf_depth(&self) -> u32 {
+        self.inner.leaf_depth
+    }
+
+    /// Details of each verified step.
+    #[getter]
+    fn verified_steps(&self) -> Vec<PyChainStep> {
+        self.inner.verified_steps.iter()
+            .map(|step| PyChainStep { inner: step.clone() })
+            .collect()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ChainVerificationResult(chain_length={}, leaf_depth={}, steps={})",
+            self.inner.chain_length,
+            self.inner.leaf_depth,
+            self.inner.verified_steps.len()
+        )
+    }
+}
+
 /// Python wrapper for Authorizer.
 #[pyclass(name = "Authorizer")]
 pub struct PyAuthorizer {
@@ -898,6 +985,99 @@ impl PyAuthorizer {
         self.inner.check(&warrant.inner, tool, &rust_args, sig.as_ref(), &[])
             .map_err(to_py_err)
     }
+
+    /// Verify a complete delegation chain.
+    ///
+    /// This is the most thorough verification method, validating the entire
+    /// path from a trusted root to the leaf warrant.
+    ///
+    /// Args:
+    ///     chain: Ordered list of warrants from root (index 0) to leaf (last)
+    ///
+    /// Returns:
+    ///     ChainVerificationResult on success, raises exception on failure
+    ///
+    /// Chain Invariants Verified:
+    ///     1. Root Trust: chain[0] must be signed by a trusted issuer
+    ///     2. Linkage: chain[i+1].parent_id == chain[i].id
+    ///     3. Depth: chain[i+1].depth == chain[i].depth + 1
+    ///     4. Expiration: chain[i+1].expires_at <= chain[i].expires_at
+    ///     5. Monotonicity: chain[i+1].constraints ⊆ chain[i].constraints
+    ///     6. Signatures: Each warrant has a valid signature
+    ///     7. No Cycles: Each warrant ID appears exactly once
+    fn verify_chain(&self, chain: &Bound<'_, PySequence>) -> PyResult<PyChainVerificationResult> {
+        let len = chain.len()?;
+        if len == 0 {
+            return Err(PyValueError::new_err("chain cannot be empty"));
+        }
+        
+        let mut warrants = Vec::with_capacity(len);
+        for i in 0..len {
+            let item = chain.get_item(i)?;
+            let warrant_bound = item.downcast::<PyWarrant>()?;
+            let warrant = warrant_bound.borrow();
+            warrants.push(warrant.inner.clone());
+        }
+        
+        let result = self.inner.verify_chain(&warrants).map_err(to_py_err)?;
+        Ok(PyChainVerificationResult { inner: result })
+    }
+
+    /// Verify chain and authorize an action.
+    ///
+    /// Convenience method combining chain verification and authorization
+    /// against the leaf warrant.
+    ///
+    /// Args:
+    ///     chain: Ordered list of warrants from root to leaf
+    ///     tool: Tool name being invoked
+    ///     args: Dictionary of argument name -> value
+    ///     signature: Optional PoP signature bytes (64 bytes)
+    ///
+    /// Returns:
+    ///     ChainVerificationResult on success, raises exception on failure
+    #[pyo3(signature = (chain, tool, args, signature=None))]
+    fn check_chain(
+        &self,
+        chain: &Bound<'_, PySequence>,
+        tool: &str,
+        args: &Bound<'_, PyDict>,
+        signature: Option<&[u8]>,
+    ) -> PyResult<PyChainVerificationResult> {
+        let len = chain.len()?;
+        if len == 0 {
+            return Err(PyValueError::new_err("chain cannot be empty"));
+        }
+        
+        let mut warrants = Vec::with_capacity(len);
+        for i in 0..len {
+            let item = chain.get_item(i)?;
+            let warrant_bound = item.downcast::<PyWarrant>()?;
+            let warrant = warrant_bound.borrow();
+            warrants.push(warrant.inner.clone());
+        }
+        
+        let mut rust_args = HashMap::new();
+        for (key, value) in args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_args.insert(field, cv);
+        }
+
+        let sig = match signature {
+            Some(bytes) => {
+                let arr: [u8; 64] = bytes
+                    .try_into()
+                    .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
+                Some(RustSignature::from_bytes(&arr).map_err(to_py_err)?)
+            }
+            None => None,
+        };
+
+        let result = self.inner.check_chain(&warrants, tool, &rust_args, sig.as_ref(), &[])
+            .map_err(to_py_err)?;
+        Ok(PyChainVerificationResult { inner: result })
+    }
 }
 
 /// Helper to convert ConstraintValue to Python object
@@ -948,6 +1128,8 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPublicKey>()?;
     m.add_class::<PySignature>()?;
     m.add_class::<PyAuthorizer>()?;
+    m.add_class::<PyChainStep>()?;
+    m.add_class::<PyChainVerificationResult>()?;
     m.add_class::<PyExtractionResult>()?;
 
     // Constants

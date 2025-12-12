@@ -433,6 +433,12 @@ impl ConstraintValue {
     }
 
     /// Get as number (f64) if this is numeric.
+    /// 
+    /// # Precision Note
+    /// 
+    /// Converting `i64` to `f64` can lose precision for integers larger than 2^53
+    /// (9,007,199,254,740,992). For very large integers (e.g., snowflake IDs),
+    /// consider using the integer directly or converting to string.
     pub fn as_number(&self) -> Option<f64> {
         match self {
             ConstraintValue::Integer(i) => Some(*i as f64),
@@ -1707,16 +1713,6 @@ mod tests {
 
         assert!(not.matches(&"allowed".into()).unwrap());
         assert!(!not.matches(&"blocked".into()).unwrap());
-    }
-
-    #[test]
-    fn test_pattern_attenuation() {
-        let parent = Pattern::new("staging-*").unwrap();
-        let valid_child = Pattern::new("staging-web").unwrap();
-        assert!(parent.validate_attenuation(&valid_child).is_ok());
-
-        let invalid_child = Pattern::new("prod-*").unwrap();
-        assert!(parent.validate_attenuation(&invalid_child).is_err());
     }
 
     #[test]

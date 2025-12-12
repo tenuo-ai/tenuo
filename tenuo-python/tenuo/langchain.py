@@ -376,7 +376,6 @@ def protect_tools(
                 constraints[constraint_name] = build_constraint(constraint_value)
             
             tool_warrant = warrant.attenuate(
-                tool=tool_name,
                 constraints=constraints,
                 keypair=keypair,
             )

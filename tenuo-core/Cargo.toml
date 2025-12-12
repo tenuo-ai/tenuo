@@ -134,6 +134,7 @@ humantime = "2.1"
 proptest = "1.4"
 criterion = "0.5"
 tokio = { version = "1.35", features = ["full", "test-util"] }
+tempfile = "3.8"
 
 [[bench]]
 name = "warrant_benchmarks"

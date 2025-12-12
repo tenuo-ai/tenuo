@@ -76,7 +76,7 @@ services:
   orchestrator:
     build:
       context: ./tenuo-core
-      dockerfile: deploy/docker/Dockerfile.agents
+      dockerfile: demo/docker/Dockerfile.agents
     entrypoint: ["tenuo-orchestrator"]
     environment:
       # Enrollment token (must match control plane)
@@ -97,7 +97,7 @@ services:
   worker:
     build:
       context: ./tenuo-core
-      dockerfile: deploy/docker/Dockerfile.agents
+      dockerfile: demo/docker/Dockerfile.agents
     entrypoint: ["tenuo-worker"]
     environment:
       # Worker only needs the Control Plane's PUBLIC key (not secret!)

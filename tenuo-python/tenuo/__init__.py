@@ -39,8 +39,8 @@ from tenuo_core import (
     # SrlBuilder,  # TODO
     
     # Chain Verification
-    # ChainStep,  # TODO
-    # ChainVerificationResult,  # TODO
+    ChainStep,
+    ChainVerificationResult,
     
     # Gateway Config
     # GatewayConfig,  # TODO
@@ -124,8 +124,8 @@ __all__ = [
     # "SrlBuilder",
     
     # Chain Verification
-    # "ChainStep",
-    # "ChainVerificationResult",
+    "ChainStep",
+    "ChainVerificationResult",
     
     # Gateway Config
     # "GatewayConfig",

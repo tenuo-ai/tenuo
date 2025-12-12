@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ============================================================================
+  # RUST CORE
+  # ============================================================================
+  rust-core:
+    name: Rust Core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Rust dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: tenuo-core
+
+      - name: Check Formatting
+        run: cargo fmt --all -- --check
+        working-directory: tenuo-core
+
+      - name: Lint with Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+        working-directory: tenuo-core
+
+      - name: Run Tests
+        run: cargo test --all-features
+        working-directory: tenuo-core
+
+      - name: Security Audit
+        uses: actions-rs/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================================================
+  # PYTHON SDK
+  # ============================================================================
+  python-sdk:
+    name: Python SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Create venv
+        run: uv venv
+
+      - name: Install dependencies
+        run: |
+          source .venv/bin/activate
+          uv pip install maturin pytest ruff mypy types-PyYAML types-requests
+
+      - name: Build and Install Tenuo
+        working-directory: tenuo-python
+        run: |
+          source ../.venv/bin/activate
+          maturin develop
+
+      - name: Lint with Ruff
+        working-directory: tenuo-python
+        run: |
+          source ../.venv/bin/activate
+          ruff check .
+
+      - name: Type Check with MyPy
+        working-directory: tenuo-python
+        run: |
+          source ../.venv/bin/activate
+          mypy .
+
+      - name: Run Tests
+        working-directory: tenuo-python
+        run: |
+          source ../.venv/bin/activate
+          pytest
+
+  # ============================================================================
+  # DOCKER
+  # ============================================================================
+  docker-build:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Control Plane
+        uses: docker/build-push-action@v5
+        with:
+          context: tenuo-core
+          file: tenuo-core/deploy/docker/Dockerfile.control
+          push: false
+          tags: tenuo/control:test
+
+      - name: Build Authorizer
+        uses: docker/build-push-action@v5
+        with:
+          context: tenuo-core
+          file: tenuo-core/deploy/docker/Dockerfile.authorizer
+          push: false
+          tags: tenuo/authorizer:test
+
+      - name: Build Agents (Demo)
+        uses: docker/build-push-action@v5
+        with:
+          context: tenuo-core
+          file: tenuo-core/demo/docker/Dockerfile.agents
+          push: false
+          tags: tenuo/agents:test

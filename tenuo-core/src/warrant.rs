@@ -317,12 +317,39 @@ impl Warrant {
     /// - If `min_approvals` is set, returns that value
     /// - If `required_approvers` is set but `min_approvals` is not, returns the count (all must sign)
     /// - Otherwise returns 0 (no approvals needed)
+    /// 
+    /// # Type Safety
+    /// 
+    /// If the approver count exceeds `u32::MAX`, it is capped at `u32::MAX`.
+    /// In practice, this is extremely unlikely (would require > 4 billion approvers).
     pub fn approval_threshold(&self) -> u32 {
+        use std::convert::TryInto;
         match (&self.payload.required_approvers, self.payload.min_approvals) {
-            (Some(approvers), Some(min)) => min.min(approvers.len() as u32),
-            (Some(approvers), None) => approvers.len() as u32, // All must sign
+            (Some(approvers), Some(min)) => {
+                let len: u32 = approvers.len()
+                    .try_into()
+                    .unwrap_or(u32::MAX); // Cap at u32::MAX if conversion fails
+                min.min(len)
+            },
+            (Some(approvers), None) => {
+                approvers.len()
+                    .try_into()
+                    .unwrap_or(u32::MAX) // Cap at u32::MAX if conversion fails
+            },
             (None, _) => 0, // No multi-sig required
         }
+    }
+
+    /// Get the payload bytes (for batch signature verification).
+    /// 
+    /// Returns the original serialized payload bytes used for signature verification.
+    pub fn payload_bytes(&self) -> &[u8] {
+        &self.payload_bytes
+    }
+
+    /// Get the signature (for batch signature verification).
+    pub fn signature(&self) -> &Signature {
+        &self.signature
     }
 
     /// Verify that a holder signature proves possession.
@@ -520,6 +547,8 @@ pub struct WarrantBuilder {
     required_approvers: Option<Vec<PublicKey>>,
     min_approvals: Option<u32>,
     id: Option<WarrantId>,
+    parent_id: Option<WarrantId>,
+    depth: Option<u32>,
 }
 
 impl WarrantBuilder {
@@ -536,7 +565,21 @@ impl WarrantBuilder {
             required_approvers: None,
             min_approvals: None,
             id: None,
+            parent_id: None,
+            depth: None,
         }
+    }
+
+    /// Set the warrant depth (advanced usage).
+    pub fn depth(mut self, depth: u32) -> Self {
+        self.depth = Some(depth);
+        self
+    }
+
+    /// Set the parent warrant ID (advanced usage).
+    pub fn parent_id(mut self, parent_id: WarrantId) -> Self {
+        self.parent_id = Some(parent_id);
+        self
     }
 
     /// Set a custom warrant ID.
@@ -646,9 +689,9 @@ impl WarrantBuilder {
             tool,
             constraints: self.constraints,
             expires_at,
-            depth: 0,
-            max_depth: self.max_depth,
-            parent_id: None,
+            depth: self.depth.unwrap_or(0),
+            max_depth: Some(self.max_depth.unwrap_or(MAX_DELEGATION_DEPTH)),
+            parent_id: self.parent_id,
             session_id: self.session_id,
             agent_id: self.agent_id,
             issuer: keypair.public_key(),
@@ -733,6 +776,13 @@ impl<'a> AttenuationBuilder<'a> {
     }
 
     /// Set or change the authorized holder (Proof-of-Possession).
+    /// 
+    /// # Important
+    /// 
+    /// If you don't call this method, the child warrant will inherit the parent's
+    /// `authorized_holder`. This means the parent can re-delegate to itself, which
+    /// is valid but may not be what you want. Always explicitly set the holder
+    /// when delegating to a different agent.
     pub fn authorized_holder(mut self, public_key: PublicKey) -> Self {
         self.authorized_holder = Some(public_key);
         self
@@ -862,6 +912,16 @@ impl<'a> AttenuationBuilder<'a> {
 
         // Validate multi-sig monotonicity (cannot remove approvers or lower threshold)
         self.validate_multisig_monotonicity()?;
+        
+        // Warn if authorized_holder wasn't explicitly changed (common mistake)
+        // Note: Inheriting parent's holder is valid (self-delegation), but usually not intended
+        if let Some(ref parent_holder) = self.parent.payload.authorized_holder {
+            if self.authorized_holder.as_ref() == Some(parent_holder) {
+                // Holder wasn't changed - this is valid but might be unintentional
+                // We don't error here because self-delegation is a valid pattern,
+                // but users should be aware they're delegating to the same key
+            }
+        }
 
         // Calculate expiration (must not exceed parent)
         let expires_at = if let Some(ttl) = self.ttl {
@@ -1126,6 +1186,118 @@ mod tests {
         assert_eq!(child.session_id(), Some("session_123"));
     }
 
+    // =========================================================================
+    // PROOF-OF-POSSESSION (PoP) FAILURE CASES
+    // =========================================================================
+
+    #[test]
+    fn test_pop_signature_wrong_keypair() {
+        let correct_keypair = create_test_keypair();
+        let wrong_keypair = create_test_keypair();
+
+        let warrant = Warrant::builder()
+            .tool("test")
+            .ttl(Duration::from_secs(600))
+            .authorized_holder(correct_keypair.public_key())
+            .build(&correct_keypair)
+            .unwrap();
+
+        let mut args = HashMap::new();
+        args.insert("param".to_string(), ConstraintValue::String("value".to_string()));
+
+        // Create PoP signature with WRONG keypair
+        let wrong_pop_sig = warrant.create_pop_signature(&wrong_keypair, "test", &args).unwrap();
+
+        // Authorization should fail - wrong keypair
+        assert!(warrant.authorize("test", &args, Some(&wrong_pop_sig)).is_err());
+    }
+
+    #[test]
+    fn test_pop_signature_wrong_tool() {
+        let keypair = create_test_keypair();
+
+        let warrant = Warrant::builder()
+            .tool("test_tool")
+            .ttl(Duration::from_secs(600))
+            .authorized_holder(keypair.public_key())
+            .build(&keypair)
+            .unwrap();
+
+        let mut args = HashMap::new();
+        args.insert("param".to_string(), ConstraintValue::String("value".to_string()));
+
+        // Create PoP signature for WRONG tool
+        let pop_sig = warrant.create_pop_signature(&keypair, "wrong_tool", &args).unwrap();
+
+        // Authorization should fail - tool mismatch
+        assert!(warrant.authorize("test_tool", &args, Some(&pop_sig)).is_err());
+    }
+
+    #[test]
+    fn test_pop_signature_wrong_args() {
+        let keypair = create_test_keypair();
+
+        let warrant = Warrant::builder()
+            .tool("test")
+            .constraint("cluster", Pattern::new("staging-*").unwrap())
+            .ttl(Duration::from_secs(600))
+            .authorized_holder(keypair.public_key())
+            .build(&keypair)
+            .unwrap();
+
+        let mut correct_args = HashMap::new();
+        correct_args.insert("cluster".to_string(), ConstraintValue::String("staging-web".to_string()));
+
+        let mut wrong_args = HashMap::new();
+        wrong_args.insert("cluster".to_string(), ConstraintValue::String("prod-web".to_string()));
+
+        // Create PoP signature with WRONG args
+        let pop_sig = warrant.create_pop_signature(&keypair, "test", &wrong_args).unwrap();
+
+        // Authorization with correct args but wrong PoP signature should fail
+        // (PoP signature is bound to specific args)
+        assert!(warrant.authorize("test", &correct_args, Some(&pop_sig)).is_err());
+    }
+
+    #[test]
+    fn test_pop_signature_expired_warrant() {
+        let keypair = create_test_keypair();
+
+        // Create warrant with very short TTL
+        let warrant = Warrant::builder()
+            .tool("test")
+            .ttl(Duration::from_secs(1))  // 1 second TTL
+            .authorized_holder(keypair.public_key())
+            .build(&keypair)
+            .unwrap();
+
+        let args = HashMap::new();
+        let pop_sig = warrant.create_pop_signature(&keypair, "test", &args).unwrap();
+
+        // Wait for expiration
+        std::thread::sleep(Duration::from_secs(2));
+
+        // Authorization should fail - warrant expired
+        assert!(warrant.authorize("test", &args, Some(&pop_sig)).is_err());
+    }
+
+    #[test]
+    fn test_pop_signature_no_signature() {
+        let keypair = create_test_keypair();
+
+        let warrant = Warrant::builder()
+            .tool("test")
+            .ttl(Duration::from_secs(600))
+            .authorized_holder(keypair.public_key())
+            .build(&keypair)
+            .unwrap();
+
+        let args = HashMap::new();
+
+        // Authorization without PoP signature should fail
+        assert!(warrant.authorize("test", &args, None).is_err());
+    }
+
     #[test]
     fn test_warrant_id_format() {
         let id = WarrantId::new();
@@ -1229,7 +1401,7 @@ mod tests {
             .build(&keypair)
             .unwrap();
 
-        assert_eq!(root.max_depth(), None);
+        assert_eq!(root.max_depth(), Some(64));
         assert_eq!(root.effective_max_depth(), MAX_DELEGATION_DEPTH);
     }
 

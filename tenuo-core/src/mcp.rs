@@ -251,3 +251,170 @@ impl CompiledMcpConfig {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::extraction::{ExtractionRule, ExtractionSource};
+    use std::collections::HashMap;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_mcp_config_from_file() {
+        // Create a temporary YAML file
+        let yaml_content = r#"
+version: "1"
+settings:
+  trusted_issuers:
+    - "f32e74b5a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8"
+tools:
+  filesystem_read:
+    description: "Read files from the filesystem"
+    constraints:
+      path:
+        from: body
+        path: "path"
+        required: true
+      max_size:
+        from: body
+        path: "maxSize"
+        type: integer
+        default: 1048576
+"#;
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "{}", yaml_content).unwrap();
+        let path = file.path();
+
+        let config = McpConfig::from_file(path).unwrap();
+        assert_eq!(config.version, "1");
+        assert_eq!(config.settings.trusted_issuers.len(), 1);
+        assert!(config.tools.contains_key("filesystem_read"));
+    }
+
+    #[test]
+    fn test_mcp_config_invalid_file() {
+        let result = McpConfig::from_file("/nonexistent/path.yaml");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_compiled_mcp_config_compile() {
+        let mut tools = HashMap::new();
+        let mut constraints = HashMap::new();
+        
+        constraints.insert(
+            "path".to_string(),
+            ExtractionRule {
+                from: ExtractionSource::Body,
+                path: "path".to_string(),
+                required: true,
+                default: None,
+                description: None,
+                value_type: None,
+                allowed_values: None,
+            },
+        );
+
+        tools.insert(
+            "read_file".to_string(),
+            ToolConfig {
+                description: "Read a file".to_string(),
+                constraints,
+            },
+        );
+
+        let config = McpConfig {
+            version: "1".to_string(),
+            settings: McpSettings {
+                trusted_issuers: vec![],
+            },
+            tools,
+        };
+
+        let compiled = CompiledMcpConfig::compile(config);
+        assert!(compiled.tools.contains_key("read_file"));
+        assert_eq!(compiled.settings.trusted_issuers.len(), 0);
+    }
+
+    #[test]
+    fn test_compiled_mcp_config_validate() {
+        let mut tools = HashMap::new();
+        let mut constraints = HashMap::new();
+        
+        // Valid: body extraction
+        constraints.insert(
+            "path".to_string(),
+            ExtractionRule {
+                from: ExtractionSource::Body,
+                path: "path".to_string(),
+                required: true,
+                default: None,
+                description: None,
+                value_type: None,
+                allowed_values: None,
+            },
+        );
+
+        tools.insert(
+            "read_file".to_string(),
+            ToolConfig {
+                description: "Read a file".to_string(),
+                constraints,
+            },
+        );
+
+        let config = McpConfig {
+            version: "1".to_string(),
+            settings: McpSettings {
+                trusted_issuers: vec![],
+            },
+            tools,
+        };
+
+        let compiled = CompiledMcpConfig::compile(config);
+        let warnings = compiled.validate();
+        assert_eq!(warnings.len(), 0);  // No warnings for valid config
+    }
+
+    #[test]
+    fn test_compiled_mcp_config_validate_incompatible_source() {
+        let mut tools = HashMap::new();
+        let mut constraints = HashMap::new();
+        
+        // Invalid: path extraction (MCP only has body)
+        constraints.insert(
+            "path".to_string(),
+            ExtractionRule {
+                from: ExtractionSource::Path,
+                path: "path".to_string(),
+                required: true,
+                default: None,
+                description: None,
+                value_type: None,
+                allowed_values: None,
+            },
+        );
+
+        tools.insert(
+            "read_file".to_string(),
+            ToolConfig {
+                description: "Read a file".to_string(),
+                constraints,
+            },
+        );
+
+        let config = McpConfig {
+            version: "1".to_string(),
+            settings: McpSettings {
+                trusted_issuers: vec![],
+            },
+            tools,
+        };
+
+        let compiled = CompiledMcpConfig::compile(config);
+        let warnings = compiled.validate();
+        assert!(warnings.len() > 0);  // Should warn about incompatible source
+        assert!(warnings[0].contains("path") || warnings[0].contains("Path"));
+    }
+}
