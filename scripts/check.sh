@@ -49,7 +49,11 @@ if [ -d ".venv" ]; then
     cd ..
 else
     echo -e "\n${RED}[4/4] Skipping Python checks (no .venv found)${NC}"
-    echo "To enable Python checks: python3 -m venv .venv && source .venv/bin/activate && pip install -e 'tenuo-python[dev]'"
+    echo "To enable Python checks:"
+    echo "  1. python3 -m venv .venv"
+    echo "  2. source .venv/bin/activate"
+    echo "  3. pip install maturin pytest ruff mypy langchain langchain-core langchain-openai fastapi uvicorn pydantic PyYAML types-PyYAML types-requests"
+    echo "  4. cd tenuo-python && maturin develop"
 fi
 
 echo -e "\n${GREEN}[OK] All checks passed! You are ready to commit.${NC}"
