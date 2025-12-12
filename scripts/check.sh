@@ -33,10 +33,19 @@ if [ -d ".venv" ]; then
     echo -e "\n${GREEN}[4/4] Running Python Checks...${NC}"
     source .venv/bin/activate
     cd tenuo-python
+    
+    echo "  → Building and installing Rust extension..."
     maturin develop
+    
+    echo "  → Linting with ruff..."
     ruff check .
+    
+    echo "  → Type checking with mypy..."
     mypy .
+    
+    echo "  → Running tests with pytest..."
     pytest
+    
     cd ..
 else
     echo -e "\n${RED}[4/4] Skipping Python checks (no .venv found)${NC}"
