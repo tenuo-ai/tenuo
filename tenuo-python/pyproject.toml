@@ -29,6 +29,21 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0",
+    "types-PyYAML",
+    "types-requests",
+    "langchain",
+    "langchain-openai",
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "PyYAML",
+]
+
 [project.urls]
 Homepage = "https://github.com/tenuo/tenuo"
 Documentation = "https://tenuo.github.io/tenuo/"

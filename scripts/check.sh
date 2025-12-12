@@ -40,6 +40,7 @@ if [ -d ".venv" ]; then
     cd ..
 else
     echo -e "\n${RED}[4/4] Skipping Python checks (no .venv found)${NC}"
+    echo "To enable Python checks: python3 -m venv .venv && source .venv/bin/activate && pip install -e 'tenuo-python[dev]'"
 fi
 
 echo -e "\n${GREEN}[OK] All checks passed! You are ready to commit.${NC}"
