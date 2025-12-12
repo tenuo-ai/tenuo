@@ -1568,7 +1568,7 @@ fn handle_extract(
             // Text output
             match result {
                 Ok(r) => {
-                    println!("📋 Extraction Results:\n");
+                    println!("[INFO] Extraction Results:\n");
                     println!(
                         "   {:<20} {:<10} {:<25} {:<10} Result",
                         "Field", "Source", "Path", "Required"
@@ -1577,16 +1577,16 @@ fn handle_extract(
 
                     for trace in &r.traces {
                         let status = if trace.result.is_some() {
-                            "✓"
+                            "[OK]"
                         } else if trace.required {
-                            "✗"
+                            "[ERR]"
                         } else {
-                            "○"
+                            "[-]"
                         };
 
                         let result_str = match &trace.result {
                             Some(v) => format_value(v),
-                            None => "—".to_string(),
+                            None => "-".to_string(),
                         };
 
                         println!(

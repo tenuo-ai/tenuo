@@ -27,7 +27,7 @@ def main():
     for path in config_paths:
         try:
             config = McpConfig.from_file(path)
-            print(f"   ✓ Configuration loaded from: {path}")
+            print(f"   [OK] Configuration loaded from: {path}")
             break
         except (FileNotFoundError, ValueError) as e:
             continue
@@ -44,9 +44,9 @@ def main():
     
     try:
         compiled = CompiledMcpConfig.compile(config)
-        print("   ✓ Configuration compiled successfully")
+        print("   [OK] Configuration compiled successfully")
     except Exception as e:
-        print(f"   ✗ Error compiling configuration: {e}")
+        print(f"   [ERR] Error compiling configuration: {e}")
         return
     
     # 2. Initialize authorizer
@@ -68,10 +68,10 @@ def main():
         # Note: to_bytes() returns a list/vector, convert to bytes for hex()
         pub_key_bytes = public_key.to_bytes()
         pub_key_bytes_obj = bytes(pub_key_bytes)  # Convert list to bytes
-        print(f"   ✓ Authorizer initialized")
+        print(f"   [OK] Authorizer initialized")
         print(f"   Control plane public key: {pub_key_bytes_obj[:8].hex()}...")
     except Exception as e:
-        print(f"   ✗ Error initializing authorizer: {e}")
+        print(f"   [ERR] Error initializing authorizer: {e}")
         return
     
     # 3. Create a warrant for filesystem operations
@@ -94,11 +94,11 @@ def main():
             holder=control_keypair.public_key() # Bind to self for demo
         )
         # Note: warrant.tool is a property (getter), not a method
-        print(f"   ✓ Warrant created")
+        print(f"   [OK] Warrant created")
         print(f"   Tool: {warrant.tool}")  # Property, not method
         print(f"   Constraints: path=/var/log/*, max_size<=1MB")
     except Exception as e:
-        print(f"   ✗ Error creating warrant: {e}")
+        print(f"   [ERR] Error creating warrant: {e}")
         return
     
     # 4. Simulate MCP tool call
@@ -137,11 +137,11 @@ def main():
             signature=bytes(pop_signature)
         )
         if authorized:
-            print(f"   ✓ Warrant authorization: Allowed")
+            print(f"   [OK] Warrant authorization: Allowed")
         else:
-            print(f"   ✗ Warrant authorization: Denied (constraints not satisfied)")
+            print(f"   [ERR] Warrant authorization: Denied (constraints not satisfied)")
     except Exception as e:
-        print(f"   ✗ Warrant authorization error: {e}")
+        print(f"   [ERR] Warrant authorization error: {e}")
     
     # 7. Full authorization with Authorizer (verifies signature + constraints)
     print("\n7. Full authorization with Authorizer.check()...")

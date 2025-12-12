@@ -114,9 +114,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Generate or load Enrollment Token
     let enrollment_token = std::env::var("TENUO_ENROLLMENT_TOKEN")
         .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
-    println!("\n╔══════════════════════════════════════════════════════════════════╗");
-    println!("║ ENROLLMENT TOKEN: {} ║", enrollment_token);
-    println!("╚══════════════════════════════════════════════════════════════════╝\n");
+    println!("\n==================================================================");
+    println!(" ENROLLMENT TOKEN: {} ", enrollment_token);
+    println!("==================================================================\n");
 
     let state = Arc::new(RwLock::new(AppState {
         control_plane,

@@ -7,7 +7,7 @@
 
 Tenuo integrates with LangChain using a **zero-intrusion** pattern:
 
-1. Tools remain pure business logic—no security imports
+1. Tools remain pure business logic - no security imports
 2. Security is applied at composition time via decorators
 3. Warrants are passed through context, not function arguments
 4. Fail-closed: missing or invalid warrants block execution
@@ -28,7 +28,7 @@ from tenuo import Keypair, Warrant, Pattern, lockdown, set_warrant_context, set_
 # 1. Define a protected tool
 @lockdown(tool="read_file")
 def read_file(file_path: str) -> str:
-    """Pure business logic—no security code"""
+    """Pure business logic - no security code"""
     with open(file_path, 'r') as f:
         return f.read()
 

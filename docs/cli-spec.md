@@ -41,7 +41,7 @@ tenuo keygen [OPTIONS] [NAME]
 
 **Arguments:**
 
-- `[NAME]` — Base name for output files. If omitted, prints to stdout.
+- `[NAME]` - Base name for output files. If omitted, prints to stdout.
 
 **Options:**
 
@@ -136,14 +136,14 @@ $ tenuo issue \
 
 ### `attenuate`
 
-Derive a child warrant with equal or narrower scope. Scope can only shrink—attempts to widen constraints will fail.
+Derive a child warrant with equal or narrower scope. Scope can only shrink - attempts to widen constraints will fail.
 ```
 tenuo attenuate [OPTIONS] <WARRANT>
 ```
 
 **Arguments:**
 
-- `<WARRANT>` — Base64 warrant string. Use `-` to read from stdin.
+- `<WARRANT>` - Base64 warrant string. Use `-` to read from stdin.
 
 **Required:**
 
@@ -197,7 +197,7 @@ tenuo sign --key <KEY> --warrant <WARRANT> [OPTIONS] <PAYLOAD>
 
 **Arguments:**
 
-- `<PAYLOAD>` — Request body to sign. Use `-` to read from stdin.
+- `<PAYLOAD>` - Request body to sign. Use `-` to read from stdin.
 
 **Required:**
 
@@ -260,7 +260,7 @@ tenuo verify --warrant <WARRANT> --signature <SIG> [OPTIONS] <PAYLOAD>
 
 **Arguments:**
 
-- `<PAYLOAD>` — Request body that was signed. Use `-` to read from stdin.
+- `<PAYLOAD>` - Request body that was signed. Use `-` to read from stdin.
 
 **Required:**
 
@@ -281,7 +281,7 @@ tenuo verify --warrant <WARRANT> --signature <SIG> [OPTIONS] <PAYLOAD>
 
 **Trust model:**
 
-Warrants are self-contained: each link in the delegation chain includes the issuer's signature, and `verify` checks that every signature is valid. However, chain validity alone doesn't establish *trust*—you must also trust the root issuer.
+Warrants are self-contained: each link in the delegation chain includes the issuer's signature, and `verify` checks that every signature is valid. However, chain validity alone doesn't establish *trust* - you must also trust the root issuer.
 
 - If `--trusted-issuer` is provided, verification fails unless the root warrant's issuer matches one of the trusted keys.
 - If `--trusted-issuer` is omitted, the chain is verified for internal consistency but the root issuer is not validated. This is useful for debugging but should not be used in production.
@@ -357,7 +357,7 @@ tenuo inspect [OPTIONS] <WARRANT>
 
 **Arguments:**
 
-- `<WARRANT>` — Base64 warrant string. Use `-` to read from stdin.
+- `<WARRANT>` - Base64 warrant string. Use `-` to read from stdin.
 
 **Options:**
 
@@ -484,11 +484,11 @@ Not required for launch.
 
 **Dependencies:**
 
-- `clap` — argument parsing
-- `tenuo-core` — warrant logic
-- `serde_json` — JSON output
-- `ed25519-dalek` or `ring` — Ed25519 with PKCS#8 support
-- `pem` — PEM encoding/decoding
+- `clap` - argument parsing
+- `tenuo-core` - warrant logic
+- `serde_json` - JSON output
+- `ed25519-dalek` or `ring` - Ed25519 with PKCS#8 support
+- `pem` - PEM encoding/decoding
 
 **Key format:** PEM-encoded Ed25519 (PKCS#8 private, SPKI public)
 

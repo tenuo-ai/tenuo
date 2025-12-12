@@ -28,7 +28,7 @@ def main():
     @lockdown(warrant, tool="upgrade_cluster", keypair=keypair)
     def upgrade_cluster(cluster: str, budget: float):
         """This function can only be called if the warrant authorizes it."""
-        print(f"✓ Upgrading cluster {cluster} with budget ${budget}")
+        print(f"[OK] Upgrading cluster {cluster} with budget ${budget}")
         # ... actual upgrade logic here
     
     # Test authorized call
@@ -43,17 +43,17 @@ def main():
     print("2. Testing unauthorized call (budget exceeds limit)...")
     try:
         upgrade_cluster(cluster="staging-web", budget=15000.0)
-        print("   ✗ Function should not have executed!\n")
+        print("   [ERR] Function should not have executed!\n")
     except AuthorizationError as e:
-        print(f"   ✓ Authorization correctly blocked: {e}\n")
+        print(f"   [OK] Authorization correctly blocked: {e}\n")
     
     # Test unauthorized call (wrong cluster)
     print("3. Testing unauthorized call (wrong cluster)...")
     try:
         upgrade_cluster(cluster="production-web", budget=5000.0)
-        print("   ✗ Function should not have executed!\n")
+        print("   [ERR] Function should not have executed!\n")
     except AuthorizationError as e:
-        print(f"   ✓ Authorization correctly blocked: {e}\n")
+        print(f"   [OK] Authorization correctly blocked: {e}\n")
     
     print("=== Example completed! ===")
 

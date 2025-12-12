@@ -37,8 +37,8 @@ def delete_database(db_name: str, reason: str):
 # 3. Execute with authorization
 # Keypair required to sign the PoP challenge (proving you own the warrant)
 with set_warrant_context(warrant), set_keypair_context(keypair):
-    delete_database(db_name="test-users", reason="cleanup")  # ✅ Allowed
-    # delete_database(db_name="prod", reason="oops")         # ❌ Blocked (AuthorizationError)
+    delete_database(db_name="test-users", reason="cleanup")  # [OK] Allowed
+    # delete_database(db_name="prod", reason="oops")         # [ERR] Blocked (AuthorizationError)
 ```
 
 ## Installation
@@ -136,7 +136,7 @@ def delete_database(db_name: str, reason: str):
 # Set BOTH warrant and keypair in context (required for PoP)
 with set_warrant_context(worker_warrant), set_keypair_context(worker_keypair):
     delete_database(db_name="test-users", reason="cleanup")
-    # ✅ Authorized: matches Pattern("test-*")
+    # [OK] Authorized: matches Pattern("test-*")
 ```
 
 **Features:**
@@ -266,8 +266,8 @@ The following features are implemented in the core engine but not yet fully expo
 │  extract_constraints() │  check()         │
 └─────────────────┘      └──────────────────┘
          │                        │
-         │ Extracted values       │ ✓ Authorized
-         │                        │   or ✗ Denied
+         │ Extracted values       │ [OK] Authorized
+         │                        │   or [ERR] Denied
          ▼                        ▼
 ┌─────────────────┐      ┌──────────────────┐
 │  Tool Execution │      │  Response        │

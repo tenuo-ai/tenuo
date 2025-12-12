@@ -1,6 +1,6 @@
 # SecureGraph: Multi-Agent Warrant Management
 
-> **Status**: 📋 Design Specification — Not Implemented  
+> **Status**: 📋 Design Specification - Not Implemented  
 > **Purpose**: Future direction for LangGraph integration  
 > **Current Workaround**: Use `@lockdown` decorator with LangGraph nodes
 
@@ -60,7 +60,7 @@ defaults:
 nodes:
   supervisor:
     role: supervisor
-    # No attenuation—inherits root warrant
+    # No attenuation - inherits root warrant
 
   researcher:
     attenuate:
@@ -130,7 +130,7 @@ search = protect_tool(search_func, name="search")
 read_file = protect_tool(read_file_func, name="read_file")
 ```
 
-Unwrapped tools bypass security—this is the user's responsibility.
+Unwrapped tools bypass security - this is the user's responsibility.
 
 ---
 

@@ -16,14 +16,14 @@ from tenuo import (
 @lockdown(tool="upgrade_cluster")
 def upgrade_cluster(cluster: str, budget: float):
     """This function uses the warrant from context."""
-    print(f"✓ Upgrading cluster {cluster} with budget ${budget}")
+    print(f"[OK] Upgrading cluster {cluster} with budget ${budget}")
     # ... actual upgrade logic here
 
 
 @lockdown(tool="manage_infrastructure")
 def manage_infrastructure(cluster: str, action: str):
     """Another function that uses context warrant."""
-    print(f"✓ Managing {cluster}: {action}")
+    print(f"[OK] Managing {cluster}: {action}")
     # ... actual management logic here
 
 
@@ -66,7 +66,7 @@ def main():
             holder=keypair.public_key() # Bind to self
         )
     except Exception as e:
-        print(f"✗ Error creating warrant: {e}")
+        print(f"[ERR] Error creating warrant: {e}")
         return
     
     # ========================================================================
@@ -84,9 +84,9 @@ def main():
                 action="restart"
             )
     except AuthorizationError as e:
-        print(f"   ✗ Authorization failed: {e}\n")
+        print(f"   [ERR] Authorization failed: {e}\n")
     except Exception as e:
-        print(f"   ✗ Unexpected error: {e}\n")
+        print(f"   [ERR] Unexpected error: {e}\n")
     
     # ========================================================================
     # PATTERN 2: FastAPI Middleware Example (SIMULATION)
@@ -109,16 +109,16 @@ def main():
                 # Process the request - all protected functions use context warrant
                 # HARDCODED VALUES: cluster="staging-web", budget=3000.0
                 upgrade_cluster(cluster="staging-web", budget=3000.0)
-                print("   ✓ FastAPI request processed\n")
+                print("   [OK] FastAPI request processed\n")
         except AuthorizationError as e:
-            print(f"   ✗ Authorization failed: {e}\n")
+            print(f"   [ERR] Authorization failed: {e}\n")
         except Exception as e:
-            print(f"   ✗ Unexpected error: {e}\n")
+            print(f"   [ERR] Unexpected error: {e}\n")
     
     try:
         fastapi_middleware_example(warrant)
     except Exception as e:
-        print(f"   ✗ Error in middleware example: {e}\n")
+        print(f"   [ERR] Error in middleware example: {e}\n")
     
     # ========================================================================
     # PATTERN 3: Error When No Warrant in Context (REAL CODE - Production-ready)

@@ -15,9 +15,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$(dirname "$(dirname "$SCRIPT_DIR")")")"
 
-echo "╔══════════════════════════════════════════════════════════════╗"
-echo "║  TENUO DEVELOPMENT SETUP                                     ║"
-echo "╚══════════════════════════════════════════════════════════════╝"
+echo "=============================================================="
+echo "  TENUO DEVELOPMENT SETUP"
+echo "=============================================================="
 echo ""
 
 cd "$PROJECT_ROOT"
@@ -35,7 +35,7 @@ fi
 
 # Generate keypair if .env doesn't exist
 if [ ! -f .env ] || [ "$1" == "--regenerate" ]; then
-    echo "→ Generating root keypair..."
+    echo "[INFO] Generating root keypair..."
     
     # Build the CLI first if needed
     if [ ! -f tenuo-core/target/release/tenuo ]; then
@@ -62,12 +62,12 @@ TENUO_SECRET_KEY=${SECRET_KEY}
 TENUO_PUBLIC_KEY=${PUBLIC_KEY}
 EOF
 
-    echo "✓ Generated keypair"
+    echo "[OK] Generated keypair"
     echo "  Public Key: ${PUBLIC_KEY}"
     echo "  Saved to .env"
     echo ""
 else
-    echo "→ Using existing .env file"
+    echo "[INFO] Using existing .env file"
     source .env
     echo "  Public Key: ${TENUO_PUBLIC_KEY}"
     echo ""
@@ -75,20 +75,20 @@ fi
 
 # Build images if requested
 if [ "$1" == "--build" ]; then
-    echo "→ Building Docker images..."
+    echo "[INFO] Building Docker images..."
     docker compose build
     echo ""
 fi
 
 # Start the stack
-echo "→ Starting Tenuo stack..."
+echo "[INFO] Starting Tenuo stack..."
 echo ""
 docker compose up -d control-plane authorizer
 
 echo ""
-echo "═══════════════════════════════════════════════════════════════"
+echo "==============================================================="
 echo "Tenuo is running!"
-echo "═══════════════════════════════════════════════════════════════"
+echo "==============================================================="
 echo ""
 echo "Control Plane: http://localhost:8080"
 echo "  - GET  /health           - Health check"

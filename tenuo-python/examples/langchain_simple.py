@@ -82,9 +82,9 @@ def main():
             keypair=keypair,
             holder=keypair.public_key() # Bind to self for demo
         )
-        print("   ✓ Warrant created: only /tmp/* files allowed\n")
+        print("   [OK] Warrant created: only /tmp/* files allowed\n")
     except Exception as e:
-        print(f"   ✗ Error creating warrant: {e}")
+        print(f"   [ERR] Error creating warrant: {e}")
         return
     
     # ========================================================================

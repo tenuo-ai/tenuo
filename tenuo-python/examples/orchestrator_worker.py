@@ -222,7 +222,7 @@ def main():
     try:
         chain1 = [root_warrant, research_warrant]
         result1: ChainVerificationResult = authorizer.verify_chain(chain1)
-        print(f"✓ Chain verified successfully!")
+        print(f"[OK] Chain verified successfully!")
         print(f"  Chain length: {result1.chain_length}")
         print(f"  Leaf depth: {result1.leaf_depth}")
         print(f"  Root issuer: {result1.root_issuer[:8].hex()}..." if result1.root_issuer else "  Root issuer: None")
@@ -230,14 +230,14 @@ def main():
         for i, step in enumerate(result1.verified_steps):
             print(f"    [{i}] ID={step.warrant_id[:16]}..., depth={step.depth}, issuer={step.issuer[:8].hex()}...")
     except Exception as e:
-        print(f"✗ Chain verification failed: {e}")
+        print(f"[ERR] Chain verification failed: {e}")
     
     # Verify Phase 2 chain: root -> write (new warrant)
     print("\n[Chain Verification] Phase 2: Root -> Write (new warrant)")
     try:
         chain2 = [root_warrant, write_warrant]
         result2: ChainVerificationResult = authorizer.verify_chain(chain2)
-        print(f"✓ Chain verified successfully!")
+        print(f"[OK] Chain verified successfully!")
         print(f"  Chain length: {result2.chain_length}")
         print(f"  Leaf depth: {result2.leaf_depth}")
         print(f"  Root issuer: {result2.root_issuer[:8].hex()}..." if result2.root_issuer else "  Root issuer: None")
@@ -245,7 +245,7 @@ def main():
         for i, step in enumerate(result2.verified_steps):
             print(f"    [{i}] ID={step.warrant_id[:16]}..., depth={step.depth}, issuer={step.issuer[:8].hex()}...")
     except Exception as e:
-        print(f"✗ Chain verification failed: {e}")
+        print(f"[ERR] Chain verification failed: {e}")
     
     # Demonstrate check_chain: verify chain AND authorize action
     print("\n[Chain Verification] Using check_chain (verify + authorize)")
@@ -258,10 +258,10 @@ def main():
             args={"query": "competitor analysis", "max_results": 3},
             signature=None  # In production, include PoP signature
         )
-        print(f"✓ Chain verified and action authorized!")
+        print(f"[OK] Chain verified and action authorized!")
         print(f"  Chain length: {result.chain_length}, leaf depth: {result.leaf_depth}")
     except Exception as e:
-        print(f"✗ Chain verification or authorization failed: {e}")
+        print(f"[ERR] Chain verification or authorization failed: {e}")
     
     print("\n" + "=" * 60)
     print("Key Takeaways:")

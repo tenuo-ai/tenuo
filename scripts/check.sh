@@ -6,7 +6,7 @@ GREEN='\033[0;32m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo "🔍 Starting Pre-commit Checks..."
+echo "[INFO] Starting Pre-commit Checks..."
 
 # 1. Rust Formatting
 echo -e "\n${GREEN}[1/4] Checking Rust Formatting...${NC}"
@@ -42,4 +42,4 @@ else
     echo -e "\n${RED}[4/4] Skipping Python checks (no .venv found)${NC}"
 fi
 
-echo -e "\n${GREEN}✅ All checks passed! You are ready to commit.${NC}"
+echo -e "\n${GREEN}[OK] All checks passed! You are ready to commit.${NC}"
