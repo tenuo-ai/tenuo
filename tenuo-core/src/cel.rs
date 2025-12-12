@@ -109,7 +109,6 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 
-
 /// Global CEL program cache.
 ///
 /// Programs are cached by expression string to avoid recompilation.
