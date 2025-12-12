@@ -10,24 +10,57 @@ from tenuo_core import (
     Keypair,
     Warrant,
     PublicKey,
+    Signature,
     Authorizer,
+    Approval,
     
-    # Constraints
+    # Constraints - Basic
+    Wildcard,
     Pattern,
+    Regex,
     Exact,
     OneOf,
+    NotOneOf,
     Range,
+    
+    # Constraints - List operations
+    Contains,
+    Subset,
+    
+    # Constraints - Composite
+    All,
+    AnyOf,
+    Not,
     CEL,
+    
+    # Revocation
+    SignedRevocationList,
+    SrlBuilder,
+    
+    # Chain Verification
+    ChainStep,
+    ChainVerificationResult,
+    
+    # Gateway Config
+    GatewayConfig,
+    CompiledGatewayConfig,
+    
+    # Revocation Manager
+    RevocationManager,
     
     # MCP integration
     McpConfig,
     CompiledMcpConfig,
+    ExtractionResult,
     
     # Constants
     MAX_DELEGATION_DEPTH,
+    MAX_CONSTRAINT_DEPTH,
     WIRE_VERSION,
     WARRANT_HEADER,
 )
+
+# Note: Signature is now exported from tenuo_core (added in python.rs)
 
 # Import Pythonic additions
 from .exceptions import (
@@ -41,7 +74,19 @@ from .decorators import (
     lockdown,
     get_warrant_context,
     set_warrant_context,
+    get_keypair_context,
+    set_keypair_context,
     WarrantContext,
+    KeypairContext,
+)
+from .audit import (
+    audit_logger,
+    AuditEvent,
+    AuditEventType,
+    AuditSeverity,
+    AuditLogger,
+    log_authorization_success,
+    log_authorization_failure,
 )
 
 # Re-export everything for clean imports
@@ -50,21 +95,52 @@ __all__ = [
     "Keypair",
     "Warrant",
     "PublicKey",
+    "Signature",
     "Authorizer",
+    "Approval",
     
-    # Constraints
+    # Constraints - Basic
+    "Wildcard",
     "Pattern",
+    "Regex",
     "Exact",
     "OneOf",
+    "NotOneOf",
     "Range",
+    
+    # Constraints - List operations
+    "Contains",
+    "Subset",
+    
+    # Constraints - Composite
+    "All",
+    "AnyOf",
+    "Not",
     "CEL",
+    
+    # Revocation
+    "SignedRevocationList",
+    "SrlBuilder",
+    
+    # Chain Verification
+    "ChainStep",
+    "ChainVerificationResult",
+    
+    # Gateway Config
+    "GatewayConfig",
+    "CompiledGatewayConfig",
+    
+    # Revocation Manager
+    "RevocationManager",
     
     # MCP integration
     "McpConfig",
     "CompiledMcpConfig",
+    "ExtractionResult",
     
     # Constants
     "MAX_DELEGATION_DEPTH",
+    "MAX_CONSTRAINT_DEPTH",
     "WIRE_VERSION",
     "WARRANT_HEADER",
     
@@ -77,7 +153,19 @@ __all__ = [
     "lockdown",
     "get_warrant_context",
     "set_warrant_context",
+    "get_keypair_context",
+    "set_keypair_context",
     "WarrantContext",
+    "KeypairContext",
+    
+    # Audit logging (SIEM compatible)
+    "audit_logger",
+    "AuditEvent",
+    "AuditEventType",
+    "AuditSeverity",
+    "AuditLogger",
+    "log_authorization_success",
+    "log_authorization_failure",
 ]
 
 __version__ = "0.1.0"

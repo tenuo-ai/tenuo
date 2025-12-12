@@ -477,7 +477,7 @@ Event types:
 | SecureGraph | ❌ Future |
 | protect_tools | ❌ Removed |
 | Dynamic constraints `${state.*}` | ❌ Future |
-| Audit logging | ❌ Future |
+| Audit logging | ✅ |
 | SRL sync | ✅ Optional |
 
 ### Not Included (Future)
