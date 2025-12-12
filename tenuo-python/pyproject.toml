@@ -59,8 +59,4 @@ python-source = "."
 [[tool.maturin.sdist]]
 include = ["README.md", "LICENSE*", "examples/**/*", "tenuo/**/*.py"]
 
-[tool.pytest.ini_options]
-# Don't add source directory to sys.path - use installed package instead
-testpaths = ["tests"]
-pythonpath = []
 
