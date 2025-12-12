@@ -475,7 +475,7 @@ Event types:
 | Warrant + mandatory PoP | ✅ |
 | Middleware (FastAPI) | ✅ (Pattern) |
 | SecureGraph | ❌ Future |
-| protect_tools | ❌ Removed |
+| protect_tools | ✅ |
 | Dynamic constraints `${state.*}` | ❌ Future |
 | Audit logging | ✅ |
 | SRL sync | ✅ Optional |
