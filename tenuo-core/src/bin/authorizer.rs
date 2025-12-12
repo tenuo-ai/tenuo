@@ -279,7 +279,7 @@ fn build_authorizer(
     // Load signed revocation list if provided
     if let Some(path) = revocation_path {
         let srl = load_signed_revocation_list(path)?;
-        
+
         // Verify against first trusted key (Control Plane key)
         authorizer.set_revocation_list(srl, &first_key)?;
         eprintln!("Loaded signed revocation list from: {}", path.display());
@@ -288,7 +288,9 @@ fn build_authorizer(
     Ok(authorizer)
 }
 
-fn load_signed_revocation_list(path: &PathBuf) -> Result<SignedRevocationList, Box<dyn std::error::Error>> {
+fn load_signed_revocation_list(
+    path: &PathBuf,
+) -> Result<SignedRevocationList, Box<dyn std::error::Error>> {
     let bytes = std::fs::read(path)?;
     let srl = SignedRevocationList::from_bytes(&bytes)?;
     Ok(srl)
@@ -379,7 +381,7 @@ async fn handle_request(
     body: Bytes,
 ) -> impl IntoResponse {
     let path = format!("/{}", path);
-    
+
     // 1. Match route
     let route_match = match state.config.match_route(method.as_str(), &path) {
         Some(m) => m,
@@ -518,4 +520,3 @@ async fn handle_request(
         ),
     }
 }
-

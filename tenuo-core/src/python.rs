@@ -6,14 +6,19 @@
 #![allow(clippy::useless_conversion)]
 
 use crate::constraints::{
-    CelConstraint, Constraint, ConstraintValue, Exact, OneOf, Pattern, Range,
-    NotOneOf, Contains, Subset, All, Any, Not,
+    All, Any, CelConstraint, Constraint, ConstraintValue, Contains, Exact, Not, NotOneOf, OneOf,
+    Pattern, Range, Subset,
 };
-use crate::crypto::{Keypair as RustKeypair, PublicKey as RustPublicKey, Signature as RustSignature};
+use crate::crypto::{
+    Keypair as RustKeypair, PublicKey as RustPublicKey, Signature as RustSignature,
+};
+use crate::mcp::{CompiledMcpConfig, McpConfig};
+use crate::planes::{
+    Authorizer as RustAuthorizer, ChainStep as RustChainStep,
+    ChainVerificationResult as RustChainVerificationResult,
+};
 use crate::warrant::Warrant as RustWarrant;
 use crate::wire;
-use crate::mcp::{McpConfig, CompiledMcpConfig};
-use crate::planes::{Authorizer as RustAuthorizer, ChainStep as RustChainStep, ChainVerificationResult as RustChainVerificationResult};
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PySequence};
@@ -349,19 +354,19 @@ impl PyKeypair {
     }
 
     /// Get the secret key bytes.
-    /// 
+    ///
     /// # Security Warning
-    /// 
+    ///
     /// This method creates a copy of the secret key in Python's managed memory.
     /// Python's garbage collector does not guarantee secure erasure of secrets.
     /// The secret key may persist in memory until garbage collection occurs.
-    /// 
+    ///
     /// **Recommendations:**
     /// - Only call this method when absolutely necessary (e.g., for key backup/export)
     /// - Minimize the lifetime of Keypair objects
     /// - Avoid storing the returned bytes in long-lived variables
     /// - Consider using Rust directly for production key management
-    /// 
+    ///
     /// For most use cases, you should not need to access the secret key bytes directly.
     /// Use the Keypair object for signing operations instead.
     fn secret_key_bytes(&self) -> Vec<u8> {
@@ -438,7 +443,9 @@ fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
         }
         Ok(ConstraintValue::List(values))
     } else {
-        Err(PyValueError::new_err("value must be str, int, float, bool, or list"))
+        Err(PyValueError::new_err(
+            "value must be str, int, float, bool, or list",
+        ))
     }
 }
 
@@ -487,8 +494,6 @@ impl PyWarrant {
         let warrant = builder.build(&keypair.inner).map_err(to_py_err)?;
         Ok(Self { inner: warrant })
     }
-
-
 
     /// Get the warrant ID.
     #[getter]
@@ -562,16 +567,21 @@ impl PyWarrant {
     }
 
     /// Authorize an action against this warrant.
-    /// 
+    ///
     /// Args:
     ///     tool: Tool name to authorize
     ///     args: Dictionary of argument name -> value
     ///     signature: Optional signature bytes for Proof-of-Possession (64 bytes)
-    /// 
+    ///
     /// Returns:
     ///     True if authorized, False if constraint not satisfied
     #[pyo3(signature = (tool, args, signature=None))]
-    fn authorize(&self, tool: &str, args: &Bound<'_, PyDict>, signature: Option<&[u8]>) -> PyResult<bool> {
+    fn authorize(
+        &self,
+        tool: &str,
+        args: &Bound<'_, PyDict>,
+        signature: Option<&[u8]>,
+    ) -> PyResult<bool> {
         let mut rust_args = HashMap::new();
         for (key, value) in args.iter() {
             let field: String = key.extract()?;
@@ -612,18 +622,23 @@ impl PyWarrant {
     }
 
     /// Create a Proof-of-Possession signature.
-    /// 
+    ///
     /// Use this when making a request with a warrant that requires PoP.
     /// The keypair should match the authorized_holder on the warrant.
-    /// 
+    ///
     /// Args:
     ///     keypair: The PyKeypair to sign with
     ///     tool: Tool name being called
     ///     args: Dictionary of argument name -> value
-    /// 
+    ///
     /// Returns:
     ///     64-byte signature as bytes
-    fn create_pop_signature(&self, keypair: &PyKeypair, tool: &str, args: &Bound<'_, PyDict>) -> PyResult<Vec<u8>> {
+    fn create_pop_signature(
+        &self,
+        keypair: &PyKeypair,
+        tool: &str,
+        args: &Bound<'_, PyDict>,
+    ) -> PyResult<Vec<u8>> {
         let mut rust_args = HashMap::new();
         for (key, value) in args.iter() {
             let field: String = key.extract()?;
@@ -631,7 +646,9 @@ impl PyWarrant {
             rust_args.insert(field, cv);
         }
 
-        let sig = self.inner.create_pop_signature(&keypair.inner, tool, &rust_args)
+        let sig = self
+            .inner
+            .create_pop_signature(&keypair.inner, tool, &rust_args)
             .map_err(to_py_err)?;
         Ok(sig.to_bytes().to_vec())
     }
@@ -702,7 +719,11 @@ impl PyCompiledMcpConfig {
     ///
     /// Returns:
     ///     ExtractionResult object with .constraints and .tool attributes
-    fn extract_constraints(&self, tool_name: &str, arguments: &Bound<'_, PyDict>) -> PyResult<PyExtractionResult> {
+    fn extract_constraints(
+        &self,
+        tool_name: &str,
+        arguments: &Bound<'_, PyDict>,
+    ) -> PyResult<PyExtractionResult> {
         // Convert Python dict to serde_json::Value
         let py = arguments.py();
         let json_str = {
@@ -710,12 +731,14 @@ impl PyCompiledMcpConfig {
             let dumps = json_mod.getattr("dumps")?;
             dumps.call1((arguments,))?.extract::<String>()?
         };
-        
+
         let args_value: serde_json::Value = serde_json::from_str(&json_str)
             .map_err(|e| PyValueError::new_err(format!("Invalid JSON arguments: {}", e)))?;
 
         // Extract
-        let result = self.inner.extract_constraints(tool_name, &args_value)
+        let result = self
+            .inner
+            .extract_constraints(tool_name, &args_value)
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
         // Convert extracted constraints to Python dict
@@ -744,7 +767,10 @@ pub struct PyExtractionResult {
 #[pymethods]
 impl PyExtractionResult {
     fn __repr__(&self) -> String {
-        format!("ExtractionResult(tool='{}', constraints={{...}})", self.tool)
+        format!(
+            "ExtractionResult(tool='{}', constraints={{...}})",
+            self.tool
+        )
     }
 }
 
@@ -771,8 +797,10 @@ impl PyPublicKey {
 
     fn __repr__(&self) -> String {
         let bytes = self.inner.to_bytes();
-        format!("PublicKey({:02x}{:02x}{:02x}{:02x}...)", 
-                bytes[0], bytes[1], bytes[2], bytes[3])
+        format!(
+            "PublicKey({:02x}{:02x}{:02x}{:02x}...)",
+            bytes[0], bytes[1], bytes[2], bytes[3]
+        )
     }
 
     /// Create a PublicKey from a PEM string.
@@ -845,9 +873,7 @@ impl PyChainStep {
     fn __repr__(&self) -> String {
         format!(
             "ChainStep(warrant_id='{}', depth={}, issuer={:02x}...)",
-            self.inner.warrant_id,
-            self.inner.depth,
-            self.inner.issuer[0]
+            self.inner.warrant_id, self.inner.depth, self.inner.issuer[0]
         )
     }
 }
@@ -882,8 +908,12 @@ impl PyChainVerificationResult {
     /// Details of each verified step.
     #[getter]
     fn verified_steps(&self) -> Vec<PyChainStep> {
-        self.inner.verified_steps.iter()
-            .map(|step| PyChainStep { inner: step.clone() })
+        self.inner
+            .verified_steps
+            .iter()
+            .map(|step| PyChainStep {
+                inner: step.clone(),
+            })
             .collect()
     }
 
@@ -918,13 +948,13 @@ impl PyAuthorizer {
     }
 
     /// Authorize an action against a warrant.
-    /// 
+    ///
     /// Args:
     ///     warrant: The warrant to check
     ///     tool: Tool name being invoked
     ///     args: Dictionary of argument name -> value
     ///     signature: Optional PoP signature bytes (64 bytes)
-    /// 
+    ///
     /// Returns:
     ///     None on success, raises exception on failure
     #[pyo3(signature = (warrant, tool, args, signature=None))]
@@ -952,7 +982,8 @@ impl PyAuthorizer {
             None => None,
         };
 
-        self.inner.authorize(&warrant.inner, tool, &rust_args, sig.as_ref(), &[])
+        self.inner
+            .authorize(&warrant.inner, tool, &rust_args, sig.as_ref(), &[])
             .map_err(to_py_err)
     }
 
@@ -982,7 +1013,8 @@ impl PyAuthorizer {
             None => None,
         };
 
-        self.inner.check(&warrant.inner, tool, &rust_args, sig.as_ref(), &[])
+        self.inner
+            .check(&warrant.inner, tool, &rust_args, sig.as_ref(), &[])
             .map_err(to_py_err)
     }
 
@@ -1010,7 +1042,7 @@ impl PyAuthorizer {
         if len == 0 {
             return Err(PyValueError::new_err("chain cannot be empty"));
         }
-        
+
         let mut warrants = Vec::with_capacity(len);
         for i in 0..len {
             let item = chain.get_item(i)?;
@@ -1018,7 +1050,7 @@ impl PyAuthorizer {
             let warrant = warrant_bound.borrow();
             warrants.push(warrant.inner.clone());
         }
-        
+
         let result = self.inner.verify_chain(&warrants).map_err(to_py_err)?;
         Ok(PyChainVerificationResult { inner: result })
     }
@@ -1048,7 +1080,7 @@ impl PyAuthorizer {
         if len == 0 {
             return Err(PyValueError::new_err("chain cannot be empty"));
         }
-        
+
         let mut warrants = Vec::with_capacity(len);
         for i in 0..len {
             let item = chain.get_item(i)?;
@@ -1056,7 +1088,7 @@ impl PyAuthorizer {
             let warrant = warrant_bound.borrow();
             warrants.push(warrant.inner.clone());
         }
-        
+
         let mut rust_args = HashMap::new();
         for (key, value) in args.iter() {
             let field: String = key.extract()?;
@@ -1074,7 +1106,9 @@ impl PyAuthorizer {
             None => None,
         };
 
-        let result = self.inner.check_chain(&warrants, tool, &rust_args, sig.as_ref(), &[])
+        let result = self
+            .inner
+            .check_chain(&warrants, tool, &rust_args, sig.as_ref(), &[])
             .map_err(to_py_err)?;
         Ok(PyChainVerificationResult { inner: result })
     }

@@ -43,38 +43,35 @@ pub mod crypto;
 pub mod error;
 pub mod extraction;
 pub mod gateway_config;
+pub mod mcp;
 pub mod planes;
-pub mod warrant;
-pub mod wire;
 pub mod revocation;
 pub mod revocation_manager;
-pub mod mcp;
+pub mod warrant;
+pub mod wire;
 
 // Re-export extraction types
 pub use extraction::{
-    CompiledPath, CompiledExtractionRule, CompiledExtractionRules,
-    ExtractionRule, ExtractionSource, RequestContext,
+    CompiledExtractionRule, CompiledExtractionRules, CompiledPath, ExtractionRule,
+    ExtractionSource, RequestContext,
 };
 
 // Re-export gateway config types
 pub use gateway_config::{
-    CompiledGatewayConfig, CompiledRoute, GatewayConfig, GatewaySettings,
-    MethodMask, RouteConfig, RouteMatch, ToolConfig,
+    CompiledGatewayConfig, CompiledRoute, GatewayConfig, GatewaySettings, MethodMask, RouteConfig,
+    RouteMatch, ToolConfig,
 };
 
 // Re-export MCP config types
-pub use mcp::{
-    CompiledMcpConfig, CompiledTool, McpConfig, McpSettings,
-};
+pub use mcp::{CompiledMcpConfig, CompiledTool, McpConfig, McpSettings};
 
 #[cfg(feature = "python")]
 pub mod python;
 
 // Re-exports for convenience
 pub use constraints::{
-    All, Any, CelConstraint, Constraint, ConstraintSet, ConstraintValue,
-    Contains, Exact, Not, NotOneOf, OneOf, Pattern, Range, RegexConstraint, Subset, Wildcard,
-    MAX_CONSTRAINT_DEPTH,
+    All, Any, CelConstraint, Constraint, ConstraintSet, ConstraintValue, Contains, Exact, Not,
+    NotOneOf, OneOf, Pattern, Range, RegexConstraint, Subset, Wildcard, MAX_CONSTRAINT_DEPTH,
 };
 pub use crypto::{Keypair, PublicKey, Signature};
 pub use error::{Error, Result};
@@ -83,23 +80,24 @@ pub use planes::{
     DEFAULT_CLOCK_TOLERANCE_SECS,
 };
 pub use revocation::{
-    RevocationRequest, SignedRevocationList, SrlBuilder, 
-    MAX_REVOCATION_REQUEST_AGE_SECS,
+    RevocationRequest, SignedRevocationList, SrlBuilder, MAX_REVOCATION_REQUEST_AGE_SECS,
 };
 pub use revocation_manager::RevocationManager;
-pub use warrant::{Warrant, WarrantBuilder, WarrantId, WARRANT_ID_PREFIX, POP_TIMESTAMP_WINDOW_SECS};
+pub use warrant::{
+    Warrant, WarrantBuilder, WarrantId, POP_TIMESTAMP_WINDOW_SECS, WARRANT_ID_PREFIX,
+};
 pub use wire::MAX_WARRANT_SIZE;
 
 /// Maximum delegation depth to prevent unbounded chains (protocol-level hard cap).
-/// 
+///
 /// Individual warrants can set a lower limit via `max_depth` in the payload.
 /// This constant prevents DoS attacks from extremely deep chains.
 pub const MAX_DELEGATION_DEPTH: u32 = 64;
 
 /// Context string for Ed25519 signatures (prevents cross-protocol attacks).
-/// 
+///
 /// All signatures are computed over: `SIGNATURE_CONTEXT || payload`
-/// 
+///
 /// This prevents a signature from one protocol being valid in another.
 pub const SIGNATURE_CONTEXT: &[u8] = b"tenuo-warrant-v1";
 
@@ -114,7 +112,7 @@ mod tests {
     #[test]
     fn test_basic_warrant_creation() {
         let keypair = Keypair::generate();
-        
+
         let warrant = Warrant::builder()
             .tool("upgrade_cluster")
             .constraint("cluster", Pattern::new("staging-*").unwrap())
@@ -150,4 +148,3 @@ mod tests {
         assert_eq!(child.depth(), parent.depth() + 1);
     }
 }
-

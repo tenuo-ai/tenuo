@@ -4,16 +4,16 @@
 //! - Duplicate approval attacks
 //! - Pattern attenuation bypass
 
+use chrono::Utc;
+use std::collections::HashMap;
+use std::time::Duration;
 use tenuo_core::{
-    approval::{Approval, compute_request_hash},
+    approval::{compute_request_hash, Approval},
     constraints::Pattern,
     crypto::Keypair,
     planes::Authorizer,
     warrant::Warrant,
 };
-use std::collections::HashMap;
-use std::time::Duration;
-use chrono::Utc;
 
 // ============================================================================
 // Multi-sig Security
@@ -28,15 +28,12 @@ fn test_duplicate_approvals_rejected() {
     let root_key = Keypair::generate();
     let approver_1 = Keypair::generate();
     let approver_2 = Keypair::generate();
-    
+
     // Require 2-of-2 approvals
     let warrant = Warrant::builder()
         .tool("critical_op")
         .ttl(Duration::from_secs(3600))
-        .required_approvers(vec![
-            approver_1.public_key(),
-            approver_2.public_key(),
-        ])
+        .required_approvers(vec![approver_1.public_key(), approver_2.public_key()])
         .min_approvals(2)
         .authorized_holder(root_key.public_key())
         .build(&root_key)
@@ -46,24 +43,19 @@ fn test_duplicate_approvals_rejected() {
 
     // Create ONE approval
     let args = HashMap::new();
-    let request_hash = compute_request_hash(
-        warrant.id().as_str(),
-        "critical_op",
-        &args,
-        None
-    );
+    let request_hash = compute_request_hash(warrant.id().as_str(), "critical_op", &args, None);
 
     let now = Utc::now();
     let expires = now + chrono::Duration::hours(1);
-    
+
     let mut signable_bytes = Vec::new();
     signable_bytes.extend_from_slice(&request_hash);
     signable_bytes.extend_from_slice("approver_1".as_bytes());
     signable_bytes.extend_from_slice(&now.timestamp().to_le_bytes());
     signable_bytes.extend_from_slice(&expires.timestamp().to_le_bytes());
-    
+
     let signature = approver_1.sign(&signable_bytes);
-    
+
     let approval = Approval {
         request_hash,
         approver_key: approver_1.public_key(),
@@ -78,14 +70,10 @@ fn test_duplicate_approvals_rejected() {
     // Submit SAME approval twice
     let approvals = vec![approval.clone(), approval.clone()];
 
-    let sig = warrant.create_pop_signature(&root_key, "critical_op", &args).unwrap();
-    let result = authorizer.authorize(
-        &warrant,
-        "critical_op",
-        &args,
-        Some(&sig),
-        &approvals
-    );
+    let sig = warrant
+        .create_pop_signature(&root_key, "critical_op", &args)
+        .unwrap();
+    let result = authorizer.authorize(&warrant, "critical_op", &args, Some(&sig), &approvals);
 
     assert!(result.is_err(), "Duplicate approvals should be rejected");
 }
@@ -104,8 +92,11 @@ fn test_suffix_pattern_cannot_widen() {
     let child = Pattern::new("*").unwrap();
 
     let result = parent.validate_attenuation(&child);
-    
-    assert!(result.is_err(), "Suffix pattern should not allow wildcard-only child");
+
+    assert!(
+        result.is_err(),
+        "Suffix pattern should not allow wildcard-only child"
+    );
 }
 
 /// Verify that infix patterns (wildcard in middle) require exact match.
@@ -118,23 +109,26 @@ fn test_infix_pattern_requires_exact() {
     let child = Pattern::new("img-*").unwrap();
 
     let result = parent.validate_attenuation(&child);
-    
-    assert!(result.is_err(), "Infix pattern should not allow suffix removal");
+
+    assert!(
+        result.is_err(),
+        "Infix pattern should not allow suffix removal"
+    );
 }
 
 /// Verify that prefix patterns work correctly.
 #[test]
 fn test_prefix_pattern_valid_attenuation() {
     let parent = Pattern::new("staging-*").unwrap();
-    
+
     // Valid: extend prefix
     let child1 = Pattern::new("staging-web-*").unwrap();
     assert!(parent.validate_attenuation(&child1).is_ok());
-    
+
     // Valid: exact match
     let child2 = Pattern::new("staging-web").unwrap();
     assert!(parent.validate_attenuation(&child2).is_ok());
-    
+
     // Invalid: different prefix
     let child3 = Pattern::new("prod-*").unwrap();
     assert!(parent.validate_attenuation(&child3).is_err());
@@ -144,17 +138,16 @@ fn test_prefix_pattern_valid_attenuation() {
 #[test]
 fn test_suffix_pattern_valid_attenuation() {
     let parent = Pattern::new("*-safe").unwrap();
-    
+
     // Valid: extend suffix
     let child1 = Pattern::new("*-extra-safe").unwrap();
     assert!(parent.validate_attenuation(&child1).is_ok());
-    
+
     // Valid: exact match
     let child2 = Pattern::new("image-safe").unwrap();
     assert!(parent.validate_attenuation(&child2).is_ok());
-    
+
     // Invalid: different suffix
     let child3 = Pattern::new("*-unsafe").unwrap();
     assert!(parent.validate_attenuation(&child3).is_err());
 }
-

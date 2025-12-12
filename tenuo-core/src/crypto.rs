@@ -1,23 +1,21 @@
 //! Cryptographic primitives for Tenuo.
 //!
 //! Uses Ed25519 with context strings to prevent cross-protocol attacks.
-//! 
+//!
 //! ## Security Properties
-//! 
+//!
 //! 1. **Domain Separation**: All signatures include a context prefix (`tenuo-warrant-v1`)
 //!    to prevent cross-protocol attacks.
-//! 
+//!
 //! 2. **Batch Verification**: For deep delegation chains, use `verify_batch` to verify
 //!    multiple signatures in a single pass (~3x faster than sequential).
 
 use crate::error::{Error, Result};
 use crate::SIGNATURE_CONTEXT;
-use ed25519_dalek::{
-    Signature as DalekSignature, Signer, SigningKey, Verifier, VerifyingKey,
-};
+use ed25519_dalek::{Signature as DalekSignature, Signer, SigningKey, Verifier, VerifyingKey};
+use pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
-use pkcs8::{DecodePrivateKey, EncodePrivateKey, DecodePublicKey, EncodePublicKey, LineEnding};
 
 /// A keypair for signing warrants.
 #[derive(Debug)]
@@ -46,7 +44,7 @@ impl Keypair {
     }
 
     /// Sign a message with context prefix.
-    /// 
+    ///
     /// The actual signed data is: `SIGNATURE_CONTEXT || message`
     pub fn sign(&self, message: &[u8]) -> Signature {
         let prefixed = Self::prefix_message(message);
@@ -100,8 +98,8 @@ pub struct PublicKey {
 impl PublicKey {
     /// Create a public key from bytes.
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self> {
-        let verifying_key = VerifyingKey::from_bytes(bytes)
-            .map_err(|e| Error::CryptoError(e.to_string()))?;
+        let verifying_key =
+            VerifyingKey::from_bytes(bytes).map_err(|e| Error::CryptoError(e.to_string()))?;
         Ok(Self { verifying_key })
     }
 
@@ -141,14 +139,14 @@ impl std::hash::Hash for PublicKey {
 }
 
 /// Batch verify multiple signatures in a single pass.
-/// 
+///
 /// This is significantly faster than verifying each signature individually
 /// when you have many signatures to check (e.g., deep delegation chains).
-/// 
+///
 /// Uses random linear combinations internally for security.
-/// 
+///
 /// # Example
-/// 
+///
 /// ```rust,ignore
 /// let items: Vec<(&PublicKey, &[u8], &Signature)> = chain
 ///     .iter()
@@ -160,18 +158,19 @@ pub fn verify_batch(items: &[(&PublicKey, &[u8], &Signature)]) -> Result<()> {
     if items.is_empty() {
         return Ok(());
     }
-    
+
     // Prepare prefixed messages
     let prefixed_messages: Vec<Vec<u8>> = items
         .iter()
         .map(|(_, msg, _)| Keypair::prefix_message(msg))
         .collect();
-    
+
     // Extract components for batch verification
     let messages: Vec<&[u8]> = prefixed_messages.iter().map(|v| v.as_slice()).collect();
     let signatures: Vec<DalekSignature> = items.iter().map(|(_, _, s)| s.inner).collect();
-    let verifying_keys: Vec<VerifyingKey> = items.iter().map(|(pk, _, _)| pk.verifying_key).collect();
-    
+    let verifying_keys: Vec<VerifyingKey> =
+        items.iter().map(|(pk, _, _)| pk.verifying_key).collect();
+
     // Use ed25519_dalek's batch verification
     ed25519_dalek::verify_batch(&messages, &signatures, &verifying_keys)
         .map_err(|e| Error::SignatureInvalid(format!("batch verification failed: {}", e)))
@@ -201,11 +200,9 @@ impl<'de> Deserialize<'de> for PublicKey {
     {
         if deserializer.is_human_readable() {
             let s = String::deserialize(deserializer)?;
-            let bytes = base64::Engine::decode(
-                &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-                &s,
-            )
-            .map_err(serde::de::Error::custom)?;
+            let bytes =
+                base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &s)
+                    .map_err(serde::de::Error::custom)?;
             let arr: [u8; 32] = bytes
                 .try_into()
                 .map_err(|_| serde::de::Error::custom("invalid public key length"))?;
@@ -263,11 +260,9 @@ impl<'de> Deserialize<'de> for Signature {
     {
         if deserializer.is_human_readable() {
             let s = String::deserialize(deserializer)?;
-            let bytes = base64::Engine::decode(
-                &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-                &s,
-            )
-            .map_err(serde::de::Error::custom)?;
+            let bytes =
+                base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, &s)
+                    .map_err(serde::de::Error::custom)?;
             let arr: [u8; 64] = bytes
                 .try_into()
                 .map_err(|_| serde::de::Error::custom("invalid signature length"))?;
@@ -309,7 +304,10 @@ mod tests {
         let signature = keypair.sign(message);
 
         let wrong_message = b"wrong message";
-        assert!(keypair.public_key().verify(wrong_message, &signature).is_err());
+        assert!(keypair
+            .public_key()
+            .verify(wrong_message, &signature)
+            .is_err());
     }
 
     #[test]
@@ -345,28 +343,31 @@ mod tests {
         let raw_sig = keypair.signing_key.sign(message);
         let wrong_signature = Signature { inner: raw_sig };
 
-        assert!(keypair.public_key().verify(message, &wrong_signature).is_err());
+        assert!(keypair
+            .public_key()
+            .verify(message, &wrong_signature)
+            .is_err());
         assert!(keypair.public_key().verify(message, &signature).is_ok());
     }
-    
+
     #[test]
     fn test_batch_verification() {
         let kp1 = Keypair::generate();
         let kp2 = Keypair::generate();
         let kp3 = Keypair::generate();
-        
+
         let msg1 = b"message 1";
         let msg2 = b"message 2";
         let msg3 = b"message 3";
-        
+
         let sig1 = kp1.sign(msg1);
         let sig2 = kp2.sign(msg2);
         let sig3 = kp3.sign(msg3);
-        
+
         let pk1 = kp1.public_key();
         let pk2 = kp2.public_key();
         let pk3 = kp3.public_key();
-        
+
         // All valid - should pass
         let items = vec![
             (&pk1, msg1.as_slice(), &sig1),
@@ -374,7 +375,7 @@ mod tests {
             (&pk3, msg3.as_slice(), &sig3),
         ];
         assert!(verify_batch(&items).is_ok());
-        
+
         // One invalid - should fail
         let bad_items = vec![
             (&pk1, msg1.as_slice(), &sig1),

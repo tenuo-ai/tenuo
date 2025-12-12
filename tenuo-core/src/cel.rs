@@ -102,36 +102,37 @@
 use crate::constraints::ConstraintValue;
 use crate::error::{Error, Result};
 use cel_interpreter::{Context, Program, Value};
-use moka::sync::Cache;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
 use chrono::{DateTime, Utc};
 use ipnetwork::IpNetwork;
+use moka::sync::Cache;
+use std::collections::HashMap;
 use std::net::IpAddr;
+use std::sync::Arc;
+use std::time::Duration;
 
 /// Global CEL program cache.
-/// 
+///
 /// Programs are cached by expression string to avoid recompilation.
-/// 
+///
 /// ## Configuration
 /// - **TTL**: None (LRU eviction only) - expressions are immutable, no security impact
 /// - **Max capacity**: 1000 entries (memory bound)
-/// 
+///
 /// ## Thread Safety
 /// Uses `moka::sync::Cache` which is thread-safe and lock-free for reads.
-/// 
+///
 /// ## Rationale
 /// Since CEL expressions are immutable and the cache key is the expression string itself,
 /// there's no security risk from long-lived cache entries. Memory is bounded by max_capacity,
 /// so we use LRU eviction only (no TTL) to avoid unnecessary recompilation of frequently-used
 /// expressions.
-static CEL_CACHE: std::sync::LazyLock<Cache<String, Arc<Program>>> = std::sync::LazyLock::new(|| {
-    Cache::builder()
-        .max_capacity(1000)
-        // No TTL - expressions are immutable, memory is bounded by max_capacity
-        .build()
-});
+static CEL_CACHE: std::sync::LazyLock<Cache<String, Arc<Program>>> =
+    std::sync::LazyLock::new(|| {
+        Cache::builder()
+            .max_capacity(1000)
+            // No TTL - expressions are immutable, memory is bounded by max_capacity
+            .build()
+    });
 
 /// Compile a CEL expression, using cache if available.
 pub fn compile(expression: &str) -> Result<Arc<Program>> {
@@ -143,10 +144,10 @@ pub fn compile(expression: &str) -> Result<Arc<Program>> {
     // Compile the expression
     let program = Program::compile(expression)
         .map_err(|e| Error::CelError(format!("compilation failed: {}", e)))?;
-    
+
     let program = Arc::new(program);
     CEL_CACHE.insert(expression.to_string(), program.clone());
-    
+
     Ok(program)
 }
 
@@ -161,24 +162,27 @@ pub fn evaluate(
     vars: &HashMap<String, ConstraintValue>,
 ) -> Result<bool> {
     let program = compile(expression)?;
-    
+
     // Build context with standard library
     let mut context = create_context();
-    
+
     // Add the primary value
-    context.add_variable("value", constraint_value_to_cel(value)?)
+    context
+        .add_variable("value", constraint_value_to_cel(value)?)
         .map_err(|e| Error::CelError(format!("failed to add variable: {}", e)))?;
-    
+
     // Add any additional variables
     for (name, val) in vars {
-        context.add_variable(name, constraint_value_to_cel(val)?)
+        context
+            .add_variable(name, constraint_value_to_cel(val)?)
             .map_err(|e| Error::CelError(format!("failed to add variable '{}': {}", name, e)))?;
     }
-    
+
     // Execute
-    let result = program.execute(&context)
+    let result = program
+        .execute(&context)
         .map_err(|e| Error::CelError(format!("execution failed: {}", e)))?;
-    
+
     // Extract boolean result
     match result {
         Value::Bool(b) => Ok(b),
@@ -193,32 +197,34 @@ pub fn evaluate(
 ///
 /// For object values, each field becomes a top-level variable.
 /// For other values, the value is available as `value`.
-pub fn evaluate_with_value_context(
-    expression: &str,
-    value: &ConstraintValue,
-) -> Result<bool> {
+pub fn evaluate_with_value_context(expression: &str, value: &ConstraintValue) -> Result<bool> {
     let program = compile(expression)?;
-    
+
     let mut context = create_context();
-    
+
     match value {
         ConstraintValue::Object(map) => {
             // For objects, expose each field as a variable
             for (key, val) in map {
-                context.add_variable(key, constraint_value_to_cel(val)?)
-                    .map_err(|e| Error::CelError(format!("failed to add variable '{}': {}", key, e)))?;
+                context
+                    .add_variable(key, constraint_value_to_cel(val)?)
+                    .map_err(|e| {
+                        Error::CelError(format!("failed to add variable '{}': {}", key, e))
+                    })?;
             }
         }
         other => {
             // For primitives, expose as "value"
-            context.add_variable("value", constraint_value_to_cel(other)?)
+            context
+                .add_variable("value", constraint_value_to_cel(other)?)
                 .map_err(|e| Error::CelError(format!("failed to add variable: {}", e)))?;
         }
     }
-    
-    let result = program.execute(&context)
+
+    let result = program
+        .execute(&context)
         .map_err(|e| Error::CelError(format!("execution failed: {}", e)))?;
-    
+
     match result {
         Value::Bool(b) => Ok(b),
         other => Err(Error::CelError(format!(
@@ -237,15 +243,15 @@ fn constraint_value_to_cel(cv: &ConstraintValue) -> Result<Value> {
         ConstraintValue::Boolean(b) => Ok(Value::Bool(*b)),
         ConstraintValue::Null => Ok(Value::Null),
         ConstraintValue::List(list) => {
-            let cel_list: std::result::Result<Vec<Value>, _> = 
+            let cel_list: std::result::Result<Vec<Value>, _> =
                 list.iter().map(constraint_value_to_cel).collect();
             Ok(Value::List(cel_list?.into()))
         }
         ConstraintValue::Object(map) => {
-            let cel_map: std::result::Result<HashMap<String, Value>, _> = 
-                map.iter()
-                    .map(|(k, v)| constraint_value_to_cel(v).map(|cv| (k.clone(), cv)))
-                    .collect();
+            let cel_map: std::result::Result<HashMap<String, Value>, _> = map
+                .iter()
+                .map(|(k, v)| constraint_value_to_cel(v).map(|cv| (k.clone(), cv)))
+                .collect();
             Ok(Value::Map(cel_map?.into()))
         }
     }
@@ -268,7 +274,7 @@ pub fn create_context() -> Context<'static> {
     // ========================================================================
     // Time Functions
     // ========================================================================
-    
+
     // time.now(unused) -> String (RFC3339)
     // Note: cel-interpreter 0.8.1 requires at least one argument for custom functions
     context.add_function("time_now", |_unused: Value| -> String {
@@ -283,7 +289,7 @@ pub fn create_context() -> Context<'static> {
         };
         match DateTime::parse_from_rfc3339(&ts_str) {
             Ok(dt) => dt < Utc::now(),
-            Err(_) => false, 
+            Err(_) => false,
         }
     });
 
@@ -318,7 +324,7 @@ pub fn create_context() -> Context<'static> {
             Ok(addr) => addr,
             Err(_) => return false,
         };
-        
+
         let network: IpNetwork = match cidr_str.parse() {
             Ok(net) => net,
             Err(_) => return false,
@@ -388,15 +394,20 @@ mod tests {
         let value = ConstraintValue::Object(
             [
                 ("amount".to_string(), ConstraintValue::Integer(5000)),
-                ("currency".to_string(), ConstraintValue::String("USD".to_string())),
+                (
+                    "currency".to_string(),
+                    ConstraintValue::String("USD".to_string()),
+                ),
             ]
             .into_iter()
             .collect(),
         );
-        
+
         assert!(evaluate_with_value_context("amount < 10000", &value).unwrap());
         assert!(evaluate_with_value_context("currency == 'USD'", &value).unwrap());
-        assert!(evaluate_with_value_context("amount < 10000 && currency == 'USD'", &value).unwrap());
+        assert!(
+            evaluate_with_value_context("amount < 10000 && currency == 'USD'", &value).unwrap()
+        );
     }
 
     #[test]
@@ -404,12 +415,15 @@ mod tests {
         let value = ConstraintValue::Object(
             [
                 ("amount".to_string(), ConstraintValue::Integer(75000)),
-                ("approver".to_string(), ConstraintValue::String("cfo@company.com".to_string())),
+                (
+                    "approver".to_string(),
+                    ConstraintValue::String("cfo@company.com".to_string()),
+                ),
             ]
             .into_iter()
             .collect(),
         );
-        
+
         // From spec: amount < 10000 || (amount < 100000 && approver != '')
         let expr = "amount < 10000 || (amount < 100000 && approver != '')";
         assert!(evaluate_with_value_context(expr, &value).unwrap());
@@ -420,22 +434,25 @@ mod tests {
         clear_cache();
         // Note: moka cache is lazy, entry_count may not reflect immediately
         // So we just verify compilation caching works by checking the cache exists
-        
+
         let value = ConstraintValue::Integer(42);
-        
+
         // First evaluation compiles the expression
         evaluate("value == 42", &value, &HashMap::new()).unwrap();
-        
+
         // Second evaluation should use cached program
         evaluate("value == 42", &value, &HashMap::new()).unwrap();
-        
+
         // Different expression also works
         evaluate("value > 0", &value, &HashMap::new()).unwrap();
-        
+
         // Verify compile function works directly and caches
         let p1 = compile("value == 100").unwrap();
         let p2 = compile("value == 100").unwrap();
-        assert!(std::sync::Arc::ptr_eq(&p1, &p2), "same expression should return same Arc");
+        assert!(
+            std::sync::Arc::ptr_eq(&p1, &p2),
+            "same expression should return same Arc"
+        );
     }
 
     #[test]
@@ -453,4 +470,3 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("must return bool"));
     }
 }
-

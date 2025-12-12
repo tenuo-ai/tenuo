@@ -19,10 +19,10 @@ use tenuo_core::{
 fn demo_kubernetes_upgrade_delegation_chain() {
     // Control plane has root authority
     let control_plane_kp = Keypair::generate();
-    
+
     // Orchestrator agent
     let orchestrator_kp = Keypair::generate();
-    
+
     // Worker agent
     let worker_kp = Keypair::generate();
 
@@ -52,7 +52,7 @@ fn demo_kubernetes_upgrade_delegation_chain() {
     assert_eq!(orchestrator_warrant.parent_id(), Some(root_warrant.id()));
 
     // Step 3: Worker attenuates to specific cluster
-    // Note: In this demo, worker binds to itself or a sub-worker. 
+    // Note: In this demo, worker binds to itself or a sub-worker.
     // Let's assume worker binds to itself for the final execution warrant.
     let worker_warrant = orchestrator_warrant
         .attenuate()
@@ -66,21 +66,45 @@ fn demo_kubernetes_upgrade_delegation_chain() {
 
     // Verify worker can upgrade staging-web
     let mut args = HashMap::new();
-    args.insert("cluster".to_string(), ConstraintValue::String("staging-web".to_string()));
-    args.insert("version".to_string(), ConstraintValue::String("1.28.5".to_string()));
-    
-    let sig = worker_warrant.create_pop_signature(&worker_kp, "upgrade_cluster", &args).unwrap();
-    assert!(worker_warrant.authorize("upgrade_cluster", &args, Some(&sig)).is_ok());
+    args.insert(
+        "cluster".to_string(),
+        ConstraintValue::String("staging-web".to_string()),
+    );
+    args.insert(
+        "version".to_string(),
+        ConstraintValue::String("1.28.5".to_string()),
+    );
+
+    let sig = worker_warrant
+        .create_pop_signature(&worker_kp, "upgrade_cluster", &args)
+        .unwrap();
+    assert!(worker_warrant
+        .authorize("upgrade_cluster", &args, Some(&sig))
+        .is_ok());
 
     // Worker cannot upgrade other staging clusters
-    args.insert("cluster".to_string(), ConstraintValue::String("staging-api".to_string()));
-    let sig = worker_warrant.create_pop_signature(&worker_kp, "upgrade_cluster", &args).unwrap();
-    assert!(worker_warrant.authorize("upgrade_cluster", &args, Some(&sig)).is_err());
+    args.insert(
+        "cluster".to_string(),
+        ConstraintValue::String("staging-api".to_string()),
+    );
+    let sig = worker_warrant
+        .create_pop_signature(&worker_kp, "upgrade_cluster", &args)
+        .unwrap();
+    assert!(worker_warrant
+        .authorize("upgrade_cluster", &args, Some(&sig))
+        .is_err());
 
     // Worker cannot upgrade production
-    args.insert("cluster".to_string(), ConstraintValue::String("prod-web".to_string()));
-    let sig = worker_warrant.create_pop_signature(&worker_kp, "upgrade_cluster", &args).unwrap();
-    assert!(worker_warrant.authorize("upgrade_cluster", &args, Some(&sig)).is_err());
+    args.insert(
+        "cluster".to_string(),
+        ConstraintValue::String("prod-web".to_string()),
+    );
+    let sig = worker_warrant
+        .create_pop_signature(&worker_kp, "upgrade_cluster", &args)
+        .unwrap();
+    assert!(worker_warrant
+        .authorize("upgrade_cluster", &args, Some(&sig))
+        .is_err());
 }
 
 /// Demo 2: Delegated Budget Authority
@@ -122,29 +146,52 @@ fn demo_finance_delegation_with_budget() {
     // Worker can process small payments
     let mut args = HashMap::new();
     args.insert("amount".to_string(), ConstraintValue::Float(500.0));
-    args.insert("currency".to_string(), ConstraintValue::String("USD".to_string()));
-    let sig = worker_warrant.create_pop_signature(&payment_worker_kp, "transfer_funds", &args).unwrap();
-    assert!(worker_warrant.authorize("transfer_funds", &args, Some(&sig)).is_ok());
+    args.insert(
+        "currency".to_string(),
+        ConstraintValue::String("USD".to_string()),
+    );
+    let sig = worker_warrant
+        .create_pop_signature(&payment_worker_kp, "transfer_funds", &args)
+        .unwrap();
+    assert!(worker_warrant
+        .authorize("transfer_funds", &args, Some(&sig))
+        .is_ok());
 
     // Worker cannot exceed $1k
     args.insert("amount".to_string(), ConstraintValue::Float(5_000.0));
-    let sig = worker_warrant.create_pop_signature(&payment_worker_kp, "transfer_funds", &args).unwrap();
-    assert!(worker_warrant.authorize("transfer_funds", &args, Some(&sig)).is_err());
+    let sig = worker_warrant
+        .create_pop_signature(&payment_worker_kp, "transfer_funds", &args)
+        .unwrap();
+    assert!(worker_warrant
+        .authorize("transfer_funds", &args, Some(&sig))
+        .is_err());
 
     // Finance agent can do $5k (but not worker)
     // Note: finance_warrant holder is payment_worker_kp, so payment_worker_kp signs
-    let sig = finance_warrant.create_pop_signature(&payment_worker_kp, "transfer_funds", &args).unwrap();
-    assert!(finance_warrant.authorize("transfer_funds", &args, Some(&sig)).is_ok());
+    let sig = finance_warrant
+        .create_pop_signature(&payment_worker_kp, "transfer_funds", &args)
+        .unwrap();
+    assert!(finance_warrant
+        .authorize("transfer_funds", &args, Some(&sig))
+        .is_ok());
 
     // Finance agent cannot exceed $10k
     args.insert("amount".to_string(), ConstraintValue::Float(50_000.0));
-    let sig = finance_warrant.create_pop_signature(&payment_worker_kp, "transfer_funds", &args).unwrap();
-    assert!(finance_warrant.authorize("transfer_funds", &args, Some(&sig)).is_err());
+    let sig = finance_warrant
+        .create_pop_signature(&payment_worker_kp, "transfer_funds", &args)
+        .unwrap();
+    assert!(finance_warrant
+        .authorize("transfer_funds", &args, Some(&sig))
+        .is_err());
 
     // CFO warrant can do $50k
     // Note: cfo_warrant holder is finance_agent_kp
-    let sig = cfo_warrant.create_pop_signature(&finance_agent_kp, "transfer_funds", &args).unwrap();
-    assert!(cfo_warrant.authorize("transfer_funds", &args, Some(&sig)).is_ok());
+    let sig = cfo_warrant
+        .create_pop_signature(&finance_agent_kp, "transfer_funds", &args)
+        .unwrap();
+    assert!(cfo_warrant
+        .authorize("transfer_funds", &args, Some(&sig))
+        .is_ok());
 }
 
 /// Demo 3: Wire Format for HTTP Transport
@@ -168,31 +215,56 @@ fn demo_http_transport() {
 
     // Encode for HTTP header
     let header_value = wire::encode_base64(&warrant).unwrap();
-    
+
     // Header should be reasonably sized
-    assert!(header_value.len() < 1200, "Warrant too large for headers: {} bytes", header_value.len());
-    
+    assert!(
+        header_value.len() < 1200,
+        "Warrant too large for headers: {} bytes",
+        header_value.len()
+    );
+
     // Simulate receiving on another service
     let received = wire::decode_base64(&header_value).unwrap();
 
     // Verify the warrant
     let verify_result = received.verify(&issuer_kp.public_key());
-    assert!(verify_result.is_ok(), "Verification failed: {:?}", verify_result.err());
+    assert!(
+        verify_result.is_ok(),
+        "Verification failed: {:?}",
+        verify_result.err()
+    );
     assert_eq!(received.tool(), "query_database");
     assert_eq!(received.session_id(), Some("session_abc123"));
 
     // Authorize a query
     let mut args = HashMap::new();
-    args.insert("database".to_string(), ConstraintValue::String("analytics".to_string()));
-    args.insert("table".to_string(), ConstraintValue::String("public_users".to_string()));
-    
-    let sig = received.create_pop_signature(&issuer_kp, "query_database", &args).unwrap();
-    assert!(received.authorize("query_database", &args, Some(&sig)).is_ok());
+    args.insert(
+        "database".to_string(),
+        ConstraintValue::String("analytics".to_string()),
+    );
+    args.insert(
+        "table".to_string(),
+        ConstraintValue::String("public_users".to_string()),
+    );
+
+    let sig = received
+        .create_pop_signature(&issuer_kp, "query_database", &args)
+        .unwrap();
+    assert!(received
+        .authorize("query_database", &args, Some(&sig))
+        .is_ok());
 
     // Cannot access private tables
-    args.insert("table".to_string(), ConstraintValue::String("private_billing".to_string()));
-    let sig = received.create_pop_signature(&issuer_kp, "query_database", &args).unwrap();
-    assert!(received.authorize("query_database", &args, Some(&sig)).is_err());
+    args.insert(
+        "table".to_string(),
+        ConstraintValue::String("private_billing".to_string()),
+    );
+    let sig = received
+        .create_pop_signature(&issuer_kp, "query_database", &args)
+        .unwrap();
+    assert!(received
+        .authorize("query_database", &args, Some(&sig))
+        .is_err());
 }
 
 /// Demo 4: Session Binding
@@ -220,7 +292,10 @@ fn demo_session_binding() {
         .unwrap();
 
     // Different warrants for different sessions
-    assert_ne!(session_1_warrant.id().as_str(), session_2_warrant.id().as_str());
+    assert_ne!(
+        session_1_warrant.id().as_str(),
+        session_2_warrant.id().as_str()
+    );
     assert_eq!(session_1_warrant.session_id(), Some("session_001"));
     assert_eq!(session_2_warrant.session_id(), Some("session_002"));
 
@@ -283,7 +358,9 @@ fn demo_audit_chain_reconstruction() {
         (root.id().to_string(), &root),
         (level1.id().to_string(), &level1),
         (level2.id().to_string(), &level2),
-    ].into_iter().collect();
+    ]
+    .into_iter()
+    .collect();
 
     while let Some(parent_id) = current_parent {
         chain.push(parent_id.to_string());
@@ -294,7 +371,7 @@ fn demo_audit_chain_reconstruction() {
 
     // Chain should have 4 warrants
     assert_eq!(chain.len(), 4);
-    
+
     // Verify depth increases along the chain
     assert_eq!(root.depth(), 0);
     assert_eq!(level1.depth(), 1);
@@ -333,21 +410,36 @@ fn demo_mixed_constraint_narrowing() {
 
     // Valid request within child constraints
     let mut args = HashMap::new();
-    args.insert("region".to_string(), ConstraintValue::String("us-east".to_string()));
-    args.insert("format".to_string(), ConstraintValue::String("csv".to_string()));
+    args.insert(
+        "region".to_string(),
+        ConstraintValue::String("us-east".to_string()),
+    );
+    args.insert(
+        "format".to_string(),
+        ConstraintValue::String("csv".to_string()),
+    );
     args.insert("max_rows".to_string(), ConstraintValue::Float(5_000.0));
-    
-    let sig = child.create_pop_signature(&child_kp, "data_export", &args).unwrap();
+
+    let sig = child
+        .create_pop_signature(&child_kp, "data_export", &args)
+        .unwrap();
     assert!(child.authorize("data_export", &args, Some(&sig)).is_ok());
 
     // Region outside child's scope
-    args.insert("region".to_string(), ConstraintValue::String("eu-west".to_string()));
-    let sig = child.create_pop_signature(&child_kp, "data_export", &args).unwrap();
+    args.insert(
+        "region".to_string(),
+        ConstraintValue::String("eu-west".to_string()),
+    );
+    let sig = child
+        .create_pop_signature(&child_kp, "data_export", &args)
+        .unwrap();
     assert!(child.authorize("data_export", &args, Some(&sig)).is_err());
 
     // But parent can still do eu-west
     // Note: parent holder is child_kp
-    let sig = parent.create_pop_signature(&child_kp, "data_export", &args).unwrap();
+    let sig = parent
+        .create_pop_signature(&child_kp, "data_export", &args)
+        .unwrap();
     assert!(parent.authorize("data_export", &args, Some(&sig)).is_ok());
 }
 
@@ -375,10 +467,10 @@ fn test_monotonicity_violation_rejected() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
-        err.to_string().contains("monotonicity") || 
-        err.to_string().contains("exceeds") ||
-        err.to_string().contains("expanded"),
-        "Expected monotonicity error, got: {}", err
+        err.to_string().contains("monotonicity")
+            || err.to_string().contains("exceeds")
+            || err.to_string().contains("expanded"),
+        "Expected monotonicity error, got: {}",
+        err
     );
 }
-

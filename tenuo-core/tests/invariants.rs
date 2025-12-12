@@ -173,7 +173,7 @@ proptest! {
         prop_assert!(res.is_ok());
 
         // Different tool should fail
-        // Note: create_pop_signature might fail if tool doesn't match warrant tool, 
+        // Note: create_pop_signature might fail if tool doesn't match warrant tool,
         // but here we are testing authorize. Even if we sign for tool2, authorize should reject.
         // Actually, create_pop_signature doesn't check warrant tool, it just signs.
         let sig = warrant.create_pop_signature(&kp, &tool2, &args).unwrap();
@@ -407,4 +407,3 @@ proptest! {
         }
     }
 }
-

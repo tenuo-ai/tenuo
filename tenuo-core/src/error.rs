@@ -15,7 +15,6 @@ pub enum Error {
     // =========================================================================
     // Signature & Cryptographic Errors
     // =========================================================================
-    
     /// Warrant signature verification failed.
     #[error("signature verification failed: {0}")]
     SignatureInvalid(String),
@@ -31,7 +30,6 @@ pub enum Error {
     // =========================================================================
     // Warrant Lifecycle Errors
     // =========================================================================
-    
     /// Warrant has been revoked.
     #[error("warrant revoked: {0}")]
     WarrantRevoked(String),
@@ -71,7 +69,6 @@ pub enum Error {
     // =========================================================================
     // Monotonicity Violation Errors (Attenuation)
     // =========================================================================
-    
     /// Generic attenuation would expand capabilities.
     /// Use more specific errors when possible.
     #[error("attenuation would expand capabilities: {0}")]
@@ -103,7 +100,9 @@ pub enum Error {
     ValueNotInParentSet { value: String },
 
     /// Range child expands beyond parent bounds.
-    #[error("range expanded: child {bound} ({child_value}) exceeds parent {bound} ({parent_value})")]
+    #[error(
+        "range expanded: child {bound} ({child_value}) exceeds parent {bound} ({parent_value})"
+    )]
     RangeExpanded {
         bound: String, // "min" or "max"
         parent_value: f64,
@@ -125,7 +124,6 @@ pub enum Error {
     // =========================================================================
     // Constraint Matching Errors (Authorization)
     // =========================================================================
-    
     /// Constraint does not match the action.
     #[error("constraint not satisfied: {field} - {reason}")]
     ConstraintNotSatisfied { field: String, reason: String },
@@ -133,7 +131,6 @@ pub enum Error {
     // =========================================================================
     // Constraint Syntax Errors
     // =========================================================================
-    
     /// Invalid pattern syntax.
     #[error("invalid pattern: {0}")]
     InvalidPattern(String),
@@ -153,7 +150,6 @@ pub enum Error {
     // =========================================================================
     // Serialization Errors
     // =========================================================================
-    
     /// Serialization error.
     #[error("serialization error: {0}")]
     SerializationError(String),
@@ -169,7 +165,6 @@ pub enum Error {
     // =========================================================================
     // General Errors
     // =========================================================================
-    
     /// Missing required field.
     #[error("missing required field: {0}")]
     MissingField(String),
@@ -181,7 +176,6 @@ pub enum Error {
     // =========================================================================
     // Approval Errors
     // =========================================================================
-
     /// Approval has expired.
     #[error("approval expired: approved at {approved_at}, expired at {expired_at}")]
     ApprovalExpired {
@@ -227,4 +221,3 @@ impl From<ed25519_dalek::SignatureError> for Error {
         Error::CryptoError(e.to_string())
     }
 }
-

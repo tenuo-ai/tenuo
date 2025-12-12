@@ -1,13 +1,21 @@
-use std::process::{Command, Stdio};
 use std::io::{BufRead, BufReader};
-use std::time::Duration;
+use std::process::{Command, Stdio};
 use std::thread;
+use std::time::Duration;
 
 #[test]
 fn test_enrollment_flow() {
     // 1. Build binaries
     let status = Command::new("cargo")
-        .args(&["build", "--bin", "tenuo-control", "--bin", "tenuo-orchestrator", "--features", "control-plane server"])
+        .args(&[
+            "build",
+            "--bin",
+            "tenuo-control",
+            "--bin",
+            "tenuo-orchestrator",
+            "--features",
+            "control-plane server",
+        ])
         .status()
         .expect("Failed to build binaries");
     assert!(status.success(), "Build failed");
@@ -54,7 +62,9 @@ fn test_enrollment_flow() {
     });
 
     // Wait for token (timeout 10s)
-    enrollment_token = rx.recv_timeout(Duration::from_secs(10)).expect("Timed out waiting for enrollment token");
+    enrollment_token = rx
+        .recv_timeout(Duration::from_secs(10))
+        .expect("Timed out waiting for enrollment token");
     println!("Found Enrollment Token: {}", enrollment_token);
 
     // 4. Start Orchestrator A with Token

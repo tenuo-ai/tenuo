@@ -1,8 +1,8 @@
+use std::time::Duration;
 use tenuo_core::crypto::Keypair;
 use tenuo_core::planes::DataPlane;
 use tenuo_core::revocation::RevocationRequest;
 use tenuo_core::warrant::Warrant;
-use std::time::Duration;
 
 #[test]
 fn test_parental_revocation() {
@@ -24,17 +24,15 @@ fn test_parental_revocation() {
     assert!(!data_plane.is_revoked(&warrant));
 
     // 4. Submit Revocation (Parent)
-    let request = RevocationRequest::new(
-        warrant.id().as_str(),
-        "Emergency Stop",
-        &issuer,
-    ).unwrap();
+    let request = RevocationRequest::new(warrant.id().as_str(), "Emergency Stop", &issuer).unwrap();
 
-    data_plane.submit_revocation(&request, &warrant).expect("Revocation submission failed");
+    data_plane
+        .submit_revocation(&request, &warrant)
+        .expect("Revocation submission failed");
 
     // 5. Verify Revoked State
     assert!(data_plane.is_revoked(&warrant));
-    
+
     // Verify verify() fails
     let result = data_plane.verify(&warrant);
     assert!(result.is_err());
@@ -55,13 +53,11 @@ fn test_self_revocation() {
         .build(&issuer)
         .unwrap();
 
-    let request = RevocationRequest::new(
-        warrant.id().as_str(),
-        "I quit",
-        &holder,
-    ).unwrap();
+    let request = RevocationRequest::new(warrant.id().as_str(), "I quit", &holder).unwrap();
 
-    data_plane.submit_revocation(&request, &warrant).expect("Self-revocation failed");
+    data_plane
+        .submit_revocation(&request, &warrant)
+        .expect("Self-revocation failed");
     assert!(data_plane.is_revoked(&warrant));
 }
 
@@ -78,11 +74,8 @@ fn test_unauthorized_revocation() {
         .build(&issuer)
         .unwrap();
 
-    let request = RevocationRequest::new(
-        warrant.id().as_str(),
-        "Malicious revocation",
-        &attacker,
-    ).unwrap();
+    let request =
+        RevocationRequest::new(warrant.id().as_str(), "Malicious revocation", &attacker).unwrap();
 
     let result = data_plane.submit_revocation(&request, &warrant);
     assert!(result.is_err());

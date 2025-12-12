@@ -17,11 +17,11 @@
 //! let srl = manager.generate_srl(&cp_keypair, 1)?;
 //! ```
 
-use std::collections::HashMap;
-use chrono::{DateTime, Utc};
 use crate::crypto::{Keypair, PublicKey};
 use crate::error::Result;
 use crate::revocation::{RevocationRequest, SignedRevocationList};
+use chrono::{DateTime, Utc};
+use std::collections::HashMap;
 
 /// Manages revocation requests and SRL generation.
 #[derive(Debug, Default)]
@@ -68,7 +68,8 @@ impl RevocationManager {
         )?;
 
         // Store it
-        self.pending_requests.insert(request.warrant_id.clone(), request);
+        self.pending_requests
+            .insert(request.warrant_id.clone(), request);
         Ok(())
     }
 
@@ -85,8 +86,7 @@ impl RevocationManager {
     /// * `signer` - The keypair to sign the SRL (usually Control Plane)
     /// * `version` - The version number for the new SRL
     pub fn generate_srl(&self, signer: &Keypair, version: u64) -> Result<SignedRevocationList> {
-        let mut builder = SignedRevocationList::builder()
-            .version(version);
+        let mut builder = SignedRevocationList::builder().version(version);
 
         // Add revoked warrant IDs
         for request in self.pending_requests.values() {
@@ -95,24 +95,23 @@ impl RevocationManager {
 
         builder.build(signer)
     }
-    
+
     /// Generate an SRL with additional warrant IDs (e.g., from key revocation cascade).
     ///
     /// Use this when `NotaryRegistry.revoke_key()` returns affected warrant IDs.
     pub fn generate_srl_with_cascade(
-        &self, 
-        signer: &Keypair, 
+        &self,
+        signer: &Keypair,
         version: u64,
         cascade_ids: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> Result<SignedRevocationList> {
-        let mut builder = SignedRevocationList::builder()
-            .version(version);
+        let mut builder = SignedRevocationList::builder().version(version);
 
         // Add revoked warrant IDs from requests
         for request in self.pending_requests.values() {
             builder = builder.revoke(&request.warrant_id);
         }
-        
+
         // Add cascaded IDs from key revocation
         for id in cascade_ids {
             builder = builder.revoke(id.as_ref());
@@ -131,7 +130,8 @@ impl RevocationManager {
     where
         F: Fn(&str) -> bool,
     {
-        self.pending_requests.retain(|warrant_id, _| !is_expired(warrant_id));
+        self.pending_requests
+            .retain(|warrant_id, _| !is_expired(warrant_id));
     }
 }
 
@@ -152,33 +152,38 @@ mod tests {
             "warrant_1",
             "test",
             &issuer, // Issuer revoking their own warrant
-        ).unwrap();
+        )
+        .unwrap();
 
-        manager.submit_request(
-            request,
-            "warrant_1",
-            &issuer.public_key(),
-            Some(&holder.public_key()),
-            Utc::now() + chrono::Duration::hours(1),
-            &cp.public_key(),
-        ).unwrap();
+        manager
+            .submit_request(
+                request,
+                "warrant_1",
+                &issuer.public_key(),
+                Some(&holder.public_key()),
+                Utc::now() + chrono::Duration::hours(1),
+                &cp.public_key(),
+            )
+            .unwrap();
 
         // 2. Generate SRL
         let srl = manager.generate_srl(&cp, 1).unwrap();
 
         assert!(srl.is_revoked("warrant_1"));
     }
-    
+
     #[test]
     fn test_cascade_from_key_revocation() {
         let cp = Keypair::generate();
         let manager = RevocationManager::new();
 
-        // Simulate cascading revocation: NotaryRegistry.revoke_key() 
+        // Simulate cascading revocation: NotaryRegistry.revoke_key()
         // returns affected warrant IDs, which we add to the SRL
         let affected_ids = vec!["warrant_a", "warrant_b", "warrant_c"];
-        
-        let srl = manager.generate_srl_with_cascade(&cp, 1, &affected_ids).unwrap();
+
+        let srl = manager
+            .generate_srl_with_cascade(&cp, 1, &affected_ids)
+            .unwrap();
 
         assert!(srl.is_revoked("warrant_a"));
         assert!(srl.is_revoked("warrant_b"));

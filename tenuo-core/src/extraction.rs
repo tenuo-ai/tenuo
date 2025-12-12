@@ -45,7 +45,7 @@ use crate::constraints::ConstraintValue;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use smallvec::SmallVec;
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 // ============================================================================
@@ -207,23 +207,29 @@ impl CompiledExtractionRule {
     /// Faster than [`extract_by_rule`] because paths are pre-parsed.
     pub fn extract(&self, ctx: &RequestContext) -> Option<ConstraintValue> {
         match &self.rule.from {
-            ExtractionSource::Path => {
-                ctx.path_params.get(&self.rule.path).map(|s| ConstraintValue::String(s.clone()))
-            }
-            ExtractionSource::Query => {
-                ctx.query_params.get(&self.rule.path).map(|s| ConstraintValue::String(s.clone()))
-            }
+            ExtractionSource::Path => ctx
+                .path_params
+                .get(&self.rule.path)
+                .map(|s| ConstraintValue::String(s.clone())),
+            ExtractionSource::Query => ctx
+                .query_params
+                .get(&self.rule.path)
+                .map(|s| ConstraintValue::String(s.clone())),
             ExtractionSource::Header => {
                 let key = self.lowercase_key.as_ref()?;
-                ctx.headers.get(key.as_ref()).map(|s| ConstraintValue::String(s.clone()))
+                ctx.headers
+                    .get(key.as_ref())
+                    .map(|s| ConstraintValue::String(s.clone()))
             }
             ExtractionSource::Body => {
                 let path = self.compiled_path.as_ref()?;
                 path.extract(&ctx.body)
             }
-            ExtractionSource::Literal => {
-                self.rule.default.as_ref().and_then(json_to_constraint_value)
-            }
+            ExtractionSource::Literal => self
+                .rule
+                .default
+                .as_ref()
+                .and_then(json_to_constraint_value),
         }
     }
 }
@@ -299,7 +305,6 @@ impl CompiledExtractionRules {
         Ok((constraints, traces))
     }
 }
-
 
 /// Extraction source specifier.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -536,13 +541,13 @@ fn json_to_constraint_value(value: &Value) -> Option<ConstraintValue> {
                         .map(ConstraintValue::Integer)
                         .or_else(|| Some(ConstraintValue::String(u.to_string())))
                 }
-            } else { n.as_f64().map(ConstraintValue::Float) }
+            } else {
+                n.as_f64().map(ConstraintValue::Float)
+            }
         }
         Value::Array(arr) => {
-            let values: Vec<ConstraintValue> = arr
-                .iter()
-                .filter_map(json_to_constraint_value)
-                .collect();
+            let values: Vec<ConstraintValue> =
+                arr.iter().filter_map(json_to_constraint_value).collect();
             Some(ConstraintValue::List(values))
         }
         Value::Null => Some(ConstraintValue::Null),
@@ -561,20 +566,22 @@ fn json_to_constraint_value(value: &Value) -> Option<ConstraintValue> {
 /// Extract a value according to an extraction rule.
 pub fn extract_by_rule(rule: &ExtractionRule, ctx: &RequestContext) -> Option<ConstraintValue> {
     match &rule.from {
-        ExtractionSource::Path => {
-            ctx.path_params.get(&rule.path).map(|s| ConstraintValue::String(s.clone()))
-        }
-        ExtractionSource::Query => {
-            ctx.query_params.get(&rule.path).map(|s| ConstraintValue::String(s.clone()))
-        }
+        ExtractionSource::Path => ctx
+            .path_params
+            .get(&rule.path)
+            .map(|s| ConstraintValue::String(s.clone())),
+        ExtractionSource::Query => ctx
+            .query_params
+            .get(&rule.path)
+            .map(|s| ConstraintValue::String(s.clone())),
         ExtractionSource::Header => {
             let key = rule.path.to_lowercase();
-            ctx.headers.get(&key).map(|s| ConstraintValue::String(s.clone()))
+            ctx.headers
+                .get(&key)
+                .map(|s| ConstraintValue::String(s.clone()))
         }
         ExtractionSource::Body => extract_json_path(&ctx.body, &rule.path),
-        ExtractionSource::Literal => {
-            rule.default.as_ref().and_then(json_to_constraint_value)
-        }
+        ExtractionSource::Literal => rule.default.as_ref().and_then(json_to_constraint_value),
     }
 }
 
@@ -722,7 +729,7 @@ mod tests {
     #[test]
     fn test_simple_extraction() {
         let body = json!({ "name": "test", "count": 42 });
-        
+
         assert_eq!(
             extract_json_path(&body, "name"),
             Some(ConstraintValue::String("test".into()))
@@ -795,7 +802,7 @@ mod tests {
     fn test_integer_preservation() {
         // Large snowflake ID
         let body = json!({ "id": 9007199254740993_i64 });
-        
+
         if let Some(ConstraintValue::Integer(i)) = extract_json_path(&body, "id") {
             assert_eq!(i, 9007199254740993);
         } else {
@@ -806,7 +813,7 @@ mod tests {
     #[test]
     fn test_float_extraction() {
         let body = json!({ "price": 19.99 });
-        
+
         assert_eq!(
             extract_json_path(&body, "price"),
             Some(ConstraintValue::Float(19.99))
@@ -839,30 +846,35 @@ mod tests {
     #[test]
     fn test_extract_all_with_defaults() {
         let mut rules = HashMap::new();
-        rules.insert("cluster".into(), ExtractionRule {
-            from: ExtractionSource::Path,
-            path: "cluster".into(),
-            description: None,
-            required: true,
-            default: None,
-            value_type: None,
-            allowed_values: None,
-        });
-        rules.insert("namespace".into(), ExtractionRule {
-            from: ExtractionSource::Query,
-            path: "namespace".into(),
-            description: None,
-            required: false,
-            default: Some(json!("default")),
-            value_type: None,
-            allowed_values: None,
-        });
+        rules.insert(
+            "cluster".into(),
+            ExtractionRule {
+                from: ExtractionSource::Path,
+                path: "cluster".into(),
+                description: None,
+                required: true,
+                default: None,
+                value_type: None,
+                allowed_values: None,
+            },
+        );
+        rules.insert(
+            "namespace".into(),
+            ExtractionRule {
+                from: ExtractionSource::Query,
+                path: "namespace".into(),
+                description: None,
+                required: false,
+                default: Some(json!("default")),
+                value_type: None,
+                allowed_values: None,
+            },
+        );
 
-        let ctx = RequestContext::new()
-            .path_param("cluster", "prod");
+        let ctx = RequestContext::new().path_param("cluster", "prod");
 
         let (constraints, _traces) = extract_all(&rules, &ctx).unwrap();
-        
+
         assert_eq!(
             constraints.get("cluster"),
             Some(&ConstraintValue::String("prod".into()))
@@ -876,21 +888,24 @@ mod tests {
     #[test]
     fn test_missing_required_field() {
         let mut rules = HashMap::new();
-        rules.insert("cluster".into(), ExtractionRule {
-            from: ExtractionSource::Path,
-            path: "cluster".into(),
-            description: None,
-            required: true,
-            default: None,
-            value_type: None,
-            allowed_values: None,
-        });
+        rules.insert(
+            "cluster".into(),
+            ExtractionRule {
+                from: ExtractionSource::Path,
+                path: "cluster".into(),
+                description: None,
+                required: true,
+                default: None,
+                value_type: None,
+                allowed_values: None,
+            },
+        );
 
         let ctx = RequestContext::new(); // No path params
 
         let result = extract_all(&rules, &ctx);
         assert!(result.is_err());
-        
+
         let err = result.unwrap_err();
         assert_eq!(err.field, "cluster");
         assert!(err.required);
@@ -905,9 +920,12 @@ mod tests {
         let path = CompiledPath::compile("name");
         assert_eq!(path.segments.len(), 1);
         assert!(!path.has_wildcard);
-        
+
         let body = json!({ "name": "test" });
-        assert_eq!(path.extract(&body), Some(ConstraintValue::String("test".into())));
+        assert_eq!(
+            path.extract(&body),
+            Some(ConstraintValue::String("test".into()))
+        );
     }
 
     #[test]
@@ -915,7 +933,7 @@ mod tests {
         let path = CompiledPath::compile("spec.replicas");
         assert_eq!(path.segments.len(), 2);
         assert!(!path.has_wildcard);
-        
+
         let body = json!({ "spec": { "replicas": 5 } });
         assert_eq!(path.extract(&body), Some(ConstraintValue::Integer(5)));
     }
@@ -924,16 +942,19 @@ mod tests {
     fn test_compiled_path_array_index() {
         let path = CompiledPath::compile("items.0.id");
         assert_eq!(path.segments.len(), 3);
-        
+
         let body = json!({ "items": [{ "id": "first" }, { "id": "second" }] });
-        assert_eq!(path.extract(&body), Some(ConstraintValue::String("first".into())));
+        assert_eq!(
+            path.extract(&body),
+            Some(ConstraintValue::String("first".into()))
+        );
     }
 
     #[test]
     fn test_compiled_path_wildcard() {
         let path = CompiledPath::compile("items.*.id");
         assert!(path.has_wildcard);
-        
+
         let body = json!({ "items": [{ "id": "a" }, { "id": "b" }] });
         assert_eq!(
             path.extract(&body),
@@ -955,10 +976,10 @@ mod tests {
             value_type: None,
             allowed_values: None,
         };
-        
+
         let compiled = CompiledExtractionRule::compile(rule);
         assert!(compiled.compiled_path.is_some());
-        
+
         let ctx = RequestContext::with_body(json!({ "metadata": { "cost": 150.0 } }));
         assert_eq!(compiled.extract(&ctx), Some(ConstraintValue::Float(150.0)));
     }
@@ -966,32 +987,38 @@ mod tests {
     #[test]
     fn test_compiled_extraction_rules() {
         let mut rules = HashMap::new();
-        rules.insert("cluster".into(), ExtractionRule {
-            from: ExtractionSource::Path,
-            path: "cluster".into(),
-            description: None,
-            required: true,
-            default: None,
-            value_type: None,
-            allowed_values: None,
-        });
-        rules.insert("cost".into(), ExtractionRule {
-            from: ExtractionSource::Body,
-            path: "metadata.cost".into(),
-            description: None,
-            required: false,
-            default: None,
-            value_type: None,
-            allowed_values: None,
-        });
-        
+        rules.insert(
+            "cluster".into(),
+            ExtractionRule {
+                from: ExtractionSource::Path,
+                path: "cluster".into(),
+                description: None,
+                required: true,
+                default: None,
+                value_type: None,
+                allowed_values: None,
+            },
+        );
+        rules.insert(
+            "cost".into(),
+            ExtractionRule {
+                from: ExtractionSource::Body,
+                path: "metadata.cost".into(),
+                description: None,
+                required: false,
+                default: None,
+                value_type: None,
+                allowed_values: None,
+            },
+        );
+
         let compiled = CompiledExtractionRules::compile(rules);
-        
+
         let ctx = RequestContext::with_body(json!({ "metadata": { "cost": 100.0 } }))
             .path_param("cluster", "prod");
-        
+
         let (constraints, _traces) = compiled.extract_all(&ctx).unwrap();
-        
+
         assert_eq!(
             constraints.get("cluster"),
             Some(&ConstraintValue::String("prod".into()))
@@ -1012,11 +1039,13 @@ mod tests {
         });
 
         if let Some(ConstraintValue::Object(map)) = extract_json_path(&body, "meta") {
-             assert_eq!(map.get("cost"), Some(&ConstraintValue::Integer(100)));
-             assert_eq!(map.get("owner"), Some(&ConstraintValue::String("admin".to_string())));
+            assert_eq!(map.get("cost"), Some(&ConstraintValue::Integer(100)));
+            assert_eq!(
+                map.get("owner"),
+                Some(&ConstraintValue::String("admin".to_string()))
+            );
         } else {
-             panic!("Failed to extract object");
+            panic!("Failed to extract object");
         }
     }
 }
-

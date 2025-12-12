@@ -146,8 +146,9 @@ pub struct CompiledTool {
 impl McpConfig {
     /// Load configuration from a file.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, crate::gateway_config::ConfigError> {
-        let content = std::fs::read_to_string(path.as_ref())
-            .map_err(|e| crate::gateway_config::ConfigError::FileRead(path.as_ref().display().to_string(), e))?;
+        let content = std::fs::read_to_string(path.as_ref()).map_err(|e| {
+            crate::gateway_config::ConfigError::FileRead(path.as_ref().display().to_string(), e)
+        })?;
         serde_yaml::from_str(&content).map_err(crate::gateway_config::ConfigError::YamlParse)
     }
 }
@@ -159,10 +160,13 @@ impl CompiledMcpConfig {
 
         for (name, tool_config) in config.tools {
             let rules = CompiledExtractionRules::compile(tool_config.constraints.clone());
-            tools.insert(name, CompiledTool {
-                config: tool_config,
-                extraction_rules: rules,
-            });
+            tools.insert(
+                name,
+                CompiledTool {
+                    config: tool_config,
+                    extraction_rules: rules,
+                },
+            );
         }
 
         Self {
@@ -302,7 +306,7 @@ tools:
     fn test_compiled_mcp_config_compile() {
         let mut tools = HashMap::new();
         let mut constraints = HashMap::new();
-        
+
         constraints.insert(
             "path".to_string(),
             ExtractionRule {
@@ -341,7 +345,7 @@ tools:
     fn test_compiled_mcp_config_validate() {
         let mut tools = HashMap::new();
         let mut constraints = HashMap::new();
-        
+
         // Valid: body extraction
         constraints.insert(
             "path".to_string(),
@@ -374,14 +378,14 @@ tools:
 
         let compiled = CompiledMcpConfig::compile(config);
         let warnings = compiled.validate();
-        assert_eq!(warnings.len(), 0);  // No warnings for valid config
+        assert_eq!(warnings.len(), 0); // No warnings for valid config
     }
 
     #[test]
     fn test_compiled_mcp_config_validate_incompatible_source() {
         let mut tools = HashMap::new();
         let mut constraints = HashMap::new();
-        
+
         // Invalid: path extraction (MCP only has body)
         constraints.insert(
             "path".to_string(),
@@ -414,7 +418,7 @@ tools:
 
         let compiled = CompiledMcpConfig::compile(config);
         let warnings = compiled.validate();
-        assert!(warnings.len() > 0);  // Should warn about incompatible source
+        assert!(warnings.len() > 0); // Should warn about incompatible source
         assert!(warnings[0].contains("path") || warnings[0].contains("Path"));
     }
 }

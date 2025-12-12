@@ -8,14 +8,14 @@
 //! 5. Tries to exceed max_depth (shows error)
 //! 6. **Multi-sig approval** for sensitive actions
 
-use tenuo_core::{Authorizer, Warrant, PublicKey, Keypair, ConstraintValue, Range};
-use tenuo_core::approval::{Approval, compute_request_hash};
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::Path;
-use std::collections::HashMap;
 use std::thread;
 use std::time::{Duration, Instant};
+use tenuo_core::approval::{compute_request_hash, Approval};
+use tenuo_core::{Authorizer, ConstraintValue, Keypair, PublicKey, Range, Warrant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n╔══════════════════════════════════════════════════════════════════╗");
@@ -35,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let trusted_key_bytes: [u8; 32] = hex::decode(&trusted_key_hex)?
         .try_into()
         .map_err(|_| "Trusted key must be 32 bytes")?;
-    
+
     let trusted_key = PublicKey::from_bytes(&trusted_key_bytes)?;
     let authorizer = Authorizer::new(trusted_key);
 
@@ -52,9 +52,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("│ STEP 2: Loading Delegation Chain                                │");
     println!("└─────────────────────────────────────────────────────────────────┘");
 
-    let input_path = env::var("TENUO_CHAIN_INPUT")
-        .unwrap_or_else(|_| "/data/chain.json".to_string());
-    
+    let input_path =
+        env::var("TENUO_CHAIN_INPUT").unwrap_or_else(|_| "/data/chain.json".to_string());
+
     println!("  Waiting for chain at: {}", input_path);
 
     let mut attempts = 0;
@@ -73,12 +73,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     let chain: Vec<Warrant> = serde_json::from_str(&chain_json)?;
-    
+
     println!("\n  ✓ Chain loaded with {} warrant(s):", chain.len());
     for (i, warrant) in chain.iter().enumerate() {
-        let signer = if i == 0 { "Control Plane" } else { "Orchestrator" };
-        println!("    [{}] {} (depth={}/{}, signed by {})", 
-            i, warrant.id(), warrant.depth(), warrant.effective_max_depth(), signer);
+        let signer = if i == 0 {
+            "Control Plane"
+        } else {
+            "Orchestrator"
+        };
+        println!(
+            "    [{}] {} (depth={}/{}, signed by {})",
+            i,
+            warrant.id(),
+            warrant.depth(),
+            warrant.effective_max_depth(),
+            signer
+        );
         if let Some(session) = warrant.session_id() {
             println!("        session: {}", session);
         }
@@ -97,13 +107,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //   For this demo, we load a pre-generated key from the orchestrator.
     //   This simulates the case where the worker already has its key.
     // ─────────────────────────────────────────────────────────────────────────
-    let worker_key_path = env::var("TENUO_WORKER_KEY_INPUT")
-        .unwrap_or_else(|_| "/data/worker.key".to_string());
-    
-    println!("\n  ⚠️  [DEMO ONLY] Loading pre-shared keypair from: {}", worker_key_path);
+    let worker_key_path =
+        env::var("TENUO_WORKER_KEY_INPUT").unwrap_or_else(|_| "/data/worker.key".to_string());
+
+    println!(
+        "\n  ⚠️  [DEMO ONLY] Loading pre-shared keypair from: {}",
+        worker_key_path
+    );
     println!("    PRODUCTION: Worker generates key locally with Keypair::generate()");
     println!("    PRODUCTION: Only PUBLIC key is sent to orchestrator");
-    
+
     // Simple wait loop (similar to chain)
     let worker_key_hex = loop {
         if Path::new(&worker_key_path).exists() {
@@ -139,7 +152,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("\n  ✓ Chain verification PASSED ({:.0?})", elapsed);
             println!("    • Chain length:  {}", result.chain_length);
             println!("    • Leaf depth:    {}", result.leaf_depth);
-            println!("    • Root issuer:   {}", hex::encode(result.root_issuer.unwrap()));
+            println!(
+                "    • Root issuer:   {}",
+                hex::encode(result.root_issuer.unwrap())
+            );
         }
         Err(e) => {
             eprintln!("\n  ✗ Chain verification FAILED: {}", e);
@@ -167,7 +183,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Upgrade staging-web with $500 budget",
             "manage_infrastructure",
             vec![
-                ("cluster", ConstraintValue::String("staging-web".to_string())),
+                (
+                    "cluster",
+                    ConstraintValue::String("staging-web".to_string()),
+                ),
                 ("action", ConstraintValue::String("upgrade".to_string())),
                 ("budget", ConstraintValue::Float(500.0)),
             ],
@@ -178,7 +197,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Restart staging-web",
             "manage_infrastructure",
             vec![
-                ("cluster", ConstraintValue::String("staging-web".to_string())),
+                (
+                    "cluster",
+                    ConstraintValue::String("staging-web".to_string()),
+                ),
                 ("action", ConstraintValue::String("restart".to_string())),
                 ("budget", ConstraintValue::Float(0.0)),
             ],
@@ -211,7 +233,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Delete staging-web (forbidden action)",
             "manage_infrastructure",
             vec![
-                ("cluster", ConstraintValue::String("staging-web".to_string())),
+                (
+                    "cluster",
+                    ConstraintValue::String("staging-web".to_string()),
+                ),
                 ("action", ConstraintValue::String("delete".to_string())),
                 ("budget", ConstraintValue::Float(0.0)),
             ],
@@ -222,7 +247,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "Expensive upgrade ($5,000)",
             "manage_infrastructure",
             vec![
-                ("cluster", ConstraintValue::String("staging-web".to_string())),
+                (
+                    "cluster",
+                    ConstraintValue::String("staging-web".to_string()),
+                ),
                 ("action", ConstraintValue::String("upgrade".to_string())),
                 ("budget", ConstraintValue::Float(5000.0)),
             ],
@@ -239,17 +267,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut blocked_count = 0u32;
 
     for (name, tool, args_vec, expected, explanation) in test_cases {
-        let args: HashMap<String, ConstraintValue> = args_vec.into_iter()
+        let args: HashMap<String, ConstraintValue> = args_vec
+            .into_iter()
             .map(|(k, v)| (k.to_string(), v))
             .collect();
-        
+
         // Sign the request (Proof-of-Possession)
         let signature = leaf_warrant.create_pop_signature(&worker_keypair, tool, &args)?;
-        
+
         let start = Instant::now();
         let result = leaf_warrant.authorize(tool, &args, Some(&signature));
         let elapsed = start.elapsed();
-        
+
         let allowed = result.is_ok();
         if allowed {
             allowed_time += elapsed;
@@ -258,17 +287,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             blocked_time += elapsed;
             blocked_count += 1;
         }
-        
+
         let status = if allowed == expected { "✓" } else { "✗" };
         let action_status = if allowed { "ALLOWED" } else { "BLOCKED" };
-        
+
         if allowed == expected {
             passed += 1;
         } else {
             failed += 1;
         }
-        
-        println!("  {} {} → {} ({:.0?})", status, name, action_status, elapsed);
+
+        println!(
+            "  {} {} → {} ({:.0?})",
+            status, name, action_status, elapsed
+        );
         println!("      {}", explanation);
         if !allowed {
             if let Err(e) = result {
@@ -277,12 +309,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         println!();
     }
-    
+
     println!("  ───────────────────────────────────────────────────────────────");
     println!("  Performance Metrics:");
     if allowed_count > 0 {
         let avg_allowed = allowed_time / allowed_count;
-        println!("    • Allowed: ~{:.0?} avg (full verification)", avg_allowed);
+        println!(
+            "    • Allowed: ~{:.0?} avg (full verification)",
+            avg_allowed
+        );
     }
     if blocked_count > 0 {
         let avg_blocked = blocked_time / blocked_count;
@@ -298,47 +333,69 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("└─────────────────────────────────────────────────────────────────┘");
 
     let leaf_warrant = chain.last().unwrap();
-    println!("\n  Current depth: {} / {}", leaf_warrant.depth(), leaf_warrant.effective_max_depth());
-    
+    println!(
+        "\n  Current depth: {} / {}",
+        leaf_warrant.depth(),
+        leaf_warrant.effective_max_depth()
+    );
+
     // Worker can create sub-agent warrants up to max_depth
     let sub_agent_keypair = Keypair::generate();
-    
+
     // Try to create depth 2 warrant (should work if max_depth >= 2)
-    println!("\n  Attempting to delegate to Sub-Agent (depth {})...", leaf_warrant.depth() + 1);
-    
-    match leaf_warrant.attenuate()
-        .constraint("budget", Range::max(500.0))  // Further restrict
-        .ttl(Duration::from_secs(300))            // 5 minutes
+    println!(
+        "\n  Attempting to delegate to Sub-Agent (depth {})...",
+        leaf_warrant.depth() + 1
+    );
+
+    match leaf_warrant
+        .attenuate()
+        .constraint("budget", Range::max(500.0)) // Further restrict
+        .ttl(Duration::from_secs(300)) // 5 minutes
         .authorized_holder(sub_agent_keypair.public_key())
         .agent_id("sub-agent-tool-handler")
-        .build(&worker_keypair) 
+        .build(&worker_keypair)
     {
         Ok(sub_warrant) => {
-            println!("  ✓ Sub-Agent warrant created (depth {})", sub_warrant.depth());
+            println!(
+                "  ✓ Sub-Agent warrant created (depth {})",
+                sub_warrant.depth()
+            );
             println!("    • ID: {}", sub_warrant.id());
             println!("    • Budget: ≤$500 (narrowed from ≤$1,000)");
-            
+
             // Now try to go even deeper
-            println!("\n  Attempting to delegate from Sub-Agent (depth {})...", sub_warrant.depth() + 1);
-            
-            match sub_warrant.attenuate()
+            println!(
+                "\n  Attempting to delegate from Sub-Agent (depth {})...",
+                sub_warrant.depth() + 1
+            );
+
+            match sub_warrant
+                .attenuate()
                 .constraint("budget", Range::max(100.0))
                 .ttl(Duration::from_secs(60))
                 .build(&sub_agent_keypair)
             {
                 Ok(deep_warrant) => {
                     println!("  ✓ Deep warrant created (depth {})", deep_warrant.depth());
-                    
+
                     // Try one more level (should fail at max_depth=3)
-                    println!("\n  Attempting depth {} (should hit max_depth limit)...", deep_warrant.depth() + 1);
-                    
+                    println!(
+                        "\n  Attempting depth {} (should hit max_depth limit)...",
+                        deep_warrant.depth() + 1
+                    );
+
                     let another_keypair = Keypair::generate();
-                    match deep_warrant.attenuate()
+                    match deep_warrant
+                        .attenuate()
                         .constraint("budget", Range::max(50.0))
                         .build(&another_keypair)
                     {
                         Ok(w) => {
-                            println!("  ✓ Created warrant at depth {} (max_depth allows it)", w.depth());
+                            println!(
+                                "  ✓ Created warrant at depth {} (max_depth allows it)",
+                                w.depth()
+                            );
                         }
                         Err(e) => {
                             println!("  ✗ BLOCKED: {}", e);
@@ -368,32 +425,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let sensitive_chain_path = input_path.replace(".json", "_sensitive.json");
     if Path::new(&sensitive_chain_path).exists() {
         println!("\n  Loading sensitive chain (requires multi-sig approval)...");
-        
+
         let sensitive_chain_json = fs::read_to_string(&sensitive_chain_path)?;
         let sensitive_chain: Vec<Warrant> = serde_json::from_str(&sensitive_chain_json)?;
-        
+
         // Verify the sensitive chain
         authorizer.verify_chain(&sensitive_chain)?;
         println!("  ✓ Sensitive chain verified");
-        
+
         let sensitive_warrant = sensitive_chain.last().unwrap();
-        
+
         // Display multi-sig requirements
         let threshold = sensitive_warrant.approval_threshold();
-        let approvers_count = sensitive_warrant.required_approvers()
+        let approvers_count = sensitive_warrant
+            .required_approvers()
             .map(|a| a.len())
             .unwrap_or(0);
-        
+
         println!("\n  Sensitive Warrant Requirements:");
         println!("    • cluster:    staging-web");
         println!("    • action:     [delete, scale-down]");
-        println!("    • approvals:  {} required ({} registered)", threshold, approvers_count);
+        println!(
+            "    • approvals:  {} required ({} registered)",
+            threshold, approvers_count
+        );
         println!("    • threshold:  {}-of-{}", threshold, approvers_count);
-        
+
         // Load admin keypair for multi-sig
-        let admin_key_path = env::var("TENUO_ADMIN_KEY_INPUT")
-            .unwrap_or_else(|_| "/data/admin.key".to_string());
-        
+        let admin_key_path =
+            env::var("TENUO_ADMIN_KEY_INPUT").unwrap_or_else(|_| "/data/admin.key".to_string());
+
         let admin_keypair = if Path::new(&admin_key_path).exists() {
             let admin_key_hex = fs::read_to_string(&admin_key_path)?;
             let admin_key_bytes: [u8; 32] = hex::decode(admin_key_hex.trim())?
@@ -404,17 +465,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  ⚠ Admin key not found at {}", admin_key_path);
             None
         };
-        
+
         // Test 1: Try to delete WITHOUT approval
         println!("\n  TEST 1: Attempt 'delete' WITHOUT multi-sig approval...");
-        
+
         let mut args_no_approval: HashMap<String, ConstraintValue> = HashMap::new();
-        args_no_approval.insert("cluster".to_string(), ConstraintValue::String("staging-web".to_string()));
-        args_no_approval.insert("action".to_string(), ConstraintValue::String("delete".to_string()));
+        args_no_approval.insert(
+            "cluster".to_string(),
+            ConstraintValue::String("staging-web".to_string()),
+        );
+        args_no_approval.insert(
+            "action".to_string(),
+            ConstraintValue::String("delete".to_string()),
+        );
         args_no_approval.insert("budget".to_string(), ConstraintValue::Float(100.0));
-        
-        let holder_sig = sensitive_warrant.create_pop_signature(&worker_keypair, "manage_infrastructure", &args_no_approval)?;
-        
+
+        let holder_sig = sensitive_warrant.create_pop_signature(
+            &worker_keypair,
+            "manage_infrastructure",
+            &args_no_approval,
+        )?;
+
         // Try authorization with NO approvals
         let start = Instant::now();
         let result = authorizer.authorize(
@@ -425,7 +496,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &[], // No approvals!
         );
         let elapsed = start.elapsed();
-        
+
         match result {
             Ok(()) => println!("  ✗ UNEXPECTED: Action was allowed without approval!"),
             Err(e) => {
@@ -433,15 +504,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("    → Multi-sig approval is required for sensitive actions!");
             }
         }
-        
+
         // Test 2: Try to delete WITH admin approval
         // ⚠️  DEMO ONLY: In production, the ADMIN signs the approval independently.
         // The worker would request approval via a separate channel (Slack, email, UI).
         // Here we simulate admin signing for demo purposes.
         if let Some(ref admin_kp) = admin_keypair {
             println!("\n  TEST 2: Attempt 'delete' WITH admin approval...");
-            println!("    ⚠️  [DEMO] Simulating admin signature (production: admin signs independently)");
-            
+            println!(
+                "    ⚠️  [DEMO] Simulating admin signature (production: admin signs independently)"
+            );
+
             // Compute the request hash that will be approved (includes holder for theft protection)
             let request_hash = compute_request_hash(
                 sensitive_warrant.id().as_str(),
@@ -449,20 +522,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &args_no_approval,
                 sensitive_warrant.authorized_holder(),
             );
-            
+
             // Admin creates an approval signature
             let now = chrono::Utc::now();
             let expires = now + chrono::Duration::seconds(300);
-            
+
             // Create signable bytes (same as Approval::signable_bytes)
             let mut signable = Vec::new();
             signable.extend_from_slice(&request_hash);
             signable.extend_from_slice("arn:aws:iam::123456789:user/admin".as_bytes());
             signable.extend_from_slice(&now.timestamp().to_le_bytes());
             signable.extend_from_slice(&expires.timestamp().to_le_bytes());
-            
+
             let approval_sig = admin_kp.sign(&signable);
-            
+
             let approval = Approval {
                 request_hash,
                 approver_key: admin_kp.public_key(),
@@ -473,10 +546,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 reason: Some("Approved for staging cleanup".to_string()),
                 signature: approval_sig,
             };
-            
+
             println!("    ✓ Approval created by: {}", &approval.external_id);
             println!("    ✓ Expires at: {}", approval.expires_at);
-            
+
             // Now authorize with the approval
             let start = Instant::now();
             let result = authorizer.authorize(
@@ -487,16 +560,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &[approval],
             );
             let elapsed = start.elapsed();
-            
+
             match result {
                 Ok(()) => {
-                    println!("\n  ✓ ALLOWED ({:.0?}): Delete action authorized with admin approval", elapsed);
+                    println!(
+                        "\n  ✓ ALLOWED ({:.0?}): Delete action authorized with admin approval",
+                        elapsed
+                    );
                     println!("    → Multi-sig verification complete!");
                 }
                 Err(e) => println!("  ✗ UNEXPECTED ERROR: {}", e),
             }
         }
-        
+
         println!("\n  ╭────────────────────────────────────────────────────────────╮");
         println!("  │  MULTI-SIG APPROVAL PATTERN                                │");
         println!("  ├────────────────────────────────────────────────────────────┤");
@@ -520,7 +596,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n╔══════════════════════════════════════════════════════════════════╗");
     println!("║                        WORKER COMPLETE                           ║");
     println!("╠══════════════════════════════════════════════════════════════════╣");
-    println!("║  Test Results: {} passed, {} failed                                ║", passed, failed);
+    println!(
+        "║  Test Results: {} passed, {} failed                                ║",
+        passed, failed
+    );
     println!("║                                                                  ║");
     println!("║  Features Demonstrated:                                          ║");
     println!("║  • Chain verification proves authority (offline)                ║");
@@ -534,6 +613,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if failed > 0 {
         std::process::exit(1);
     }
-    
+
     Ok(())
 }

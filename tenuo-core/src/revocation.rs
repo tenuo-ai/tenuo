@@ -43,11 +43,11 @@
 //! }
 //! ```
 
-use std::collections::HashSet;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use crate::crypto::{Keypair, PublicKey, Signature};
 use crate::error::{Error, Result};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 // ============================================================================
 // Revocation Request
@@ -120,12 +120,18 @@ impl RevocationRequest {
     /// **Note**: For full validation including authorization and replay protection,
     /// use `validate()` instead.
     pub fn verify_signature(&self) -> Result<()> {
-        let payload = (&self.warrant_id, &self.reason, &self.requestor, self.requested_at.timestamp());
+        let payload = (
+            &self.warrant_id,
+            &self.reason,
+            &self.requestor,
+            self.requested_at.timestamp(),
+        );
         let mut payload_bytes = Vec::new();
         ciborium::ser::into_writer(&payload, &mut payload_bytes)
             .map_err(|e| Error::SerializationError(e.to_string()))?;
 
-        self.requestor.verify(&payload_bytes, &self.signature)
+        self.requestor
+            .verify(&payload_bytes, &self.signature)
             .map_err(|_| Error::SignatureInvalid("Revocation request signature invalid".into()))
     }
 
@@ -178,20 +184,21 @@ impl RevocationRequest {
         if age.num_seconds() > MAX_REVOCATION_REQUEST_AGE_SECS {
             return Err(Error::Unauthorized(format!(
                 "Revocation request is too old ({} seconds, max {})",
-                age.num_seconds(), MAX_REVOCATION_REQUEST_AGE_SECS
+                age.num_seconds(),
+                MAX_REVOCATION_REQUEST_AGE_SECS
             )));
         }
         if age.num_seconds() < -60 {
             // Request from the future (clock skew tolerance: 1 minute)
             return Err(Error::Unauthorized(
-                "Revocation request timestamp is in the future".into()
+                "Revocation request timestamp is in the future".into(),
             ));
         }
 
         // 5. Check warrant hasn't already expired
         if warrant_expires_at < Utc::now() {
             return Err(Error::Unauthorized(
-                "Warrant has already expired; revocation unnecessary".into()
+                "Warrant has already expired; revocation unnecessary".into(),
             ));
         }
 
@@ -243,8 +250,7 @@ impl RevocationRequest {
 
     /// Deserialize from bytes (CBOR).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        ciborium::de::from_reader(bytes)
-            .map_err(|e| Error::DeserializationError(e.to_string()))
+        ciborium::de::from_reader(bytes).map_err(|e| Error::DeserializationError(e.to_string()))
     }
 }
 
@@ -320,13 +326,14 @@ impl SignedRevocationList {
         // Check issuer matches
         if &self.payload.issuer != expected_issuer {
             return Err(Error::SignatureInvalid(
-                "SRL issuer does not match expected key".into()
+                "SRL issuer does not match expected key".into(),
             ));
         }
 
         // Verify signature
         let payload_bytes = self.payload_bytes()?;
-        expected_issuer.verify(&payload_bytes, &self.signature)
+        expected_issuer
+            .verify(&payload_bytes, &self.signature)
             .map_err(|_| Error::SignatureInvalid("SRL signature verification failed".into()))
     }
 
@@ -344,9 +351,7 @@ impl SignedRevocationList {
     ///
     /// Call this after loading/verifying the SRL for better performance.
     pub fn build_cache(&mut self) {
-        self.lookup_cache = Some(
-            self.payload.revoked_ids.iter().cloned().collect()
-        );
+        self.lookup_cache = Some(self.payload.revoked_ids.iter().cloned().collect());
     }
 
     /// Get the version number.
@@ -582,7 +587,7 @@ mod tests {
 
         // Authorizer should check version before accepting
         assert!(v2.version() > v1.version());
-        
+
         // v2 has more revocations
         assert!(!v1.is_revoked("tnu_wrt_new"));
         assert!(v2.is_revoked("tnu_wrt_new"));
@@ -659,11 +664,9 @@ mod tests {
     fn test_revocation_request_creation_and_verification() {
         let requestor = Keypair::generate();
 
-        let request = RevocationRequest::new(
-            "tnu_wrt_compromised",
-            "Key compromise detected",
-            &requestor,
-        ).unwrap();
+        let request =
+            RevocationRequest::new("tnu_wrt_compromised", "Key compromise detected", &requestor)
+                .unwrap();
 
         assert_eq!(request.warrant_id, "tnu_wrt_compromised");
         assert_eq!(request.reason, "Key compromise detected");
@@ -677,11 +680,8 @@ mod tests {
     fn test_revocation_request_serialization() {
         let requestor = Keypair::generate();
 
-        let request = RevocationRequest::new(
-            "tnu_wrt_test",
-            "Test revocation",
-            &requestor,
-        ).unwrap();
+        let request =
+            RevocationRequest::new("tnu_wrt_test", "Test revocation", &requestor).unwrap();
 
         // Serialize
         let bytes = request.to_bytes().unwrap();
@@ -701,11 +701,8 @@ mod tests {
         let holder = Keypair::generate();
 
         // Control Plane can revoke anything
-        let request = RevocationRequest::new(
-            "tnu_wrt_any",
-            "Admin revocation",
-            &control_plane,
-        ).unwrap();
+        let request =
+            RevocationRequest::new("tnu_wrt_any", "Admin revocation", &control_plane).unwrap();
 
         assert!(request.is_authorized(
             &issuer.public_key(),
@@ -725,7 +722,8 @@ mod tests {
             "tnu_wrt_issued_by_me",
             "Revoking delegated warrant",
             &issuer,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(request.is_authorized(
             &issuer.public_key(),
@@ -741,11 +739,8 @@ mod tests {
         let holder = Keypair::generate();
 
         // Holder can surrender their own warrant
-        let request = RevocationRequest::new(
-            "tnu_wrt_my_warrant",
-            "Voluntary surrender",
-            &holder,
-        ).unwrap();
+        let request =
+            RevocationRequest::new("tnu_wrt_my_warrant", "Voluntary surrender", &holder).unwrap();
 
         assert!(request.is_authorized(
             &issuer.public_key(),
@@ -766,7 +761,8 @@ mod tests {
             "tnu_wrt_not_mine",
             "Trying to revoke someone else's warrant",
             &random_attacker,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(!request.is_authorized(
             &issuer.public_key(),
@@ -784,20 +780,18 @@ mod tests {
         let expires_at = Utc::now() + chrono::Duration::hours(1);
 
         // Valid request from holder (surrender)
-        let request = RevocationRequest::new(
-            warrant_id,
-            "Voluntary surrender",
-            &holder,
-        ).unwrap();
+        let request = RevocationRequest::new(warrant_id, "Voluntary surrender", &holder).unwrap();
 
         // Full validation should pass
-        assert!(request.validate(
-            warrant_id,
-            &issuer.public_key(),
-            Some(&holder.public_key()),
-            expires_at,
-            &control_plane.public_key(),
-        ).is_ok());
+        assert!(request
+            .validate(
+                warrant_id,
+                &issuer.public_key(),
+                Some(&holder.public_key()),
+                expires_at,
+                &control_plane.public_key(),
+            )
+            .is_ok());
     }
 
     #[test]
@@ -807,15 +801,12 @@ mod tests {
         let expires_at = Utc::now() + chrono::Duration::hours(1);
 
         // Request for one warrant, but validating against different warrant
-        let request = RevocationRequest::new(
-            "tnu_wrt_requested",
-            "DoS attempt",
-            &control_plane,
-        ).unwrap();
+        let request =
+            RevocationRequest::new("tnu_wrt_requested", "DoS attempt", &control_plane).unwrap();
 
         // Should fail: warrant ID mismatch (proves warrant doesn't exist)
         let result = request.validate(
-            "tnu_wrt_actual",  // Different ID!
+            "tnu_wrt_actual", // Different ID!
             &issuer.public_key(),
             None,
             expires_at,
@@ -835,11 +826,8 @@ mod tests {
         let expires_at = Utc::now() + chrono::Duration::hours(1);
 
         // Attacker tries to revoke someone else's warrant
-        let request = RevocationRequest::new(
-            warrant_id,
-            "Malicious revocation",
-            &attacker,
-        ).unwrap();
+        let request =
+            RevocationRequest::new(warrant_id, "Malicious revocation", &attacker).unwrap();
 
         // Should fail: not authorized
         let result = request.validate(
@@ -858,13 +846,14 @@ mod tests {
         let control_plane = Keypair::generate();
         let issuer = Keypair::generate();
         let warrant_id = "tnu_wrt_already_expired";
-        let expires_at = Utc::now() - chrono::Duration::hours(1);  // Already expired
+        let expires_at = Utc::now() - chrono::Duration::hours(1); // Already expired
 
         let request = RevocationRequest::new(
             warrant_id,
             "Trying to revoke expired warrant",
             &control_plane,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Should fail: warrant already expired
         let result = request.validate(

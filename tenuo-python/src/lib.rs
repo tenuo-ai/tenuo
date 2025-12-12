@@ -11,4 +11,3 @@ fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Use ::tenuo_core to disambiguate from the pymodule name
     ::tenuo_core::python::tenuo_core(m)
 }
-

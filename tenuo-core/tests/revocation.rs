@@ -5,14 +5,14 @@
 //! - Chain/cascading revocation
 //! - RevocationRequest and RevocationManager flow
 
-use std::time::Duration;
 use chrono::Utc;
+use std::time::Duration;
 use tenuo_core::{
     crypto::Keypair,
-    warrant::Warrant,
     planes::{ControlPlane, DataPlane},
     revocation::{RevocationRequest, SignedRevocationList},
     revocation_manager::RevocationManager,
+    warrant::Warrant,
     Error,
 };
 
@@ -32,7 +32,7 @@ fn test_single_warrant_revocation() {
 
     let mut data_plane = DataPlane::new();
     data_plane.trust_issuer("root", kp.public_key());
-    
+
     // Initially valid
     assert!(data_plane.verify(&warrant).is_ok());
 
@@ -42,7 +42,9 @@ fn test_single_warrant_revocation() {
         .version(1)
         .build(&kp)
         .unwrap();
-    data_plane.set_revocation_list(srl, &kp.public_key()).unwrap();
+    data_plane
+        .set_revocation_list(srl, &kp.public_key())
+        .unwrap();
 
     // Now invalid
     match data_plane.verify(&warrant) {
@@ -67,13 +69,19 @@ fn test_chain_revocation_child() {
         .build(&root_kp)
         .unwrap();
 
-    let child = root.attenuate().authorized_holder(child_kp.public_key()).build(&child_kp).unwrap();
+    let child = root
+        .attenuate()
+        .authorized_holder(child_kp.public_key())
+        .build(&child_kp)
+        .unwrap();
 
     let mut data_plane = DataPlane::new();
     data_plane.trust_issuer("root", root_kp.public_key());
 
     // Initially valid
-    assert!(data_plane.verify_chain(&[root.clone(), child.clone()]).is_ok());
+    assert!(data_plane
+        .verify_chain(&[root.clone(), child.clone()])
+        .is_ok());
 
     // Revoke the child
     let srl = SignedRevocationList::builder()
@@ -81,7 +89,9 @@ fn test_chain_revocation_child() {
         .version(1)
         .build(&root_kp)
         .unwrap();
-    data_plane.set_revocation_list(srl, &root_kp.public_key()).unwrap();
+    data_plane
+        .set_revocation_list(srl, &root_kp.public_key())
+        .unwrap();
 
     // Chain invalid
     match data_plane.verify_chain(&[root.clone(), child.clone()]) {
@@ -102,7 +112,11 @@ fn test_chain_revocation_parent_cascades() {
         .build(&root_kp)
         .unwrap();
 
-    let child = root.attenuate().authorized_holder(child_kp.public_key()).build(&child_kp).unwrap();
+    let child = root
+        .attenuate()
+        .authorized_holder(child_kp.public_key())
+        .build(&child_kp)
+        .unwrap();
 
     let mut data_plane = DataPlane::new();
     data_plane.trust_issuer("root", root_kp.public_key());
@@ -113,7 +127,9 @@ fn test_chain_revocation_parent_cascades() {
         .version(1)
         .build(&root_kp)
         .unwrap();
-    data_plane.set_revocation_list(srl, &root_kp.public_key()).unwrap();
+    data_plane
+        .set_revocation_list(srl, &root_kp.public_key())
+        .unwrap();
 
     match data_plane.verify_chain(&[root.clone(), child.clone()]) {
         Err(Error::WarrantRevoked(id)) => assert_eq!(id, root.id().to_string()),
@@ -152,12 +168,22 @@ fn test_cascading_revocation_multiple_warrants() {
     // Revoke both via cascade (simulating key revocation)
     let affected_ids = vec![warrant1.id().to_string(), warrant2.id().to_string()];
     let manager = RevocationManager::new();
-    let srl = manager.generate_srl_with_cascade(&cp_keypair, 1, &affected_ids).unwrap();
+    let srl = manager
+        .generate_srl_with_cascade(&cp_keypair, 1, &affected_ids)
+        .unwrap();
 
-    data_plane.set_revocation_list(srl, &control_plane.public_key()).unwrap();
+    data_plane
+        .set_revocation_list(srl, &control_plane.public_key())
+        .unwrap();
 
-    assert!(matches!(data_plane.verify(&warrant1), Err(Error::WarrantRevoked(_))));
-    assert!(matches!(data_plane.verify(&warrant2), Err(Error::WarrantRevoked(_))));
+    assert!(matches!(
+        data_plane.verify(&warrant1),
+        Err(Error::WarrantRevoked(_))
+    ));
+    assert!(matches!(
+        data_plane.verify(&warrant2),
+        Err(Error::WarrantRevoked(_))
+    ));
 }
 
 // ============================================================================
@@ -168,25 +194,24 @@ fn test_cascading_revocation_multiple_warrants() {
 fn test_revocation_request_flow() {
     let cp_keypair = Keypair::generate();
     let issuer_keypair = Keypair::generate();
-    
+
     let mut manager = RevocationManager::new();
 
     // Issuer requests revocation of their warrant
-    let request = RevocationRequest::new(
-        "warrant_to_revoke",
-        "key compromised",
-        &issuer_keypair,
-    ).unwrap();
+    let request =
+        RevocationRequest::new("warrant_to_revoke", "key compromised", &issuer_keypair).unwrap();
 
     // Submit to manager
-    manager.submit_request(
-        request,
-        "warrant_to_revoke",
-        &issuer_keypair.public_key(),
-        None,
-        Utc::now() + chrono::Duration::hours(1),
-        &cp_keypair.public_key(),
-    ).unwrap();
+    manager
+        .submit_request(
+            request,
+            "warrant_to_revoke",
+            &issuer_keypair.public_key(),
+            None,
+            Utc::now() + chrono::Duration::hours(1),
+            &cp_keypair.public_key(),
+        )
+        .unwrap();
 
     // Generate SRL
     let srl = manager.generate_srl(&cp_keypair, 1).unwrap();

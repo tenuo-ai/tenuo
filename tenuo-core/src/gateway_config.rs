@@ -49,8 +49,8 @@
 
 use crate::constraints::ConstraintValue;
 use crate::extraction::{
-    extract_all, CompiledExtractionRules, ExtractionError, ExtractionRule,
-    ExtractionSource, ExtractionTrace, RequestContext,
+    extract_all, CompiledExtractionRules, ExtractionError, ExtractionRule, ExtractionSource,
+    ExtractionTrace, RequestContext,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -159,10 +159,16 @@ impl GatewayConfig {
     }
 
     /// Find a matching route for a request.
-    pub fn match_route(&self, method: &str, path: &str) -> Option<(&RouteConfig, HashMap<String, String>)> {
+    pub fn match_route(
+        &self,
+        method: &str,
+        path: &str,
+    ) -> Option<(&RouteConfig, HashMap<String, String>)> {
         for route in &self.routes {
             // Check method
-            if !route.method.is_empty() && !route.method.iter().any(|m| m.eq_ignore_ascii_case(method)) {
+            if !route.method.is_empty()
+                && !route.method.iter().any(|m| m.eq_ignore_ascii_case(method))
+            {
                 continue;
             }
 
@@ -258,7 +264,7 @@ fn match_pattern(pattern: &str, path: &str) -> Option<HashMap<String, String>> {
     // Quick length check (allow trailing slash difference)
     let pattern_len = pattern_parts.len();
     let path_len = path_parts.len();
-    
+
     if pattern_len != path_len {
         // Handle trailing slash
         if !(pattern_len == path_len + 1 && pattern_parts.last() == Some(&"")
@@ -445,7 +451,7 @@ impl MethodMask {
 
         let method_upper = method.to_uppercase();
         let bit = Self::method_bit(&method_upper);
-        
+
         if bit != 0 {
             // Standard method - check bitmask
             (self.standard & bit) != 0
@@ -524,24 +530,48 @@ pub struct CompiledGatewayConfig {
 #[derive(Debug)]
 pub enum CompileError {
     /// Route pattern is invalid
-    InvalidPattern { route_index: usize, pattern: String, error: String },
+    InvalidPattern {
+        route_index: usize,
+        pattern: String,
+        error: String,
+    },
     /// Tool referenced by route is not defined
     UndefinedTool { route_index: usize, tool: String },
     /// Router conflict (duplicate patterns)
-    RouterConflict { route_index: usize, pattern: String, error: String },
+    RouterConflict {
+        route_index: usize,
+        pattern: String,
+        error: String,
+    },
 }
 
 impl std::fmt::Display for CompileError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            CompileError::InvalidPattern { route_index, pattern, error } => {
-                write!(f, "Route {}: Invalid pattern '{}': {}", route_index, pattern, error)
+            CompileError::InvalidPattern {
+                route_index,
+                pattern,
+                error,
+            } => {
+                write!(
+                    f,
+                    "Route {}: Invalid pattern '{}': {}",
+                    route_index, pattern, error
+                )
             }
             CompileError::UndefinedTool { route_index, tool } => {
                 write!(f, "Route {}: Tool '{}' is not defined", route_index, tool)
             }
-            CompileError::RouterConflict { route_index, pattern, error } => {
-                write!(f, "Route {}: Pattern '{}' conflicts: {}", route_index, pattern, error)
+            CompileError::RouterConflict {
+                route_index,
+                pattern,
+                error,
+            } => {
+                write!(
+                    f,
+                    "Route {}: Pattern '{}' conflicts: {}",
+                    route_index, pattern, error
+                )
             }
         }
     }
@@ -559,24 +589,26 @@ impl CompiledGatewayConfig {
 
         for (i, route) in config.routes.into_iter().enumerate() {
             // Validate tool exists
-            let tool_config = config.tools.get(&route.tool).ok_or_else(|| {
-                CompileError::UndefinedTool {
-                    route_index: i,
-                    tool: route.tool.clone(),
-                }
-            })?;
+            let tool_config =
+                config
+                    .tools
+                    .get(&route.tool)
+                    .ok_or_else(|| CompileError::UndefinedTool {
+                        route_index: i,
+                        tool: route.tool.clone(),
+                    })?;
 
             // Convert pattern from {param} to :param for matchit
             let matchit_pattern = convert_pattern_to_matchit(&route.pattern);
 
             // Add to router
-            router.insert(matchit_pattern, i).map_err(|e| {
-                CompileError::RouterConflict {
+            router
+                .insert(matchit_pattern, i)
+                .map_err(|e| CompileError::RouterConflict {
                     route_index: i,
                     pattern: route.pattern.clone(),
                     error: e.to_string(),
-                }
-            })?;
+                })?;
 
             // Merge and compile extraction rules
             let mut all_rules = tool_config.constraints.clone();
@@ -724,7 +756,7 @@ routes:
     #[test]
     fn test_parse_config() {
         let config = GatewayConfig::from_yaml(SAMPLE_CONFIG).unwrap();
-        
+
         assert_eq!(config.version, "1");
         assert_eq!(config.settings.chain_header, "X-Tenuo-Chain");
         assert!(config.tools.contains_key("manage_infrastructure"));
@@ -734,10 +766,10 @@ routes:
     #[test]
     fn test_route_matching() {
         let config = GatewayConfig::from_yaml(SAMPLE_CONFIG).unwrap();
-        
+
         let result = config.match_route("POST", "/api/v1/clusters/staging-web/scale");
         assert!(result.is_some());
-        
+
         let (route, params) = result.unwrap();
         assert_eq!(route.tool, "manage_infrastructure");
         assert_eq!(params.get("cluster"), Some(&"staging-web".to_string()));
@@ -747,7 +779,7 @@ routes:
     #[test]
     fn test_route_method_mismatch() {
         let config = GatewayConfig::from_yaml(SAMPLE_CONFIG).unwrap();
-        
+
         // GET is not allowed
         let result = config.match_route("GET", "/api/v1/clusters/staging-web/scale");
         assert!(result.is_none());
@@ -756,19 +788,19 @@ routes:
     #[test]
     fn test_constraint_extraction() {
         let config = GatewayConfig::from_yaml(SAMPLE_CONFIG).unwrap();
-        
+
         let (route, path_params) = config
             .match_route("POST", "/api/v1/clusters/staging-web/scale")
             .unwrap();
-        
+
         let mut ctx = RequestContext::with_body(json!({
             "spec": { "replicas": 5 },
             "metadata": { "estimatedCost": 150.0 }
         }));
         ctx.path_params = path_params;
-        
+
         let result = config.extract_constraints(route, &ctx).unwrap();
-        
+
         assert_eq!(
             result.constraints.get("cluster"),
             Some(&ConstraintValue::String("staging-web".into()))
@@ -804,7 +836,7 @@ routes:
 "#;
         let config = GatewayConfig::from_yaml(bad_config).unwrap();
         let errors = config.validate().unwrap_err();
-        
+
         assert!(errors.iter().any(|e| e.message.contains("undefined_tool")));
         assert!(errors.iter().any(|e| e.message.contains("Empty parameter")));
     }
@@ -817,14 +849,20 @@ routes:
     fn test_compiled_route_matching() {
         let config = GatewayConfig::from_yaml(SAMPLE_CONFIG).unwrap();
         let compiled = CompiledGatewayConfig::compile(config).unwrap();
-        
+
         let result = compiled.match_route("POST", "/api/v1/clusters/staging-web/scale");
         assert!(result.is_some());
-        
+
         let route_match = result.unwrap();
         assert_eq!(route_match.route.tool.as_ref(), "manage_infrastructure");
-        assert_eq!(route_match.path_params.get("cluster"), Some(&"staging-web".to_string()));
-        assert_eq!(route_match.path_params.get("action"), Some(&"scale".to_string()));
+        assert_eq!(
+            route_match.path_params.get("cluster"),
+            Some(&"staging-web".to_string())
+        );
+        assert_eq!(
+            route_match.path_params.get("action"),
+            Some(&"scale".to_string())
+        );
     }
 
     #[test]
@@ -835,7 +873,7 @@ routes:
         assert!(mask.matches("post")); // Case insensitive
         assert!(!mask.matches("GET"));
         assert!(!mask.matches("DELETE"));
-        
+
         let all_mask = MethodMask::all();
         assert!(all_mask.matches("GET"));
         assert!(all_mask.matches("POST"));
@@ -850,17 +888,17 @@ routes:
             "PURGE".to_string(),
             "PROPFIND".to_string(),
         ]);
-        
+
         // Standard method
         assert!(mask.matches("POST"));
         assert!(!mask.matches("GET"));
-        
+
         // Custom methods
         assert!(mask.matches("PURGE"));
         assert!(mask.matches("purge")); // Case insensitive
         assert!(mask.matches("PROPFIND"));
         assert!(mask.matches("propfind"));
-        
+
         // Not in mask
         assert!(!mask.matches("PATCH"));
         assert!(!mask.matches("CUSTOM_METHOD"));
@@ -869,7 +907,7 @@ routes:
     #[test]
     fn test_method_mask_all() {
         let all_mask = MethodMask::all();
-        
+
         // Standard methods
         assert!(all_mask.matches("GET"));
         assert!(all_mask.matches("POST"));
@@ -878,7 +916,7 @@ routes:
         assert!(all_mask.matches("PATCH"));
         assert!(all_mask.matches("HEAD"));
         assert!(all_mask.matches("OPTIONS"));
-        
+
         // Custom methods
         assert!(all_mask.matches("PURGE"));
         assert!(all_mask.matches("PROPFIND"));
@@ -889,18 +927,18 @@ routes:
     fn test_compiled_constraint_extraction() {
         let config = GatewayConfig::from_yaml(SAMPLE_CONFIG).unwrap();
         let compiled = CompiledGatewayConfig::compile(config).unwrap();
-        
+
         let route_match = compiled
             .match_route("POST", "/api/v1/clusters/staging-web/scale")
             .unwrap();
-        
+
         let ctx = RequestContext::with_body(json!({
             "spec": { "replicas": 5 },
             "metadata": { "estimatedCost": 150.0 }
         }));
-        
+
         let result = compiled.extract_constraints(&route_match, &ctx).unwrap();
-        
+
         assert_eq!(
             result.constraints.get("cluster"),
             Some(&ConstraintValue::String("staging-web".into()))
@@ -919,7 +957,7 @@ routes:
     fn test_compiled_method_mismatch() {
         let config = GatewayConfig::from_yaml(SAMPLE_CONFIG).unwrap();
         let compiled = CompiledGatewayConfig::compile(config).unwrap();
-        
+
         // GET is not allowed
         let result = compiled.match_route("GET", "/api/v1/clusters/staging-web/scale");
         assert!(result.is_none());
@@ -929,42 +967,38 @@ routes:
     fn test_compiled_path_with_query() {
         let config = GatewayConfig::from_yaml(SAMPLE_CONFIG).unwrap();
         let compiled = CompiledGatewayConfig::compile(config).unwrap();
-        
+
         // Should match even with query string
         let result = compiled.match_route("POST", "/api/v1/clusters/staging-web/scale?foo=bar");
         assert!(result.is_some());
-        assert_eq!(result.unwrap().path_params.get("cluster"), Some(&"staging-web".to_string()));
+        assert_eq!(
+            result.unwrap().path_params.get("cluster"),
+            Some(&"staging-web".to_string())
+        );
     }
 
     #[test]
     fn test_pattern_to_matchit_conversion() {
-        assert_eq!(
-            convert_pattern_to_matchit("/api/{id}"),
-            "/api/:id"
-        );
+        assert_eq!(convert_pattern_to_matchit("/api/{id}"), "/api/:id");
         assert_eq!(
             convert_pattern_to_matchit("/api/{cluster}/{action}"),
             "/api/:cluster/:action"
         );
-        assert_eq!(
-            convert_pattern_to_matchit("/static/path"),
-            "/static/path"
-        );
+        assert_eq!(convert_pattern_to_matchit("/static/path"), "/static/path");
     }
 
     #[test]
     fn test_matchit_directly() {
         let mut router: matchit::Router<usize> = matchit::Router::new();
-        
+
         // Test param matching
         router.insert("/api/:cluster/:action", 0).unwrap();
         let matched = router.at("/api/staging-web/scale");
         assert!(matched.is_ok());
-        
+
         let m = matched.unwrap();
         assert_eq!(*m.value, 0);
         assert_eq!(m.params.get("cluster"), Some("staging-web"));
         assert_eq!(m.params.get("action"), Some("scale"));
     }
 }
-

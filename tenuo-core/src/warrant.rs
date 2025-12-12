@@ -32,13 +32,13 @@ pub const WARRANT_ID_PREFIX: &str = "tnu_wrt_";
 pub const POP_TIMESTAMP_WINDOW_SECS: i64 = 30;
 
 /// A unique identifier for a warrant.
-/// 
+///
 /// Uses UUIDv7 (time-ordered) which provides:
 /// - 48 bits of millisecond timestamp
 /// - 74 bits of random data
 /// - Monotonically increasing within the same millisecond
 /// - Collision probability: 1 in 2^74 per millisecond (effectively zero)
-/// 
+///
 /// **Validation**: IDs must start with `tnu_wrt_` prefix. This is enforced
 /// during both construction (`from_string`) and deserialization.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
@@ -63,22 +63,22 @@ impl<'de> Deserialize<'de> for WarrantId {
 
 impl WarrantId {
     /// Generate a new time-ordered warrant ID (UUIDv7).
-    /// 
+    ///
     /// UUIDv7 provides both uniqueness and chronological ordering,
     /// making it ideal for debugging and audit trails.
     pub fn new() -> Self {
         Self(format!("tnu_wrt_{}", Uuid::now_v7().simple()))
     }
-    
+
     /// Generate a random warrant ID (UUIDv4).
-    /// 
+    ///
     /// Use this when you don't want IDs to reveal timing information.
     pub fn new_random() -> Self {
         Self(format!("tnu_wrt_{}", Uuid::new_v4().simple()))
     }
 
     /// Create a warrant ID from a string.
-    /// 
+    ///
     /// Returns `InvalidWarrantId` if the string doesn't start with `tnu_wrt_`.
     pub fn from_string(s: impl Into<String>) -> Result<Self> {
         let s = s.into();
@@ -124,11 +124,11 @@ pub struct WarrantPayload {
     /// Delegation depth (0 for root warrants).
     pub depth: u32,
     /// Maximum delegation depth allowed from this warrant chain.
-    /// 
+    ///
     /// If set, child warrants cannot exceed this depth. This is a policy limit
     /// that can be set by the Control Plane or any delegator. The value can only
     /// shrink during attenuation (monotonicity).
-    /// 
+    ///
     /// If `None`, the protocol-level `MAX_DELEGATION_DEPTH` applies.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_depth: Option<u32>,
@@ -141,25 +141,25 @@ pub struct WarrantPayload {
     /// Public key of the issuer (who signed this warrant).
     pub issuer: PublicKey,
     /// Public key of the authorized holder (Proof-of-Possession).
-    /// 
+    ///
     /// If set, the holder must prove they control this key when using the warrant.
     /// This prevents stolen warrants from being used by attackers.
-    /// 
+    ///
     /// When `None`, the warrant is a bearer token (anyone with it can use it).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authorized_holder: Option<PublicKey>,
 
     /// Public keys of required approvers for multi-sig workflows.
-    /// 
+    ///
     /// If set, actions require signatures from approvers in this list.
     /// Use with `min_approvals` for M-of-N schemes (e.g., 2-of-3).
-    /// 
+    ///
     /// When `None`, no additional approvals are required.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required_approvers: Option<Vec<PublicKey>>,
 
     /// Minimum number of approvals required (for M-of-N multi-sig).
-    /// 
+    ///
     /// If `None` but `required_approvers` is set, ALL approvers must sign.
     /// Must be <= len(required_approvers).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -167,7 +167,7 @@ pub struct WarrantPayload {
 }
 
 /// A signed warrant - the complete token of authority.
-/// 
+///
 /// **Security**: Custom deserialization validates constraint depth to prevent
 /// stack overflow attacks from maliciously nested constraints.
 #[derive(Debug, Clone, Serialize)]
@@ -199,11 +199,13 @@ impl<'de> Deserialize<'de> for Warrant {
         }
 
         let raw = WarrantRaw::deserialize(deserializer)?;
-        
+
         // Validate constraint depth before returning
-        raw.payload.constraints.validate_depth()
+        raw.payload
+            .constraints
+            .validate_depth()
             .map_err(serde::de::Error::custom)?;
-        
+
         Ok(Warrant {
             payload: raw.payload,
             signature: raw.signature,
@@ -232,9 +234,9 @@ impl Warrant {
     pub fn constraints(&self) -> &ConstraintSet {
         &self.payload.constraints
     }
-    
+
     /// Validate that constraint nesting depths are within limits.
-    /// 
+    ///
     /// Call this after deserializing warrants from untrusted sources
     /// to prevent stack overflow attacks from deeply nested constraints.
     pub fn validate_constraint_depth(&self) -> Result<()> {
@@ -252,7 +254,7 @@ impl Warrant {
     }
 
     /// Get the maximum delegation depth allowed for this warrant chain.
-    /// 
+    ///
     /// Returns `None` if no limit was set (protocol default applies).
     pub fn max_depth(&self) -> Option<u32> {
         self.payload.max_depth
@@ -284,7 +286,7 @@ impl Warrant {
     }
 
     /// Get the authorized holder's public key (if set).
-    /// 
+    ///
     /// When set, the holder must prove possession of the corresponding
     /// private key to use this warrant (Proof-of-Possession).
     pub fn authorized_holder(&self) -> Option<&PublicKey> {
@@ -312,36 +314,32 @@ impl Warrant {
     }
 
     /// Get the effective approval threshold.
-    /// 
+    ///
     /// Returns the number of approvals needed:
     /// - If `min_approvals` is set, returns that value
     /// - If `required_approvers` is set but `min_approvals` is not, returns the count (all must sign)
     /// - Otherwise returns 0 (no approvals needed)
-    /// 
+    ///
     /// # Type Safety
-    /// 
+    ///
     /// If the approver count exceeds `u32::MAX`, it is capped at `u32::MAX`.
     /// In practice, this is extremely unlikely (would require > 4 billion approvers).
     pub fn approval_threshold(&self) -> u32 {
         use std::convert::TryInto;
         match (&self.payload.required_approvers, self.payload.min_approvals) {
             (Some(approvers), Some(min)) => {
-                let len: u32 = approvers.len()
-                    .try_into()
-                    .unwrap_or(u32::MAX); // Cap at u32::MAX if conversion fails
+                let len: u32 = approvers.len().try_into().unwrap_or(u32::MAX); // Cap at u32::MAX if conversion fails
                 min.min(len)
-            },
+            }
             (Some(approvers), None) => {
-                approvers.len()
-                    .try_into()
-                    .unwrap_or(u32::MAX) // Cap at u32::MAX if conversion fails
-            },
+                approvers.len().try_into().unwrap_or(u32::MAX) // Cap at u32::MAX if conversion fails
+            }
             (None, _) => 0, // No multi-sig required
         }
     }
 
     /// Get the payload bytes (for batch signature verification).
-    /// 
+    ///
     /// Returns the original serialized payload bytes used for signature verification.
     pub fn payload_bytes(&self) -> &[u8] {
         &self.payload_bytes
@@ -353,26 +351,23 @@ impl Warrant {
     }
 
     /// Verify that a holder signature proves possession.
-    /// 
+    ///
     /// The holder must sign a challenge (typically the action being performed)
     /// to prove they control the `authorized_holder` key.
-    /// 
+    ///
     /// # Arguments
     /// * `challenge` - The data that was signed (e.g., action + timestamp + nonce)
     /// * `signature` - The holder's signature over the challenge
-    /// 
+    ///
     /// # Returns
     /// * `Ok(())` if no PoP required OR signature is valid
     /// * `Err` if PoP required but signature invalid or missing holder
     pub fn verify_holder(&self, challenge: &[u8], signature: &Signature) -> Result<()> {
         match &self.payload.authorized_holder {
             None => Ok(()), // Defensive: Bearer token (legacy/external), though build() enforces PoP
-            Some(holder_key) => {
-                holder_key.verify(challenge, signature)
-                    .map_err(|_| Error::SignatureInvalid(
-                        "holder proof-of-possession failed".to_string()
-                    ))
-            }
+            Some(holder_key) => holder_key.verify(challenge, signature).map_err(|_| {
+                Error::SignatureInvalid("holder proof-of-possession failed".to_string())
+            }),
         }
     }
 
@@ -410,7 +405,9 @@ impl Warrant {
     /// contained within the warrant itself. It does NOT verify that the issuer is trusted.
     pub fn verify_signature(&self) -> Result<()> {
         // Use the stored payload bytes for verification (ensures determinism)
-        self.payload.issuer.verify(&self.payload_bytes, &self.signature)
+        self.payload
+            .issuer
+            .verify(&self.payload_bytes, &self.signature)
     }
 
     /// Authorize an action against this warrant.
@@ -437,10 +434,7 @@ impl Warrant {
             if !allowed_tools.contains(&tool) {
                 return Err(Error::ConstraintNotSatisfied {
                     field: "tool".to_string(),
-                    reason: format!(
-                        "warrant is for tools '{:?}', not '{}'",
-                        allowed_tools, tool
-                    ),
+                    reason: format!("warrant is for tools '{:?}', not '{}'", allowed_tools, tool),
                 });
             }
         }
@@ -456,13 +450,13 @@ impl Warrant {
 
             // PoP signature covers (warrant_id, tool, sorted_args, timestamp_window)
             // We verify against multiple recent windows to handle clock skew.
-            // 
+            //
             // Security: This creates a ~2 minute replay window. Mitigate with:
             // - Short-lived warrants (TTL < 2 min)
             // - Application-layer request deduplication
             let now = Utc::now().timestamp();
             let max_windows = 4; // Accept signatures from last ~2 minutes
-            
+
             let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
             sorted_args.sort_by_key(|(k, _)| *k);
 
@@ -480,9 +474,11 @@ impl Warrant {
                     break;
                 }
             }
-            
+
             if !verified {
-                return Err(Error::SignatureInvalid("Proof-of-Possession failed or expired".to_string()));
+                return Err(Error::SignatureInvalid(
+                    "Proof-of-Possession failed or expired".to_string(),
+                ));
             }
         }
 
@@ -583,7 +579,7 @@ impl WarrantBuilder {
     }
 
     /// Set a custom warrant ID.
-    /// 
+    ///
     /// If not set, a random time-ordered ID (UUIDv7) will be generated.
     pub fn id(mut self, id: WarrantId) -> Self {
         self.id = Some(id);
@@ -597,7 +593,11 @@ impl WarrantBuilder {
     }
 
     /// Add a constraint.
-    pub fn constraint(mut self, field: impl Into<String>, constraint: impl Into<Constraint>) -> Self {
+    pub fn constraint(
+        mut self,
+        field: impl Into<String>,
+        constraint: impl Into<Constraint>,
+    ) -> Self {
         self.constraints.insert(field, constraint);
         self
     }
@@ -609,10 +609,10 @@ impl WarrantBuilder {
     }
 
     /// Set the maximum delegation depth for this warrant chain.
-    /// 
+    ///
     /// This is a policy limit that restricts how deep the delegation chain
     /// can grow. Child warrants can only shrink this value, never expand it.
-    /// 
+    ///
     /// If not set, the protocol-level `MAX_DELEGATION_DEPTH` (64) applies.
     pub fn max_depth(mut self, max_depth: u32) -> Self {
         self.max_depth = Some(max_depth);
@@ -638,7 +638,7 @@ impl WarrantBuilder {
     }
 
     /// Set required approvers for multi-sig workflows.
-    /// 
+    ///
     /// Actions will require signatures from these approvers.
     /// Use with `min_approvals()` for M-of-N schemes.
     pub fn required_approvers(mut self, approvers: Vec<PublicKey>) -> Self {
@@ -647,7 +647,7 @@ impl WarrantBuilder {
     }
 
     /// Set the minimum number of approvals required (M-of-N).
-    /// 
+    ///
     /// If not set but `required_approvers` is set, ALL approvers must sign.
     pub fn min_approvals(mut self, min: u32) -> Self {
         self.min_approvals = Some(min);
@@ -675,7 +675,8 @@ impl WarrantBuilder {
             if min as usize > approvers.len() {
                 return Err(Error::MonotonicityViolation(format!(
                     "min_approvals ({}) cannot exceed required_approvers count ({})",
-                    min, approvers.len()
+                    min,
+                    approvers.len()
                 )));
             }
         }
@@ -704,7 +705,11 @@ impl WarrantBuilder {
         ciborium::ser::into_writer(&payload, &mut payload_bytes)?;
         let signature = keypair.sign(&payload_bytes);
 
-        Ok(Warrant { payload, signature, payload_bytes })
+        Ok(Warrant {
+            payload,
+            signature,
+            payload_bytes,
+        })
     }
 }
 
@@ -746,7 +751,11 @@ impl<'a> AttenuationBuilder<'a> {
     }
 
     /// Override a constraint with a narrower one.
-    pub fn constraint(mut self, field: impl Into<String>, constraint: impl Into<Constraint>) -> Self {
+    pub fn constraint(
+        mut self,
+        field: impl Into<String>,
+        constraint: impl Into<Constraint>,
+    ) -> Self {
         self.constraints.insert(field, constraint);
         self
     }
@@ -758,7 +767,7 @@ impl<'a> AttenuationBuilder<'a> {
     }
 
     /// Set a lower maximum delegation depth.
-    /// 
+    ///
     /// This can only shrink the parent's `max_depth`, never expand it.
     /// An error will be returned at build time if monotonicity is violated.
     pub fn max_depth(mut self, max_depth: u32) -> Self {
@@ -776,9 +785,9 @@ impl<'a> AttenuationBuilder<'a> {
     }
 
     /// Set or change the authorized holder (Proof-of-Possession).
-    /// 
+    ///
     /// # Important
-    /// 
+    ///
     /// If you don't call this method, the child warrant will inherit the parent's
     /// `authorized_holder`. This means the parent can re-delegate to itself, which
     /// is valid but may not be what you want. Always explicitly set the holder
@@ -789,7 +798,7 @@ impl<'a> AttenuationBuilder<'a> {
     }
 
     /// Add required approvers (can only add more, not remove).
-    /// 
+    ///
     /// Multi-sig is monotonic: you can add approvers but not remove them.
     /// The new approvers are merged with any inherited from the parent.
     pub fn add_approvers(mut self, approvers: Vec<PublicKey>) -> Self {
@@ -804,7 +813,7 @@ impl<'a> AttenuationBuilder<'a> {
     }
 
     /// Increase the minimum approvals required (can only increase).
-    /// 
+    ///
     /// Multi-sig threshold is monotonic: you can raise it but not lower it.
     pub fn raise_min_approvals(mut self, min: u32) -> Self {
         let current = self.min_approvals.unwrap_or(0);
@@ -828,7 +837,7 @@ impl<'a> AttenuationBuilder<'a> {
             } else {
                 // Child doesn't have approvers but parent does - violation
                 return Err(Error::MonotonicityViolation(
-                    "cannot remove multi-sig requirement from parent".to_string()
+                    "cannot remove multi-sig requirement from parent".to_string(),
                 ));
             }
         }
@@ -851,7 +860,8 @@ impl<'a> AttenuationBuilder<'a> {
             if min as usize > approvers.len() {
                 return Err(Error::MonotonicityViolation(format!(
                     "min_approvals ({}) cannot exceed required_approvers count ({})",
-                    min, approvers.len()
+                    min,
+                    approvers.len()
                 )));
             }
         }
@@ -862,10 +872,13 @@ impl<'a> AttenuationBuilder<'a> {
     /// Build and sign the attenuated warrant.
     pub fn build(self, keypair: &Keypair) -> Result<Warrant> {
         // Use checked arithmetic to prevent overflow
-        let new_depth = self.parent.payload.depth
+        let new_depth = self
+            .parent
+            .payload
+            .depth
             .checked_add(1)
             .ok_or(Error::DepthExceeded(u32::MAX, MAX_DELEGATION_DEPTH))?;
-        
+
         // Calculate effective max_depth (monotonic: can only shrink)
         let effective_max = match (self.parent.payload.max_depth, self.max_depth) {
             // Both set: take the minimum (can only shrink)
@@ -908,11 +921,14 @@ impl<'a> AttenuationBuilder<'a> {
         }
 
         // Validate attenuation monotonicity for constraints
-        self.parent.payload.constraints.validate_attenuation(&self.constraints)?;
+        self.parent
+            .payload
+            .constraints
+            .validate_attenuation(&self.constraints)?;
 
         // Validate multi-sig monotonicity (cannot remove approvers or lower threshold)
         self.validate_multisig_monotonicity()?;
-        
+
         // Warn if authorized_holder wasn't explicitly changed (common mistake)
         // Note: Inheriting parent's holder is valid (self-delegation), but usually not intended
         if let Some(ref parent_holder) = self.parent.payload.authorized_holder {
@@ -960,7 +976,11 @@ impl<'a> AttenuationBuilder<'a> {
         ciborium::ser::into_writer(&payload, &mut payload_bytes)?;
         let signature = keypair.sign(&payload_bytes);
 
-        Ok(Warrant { payload, signature, payload_bytes })
+        Ok(Warrant {
+            payload,
+            signature,
+            payload_bytes,
+        })
     }
 }
 
@@ -1022,21 +1042,38 @@ mod tests {
             .unwrap();
 
         let mut args = HashMap::new();
-        args.insert("cluster".to_string(), ConstraintValue::String("staging-web".to_string()));
-        args.insert("version".to_string(), ConstraintValue::String("1.28.5".to_string()));
+        args.insert(
+            "cluster".to_string(),
+            ConstraintValue::String("staging-web".to_string()),
+        );
+        args.insert(
+            "version".to_string(),
+            ConstraintValue::String("1.28.5".to_string()),
+        );
 
         // Create PoP signature (mandatory now)
-        let pop_sig = warrant.create_pop_signature(&keypair, "upgrade_cluster", &args).unwrap();
+        let pop_sig = warrant
+            .create_pop_signature(&keypair, "upgrade_cluster", &args)
+            .unwrap();
 
-        assert!(warrant.authorize("upgrade_cluster", &args, Some(&pop_sig)).is_ok());
+        assert!(warrant
+            .authorize("upgrade_cluster", &args, Some(&pop_sig))
+            .is_ok());
 
         // Wrong tool
-        assert!(warrant.authorize("delete_cluster", &args, Some(&pop_sig)).is_err());
+        assert!(warrant
+            .authorize("delete_cluster", &args, Some(&pop_sig))
+            .is_err());
 
         // Wrong cluster
         let mut bad_args = args.clone();
-        bad_args.insert("cluster".to_string(), ConstraintValue::String("production-web".to_string()));
-        assert!(warrant.authorize("upgrade_cluster", &bad_args, Some(&pop_sig)).is_err());
+        bad_args.insert(
+            "cluster".to_string(),
+            ConstraintValue::String("production-web".to_string()),
+        );
+        assert!(warrant
+            .authorize("upgrade_cluster", &bad_args, Some(&pop_sig))
+            .is_err());
     }
 
     #[test]
@@ -1203,13 +1240,20 @@ mod tests {
             .unwrap();
 
         let mut args = HashMap::new();
-        args.insert("param".to_string(), ConstraintValue::String("value".to_string()));
+        args.insert(
+            "param".to_string(),
+            ConstraintValue::String("value".to_string()),
+        );
 
         // Create PoP signature with WRONG keypair
-        let wrong_pop_sig = warrant.create_pop_signature(&wrong_keypair, "test", &args).unwrap();
+        let wrong_pop_sig = warrant
+            .create_pop_signature(&wrong_keypair, "test", &args)
+            .unwrap();
 
         // Authorization should fail - wrong keypair
-        assert!(warrant.authorize("test", &args, Some(&wrong_pop_sig)).is_err());
+        assert!(warrant
+            .authorize("test", &args, Some(&wrong_pop_sig))
+            .is_err());
     }
 
     #[test]
@@ -1224,13 +1268,20 @@ mod tests {
             .unwrap();
 
         let mut args = HashMap::new();
-        args.insert("param".to_string(), ConstraintValue::String("value".to_string()));
+        args.insert(
+            "param".to_string(),
+            ConstraintValue::String("value".to_string()),
+        );
 
         // Create PoP signature for WRONG tool
-        let pop_sig = warrant.create_pop_signature(&keypair, "wrong_tool", &args).unwrap();
+        let pop_sig = warrant
+            .create_pop_signature(&keypair, "wrong_tool", &args)
+            .unwrap();
 
         // Authorization should fail - tool mismatch
-        assert!(warrant.authorize("test_tool", &args, Some(&pop_sig)).is_err());
+        assert!(warrant
+            .authorize("test_tool", &args, Some(&pop_sig))
+            .is_err());
     }
 
     #[test]
@@ -1246,17 +1297,27 @@ mod tests {
             .unwrap();
 
         let mut correct_args = HashMap::new();
-        correct_args.insert("cluster".to_string(), ConstraintValue::String("staging-web".to_string()));
+        correct_args.insert(
+            "cluster".to_string(),
+            ConstraintValue::String("staging-web".to_string()),
+        );
 
         let mut wrong_args = HashMap::new();
-        wrong_args.insert("cluster".to_string(), ConstraintValue::String("prod-web".to_string()));
+        wrong_args.insert(
+            "cluster".to_string(),
+            ConstraintValue::String("prod-web".to_string()),
+        );
 
         // Create PoP signature with WRONG args
-        let pop_sig = warrant.create_pop_signature(&keypair, "test", &wrong_args).unwrap();
+        let pop_sig = warrant
+            .create_pop_signature(&keypair, "test", &wrong_args)
+            .unwrap();
 
         // Authorization with correct args but wrong PoP signature should fail
         // (PoP signature is bound to specific args)
-        assert!(warrant.authorize("test", &correct_args, Some(&pop_sig)).is_err());
+        assert!(warrant
+            .authorize("test", &correct_args, Some(&pop_sig))
+            .is_err());
     }
 
     #[test]
@@ -1266,13 +1327,15 @@ mod tests {
         // Create warrant with very short TTL
         let warrant = Warrant::builder()
             .tool("test")
-            .ttl(Duration::from_secs(1))  // 1 second TTL
+            .ttl(Duration::from_secs(1)) // 1 second TTL
             .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
         let args = HashMap::new();
-        let pop_sig = warrant.create_pop_signature(&keypair, "test", &args).unwrap();
+        let pop_sig = warrant
+            .create_pop_signature(&keypair, "test", &args)
+            .unwrap();
 
         // Wait for expiration
         std::thread::sleep(Duration::from_secs(2));
@@ -1484,7 +1547,8 @@ mod tests {
             .unwrap();
 
         // Attenuate and ADD another approver (valid: more restrictive)
-        let child = root.attenuate()
+        let child = root
+            .attenuate()
             .add_approvers(vec![approver2.public_key()])
             .raise_min_approvals(2)
             .build(&delegator)
@@ -1515,9 +1579,7 @@ mod tests {
         // The builder inherits from parent, so we can't directly remove.
         // But if the internal field is manipulated, the build should fail.
         // For now, verify that inherited approvers are preserved.
-        let child = root.attenuate()
-            .build(&delegator)
-            .unwrap();
+        let child = root.attenuate().build(&delegator).unwrap();
 
         // All parent approvers should be preserved
         assert_eq!(child.required_approvers().unwrap().len(), 2);
@@ -1542,7 +1604,8 @@ mod tests {
 
         // Try to lower threshold using raise_min_approvals (should be ignored)
         // raise_min_approvals uses max() so it cannot lower
-        let child = root.attenuate()
+        let child = root
+            .attenuate()
             .raise_min_approvals(1) // Tries to set 1, but max(current, 1) = 2
             .build(&delegator)
             .unwrap();
@@ -1567,4 +1630,3 @@ mod tests {
         assert!(warrant.required_approvers().is_none());
     }
 }
-

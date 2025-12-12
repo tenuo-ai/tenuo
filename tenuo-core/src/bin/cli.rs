@@ -2,7 +2,12 @@
 //!
 //! Implements the CLI specification v0.1.0
 
+use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
+use der::asn1::{AnyRef, BitStringRef};
+use der::{Decode, Encode, EncodePem};
+use pkcs8::{LineEnding, PrivateKeyInfo};
+use spki::{AlgorithmIdentifier, SubjectPublicKeyInfo};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Read};
@@ -17,11 +22,6 @@ use tenuo_core::{
     warrant::Warrant,
     wire,
 };
-use chrono::{DateTime, Utc};
-use pkcs8::{LineEnding, PrivateKeyInfo};
-use spki::{SubjectPublicKeyInfo, AlgorithmIdentifier};
-use der::{Decode, Encode, EncodePem};
-use der::asn1::{AnyRef, BitStringRef};
 // We use the pkcs8/spki crates for standard PEM handling
 
 #[derive(Parser)]
@@ -38,15 +38,15 @@ enum Commands {
     Keygen {
         /// Base name for output files (creates NAME.key and NAME.pub)
         name: Option<String>,
-        
+
         /// Overwrite existing files
         #[arg(short, long)]
         force: bool,
-        
+
         /// Output raw base64 private key only (for CI/CD env vars)
         #[arg(long)]
         raw: bool,
-        
+
         /// Print public key from existing private key
         #[arg(long)]
         show_public: Option<PathBuf>,
@@ -57,35 +57,35 @@ enum Commands {
         /// Path to issuer's private key (PEM)
         #[arg(short = 'k', long = "signing-key", required = true)]
         signing_key: PathBuf,
-        
+
         /// Holder's public key: path to PEM file or base64 string
         #[arg(long = "holder", required = true)]
         holder: String,
-        
+
         /// Comma-separated allowed tools (e.g., search,read_file)
         #[arg(short = 't', long = "tool")]
         tool: Option<String>,
-        
+
         /// Validity duration (default: 5m). Formats: 300s, 10m, 1h
         #[arg(long = "ttl", default_value = "5m")]
         ttl: String,
-        
+
         /// Warrant ID (default: generated)
         #[arg(long = "id")]
         id: Option<String>,
-        
+
         /// Add constraint (repeatable). Format: key=type:value
         #[arg(short = 'c', long = "constraint")]
         constraint: Vec<String>,
-        
+
         /// Add constraint as JSON (for complex values)
         #[arg(long = "constraint-json")]
         constraint_json: Vec<String>,
-        
+
         /// Output as JSON
         #[arg(long)]
         json: bool,
-        
+
         /// Output warrant string only, no decoration
         #[arg(short, long)]
         quiet: bool,
@@ -95,35 +95,35 @@ enum Commands {
     Attenuate {
         /// Base64 warrant string. Use - to read from stdin.
         warrant: String,
-        
+
         /// Current holder's private key (PEM)
         #[arg(short = 'k', long = "signing-key", required = true)]
         signing_key: PathBuf,
-        
+
         /// Child's public key. If omitted, self-attenuates (same holder).
         #[arg(long = "holder")]
         holder: Option<String>,
-        
+
         /// Subset of tools to retain (must be subset of parent)
         #[arg(short = 't', long = "tool")]
         tool: Option<String>,
-        
+
         /// New TTL (must be <= parent's remaining TTL). Formats: 300s, 10m, 1h
         #[arg(long = "ttl")]
         ttl: Option<String>,
-        
+
         /// Narrowing constraints (must not widen parent's constraints)
         #[arg(short = 'c', long = "constraint")]
         constraint: Vec<String>,
-        
+
         /// Narrowing constraint as JSON
         #[arg(long = "constraint-json")]
         constraint_json: Vec<String>,
-        
+
         /// Output as JSON
         #[arg(long)]
         json: bool,
-        
+
         /// Output warrant string only
         #[arg(short, long)]
         quiet: bool,
@@ -134,22 +134,22 @@ enum Commands {
         /// Holder's private key (must match warrant's holder)
         #[arg(short = 'k', long = "key", required = true)]
         key: PathBuf,
-        
+
         /// Base64 warrant string
         #[arg(short = 'w', long = "warrant", required = true)]
         warrant: String,
-        
+
         /// Tool name for the request
         #[arg(short = 't', long = "tool", required = true)]
         tool: String,
-        
+
         /// Request body to sign (JSON). Use - to read from stdin.
         payload: String,
-        
+
         /// Output as JSON with warrant, payload hash, and signature
         #[arg(long)]
         json: bool,
-        
+
         /// Output signature only
         #[arg(short, long)]
         quiet: bool,
@@ -159,31 +159,31 @@ enum Commands {
     Verify {
         /// Request body that was signed (JSON). Use - to read from stdin.
         payload: String,
-        
+
         /// Base64 warrant string. Repeatable for chain verification (root to leaf).
         #[arg(short = 'w', long = "warrant", required = true)]
         warrant: Vec<String>,
-        
+
         /// Base64 signature from sign command
         #[arg(short = 's', long = "signature", required = true)]
         signature: String,
-        
+
         /// Tool name for the request
         #[arg(short = 't', long = "tool", required = true)]
         tool: String,
-        
+
         /// Trusted root issuer's public key (PEM or base64). Repeatable.
         #[arg(short = 'i', long = "trusted-issuer")]
         trusted_issuer: Vec<String>,
-        
+
         /// Verify as of specific time (default: now). ISO 8601 format.
         #[arg(long = "at")]
         at: Option<String>,
-        
+
         /// Output detailed JSON result
         #[arg(long)]
         json: bool,
-        
+
         /// Exit code only (0 = valid, 1 = invalid)
         #[arg(short, long)]
         quiet: bool,
@@ -193,15 +193,15 @@ enum Commands {
     Inspect {
         /// Base64 warrant string. Repeatable for chain inspection.
         warrant: Vec<String>,
-        
+
         /// Output raw JSON structure
         #[arg(long)]
         json: bool,
-        
+
         /// Verify internal signatures and TTL
         #[arg(long)]
         verify: bool,
-        
+
         /// Show full delegation chain
         #[arg(long)]
         chain: bool,
@@ -254,7 +254,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Keygen { name, force, raw, show_public } => {
+        Commands::Keygen {
+            name,
+            force,
+            raw,
+            show_public,
+        } => {
             handle_keygen(name, force, raw, show_public)?;
         }
         Commands::Issue {
@@ -268,7 +273,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             json,
             quiet,
         } => {
-            handle_issue(signing_key, holder, tool, ttl, id, constraint, constraint_json, json, quiet)?;
+            handle_issue(
+                signing_key,
+                holder,
+                tool,
+                ttl,
+                id,
+                constraint,
+                constraint_json,
+                json,
+                quiet,
+            )?;
         }
         Commands::Attenuate {
             warrant,
@@ -281,7 +296,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             json,
             quiet,
         } => {
-            handle_attenuate(warrant, signing_key, holder, tool, ttl, constraint, constraint_json, json, quiet)?;
+            handle_attenuate(
+                warrant,
+                signing_key,
+                holder,
+                tool,
+                ttl,
+                constraint,
+                constraint_json,
+                json,
+                quiet,
+            )?;
         }
         Commands::Sign {
             key,
@@ -303,9 +328,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             json,
             quiet,
         } => {
-            handle_verify(payload, warrant, signature, tool, trusted_issuer, at, json, quiet)?;
+            handle_verify(
+                payload,
+                warrant,
+                signature,
+                tool,
+                trusted_issuer,
+                at,
+                json,
+                quiet,
+            )?;
         }
-        Commands::Inspect { warrant, json, verify, chain: _ } => {
+        Commands::Inspect {
+            warrant,
+            json,
+            verify,
+            chain: _,
+        } => {
             let mut warrants = Vec::new();
             for w_str in &warrant {
                 warrants.push(read_warrant(w_str)?);
@@ -322,7 +361,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             verbose,
             output,
         } => {
-            handle_extract(config, request, method, path, headers, query, verbose, output)?;
+            handle_extract(
+                config, request, method, path, headers, query, verbose, output,
+            )?;
         }
         Commands::ValidateConfig { config } => {
             handle_validate_config(config)?;
@@ -354,7 +395,9 @@ fn parse_duration(s: &str) -> Result<Duration, String> {
         (s, "s")
     };
 
-    let num: u64 = num_str.parse().map_err(|_| format!("Invalid number in duration: {}", num_str))?;
+    let num: u64 = num_str
+        .parse()
+        .map_err(|_| format!("Invalid number in duration: {}", num_str))?;
 
     let secs = match unit {
         "s" => num,
@@ -370,7 +413,7 @@ fn parse_duration(s: &str) -> Result<Duration, String> {
 fn load_private_key(path: &PathBuf) -> Result<Keypair, Box<dyn std::error::Error>> {
     let content = fs::read_to_string(path)?;
     let content = content.trim();
-    
+
     // Try standard PKCS#8 PEM using pem crate
     if let Ok(pem) = pem::parse(content) {
         if pem.tag() == "PRIVATE KEY" {
@@ -378,7 +421,9 @@ fn load_private_key(path: &PathBuf) -> Result<Keypair, Box<dyn std::error::Error
             if let Ok(info) = PrivateKeyInfo::from_der(pem.contents()) {
                 if info.algorithm.oid.to_string() == "1.3.101.112" {
                     use der::Decode;
-                    if let Ok(octet_string) = <der::asn1::OctetString as Decode>::from_der(info.private_key) {
+                    if let Ok(octet_string) =
+                        <der::asn1::OctetString as Decode>::from_der(info.private_key)
+                    {
                         let bytes = octet_string.as_bytes();
                         if bytes.len() == 32 {
                             let arr: [u8; 32] = bytes.try_into()?;
@@ -413,7 +458,7 @@ fn load_private_key(path: &PathBuf) -> Result<Keypair, Box<dyn std::error::Error
                 hex_str.push_str(line.trim());
             }
         }
-        
+
         if !hex_str.is_empty() {
             if let Ok(bytes) = hex::decode(&hex_str) {
                 if bytes.len() == 32 {
@@ -424,7 +469,7 @@ fn load_private_key(path: &PathBuf) -> Result<Keypair, Box<dyn std::error::Error
         }
         // Don't return error yet, try other formats
     }
-    
+
     // Try as hex
     if let Ok(bytes) = hex::decode(content) {
         if bytes.len() == 32 {
@@ -432,18 +477,15 @@ fn load_private_key(path: &PathBuf) -> Result<Keypair, Box<dyn std::error::Error
             return Ok(Keypair::from_bytes(&arr));
         }
     }
-    
+
     // Try as base64
-    if let Ok(bytes) = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        content,
-    ) {
+    if let Ok(bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, content) {
         if bytes.len() == 32 {
             let arr: [u8; 32] = bytes.try_into().map_err(|_| "Invalid key length")?;
             return Ok(Keypair::from_bytes(&arr));
         }
     }
-    
+
     Err("Could not parse private key (expected PKCS#8 PEM, hex, or base64)".into())
 }
 
@@ -454,11 +496,13 @@ fn load_public_key(input: &str) -> Result<PublicKey, Box<dyn std::error::Error>>
     if path.exists() {
         let content = fs::read_to_string(&path)?;
         let content = content.trim();
-        
+
         // Try standard SPKI PEM using pem crate
         if let Ok(pem) = pem::parse(content) {
             if pem.tag() == "PUBLIC KEY" {
-                if let Ok(info) = SubjectPublicKeyInfo::<AnyRef, BitStringRef>::from_der(pem.contents()) {
+                if let Ok(info) =
+                    SubjectPublicKeyInfo::<AnyRef, BitStringRef>::from_der(pem.contents())
+                {
                     if info.algorithm.oid.to_string() == "1.3.101.112" {
                         let bytes = info.subject_public_key.as_bytes();
                         if let Some(b) = bytes {
@@ -491,7 +535,7 @@ fn load_public_key(input: &str) -> Result<PublicKey, Box<dyn std::error::Error>>
                     hex_str.push_str(line.trim());
                 }
             }
-            
+
             if !hex_str.is_empty() {
                 if let Ok(bytes) = hex::decode(&hex_str) {
                     if bytes.len() == 32 {
@@ -502,7 +546,7 @@ fn load_public_key(input: &str) -> Result<PublicKey, Box<dyn std::error::Error>>
             }
             // Don't return error yet, try other formats
         }
-        
+
         // Try as hex
         if let Ok(bytes) = hex::decode(content) {
             if bytes.len() == 32 {
@@ -510,30 +554,26 @@ fn load_public_key(input: &str) -> Result<PublicKey, Box<dyn std::error::Error>>
                 return Ok(PublicKey::from_bytes(&arr)?);
             }
         }
-        
+
         // Try as base64
-        if let Ok(bytes) = base64::Engine::decode(
-            &base64::engine::general_purpose::STANDARD,
-            content,
-        ) {
+        if let Ok(bytes) =
+            base64::Engine::decode(&base64::engine::general_purpose::STANDARD, content)
+        {
             if bytes.len() == 32 {
                 let arr: [u8; 32] = bytes.try_into().map_err(|_| "Invalid key length")?;
                 return Ok(PublicKey::from_bytes(&arr)?);
             }
         }
     }
-    
+
     // Try as base64 string (if not a file or file doesn't exist)
-    if let Ok(bytes) = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        input,
-    ) {
+    if let Ok(bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, input) {
         if bytes.len() == 32 {
             let arr: [u8; 32] = bytes.try_into().map_err(|_| "Invalid key length")?;
             return Ok(PublicKey::from_bytes(&arr)?);
         }
     }
-    
+
     // Try as hex string
     if let Ok(bytes) = hex::decode(input) {
         if bytes.len() == 32 {
@@ -541,31 +581,36 @@ fn load_public_key(input: &str) -> Result<PublicKey, Box<dyn std::error::Error>>
             return Ok(PublicKey::from_bytes(&arr)?);
         }
     }
-    
+
     Err(format!("Could not parse public key from: {}", input).into())
 }
 
 /// Encode private key to PEM (PKCS#8)
 fn encode_private_key_pem(keypair: &Keypair) -> Result<String, Box<dyn std::error::Error>> {
     let secret = keypair.secret_key_bytes();
-    
+
     // For Ed25519, the private key is an OctetString wrapping the 32-byte seed
     // We need to encode the inner OctetString first
     let octet_string = der::asn1::OctetString::new(secret)
         .map_err(|e| format!("Failed to create OctetString: {:?}", e))?;
-    let octet_string_bytes = octet_string.to_der()
+    let octet_string_bytes = octet_string
+        .to_der()
         .map_err(|e| format!("Failed to encode OctetString: {:?}", e))?;
-    
-    let oid = "1.3.101.112".parse()
+
+    let oid = "1.3.101.112"
+        .parse()
         .map_err(|e| format!("Failed to parse Ed25519 OID: {:?}", e))?;
-    let alg: AlgorithmIdentifier<AnyRef> = AlgorithmIdentifier { oid, parameters: None };
-    
+    let alg: AlgorithmIdentifier<AnyRef> = AlgorithmIdentifier {
+        oid,
+        parameters: None,
+    };
+
     let info = PrivateKeyInfo {
         algorithm: alg,
         private_key: &octet_string_bytes,
         public_key: None,
     };
-    
+
     info.to_pem(LineEnding::LF)
         .map_err(|e| format!("Failed to encode PEM: {:?}", e).into())
 }
@@ -575,16 +620,20 @@ fn encode_public_key_pem(pubkey: &PublicKey) -> Result<String, Box<dyn std::erro
     let bytes = pubkey.to_bytes();
     let bit_string = BitStringRef::from_bytes(&bytes)
         .map_err(|e| format!("Failed to create BitString: {:?}", e))?;
-    
-    let oid = "1.3.101.112".parse()
+
+    let oid = "1.3.101.112"
+        .parse()
         .map_err(|e| format!("Failed to parse Ed25519 OID: {:?}", e))?;
-    let alg: AlgorithmIdentifier<AnyRef> = AlgorithmIdentifier { oid, parameters: None };
-    
+    let alg: AlgorithmIdentifier<AnyRef> = AlgorithmIdentifier {
+        oid,
+        parameters: None,
+    };
+
     let info = SubjectPublicKeyInfo {
         algorithm: alg,
         subject_public_key: bit_string,
     };
-    
+
     info.to_pem(LineEnding::LF)
         .map_err(|e| format!("Failed to encode PEM: {:?}", e).into())
 }
@@ -595,10 +644,10 @@ fn parse_constraint(s: &str) -> Result<(String, Constraint), String> {
     if parts.len() != 2 {
         return Err(format!("Invalid constraint format: {}", s));
     }
-    
+
     let key = parts[0].to_string();
     let value_part = parts[1];
-    
+
     let (constraint_type, value) = if let Some(colon_idx) = value_part.find(':') {
         let ctype = &value_part[..colon_idx];
         let val = &value_part[colon_idx + 1..];
@@ -607,7 +656,7 @@ fn parse_constraint(s: &str) -> Result<(String, Constraint), String> {
         // Default to pattern if no type specified
         ("pattern", value_part)
     };
-    
+
     let constraint: Constraint = match constraint_type {
         "exact" => Constraint::Exact(Exact::new(value.to_string())),
         "pattern" => Constraint::Pattern(Pattern::new(value).map_err(|e| e.to_string())?),
@@ -633,22 +682,24 @@ fn parse_constraint(s: &str) -> Result<(String, Constraint), String> {
         }
         _ => return Err(format!("Unknown constraint type: {}", constraint_type)),
     };
-    
+
     Ok((key, constraint))
 }
 
 /// Parse constraints from JSON string
-fn parse_constraint_json(s: &str) -> Result<HashMap<String, Constraint>, Box<dyn std::error::Error>> {
+fn parse_constraint_json(
+    s: &str,
+) -> Result<HashMap<String, Constraint>, Box<dyn std::error::Error>> {
     let json: serde_json::Value = serde_json::from_str(s)?;
     let mut constraints = HashMap::new();
-    
+
     if let Some(obj) = json.as_object() {
         for (key, value) in obj {
             let constraint = json_to_constraint(value)?;
             constraints.insert(key.clone(), constraint);
         }
     }
-    
+
     Ok(constraints)
 }
 
@@ -685,12 +736,12 @@ fn json_to_constraint(v: &serde_json::Value) -> Result<Constraint, Box<dyn std::
             return Ok(Constraint::OneOf(OneOf::new(values)));
         }
     }
-    
+
     // If it's a string, treat as pattern
     if let Some(s) = v.as_str() {
         return Ok(Constraint::Pattern(Pattern::new(s)?));
     }
-    
+
     Err("Invalid constraint JSON format".into())
 }
 
@@ -710,11 +761,9 @@ fn read_warrant(input: &str) -> Result<Warrant, Box<dyn std::error::Error>> {
     } else {
         input.trim().to_string()
     };
-    
+
     wire::decode_base64(&content).map_err(|e| e.into())
 }
-
-
 
 // ============================================================================
 // Command Handlers
@@ -730,54 +779,60 @@ fn handle_keygen(
         // Extract public key from existing private key
         let keypair = load_private_key(&pub_path)?;
         let pubkey = keypair.public_key();
-        
+
         if raw {
             // Output raw base64
-            println!("{}", base64::Engine::encode(
-                &base64::engine::general_purpose::STANDARD,
-                pubkey.to_bytes(),
-            ));
+            println!(
+                "{}",
+                base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    pubkey.to_bytes(),
+                )
+            );
         } else {
             // Output PEM
             println!("{}", encode_public_key_pem(&pubkey)?);
         }
         return Ok(());
     }
-    
+
     let keypair = Keypair::generate();
     let pubkey = keypair.public_key();
-    
+
     if raw {
         // Output raw base64 private key only
-        println!("{}", base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            keypair.secret_key_bytes(),
-        ));
+        println!(
+            "{}",
+            base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                keypair.secret_key_bytes(),
+            )
+        );
         return Ok(());
     }
-    
+
     if let Some(base_name) = name {
         let private_path = PathBuf::from(format!("{}.key", base_name));
         let public_path = PathBuf::from(format!("{}.pub", base_name));
-        
-        if !force
-            && (private_path.exists() || public_path.exists()) {
-                return Err(format!(
-                    "Files exist: {}.key or {}.pub. Use --force to overwrite.",
-                    base_name, base_name
-                ).into());
-            }
-        
+
+        if !force && (private_path.exists() || public_path.exists()) {
+            return Err(format!(
+                "Files exist: {}.key or {}.pub. Use --force to overwrite.",
+                base_name, base_name
+            )
+            .into());
+        }
+
         fs::write(&private_path, encode_private_key_pem(&keypair)?)?;
         fs::write(&public_path, encode_public_key_pem(&pubkey)?)?;
-        
+
         eprintln!("Created {}.key and {}.pub", base_name, base_name);
     } else {
         // Output to stdout
         println!("{}", encode_private_key_pem(&keypair)?);
         eprintln!("{}", encode_public_key_pem(&pubkey)?);
     }
-    
+
     Ok(())
 }
 
@@ -795,36 +850,36 @@ fn handle_issue(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let issuer_kp = load_private_key(&signing_key)?;
     let holder_pubkey = load_public_key(&holder)?;
-    
+
     let tool_str = tool.as_deref().unwrap_or("*");
     let ttl_duration = parse_duration(&ttl)?;
-    
+
     let mut builder = Warrant::builder()
         .tool(tool_str)
         .ttl(ttl_duration)
         .authorized_holder(holder_pubkey.clone());
-    
+
     if let Some(id_str) = id {
         let warrant_id = tenuo_core::warrant::WarrantId::from_string(id_str)?;
         builder = builder.id(warrant_id);
     }
-    
+
     // Parse constraints
     for c in constraint {
         let (key, constraint) = parse_constraint(&c)?;
         builder = builder.constraint(key, constraint);
     }
-    
+
     for json_str in constraint_json {
         let constraints = parse_constraint_json(&json_str)?;
         for (key, constraint) in constraints {
             builder = builder.constraint(key, constraint);
         }
     }
-    
+
     let warrant = builder.build(&issuer_kp)?;
     let warrant_b64 = wire::encode_base64(&warrant)?;
-    
+
     if quiet {
         println!("{}", warrant_b64);
     } else if json {
@@ -840,7 +895,7 @@ fn handle_issue(
     } else {
         println!("{}", warrant_b64);
     }
-    
+
     Ok(())
 }
 
@@ -858,14 +913,14 @@ fn handle_attenuate(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let parent_warrant = read_warrant(&warrant)?;
     let current_kp = load_private_key(&signing_key)?;
-    
+
     let mut builder = parent_warrant.attenuate();
-    
+
     if let Some(holder_str) = holder {
         let holder_pubkey = load_public_key(&holder_str)?;
         builder = builder.authorized_holder(holder_pubkey);
     }
-    
+
     // Note: AttenuationBuilder always inherits tool from parent
     // Tool narrowing is validated during authorization, not during attenuation
     // The spec allows --tool to narrow, but the current implementation inherits
@@ -874,38 +929,39 @@ fn handle_attenuate(
         // Validate that the requested tool is a subset of parent's tools
         let parent_tools: Vec<&str> = parent_warrant.tool().split(',').map(|s| s.trim()).collect();
         let child_tools: Vec<&str> = tool_str.split(',').map(|s| s.trim()).collect();
-        
+
         if parent_warrant.tool() != "*" {
             for child_tool in &child_tools {
                 if !parent_tools.contains(child_tool) {
                     return Err(format!(
                         "Cannot attenuate: tool '{}' not in parent's allowed tools: {:?}",
                         child_tool, parent_tools
-                    ).into());
+                    )
+                    .into());
                 }
             }
         }
         // Tool will be inherited from parent - narrowing is enforced at auth time
     }
-    
+
     if let Some(ttl_str) = ttl {
         let ttl_duration = parse_duration(&ttl_str)?;
         builder = builder.ttl(ttl_duration);
     }
-    
+
     // Parse constraints
     for c in constraint {
         let (key, constraint) = parse_constraint(&c)?;
         builder = builder.constraint(key, constraint);
     }
-    
+
     for json_str in constraint_json {
         let constraints = parse_constraint_json(&json_str)?;
         for (key, constraint) in constraints {
             builder = builder.constraint(key, constraint);
         }
     }
-    
+
     let child_warrant = builder.build(&current_kp).map_err(|e| {
         // Format error messages to match spec format
         let error_str = format!("{}", e);
@@ -916,8 +972,12 @@ fn handle_attenuate(
             // Try to extract patterns and reformat
             if let Some(child_start) = error_str.find("child pattern '") {
                 if let Some(parent_start) = error_str.find("parent '") {
-                    let child_end = error_str[child_start + 15..].find('\'').map(|i| child_start + 15 + i);
-                    let parent_end = error_str[parent_start + 8..].find('\'').map(|i| parent_start + 8 + i);
+                    let child_end = error_str[child_start + 15..]
+                        .find('\'')
+                        .map(|i| child_start + 15 + i);
+                    let parent_end = error_str[parent_start + 8..]
+                        .find('\'')
+                        .map(|i| parent_start + 8 + i);
                     if let (Some(ce), Some(pe)) = (child_end, parent_end) {
                         let child = &error_str[child_start + 15..ce];
                         let parent = &error_str[parent_start + 8..pe];
@@ -933,7 +993,7 @@ fn handle_attenuate(
         error_str
     })?;
     let warrant_b64 = wire::encode_base64(&child_warrant)?;
-    
+
     if quiet {
         println!("{}", warrant_b64);
     } else if json {
@@ -949,7 +1009,7 @@ fn handle_attenuate(
     } else {
         println!("{}", warrant_b64);
     }
-    
+
     Ok(())
 }
 
@@ -963,15 +1023,16 @@ fn handle_sign(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let keypair = load_private_key(&key)?;
     let warrant_obj = read_warrant(&warrant)?;
-    
+
     // Verify keypair matches warrant's holder
-    let holder = warrant_obj.authorized_holder()
+    let holder = warrant_obj
+        .authorized_holder()
         .ok_or("Warrant has no authorized_holder")?;
-    
+
     if keypair.public_key().to_bytes() != holder.to_bytes() {
         return Err("Keypair does not match warrant's authorized_holder".into());
     }
-    
+
     // Read and parse payload as JSON
     let payload_str = if payload == "-" {
         let mut buf = String::new();
@@ -980,10 +1041,10 @@ fn handle_sign(
     } else {
         payload
     };
-    
+
     let payload_json: serde_json::Value = serde_json::from_str(&payload_str)
         .map_err(|e| format!("Payload must be valid JSON: {}", e))?;
-    
+
     // Convert JSON to HashMap<String, ConstraintValue>
     let mut args = HashMap::new();
     if let Some(obj) = payload_json.as_object() {
@@ -994,15 +1055,15 @@ fn handle_sign(
     } else {
         return Err("Payload JSON must be an object".into());
     }
-    
+
     // Create PoP signature using warrant's method
     let signature = warrant_obj.create_pop_signature(&keypair, &tool, &args)?;
-    
+
     let sig_b64 = base64::Engine::encode(
         &base64::engine::general_purpose::STANDARD,
         signature.to_bytes(),
     );
-    
+
     if quiet {
         println!("{}", sig_b64);
     } else if json {
@@ -1015,12 +1076,14 @@ fn handle_sign(
     } else {
         println!("{}", sig_b64);
     }
-    
+
     Ok(())
 }
 
 /// Convert JSON value to ConstraintValue
-fn json_to_constraint_value(v: &serde_json::Value) -> Result<ConstraintValue, Box<dyn std::error::Error>> {
+fn json_to_constraint_value(
+    v: &serde_json::Value,
+) -> Result<ConstraintValue, Box<dyn std::error::Error>> {
     match v {
         serde_json::Value::String(s) => Ok(ConstraintValue::String(s.clone())),
         serde_json::Value::Number(n) => {
@@ -1034,7 +1097,8 @@ fn json_to_constraint_value(v: &serde_json::Value) -> Result<ConstraintValue, Bo
         }
         serde_json::Value::Bool(b) => Ok(ConstraintValue::Boolean(*b)),
         serde_json::Value::Array(arr) => {
-            let items: Result<Vec<ConstraintValue>, _> = arr.iter().map(json_to_constraint_value).collect();
+            let items: Result<Vec<ConstraintValue>, _> =
+                arr.iter().map(json_to_constraint_value).collect();
             Ok(ConstraintValue::List(items?))
         }
         serde_json::Value::Object(_) => {
@@ -1061,22 +1125,23 @@ fn handle_verify(
     for w_str in &warrant {
         warrants.push(read_warrant(w_str)?);
     }
-    
+
     if warrants.is_empty() {
         return Err("No warrants provided".into());
     }
-    
+
     // The leaf warrant is the last one in the chain (or the only one)
-    let leaf_warrant = warrants.last().expect("Warrants vector should not be empty at this point");
-    
+    let leaf_warrant = warrants
+        .last()
+        .expect("Warrants vector should not be empty at this point");
+
     // Decode signature
-    let sig_bytes = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        &signature,
-    )?;
-    let sig_arr: [u8; 64] = sig_bytes.try_into().map_err(|_| "Invalid signature length")?;
+    let sig_bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &signature)?;
+    let sig_arr: [u8; 64] = sig_bytes
+        .try_into()
+        .map_err(|_| "Invalid signature length")?;
     let sig = Signature::from_bytes(&sig_arr)?;
-    
+
     // Parse payload as JSON and convert to args
     let payload_str = if payload == "-" {
         let mut buf = String::new();
@@ -1085,10 +1150,10 @@ fn handle_verify(
     } else {
         payload
     };
-    
+
     let payload_json: serde_json::Value = serde_json::from_str(&payload_str)
         .map_err(|e| format!("Payload must be valid JSON: {}", e))?;
-    
+
     let mut args = HashMap::new();
     if let Some(obj) = payload_json.as_object() {
         for (key, value) in obj {
@@ -1098,11 +1163,11 @@ fn handle_verify(
     } else {
         return Err("Payload JSON must be an object".into());
     }
-    
+
     // Configure DataPlane
     let mut data_plane = DataPlane::new();
     let mut trusted_any = false;
-    
+
     for issuer_str in &trusted_issuer {
         match load_public_key(issuer_str) {
             Ok(pubkey) => {
@@ -1110,15 +1175,18 @@ fn handle_verify(
                 trusted_any = true;
             }
             Err(e) => {
-                eprintln!("Warning: Could not load trusted issuer '{}': {}", issuer_str, e);
+                eprintln!(
+                    "Warning: Could not load trusted issuer '{}': {}",
+                    issuer_str, e
+                );
             }
         }
     }
-    
+
     // Verify chain or single warrant
     let chain_valid;
     let mut chain_error = None;
-    
+
     if warrants.len() > 1 {
         match data_plane.verify_chain(&warrants) {
             Ok(_) => chain_valid = true,
@@ -1149,7 +1217,7 @@ fn handle_verify(
             }
         }
     }
-    
+
     // Check expiration of leaf warrant
     let expired = if let Some(at_str) = at {
         let verify_time = DateTime::parse_from_rfc3339(&at_str)
@@ -1159,7 +1227,7 @@ fn handle_verify(
     } else {
         leaf_warrant.is_expired()
     };
-    
+
     if expired {
         if quiet {
             std::process::exit(2);
@@ -1168,7 +1236,7 @@ fn handle_verify(
         eprintln!("Expires at: {}", leaf_warrant.expires_at());
         std::process::exit(2);
     }
-    
+
     if !chain_valid {
         if quiet {
             std::process::exit(2);
@@ -1178,11 +1246,12 @@ fn handle_verify(
         }
         std::process::exit(2);
     }
-    
+
     // Verify authorization (includes PoP signature verification)
-    let holder = leaf_warrant.authorized_holder()
+    let holder = leaf_warrant
+        .authorized_holder()
         .ok_or("Warrant has no authorized_holder")?;
-    
+
     match leaf_warrant.authorize(&tool, &args, Some(&sig)) {
         Ok(()) => {
             // Authorization successful - PoP signature is valid
@@ -1198,7 +1267,7 @@ fn handle_verify(
             std::process::exit(2);
         }
     }
-    
+
     if quiet {
         // Exit code only
         if !trusted_any {
@@ -1206,7 +1275,7 @@ fn handle_verify(
         }
         return Ok(());
     }
-    
+
     if json {
         let mut result = serde_json::json!({
             "valid": true,
@@ -1218,14 +1287,14 @@ fn handle_verify(
             "chain_length": warrants.len(),
             "trusted_root": trusted_any,
         });
-        
+
         // Add constraints
         let mut constraints = serde_json::Map::new();
         for (key, constraint) in leaf_warrant.constraints().iter() {
             constraints.insert(key.clone(), serde_json::json!(format!("{:?}", constraint)));
         }
         result["constraints"] = serde_json::Value::Object(constraints);
-        
+
         println!("{}", serde_json::to_string_pretty(&result)?);
     } else {
         if !trusted_any {
@@ -1237,29 +1306,33 @@ fn handle_verify(
             eprintln!("✅ VALID");
             eprintln!();
         }
-        
+
         eprintln!("Warrant:     {}", leaf_warrant.id().as_str());
         eprintln!("Holder:      {} (verified)", hex::encode(holder.to_bytes()));
-        
+
         let remaining = leaf_warrant.expires_at() - Utc::now();
         if remaining.num_minutes() > 0 {
             eprintln!("Expires:     in {}m", remaining.num_minutes());
         } else {
             eprintln!("Expires:     in {}s", remaining.num_seconds());
         }
-        
+
         eprintln!("Tools:       [{}]", leaf_warrant.tool());
         eprintln!("Constraints:");
         for (key, constraint) in leaf_warrant.constraints().iter() {
             eprintln!("  {}: {:?}", key, constraint);
         }
         eprintln!();
-        
-        eprintln!("Chain:       {} warrants (depth {})", warrants.len(), leaf_warrant.depth());
-        
+
+        eprintln!(
+            "Chain:       {} warrants (depth {})",
+            warrants.len(),
+            leaf_warrant.depth()
+        );
+
         eprintln!("PoP:         ✅ Signature valid, signer matches holder");
     }
-    
+
     Ok(())
 }
 
@@ -1268,20 +1341,21 @@ fn handle_inspect(
     json: bool,
     verify: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    
     if warrants.is_empty() {
         return Err("No warrants provided".into());
     }
-    
+
     // The leaf warrant is the last one in the chain (or the only one)
-    let warrant = warrants.last().expect("Warrants vector should not be empty at this point");
-    
+    let warrant = warrants
+        .last()
+        .expect("Warrants vector should not be empty at this point");
+
     if verify {
         if warrant.is_expired() {
             eprintln!("❌ EXPIRED: Warrant expired at {}", warrant.expires_at());
             std::process::exit(2);
         }
-        
+
         // If chain provided, verify it
         if warrants.len() > 1 {
             let data_plane = DataPlane::new();
@@ -1291,7 +1365,7 @@ fn handle_inspect(
             }
         }
     }
-    
+
     if json {
         // If multiple warrants, output array. If single, output object.
         if warrants.len() > 1 {
@@ -1301,33 +1375,36 @@ fn handle_inspect(
             }
             println!("{}", serde_json::to_string_pretty(&chain_json)?);
         } else {
-            println!("{}", serde_json::to_string_pretty(&warrant_to_json(warrant))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&warrant_to_json(warrant))?
+            );
         }
     } else {
         println!("──────────────────────────────────────────────────");
         println!("TENUO WARRANT INSPECTOR");
         println!("──────────────────────────────────────────────────");
-        
+
         for (i, w) in warrants.iter().enumerate() {
             if i > 0 {
                 println!("  │");
                 println!("  ▼");
             }
-            
+
             println!("Warrant[{}]:  {}", i, w.id().as_str());
             println!("Issuer:      {}", hex::encode(w.issuer().to_bytes()));
             if let Some(holder) = w.authorized_holder() {
                 println!("Holder:      {}", hex::encode(holder.to_bytes()));
             }
             println!("Tools:       [{}]", w.tool());
-            
+
             let ttl_secs = (w.expires_at() - Utc::now()).num_seconds();
             if ttl_secs > 0 {
                 println!("TTL:         {}s", ttl_secs);
             } else {
                 println!("TTL:         expired");
             }
-            
+
             if !w.constraints().is_empty() {
                 println!("Constraints:");
                 for (key, constraint) in w.constraints().iter() {
@@ -1337,7 +1414,7 @@ fn handle_inspect(
             println!("──────────────────────────────────────────────────");
         }
     }
-    
+
     Ok(())
 }
 
@@ -1346,7 +1423,7 @@ fn warrant_to_json(w: &Warrant) -> serde_json::Value {
     for (key, constraint) in w.constraints().iter() {
         constraints.insert(key.clone(), serde_json::json!(format!("{:?}", constraint)));
     }
-    
+
     let mut json = serde_json::json!({
         "id": w.id().as_str(),
         "issuer": hex::encode(w.issuer().to_bytes()),
@@ -1355,15 +1432,15 @@ fn warrant_to_json(w: &Warrant) -> serde_json::Value {
         "depth": w.depth(),
         "constraints": constraints,
     });
-    
+
     if let Some(holder) = w.authorized_holder() {
         json["holder"] = serde_json::json!(hex::encode(holder.to_bytes()));
     }
-    
+
     if let Some(parent) = w.parent_id() {
         json["parent_id"] = serde_json::json!(parent.as_str());
     }
-    
+
     json
 }
 
@@ -1524,7 +1601,13 @@ fn handle_extract(
 
                         // Show hint on failure
                         if trace.result.is_none() && trace.hint.is_some() && verbose {
-                            println!("      └── 💡 {}", trace.hint.as_ref().expect("hint should be present when is_some() is true"));
+                            println!(
+                                "      └── 💡 {}",
+                                trace
+                                    .hint
+                                    .as_ref()
+                                    .expect("hint should be present when is_some() is true")
+                            );
                         }
                     }
 
@@ -1565,7 +1648,7 @@ fn handle_validate_config(config_path: PathBuf) -> Result<(), Box<dyn std::error
             println!("  Tools:  {}", config.tools.len());
             println!("  Routes: {}", config.routes.len());
             println!();
-            
+
             for (name, tool) in &config.tools {
                 println!("  Tool '{}':", name);
                 println!("    Description: {}", tool.description);

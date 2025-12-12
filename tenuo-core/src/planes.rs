@@ -29,16 +29,16 @@
 //! 4. Child.constraints ⊆ Parent.constraints
 //! 5. Signature is valid
 
+use crate::approval::WarrantTracker;
 use crate::constraints::{Constraint, ConstraintValue};
 use crate::crypto::{Keypair, PublicKey};
 use crate::error::{Error, Result};
+use crate::revocation::RevocationRequest;
 use crate::warrant::Warrant;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 use std::time::Duration;
-use crate::approval::WarrantTracker;
-use crate::revocation::RevocationRequest;
 
 // ============================================================================
 // SHARED HELPERS
@@ -74,7 +74,8 @@ fn verify_approvals_with_tolerance(
     if approvals.len() > max_approvals {
         return Err(Error::InvalidApproval(format!(
             "too many approvals: {} provided, max {}",
-            approvals.len(), max_approvals
+            approvals.len(),
+            max_approvals
         )));
     }
 
@@ -116,7 +117,7 @@ fn verify_approvals_with_tolerance(
         if approval.verify().is_ok() {
             valid_count = valid_count.saturating_add(1);
             seen_approvers.insert(approval.approver_key.clone());
-            
+
             // Early exit: we have enough
             if valid_count >= threshold {
                 return Ok(());
@@ -215,7 +216,7 @@ impl ControlPlane {
     }
 
     /// Issue a root warrant.
-    /// 
+    ///
     /// By default, the warrant is bound to the issuer's public key (self-held).
     /// Use `issue_bound_warrant` to bind to a different holder.
     pub fn issue_warrant(
@@ -244,7 +245,10 @@ impl ControlPlane {
         ttl: Duration,
         holder: &PublicKey,
     ) -> Result<Warrant> {
-        let mut builder = Warrant::builder().tool(tool).ttl(ttl).authorized_holder(holder.clone());
+        let mut builder = Warrant::builder()
+            .tool(tool)
+            .ttl(ttl)
+            .authorized_holder(holder.clone());
 
         for (field, constraint) in constraints {
             builder = builder.constraint(*field, constraint.clone());
@@ -254,7 +258,7 @@ impl ControlPlane {
     }
 
     /// Issue a warrant with full configuration options.
-    /// 
+    ///
     /// This is the most flexible issuance method, allowing control over:
     /// - Tool name
     /// - Constraints
@@ -294,10 +298,10 @@ impl ControlPlane {
         tracker: &mut T,
     ) -> Result<Warrant> {
         let warrant = self.issue_bound_warrant(tool, constraints, ttl, holder)?;
-        
+
         // Track for issuer (Control Plane)
         tracker.track_warrant(&self.public_key(), warrant.id().as_str());
-        
+
         // Track for authorized holder
         tracker.track_warrant(holder, warrant.id().as_str());
 
@@ -334,7 +338,7 @@ impl ControlPlane {
 /// data_plane.authorize(&warrant, "upgrade_cluster", &args)?;
 /// ```
 /// Default clock skew tolerance: 30 seconds.
-/// 
+///
 /// This allows for reasonable clock drift between distributed nodes
 /// while still providing security against replay attacks.
 pub const DEFAULT_CLOCK_TOLERANCE_SECS: i64 = 30;
@@ -433,7 +437,7 @@ impl DataPlane {
     /// Check if a warrant is revoked (globally or locally).
     pub fn is_revoked(&self, warrant: &Warrant) -> bool {
         let id = warrant.id().as_str();
-        
+
         // 1. Check global SRL
         if let Some(srl) = &self.revocation_list {
             if srl.is_revoked(id) {
@@ -444,12 +448,12 @@ impl DataPlane {
                         "revocation-check",
                     )
                     .with_details(format!("Warrant {} is revoked in SRL", id))
-                    .with_related(vec![id.to_string()])
+                    .with_related(vec![id.to_string()]),
                 );
                 return true;
             }
         }
-        
+
         // 2. Check local cache (Parental Revocation)
         if let Ok(cache) = self.local_revocation_cache.read() {
             if cache.contains(id) {
@@ -460,12 +464,12 @@ impl DataPlane {
                         "revocation-check",
                     )
                     .with_details(format!("Warrant {} is locally revoked", id))
-                    .with_related(vec![id.to_string()])
+                    .with_related(vec![id.to_string()]),
                 );
                 return true;
             }
         }
-        
+
         false
     }
 
@@ -486,19 +490,19 @@ impl DataPlane {
         if request.warrant_id != warrant.id().as_str() {
             return Err(Error::Unauthorized(format!(
                 "Request warrant_id '{}' does not match provided warrant '{}'",
-                request.warrant_id, warrant.id()
+                request.warrant_id,
+                warrant.id()
             )));
         }
 
         // 3. Verify authorization (Issuer or Holder only for direct revocation)
         // Note: We don't check Control Plane key here as we might not know it,
         // and CP revocations should go through SRL anyway.
-        let is_authorized = 
-            request.requestor == *warrant.issuer() || // Parent
+        let is_authorized = request.requestor == *warrant.issuer() || // Parent
             Some(&request.requestor) == warrant.authorized_holder(); // Self
 
         if !is_authorized {
-             return Err(Error::Unauthorized(format!(
+            return Err(Error::Unauthorized(format!(
                 "Requestor {} is not authorized to revoke this warrant directly",
                 hex::encode(request.requestor.to_bytes())
             )));
@@ -556,8 +560,6 @@ impl DataPlane {
         warrant.verify(issuer)
     }
 
-
-
     /// Verify a complete delegation chain.
     ///
     /// This is the most thorough verification method, validating the entire
@@ -588,15 +590,15 @@ impl DataPlane {
     pub fn verify_chain(&self, chain: &[Warrant]) -> Result<ChainVerificationResult> {
         self.verify_chain_with_options(chain, false)
     }
-    
+
     /// Verify chain with session binding enforcement.
-    /// 
+    ///
     /// Same as `verify_chain`, but also verifies that all warrants in the chain
     /// have the same `session_id`. Use this when warrants should be isolated
     /// per-session (e.g., per HTTP request, per task).
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```rust,ignore
     /// // All warrants must share the same session_id
     /// data_plane.verify_chain_strict(&chain)?;
@@ -604,11 +606,11 @@ impl DataPlane {
     pub fn verify_chain_strict(&self, chain: &[Warrant]) -> Result<ChainVerificationResult> {
         self.verify_chain_with_options(chain, true)
     }
-    
+
     fn verify_chain_with_options(
-        &self, 
-        chain: &[Warrant], 
-        enforce_session: bool
+        &self,
+        chain: &[Warrant],
+        enforce_session: bool,
     ) -> Result<ChainVerificationResult> {
         if chain.is_empty() {
             return Err(Error::ChainVerificationFailed(
@@ -651,13 +653,13 @@ impl DataPlane {
                 "root warrant issuer not trusted".to_string(),
             ));
         }
-        
+
         // Batch verify all signatures in the chain (3x faster than sequential)
         use crate::crypto::verify_batch;
-        let batch_items: Vec<(&crate::crypto::PublicKey, &[u8], &crate::crypto::Signature)> = 
-            chain.iter()
-                .map(|w| (w.issuer(), w.payload_bytes(), w.signature()))
-                .collect();
+        let batch_items: Vec<(&crate::crypto::PublicKey, &[u8], &crate::crypto::Signature)> = chain
+            .iter()
+            .map(|w| (w.issuer(), w.payload_bytes(), w.signature()))
+            .collect();
         verify_batch(&batch_items)?;
 
         result.root_issuer = Some(root.issuer().to_bytes());
@@ -666,9 +668,13 @@ impl DataPlane {
             depth: root.depth(),
             issuer: root.issuer().to_bytes(),
         });
-        
+
         // SESSION BINDING: Track session from root
-        let expected_session = if enforce_session { root.session_id() } else { None };
+        let expected_session = if enforce_session {
+            root.session_id()
+        } else {
+            None
+        };
 
         // Step 2: Walk the chain, verifying each link
         for i in 1..chain.len() {
@@ -676,12 +682,14 @@ impl DataPlane {
             let child = &chain[i];
 
             self.verify_chain_link(parent, child)?;
-            
+
             // Check session binding if enforced
             if enforce_session && child.session_id() != expected_session {
                 return Err(Error::ChainVerificationFailed(format!(
                     "session mismatch: expected {:?}, got {:?} at depth {}",
-                    expected_session, child.session_id(), child.depth()
+                    expected_session,
+                    child.session_id(),
+                    child.depth()
                 )));
             }
 
@@ -707,15 +715,14 @@ impl DataPlane {
 
         // 1. Check parent_id linkage
         let parent_id = child.parent_id().ok_or_else(|| {
-            Error::ChainVerificationFailed(
-                "child warrant has no parent_id".to_string()
-            )
+            Error::ChainVerificationFailed("child warrant has no parent_id".to_string())
         })?;
 
         if parent_id != parent.id() {
             return Err(Error::ChainVerificationFailed(format!(
                 "chain broken: child's parent_id '{}' != parent's id '{}'",
-                parent_id, parent.id()
+                parent_id,
+                parent.id()
             )));
         }
 
@@ -724,7 +731,8 @@ impl DataPlane {
         if child.depth() != expected_depth {
             return Err(Error::ChainVerificationFailed(format!(
                 "depth mismatch: child depth {} != parent depth {} + 1",
-                child.depth(), parent.depth()
+                child.depth(),
+                parent.depth()
             )));
         }
 
@@ -735,7 +743,8 @@ impl DataPlane {
         if child.depth() > parent_max {
             return Err(Error::ChainVerificationFailed(format!(
                 "child depth {} exceeds parent's max_depth {}",
-                child.depth(), parent_max
+                child.depth(),
+                parent_max
             )));
         }
 
@@ -743,7 +752,8 @@ impl DataPlane {
         if child.expires_at() > parent.expires_at() {
             return Err(Error::ChainVerificationFailed(format!(
                 "child expires at {} which is after parent {}",
-                child.expires_at(), parent.expires_at()
+                child.expires_at(),
+                parent.expires_at()
             )));
         }
 
@@ -753,7 +763,9 @@ impl DataPlane {
         }
 
         // 5. Validate constraint attenuation (monotonicity)
-        parent.constraints().validate_attenuation(child.constraints())?;
+        parent
+            .constraints()
+            .validate_attenuation(child.constraints())?;
 
         // 6. Verify child's signature
         child.verify(child.issuer())?;
@@ -798,14 +810,16 @@ impl DataPlane {
         approvals: &[crate::approval::Approval],
     ) -> Result<()> {
         // Standard constraint authorization
-        let result = warrant.authorize(tool, args, signature)
-            .and_then(|_| {
-                // Multi-sig verification
-                verify_approvals_with_tolerance(
-                    warrant, tool, args, approvals,
-                    chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
-                )
-            });
+        let result = warrant.authorize(tool, args, signature).and_then(|_| {
+            // Multi-sig verification
+            verify_approvals_with_tolerance(
+                warrant,
+                tool,
+                args,
+                approvals,
+                chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
+            )
+        });
 
         match &result {
             Ok(_) => {
@@ -816,7 +830,7 @@ impl DataPlane {
                         "authorize",
                     )
                     .with_details(format!("Authorized tool '{}'", tool))
-                    .with_related(vec![warrant.id().to_string()])
+                    .with_related(vec![warrant.id().to_string()]),
                 );
             }
             Err(e) => {
@@ -827,7 +841,7 @@ impl DataPlane {
                         "authorize",
                     )
                     .with_details(format!("Denied tool '{}': {}", tool, e))
-                    .with_related(vec![warrant.id().to_string()])
+                    .with_related(vec![warrant.id().to_string()]),
                 );
             }
         }
@@ -901,7 +915,10 @@ impl Authorizer {
     ///
     /// Uses the default clock tolerance of 30 seconds.
     pub fn new(root_public_key: PublicKey) -> Self {
-        Self::with_clock_tolerance(root_public_key, chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS))
+        Self::with_clock_tolerance(
+            root_public_key,
+            chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
+        )
     }
 
     /// Create an authorizer with a custom clock tolerance.
@@ -912,7 +929,10 @@ impl Authorizer {
     /// # Arguments
     /// * `root_public_key` - The trusted root public key
     /// * `clock_tolerance` - Maximum allowed clock skew (for expiration checks)
-    pub fn with_clock_tolerance(root_public_key: PublicKey, clock_tolerance: chrono::Duration) -> Self {
+    pub fn with_clock_tolerance(
+        root_public_key: PublicKey,
+        clock_tolerance: chrono::Duration,
+    ) -> Self {
         Self {
             trusted_keys: vec![root_public_key],
             clock_tolerance,
@@ -1064,9 +1084,9 @@ impl Authorizer {
     pub fn verify_chain(&self, chain: &[Warrant]) -> Result<ChainVerificationResult> {
         self.verify_chain_with_options(chain, false)
     }
-    
+
     /// Verify chain with session binding enforcement.
-    /// 
+    ///
     /// Same as `verify_chain`, but also verifies that all warrants in the chain
     /// have the same `session_id`. Use this when warrants should be isolated
     /// per-session (e.g., per HTTP request, per task).
@@ -1075,16 +1095,16 @@ impl Authorizer {
     }
 
     fn verify_chain_with_options(
-        &self, 
+        &self,
         chain: &[Warrant],
-        enforce_session: bool
+        enforce_session: bool,
     ) -> Result<ChainVerificationResult> {
         if chain.is_empty() {
             return Err(Error::ChainVerificationFailed(
                 "chain cannot be empty".to_string(),
             ));
         }
-        
+
         // CASCADING REVOCATION: Check if ANY warrant in the chain is revoked (from SRL)
         // This must happen before any other validation to fail fast.
         for warrant in chain {
@@ -1120,14 +1140,14 @@ impl Authorizer {
                 "root warrant issuer not trusted".to_string(),
             ));
         }
-        
+
         // Batch verify all signatures in the chain (3x faster than sequential)
         // We verify all signatures in one batch after checking trust
         use crate::crypto::verify_batch;
-        let batch_items: Vec<(&crate::crypto::PublicKey, &[u8], &crate::crypto::Signature)> = 
-            chain.iter()
-                .map(|w| (w.issuer(), w.payload_bytes(), w.signature()))
-                .collect();
+        let batch_items: Vec<(&crate::crypto::PublicKey, &[u8], &crate::crypto::Signature)> = chain
+            .iter()
+            .map(|w| (w.issuer(), w.payload_bytes(), w.signature()))
+            .collect();
         verify_batch(&batch_items)?;
 
         result.root_issuer = Some(issuer.to_bytes());
@@ -1136,9 +1156,13 @@ impl Authorizer {
             depth: root.depth(),
             issuer: issuer.to_bytes(),
         });
-        
+
         // SESSION BINDING: Track session from root
-        let expected_session = if enforce_session { root.session_id() } else { None };
+        let expected_session = if enforce_session {
+            root.session_id()
+        } else {
+            None
+        };
 
         // Walk the chain, verifying each link
         for i in 1..chain.len() {
@@ -1146,12 +1170,14 @@ impl Authorizer {
             let child = &chain[i];
 
             self.verify_link(parent, child)?;
-            
+
             // Check session binding if enforced
             if enforce_session && child.session_id() != expected_session {
                 return Err(Error::ChainVerificationFailed(format!(
                     "session mismatch: expected {:?}, got {:?} at depth {}",
-                    expected_session, child.session_id(), child.depth()
+                    expected_session,
+                    child.session_id(),
+                    child.depth()
                 )));
             }
 
@@ -1175,15 +1201,14 @@ impl Authorizer {
 
         // Check parent_id linkage
         let parent_id = child.parent_id().ok_or_else(|| {
-            Error::ChainVerificationFailed(
-                "child warrant has no parent_id".to_string()
-            )
+            Error::ChainVerificationFailed("child warrant has no parent_id".to_string())
         })?;
 
         if parent_id != parent.id() {
             return Err(Error::ChainVerificationFailed(format!(
                 "chain broken: child parent_id '{}' != parent id '{}'",
-                parent_id, parent.id()
+                parent_id,
+                parent.id()
             )));
         }
 
@@ -1191,7 +1216,8 @@ impl Authorizer {
         if child.depth() != parent.depth() + 1 {
             return Err(Error::ChainVerificationFailed(format!(
                 "depth mismatch: child {} != parent {} + 1",
-                child.depth(), parent.depth()
+                child.depth(),
+                parent.depth()
             )));
         }
 
@@ -1200,7 +1226,8 @@ impl Authorizer {
         if child.depth() > parent_max {
             return Err(Error::ChainVerificationFailed(format!(
                 "child depth {} exceeds parent's max_depth {}",
-                child.depth(), parent_max
+                child.depth(),
+                parent_max
             )));
         }
 
@@ -1208,7 +1235,8 @@ impl Authorizer {
         if child.expires_at() > parent.expires_at() {
             return Err(Error::ChainVerificationFailed(format!(
                 "child expires at {} after parent {}",
-                child.expires_at(), parent.expires_at()
+                child.expires_at(),
+                parent.expires_at()
             )));
         }
 
@@ -1218,7 +1246,9 @@ impl Authorizer {
         }
 
         // Validate monotonicity
-        parent.constraints().validate_attenuation(child.constraints())?;
+        parent
+            .constraints()
+            .validate_attenuation(child.constraints())?;
 
         // Note: Signature verification is done in batch at the chain level for performance
         // (see verify_chain_with_options). Individual verify_link calls don't re-verify signatures.
@@ -1238,11 +1268,11 @@ impl Authorizer {
         approvals: &[crate::approval::Approval],
     ) -> Result<ChainVerificationResult> {
         let result = self.verify_chain(chain)?;
-        
+
         if let Some(leaf) = chain.last() {
             self.authorize(leaf, tool, args, signature, approvals)?;
         }
-        
+
         Ok(result)
     }
 }
@@ -1293,9 +1323,19 @@ mod tests {
                 &holder_keypair.public_key(),
             )
             .unwrap();
-        
-        let pop_sig = warrant_for_holder.create_pop_signature(&holder_keypair, "upgrade_cluster", &args).unwrap();
-        assert!(data_plane.authorize(&warrant_for_holder, "upgrade_cluster", &args, Some(&pop_sig), &[]).is_ok());
+
+        let pop_sig = warrant_for_holder
+            .create_pop_signature(&holder_keypair, "upgrade_cluster", &args)
+            .unwrap();
+        assert!(data_plane
+            .authorize(
+                &warrant_for_holder,
+                "upgrade_cluster",
+                &args,
+                Some(&pop_sig),
+                &[]
+            )
+            .is_ok());
     }
 
     #[test]
@@ -1314,7 +1354,10 @@ mod tests {
         let orchestrator = DataPlane::with_keypair(Keypair::generate());
 
         let worker_warrant = orchestrator
-            .attenuate(&root_warrant, &[("table", Pattern::new("public_*").unwrap().into())])
+            .attenuate(
+                &root_warrant,
+                &[("table", Pattern::new("public_*").unwrap().into())],
+            )
             .unwrap();
 
         assert_eq!(worker_warrant.depth(), 1);
@@ -1331,14 +1374,23 @@ mod tests {
         // Minimal authorizer - just the public key
         let holder_keypair = Keypair::generate();
         let warrant_for_holder = control_plane
-            .issue_bound_warrant("test", &[], Duration::from_secs(60), &holder_keypair.public_key())
+            .issue_bound_warrant(
+                "test",
+                &[],
+                Duration::from_secs(60),
+                &holder_keypair.public_key(),
+            )
             .unwrap();
         let authorizer = Authorizer::new(control_plane.public_key());
 
         // Check in one call
         let args = HashMap::new();
-        let pop_sig = warrant_for_holder.create_pop_signature(&holder_keypair, "test", &args).unwrap();
-        assert!(authorizer.check(&warrant_for_holder, "test", &args, Some(&pop_sig), &[]).is_ok());
+        let pop_sig = warrant_for_holder
+            .create_pop_signature(&holder_keypair, "test", &args)
+            .unwrap();
+        assert!(authorizer
+            .check(&warrant_for_holder, "test", &args, Some(&pop_sig), &[])
+            .is_ok());
     }
 
     // =========================================================================
@@ -1366,7 +1418,7 @@ mod tests {
     fn test_chain_verification_delegation() {
         let control_plane = ControlPlane::generate();
         let orchestrator_keypair = Keypair::generate();
-        
+
         // Root warrant
         let root = control_plane
             .issue_warrant(
@@ -1463,17 +1515,19 @@ mod tests {
             "cluster".to_string(),
             ConstraintValue::String("staging-web".to_string()),
         );
-        
+
         // Create PoP signature for the agent warrant
-        let pop_sig = agent_warrant.create_pop_signature(&agent_keypair, "upgrade_cluster", &args).unwrap();
-        
+        let pop_sig = agent_warrant
+            .create_pop_signature(&agent_keypair, "upgrade_cluster", &args)
+            .unwrap();
+
         let result = data_plane
             .check_chain(
                 &[root, agent_warrant],
                 "upgrade_cluster",
                 &args,
                 Some(&pop_sig),
-                &[]
+                &[],
             )
             .unwrap();
         assert_eq!(result.chain_length, 2);
@@ -1511,10 +1565,7 @@ mod tests {
             .unwrap();
 
         // Create an attenuated warrant from warrant2
-        let child = warrant2
-            .attenuate()
-            .build(&agent_keypair)
-            .unwrap();
+        let child = warrant2.attenuate().build(&agent_keypair).unwrap();
 
         let mut data_plane = DataPlane::new();
         data_plane.trust_issuer("root", control_plane.public_key());
@@ -1563,24 +1614,33 @@ mod tests {
         let authorizer = Authorizer::new(control_plane.public_key());
 
         // Verify chain
-        let result = authorizer.verify_chain(&[root.clone(), child.clone()]).unwrap();
+        let result = authorizer
+            .verify_chain(&[root.clone(), child.clone()])
+            .unwrap();
         assert_eq!(result.chain_length, 2);
 
         // Check chain        // Authorize against child
         let mut args = HashMap::new();
-        args.insert("key".to_string(), ConstraintValue::String("value".to_string()));
-        
+        args.insert(
+            "key".to_string(),
+            ConstraintValue::String("value".to_string()),
+        );
+
         // Create PoP signature for child warrant
-        let pop_sig = child.create_pop_signature(&agent_keypair, "test", &args).unwrap();
-        
-        assert!(authorizer.authorize(&child, "test", &args, Some(&pop_sig), &[]).is_ok());
+        let pop_sig = child
+            .create_pop_signature(&agent_keypair, "test", &args)
+            .unwrap();
+
+        assert!(authorizer
+            .authorize(&child, "test", &args, Some(&pop_sig), &[])
+            .is_ok());
         assert_eq!(result.chain_length, 2);
     }
 
     #[test]
     fn test_empty_chain_fails() {
         let control_plane = ControlPlane::generate();
-        
+
         let mut data_plane = DataPlane::new();
         data_plane.trust_issuer("root", control_plane.public_key());
 
@@ -1599,16 +1659,15 @@ mod tests {
             .issue_warrant("test", &[], Duration::from_secs(60))
             .unwrap();
 
-        let child = root
-            .attenuate()
-            .build(&orchestrator_keypair)
-            .unwrap();
+        let child = root.attenuate().build(&orchestrator_keypair).unwrap();
 
         let mut data_plane = DataPlane::new();
         data_plane.trust_issuer("root", control_plane.public_key());
 
         // Chain should verify successfully
-        assert!(data_plane.verify_chain(&[root.clone(), child.clone()]).is_ok());
+        assert!(data_plane
+            .verify_chain(&[root.clone(), child.clone()])
+            .is_ok());
 
         // Revoke the ROOT warrant (signed by control plane)
         let srl = SignedRevocationList::builder()
@@ -1616,7 +1675,9 @@ mod tests {
             .version(1)
             .build(&control_plane.keypair)
             .unwrap();
-        data_plane.set_revocation_list(srl, &control_plane.public_key()).unwrap();
+        data_plane
+            .set_revocation_list(srl, &control_plane.public_key())
+            .unwrap();
 
         // Now the entire chain should fail (cascading revocation)
         let result = data_plane.verify_chain(&[root.clone(), child.clone()]);
@@ -1630,7 +1691,9 @@ mod tests {
             .version(1)
             .build(&control_plane.keypair)
             .unwrap();
-        authorizer.set_revocation_list(srl, &control_plane.public_key()).unwrap();
+        authorizer
+            .set_revocation_list(srl, &control_plane.public_key())
+            .unwrap();
 
         let result = authorizer.verify_chain(&[root, child]);
         assert!(result.is_err());
@@ -1644,25 +1707,32 @@ mod tests {
     #[test]
     fn test_authorize_with_approvals_no_multisig() {
         let control_plane = ControlPlane::generate();
-        
+
         // Create warrant WITHOUT multi-sig
         let warrant = control_plane
             .issue_warrant("test", &[], Duration::from_secs(60))
             .unwrap();
 
         let authorizer = Authorizer::new(control_plane.public_key());
-        
+
         let args = HashMap::new();
-        
+
         // Create PoP signature (warrant is bound to control_plane's key)
         // In a real scenario, the holder would have their own keypair
         let holder_keypair = Keypair::generate();
         let warrant_for_holder = control_plane
-            .issue_bound_warrant("test", &[], Duration::from_secs(60), &holder_keypair.public_key())
+            .issue_bound_warrant(
+                "test",
+                &[],
+                Duration::from_secs(60),
+                &holder_keypair.public_key(),
+            )
             .unwrap();
-        
-        let pop_sig = warrant_for_holder.create_pop_signature(&holder_keypair, "test", &args).unwrap();
-        
+
+        let pop_sig = warrant_for_holder
+            .create_pop_signature(&holder_keypair, "test", &args)
+            .unwrap();
+
         // Should pass without any approvals (just PoP)
         let result = authorizer.authorize(&warrant_for_holder, "test", &args, Some(&pop_sig), &[]);
         assert!(result.is_ok());
@@ -1672,7 +1742,7 @@ mod tests {
     fn test_authorize_requires_approval_when_multisig() {
         let issuer_keypair = Keypair::generate();
         let admin_keypair = Keypair::generate();
-        
+
         // Create warrant WITH multi-sig requirement
         let warrant = Warrant::builder()
             .tool("sensitive_action")
@@ -1685,10 +1755,12 @@ mod tests {
 
         let authorizer = Authorizer::new(issuer_keypair.public_key());
         let args = HashMap::new();
-        
+
         // Create PoP signature
-        let pop_sig = warrant.create_pop_signature(&issuer_keypair, "sensitive_action", &args).unwrap();
-        
+        let pop_sig = warrant
+            .create_pop_signature(&issuer_keypair, "sensitive_action", &args)
+            .unwrap();
+
         // Should FAIL without approval (but WITH PoP signature)
         let result = authorizer.authorize(&warrant, "sensitive_action", &args, Some(&pop_sig), &[]);
         assert!(result.is_err());
@@ -1697,12 +1769,12 @@ mod tests {
 
     #[test]
     fn test_authorize_valid_approval() {
-        use crate::approval::{Approval, compute_request_hash};
+        use crate::approval::{compute_request_hash, Approval};
         use chrono::{Duration as ChronoDuration, Utc};
-        
+
         let issuer_keypair = Keypair::generate();
         let admin_keypair = Keypair::generate();
-        
+
         // Create warrant WITH multi-sig requirement
         let warrant = Warrant::builder()
             .tool("sensitive_action")
@@ -1715,10 +1787,12 @@ mod tests {
 
         let authorizer = Authorizer::new(issuer_keypair.public_key());
         let args = HashMap::new();
-        
+
         // Create PoP signature
-        let pop_sig = warrant.create_pop_signature(&issuer_keypair, "sensitive_action", &args).unwrap();
-        
+        let pop_sig = warrant
+            .create_pop_signature(&issuer_keypair, "sensitive_action", &args)
+            .unwrap();
+
         // Create approval
         let request_hash = compute_request_hash(
             warrant.id().as_str(),
@@ -1726,17 +1800,17 @@ mod tests {
             &args,
             warrant.authorized_holder(),
         );
-        
+
         let now = Utc::now();
         let expires = now + ChronoDuration::seconds(300);
-        
+
         // Create signable bytes for approval
         let mut signable = Vec::new();
         signable.extend_from_slice(&request_hash);
         signable.extend_from_slice("admin@test.com".as_bytes());
         signable.extend_from_slice(&now.timestamp().to_le_bytes());
         signable.extend_from_slice(&expires.timestamp().to_le_bytes());
-        
+
         let approval = Approval {
             request_hash,
             approver_key: admin_keypair.public_key(),
@@ -1747,21 +1821,27 @@ mod tests {
             reason: None,
             signature: admin_keypair.sign(&signable),
         };
-        
+
         // Should SUCCEED with valid approval AND PoP signature
-        let result = authorizer.authorize(&warrant, "sensitive_action", &args, Some(&pop_sig), &[approval]);
+        let result = authorizer.authorize(
+            &warrant,
+            "sensitive_action",
+            &args,
+            Some(&pop_sig),
+            &[approval],
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_authorize_wrong_approver() {
-        use crate::approval::{Approval, compute_request_hash};
+        use crate::approval::{compute_request_hash, Approval};
         use chrono::{Duration as ChronoDuration, Utc};
-        
+
         let issuer_keypair = Keypair::generate();
         let admin_keypair = Keypair::generate();
         let other_keypair = Keypair::generate(); // Not in required_approvers
-        
+
         // Create warrant requiring admin's approval
         let warrant = Warrant::builder()
             .tool("sensitive_action")
@@ -1774,20 +1854,25 @@ mod tests {
 
         let authorizer = Authorizer::new(issuer_keypair.public_key());
         let args = HashMap::new();
-        
+
         // Create approval from WRONG keypair
         let now = Utc::now();
         let expires = now + ChronoDuration::seconds(300);
-        let request_hash = compute_request_hash(warrant.id().as_str(), "sensitive_action", &args, warrant.authorized_holder());
-        
+        let request_hash = compute_request_hash(
+            warrant.id().as_str(),
+            "sensitive_action",
+            &args,
+            warrant.authorized_holder(),
+        );
+
         let mut signable = Vec::new();
         signable.extend_from_slice(&request_hash);
         signable.extend_from_slice("other@test.com".as_bytes());
         signable.extend_from_slice(&now.timestamp().to_le_bytes());
         signable.extend_from_slice(&expires.timestamp().to_le_bytes());
-        
+
         let sig = other_keypair.sign(&signable);
-        
+
         let approval = Approval {
             request_hash,
             approver_key: other_keypair.public_key(), // Wrong approver!
@@ -1798,30 +1883,42 @@ mod tests {
             reason: None,
             signature: sig,
         };
-        
+
         // Create PoP signature
-        let pop_sig = warrant.create_pop_signature(&issuer_keypair, "sensitive_action", &args).unwrap();
-        
+        let pop_sig = warrant
+            .create_pop_signature(&issuer_keypair, "sensitive_action", &args)
+            .unwrap();
+
         // Should FAIL - approver not in required set (even with valid PoP)
-        let result = authorizer.authorize(&warrant, "sensitive_action", &args, Some(&pop_sig), &[approval]);
+        let result = authorizer.authorize(
+            &warrant,
+            "sensitive_action",
+            &args,
+            Some(&pop_sig),
+            &[approval],
+        );
         assert!(result.is_err());
     }
 
     #[test]
     fn test_authorize_2_of_3() {
-        use crate::approval::{Approval, compute_request_hash};
+        use crate::approval::{compute_request_hash, Approval};
         use chrono::{Duration as ChronoDuration, Utc};
-        
+
         let issuer_keypair = Keypair::generate();
         let admin1 = Keypair::generate();
         let admin2 = Keypair::generate();
         let admin3 = Keypair::generate();
-        
+
         // Create warrant requiring 2-of-3 approvals
         let warrant = Warrant::builder()
             .tool("sensitive_action")
             .ttl(Duration::from_secs(300))
-            .required_approvers(vec![admin1.public_key(), admin2.public_key(), admin3.public_key()])
+            .required_approvers(vec![
+                admin1.public_key(),
+                admin2.public_key(),
+                admin3.public_key(),
+            ])
             .min_approvals(2)
             .authorized_holder(issuer_keypair.public_key()) // Added this line
             .build(&issuer_keypair)
@@ -1829,11 +1926,16 @@ mod tests {
 
         let authorizer = Authorizer::new(issuer_keypair.public_key());
         let args = HashMap::new();
-        
+
         let now = Utc::now();
         let expires = now + ChronoDuration::seconds(300);
-        let request_hash = compute_request_hash(warrant.id().as_str(), "sensitive_action", &args, warrant.authorized_holder());
-        
+        let request_hash = compute_request_hash(
+            warrant.id().as_str(),
+            "sensitive_action",
+            &args,
+            warrant.authorized_holder(),
+        );
+
         // Helper to create approval
         let make_approval = |kp: &Keypair, id: &str| {
             let mut signable = Vec::new();
@@ -1841,7 +1943,7 @@ mod tests {
             signable.extend_from_slice(id.as_bytes());
             signable.extend_from_slice(&now.timestamp().to_le_bytes());
             signable.extend_from_slice(&expires.timestamp().to_le_bytes());
-            
+
             Approval {
                 request_hash,
                 approver_key: kp.public_key(),
@@ -1853,19 +1955,33 @@ mod tests {
                 signature: kp.sign(&signable),
             }
         };
-        
+
         let approval1 = make_approval(&admin1, "admin1@test.com");
         let approval2 = make_approval(&admin2, "admin2@test.com");
-        
+
         // Create PoP signature
-        let pop_sig = warrant.create_pop_signature(&issuer_keypair, "sensitive_action", &args).unwrap();
-        
+        let pop_sig = warrant
+            .create_pop_signature(&issuer_keypair, "sensitive_action", &args)
+            .unwrap();
+
         // With 1 approval - should fail (need 2)
-        let result = authorizer.authorize(&warrant, "sensitive_action", &args, Some(&pop_sig), std::slice::from_ref(&approval1));
+        let result = authorizer.authorize(
+            &warrant,
+            "sensitive_action",
+            &args,
+            Some(&pop_sig),
+            std::slice::from_ref(&approval1),
+        );
         assert!(result.is_err());
-        
+
         // With 2 approvals - should pass
-        let result = authorizer.authorize(&warrant, "sensitive_action", &args, Some(&pop_sig), &[approval1, approval2]);
+        let result = authorizer.authorize(
+            &warrant,
+            "sensitive_action",
+            &args,
+            Some(&pop_sig),
+            &[approval1, approval2],
+        );
         assert!(result.is_ok());
     }
 
@@ -1928,8 +2044,8 @@ mod tests {
             .tool("test")
             .session_id("session_456") // Different session
             .ttl(Duration::from_secs(500)) // Required field, must be < root TTL
-            .parent_id(root.id().clone())      // Correct parent linkage
-            .depth(root.depth() + 1)           // Correct depth
+            .parent_id(root.id().clone()) // Correct parent linkage
+            .depth(root.depth() + 1) // Correct depth
             .authorized_holder(worker_keypair.public_key())
             .build(&orchestrator_keypair)
             .unwrap();
@@ -1942,7 +2058,11 @@ mod tests {
         let result = data_plane.verify_chain_strict(&[root, child]);
         assert!(result.is_err(), "Expected error for mismatched sessions");
         let err_msg = result.unwrap_err().to_string();
-        assert!(err_msg.contains("session mismatch"), "Expected 'session mismatch' in error, got: '{}'", err_msg);
+        assert!(
+            err_msg.contains("session mismatch"),
+            "Expected 'session mismatch' in error, got: '{}'",
+            err_msg
+        );
     }
 
     #[test]
@@ -2014,7 +2134,7 @@ mod tests {
         // Create a different root with different session, then attenuate
         let root2 = Warrant::builder()
             .tool("test")
-            .session_id("session_456")  // Different session
+            .session_id("session_456") // Different session
             .ttl(Duration::from_secs(600))
             .authorized_holder(orchestrator_keypair.public_key())
             .build(&control_plane.keypair)
@@ -2036,17 +2156,14 @@ mod tests {
     fn test_issue_bound_warrant_and_audit_serialization() {
         let control_plane = ControlPlane::generate();
         let holder_key = Keypair::generate().public_key();
-        
+
         // 1. Issue bound warrant
-        let warrant = control_plane.issue_bound_warrant(
-            "test_tool",
-            &[],
-            Duration::from_secs(60),
-            &holder_key
-        ).expect("Failed to issue bound warrant");
-        
+        let warrant = control_plane
+            .issue_bound_warrant("test_tool", &[], Duration::from_secs(60), &holder_key)
+            .expect("Failed to issue bound warrant");
+
         assert_eq!(warrant.authorized_holder(), Some(&holder_key));
-        
+
         // 2. Create AuditEvent
         let event = crate::approval::AuditEvent::new(
             crate::approval::AuditEventType::EnrollmentSuccess,
@@ -2056,10 +2173,9 @@ mod tests {
         .with_key(warrant.authorized_holder().unwrap())
         .with_details(format!("Issued warrant {}", warrant.id()))
         .with_related(vec![warrant.id().to_string()]);
-        
+
         // 3. Serialize
         let json = serde_json::to_string(&event).expect("Failed to serialize audit event");
         println!("Serialized event: {}", json);
     }
 }
-

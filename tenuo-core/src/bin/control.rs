@@ -39,12 +39,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use tenuo_core::{
-    constraints::Pattern,
-    crypto::Keypair,
-    planes::ControlPlane,
-    wire,
-};
+use tenuo_core::{constraints::Pattern, crypto::Keypair, planes::ControlPlane, wire};
 use tokio::sync::RwLock;
 
 /// Application state
@@ -122,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("║ ENROLLMENT TOKEN: {} ║", enrollment_token);
     println!("╚══════════════════════════════════════════════════════════════════╝\n");
 
-    let state = Arc::new(RwLock::new(AppState { 
+    let state = Arc::new(RwLock::new(AppState {
         control_plane,
         enrollment_token: enrollment_token.clone(),
         enrolled_agents: std::collections::HashSet::new(),
@@ -193,9 +188,15 @@ struct EnrollmentRequest {
     max_depth: u32,
 }
 
-fn default_tool() -> String { "manage_infrastructure".to_string() }
-fn default_ttl() -> u64 { 3600 }
-fn default_max_depth() -> u32 { 3 }
+fn default_tool() -> String {
+    "manage_infrastructure".to_string()
+}
+fn default_ttl() -> u64 {
+    3600
+}
+fn default_max_depth() -> u32 {
+    3
+}
 
 async fn enroll(
     State(state): State<Arc<RwLock<AppState>>>,
@@ -207,17 +208,20 @@ async fn enroll(
     if req.enrollment_token != state.enrollment_token {
         // Delay to prevent brute-force (simple mitigation)
         tokio::time::sleep(Duration::from_millis(100)).await;
-        
+
         tenuo_core::audit::log_event(
             tenuo_core::approval::AuditEvent::new(
                 tenuo_core::approval::AuditEventType::EnrollmentFailure,
                 "control-plane",
                 "unknown",
             )
-            .with_details("Invalid enrollment token")
+            .with_details("Invalid enrollment token"),
         );
-        
-        return Err((StatusCode::UNAUTHORIZED, "Invalid enrollment token".to_string()));
+
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            "Invalid enrollment token".to_string(),
+        ));
     }
 
     // 2. Verify timestamp freshness (prevents replay attacks)
@@ -230,54 +234,90 @@ async fn enroll(
                 "control-plane",
                 "unknown",
             )
-            .with_details(format!("Stale PoP timestamp: age={}s, max={}s", age, ENROLLMENT_POP_MAX_AGE_SECS))
+            .with_details(format!(
+                "Stale PoP timestamp: age={}s, max={}s",
+                age, ENROLLMENT_POP_MAX_AGE_SECS
+            )),
         );
-        return Err((StatusCode::BAD_REQUEST, format!(
-            "PoP timestamp too old: {}s (max {}s)", age, ENROLLMENT_POP_MAX_AGE_SECS
-        )));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "PoP timestamp too old: {}s (max {}s)",
+                age, ENROLLMENT_POP_MAX_AGE_SECS
+            ),
+        ));
     }
 
     // 3. Verify PoP signature
-    let pubkey_bytes = hex::decode(&req.public_key_hex)
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid public key hex".to_string()))?;
-    let pubkey_arr: [u8; 32] = pubkey_bytes.try_into()
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid public key length".to_string()))?;
+    let pubkey_bytes = hex::decode(&req.public_key_hex).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Invalid public key hex".to_string(),
+        )
+    })?;
+    let pubkey_arr: [u8; 32] = pubkey_bytes.try_into().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Invalid public key length".to_string(),
+        )
+    })?;
     let public_key = tenuo_core::crypto::PublicKey::from_bytes(&pubkey_arr)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
     let sig_bytes = hex::decode(&req.pop_signature_hex)
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid signature hex".to_string()))?;
-    let sig_arr: [u8; 64] = sig_bytes.try_into()
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid signature length".to_string()))?;
-    let signature = tenuo_core::crypto::Signature::from_bytes(&sig_arr)
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid signature format".to_string()))?;
+    let sig_arr: [u8; 64] = sig_bytes.try_into().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Invalid signature length".to_string(),
+        )
+    })?;
+    let signature = tenuo_core::crypto::Signature::from_bytes(&sig_arr).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            "Invalid signature format".to_string(),
+        )
+    })?;
 
     // PoP message format: "enroll:{public_key_hex}:{timestamp}"
     // This binds the signature to both the key and the time
     let pop_message = format!("enroll:{}:{}", req.public_key_hex, req.timestamp);
-    if public_key.verify(pop_message.as_bytes(), &signature).is_err() {
-        return Err((StatusCode::BAD_REQUEST, "Invalid Proof of Possession".to_string()));
+    if public_key
+        .verify(pop_message.as_bytes(), &signature)
+        .is_err()
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Invalid Proof of Possession".to_string(),
+        ));
     }
 
     // 3. Issue Root Warrant with configurable constraints
-    let constraints: Vec<(&str, tenuo_core::constraints::Constraint)> = if let Some(ref custom) = req.constraints {
-        // Use custom constraints from request
-        let mut result = Vec::new();
-        for (field, pattern) in custom {
-            let p = Pattern::new(pattern).map_err(|e| {
-                (StatusCode::BAD_REQUEST, format!("Invalid pattern for {}: {}", field, e))
-            })?;
-            result.push((field.as_str(), p.into()));
-        }
-        result
-    } else {
-        // Default constraints
-        vec![
-            ("cluster", Pattern::new("staging-*").unwrap().into()),
-            ("action", tenuo_core::constraints::Wildcard::new().into()),
-            ("budget", tenuo_core::constraints::Range::max(10000.0).into()),
-        ]
-    };
+    let constraints: Vec<(&str, tenuo_core::constraints::Constraint)> =
+        if let Some(ref custom) = req.constraints {
+            // Use custom constraints from request
+            let mut result = Vec::new();
+            for (field, pattern) in custom {
+                let p = Pattern::new(pattern).map_err(|e| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        format!("Invalid pattern for {}: {}", field, e),
+                    )
+                })?;
+                result.push((field.as_str(), p.into()));
+            }
+            result
+        } else {
+            // Default constraints
+            vec![
+                ("cluster", Pattern::new("staging-*").unwrap().into()),
+                ("action", tenuo_core::constraints::Wildcard::new().into()),
+                (
+                    "budget",
+                    tenuo_core::constraints::Range::max(10000.0).into(),
+                ),
+            ]
+        };
 
     // Issue warrant with full configuration
     let warrant = state
@@ -291,8 +331,8 @@ async fn enroll(
         )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let warrant_base64 =
-        wire::encode_base64(&warrant).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let warrant_base64 = wire::encode_base64(&warrant)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Track enrolled agent
     state.enrolled_agents.insert(public_key.to_bytes());
@@ -305,7 +345,7 @@ async fn enroll(
         )
         .with_key(warrant.authorized_holder().unwrap())
         .with_details(format!("Issued root warrant {}", warrant.id()))
-        .with_related(vec![warrant.id().to_string()])
+        .with_related(vec![warrant.id().to_string()]),
     );
 
     Ok(Json(IssueResponse {
@@ -320,34 +360,58 @@ async fn issue_warrant(
     Json(req): Json<IssueRequest>,
 ) -> Result<Json<IssueResponse>, (StatusCode, String)> {
     let state = state.read().await;
-    
+
     // Require enrollment - caller must prove identity
-    let caller_key = req.caller_pubkey_hex.as_ref()
-        .ok_or((StatusCode::UNAUTHORIZED, "Missing caller_pubkey_hex".to_string()))?;
+    let caller_key = req.caller_pubkey_hex.as_ref().ok_or((
+        StatusCode::UNAUTHORIZED,
+        "Missing caller_pubkey_hex".to_string(),
+    ))?;
     let caller_bytes: [u8; 32] = hex::decode(caller_key)
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid caller public key hex".to_string()))?
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Invalid caller public key hex".to_string(),
+            )
+        })?
         .try_into()
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Caller key must be 32 bytes".to_string()))?;
-    
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Caller key must be 32 bytes".to_string(),
+            )
+        })?;
+
     if !state.enrolled_agents.contains(&caller_bytes) {
         return Err((StatusCode::UNAUTHORIZED, "Caller not enrolled".to_string()));
     }
-    
+
     // Verify PoP signature (caller signs the request body)
     let caller_pubkey = tenuo_core::crypto::PublicKey::from_bytes(&caller_bytes)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-    let sig_hex = req.signature_hex.as_ref()
-        .ok_or((StatusCode::UNAUTHORIZED, "Missing signature_hex".to_string()))?;
+    let sig_hex = req.signature_hex.as_ref().ok_or((
+        StatusCode::UNAUTHORIZED,
+        "Missing signature_hex".to_string(),
+    ))?;
     let sig_bytes: [u8; 64] = hex::decode(sig_hex)
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid signature hex".to_string()))?
         .try_into()
-        .map_err(|_| (StatusCode::BAD_REQUEST, "Signature must be 64 bytes".to_string()))?;
+        .map_err(|_| {
+            (
+                StatusCode::BAD_REQUEST,
+                "Signature must be 64 bytes".to_string(),
+            )
+        })?;
     let signature = tenuo_core::crypto::Signature::from_bytes(&sig_bytes)
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid signature".to_string()))?;
-    
+
     // Verify signature over tool + constraints (simple PoP)
-    let signable = format!("{}:{}", req.tool, serde_json::to_string(&req.constraints).unwrap_or_default());
-    caller_pubkey.verify(signable.as_bytes(), &signature)
+    let signable = format!(
+        "{}:{}",
+        req.tool,
+        serde_json::to_string(&req.constraints).unwrap_or_default()
+    );
+    caller_pubkey
+        .verify(signable.as_bytes(), &signature)
         .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid signature".to_string()))?;
 
     // Build constraints
@@ -365,11 +429,15 @@ async fn issue_warrant(
     // Issue warrant
     let warrant = state
         .control_plane
-        .issue_warrant(&req.tool, &constraints, Duration::from_secs(req.ttl_seconds))
+        .issue_warrant(
+            &req.tool,
+            &constraints,
+            Duration::from_secs(req.ttl_seconds),
+        )
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let warrant_base64 =
-        wire::encode_base64(&warrant).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let warrant_base64 = wire::encode_base64(&warrant)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     tenuo_core::audit::log_event(
         tenuo_core::approval::AuditEvent::new(
@@ -377,8 +445,12 @@ async fn issue_warrant(
             "control-plane",
             "api-request",
         )
-        .with_details(format!("Issued warrant {} for tool {}", warrant.id(), req.tool))
-        .with_related(vec![warrant.id().to_string()])
+        .with_details(format!(
+            "Issued warrant {} for tool {}",
+            warrant.id(),
+            req.tool
+        ))
+        .with_related(vec![warrant.id().to_string()]),
     );
 
     Ok(Json(IssueResponse {
@@ -387,4 +459,3 @@ async fn issue_warrant(
         expires_at: warrant.expires_at().to_rfc3339(),
     }))
 }
-

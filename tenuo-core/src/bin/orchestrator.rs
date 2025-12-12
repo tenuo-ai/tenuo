@@ -8,11 +8,11 @@
 //! 5. **Multi-sig approval**: Requires human approval for sensitive actions
 //! 6. **Notary Registry**: Maps enterprise identities to cryptographic keys
 
-use tenuo_core::{Keypair, Exact, Range, Warrant, wire, OneOf};
-use std::time::Duration;
-use std::env;
-use uuid::Uuid;
 use chrono::Utc;
+use std::env;
+use std::time::Duration;
+use tenuo_core::{wire, Exact, Keypair, OneOf, Range, Warrant};
+use uuid::Uuid;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n╔══════════════════════════════════════════════════════════════════╗");
@@ -39,9 +39,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 2. Get Enrollment Token from Env
     let enrollment_token = env::var("TENUO_ENROLLMENT_TOKEN")
         .expect("TENUO_ENROLLMENT_TOKEN must be set (copy from control plane stdout)");
-    
-    let control_url = env::var("TENUO_CONTROL_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+
+    let control_url =
+        env::var("TENUO_CONTROL_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
 
     // 3. Create Proof of Possession with timestamp (prevents replay attacks)
     // Format: "enroll:{public_key_hex}:{timestamp}"
@@ -53,7 +53,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 4. Send Enrollment Request
     println!("  Requesting enrollment from {}...", control_url);
     let client = reqwest::blocking::Client::new();
-    let resp = client.post(format!("{}/v1/enroll", control_url))
+    let resp = client
+        .post(format!("{}/v1/enroll", control_url))
         .json(&serde_json::json!({
             "enrollment_token": enrollment_token,
             "public_key_hex": pubkey_hex,
@@ -79,7 +80,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    • ID:          {}", root_warrant.id());
     println!("    • Tool:        {}", root_warrant.tool());
     println!("    • Depth:       {} (root)", root_warrant.depth());
-    println!("    • Max Depth:   {} (policy limit)", root_warrant.effective_max_depth());
+    println!(
+        "    • Max Depth:   {} (policy limit)",
+        root_warrant.effective_max_depth()
+    );
     println!("    • Expires:     {}", root_warrant.expires_at());
     println!("    • Constraints:");
     println!("      - cluster:   staging-*");
@@ -96,7 +100,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Orchestrator already generated its keypair in Step 1 (for enrollment)
     // We reuse the same keypair for signing delegated warrants
     println!("  Orchestrator keypair (from enrollment):");
-    println!("    Public Key: {}", hex::encode(orchestrator_keypair.public_key().to_bytes()));
+    println!(
+        "    Public Key: {}",
+        hex::encode(orchestrator_keypair.public_key().to_bytes())
+    );
 
     // ─────────────────────────────────────────────────────────────────────────
     // DEMO SIMPLIFICATION: In production, the worker generates its own keypair
@@ -113,7 +120,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let worker_keypair = Keypair::generate();
     println!("\n  [DEMO] Simulating worker key registration:");
     println!("    In production: Worker generates key, sends ONLY public key");
-    println!("    Worker Public Key: {}", hex::encode(worker_keypair.public_key().to_bytes()));
+    println!(
+        "    Worker Public Key: {}",
+        hex::encode(worker_keypair.public_key().to_bytes())
+    );
 
     // ⚠️  DEMO ONLY: Writing private key to shared storage
     // ─────────────────────────────────────────────────────────────────────────
@@ -121,10 +131,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // This file-sharing approach is ONLY for demo convenience.
     // Production: Worker generates key locally, sends only PUBLIC key to orchestrator.
     // ─────────────────────────────────────────────────────────────────────────
-    let worker_key_path = env::var("TENUO_WORKER_KEY_OUTPUT")
-        .unwrap_or_else(|_| "/data/worker.key".to_string());
-    std::fs::write(&worker_key_path, hex::encode(worker_keypair.secret_key_bytes()))?;
-    println!("    ⚠️  [DEMO ONLY] Saved secret key to: {}", worker_key_path);
+    let worker_key_path =
+        env::var("TENUO_WORKER_KEY_OUTPUT").unwrap_or_else(|_| "/data/worker.key".to_string());
+    std::fs::write(
+        &worker_key_path,
+        hex::encode(worker_keypair.secret_key_bytes()),
+    )?;
+    println!(
+        "    ⚠️  [DEMO ONLY] Saved secret key to: {}",
+        worker_key_path
+    );
     println!("    ⚠️  PRODUCTION: Private keys MUST stay with the agent!");
 
     // =========================================================================
@@ -140,7 +156,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    • budget:  ≤$10,000   → ≤$1,000 (reduced)");
     println!("    • TTL:     1 hour     → 10 minutes (shortened)");
 
-    let worker_warrant = root_warrant.attenuate()
+    let worker_warrant = root_warrant
+        .attenuate()
         .constraint("cluster", Exact::new("staging-web"))
         .constraint("action", OneOf::new(vec!["upgrade", "restart"]))
         .constraint("budget", Range::max(1000.0))
@@ -153,10 +170,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n  ✓ Worker Warrant Created:");
     println!("    • ID:          {}", worker_warrant.id());
     println!("    • Parent ID:   {}", worker_warrant.parent_id().unwrap());
-    println!("    • Depth:       {} / {} (delegated)", worker_warrant.depth(), worker_warrant.effective_max_depth());
-    println!("    • Session:     {} (inherited)", worker_warrant.session_id().unwrap_or("-"));
+    println!(
+        "    • Depth:       {} / {} (delegated)",
+        worker_warrant.depth(),
+        worker_warrant.effective_max_depth()
+    );
+    println!(
+        "    • Session:     {} (inherited)",
+        worker_warrant.session_id().unwrap_or("-")
+    );
     println!("    • Expires:     {}", worker_warrant.expires_at());
-    println!("    • Holder:      {} (PoP required)", hex::encode(&worker_keypair.public_key().to_bytes()[..8]));
+    println!(
+        "    • Holder:      {} (PoP required)",
+        hex::encode(&worker_keypair.public_key().to_bytes()[..8])
+    );
     println!("    • Signed by:   Orchestrator");
 
     // =========================================================================
@@ -172,20 +199,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create an "approver" keypair (simulates an admin mapped via Notary Registry)
     let admin_keypair = Keypair::generate();
     println!("  Generated Admin Keypair (simulating Notary-bound identity):");
-    println!("    • Public Key: {}", hex::encode(&admin_keypair.public_key().to_bytes()[..16]));
+    println!(
+        "    • Public Key: {}",
+        hex::encode(&admin_keypair.public_key().to_bytes()[..16])
+    );
     println!("    • External ID: arn:aws:iam::123456789:user/admin (simulated)\n");
 
     // ⚠️  DEMO ONLY: In production, admin keys are managed by the admin (HSM, Yubikey, etc.)
     // This is shared here so the worker demo can simulate admin approval.
-    let admin_key_path = env::var("TENUO_ADMIN_KEY_OUTPUT")
-        .unwrap_or_else(|_| "/data/admin.key".to_string());
-    std::fs::write(&admin_key_path, hex::encode(admin_keypair.secret_key_bytes()))?;
+    let admin_key_path =
+        env::var("TENUO_ADMIN_KEY_OUTPUT").unwrap_or_else(|_| "/data/admin.key".to_string());
+    std::fs::write(
+        &admin_key_path,
+        hex::encode(admin_keypair.secret_key_bytes()),
+    )?;
     println!("    ⚠️  [DEMO ONLY] Saved admin key to: {}", admin_key_path);
 
     // Create a warrant for sensitive operations that REQUIRES multi-sig approval
-    let sensitive_warrant = root_warrant.attenuate()
+    let sensitive_warrant = root_warrant
+        .attenuate()
         .constraint("cluster", Exact::new("staging-web"))
-        .constraint("action", OneOf::new(vec!["delete", "scale-down"]))  // Dangerous actions
+        .constraint("action", OneOf::new(vec!["delete", "scale-down"])) // Dangerous actions
         .constraint("budget", Range::max(500.0))
         .ttl(Duration::from_secs(300)) // 5 minutes (short for sensitive ops)
         .authorized_holder(worker_keypair.public_key())
@@ -212,7 +246,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let chain = vec![root_warrant.clone(), worker_warrant.clone()];
     let sensitive_chain = vec![root_warrant.clone(), sensitive_warrant.clone()];
-    
+
     println!("  Chain Structure:");
     println!("    ┌─────────────────────────────────────────────────────────────┐");
     println!("    │  [0] Root Warrant (Control Plane)                           │");
@@ -227,9 +261,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Serialize the chains for the worker
     let chain_json = serde_json::to_string_pretty(&chain)?;
     let sensitive_chain_json = serde_json::to_string_pretty(&sensitive_chain)?;
-    
-    let output_path = env::var("TENUO_CHAIN_OUTPUT")
-        .unwrap_or_else(|_| "/data/chain.json".to_string());
+
+    let output_path =
+        env::var("TENUO_CHAIN_OUTPUT").unwrap_or_else(|_| "/data/chain.json".to_string());
     std::fs::write(&output_path, &chain_json)?;
     println!("\n  ✓ Standard chain written to: {}", output_path);
 
@@ -239,7 +273,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Also output the warrant in wire format (base64)
     let wire_format = wire::encode_base64(&worker_warrant)?;
-    println!("\n  Worker Warrant (wire format, {} bytes):", wire_format.len());
+    println!(
+        "\n  Worker Warrant (wire format, {} bytes):",
+        wire_format.len()
+    );
     println!("    {}", &wire_format[..80.min(wire_format.len())]);
     if wire_format.len() > 80 {
         println!("    ... ({} more bytes)", wire_format.len() - 80);
@@ -263,6 +300,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("║  • Sensitive actions (delete) → BLOCKED without approval         ║");
     println!("║  • Sensitive actions (delete) → ALLOWED with admin approval      ║");
     println!("╚══════════════════════════════════════════════════════════════════╝\n");
-    
+
     Ok(())
 }
