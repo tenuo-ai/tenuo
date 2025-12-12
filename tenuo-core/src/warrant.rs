@@ -339,7 +339,7 @@ impl Warrant {
     /// * `Err` if PoP required but signature invalid or missing holder
     pub fn verify_holder(&self, challenge: &[u8], signature: &Signature) -> Result<()> {
         match &self.payload.authorized_holder {
-            None => Ok(()), // Bearer token, no PoP required
+            None => Ok(()), // Defensive: Bearer token (legacy/external), though build() enforces PoP
             Some(holder_key) => {
                 holder_key.verify(challenge, signature)
                     .map_err(|_| Error::SignatureInvalid(

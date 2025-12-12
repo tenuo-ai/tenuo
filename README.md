@@ -247,6 +247,8 @@ The following features are implemented in the core engine but not yet fully expo
 
 - **Multi-sig approvals**: M-of-N approval for sensitive actions
 - **Cascading revocation**: Surgical (one warrant) or nuclear (entire agent swarm) revocation
+- **LangGraph SecureGraph**: Automatic warrant attenuation in multi-agent graphs
+- **Framework packages**: `tenuo-langchain`, `tenuo-fastapi`, `tenuo-mcp` (based on demand)
 
 ## MCP (Model Context Protocol) Integration
 

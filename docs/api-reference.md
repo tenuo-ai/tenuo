@@ -145,6 +145,7 @@ from tenuo import Warrant
 | `verify(public_key)` | `bool` | Verify signature against issuer |
 | `create_pop_signature(keypair, tool, args)` | `list[int]` | Create PoP signature (bytes as list of ints) |
 | `to_base64()` | `str` | Serialize to base64 |
+| `is_expired()` | `bool` | Check if warrant has expired |
 
 #### Example
 

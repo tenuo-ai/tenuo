@@ -5,6 +5,7 @@ A pure Python wrapper around the Rust tenuo_core extension.
 """
 
 # Import all public API from the Rust extension
+# Note: Commented-out features (TODO) are planned for v0.2+ and not included in v0.1 scope.
 from tenuo_core import (
     # Core types
     Keypair,

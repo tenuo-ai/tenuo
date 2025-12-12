@@ -15,6 +15,9 @@ pip install tenuo
 - **[decorator_example.py](decorator_example.py)**: Demonstrates the `@lockdown` decorator pattern for protecting functions with minimal boilerplate.
 - **[context_pattern.py](context_pattern.py)**: Shows how to use `set_warrant_context` for thread-safe/async-safe warrant passing (essential for web frameworks like FastAPI).
 
+### Multi-Agent Delegation
+- **[orchestrator_worker.py](orchestrator_worker.py)**: **Core delegation pattern** - Shows how orchestrators attenuate warrants for workers. Demonstrates Tenuo's key value: authority that shrinks as it flows through the system. Essential for understanding multi-agent workflows.
+
 ### LangChain Integration
 - **[langchain_simple.py](langchain_simple.py)**: Minimal example of protecting LangChain tools. Shows how to wrap a tool and run an agent with a warrant. **Start here for LangChain integration.**
 - **[langchain_integration.py](langchain_integration.py)**: Advanced LangChain integration with callbacks. Demonstrates warrant context propagation through LangChain's callback system.
@@ -22,6 +25,21 @@ pip install tenuo
 
 ### MCP (Model Context Protocol)
 - **[mcp_integration.py](mcp_integration.py)**: Demonstrates how to integrate Tenuo with MCP servers, extracting constraints from MCP tool calls.
+
+### Web Frameworks
+- **[fastapi_integration.py](fastapi_integration.py)**: Complete FastAPI application with Tenuo authorization. Shows:
+    - Middleware for warrant extraction and context setting
+    - Multiple protected endpoints
+    - Error handling and proper HTTP responses
+    - Keypair loading from secrets
+    - Request-scoped warrant validation
+
+### Error Handling
+- **[error_handling_guide.py](error_handling_guide.py)**: Comprehensive error handling patterns. Covers:
+    - Common error scenarios (expired warrants, PoP failures, constraint violations)
+    - Error classification and severity levels
+    - Recovery strategies (when to retry vs abort)
+    - Production-ready error handling patterns
 
 ### Infrastructure
 - **[kubernetes_integration.py](kubernetes_integration.py)**: A complete simulation of a Kubernetes deployment. Shows how to:
@@ -39,6 +57,9 @@ python basic_usage.py
 python decorator_example.py
 python context_pattern.py
 
+# Multi-agent delegation (core pattern)
+python orchestrator_worker.py
+
 # LangChain examples (requires: pip install langchain langchain-openai langchain-community)
 python langchain_simple.py
 python langchain_integration.py
@@ -46,6 +67,13 @@ python langchain_protect_tools.py
 
 # MCP example (uses local config file, no external server needed)
 python mcp_integration.py
+
+# Web framework example (requires: pip install fastapi uvicorn)
+python fastapi_integration.py
+# Or run with: uvicorn fastapi_integration:app --reload
+
+# Error handling guide
+python error_handling_guide.py
 
 # Kubernetes example (simulation, no actual K8s needed)
 python kubernetes_integration.py
@@ -64,6 +92,7 @@ python kubernetes_integration.py
 1. `basic_usage.py` - Core concepts (warrants, constraints, attenuation)
 2. `decorator_example.py` - Simplest protection pattern
 3. `context_pattern.py` - Context-based patterns (for web frameworks)
+4. `orchestrator_worker.py` - **Multi-agent delegation (core value proposition)**
 
 **Integrating with LangChain?**
 1. `langchain_simple.py` - Basic LangChain protection
@@ -71,5 +100,10 @@ python kubernetes_integration.py
 3. `langchain_integration.py` - Advanced callback patterns
 
 **Production Patterns:**
+- `orchestrator_worker.py` - **Multi-agent delegation (understand this first!)**
+- `fastapi_integration.py` - Complete web application with authorization
+- `error_handling_guide.py` - Production error handling strategies
 - `kubernetes_integration.py` - Real-world deployment patterns
 - `mcp_integration.py` - MCP server integration
+
+**Note:** Queue integration patterns (RabbitMQ, SQS, etc.) will be available in v0.2 with framework-specific packages to reduce boilerplate.

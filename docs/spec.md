@@ -193,19 +193,25 @@ from tenuo.decorators import set_warrant_context, set_keypair_context
 
 KEYPAIR = Keypair.from_file("/var/run/secrets/tenuo/keypair")
 
+KEYPAIR = Keypair.from_file("/var/run/secrets/tenuo/keypair")
+
 @app.middleware("http")
 async def tenuo_middleware(request: Request, call_next):
     warrant_b64 = request.headers.get("X-Tenuo-Warrant")
     if not warrant_b64:
+        # Endpoints without warrant header bypass authorization
         return await call_next(request)
     
     warrant = Warrant.from_base64(warrant_b64)
     
-    if not warrant.is_bound_to(KEYPAIR.public_key()):
-        raise HTTPException(403, "Warrant not bound to this agent")
-    if warrant.is_expired:
+    # Check expiration
+    if warrant.is_expired():
         raise HTTPException(403, "Warrant expired")
     
+    # Note: Warrant binding is verified via PoP signature during authorization.
+    # The keypair context must match the warrant's authorized_holder for PoP to succeed.
+    
+    # Set both warrant and keypair in context (required for PoP)
     with set_warrant_context(warrant), set_keypair_context(KEYPAIR):
         return await call_next(request)
 ```
@@ -230,18 +236,34 @@ async def process_message(message: QueueMessage):
 
 See [SecureGraph Design Spec](./langgraph-spec.md).
 
+> **Note**: SecureGraph is a planned feature for v0.2 and is not included in the v0.1 release.
+
 ---
 
 ### 4. LangChain Integration
 
 See [LangChain Integration Spec](./langchain-spec.md).
 
-def read_file(path: str) -> str: ...
+```python
+from tenuo.langchain import protect_tools
+from tenuo import Keypair, Warrant, Pattern
+
+# Create warrant and keypair
+keypair = Keypair.generate()
+warrant = Warrant.issue(
+    tool="search,read_file",
+    keypair=keypair,
+    holder=keypair.public_key(),
+    constraints={"path": Pattern("/data/*")},
+    ttl_seconds=3600
+)
 
 # Wrap at setup
 secure_tools = protect_tools(
     tools=[search, read_file],
-    config="tenuo.yaml",
+    warrant=warrant,
+    keypair=keypair,
+    config="tenuo.yaml",  # Optional: per-tool constraints
 )
 
 # Use in agent
@@ -315,8 +337,8 @@ get_keypair_context() -> Optional[Keypair]
 ### LangChain (`tenuo.langchain`)
 
 ```python
-protect_tools(tools, config=None) -> list[Callable]
-protect_tool(tool, name=None) -> Callable
+protect_tools(tools, warrant, keypair, config=None) -> list[Callable]
+protect_tool(tool, name=None, warrant=None, keypair=None) -> Callable
 ```
 
 ### LangGraph (`tenuo.langgraph`)
@@ -441,6 +463,19 @@ if warrant.is_expired:
 | > 1 hour | N/A | Break into subtasks |
 
 For long workflows, decompose into subtasks. Each subtask gets its own warrant from gateway.
+
+---
+
+## Error Handling
+
+Common error scenarios and recommended handling:
+
+| Scenario | Error | Handling |
+|----------|-------|----------|
+| **Warrant Expired** | `WarrantError: Warrant expired` | **Fatal**. Task must be resubmitted to gateway for a fresh warrant. Do not retry locally. |
+| **PoP Failed** | `AuthorizationError: Proof-of-Possession failed` | **Fatal**. Keypair does not match warrant holder. Check keypair configuration. |
+| **Constraint Violation** | `AuthorizationError: Warrant does not authorize...` | **Fatal**. Agent is attempting unauthorized action. Log security event and abort task. |
+| **Missing Warrant** | `AuthorizationError: No warrant available` | **Fatal**. Ensure warrant is passed explicitly or set in context. |
 
 ---
 
