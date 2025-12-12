@@ -169,14 +169,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let result = authorizer.check(&w, &tool, &args, None, &[]);
 
             match output.as_str() {
-                "exit-code" => {
-                    if result.is_ok() {
-                        std::process::exit(0);
-                    } else {
-                        eprintln!("Authorization failed: {}", result.unwrap_err());
+                "exit-code" => match result {
+                    Ok(_) => std::process::exit(0),
+                    Err(e) => {
+                        eprintln!("Authorization failed: {}", e);
                         std::process::exit(1);
                     }
-                }
+                },
                 "json" => {
                     let json = serde_json::json!({
                         "authorized": result.is_ok(),
