@@ -443,7 +443,7 @@ impl std::error::Error for ExtractionError {}
 /// # Examples
 ///
 /// ```
-/// use tenuo_core::extraction::{extract_json_path, ConstraintValue};
+/// use tenuo_core::{extraction::extract_json_path, constraints::ConstraintValue};
 /// use serde_json::json;
 ///
 /// let body = json!({

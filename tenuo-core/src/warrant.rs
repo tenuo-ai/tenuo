@@ -397,14 +397,17 @@ impl Warrant {
         }
 
         // Check tool name
-        if self.payload.tool != tool {
-            return Err(Error::ConstraintNotSatisfied {
-                field: "tool".to_string(),
-                reason: format!(
-                    "warrant is for tool '{}', not '{}'",
-                    self.payload.tool, tool
-                ),
-            });
+        if self.payload.tool != "*" {
+            let allowed_tools: Vec<&str> = self.payload.tool.split(',').map(|s| s.trim()).collect();
+            if !allowed_tools.contains(&tool) {
+                return Err(Error::ConstraintNotSatisfied {
+                    field: "tool".to_string(),
+                    reason: format!(
+                        "warrant is for tools '{:?}', not '{}'",
+                        allowed_tools, tool
+                    ),
+                });
+            }
         }
 
         // Check constraints
@@ -508,6 +511,7 @@ pub struct WarrantBuilder {
     authorized_holder: Option<PublicKey>,
     required_approvers: Option<Vec<PublicKey>>,
     min_approvals: Option<u32>,
+    id: Option<WarrantId>,
 }
 
 impl WarrantBuilder {
@@ -523,7 +527,16 @@ impl WarrantBuilder {
             authorized_holder: None,
             required_approvers: None,
             min_approvals: None,
+            id: None,
         }
+    }
+
+    /// Set a custom warrant ID.
+    /// 
+    /// If not set, a random time-ordered ID (UUIDv7) will be generated.
+    pub fn id(mut self, id: WarrantId) -> Self {
+        self.id = Some(id);
+        self
     }
 
     /// Set the tool name.
@@ -617,7 +630,7 @@ impl WarrantBuilder {
         }
 
         let payload = WarrantPayload {
-            id: WarrantId::new(),
+            id: self.id.unwrap_or_else(WarrantId::new),
             tool,
             constraints: self.constraints,
             expires_at,

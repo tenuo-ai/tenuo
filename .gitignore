@@ -1,7 +1,14 @@
 # Rust build artifacts
-target/
+/target
+**/*.rs.bk
 Cargo.lock
-
+.DS_Store
+*.key
+*.pub
+test_cli_output/
+.venv/
+verify_cli.sh
+reproduce_pickle.py
 # IDE
 .idea/
 .vscode/
