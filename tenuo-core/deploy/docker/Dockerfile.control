@@ -9,25 +9,29 @@
 # ============================================================================
 # Build stage
 # ============================================================================
-FROM rust:1.85-bookworm as builder
+# ============================================================================
+# Chef stage - Install cargo-chef
+# ============================================================================
+FROM rust:1.85-bookworm as chef
+WORKDIR /app
+RUN cargo install cargo-chef
 
-WORKDIR /build
+# ============================================================================
+# Planner stage - Compute recipe
+# ============================================================================
+FROM chef as planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
 
-# Cache dependencies
-COPY Cargo.toml Cargo.lock* ./
-# Create dummy source files to satisfy cargo fetch
-# Library and binaries (all defined in Cargo.toml)
-RUN mkdir -p src/bin benches && \
-    echo "// dummy" > src/lib.rs && \
-    echo "fn main() {}" > src/bin/control.rs && \
-    echo "fn main() {}" > src/bin/authorizer.rs && \
-    echo "fn main() {}" > src/bin/cli.rs && \
-    echo "fn main() {}" > src/bin/orchestrator.rs && \
-    echo "fn main() {}" > src/bin/worker.rs && \
-    echo "fn main() {}" > benches/warrant_benchmarks.rs
-RUN cargo fetch
+# ============================================================================
+# Builder stage - Build dependencies and app
+# ============================================================================
+FROM chef as builder
+COPY --from=planner /app/recipe.json recipe.json
+# Build dependencies - this is cached if recipe.json doesn't change
+RUN cargo chef cook --release --recipe-path recipe.json --features "control-plane,server"
 
-# Build the actual binary
+# Build application
 COPY . .
 RUN cargo build --release --bin tenuo-control --features "control-plane,server"
 
