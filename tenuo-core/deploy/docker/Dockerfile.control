@@ -50,7 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN useradd -m -u 1000 tenuo
 
 # Copy binary
-COPY --from=builder /build/target/release/tenuo-control /usr/local/bin/
+COPY --from=builder /app/target/release/tenuo-control /usr/local/bin/
 
 # Set ownership
 RUN chown tenuo:tenuo /usr/local/bin/tenuo-control

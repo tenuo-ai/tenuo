@@ -21,7 +21,8 @@ from tenuo import (
 # Try to import LangChain
 try:
     from langchain_core.tools import Tool
-    from langchain.agents import AgentExecutor, create_openai_tools_agent
+    from langchain.agents.agent import AgentExecutor
+    from langchain.agents.openai_tools.base import create_openai_tools_agent
     from langchain_openai import ChatOpenAI
     LANGCHAIN_AVAILABLE = True
 except ImportError:

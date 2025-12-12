@@ -31,8 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /build/target/release/tenuo-orchestrator /usr/local/bin/
-COPY --from=builder /build/target/release/tenuo-worker /usr/local/bin/
+COPY --from=builder /app/target/release/tenuo-orchestrator /usr/local/bin/
+COPY --from=builder /app/target/release/tenuo-worker /usr/local/bin/
 
 # Create a directory for shared data
 RUN mkdir -p /data && chmod 777 /data

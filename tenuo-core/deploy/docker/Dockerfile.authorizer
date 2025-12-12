@@ -44,7 +44,7 @@ RUN cargo build --release --bin tenuo-authorizer --features "data-plane,server"
 FROM gcr.io/distroless/cc-debian12
 
 # Copy binary
-COPY --from=builder /build/target/release/tenuo-authorizer /tenuo-authorizer
+COPY --from=builder /app/target/release/tenuo-authorizer /tenuo-authorizer
 
 # Run as non-root
 USER 1000
