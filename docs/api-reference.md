@@ -2,6 +2,8 @@
 
 Complete API documentation for the Tenuo Python SDK.
 
+> **Note**: This reference documents the current Python SDK. For removed features (GatewayConfig, RevocationManager, SecureGraph, etc.), see the Git history or Rust API documentation.
+
 ## Table of Contents
 
 - [Core Types](#core-types)
@@ -10,27 +12,10 @@ Complete API documentation for the Tenuo Python SDK.
   - [Signature](#signature)
   - [Warrant](#warrant)
   - [Authorizer](#authorizer)
-  - [Approval](#approval)
 - [Constraints](#constraints)
-  - [Basic Constraints](#basic-constraints)
-  - [List Constraints](#list-constraints)
-  - [Composite Constraints](#composite-constraints)
-- [Revocation](#revocation)
-  - [RevocationManager](#revocationmanager)
-  - [SignedRevocationList](#signedrevocationlist)
-  - [SrlBuilder](#srlbuilder)
-- [Gateway / MCP](#gateway--mcp)
-  - [GatewayConfig](#gatewayconfig)
-  - [CompiledGatewayConfig](#compiledgatewayconfig)
+- [MCP Integration](#mcp-integration)
 - [Decorators & Context](#decorators--context)
-  - [lockdown](#lockdown)
-  - [Context Functions](#context-functions)
-- [Audit Logging](#audit-logging)
-  - [AuditLogger](#auditlogger)
-  - [AuditEvent](#auditevent)
-  - [AuditEventType](#auditeventtype)
 - [Exceptions](#exceptions)
-- [Constants](#constants)
 
 ---
 
@@ -61,24 +46,6 @@ from tenuo import Keypair
 | `sign(message: bytes)` | `Signature` | Sign a message |
 
 ⚠️ **Security Warning**: `secret_key_bytes()` copies secret material to Python memory. Minimize use.
-
-#### Example
-
-```python
-# Generate keypair
-kp = Keypair.generate()
-
-# Get public key for sharing
-pub = kp.public_key()
-pub_bytes = kp.public_key_bytes()
-
-# Sign a message
-sig = kp.sign(b"hello world")
-
-# Reconstruct from bytes (for key storage/recovery)
-secret = kp.secret_key_bytes()
-restored = Keypair.from_bytes(secret)
-```
 
 ---
 
@@ -144,16 +111,13 @@ from tenuo import Warrant
 
 #### `Warrant.create()` Parameters
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `tool` | `str` | Yes | Tool name (or `"*"` for wildcard) |
-| `constraints` | `dict[str, Constraint]` | Yes | Constraint mappings |
-| `ttl_seconds` | `int` | Yes | Time-to-live in seconds |
-| `keypair` | `Keypair` | Yes | Signing keypair |
-| `session_id` | `str` | No | Session/trace identifier |
-| `authorized_holder` | `PublicKey` | No | PoP binding (recommended!) |
-| `required_approvers` | `list[PublicKey]` | No | M-of-N approval keys |
-| `min_approvals` | `int` | No | Minimum approvals needed |
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `tool` | `str` | Yes | - | Tool name (or `"*"` for wildcard) |
+| `constraints` | `dict[str, Constraint]` | No | `None` | Constraint mappings |
+| `ttl_seconds` | `int` | No | `3600` | Time-to-live in seconds |
+| `keypair` | `Keypair` | Yes | - | Signing keypair |
+| `session_id` | `str` | No | `None` | Session/trace identifier |
 
 #### Instance Properties
 
@@ -162,8 +126,7 @@ from tenuo import Warrant
 | `id` | `str` | Unique warrant ID |
 | `tool` | `str` | Tool this warrant authorizes |
 | `depth` | `int` | Delegation depth (0 = root) |
-| `session_id` | `str` | Session identifier |
-| `requires_pop` | `bool` | Whether PoP is required |
+| `session_id` | `str \| None` | Session identifier |
 | `authorized_holder` | `PublicKey \| None` | Bound holder's public key |
 | `expires_at` | `str` | Expiration time (RFC3339) |
 
@@ -177,22 +140,10 @@ from tenuo import Warrant
 | `create_pop_signature(keypair, tool, args)` | `Signature` | Create PoP signature |
 | `to_base64()` | `str` | Serialize to base64 |
 
-#### `attenuate()` Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `constraints` | `dict[str, Constraint]` | Yes | Narrower constraints |
-| `keypair` | `Keypair` | Yes | Signing keypair |
-| `tool` | `str` | No | New tool (if parent is `"*"`) |
-| `ttl_seconds` | `int` | No | Shorter TTL |
-| `authorized_holder` | `PublicKey` | No | PoP binding for child |
-| `add_approvers` | `list[PublicKey]` | No | Additional approvers |
-| `raise_min_approvals` | `int` | No | Higher approval threshold |
-
 #### Example
 
 ```python
-from tenuo import Warrant, Keypair, Pattern, Exact, Range
+from tenuo import Warrant, Keypair, Pattern, Exact
 
 # Create root warrant
 root_kp = Keypair.generate()
@@ -202,46 +153,35 @@ root = Warrant.create(
     tool="manage_infrastructure",
     constraints={
         "cluster": Pattern("staging-*"),
-        "budget": Range.max_value(10000.0),
     },
     ttl_seconds=3600,
     keypair=root_kp,
-    authorized_holder=agent_kp.public_key(),  # PoP binding
 )
 
 # Attenuate for sub-agent
 child = root.attenuate(
-    constraints={
-        "cluster": Exact("staging-web"),
-        "budget": Range.max_value(1000.0),
-    },
+    constraints={"cluster": Exact("staging-web")},
     keypair=agent_kp,
-    ttl_seconds=300,
 )
 
 # Authorize with PoP
 pop_sig = child.create_pop_signature(
     agent_kp, 
     "manage_infrastructure", 
-    {"cluster": "staging-web", "budget": 500.0}
+    {"cluster": "staging-web"}
 )
 result = child.authorize(
     "manage_infrastructure",
-    {"cluster": "staging-web", "budget": 500.0},
+    {"cluster": "staging-web"},
     signature=pop_sig
 )
-print(f"Authorized: {result}")  # True
-
-# Serialize for transmission
-b64 = child.to_base64()
-restored = Warrant.from_base64(b64)
 ```
 
 ---
 
 ### Authorizer
 
-Centralized authorization with revocation support.
+Centralized authorization with chain verification.
 
 ```python
 from tenuo import Authorizer
@@ -260,18 +200,14 @@ from tenuo import Authorizer
 | `authorize(warrant, tool, args, signature?, approvals?)` | `None` | Authorize (raises on failure) |
 | `verify_chain(warrants: list)` | `ChainVerificationResult` | Verify delegation chain |
 | `check_chain(warrants, tool, args, signature?, approvals?)` | `ChainVerificationResult` | Verify chain + authorize |
-| `set_revocation_list(srl, expected_issuer)` | `None` | Load revocation list |
 
 #### Example
 
 ```python
-from tenuo import Authorizer, Keypair, Warrant
+from tenuo import Authorizer, Keypair
 
 cp_kp = Keypair.generate()
 authorizer = Authorizer.new(cp_kp.public_key())
-
-# With revocation
-authorizer.set_revocation_list(srl, cp_kp.public_key())
 
 # Verify full delegation chain
 result = authorizer.verify_chain([root_warrant, child_warrant])
@@ -288,353 +224,144 @@ authorizer.check_chain(
 
 ---
 
-### Approval
-
-Multi-signature approval for M-of-N authorization.
-
-```python
-from tenuo import Approval
-```
-
-#### Class Methods
-
-| Method | Description |
-|--------|-------------|
-| `Approval.create(...)` | Create a signed approval |
-
-#### `Approval.create()` Parameters
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `warrant_id` | `str` | Yes | ID of warrant being approved |
-| `tool` | `str` | Yes | Tool being authorized |
-| `args` | `dict` | Yes | Arguments being approved |
-| `approver_key` | `Keypair` | Yes | Approver's keypair |
-| `external_id` | `str` | Yes | External identity (e.g., email) |
-| `provider` | `str` | Yes | Identity provider (e.g., "okta") |
-| `ttl_seconds` | `int` | Yes | Approval validity period |
-| `reason` | `str` | No | Approval reason |
-| `authorized_holder` | `PublicKey` | No | PoP binding |
-
-#### Example
-
-```python
-from tenuo import Approval, Keypair
-
-admin_kp = Keypair.generate()
-
-approval = Approval.create(
-    warrant_id=warrant.id,
-    tool="delete_database",
-    args={"db_name": "production"},
-    approver_key=admin_kp,
-    external_id="admin@company.com",
-    provider="okta",
-    ttl_seconds=300,
-    reason="Approved for maintenance"
-)
-
-# Use with authorizer
-authorizer.authorize(
-    warrant, "delete_database", args,
-    signature=pop_sig,
-    approvals=[approval]
-)
-```
-
----
-
 ## Constraints
 
-### Basic Constraints
-
-#### Wildcard
-
-Matches any value. Universal superset for attenuation.
+All constraint types for fine-grained authorization.
 
 ```python
-from tenuo import Wildcard
-
-Wildcard()  # Matches everything
+from tenuo import (
+    Pattern,    # Glob patterns: "staging-*"
+    Exact,      # Exact match: "production"
+    Range,      # Numeric ranges: Range(0, 100)
+    OneOf,      # Allowlist: OneOf(["read", "write"])
+    NotOneOf,   # Denylist: NotOneOf(["admin"])
+    Contains,   # List contains: Contains(["admin"])
+    Subset,     # List subset: Subset(["read", "write"])
+    All,        # AND logic: All([constraint1, constraint2])
+    AnyOf,      # OR logic: AnyOf([constraint1, constraint2])
+    Not,        # Negation: Not(constraint)
+    Cel,        # CEL expressions: Cel('value > 0')
+)
 ```
 
-#### Pattern
+### Pattern
 
 Glob-style pattern matching.
 
 ```python
-from tenuo import Pattern
-
-Pattern("staging-*")     # Matches staging-web, staging-db, etc.
-Pattern("/tmp/**")       # Matches /tmp/foo, /tmp/foo/bar, etc.
-Pattern("user-?")        # Matches user-1, user-a, etc.
+Pattern("staging-*")     # Matches staging-web, staging-db
+Pattern("/tmp/**")       # Matches /tmp/foo, /tmp/foo/bar
 ```
 
-#### Regex
-
-Regular expression matching.
-
-```python
-from tenuo import Regex
-
-Regex(r"^prod-[a-z]+$")  # Matches prod-web, prod-api
-Regex(r"\d{4}-\d{2}")    # Matches 2024-01, etc.
-```
-
-#### Exact
+### Exact
 
 Exact string match.
 
 ```python
-from tenuo import Exact
-
 Exact("production")      # Only matches "production"
 ```
 
-#### OneOf
-
-Value must be in allowed set.
-
-```python
-from tenuo import OneOf
-
-OneOf(["read", "write", "delete"])  # Must be one of these
-```
-
-#### NotOneOf
-
-Value must NOT be in excluded set. Use for "carving holes".
-
-```python
-from tenuo import NotOneOf
-
-NotOneOf(["admin", "root"])  # Anything except these
-```
-
-⚠️ **Security**: Never start with negation. Use positive allowlist first.
-
-#### Range
+### Range
 
 Numeric range constraints.
 
 ```python
-from tenuo import Range
-
 Range(min=0, max=100)    # 0 <= value <= 100
 Range.min_value(10)      # value >= 10
 Range.max_value(1000)    # value <= 1000
 ```
 
-#### CEL
+### OneOf / NotOneOf
+
+Set membership.
+
+```python
+OneOf(["read", "write", "delete"])  # Must be one of these
+NotOneOf(["admin", "root"])         # Anything except these
+```
+
+⚠️ **Security**: Always start with positive allowlist, use NotOneOf sparingly.
+
+### Contains / Subset
+
+List constraints.
+
+```python
+Contains(["admin"])                      # List must include "admin"
+Subset(["read", "write", "admin"])      # Only these values allowed
+```
+
+### All / AnyOf / Not
+
+Composite logic.
+
+```python
+All([Range.min_value(0), Range.max_value(100)])  # AND
+AnyOf([Exact("admin"), Exact("superuser")])      # OR
+Not(Exact("blocked"))                             # Negation
+```
+
+### Cel
 
 Common Expression Language for complex logic.
 
 ```python
-from tenuo import CEL
-
-CEL('value.startsWith("staging") && size(value) < 20')
-CEL('value > 0 && value <= 1000')
+Cel('value.startsWith("staging") && size(value) < 20')
+Cel('value > 0 && value <= 1000')
 ```
 
 ---
 
-### List Constraints
+## MCP Integration
 
-#### Contains
-
-List must contain all required values.
+Native support for [Model Context Protocol](https://modelcontextprotocol.io).
 
 ```python
-from tenuo import Contains
-
-Contains(["admin"])  # List must include "admin"
+from tenuo import McpConfig, CompiledMcpConfig
 ```
 
-#### Subset
+### McpConfig
 
-List must be subset of allowed values.
+Load MCP configuration from YAML.
 
 ```python
-from tenuo import Subset
-
-Subset(["read", "write", "admin"])  # Only these values allowed
+config = McpConfig.from_file("mcp-config.yaml")
 ```
 
----
+### CompiledMcpConfig
 
-### Composite Constraints
-
-#### All
-
-All nested constraints must match (AND).
+Compiled configuration for fast constraint extraction.
 
 ```python
-from tenuo import All, Range
-
-All([Range.min_value(0), Range.max_value(100)])  # 0 <= x <= 100
-```
-
-#### AnyOf
-
-At least one constraint must match (OR).
-
-```python
-from tenuo import AnyOf, Exact
-
-AnyOf([Exact("admin"), Exact("superuser")])  # Either one
-```
-
-#### Not
-
-Negation of a constraint.
-
-```python
-from tenuo import Not, Exact
-
-Not(Exact("blocked"))  # Anything except "blocked"
-```
-
-⚠️ **Security**: Prefer `NotOneOf` over `Not`. Be careful with negation.
-
----
-
-## Revocation
-
-### RevocationManager
-
-Manages warrant revocation requests and SRL generation.
-
-```python
-from tenuo import RevocationManager
-```
-
-#### Methods
-
-| Method | Description |
-|--------|-------------|
-| `submit_request(...)` | Submit a revocation request |
-| `pending_ids()` | Get list of pending warrant IDs |
-| `generate_srl(keypair, version)` | Generate signed revocation list |
-
-#### Example
-
-```python
-from tenuo import RevocationManager, Keypair
-import datetime
-
-manager = RevocationManager()
-
-# Submit revocation
-expires_at = (datetime.datetime.utcnow() + datetime.timedelta(hours=1)).isoformat() + "Z"
-manager.submit_request(
-    warrant_id=warrant.id,
-    reason="Key compromise",
-    warrant_issuer=issuer_kp.public_key(),
-    warrant_expires_at=expires_at,
-    control_plane_key=cp_kp.public_key(),
-    revocation_keypair=issuer_kp,
-    warrant_holder=None
-)
-
-# Generate SRL
-srl = manager.generate_srl(cp_kp, version=1)
-```
-
----
-
-### SignedRevocationList
-
-Signed list of revoked warrant IDs.
-
-#### Properties
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `version` | `int` | SRL version number |
-
-#### Methods
-
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `revoked_ids()` | `list[str]` | List of revoked warrant IDs |
-
----
-
-### SrlBuilder
-
-Build revocation lists manually.
-
-```python
-from tenuo import SrlBuilder
-
-builder = SrlBuilder()
-builder.add_warrant_id("wrt_123")
-builder.add_warrant_id("wrt_456")
-srl = builder.build(cp_keypair, version=1)
-```
-
----
-
-## Gateway / MCP
-
-### GatewayConfig
-
-Load gateway configuration from YAML.
-
-```python
-from tenuo import GatewayConfig
-
-config = GatewayConfig.from_yaml(yaml_string)
-```
-
-#### Properties
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `version` | `str` | Config version |
-
----
-
-### CompiledGatewayConfig
-
-Compiled configuration for fast route matching.
-
-```python
-from tenuo import CompiledGatewayConfig
-
-compiled = CompiledGatewayConfig.compile(config)
+compiled = CompiledMcpConfig.compile(config)
 ```
 
 #### Methods
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `extract(method, path, headers, query, body)` | `tuple[str, dict] \| None` | Extract tool and constraints |
+| `extract_constraints(tool, arguments)` | `ExtractionResult` | Extract constraints from MCP tool call |
 
 #### Example
 
 ```python
-yaml_config = """
-version: "1.0"
-routes:
-  - pattern: "/api/v1/users/{user_id}"
-    method: ["GET"]
-    tool: "read_user"
-    extra_constraints:
-      user_id:
-        from: "path"
-        path: "user_id"
-"""
+from tenuo import McpConfig, CompiledMcpConfig, Warrant
 
-config = GatewayConfig.from_yaml(yaml_config)
-compiled = CompiledGatewayConfig.compile(config)
+# Load MCP configuration
+config = McpConfig.from_file("mcp-config.yaml")
+compiled = CompiledMcpConfig.compile(config)
 
-result = compiled.extract("GET", "/api/v1/users/alice", {}, {}, None)
-if result:
-    tool, constraints = result
-    print(f"Tool: {tool}")  # "read_user"
-    print(f"Constraints: {constraints}")  # {"user_id": "alice"}
+# Extract constraints from MCP tool call
+arguments = {"path": "/var/log/app.log", "maxSize": 1024}
+result = compiled.extract_constraints("filesystem_read", arguments)
+
+# Authorize
+warrant = Warrant.from_base64(warrant_base64)
+pop_sig = warrant.create_pop_signature(keypair, "filesystem_read", result.constraints)
+authorized = warrant.authorize("filesystem_read", result.constraints, pop_sig)
 ```
+
+See `examples/mcp_integration.py` for a complete example.
 
 ---
 
@@ -652,42 +379,33 @@ from tenuo import lockdown
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `warrant` | `Warrant` | No* | Explicit warrant |
 | `tool` | `str` | Yes | Tool name for authorization |
-| `keypair` | `Keypair` | No | Keypair for PoP |
+| `warrant` | `Warrant` | No* | Explicit warrant |
+| `keypair` | `Keypair` | No* | Keypair for PoP |
 | `mapping` | `dict[str, str]` | No | Arg name → constraint name mapping |
 | `extract_args` | `Callable` | No | Custom arg extraction function |
 
-*If no warrant provided, uses context.
+*If not provided, uses context.
 
 #### Patterns
 
 **Explicit warrant:**
 ```python
-@lockdown(warrant, tool="read_file", keypair=agent_kp)
+@lockdown(warrant=warrant, tool="read_file", keypair=agent_kp)
 def read_file(path: str) -> str:
     return open(path).read()
 ```
 
-**Context-based:**
+**Context-based (recommended for LangChain/FastAPI):**
 ```python
 @lockdown(tool="read_file")
 def read_file(path: str) -> str:
     return open(path).read()
 
 # Use with context
-with set_warrant_context(warrant), set_keypair_context(keypair):
+with set_warrant_context(warrant):
     read_file("/tmp/test.txt")
 ```
-
-**With argument mapping:**
-```python
-@lockdown(warrant, tool="manage", mapping={"target_env": "cluster"})
-def deploy(target_env: str):  # target_env maps to "cluster" constraint
-    ...
-```
-
----
 
 ### Context Functions
 
@@ -695,8 +413,7 @@ def deploy(target_env: str):  # target_env maps to "cluster" constraint
 from tenuo import (
     set_warrant_context,
     get_warrant_context,
-    set_keypair_context,
-    get_keypair_context,
+    WarrantContext,
 )
 ```
 
@@ -704,8 +421,6 @@ from tenuo import (
 |----------|---------|-------------|
 | `set_warrant_context(warrant)` | Context manager | Set warrant in async-safe context |
 | `get_warrant_context()` | `Warrant \| None` | Get current warrant |
-| `set_keypair_context(keypair)` | Context manager | Set keypair for PoP |
-| `get_keypair_context()` | `Keypair \| None` | Get current keypair |
 
 #### Example
 
@@ -717,122 +432,43 @@ with set_warrant_context(warrant), set_keypair_context(keypair):
 
 ---
 
-## Audit Logging
-
-### AuditLogger
-
-Global logger for security events.
-
-```python
-from tenuo import audit_logger
-```
-
-#### Methods
-
-| Method | Description |
-|--------|-------------|
-| `configure(...)` | Configure logging settings |
-| `log(event: AuditEvent)` | Log an event |
-| `authorization_success(...)` | Log successful auth |
-| `authorization_failure(...)` | Log failed auth |
-
-#### `configure()` Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `enabled` | `bool` | `True` | Enable/disable logging |
-| `service_name` | `str` | `"tenuo-python"` | Service name in events |
-| `handler` | `Callable` | None | Custom event handler |
-| `use_python_logging` | `bool` | `False` | Use Python's logging module |
-| `logger_name` | `str` | `"tenuo.audit"` | Logger name |
-
----
-
-### AuditEvent
-
-Structured audit event.
-
-```python
-from tenuo import AuditEvent, AuditEventType
-```
-
-#### Fields
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `event_type` | `AuditEventType` | Type of event |
-| `id` | `str` | Auto-generated event ID |
-| `severity` | `AuditSeverity` | Auto-inferred severity |
-| `timestamp` | `str` | ISO8601 timestamp |
-| `service` | `str` | Service name |
-| `trace_id` | `str` | Correlation ID |
-| `warrant_id` | `str` | Related warrant |
-| `tool` | `str` | Tool name |
-| `action` | `str` | Action performed |
-| `constraints` | `dict` | Constraints checked |
-| `actor` | `str` | Actor identifier |
-| `details` | `str` | Human-readable details |
-| `error_code` | `str` | Error code (failures) |
-
----
-
-### AuditEventType
-
-```python
-from tenuo import AuditEventType
-```
-
-| Event Type | Severity | Description |
-|------------|----------|-------------|
-| `AUTHORIZATION_SUCCESS` | INFO | Authorization granted |
-| `AUTHORIZATION_FAILURE` | ERROR | Authorization denied |
-| `WARRANT_CREATED` | INFO | New warrant issued |
-| `WARRANT_ATTENUATED` | INFO | Warrant narrowed |
-| `WARRANT_VERIFIED` | INFO | Signature verified |
-| `WARRANT_EXPIRED` | WARNING | Warrant expired |
-| `CONTEXT_SET` | INFO | Context activated |
-| `CONTEXT_CLEARED` | INFO | Context deactivated |
-| `POP_VERIFIED` | INFO | PoP signature valid |
-| `POP_FAILED` | ERROR | PoP signature invalid |
-| `ENROLLMENT_SUCCESS` | INFO | Agent enrolled |
-| `ENROLLMENT_FAILURE` | ERROR | Enrollment failed |
-
----
-
 ## Exceptions
 
+Pythonic exceptions for error handling.
+
 ```python
-from tenuo import (
-    TenuoError,           # Base exception
-    WarrantError,         # Warrant operations failed
-    AuthorizationError,   # Authorization check failed
-    ConstraintError,      # Constraint validation failed
-    ConfigurationError,   # Invalid configuration
-)
+from tenuo import TenuoError, AuthorizationError, WarrantError
 ```
 
-All exceptions inherit from `TenuoError`.
+### Exception Hierarchy
+
+```
+TenuoError (base)
+├── AuthorizationError    # Authorization failed
+└── WarrantError          # Warrant creation/validation failed
+```
+
+### Example
+
+```python
+try:
+    warrant.authorize("tool", args, signature)
+except AuthorizationError as e:
+    print(f"Authorization failed: {e}")
+except WarrantError as e:
+    print(f"Warrant error: {e}")
+```
 
 ---
 
-## Constants
+## See Also
 
-```python
-from tenuo import (
-    MAX_DELEGATION_DEPTH,  # Maximum delegation chain depth (64)
-    MAX_CONSTRAINT_DEPTH,  # Maximum constraint nesting depth
-    WIRE_VERSION,          # Wire protocol version
-    WARRANT_HEADER,        # HTTP header name ("X-Tenuo-Warrant")
-)
-```
+- **[CLI Specification](cli-spec.md)**: Complete CLI reference
+- **[Rust API](https://docs.rs/tenuo-core)**: Full Rust API documentation
+- **[Examples](../tenuo-python/examples/)**: Python usage examples
+- **[Website](https://tenuo.github.io/tenuo/)**: Landing page and guides
 
 ---
 
-## LangChain / LangGraph Extensions
-
-See also:
-- `tenuo.langchain.protect_tools()` - Wrap tools for single-agent
-- `tenuo.langchain.protect_tool()` - Wrap single tool
-- `tenuo.langgraph.SecureGraph` - Multi-agent warrant management
-
-Refer to [examples/](../examples/README.md) for complete usage patterns.
+**Last Updated**: 2025-12-11  
+**SDK Version**: 0.1.x

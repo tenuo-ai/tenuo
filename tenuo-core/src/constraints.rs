@@ -44,7 +44,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::cell::Cell;
 
 thread_local! {
-    static DESERIALIZATION_DEPTH: Cell<usize> = Cell::new(0);
+    static DESERIALIZATION_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
 struct DepthGuard;

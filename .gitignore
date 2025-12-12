@@ -1,5 +1,5 @@
 # Rust build artifacts
-/target
+target/
 **/*.rs.bk
 Cargo.lock
 .DS_Store
@@ -42,4 +42,8 @@ build/
 # Test artifacts
 *.profraw
 coverage/
+
+# Test output artifacts
+test_failures.txt
+test_output.txt
 

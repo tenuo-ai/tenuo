@@ -208,6 +208,7 @@ python examples/mcp_integration.py
 ## Documentation
 
 - **[Website](https://tenuo.github.io/tenuo/)**: Landing page and guides
+- **[CLI Specification](../docs/cli-spec.md)**: Complete CLI reference
 - **[Rust API](https://docs.rs/tenuo-core)**: Full Rust API documentation
 - **[Examples](examples/)**: Python usage examples
 

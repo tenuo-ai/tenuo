@@ -257,26 +257,29 @@ pub struct PyWarrant {
 impl PyWarrant {
     /// Create a new warrant builder.
     #[staticmethod]
-    #[pyo3(signature = (tool, constraints, ttl_seconds, keypair, session_id=None))]
+    #[pyo3(signature = (tool, constraints=None, ttl_seconds=3600, keypair, session_id=None))]
     fn create(
         tool: &str,
-        constraints: &Bound<'_, PyDict>,
+        constraints: Option<&Bound<'_, PyDict>>,
         ttl_seconds: u64,
         keypair: &PyKeypair,
         session_id: Option<&str>,
     ) -> PyResult<Self> {
         let mut builder = RustWarrant::builder()
             .tool(tool)
-            .ttl(Duration::from_secs(ttl_seconds));
+            .ttl(Duration::from_secs(ttl_seconds))
+            .authorized_holder(keypair.inner.public_key());
 
         if let Some(sid) = session_id {
             builder = builder.session_id(sid);
         }
 
-        for (key, value) in constraints.iter() {
-            let field: String = key.extract()?;
-            let constraint = py_to_constraint(&value)?;
-            builder = builder.constraint(field, constraint);
+        if let Some(constraints_dict) = constraints {
+            for (key, value) in constraints_dict.iter() {
+                let field: String = key.extract()?;
+                let constraint = py_to_constraint(&value)?;
+                builder = builder.constraint(field, constraint);
+            }
         }
 
         let warrant = builder.build(&keypair.inner).map_err(to_py_err)?;

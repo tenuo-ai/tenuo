@@ -305,8 +305,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             handle_verify(payload, warrant, signature, tool, trusted_issuer, at, json, quiet)?;
         }
-        Commands::Inspect { warrant, json, verify, chain } => {
-            handle_inspect(warrant, json, verify, chain)?;
+        Commands::Inspect { warrant, json, verify, chain: _ } => {
+            let mut warrants = Vec::new();
+            for w_str in &warrant {
+                warrants.push(read_warrant(w_str)?);
+            }
+            handle_inspect(warrants, json, verify)?;
         }
         Commands::Extract {
             config,
@@ -341,10 +345,10 @@ fn parse_duration(s: &str) -> Result<Duration, String> {
 
     let (num_str, unit) = if s.ends_with('s') && !s.ends_with("ms") {
         (&s[..s.len() - 1], "s")
-    } else if s.ends_with('m') {
-        (&s[..s.len() - 1], "m")
-    } else if s.ends_with('h') {
-        (&s[..s.len() - 1], "h")
+    } else if let Some(stripped) = s.strip_suffix('m') {
+        (stripped, "m")
+    } else if let Some(stripped) = s.strip_suffix('h') {
+        (stripped, "h")
     } else {
         // Assume seconds if no unit
         (s, "s")
@@ -690,14 +694,19 @@ fn json_to_constraint(v: &serde_json::Value) -> Result<Constraint, Box<dyn std::
     Err("Invalid constraint JSON format".into())
 }
 
-/// Read warrant from string or stdin
+/// Read warrant from string or file path.
+///
+/// This function intentionally supports both:
+/// - Direct base64-encoded warrant strings
+/// - File paths containing warrant data (for CLI convenience)
+///
+/// If the input is a valid file path, the file contents are read.
+/// Otherwise, the input is treated as a base64-encoded warrant string.
 fn read_warrant(input: &str) -> Result<Warrant, Box<dyn std::error::Error>> {
     let path = Path::new(input);
     let exists = path.exists();
-    // eprintln!("DEBUG: read_warrant input='{}', exists={}", input, exists);
-    
     let content = if exists {
-        fs::read_to_string(input)?.trim().to_string()
+        fs::read_to_string(input)?
     } else {
         input.trim().to_string()
     };
@@ -751,14 +760,13 @@ fn handle_keygen(
         let private_path = PathBuf::from(format!("{}.key", base_name));
         let public_path = PathBuf::from(format!("{}.pub", base_name));
         
-        if !force {
-            if private_path.exists() || public_path.exists() {
+        if !force
+            && (private_path.exists() || public_path.exists()) {
                 return Err(format!(
                     "Files exist: {}.key or {}.pub. Use --force to overwrite.",
                     base_name, base_name
                 ).into());
             }
-        }
         
         fs::write(&private_path, encode_private_key_pem(&keypair)?)?;
         fs::write(&public_path, encode_public_key_pem(&pubkey)?)?;
@@ -773,6 +781,7 @@ fn handle_keygen(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_issue(
     signing_key: PathBuf,
     holder: String,
@@ -835,6 +844,7 @@ fn handle_issue(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_attenuate(
     warrant: String,
     signing_key: PathBuf,
@@ -1035,6 +1045,7 @@ fn json_to_constraint_value(v: &serde_json::Value) -> Result<ConstraintValue, Bo
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_verify(
     payload: String,
     warrant: Vec<String>,
@@ -1056,7 +1067,7 @@ fn handle_verify(
     }
     
     // The leaf warrant is the last one in the chain (or the only one)
-    let leaf_warrant = warrants.last().unwrap();
+    let leaf_warrant = warrants.last().expect("Warrants vector should not be empty at this point");
     
     // Decode signature
     let sig_bytes = base64::Engine::decode(
@@ -1117,11 +1128,24 @@ fn handle_verify(
             }
         }
     } else {
-        match data_plane.verify(leaf_warrant) {
-            Ok(_) => chain_valid = true,
-            Err(e) => {
-                chain_valid = false;
-                chain_error = Some(e.to_string());
+        // Single warrant verification
+        if trusted_any {
+            // Production mode: verify signature AND trust
+            match data_plane.verify(leaf_warrant) {
+                Ok(_) => chain_valid = true,
+                Err(e) => {
+                    chain_valid = false;
+                    chain_error = Some(e.to_string());
+                }
+            }
+        } else {
+            // Debugging mode: verify signature only (no trust check)
+            match leaf_warrant.verify_signature() {
+                Ok(_) => chain_valid = true,
+                Err(e) => {
+                    chain_valid = false;
+                    chain_error = Some(e.to_string());
+                }
             }
         }
     }
@@ -1240,28 +1264,21 @@ fn handle_verify(
 }
 
 fn handle_inspect(
-    warrant: Vec<String>,
+    warrants: Vec<Warrant>,
     json: bool,
     verify: bool,
-    chain: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-
-    // Parse all warrants
-    let mut warrants = Vec::new();
-    for w_str in &warrant {
-        warrants.push(read_warrant(w_str)?);
-    }
     
     if warrants.is_empty() {
         return Err("No warrants provided".into());
     }
     
     // The leaf warrant is the last one in the chain (or the only one)
-    let leaf_warrant = warrants.last().unwrap();
+    let warrant = warrants.last().expect("Warrants vector should not be empty at this point");
     
     if verify {
-        if leaf_warrant.is_expired() {
-            eprintln!("❌ EXPIRED: Warrant expired at {}", leaf_warrant.expires_at());
+        if warrant.is_expired() {
+            eprintln!("❌ EXPIRED: Warrant expired at {}", warrant.expires_at());
             std::process::exit(2);
         }
         
@@ -1284,7 +1301,7 @@ fn handle_inspect(
             }
             println!("{}", serde_json::to_string_pretty(&chain_json)?);
         } else {
-            println!("{}", serde_json::to_string_pretty(&warrant_to_json(leaf_warrant))?);
+            println!("{}", serde_json::to_string_pretty(&warrant_to_json(warrant))?);
         }
     } else {
         println!("──────────────────────────────────────────────────");
@@ -1350,6 +1367,7 @@ fn warrant_to_json(w: &Warrant) -> serde_json::Value {
     json
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_extract(
     config_path: PathBuf,
     request: String,
@@ -1364,8 +1382,7 @@ fn handle_extract(
     let config = GatewayConfig::from_file(&config_path)?;
 
     // Parse request body
-    let body: serde_json::Value = if request.starts_with('@') {
-        let file_path = &request[1..];
+    let body: serde_json::Value = if let Some(file_path) = request.strip_prefix('@') {
         let content = fs::read_to_string(file_path)?;
         serde_json::from_str(&content)?
     } else {
@@ -1476,8 +1493,8 @@ fn handle_extract(
                 Ok(r) => {
                     println!("📋 Extraction Results:\n");
                     println!(
-                        "   {:<20} {:<10} {:<25} {:<10} {}",
-                        "Field", "Source", "Path", "Required", "Result"
+                        "   {:<20} {:<10} {:<25} {:<10} Result",
+                        "Field", "Source", "Path", "Required"
                     );
                     println!("   {}", "─".repeat(85));
 
@@ -1507,7 +1524,7 @@ fn handle_extract(
 
                         // Show hint on failure
                         if trace.result.is_none() && trace.hint.is_some() && verbose {
-                            println!("      └── 💡 {}", trace.hint.as_ref().unwrap());
+                            println!("      └── 💡 {}", trace.hint.as_ref().expect("hint should be present when is_some() is true"));
                         }
                     }
 

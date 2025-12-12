@@ -374,6 +374,14 @@ impl Warrant {
             ));
         }
 
+        self.verify_signature()
+    }
+
+    /// Verify the warrant signature without checking the issuer.
+    ///
+    /// This verifies that the signature is valid for the payload and the issuer key
+    /// contained within the warrant itself. It does NOT verify that the issuer is trusted.
+    pub fn verify_signature(&self) -> Result<()> {
         // Use the stored payload bytes for verification (ensures determinism)
         self.payload.issuer.verify(&self.payload_bytes, &self.signature)
     }
@@ -629,8 +637,12 @@ impl WarrantBuilder {
             }
         }
 
+        let authorized_holder = self.authorized_holder.ok_or_else(|| {
+            Error::Validation("authorized_holder is required (Mandatory PoP)".into())
+        })?;
+
         let payload = WarrantPayload {
-            id: self.id.unwrap_or_else(WarrantId::new),
+            id: self.id.unwrap_or_default(),
             tool,
             constraints: self.constraints,
             expires_at,
@@ -640,7 +652,7 @@ impl WarrantBuilder {
             session_id: self.session_id,
             agent_id: self.agent_id,
             issuer: keypair.public_key(),
-            authorized_holder: self.authorized_holder,
+            authorized_holder: Some(authorized_holder),
             required_approvers: self.required_approvers,
             min_approvals: self.min_approvals,
         };
@@ -909,6 +921,7 @@ mod tests {
             .tool("upgrade_cluster")
             .constraint("cluster", Pattern::new("staging-*").unwrap())
             .ttl(Duration::from_secs(600))
+            .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -925,6 +938,7 @@ mod tests {
         let warrant = Warrant::builder()
             .tool("test")
             .ttl(Duration::from_secs(60))
+            .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -943,6 +957,7 @@ mod tests {
             .constraint("cluster", Pattern::new("staging-*").unwrap())
             .constraint("version", Pattern::new("1.28.*").unwrap())
             .ttl(Duration::from_secs(600))
+            .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -950,16 +965,18 @@ mod tests {
         args.insert("cluster".to_string(), ConstraintValue::String("staging-web".to_string()));
         args.insert("version".to_string(), ConstraintValue::String("1.28.5".to_string()));
 
-        args.insert("version".to_string(), ConstraintValue::String("1.28.5".to_string()));
+        // Create PoP signature (mandatory now)
+        let pop_sig = warrant.create_pop_signature(&keypair, "upgrade_cluster", &args).unwrap();
 
-        assert!(warrant.authorize("upgrade_cluster", &args, None).is_ok());
+        assert!(warrant.authorize("upgrade_cluster", &args, Some(&pop_sig)).is_ok());
 
         // Wrong tool
-        assert!(warrant.authorize("delete_cluster", &args, None).is_err());
+        assert!(warrant.authorize("delete_cluster", &args, Some(&pop_sig)).is_err());
 
         // Wrong cluster
-        args.insert("cluster".to_string(), ConstraintValue::String("prod-web".to_string()));
-        assert!(warrant.authorize("upgrade_cluster", &args, None).is_err());
+        let mut bad_args = args.clone();
+        bad_args.insert("cluster".to_string(), ConstraintValue::String("production-web".to_string()));
+        assert!(warrant.authorize("upgrade_cluster", &bad_args, Some(&pop_sig)).is_err());
     }
 
     #[test]
@@ -971,6 +988,7 @@ mod tests {
             .tool("upgrade_cluster")
             .constraint("cluster", Pattern::new("staging-*").unwrap())
             .ttl(Duration::from_secs(600))
+            .authorized_holder(parent_keypair.public_key())
             .build(&parent_keypair)
             .unwrap();
 
@@ -994,6 +1012,7 @@ mod tests {
             .tool("upgrade_cluster")
             .constraint("cluster", Pattern::new("staging-*").unwrap())
             .ttl(Duration::from_secs(600))
+            .authorized_holder(parent_keypair.public_key())
             .build(&parent_keypair)
             .unwrap();
 
@@ -1021,6 +1040,7 @@ mod tests {
         let parent = Warrant::builder()
             .tool("test")
             .ttl(Duration::from_secs(60))
+            .authorized_holder(parent_keypair.public_key())
             .build(&parent_keypair)
             .unwrap();
 
@@ -1041,6 +1061,7 @@ mod tests {
         let mut warrant = Warrant::builder()
             .tool("test")
             .ttl(Duration::from_secs(3600))
+            .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -1067,6 +1088,7 @@ mod tests {
             .tool("transfer_funds")
             .constraint("amount", Range::max(10000.0))
             .ttl(Duration::from_secs(600))
+            .authorized_holder(parent_keypair.public_key())
             .build(&parent_keypair)
             .unwrap();
 
@@ -1093,6 +1115,7 @@ mod tests {
             .tool("test")
             .ttl(Duration::from_secs(60))
             .session_id("session_123")
+            .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -1124,6 +1147,7 @@ mod tests {
             .tool("test")
             .ttl(Duration::from_secs(3600))
             .max_depth(3)
+            .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -1158,6 +1182,7 @@ mod tests {
             .tool("test")
             .ttl(Duration::from_secs(3600))
             .max_depth(5)
+            .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -1183,6 +1208,7 @@ mod tests {
             .tool("test")
             .ttl(Duration::from_secs(60))
             .max_depth(100) // Above MAX_DELEGATION_DEPTH (64)
+            .authorized_holder(keypair.public_key())
             .build(&keypair);
 
         assert!(result.is_err());
@@ -1199,6 +1225,7 @@ mod tests {
         let root = Warrant::builder()
             .tool("test")
             .ttl(Duration::from_secs(3600))
+            .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -1221,6 +1248,7 @@ mod tests {
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .min_approvals(2)
+            .authorized_holder(issuer.public_key())
             .build(&issuer)
             .unwrap();
 
@@ -1240,6 +1268,7 @@ mod tests {
             .tool("sensitive_action")
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
+            .authorized_holder(issuer.public_key())
             // min_approvals NOT set
             .build(&issuer)
             .unwrap();
@@ -1259,6 +1288,7 @@ mod tests {
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key()])
             .min_approvals(3)
+            .authorized_holder(issuer.public_key())
             .build(&issuer);
 
         assert!(result.is_err());
@@ -1277,6 +1307,7 @@ mod tests {
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key()])
             .min_approvals(1)
+            .authorized_holder(issuer.public_key())
             .build(&issuer)
             .unwrap();
 
@@ -1304,6 +1335,7 @@ mod tests {
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .min_approvals(1)
+            .authorized_holder(issuer.public_key())
             .build(&issuer)
             .unwrap();
 
@@ -1332,6 +1364,7 @@ mod tests {
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .min_approvals(2)
+            .authorized_holder(issuer.public_key())
             .build(&issuer)
             .unwrap();
 
@@ -1353,6 +1386,7 @@ mod tests {
         let warrant = Warrant::builder()
             .tool("regular_action")
             .ttl(Duration::from_secs(300))
+            .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 

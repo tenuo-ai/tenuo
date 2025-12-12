@@ -119,6 +119,7 @@ mod tests {
             .tool("upgrade_cluster")
             .constraint("cluster", Pattern::new("staging-*").unwrap())
             .ttl(Duration::from_secs(600))
+            .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -135,6 +136,7 @@ mod tests {
             .tool("upgrade_cluster")
             .constraint("cluster", Pattern::new("staging-*").unwrap())
             .ttl(Duration::from_secs(600))
+            .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 

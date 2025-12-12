@@ -261,8 +261,8 @@ fn match_pattern(pattern: &str, path: &str) -> Option<HashMap<String, String>> {
     
     if pattern_len != path_len {
         // Handle trailing slash
-        if !(pattern_len == path_len + 1 && pattern_parts.last() == Some(&""))
-            && !(path_len == pattern_len + 1 && path_parts.last() == Some(&""))
+        if !(pattern_len == path_len + 1 && pattern_parts.last() == Some(&"")
+            || path_len == pattern_len + 1 && path_parts.last() == Some(&""))
         {
             return None;
         }

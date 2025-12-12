@@ -226,78 +226,16 @@ async def process_message(message: QueueMessage):
 
 ---
 
-### 3. SecureGraph
+### 3. SecureGraph (Future)
 
-Wraps LangGraph with per-node attenuation.
-
-**Config:**
-```yaml
-# tenuo-graph.yaml
-version: "1"
-
-settings:
-  max_stack_depth: 16
-  allow_unlisted_nodes: false
-
-nodes:
-  supervisor:
-    role: supervisor
-    
-  researcher:
-    attenuate:
-      tools: [search, read_file]
-      constraints:
-        path:
-          pattern: "/data/${state.project_id}/*"
-          validate: "^[a-zA-Z0-9_-]+$"
-          
-  writer:
-    attenuate:
-      tools: [write_file]
-      constraints:
-        path:
-          pattern: "/output/${state.task_id}/*"
-          validate: "^[a-zA-Z0-9_-]+$"
-```
-
-**Usage:**
-```python
-# Node functions have NO TENUO IMPORTS
-def researcher(state: AgentState) -> dict:
-    results = search_tool(state["query"])
-    return {"research": results}
-
-# Wrap with SecureGraph
-graph = StateGraph(AgentState)
-graph.add_node("supervisor", supervisor_fn)
-graph.add_node("researcher", researcher_fn)
-# ... edges
-
-secure = SecureGraph(graph=graph, config="tenuo-graph.yaml")
-
-# Invoke (warrant in ContextVar from middleware)
-result = await secure.invoke({"input": prompt, "project_id": "alpha"})
-```
-
-**What it protects:**
-- ✅ Prompt injection (LLM can only call tools with attenuated scope)
-- ✅ Confused deputy (node uses wrong tool accidentally)
-- ❌ Container compromise (attacker bypasses wrappers)
+See [SecureGraph Design Spec](./langgraph-spec.md).
 
 ---
 
-### 4. protect_tools
+### 4. LangChain Integration
 
-Wraps tools with authorization.
+See [LangChain Integration Spec](./langchain-spec.md).
 
-```python
-from tenuo.langchain import protect_tools
-
-# Tools have NO TENUO IMPORTS
-@tool
-def search(query: str) -> str: ...
-
-@tool
 def read_file(path: str) -> str: ...
 
 # Wrap at setup
@@ -535,11 +473,11 @@ Event types:
 | Component | Status |
 |-----------|--------|
 | Warrant + mandatory PoP | ✅ |
-| Middleware (FastAPI) | ✅ |
-| SecureGraph | ✅ |
-| protect_tools | ✅ |
-| Dynamic constraints `${state.*}` | ✅ |
-| Audit logging | ✅ |
+| Middleware (FastAPI) | ✅ (Pattern) |
+| SecureGraph | ❌ Future |
+| protect_tools | ❌ Removed |
+| Dynamic constraints `${state.*}` | ❌ Future |
+| Audit logging | ❌ Future |
 | SRL sync | ✅ Optional |
 
 ### Not Included (Future)

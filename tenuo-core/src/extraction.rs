@@ -531,11 +531,7 @@ fn json_to_constraint_value(value: &Value) -> Option<ConstraintValue> {
                 } else {
                     Some(ConstraintValue::Integer(u as i64))
                 }
-            } else if let Some(f) = n.as_f64() {
-                Some(ConstraintValue::Float(f))
-            } else {
-                None
-            }
+            } else { n.as_f64().map(ConstraintValue::Float) }
         }
         Value::Array(arr) => {
             let values: Vec<ConstraintValue> = arr

@@ -39,6 +39,43 @@ delete_database(db_name="prod", reason="hallucinated")
 pip install tenuo
 ```
 
+## Design Principles
+
+### Security Invariants
+
+1. **Authority is Delegated, Not Inherent**: Identity proves *who* you are; a warrant proves *what* you can do.
+2. **Monotonic Attenuation**: Scope only shrinks. A child warrant can never exceed its parent's authority.
+3. **Mandatory Proof-of-Possession**: Warrants are useless without the corresponding private key. Theft of the token alone grants no access.
+4. **Stateless Verification**: Verification is local. It does not require a "phone home" to a control plane.
+5. **Ephemeral by Design**: Authority is bound to a task's lifecycle (TTL), not the compute's uptime.
+6. **Verifiable Lineage**: Every capability can be cryptographically traced back to a root trust anchor.
+
+### Architectural Boundaries
+
+7. **No Agent Runtime**: Tenuo authorizes actions; it does not execute code, manage state, or orchestrate workflows.
+8. **Model Agnostic**: No assumptions about LLMs, prompt structures, or embeddings.
+9. **Infrastructure Neutral**: Works in containers, serverless functions, or local scripts.
+
+### Scope
+
+**Tenuo Provides:**
+
+- Key generation
+- Warrant issuance, attenuation, and verification
+- A constraint language for fine-grained scoping
+
+**Tenuo Does NOT Require:**
+
+- Phone home for verification
+- Central authority at runtime
+- Network access to validate warrants
+
+**Tenuo Does NOT Provide:**
+
+- Agent frameworks or orchestration (use LangGraph, CrewAI, etc.)
+- Tool execution or routing
+- Network enforcement (Tenuo is an authorization primitive, not a firewall)
+
 ## Why Tenuo?
 
 AI Agents are non-deterministic. Giving them static access (like `S3FullAccess`) creates a massive blast radius if they get prompt-injected.
@@ -203,6 +240,7 @@ Your services keep their existing IAM. Tenuo adds a **delegation layer** that tr
 
 - **[Website](https://tenuo.github.io/tenuo/)**: Landing page and infographics
 - **[Guide](https://tenuo.github.io/tenuo/guide/)**: Concepts, examples, and constraint types
+- **[CLI Specification](docs/cli-spec.md)**: Complete CLI reference and examples
 - **[Python SDK](tenuo-python/)**: Full Python documentation and examples
 - **[Rust API](https://docs.rs/tenuo-core)**: Complete Rust API reference
 

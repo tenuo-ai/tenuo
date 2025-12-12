@@ -130,6 +130,7 @@ mod tests {
             .tool("test_tool")
             .constraint("arg", Pattern::new("value-*").unwrap())
             .ttl(Duration::from_secs(300))
+            .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -146,6 +147,7 @@ mod tests {
         let warrant = Warrant::builder()
             .tool("test")
             .ttl(Duration::from_secs(60))
+            .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -165,6 +167,7 @@ mod tests {
         let warrant = Warrant::builder()
             .tool("test")
             .ttl(Duration::from_secs(60))
+            .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -186,6 +189,7 @@ mod tests {
         let minimal = Warrant::builder()
             .tool("t")
             .ttl(Duration::from_secs(60))
+            .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -198,6 +202,7 @@ mod tests {
             .constraint("cluster", Pattern::new("staging-*").unwrap())
             .constraint("version", Pattern::new("1.28.*").unwrap())
             .ttl(Duration::from_secs(600))
+            .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -222,6 +227,7 @@ mod tests {
             .constraint("alpha", Pattern::new("a-*").unwrap())  // Then A
             .constraint("middle", Pattern::new("m-*").unwrap()) // Then M
             .ttl(Duration::from_secs(300))
+            .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
         

@@ -204,6 +204,10 @@ pub enum Error {
     /// Operation unauthorized.
     #[error("unauthorized: {0}")]
     Unauthorized(String),
+
+    /// Validation error.
+    #[error("validation error: {0}")]
+    Validation(String),
 }
 
 impl From<ciborium::ser::Error<std::io::Error>> for Error {
