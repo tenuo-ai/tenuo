@@ -41,7 +41,7 @@ pip install tenuo
 
 ## Why Tenuo?
 
-AI Agents are non-deterministic. Giving them static API keys (like `S3FullAccess`) creates a massive blast radius if they get prompt-injected.
+AI Agents are non-deterministic. Giving them static access (like `S3FullAccess`) creates a massive blast radius if they get prompt-injected.
 
 Tenuo implements **Subtractive Delegation**:
 

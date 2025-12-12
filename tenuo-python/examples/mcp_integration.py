@@ -15,36 +15,90 @@ def main():
     
     # 1. Load MCP configuration
     print("1. Loading MCP configuration...")
+    # HARDCODED PATH: Try multiple locations for demo
+    # In production: Use env var or config to specify path
+    config_paths = [
+        "../../examples/mcp-config.yaml",  # From tenuo-python/examples/
+        "../examples/mcp-config.yaml",    # Alternative path
+        "examples/mcp-config.yaml",        # From repo root
+    ]
+    
+    config = None
+    for path in config_paths:
+        try:
+            config = McpConfig.from_file(path)
+            print(f"   ✓ Configuration loaded from: {path}")
+            break
+        except (FileNotFoundError, ValueError) as e:
+            continue
+    
+    if config is None:
+        print("   ⚠ mcp-config.yaml not found in any standard location")
+        print("   [SIMULATION] Continuing with demo using mock extraction...")
+        print("   (In production, ensure mcp-config.yaml exists)")
+        # Continue with demo - we'll show the pattern even without config file
+        # Note: control_keypair needs to be defined first
+        control_keypair = Keypair.generate()
+        demo_without_config(control_keypair)
+        return
+    
     try:
-        config = McpConfig.from_file("../../examples/mcp-config.yaml")
         compiled = CompiledMcpConfig.compile(config)
-        print("   ✓ Configuration loaded and compiled")
-    except FileNotFoundError:
-        print("   ⚠ mcp-config.yaml not found, using example config...")
-        # For demo purposes, we'll show the concept
-        print("   (In production, load from actual mcp-config.yaml)")
+        print("   ✓ Configuration compiled successfully")
+    except Exception as e:
+        print(f"   ✗ Error compiling configuration: {e}")
         return
     
     # 2. Initialize authorizer
     print("\n2. Initializing authorizer...")
-    control_keypair = Keypair.generate()
-    authorizer = Authorizer.new(control_keypair.public_key())
-    pub_key_bytes = control_keypair.public_key().to_bytes()
-    print(f"   Control plane public key: {pub_key_bytes[:8].hex()}...")
+    try:
+        # SIMULATION: Generate keypair for demo
+        # In production: Control plane keypair is loaded from secure storage
+        control_keypair = Keypair.generate()
+        
+        # Get public key object (method call, not property)
+        public_key = control_keypair.public_key()
+        
+        # Create authorizer with public key
+        # HARDCODED: Using generated keypair for demo
+        # In production: Load public key from K8s Secret or config
+        authorizer = Authorizer.new(public_key)
+        
+        # Display public key (first 8 bytes for brevity)
+        # Note: to_bytes() returns a list/vector, convert to bytes for hex()
+        pub_key_bytes = public_key.to_bytes()
+        pub_key_bytes_obj = bytes(pub_key_bytes)  # Convert list to bytes
+        print(f"   ✓ Authorizer initialized")
+        print(f"   Control plane public key: {pub_key_bytes_obj[:8].hex()}...")
+    except Exception as e:
+        print(f"   ✗ Error initializing authorizer: {e}")
+        return
     
     # 3. Create a warrant for filesystem operations
     print("\n3. Creating warrant for filesystem operations...")
-    warrant = Warrant.create(
-        tool="filesystem_read",
-        constraints={
-            "path": Pattern("/var/log/*"),
-            "maxSize": Range.max_value(1024 * 1024)  # 1MB max
-        },
-        ttl_seconds=3600,
-        keypair=control_keypair
-    )
-    print(f"   Tool: {warrant.tool()}")
-    print(f"   Constraints: path=/var/log/*, maxSize<=1MB")
+    try:
+        # SIMULATION: Create warrant with hardcoded constraints
+        # In production: Constraints come from policy engine or configuration
+        # HARDCODED: Pattern("/var/log/*"), Range.max_value(1MB)
+        # Note: Constraint names must match what MCP config extracts
+        # MCP config extracts "max_size" (snake_case), but we'll use "maxSize" (camelCase)
+        # In production, ensure warrant constraint names match MCP extraction names
+        warrant = Warrant.create(
+            tool="filesystem_read",
+            constraints={
+                "path": Pattern("/var/log/*"),  # HARDCODED: Only /var/log/ files for demo
+                "max_size": Range.max_value(1024 * 1024)  # HARDCODED: Match MCP extraction name "max_size"
+            },
+            ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
+            keypair=control_keypair
+        )
+        # Note: warrant.tool is a property (getter), not a method
+        print(f"   ✓ Warrant created")
+        print(f"   Tool: {warrant.tool}")  # Property, not method
+        print(f"   Constraints: path=/var/log/*, max_size<=1MB")
+    except Exception as e:
+        print(f"   ✗ Error creating warrant: {e}")
+        return
     
     # 4. Simulate MCP tool call
     print("\n4. Simulating MCP tool call...")
@@ -64,21 +118,41 @@ def main():
     print("\n6. Authorizing operation...")
     # Convert result.constraints (PyObject) to dict for warrant.authorize
     constraints_dict = dict(result.constraints)
+    print(f"   Extracted constraints: {constraints_dict}")
+    
+    # Note: MCP config extracts constraints with names matching the config (e.g., "max_size")
+    # The warrant must use the same constraint names for authorization to work
+    # In production, ensure MCP config constraint names match warrant constraint names
     
     # Check if warrant authorizes these constraints
-    authorized = warrant.authorize(
-        tool="filesystem_read",
-        args=constraints_dict
-    )
-    print(f"   ✓ Warrant authorization result: {authorized}")
+    # Note: constraints_dict already has the correct names from MCP extraction
+    try:
+        authorized = warrant.authorize(
+            tool="filesystem_read",
+            args=constraints_dict  # Use extracted constraints directly (names match warrant)
+        )
+        if authorized:
+            print(f"   ✓ Warrant authorization: Allowed")
+        else:
+            print(f"   ✗ Warrant authorization: Denied (constraints not satisfied)")
+    except Exception as e:
+        print(f"   ✗ Warrant authorization error: {e}")
     
     # 7. Full authorization with Authorizer (verifies signature + constraints)
     print("\n7. Full authorization with Authorizer.check()...")
     try:
-        authorizer.check(warrant, "filesystem_read", constraints_dict)
+        # Authorizer.check() verifies:
+        # 1. Warrant signature (signed by trusted issuer)
+        # 2. Warrant expiration (not expired)
+        # 3. Warrant revocation (not in revocation list)
+        # 4. Constraint satisfaction (all constraints match)
+        # Note: check() expects args as a dict - PyO3 automatically converts Python dict to PyDict
+        # Note: signature parameter expects bytes (64 bytes) or None for PoP signature
+        authorizer.check(warrant, "filesystem_read", constraints_dict, None)  # None = no PoP signature
         print("   ✓ Full authorization successful (signature + constraints verified)")
     except Exception as e:
         print(f"   ✗ Authorization failed: {e}")
+        print(f"   (Check: constraint names match, warrant is signed by trusted issuer)")
     print()
     
     print("=== MCP Integration example completed! ===")
@@ -88,6 +162,60 @@ def main():
     print("  3. Verify warrant chain with Authorizer.check()")
     print("  4. Allow or deny the operation based on authorization")
 
+
+def demo_without_config(control_keypair):
+    """
+    [SIMULATION] Demo the MCP integration pattern without config file.
+    Shows how extraction and authorization would work.
+    """
+    print("\n=== MCP Integration Pattern (without config file) ===\n")
+    
+    # Create warrant
+    try:
+        warrant = Warrant.create(
+            tool="filesystem_read",
+            constraints={
+                "path": Pattern("/var/log/*"),
+                "maxSize": Range.max_value(1024 * 1024)
+            },
+            ttl_seconds=3600,
+            keypair=control_keypair
+        )
+        print(f"✓ Warrant created: {warrant.tool}")
+    except Exception as e:
+        print(f"✗ Error: {e}")
+        return
+    
+    # Simulate MCP tool call
+    mcp_arguments = {
+        "path": "/var/log/app.log",
+        "maxSize": 512 * 1024
+    }
+    print(f"\nSimulated MCP arguments: {mcp_arguments}")
+    
+    # In real usage, CompiledMcpConfig would extract these
+    # For demo, we'll manually create the constraint dict
+    extracted_constraints = {
+        "path": "/var/log/app.log",
+        "maxSize": 512 * 1024
+    }
+    print(f"Extracted constraints: {extracted_constraints}")
+    
+    # Authorize
+    try:
+        authorized = warrant.authorize("filesystem_read", extracted_constraints)
+        print(f"\n✓ Warrant authorization: {authorized}")
+        
+        # Full authorization with Authorizer
+        public_key = control_keypair.public_key()
+        authorizer = Authorizer.new(public_key)
+        try:
+            authorizer.check(warrant, "filesystem_read", extracted_constraints, None)
+            print("✓ Full authorization (Authorizer.check): Success")
+        except Exception as e:
+            print(f"✗ Authorizer.check failed: {e}")
+    except Exception as e:
+        print(f"\n✗ Authorization failed: {e}")
 if __name__ == "__main__":
     main()
 
