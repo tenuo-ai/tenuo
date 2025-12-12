@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let issue_resp: serde_json::Value = resp.json()?;
     let warrant_base64 = issue_resp["warrant_base64"]
         .as_str()
-        .ok_or_else(|| "Control plane response missing 'warrant_base64' field")?;
+        .ok_or("Control plane response missing 'warrant_base64' field")?;
     let root_warrant: Warrant = wire::decode_base64(warrant_base64)?;
 
     println!("\n  ✓ Root Warrant Received via Enrollment Protocol:");

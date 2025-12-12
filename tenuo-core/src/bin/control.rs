@@ -61,7 +61,8 @@ struct IssueRequest {
     /// Signature over "tool:constraints_json" proving caller identity
     signature_hex: Option<String>,
     /// Optional session ID for traceability
-    session_id: Option<String>,
+    #[serde(rename = "session_id")]
+    _session_id: Option<String>,
 }
 
 /// Response with issued warrant

@@ -202,7 +202,7 @@ impl PyAll {
     }
 
     fn __repr__(&self) -> String {
-        format!("All(...)")
+        "All(...)".to_string()
     }
 }
 
@@ -231,7 +231,7 @@ impl PyAnyOf {
     }
 
     fn __repr__(&self) -> String {
-        format!("AnyOf(...)")
+        "AnyOf(...)".to_string()
     }
 }
 
@@ -256,7 +256,7 @@ impl PyNot {
     }
 
     fn __repr__(&self) -> String {
-        format!("Not(...)")
+        "Not(...)".to_string()
     }
 }
 
