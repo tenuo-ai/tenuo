@@ -23,8 +23,8 @@ from contextvars import Token
 # Try to import LangChain components
 try:
     from langchain_core.tools import Tool
-    from langchain.agents.agent import AgentExecutor
-    from langchain.agents.openai_tools.base import create_openai_tools_agent
+    from langchain.agents.agent import AgentExecutor  # type: ignore[import-not-found]
+    from langchain.agents.openai_tools.base import create_openai_tools_agent  # type: ignore[import-not-found]
     from langchain_openai import ChatOpenAI
     from langchain_core.callbacks import BaseCallbackHandler
     # from langchain.schema import AgentAction, AgentFinish, LLMResult
