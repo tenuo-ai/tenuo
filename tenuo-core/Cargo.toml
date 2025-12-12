@@ -141,5 +141,13 @@ name = "warrant_benchmarks"
 harness = false
 
 [profile.release]
-lto = true
-codegen-units = 1
+lto = "thin"        # Faster than "true" (fat LTO), still good optimization
+codegen-units = 16  # Allow parallel code generation (faster builds)
+strip = true        # Strip symbols to reduce binary size
+opt-level = 3       # Maximum optimization
+
+# Optimize dependencies even in debug builds
+# This makes 'cargo test' and 'maturin develop' much faster after the initial build
+[profile.dev.package."*"]
+opt-level = 3
+
