@@ -7,13 +7,13 @@
 # 3. Starts the Docker Compose stack
 #
 # Usage:
-#   ./scripts/dev-setup.sh        # Setup and start
-#   ./scripts/dev-setup.sh --build # Rebuild images first
+#   ./tenuo-core/demo/setup.sh        # Setup and start
+#   ./tenuo-core/demo/setup.sh --build # Rebuild images first
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT="$(dirname "$(dirname "$(dirname "$SCRIPT_DIR")")")"
 
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║  TENUO DEVELOPMENT SETUP                                     ║"
