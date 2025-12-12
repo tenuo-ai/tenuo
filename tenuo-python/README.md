@@ -64,6 +64,24 @@ authorized = worker_warrant.authorize(
 print(f"Authorized: {authorized}")  # True
 ```
 
+## Security Considerations
+
+### Secret Key Management
+
+The `Keypair.secret_key_bytes()` method creates a copy of the secret key in Python's managed memory. Python's garbage collector does not guarantee secure erasure of secrets, and the key material may persist in memory until garbage collection occurs.
+
+**Best Practices:**
+- **Minimize keypair lifetime**: Create keypairs only when needed and let them go out of scope quickly
+- **Avoid `secret_key_bytes()` unless necessary**: Only call this method when absolutely required (e.g., for key backup/export)
+- **Don't store secret keys in long-lived variables**: Avoid keeping secret key bytes in variables that persist across function calls
+- **Use Rust for production key management**: For high-security deployments, consider using the Rust API directly, which provides better memory safety guarantees
+
+**For most use cases**, you should not need to access secret key bytes directly. The `Keypair` object handles signing operations internally, and you can use `public_key()` to share public keys.
+
+### Memory Safety
+
+Tenuo's Python bindings use PyO3 to wrap the Rust core, providing memory safety from corruption. However, Python's memory management model means that secret material copied into Python objects may persist in memory until garbage collection. This is a standard limitation of Python crypto bindings and is consistent with libraries like `cryptography` and `pyca/cryptography`.
+
 ## Pythonic Features
 
 The `tenuo` package provides a clean Python API with additional features:
@@ -165,6 +183,24 @@ with set_warrant_context(warrant):
 ```
 
 See `examples/langchain_simple.py` for a complete working example, or `examples/langchain_integration.py` for an advanced example with callbacks.
+
+### Protecting Third-Party Tools
+
+For tools you don't own (e.g., from `langchain_community`), use `protect_tools()` to wrap them at runtime:
+
+```python
+from tenuo.langchain import protect_tools
+from langchain_community.tools import DuckDuckGoSearchRun
+
+# Wrap tools at setup time
+secure_tools = protect_tools(
+    tools=[DuckDuckGoSearchRun()],
+    warrant=warrant,
+    keypair=keypair,
+)
+```
+
+See `examples/langchain_protect_tools.py` for a complete example.
 ## MCP Integration
 
 Tenuo provides native support for the [Model Context Protocol](https://modelcontextprotocol.io):
@@ -186,6 +222,25 @@ authorized = warrant.authorize("filesystem_read", result.constraints)
 ```
 
 See `examples/mcp_integration.py` for a complete example.
+
+## Audit Logging
+
+Tenuo provides SIEM-compatible structured audit logging for all authorization decisions:
+
+```python
+from tenuo import audit_logger, AuditEventType
+
+# Configure audit logger (optional, defaults to stdout)
+# audit_logger.configure(service_name="my-service")
+
+# Authorization events are automatically logged by @lockdown and protect_tools
+# You can also log manually:
+audit_logger.log_authorization_success(
+    warrant_id=warrant.id,
+    tool="read_file",
+    constraints={"path": "/tmp/test.txt"}
+)
+```
 
 ## Examples
 
@@ -212,23 +267,7 @@ python examples/mcp_integration.py
 - **[Rust API](https://docs.rs/tenuo-core)**: Full Rust API documentation
 - **[Examples](examples/)**: Python usage examples
 
-## Security Considerations
 
-### Secret Key Management
-
-The `Keypair.secret_key_bytes()` method creates a copy of the secret key in Python's managed memory. Python's garbage collector does not guarantee secure erasure of secrets, and the key material may persist in memory until garbage collection occurs.
-
-**Best Practices:**
-- **Minimize keypair lifetime**: Create keypairs only when needed and let them go out of scope quickly
-- **Avoid `secret_key_bytes()` unless necessary**: Only call this method when absolutely required (e.g., for key backup/export)
-- **Don't store secret keys in long-lived variables**: Avoid keeping secret key bytes in variables that persist across function calls
-- **Use Rust for production key management**: For high-security deployments, consider using the Rust API directly, which provides better memory safety guarantees
-
-**For most use cases**, you should not need to access secret key bytes directly. The `Keypair` object handles signing operations internally, and you can use `public_key()` to share public keys.
-
-### Memory Safety
-
-Tenuo's Python bindings use PyO3 to wrap the Rust core, providing memory safety from corruption. However, Python's memory management model means that secret material copied into Python objects may persist in memory until garbage collection. This is a standard limitation of Python crypto bindings and is consistent with libraries like `cryptography` and `pyca/cryptography`.
 ## License
 
 MIT OR Apache-2.0

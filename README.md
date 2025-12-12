@@ -97,6 +97,9 @@ Perfect for LangChain, AutoGPT, and CrewAI tools.
 ```python
 from tenuo import Warrant, Pattern, set_warrant_context, lockdown
 
+# Generate worker keypair
+worker_keypair = Keypair.generate()
+
 # Create a restricted warrant for a sub-agent
 worker_warrant = root_warrant.attenuate(
     constraints={"db_name": Pattern("test-*")},
@@ -119,7 +122,7 @@ with set_warrant_context(worker_warrant):
 - ContextVar support for LangChain/FastAPI integration
 - Pythonic exceptions and error handling
 
-See [tenuo-python/](tenuo-python/) for full documentation and examples.
+See [tenuo-python/README.md](tenuo-python/README.md) and [examples](tenuo-python/examples/) for full documentation and examples.
 
 ### Rust Core (The Performance Way)
 
@@ -133,7 +136,7 @@ tenuo-core = "0.1"
 ```
 
 ```rust
-use tenuo_core::{Warrant, Keypair, Pattern, Range};
+use tenuo_core::{Warrant, Keypair, Pattern, Range, Exact};
 use std::time::Duration;
 
 let keypair = Keypair::generate();
@@ -183,6 +186,7 @@ This demonstrates the complete flow: warrant issuance, attenuation, delegation, 
 | **Multi-sig approvals** | M-of-N approval for sensitive actions |
 | **Cascading revocation** | Surgical (one warrant) or nuclear (entire agent swarm) |
 | **Depth limits** | Configurable delegation depth (max 64) |
+| **Audit logging** | SIEM-compatible structured JSON events for all authorization decisions |
 | **MCP integration** | Native support for Model Context Protocol (AI agent tool calling) |
 
 ## MCP (Model Context Protocol) Integration
