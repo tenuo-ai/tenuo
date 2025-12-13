@@ -75,6 +75,8 @@ jobs:
           source ../.venv/bin/activate
           pip install maturin
           maturin develop
+          # Ensure Python wrapper is importable
+          echo "$(pwd)" > ../.venv/lib/python3.10/site-packages/tenuo.pth
 
       - name: Install dev dependencies
         working-directory: tenuo-python
