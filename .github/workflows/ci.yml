@@ -58,6 +58,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tenuo-python
+
       - name: Install Python
         uses: actions/setup-python@v5
         with:
@@ -110,6 +115,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            tenuo-core
+            tenuo-python
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
