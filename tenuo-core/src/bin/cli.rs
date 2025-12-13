@@ -19,7 +19,7 @@ use tenuo_core::{
     extraction::RequestContext,
     gateway_config::GatewayConfig,
     planes::DataPlane,
-    warrant::Warrant,
+    warrant::{TrustLevel, Warrant, WarrantType},
     wire,
 };
 // We use the pkcs8/spki crates for standard PEM handling
@@ -62,9 +62,29 @@ enum Commands {
         #[arg(long = "holder", required = true)]
         holder: String,
 
-        /// Comma-separated allowed tools (e.g., search,read_file)
+        /// Warrant type: execution (default) or issuer
+        #[arg(long = "type", default_value = "execution")]
+        warrant_type: String,
+
+        /// Comma-separated allowed tools (e.g., search,read_file) - required for execution warrants
         #[arg(short = 't', long = "tool")]
         tool: Option<String>,
+
+        /// Comma-separated issuable tools (e.g., read_file,send_email) - required for issuer warrants
+        #[arg(long = "issuable-tools")]
+        issuable_tools: Option<String>,
+
+        /// Trust ceiling for issuer warrants: external, internal, or system
+        #[arg(long = "trust-ceiling")]
+        trust_ceiling: Option<String>,
+
+        /// Maximum issue depth for issuer warrants
+        #[arg(long = "max-issue-depth")]
+        max_issue_depth: Option<u32>,
+
+        /// Trust level (optional): external, internal, or system
+        #[arg(long = "trust-level")]
+        trust_level: Option<String>,
 
         /// Validity duration (default: 5m). Formats: 300s, 10m, 1h
         #[arg(long = "ttl", default_value = "5m")]
@@ -81,6 +101,10 @@ enum Commands {
         /// Add constraint as JSON (for complex values)
         #[arg(long = "constraint-json")]
         constraint_json: Vec<String>,
+
+        /// Add constraint bound for issuer warrants (repeatable). Format: key=type:value
+        #[arg(long = "constraint-bound")]
+        constraint_bound: Vec<String>,
 
         /// Output as JSON
         #[arg(long)]
@@ -99,6 +123,11 @@ enum Commands {
         /// Current holder's private key (PEM)
         #[arg(short = 'k', long = "signing-key", required = true)]
         signing_key: PathBuf,
+
+        /// Parent warrant issuer's private key (PEM) for chain link signature.
+        /// If omitted, assumes parent was signed by the same keypair as signing-key.
+        #[arg(long = "parent-key")]
+        parent_key: Option<PathBuf>,
 
         /// Child's public key. If omitted, self-attenuates (same holder).
         #[arg(long = "holder")]
@@ -265,22 +294,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Issue {
             signing_key,
             holder,
+            warrant_type,
             tool,
+            issuable_tools,
+            trust_ceiling,
+            max_issue_depth,
+            trust_level,
             ttl,
             id,
             constraint,
             constraint_json,
+            constraint_bound,
             json,
             quiet,
         } => {
             handle_issue(
                 signing_key,
                 holder,
+                warrant_type,
                 tool,
+                issuable_tools,
+                trust_ceiling,
+                max_issue_depth,
+                trust_level,
                 ttl,
                 id,
                 constraint,
                 constraint_json,
+                constraint_bound,
                 json,
                 quiet,
             )?;
@@ -288,6 +329,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Attenuate {
             warrant,
             signing_key,
+            parent_key,
             holder,
             tool,
             ttl,
@@ -299,6 +341,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             handle_attenuate(
                 warrant,
                 signing_key,
+                parent_key,
                 holder,
                 tool,
                 ttl,
@@ -840,41 +883,97 @@ fn handle_keygen(
 fn handle_issue(
     signing_key: PathBuf,
     holder: String,
+    warrant_type: String,
     tool: Option<String>,
+    issuable_tools: Option<String>,
+    trust_ceiling: Option<String>,
+    max_issue_depth: Option<u32>,
+    trust_level: Option<String>,
     ttl: String,
     id: Option<String>,
     constraint: Vec<String>,
     constraint_json: Vec<String>,
+    constraint_bound: Vec<String>,
     json: bool,
     quiet: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let issuer_kp = load_private_key(&signing_key)?;
     let holder_pubkey = load_public_key(&holder)?;
 
-    let tool_str = tool.as_deref().unwrap_or("*");
+    let warrant_type_enum = match warrant_type.as_str() {
+        "execution" => WarrantType::Execution,
+        "issuer" => WarrantType::Issuer,
+        _ => {
+            return Err(format!(
+                "Invalid warrant type: {}. Must be 'execution' or 'issuer'",
+                warrant_type
+            )
+            .into())
+        }
+    };
+
     let ttl_duration = parse_duration(&ttl)?;
 
     let mut builder = Warrant::builder()
-        .tool(tool_str)
+        .r#type(warrant_type_enum)
         .ttl(ttl_duration)
         .authorized_holder(holder_pubkey.clone());
+
+    // Set trust level if provided
+    if let Some(trust_level_str) = trust_level {
+        let level = trust_level_str
+            .parse()
+            .map_err(|e: String| format!("Invalid trust level: {}", e))?;
+        builder = builder.trust_level(level);
+    }
+
+    match warrant_type_enum {
+        WarrantType::Execution => {
+            let tool_str = tool.as_deref().ok_or("Execution warrant requires --tool")?;
+            builder = builder.tool(tool_str);
+
+            // Parse constraints for execution warrants
+            for c in constraint {
+                let (key, constraint) = parse_constraint(&c)?;
+                builder = builder.constraint(key, constraint);
+            }
+
+            for json_str in constraint_json {
+                let constraints = parse_constraint_json(&json_str)?;
+                for (key, constraint) in constraints {
+                    builder = builder.constraint(key, constraint);
+                }
+            }
+        }
+        WarrantType::Issuer => {
+            let issuable_tools_vec: Vec<String> = issuable_tools
+                .ok_or("Issuer warrant requires --issuable-tools")?
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect();
+            builder = builder.issuable_tools(issuable_tools_vec);
+
+            let ceiling = trust_ceiling
+                .ok_or("Issuer warrant requires --trust-ceiling")?
+                .parse::<TrustLevel>()
+                .map_err(|e| format!("Invalid trust ceiling: {}", e))?;
+            builder = builder.trust_ceiling(ceiling);
+
+            if let Some(max_issue) = max_issue_depth {
+                builder = builder.max_issue_depth(max_issue);
+            }
+
+            // Parse constraint bounds for issuer warrants
+            for c in constraint_bound {
+                let (key, constraint) = parse_constraint(&c)?;
+                builder = builder.constraint_bound(key, constraint);
+            }
+        }
+    }
 
     if let Some(id_str) = id {
         let warrant_id = tenuo_core::warrant::WarrantId::from_string(id_str)?;
         builder = builder.id(warrant_id);
-    }
-
-    // Parse constraints
-    for c in constraint {
-        let (key, constraint) = parse_constraint(&c)?;
-        builder = builder.constraint(key, constraint);
-    }
-
-    for json_str in constraint_json {
-        let constraints = parse_constraint_json(&json_str)?;
-        for (key, constraint) in constraints {
-            builder = builder.constraint(key, constraint);
-        }
     }
 
     let warrant = builder.build(&issuer_kp)?;
@@ -883,14 +982,25 @@ fn handle_issue(
     if quiet {
         println!("{}", warrant_b64);
     } else if json {
-        let info = serde_json::json!({
+        let mut info = serde_json::json!({
             "id": warrant.id().as_str(),
-            "tool": warrant.tool(),
+            "type": format!("{:?}", warrant.r#type()).to_lowercase(),
             "depth": warrant.depth(),
             "expires_at": warrant.expires_at().to_rfc3339(),
             "holder": hex::encode(holder_pubkey.to_bytes()),
             "base64": warrant_b64,
         });
+        if let Some(tool) = warrant.tool() {
+            info["tool"] = serde_json::Value::String(tool.to_string());
+        }
+        if let Some(issuable_tools) = warrant.issuable_tools() {
+            info["issuable_tools"] = serde_json::Value::Array(
+                issuable_tools
+                    .iter()
+                    .map(|t| serde_json::Value::String(t.clone()))
+                    .collect(),
+            );
+        }
         println!("{}", serde_json::to_string_pretty(&info)?);
     } else {
         println!("{}", warrant_b64);
@@ -903,6 +1013,7 @@ fn handle_issue(
 fn handle_attenuate(
     warrant: String,
     signing_key: PathBuf,
+    parent_key: Option<PathBuf>,
     holder: Option<String>,
     tool: Option<String>,
     ttl: Option<String>,
@@ -914,6 +1025,15 @@ fn handle_attenuate(
     let parent_warrant = read_warrant(&warrant)?;
     let current_kp = load_private_key(&signing_key)?;
 
+    // Get parent keypair - use provided one, or assume same as signing key
+    let parent_kp = if let Some(parent_key_path) = parent_key {
+        load_private_key(&parent_key_path)?
+    } else {
+        // Assume parent was signed by the same keypair (common in tests)
+        // In production, this should be explicitly provided
+        current_kp.clone()
+    };
+
     let mut builder = parent_warrant.attenuate();
 
     if let Some(holder_str) = holder {
@@ -921,27 +1041,35 @@ fn handle_attenuate(
         builder = builder.authorized_holder(holder_pubkey);
     }
 
-    // Note: AttenuationBuilder always inherits tool from parent
-    // Tool narrowing is validated during authorization, not during attenuation
-    // The spec allows --tool to narrow, but the current implementation inherits
-    // This is acceptable - narrowing is enforced at authorization time
+    // Note: Tool handling depends on warrant type
+    // For execution warrants, tool narrowing is validated during authorization
+    // For issuer warrants, we validate issuable_tools monotonicity
     if let Some(tool_str) = tool {
-        // Validate that the requested tool is a subset of parent's tools
-        let parent_tools: Vec<&str> = parent_warrant.tool().split(',').map(|s| s.trim()).collect();
-        let child_tools: Vec<&str> = tool_str.split(',').map(|s| s.trim()).collect();
+        match parent_warrant.r#type() {
+            WarrantType::Execution => {
+                if let Some(parent_tool) = parent_warrant.tool() {
+                    let parent_tools: Vec<&str> =
+                        parent_tool.split(',').map(|s| s.trim()).collect();
+                    let child_tools: Vec<&str> = tool_str.split(',').map(|s| s.trim()).collect();
 
-        if parent_warrant.tool() != "*" {
-            for child_tool in &child_tools {
-                if !parent_tools.contains(child_tool) {
-                    return Err(format!(
-                        "Cannot attenuate: tool '{}' not in parent's allowed tools: {:?}",
-                        child_tool, parent_tools
-                    )
-                    .into());
+                    if parent_tool != "*" {
+                        for child_tool in &child_tools {
+                            if !parent_tools.contains(child_tool) {
+                                return Err(format!(
+                                    "Cannot attenuate: tool '{}' not in parent's allowed tools: {:?}",
+                                    child_tool, parent_tools
+                                )
+                                .into());
+                            }
+                        }
+                    }
                 }
             }
+            WarrantType::Issuer => {
+                // For issuer warrants, tool parameter is ignored (use issuable_tools instead)
+                eprintln!("Warning: --tool is ignored for issuer warrants. Use constraint bounds instead.");
+            }
         }
-        // Tool will be inherited from parent - narrowing is enforced at auth time
     }
 
     if let Some(ttl_str) = ttl {
@@ -962,7 +1090,7 @@ fn handle_attenuate(
         }
     }
 
-    let child_warrant = builder.build(&current_kp).map_err(|e| {
+    let child_warrant = builder.build(&current_kp, &parent_kp).map_err(|e| {
         // Format error messages to match spec format
         let error_str = format!("{}", e);
         // Check for PatternExpanded error and format it per spec
@@ -997,14 +1125,25 @@ fn handle_attenuate(
     if quiet {
         println!("{}", warrant_b64);
     } else if json {
-        let info = serde_json::json!({
+        let mut info = serde_json::json!({
             "id": child_warrant.id().as_str(),
-            "tool": child_warrant.tool(),
+            "type": format!("{:?}", child_warrant.r#type()).to_lowercase(),
             "depth": child_warrant.depth(),
             "expires_at": child_warrant.expires_at().to_rfc3339(),
             "parent_id": child_warrant.parent_id().map(|id| id.to_string()),
             "base64": warrant_b64,
         });
+        if let Some(tool) = child_warrant.tool() {
+            info["tool"] = serde_json::Value::String(tool.to_string());
+        }
+        if let Some(issuable_tools) = child_warrant.issuable_tools() {
+            info["issuable_tools"] = serde_json::Value::Array(
+                issuable_tools
+                    .iter()
+                    .map(|t| serde_json::Value::String(t.clone()))
+                    .collect(),
+            );
+        }
         println!("{}", serde_json::to_string_pretty(&info)?);
     } else {
         println!("{}", warrant_b64);
@@ -1025,9 +1164,7 @@ fn handle_sign(
     let warrant_obj = read_warrant(&warrant)?;
 
     // Verify keypair matches warrant's holder
-    let holder = warrant_obj
-        .authorized_holder()
-        .ok_or("Warrant has no authorized_holder")?;
+    let holder = warrant_obj.authorized_holder();
 
     if keypair.public_key().to_bytes() != holder.to_bytes() {
         return Err("Keypair does not match warrant's authorized_holder".into());
@@ -1248,9 +1385,7 @@ fn handle_verify(
     }
 
     // Verify authorization (includes PoP signature verification)
-    let holder = leaf_warrant
-        .authorized_holder()
-        .ok_or("Warrant has no authorized_holder")?;
+    let holder = leaf_warrant.authorized_holder();
 
     match leaf_warrant.authorize(&tool, &args, Some(&sig)) {
         Ok(()) => {
@@ -1282,7 +1417,7 @@ fn handle_verify(
             "warrant_id": leaf_warrant.id().as_str(),
             "holder": hex::encode(holder.to_bytes()),
             "expires_at": leaf_warrant.expires_at().to_rfc3339(),
-            "tools": leaf_warrant.tool(),
+            "tools": leaf_warrant.tool().map(|t| t.to_string()).unwrap_or_default(),
             "chain_verified": chain_valid,
             "chain_length": warrants.len(),
             "trusted_root": trusted_any,
@@ -1290,8 +1425,10 @@ fn handle_verify(
 
         // Add constraints
         let mut constraints = serde_json::Map::new();
-        for (key, constraint) in leaf_warrant.constraints().iter() {
-            constraints.insert(key.clone(), serde_json::json!(format!("{:?}", constraint)));
+        if let Some(constraints_set) = leaf_warrant.constraints() {
+            for (key, constraint) in constraints_set.iter() {
+                constraints.insert(key.clone(), serde_json::json!(format!("{:?}", constraint)));
+            }
         }
         result["constraints"] = serde_json::Value::Object(constraints);
 
@@ -1317,10 +1454,19 @@ fn handle_verify(
             eprintln!("Expires:     in {}s", remaining.num_seconds());
         }
 
-        eprintln!("Tools:       [{}]", leaf_warrant.tool());
+        if let Some(tool) = leaf_warrant.tool() {
+            eprintln!("Tools:       [{}]", tool);
+        }
+        if let Some(issuable_tools) = leaf_warrant.issuable_tools() {
+            eprintln!("Issuable Tools: [{}]", issuable_tools.join(", "));
+        }
         eprintln!("Constraints:");
-        for (key, constraint) in leaf_warrant.constraints().iter() {
-            eprintln!("  {}: {:?}", key, constraint);
+        if let Some(constraints_set) = leaf_warrant.constraints() {
+            for (key, constraint) in constraints_set.iter() {
+                eprintln!("  {}: {:?}", key, constraint);
+            }
+        } else {
+            eprintln!("  (none)");
         }
         eprintln!();
 
@@ -1393,10 +1539,15 @@ fn handle_inspect(
 
             println!("Warrant[{}]:  {}", i, w.id().as_str());
             println!("Issuer:      {}", hex::encode(w.issuer().to_bytes()));
-            if let Some(holder) = w.authorized_holder() {
-                println!("Holder:      {}", hex::encode(holder.to_bytes()));
+            println!(
+                "Holder:      {}",
+                hex::encode(w.authorized_holder().to_bytes())
+            );
+            if let Some(tool) = w.tool() {
+                println!("Tools:       [{}]", tool);
+            } else if let Some(issuable_tools) = w.issuable_tools() {
+                println!("Issuable Tools: [{}]", issuable_tools.join(", "));
             }
-            println!("Tools:       [{}]", w.tool());
 
             let ttl_secs = (w.expires_at() - Utc::now()).num_seconds();
             if ttl_secs > 0 {
@@ -1405,10 +1556,12 @@ fn handle_inspect(
                 println!("TTL:         expired");
             }
 
-            if !w.constraints().is_empty() {
-                println!("Constraints:");
-                for (key, constraint) in w.constraints().iter() {
-                    println!("  {}: {:?}", key, constraint);
+            if let Some(constraints_set) = w.constraints() {
+                if !constraints_set.is_empty() {
+                    println!("Constraints:");
+                    for (key, constraint) in constraints_set.iter() {
+                        println!("  {}: {:?}", key, constraint);
+                    }
                 }
             }
             println!("──────────────────────────────────────────────────");
@@ -1420,22 +1573,22 @@ fn handle_inspect(
 
 fn warrant_to_json(w: &Warrant) -> serde_json::Value {
     let mut constraints = serde_json::Map::new();
-    for (key, constraint) in w.constraints().iter() {
-        constraints.insert(key.clone(), serde_json::json!(format!("{:?}", constraint)));
+    if let Some(constraints_set) = w.constraints() {
+        for (key, constraint) in constraints_set.iter() {
+            constraints.insert(key.clone(), serde_json::json!(format!("{:?}", constraint)));
+        }
     }
 
     let mut json = serde_json::json!({
         "id": w.id().as_str(),
         "issuer": hex::encode(w.issuer().to_bytes()),
         "expires_at": w.expires_at().to_rfc3339(),
-        "tool": w.tool(),
+        "tool": w.tool().map(|t| t.to_string()),
         "depth": w.depth(),
         "constraints": constraints,
     });
 
-    if let Some(holder) = w.authorized_holder() {
-        json["holder"] = serde_json::json!(hex::encode(holder.to_bytes()));
-    }
+    json["holder"] = serde_json::json!(hex::encode(w.authorized_holder().to_bytes()));
 
     if let Some(parent) = w.parent_id() {
         json["parent_id"] = serde_json::json!(parent.as_str());

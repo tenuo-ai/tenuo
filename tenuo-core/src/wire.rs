@@ -138,7 +138,7 @@ mod tests {
         let decoded = decode(&encoded).unwrap();
 
         assert_eq!(decoded.id(), warrant.id());
-        assert_eq!(decoded.tool(), warrant.tool());
+        assert_eq!(decoded.tool(), warrant.tool()); // Both return Option<&str>
     }
 
     #[test]

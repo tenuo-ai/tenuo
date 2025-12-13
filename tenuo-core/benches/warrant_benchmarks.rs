@@ -98,7 +98,7 @@ fn benchmark_warrant_attenuation(c: &mut Criterion) {
             parent
                 .attenuate()
                 .constraint("cluster", Exact::new("staging-web"))
-                .build(black_box(&child_keypair))
+                .build(black_box(&child_keypair), black_box(&parent_keypair))
                 .unwrap()
         })
     });
@@ -147,7 +147,7 @@ fn benchmark_deep_delegation_chain(c: &mut Criterion) {
                 .unwrap();
 
             for _ in 0..10 {
-                warrant = warrant.attenuate().build(&keypair).unwrap();
+                warrant = warrant.attenuate().build(&keypair, &keypair).unwrap();
             }
             warrant
         })

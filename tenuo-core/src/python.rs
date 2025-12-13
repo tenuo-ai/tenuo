@@ -17,7 +17,7 @@ use crate::planes::{
     Authorizer as RustAuthorizer, ChainStep as RustChainStep,
     ChainVerificationResult as RustChainVerificationResult,
 };
-use crate::warrant::Warrant as RustWarrant;
+use crate::warrant::{TrustLevel, Warrant as RustWarrant, WarrantType};
 use crate::wire;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -449,6 +449,78 @@ fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
     }
 }
 
+/// Python enum for WarrantType.
+#[pyclass(name = "WarrantType")]
+#[derive(Clone, Copy)]
+pub struct PyWarrantType {
+    inner: WarrantType,
+}
+
+#[pymethods]
+impl PyWarrantType {
+    #[new]
+    fn new(warrant_type: &str) -> PyResult<Self> {
+        let inner = match warrant_type.to_lowercase().as_str() {
+            "execution" => WarrantType::Execution,
+            "issuer" => WarrantType::Issuer,
+            _ => {
+                return Err(PyValueError::new_err(
+                    "WarrantType must be 'execution' or 'issuer'",
+                ))
+            }
+        };
+        Ok(Self { inner })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("WarrantType.{:?}", self.inner)
+    }
+}
+
+/// Python enum for TrustLevel.
+#[pyclass(name = "TrustLevel")]
+#[derive(Clone, Copy)]
+pub struct PyTrustLevel {
+    inner: TrustLevel,
+}
+
+#[pymethods]
+impl PyTrustLevel {
+    #[new]
+    fn new(level: &str) -> PyResult<Self> {
+        let inner = level
+            .parse()
+            .map_err(|e: String| PyValueError::new_err(e))?;
+        Ok(Self { inner })
+    }
+
+    /// Get the numeric value of the trust level.
+    fn value(&self) -> u8 {
+        self.inner as u8
+    }
+
+    /// Compare trust levels numerically.
+    fn __ge__(&self, other: &Self) -> bool {
+        self.inner >= other.inner
+    }
+
+    fn __le__(&self, other: &Self) -> bool {
+        self.inner <= other.inner
+    }
+
+    fn __gt__(&self, other: &Self) -> bool {
+        self.inner > other.inner
+    }
+
+    fn __lt__(&self, other: &Self) -> bool {
+        self.inner < other.inner
+    }
+
+    fn __repr__(&self) -> String {
+        format!("TrustLevel.{:?}", self.inner)
+    }
+}
+
 /// Python wrapper for Warrant.
 #[pyclass(name = "Warrant", subclass)]
 pub struct PyWarrant {
@@ -503,8 +575,8 @@ impl PyWarrant {
 
     /// Get the tool name.
     #[getter]
-    fn tool(&self) -> &str {
-        self.inner.tool()
+    fn tool(&self) -> Option<String> {
+        self.inner.tool().map(|s| s.to_string())
     }
 
     /// Get the delegation depth.
@@ -535,14 +607,13 @@ impl PyWarrant {
         self.inner.expires_at().to_rfc3339()
     }
 
-    /// Attenuate this warrant with additional constraints.
-    ///
-    /// Note: session_id is immutable and inherited from the parent warrant.
-    #[pyo3(signature = (constraints, keypair, ttl_seconds=None, holder=None))]
+    /// Attenuate the warrant (create a child with narrower scope).
+    #[pyo3(signature = (constraints, keypair, parent_keypair, ttl_seconds=None, holder=None))]
     fn attenuate(
         &self,
         constraints: &Bound<'_, PyDict>,
         keypair: &PyKeypair,
+        parent_keypair: &PyKeypair,
         ttl_seconds: Option<u64>,
         holder: Option<&PyPublicKey>,
     ) -> PyResult<PyWarrant> {
@@ -556,13 +627,15 @@ impl PyWarrant {
             builder = builder.authorized_holder(h.inner.clone());
         }
 
-        for (key, value) in constraints.iter() {
-            let field: String = key.extract()?;
-            let constraint = py_to_constraint(&value)?;
+        for (field, constraint) in constraints.iter() {
+            let field: String = field.extract()?;
+            let constraint = py_to_constraint(&constraint)?;
             builder = builder.constraint(field, constraint);
         }
 
-        let warrant = builder.build(&keypair.inner).map_err(to_py_err)?;
+        let warrant = builder
+            .build(&keypair.inner, &parent_keypair.inner)
+            .map_err(to_py_err)?;
         Ok(PyWarrant { inner: warrant })
     }
 
@@ -668,9 +741,10 @@ impl PyWarrant {
 
     fn __repr__(&self) -> String {
         format!(
-            "Warrant(id='{}', tool='{}', depth={})",
+            "Warrant(id='{}', type={:?}, tool={}, depth={})",
             self.inner.id(),
-            self.inner.tool(),
+            self.inner.r#type(),
+            self.inner.tool().unwrap_or("None"),
             self.inner.depth()
         )
     }
@@ -1145,6 +1219,8 @@ fn constraint_value_to_py(py: Python<'_>, cv: &ConstraintValue) -> PyResult<PyOb
 ///
 /// This function is public so it can be called from tenuo-python package.
 pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PyWarrantType>()?;
+    m.add_class::<PyTrustLevel>()?;
     m.add_class::<PyPattern>()?;
     m.add_class::<PyExact>()?;
     m.add_class::<PyOneOf>()?;
@@ -1156,12 +1232,15 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAll>()?;
     m.add_class::<PyAnyOf>()?;
     m.add_class::<PyNot>()?;
+    // Core types
     m.add_class::<PyKeypair>()?;
-    m.add_class::<PyWarrant>()?;
-    m.add_class::<PyMcpConfig>()?;
-    m.add_class::<PyCompiledMcpConfig>()?;
     m.add_class::<PyPublicKey>()?;
     m.add_class::<PySignature>()?;
+    m.add_class::<PyWarrant>()?;
+    m.add_class::<PyWarrantType>()?;
+    m.add_class::<PyTrustLevel>()?;
+    m.add_class::<PyMcpConfig>()?;
+    m.add_class::<PyCompiledMcpConfig>()?;
     m.add_class::<PyAuthorizer>()?;
     m.add_class::<PyChainStep>()?;
     m.add_class::<PyChainVerificationResult>()?;

@@ -72,7 +72,7 @@ fn test_chain_revocation_child() {
     let child = root
         .attenuate()
         .authorized_holder(child_kp.public_key())
-        .build(&child_kp)
+        .build(&child_kp, &root_kp)
         .unwrap();
 
     let mut data_plane = DataPlane::new();
@@ -115,7 +115,7 @@ fn test_chain_revocation_parent_cascades() {
     let child = root
         .attenuate()
         .authorized_holder(child_kp.public_key())
-        .build(&child_kp)
+        .build(&child_kp, &root_kp)
         .unwrap();
 
     let mut data_plane = DataPlane::new();

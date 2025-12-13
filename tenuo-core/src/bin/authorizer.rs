@@ -203,7 +203,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(()) => {
                     println!("✓ Warrant signature is valid");
                     println!("  ID: {}", w.id());
-                    println!("  Tool: {}", w.tool());
+                    if let Some(tool) = w.tool() {
+                        println!("  Tool: {}", tool);
+                    }
                     println!("  Expires: {}", w.expires_at());
                     if w.is_expired() {
                         println!("  ⚠ WARNING: Warrant has EXPIRED");

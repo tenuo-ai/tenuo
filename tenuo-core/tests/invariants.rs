@@ -53,7 +53,7 @@ proptest! {
             .attenuate()
             .ttl(Duration::from_secs(ttl_child))
             .authorized_holder(child_kp.public_key())
-            .build(&child_kp)
+            .build(&child_kp, &child_kp)
             .unwrap();
 
         // INVARIANT: child.expires_at <= parent.expires_at
@@ -75,7 +75,7 @@ proptest! {
         prop_assert_eq!(warrant.depth(), 0);
 
         for expected_depth in 1..=depth_limit {
-            warrant = warrant.attenuate().authorized_holder(kp.public_key()).build(&kp).unwrap();
+            warrant = warrant.attenuate().authorized_holder(kp.public_key()).build(&kp, &kp).unwrap();
             prop_assert_eq!(warrant.depth(), expected_depth);
         }
     }
@@ -102,7 +102,7 @@ proptest! {
             .attenuate()
             .constraint("field", Pattern::new("*").unwrap())
             .authorized_holder(child_kp.public_key())
-            .build(&child_kp);
+            .build(&child_kp, &child_kp);
 
         prop_assert!(result.is_err());
     }
@@ -129,7 +129,7 @@ proptest! {
             .attenuate()
             .constraint("amount", Range::max(parent_max + child_delta))
             .authorized_holder(child_kp.public_key())
-            .build(&child_kp);
+            .build(&child_kp, &child_kp);
 
         prop_assert!(result.is_err());
 
@@ -138,7 +138,7 @@ proptest! {
             .attenuate()
             .constraint("amount", Range::max(parent_max - child_delta.min(parent_max - 1.0)))
             .authorized_holder(child_kp.public_key())
-            .build(&child_kp);
+            .build(&child_kp, &child_kp);
 
         prop_assert!(narrower.is_ok());
     }
@@ -330,14 +330,14 @@ proptest! {
 
         // Delegate up to max
         for _ in 0..MAX_DELEGATION_DEPTH {
-            warrant = warrant.attenuate().authorized_holder(kp.public_key()).build(&kp).unwrap();
+            warrant = warrant.attenuate().authorized_holder(kp.public_key()).build(&kp, &kp).unwrap();
         }
 
         prop_assert_eq!(warrant.depth(), MAX_DELEGATION_DEPTH);
 
         // Any further delegation should fail
         for _ in 0..extra_attempts {
-            let result = warrant.attenuate().authorized_holder(kp.public_key()).build(&kp);
+            let result = warrant.attenuate().authorized_holder(kp.public_key()).build(&kp, &kp);
             prop_assert!(result.is_err());
             match result.unwrap_err() {
                 Error::DepthExceeded(got, max) => {
@@ -398,7 +398,7 @@ proptest! {
 
         let mut parent = root;
         for _ in 1..chain_length {
-            let child = parent.attenuate().authorized_holder(kp.public_key()).build(&kp).unwrap();
+            let child = parent.attenuate().authorized_holder(kp.public_key()).build(&kp, &kp).unwrap();
             prop_assert_eq!(
                 child.parent_id().map(|id| id.as_str()),
                 Some(parent.id().as_str())

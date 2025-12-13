@@ -12,6 +12,7 @@ pip install tenuo
 
 ### Basics
 - **[basic_usage.py](basic_usage.py)**: The "Hello World" of Tenuo. Shows how to create a keypair, issue a warrant, and authorize a tool call.
+- **[issuer_execution_pattern.py](issuer_execution_pattern.py)**: **RECOMMENDED PATTERN** - Shows the production best practice: ISSUER warrants for planners, EXECUTION warrants for workers. Demonstrates trust levels and separation of concerns. **Start here for production deployments.**
 - **[decorator_example.py](decorator_example.py)**: Demonstrates the `@lockdown` decorator pattern for protecting functions with minimal boilerplate.
 - **[context_pattern.py](context_pattern.py)**: Shows how to use `set_warrant_context` for thread-safe/async-safe warrant passing (essential for web frameworks like FastAPI).
 

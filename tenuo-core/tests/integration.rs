@@ -45,7 +45,7 @@ fn demo_kubernetes_upgrade_delegation_chain() {
         .constraint("cluster", Pattern::new("staging-*").unwrap())
         .ttl(Duration::from_secs(600))
         .authorized_holder(worker_kp.public_key())
-        .build(&orchestrator_kp)
+        .build(&orchestrator_kp, &orchestrator_kp)
         .unwrap();
 
     assert_eq!(orchestrator_warrant.depth(), 1);
@@ -58,7 +58,7 @@ fn demo_kubernetes_upgrade_delegation_chain() {
         .attenuate()
         .constraint("cluster", Exact::new("staging-web"))
         .authorized_holder(worker_kp.public_key())
-        .build(&worker_kp)
+        .build(&worker_kp, &worker_kp)
         .unwrap();
 
     assert_eq!(worker_warrant.depth(), 2);
@@ -132,7 +132,7 @@ fn demo_finance_delegation_with_budget() {
         .attenuate()
         .constraint("amount", Range::max(10_000.0))
         .authorized_holder(payment_worker_kp.public_key())
-        .build(&finance_agent_kp)
+        .build(&finance_agent_kp, &finance_agent_kp)
         .unwrap();
 
     // Payment worker gets even narrower: $1k max
@@ -140,7 +140,7 @@ fn demo_finance_delegation_with_budget() {
         .attenuate()
         .constraint("amount", Range::max(1_000.0))
         .authorized_holder(payment_worker_kp.public_key())
-        .build(&payment_worker_kp)
+        .build(&payment_worker_kp, &payment_worker_kp)
         .unwrap();
 
     // Worker can process small payments
@@ -233,7 +233,7 @@ fn demo_http_transport() {
         "Verification failed: {:?}",
         verify_result.err()
     );
-    assert_eq!(received.tool(), "query_database");
+    assert_eq!(received.tool(), Some("query_database"));
     assert_eq!(received.session_id(), Some("session_abc123"));
 
     // Authorize a query
@@ -303,7 +303,7 @@ fn demo_session_binding() {
     let attenuated = session_1_warrant
         .attenuate()
         .authorized_holder(kp.public_key())
-        .build(&kp)
+        .build(&kp, &kp)
         .unwrap();
     assert_eq!(attenuated.session_id(), Some("session_001"));
 }
@@ -332,21 +332,21 @@ fn demo_audit_chain_reconstruction() {
         .attenuate()
         .constraint("scope", Pattern::new("dept-*").unwrap())
         .authorized_holder(level2_kp.public_key())
-        .build(&level1_kp)
+        .build(&level1_kp, &level1_kp)
         .unwrap();
 
     let level2 = level1
         .attenuate()
         .constraint("scope", Pattern::new("dept-engineering-*").unwrap())
         .authorized_holder(level3_kp.public_key())
-        .build(&level2_kp)
+        .build(&level2_kp, &level2_kp)
         .unwrap();
 
     let level3 = level2
         .attenuate()
         .constraint("scope", Exact::new("dept-engineering-frontend"))
         .authorized_holder(level3_kp.public_key())
-        .build(&level3_kp)
+        .build(&level3_kp, &level3_kp)
         .unwrap();
 
     // Reconstruct the chain from the leaf
@@ -405,7 +405,7 @@ fn demo_mixed_constraint_narrowing() {
         .constraint("format", Pattern::new("csv*").unwrap()) // Only CSV formats
         .constraint("max_rows", Range::max(10_000.0)) // Much smaller limit
         .authorized_holder(child_kp.public_key())
-        .build(&child_kp)
+        .build(&child_kp, &child_kp)
         .unwrap();
 
     // Valid request within child constraints
@@ -462,7 +462,7 @@ fn test_monotonicity_violation_rejected() {
         .attenuate()
         .constraint("amount", Range::max(5000.0))
         .authorized_holder(child_kp.public_key())
-        .build(&child_kp);
+        .build(&child_kp, &child_kp);
 
     assert!(result.is_err());
     let err = result.unwrap_err();

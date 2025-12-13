@@ -10,6 +10,8 @@ from tenuo_core import (  # type: ignore
     # Core types
     Keypair,
     Warrant,
+    WarrantType,
+    TrustLevel,
     PublicKey,
     Signature,
     Authorizer,
@@ -95,6 +97,8 @@ __all__ = [
     # Core types
     "Keypair",
     "Warrant",
+    "WarrantType",
+    "TrustLevel",
     "PublicKey",
     "Signature",
     "Authorizer",

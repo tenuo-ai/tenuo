@@ -348,13 +348,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         leaf_warrant.depth() + 1
     );
 
+    // Get orchestrator keypair for chain link signature
+    // In production, the orchestrator (parent issuer) would sign the chain link
+    // For demo, we get it from environment or use a placeholder
+    let orchestrator_keypair = if let Ok(orch_key_hex) = env::var("TENUO_ORCHESTRATOR_KEY") {
+        let orch_key_bytes: [u8; 32] = hex::decode(orch_key_hex)?
+            .try_into()
+            .map_err(|_| "Orchestrator key must be 32 bytes")?;
+        Keypair::from_bytes(&orch_key_bytes)
+    } else {
+        // For demo, if not provided, we can't create proper chain link signature
+        // In production, this should always be provided
+        println!(
+            "  ⚠️  WARNING: TENUO_ORCHESTRATOR_KEY not set - chain link signature will be invalid"
+        );
+        println!("     In production, the orchestrator must sign chain links");
+        Keypair::generate() // Placeholder - won't match leaf_warrant.issuer()
+    };
+
     match leaf_warrant
         .attenuate()
         .constraint("budget", Range::max(500.0)) // Further restrict
         .ttl(Duration::from_secs(300)) // 5 minutes
         .authorized_holder(sub_agent_keypair.public_key())
         .agent_id("sub-agent-tool-handler")
-        .build(&worker_keypair)
+        .build(&worker_keypair, &orchestrator_keypair)
     {
         Ok(sub_warrant) => {
             println!(
@@ -374,7 +392,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .attenuate()
                 .constraint("budget", Range::max(100.0))
                 .ttl(Duration::from_secs(60))
-                .build(&sub_agent_keypair)
+                .build(&sub_agent_keypair, &worker_keypair) // Worker signed the parent
             {
                 Ok(deep_warrant) => {
                     println!("  ✓ Deep warrant created (depth {})", deep_warrant.depth());
@@ -389,7 +407,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     match deep_warrant
                         .attenuate()
                         .constraint("budget", Range::max(50.0))
-                        .build(&another_keypair)
+                        .build(&another_keypair, &sub_agent_keypair) // Sub-agent signed the parent
                     {
                         Ok(w) => {
                             println!(
@@ -520,7 +538,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 sensitive_warrant.id().as_str(),
                 "manage_infrastructure",
                 &args_no_approval,
-                sensitive_warrant.authorized_holder(),
+                Some(sensitive_warrant.authorized_holder()),
             );
 
             // Admin creates an approval signature

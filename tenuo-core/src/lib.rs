@@ -121,7 +121,7 @@ mod tests {
             .build(&keypair)
             .unwrap();
 
-        assert_eq!(warrant.tool(), "upgrade_cluster");
+        assert_eq!(warrant.tool(), Some("upgrade_cluster"));
         assert!(warrant.verify(&keypair.public_key()).is_ok());
     }
 
@@ -141,7 +141,7 @@ mod tests {
         let child = parent
             .attenuate()
             .constraint("cluster", Exact::new("staging-web"))
-            .build(&child_keypair)
+            .build(&child_keypair, &keypair) // keypair is the parent issuer
             .unwrap();
 
         assert!(child.expires_at() <= parent.expires_at());

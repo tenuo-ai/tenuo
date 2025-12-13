@@ -344,7 +344,7 @@ async fn enroll(
             "control-plane",
             "enrollment-token",
         )
-        .with_key(warrant.authorized_holder().unwrap())
+        .with_key(warrant.authorized_holder())
         .with_details(format!("Issued root warrant {}", warrant.id()))
         .with_related(vec![warrant.id().to_string()]),
     );

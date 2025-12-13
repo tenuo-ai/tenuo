@@ -34,7 +34,7 @@ use crate::constraints::{Constraint, ConstraintValue};
 use crate::crypto::{Keypair, PublicKey};
 use crate::error::{Error, Result};
 use crate::revocation::RevocationRequest;
-use crate::warrant::Warrant;
+use crate::warrant::{Warrant, WarrantType};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
@@ -84,7 +84,7 @@ fn verify_approvals_with_tolerance(
         warrant.id().as_str(),
         tool,
         args,
-        warrant.authorized_holder(),
+        Some(warrant.authorized_holder()),
     );
 
     // Count valid approvals from required approvers
@@ -499,7 +499,7 @@ impl DataPlane {
         // Note: We don't check Control Plane key here as we might not know it,
         // and CP revocations should go through SRL anyway.
         let is_authorized = request.requestor == *warrant.issuer() || // Parent
-            Some(&request.requestor) == warrant.authorized_holder(); // Self
+            request.requestor == *warrant.authorized_holder(); // Self
 
         if !is_authorized {
             return Err(Error::Unauthorized(format!(
@@ -677,11 +677,25 @@ impl DataPlane {
         };
 
         // Step 2: Walk the chain, verifying each link
+        // Use embedded ChainLink data for self-contained verification when available
         for i in 1..chain.len() {
             let parent = &chain[i - 1];
             let child = &chain[i];
 
-            self.verify_chain_link(parent, child)?;
+            // Try to use embedded ChainLink data for verification (self-contained)
+            // If the child has an issuer_chain with matching parent, use it
+            let issuer_chain = child.issuer_chain();
+            let use_embedded = issuer_chain.len() >= i
+                && issuer_chain[i - 1].issuer_id.as_str() == parent.id().as_str();
+
+            if use_embedded {
+                // Self-contained verification using embedded ChainLink
+                let link = &child.issuer_chain()[i - 1];
+                self.verify_chain_link_embedded(link, child)?;
+            } else {
+                // Fallback to full parent warrant verification
+                self.verify_chain_link(parent, child)?;
+            }
 
             // Check session binding if enforced
             if enforce_session && child.session_id() != expected_session {
@@ -704,9 +718,137 @@ impl DataPlane {
         Ok(result)
     }
 
+    /// Verify a single link using embedded ChainLink data (self-contained verification).
+    ///
+    /// This method uses the embedded issuer scope from the ChainLink, enabling
+    /// verification without needing the full parent warrant.
+    fn verify_chain_link_embedded(
+        &self,
+        link: &crate::warrant::ChainLink,
+        child: &Warrant,
+    ) -> Result<()> {
+        // Check revocation
+        if self.is_revoked(child) {
+            return Err(Error::WarrantRevoked(child.id().to_string()));
+        }
+
+        // 1. Verify the chain link signature - issuer signs the child warrant's payload
+        // This cryptographically binds the chain link to the specific child warrant
+        // Note: The chain link signature is over the payload WITHOUT the issuer_chain,
+        // so we use payload_bytes_without_chain() for verification
+        let payload_bytes_without_chain = child.payload_bytes_without_chain()?;
+        link.issuer_pubkey
+            .verify(&payload_bytes_without_chain, &link.signature)?;
+
+        // 2. Verify the child's signature (signed by child's issuer, not parent's)
+        // The link contains parent information, but the child is signed by its own issuer
+        child.verify(child.issuer())?;
+
+        // 3. Check parent_id linkage
+        let parent_id = child.parent_id().ok_or_else(|| {
+            Error::ChainVerificationFailed("child warrant has no parent_id".to_string())
+        })?;
+
+        if parent_id != &link.issuer_id {
+            return Err(Error::ChainVerificationFailed(format!(
+                "chain broken: child's parent_id '{}' != link's issuer_id '{}'",
+                parent_id, link.issuer_id
+            )));
+        }
+
+        // 4. Check depth doesn't exceed issuer's max_depth constraint
+        // Note: We can't verify exact depth increment without the parent's actual depth,
+        // but we can ensure the child doesn't exceed the issuer's max_depth policy
+        if child.depth() > link.issuer_max_depth {
+            return Err(Error::ChainVerificationFailed(format!(
+                "child depth {} exceeds link's issuer_max_depth {}",
+                child.depth(),
+                link.issuer_max_depth
+            )));
+        }
+
+        // 5. Check expiration doesn't exceed issuer
+        if child.expires_at() > link.issuer_expires_at {
+            return Err(Error::ChainVerificationFailed(format!(
+                "child expires at {} which is after issuer {}",
+                child.expires_at(),
+                link.issuer_expires_at
+            )));
+        }
+
+        // 6. Check child is not expired (with clock tolerance)
+        if child.is_expired_with_tolerance(self.clock_tolerance) {
+            return Err(Error::WarrantExpired(child.expires_at()));
+        }
+
+        // 7. Validate monotonicity using embedded scope
+        match (link.issuer_type, child.r#type()) {
+            (WarrantType::Execution, WarrantType::Execution) => {
+                // For execution warrants, validate constraint attenuation
+                if let (Some(parent_constraints), Some(child_constraints)) =
+                    (link.issuer_constraints.as_ref(), child.constraints())
+                {
+                    parent_constraints.validate_attenuation(child_constraints)?;
+                }
+                // Validate tool is within issuer's tools
+                if let Some(issuer_tools) = &link.issuer_tools {
+                    if let Some(child_tool) = child.tool() {
+                        if !issuer_tools.iter().any(|t| t == child_tool || t == "*") {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "child tool '{}' not in issuer's tools: {:?}",
+                                child_tool, issuer_tools
+                            )));
+                        }
+                    }
+                }
+            }
+            (WarrantType::Issuer, WarrantType::Issuer) => {
+                // For issuer warrants, validate issuable_tools and trust_ceiling
+                if let (Some(parent_tools), Some(child_tools)) =
+                    (link.issuer_tools.as_ref(), child.issuable_tools())
+                {
+                    // Child issuable_tools must be a subset of parent
+                    for tool in child_tools {
+                        if !parent_tools.contains(tool) {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "issuable_tool '{}' not in issuer's issuable_tools",
+                                tool
+                            )));
+                        }
+                    }
+                }
+                // Trust ceiling can only decrease
+                if let (Some(parent_ceiling), Some(child_ceiling)) =
+                    (link.issuer_trust, child.trust_ceiling())
+                {
+                    if child_ceiling > parent_ceiling {
+                        return Err(Error::MonotonicityViolation(format!(
+                            "trust_ceiling cannot increase: issuer {:?}, child {:?}",
+                            parent_ceiling, child_ceiling
+                        )));
+                    }
+                }
+                // Constraint bounds must be monotonic
+                if let (Some(parent_bounds), Some(child_bounds)) =
+                    (link.issuer_constraints.as_ref(), child.constraint_bounds())
+                {
+                    parent_bounds.validate_attenuation(child_bounds)?;
+                }
+            }
+            _ => {
+                return Err(Error::MonotonicityViolation(
+                    "warrant type cannot change during attenuation".to_string(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Verify a single link in the delegation chain.
     ///
     /// Validates that `child` is a valid delegation from `parent`.
+    /// This is the fallback method when embedded ChainLink data is not available.
     fn verify_chain_link(&self, parent: &Warrant, child: &Warrant) -> Result<()> {
         // Check revocation
         if self.is_revoked(child) {
@@ -763,9 +905,12 @@ impl DataPlane {
         }
 
         // 5. Validate constraint attenuation (monotonicity)
-        parent
-            .constraints()
-            .validate_attenuation(child.constraints())?;
+        // Only validate for execution warrants
+        if let (Some(parent_constraints), Some(child_constraints)) =
+            (parent.constraints(), child.constraints())
+        {
+            parent_constraints.validate_attenuation(child_constraints)?;
+        }
 
         // 6. Verify child's signature
         child.verify(child.issuer())?;
@@ -865,10 +1010,17 @@ impl DataPlane {
     /// Attenuate a warrant for a sub-agent.
     ///
     /// Requires this data plane to have its own keypair.
+    ///
+    /// # Arguments
+    ///
+    /// * `parent` - The parent warrant to attenuate from
+    /// * `constraints` - Constraints to apply to the child warrant
+    /// * `parent_keypair` - The keypair of the parent warrant issuer (for chain link signature)
     pub fn attenuate(
         &self,
         parent: &Warrant,
         constraints: &[(&str, Constraint)],
+        parent_keypair: &Keypair,
     ) -> Result<Warrant> {
         let keypair = self.own_keypair.as_ref().ok_or_else(|| {
             Error::CryptoError("data plane has no keypair for attenuation".to_string())
@@ -879,7 +1031,7 @@ impl DataPlane {
             builder = builder.constraint(*field, constraint.clone());
         }
 
-        builder.build(keypair)
+        builder.build(keypair, parent_keypair)
     }
 
     /// Get this data plane's public key (if it has one).
@@ -1245,10 +1397,55 @@ impl Authorizer {
             return Err(Error::WarrantExpired(child.expires_at()));
         }
 
-        // Validate monotonicity
-        parent
-            .constraints()
-            .validate_attenuation(child.constraints())?;
+        // Validate monotonicity based on warrant type
+        match (parent.r#type(), child.r#type()) {
+            (WarrantType::Execution, WarrantType::Execution) => {
+                // For execution warrants, validate constraint attenuation
+                if let (Some(parent_constraints), Some(child_constraints)) =
+                    (parent.constraints(), child.constraints())
+                {
+                    parent_constraints.validate_attenuation(child_constraints)?;
+                }
+            }
+            (WarrantType::Issuer, WarrantType::Issuer) => {
+                // For issuer warrants, validate issuable_tools and trust_ceiling
+                if let (Some(parent_tools), Some(child_tools)) =
+                    (parent.issuable_tools(), child.issuable_tools())
+                {
+                    // Child issuable_tools must be a subset of parent
+                    for tool in child_tools {
+                        if !parent_tools.contains(tool) {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "issuable_tool '{}' not in parent's issuable_tools",
+                                tool
+                            )));
+                        }
+                    }
+                }
+                // Trust ceiling can only decrease
+                if let (Some(parent_ceiling), Some(child_ceiling)) =
+                    (parent.trust_ceiling(), child.trust_ceiling())
+                {
+                    if child_ceiling > parent_ceiling {
+                        return Err(Error::MonotonicityViolation(format!(
+                            "trust_ceiling cannot increase: parent {:?}, child {:?}",
+                            parent_ceiling, child_ceiling
+                        )));
+                    }
+                }
+                // Constraint bounds must be monotonic
+                if let (Some(parent_bounds), Some(child_bounds)) =
+                    (parent.constraint_bounds(), child.constraint_bounds())
+                {
+                    parent_bounds.validate_attenuation(child_bounds)?;
+                }
+            }
+            _ => {
+                return Err(Error::MonotonicityViolation(
+                    "warrant type cannot change during attenuation".to_string(),
+                ));
+            }
+        }
 
         // Note: Signature verification is done in batch at the chain level for performance
         // (see verify_chain_with_options). Individual verify_link calls don't re-verify signatures.
@@ -1357,11 +1554,17 @@ mod tests {
             .attenuate(
                 &root_warrant,
                 &[("table", Pattern::new("public_*").unwrap().into())],
+                &control_plane.keypair, // Parent issuer keypair
             )
             .unwrap();
 
         assert_eq!(worker_warrant.depth(), 1);
-        assert_eq!(root_warrant.max_depth(), Some(64)); // Now defaults to 64 in builder
+        // max_depth is now None when not explicitly set (protocol default applies via effective_max_depth)
+        assert_eq!(root_warrant.max_depth(), None);
+        assert_eq!(
+            root_warrant.effective_max_depth(),
+            crate::MAX_DELEGATION_DEPTH
+        );
     }
 
     #[test]
@@ -1432,7 +1635,7 @@ mod tests {
         let child = root
             .attenuate()
             .constraint("cluster", Exact::new("staging-web"))
-            .build(&orchestrator_keypair)
+            .build(&orchestrator_keypair, &control_plane.keypair)
             .unwrap();
 
         // Data plane verifies the chain
@@ -1463,13 +1666,13 @@ mod tests {
         let orchestrator_warrant = root
             .attenuate()
             .constraint("table", Pattern::new("public_*").unwrap())
-            .build(&orchestrator_keypair)
+            .build(&orchestrator_keypair, &control_plane.keypair)
             .unwrap();
 
         let worker_warrant = orchestrator_warrant
             .attenuate()
             .constraint("table", Exact::new("public_users"))
-            .build(&worker_keypair)
+            .build(&worker_keypair, &orchestrator_keypair)
             .unwrap();
 
         let mut data_plane = DataPlane::new();
@@ -1503,7 +1706,7 @@ mod tests {
             .attenuate()
             .constraint("cluster", Exact::new("staging-web"))
             .authorized_holder(agent_keypair.public_key())
-            .build(&agent_keypair)
+            .build(&agent_keypair, &control_plane.keypair)
             .unwrap();
 
         let mut data_plane = DataPlane::new();
@@ -1565,7 +1768,10 @@ mod tests {
             .unwrap();
 
         // Create an attenuated warrant from warrant2
-        let child = warrant2.attenuate().build(&agent_keypair).unwrap();
+        let child = warrant2
+            .attenuate()
+            .build(&agent_keypair, &control_plane.keypair)
+            .unwrap();
 
         let mut data_plane = DataPlane::new();
         data_plane.trust_issuer("root", control_plane.public_key());
@@ -1608,7 +1814,7 @@ mod tests {
         let child = root
             .attenuate()
             .authorized_holder(agent_keypair.public_key())
-            .build(&agent_keypair)
+            .build(&agent_keypair, &control_plane.keypair)
             .unwrap();
 
         let authorizer = Authorizer::new(control_plane.public_key());
@@ -1659,7 +1865,10 @@ mod tests {
             .issue_warrant("test", &[], Duration::from_secs(60))
             .unwrap();
 
-        let child = root.attenuate().build(&orchestrator_keypair).unwrap();
+        let child = root
+            .attenuate()
+            .build(&orchestrator_keypair, &control_plane.keypair)
+            .unwrap();
 
         let mut data_plane = DataPlane::new();
         data_plane.trust_issuer("root", control_plane.public_key());
@@ -1798,7 +2007,7 @@ mod tests {
             warrant.id().as_str(),
             "sensitive_action",
             &args,
-            warrant.authorized_holder(),
+            Some(warrant.authorized_holder()),
         );
 
         let now = Utc::now();
@@ -1862,7 +2071,7 @@ mod tests {
             warrant.id().as_str(),
             "sensitive_action",
             &args,
-            warrant.authorized_holder(),
+            Some(warrant.authorized_holder()),
         );
 
         let mut signable = Vec::new();
@@ -1933,7 +2142,7 @@ mod tests {
             warrant.id().as_str(),
             "sensitive_action",
             &args,
-            warrant.authorized_holder(),
+            Some(warrant.authorized_holder()),
         );
 
         // Helper to create approval
@@ -2008,7 +2217,7 @@ mod tests {
             .attenuate()
             // Session ID inherited from root (session_123)
             .authorized_holder(worker_keypair.public_key())
-            .build(&orchestrator_keypair)
+            .build(&orchestrator_keypair, &control_plane.keypair)
             .unwrap();
 
         let mut data_plane = DataPlane::new();
@@ -2093,7 +2302,7 @@ mod tests {
             .attenuate()
             // Session ID inherited (None)
             .authorized_holder(worker_keypair.public_key())
-            .build(&orchestrator_keypair)
+            .build(&orchestrator_keypair, &control_plane.keypair)
             .unwrap();
 
         let mut data_plane = DataPlane::new();
@@ -2122,7 +2331,7 @@ mod tests {
             .attenuate()
             // Session ID inherited from root (session_123)
             .authorized_holder(orchestrator_keypair.public_key())
-            .build(&orchestrator_keypair)
+            .build(&orchestrator_keypair, &control_plane.keypair)
             .unwrap();
 
         let authorizer = Authorizer::new(control_plane.public_key());
@@ -2144,7 +2353,7 @@ mod tests {
             .attenuate()
             // Session ID inherited from root2 (session_456)
             .authorized_holder(orchestrator_keypair.public_key())
-            .build(&orchestrator_keypair)
+            .build(&orchestrator_keypair, &control_plane.keypair)
             .unwrap();
 
         // Should fail - mixing warrants from different sessions
@@ -2162,7 +2371,7 @@ mod tests {
             .issue_bound_warrant("test_tool", &[], Duration::from_secs(60), &holder_key)
             .expect("Failed to issue bound warrant");
 
-        assert_eq!(warrant.authorized_holder(), Some(&holder_key));
+        assert_eq!(warrant.authorized_holder(), &holder_key);
 
         // 2. Create AuditEvent
         let event = crate::approval::AuditEvent::new(
@@ -2170,7 +2379,7 @@ mod tests {
             "control-plane",
             "test",
         )
-        .with_key(warrant.authorized_holder().unwrap())
+        .with_key(warrant.authorized_holder())
         .with_details(format!("Issued warrant {}", warrant.id()))
         .with_related(vec![warrant.id().to_string()]);
 

@@ -98,6 +98,39 @@ Tenuo implements **Subtractive Delegation**:
 
 Warrants can only **shrink** when delegated: a $1000 budget becomes $500, access to `staging-*` narrows to `staging-web`. Verification is 100% offline in ~25μs.
 
+## Warrant Types
+
+Tenuo supports two types of warrants for separation of concerns:
+
+### ISSUER Warrants (Planners)
+- **Purpose**: Issue EXECUTION warrants to workers
+- **Use Case**: Orchestrators, P-LLMs that decide capabilities
+- **Capabilities**: Can issue warrants, cannot execute tools
+- **Security**: Prevents planning components from directly invoking tools
+
+### EXECUTION Warrants (Workers)
+- **Purpose**: Invoke specific tools with specific constraints
+- **Use Case**: Workers that execute actions
+- **Capabilities**: Can execute tools, cannot issue new warrants
+- **Security**: Prevents execution components from escalating privileges
+
+### Trust Levels
+
+Warrants have hierarchical trust levels that enforce organizational boundaries:
+
+| Level | Value | Use Case |
+|-------|-------|----------|
+| **Untrusted** | 0 | Anonymous/unauthenticated entities |
+| **External** | 10 | Authenticated external users |
+| **Partner** | 20 | Third-party integrations |
+| **Internal** | 30 | Internal services |
+| **Privileged** | 40 | Admin operations |
+| **System** | 50 | Control plane |
+
+Trust levels can only **decrease** during delegation, preventing privilege escalation.
+
+**Best Practice**: Use ISSUER warrants for planners, EXECUTION warrants for workers. See [`issuer_execution_pattern.py`](tenuo-python/examples/issuer_execution_pattern.py) for the recommended pattern.
+
 ## Integration Patterns
 
 ### Python SDK (The Easy Way)

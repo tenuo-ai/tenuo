@@ -40,6 +40,7 @@ def test_full_warrant_lifecycle():
             "budget": Range.max_value(1000.0)
         },
         keypair=control_keypair, # Signed by parent (Control Plane)
+        parent_keypair=control_keypair, # Parent signs the chain link
         holder=worker_keypair.public_key() # Bound to worker
     )
     
