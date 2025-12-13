@@ -42,10 +42,9 @@ jobs:
         working-directory: tenuo-core
 
       - name: Security Audit
-        uses: actions-rs/audit-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
         working-directory: tenuo-core
+        run: |
+          cargo audit
 
   # ============================================================================
   # PYTHON SDK
