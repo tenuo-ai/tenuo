@@ -37,6 +37,9 @@ if [ -d ".venv" ]; then
     echo "  → Building and installing Rust extension..."
     maturin develop
     
+    # Ensure the Python wrapper is importable (maturin develop doesn't always create .pth file)
+    echo "$(pwd)" > ../.venv/lib/python3.9/site-packages/tenuo.pth
+    
     echo "  → Linting with ruff..."
     ruff check .
     
