@@ -44,6 +44,7 @@ jobs:
       - name: Security Audit
         working-directory: tenuo-core
         run: |
+          cargo install cargo-audit --locked
           cargo audit
 
   # ============================================================================

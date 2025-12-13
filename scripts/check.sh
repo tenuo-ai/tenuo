@@ -23,14 +23,24 @@ cargo clippy --all-targets --all-features -- -D warnings
 cd ..
 
 # 3. Rust Tests
-echo -e "\n${GREEN}[3/4] Running Rust Tests...${NC}"
+echo -e "\n${GREEN}[3/5] Running Rust Tests...${NC}"
 cd tenuo-core
 cargo test
 cd ..
 
-# 4. Python Checks (if venv exists)
+# 4. Security Audit
+echo -e "\n${GREEN}[4/5] Running Security Audit...${NC}"
+cd tenuo-core
+if ! command -v cargo-audit &> /dev/null; then
+    echo "Installing cargo-audit..."
+    cargo install cargo-audit --locked
+fi
+cargo audit
+cd ..
+
+# 5. Python Checks (if venv exists)
 if [ -d ".venv" ]; then
-    echo -e "\n${GREEN}[4/4] Running Python Checks...${NC}"
+    echo -e "\n${GREEN}[5/5] Running Python Checks...${NC}"
     source .venv/bin/activate
     cd tenuo-python
     
@@ -51,7 +61,7 @@ if [ -d ".venv" ]; then
     
     cd ..
 else
-    echo -e "\n${RED}[4/4] Skipping Python checks (no .venv found)${NC}"
+    echo -e "\n${RED}[5/5] Skipping Python checks (no .venv found)${NC}"
     echo "To enable Python checks:"
     echo "  1. python3 -m venv .venv"
     echo "  2. source .venv/bin/activate"
