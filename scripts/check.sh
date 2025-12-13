@@ -44,9 +44,7 @@ if [ -d ".venv" ]; then
     mypy .
     
     echo "  → Running tests with pytest..."
-    cd ..
-    python -m pytest --rootdir=. tenuo-python/tests/ -v
-    cd tenuo-python
+    pytest
     
     cd ..
 else
