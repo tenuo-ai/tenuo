@@ -728,7 +728,7 @@ impl PyCompiledMcpConfig {
         // Convert Python dict to serde_json::Value
         let py = arguments.py();
         let json_str = {
-            let json_mod = py.import_bound("json")?;
+            let json_mod = py.import("json")?;
             let dumps = json_mod.getattr("dumps")?;
             dumps.call1((arguments,))?.extract::<String>()?
         };
@@ -743,7 +743,7 @@ impl PyCompiledMcpConfig {
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
 
         // Convert extracted constraints to Python dict
-        let dict = PyDict::new_bound(py);
+        let dict = PyDict::new(py);
         for (key, value) in result.constraints {
             let py_val = constraint_value_to_py(py, &value)?;
             dict.set_item(key, py_val)?;
@@ -1117,21 +1117,22 @@ impl PyAuthorizer {
 
 /// Helper to convert ConstraintValue to Python object
 fn constraint_value_to_py(py: Python<'_>, cv: &ConstraintValue) -> PyResult<PyObject> {
+    #[allow(deprecated)]
     match cv {
-        ConstraintValue::String(s) => Ok(s.into_py(py)),
-        ConstraintValue::Integer(i) => Ok(i.into_py(py)),
-        ConstraintValue::Float(f) => Ok(f.into_py(py)),
-        ConstraintValue::Boolean(b) => Ok(b.into_py(py)),
+        ConstraintValue::String(s) => Ok(s.to_object(py)),
+        ConstraintValue::Integer(i) => Ok(i.to_object(py)),
+        ConstraintValue::Float(f) => Ok(f.to_object(py)),
+        ConstraintValue::Boolean(b) => Ok(b.to_object(py)),
         ConstraintValue::Null => Ok(py.None()),
         ConstraintValue::List(l) => {
-            let list = pyo3::types::PyList::empty_bound(py);
+            let list = pyo3::types::PyList::empty(py);
             for item in l {
                 list.append(constraint_value_to_py(py, item)?)?;
             }
             Ok(list.into())
         }
         ConstraintValue::Object(m) => {
-            let dict = PyDict::new_bound(py);
+            let dict = PyDict::new(py);
             for (k, v) in m {
                 dict.set_item(k, constraint_value_to_py(py, v)?)?;
             }
