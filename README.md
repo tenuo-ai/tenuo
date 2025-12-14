@@ -73,6 +73,8 @@ pip install tenuo
 - Key generation
 - Warrant issuance, attenuation, and verification
 - A constraint language for fine-grained scoping
+- Delegation diff tracking and audit receipts
+- Builder pattern for warrant attenuation with preview
 
 **Tenuo Does NOT Require:**
 
@@ -154,11 +156,20 @@ root_warrant = Warrant.issue(
 )
 
 # Create a restricted warrant for a sub-agent (Orchestrator)
+# Option 1: Direct attenuation
 worker_warrant = root_warrant.attenuate(
     constraints={"db_name": Pattern("test-*")},
     holder=worker_keypair.public_key(),
     keypair=root_keypair  # Parent signs the attenuation
 )
+
+# Option 2: Builder pattern with diff preview (recommended for audit trails)
+builder = root_warrant.attenuate_builder()
+builder.with_constraint("db_name", Pattern("test-*"))
+builder.with_holder(worker_keypair.public_key())
+builder.with_intent("Test database cleanup")
+print(builder.diff())  # Preview changes before delegation
+worker_warrant = builder.delegate_to(root_keypair, root_keypair)
 
 # Use with ContextVar (LangChain/FastAPI)
 @lockdown(tool="delete_database")
@@ -176,8 +187,12 @@ with set_warrant_context(worker_warrant), set_keypair_context(worker_keypair):
 - `@lockdown` decorator for function-level authorization
 - ContextVar support for LangChain/FastAPI integration
 - Pythonic exceptions and error handling
+- Delegation diff tracking with `attenuate_builder()` and audit receipts
+- SIEM-compatible JSON export
 
 See [tenuo-python/README.md](tenuo-python/README.md) and [examples](tenuo-python/examples/) for full documentation and examples.
+
+**Delegation Diff & Audit**: See [`delegation_receipts.py`](tenuo-python/examples/delegation_receipts.py) for a comprehensive example of diff tracking, receipts, and SIEM integration.
 
 ### CLI Usage (The Manual Way)
 

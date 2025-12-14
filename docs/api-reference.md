@@ -141,6 +141,7 @@ from tenuo import Warrant
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `attenuate(constraints, keypair, ttl_seconds=None, holder=None)` | `Warrant` | Create narrower child warrant |
+| `attenuate_builder()` | `AttenuationBuilder` | Create builder for attenuation with diff preview |
 | `authorize(tool, args, signature?)` | `bool` | Check if action is authorized |
 | `verify(public_key)` | `bool` | Verify signature against issuer |
 | `create_pop_signature(keypair, tool, args)` | `list[int]` | Create PoP signature (bytes as list of ints). **⚠️ Replay Window:** PoP signatures are valid for ~2 minutes to handle clock skew. Implement request deduplication for high-security operations. |
@@ -149,6 +150,7 @@ from tenuo import Warrant
 | `expires_at()` | `str` | Get expiration time (RFC3339) |
 | `tool` | `str` | **Property**: The tool(s) authorized by this warrant |
 | `session_id` | `str \| None` | **Property**: The session ID |
+| `delegation_receipt` | `DelegationReceipt \| None` | **Property**: Get delegation receipt if this warrant was created via delegation |
 
 #### Example
 
@@ -183,6 +185,127 @@ result = child.authorize(
     {"cluster": "staging-web"},
     signature=bytes(pop_sig)
 )
+```
+
+---
+
+## Delegation Diff & Audit
+
+Types and methods for tracking warrant delegation changes and generating audit receipts.
+
+### AttenuationBuilder
+
+Fluent builder for creating attenuated warrants with diff preview.
+
+```python
+from tenuo import Warrant
+
+builder = warrant.attenuate_builder()
+```
+
+#### Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `with_constraint(field, constraint)` | `AttenuationBuilder` | Add or override a constraint |
+| `with_ttl(seconds)` | `AttenuationBuilder` | Set TTL in seconds |
+| `with_holder(public_key)` | `AttenuationBuilder` | Set authorized holder |
+| `with_trust_level(level)` | `AttenuationBuilder` | Set trust level |
+| `with_intent(intent)` | `AttenuationBuilder` | Set human-readable intent for audit |
+| `diff()` | `str` | Get human-readable diff preview |
+| `diff_structured()` | `DelegationDiff` | Get structured diff for programmatic use |
+| `delegate_to(keypair, parent_keypair)` | `Warrant` | Build and sign the attenuated warrant |
+
+#### Example
+
+```python
+builder = parent_warrant.attenuate_builder()
+builder.with_constraint("path", Exact("/data/q3.pdf"))
+builder.with_ttl(60)
+builder.with_holder(worker_key)
+builder.with_intent("Read Q3 report for analysis")
+
+# Preview changes
+print(builder.diff())
+
+# Create child warrant
+child = builder.delegate_to(orchestrator_kp, control_kp)
+
+# Access receipt
+receipt = child.delegation_receipt
+```
+
+### DelegationDiff
+
+Structured representation of changes between parent and child warrants.
+
+```python
+from tenuo import DelegationDiff
+```
+
+#### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `parent_warrant_id` | `str` | Parent warrant ID |
+| `child_warrant_id` | `str \| None` | Child warrant ID (None if not yet built) |
+| `timestamp` | `str` | RFC3339 timestamp |
+| `tools` | `ToolsDiff` | Tools changes |
+| `constraints` | `dict[str, ConstraintDiff]` | Constraint changes by field |
+| `ttl` | `TtlDiff` | TTL changes |
+| `trust` | `TrustDiff` | Trust level changes |
+| `depth` | `DepthDiff` | Depth changes |
+| `intent` | `str \| None` | Human-readable intent |
+
+#### Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `to_human()` | `str` | Human-readable diff output |
+| `to_json()` | `str` | JSON serialization |
+| `to_siem_json()` | `str` | SIEM-compatible JSON format |
+
+### DelegationReceipt
+
+Audit receipt for warrant delegation, extends `DelegationDiff` with additional metadata.
+
+```python
+from tenuo import DelegationReceipt
+```
+
+#### Properties
+
+Includes all `DelegationDiff` properties plus:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `delegator_fingerprint` | `str` | Fingerprint of delegator's key |
+| `delegatee_fingerprint` | `str` | Fingerprint of delegatee's key |
+| `used_pass_through` | `bool` | Whether pass-through was used |
+| `pass_through_reason` | `str \| None` | Reason for pass-through (if used) |
+
+#### Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `to_json()` | `str` | JSON serialization |
+| `to_siem_json()` | `str` | SIEM-compatible JSON format |
+
+#### Example
+
+```python
+# Receipt is automatically attached after delegation
+child = builder.delegate_to(keypair, parent_keypair)
+receipt = child.delegation_receipt
+
+if receipt:
+    print(f"Delegator: {receipt.delegator_fingerprint}")
+    print(f"Delegatee: {receipt.delegatee_fingerprint}")
+    print(f"Intent: {receipt.intent}")
+    
+    # Export for SIEM/audit logging
+    siem_json = receipt.to_siem_json()
+    audit_logger.log(siem_json)
 ```
 
 ---

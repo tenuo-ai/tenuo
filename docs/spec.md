@@ -175,9 +175,39 @@ child = warrant.attenuate(
     keypair=agent_keypair,
 )
 
+# Builder pattern with diff preview (recommended for audit trails)
+builder = warrant.attenuate_builder()
+builder.with_constraint("path", Exact("/data/project-1/report.pdf"))
+builder.with_ttl(60)
+builder.with_holder(worker_keypair.public_key())
+builder.with_intent("Read Q3 report for analysis")
+print(builder.diff())  # Preview changes before delegation
+child = builder.delegate_to(agent_keypair, agent_keypair)
+
+# Access delegation receipt for audit
+receipt = child.delegation_receipt
+if receipt:
+    print(f"Delegated to: {receipt.delegatee_fingerprint}")
+    print(f"Intent: {receipt.intent}")
+    # Export to SIEM
+    siem_json = receipt.to_siem_json()
+
 # Authorize (local)
 pop_sig = warrant.create_pop_signature(keypair, tool, args)
 authorized = warrant.authorize(tool, args, signature=bytes(pop_sig))
+```
+
+**Delegation Diff Tracking:**
+
+Tenuo provides first-class support for delegation diff tracking and audit receipts:
+
+- **Builder Pattern**: `attenuate_builder()` returns an `AttenuationBuilder` for fluent configuration
+- **Diff Preview**: `builder.diff()` shows human-readable changes before delegation
+- **Structured Diff**: `builder.diff_structured()` returns programmatic diff data
+- **Delegation Receipts**: Automatically attached to child warrants via `warrant.delegation_receipt`
+- **SIEM Integration**: `receipt.to_siem_json()` exports compliance-ready JSON
+
+See [`delegation_receipts.py`](../tenuo-python/examples/delegation_receipts.py) for a comprehensive example.
 ```
 
 ---

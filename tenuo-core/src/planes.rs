@@ -1050,22 +1050,33 @@ impl Default for DataPlane {
 // AUTHORIZER (Minimal Data Plane for embedding)
 // ============================================================================
 
+/// Default PoP window size in seconds.
+///
+/// PoP signatures are valid for `pop_window_secs * max_windows` seconds total
+/// (default: 30 * 4 = 120 seconds).
+pub const DEFAULT_POP_WINDOW_SECS: i64 = 30;
+
+/// Default number of PoP windows to check (handles clock skew).
+pub const DEFAULT_POP_MAX_WINDOWS: u32 = 4;
+
 /// A minimal authorizer for embedding in services.
 ///
-/// This is the smallest possible data plane - just a set of trusted
 /// This is the smallest possible data plane - just a set of trusted keys.
-
 #[derive(Debug, Clone)]
 pub struct Authorizer {
     trusted_keys: Vec<PublicKey>,
     clock_tolerance: chrono::Duration,
     revocation_list: Option<SignedRevocationList>,
+    /// PoP window size in seconds (default: 30)
+    pop_window_secs: i64,
+    /// Number of recent windows to accept (default: 4)
+    pop_max_windows: u32,
 }
 
 impl Authorizer {
     /// Create an authorizer with a single trusted key.
     ///
-    /// Uses the default clock tolerance of 30 seconds.
+    /// Uses the default clock tolerance of 30 seconds and default PoP window.
     pub fn new(root_public_key: PublicKey) -> Self {
         Self::with_clock_tolerance(
             root_public_key,
@@ -1089,7 +1100,52 @@ impl Authorizer {
             trusted_keys: vec![root_public_key],
             clock_tolerance,
             revocation_list: None,
+            pop_window_secs: DEFAULT_POP_WINDOW_SECS,
+            pop_max_windows: DEFAULT_POP_MAX_WINDOWS,
         }
+    }
+
+    /// Set a custom PoP window configuration.
+    ///
+    /// Use smaller windows for high-security deployments with tight clock sync.
+    /// Use larger windows for deployments with poor clock sync (edge/IoT).
+    ///
+    /// # Arguments
+    /// * `window_secs` - Size of each time window (default: 30)
+    /// * `max_windows` - Number of windows to accept (default: 4)
+    ///
+    /// Total replay window = `window_secs * max_windows` seconds
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // High-security: 5s windows, 2 windows = 10s total replay window
+    /// authorizer.set_pop_window(5, 2);
+    ///
+    /// // Edge deployment: 60s windows, 4 windows = 240s total replay window
+    /// authorizer.set_pop_window(60, 4);
+    /// ```
+    pub fn set_pop_window(&mut self, window_secs: i64, max_windows: u32) {
+        self.pop_window_secs = window_secs;
+        self.pop_max_windows = max_windows;
+    }
+
+    /// Builder-style method to set PoP window.
+    pub fn with_pop_window(mut self, window_secs: i64, max_windows: u32) -> Self {
+        self.set_pop_window(window_secs, max_windows);
+        self
+    }
+
+    /// Get the current PoP window configuration.
+    ///
+    /// Returns (window_secs, max_windows).
+    pub fn pop_window_config(&self) -> (i64, u32) {
+        (self.pop_window_secs, self.pop_max_windows)
+    }
+
+    /// Get the total PoP validity duration in seconds.
+    pub fn pop_validity_secs(&self) -> i64 {
+        self.pop_window_secs * self.pop_max_windows as i64
     }
 
     /// Set a signed revocation list.
@@ -1183,8 +1239,14 @@ impl Authorizer {
         holder_signature: Option<&crate::crypto::Signature>,
         approvals: &[crate::approval::Approval],
     ) -> Result<()> {
-        // 1. Standard constraint authorization
-        warrant.authorize(tool, args, holder_signature)?;
+        // 1. Standard constraint authorization with configured PoP window
+        warrant.authorize_with_pop_config(
+            tool,
+            args,
+            holder_signature,
+            self.pop_window_secs,
+            self.pop_max_windows,
+        )?;
 
         // 2. Multi-sig verification (if required)
         self.verify_approvals(warrant, tool, args, approvals)

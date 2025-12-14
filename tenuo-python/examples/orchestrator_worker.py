@@ -66,20 +66,28 @@ def orchestrator_task(warrant: Warrant, keypair: Keypair, worker_keypair: Keypai
     # Note: Attenuation inherits tools from parent. We use constraints to restrict usage.
     # The warrant still has all tools, but constraints make search/fetch the only usable ones.
     print("\n[Orchestrator] Phase 1: Delegating research to Worker")
-    research_warrant = warrant.attenuate(
-        constraints={
-            "query": Pattern("*competitor*"),  # Only competitor queries
-            "max_results": Range.max_value(5),  # Limit results
-            "url": Pattern("https://public.*"),  # Only public URLs
-            # Note: path constraint restricts write, but write tool is still in warrant
-            # Authorization will fail if write is called (no matching constraint)
-        },
-        keypair=keypair,
-        holder=worker_keypair.public_key(),
-        ttl_seconds=60  # Short-lived
-    )
+    
+    # Use builder pattern with diff preview
+    research_builder = warrant.attenuate_builder()
+    research_builder.with_constraint("query", Pattern("*competitor*"))  # Only competitor queries
+    research_builder.with_constraint("max_results", Range.max_value(5))  # Limit results
+    research_builder.with_constraint("url", Pattern("https://public.*"))  # Only public URLs
+    research_builder.with_ttl(60)  # Short-lived
+    research_builder.with_holder(worker_keypair.public_key())
+    research_builder.with_intent("Research Q3 competitors")
+    
+    # Optional: Preview diff before delegation
+    # print("\nDelegation Diff Preview:")
+    # print(research_builder.diff())
+    
+    research_warrant = research_builder.delegate_to(keypair, keypair)
     print(f"  Attenuated: tools={research_warrant.tool} (inherited)")
     print("  Constraints: query=*competitor*, max_results<=5, url=https://public.*, ttl=60s")
+    
+    # Access receipt if needed for audit
+    if hasattr(research_warrant, 'delegation_receipt') and research_warrant.delegation_receipt:
+        receipt = research_warrant.delegation_receipt
+        print(f"  Receipt: {receipt.child_warrant_id} (intent: {receipt.intent})")
     
     # Worker executes research phase
     worker_research(research_warrant, worker_keypair)

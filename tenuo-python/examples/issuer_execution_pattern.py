@@ -7,8 +7,7 @@ Demonstrates the recommended production pattern:
 - Apply trust levels for organizational boundaries
 - Leverage attenuation for delegation
 
-Note: This example uses the current Python API. Full ISSUER/EXECUTION
-warrant support will be added in a future release.
+This demonstrates the recommended production pattern using Tenuo's current API.
 """
 
 from tenuo import (

@@ -108,6 +108,14 @@ impl PublicKey {
         self.verifying_key.to_bytes()
     }
 
+    /// Get a short fingerprint of the public key (first 16 hex chars).
+    ///
+    /// Useful for audit logs and receipts where full key isn't needed.
+    pub fn fingerprint(&self) -> String {
+        let bytes = self.to_bytes();
+        hex::encode(&bytes[..8])
+    }
+
     /// Verify a signature against a message.
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<()> {
         let prefixed = Keypair::prefix_message(message);

@@ -826,18 +826,78 @@ impl Warrant {
             constraints.matches(args)?;
         }
 
-        // Check Proof-of-Possession (mandatory)
+        // Check Proof-of-Possession (mandatory) with default window config
+        self.verify_pop(tool, args, signature, POP_TIMESTAMP_WINDOW_SECS, 4)
+    }
+
+    /// Authorize an action with custom PoP window configuration.
+    ///
+    /// Use this for deployments with specific security/clock requirements:
+    /// - Smaller windows = tighter security, requires better clock sync
+    /// - Larger windows = more tolerant of clock skew, larger replay window
+    ///
+    /// # Arguments
+    ///
+    /// * `tool` - The tool being invoked
+    /// * `args` - The arguments to the tool
+    /// * `signature` - The PoP signature
+    /// * `pop_window_secs` - Size of each time window in seconds
+    /// * `pop_max_windows` - Number of windows to accept
+    pub fn authorize_with_pop_config(
+        &self,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+        signature: Option<&Signature>,
+        pop_window_secs: i64,
+        pop_max_windows: u32,
+    ) -> Result<()> {
+        // Perform same checks as authorize()
+        if self.is_expired() {
+            return Err(Error::WarrantExpired(self.payload.expires_at));
+        }
+
+        if self.payload.r#type != WarrantType::Execution {
+            return Err(Error::Validation(
+                "only execution warrants can authorize actions".to_string(),
+            ));
+        }
+
+        let warrant_tool =
+            self.payload.tool.as_ref().ok_or_else(|| {
+                Error::Validation("execution warrant must have a tool".to_string())
+            })?;
+
+        if warrant_tool != "*" {
+            let allowed_tools: Vec<&str> = warrant_tool.split(',').map(|s| s.trim()).collect();
+            if !allowed_tools.contains(&tool) {
+                return Err(Error::ConstraintNotSatisfied {
+                    field: "tool".to_string(),
+                    reason: format!("warrant is for tools '{:?}', not '{}'", allowed_tools, tool),
+                });
+            }
+        }
+
+        if let Some(constraints) = &self.payload.constraints {
+            constraints.matches(args)?;
+        }
+
+        // Check PoP with custom window config
+        self.verify_pop(tool, args, signature, pop_window_secs, pop_max_windows)
+    }
+
+    /// Verify PoP signature with configurable window.
+    fn verify_pop(
+        &self,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+        signature: Option<&Signature>,
+        window_secs: i64,
+        max_windows: u32,
+    ) -> Result<()> {
         let signature = signature
             .ok_or_else(|| Error::MissingSignature("Proof-of-Possession required".to_string()))?;
 
-        // PoP signature covers (warrant_id, tool, sorted_args, timestamp_window)
-        // We verify against multiple recent windows to handle clock skew.
-        //
-        // Security: This creates a ~2 minute replay window. Mitigate with:
-        // - Short-lived warrants (TTL < 2 min)
-        // - Application-layer request deduplication
         let now = Utc::now().timestamp();
-        let max_windows = 4; // Accept signatures from last ~2 minutes
 
         let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
         sorted_args.sort_by_key(|(k, _)| *k);
@@ -845,7 +905,7 @@ impl Warrant {
         let mut verified = false;
         for i in 0..max_windows {
             // Try current and recent time windows
-            let window_ts = (now / POP_TIMESTAMP_WINDOW_SECS - i) * POP_TIMESTAMP_WINDOW_SECS;
+            let window_ts = (now / window_secs - i as i64) * window_secs;
             let challenge_data = (self.payload.id.as_str(), tool, &sorted_args, window_ts);
             let mut challenge_bytes = Vec::new();
             if ciborium::ser::into_writer(&challenge_data, &mut challenge_bytes).is_err() {
@@ -908,6 +968,58 @@ impl Warrant {
             .map_err(|e| Error::SerializationError(e.to_string()))?;
 
         Ok(keypair.sign(&challenge_bytes))
+    }
+
+    /// Generate a deduplication key for replay protection.
+    ///
+    /// This key can be used as a cache key to prevent replay attacks within
+    /// the PoP validity window (~2 minutes). Store this key with a TTL of
+    /// `POP_TIMESTAMP_WINDOW_SECS * 4` (120 seconds by default).
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let dedup_key = warrant.dedup_key("upgrade_cluster", &args);
+    /// if cache.contains(&dedup_key) {
+    ///     return Err("Duplicate request - possible replay attack");
+    /// }
+    /// cache.insert_with_ttl(dedup_key, Duration::from_secs(120));
+    /// // ... proceed with authorization
+    /// ```
+    ///
+    /// # Format
+    ///
+    /// Returns a hex string: `sha256(warrant_id || tool || sorted_args_cbor)`
+    ///
+    /// This is deterministic: same (warrant, tool, args) always produces
+    /// the same key, enabling consistent deduplication across services.
+    pub fn dedup_key(&self, tool: &str, args: &HashMap<String, ConstraintValue>) -> String {
+        use sha2::{Digest, Sha256};
+
+        let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
+        sorted_args.sort_by_key(|(k, _)| *k);
+
+        // Serialize the dedup payload
+        let payload = (self.payload.id.as_str(), tool, &sorted_args);
+        let mut payload_bytes = Vec::new();
+        // Unwrap is safe here - these types always serialize
+        ciborium::ser::into_writer(&payload, &mut payload_bytes)
+            .expect("dedup payload serialization should never fail");
+
+        // Hash to fixed-length key
+        let mut hasher = Sha256::new();
+        hasher.update(&payload_bytes);
+        let hash = hasher.finalize();
+
+        hex::encode(hash)
+    }
+
+    /// Get the recommended TTL for deduplication cache entries.
+    ///
+    /// This is `POP_TIMESTAMP_WINDOW_SECS * 4` (120 seconds by default),
+    /// which matches the PoP verification window.
+    pub const fn dedup_ttl_secs() -> i64 {
+        POP_TIMESTAMP_WINDOW_SECS * 4
     }
 
     /// Create a builder for attenuating this warrant.
@@ -1678,6 +1790,544 @@ impl<'a> AttenuationBuilder<'a> {
             signature,
             payload_bytes, // Child's signature is over payload WITHOUT chain
         })
+    }
+}
+
+/// Builder for attenuating warrants that owns its data (no lifetime).
+///
+/// This is identical to `AttenuationBuilder` but owns the parent warrant,
+/// making it suitable for FFI boundaries (e.g., Python bindings) where
+/// lifetime management is difficult.
+///
+/// # Example
+///
+/// ```ignore
+/// let builder = OwnedAttenuationBuilder::new(parent.clone());
+/// let child = builder
+///     .constraint("path", Pattern::new("/data/specific/*"))
+///     .ttl(Duration::from_secs(60))
+///     .build(&delegator_keypair, &parent_keypair)?;
+/// ```
+#[derive(Debug, Clone)]
+pub struct OwnedAttenuationBuilder {
+    parent: Warrant,
+    // Execution warrant fields
+    constraints: ConstraintSet,
+    // Issuer warrant fields
+    issuable_tools: Option<Vec<String>>,
+    trust_ceiling: Option<TrustLevel>,
+    max_issue_depth: Option<u32>,
+    constraint_bounds: ConstraintSet,
+    // Common fields
+    trust_level: Option<TrustLevel>,
+    ttl: Option<Duration>,
+    max_depth: Option<u32>,
+    session_id: Option<String>,
+    agent_id: Option<String>,
+    authorized_holder: Option<PublicKey>,
+    required_approvers: Option<Vec<PublicKey>>,
+    min_approvals: Option<u32>,
+    /// Intent/purpose for this delegation (for audit trails).
+    intent: Option<String>,
+}
+
+impl OwnedAttenuationBuilder {
+    /// Create a new owned attenuation builder.
+    pub fn new(parent: Warrant) -> Self {
+        // Inherit from parent based on warrant type
+        let (constraints, issuable_tools, trust_ceiling, max_issue_depth, constraint_bounds) =
+            match parent.payload.r#type {
+                WarrantType::Execution => (
+                    parent.payload.constraints.clone().unwrap_or_default(),
+                    None,
+                    None,
+                    None,
+                    ConstraintSet::new(),
+                ),
+                WarrantType::Issuer => (
+                    ConstraintSet::new(),
+                    parent.payload.issuable_tools.clone(),
+                    parent.payload.trust_ceiling,
+                    parent.payload.max_issue_depth,
+                    parent.payload.constraint_bounds.clone().unwrap_or_default(),
+                ),
+            };
+
+        Self {
+            trust_level: parent.payload.trust_level,
+            session_id: parent.payload.session_id.clone(),
+            agent_id: parent.payload.agent_id.clone(),
+            authorized_holder: Some(parent.payload.authorized_holder.clone()),
+            required_approvers: parent.payload.required_approvers.clone(),
+            min_approvals: parent.payload.min_approvals,
+            parent,
+            constraints,
+            issuable_tools,
+            trust_ceiling,
+            max_issue_depth,
+            constraint_bounds,
+            ttl: None,
+            max_depth: None,
+            intent: None,
+        }
+    }
+
+    /// Get a reference to the parent warrant.
+    pub fn parent(&self) -> &Warrant {
+        &self.parent
+    }
+
+    /// Get the current constraints being configured.
+    pub fn constraints(&self) -> &ConstraintSet {
+        &self.constraints
+    }
+
+    /// Get the configured TTL (if any).
+    pub fn ttl_seconds(&self) -> Option<u64> {
+        self.ttl.map(|d| d.as_secs())
+    }
+
+    /// Get the configured holder (if any).
+    pub fn holder(&self) -> Option<&PublicKey> {
+        self.authorized_holder.as_ref()
+    }
+
+    /// Get the configured trust level.
+    pub fn trust_level(&self) -> Option<TrustLevel> {
+        self.trust_level
+    }
+
+    /// Get the configured intent.
+    pub fn intent(&self) -> Option<&str> {
+        self.intent.as_deref()
+    }
+
+    /// Override a constraint with a narrower one.
+    pub fn constraint(
+        mut self,
+        field: impl Into<String>,
+        constraint: impl Into<Constraint>,
+    ) -> Self {
+        self.constraints.insert(field, constraint);
+        self
+    }
+
+    /// Set a constraint (mutable version for FFI).
+    pub fn set_constraint(&mut self, field: impl Into<String>, constraint: impl Into<Constraint>) {
+        self.constraints.insert(field, constraint);
+    }
+
+    /// Set a shorter TTL.
+    pub fn ttl(mut self, ttl: Duration) -> Self {
+        self.ttl = Some(ttl);
+        self
+    }
+
+    /// Set TTL (mutable version for FFI).
+    pub fn set_ttl(&mut self, ttl: Duration) {
+        self.ttl = Some(ttl);
+    }
+
+    /// Set a lower maximum delegation depth.
+    pub fn max_depth(mut self, max_depth: u32) -> Self {
+        self.max_depth = Some(max_depth);
+        self
+    }
+
+    /// Set or change the agent ID.
+    pub fn agent_id(mut self, agent_id: impl Into<String>) -> Self {
+        self.agent_id = Some(agent_id.into());
+        self
+    }
+
+    /// Set or change the authorized holder.
+    pub fn authorized_holder(mut self, public_key: PublicKey) -> Self {
+        self.authorized_holder = Some(public_key);
+        self
+    }
+
+    /// Set holder (mutable version for FFI).
+    pub fn set_authorized_holder(&mut self, public_key: PublicKey) {
+        self.authorized_holder = Some(public_key);
+    }
+
+    /// Set the trust level for the child warrant.
+    pub fn set_trust_level(&mut self, level: TrustLevel) {
+        self.trust_level = Some(level);
+    }
+
+    /// Set the intent/purpose for this delegation.
+    pub fn set_intent(&mut self, intent: impl Into<String>) {
+        self.intent = Some(intent.into());
+    }
+
+    /// Add required approvers.
+    pub fn add_approvers(mut self, approvers: Vec<PublicKey>) -> Self {
+        let mut current = self.required_approvers.unwrap_or_default();
+        for approver in approvers {
+            if !current.contains(&approver) {
+                current.push(approver);
+            }
+        }
+        self.required_approvers = Some(current);
+        self
+    }
+
+    /// Increase the minimum approvals required.
+    pub fn raise_min_approvals(mut self, min: u32) -> Self {
+        let current = self.min_approvals.unwrap_or(0);
+        self.min_approvals = Some(min.max(current));
+        self
+    }
+
+    /// Compute the diff between parent and proposed child warrant.
+    ///
+    /// This can be used to preview what will change before calling `build()`.
+    pub fn diff(&self) -> crate::diff::DelegationDiff {
+        use crate::diff::{
+            ConstraintDiff, DelegationDiff, DepthDiff, ToolsDiff, TrustDiff, TtlDiff,
+        };
+        use chrono::Utc;
+        use std::collections::HashMap;
+
+        // Tools - for attenuation, tools stay the same
+        let parent_tools = self
+            .parent
+            .tool()
+            .map(|t| vec![t.to_string()])
+            .unwrap_or_default();
+        let child_tools = parent_tools.clone(); // Attenuation doesn't change tools
+        let tools = ToolsDiff::new(parent_tools, child_tools);
+
+        // Constraints
+        let mut constraints: HashMap<String, ConstraintDiff> = HashMap::new();
+        let parent_constraints = self.parent.constraints().cloned().unwrap_or_default();
+
+        // Get all constraint fields (parent + builder's overrides)
+        let mut all_fields: Vec<String> = Vec::new();
+        for (field, _) in parent_constraints.iter() {
+            all_fields.push(field.clone());
+        }
+        for (field, _) in self.constraints.iter() {
+            if !all_fields.contains(field) {
+                all_fields.push(field.clone());
+            }
+        }
+
+        for field in all_fields {
+            let pc = parent_constraints.get(&field).cloned();
+            // Child constraint: use override if set, otherwise inherit from parent
+            let cc = self.constraints.get(&field).cloned().or_else(|| pc.clone());
+            constraints.insert(field.clone(), ConstraintDiff::new(field, pc, cc));
+        }
+
+        // TTL
+        let now = Utc::now();
+        let parent_remaining = (self.parent.expires_at() - now).num_seconds().max(0);
+        let child_ttl = self.ttl.map(|d| d.as_secs() as i64);
+        let ttl = TtlDiff::new(Some(parent_remaining), child_ttl);
+
+        // Trust
+        let trust = TrustDiff::new(self.parent.trust_level(), self.trust_level);
+
+        // Depth
+        let depth = DepthDiff::new(
+            self.parent.depth(),
+            self.parent.depth() + 1,
+            self.parent.max_depth(),
+        );
+
+        DelegationDiff {
+            parent_warrant_id: self.parent.id().to_string(),
+            child_warrant_id: None, // Not yet built
+            timestamp: Utc::now(),
+            tools,
+            constraints,
+            ttl,
+            trust,
+            depth,
+            intent: self.intent.clone(),
+        }
+    }
+
+    /// Validate multi-sig monotonicity.
+    fn validate_multisig_monotonicity(&self) -> Result<()> {
+        if let Some(parent_approvers) = &self.parent.payload.required_approvers {
+            if let Some(child_approvers) = &self.required_approvers {
+                for parent_key in parent_approvers {
+                    if !child_approvers.contains(parent_key) {
+                        return Err(Error::MonotonicityViolation(format!(
+                            "cannot remove approver {} from multi-sig set",
+                            hex::encode(parent_key.to_bytes())
+                        )));
+                    }
+                }
+            } else {
+                return Err(Error::MonotonicityViolation(
+                    "cannot remove multi-sig requirement from parent".to_string(),
+                ));
+            }
+        }
+
+        if let Some(parent_min) = self.parent.payload.min_approvals {
+            if let Some(child_min) = self.min_approvals {
+                if child_min < parent_min {
+                    return Err(Error::MonotonicityViolation(format!(
+                        "cannot lower min_approvals from {} to {}",
+                        parent_min, child_min
+                    )));
+                }
+            }
+        }
+
+        if let (Some(approvers), Some(min)) = (&self.required_approvers, self.min_approvals) {
+            if min as usize > approvers.len() {
+                return Err(Error::MonotonicityViolation(format!(
+                    "min_approvals ({}) cannot exceed required_approvers count ({})",
+                    min,
+                    approvers.len()
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Build and sign the attenuated warrant.
+    pub fn build(self, keypair: &Keypair, parent_keypair: &Keypair) -> Result<Warrant> {
+        let new_depth = self
+            .parent
+            .payload
+            .depth
+            .checked_add(1)
+            .ok_or(Error::DepthExceeded(u32::MAX, MAX_DELEGATION_DEPTH))?;
+
+        let effective_max = match (self.parent.payload.max_depth, self.max_depth) {
+            (Some(parent_max), Some(child_max)) => {
+                if child_max > parent_max {
+                    return Err(Error::MonotonicityViolation(format!(
+                        "max_depth {} exceeds parent's max_depth {}",
+                        child_max, parent_max
+                    )));
+                }
+                Some(child_max)
+            }
+            (Some(parent_max), None) => Some(parent_max),
+            (None, Some(child_max)) => {
+                if child_max > MAX_DELEGATION_DEPTH {
+                    return Err(Error::DepthExceeded(child_max, MAX_DELEGATION_DEPTH));
+                }
+                Some(child_max)
+            }
+            (None, None) => None,
+        };
+
+        let depth_limit = effective_max.unwrap_or(MAX_DELEGATION_DEPTH);
+        if new_depth > depth_limit {
+            return Err(Error::DepthExceeded(new_depth, depth_limit));
+        }
+
+        if new_depth > MAX_DELEGATION_DEPTH {
+            return Err(Error::DepthExceeded(new_depth, MAX_DELEGATION_DEPTH));
+        }
+
+        if self.parent.is_expired() {
+            return Err(Error::WarrantExpired(self.parent.payload.expires_at));
+        }
+
+        // Validate attenuation monotonicity
+        match self.parent.payload.r#type {
+            WarrantType::Execution => {
+                if let Some(parent_constraints) = &self.parent.payload.constraints {
+                    parent_constraints.validate_attenuation(&self.constraints)?;
+                }
+            }
+            WarrantType::Issuer => {
+                if let Some(parent_issuable) = &self.parent.payload.issuable_tools {
+                    if let Some(ref child_issuable) = self.issuable_tools {
+                        for tool in child_issuable {
+                            if !parent_issuable.contains(tool) {
+                                return Err(Error::MonotonicityViolation(format!(
+                                    "issuable_tool '{}' not in parent's issuable_tools",
+                                    tool
+                                )));
+                            }
+                        }
+                    }
+                }
+                if let (Some(parent_ceiling), Some(child_ceiling)) =
+                    (self.parent.payload.trust_ceiling, self.trust_ceiling)
+                {
+                    if child_ceiling > parent_ceiling {
+                        return Err(Error::MonotonicityViolation(format!(
+                            "trust_ceiling cannot increase: parent {:?}, child {:?}",
+                            parent_ceiling, child_ceiling
+                        )));
+                    }
+                }
+                if let Some(parent_bounds) = &self.parent.payload.constraint_bounds {
+                    parent_bounds.validate_attenuation(&self.constraint_bounds)?;
+                }
+            }
+        }
+
+        self.validate_multisig_monotonicity()?;
+
+        let authorized_holder = self
+            .authorized_holder
+            .ok_or_else(|| Error::Validation("authorized_holder is required".to_string()))?;
+
+        let expires_at = if let Some(ttl) = self.ttl {
+            let chrono_ttl = ChronoDuration::from_std(ttl)
+                .map_err(|_| Error::InvalidTtl("TTL too large".to_string()))?;
+            let proposed = Utc::now() + chrono_ttl;
+            if proposed > self.parent.payload.expires_at {
+                self.parent.payload.expires_at
+            } else {
+                proposed
+            }
+        } else {
+            self.parent.payload.expires_at
+        };
+
+        let effective_min = self.min_approvals.or(self.parent.payload.min_approvals);
+
+        let mut issuer_chain = self.parent.payload.issuer_chain.clone();
+
+        let payload = WarrantPayload {
+            version: WARRANT_VERSION,
+            r#type: self.parent.payload.r#type,
+            id: WarrantId::new(),
+            authorized_holder,
+            tool: match self.parent.payload.r#type {
+                WarrantType::Execution => Some(
+                    self.parent
+                        .payload
+                        .tool
+                        .clone()
+                        .expect("execution warrant must have tool"),
+                ),
+                WarrantType::Issuer => None,
+            },
+            constraints: match self.parent.payload.r#type {
+                WarrantType::Execution => {
+                    if self.constraints.is_empty() {
+                        None
+                    } else {
+                        Some(self.constraints)
+                    }
+                }
+                WarrantType::Issuer => None,
+            },
+            issuable_tools: match self.parent.payload.r#type {
+                WarrantType::Issuer => self.issuable_tools.clone(),
+                WarrantType::Execution => None,
+            },
+            trust_ceiling: match self.parent.payload.r#type {
+                WarrantType::Issuer => self.trust_ceiling,
+                WarrantType::Execution => None,
+            },
+            max_issue_depth: match self.parent.payload.r#type {
+                WarrantType::Issuer => self.max_issue_depth,
+                WarrantType::Execution => None,
+            },
+            constraint_bounds: match self.parent.payload.r#type {
+                WarrantType::Issuer => {
+                    if self.constraint_bounds.is_empty() {
+                        None
+                    } else {
+                        Some(self.constraint_bounds)
+                    }
+                }
+                WarrantType::Execution => None,
+            },
+            trust_level: self.trust_level,
+            issued_at: Utc::now(),
+            expires_at,
+            depth: new_depth,
+            max_depth: effective_max,
+            session_id: self.session_id,
+            agent_id: self.agent_id,
+            issuer: keypair.public_key(),
+            parent_id: Some(self.parent.payload.id.clone()),
+            required_approvers: self.required_approvers,
+            min_approvals: effective_min,
+            issuer_chain: Vec::new(),
+        };
+
+        let mut payload_bytes = Vec::new();
+        ciborium::ser::into_writer(&payload, &mut payload_bytes)?;
+        let signature = keypair.sign(&payload_bytes);
+
+        let parent_link = ChainLink {
+            issuer_id: self.parent.payload.id.clone(),
+            issuer_pubkey: self.parent.payload.issuer.clone(),
+            issuer_type: self.parent.payload.r#type,
+            issuer_tools: self.parent.payload.tool.clone().map(|t| vec![t]),
+            issuer_constraints: self.parent.payload.constraints.clone(),
+            issuer_trust: self.parent.payload.trust_level,
+            issuer_expires_at: self.parent.payload.expires_at,
+            issuer_max_depth: self.parent.effective_max_depth(),
+            signature: parent_keypair.sign(&payload_bytes),
+        };
+        issuer_chain.push(parent_link);
+
+        let mut final_payload = payload;
+        final_payload.issuer_chain = issuer_chain;
+
+        let mut final_payload_bytes = Vec::new();
+        ciborium::ser::into_writer(&final_payload, &mut final_payload_bytes)?;
+
+        Ok(Warrant {
+            payload: final_payload,
+            signature,
+            payload_bytes,
+        })
+    }
+
+    /// Build and sign the attenuated warrant, returning both warrant and receipt.
+    ///
+    /// This is a convenience method for audit-conscious workflows that need
+    /// to capture the delegation receipt immediately.
+    ///
+    /// # Arguments
+    ///
+    /// * `keypair` - The keypair of the delegator (who is creating the child warrant)
+    /// * `parent_keypair` - The keypair of the parent warrant issuer (for chain link signature)
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (child_warrant, delegation_receipt)
+    pub fn build_with_receipt(
+        self,
+        keypair: &Keypair,
+        parent_keypair: &Keypair,
+    ) -> Result<(Warrant, crate::diff::DelegationReceipt)> {
+        // Capture diff before build consumes self
+        let mut diff = self.diff();
+
+        // Get fingerprints before build
+        let delegator_fingerprint = keypair.public_key().fingerprint();
+        let delegatee_fingerprint = self
+            .holder()
+            .map(|h| h.fingerprint())
+            .unwrap_or_else(|| keypair.public_key().fingerprint());
+
+        // Build the warrant
+        let child = self.build(keypair, parent_keypair)?;
+
+        // Update diff with child warrant ID
+        diff.child_warrant_id = Some(child.id().to_string());
+
+        // Create receipt from diff
+        let receipt = crate::diff::DelegationReceipt::from_diff(
+            diff,
+            child.id().to_string(),
+            delegator_fingerprint,
+            delegatee_fingerprint,
+        );
+
+        Ok((child, receipt))
     }
 }
 

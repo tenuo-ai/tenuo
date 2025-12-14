@@ -91,6 +91,29 @@ from .audit import (
     log_authorization_success,
     log_authorization_failure,
 )
+from .builder import AttenuationBuilder
+
+# Import Rust diff types
+from tenuo_core import (  # type: ignore
+    DelegationDiff,
+    DelegationReceipt,
+    ToolsDiff,
+    ConstraintDiff,
+    TtlDiff,
+    TrustDiff,
+    DepthDiff,
+    ChangeType,
+)
+
+from .warrant_ext import (
+    get_chain_with_diffs,
+    compute_diff,
+    compute_diff_from_link,
+)
+
+# Initialize warrant extensions
+# This adds the delegation_receipt property to Warrant
+import tenuo.warrant_ext  # noqa: F401
 
 # Re-export everything for clean imports
 __all__ = [
@@ -171,6 +194,20 @@ __all__ = [
     "AuditLogger",
     "log_authorization_success",
     "log_authorization_failure",
+    
+    # Delegation diffs and receipts
+    "AttenuationBuilder",
+    "DelegationDiff",
+    "DelegationReceipt",
+    "ToolsDiff",
+    "ConstraintDiff",
+    "TtlDiff",
+    "TrustDiff",
+    "DepthDiff",
+    "ChangeType",
+    "get_chain_with_diffs",
+    "compute_diff",
+    "compute_diff_from_link",
 ]
 
 __version__ = "0.1.0"

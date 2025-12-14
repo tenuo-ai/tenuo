@@ -40,6 +40,7 @@ pub mod audit;
 pub mod cel;
 pub mod constraints;
 pub mod crypto;
+pub mod diff;
 pub mod error;
 pub mod extraction;
 pub mod gateway_config;
@@ -84,9 +85,16 @@ pub use revocation::{
 };
 pub use revocation_manager::RevocationManager;
 pub use warrant::{
-    Warrant, WarrantBuilder, WarrantId, POP_TIMESTAMP_WINDOW_SECS, WARRANT_ID_PREFIX,
+    OwnedAttenuationBuilder, Warrant, WarrantBuilder, WarrantId, POP_TIMESTAMP_WINDOW_SECS,
+    WARRANT_ID_PREFIX,
 };
 pub use wire::MAX_WARRANT_SIZE;
+
+// Re-export diff types
+pub use diff::{
+    ChangeType, ConstraintDiff, DelegationDiff, DelegationReceipt, DepthDiff, ToolsDiff, TrustDiff,
+    TtlDiff,
+};
 
 /// Maximum delegation depth to prevent unbounded chains (protocol-level hard cap).
 ///
