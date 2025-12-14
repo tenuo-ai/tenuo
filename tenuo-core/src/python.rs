@@ -1890,6 +1890,19 @@ impl PyAuthorizer {
         self.inner.pop_validity_secs()
     }
 
+    /// Add an additional trusted key.
+    ///
+    /// Use this to configure multiple trusted roots for scenarios like:
+    /// - Key rotation (trust both old and new keys during transition)
+    /// - Multi-tenant systems with separate root keys per tenant
+    /// - Federated deployments with multiple control planes
+    ///
+    /// Args:
+    ///     key: The public key to trust
+    fn add_trusted_key(&mut self, key: &PyPublicKey) {
+        self.inner.add_trusted_key(key.inner.clone());
+    }
+
     /// Verify a warrant (checks signature, expiration, revocation).
     fn verify(&self, warrant: &PyWarrant) -> PyResult<()> {
         self.inner.verify(&warrant.inner).map_err(to_py_err)
