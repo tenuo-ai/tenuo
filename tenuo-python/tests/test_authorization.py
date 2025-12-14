@@ -40,8 +40,9 @@ def test_lockdown_requires_keypair_context():
     )
     
     # Should fail without keypair context
+    from tenuo import MissingKeypair
     with set_warrant_context(warrant):
-        with pytest.raises(AuthorizationError, match="Proof-of-Possession is mandatory"):
+        with pytest.raises(MissingKeypair):
             protected_function(value="test")
     
     # Should succeed with keypair context
@@ -124,6 +125,89 @@ def test_pop_prevents_replay_attacks():
         assert result1 == "deleted /tmp/test.txt"
         assert result2 == "deleted /tmp/test.txt"
         # PoP signatures are different each time (timestamp changes)
+
+
+def test_pop_prevents_cross_tenant_misuse():
+    """
+    Critical security test: Tenant A mints warrant for Tenant B's agent,
+    but Tenant A cannot use it because they don't possess Tenant B's private key.
+    
+    This proves PoP is strictly enforced - stolen or misdirected warrants are useless.
+    """
+    # Tenant A (control plane / issuer)
+    tenant_a_kp = Keypair.generate()
+    
+    # Tenant B's agent (intended holder)
+    tenant_b_agent_kp = Keypair.generate()
+    
+    # Tenant A mints a warrant FOR Tenant B's agent
+    # The authorized_holder is set to Tenant B's public key
+    warrant = Warrant.issue(
+        tool="sensitive_operation",
+        keypair=tenant_a_kp,  # Signed by Tenant A
+        holder=tenant_b_agent_kp.public_key(),  # For Tenant B's agent
+        constraints={"resource": Exact("secret-data")},
+        ttl_seconds=3600
+    )
+    
+    # Verify the warrant was created correctly
+    assert warrant.authorized_holder.to_bytes() == tenant_b_agent_kp.public_key().to_bytes()
+    assert warrant.issuer.to_bytes() == tenant_a_kp.public_key().to_bytes()
+    
+    # ATTACK SCENARIO: Tenant A tries to use the warrant with their OWN keypair
+    # This MUST fail - they don't have Tenant B's private key
+    
+    @lockdown(tool="sensitive_operation")
+    def sensitive_operation(resource: str) -> str:
+        return f"accessed {resource}"
+    
+    # Tenant A tries to use their own keypair (wrong key)
+    with set_warrant_context(warrant), set_keypair_context(tenant_a_kp):
+        try:
+            sensitive_operation(resource="secret-data")
+            assert False, "Should have raised AuthorizationError - wrong keypair!"
+        except AuthorizationError:
+            # Expected: Authorization denied because PoP signature doesn't match authorized_holder
+            # The specific error message may vary, but access MUST be denied
+            pass  # Success - access was denied
+    
+    # SUCCESS SCENARIO: Tenant B's agent uses the warrant with THEIR keypair
+    with set_warrant_context(warrant), set_keypair_context(tenant_b_agent_kp):
+        result = sensitive_operation(resource="secret-data")
+        assert result == "accessed secret-data"
+
+
+def test_pop_signature_must_match_authorized_holder():
+    """
+    Verify that PoP verification strictly checks the authorized_holder.
+    Using any other keypair must fail, even if it's a valid Ed25519 signature.
+    """
+    correct_kp = Keypair.generate()
+    wrong_kp = Keypair.generate()
+    
+    warrant = Warrant.issue(
+        tool="test_tool",
+        keypair=correct_kp,
+        holder=correct_kp.public_key(),
+        constraints={"action": Exact("test")},
+        ttl_seconds=60
+    )
+    
+    args = {"action": "test"}
+    
+    # Create PoP with WRONG keypair
+    wrong_pop = warrant.create_pop_signature(wrong_kp, "test_tool", args)
+    
+    # Try to authorize with wrong signature - MUST fail
+    result = warrant.authorize("test_tool", args, signature=bytes(wrong_pop))
+    assert result is False, "Wrong keypair should NOT be accepted!"
+    
+    # Create PoP with CORRECT keypair
+    correct_pop = warrant.create_pop_signature(correct_kp, "test_tool", args)
+    
+    # Authorize with correct signature - should succeed
+    result = warrant.authorize("test_tool", args, signature=bytes(correct_pop))
+    assert result is True
 
 
 # ============================================================================

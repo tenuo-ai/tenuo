@@ -318,11 +318,16 @@ Centralized authorization with chain verification.
 from tenuo import Authorizer
 ```
 
-#### Class Methods
+#### Constructor
 
-| Method | Description |
-|--------|-------------|
-| `Authorizer.new(trusted_key: PublicKey)` | Create with trusted root public key |
+```python
+Authorizer(
+    trusted_roots: List[PublicKey],  # At least one required
+    clock_tolerance_secs: int = 30,
+    pop_window_secs: int = 30,
+    pop_max_windows: int = 4,
+)
+```
 
 #### Instance Methods
 
@@ -340,7 +345,7 @@ from tenuo import Authorizer
 from tenuo import Authorizer, Keypair
 
 cp_kp = Keypair.generate()
-authorizer = Authorizer.new(cp_kp.public_key())
+authorizer = Authorizer(trusted_roots=[cp_kp.public_key()])
 
 # Verify root warrant
 authorizer.verify(root_warrant)

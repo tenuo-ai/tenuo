@@ -34,12 +34,119 @@ use std::time::Duration;
 
 /// Convert a Tenuo error to a Python exception.
 fn to_py_err(e: crate::error::Error) -> PyErr {
-    PyRuntimeError::new_err(e.to_string())
+    Python::with_gil(|py| {
+        let exceptions = match py.import("tenuo.exceptions") {
+            Ok(m) => m,
+            Err(e) => return e,
+        };
+
+        let (exc_name, msg) = match &e {
+            // Crypto
+            crate::error::Error::SignatureInvalid(m) => ("SignatureInvalid", m.clone()),
+            crate::error::Error::MissingSignature(m) => ("MissingSignature", m.clone()),
+            crate::error::Error::CryptoError(m) => ("CryptoError", m.clone()),
+
+            // Lifecycle
+            crate::error::Error::WarrantRevoked(id) => ("RevokedError", id.clone()),
+            crate::error::Error::WarrantExpired(t) => ("ExpiredError", t.to_string()),
+            crate::error::Error::DepthExceeded(d, m) => {
+                ("DepthExceeded", format!("depth {} > max {}", d, m))
+            }
+            crate::error::Error::InvalidWarrantId(m) => ("InvalidWarrantId", m.clone()),
+            crate::error::Error::InvalidTtl(m) => ("InvalidTtl", m.clone()),
+            crate::error::Error::ConstraintDepthExceeded { .. } => {
+                ("ConstraintDepthExceeded", e.to_string())
+            }
+            crate::error::Error::PayloadTooLarge { .. } => ("PayloadTooLarge", e.to_string()),
+            crate::error::Error::ParentRequired => {
+                ("ParentRequired", "Parent warrant required".to_string())
+            }
+            crate::error::Error::ToolMismatch { parent, child } => (
+                "ToolMismatch",
+                format!("parent: {}, child: {}", parent, child),
+            ),
+
+            // Monotonicity
+            crate::error::Error::MonotonicityViolation(m) => ("MonotonicityError", m.clone()),
+            crate::error::Error::IncompatibleConstraintTypes { .. } => {
+                ("IncompatibleConstraintTypes", e.to_string())
+            }
+            crate::error::Error::WildcardExpansion { .. } => ("WildcardExpansion", e.to_string()),
+            crate::error::Error::EmptyResultSet { .. } => ("EmptyResultSet", e.to_string()),
+            crate::error::Error::ExclusionRemoved { .. } => ("ExclusionRemoved", e.to_string()),
+            crate::error::Error::ValueNotInParentSet { .. } => {
+                ("ValueNotInParentSet", e.to_string())
+            }
+            crate::error::Error::RangeExpanded { .. } => ("RangeExpanded", e.to_string()),
+            crate::error::Error::PatternExpanded { .. } => ("PatternExpanded", e.to_string()),
+            crate::error::Error::RequiredValueRemoved { .. } => {
+                ("RequiredValueRemoved", e.to_string())
+            }
+            crate::error::Error::ExactValueMismatch { .. } => ("ExactValueMismatch", e.to_string()),
+
+            // Constraints
+            crate::error::Error::ConstraintNotSatisfied { field, reason } => {
+                ("ConstraintViolation", format!("{}: {}", field, reason))
+            }
+
+            // Syntax
+            crate::error::Error::InvalidPattern(m) => ("InvalidPattern", m.clone()),
+            crate::error::Error::InvalidRange(m) => ("InvalidRange", m.clone()),
+            crate::error::Error::InvalidRegex(m) => ("InvalidRegex", m.clone()),
+            crate::error::Error::CelError(m) => ("CelError", m.clone()),
+
+            // Serialization
+            crate::error::Error::SerializationError(m) => ("SerializationError", m.clone()),
+            crate::error::Error::DeserializationError(m) => ("DeserializationError", m.clone()),
+            crate::error::Error::UnsupportedVersion(v) => ("UnsupportedVersion", v.to_string()),
+
+            // General
+            crate::error::Error::MissingField(m) => ("MissingField", m.clone()),
+            crate::error::Error::ChainVerificationFailed(m) => ("ChainError", m.clone()),
+            crate::error::Error::Validation(m) => ("ValidationError", m.clone()),
+            crate::error::Error::Unauthorized(m) => ("Unauthorized", m.clone()),
+
+            // Approval
+            crate::error::Error::ApprovalExpired { .. } => ("ApprovalExpired", e.to_string()),
+            crate::error::Error::InsufficientApprovals { .. } => {
+                ("InsufficientApprovals", e.to_string())
+            }
+            crate::error::Error::InvalidApproval(m) => ("InvalidApproval", m.clone()),
+            crate::error::Error::UnknownProvider(m) => ("UnknownProvider", m.clone()),
+        };
+
+        match exceptions.getattr(exc_name) {
+            Ok(cls) => {
+                // Most exceptions take a single string argument
+                // Some might take more, but for now we pass the main message
+                // Ideally we'd match arguments exactly, but mapping to string is a safe fallback
+                PyErr::from_value(cls.call1((msg,)).unwrap_or_else(|_| {
+                    // Fallback if constructor fails
+                    PyRuntimeError::new_err(e.to_string())
+                        .value(py)
+                        .as_any()
+                        .clone()
+                }))
+            }
+            Err(_) => PyRuntimeError::new_err(e.to_string()),
+        }
+    })
 }
 
 /// Convert a ConfigError to a Python exception.
 fn config_err_to_py(e: crate::gateway_config::ConfigError) -> PyErr {
-    PyValueError::new_err(e.to_string())
+    Python::with_gil(|py| match py.import("tenuo.exceptions") {
+        Ok(m) => match m.getattr("ConfigurationError") {
+            Ok(cls) => PyErr::from_value(cls.call1((e.to_string(),)).unwrap_or_else(|_| {
+                PyValueError::new_err(e.to_string())
+                    .value(py)
+                    .as_any()
+                    .clone()
+            })),
+            Err(_) => PyValueError::new_err(e.to_string()),
+        },
+        Err(_) => PyValueError::new_err(e.to_string()),
+    })
 }
 
 /// Python wrapper for Pattern constraint.
@@ -1353,6 +1460,17 @@ impl PyWarrant {
         }
     }
 
+    /// Get the issuer's public key (who signed this warrant).
+    ///
+    /// For root warrants, this is the control plane's key.
+    /// For delegated warrants, this is the delegator's key.
+    #[getter]
+    fn issuer(&self) -> PyPublicKey {
+        PyPublicKey {
+            inner: self.inner.issuer().clone(),
+        }
+    }
+
     /// Get the trust level (optional, for audit/classification).
     #[getter]
     fn trust_level(&self) -> Option<PyTrustLevel> {
@@ -1849,6 +1967,18 @@ impl PyChainVerificationResult {
 }
 
 /// Python wrapper for Authorizer.
+///
+/// Example:
+///     # Create with explicit trusted roots
+///     authorizer = Authorizer(trusted_roots=[key1, key2])
+///     
+///     # Create with all options
+///     authorizer = Authorizer(
+///         trusted_roots=[control_plane_key],
+///         clock_tolerance_secs=60,
+///         pop_window_secs=15,
+///         pop_max_windows=4,
+///     )
 #[pyclass(name = "Authorizer")]
 pub struct PyAuthorizer {
     inner: RustAuthorizer,
@@ -1856,26 +1986,78 @@ pub struct PyAuthorizer {
 
 #[pymethods]
 impl PyAuthorizer {
-    #[staticmethod]
-    fn new(public_key: &PyPublicKey) -> Self {
-        Self {
-            inner: RustAuthorizer::new(public_key.inner.clone()),
-        }
-    }
-
-    /// Set custom PoP window configuration.
-    ///
-    /// Use smaller windows for high-security deployments with tight clock sync.
-    /// Use larger windows for deployments with poor clock sync.
+    /// Create a new authorizer.
     ///
     /// Args:
-    ///     window_secs: Size of each time window (default: 30)
-    ///     max_windows: Number of windows to accept (default: 4)
+    ///     trusted_roots: List of trusted root public keys. At least one required.
+    ///     clock_tolerance_secs: Clock tolerance in seconds (default: 30)
+    ///     pop_window_secs: PoP window size in seconds (default: 30)
+    ///     pop_max_windows: Number of PoP windows to accept (default: 4)
     ///
-    /// Total replay window = window_secs * max_windows seconds
+    /// Example:
+    ///     authorizer = Authorizer(trusted_roots=[control_plane_key])
+    ///     
+    ///     # With custom settings
+    ///     authorizer = Authorizer(
+    ///         trusted_roots=[key1, key2],
+    ///         clock_tolerance_secs=60,
+    ///         pop_window_secs=15,
+    ///         pop_max_windows=4,
+    ///     )
+    #[new]
+    #[pyo3(signature = (trusted_roots=None, clock_tolerance_secs=30, pop_window_secs=30, pop_max_windows=4))]
+    fn new(
+        trusted_roots: Option<Vec<PyRef<PyPublicKey>>>,
+        clock_tolerance_secs: i64,
+        pop_window_secs: i64,
+        pop_max_windows: u32,
+    ) -> PyResult<Self> {
+        let mut authorizer = RustAuthorizer::new()
+            .with_clock_tolerance(chrono::Duration::seconds(clock_tolerance_secs))
+            .with_pop_window(pop_window_secs, pop_max_windows);
+
+        if let Some(roots) = trusted_roots {
+            for key in roots {
+                authorizer = authorizer.with_trusted_root(key.inner.clone());
+            }
+        }
+
+        Ok(Self { inner: authorizer })
+    }
+
+    // =========================================================================
+    // Mutable setters (for adding after construction)
+    // =========================================================================
+
+    /// Add a trusted root public key.
+    ///
+    /// Args:
+    ///     key: The public key to trust
+    fn add_trusted_root(&mut self, key: &PyPublicKey) {
+        self.inner.add_trusted_root(key.inner.clone());
+    }
+
+    /// Set the clock tolerance for expiration checks.
+    ///
+    /// Args:
+    ///     seconds: Clock tolerance in seconds
+    fn set_clock_tolerance(&mut self, seconds: i64) {
+        self.inner
+            .set_clock_tolerance(chrono::Duration::seconds(seconds));
+    }
+
+    /// Set the PoP window configuration.
+    ///
+    /// Args:
+    ///     window_secs: Size of each time window
+    ///     max_windows: Number of windows to accept
     fn set_pop_window(&mut self, window_secs: i64, max_windows: u32) {
         self.inner.set_pop_window(window_secs, max_windows);
     }
+
+    // =========================================================================
+    // Getters
+    // =========================================================================
 
     /// Get the current PoP window configuration.
     ///
@@ -1890,17 +2072,9 @@ impl PyAuthorizer {
         self.inner.pop_validity_secs()
     }
 
-    /// Add an additional trusted key.
-    ///
-    /// Use this to configure multiple trusted roots for scenarios like:
-    /// - Key rotation (trust both old and new keys during transition)
-    /// - Multi-tenant systems with separate root keys per tenant
-    /// - Federated deployments with multiple control planes
-    ///
-    /// Args:
-    ///     key: The public key to trust
-    fn add_trusted_key(&mut self, key: &PyPublicKey) {
-        self.inner.add_trusted_key(key.inner.clone());
+    /// Get the number of trusted roots.
+    fn trusted_root_count(&self) -> usize {
+        self.inner.trusted_root_count()
     }
 
     /// Verify a warrant (checks signature, expiration, revocation).

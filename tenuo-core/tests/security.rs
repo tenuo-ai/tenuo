@@ -39,7 +39,7 @@ fn test_duplicate_approvals_rejected() {
         .build(&root_key)
         .unwrap();
 
-    let authorizer = Authorizer::new(root_key.public_key());
+    let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
 
     // Create ONE approval
     let args = HashMap::new();

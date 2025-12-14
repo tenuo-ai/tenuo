@@ -1059,82 +1059,268 @@ pub const DEFAULT_POP_WINDOW_SECS: i64 = 30;
 /// Default number of PoP windows to check (handles clock skew).
 pub const DEFAULT_POP_MAX_WINDOWS: u32 = 4;
 
+/// Builder for creating an [`Authorizer`] with validated configuration.
+///
+/// Use this builder to configure an authorizer before construction.
+/// The `build()` method validates that at least one trusted root is configured.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use tenuo_core::planes::AuthorizerBuilder;
+///
+/// let authorizer = AuthorizerBuilder::new()
+///     .trusted_root(control_plane_key)
+///     .trusted_root(backup_key)
+///     .clock_tolerance(Duration::seconds(60))
+///     .pop_window(15, 4)
+///     .build()?;
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct AuthorizerBuilder {
+    trusted_keys: Vec<PublicKey>,
+    clock_tolerance: chrono::Duration,
+    pop_window_secs: i64,
+    pop_max_windows: u32,
+    pending_srl: Option<(SignedRevocationList, PublicKey)>,
+}
+
+impl AuthorizerBuilder {
+    /// Create a new builder with default settings.
+    pub fn new() -> Self {
+        Self {
+            trusted_keys: Vec::new(),
+            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
+            pop_window_secs: DEFAULT_POP_WINDOW_SECS,
+            pop_max_windows: DEFAULT_POP_MAX_WINDOWS,
+            pending_srl: None,
+        }
+    }
+
+    /// Add a trusted root public key.
+    ///
+    /// Warrants signed by this key (or chains rooted in it) will be trusted.
+    /// Can be called multiple times to trust multiple roots.
+    ///
+    /// At least one trusted root is required for `build()` to succeed.
+    pub fn trusted_root(mut self, key: PublicKey) -> Self {
+        self.trusted_keys.push(key);
+        self
+    }
+
+    /// Add multiple trusted roots at once.
+    pub fn trusted_roots(mut self, keys: impl IntoIterator<Item = PublicKey>) -> Self {
+        self.trusted_keys.extend(keys);
+        self
+    }
+
+    /// Set the clock tolerance for expiration checks.
+    ///
+    /// In distributed systems, clocks can drift. This tolerance allows a grace
+    /// period when checking warrant expiration.
+    ///
+    /// Default: 30 seconds.
+    pub fn clock_tolerance(mut self, tolerance: chrono::Duration) -> Self {
+        self.clock_tolerance = tolerance;
+        self
+    }
+
+    /// Set the PoP (Proof-of-Possession) window configuration.
+    ///
+    /// The PoP window determines how long a PoP signature is valid.
+    /// Total validity = `window_secs * max_windows`.
+    ///
+    /// - Smaller windows = tighter security, requires better clock sync
+    /// - Larger windows = more tolerant of clock skew
+    ///
+    /// Default: 30s windows, 4 windows = 120s total.
+    pub fn pop_window(mut self, window_secs: i64, max_windows: u32) -> Self {
+        self.pop_window_secs = window_secs;
+        self.pop_max_windows = max_windows;
+        self
+    }
+
+    /// Set a signed revocation list.
+    ///
+    /// The signature is verified during `build()`.
+    /// This allows chaining without breaking the fluent API.
+    pub fn revocation_list(mut self, srl: SignedRevocationList, issuer: PublicKey) -> Self {
+        self.pending_srl = Some((srl, issuer));
+        self
+    }
+
+    /// Build the [`Authorizer`], validating configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - No trusted roots were configured
+    /// - The revocation list signature is invalid
+    pub fn build(self) -> Result<Authorizer> {
+        if self.trusted_keys.is_empty() {
+            return Err(crate::error::Error::Validation(
+                "Authorizer requires at least one trusted root".to_string(),
+            ));
+        }
+
+        let revocation_list = if let Some((srl, issuer)) = self.pending_srl {
+            srl.verify(&issuer)?;
+            Some(srl)
+        } else {
+            None
+        };
+
+        Ok(Authorizer {
+            trusted_keys: self.trusted_keys,
+            clock_tolerance: self.clock_tolerance,
+            revocation_list,
+            pop_window_secs: self.pop_window_secs,
+            pop_max_windows: self.pop_max_windows,
+        })
+    }
+}
+
 /// A minimal authorizer for embedding in services.
 ///
 /// This is the smallest possible data plane - just a set of trusted keys.
+///
+/// # Creating an Authorizer
+///
+/// Use [`AuthorizerBuilder`] for validated construction:
+///
+/// ```rust,ignore
+/// let authorizer = AuthorizerBuilder::new()
+///     .trusted_root(control_plane_key)
+///     .trusted_root(backup_key)
+///     .clock_tolerance(Duration::seconds(60))
+///     .pop_window(15, 4)
+///     .build()?;
+/// ```
+///
+/// Or use the convenience method [`Authorizer::new()`] for quick setup:
+///
+/// ```rust,ignore
+/// let authorizer = Authorizer::new()
+///     .with_trusted_root(control_plane_key);
+/// ```
 #[derive(Debug, Clone)]
 pub struct Authorizer {
     trusted_keys: Vec<PublicKey>,
     clock_tolerance: chrono::Duration,
     revocation_list: Option<SignedRevocationList>,
-    /// PoP window size in seconds (default: 30)
     pop_window_secs: i64,
-    /// Number of recent windows to accept (default: 4)
     pop_max_windows: u32,
 }
 
-impl Authorizer {
-    /// Create an authorizer with a single trusted key.
-    ///
-    /// Uses the default clock tolerance of 30 seconds and default PoP window.
-    pub fn new(root_public_key: PublicKey) -> Self {
-        Self::with_clock_tolerance(
-            root_public_key,
-            chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
-        )
+impl Default for Authorizer {
+    fn default() -> Self {
+        Self::new()
     }
+}
 
-    /// Create an authorizer with a custom clock tolerance.
+impl Authorizer {
+    /// Create a new authorizer with default settings.
     ///
-    /// Use this when your deployment has significant clock skew or you need
-    /// stricter/faster expiration checks.
+    /// This is a convenience method that allows immediate chaining.
+    /// For validated construction, use [`AuthorizerBuilder`].
     ///
-    /// # Arguments
-    /// * `root_public_key` - The trusted root public key
-    /// * `clock_tolerance` - Maximum allowed clock skew (for expiration checks)
-    pub fn with_clock_tolerance(
-        root_public_key: PublicKey,
-        clock_tolerance: chrono::Duration,
-    ) -> Self {
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let authorizer = Authorizer::new()
+    ///     .with_trusted_root(root_key);
+    /// ```
+    pub fn new() -> Self {
         Self {
-            trusted_keys: vec![root_public_key],
-            clock_tolerance,
+            trusted_keys: Vec::new(),
+            clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
             revocation_list: None,
             pop_window_secs: DEFAULT_POP_WINDOW_SECS,
             pop_max_windows: DEFAULT_POP_MAX_WINDOWS,
         }
     }
 
-    /// Set a custom PoP window configuration.
+    /// Create a builder for more controlled construction.
     ///
-    /// Use smaller windows for high-security deployments with tight clock sync.
-    /// Use larger windows for deployments with poor clock sync (edge/IoT).
+    /// The builder validates configuration on `build()`.
+    pub fn builder() -> AuthorizerBuilder {
+        AuthorizerBuilder::new()
+    }
+
+    /// Add a trusted root public key (chainable).
     ///
-    /// # Arguments
-    /// * `window_secs` - Size of each time window (default: 30)
-    /// * `max_windows` - Number of windows to accept (default: 4)
+    /// Warrants signed by this key (or chains rooted in it) will be trusted.
+    /// Can be called multiple times to trust multiple roots.
+    pub fn with_trusted_root(mut self, key: PublicKey) -> Self {
+        self.trusted_keys.push(key);
+        self
+    }
+
+    /// Set the clock tolerance for expiration checks (chainable).
     ///
-    /// Total replay window = `window_secs * max_windows` seconds
+    /// Default: 30 seconds.
+    pub fn with_clock_tolerance(mut self, tolerance: chrono::Duration) -> Self {
+        self.clock_tolerance = tolerance;
+        self
+    }
+
+    /// Set the PoP window configuration (chainable).
     ///
-    /// # Example
+    /// Default: 30s windows, 4 windows = 120s total.
+    pub fn with_pop_window(mut self, window_secs: i64, max_windows: u32) -> Self {
+        self.pop_window_secs = window_secs;
+        self.pop_max_windows = max_windows;
+        self
+    }
+
+    /// Set a signed revocation list (chainable, fallible).
     ///
-    /// ```rust,ignore
-    /// // High-security: 5s windows, 2 windows = 10s total replay window
-    /// authorizer.set_pop_window(5, 2);
-    ///
-    /// // Edge deployment: 60s windows, 4 windows = 240s total replay window
-    /// authorizer.set_pop_window(60, 4);
-    /// ```
+    /// Verifies the signature before accepting.
+    /// Use `revocation_list()` on [`AuthorizerBuilder`] for non-fallible chaining.
+    pub fn try_revocation_list(
+        mut self,
+        srl: SignedRevocationList,
+        issuer: &PublicKey,
+    ) -> Result<Self> {
+        srl.verify(issuer)?;
+        self.revocation_list = Some(srl);
+        Ok(self)
+    }
+
+    // =========================================================================
+    // Mutable setters (for updating after construction)
+    // =========================================================================
+
+    /// Add a trusted root (mutable version).
+    pub fn add_trusted_root(&mut self, key: PublicKey) {
+        self.trusted_keys.push(key);
+    }
+
+    /// Set the PoP window (mutable version).
     pub fn set_pop_window(&mut self, window_secs: i64, max_windows: u32) {
         self.pop_window_secs = window_secs;
         self.pop_max_windows = max_windows;
     }
 
-    /// Builder-style method to set PoP window.
-    pub fn with_pop_window(mut self, window_secs: i64, max_windows: u32) -> Self {
-        self.set_pop_window(window_secs, max_windows);
-        self
+    /// Set a signed revocation list (mutable version).
+    pub fn set_revocation_list(
+        &mut self,
+        srl: SignedRevocationList,
+        expected_issuer: &PublicKey,
+    ) -> Result<()> {
+        srl.verify(expected_issuer)?;
+        self.revocation_list = Some(srl);
+        Ok(())
     }
+
+    /// Set the clock tolerance (mutable version).
+    pub fn set_clock_tolerance(&mut self, tolerance: chrono::Duration) {
+        self.clock_tolerance = tolerance;
+    }
+
+    // =========================================================================
+    // Getters
+    // =========================================================================
 
     /// Get the current PoP window configuration.
     ///
@@ -1148,22 +1334,19 @@ impl Authorizer {
         self.pop_window_secs * self.pop_max_windows as i64
     }
 
-    /// Set a signed revocation list.
-    ///
-    /// Verifies the signature before accepting. Returns error if verification fails.
-    ///
-    /// # Arguments
-    /// * `srl` - The signed revocation list
-    /// * `expected_issuer` - The Control Plane's public key (must match SRL issuer)
-    pub fn set_revocation_list(
-        &mut self,
-        srl: SignedRevocationList,
-        expected_issuer: &PublicKey,
-    ) -> Result<()> {
-        srl.verify(expected_issuer)?;
-        self.revocation_list = Some(srl);
-        Ok(())
+    /// Get the number of trusted roots.
+    pub fn trusted_root_count(&self) -> usize {
+        self.trusted_keys.len()
     }
+
+    /// Check if the authorizer has any trusted roots configured.
+    pub fn has_trusted_roots(&self) -> bool {
+        !self.trusted_keys.is_empty()
+    }
+
+    // =========================================================================
+    // Internal helpers
+    // =========================================================================
 
     /// Check if a warrant is revoked by ID.
     fn is_revoked(&self, warrant: &Warrant) -> bool {
@@ -1171,16 +1354,6 @@ impl Authorizer {
             .as_ref()
             .map(|srl| srl.is_revoked(warrant.id().as_str()))
             .unwrap_or(false)
-    }
-
-    /// Create an authorizer from raw key bytes.
-    pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self> {
-        Ok(Self::new(PublicKey::from_bytes(bytes)?))
-    }
-
-    /// Add an additional trusted key.
-    pub fn add_trusted_key(&mut self, key: PublicKey) {
-        self.trusted_keys.push(key);
     }
 
     /// Verify a warrant.
@@ -1646,7 +1819,7 @@ mod tests {
                 &holder_keypair.public_key(),
             )
             .unwrap();
-        let authorizer = Authorizer::new(control_plane.public_key());
+        let authorizer = Authorizer::new().with_trusted_root(control_plane.public_key());
 
         // Check in one call
         let args = HashMap::new();
@@ -1879,7 +2052,7 @@ mod tests {
             .build(&agent_keypair, &control_plane.keypair)
             .unwrap();
 
-        let authorizer = Authorizer::new(control_plane.public_key());
+        let authorizer = Authorizer::new().with_trusted_root(control_plane.public_key());
 
         // Verify chain
         let result = authorizer
@@ -1956,7 +2129,7 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("revoked"));
 
         // Also test with Authorizer
-        let mut authorizer = Authorizer::new(control_plane.public_key());
+        let mut authorizer = Authorizer::new().with_trusted_root(control_plane.public_key());
         let srl = SignedRevocationList::builder()
             .revoke(root.id().as_str())
             .version(1)
@@ -1984,7 +2157,7 @@ mod tests {
             .issue_warrant("test", &[], Duration::from_secs(60))
             .unwrap();
 
-        let authorizer = Authorizer::new(control_plane.public_key());
+        let authorizer = Authorizer::new().with_trusted_root(control_plane.public_key());
 
         let args = HashMap::new();
 
@@ -2024,7 +2197,7 @@ mod tests {
             .build(&issuer_keypair)
             .unwrap();
 
-        let authorizer = Authorizer::new(issuer_keypair.public_key());
+        let authorizer = Authorizer::new().with_trusted_root(issuer_keypair.public_key());
         let args = HashMap::new();
 
         // Create PoP signature
@@ -2056,7 +2229,7 @@ mod tests {
             .build(&issuer_keypair)
             .unwrap();
 
-        let authorizer = Authorizer::new(issuer_keypair.public_key());
+        let authorizer = Authorizer::new().with_trusted_root(issuer_keypair.public_key());
         let args = HashMap::new();
 
         // Create PoP signature
@@ -2123,7 +2296,7 @@ mod tests {
             .build(&issuer_keypair)
             .unwrap();
 
-        let authorizer = Authorizer::new(issuer_keypair.public_key());
+        let authorizer = Authorizer::new().with_trusted_root(issuer_keypair.public_key());
         let args = HashMap::new();
 
         // Create approval from WRONG keypair
@@ -2195,7 +2368,7 @@ mod tests {
             .build(&issuer_keypair)
             .unwrap();
 
-        let authorizer = Authorizer::new(issuer_keypair.public_key());
+        let authorizer = Authorizer::new().with_trusted_root(issuer_keypair.public_key());
         let args = HashMap::new();
 
         let now = Utc::now();
@@ -2396,7 +2569,7 @@ mod tests {
             .build(&orchestrator_keypair, &control_plane.keypair)
             .unwrap();
 
-        let authorizer = Authorizer::new(control_plane.public_key());
+        let authorizer = Authorizer::new().with_trusted_root(control_plane.public_key());
 
         // Should pass with matching sessions
         let result = authorizer.verify_chain_strict(&[root.clone(), child.clone()]);

@@ -63,7 +63,7 @@
 //! // Initialize authorizer with trusted Control Plane key
 //! let control_plane_key_bytes: [u8; 32] = hex::decode("f32e74b5...")?.try_into().unwrap();
 //! let control_plane_key = PublicKey::from_bytes(&control_plane_key_bytes)?;
-//! let authorizer = Authorizer::new(control_plane_key);
+//! let authorizer = Authorizer::new().with_trusted_root(control_plane_key);
 //!
 //! // MCP tool call arrives from AI agent
 //! let arguments = json!({

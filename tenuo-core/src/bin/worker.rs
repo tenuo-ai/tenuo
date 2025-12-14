@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|_| "Trusted key must be 32 bytes")?;
 
     let trusted_key = PublicKey::from_bytes(&trusted_key_bytes)?;
-    let authorizer = Authorizer::new(trusted_key);
+    let authorizer = Authorizer::new().with_trusted_root(trusted_key);
 
     println!("  ✓ Authorizer configured with trusted root:");
     println!("    Public Key: {}", trusted_key_hex);

@@ -212,7 +212,7 @@ def main():
     print("  Root warrant: tools=[search, fetch, write], ttl=1h")
     
     # Create Authorizer to verify delegation chain
-    authorizer = Authorizer.new(control_plane_keypair.public_key())
+    authorizer = Authorizer(trusted_roots=[control_plane_keypair.public_key()])
     print(f"\n[Authorizer] Created with trusted root: {control_plane_keypair.public_key().to_bytes()[:8].hex()}...")
     
     # Orchestrator executes task, delegating to Worker

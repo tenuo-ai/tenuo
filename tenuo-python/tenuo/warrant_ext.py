@@ -4,11 +4,11 @@ Extensions for Warrant class - delegation receipts and chain reconstruction.
 This module provides:
 - Receipt storage for delegated warrants  
 - Chain reconstruction utilities for audit
-- Diff computation between warrants
+- Diff computation between warrants (delegates to Rust)
 - Wrapper for attenuate_builder() to return Python builder with diff support
 """
 
-from typing import Optional, Dict, Any, List, TYPE_CHECKING
+from typing import Optional, Dict, Any, List, TYPE_CHECKING, Union
 from tenuo_core import Warrant  # type: ignore[import-untyped]
 
 if TYPE_CHECKING:
@@ -18,13 +18,6 @@ from tenuo_core import (  # type: ignore[import-untyped]
     DelegationDiff,
     DelegationReceipt,
     compute_diff as rust_compute_diff,
-)
-from .diff import (
-    DelegationDiff as PyDelegationDiff,
-    ToolsDiff as PyToolsDiff,
-    TtlDiff as PyTtlDiff,
-    TrustDiff as PyTrustDiff,
-    DepthDiff as PyDepthDiff,
 )
 
 # Store receipts in a dict keyed by warrant ID (string)
@@ -79,7 +72,7 @@ Warrant.attenuate_builder = _wrapped_attenuate_builder  # type: ignore[method-as
 def get_chain_with_diffs(
     warrant: Warrant,
     warrant_store: Optional[Any] = None,
-) -> List[DelegationDiff]:
+) -> List[Union[DelegationDiff, Dict[str, Any]]]:
     """
     Reconstruct full delegation chain with diffs.
     
@@ -92,14 +85,14 @@ def get_chain_with_diffs(
             Must have a .get(warrant_id) method
         
     Returns:
-        List of DelegationDiff objects from root to leaf
+        List of DelegationDiff objects (or fallback dicts) from root to leaf
     """
-    chain: List[DelegationDiff] = []
+    chain: List[Union[DelegationDiff, Dict[str, Any]]] = []
     current = warrant
     
     # Without a store, we can only return minimal info
     if warrant_store is None:
-        return [compute_diff_from_link_minimal(current)]
+        return [_create_minimal_diff(current)]
     
     # Trace back using parent_id
     while current.parent_id is not None:
@@ -123,24 +116,17 @@ def get_chain_with_diffs(
     return list(reversed(chain))
 
 
-def compute_diff_from_link_minimal(child: Warrant) -> PyDelegationDiff:
-    """Create minimal diff when parent not available (fallback).
-    
-    Returns a Python DelegationDiff since we don't have full warrant data.
-    """
+def _create_minimal_diff(child: Warrant) -> Dict[str, Any]:
+    """Create minimal diff dict when parent not available (fallback)."""
     from datetime import datetime, timezone
     
-    return PyDelegationDiff(
-        parent_warrant_id=child.parent_id or "unknown",
-        child_warrant_id=child.id,
-        timestamp=datetime.now(timezone.utc),
-        tools=PyToolsDiff(parent_tools=[], child_tools=[]),
-        constraints={},
-        ttl=PyTtlDiff(parent_ttl_seconds=None, child_ttl_seconds=None),
-        trust=PyTrustDiff(parent_trust=None, child_trust=child.trust_level),
-        depth=PyDepthDiff(parent_depth=child.depth - 1, child_depth=child.depth),
-        intent=None,
-    )
+    return {
+        "parent_warrant_id": child.parent_id or "unknown",
+        "child_warrant_id": child.id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "depth": {"parent": child.depth - 1, "child": child.depth},
+        "note": "Minimal diff - parent warrant not available",
+    }
 
 
 def compute_diff(parent: Warrant, child: Warrant) -> DelegationDiff:
@@ -149,24 +135,3 @@ def compute_diff(parent: Warrant, child: Warrant) -> DelegationDiff:
     Delegates to the Rust implementation for performance and consistency.
     """
     return rust_compute_diff(parent, child)
-
-
-def compute_diff_from_link(link: Any, child: Warrant) -> PyDelegationDiff:
-    """Compute diff from embedded chain link data.
-    
-    This is a fallback when the parent warrant is not available
-    in the warrant store. Returns a Python DelegationDiff.
-    """
-    from datetime import datetime, timezone
-    
-    return PyDelegationDiff(
-        parent_warrant_id=getattr(link, 'issuer_id', 'unknown'),
-        child_warrant_id=child.id,
-        timestamp=datetime.now(timezone.utc),
-        tools=PyToolsDiff(parent_tools=[], child_tools=[]),
-        constraints={},
-        ttl=PyTtlDiff(parent_ttl_seconds=None, child_ttl_seconds=None),
-        trust=PyTrustDiff(parent_trust=None, child_trust=child.trust_level),
-        depth=PyDepthDiff(parent_depth=child.depth - 1, child_depth=child.depth),
-        intent=None,
-    )

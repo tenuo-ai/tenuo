@@ -264,7 +264,7 @@ fn build_authorizer(
         })
     };
 
-    let mut authorizer = Authorizer::new(first_key.clone());
+    let mut authorizer = Authorizer::new().with_trusted_root(first_key.clone());
 
     // Add remaining keys
     if let Some(keys) = trusted_keys {
@@ -272,7 +272,7 @@ fn build_authorizer(
             if !key_hex.is_empty() {
                 let bytes = hex::decode(key_hex)?;
                 let arr: [u8; 32] = bytes.try_into().map_err(|_| "invalid key length")?;
-                authorizer.add_trusted_key(PublicKey::from_bytes(&arr)?);
+                authorizer.add_trusted_root(PublicKey::from_bytes(&arr)?);
             }
         }
     }

@@ -30,8 +30,16 @@ Audit Logging:
 from functools import wraps
 from typing import Callable, Optional, Union
 from contextvars import ContextVar
-from . import Warrant, Keypair, AuthorizationError
+from .exceptions import (
+    ScopeViolation,
+    ConstraintViolation,
+    ExpiredError,
+    MissingKeypair,
+)
 from .audit import audit_logger, AuditEvent, AuditEventType
+
+# Runtime imports
+from tenuo_core import Warrant, Keypair  # type: ignore[import-untyped]
 
 # Context variable for warrant storage (works with both threads and asyncio)
 # This allows warrants to be passed through async call stacks without explicit threading
@@ -223,7 +231,7 @@ def lockdown(
                     error_code="no_warrant",
                     details=f"No warrant available for {tool_name}",
                 ))
-                raise AuthorizationError(
+                raise ScopeViolation(
                     f"No warrant available for {tool_name}. "
                     "Either pass warrant explicitly or set it in context using set_warrant_context()."
                 )
@@ -239,9 +247,9 @@ def lockdown(
                     error_code="warrant_expired",
                     details=f"Warrant expired at {expires_at}",
                 ))
-                raise AuthorizationError(
-                    f"Warrant has expired (at {expires_at}). "
-                    f"Cannot authorize {tool_name}."
+                raise ExpiredError(
+                    warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else "unknown",
+                    expired_at=expires_at
                 )
             
             # Get keypair: explicit or from context (REQUIRED - PoP is mandatory)
@@ -259,11 +267,7 @@ def lockdown(
                     error_code="no_keypair_for_pop",
                     details=f"Proof-of-Possession is mandatory but no keypair available for {tool_name}",
                 ))
-                raise AuthorizationError(
-                    f"Proof-of-Possession is mandatory for {tool_name}, "
-                    "but no keypair is available. "
-                    "Either pass keypair explicitly or set it in context using set_keypair_context()."
-                )
+                raise MissingKeypair(tool=tool_name)
             
             # Extract arguments for authorization
             if extract_args:
@@ -321,8 +325,10 @@ def lockdown(
                     error_code="constraint_violation",
                     details=f"Warrant does not authorize {tool_name} with provided args",
                 ))
-                raise AuthorizationError(
-                    f"Warrant does not authorize {tool_name} with args {auth_args}"
+                raise ConstraintViolation(
+                    field="authorization",
+                    reason=f"Warrant does not authorize {tool_name} with provided args",
+                    value=auth_args
                 )
             
             # Log authorization success

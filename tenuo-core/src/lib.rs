@@ -77,7 +77,7 @@ pub use constraints::{
 pub use crypto::{Keypair, PublicKey, Signature};
 pub use error::{Error, Result};
 pub use planes::{
-    Authorizer, ChainStep, ChainVerificationResult, ControlPlane, DataPlane,
+    Authorizer, AuthorizerBuilder, ChainStep, ChainVerificationResult, ControlPlane, DataPlane,
     DEFAULT_CLOCK_TOLERANCE_SECS,
 };
 pub use revocation::{

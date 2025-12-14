@@ -62,7 +62,7 @@ def main():
         # Create authorizer with public key
         # HARDCODED: Using generated keypair for demo
         # In production: Load public key from K8s Secret or config
-        authorizer = Authorizer.new(public_key)
+        authorizer = Authorizer(trusted_roots=[public_key])
         
         # Display public key (first 8 bytes for brevity)
         # Note: to_bytes() returns a list/vector, convert to bytes for hex()
@@ -215,7 +215,7 @@ def demo_without_config(control_keypair):
         
         # Full authorization with Authorizer
         public_key = control_keypair.public_key()
-        authorizer = Authorizer.new(public_key)
+        authorizer = Authorizer(trusted_roots=[public_key])
         try:
             authorizer.check(warrant, "filesystem_read", extracted_constraints, bytes(pop_sig))
             print("✓ Full authorization (Authorizer.check): Success")

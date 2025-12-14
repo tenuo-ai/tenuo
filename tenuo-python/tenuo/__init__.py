@@ -4,8 +4,6 @@ Tenuo Python SDK - Capability tokens for AI agents
 A pure Python wrapper around the Rust tenuo_core extension.
 """
 
-# Import all public API from the Rust extension
-# Note: Commented-out features (TODO) are planned for v0.2+ and not included in v0.1 scope.
 from tenuo_core import (  # type: ignore
     # Core types
     Keypair,
@@ -15,63 +13,110 @@ from tenuo_core import (  # type: ignore
     PublicKey,
     Signature,
     Authorizer,
-    # Approval,  # TODO: Implement in python.rs
-    
-    # Constraints - Basic
-    # Wildcard,  # TODO
+    # Constraints
     Pattern,
-    # Regex,  # TODO
     Exact,
     OneOf,
     NotOneOf,
     Range,
-    
-    # Constraints - List operations
     Contains,
     Subset,
-    
-    # Constraints - Composite
     All,
     AnyOf,
     Not,
     CEL,
-    
-    # Revocation
-    # SignedRevocationList,  # TODO
-    # SrlBuilder,  # TODO
-    
     # Chain Verification
     ChainStep,
     ChainVerificationResult,
-    
-    # Gateway Config
-    # GatewayConfig,  # TODO
-    # CompiledGatewayConfig,  # TODO
-    
-    # Revocation Manager
-    # RevocationManager,  # TODO
-    
     # MCP integration
     McpConfig,
     CompiledMcpConfig,
     ExtractionResult,
-    
     # Constants
     MAX_DELEGATION_DEPTH,
-    # MAX_CONSTRAINT_DEPTH,  # TODO
     WIRE_VERSION,
     WARRANT_HEADER,
 )
 
-# Note: Signature is now exported from tenuo_core (added in python.rs)
-
-# Import Pythonic additions
+# Import Pythonic additions - exceptions map 1:1 to Rust Error variants
 from .exceptions import (
+    # Base
     TenuoError,
+    RUST_ERROR_MAP,
+    RUST_ERROR_VARIANTS,
+    # Crypto errors
+    CryptoError,
+    SignatureInvalid,
+    MissingSignature,
+    InvalidSignature,  # alias for SignatureInvalid
+    # Scope violations
+    ScopeViolation,
+    ToolNotAuthorized,
+    ToolMismatch,
+    ConstraintViolation,
+    ExpiredError,
+    Unauthorized,
+    # Monotonicity errors
+    MonotonicityError,
+    IncompatibleConstraintTypes,
+    WildcardExpansion,
+    EmptyResultSet,
+    ExclusionRemoved,
+    ValueNotInParentSet,
+    RangeExpanded,
+    PatternExpanded,
+    RequiredValueRemoved,
+    ExactValueMismatch,
+    # Trust violations
+    TrustViolation,
+    TrustLevelExceeded,
+    # PoP errors
+    PopError,
+    MissingKeypair,
+    SignatureMismatch,
+    PopExpired,
+    # Chain errors
+    ChainError,
+    BrokenChain,
+    CycleDetected,
+    UntrustedRoot,
+    ParentRequired,
+    # Limit errors
+    LimitError,
+    DepthExceeded,
+    ConstraintDepthExceeded,
+    PayloadTooLarge,
+    TtlExceeded,
+    # Revocation
+    RevokedError,
+    # Validation errors
+    ValidationError,
+    MissingField,
+    InvalidWarrantId,
+    InvalidTtl,
+    # Constraint syntax errors
+    ConstraintSyntaxError,
+    InvalidPattern,
+    InvalidRange,
+    InvalidRegex,
+    CelError,
+    # Serialization errors
+    SerializationError,
+    DeserializationError,
+    UnsupportedVersion,
+    # Approval errors
+    ApprovalError,
+    ApprovalExpired,
+    InsufficientApprovals,
+    InvalidApproval,
+    UnknownProvider,
+    # Config
+    ConfigurationError,
+    # Legacy aliases
     WarrantError,
     AuthorizationError,
-    ConstraintError,
-    ConfigurationError,
+    # Helper
+    categorize_rust_error,
 )
 from .decorators import (
     lockdown,
@@ -108,7 +153,6 @@ from tenuo_core import (  # type: ignore
 from .warrant_ext import (
     get_chain_with_diffs,
     compute_diff,
-    compute_diff_from_link,
 )
 
 # Initialize warrant extensions
@@ -125,59 +169,107 @@ __all__ = [
     "PublicKey",
     "Signature",
     "Authorizer",
-    # "Approval",
-    
-    # Constraints - Basic
-    # "Wildcard",
+    # Constraints
     "Pattern",
-    # "Regex",
     "Exact",
     "OneOf",
     "NotOneOf",
     "Range",
-    
-    # Constraints - List operations
     "Contains",
     "Subset",
-    
-    # Constraints - Composite
     "All",
     "AnyOf",
     "Not",
     "CEL",
-    
-    # Revocation
-    # "SignedRevocationList",
-    # "SrlBuilder",
-    
     # Chain Verification
     "ChainStep",
     "ChainVerificationResult",
-    
-    # Gateway Config
-    # "GatewayConfig",
-    # "CompiledGatewayConfig",
-    
-    # Revocation Manager
-    # "RevocationManager",
-    
     # MCP integration
     "McpConfig",
     "CompiledMcpConfig",
     "ExtractionResult",
-    
     # Constants
     "MAX_DELEGATION_DEPTH",
-    # "MAX_CONSTRAINT_DEPTH",
     "WIRE_VERSION",
     "WARRANT_HEADER",
-    
-    # Pythonic additions
+    # Exceptions - Base & Mapping
     "TenuoError",
+    "RUST_ERROR_MAP",
+    "RUST_ERROR_VARIANTS",
+    # Exceptions - Crypto
+    "CryptoError",
+    "SignatureInvalid",
+    "MissingSignature",
+    "InvalidSignature",
+    # Exceptions - Scope violations
+    "ScopeViolation",
+    "ToolNotAuthorized",
+    "ToolMismatch",
+    "ConstraintViolation",
+    "ExpiredError",
+    "Unauthorized",
+    # Exceptions - Monotonicity
+    "MonotonicityError",
+    "IncompatibleConstraintTypes",
+    "WildcardExpansion",
+    "EmptyResultSet",
+    "ExclusionRemoved",
+    "ValueNotInParentSet",
+    "RangeExpanded",
+    "PatternExpanded",
+    "RequiredValueRemoved",
+    "ExactValueMismatch",
+    # Exceptions - Trust violations
+    "TrustViolation",
+    "TrustLevelExceeded",
+    # Exceptions - PoP errors
+    "PopError",
+    "MissingKeypair",
+    "SignatureMismatch",
+    "PopExpired",
+    # Exceptions - Chain errors
+    "ChainError",
+    "BrokenChain",
+    "CycleDetected",
+    "UntrustedRoot",
+    "ParentRequired",
+    # Exceptions - Limit errors
+    "LimitError",
+    "DepthExceeded",
+    "ConstraintDepthExceeded",
+    "PayloadTooLarge",
+    "TtlExceeded",
+    # Exceptions - Revocation
+    "RevokedError",
+    # Exceptions - Validation
+    "ValidationError",
+    "MissingField",
+    "InvalidWarrantId",
+    "InvalidTtl",
+    # Exceptions - Constraint syntax
+    "ConstraintSyntaxError",
+    "InvalidPattern",
+    "InvalidRange",
+    "InvalidRegex",
+    "CelError",
+    # Exceptions - Serialization
+    "SerializationError",
+    "DeserializationError",
+    "UnsupportedVersion",
+    # Exceptions - Approval
+    "ApprovalError",
+    "ApprovalExpired",
+    "InsufficientApprovals",
+    "InvalidApproval",
+    "UnknownProvider",
+    # Exceptions - Config
+    "ConfigurationError",
+    # Exceptions - Legacy aliases
     "WarrantError",
     "AuthorizationError",
-    "ConstraintError",
-    "ConfigurationError",
+    # Exceptions - Helper
+    "categorize_rust_error",
+    # Decorators
     "lockdown",
     "get_warrant_context",
     "set_warrant_context",
@@ -207,7 +299,6 @@ __all__ = [
     "ChangeType",
     "get_chain_with_diffs",
     "compute_diff",
-    "compute_diff_from_link",
 ]
 
 __version__ = "0.1.0"

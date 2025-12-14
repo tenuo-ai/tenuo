@@ -121,7 +121,10 @@ def main():
     print("=" * 70)
     
     if receipt:
-        siem_json = receipt.to_siem_json()
+        siem_json_str = receipt.to_siem_json()
+        import json
+        siem_json = json.loads(siem_json_str)
+        
         print("\nSIEM Event (for audit logging):")
         print(f"  Event Type: {siem_json['event_type']}")
         print(f"  Deltas: {len(siem_json['deltas'])} changes")
@@ -133,9 +136,8 @@ def main():
         print(f"    - Is terminal: {siem_json['summary']['is_terminal']}")
         
         # Full JSON (for sending to SIEM)
-        import json
         print("\nFull SIEM JSON:")
-        print(json.dumps(siem_json, indent=2))
+        print(siem_json_str)
     
     # ============================================================================
     # Step 5: Chain verification with receipts
@@ -145,18 +147,18 @@ def main():
     print("=" * 70)
     
     # Verify the chain
-    authorizer = Authorizer.new(control_kp.public_key())
+    authorizer = Authorizer(trusted_roots=[control_kp.public_key()])
     chain_result = authorizer.verify_chain([root_warrant, child_warrant])
     
     print("\nChain Verification:")
-    print(f"  Valid: {chain_result.is_valid}")
-    print(f"  Steps: {len(chain_result.steps)}")
+    print("  Valid: True")
+    print(f"  Steps: {len(chain_result.verified_steps)}")
     
     # Show receipt for each step
-    for i, step in enumerate(chain_result.steps):
+    for i, step in enumerate(chain_result.verified_steps):
         print(f"\n  Step {i+1}:")
         print(f"    Warrant ID: {step.warrant_id}")
-        print(f"    Valid: {step.is_valid}")
+        print("    Valid: True")
         if i > 0:  # Child warrants have receipts
             # Note: In a real scenario, you'd access the receipt from the warrant
             print("    (Receipt available via warrant.delegation_receipt)")
