@@ -3,8 +3,8 @@
 
 title: Tenuo Documentation
 description: Capability-based authorization for AI agents
-url: "https://tenuo.github.io"
-baseurl: "/tenuo"
+url: "https://tenuo.ai"
+baseurl: ""
 
 # Use GitHub Pages default theme (can customize later)
 theme: jekyll-theme-minimal
@@ -26,7 +26,6 @@ exclude:
 # Include HTML files as-is
 include:
   - index.html
-  - guide/
 
 # Defaults for markdown pages
 defaults:
