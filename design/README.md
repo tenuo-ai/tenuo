@@ -11,6 +11,7 @@
 
 | Document | Description | Status |
 |----------|-------------|--------|
+| [full-spec.md](./full-spec.md) | Complete internal specification (Trust Levels, Issuer Warrants, etc.) | Reference |
 | [tiered-api-spec.md](./tiered-api-spec.md) | Tier 1/2/3 API design and constraint algebra | Implemented (v0.1) |
 | [securegraph-spec.md](./securegraph-spec.md) | SecureGraph declarative policy engine | Design (v0.2) |
 

@@ -475,23 +475,3 @@ tenuo revoke --signing-key <KEY> --warrant-id <ID>
 ```
 
 Not required for launch.
-
----
-
-## Implementation Notes
-
-**Crate:** `tenuo-cli` in Rust workspace
-
-**Dependencies:**
-
-- `clap` - argument parsing
-- `tenuo-core` - warrant logic
-- `serde_json` - JSON output
-- `ed25519-dalek` or `ring` - Ed25519 with PKCS#8 support
-- `pem` - PEM encoding/decoding
-
-**Key format:** PEM-encoded Ed25519 (PKCS#8 private, SPKI public)
-
-**Warrant format:** Base64-encoded, self-describing (includes version byte)
-
-**Signature scheme:** Ed25519 over SHA-256 hash of payload bytes
