@@ -264,7 +264,7 @@ See [Constraints](./constraints) for the full list.
 - **[Concepts](./concepts)** — Why Tenuo? Threat model, core invariants
 - **[Protocol](./protocol)** — How it works under the hood
 - **[API Reference](./api-reference)** — Complete Python SDK docs (includes MCP)
-- **[CLI Reference](./cli-spec)** — Full CLI documentation
+- **[CLI Reference](./cli)** — Full CLI documentation
 - **[LangChain](./langchain)** — Protect LangChain tools
 - **[LangGraph](./langgraph)** — Scope LangGraph nodes
 - **[Security](./security)** — Threat model, best practices

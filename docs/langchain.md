@@ -257,7 +257,7 @@ For automatic attenuation in multi-agent graphs, see [LangGraph Integration](./l
 
 ## See Also
 
-- [CLI Reference](./cli-spec.md)
+- [CLI Reference](./cli)
 - [Python API Reference](./api-reference.md)
 - [LangGraph Integration](./langgraph.md)
 - [Protocol](./protocol.md)
