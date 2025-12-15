@@ -716,7 +716,7 @@ Tenuo uses a two-layer security model for LangGraph:
 | **Scoping** | `@tenuo_node` | Narrows what's allowed in this node |
 | **Enforcement** | `@lockdown` | Checks warrant at tool invocation |
 
-**Both layers are required for security.** See [LangGraph Spec](./langgraph-spec.md) for details.
+**Both layers are required for security.** See [LangGraph Integration](./langgraph.md) for details.
 
 ### `@tenuo_node`
 

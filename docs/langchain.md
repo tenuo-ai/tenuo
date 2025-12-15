@@ -244,7 +244,7 @@ Constraints restrict tool arguments. They mirror CLI constraint types:
 - **Manual attenuation**: Delegation requires explicit warrant creation
 - **Single warrant**: Context holds one warrant at a time
 
-For automatic attenuation in multi-agent graphs, see [langgraph-spec.md](./langgraph-spec.md).
+For automatic attenuation in multi-agent graphs, see [LangGraph Integration](./langgraph.md).
 
 ---
 
@@ -252,5 +252,5 @@ For automatic attenuation in multi-agent graphs, see [langgraph-spec.md](./langg
 
 - [CLI Reference](./cli-spec.md)
 - [Python API Reference](./api-reference.md)
-- [LangGraph Design](./langgraph-spec.md) (future)
-- [Core Specification](./spec.md)
+- [LangGraph Integration](./langgraph.md)
+- [Protocol](./protocol.md)

@@ -125,6 +125,6 @@ Declarative authority policy with automatic attenuation at graph edges. Stay tun
 
 ## See Also
 
-- [LangChain Integration](./langchain-spec.md) — Tool protection for LangChain
-- [Core Specification](./spec.md) — Protocol fundamentals and cycle protection
+- [LangChain Integration](./langchain.md) — Tool protection for LangChain
+- [Protocol](./protocol.md) — Protocol fundamentals and cycle protection
 - [API Reference](./api-reference.md) — Full Python API documentation

@@ -164,6 +164,6 @@ with root_task(tools=["read_file", "write_file", "delete_file"], path="/*"):
 
 ## See Also
 
-- [Core Specification](./spec.md) — Full protocol details
+- [Protocol](./protocol.md) — Full protocol details
 - [API Reference](./api-reference.md) — Function signatures
 - [Constraints](./constraints.md) — Constraint types and usage

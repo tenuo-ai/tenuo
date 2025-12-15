@@ -97,7 +97,7 @@ Constrains numeric values to a range.
 from tenuo import Range
 
 # 0 to 100 (inclusive)
-Range.between(0, 100)
+Range(min=0, max=100)
 
 # At most 1000
 Range.max_value(1000)
@@ -111,8 +111,39 @@ Range.min_value(10)
 |-------|-------|--------|
 | `Range.max_value(100)` | `50` | ✅ |
 | `Range.max_value(100)` | `150` | ❌ |
-| `Range.between(10, 50)` | `25` | ✅ |
-| `Range.between(10, 50)` | `5` | ❌ |
+| `Range(min=10, max=50)` | `25` | ✅ |
+| `Range(min=10, max=50)` | `5` | ❌ |
+
+---
+
+### Regex
+
+Matches strings against regular expressions.
+
+```python
+from tenuo import Regex
+
+# Matches production-* pattern
+Regex(r"^production-[a-z]+$")
+
+# Matches email format
+Regex(r"^[a-z]+@company\.com$")
+```
+
+---
+
+### NotOneOf
+
+Excludes specific values (use sparingly - prefer allowlists).
+
+```python
+from tenuo import NotOneOf
+
+# Block admin and root
+NotOneOf(["admin", "root"])
+```
+
+⚠️ **Security**: Always prefer `OneOf` (allowlist) over `NotOneOf` (denylist).
 
 ---
 
@@ -181,8 +212,10 @@ def transfer_money(account: str, amount: float):
 ```python
 from tenuo import protect_tools
 
-tools = [read_file, write_file, delete_file]
-protect_tools(tools)  # All tools now check constraints
+from tenuo import protect_tools
+
+# Protect tools (uses warrant/keypair from context)
+protected = protect_tools([read_file, write_file, delete_file])
 ```
 
 ---
