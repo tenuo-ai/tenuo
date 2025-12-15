@@ -267,6 +267,8 @@ Tenuo integrates with existing service meshes via external authorization:
 | **root_task / scoped_task** | Context managers for scoped authority |
 | **tenuo-authorizer** | External authorization service for gateway integration |
 
+> **Context vs State**: Context (`set_warrant_context`) is a convenience layer for tool protection within a single process. For distributed systems, serialized state, or multi-agent workflows, warrants must travel in request state. **Context is convenience; state is the security boundary.**
+
 ### What's NOT in v0.1
 
 | Component | Status |

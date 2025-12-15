@@ -108,6 +108,16 @@ with root_task_sync(tools=["search", "write_file"], query="*", path="/*"):
 
 ---
 
+## Context vs State
+
+> **Important**: Context (`set_warrant_context`) is a **convenience layer** for tool protection. For distributed workflows, checkpointing, or serialized state, authority must travel in the graph state (e.g., `tenuo_warrant` field).
+>
+> **Context is convenience; state is the security boundary.**
+
+For v0.1, `@tenuo_node` uses context internally. For advanced use cases requiring serialization (v0.2 SecureGraph), warrants will be carried in state.
+
+---
+
 ## Error Handling & Troubleshooting
 
 ### Common Errors

@@ -720,6 +720,8 @@ from tenuo import (
 | `get_warrant_context()` | `Warrant \| None` | Get current warrant |
 | `get_keypair_context()` | `Keypair \| None` | Get current keypair |
 
+> **Important**: Context is a **convenience layer** for tool protection within a single process. For distributed systems, serialized state, or checkpointing, warrants must travel in request state (e.g., `tenuo_warrant` field). Context does not survive serialization boundaries.
+
 ---
 
 ## LangChain Integration

@@ -40,6 +40,16 @@ SecureGraph enforces a single invariant:
 
 Policy defines the **ceiling**. Incoming warrant defines the **actual**. Node receives the **intersection**.
 
+### No Amplification Law
+
+For any execution step *n*:
+
+```
+Authority(n+1) ⊆ Authority(n)
+```
+
+This is the fundamental security guarantee. Authority can only shrink, never expand.
+
 ---
 
 ## Mental Model
@@ -623,6 +633,48 @@ async def supervisor(state: AgentState) -> AgentState:
 
 ---
 
+## Node Types
+
+SecureGraph recognizes three node patterns based on policy configuration:
+
+| Node Type | Configuration | Behavior |
+|-----------|---------------|----------|
+| **Passthrough Node** | `secure.node("name")` (no args) | Inherits parent warrant unchanged. NOT "full authority" — bounded by incoming warrant. |
+| **Attenuating Node** | `secure.node("name", tools=[...], ...)` | Narrows authority to intersection of policy and incoming warrant. |
+| **Supervisor Node** | `secure.node("name", holds_issuer=True)` | Retains `tenuo_issuer` to mint fresh execution warrants. |
+
+### Passthrough Node
+
+```python
+secure.node("router")  # No tools, no constraints
+```
+
+A passthrough node does **not** mean "full authority". It means "no additional narrowing at this node". The node receives exactly what the incoming warrant carries — which is already bounded by previous attenuations.
+
+Use passthrough for:
+- Routing/orchestration nodes that don't invoke tools
+- Nodes where tool selection is dynamic (handled in code)
+
+### Attenuating Node
+
+```python
+secure.node("researcher", tools=["search", "read_file"], path="/data/*")
+```
+
+Authority is narrowed to the **intersection** of:
+- Policy ceiling (tools, constraints defined here)
+- Incoming warrant (what the parent actually granted)
+
+### Supervisor Node
+
+```python
+secure.node("supervisor", holds_issuer=True)
+```
+
+Supervisor nodes hold an issuer warrant (`tenuo_issuer`) that enables them to mint fresh execution warrants for different workers. The issuer warrant is **held**, not **passed** — workers never see it.
+
+---
+
 ## Attenuation Modes
 
 ```python
@@ -821,7 +873,10 @@ class SecureGraph:
             raise ConfigurationError(f"Node '{name}' not in graph")
         
         if tools is None and not constraints and not holds_issuer and not terminal:
-            self._policies[name] = None  # Pass-through
+            # Passthrough Node: Inherits parent warrant unchanged.
+            # NOT "full authority" - just no additional narrowing at this node.
+            # Authority is still bounded by what the incoming warrant carries.
+            self._policies[name] = None
         else:
             self._policies[name] = NodePolicy(
                 tools=tools,
