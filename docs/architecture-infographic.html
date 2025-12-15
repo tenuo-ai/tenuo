@@ -582,7 +582,7 @@
                     </li>
                     <li>
                         <span class="icon">✅</span>
-                        <div><strong>Approval Workflows:</strong> Human-in-the-loop for sensitive ops</div>
+                        <div><strong>Approval Workflows:</strong> Human-in-the-loop for sensitive ops <span style="background: rgba(255, 204, 0, 0.2); color: var(--accent-yellow); padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; margin-left: 8px;">v0.2</span></div>
                     </li>
                     <li>
                         <span class="icon">📊</span>
@@ -590,7 +590,7 @@
                     </li>
                     <li>
                         <span class="icon">🔑</span>
-                        <div><strong>Key Rotation:</strong> Scheduled and emergency rotation</div>
+                        <div><strong>Key Rotation:</strong> Scheduled and emergency rotation <span style="background: rgba(255, 204, 0, 0.2); color: var(--accent-yellow); padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; margin-left: 8px;">v0.2</span></div>
                     </li>
                 </ul>
                 <div style="background: rgba(168, 85, 247, 0.1); border-radius: 8px; padding: 12px; font-size: 0.85rem; color: var(--text-secondary);">
@@ -758,8 +758,8 @@
                                 <div style="font-size: 0.8rem; color: var(--accent-green); font-weight: 600;">⚙️ Worker A</div>
                                 <div style="font-size: 0.7rem; color: var(--text-muted);">action: [upgrade, restart]</div>
                             </div>
-                            <div style="background: rgba(255, 204, 0, 0.15); padding: 10px 14px; border-radius: 8px; border: 1px dashed var(--accent-yellow);">
-                                <div style="font-size: 0.8rem; color: var(--accent-yellow); font-weight: 600;">🔐 Worker B</div>
+                            <div style="background: rgba(255, 204, 0, 0.15); padding: 10px 14px; border-radius: 8px; border: 1px dashed var(--accent-yellow); opacity: 0.8;">
+                                <div style="font-size: 0.8rem; color: var(--accent-yellow); font-weight: 600;">🔐 Worker B <span style="font-size: 0.6rem;">v0.2</span></div>
                                 <div style="font-size: 0.7rem; color: var(--text-muted);">action: [delete] + multi-sig</div>
                             </div>
                         </div>
@@ -810,8 +810,8 @@
                         </div>
                         
                         <!-- Sensitive Worker Flow -->
-                        <div style="display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 220px; background: rgba(255, 204, 0, 0.05); padding: 20px; border-radius: 12px; border: 1px dashed var(--accent-yellow);">
-                            <div style="font-size: 0.85rem; color: var(--accent-yellow); font-weight: 600;">🔐 Worker B (Sensitive Actions)</div>
+                        <div style="display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 220px; background: rgba(255, 204, 0, 0.05); padding: 20px; border-radius: 12px; border: 1px dashed var(--accent-yellow); opacity: 0.8;">
+                            <div style="font-size: 0.85rem; color: var(--accent-yellow); font-weight: 600;">🔐 Worker B (Sensitive Actions) <span style="background: rgba(255, 204, 0, 0.2); padding: 2px 6px; border-radius: 4px; font-size: 0.6rem;">v0.2</span></div>
                             <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 8px;">action: [delete] + requires approval</div>
                             <div style="display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%;">
                                 <div style="display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.2); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
@@ -906,11 +906,11 @@
                     </div>
                 </div>
                 
-                <div class="integration-card" style="border-top: 3px solid var(--accent-purple);">
+                <div class="integration-card" style="border-top: 3px solid var(--accent-purple); opacity: 0.7;">
                     <div class="integration-header">
                         <div class="integration-icon">🔑</div>
                         <div class="integration-title">Notary Registry</div>
-                        <div class="integration-badge">Available</div>
+                        <div class="integration-badge" style="background: rgba(255, 204, 0, 0.2); color: var(--accent-yellow);">v0.2</div>
                     </div>
                     <div class="integration-desc">
                         Map external identities (AWS IAM, Okta, OIDC) to Ed25519 keys for multi-sig approvals.
@@ -976,30 +976,30 @@
                 <div class="integration-card agents">
                     <div class="integration-header">
                         <div class="integration-icon">🤖</div>
-                        <div class="integration-title">Agent Frameworks</div>
-                        <div class="integration-badge">Planned</div>
+                        <div class="integration-title">LangChain / LangGraph</div>
+                        <div class="integration-badge">Available</div>
                     </div>
                     <div class="integration-desc">
-                        First-class support for LangChain Tools, AutoGPT plugins, and CrewAI task authorization.
+                        First-class support for LangChain Tools and LangGraph node scoping with @tenuo_node decorator.
                     </div>
                     <div class="integration-code">
-                        @tenuo.authorized("db:read")<br>
-                        def query_database(...)
+                        @lockdown("read_file")<br>
+                        def read_file(path: str): ...
                     </div>
                 </div>
                 
                 <div class="integration-card infra">
                     <div class="integration-header">
                         <div class="integration-icon">☁️</div>
-                        <div class="integration-title">Gateway / Envoy</div>
-                        <div class="integration-badge">Planned</div>
+                        <div class="integration-title">Envoy / Istio</div>
+                        <div class="integration-badge">Available</div>
                     </div>
                     <div class="integration-desc">
-                        Envoy/Istio filters, AWS Lambda authorizers, and API Gateway integration.
+                        External authorization service for Envoy ext_authz and Istio AuthorizationPolicy.
                     </div>
                     <div class="integration-code">
-                        envoy.filters.http.tenuo<br>
-                        aws.lambda.authorizer
+                        tenuo-authorizer serve \<br>
+                        &nbsp;&nbsp;--config gateway.yaml
                     </div>
                 </div>
             </div>
@@ -1023,8 +1023,8 @@
                         Parent grants $10k, orchestrator limits to $1k per worker.
                     </div>
                 </div>
-                <div class="use-case">
-                    <div class="use-case-title">🔐 Multi-Sig Approvals</div>
+                <div class="use-case" style="border: 1px dashed var(--accent-yellow);">
+                    <div class="use-case-title">🔐 Multi-Sig Approvals <span style="background: rgba(255, 204, 0, 0.2); color: var(--accent-yellow); padding: 2px 6px; border-radius: 4px; font-size: 0.65rem;">v0.2</span></div>
                     <div class="use-case-desc">
                         Sensitive actions require M-of-N human approval.
                         "Delete requires 2-of-3 admins. Approvals bound to holder."
@@ -1087,19 +1087,20 @@
                     <ul class="roadmap-list">
                         <li>Warrant issuance & chain verification</li>
                         <li>Holder binding (PoP)</li>
-                        <li>Multi-sig approvals (M-of-N)</li>
-                        <li>Notary Registry (identity mapping)</li>
+                        <li>Python SDK (PyO3)</li>
+                        <li>LangChain / LangGraph integration</li>
+                        <li>Envoy ext_authz sidecar</li>
                         <li>10+ constraint types</li>
                     </ul>
                 </div>
                 <div class="roadmap-item">
                     <div class="roadmap-phase next">Next</div>
-                    <div class="roadmap-title">v0.2 - SDK</div>
+                    <div class="roadmap-title">v0.2 - Multi-Agent</div>
                     <ul class="roadmap-list">
-                        <li>Python SDK (PyO3)</li>
-                        <li>LangChain integration</li>
-                        <li>AutoGPT plugin</li>
-                        <li>Async warrant refresh</li>
+                        <li>SecureGraph (auto attenuation)</li>
+                        <li>Multi-sig approvals (M-of-N)</li>
+                        <li>Notary Registry (identity mapping)</li>
+                        <li>MCP native integration</li>
                     </ul>
                 </div>
                 <div class="roadmap-item">

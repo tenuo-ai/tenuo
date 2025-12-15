@@ -15,10 +15,10 @@ The gateway configuration file defines how the Tenuo authorizer maps HTTP reques
 version: "1"
 
 settings:
-  chain_header: "X-Tenuo-Chain"    # Header containing warrant (base64)
-  pop_header: "X-Tenuo-Pop"        # Header containing PoP signature (hex)
-  clock_tolerance_secs: 30         # Tolerance for expiration checks
-  trusted_issuers:                 # Control plane public keys (hex)
+  warrant_header: "X-Tenuo-Warrant"  # Header containing warrant (base64)
+  pop_header: "X-Tenuo-PoP"          # Header containing PoP signature (hex)
+  clock_tolerance_secs: 30           # Tolerance for expiration checks
+  trusted_roots:                     # Control plane public keys (hex)
     - "f32e74b5b8569dc288db0109b7ec0d8eb3b4e5be7b07c647171d53fd31e7391f"
 
 tools:
@@ -43,10 +43,10 @@ routes:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `chain_header` | string | `X-Tenuo-Chain` | HTTP header containing base64-encoded warrant |
-| `pop_header` | string | `X-Tenuo-Pop` | HTTP header containing hex-encoded PoP signature |
+| `warrant_header` | string | `X-Tenuo-Warrant` | HTTP header containing base64-encoded warrant |
+| `pop_header` | string | `X-Tenuo-PoP` | HTTP header containing hex-encoded PoP signature |
 | `clock_tolerance_secs` | int | `30` | Seconds of tolerance for expiration checks |
-| `trusted_issuers` | list | `[]` | Hex-encoded public keys of trusted control planes |
+| `trusted_roots` | list | `[]` | Hex-encoded public keys of trusted control planes |
 
 ---
 
@@ -162,10 +162,10 @@ Patterns use `{param}` placeholders:
 version: "1"
 
 settings:
-  chain_header: "X-Tenuo-Chain"
-  pop_header: "X-Tenuo-Pop"
+  warrant_header: "X-Tenuo-Warrant"
+  pop_header: "X-Tenuo-PoP"
   clock_tolerance_secs: 30
-  trusted_issuers:
+  trusted_roots:
     - "f32e74b5b8569dc288db0109b7ec0d8eb3b4e5be7b07c647171d53fd31e7391f"
 
 tools:

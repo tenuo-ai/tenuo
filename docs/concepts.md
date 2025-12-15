@@ -218,6 +218,8 @@ Authorization happens **locally** at the tool. No control plane calls during exe
 
 ## Architecture (v0.1)
 
+### SDK Integration (In-Process)
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                           YOUR APPLICATION                                   │
@@ -238,6 +240,21 @@ Authorization happens **locally** at the tool. No control plane calls during exe
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### Gateway Integration (Service Mesh)
+
+Tenuo integrates with existing service meshes via external authorization:
+
+```
+┌────────────┐     ┌─────────────┐     ┌─────────────────┐     ┌─────────┐
+│   Client   │────▶│ Envoy/Istio │────▶│ tenuo-authorizer│────▶│ Backend │
+│            │     │             │     │   (sidecar)     │     │         │
+│ X-Tenuo-   │     │  ext_authz  │     │                 │     │         │
+│ Warrant    │     │  filter     │     │ 200 OK / 403    │     │         │
+└────────────┘     └─────────────┘     └─────────────────┘     └─────────┘
+```
+
+**Supported integrations**: Envoy, Istio, nginx, Kubernetes sidecars. See [Deployment Patterns](./deployment).
+
 ### What v0.1 Provides
 
 | Component | Description |
@@ -248,14 +265,15 @@ Authorization happens **locally** at the tool. No control plane calls during exe
 | **@lockdown** | Decorator for tool protection |
 | **protect_tools()** | Wrap LangChain/LangGraph tools |
 | **root_task / scoped_task** | Context managers for scoped authority |
+| **tenuo-authorizer** | External authorization service for gateway integration |
 
 ### What's NOT in v0.1
 
 | Component | Status |
 |-----------|--------|
-| Gateway service | Build your own or use library directly |
 | Control plane | Optional; can run fully embedded |
 | Revocation service | Basic revocation via Authorizer; distributed revocation in v0.2 |
+| Multi-sig approvals | Planned for v0.2 |
 
 ---
 

@@ -107,16 +107,20 @@ Constraints form a partial order. Attenuation can only move **toward more restri
                      Exact (⊥)
 ```
 
-### Serialization
+### Constraint Serialization (CBOR)
 
-```json
-{"type": "exact", "value": "/data/q3.pdf"}
-{"type": "pattern", "value": "/data/*.pdf"}
-{"type": "range", "min": 0, "max": 1000}
-{"type": "one_of", "values": ["dev", "staging"]}
-{"type": "regex", "value": "^[a-z]+\\.pdf$"}
-{"type": "wildcard"}
+Constraints are serialized as tagged CBOR maps:
+
 ```
+Exact:    {type: "exact", value: "/data/q3.pdf"}
+Pattern:  {type: "pattern", value: "/data/*.pdf"}
+Range:    {type: "range", min: 0, max: 1000}
+OneOf:    {type: "one_of", values: ["dev", "staging"]}
+Regex:    {type: "regex", value: "^[a-z]+\\.pdf$"}
+Wildcard: {type: "wildcard"}
+```
+
+For debugging, use `tenuo inspect` to view constraints as JSON.
 
 ---
 
@@ -219,70 +223,70 @@ The verification loop **must fail** if it does not end at a key in the configure
 
 PoP ensures stolen warrants are useless without the holder's private key.
 
-### PoP Payload
+### PoP Challenge Structure
 
-```python
-PopPayload {
-    warrant_id: str       # Which warrant
-    tool: str             # Which tool being invoked
-    args: dict            # Arguments (actual values)
-    timestamp: int        # Unix timestamp (seconds)
-    nonce: bytes          # 16 random bytes
-}
 ```
+PopChallenge = (warrant_id, tool, sorted_args, timestamp_window)
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `warrant_id` | string | UUID of the warrant being used |
+| `tool` | string | Tool name being invoked |
+| `sorted_args` | array of (key, value) | Arguments sorted by key |
+| `timestamp_window` | int | Time window (floor division by 30s) |
 
 ### Creating PoP
 
 ```python
-def create_pop(warrant, keypair, tool, args) -> PopToken:
-    # Build payload
-    payload = PopPayload(
-        warrant_id=warrant.id,
-        tool=tool,
-        args=args,
-        timestamp=int(time.time()),
-        nonce=os.urandom(16),
-    )
+def create_pop(warrant, keypair, tool, args) -> Signature:
+    # Sort args by key for deterministic serialization
+    sorted_args = sorted(args.items(), key=lambda x: x[0])
     
-    # Canonical JSON (sorted keys, no whitespace)
-    signed_bytes = canonical_json(payload).encode('utf-8')
+    # Time-bound to 30-second window
+    now = int(time.time())
+    timestamp_window = (now // 30) * 30
+    
+    # Build challenge tuple
+    challenge = (warrant.id, tool, sorted_args, timestamp_window)
+    
+    # Serialize with Deterministic CBOR
+    challenge_bytes = cbor_serialize(challenge)
     
     # Sign
-    signature = keypair.sign(signed_bytes)
-    
-    return PopToken(signed_bytes=signed_bytes, signature=signature)
+    return keypair.sign(challenge_bytes)
 ```
 
 ### Verifying PoP
 
 ```python
-def verify_pop(warrant, pop, tool, args, max_age_seconds=60) -> bool:
-    # 1. Verify signature FIRST (over raw bytes)
-    if not warrant.holder.verify(pop.signed_bytes, pop.signature):
-        return False
+def verify_pop(warrant, signature, tool, args, max_windows=4) -> bool:
+    now = int(time.time())
+    sorted_args = sorted(args.items(), key=lambda x: x[0])
     
-    # 2. Deserialize AFTER signature verified
-    payload = json.loads(pop.signed_bytes)
+    # Try current and recent time windows (handles clock skew)
+    for i in range(max_windows):
+        timestamp_window = ((now // 30) - i) * 30
+        challenge = (warrant.id, tool, sorted_args, timestamp_window)
+        challenge_bytes = cbor_serialize(challenge)
+        
+        if warrant.holder.verify(challenge_bytes, signature):
+            return True
     
-    # 3. Check warrant ID, tool, args match
-    if payload["warrant_id"] != warrant.id:
-        return False
-    if payload["tool"] != tool:
-        return False
-    if payload["args"] != args:
-        return False
-    
-    # 4. Check timestamp freshness
-    age = time.time() - payload["timestamp"]
-    if age > max_age_seconds or age < -60:  # 60s clock skew
-        return False
-    
-    return True
+    return False
 ```
 
-### Key Principle: Sign Bytes, Not Objects
+### Time Window Design
 
-The signer sends **exact bytes** they signed. The verifier hashes those bytes directly, never reconstructing JSON. This ensures cross-language compatibility.
+| Parameter | Default | Purpose |
+|-----------|---------|---------|
+| Window size | 30 seconds | Groups signatures into buckets |
+| Max windows | 4 | ~2 minute total validity |
+| Clock tolerance | ±60 seconds | Handles distributed clock skew |
+
+**Trade-off**: Larger windows allow more clock skew but increase replay risk. Within the ~2 minute window, a captured PoP can be replayed for the **same** (warrant, tool, args) tuple.
+
+**Mitigation**: Use `warrant.dedup_key(tool, args)` as a cache key with 120s TTL for deduplication.
 
 ---
 
@@ -350,23 +354,47 @@ A warrant with `max_depth = 0` cannot delegate further. Cryptographically enforc
 
 ### Wire Format
 
+Tenuo uses **Deterministic CBOR (RFC 8949)** for all cryptographic operations:
+
 | Context | Format | Rationale |
 |---------|--------|-----------|
-| Warrant signing | Canonical JSON | Consistent across implementations |
-| PoP verification | Raw bytes passthrough | Avoids JSON disagreements |
-| Wire transport | Base64 (URL-safe) | Header-safe encoding |
+| Warrant payload signing | Deterministic CBOR | Compact, consistent across implementations |
+| ChainLink signing | Deterministic CBOR | Binds issuer scope to child |
+| PoP challenge signing | Deterministic CBOR | Timestamp-bound challenge |
+| Wire transport | CBOR + Base64 (URL-safe) | Header-safe encoding |
+| Audit logs | JSON | Human-readable, standard tooling |
+| CLI output | JSON | Human-readable debugging |
 
-### Canonical JSON Rules
+### Deterministic CBOR Rules (RFC 8949 §4.2)
 
-- Keys sorted alphabetically (recursive)
-- No whitespace: `separators=(',', ':')`
-- No floats (all numbers are integers)
-- UTF-8 encoding
-- Null values omitted
+- **Map keys**: Sorted by byte-wise lexicographic order (using `BTreeMap`)
+- **Integers**: Minimal encoding (smallest CBOR type that fits)
+- **No indefinite-length**: All arrays and maps use definite length
+- **Floats**: IEEE 754 binary64 representation
+
+### Key Principle: Sign Bytes, Not Objects
+
+For PoP signatures, the challenge is serialized to bytes once, then signed:
+
+```python
+# Client
+challenge = (warrant_id, tool, sorted_args, timestamp_window)
+challenge_bytes = cbor_serialize(challenge)  # Deterministic
+signature = keypair.sign(challenge_bytes)
+
+# Server (reconstructs same challenge structure)
+challenge = (warrant_id, tool, sorted_args, timestamp_window)
+reconstructed_bytes = cbor_serialize(challenge)  # Same deterministic output
+verify(reconstructed_bytes, signature, holder_pubkey)
+```
+
+**Safety**: Since both client and server use the same Rust/ciborium implementation via PyO3 bindings, serialization is guaranteed identical. For non-Rust clients, use the same CBOR library and sorting rules.
 
 ### Cryptographic Values
 
-Ed25519 keys (32 bytes) and signatures (64 bytes) as URL-safe Base64.
+- Ed25519 public keys: 32 bytes
+- Ed25519 signatures: 64 bytes
+- Wire encoding: URL-safe Base64 (no padding)
 
 ---
 
@@ -453,11 +481,21 @@ All Tenuo implementations MUST:
 1. **Verify chain ends at trusted root** — Hard fail if not anchored
 2. **Enforce PoP on every authorization** — No exceptions
 3. **Enforce protocol limits** — Chain length, warrant size
-4. **Use canonical JSON for signing** — Sorted keys, no whitespace
-5. **Use raw bytes passthrough for PoP verification** — Never reconstruct
+4. **Use Deterministic CBOR (RFC 8949)** — Sorted keys, minimal integers
+5. **Reconstruct challenge identically** — Same serialization on both sides
 6. **Log all authorization decisions** — Allow and deny
 7. **Prevent self-issuance** — Issuer cannot grant to self
 8. **Enforce monotonicity** — Every dimension checked
+
+### Cross-Language Compatibility
+
+For non-Rust implementations:
+
+1. Use a CBOR library that supports deterministic encoding
+2. Sort map keys by byte-wise lexicographic order
+3. Use minimal integer encoding
+4. Use `BTreeMap` (or equivalent ordered map) for constraint sets
+5. Test serialization output against reference Rust implementation
 
 ---
 

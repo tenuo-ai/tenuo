@@ -397,9 +397,9 @@ async fn handle_request(
         }
     };
 
-    // 2. Extract warrant chain from header
-    let chain_header = &state.config.settings.chain_header;
-    let warrant_b64 = match headers.get(chain_header) {
+    // 2. Extract warrant from header
+    let warrant_header = &state.config.settings.warrant_header;
+    let warrant_b64 = match headers.get(warrant_header) {
         Some(v) => match v.to_str() {
             Ok(s) => s.to_string(),
             Err(_) => {
@@ -407,7 +407,7 @@ async fn handle_request(
                     StatusCode::BAD_REQUEST,
                     Json(json!({
                         "error": "invalid_header",
-                        "message": format!("Invalid {} header encoding", chain_header)
+                        "message": format!("Invalid {} header encoding", warrant_header)
                     })),
                 );
             }
@@ -417,7 +417,7 @@ async fn handle_request(
                 StatusCode::UNAUTHORIZED,
                 Json(json!({
                     "error": "missing_warrant",
-                    "message": format!("Missing {} header", chain_header)
+                    "message": format!("Missing {} header", warrant_header)
                 })),
             );
         }

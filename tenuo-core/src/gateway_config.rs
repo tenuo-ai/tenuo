@@ -8,10 +8,10 @@
 //! version: "1"
 //!
 //! settings:
-//!   chain_header: "X-Tenuo-Chain"
+//!   warrant_header: "X-Tenuo-Warrant"
 //!   pop_header: "X-Tenuo-PoP"
 //!   clock_tolerance_secs: 30
-//!   trusted_issuers:
+//!   trusted_roots:
 //!     - "f32e74b5..."
 //!
 //! tools:
@@ -73,22 +73,22 @@ pub struct GatewayConfig {
 /// Global gateway settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewaySettings {
-    /// Header containing the warrant chain (base64)
-    #[serde(default = "default_chain_header")]
-    pub chain_header: String,
+    /// Header containing the warrant (base64)
+    #[serde(default = "default_warrant_header", alias = "chain_header")]
+    pub warrant_header: String,
     /// Header containing the PoP signature
     #[serde(default = "default_pop_header")]
     pub pop_header: String,
     /// Clock tolerance for expiration checks (seconds)
     #[serde(default = "default_clock_tolerance")]
     pub clock_tolerance_secs: u64,
-    /// Trusted Control Plane public keys (hex)
-    #[serde(default)]
-    pub trusted_issuers: Vec<String>,
+    /// Trusted root public keys (hex)
+    #[serde(default, alias = "trusted_issuers")]
+    pub trusted_roots: Vec<String>,
 }
 
-fn default_chain_header() -> String {
-    "X-Tenuo-Chain".into()
+fn default_warrant_header() -> String {
+    "X-Tenuo-Warrant".into()
 }
 
 fn default_pop_header() -> String {
@@ -102,10 +102,10 @@ fn default_clock_tolerance() -> u64 {
 impl Default for GatewaySettings {
     fn default() -> Self {
         Self {
-            chain_header: default_chain_header(),
+            warrant_header: default_warrant_header(),
             pop_header: default_pop_header(),
             clock_tolerance_secs: default_clock_tolerance(),
-            trusted_issuers: Vec::new(),
+            trusted_roots: Vec::new(),
         }
     }
 }
@@ -720,10 +720,10 @@ mod tests {
 version: "1"
 
 settings:
-  chain_header: "X-Tenuo-Chain"
+  warrant_header: "X-Tenuo-Warrant"
   pop_header: "X-Tenuo-PoP"
   clock_tolerance_secs: 30
-  trusted_issuers:
+  trusted_roots:
     - "f32e74b5b8569dc288db0109b7ec0d8eb3b4e5be7b07c647171d53fd31e7391f"
 
 tools:
@@ -758,7 +758,7 @@ routes:
         let config = GatewayConfig::from_yaml(SAMPLE_CONFIG).unwrap();
 
         assert_eq!(config.version, "1");
-        assert_eq!(config.settings.chain_header, "X-Tenuo-Chain");
+        assert_eq!(config.settings.warrant_header, "X-Tenuo-Warrant");
         assert!(config.tools.contains_key("manage_infrastructure"));
         assert_eq!(config.routes.len(), 1);
     }

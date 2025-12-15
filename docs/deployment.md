@@ -63,7 +63,7 @@ static_resources:
                   # Forward warrant headers to Tenuo
                   allowed_headers:
                     patterns:
-                    - exact: x-tenuo-chain
+                    - exact: x-tenuo-warrant
                     - exact: x-tenuo-pop
                     - exact: content-type
                 authorization_response:
@@ -107,7 +107,7 @@ static_resources:
 
 ### Flow
 
-1. Request arrives at Envoy with `X-Tenuo-Chain` header (base64 warrant)
+1. Request arrives at Envoy with `X-Tenuo-Warrant` header (base64 warrant)
 2. Envoy calls Tenuo sidecar with warrant headers
 3. Tenuo verifies warrant, extracts constraints, authorizes
 4. Tenuo returns `200` (allow) or `403` (deny)
@@ -133,7 +133,7 @@ spec:
         service: tenuo-authz.default.svc.cluster.local
         port: 9090
         includeRequestHeadersInCheck:
-        - x-tenuo-chain
+        - x-tenuo-warrant
         - x-tenuo-pop
         - content-type
         headersToUpstreamOnAllow:
@@ -165,7 +165,7 @@ spec:
 ### What This Does
 
 - All requests to `/api/*` are sent to Tenuo for authorization
-- Tenuo checks the warrant in `X-Tenuo-Chain` header
+- Tenuo checks the warrant in `X-Tenuo-Warrant` header
 - Only authorized requests reach your backend
 
 ---
@@ -238,8 +238,8 @@ data:
   gateway.yaml: |
     version: "1"
     settings:
-      chain_header: "X-Tenuo-Chain"
-      pop_header: "X-Tenuo-Pop"
+      warrant_header: "X-Tenuo-Warrant"
+      pop_header: "X-Tenuo-PoP"
       clock_tolerance_secs: 30
     
     tools:
@@ -309,8 +309,8 @@ server {
         proxy_set_header X-Original-URI $request_uri;
         proxy_set_header X-Original-Method $request_method;
         # Forward warrant headers
-        proxy_set_header X-Tenuo-Chain $http_x_tenuo_chain;
-        proxy_set_header X-Tenuo-Pop $http_x_tenuo_pop;
+        proxy_set_header X-Tenuo-Warrant $http_x_tenuo_warrant;
+        proxy_set_header X-Tenuo-PoP $http_x_tenuo_pop;
     }
 
     # Protected API routes
@@ -398,9 +398,9 @@ keypair = Keypair.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
 @app.middleware("http")
 async def tenuo_middleware(request: Request, call_next):
     # Extract warrant from header
-    warrant_b64 = request.headers.get("X-Tenuo-Chain")
+    warrant_b64 = request.headers.get("X-Tenuo-Warrant")
     if not warrant_b64:
-        raise HTTPException(401, "Missing X-Tenuo-Chain header")
+        raise HTTPException(401, "Missing X-Tenuo-Warrant header")
     
     try:
         warrant = Warrant.from_base64(warrant_b64)
