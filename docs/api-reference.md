@@ -138,9 +138,10 @@ from tenuo import Warrant
 | Method | Description |
 |--------|-------------|
 | `Warrant.from_base64(s: str)` | Deserialize from base64 |
-| `Warrant.issue(...)` | Issue a new warrant (see parameters below) |
+| `Warrant.issue(...)` | Issue a new execution warrant |
+| `Warrant.issue_issuer(...)` | Issue a new issuer warrant |
 
-#### `Warrant.issue()` Parameters
+#### `Warrant.issue()` Parameters (Execution Warrants)
 
 ```python
 Warrant.issue(
@@ -162,6 +163,31 @@ Warrant.issue(
 | `holder` | `PublicKey` | Optional holder (defaults to issuer) |
 | `session_id` | `str` | Optional session ID |
 
+#### `Warrant.issue_issuer()` Parameters (Issuer Warrants)
+
+```python
+Warrant.issue_issuer(
+    issuable_tools: List[str],
+    trust_ceiling: TrustLevel,
+    keypair: Keypair,
+    constraint_bounds: Optional[dict] = None,
+    max_issue_depth: Optional[int] = None,
+    ttl_seconds: int = 3600,
+    holder: Optional[PublicKey] = None,
+    session_id: Optional[str] = None,
+)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `issuable_tools` | `List[str]` | Tools this warrant can issue |
+| `trust_ceiling` | `TrustLevel` | Maximum trust level for issued warrants |
+| `keypair` | `Keypair` | Issuer's keypair |
+| `constraint_bounds` | `dict` | Optional constraint bounds |
+| `max_issue_depth` | `int` | Max depth for issued warrants |
+| `ttl_seconds` | `int` | Time-to-live in seconds |
+| `holder` | `PublicKey` | Optional holder (defaults to issuer) |
+
 #### Instance Properties
 
 | Property | Type | Description |
@@ -180,6 +206,8 @@ Warrant.issue(
 |--------|---------|-------------|
 | `attenuate(constraints, keypair, ttl_seconds=None, holder=None)` | `Warrant` | Create narrower child warrant |
 | `attenuate_builder()` | `AttenuationBuilder` | Create builder for attenuation with diff preview |
+| `issue_execution()` | `IssuanceBuilder` | Create execution warrant from issuer warrant |
+| `delegate(holder, **constraints)` | `Warrant` | Convenience method to delegate (requires context) |
 | `authorize(tool, args, signature?)` | `bool` | Check if action is authorized |
 | `verify(public_key)` | `bool` | Verify signature against issuer |
 | `create_pop_signature(keypair, tool, args)` | `list[int]` | Create PoP signature |
@@ -187,6 +215,54 @@ Warrant.issue(
 | `is_expired()` | `bool` | Check if warrant has expired |
 
 ⚠️ **Replay Window:** PoP signatures are valid for ~2 minutes to handle clock skew.
+
+#### Tool Narrowing
+
+**Execution warrants cannot have their tools narrowed via attenuation.** Child execution warrants always inherit all tools from their parent.
+
+To create a warrant with specific tools, use an **Issuer warrant**:
+
+```python
+# 1. Create issuer warrant with all tools
+issuer_warrant = Warrant.issue_issuer(
+    issuable_tools=["read_file", "send_email", "query_db"],
+    trust_ceiling=TrustLevel.Internal,
+    keypair=control_plane_kp,
+    ttl_seconds=3600,
+)
+
+# 2. Issue execution warrant with only needed tools
+builder = issuer_warrant.issue_execution()
+builder.with_tool("read_file")  # Select specific tool
+builder.with_holder(worker_kp.public_key)
+builder.with_constraint("path", Pattern("/data/*"))
+builder.with_ttl(300)
+
+exec_warrant = builder.build(issuer_kp, issuer_kp)
+# exec_warrant.tools == ["read_file"]
+```
+
+---
+
+### IssuanceBuilder
+
+Builder for issuing execution warrants from issuer warrants.
+
+```python
+builder = issuer_warrant.issue_execution()
+```
+
+#### Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `with_tool(tool)` | `IssuanceBuilder` | Set single tool |
+| `with_tools(tools)` | `IssuanceBuilder` | Set multiple tools |
+| `with_holder(public_key)` | `IssuanceBuilder` | Set authorized holder |
+| `with_constraint(field, constraint)` | `IssuanceBuilder` | Add constraint |
+| `with_ttl(seconds)` | `IssuanceBuilder` | Set TTL (required) |
+| `with_trust_level(level)` | `IssuanceBuilder` | Set trust level |
+| `build(keypair, issuer_keypair)` | `Warrant` | Build and sign the warrant |
 
 ---
 
