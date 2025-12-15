@@ -104,20 +104,34 @@ Tenuo builds on established capability-based authorization patterns:
 | System | Contribution | Tenuo Difference |
 |--------|--------------|------------------|
 | [Macaroons](https://research.google/pubs/pub41892/) (Google, 2014) | Contextual caveats, attenuation | Tenuo adds PoP binding, AI-specific constraints |
-| [Biscuit](https://www.biscuitsec.org/) (Clever Cloud) | Offline attenuation, Datalog policies | Tenuo uses simpler constraint algebra, no Datalog |
+| [Biscuit](https://www.biscuitsec.org/) (Clever Cloud) | Offline attenuation, Datalog authorization | Tenuo uses simpler constraint predicates |
 | [UCAN](https://ucan.xyz/) (Fission) | Decentralized capability chains | Tenuo focused on centralized control plane model |
 
 ### Why Not Just Use Biscuit?
 
-Biscuit is excellent. Tenuo differs in:
+Biscuit is excellent. Both Tenuo and Biscuit support offline attenuation with similar mechanisms. Tenuo differs in:
 
 1. **Threat model** — Designed specifically for AI agents processing untrusted input
 2. **PoP binding** — Mandatory proof-of-possession (Biscuit has optional third-party caveats)
 3. **Constraint types** — Purpose-built for tool authorization (Pattern, Range, OneOf)
-4. **Simpler model** — No Datalog; constraints are closed-form predicates
+4. **Authorization model** — Closed-form constraint predicates vs Datalog policies
 
-If you need general-purpose capability tokens, consider Biscuit.  
+If you need general-purpose capability tokens with flexible policy logic, consider Biscuit.  
 If you need AI agent authorization with prompt injection defense, use Tenuo.
+
+---
+
+## Industry Approaches
+
+| Vendor | Approach |
+|--------|----------|
+| Anthropic | Constitutional AI, RLHF alignment |
+| OpenAI | System prompt isolation, function calling constraints |
+| Google | Instruction hierarchy |
+
+These focus on **model behavior**. Tenuo focuses on **authorization infrastructure**.
+
+The approaches are complementary: model-level defenses reduce the likelihood of malicious intent; Tenuo limits the blast radius when defenses fail.
 
 ---
 
