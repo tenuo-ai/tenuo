@@ -1,3 +1,8 @@
+---
+title: LangChain Integration
+description: Tool protection for LangChain agents
+---
+
 # Tenuo LangChain Integration
 
 > **Status**: ✅ Implemented  

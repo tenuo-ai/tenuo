@@ -1,3 +1,8 @@
+---
+title: CLI Reference
+description: Complete Tenuo command-line interface reference
+---
+
 # Tenuo CLI Specification v0.1.0
 
 ## Overview

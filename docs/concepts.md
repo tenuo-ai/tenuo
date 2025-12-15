@@ -1,3 +1,8 @@
+---
+title: Concepts
+description: Why Tenuo? Problem/solution, threat model, core invariants
+---
+
 # Tenuo Concepts
 
 > Should I use this? What problem does it solve?

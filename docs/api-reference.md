@@ -1,3 +1,8 @@
+---
+title: API Reference
+description: Complete Python SDK documentation
+---
+
 # Tenuo Python SDK API Reference
 
 Complete API documentation for the Tenuo Python SDK.

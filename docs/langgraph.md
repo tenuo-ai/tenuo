@@ -1,3 +1,8 @@
+---
+title: LangGraph Integration
+description: Node scoping for LangGraph workflows
+---
+
 # Tenuo LangGraph Integration
 
 > **Status**: ✅ Implemented (v0.1)  

@@ -1,3 +1,8 @@
+---
+title: Kubernetes Integration
+description: Deployment patterns for Kubernetes
+---
+
 # Kubernetes Integration
 
 Tenuo provides primitives. You build the integration that fits your setup.

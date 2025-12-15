@@ -1,3 +1,8 @@
+---
+title: Protocol
+description: How Tenuo works - warrant model, constraints, verification
+---
+
 # Tenuo Protocol
 
 > How does Tenuo work? Technical details for implementers and security reviewers.

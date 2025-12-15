@@ -1,3 +1,8 @@
+---
+title: Security
+description: Threat model, PoP requirements, best practices
+---
+
 # Tenuo Security Model
 
 > Understanding what Tenuo protects against and how it works.

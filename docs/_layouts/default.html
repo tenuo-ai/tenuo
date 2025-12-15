@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ page.title }} | Tenuo</title>
+  <meta name="description" content="{{ page.description | default: site.description }}">
+  <style>
+    :root {
+      --bg: #0f0f0f;
+      --surface: #1a1a1a;
+      --text: #e0e0e0;
+      --text-muted: #888;
+      --accent: #4a9eff;
+      --accent-dim: #3a7edf;
+      --code-bg: #252525;
+      --border: #333;
+    }
+    
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+    }
+    
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    
+    nav {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    
+    nav a {
+      color: var(--text);
+      text-decoration: none;
+      margin-right: 1.5rem;
+      font-size: 0.9rem;
+    }
+    
+    nav a:hover { color: var(--accent); }
+    nav .brand { font-weight: bold; font-size: 1.1rem; }
+    
+    h1, h2, h3, h4 {
+      margin: 2rem 0 1rem;
+      font-weight: 600;
+    }
+    
+    h1 { font-size: 2rem; border-bottom: 2px solid var(--accent); padding-bottom: 0.5rem; }
+    h2 { font-size: 1.5rem; color: var(--accent); }
+    h3 { font-size: 1.2rem; }
+    
+    p { margin: 1rem 0; }
+    
+    a { color: var(--accent); }
+    a:hover { color: var(--accent-dim); }
+    
+    code {
+      background: var(--code-bg);
+      padding: 0.2rem 0.4rem;
+      border-radius: 4px;
+      font-family: 'SF Mono', 'Consolas', monospace;
+      font-size: 0.9em;
+    }
+    
+    pre {
+      background: var(--code-bg);
+      padding: 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      margin: 1rem 0;
+      border: 1px solid var(--border);
+    }
+    
+    pre code {
+      background: none;
+      padding: 0;
+    }
+    
+    blockquote {
+      border-left: 4px solid var(--accent);
+      padding-left: 1rem;
+      margin: 1rem 0;
+      color: var(--text-muted);
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+    }
+    
+    th, td {
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      text-align: left;
+    }
+    
+    th { background: var(--surface); }
+    
+    ul, ol {
+      margin: 1rem 0;
+      padding-left: 2rem;
+    }
+    
+    li { margin: 0.5rem 0; }
+    
+    hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 2rem 0;
+    }
+    
+    .toc {
+      background: var(--surface);
+      padding: 1rem;
+      border-radius: 8px;
+      margin: 1rem 0;
+    }
+    
+    .toc ul { list-style: none; padding-left: 1rem; }
+    .toc > ul { padding-left: 0; }
+    
+    footer {
+      margin-top: 4rem;
+      padding: 2rem;
+      border-top: 1px solid var(--border);
+      color: var(--text-muted);
+      text-align: center;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="{{ site.baseurl }}/" class="brand">Tenuo</a>
+    <a href="{{ site.baseurl }}/concepts">Concepts</a>
+    <a href="{{ site.baseurl }}/protocol">Protocol</a>
+    <a href="{{ site.baseurl }}/api-reference">API</a>
+    <a href="{{ site.baseurl }}/langchain">LangChain</a>
+    <a href="{{ site.baseurl }}/langgraph">LangGraph</a>
+    <a href="https://github.com/tenuo/tenuo">GitHub</a>
+  </nav>
+  
+  <main class="container">
+    {{ content }}
+  </main>
+  
+  <footer>
+    <p>Tenuo — Capability-based authorization for AI agents</p>
+    <p><a href="https://github.com/tenuo/tenuo">GitHub</a> · <a href="{{ site.baseurl }}/security">Security</a> · <a href="{{ site.baseurl }}/cli-spec">CLI</a></p>
+  </footer>
+</body>
+</html>

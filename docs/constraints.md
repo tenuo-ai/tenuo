@@ -1,3 +1,8 @@
+---
+title: Constraints
+description: How to use constraints to scope authority precisely
+---
+
 # Tenuo Constraints
 
 > How to use constraints to scope authority precisely.

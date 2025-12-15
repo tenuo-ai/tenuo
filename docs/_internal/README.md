@@ -2,8 +2,8 @@
 
 > ⚠️ **Internal documentation** — Not for public consumption.
 > 
-> These documents are design specifications and implementation details.
-> For user-facing documentation, see [`/docs`](../docs/).
+> This directory (`docs/_internal/`) is excluded from the public website.
+> For user-facing documentation, see the parent [`/docs`](..) directory.
 
 ---
 
