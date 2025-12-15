@@ -460,7 +460,7 @@
 <body>
     <div class="container">
         <header>
-            <div class="logo">Tenuo</div>
+            <div class="logo">tenuo</div>
             <div class="tagline">Capability Delegation with Depth Limits</div>
         </header>
 
@@ -806,74 +806,6 @@
             </div>
         </div>
 
-        <!-- Multi-Sig Section -->
-        <div class="agent-card" style="margin-top: 48px; border-color: var(--accent-yellow); border-width: 2px;">
-            <div class="agent-header">
-                <div class="agent-icon" style="background: linear-gradient(135deg, var(--accent-yellow), #f59e0b);">🔐
-                </div>
-                <div>
-                    <div class="agent-title">Multi-Sig Approval (Sensitive Actions)</div>
-                    <div class="agent-subtitle">Human-in-the-Loop • M-of-N Approval Schemes</div>
-                </div>
-            </div>
-
-            <p style="color: var(--text-secondary); margin-bottom: 20px;">
-                Dangerous actions like <code
-                    style="background: var(--bg-card); padding: 2px 6px; border-radius: 4px;">delete</code> require
-                cryptographic approval from designated administrators. Approvals are bound to the specific request.
-            </p>
-
-            <div class="warrant" style="border-color: var(--accent-yellow);">
-                <div class="warrant-header">
-                    <span class="warrant-badge" style="background: var(--accent-yellow); color: black;">Multi-Sig</span>
-                    <span>1-of-1 Admin Approval</span>
-                </div>
-                <div class="warrant-field">
-                    <span class="warrant-key">action:</span>
-                    <span class="warrant-value">[delete, scale-down] ← dangerous!</span>
-                </div>
-                <div class="warrant-field">
-                    <span class="warrant-key">required_approvers:</span>
-                    <span class="warrant-value" style="color: var(--accent-yellow);">[admin_pubkey]</span>
-                </div>
-                <div class="warrant-field">
-                    <span class="warrant-key">min_approvals:</span>
-                    <span class="warrant-value" style="color: var(--accent-yellow);">1</span>
-                </div>
-            </div>
-
-            <div class="action-grid" style="margin-top: 20px;">
-                <div class="action-item" style="border-color: var(--accent-red);">
-                    <div class="action-status blocked">✗</div>
-                    <div class="action-content">
-                        <div class="action-name">delete staging-web (no approval) <span
-                                style="color: var(--accent-red); font-size: 0.7rem;">~8μs</span></div>
-                        <div class="action-reason">InsufficientApprovals: required 1, received 0</div>
-                    </div>
-                </div>
-                <div class="action-item" style="border-color: var(--accent-green);">
-                    <div class="action-status allowed">✓</div>
-                    <div class="action-content">
-                        <div class="action-name">delete staging-web (with approval) <span
-                                style="color: var(--accent-green); font-size: 0.7rem;">~45μs</span></div>
-                        <div class="action-reason">Admin signed request_hash → 1/1 approvals</div>
-                    </div>
-                </div>
-            </div>
-
-            <div
-                style="margin-top: 20px; padding: 16px; background: rgba(255, 204, 0, 0.1); border-radius: 8px; border: 1px dashed var(--accent-yellow);">
-                <strong style="color: var(--accent-yellow);">Multi-Agent Pattern:</strong>
-                <p style="color: var(--text-secondary); margin-top: 8px; font-size: 0.9rem;">
-                    Orchestrator → Worker A (routine ops) → Sub-Agent A1<br>
-                    Orchestrator → Worker B (with multi-sig) → requires Admin approval for delete<br>
-                    <br>
-                    <em>Approvals are cryptographically bound to (warrant_id, tool, args, holder_key). Stolen approvals
-                        are useless.</em>
-                </p>
-            </div>
-        </div>
-
         <!-- Key Insights -->
         <div class="insight-box">
             <div class="insight-title">Security Properties Demonstrated</div>
@@ -905,10 +837,6 @@
                 <div class="insight-item">
                     <div class="insight-icon">🔗</div>
                     <div class="insight-label"><strong>Session Binding</strong><br>Warrants linked by session</div>
-                </div>
-                <div class="insight-item">
-                    <div class="insight-icon">✍️</div>
-                    <div class="insight-label"><strong>Multi-Sig</strong><br>M-of-N approval for sensitive ops</div>
                 </div>
                 <div class="insight-item">
                     <div class="insight-icon">⚡</div>

@@ -67,15 +67,16 @@
     
     /* Sidebar */
     .sidebar {
-      position: fixed;
-      top: 56px;
-      left: 0;
+      position: sticky;
+      top: 80px;
       width: var(--sidebar-width);
-      height: calc(100vh - 56px);
+      max-height: calc(100vh - 100px);
       background: var(--surface);
       border-right: 1px solid var(--border);
       overflow-y: auto;
       padding: 24px 16px;
+      flex-shrink: 0;
+      align-self: flex-start;
     }
     
     .sidebar-title {
@@ -120,10 +121,9 @@
     
     /* Main content */
     .main {
-      margin-left: var(--sidebar-width);
       flex: 1;
       padding: 48px 64px;
-      max-width: calc(100% - var(--sidebar-width));
+      min-width: 0;
     }
     
     .content {
@@ -231,13 +231,13 @@
     /* Mobile */
     @media (max-width: 900px) {
       .sidebar { display: none; }
-      .main { margin-left: 0; padding: 32px 24px; max-width: 100%; }
+      .main { padding: 32px 24px; }
     }
   </style>
 </head>
 <body>
   <nav class="top-nav">
-    <a href="{{ site.baseurl }}/" class="brand">Tenuo</a>
+    <a href="{{ site.baseurl }}/" class="brand">tenuo</a>
     <span class="spacer"></span>
     <a href="{{ site.baseurl }}/quickstart">Quick Start</a>
     <a href="{{ site.baseurl }}/concepts">Concepts</a>
