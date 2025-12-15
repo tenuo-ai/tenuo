@@ -207,17 +207,21 @@ impl std::fmt::Display for WarrantId {
 /// parent warrants from external sources. Each link contains:
 /// - Identity information (issuer ID, public key)
 /// - Embedded scope (tools, constraints, trust level, expiration)
-/// - Signature over the child warrant
+/// - Signature binding both the child warrant AND issuer scope
 ///
 /// ## Cryptographic Binding
 ///
-/// The `signature` field contains the parent's signature over the child warrant's
-/// payload (WITHOUT the issuer_chain to avoid circular dependencies). This
-/// cryptographically binds the chain link to the specific child warrant, preventing
-/// substitution attacks.
+/// The `signature` field contains the parent's signature over a `ChainLinkSignedData`
+/// struct that includes BOTH:
+/// 1. The child warrant's payload bytes (without issuer_chain)
+/// 2. All issuer scope fields (tools, constraints, trust, expiration, max_depth)
 ///
-/// During verification, the child's payload is reconstructed without the chain,
-/// and the parent's signature is verified against it.
+/// This prevents attacks where an attacker modifies the embedded issuer scope
+/// (e.g., adding tools the issuer never had) while keeping a valid signature.
+///
+/// During verification:
+/// 1. Reconstruct `ChainLinkSignedData` from the link and child payload
+/// 2. Verify the signature covers this exact data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChainLink {
     /// Warrant ID of the issuer.
@@ -239,8 +243,59 @@ pub struct ChainLink {
     pub issuer_expires_at: DateTime<Utc>,
     /// Maximum depth allowed by the issuer.
     pub issuer_max_depth: u32,
-    /// Signature over the child warrant by this issuer.
+    /// Signature over ChainLinkSignedData (child payload + issuer scope).
     pub signature: Signature,
+}
+
+/// Data structure that is signed for ChainLink verification.
+///
+/// This struct binds BOTH the child warrant payload AND the issuer's scope fields
+/// into a single signed message. This prevents scope tampering attacks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainLinkSignedData {
+    /// Child warrant's payload bytes (without issuer_chain)
+    #[serde(with = "serde_bytes")]
+    pub child_payload_bytes: Vec<u8>,
+    /// Issuer's warrant ID
+    pub issuer_id: WarrantId,
+    /// Issuer's warrant type
+    pub issuer_type: WarrantType,
+    /// Issuer's tools (execution) or issuable_tools (issuer)
+    pub issuer_tools: Option<Vec<String>>,
+    /// Issuer's constraints or constraint_bounds
+    pub issuer_constraints: Option<ConstraintSet>,
+    /// Issuer's trust level or trust_ceiling
+    pub issuer_trust: Option<TrustLevel>,
+    /// Issuer's expiration time
+    pub issuer_expires_at: DateTime<Utc>,
+    /// Issuer's max_depth
+    pub issuer_max_depth: u32,
+}
+
+impl ChainLink {
+    /// Create signed data for this link given the child's payload bytes.
+    pub fn signed_data(&self, child_payload_bytes: Vec<u8>) -> ChainLinkSignedData {
+        ChainLinkSignedData {
+            child_payload_bytes,
+            issuer_id: self.issuer_id.clone(),
+            issuer_type: self.issuer_type,
+            issuer_tools: self.issuer_tools.clone(),
+            issuer_constraints: self.issuer_constraints.clone(),
+            issuer_trust: self.issuer_trust,
+            issuer_expires_at: self.issuer_expires_at,
+            issuer_max_depth: self.issuer_max_depth,
+        }
+    }
+
+    /// Verify this chain link's signature against the child's payload bytes.
+    pub fn verify_signature(&self, child_payload_bytes: &[u8]) -> Result<()> {
+        let signed_data = self.signed_data(child_payload_bytes.to_vec());
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(&signed_data, &mut buf).map_err(|e| {
+            Error::Validation(format!("failed to serialize ChainLinkSignedData: {}", e))
+        })?;
+        self.issuer_pubkey.verify(&buf, &self.signature)
+    }
 }
 
 /// The payload of a warrant (unsigned).
@@ -358,7 +413,7 @@ pub struct Warrant {
     payload_bytes: Vec<u8>,
 }
 
-// Custom Deserialize to enforce constraint depth validation
+// Custom Deserialize to enforce constraint depth validation and canonical binding
 impl<'de> Deserialize<'de> for Warrant {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
@@ -385,6 +440,27 @@ impl<'de> Deserialize<'de> for Warrant {
             constraint_bounds
                 .validate_depth()
                 .map_err(serde::de::Error::custom)?;
+        }
+
+        // SECURITY: Canonical binding verification
+        // This prevents attacks where an attacker crafts a token where:
+        //   - payload says tools=["read"]
+        //   - payload_bytes (what's actually signed) encodes tools=["write"]
+        // We recompute canonical bytes from the payload (sans issuer_chain) and require equality.
+        let mut payload_sans_chain = raw.payload.clone();
+        payload_sans_chain.issuer_chain = Vec::new();
+        let canonical_bytes = {
+            let mut buf = Vec::new();
+            ciborium::ser::into_writer(&payload_sans_chain, &mut buf).map_err(|e| {
+                serde::de::Error::custom(format!("canonical serialization failed: {}", e))
+            })?;
+            buf
+        };
+
+        if canonical_bytes != raw.payload_bytes {
+            return Err(serde::de::Error::custom(
+                "payload_bytes mismatch: parsed payload does not match signed bytes (potential forgery)"
+            ));
         }
 
         Ok(Warrant {
@@ -1856,7 +1932,21 @@ impl<'a> AttenuationBuilder<'a> {
         ciborium::ser::into_writer(&payload, &mut payload_bytes)?;
         let signature = keypair.sign(&payload_bytes);
 
-        // Now create the chain link with parent's signature over the child warrant
+        // Now create the chain link with parent's signature over BOTH
+        // the child warrant AND the issuer's scope fields
+        let issuer_scope = ChainLinkSignedData {
+            child_payload_bytes: payload_bytes.clone(),
+            issuer_id: self.parent.payload.id.clone(),
+            issuer_type: self.parent.payload.r#type,
+            issuer_tools: self.parent.payload.tools.clone(),
+            issuer_constraints: self.parent.payload.constraints.clone(),
+            issuer_trust: self.parent.payload.trust_level,
+            issuer_expires_at: self.parent.payload.expires_at,
+            issuer_max_depth: self.parent.effective_max_depth(),
+        };
+        let mut scope_bytes = Vec::new();
+        ciborium::ser::into_writer(&issuer_scope, &mut scope_bytes)?;
+
         let parent_link = ChainLink {
             issuer_id: self.parent.payload.id.clone(),
             issuer_pubkey: self.parent.payload.issuer.clone(),
@@ -1866,8 +1956,8 @@ impl<'a> AttenuationBuilder<'a> {
             issuer_trust: self.parent.payload.trust_level,
             issuer_expires_at: self.parent.payload.expires_at,
             issuer_max_depth: self.parent.effective_max_depth(),
-            // Parent signs the child warrant's payload to cryptographically bind the chain link
-            signature: parent_keypair.sign(&payload_bytes),
+            // Parent signs ChainLinkSignedData (child + issuer scope)
+            signature: parent_keypair.sign(&scope_bytes),
         };
         issuer_chain.push(parent_link);
 
@@ -2466,6 +2556,20 @@ impl OwnedAttenuationBuilder {
         ciborium::ser::into_writer(&payload, &mut payload_bytes)?;
         let signature = keypair.sign(&payload_bytes);
 
+        // Create ChainLinkSignedData binding child payload AND issuer scope
+        let issuer_scope = ChainLinkSignedData {
+            child_payload_bytes: payload_bytes.clone(),
+            issuer_id: self.parent.payload.id.clone(),
+            issuer_type: self.parent.payload.r#type,
+            issuer_tools: self.parent.payload.tools.clone(),
+            issuer_constraints: self.parent.payload.constraints.clone(),
+            issuer_trust: self.parent.payload.trust_level,
+            issuer_expires_at: self.parent.payload.expires_at,
+            issuer_max_depth: self.parent.effective_max_depth(),
+        };
+        let mut scope_bytes = Vec::new();
+        ciborium::ser::into_writer(&issuer_scope, &mut scope_bytes)?;
+
         let parent_link = ChainLink {
             issuer_id: self.parent.payload.id.clone(),
             issuer_pubkey: self.parent.payload.issuer.clone(),
@@ -2475,7 +2579,8 @@ impl OwnedAttenuationBuilder {
             issuer_trust: self.parent.payload.trust_level,
             issuer_expires_at: self.parent.payload.expires_at,
             issuer_max_depth: self.parent.effective_max_depth(),
-            signature: parent_keypair.sign(&payload_bytes),
+            // Sign ChainLinkSignedData (child + issuer scope)
+            signature: parent_keypair.sign(&scope_bytes),
         };
         issuer_chain.push(parent_link);
 
@@ -2847,8 +2952,20 @@ impl<'a> IssuanceBuilder<'a> {
         ciborium::ser::into_writer(&payload, &mut payload_bytes)?;
         let signature = keypair.sign(&payload_bytes);
 
-        // Now create the chain link with issuer's signature over the child warrant's payload
-        // This cryptographically binds the chain link to the specific child warrant
+        // Create ChainLinkSignedData binding child payload AND issuer scope
+        let issuer_scope = ChainLinkSignedData {
+            child_payload_bytes: payload_bytes.clone(),
+            issuer_id: self.issuer.payload.id.clone(),
+            issuer_type: self.issuer.payload.r#type,
+            issuer_tools: self.issuer.payload.issuable_tools.clone(),
+            issuer_constraints: self.issuer.payload.constraint_bounds.clone(),
+            issuer_trust: self.issuer.payload.trust_ceiling,
+            issuer_expires_at: self.issuer.payload.expires_at,
+            issuer_max_depth: self.issuer.effective_max_depth(),
+        };
+        let mut scope_bytes = Vec::new();
+        ciborium::ser::into_writer(&issuer_scope, &mut scope_bytes)?;
+
         let issuer_link = ChainLink {
             issuer_id: self.issuer.payload.id.clone(),
             issuer_pubkey: self.issuer.payload.issuer.clone(),
@@ -2858,8 +2975,8 @@ impl<'a> IssuanceBuilder<'a> {
             issuer_trust: self.issuer.payload.trust_ceiling,
             issuer_expires_at: self.issuer.payload.expires_at,
             issuer_max_depth: self.issuer.effective_max_depth(),
-            // Issuer signs the child warrant's payload to cryptographically bind the chain link
-            signature: issuer_keypair.sign(&payload_bytes),
+            // Sign ChainLinkSignedData (child + issuer scope)
+            signature: issuer_keypair.sign(&scope_bytes),
         };
         issuer_chain.push(issuer_link);
 
