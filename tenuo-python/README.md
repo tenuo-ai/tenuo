@@ -297,10 +297,13 @@ python examples/mcp_integration.py
 
 ## Documentation
 
-- **[Website](https://tenuo.github.io/tenuo/)**: Landing page and guides
-- **[CLI Specification](../docs/cli-spec.md)**: Complete CLI reference
-- **[Rust API](https://docs.rs/tenuo-core)**: Full Rust API documentation
-- **[Examples](examples/README.md)**: Python usage examples with learning path
+- **[Concepts](../docs/concepts.md)**: Why Tenuo? Problem/solution
+- **[API Reference](../docs/api-reference.md)**: Python SDK reference
+- **[Constraints](../docs/constraints.md)**: Constraint types and usage
+- **[LangChain Integration](../docs/langchain.md)**: Tool protection
+- **[Security Model](../docs/security.md)**: Threat model, best practices
+- **[CLI Specification](../docs/cli-spec.md)**: CLI reference
+- **[Examples](examples/README.md)**: Python usage examples
 
 
 ## License

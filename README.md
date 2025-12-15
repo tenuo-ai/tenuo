@@ -353,11 +353,24 @@ Your services keep their existing IAM. Tenuo adds a **delegation layer** that tr
 
 ## Documentation
 
-- **[Website](https://tenuo.github.io/tenuo/)**: Landing page and infographics
-- **[Guide](https://tenuo.github.io/tenuo/guide/)**: Concepts, examples, and constraint types
-- **[CLI Specification](docs/cli-spec.md)**: Complete CLI reference and examples
-- **[Python SDK](tenuo-python/)**: Full Python documentation and examples
-- **[Rust API](https://docs.rs/tenuo-core)**: Complete Rust API reference
+### Getting Started
+- **[Website](https://tenuo.github.io/tenuo/)**: Landing page and overview
+- **[Concepts](docs/concepts.md)**: Why Tenuo? Problem/solution, threat model
+- **[Protocol](docs/protocol.md)**: How it works (for implementers)
+
+### Reference
+- **[API Reference](docs/api-reference.md)**: Python SDK function signatures
+- **[CLI Specification](docs/cli-spec.md)**: Complete CLI reference
+- **[Constraints](docs/constraints.md)**: Constraint types and usage
+- **[Rust API](https://docs.rs/tenuo-core)**: Rust API reference
+
+### Integration Guides
+- **[LangChain](docs/langchain.md)**: Tool protection for LangChain
+- **[LangGraph](docs/langgraph.md)**: Node scoping for LangGraph
+- **[Kubernetes](docs/kubernetes-integration.md)**: Deployment patterns
+
+### Security
+- **[Security Model](docs/security.md)**: Threat model, PoP, best practices
 
 ## License
 
