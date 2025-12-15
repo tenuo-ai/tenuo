@@ -2000,6 +2000,7 @@ impl PyChainVerificationResult {
 /// Python wrapper for Authorizer.
 ///
 /// Example:
+/// ```python
 ///     # Create with explicit trusted roots
 ///     authorizer = Authorizer(trusted_roots=[key1, key2])
 ///     
@@ -2010,6 +2011,7 @@ impl PyChainVerificationResult {
 ///         pop_window_secs=15,
 ///         pop_max_windows=4,
 ///     )
+/// ```
 #[pyclass(name = "Authorizer")]
 pub struct PyAuthorizer {
     inner: RustAuthorizer,
@@ -2026,6 +2028,7 @@ impl PyAuthorizer {
     ///     pop_max_windows: Number of PoP windows to accept (default: 4)
     ///
     /// Example:
+    /// ```python
     ///     authorizer = Authorizer(trusted_roots=[control_plane_key])
     ///     
     ///     # With custom settings
@@ -2035,6 +2038,7 @@ impl PyAuthorizer {
     ///         pop_window_secs=15,
     ///         pop_max_windows=4,
     ///     )
+    /// ```
     #[new]
     #[pyo3(signature = (trusted_roots=None, clock_tolerance_secs=30, pop_window_secs=30, pop_max_windows=4))]
     fn new(
