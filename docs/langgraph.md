@@ -1,7 +1,7 @@
 # Tenuo LangGraph Integration
 
 > **Status**: ✅ Implemented (v0.1)  
-> **Future**: SecureGraph (v0.2) — see [securegraph-spec.md](./securegraph-spec.md)
+> **Future**: SecureGraph (v0.2)
 
 ---
 
@@ -119,7 +119,7 @@ with root_task_sync(tools=["search", "write_file"], query="*", path="/*"):
 
 ## Coming in v0.2: SecureGraph
 
-For declarative authority policy with automatic attenuation at graph edges, see the [SecureGraph Specification](./securegraph-spec.md).
+Declarative authority policy with automatic attenuation at graph edges. Stay tuned!
 
 ---
 
