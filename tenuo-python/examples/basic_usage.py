@@ -45,8 +45,9 @@ def main():
             "cluster": Exact("staging-web"),
             "budget": Range.max_value(1000.0)
         },
-        keypair=control_keypair, # Signed by parent (Control Plane)
-        holder=worker_keypair.public_key() # Bound to worker
+        keypair=worker_keypair,       # Subject keypair (for binding)
+        parent_keypair=control_keypair, # Issuer keypair (for signing)
+        holder=worker_keypair.public_key() # Explicit holder (optional if keypair matches)
     )
     print(f"   Worker tool: {worker_warrant.tool}")
     print(f"   Worker depth: {worker_warrant.depth} (attenuated)")

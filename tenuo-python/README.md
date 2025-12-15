@@ -54,7 +54,8 @@ worker_warrant = warrant.attenuate(
         "cluster": Exact("staging-web"),
         "budget": Range.max_value(1000.0)
     },
-    keypair=keypair,  # Parent signs the attenuation
+    keypair=worker_keypair,       # Subject keypair
+    parent_keypair=keypair,       # Parent signs the attenuation
     holder=worker_keypair.public_key()  # Bind to worker
 )
 

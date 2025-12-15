@@ -138,6 +138,56 @@ from .audit import (
 )
 from .builder import AttenuationBuilder
 
+# Tier 1 API - Simple scoped authority
+from .config import (
+    configure,
+    get_config,
+    reset_config,
+    is_configured,
+    is_dev_mode,
+    TenuoConfig,
+)
+from .scoped import (
+    root_task,
+    root_task_sync,
+    scoped_task,
+    ScopedTaskBuilder,
+    ScopePreview,
+)
+
+# Tier 1 API - Tool protection
+from .protect import (
+    protect_tools,
+    protected_tool,
+)
+from .schemas import (
+    ToolSchema,
+    TOOL_SCHEMAS,
+    register_schema,
+    get_schema,
+    recommended_constraints,
+    check_constraints,
+)
+
+# Tier 1 API - LangChain integration
+from .langchain import (
+    protect_langchain_tools,
+    TenuoTool,
+    LANGCHAIN_AVAILABLE,
+)
+
+# Tier 1 API - LangGraph integration
+from .langgraph import (
+    tenuo_node,
+    require_warrant,
+)
+
+# Tier 1 API - Error explanation
+from .explain import (
+    explain,
+    explain_str,
+)
+
 # Import Rust diff types
 from tenuo_core import (  # type: ignore
     DelegationDiff,
@@ -161,6 +211,49 @@ import tenuo.warrant_ext  # noqa: F401
 
 # Re-export everything for clean imports
 __all__ = [
+    # =========================================================================
+    # Tier 1 API (Simple - 3 lines of code)
+    # =========================================================================
+    "configure",
+    "root_task",
+    "root_task_sync",
+    "scoped_task",
+    # Tier 1 helpers
+    "get_config",
+    "reset_config",
+    "is_configured",
+    "is_dev_mode",
+    "TenuoConfig",
+    "ScopedTaskBuilder",
+    "ScopePreview",
+    # Tool protection
+    "protect_tools",
+    "protected_tool",
+    # Tool schemas
+    "ToolSchema",
+    "TOOL_SCHEMAS",
+    "register_schema",
+    "get_schema",
+    "recommended_constraints",
+    "check_constraints",
+    
+    # =========================================================================
+    # Framework Integrations
+    # =========================================================================
+    # LangChain
+    "protect_langchain_tools",
+    "TenuoTool",
+    "LANGCHAIN_AVAILABLE",
+    # LangGraph
+    "tenuo_node",
+    "require_warrant",
+    # Error explanation
+    "explain",
+    "explain_str",
+    
+    # =========================================================================
+    # Tier 2 API (Explicit control)
+    # =========================================================================
     # Core types
     "Keypair",
     "Warrant",

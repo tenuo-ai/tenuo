@@ -156,6 +156,14 @@ enum Commands {
         /// Output warrant string only
         #[arg(short, long)]
         quiet: bool,
+
+        /// Show diff of what changed (tools, constraints, TTL)
+        #[arg(long)]
+        diff: bool,
+
+        /// Preview only - show what would change without creating warrant
+        #[arg(long)]
+        preview: bool,
     },
 
     /// Create a proof-of-possession signature over a request payload
@@ -337,6 +345,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             constraint_json,
             json,
             quiet,
+            diff,
+            preview,
         } => {
             handle_attenuate(
                 warrant,
@@ -349,6 +359,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 constraint_json,
                 json,
                 quiet,
+                diff,
+                preview,
             )?;
         }
         Commands::Sign {
@@ -1021,6 +1033,8 @@ fn handle_attenuate(
     constraint_json: Vec<String>,
     json: bool,
     quiet: bool,
+    diff: bool,
+    preview: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let parent_warrant = read_warrant(&warrant)?;
     let current_kp = load_private_key(&signing_key)?;
@@ -1034,17 +1048,21 @@ fn handle_attenuate(
         current_kp.clone()
     };
 
+    // Collect child constraints for diff/preview
+    let mut child_constraints: HashMap<String, Constraint> = HashMap::new();
+    let child_ttl_duration = ttl.as_ref().map(|t| parse_duration(t)).transpose()?;
+
     let mut builder = parent_warrant.attenuate();
 
-    if let Some(holder_str) = holder {
-        let holder_pubkey = load_public_key(&holder_str)?;
+    if let Some(holder_str) = &holder {
+        let holder_pubkey = load_public_key(holder_str)?;
         builder = builder.authorized_holder(holder_pubkey);
     }
 
     // Note: Tool handling depends on warrant type
     // For execution warrants, tool narrowing is validated during authorization
     // For issuer warrants, we validate issuable_tools monotonicity
-    if let Some(tool_str) = tool {
+    if let Some(tool_str) = &tool {
         match parent_warrant.r#type() {
             WarrantType::Execution => {
                 if let Some(parent_tool) = parent_warrant.tool() {
@@ -1072,22 +1090,37 @@ fn handle_attenuate(
         }
     }
 
-    if let Some(ttl_str) = ttl {
-        let ttl_duration = parse_duration(&ttl_str)?;
+    if let Some(ttl_duration) = child_ttl_duration {
         builder = builder.ttl(ttl_duration);
     }
 
     // Parse constraints
-    for c in constraint {
-        let (key, constraint) = parse_constraint(&c)?;
-        builder = builder.constraint(key, constraint);
+    for c in &constraint {
+        let (key, constraint_val) = parse_constraint(c)?;
+        child_constraints.insert(key.clone(), constraint_val.clone());
+        builder = builder.constraint(key, constraint_val);
     }
 
-    for json_str in constraint_json {
-        let constraints = parse_constraint_json(&json_str)?;
-        for (key, constraint) in constraints {
-            builder = builder.constraint(key, constraint);
+    for json_str in &constraint_json {
+        let constraints = parse_constraint_json(json_str)?;
+        for (key, constraint_val) in constraints {
+            child_constraints.insert(key.clone(), constraint_val.clone());
+            builder = builder.constraint(key, constraint_val);
         }
+    }
+
+    // Handle preview mode - show what would change without creating warrant
+    if preview {
+        print_attenuation_diff(
+            &parent_warrant,
+            tool.as_deref(),
+            &child_constraints,
+            child_ttl_duration,
+            holder.as_deref(),
+            json,
+            true, // is_preview
+        )?;
+        return Ok(());
     }
 
     let child_warrant = builder.build(&current_kp, &parent_kp).map_err(|e| {
@@ -1122,6 +1155,23 @@ fn handle_attenuate(
     })?;
     let warrant_b64 = wire::encode_base64(&child_warrant)?;
 
+    // Handle diff mode - show what changed along with the warrant
+    if diff {
+        print_attenuation_diff(
+            &parent_warrant,
+            tool.as_deref(),
+            &child_constraints,
+            child_ttl_duration,
+            holder.as_deref(),
+            json,
+            false, // is_preview
+        )?;
+        if !json {
+            eprintln!();
+            eprintln!("Child warrant:");
+        }
+    }
+
     if quiet {
         println!("{}", warrant_b64);
     } else if json {
@@ -1147,6 +1197,253 @@ fn handle_attenuate(
         println!("{}", serde_json::to_string_pretty(&info)?);
     } else {
         println!("{}", warrant_b64);
+    }
+
+    Ok(())
+}
+
+/// Format a constraint for human-readable display
+fn format_constraint(c: &Constraint) -> String {
+    match c {
+        Constraint::Wildcard(_) => "Wildcard(*)".to_string(),
+        Constraint::Exact(e) => format!("Exact(\"{}\")", e.value),
+        Constraint::Pattern(p) => format!("Pattern(\"{}\")", p.pattern),
+        Constraint::Regex(r) => format!("Regex(\"{}\")", r.pattern),
+        Constraint::Range(r) => match (r.min, r.max) {
+            (Some(min), Some(max)) => format!("Range({} .. {})", min, max),
+            (Some(min), None) => format!("Range({} ..)", min),
+            (None, Some(max)) => format!("Range(.. {})", max),
+            (None, None) => "Range(..)".to_string(),
+        },
+        Constraint::OneOf(o) => {
+            let vals: Vec<String> = o.values.iter().map(|v| format!("{}", v)).collect();
+            format!("OneOf([{}])", vals.join(", "))
+        }
+        Constraint::NotOneOf(n) => {
+            let vals: Vec<String> = n.excluded.iter().map(|v| format!("{}", v)).collect();
+            format!("NotOneOf([{}])", vals.join(", "))
+        }
+        Constraint::Contains(c) => {
+            let vals: Vec<String> = c.required.iter().map(|v| format!("{}", v)).collect();
+            format!("Contains([{}])", vals.join(", "))
+        }
+        Constraint::Subset(s) => {
+            let vals: Vec<String> = s.allowed.iter().map(|v| format!("{}", v)).collect();
+            format!("Subset([{}])", vals.join(", "))
+        }
+        Constraint::All(a) => format!("All({} constraints)", a.constraints.len()),
+        Constraint::Any(a) => format!("Any({} constraints)", a.constraints.len()),
+        Constraint::Not(n) => format!("Not({})", format_constraint(&n.constraint)),
+        Constraint::Cel(c) => format!("CEL(\"{}\")", c.expression),
+    }
+}
+
+/// Print diff showing what changed between parent and child warrant
+fn print_attenuation_diff(
+    parent: &Warrant,
+    child_tool: Option<&str>,
+    child_constraints: &HashMap<String, Constraint>,
+    child_ttl: Option<Duration>,
+    child_holder: Option<&str>,
+    json_output: bool,
+    is_preview: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let parent_ttl_remaining = (parent.expires_at() - Utc::now()).num_seconds().max(0) as u64;
+    let child_ttl_secs = child_ttl
+        .map(|d| d.as_secs())
+        .unwrap_or(parent_ttl_remaining);
+
+    // Build diff info
+    let mut deltas: Vec<serde_json::Value> = Vec::new();
+
+    // Tools diff
+    let parent_tool = parent.tool().map(|t| t.to_string());
+    let effective_child_tool = child_tool
+        .map(|t| t.to_string())
+        .or_else(|| parent_tool.clone());
+
+    if parent_tool.as_deref() != effective_child_tool.as_deref() {
+        deltas.push(serde_json::json!({
+            "field": "tool",
+            "change": "narrowed",
+            "from": parent_tool,
+            "to": effective_child_tool,
+        }));
+    }
+
+    // Constraints diff
+    let parent_constraints = parent.constraints();
+    for (key, child_val) in child_constraints {
+        let parent_val = parent_constraints.as_ref().and_then(|c| c.get(key));
+        if let Some(pv) = parent_val {
+            deltas.push(serde_json::json!({
+                "field": format!("constraints.{}", key),
+                "change": "narrowed",
+                "from": format_constraint(pv),
+                "to": format_constraint(child_val),
+            }));
+        } else {
+            deltas.push(serde_json::json!({
+                "field": format!("constraints.{}", key),
+                "change": "added",
+                "to": format_constraint(child_val),
+            }));
+        }
+    }
+
+    // TTL diff
+    if child_ttl_secs < parent_ttl_remaining {
+        deltas.push(serde_json::json!({
+            "field": "ttl",
+            "change": "reduced",
+            "from": parent_ttl_remaining,
+            "to": child_ttl_secs,
+        }));
+    }
+
+    // Holder diff
+    if child_holder.is_some() {
+        deltas.push(serde_json::json!({
+            "field": "holder",
+            "change": "changed",
+            "from": hex::encode(parent.authorized_holder().to_bytes()),
+            "to": child_holder,
+        }));
+    }
+
+    // Depth diff
+    deltas.push(serde_json::json!({
+        "field": "depth",
+        "change": "incremented",
+        "from": parent.depth(),
+        "to": parent.depth() + 1,
+    }));
+
+    if json_output {
+        let diff_json = serde_json::json!({
+            "preview": is_preview,
+            "parent_id": parent.id().as_str(),
+            "deltas": deltas,
+            "summary": {
+                "constraints_narrowed": child_constraints.len(),
+                "ttl_reduced": child_ttl_secs < parent_ttl_remaining,
+                "holder_changed": child_holder.is_some(),
+            }
+        });
+        println!("{}", serde_json::to_string_pretty(&diff_json)?);
+    } else {
+        let mode_label = if is_preview { "PREVIEW" } else { "DIFF" };
+        eprintln!("╔══════════════════════════════════════════════════════════════════╗");
+        eprintln!(
+            "║  DELEGATION {}                                                  ║",
+            mode_label
+        );
+        eprintln!(
+            "║  Parent: {} → Child: {}           ║",
+            &parent.id().as_str()[..20],
+            if is_preview { "(pending)" } else { "(created)" }
+        );
+        eprintln!("╠══════════════════════════════════════════════════════════════════╣");
+
+        // Tools
+        if let Some(parent_tool) = parent.tool() {
+            eprintln!("║                                                                  ║");
+            eprintln!("║  TOOLS                                                           ║");
+            if let Some(ct) = &effective_child_tool {
+                if ct != parent_tool {
+                    eprintln!(
+                        "║    ✓ {}                                                   ║",
+                        ct
+                    );
+                    // Show dropped tools
+                    let parent_tools: Vec<&str> =
+                        parent_tool.split(',').map(|s| s.trim()).collect();
+                    let child_tools: Vec<&str> = ct.split(',').map(|s| s.trim()).collect();
+                    for pt in parent_tools {
+                        if !child_tools.contains(&pt) {
+                            eprintln!(
+                                "║    ✗ {}      DROPPED                                     ║",
+                                pt
+                            );
+                        }
+                    }
+                } else {
+                    eprintln!(
+                        "║    ✓ {} (unchanged)                                      ║",
+                        parent_tool
+                    );
+                }
+            } else {
+                eprintln!(
+                    "║    ✓ {} (unchanged)                                      ║",
+                    parent_tool
+                );
+            }
+        }
+
+        // Constraints
+        if !child_constraints.is_empty() || parent_constraints.is_some() {
+            eprintln!("║                                                                  ║");
+            eprintln!("║  CONSTRAINTS                                                     ║");
+            for (key, child_val) in child_constraints {
+                let parent_val = parent_constraints.as_ref().and_then(|c| c.get(key));
+                if let Some(pv) = parent_val {
+                    eprintln!(
+                        "║    {}                                                      ║",
+                        key
+                    );
+                    eprintln!(
+                        "║      parent: {}                               ║",
+                        format_constraint(pv)
+                    );
+                    eprintln!(
+                        "║      child:  {}                               ║",
+                        format_constraint(child_val)
+                    );
+                    eprintln!("║      change: NARROWED                                        ║");
+                } else {
+                    eprintln!(
+                        "║    {} (new)                                               ║",
+                        key
+                    );
+                    eprintln!(
+                        "║      child:  {}                               ║",
+                        format_constraint(child_val)
+                    );
+                    eprintln!("║      change: ADDED                                           ║");
+                }
+            }
+        }
+
+        // TTL
+        eprintln!("║                                                                  ║");
+        eprintln!("║  TTL                                                             ║");
+        eprintln!(
+            "║    parent: {}s remaining                                      ║",
+            parent_ttl_remaining
+        );
+        eprintln!(
+            "║    child:  {}s                                                ║",
+            child_ttl_secs
+        );
+        if child_ttl_secs < parent_ttl_remaining {
+            eprintln!("║    change: REDUCED                                             ║");
+        } else {
+            eprintln!("║    change: (inherited)                                         ║");
+        }
+
+        // Depth
+        eprintln!("║                                                                  ║");
+        eprintln!("║  DEPTH                                                           ║");
+        eprintln!(
+            "║    parent: {}                                                     ║",
+            parent.depth()
+        );
+        eprintln!(
+            "║    child:  {}                                                     ║",
+            parent.depth() + 1
+        );
+        eprintln!("╚══════════════════════════════════════════════════════════════════╝");
     }
 
     Ok(())

@@ -167,6 +167,11 @@ impl PyPattern {
     fn __repr__(&self) -> String {
         format!("Pattern('{}')", self.inner.pattern)
     }
+
+    #[getter]
+    fn pattern(&self) -> String {
+        self.inner.pattern.clone()
+    }
 }
 
 /// Python wrapper for Exact constraint.
@@ -188,6 +193,11 @@ impl PyExact {
     fn __repr__(&self) -> String {
         format!("Exact('{}')", self.inner.value)
     }
+
+    #[getter]
+    fn value(&self) -> PyResult<PyObject> {
+        Python::with_gil(|py| constraint_value_to_py(py, &self.inner.value))
+    }
 }
 
 /// Python wrapper for OneOf constraint.
@@ -208,6 +218,17 @@ impl PyOneOf {
 
     fn __repr__(&self) -> String {
         format!("OneOf({:?})", self.inner.values)
+    }
+
+    #[getter]
+    fn values(&self) -> PyResult<PyObject> {
+        Python::with_gil(|py| {
+            let list = pyo3::types::PyList::empty(py);
+            for v in &self.inner.values {
+                list.append(constraint_value_to_py(py, v)?)?;
+            }
+            Ok(list.into())
+        })
     }
 }
 
@@ -406,6 +427,16 @@ impl PyRange {
 
     fn __repr__(&self) -> String {
         format!("Range(min={:?}, max={:?})", self.inner.min, self.inner.max)
+    }
+
+    #[getter]
+    fn min(&self) -> Option<f64> {
+        self.inner.min
+    }
+
+    #[getter]
+    fn max(&self) -> Option<f64> {
+        self.inner.max
     }
 }
 

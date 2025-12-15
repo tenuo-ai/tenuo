@@ -159,8 +159,9 @@ root_warrant = Warrant.issue(
 # Option 1: Direct attenuation
 worker_warrant = root_warrant.attenuate(
     constraints={"db_name": Pattern("test-*")},
-    holder=worker_keypair.public_key(),
-    keypair=root_keypair  # Parent signs the attenuation
+    keypair=worker_keypair,       # Subject keypair
+    parent_keypair=root_keypair,  # Issuer keypair
+    holder=worker_keypair.public_key()
 )
 
 # Option 2: Builder pattern with diff preview (recommended for audit trails)

@@ -1,61 +1,323 @@
 """
 Tenuo LangChain Integration
 
-This module provides tools to wrap LangChain tools with Tenuo authorization.
+This module provides two patterns for protecting LangChain tools with Tenuo:
 
-Usage patterns:
+1. **Tier 1 API (Recommended)** - Uses context from root_task/scoped_task:
+    ```python
+    from tenuo import configure, root_task_sync, Keypair
+    from tenuo.langchain import protect_langchain_tools
+    
+    kp = Keypair.generate()
+    configure(issuer_key=kp, dev_mode=True)
+    
+    # Wrap LangChain tools
+    tools = protect_langchain_tools([search_tool, file_tool])
+    
+    # Tools automatically use warrant from context
+    with root_task_sync(tools=["search", "read_file"], path="/data/*"):
+        agent = create_openai_tools_agent(llm, tools)
+        result = executor.invoke({"input": "search for reports"})
+    ```
 
-1. Single Agent with Config (Recommended):
+2. **Tier 2 API (Explicit)** - Pass warrant/keypair explicitly:
     ```python
     from tenuo.langchain import protect_tools
     
-    # Your tools - NO TENUO IMPORTS needed
-    @tool
-    def search(query: str) -> str: ...
-    
-    @tool  
-    def read_file(path: str) -> str: ...
-    
-    # Wrap at setup time
-    secure_tools = protect_tools(
-        tools=[search, read_file],
-        warrant=root_warrant,
-        keypair=keypair,
-        config="tenuo.yaml",  # Per-tool constraints
-    )
-    
-    agent = AgentExecutor(agent=base_agent, tools=secure_tools)
-    ```
-
-2. Single Agent without Config:
-    ```python
-    secure_tools = protect_tools(
+    # Wrap with explicit warrant
+    tools = protect_tools(
         tools=[search, read_file],
         warrant=root_warrant,
         keypair=keypair,
     )
     ```
 
-3. Multi-Agent (use SecureGraph from tenuo.langgraph instead)
+For multi-agent graphs with automatic delegation, see tenuo.langgraph.
 """
 
-from typing import List, Callable, Optional, Union, Any, Dict
 from dataclasses import dataclass, field
 from functools import wraps
-import yaml
+from typing import Any, Callable, Dict, List, Optional, Union
+import asyncio
+import inspect
 import logging
 
-from tenuo import Warrant, Keypair, AuthorizationError
-from tenuo.decorators import get_warrant_context, get_keypair_context
-from tenuo.audit import audit_logger, AuditEvent, AuditEventType
-from tenuo.config_utils import build_constraint
+import yaml
+
+from .config import allow_passthrough
+from .decorators import get_warrant_context, get_keypair_context, get_allowed_tools_context
+from .exceptions import (
+    TenuoError,
+    ToolNotAuthorized,
+    ConstraintViolation,
+    ConfigurationError,
+)
+from .schemas import ToolSchema, TOOL_SCHEMAS, _get_tool_name
+from .audit import log_authorization_success
+
+# Optional LangChain import
+try:
+    from langchain_core.tools import BaseTool, StructuredTool
+    from pydantic import BaseModel
+    LANGCHAIN_AVAILABLE = True
+except ImportError:
+    LANGCHAIN_AVAILABLE = False
+    BaseTool = object  # type: ignore
+    StructuredTool = object  # type: ignore
+    BaseModel = object  # type: ignore
 
 # Module logger
 logger = logging.getLogger("tenuo.langchain")
 
 
 # =============================================================================
-# Config Classes
+# Tier 1 API: Context-based protection
+# =============================================================================
+
+def protect_langchain_tools(
+    tools: List[Any],
+    *,
+    strict: bool = False,
+    schemas: Optional[Dict[str, ToolSchema]] = None,
+) -> List[Any]:
+    """
+    Wrap LangChain tools with Tenuo authorization (Tier 1 API).
+    
+    This function wraps LangChain tools to enforce authorization using
+    warrants from context (set by root_task/scoped_task).
+    
+    Args:
+        tools: List of LangChain BaseTool objects
+        strict: If True, fail on tools with require_at_least_one but no constraints
+        schemas: Optional custom tool schemas
+    
+    Returns:
+        List of TenuoTool wrapped tools
+    
+    Example:
+        from tenuo import configure, root_task_sync, Keypair
+        from tenuo.langchain import protect_langchain_tools
+        
+        kp = Keypair.generate()
+        configure(issuer_key=kp, dev_mode=True)
+        
+        tools = protect_langchain_tools([search_tool, file_tool])
+        
+        with root_task_sync(tools=["search", "read_file"], path="/data/*"):
+            result = tools[0].invoke({"query": "Q3 reports"})
+    
+    Raises:
+        ImportError: If langchain is not installed
+    """
+    if not LANGCHAIN_AVAILABLE:
+        raise ImportError(
+            "LangChain is required for protect_langchain_tools(). "
+            "Install with: pip install langchain-core"
+        )
+    
+    merged_schemas = {**TOOL_SCHEMAS, **(schemas or {})}
+    return [TenuoTool(t, strict=strict, schemas=merged_schemas) for t in tools]
+
+
+class TenuoTool(BaseTool):  # type: ignore[misc]
+    """
+    LangChain tool wrapper that enforces Tenuo authorization.
+    
+    This tool wraps another LangChain tool and checks authorization
+    from context before each invocation.
+    
+    Attributes:
+        wrapped: The original LangChain tool
+        strict: If True, require constraints for require_at_least_one tools
+    """
+    
+    name: str = ""
+    description: str = ""
+    wrapped: Any = None
+    strict: bool = False
+    _schemas: Dict[str, ToolSchema] = {}
+    
+    def __init__(
+        self,
+        wrapped: Any,
+        strict: bool = False,
+        schemas: Optional[Dict[str, ToolSchema]] = None,
+        **kwargs: Any,
+    ):
+        """
+        Create a TenuoTool wrapper.
+        
+        Args:
+            wrapped: The LangChain tool to wrap
+            strict: Enforce constraints for require_at_least_one tools
+            schemas: Tool schemas for risk level checking
+        """
+        # Get tool name and description
+        tool_name = _get_tool_name(wrapped)
+        tool_desc = getattr(wrapped, 'description', f"Protected tool: {tool_name}")
+        
+        # Initialize with name and description
+        super().__init__(name=tool_name, description=tool_desc, **kwargs)
+        
+        # Store wrapped tool and settings
+        object.__setattr__(self, 'wrapped', wrapped)
+        object.__setattr__(self, 'strict', strict)
+        object.__setattr__(self, '_schemas', schemas or TOOL_SCHEMAS)
+        
+        # Copy args_schema if present
+        if hasattr(wrapped, 'args_schema'):
+            object.__setattr__(self, 'args_schema', wrapped.args_schema)
+    
+    def _check_authorization(self, tool_input: Dict[str, Any]) -> None:
+        """Check authorization before tool execution."""
+        warrant = get_warrant_context()
+        schema = self._schemas.get(self.name)
+        
+        # No warrant in context
+        if warrant is None:
+            if allow_passthrough():
+                logger.warning(
+                    f"PASSTHROUGH: Tool '{self.name}' executed without warrant"
+                )
+                return
+            raise ToolNotAuthorized(tool=self.name)
+        
+        # Check allowed tools from scoped_task context (takes precedence)
+        allowed_tools = get_allowed_tools_context()
+        if allowed_tools is not None:
+            if self.name not in allowed_tools:
+                raise ToolNotAuthorized(
+                    tool=self.name,
+                    authorized_tools=allowed_tools,
+                )
+        # Fall back to warrant's tool allowlist
+        elif warrant.tool and self.name not in warrant.tool.split(","):
+            raise ToolNotAuthorized(
+                tool=self.name,
+                authorized_tools=warrant.tool.split(",") if warrant.tool else None,
+            )
+        
+        # Critical tools require constraints
+        if schema and schema.risk_level == "critical":
+            constraints = _get_constraints_dict(warrant)
+            has_relevant = any(
+                c in constraints for c in schema.recommended_constraints
+            )
+            if not has_relevant and not constraints:
+                raise ConfigurationError(
+                    f"Critical tool '{self.name}' requires at least one constraint. "
+                    f"Recommended: {schema.recommended_constraints}."
+                )
+        
+        # Strict mode
+        if self.strict and schema and schema.require_at_least_one:
+            constraints = _get_constraints_dict(warrant)
+            if not constraints:
+                raise ConfigurationError(
+                    f"Strict mode: tool '{self.name}' requires at least one constraint."
+                )
+        
+        # Check constraints
+        constraints = _get_constraints_dict(warrant)
+        for key, constraint in constraints.items():
+            if key in tool_input:
+                value = tool_input[key]
+                if hasattr(constraint, 'check'):
+                    try:
+                        constraint.check(value)
+                    except Exception as e:
+                        raise ConstraintViolation(
+                            field=key,
+                            reason=str(e),
+                            value=value,
+                        ) from e
+        
+        # Audit success
+        log_authorization_success(warrant, self.name, tool_input)
+    
+    def _run(self, *args: Any, **kwargs: Any) -> Any:
+        """Synchronous tool execution with authorization."""
+        # Build tool input from args/kwargs
+        tool_input = self._build_tool_input(args, kwargs)
+        
+        # Check authorization
+        self._check_authorization(tool_input)
+        
+        # Execute wrapped tool - prefer func over _run for @tool decorated functions
+        if hasattr(self.wrapped, 'func') and self.wrapped.func is not None:
+            return self.wrapped.func(*args, **kwargs)
+        elif hasattr(self.wrapped, '_run'):
+            # Pass through config if present in kwargs
+            return self.wrapped._run(*args, **kwargs)
+        else:
+            return self.wrapped(*args, **kwargs)
+    
+    async def _arun(self, *args: Any, **kwargs: Any) -> Any:
+        """Asynchronous tool execution with authorization."""
+        # Build tool input from args/kwargs
+        tool_input = self._build_tool_input(args, kwargs)
+        
+        # Check authorization
+        self._check_authorization(tool_input)
+        
+        # Execute wrapped tool - prefer func over _arun for @tool decorated functions
+        if hasattr(self.wrapped, 'coroutine') and self.wrapped.coroutine is not None:
+            return await self.wrapped.coroutine(*args, **kwargs)
+        elif hasattr(self.wrapped, 'func') and self.wrapped.func is not None:
+            result = self.wrapped.func(*args, **kwargs)
+            if asyncio.iscoroutine(result):
+                return await result
+            return result
+        elif hasattr(self.wrapped, '_arun'):
+            return await self.wrapped._arun(*args, **kwargs)
+        elif hasattr(self.wrapped, '_run'):
+            return self.wrapped._run(*args, **kwargs)
+        else:
+            result = self.wrapped(*args, **kwargs)
+            if asyncio.iscoroutine(result):
+                return await result
+            return result
+    
+    def _build_tool_input(self, args: tuple, kwargs: dict) -> Dict[str, Any]:
+        """Build tool input dict from args and kwargs."""
+        tool_input = dict(kwargs)
+        
+        # Try to get parameter names from wrapped tool
+        if hasattr(self.wrapped, 'func'):
+            func = self.wrapped.func
+        elif hasattr(self.wrapped, '_run'):
+            func = self.wrapped._run
+        elif callable(self.wrapped):
+            func = self.wrapped
+        else:
+            return tool_input
+        
+        try:
+            sig = inspect.signature(func)
+            params = list(sig.parameters.keys())
+            # Skip 'self' if present
+            if params and params[0] == 'self':
+                params = params[1:]
+            for i, arg in enumerate(args):
+                if i < len(params):
+                    tool_input[params[i]] = arg
+        except (ValueError, TypeError):
+            pass
+        
+        return tool_input
+
+
+def _get_constraints_dict(warrant: Any) -> Dict[str, Any]:
+    """Safely get constraints dict from warrant."""
+    if hasattr(warrant, 'constraints_dict'):
+        result = warrant.constraints_dict()
+        if result is not None:
+            return dict(result)
+    return {}
+
+
+# =============================================================================
+# Tier 2 API: Explicit warrant/keypair (preserved for compatibility)
 # =============================================================================
 
 @dataclass
@@ -78,8 +340,6 @@ class LangChainConfig:
             constraints:
               query:
                 pattern: "*"
-              max_results:
-                max: 100
           read_file:
             constraints:
               path:
@@ -110,75 +370,50 @@ class LangChainConfig:
         )
 
 
-# =============================================================================
-# Constraint Building (imported from config_utils)
-# =============================================================================
-# build_constraint() is imported from tenuo.config_utils
-
-
-# =============================================================================
-# Core Functions
-# =============================================================================
-
-def _get_tool_name(tool: Any) -> str:
-    """
-    Get the name of a tool, handling both functions and LangChain BaseTool.
-    
-    LangChain tools (StructuredTool, BaseTool) have a 'name' attribute.
-    Regular functions have __name__.
-    """
-    return getattr(tool, 'name', getattr(tool, '__name__', str(tool)))
-
-
-def _get_callable(tool: Any) -> Callable:
-    """
-    Get the callable from a tool, handling both functions and LangChain BaseTool.
-    
-    LangChain BaseTool has a 'func' attribute or can be called directly.
-    """
-    if hasattr(tool, 'func') and tool.func is not None:
-        return tool.func
-    if hasattr(tool, '_run'):
-        return tool._run
-    return tool
-
-
 def protect_tool(
-    tool: Any,  # Callable or LangChain BaseTool
+    tool: Any,
     name: Optional[str] = None, 
     extract_args: Optional[Callable[..., dict]] = None,
-    warrant: Optional[Warrant] = None,
-    keypair: Optional[Keypair] = None
+    warrant: Optional[Any] = None,
+    keypair: Optional[Any] = None,
 ) -> Callable:
     """
-    Wrap a tool function to enforce Tenuo authorization.
+    Wrap a tool function to enforce Tenuo authorization (Tier 2 API).
     
-    If warrant/keypair are provided, they are used (Single Agent mode).
-    If not, they are retrieved from context (SecureGraph mode).
-    
-    IMPORTANT: PoP is MANDATORY
-    ---------------------------
-    Keypair must always be available (either provided or in context) because
-    Proof-of-Possession is mandatory. This ensures leaked warrants are useless
-    without the corresponding private key.
+    If warrant/keypair are provided, they are used directly.
+    If not, they are retrieved from context.
     
     Args:
         tool: The tool function or LangChain BaseTool to wrap.
         name: Tool name (defaults to tool.name or function name).
         extract_args: Function to extract authorization args from tool call.
-        warrant: Explicit warrant to use (optional, falls back to context).
-        keypair: Explicit keypair to use (optional, falls back to context).
+        warrant: Explicit warrant to use (optional).
+        keypair: Explicit keypair to use (optional).
     
     Returns:
         Wrapped function that enforces authorization before execution.
     """
-    # Handle both functions and LangChain BaseTool objects
+    from .audit import audit_logger, AuditEvent, AuditEventType
+    
+    # Import AuthorizationError
+    try:
+        from tenuo import AuthorizationError
+    except ImportError:
+        AuthorizationError = TenuoError  # type: ignore
+    
     tool_name = name or _get_tool_name(tool)
-    callable_func = _get_callable(tool)
+    
+    # Get the callable
+    if hasattr(tool, 'func') and tool.func is not None:
+        callable_func = tool.func
+    elif hasattr(tool, '_run'):
+        callable_func = tool._run
+    else:
+        callable_func = tool
     
     @wraps(callable_func)
-    def protected_tool(*args, **kwargs):
-        # 1. Get context (or use provided)
+    def protected_tool(*args: Any, **kwargs: Any) -> Any:
+        # Get context (or use provided)
         current_warrant = warrant or get_warrant_context()
         current_keypair = keypair or get_keypair_context()
         
@@ -188,15 +423,13 @@ def protect_tool(
                 "Either pass warrant explicitly or set it in context."
             )
         
-        # PoP is MANDATORY - keypair must always be available
         if not current_keypair:
             raise AuthorizationError(
                 f"No keypair found for tool '{tool_name}'. "
-                "Proof-of-Possession is mandatory - keypair is required. "
-                "Either pass keypair explicitly or set it in context using set_keypair_context()."
+                "Either pass keypair explicitly or set it in context."
             )
         
-        # 2. Check warrant expiry BEFORE any further processing
+        # Check warrant expiry
         if current_warrant.is_expired():
             expires_at = current_warrant.expires_at() if hasattr(current_warrant, 'expires_at') else "unknown"
             audit_logger.log(AuditEvent(
@@ -212,17 +445,13 @@ def protect_tool(
                 f"Cannot authorize tool '{tool_name}'."
             )
             
-        # 3. Extract args for auth check
+        # Extract args for auth check
         if extract_args:
-            # Bind args to signature to handle positional/keyword mix
-            import inspect
             sig = inspect.signature(callable_func)
             bound = sig.bind(*args, **kwargs)
             bound.apply_defaults()
             auth_args = extract_args(**bound.arguments)
         else:
-            # Default: use all kwargs + positional args mapped to param names
-            import inspect
             sig = inspect.signature(callable_func)
             params = list(sig.parameters.keys())
             auth_args = dict(kwargs)
@@ -230,15 +459,13 @@ def protect_tool(
                 if i < len(params):
                     auth_args[params[i]] = arg_val
             
-        # 4. Create PoP signature (ALWAYS - PoP is mandatory)
-        # Keypair is guaranteed to be present (validated above)
+        # Create PoP signature
         signature = current_warrant.create_pop_signature(
             current_keypair, tool_name, auth_args
         )
             
-        # 5. Authorize
+        # Authorize
         if not current_warrant.authorize(tool_name, auth_args, bytes(signature)):
-            # Audit log the failure
             audit_logger.log(AuditEvent(
                 event_type=AuditEventType.AUTHORIZATION_FAILURE,
                 warrant_id=current_warrant.id,
@@ -264,17 +491,16 @@ def protect_tool(
             details=f"Authorization successful for tool '{tool_name}'",
         ))
             
-        # 6. Execute original
+        # Execute original
         logger.debug(f"Authorized access to '{tool_name}' with args {auth_args}")
         return callable_func(*args, **kwargs)
     
-    # Preserve original function/tool metadata for LangChain
+    # Preserve metadata
     protected_tool.__name__ = getattr(callable_func, '__name__', tool_name)
     protected_tool.__doc__ = getattr(callable_func, '__doc__', None)
     
-    # Preserve LangChain-specific attributes if present
-    for attr in ('name', 'description', 'args_schema', 'return_direct', 
-                 'verbose', 'handle_tool_error', 'handle_validation_error'):
+    # Preserve LangChain attributes
+    for attr in ('name', 'description', 'args_schema', 'return_direct'):
         if hasattr(tool, attr):
             setattr(protected_tool, attr, getattr(tool, attr))
     
@@ -283,73 +509,27 @@ def protect_tool(
 
 def protect_tools(
     tools: List[Any],
-    warrant: Warrant,
-    keypair: Keypair,  # REQUIRED - PoP is mandatory
-    config: Optional[Union[str, dict, LangChainConfig]] = None
+    warrant: Any,
+    keypair: Any,
+    config: Optional[Union[str, dict, LangChainConfig]] = None,
 ) -> List[Callable]:
     """
-    Wrap a list of tools for Single Agent use with Tenuo authorization.
+    Wrap tools for Single Agent use with Tenuo authorization (Tier 2 API).
     
-    This is the main entry point for protecting LangChain tools. Each tool
-    will be wrapped to check authorization before execution.
-    
-    IMPORTANT: PoP is MANDATORY
-    ---------------------------
-    The keypair parameter is required because Proof-of-Possession (PoP) is
-    mandatory. This ensures that leaked warrants are useless without the
-    corresponding private key.
-    
-    IMPORTANT: Static vs Dynamic Constraints
-    ----------------------------------------
-    Constraints are evaluated at SETUP TIME when protect_tools() is called.
-    This means ${state.*} interpolation is NOT supported here.
-    
-    For dynamic constraints that depend on runtime state, use SecureGraph:
-    
-        from tenuo.langgraph import SecureGraph
-        
-        # Dynamic constraints work in SecureGraph
-        config = {
-            "nodes": {
-                "file_reader": {
-                    "attenuate": {
-                        "tools": ["read_file"],
-                        "constraints": {
-                            "path": {"pattern": "/uploads/${state.user_id}/*"}
-                        }
-                    }
-                }
-            }
-        }
-        secure = SecureGraph(graph=graph, config=config, ...)
+    This is the Tier 2 entry point requiring explicit warrant/keypair.
+    For Tier 1 (context-based), use protect_langchain_tools().
     
     Args:
         tools: List of tool functions to protect.
         warrant: Root warrant to enforce.
-        keypair: Keypair for PoP (REQUIRED - Proof-of-Possession is mandatory).
-        config: Optional config for per-tool constraints. Can be:
-                - Path to YAML config file
-                - Dict with config
-                - LangChainConfig object
+        keypair: Keypair for PoP.
+        config: Optional config for per-tool constraints.
     
     Returns:
         List of protected tool functions.
-    
-    Example config (tenuo.yaml):
-        version: "1"
-        tools:
-          search:
-            constraints:
-              query:
-                pattern: "*"
-          read_file:
-            constraints:
-              path:
-                pattern: "/data/*"
-    
-    With config, each tool gets its own attenuated warrant based on the
-    constraints specified. Without config, all tools use the root warrant.
     """
+    from .config_utils import build_constraint
+    
     # Load config if provided
     parsed_config: Optional[LangChainConfig] = None
     if config is not None:
@@ -383,10 +563,8 @@ def protect_tools(
                 f"Attenuated warrant for tool '{tool_name}': {tool_warrant.id}"
             )
         else:
-            # Use root warrant as-is
             tool_warrant = warrant
         
-        # Wrap the tool
         protected.append(
             protect_tool(
                 tool,
@@ -398,3 +576,17 @@ def protect_tools(
         )
     
     return protected
+
+
+__all__ = [
+    # Tier 1 API (context-based)
+    "protect_langchain_tools",
+    "TenuoTool",
+    # Tier 2 API (explicit)
+    "protect_tool",
+    "protect_tools",
+    "ToolConfig",
+    "LangChainConfig",
+    # Feature flag
+    "LANGCHAIN_AVAILABLE",
+]
