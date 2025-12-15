@@ -8,6 +8,8 @@ description: Tool protection for LangChain agents
 > **Status**: ✅ Implemented  
 > **Location**: `tenuo-python/examples/`
 
+📊 **Visual guide**: See the [LangChain Infographic](./langchain-infographic.html) for where Tenuo fits in your agent stack.
+
 ## Overview
 
 Tenuo integrates with LangChain using a **zero-intrusion** pattern:

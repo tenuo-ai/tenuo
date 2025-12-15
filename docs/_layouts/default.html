@@ -224,9 +224,18 @@
       border-top: 1px solid var(--border);
       color: var(--text-muted);
       font-size: 0.85rem;
+      text-align: center;
     }
     
-    footer a { margin-right: 16px; }
+    footer a { color: var(--text-muted); text-decoration: none; }
+    footer a:hover { color: var(--text); }
+    
+    .footer-tech {
+      margin-bottom: 12px;
+      font-size: 0.9rem;
+      color: var(--text);
+      opacity: 0.7;
+    }
     
     /* Mobile */
     @media (max-width: 900px) {
@@ -259,10 +268,14 @@
       </article>
       
       <footer>
-        <a href="{{ site.baseurl }}/">Home</a>
-        <a href="{{ site.baseurl }}/quickstart">Quick Start</a>
-        <a href="{{ site.baseurl }}/security">Security</a>
-        <a href="https://github.com/tenuo/tenuo">GitHub</a>
+        <p class="footer-tech">🦀 Rust core  •  🐍 Python SDK  •  ⚡ ~25μs verification</p>
+        <p>
+          <a href="{{ site.baseurl }}/">Home</a> ·
+          <a href="{{ site.baseurl }}/quickstart">Quick Start</a> ·
+          <a href="{{ site.baseurl }}/api-reference">API</a> ·
+          <a href="{{ site.baseurl }}/security">Security</a> ·
+          <a href="https://github.com/tenuo/tenuo">GitHub</a>
+        </p>
       </footer>
     </main>
   </div>
