@@ -1,7 +1,6 @@
 import pytest
 import tempfile
 import os
-import json
 from tenuo import McpConfig, CompiledMcpConfig, ExtractionResult
 
 # Sample MCP Config YAML

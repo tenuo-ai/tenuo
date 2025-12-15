@@ -29,8 +29,7 @@ def main():
             config = McpConfig.from_file(path)
             print(f"   [OK] Configuration loaded from: {path}")
             break
-        except Exception as e:
-            # print(f"   [DEBUG] Failed to load from {path}: {e}")
+        except Exception:
             continue
     
     if config is None:
