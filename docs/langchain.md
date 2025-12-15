@@ -19,6 +19,8 @@ Tenuo integrates with LangChain using a **zero-intrusion** pattern:
 3. Warrants are passed through context, not function arguments
 4. Fail-closed: missing or invalid warrants block execution
 
+> **Note**: LangChain integration uses `Warrant.issue()` directly. You don't need `configure()` unless you're using LangGraph's `@tenuo_node` or `root_task()`. See [LangGraph Integration](./langgraph.md) for the `configure()` pattern.
+
 ---
 
 ## Installation
@@ -42,7 +44,7 @@ def read_file(file_path: str) -> str:
 # 2. Create keypair and warrant
 keypair = Keypair.generate()
 warrant = Warrant.issue(
-    tools="read_file",
+    tools="read_file",              # str or List[str]: "tool" or ["tool1", "tool2"]
     keypair=keypair,
     holder=keypair.public_key,
     constraints={"file_path": Pattern("/tmp/*")},
@@ -109,8 +111,6 @@ def read_file(file_path: str) -> str:
 2. Verifies tool is in warrant's allowed tools
 3. Verifies extracted args satisfy warrant constraints
 4. Generates PoP signature using context keypair
-5. Executes function if authorized, raises `AuthorizationError` if not
-
 5. Executes function if authorized, raises `AuthorizationError` if not
 
 ---
@@ -188,7 +188,7 @@ def read_file(path: str) -> str:
 # Warrant setup
 keypair = Keypair.generate()
 warrant = Warrant.issue(
-    tools="read_file",
+    tools=["search", "read_file"],  # List of allowed tools
     keypair=keypair,
     holder=keypair.public_key,
     constraints={"file_path": Pattern("/tmp/*")},

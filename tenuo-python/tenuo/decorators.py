@@ -293,25 +293,26 @@ def lockdown(
                 # Try to infer from function signature
                 import inspect
                 sig = inspect.signature(func)
-                params = list(sig.parameters.keys())
-                auth_args = {}
                 
-                # Add kwargs first (they override positional)
-                auth_args.update(kwargs)
-                
-                # Map positional args to parameter names
-                for i, arg_val in enumerate(args):
-                    if i < len(params):
-                        param_name = params[i]
-                        # Only add if not already in kwargs
-                        if param_name not in auth_args:
-                            auth_args[param_name] = arg_val
-                
-                # SECURITY FIX: Include default values for parameters not provided
-                # This prevents bypassing constraints by relying on dangerous defaults
-                for param_name, param in sig.parameters.items():
-                    if param_name not in auth_args and param.default is not inspect.Parameter.empty:
-                        auth_args[param_name] = param.default
+                try:
+                    # Robustly bind arguments to parameters
+                    bound = sig.bind(*args, **kwargs)
+                    bound.apply_defaults()
+                    auth_args = dict(bound.arguments)
+                except TypeError as e:
+                    # If binding fails (e.g. wrong number of args), we can't authorize
+                    # Let the function call proceed to fail naturally, or raise
+                    # But for security, if we can't inspect args, we shouldn't authorize.
+                    # However, the function call itself would fail right after.
+                    # Let's log and re-raise to be safe/clear.
+                    audit_logger.log(AuditEvent(
+                        event_type=AuditEventType.AUTHORIZATION_FAILURE,
+                        tool=tool_name,
+                        action="denied",
+                        error_code="argument_binding_error",
+                        details=f"Failed to bind arguments for {tool_name}: {e}",
+                    ))
+                    raise
 
                 # Apply mapping if provided
                 if mapping:

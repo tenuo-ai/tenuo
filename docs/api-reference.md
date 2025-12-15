@@ -9,6 +9,7 @@ Complete API documentation for the Tenuo Python SDK.
 
 ## Table of Contents
 
+- [Configuration](#configuration)
 - [Constants](#constants)
 - [Core Types](#core-types)
   - [Keypair](#keypair)
@@ -43,6 +44,78 @@ from tenuo import MAX_DELEGATION_DEPTH, MAX_ISSUER_CHAIN_LENGTH, MAX_WARRANT_SIZ
 | `MAX_WARRANT_SIZE` | 1,048,576 | Maximum serialized warrant size in bytes (1 MB) |
 
 **Security Note**: `MAX_ISSUER_CHAIN_LENGTH` limits the embedded issuer chain to prevent stack overflow attacks during verification. Chains longer than 8 levels indicate a design smell and should be reconsidered.
+
+---
+
+## Configuration
+
+### `configure()`
+
+Initialize Tenuo globally. **Call once at application startup** before using `root_task()` or `scoped_task()`.
+
+```python
+from tenuo import configure, Keypair
+
+# Development (self-signed warrants)
+kp = Keypair.generate()
+configure(
+    issuer_key=kp,
+    dev_mode=True,
+    allow_self_signed=True,
+)
+
+# Production (trusted roots required)
+configure(
+    issuer_key=my_keypair,
+    trusted_roots=[control_plane_pubkey],
+)
+```
+
+#### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `issuer_key` | `Keypair` | None | Keypair for signing warrants (required for `root_task`) |
+| `trusted_roots` | `List[PublicKey]` | None | Public keys to trust as warrant issuers (**required in production**) |
+| `default_ttl` | `int` | 300 | Default warrant TTL in seconds |
+| `clock_tolerance` | `int` | 30 | Clock tolerance for expiration checks |
+| `pop_window_secs` | `int` | 30 | PoP window size in seconds |
+| `pop_max_windows` | `int` | 4 | Number of PoP windows to accept (~2 min total) |
+| `dev_mode` | `bool` | False | Enable development mode (relaxed security) |
+| `allow_passthrough` | `bool` | False | Allow tool calls without warrants (requires `dev_mode`) |
+| `allow_self_signed` | `bool` | False | Trust self-signed warrants (requires `dev_mode`) |
+
+#### Modes
+
+**Production Mode** (default):
+- `trusted_roots` required
+- All warrants must chain to a trusted root
+- PoP mandatory
+
+**Development Mode** (`dev_mode=True`):
+- `trusted_roots` optional
+- `allow_self_signed=True` enables single-keypair testing
+- `allow_passthrough=True` skips authorization entirely (dangerous)
+
+#### Errors
+
+| Error | Cause |
+|-------|-------|
+| `ConfigurationError: trusted_roots required` | Production mode without trusted roots |
+| `ConfigurationError: allow_passthrough requires dev_mode` | Passthrough without dev mode |
+| `ConfigurationError: allow_self_signed requires dev_mode` | Self-signed without dev mode |
+
+### `get_config()`
+
+Get the current configuration.
+
+```python
+from tenuo import get_config
+
+config = get_config()
+print(f"TTL: {config.default_ttl}")
+print(f"Dev mode: {config.dev_mode}")
+```
 
 ---
 
