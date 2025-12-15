@@ -167,53 +167,40 @@ def _create_protected_wrapper(
     schemas: Dict[str, ToolSchema],
     tool_name: Optional[str] = None,
 ) -> Callable:
-    """Create the protected wrapper function."""
+    """Create the protected wrapper function.
+    
+    Strict about sync/async:
+    - If original_fn is async → return async wrapper
+    - If original_fn is sync → return sync wrapper
+    No magic loop detection.
+    """
     name: str = tool_name if tool_name else str(getattr(original_fn, '__name__', 'unknown'))
     
-    @wraps(original_fn)
-    async def protected_async(*args: Any, **kwargs: Any) -> Any:
-        return await _execute_protected(
-            original_fn, name, strict, schemas, args, kwargs, is_async=True
-        )
-    
-    @wraps(original_fn)
-    def protected_sync(*args: Any, **kwargs: Any) -> Any:
-        # Check if we're in an async context
-        try:
-            asyncio.get_running_loop()
-            # We're in async context, need to handle differently
-            # Return a coroutine that will be awaited
-            return _execute_protected(
-                original_fn, name, strict, schemas, args, kwargs, is_async=True
-            )
-        except RuntimeError:
-            # No event loop - sync context
-            pass
-        
-        # Execute synchronously
-        return asyncio.get_event_loop().run_until_complete(
-            _execute_protected(
-                original_fn, name, strict, schemas, args, kwargs, is_async=False
-            )
-        )
-    
-    # If original is async, return async wrapper
     if asyncio.iscoroutinefunction(original_fn):
+        # Async function → async wrapper (strict)
+        @wraps(original_fn)
+        async def protected_async(*args: Any, **kwargs: Any) -> Any:
+            return await _execute_protected_async(
+                original_fn, name, strict, schemas, args, kwargs
+            )
         return protected_async
-    
-    return protected_sync
+    else:
+        # Sync function → sync wrapper (strict)
+        @wraps(original_fn)
+        def protected_sync(*args: Any, **kwargs: Any) -> Any:
+            return _execute_protected_sync(
+                original_fn, name, strict, schemas, args, kwargs
+            )
+        return protected_sync
 
 
-async def _execute_protected(
-    original_fn: Callable,
+def _check_authorization(
     tool_name: str,
     strict: bool,
     schemas: Dict[str, ToolSchema],
-    args: tuple,
     kwargs: dict,
-    is_async: bool,
-) -> Any:
-    """Execute the protected tool with authorization checks."""
+) -> None:
+    """Check authorization - shared by sync and async paths."""
     warrant = get_warrant_context()
     _ = get_keypair_context()  # Reserved for PoP signature creation
     schema = schemas.get(tool_name)
@@ -222,16 +209,15 @@ async def _execute_protected(
     if warrant is None:
         if allow_passthrough():
             _audit_passthrough(tool_name, kwargs)
-            return await _maybe_await(original_fn(*args, **kwargs))
+            return  # Allow passthrough
         raise ToolNotAuthorized(tool=tool_name)
     
     # Check tool is in warrant's allowlist
     if warrant.tools and tool_name not in warrant.tools:
-        if tool_name not in (warrant.tools or []):
-            raise ToolNotAuthorized(
-                tool=tool_name,
-                authorized_tools=warrant.tools if warrant.tools else None,
-            )
+        raise ToolNotAuthorized(
+            tool=tool_name,
+            authorized_tools=warrant.tools if warrant.tools else None,
+        )
     
     # Critical tools ALWAYS require at least one constraint
     if schema and schema.risk_level == "critical":
@@ -264,18 +250,8 @@ async def _execute_protected(
             )
     
     # Authorize (checks constraints)
+    constraint_args = {k: v for k, v in kwargs.items()}
     try:
-        # Get constraint values from kwargs
-        constraint_args = {k: v for k, v in kwargs.items()}
-        
-        # Simple authorization - check tool name matches
-        # Full constraint checking happens via warrant.authorize() if PoP is needed
-        if warrant.tools and tool_name not in warrant.tools:
-            raise ToolNotAuthorized(
-                tool=tool_name,
-                authorized_tools=warrant.tools,
-            )
-        
         # Check constraints match if we have any
         warrant_constraints = _get_constraints_dict(warrant)
         for key, constraint in warrant_constraints.items():
@@ -303,41 +279,92 @@ async def _execute_protected(
             reason=str(e),
         )
         raise
+
+
+def _execute_protected_sync(
+    original_fn: Callable,
+    tool_name: str,
+    strict: bool,
+    schemas: Dict[str, ToolSchema],
+    args: tuple,
+    kwargs: dict,
+) -> Any:
+    """Execute protected tool synchronously (strict sync path)."""
+    warrant = get_warrant_context()
+    
+    # Check authorization (may raise or allow passthrough)
+    _check_authorization(tool_name, strict, schemas, kwargs)
+    
+    # If passthrough was allowed (no warrant, dev_mode), just execute
+    if warrant is None:
+        return original_fn(*args, **kwargs)
     
     # Execute the original function
-    return await _maybe_await(original_fn(*args, **kwargs))
+    return original_fn(*args, **kwargs)
+
+
+async def _execute_protected_async(
+    original_fn: Callable,
+    tool_name: str,
+    strict: bool,
+    schemas: Dict[str, ToolSchema],
+    args: tuple,
+    kwargs: dict,
+) -> Any:
+    """Execute protected tool asynchronously (strict async path)."""
+    warrant = get_warrant_context()
+    
+    # Check authorization (may raise or allow passthrough)
+    _check_authorization(tool_name, strict, schemas, kwargs)
+    
+    # If passthrough was allowed (no warrant, dev_mode), just execute
+    if warrant is None:
+        result = original_fn(*args, **kwargs)
+        if asyncio.iscoroutine(result):
+            return await result
+        return result
+    
+    # Execute the original function
+    result = original_fn(*args, **kwargs)
+    if asyncio.iscoroutine(result):
+        return await result
+    return result
 
 
 def _check_constraint(constraint: Any, value: Any) -> None:
-    """Check if value satisfies constraint."""
-    # Use check method if available
+    """Check if value satisfies constraint.
+    
+    Uses duck typing with hasattr() for robustness against type renames or subclasses.
+    """
+    # Use check method if available (preferred path)
     if hasattr(constraint, 'check'):
         constraint.check(value)
         return
 
-    # Manual checks for Rust types
-    type_name = type(constraint).__name__
-    
-    if type_name == 'Pattern':
-        pattern = getattr(constraint, 'pattern', '')
+    # Duck typing: check for Pattern-like (has 'pattern' attribute)
+    if hasattr(constraint, 'pattern'):
+        pattern = constraint.pattern
         import fnmatch
         if not fnmatch.fnmatch(str(value), pattern):
-             raise ValueError(f"Value '{value}' does not match pattern '{pattern}'")
+            raise ValueError(f"Value '{value}' does not match pattern '{pattern}'")
         return
 
-    if type_name == 'Exact':
-        expected = getattr(constraint, 'value', None)
+    # Duck typing: check for Exact-like (has 'value' attribute, not 'values')
+    if hasattr(constraint, 'value') and not hasattr(constraint, 'values'):
+        expected = constraint.value
         if str(value) != str(expected):
-             raise ValueError(f"Value '{value}' does not match expected '{expected}'")
+            raise ValueError(f"Value '{value}' does not match expected '{expected}'")
         return
         
-    if type_name == 'OneOf':
-        allowed = getattr(constraint, 'values', [])
+    # Duck typing: check for OneOf-like (has 'values' attribute as collection)
+    if hasattr(constraint, 'values'):
+        allowed = constraint.values
         if str(value) not in allowed:
             raise ValueError(f"Value '{value}' not in allowed values: {allowed}")
         return
         
-    if type_name == 'Range':
+    # Duck typing: check for Range-like (has 'min' or 'max' attribute)
+    if hasattr(constraint, 'min') or hasattr(constraint, 'max'):
         min_val = getattr(constraint, 'min', None)
         max_val = getattr(constraint, 'max', None)
         
@@ -358,20 +385,8 @@ def _check_constraint(constraint: Any, value: Any) -> None:
             raise ValueError(f"Value '{value}' does not match expected '{constraint}'")
         return
         
-    # Unknown constraint type
-    # We should probably fail safe if we can't verify
-    # But for now, let's assume if it has no check() and not a known type, it might be a custom object
-    # If we can't check it, we can't enforce it.
-    # However, to be secure, we should probably warn or fail.
-    # Given the context, failing safe is better.
-    raise ValueError(f"Cannot verify constraint of type {type_name}")
-
-
-async def _maybe_await(result: Any) -> Any:
-    """Await the result if it's a coroutine."""
-    if asyncio.iscoroutine(result):
-        return await result
-    return result
+    # Unknown constraint type - fail safe
+    raise ValueError(f"Cannot verify constraint of type {type(constraint).__name__}")
 
 
 def _audit_passthrough(tool_name: str, kwargs: dict) -> None:

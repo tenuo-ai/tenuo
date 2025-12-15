@@ -6,6 +6,11 @@ This module provides:
 - Chain reconstruction utilities for audit
 - Diff computation between warrants (delegates to Rust)
 - Wrapper for attenuate_builder() to return Python builder with diff support
+
+Note on memory management:
+    Delegation receipts are stored in a module-level cache keyed by warrant ID.
+    For long-running processes that create many warrants, call clear_receipts()
+    periodically or clear_receipt(warrant) when individual warrants are no longer needed.
 """
 
 from typing import Optional, Dict, Any, List, TYPE_CHECKING, Union
@@ -22,8 +27,12 @@ from tenuo_core import (  # type: ignore[import-untyped]
 )
 
 # Store receipts in a dict keyed by warrant ID (string)
-# Rust-exposed objects can't store arbitrary attributes
+# Rust-exposed objects can't store arbitrary Python attributes.
+# Use clear_receipt() or clear_receipts() to prevent memory leaks in long-running processes.
 _delegation_receipts: Dict[str, DelegationReceipt] = {}
+
+# Maximum receipts to keep (LRU-style eviction)
+_MAX_RECEIPTS = 10000
 
 
 def get_delegation_receipt(warrant: Warrant) -> Optional[DelegationReceipt]:
@@ -33,7 +42,22 @@ def get_delegation_receipt(warrant: Warrant) -> Optional[DelegationReceipt]:
 
 def set_delegation_receipt(warrant: Warrant, receipt: DelegationReceipt) -> None:
     """Set the delegation receipt for a warrant."""
+    # Simple size limit to prevent unbounded growth
+    if len(_delegation_receipts) >= _MAX_RECEIPTS:
+        # Remove oldest entry (first key in dict - Python 3.7+ maintains insertion order)
+        oldest_key = next(iter(_delegation_receipts))
+        del _delegation_receipts[oldest_key]
     _delegation_receipts[warrant.id] = receipt
+
+
+def clear_receipt(warrant: Warrant) -> None:
+    """Clear the delegation receipt for a warrant (memory cleanup)."""
+    _delegation_receipts.pop(warrant.id, None)
+
+
+def clear_receipts() -> None:
+    """Clear all stored delegation receipts (memory cleanup)."""
+    _delegation_receipts.clear()
 
 
 # Add delegation_receipt property to Warrant class
@@ -44,7 +68,7 @@ def _warrant_get_delegation_receipt(self: Warrant) -> Optional[DelegationReceipt
 
 def _warrant_set_delegation_receipt(self: Warrant, receipt: DelegationReceipt) -> None:
     """Set the delegation receipt (internal use)."""
-    _delegation_receipts[self.id] = receipt
+    set_delegation_receipt(self, receipt)
 
 
 # Add delegation_receipt property to Warrant
