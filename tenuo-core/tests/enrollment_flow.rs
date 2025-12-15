@@ -3,6 +3,15 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
+struct ProcessGuard(std::process::Child);
+
+impl Drop for ProcessGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 #[test]
 fn test_enrollment_flow() {
     // 1. Build binaries
@@ -21,16 +30,19 @@ fn test_enrollment_flow() {
     assert!(status.success(), "Build failed");
 
     // 2. Start Control Plane
-    let mut control = Command::new("target/debug/tenuo-control")
+    let control = Command::new("target/debug/tenuo-control")
         .env("TENUO_BIND_ADDR", "127.0.0.1:8084") // Use different port
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .expect("Failed to start control plane");
 
+    // Wrap in guard to ensure cleanup on panic
+    let mut control_guard = ProcessGuard(control);
+
     // 3. Read stdout to find ENROLLMENT TOKEN
-    let stdout = control.stdout.take().expect("Failed to open stdout");
-    let stderr = control.stderr.take().expect("Failed to open stderr");
+    let stdout = control_guard.0.stdout.take().expect("Failed to open stdout");
+    let stderr = control_guard.0.stderr.take().expect("Failed to open stderr");
     let reader = BufReader::new(stdout);
     let err_reader = BufReader::new(stderr);
 
@@ -86,7 +98,5 @@ fn test_enrollment_flow() {
         .expect("Failed to start orchestrator B");
     assert!(status_b.success(), "Orchestrator B failed");
 
-    // 6. Cleanup
-    control.kill().ok();
-    control.wait().ok();
+    // 6. Cleanup happens automatically via Drop
 }
