@@ -326,7 +326,7 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
     for fine-grained authorization control.
     """
     read_warrant = Warrant.issue(
-        tool="read_file",
+        tools="read_file",
         keypair=AGENT_KEYPAIR,
         holder=AGENT_KEYPAIR.public_key,
         constraints={"file_path": Pattern("/tmp/*")},
@@ -334,7 +334,7 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
     )
     
     write_warrant = Warrant.issue(
-        tool="write_file",
+        tools="write_file",
         keypair=AGENT_KEYPAIR,
         holder=AGENT_KEYPAIR.public_key,
         constraints={"file_path": Pattern("/tmp/*")},
@@ -342,7 +342,7 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
     )
     
     cluster_warrant = Warrant.issue(
-        tool="manage_cluster",
+        tools="manage_cluster",
         keypair=AGENT_KEYPAIR,
         holder=AGENT_KEYPAIR.public_key,
         constraints={

@@ -56,7 +56,7 @@ def main():
         # HARDCODED: Pattern("staging-*"), Range.max_value(10000.0), ttl_seconds=3600
         # In production: Constraints come from policy engine or configuration
         warrant = Warrant.issue(
-            tool="upgrade_cluster",  # Note: functions can use different tools
+            tools="upgrade_cluster",  # Note: functions can use different tools
             constraints={
                 "cluster": Pattern("staging-*"),  # HARDCODED: Only staging clusters for demo
                 "budget": Range.max_value(10000.0)  # HARDCODED: $10k max budget for demo
@@ -137,14 +137,14 @@ def main():
     # Pattern 4: Nested contexts (context inheritance)
     print("4. Testing nested contexts...")
     warrant1 = Warrant.issue(
-        tool="upgrade_cluster",
+        tools="upgrade_cluster",
         constraints={"cluster": Pattern("staging-*")},
         ttl_seconds=3600,
         keypair=keypair,
         holder=keypair.public_key
     )
     warrant2 = Warrant.issue(
-        tool="upgrade_cluster",
+        tools="upgrade_cluster",
         constraints={"cluster": Pattern("production-*")},
         ttl_seconds=3600,
         keypair=keypair,

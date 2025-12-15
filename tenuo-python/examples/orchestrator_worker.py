@@ -105,7 +105,7 @@ def orchestrator_task(warrant: Warrant, keypair: Keypair, worker_keypair: Keypai
         },
         ttl_seconds=30
     )
-    print("  New warrant: tool=write, path=/output/reports/*, ttl=30s")
+    print("  New warrant: tools=write, path=/output/reports/*, ttl=30s")
     print("  Note: This is a new warrant (not attenuated) to change tool set")
     
     # Worker executes write phase

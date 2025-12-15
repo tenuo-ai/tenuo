@@ -189,7 +189,7 @@ class ControlPlane:
             Warrant object
         """
         return Warrant.issue(
-            tool="agent_tools",  # HARDCODED: General tool name. In production, use config.
+            tools="agent_tools",  # HARDCODED: General tool name. In production, use config.
             constraints=constraints,
             ttl_seconds=ttl_seconds,  # HARDCODED default: 3600. In production, use env var or config.
             keypair=self.keypair,
@@ -216,7 +216,7 @@ class ControlPlane:
         }
         
         return Warrant.issue(
-            tool="agent_tools",
+            tools="agent_tools",
             constraints=constraints,
             ttl_seconds=ttl_seconds,
             keypair=self.keypair,
@@ -488,7 +488,7 @@ def main():
         # HARDCODED: tool="read_file", Pattern("/tmp/*"), ttl_seconds=3600
         # In production: Use env vars or config for these values
         agent_warrant = Warrant.issue(
-            tool="read_file",  # Match the tool name used in @lockdown decorator
+            tools="read_file",  # Match the tool name used in @lockdown decorator
             constraints={
                 "file_path": Pattern("/tmp/*"),  # HARDCODED: Only /tmp/ files for demo safety
             },

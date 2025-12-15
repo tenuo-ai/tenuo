@@ -13,7 +13,7 @@ def main():
     # Create a warrant
     keypair = Keypair.generate()
     warrant = Warrant.issue(
-        tool="upgrade_cluster",
+        tools="upgrade_cluster",
         constraints={
             "cluster": Pattern("staging-*"),
             "budget": Range.max_value(10000.0)

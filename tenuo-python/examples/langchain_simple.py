@@ -77,7 +77,7 @@ def main():
         # HARDCODED: Pattern("/tmp/*"), ttl_seconds=3600
         # In production: Constraints come from policy engine or configuration
         warrant = Warrant.issue(
-            tool="read_file",
+            tools="read_file",
             constraints={"file_path": Pattern("/tmp/*")},  # HARDCODED: Only /tmp/ for demo safety
             ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
             keypair=keypair,

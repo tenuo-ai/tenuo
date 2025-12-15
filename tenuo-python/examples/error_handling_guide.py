@@ -281,7 +281,7 @@ def main():
     print("-" * 60)
     
     expired_warrant = Warrant.issue(
-        tool="read_file",
+        tools="read_file",
         keypair=keypair,
         holder=keypair.public_key,
         constraints={"file_path": Pattern("/tmp/*")},
@@ -307,7 +307,7 @@ def main():
     print("-" * 60)
     
     restricted_warrant = Warrant.issue(
-        tool="process_payment",
+        tools="process_payment",
         keypair=keypair,
         holder=keypair.public_key,
         constraints={
@@ -350,7 +350,7 @@ def main():
     
     wrong_keypair = Keypair.generate()  # Different keypair
     warrant = Warrant.issue(
-        tool="read_file",
+        tools="read_file",
         keypair=keypair,
         holder=keypair.public_key,  # Bound to original keypair
         constraints={"file_path": Pattern("/tmp/*")},

@@ -44,7 +44,7 @@ keypair = Keypair.generate()
 
 # Create a warrant that authorizes "search" but only for queries starting with "safe"
 warrant = Warrant.issue(
-    tool="search",
+    tools="search",
     constraints={
         "query": Pattern("safe*")  # Only allow safe queries
     },

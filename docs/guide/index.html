@@ -478,7 +478,7 @@ keypair = Keypair.generate()
 # Create a warrant that authorizes "manage_infrastructure" tool
 # with constraints: cluster must match "staging-*" pattern, budget max $10,000
 warrant = Warrant.issue(
-    tool="manage_infrastructure",
+    tools="manage_infrastructure",
     keypair=keypair,  # Sign the warrant with the issuer's keypair
     holder=keypair.public_key(),  # Bind to self initially
     constraints={
@@ -542,7 +542,7 @@ print(f"Authorized: {authorized}")  # True - all constraints satisfied</code></p
 
 # Create a warrant (as shown in step 1 above)
 warrant = Warrant.issue(
-    tool="upgrade_cluster",
+    tools="upgrade_cluster",
     keypair=keypair,
     holder=keypair.public_key(),
     constraints={"cluster": Pattern("staging-*")},
@@ -594,7 +594,7 @@ use std::time::Duration;
 
 let keypair = Keypair::generate();
 let warrant = Warrant::builder()
-    .tool("manage_infrastructure")
+    .tools(vec!["manage_infrastructure".to_string()])
     .constraint("cluster", Pattern::new("staging-*")?)
     .constraint("budget", Range::max(10000.0))
     .ttl(Duration::from_secs(3600))
@@ -702,8 +702,8 @@ tenuo inspect worker.warrant</code></pre>
                     <td>Unique identifier (UUIDv7)</td>
                 </tr>
                 <tr>
-                    <td><code>tool</code></td>
-                    <td>What action is authorized</td>
+                    <td><code>tools</code></td>
+                    <td>What actions are authorized</td>
                 </tr>
                 <tr>
                     <td><code>constraints</code></td>

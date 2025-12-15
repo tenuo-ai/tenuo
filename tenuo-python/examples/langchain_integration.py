@@ -225,7 +225,7 @@ def main():
         # In production: Constraints come from policy engine, user request, or configuration
         # HARDCODED PATH: /tmp/* is used for demo safety. In production, use env vars or config.
         agent_warrant = Warrant.issue(
-            tool="read_file",  # Base tool - can be used for multiple tools
+            tools="read_file",  # Base tool - can be used for multiple tools
             constraints={
                 "file_path": Pattern("/tmp/*"),  # HARDCODED: Only files in /tmp/ for demo safety
             },
