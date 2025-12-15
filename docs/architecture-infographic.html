@@ -983,7 +983,7 @@
                         First-class support for LangChain Tools and LangGraph node scoping with @tenuo_node decorator.
                     </div>
                     <div class="integration-code">
-                        @lockdown("read_file")<br>
+                        @lockdown(tool="read_file")<br>
                         def read_file(path: str): ...
                     </div>
                 </div>

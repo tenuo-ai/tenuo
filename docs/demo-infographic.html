@@ -607,7 +607,7 @@
                 <div class="connector-line">
                     <div class="connector-arrow"></div>
                 </div>
-                <div class="connector-label">Sends Chain (JSON)</div>
+                <div class="connector-label">Sends Warrant (Base64 CBOR)</div>
             </div>
 
             <!-- Worker -->
@@ -631,7 +631,7 @@
                 <div
                     style="background: rgba(0, 0, 0, 0.3); border: 1px dashed var(--text-muted); border-radius: 8px; padding: 12px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-muted);">
                     &gt; POST /api/v1/cluster/staging-web/upgrade<br>
-                    &gt; X-Tenuo-Chain: [Root, Orchestrator, Worker]<br>
+                    &gt; X-Tenuo-Warrant: &lt;base64-cbor-warrant-with-chain&gt;<br>
                     &gt; X-Tenuo-PoP: sig(warrant_id, tool, args, timestamp)
                 </div>
             </div>

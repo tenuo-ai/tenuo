@@ -743,11 +743,11 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
 <span class="comment"># Create warrant (in production, from control plane)</span>
 <span class="type">keypair</span> = <span class="function">Keypair.generate</span>()
 <span class="type">warrant</span> = <span class="function">Warrant.issue</span>(
-    <span class="keyword">tool</span>=<span class="string">"read_file"</span>,
+    <span class="keyword">tools</span>=<span class="string">"read_file"</span>,  <span class="comment"># str or List[str]</span>
     <span class="keyword">constraints</span>={<span class="string">"file_path"</span>: <span class="function">Pattern</span>(<span class="string">"/tmp/*"</span>)},  <span class="comment"># Only /tmp/ files</span>
     <span class="keyword">ttl_seconds</span>=<span class="number">3600</span>,
     <span class="keyword">keypair</span>=<span class="type">keypair</span>,
-    <span class="keyword">holder</span>=<span class="type">keypair.public_key()</span>
+    <span class="keyword">holder</span>=<span class="type">keypair.public_key</span>
 )
 
 <span class="comment"># Set warrant in context before running agent</span>
