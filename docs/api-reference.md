@@ -202,12 +202,14 @@ from tenuo import Authorizer
 
 ```python
 Authorizer(
-    trusted_roots: List[PublicKey],
+    trusted_roots: Optional[List[PublicKey]] = None,
     clock_tolerance_secs: int = 30,
     pop_window_secs: int = 30,
     pop_max_windows: int = 4,
 )
 ```
+
+**Note:** For production use, always provide `trusted_roots` to validate the root issuer. Without it, chain verification only checks internal consistency.
 
 #### Instance Methods
 
@@ -504,12 +506,23 @@ Decorator for function-level authorization.
 from tenuo import lockdown
 ```
 
+#### Signature
+
+```python
+@lockdown(
+    warrant_or_tool=None,  # Warrant instance OR tool name string
+    tool=None,             # Tool name (if not passed as first arg)
+    keypair=None,          # Keypair for PoP (or use context)
+    mapping=None,          # Arg name → constraint name mapping
+)
+```
+
 #### Parameters
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `tool` | `str` | Yes | Tool name for authorization |
-| `warrant` | `Warrant` | No | Explicit warrant (or use context) |
+| `warrant_or_tool` | `Warrant \| str` | No | Warrant instance or tool name as first positional arg |
+| `tool` | `str` | Yes* | Tool name for authorization (*not needed if tool passed as first arg) |
 | `keypair` | `Keypair` | No | Keypair for PoP (or use context) |
 | `mapping` | `dict[str, str]` | No | Arg name → constraint name mapping |
 
@@ -527,10 +540,18 @@ async with root_task(tools=["read_file"], path="/data/*"):
     read_file("/data/test.txt")
 ```
 
-**Explicit warrant:**
+**Explicit warrant (positional):**
 
 ```python
-@lockdown(warrant=warrant, tool="read_file", keypair=agent_kp)
+@lockdown(warrant, tool="read_file", keypair=agent_kp)
+def read_file(path: str) -> str:
+    return open(path).read()
+```
+
+**Tool as first arg:**
+
+```python
+@lockdown("read_file")  # tool name as positional arg
 def read_file(path: str) -> str:
     return open(path).read()
 ```
