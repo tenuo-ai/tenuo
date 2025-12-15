@@ -41,8 +41,16 @@ fn test_enrollment_flow() {
     let mut control_guard = ProcessGuard(control);
 
     // 3. Read stdout to find ENROLLMENT TOKEN
-    let stdout = control_guard.0.stdout.take().expect("Failed to open stdout");
-    let stderr = control_guard.0.stderr.take().expect("Failed to open stderr");
+    let stdout = control_guard
+        .0
+        .stdout
+        .take()
+        .expect("Failed to open stdout");
+    let stderr = control_guard
+        .0
+        .stderr
+        .take()
+        .expect("Failed to open stderr");
     let reader = BufReader::new(stdout);
     let err_reader = BufReader::new(stderr);
 
