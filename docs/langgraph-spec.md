@@ -1,16 +1,16 @@
-# SecureGraph: Multi-Agent Warrant Management
+# Tenuo LangGraph Integration
 
-> **Status**: 📋 Design Specification - Not Implemented  
-> **Purpose**: Future direction for LangGraph integration  
-> **Current Workaround**: Use `@lockdown` decorator with LangGraph nodes
+> **Status**: ✅ Implemented (v0.1)  
+> **Future**: SecureGraph (v0.2) — see [securegraph-spec.md](./securegraph-spec.md)
 
 ---
 
 ## Problem
 
 In multi-agent systems, manually managing warrant attenuation is error-prone:
+
 ```python
-# Current: Manual attenuation at every delegation
+# Without Tenuo: Manual attenuation at every delegation
 researcher_warrant = root_warrant.attenuate(
     constraints={"file_path": Pattern("/tmp/research/*")},
     keypair=researcher_keypair
@@ -24,161 +24,9 @@ This becomes unmanageable as graphs grow.
 
 ---
 
-## Proposed Solution: SecureGraph
+## Solution: Two-Layer Security Model
 
-`SecureGraph` wraps LangGraph's `StateGraph` and automatically attenuates warrants based on a configuration file.
-```python
-from tenuo.langgraph import SecureGraph
-
-secure = SecureGraph(
-    graph=graph,
-    config="tenuo-graph.yaml",
-    root_warrant=root_warrant,
-    keypair=keypair
-)
-
-app = secure.compile()
-result = app.invoke({"input": "Research Q3 results"})
-# Warrants automatically attenuated at each node transition
-```
-
----
-
-## Configuration
-
-Security rules defined in YAML, separate from code:
-```yaml
-version: "1"
-
-defaults:
-  # Fail-closed: unlisted nodes are denied
-  deny_unlisted: true
-  
-  # Require validation on all interpolated values
-  require_validation: true
-
-nodes:
-  supervisor:
-    role: supervisor
-    # No attenuation - inherits root warrant
-
-  researcher:
-    attenuate:
-      tools:
-        - search
-        - read_file
-      constraints:
-        file_path:
-          pattern: "/tmp/research/*"
-
-  writer:
-    attenuate:
-      tools:
-        - write_file
-      constraints:
-        file_path:
-          pattern: "/tmp/output/*"
-```
-
----
-
-## Behavior
-
-### Warrant Stack
-
-SecureGraph maintains a stack to handle nested delegations:
-
-1. **Entry**: Push current warrant, activate attenuated warrant
-2. **Execution**: Node runs with attenuated warrant
-3. **Exit**: Pop stack, restore previous warrant
-```
-Supervisor (root warrant)
-    │
-    ├─► Researcher (attenuated: search, read_file)
-    │       │
-    │       └─► Fact Checker (further attenuated: read_file only)
-    │
-    └─► Writer (attenuated: write_file)
-```
-
-### State Interpolation
-
-Dynamic constraints from runtime state:
-```yaml
-researcher:
-  attenuate:
-    constraints:
-      file_path:
-        pattern: "/tmp/${state.project_id}/*"
-        validate: "^[a-zA-Z0-9_-]+$"  # Required
-```
-
-**Validation is mandatory.** Without it, `${state.project_id}` could be `../../../etc/passwd`.
-
-If validation regex is omitted, SecureGraph rejects the configuration at compile time.
-
----
-
-## Tool Protection
-
-Tools must be wrapped with `protect_tool` to read warrants from graph state:
-```python
-from tenuo.langgraph import protect_tool
-
-# Wrap tools
-search = protect_tool(search_func, name="search")
-read_file = protect_tool(read_file_func, name="read_file")
-```
-
-Unwrapped tools bypass security - this is the user's responsibility.
-
----
-
-## Audit Events
-
-All transitions and authorizations logged:
-
-| Event | Description |
-|-------|-------------|
-| `node.enter` | Warrant attenuated for node |
-| `node.exit` | Warrant restored from stack |
-| `tool.authorized` | Tool call permitted |
-| `tool.denied` | Tool call blocked |
-| `interpolation.validated` | State variable passed validation |
-| `interpolation.rejected` | State variable failed validation |
-
----
-
-## Known Limitations
-
-### Parallel Execution
-
-LangGraph copies state for parallel branches. This causes:
-
-- Each branch has independent warrant stack
-- Merge may lose stack state (depends on reducer)
-
-**Recommendation**: Avoid complex delegation chains in parallel branches. Simple fan-out/fan-in patterns work correctly.
-
-### No Cross-Graph Delegation
-
-SecureGraph manages warrants within a single graph. Delegation to external services or subgraphs requires manual warrant passing.
-
----
-
-## Open Questions
-
-1. **Keypair per node?** Should each node have its own keypair, or share the parent's?
-2. **Revocation integration**: How does SRL checking integrate with graph execution?
-3. **Subgraph support**: How do compiled subgraphs inherit warrant context?
-
----
-
-## Current Implementation (v0.1)
-
-Until SecureGraph is implemented, use the **two-layer model**:
-
-### Two-Layer Architecture
+Tenuo uses a **two-layer model** for LangGraph security:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -198,7 +46,9 @@ Until SecureGraph is implemented, use the **two-layer model**:
 - `@tenuo_node` without `@lockdown` = scoping with no enforcement
 - `@lockdown` without `@tenuo_node` = enforcement with no scoping
 
-### Example
+---
+
+## Example
 
 ```python
 from langgraph.graph import StateGraph
@@ -240,7 +90,20 @@ with root_task_sync(tools=["search", "write_file"], query="*", path="/*"):
     result = graph.compile().invoke({"query": "public data"})
 ```
 
-### Important Notes
+---
+
+## Why Two Layers?
+
+| Scenario | @tenuo_node | @lockdown | Result |
+|----------|-------------|-----------|--------|
+| Both | ✅ | ✅ | **Secure**: Scoped AND enforced |
+| Node only | ✅ | ❌ | ⚠️ Scoped but not enforced |
+| Tool only | ❌ | ✅ | ⚠️ Enforced but not scoped per-node |
+| Neither | ❌ | ❌ | ❌ No protection |
+
+---
+
+## Important Notes
 
 1. **Raw calls bypass Tenuo**: `await http_client.get(...)` is not protected.
    All tools you want governed MUST use `@lockdown` or `protect_tools()`.
@@ -252,33 +115,16 @@ with root_task_sync(tools=["search", "write_file"], query="*", path="/*"):
 3. **The tool wrapper is the gate**: Even if a node has a narrow scope,
    the tool wrapper is what actually blocks unauthorized calls.
 
-### Why Two Layers?
-
-| Scenario | @tenuo_node | @lockdown | Result |
-|----------|-------------|-----------|--------|
-| Both | ✅ | ✅ | **Secure**: Scoped AND enforced |
-| Node only | ✅ | ❌ | ⚠️ Scoped but not enforced |
-| Tool only | ❌ | ✅ | ⚠️ Enforced but not scoped per-node |
-| Neither | ❌ | ❌ | ❌ No protection |
-
 ---
 
-## Future: SecureGraph
+## Coming in v0.2: SecureGraph
 
-For the full SecureGraph implementation with:
-- Declarative YAML configuration
-- Automatic attenuation at graph edges
-- State interpolation with validation
-- Cycle protection mechanisms
-- Audit event integration
-
-See **[SecureGraph Specification](./securegraph-spec.md)** (v0.2+)
+For declarative authority policy with automatic attenuation at graph edges, see the [SecureGraph Specification](./securegraph-spec.md).
 
 ---
 
 ## See Also
 
-- [SecureGraph Specification](./securegraph-spec.md) - Full declarative graph security (v0.2+)
-- [LangChain Integration](./langchain-spec.md) - Tool protection for LangChain
-- [Core Specification](./spec.md) - Protocol fundamentals and cycle protection
-- [CLI Specification](./cli-spec.md) - Command-line interface
+- [LangChain Integration](./langchain-spec.md) — Tool protection for LangChain
+- [Core Specification](./spec.md) — Protocol fundamentals and cycle protection
+- [API Reference](./api-reference.md) — Full Python API documentation
