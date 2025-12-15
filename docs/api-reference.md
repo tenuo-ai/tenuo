@@ -517,6 +517,8 @@ Regex("^[a-z0-9_]+$")     # Matches lowercase alphanumeric with underscores
 Regex(".*\\.pdf$")        # Matches files ending in .pdf
 ```
 
+> **⚠️ Attenuation Limitation**: Regex patterns cannot be narrowed during attenuation. Child must use the **same pattern** as parent, or attenuate to `Exact()`. This is due to the undecidability of regex subset checking. See [Constraints → Regex Narrowing](./constraints#regex-narrowing) for details.
+
 ### Wildcard
 
 Matches any value. Use sparingly—prefer explicit constraints.

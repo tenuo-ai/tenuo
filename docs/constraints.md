@@ -197,6 +197,42 @@ Regex(r"^production-[a-z]+$")
 Regex(r"^[a-z]+@company\.com$")
 ```
 
+> **⚠️ Attenuation Limitation**: Regex constraints **cannot be narrowed** during attenuation.
+>
+> Child regex must have **identical pattern** to parent. This is because determining if one regex is a subset of another is mathematically undecidable in the general case.
+>
+> ```python
+> # Parent with regex
+> parent = Warrant.issue(
+>     tools=["query"],
+>     constraints={"env": Regex(r"^(staging|dev)-.*$")},
+>     ...
+> )
+>
+> # ❌ Cannot narrow to different regex (even if provably narrower)
+> child = parent.attenuate(
+>     constraints={"env": Regex(r"^staging-.*$")},  # FAILS
+>     ...
+> )
+>
+> # ✅ Can narrow to Exact value (if it matches parent regex)
+> child = parent.attenuate(
+>     constraints={"env": Exact("staging-web")},  # OK
+>     ...
+> )
+>
+> # ✅ Can keep same regex pattern
+> child = parent.attenuate(
+>     constraints={"env": Regex(r"^(staging|dev)-.*$")},  # OK
+>     ...
+> )
+> ```
+>
+> **Workaround**: If you need to narrow regex constraints during delegation:
+> 1. Use `Pattern()` instead (supports simple prefix/suffix narrowing)
+> 2. Attenuate to `Exact()` for specific values
+> 3. Keep the same regex in child warrants
+
 ---
 
 ### NotOneOf
@@ -347,6 +383,27 @@ warrant = Warrant.issue(
 
 When attenuating a warrant, child constraints must be **contained** within parent constraints.
 
+### Attenuation Compatibility Matrix
+
+| Parent Type | Can Attenuate To |
+|-------------|------------------|
+| `Wildcard()` | **Any** constraint type (universal) |
+| `Pattern()` | Pattern (if narrower), Exact (if matches), Regex |
+| `Regex()` | **Same** Regex only, Exact (if matches) |
+| `Exact()` | Same Exact only |
+| `OneOf()` | OneOf (subset), NotOneOf, Exact (if in set) |
+| `NotOneOf()` | NotOneOf (more exclusions) |
+| `Range()` | Range (narrower bounds) |
+| `Contains()` | Contains (more required values) |
+| `Subset()` | Subset (fewer allowed values) |
+| `All()` | All (more constraints) |
+| `CEL()` | CEL (conjunction with parent) |
+
+⚠️ **Key Limitations**:
+- **Regex**: Cannot narrow to different regex patterns (undecidable subset problem)
+- **Exact**: Cannot change value at all
+- **No attenuation TO Wildcard**: Would re-widen authority
+
 ### Pattern Narrowing
 
 ```python
@@ -385,6 +442,28 @@ child = parent.attenuate(constraints={"action": OneOf(["a", "b"])}, ...)
 # ❌ Child: ["a", "b", "d"] (adds "d" - FAILS)
 child = parent.attenuate(constraints={"action": OneOf(["a", "b", "d"])}, ...)
 ```
+
+### Regex Narrowing
+
+⚠️ **Regex constraints are conservative**: Child regex must have **identical pattern** to parent.
+
+```python
+# Parent: regex pattern
+parent = Warrant.issue(constraints={"env": Regex(r"^(staging|dev)-.*$")}, ...)
+
+# ❌ Cannot narrow to different regex (even if provably narrower)
+child = parent.attenuate(constraints={"env": Regex(r"^staging-.*$")}, ...)  # FAILS
+
+# ✅ Can keep same pattern
+child = parent.attenuate(constraints={"env": Regex(r"^(staging|dev)-.*$")}, ...)  # OK
+
+# ✅ Can narrow to Exact (if it matches parent regex)
+child = parent.attenuate(constraints={"env": Exact("staging-web")}, ...)  # OK
+```
+
+**Why**: Determining if one regex is a subset of another is undecidable in general. Tenuo takes a conservative approach for security.
+
+**Recommendation**: Use `Pattern()` for simple matching that needs attenuation, or `Exact()` for specific values.
 
 ---
 
