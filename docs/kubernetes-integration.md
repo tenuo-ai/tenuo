@@ -1,363 +1,232 @@
-# Tenuo + LangChain Kubernetes Integration Guide
+# Kubernetes Integration
 
-This guide shows how to deploy Tenuo-protected LangChain agents in Kubernetes.
+Tenuo provides primitives. You build the integration that fits your setup.
 
-## Architecture Overview
+---
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Control Plane (Issuer)                                      │
-│  - Issues warrants for agents                                │
-│  - Signs with root keypair                                    │
-│  - Updates K8s Secrets/ConfigMaps                             │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-                       │ Updates Secret
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Kubernetes Secret / ConfigMap                              │
-│  - Stores base64-encoded warrant                             │
-│  - Mounted to agent pods                                     │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-                       │ Mounted at /etc/tenuo/warrant.b64
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│  LangChain Agent Pods (Replicas)                            │
-│  - Load warrant at startup                                   │
-│  - Set warrant in context per-request                        │
-│  - All @lockdown functions protected                        │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-                       │ Request with warrant header
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Ingress / API Gateway                                      │
-│  - Validates warrant (optional)                              │
-│  - Forwards X-Tenuo-Warrant header                          │
-└─────────────────────────────────────────────────────────────┘
+## Primitives
+
+```python
+from tenuo import Warrant, Keypair, set_warrant_context, set_keypair_context
+
+# Load warrant from any source
+warrant = Warrant.from_base64(data)
+
+# Load keypair (required for PoP)
+keypair = Keypair.from_pem(pem_string)
+
+# Set in context
+with set_warrant_context(warrant), set_keypair_context(keypair):
+    await agent.invoke(...)
 ```
 
-## Deployment Patterns
+---
 
-### Pattern 1: Pod-Level Warrant (Static)
+## Pattern: Environment Variable
 
-Warrant is loaded once at pod startup and used for all requests.
-
-**Use Case:** Agent has fixed capabilities, warrant doesn't change per-request.
+Warrant and keypair loaded at pod startup from K8s Secret.
 
 ```yaml
+# kubernetes/secret.yaml
 apiVersion: v1
 kind: Secret
 metadata:
-  name: tenuo-warrant
+  name: tenuo-credentials
 type: Opaque
 stringData:
   WARRANT_BASE64: <base64-encoded-warrant>
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: langchain-agent
-spec:
-  template:
-    spec:
-      containers:
-      - name: agent
-        image: langchain-agent:latest
-        env:
-        - name: TENUO_WARRANT_BASE64
-          valueFrom:
-            secretKeyRef:
-              name: tenuo-warrant
-              key: WARRANT_BASE64
+  KEYPAIR_PEM: |
+    -----BEGIN PRIVATE KEY-----
+    ...
+    -----END PRIVATE KEY-----
 ```
-
-**Python Code:**
-```python
-import os
-from tenuo import Warrant, set_warrant_context, set_keypair_context, Keypair
-
-# Load warrant from environment variable
-warrant_base64 = os.getenv("TENUO_WARRANT_BASE64")
-warrant = Warrant.from_base64(warrant_base64)
-
-# Load keypair from secret (required for PoP)
-keypair_pem = os.getenv("TENUO_KEYPAIR_PEM")
-keypair = Keypair.from_pem(keypair_pem)
-
-# Use for all requests
-with set_warrant_context(warrant), set_keypair_context(keypair):
-    agent_executor.invoke({"input": prompt})
-```
-
-### Pattern 2: Per-Request Warrant (Dynamic)
-
-Warrant is passed in request headers, different per request.
-
-**Use Case:** Capabilities vary by user/tenant/request context.
 
 ```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: langchain-agent
-  annotations:
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      # Forward warrant header from client
-      proxy_set_header X-Tenuo-Warrant $http_x_tenuo_warrant;
+# kubernetes/deployment.yaml
+env:
+- name: TENUO_WARRANT_BASE64
+  valueFrom:
+    secretKeyRef:
+      name: tenuo-credentials
+      key: WARRANT_BASE64
+- name: TENUO_KEYPAIR_PEM
+  valueFrom:
+    secretKeyRef:
+      name: tenuo-credentials
+      key: KEYPAIR_PEM
 ```
 
-**Python Code (FastAPI):**
 ```python
-from fastapi import FastAPI, Request, Header
-from tenuo import set_warrant_context, set_keypair_context, Warrant, Keypair
+import os
+from tenuo import Warrant, Keypair, set_warrant_context, set_keypair_context
+
+warrant = Warrant.from_base64(os.getenv("TENUO_WARRANT_BASE64"))
+keypair = Keypair.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
+
+with set_warrant_context(warrant), set_keypair_context(keypair):
+    result = agent.invoke({"input": prompt})
+```
+
+---
+
+## Pattern: Request Header
+
+Warrant passed per-request, keypair loaded at startup.
+
+```python
+from fastapi import FastAPI, Request
+from tenuo import Warrant, Keypair, set_warrant_context, set_keypair_context
+import os
 
 app = FastAPI()
+keypair = Keypair.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
 
 @app.middleware("http")
 async def tenuo_middleware(request: Request, call_next):
-    # Get warrant and keypair from headers (or secrets)
-    warrant_header = request.headers.get("X-Tenuo-Warrant")
-    keypair_header = request.headers.get("X-Tenuo-Keypair") # Or load from env/secret
-    
-    if warrant_header and keypair_header:
-        warrant = Warrant.from_base64(warrant_header)
-        keypair = Keypair.from_pem(keypair_header)
-        
-        # Set BOTH in context
+    if header := request.headers.get("X-Tenuo-Warrant"):
+        warrant = Warrant.from_base64(header)
         with set_warrant_context(warrant), set_keypair_context(keypair):
             return await call_next(request)
-            
     return await call_next(request)
 ```
 
-### Pattern 3: Hybrid (Pod + Request)
+---
 
-Pod-level warrant as fallback, request header for override.
+## Pattern: Control Plane (Per-Request)
 
-**Use Case:** Default capabilities from pod warrant, enhanced capabilities per-request.
+Fetch warrant from control plane for each task.
+
+```python
+import httpx
+from tenuo import Warrant
+
+async def get_warrant(tools: list, constraints: dict, ttl: int = 60) -> Warrant:
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "http://control-plane.tenuo.svc.cluster.local:8080/v1/warrants",
+            json={
+                "tools": tools,
+                "constraints": constraints,
+                "ttl_seconds": ttl,
+                "holder": keypair.public_key.to_bytes().hex(),
+            }
+        )
+        return Warrant.from_base64(resp.json()["warrant"])
+
+# Usage
+warrant = await get_warrant(
+    tools=["read_file"],
+    constraints={"path": "/data/reports/*"},
+)
+```
+
+---
+
+## Pattern: Hybrid
+
+Default warrant from environment, override per-request.
 
 ```python
 import os
-from typing import Dict, Optional
 from tenuo import Warrant
 
-class KubernetesWarrantManager:
+class WarrantManager:
     def __init__(self):
-        # Load pod-level warrant at startup
         base64 = os.getenv("TENUO_WARRANT_BASE64")
-        self.pod_warrant = Warrant.from_base64(base64) if base64 else None
+        self.default = Warrant.from_base64(base64) if base64 else None
     
-    def get_warrant_for_request(self, headers: Dict[str, str]) -> Optional[Warrant]:
-        # Try request header first (most specific)
-        if "X-Tenuo-Warrant" in headers:
-            return Warrant.from_base64(headers["X-Tenuo-Warrant"])
-        
-        # Fall back to pod-level warrant
-        return self.pod_warrant
+    def for_request(self, headers: dict) -> Warrant:
+        if h := headers.get("X-Tenuo-Warrant"):
+            return Warrant.from_base64(h)
+        return self.default
+
+# Usage
+manager = WarrantManager()
+
+@app.middleware("http")
+async def tenuo_middleware(request: Request, call_next):
+    warrant = manager.for_request(dict(request.headers))
+    if warrant:
+        with set_warrant_context(warrant), set_keypair_context(keypair):
+            return await call_next(request)
+    return await call_next(request)
 ```
 
-## Control Plane Integration
+---
 
-### Option 1: Init Container
+## Pattern: Init Container
 
-Fetch warrant from control plane during pod startup.
+Fetch warrant during pod initialization.
 
 ```yaml
 spec:
   initContainers:
   - name: fetch-warrant
-    image: tenuo/fetch-warrant:latest
-    env:
-    - name: AGENT_ID
-      valueFrom:
-        fieldRef:
-          fieldPath: metadata.name
-    - name: CONTROL_PLANE_URL
-      value: "https://control-plane.tenuo.svc.cluster.local"
+    image: curlimages/curl:latest
+    command:
+    - sh
+    - -c
+    - |
+      curl -s http://control-plane:8080/v1/warrants \
+        -d '{"agent_id": "'$HOSTNAME'"}' \
+        -o /tenuo/warrant.b64
     volumeMounts:
-    - name: warrant
-      mountPath: /etc/tenuo
+    - name: tenuo
+      mountPath: /tenuo
   containers:
   - name: agent
     volumeMounts:
-    - name: warrant
-      mountPath: /etc/tenuo
+    - name: tenuo
+      mountPath: /tenuo
       readOnly: true
+  volumes:
+  - name: tenuo
+    emptyDir: {}
 ```
-
-### Option 2: Operator Pattern
-
-Kubernetes operator watches agent deployments and updates warrants.
-
-```yaml
-apiVersion: tenuo.io/v1
-kind: AgentWarrant
-metadata:
-  name: langchain-agent-warrant
-spec:
-  agentId: langchain-agent
-  constraints:
-    file_path: "/tmp/*"
-    user_id: "user-*"
-  ttl: 3600
-```
-
-### Option 3: Admission Webhook
-
-Mutating webhook injects warrant into pod spec at creation time.
-
-## FastAPI Integration
-
-Complete FastAPI example for Kubernetes:
 
 ```python
-from fastapi import FastAPI, Request
-from tenuo import set_warrant_context, set_keypair_context, Warrant, AuthorizationError, Keypair
-# KubernetesWarrantManager defined above
-
-app = FastAPI()
-warrant_manager = KubernetesWarrantManager()
-# Assume keypair is loaded from secret
-keypair = Keypair.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
-
-@app.middleware("http")
-async def tenuo_middleware(request: Request, call_next):
-    """Set warrant in context for each request."""
-    headers = dict(request.headers)
-    warrant = warrant_manager.get_warrant_for_request(headers)
-    
-    if not warrant:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="No warrant available")
-    
-    # Set BOTH warrant and keypair in context
-    with set_warrant_context(warrant), set_keypair_context(keypair):
-        return await call_next(request)
-
-@app.post("/agent/run")
-async def run_agent(prompt: str):
-    """Run LangChain agent with Tenuo protection."""
-    # Warrant is already in context from middleware
-    # All @lockdown functions are automatically protected
-    from langchain_agent import agent_executor
-    
-    try:
-        response = agent_executor.invoke({"input": prompt})
-        return {"output": response["output"]}
-    except AuthorizationError as e:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail=str(e))
+# Read warrant from init container output
+with open("/tenuo/warrant.b64") as f:
+    warrant = Warrant.from_base64(f.read().strip())
 ```
 
-## Security Considerations
+---
 
-### 1. Secret Management
+## Security Notes
 
-- **Use K8s Secrets** for warrant storage (not ConfigMaps)
-- **Rotate warrants** regularly (via TTL or manual updates)
-- **Use sealed-secrets** or external secret operators for production
+| Practice | Why |
+|----------|-----|
+| Use K8s Secrets, not ConfigMaps | Secrets are base64 encoded and can be encrypted at rest |
+| Keypair per pod | Compromise of one pod doesn't affect others |
+| Short TTLs | Limits blast radius of stolen warrants |
+| Network policies | Restrict which pods can reach control plane |
 
-### 2. Network Security
-
-- **Control plane** should be in separate namespace with network policies
-- **Agent pods** should not have direct access to control plane
-- **Use service mesh** (Istio/Linkerd) for mTLS between services
-
-### 3. Warrant Distribution
-
-- **Init containers** fetch warrants before agent starts
-- **Operators** manage warrant lifecycle
-- **Admission webhooks** inject warrants at pod creation
-
-### 4. Revocation
-
-- **Signed Revocation Lists (SRLs)** distributed via ConfigMap
-- **Authorizer** checks revocation list before authorizing
-- **Update SRL** to revoke compromised warrants
-
-## Monitoring and Observability
-
-### Metrics
-
-- Warrant load failures
-- Authorization failures (by tool, by constraint)
-- Warrant expiration warnings
-- Revocation list updates
-
-### Logging
-
-```python
-import logging
-
-logger = logging.getLogger("tenuo")
-
-@lockdown(tool="read_file")
-def read_file(file_path: str) -> str:
-    logger.info(f"Authorized read_file: {file_path}")
-    # ... implementation
-```
-
-### Tracing
-
-- Add warrant ID to trace context
-- Track warrant chain depth
-- Monitor constraint violations
-
-## Example: Complete Deployment
-
-See `examples/kubernetes_integration.py` for a complete working example.
-
-## Best Practices
-
-1. **Load warrant at startup** - Don't fetch on every request
-2. **Use request headers** - For dynamic per-request capabilities
-3. **Set context once** - In middleware, not in each route
-4. **Handle errors gracefully** - Return 403, not 500
-5. **Monitor warrant expiration** - Alert before TTL expires
-6. **Rotate warrants regularly** - Update secrets periodically
-7. **Use separate namespaces** - Control plane vs data plane
-8. **Enable network policies** - Restrict pod-to-pod communication
+---
 
 ## Troubleshooting
 
-### Warrant Not Loading
-
 ```python
-# Check environment
-warrant_base64 = os.getenv("TENUO_WARRANT_BASE64")
-if not warrant_base64:
-    # Try loading from file
-    try:
-        with open("/etc/tenuo/warrant.b64", "r") as f:
-            warrant_base64 = f.read().strip()
-    except FileNotFoundError:
-        pass
+import os
 
-if not warrant_base64:
-    raise RuntimeError("No warrant available")
+# Check if warrant is loaded
+warrant_b64 = os.getenv("TENUO_WARRANT_BASE64")
+if not warrant_b64:
+    raise RuntimeError("TENUO_WARRANT_BASE64 not set")
 
-warrant = Warrant.from_base64(warrant_base64)
+warrant = Warrant.from_base64(warrant_b64)
+
+# Check if expired
+if warrant.is_expired():
+    raise RuntimeError(f"Warrant expired at {warrant.expires_at}")
+
+# Check tools
+print(f"Authorized tools: {warrant.tools}")
 ```
 
-### Authorization Failures
-
-```python
-# Enable debug logging
-import logging
-logging.getLogger("tenuo").setLevel(logging.DEBUG)
-```
-
-### Context Not Propagating
-
-- Ensure `set_warrant_context` is called before async operations
-- Use `ContextVar` which propagates through `await` boundaries
-- Check that middleware is applied correctly
+---
 
 ## See Also
 
-- [LangChain Integration Examples](../tenuo-python/examples/langchain_simple.py)
-- [ContextVar Pattern](../tenuo-python/examples/context_pattern.py)
-- [Kubernetes Integration Example](../tenuo-python/examples/kubernetes_integration.py)
-
+- [LangChain Integration](./langchain.md)
+- [API Reference](./api-reference.md)
+- [Protocol](./protocol.md)
