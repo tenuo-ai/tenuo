@@ -10,6 +10,39 @@ description: Node scoping for LangGraph workflows
 
 ---
 
+## Quick Start
+
+```python
+from langgraph.graph import StateGraph
+from tenuo import configure, Keypair, lockdown, root_task
+from tenuo.langgraph import tenuo_node
+
+# Setup
+kp = Keypair.generate()
+configure(issuer_key=kp)
+
+# 1. Protect your tools (ENFORCEMENT layer)
+@lockdown(tool="search")
+async def search(query: str) -> list:
+    return [f"Result for {query}"]
+
+# 2. Scope your nodes (SCOPING layer)
+@tenuo_node(tools=["search"])
+async def researcher(state):
+    return {"results": await search(state["query"])}
+
+# 3. Build and run with root authority
+graph = StateGraph(dict)
+graph.add_node("researcher", researcher)
+graph.set_entry_point("researcher")
+graph.set_finish_point("researcher")
+
+async with root_task(tools=["search"]):
+    result = await graph.compile().ainvoke({"query": "test"})
+```
+
+---
+
 ## Problem
 
 In multi-agent systems, manually managing warrant attenuation is error-prone:
@@ -57,8 +90,12 @@ Tenuo uses a **two-layer model** for LangGraph security:
 
 ```python
 from langgraph.graph import StateGraph
-from tenuo import lockdown, root_task_sync
+from tenuo import configure, Keypair, lockdown, root_task
 from tenuo.langgraph import tenuo_node
+
+# Setup (once at startup)
+kp = Keypair.generate()
+configure(issuer_key=kp)
 
 # LAYER 2: Tool wrapper (ENFORCEMENT)
 # This is where authorization is actually checked
@@ -86,13 +123,17 @@ async def writer(state):
     return {"done": True}
 
 # Build graph
-graph = StateGraph(AgentState)
+graph = StateGraph(dict)
 graph.add_node("researcher", researcher)
 graph.add_node("writer", writer)
 
-# Run with root authority
-with root_task_sync(tools=["search", "write_file"], query="*", path="/*"):
-    result = graph.compile().invoke({"query": "public data"})
+# Run with root authority (async)
+async with root_task(tools=["search", "write_file"], query="*", path="/*"):
+    result = await graph.compile().ainvoke({"query": "public data"})
+
+# For sync code, use root_task_sync:
+# with root_task_sync(tools=["search", "write_file"], query="*", path="/*"):
+#     result = graph.compile().invoke({"query": "public data"})
 ```
 
 ---
@@ -150,9 +191,11 @@ async with root_task(tools=["search", "write_file"]):
 ### Debugging a Node
 
 ```python
+from tenuo import get_warrant_context
+from tenuo.langgraph import tenuo_node
+
 @tenuo_node(tools=["read_file"], path="/data/*")
 async def my_node(state):
-    from tenuo import get_warrant_context
     warrant = get_warrant_context()
     
     # Inspect active warrant
@@ -175,6 +218,18 @@ async def my_node(state):
 
 3. **The tool wrapper is the gate**: Even if a node has a narrow scope,
    the tool wrapper is what actually blocks unauthorized calls.
+
+4. **Async/Sync**: Use `root_task` (async) with `ainvoke()`, use `root_task_sync` (sync) with `invoke()`. The `@lockdown` decorator works with both sync and async functions.
+
+5. **String constraints are auto-converted to Pattern**:
+   ```python
+   @tenuo_node(tools=["search"], query="*public*")  # query becomes Pattern("*public*")
+   ```
+   For other constraint types, use explicit constructors:
+   ```python
+   from tenuo import Range, Exact
+   @tenuo_node(tools=["search"], max_results=Range(max=100), env=Exact("prod"))
+   ```
 
 ---
 
