@@ -279,7 +279,7 @@ Tenuo integrates with existing service meshes via external authorization:
 
 ## Relationship to CaMeL
 
-Tenuo implements the capability enforcement layer from "Defeating Prompt Injections by Design" (CaMeL, 2024).
+Tenuo implements the capability enforcement layer from [Defeating Prompt Injections by Design](https://arxiv.org/abs/2503.18813) (CaMeL, Debenedetti et al. 2025).
 
 | CaMeL Concept | Tenuo Implementation |
 |---------------|----------------------|
@@ -289,6 +289,8 @@ Tenuo implements the capability enforcement layer from "Defeating Prompt Injecti
 | Q-LLM holds tokens | Execution warrants |
 
 CaMeL is the architecture. Tenuo is the authorization primitive.
+
+See [Related Work](./related-work) for comparison with other approaches.
 
 ---
 
@@ -333,3 +335,4 @@ CaMeL is the architecture. Tenuo is the authorization primitive.
 - [API Reference](./api-reference) — Function signatures
 - [Deployment Patterns](./deployment) — Envoy, Istio, nginx integration
 - [Security](./security) — Detailed threat model
+- [Related Work](./related-work) — CaMeL, FIDES, and other approaches

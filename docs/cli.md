@@ -21,17 +21,16 @@ In Tenuo, a **warrant** is a cryptographically signed capability token that enco
 - **Stateless:** No config files or local database; keys and warrants passed as arguments
 - **Dev-first:** Human-readable output by default; `--json` for automation; `--quiet` for scripts
 
-**Non-goals (v0.1):**
+**Non-goals (`tenuo` CLI v0.1):**
 
-Tenuo CLI v0.1 focuses exclusively on capability issuance, attenuation, and verification. It does not provide:
+The `tenuo` CLI focuses on capability issuance, attenuation, and verification. It does not provide:
 
 - Policy engines or policy languages
 - Revocation infrastructure (SRL distribution, status endpoints)
 - Identity provisioning or key management beyond `keygen`
-- Network enforcement or service mesh integration
 - Warrant storage or persistence
 
-These concerns are intentionally deferred to keep the core model simple and auditable.
+For network enforcement and service mesh integration, see the [`tenuo-authorizer`](#authorizer-binary) binary below.
 
 ---
 
@@ -466,6 +465,141 @@ tenuo verify \
     --signature "$SIGNATURE" \
     --trusted-issuer issuer.pub \
     -- "$PAYLOAD"
+```
+
+---
+
+---
+
+## Authorizer Binary
+
+**Binary:** `tenuo-authorizer`
+
+**Purpose:** Data plane authorization service for gateway integration (Envoy ext_authz, nginx auth_request, etc.).
+
+### `serve`
+
+Run Tenuo as an HTTP authorization service.
+```
+tenuo-authorizer serve --config <CONFIG> [OPTIONS]
+```
+
+**Required:**
+
+| Flag | Description |
+|------|-------------|
+| `--config`, `-c` | Path to gateway configuration YAML file |
+
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `--port`, `-p` | Port to listen on (default: `9090`) |
+| `--bind`, `-b` | Bind address (default: `0.0.0.0`) |
+
+**Global Options:**
+
+| Flag | Env Var | Description |
+|------|---------|-------------|
+| `--trusted-keys` | `TENUO_TRUSTED_KEYS` | Comma-separated trusted public keys (hex) |
+| `--revocation-list` | `TENUO_REVOCATION_LIST` | Path to signed revocation list (CBOR) |
+
+**Behavior:**
+
+1. Listens for HTTP requests on specified port
+2. Extracts constraints from request based on config (path params, headers, body)
+3. Reads warrant from `X-Tenuo-Warrant` header
+4. Reads PoP signature from `X-Tenuo-PoP` header
+5. Verifies warrant chain, constraints, and PoP
+6. Returns `200 OK` (authorized) or `403 Forbidden` (unauthorized)
+
+**Example:**
+```bash
+# Start authorizer with gateway config
+$ tenuo-authorizer serve \
+    --config ./gateway.yaml \
+    --port 9090 \
+    --trusted-keys "8f4a...control_plane_pubkey"
+
+# Or using environment variables
+$ TENUO_TRUSTED_KEYS="8f4a..." tenuo-authorizer serve \
+    --config ./gateway.yaml
+```
+
+**Gateway Config Example:**
+```yaml
+settings:
+  warrant_header: "X-Tenuo-Warrant"
+  pop_header: "X-Tenuo-PoP"
+  clock_tolerance_secs: 30
+
+tools:
+  read_file:
+    constraints:
+      path:
+        source: path
+        key: "filename"
+
+routes:
+  - pattern: "/files/{filename}"
+    method: GET
+    tool: read_file
+```
+
+See [Gateway Configuration](./gateway-config) for full configuration reference.
+
+---
+
+### `verify`
+
+Verify and authorize a single warrant (for scripting/testing).
+```
+tenuo-authorizer verify --tool <TOOL> [OPTIONS]
+```
+
+**Required:**
+
+| Flag | Description |
+|------|-------------|
+| `--tool`, `-t` | Tool name to authorize |
+
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `--warrant`, `-w` | Warrant (base64, or `-` for stdin) |
+| `--arg`, `-a` | Arguments in `key=value` format (repeatable) |
+| `--output`, `-o` | Output format: `exit-code`, `json`, or `quiet` (default: `exit-code`) |
+
+**Example:**
+```bash
+$ tenuo-authorizer verify \
+    --warrant "$WARRANT" \
+    --tool read_file \
+    --arg "path=/data/readme.md"
+```
+
+---
+
+### `check`
+
+Check if a warrant is structurally valid (no authorization, just verification).
+```
+tenuo-authorizer check --warrant <WARRANT>
+```
+
+**Example:**
+```bash
+$ tenuo-authorizer check --warrant "$WARRANT"
+```
+
+---
+
+### `info`
+
+Print authorizer configuration info.
+```
+tenuo-authorizer info
 ```
 
 ---

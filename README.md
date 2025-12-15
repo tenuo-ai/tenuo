@@ -6,6 +6,8 @@ Identity is dead for Agents. Standard IAM answers "Who are you?" Tenuo answers "
 
 It is a cryptographically verifiable, offline authorization engine for AI Agents. Built in Rust, consumed in Python.
 
+*Inspired by [Macaroons](https://research.google/pubs/pub41892/), [Biscuit](https://www.biscuitsec.org/), and [UCAN](https://ucan.xyz/).*
+
 [![Crate](https://img.shields.io/crates/v/tenuo-core.svg)](https://crates.io/crates/tenuo-core)
 [![PyPI](https://img.shields.io/pypi/v/tenuo.svg)](https://pypi.org/project/tenuo/)
 [![Docs](https://docs.rs/tenuo-core/badge.svg)](https://docs.rs/tenuo-core)
