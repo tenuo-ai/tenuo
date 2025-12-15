@@ -92,17 +92,23 @@ tenuo issue --signing-key <KEY> --holder <KEY> [OPTIONS]
 | Flag | Description |
 |------|-------------|
 | `--signing-key`, `-k` | Path to issuer's private key (PEM) |
-| `--holder`, `-h` | Holder's public key: path to PEM file or base64 string |
+| `--holder` | Holder's public key: path to PEM file or base64 string |
 
 **Options:**
 
 | Flag | Description |
 |------|-------------|
-| `--tool`, `-t` | Comma-separated allowed tools (e.g., `search,read_file`) |
+| `--type` | Warrant type: `execution` (default) or `issuer` |
+| `--tool`, `-t` | Comma-separated allowed tools (required for execution warrants) |
+| `--issuable-tools` | Comma-separated issuable tools (required for issuer warrants) |
+| `--trust-ceiling` | Trust ceiling for issuer warrants: `external`, `internal`, or `system` |
+| `--max-issue-depth` | Maximum issue depth for issuer warrants |
+| `--trust-level` | Trust level: `external`, `internal`, or `system` |
 | `--ttl` | Validity duration (default: `5m`). Formats: `300s`, `10m`, `1h` |
 | `--id` | Warrant ID (default: generated `wrt_...`) |
 | `--constraint`, `-c` | Add constraint (repeatable). See constraint syntax below. |
 | `--constraint-json` | Add constraint as JSON (for complex values). See below. |
+| `--constraint-bound` | Add constraint bound for issuer warrants (repeatable) |
 | `--json` | Output as JSON |
 | `--quiet`, `-q` | Output warrant string only, no decoration |
 
@@ -126,7 +132,7 @@ JSON format for complex values (regex with special characters, etc.):
 --constraint-json '{"path":{"regex":"^/data/[^/]+/.*"}}'
 ```
 
-**Example:**
+**Example (execution warrant):**
 ```bash
 $ tenuo issue \
     --signing-key ./issuer.key \
@@ -134,6 +140,18 @@ $ tenuo issue \
     --tool search,read_file \
     --constraint "path=pattern:/data/project-1/*" \
     --ttl 1h
+```
+
+**Example (issuer warrant):**
+```bash
+$ tenuo issue \
+    --signing-key ./issuer.key \
+    --holder ./orchestrator.pub \
+    --type issuer \
+    --issuable-tools read_file,send_email \
+    --trust-ceiling internal \
+    --max-issue-depth 3 \
+    --ttl 24h
 ```
 
 ---
@@ -159,13 +177,16 @@ tenuo attenuate [OPTIONS] <WARRANT>
 
 | Flag | Description |
 |------|-------------|
-| `--holder`, `-h` | Child's public key. If omitted, self-attenuates (same holder). |
+| `--parent-key` | Parent warrant issuer's private key (PEM) for chain link signature. If omitted, assumes same as `--signing-key`. |
+| `--holder` | Child's public key. If omitted, self-attenuates (same holder). |
 | `--tool`, `-t` | Subset of tools to retain (must be subset of parent) |
 | `--ttl` | New TTL (must be ≤ parent's remaining TTL) |
 | `--constraint`, `-c` | Narrowing constraints (must not widen parent's constraints) |
 | `--constraint-json` | Narrowing constraint as JSON |
 | `--json` | Output as JSON |
 | `--quiet`, `-q` | Output warrant string only |
+| `--diff` | Show diff of what changed (tools, constraints, TTL) |
+| `--preview` | Preview only - show what would change without creating warrant |
 
 **Enforcement:**
 
@@ -188,6 +209,24 @@ $ tenuo issue ... | tenuo attenuate - \
     --holder ./worker.pub \
     --tool read_file \
     --constraint "path=exact:/data/project-1/readme.md"
+```
+
+**Example (preview mode):**
+```bash
+$ tenuo attenuate "$WARRANT" \
+    --signing-key ./agent.key \
+    --tool read_file \
+    --preview
+# Shows what would change without creating the warrant
+```
+
+**Example (diff mode):**
+```bash
+$ tenuo attenuate "$WARRANT" \
+    --signing-key ./agent.key \
+    --holder ./worker.pub \
+    --diff
+# Creates warrant and shows what changed
 ```
 
 ---
@@ -407,6 +446,67 @@ DELEGATION CHAIN:
 **Expired warrant:**
 ```
 Status:      ❌ EXPIRED (2m ago)
+```
+
+---
+
+### `extract`
+
+Test extraction rules against a sample request (dry run). Useful for debugging gateway configurations.
+```
+tenuo extract --config <CONFIG> --request <JSON> --path <PATH> [OPTIONS]
+```
+
+**Required:**
+
+| Flag | Description |
+|------|-------------|
+| `--config`, `-c` | Path to gateway configuration YAML file |
+| `--request`, `-r` | Sample request JSON (inline or `@filename`) |
+| `--path`, `-p` | Request path (e.g., `/api/v1/clusters/prod/scale`) |
+
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `--method` | HTTP method (default: `POST`) |
+| `--header`, `-H` | Additional headers as `key=value` pairs (repeatable) |
+| `--query`, `-q` | Query parameters as `key=value` pairs (repeatable) |
+| `--verbose`, `-v` | Show verbose extraction trace |
+| `--output` | Output format: `text` (default) or `json` |
+
+**Example:**
+```bash
+$ tenuo extract \
+    --config ./gateway.yaml \
+    --request '{"cluster": "staging-web", "replicas": 3}' \
+    --path /api/v1/clusters/staging-web/scale \
+    --method POST
+```
+
+---
+
+### `validate-config`
+
+Validate a gateway configuration file.
+```
+tenuo validate-config --config <CONFIG>
+```
+
+**Options:**
+
+| Flag | Description |
+|------|-------------|
+| `--config`, `-c` | Path to gateway configuration YAML file |
+
+**Example:**
+```bash
+$ tenuo validate-config --config ./gateway.yaml
+✅ Configuration is valid.
+
+Summary:
+  Tools:  3
+  Routes: 5
 ```
 
 ---

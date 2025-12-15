@@ -15,7 +15,8 @@ different authority per task phase.
 """
 
 from tenuo import (
-    Keypair, Warrant, Pattern, Range, Authorizer,
+    Keypair, Warrant, Pattern, Range, Wildcard,
+    Authorizer,
     ChainVerificationResult,
     lockdown, set_warrant_context, set_keypair_context,
     AuthorizationError
@@ -203,7 +204,7 @@ def main():
         keypair=control_plane_keypair,
         holder=orchestrator_keypair.public_key,
         constraints={
-            "query": Pattern("*"),  # Any query allowed
+            "query": Wildcard(),  # Any query allowed
             "url": Pattern("https://*"),  # Any HTTPS URL
             "path": Pattern("/output/*"),  # Any path under /output
         },
