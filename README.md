@@ -293,12 +293,14 @@ This demonstrates the complete flow: warrant issuance, attenuation, delegation, 
 
 ## Roadmap
 
-The following features are implemented in the core engine but not yet fully exposed in the CLI or Python SDK:
-
+### v0.2 (Planned)
+- **LangGraph SecureGraph**: Declarative warrant attenuation in multi-agent graphs
 - **Multi-sig approvals**: M-of-N approval for sensitive actions
 - **Cascading revocation**: Surgical (one warrant) or nuclear (entire agent swarm) revocation
-- **LangGraph SecureGraph**: Automatic warrant attenuation in multi-agent graphs
-- **Framework packages**: `tenuo-langchain`, `tenuo-fastapi`, `tenuo-mcp` (based on demand)
+- **`tenuo-mcp` package**: Standalone MCP server wrapper (core MCP support already in v0.1)
+
+### Future
+- **Framework packages**: `tenuo-langchain`, `tenuo-fastapi` (based on demand)
 
 ## MCP (Model Context Protocol) Integration
 
@@ -354,7 +356,7 @@ Your services keep their existing IAM. Tenuo adds a **delegation layer** that tr
 ## Documentation
 
 ### Getting Started
-- **[Website](https://tenuo.github.io/tenuo/)**: Landing page and overview
+- **[Website](https://tenuo.ai)**: Landing page and overview
 - **[Concepts](docs/concepts.md)**: Why Tenuo? Problem/solution, threat model
 - **[Protocol](docs/protocol.md)**: How it works (for implementers)
 

@@ -261,8 +261,30 @@ See [Constraints](./constraints) for the full list.
 
 - **[Concepts](./concepts)** — Why Tenuo? Threat model, core invariants
 - **[Protocol](./protocol)** — How it works under the hood
-- **[API Reference](./api-reference)** — Complete Python SDK docs
+- **[API Reference](./api-reference)** — Complete Python SDK docs (includes MCP)
 - **[CLI Reference](./cli-spec)** — Full CLI documentation
 - **[LangChain](./langchain)** — Protect LangChain tools
 - **[LangGraph](./langgraph)** — Scope LangGraph nodes
 - **[Security](./security)** — Threat model, best practices
+
+---
+
+## MCP Integration
+
+Tenuo supports [Model Context Protocol](https://modelcontextprotocol.io) natively:
+
+```python
+from tenuo import McpConfig, CompiledMcpConfig
+
+# Load MCP config
+config = McpConfig.from_file("mcp-config.yaml")
+compiled = CompiledMcpConfig.compile(config)
+
+# Extract constraints from MCP tool call
+result = compiled.extract_constraints("filesystem_read", {"path": "/var/log/app.log"})
+
+# Authorize using extracted constraints
+authorized = warrant.authorize("filesystem_read", result.constraints, pop_sig)
+```
+
+See [API Reference → MCP Integration](./api-reference#mcp-integration) for details.

@@ -2223,25 +2223,41 @@ protect_tool(tool, name=None) -> Callable
 TOOL_SCHEMAS  # Recommended constraints per tool
 ```
 
-### LangGraph (`tenuo.langgraph`) (Future)
+### LangGraph (`tenuo.langgraph`)
 
 ```python
-SecureGraph(graph, config)
+# v0.1 (Implemented)
+@tenuo_node(tools=["read_file"], path="/data/*")  # Node-level scoping
+@require_warrant  # Explicit warrant requirement
+
+# v0.2 (Planned - see securegraph-spec.md)
+SecureGraph(graph, config)  # Declarative attenuation
 TENUO_WARRANT, TENUO_STACK  # State keys
+```
+
+### MCP (`tenuo_core.mcp`)
+
+```python
+# v0.1 (Implemented)
+McpConfig.from_file("mcp-config.yaml")
+CompiledMcpConfig.compile(config)
+compiled.extract_constraints("tool_name", arguments)
+compiled.validate()  # Check for incompatible extraction sources
 ```
 
 ---
 
 ## 24. Implementation Phases
 
-### v0.1: Core
+### v0.1: Core (Current Release)
 
 | Component | Status |
 |-----------|--------|
 | **Tiered API** | |
-| scoped_task() - Tier 1 | ✅ |
-| .delegate() - Tier 2 | ✅ |
-| .attenuate() builder - Tier 3 | ✅ |
+| `configure()` global config | ✅ |
+| `root_task()` / `root_task_sync()` | ✅ |
+| `scoped_task()` | ✅ |
+| `.attenuate()` builder | ✅ |
 | **Warrant Model** | |
 | Warrant (execution + issuer types) | ✅ |
 | Constraints (Exact, Pattern, Range, OneOf, NotOneOf, Regex, Wildcard) | ✅ |
@@ -2252,37 +2268,46 @@ TENUO_WARRANT, TENUO_STACK  # State keys
 | Mandatory PoP (with max_age enforcement) | ✅ |
 | Required narrowing | ✅ |
 | Monotonicity verification | ✅ |
-| Chain limits (length, bytes, tools, constraints) | ✅ |
+| Chain limits (depth 64, chain length 8) | ✅ |
+| Issuer-holder separation | ✅ |
+| Self-issuance prevention | ✅ |
 | Pass-through controls (TENUO_ALLOW_PASSTHROUGH) | ✅ |
 | **Runtime** | |
 | Authorizer | ✅ |
 | TrustLevel (data model, enforcement opt-in) | ✅ |
 | DelegationDiff / DelegationReceipt | ✅ |
 | Middleware patterns | ✅ |
-| **Integrations** | |
-| protect_tools (LangChain) | ✅ |
+| **Python SDK** | |
+| `@lockdown` decorator | ✅ |
+| `protect_tools()` (LangChain) | ✅ |
+| `@tenuo_node` (LangGraph) | ✅ |
 | Tool constraint schemas | ✅ |
-| SRL (optional) | ✅ |
 | Audit logging | ✅ |
+| **MCP Integration** | |
+| `McpConfig` / `CompiledMcpConfig` | ✅ |
+| Constraint extraction from MCP calls | ✅ |
+| Python bindings | ✅ |
+| **CLI** | |
+| `keygen`, `issue`, `attenuate`, `verify`, `inspect` | ✅ |
+| `--diff` and `--preview` flags | ✅ |
 
-### v0.2: Trust + Integration
+### v0.2: SecureGraph + Trust
 
 | Component | Status |
 |-----------|--------|
-| Trust enforcement (opt-in) | Planned |
-| AuthorizationContext | Planned |
-| Context propagation (contextvars) | Planned |
-| SecureGraph (LangGraph) | Planned |
-| Framework integrations | Planned |
+| SecureGraph (declarative LangGraph attenuation) | 📋 Design |
+| Trust enforcement (opt-in) | 📋 Design |
+| `tenuo-mcp` standalone package | 📋 Planned |
+| Multi-sig approvals | 📋 Planned |
+| Cascading revocation | 📋 Planned |
 
 ### v0.3: Ecosystem
 
 | Component | Status |
 |-----------|--------|
-| @lockdown decorator | Planned |
-| Dynamic constraints `${state.*}` | Planned |
-| Human-in-the-loop patterns | Planned |
-| Additional framework integrations | Planned |
+| Dynamic constraints `${state.*}` | 📋 Planned |
+| Human-in-the-loop patterns | 📋 Planned |
+| Additional framework integrations | 📋 Planned |
 
 ---
 
