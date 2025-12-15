@@ -70,6 +70,56 @@ Each task carries exactly the authority it needs. No more, no less.
 
 ---
 
+## Cycle Protection
+
+Cyclic delegation could exhaust memory/CPU or create infinite loops. Tenuo uses multiple defense layers:
+
+### Layer 1: Warrant ID Tracking
+
+During chain verification, each warrant ID is tracked in a HashSet:
+
+```
+chain[0].id → seen
+chain[1].id → seen
+chain[2].id → ERROR if already seen ("cycle detected")
+```
+
+If the same warrant appears twice → verification fails.
+
+### Layer 2: Chain Length Limits
+
+| Limit | Value | Effect |
+|-------|-------|--------|
+| `MAX_ISSUER_CHAIN_LENGTH` | 8 | Max embedded chain links |
+| `MAX_DELEGATION_DEPTH` | 64 | Max payload depth counter |
+
+Even if cycles somehow formed, verification stops at 8 links.
+
+### Layer 3: Monotonic Attenuation
+
+Every delegation MUST strictly narrow scope:
+- Tools can only shrink (never add new tools)
+- Constraints can only tighten (never loosen)
+- TTL can only decrease (never extend)
+- `max_depth` can only decrease (never increase)
+
+This means **holder cycling is safe**: A→B→A creates 3 different warrants, each strictly weaker. The third warrant (back to A) has less authority than A started with.
+
+### Layer 4: Terminal Warrants
+
+A warrant with `max_depth = current_depth + 1` cannot delegate further. This is cryptographically enforced - the signed payload prevents modification.
+
+### What's Blocked vs Allowed
+
+| Pattern | Status | Reason |
+|---------|--------|--------|
+| Same warrant ID twice in chain | ❌ Blocked | Cycle detection |
+| Holder A→B→A (different warrants) | ✅ Allowed | Monotonicity makes it safe |
+| Self-issuance (issuer warrant) | ❌ Blocked | Privilege escalation |
+| Chain > 8 links | ❌ Blocked | DoS protection |
+
+---
+
 ## Threat Model
 
 ### Protected

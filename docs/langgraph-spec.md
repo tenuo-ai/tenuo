@@ -263,19 +263,22 @@ with root_task_sync(tools=["search", "write_file"], query="*", path="/*"):
 
 ---
 
-## Timeline
+## Future: SecureGraph
 
-| Milestone | Target |
-|-----------|--------|
-| Design finalized | v0.2 |
-| Prototype | v0.3 |
-| Production ready | v0.4 |
+For the full SecureGraph implementation with:
+- Declarative YAML configuration
+- Automatic attenuation at graph edges
+- State interpolation with validation
+- Cycle protection mechanisms
+- Audit event integration
+
+See **[SecureGraph Specification](./securegraph-spec.md)** (v0.2+)
 
 ---
 
 ## See Also
 
-- [LangChain Integration](./langchain-spec.md) (implemented)
-- [Security Review](./langgraph-security-review.md)
-- [CLI Specification](./cli-spec.md)
-- [Core Specification](./spec.md)
+- [SecureGraph Specification](./securegraph-spec.md) - Full declarative graph security (v0.2+)
+- [LangChain Integration](./langchain-spec.md) - Tool protection for LangChain
+- [Core Specification](./spec.md) - Protocol fundamentals and cycle protection
+- [CLI Specification](./cli-spec.md) - Command-line interface
