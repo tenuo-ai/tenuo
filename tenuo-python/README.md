@@ -37,14 +37,14 @@ keypair = Keypair.generate()
 
 # Issue a warrant with constraints
 warrant = Warrant.issue(
-    tool="manage_infrastructure",
+    tools="manage_infrastructure",  # Can also be a list: ["tool1", "tool2"]
     constraints={
         "cluster": Pattern("staging-*"),
         "budget": Range.max_value(10000.0)
     },
     ttl_seconds=3600,
     keypair=keypair,
-    holder=keypair.public_key()  # Bind to self initially
+    holder=keypair.public_key  # Bind to self initially
 )
 
 # Attenuate for a worker (capabilities shrink)
@@ -56,7 +56,7 @@ worker_warrant = warrant.attenuate(
     },
     keypair=worker_keypair,       # Subject keypair
     parent_keypair=keypair,       # Parent signs the attenuation
-    holder=worker_keypair.public_key()  # Bind to worker
+    holder=worker_keypair.public_key  # Bind to worker
 )
 
 # Authorize an action (requires Proof-of-Possession)
@@ -94,7 +94,7 @@ The `Keypair.secret_key_bytes()` method creates a copy of the secret key in Pyth
 - **Don't store secret keys in long-lived variables**: Avoid keeping secret key bytes in variables that persist across function calls
 - **Use Rust for production key management**: For high-security deployments, consider using the Rust API directly, which provides better memory safety guarantees
 
-**For most use cases**, you should not need to access secret key bytes directly. The `Keypair` object handles signing operations internally, and you can use `public_key()` to share public keys.
+**For most use cases**, you should not need to access secret key bytes directly. The `Keypair` object handles signing operations internally, and you can use `public_key` (property) to share public keys.
 
 ### Memory Safety
 
@@ -113,11 +113,11 @@ Use the `@lockdown` decorator to enforce authorization. It supports two patterns
 from tenuo import lockdown, Warrant, Pattern, Range
 
 warrant = Warrant.issue(
-    tool="upgrade_cluster",
+    tools="upgrade_cluster",
     constraints={"cluster": Pattern("staging-*")},
     ttl_seconds=3600,
     keypair=keypair,
-    holder=keypair.public_key()
+    holder=keypair.public_key
 )
 
 @lockdown(warrant, tool="upgrade_cluster")
@@ -186,11 +186,11 @@ def read_file(file_path: str) -> str:
 # 2. Create warrant that restricts access
 keypair = Keypair.generate()
 warrant = Warrant.issue(
-    tool="read_file",
+    tools="read_file",
     constraints={"file_path": Pattern("/tmp/*")},  # Only /tmp/ files
     ttl_seconds=3600,
     keypair=keypair,
-    holder=keypair.public_key()
+    holder=keypair.public_key
 )
 
 # 3. Create LangChain tools and agent
@@ -219,9 +219,9 @@ from langchain_community.tools import DuckDuckGoSearchRun
 # Create warrant and keypair first
 keypair = Keypair.generate()
 warrant = Warrant.issue(
-    tool="search",
+    tools="search",
     keypair=keypair,
-    holder=keypair.public_key(),
+    holder=keypair.public_key,
     constraints={"query": Pattern("*")},  # Or specific constraints
     ttl_seconds=3600
 )

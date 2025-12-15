@@ -47,9 +47,9 @@ print("="*70)
 
 # Control plane issues broad warrant to orchestrator
 root_warrant = Warrant.issue(
-    tool="file_operations",  # Broad capability
+    tools="file_operations",  # Broad capability
     keypair=control_kp,
-    holder=orchestrator_kp.public_key(),
+    holder=orchestrator_kp.public_key,
     constraints={
         "path": Pattern("/data/*"),  # Broad path access
     },
@@ -57,7 +57,7 @@ root_warrant = Warrant.issue(
 )
 
 print("\n✓ Issued root warrant to orchestrator")
-print(f"  Tool: {root_warrant.tool}")
+print(f"  Tools: {root_warrant.tools}")
 print(f"  Depth: {root_warrant.depth}")
 print("  Constraints: path must match /data/*")
 print("  TTL: 3600 seconds")
@@ -78,12 +78,12 @@ worker_warrant = root_warrant.attenuate(
     },
     keypair=orchestrator_kp,
     parent_keypair=control_kp,  # Parent signs the chain link
-    holder=worker_kp.public_key(),
+    holder=worker_kp.public_key,
     ttl_seconds=60  # Much shorter TTL
 )
 
 print("\n✓ Attenuated warrant for worker")
-print(f"  Tool: {worker_warrant.tool}")
+print(f"  Tools: {worker_warrant.tools}")
 print(f"  Depth: {worker_warrant.depth}")
 print("  Constraints: path must match /data/reports/* (narrower!)")
 print("  TTL: 60 seconds (shorter!)")

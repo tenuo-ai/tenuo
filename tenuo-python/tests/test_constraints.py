@@ -26,9 +26,9 @@ def test_pattern_constraint_matching():
     
     kp = Keypair.generate()
     warrant = Warrant.issue(
-        tool="file_ops",
+        tools="file_ops",
         keypair=kp,
-        holder=kp.public_key(),
+        holder=kp.public_key,
         constraints={"path": Pattern("/data/*")},
         ttl_seconds=60
     )
@@ -52,9 +52,9 @@ def test_exact_constraint_matching():
     
     kp = Keypair.generate()
     warrant = Warrant.issue(
-        tool="delete_db",
+        tools="delete_db",
         keypair=kp,
-        holder=kp.public_key(),
+        holder=kp.public_key,
         constraints={"db_name": Exact("test-db")},
         ttl_seconds=60
     )
@@ -80,9 +80,9 @@ def test_multiple_constraints():
     
     kp = Keypair.generate()
     warrant = Warrant.issue(
-        tool="transfer_money",
+        tools="transfer_money",
         keypair=kp,
-        holder=kp.public_key(),
+        holder=kp.public_key,
         constraints={
             "account": Pattern("checking-*"),
             "amount": Exact("100")
@@ -116,9 +116,9 @@ def test_constraint_attenuation():
     
     # Parent with broad constraint
     parent = Warrant.issue(
-        tool="file_ops",
+        tools="file_ops",
         keypair=kp,
-        holder=kp.public_key(),
+        holder=kp.public_key,
         constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
@@ -128,7 +128,7 @@ def test_constraint_attenuation():
         constraints={"path": Pattern("/data/reports/*")},
         keypair=kp,
         parent_keypair=kp,
-        holder=kp.public_key(),
+        holder=kp.public_key,
         ttl_seconds=60
     )
     
@@ -156,9 +156,9 @@ def test_constraint_field_addition():
     
     # Parent with one constraint
     parent = Warrant.issue(
-        tool="api_call",
+        tools="api_call",
         keypair=kp,
-        holder=kp.public_key(),
+        holder=kp.public_key,
         constraints={"endpoint": Pattern("/api/*")},
         ttl_seconds=3600
     )
@@ -171,7 +171,7 @@ def test_constraint_field_addition():
         },
         keypair=kp,
         parent_keypair=kp,
-        holder=kp.public_key(),
+        holder=kp.public_key,
         ttl_seconds=60
     )
     
@@ -206,9 +206,9 @@ def test_missing_constraint_parameter():
     
     kp = Keypair.generate()
     warrant = Warrant.issue(
-        tool="test_tool",
+        tools="test_tool",
         keypair=kp,
-        holder=kp.public_key(),
+        holder=kp.public_key,
         constraints={"required": Exact("value")},
         ttl_seconds=60
     )

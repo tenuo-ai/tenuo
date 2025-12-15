@@ -69,7 +69,7 @@ def load_agent_keypair() -> Keypair:
 
 # Load keypair at startup
 AGENT_KEYPAIR = load_agent_keypair()
-logger.info(f"Agent keypair loaded (public key: {AGENT_KEYPAIR.public_key().to_bytes()[:8].hex()}...)")
+logger.info(f"Agent keypair loaded (public key: {AGENT_KEYPAIR.public_key.to_bytes()[:8].hex()}...)")
 
 # ============================================================================
 # FastAPI App
@@ -328,7 +328,7 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
     read_warrant = Warrant.issue(
         tool="read_file",
         keypair=AGENT_KEYPAIR,
-        holder=AGENT_KEYPAIR.public_key(),
+        holder=AGENT_KEYPAIR.public_key,
         constraints={"file_path": Pattern("/tmp/*")},
         ttl_seconds=3600
     )
@@ -336,7 +336,7 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
     write_warrant = Warrant.issue(
         tool="write_file",
         keypair=AGENT_KEYPAIR,
-        holder=AGENT_KEYPAIR.public_key(),
+        holder=AGENT_KEYPAIR.public_key,
         constraints={"file_path": Pattern("/tmp/*")},
         ttl_seconds=3600
     )
@@ -344,7 +344,7 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
     cluster_warrant = Warrant.issue(
         tool="manage_cluster",
         keypair=AGENT_KEYPAIR,
-        holder=AGENT_KEYPAIR.public_key(),
+        holder=AGENT_KEYPAIR.public_key,
         constraints={
             "cluster": Pattern("staging-*"),
             "budget": Range.max_value(10000.0)
@@ -365,7 +365,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("Tenuo FastAPI Integration Example")
     print("=" * 60)
-    print(f"\nAgent keypair loaded: {AGENT_KEYPAIR.public_key().to_bytes()[:8].hex()}...")
+    print(f"\nAgent keypair loaded: {AGENT_KEYPAIR.public_key.to_bytes()[:8].hex()}...")
     print("\nTo test, create a warrant and include it in the X-Tenuo-Warrant header:")
     print("\nExample:")
     warrants = create_demo_warrants()

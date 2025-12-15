@@ -19,17 +19,17 @@ def test_full_warrant_lifecycle():
     
     # 2. Create a root warrant with constraints
     root_warrant = Warrant.issue(
-        tool="manage_infrastructure",
+        tools="manage_infrastructure",
         constraints={
             "cluster": Pattern("staging-*"),
             "budget": Range.max_value(10000.0)
         },
         ttl_seconds=3600,
         keypair=control_keypair,
-        holder=control_keypair.public_key()
+        holder=control_keypair.public_key
     )
     
-    assert root_warrant.tool == "manage_infrastructure"
+    assert root_warrant.tools == ["manage_infrastructure"]
     assert root_warrant.depth == 0
     assert not root_warrant.is_expired()
     
@@ -41,10 +41,10 @@ def test_full_warrant_lifecycle():
         },
         keypair=control_keypair, # Signed by parent (Control Plane)
         parent_keypair=control_keypair, # Parent signs the chain link
-        holder=worker_keypair.public_key() # Bound to worker
+        holder=worker_keypair.public_key # Bound to worker
     )
     
-    assert worker_warrant.tool == "manage_infrastructure"
+    assert worker_warrant.tools == ["manage_infrastructure"]
     assert worker_warrant.depth == 1
     
     # 4. Test authorization
@@ -77,5 +77,5 @@ def test_full_warrant_lifecycle():
     
     # Deserialize
     deserialized = Warrant.from_base64(warrant_base64)
-    assert deserialized.tool == worker_warrant.tool
+    assert deserialized.tools == worker_warrant.tools
     assert deserialized.id == worker_warrant.id

@@ -48,7 +48,7 @@ _warrant_context: ContextVar[Optional[Warrant]] = ContextVar('_warrant_context',
 # Context variable for keypair storage (for PoP signatures)
 _keypair_context: ContextVar[Optional[Keypair]] = ContextVar('_keypair_context', default=None)
 
-# Context variable for allowed tools (narrower than warrant.tool)
+# Context variable for allowed tools (narrower than warrant.tools)
 # Used by scoped_task to restrict tools beyond what the warrant allows
 _allowed_tools_context: ContextVar[Optional[List[str]]] = ContextVar('_allowed_tools_context', default=None)
 
@@ -78,7 +78,7 @@ def get_allowed_tools_context() -> Optional[List[str]]:
     Get the current allowed tools from context.
     
     This returns the tools restricted by scoped_task, which may be
-    narrower than what the warrant.tool field allows.
+    narrower than what the warrant.tools field allows.
     
     Returns:
         List of allowed tool names, or None if not restricted.

@@ -72,18 +72,19 @@ def test_configure_validation():
 # =============================================================================
 
 def test_containment_logic():
+    from tenuo_core import Pattern, Exact, Range, OneOf  # type: ignore[import-untyped]
+
     # Exact
     assert _is_constraint_contained("foo", "foo")
     assert not _is_constraint_contained("foo", "bar")
     
-    # Glob/Pattern
-    assert _is_constraint_contained("/data/reports/q3.pdf", "/data/*")
-    assert _is_constraint_contained("/data/reports/*", "/data/*")
-    assert not _is_constraint_contained("/data/*", "/data/reports/*")  # Parent is narrower
-    assert not _is_constraint_contained("/etc/passwd", "/data/*")
+    # Glob/Pattern (Must be explicit now)
+    assert _is_constraint_contained(Exact("/data/reports/q3.pdf"), Pattern("/data/*"))
+    assert _is_constraint_contained(Pattern("/data/reports/*"), Pattern("/data/*"))
+    assert not _is_constraint_contained(Pattern("/data/*"), Pattern("/data/reports/*"))  # Parent is narrower
+    assert not _is_constraint_contained(Exact("/etc/passwd"), Pattern("/data/*"))
     
     # Range (tuples)
-    from tenuo_core import Range  # type: ignore[import-untyped]
     r_parent = Range(0, 100)
     r_child = Range(10, 50)
     r_wide = Range(0, 200)
@@ -92,7 +93,6 @@ def test_containment_logic():
     assert not _is_constraint_contained(r_wide, r_parent)
     
     # OneOf (lists)
-    from tenuo_core import OneOf  # type: ignore[import-untyped]
     o_parent = OneOf(["a", "b", "c"])
     o_child = OneOf(["a", "b"])
     o_wide = OneOf(["a", "b", "c", "d"])
@@ -105,11 +105,12 @@ def test_containment_logic():
 # =============================================================================
 
 def test_root_task_creates_warrant(setup_config):
+    from tenuo_core import Pattern
     async def _test():
-        async with root_task(tools=["read_file"], path="/data/*") as warrant:
+        async with root_task(tools=["read_file"], path=Pattern("/data/*")) as warrant:
             assert warrant is not None
             assert get_warrant_context() == warrant
-            assert warrant.tool == "read_file"
+            assert warrant.tools == ["read_file"]
             
             # Check constraints
             constraints = warrant.constraints_dict()
@@ -118,41 +119,46 @@ def test_root_task_creates_warrant(setup_config):
     asyncio.run(_test())
 
 def test_scoped_task_narrowing(setup_config):
+    from tenuo_core import Pattern
     async def _test():
-        async with root_task(tools=["read_file"], path="/data/*"):
+        async with root_task(tools=["read_file"], path=Pattern("/data/*")):
             parent = get_warrant_context()
             
             # Valid narrowing
-            async with scoped_task(path="/data/reports/*") as child:
+            async with scoped_task(path=Pattern("/data/reports/*")) as child:
                 assert child.parent_id == parent.id
                 assert child.depth == parent.depth + 1
     
     asyncio.run(_test())
 
 def test_scoped_task_requires_parent(setup_config):
+    from tenuo_core import Pattern
     async def _test():
         with pytest.raises(ScopeViolation, match="requires a parent warrant"):
-            async with scoped_task(path="/data/*"):
+            async with scoped_task(path=Pattern("/data/*")):
                 pass
     
     asyncio.run(_test())
 
 def test_scoped_task_enforces_containment(setup_config):
+    from tenuo_core import Pattern
     async def _test():
-        async with root_task(tools=["read_file"], path="/data/reports/*"):
+        async with root_task(tools=["read_file"], path=Pattern("/data/reports/*")):
             # Try to widen scope
             with pytest.raises(MonotonicityError):
-                async with scoped_task(path="/data/*"):
+                async with scoped_task(path=Pattern("/data/*")):
                     pass
     
     asyncio.run(_test())
 
 def test_scoped_task_preview(setup_config):
+    from tenuo_core import Pattern
     async def _test():
-        async with root_task(tools=["read_file"], path="/data/*"):
-            preview = scoped_task(path="/data/reports/*").preview()
+        async with root_task(tools=["read_file"], path=Pattern("/data/*")):
+            preview = scoped_task(path=Pattern("/data/reports/*")).preview()
             assert preview.error is None
-            assert preview.constraints["path"] == "/data/reports/*"
+            # Preview returns the constraint object, not string
+            assert preview.constraints["path"].pattern == "/data/reports/*"
             assert preview.depth == 1  # 0 (root) + 1
     
     asyncio.run(_test())
@@ -162,6 +168,7 @@ def test_scoped_task_preview(setup_config):
 # =============================================================================
 
 def test_protect_tools_async(setup_config):
+    from tenuo_core import Pattern
     async def _test():
         # Define a dummy async tool
         async def read_file(path: str) -> str:
@@ -177,12 +184,12 @@ def test_protect_tools_async(setup_config):
             await protected_read_file(path="/data/file.txt")
             
         # 2. Call with valid warrant -> Success
-        async with root_task(tools=["read_file"], path="/data/*"):
+        async with root_task(tools=["read_file"], path=Pattern("/data/*")):
             result = await protected_read_file(path="/data/file.txt")
             assert result == "content of /data/file.txt"
             
         # 3. Call with invalid constraint -> Error
-        async with root_task(tools=["read_file"], path="/data/*"):
+        async with root_task(tools=["read_file"], path=Pattern("/data/*")):
             try:
                 await protected_read_file(path="/etc/passwd")
                 pytest.fail("Should have raised authorization error")

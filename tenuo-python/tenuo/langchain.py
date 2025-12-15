@@ -191,10 +191,10 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                     authorized_tools=allowed_tools,
                 )
         # Fall back to warrant's tool allowlist
-        elif warrant.tool and self.name not in warrant.tool.split(","):
+        elif warrant.tools and self.name not in warrant.tools:
             raise ToolNotAuthorized(
                 tool=self.name,
-                authorized_tools=warrant.tool.split(",") if warrant.tool else None,
+                authorized_tools=warrant.tools if warrant.tools else None,
             )
         
         # Critical tools require constraints

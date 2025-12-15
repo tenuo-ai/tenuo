@@ -96,8 +96,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n  ✓ Root Warrant Received via Enrollment Protocol:");
     println!("    • ID:          {}", root_warrant.id());
-    if let Some(tool) = root_warrant.tool() {
-        println!("    • Tool:        {}", tool);
+    if let Some(tools) = root_warrant.tools() {
+        println!("    • Tools:       {:?}", tools);
     }
     println!("    • Depth:       {} (root)", root_warrant.depth());
     println!(

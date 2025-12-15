@@ -7,7 +7,7 @@
 
 use crate::constraints::{
     All, Any, CelConstraint, Constraint, ConstraintValue, Contains, Exact, Not, NotOneOf, OneOf,
-    Pattern, Range, Subset,
+    Pattern, Range, RegexConstraint, Subset, Wildcard,
 };
 use crate::crypto::{
     Keypair as RustKeypair, PublicKey as RustPublicKey, Signature as RustSignature,
@@ -23,7 +23,9 @@ use crate::planes::{
     Authorizer as RustAuthorizer, ChainStep as RustChainStep,
     ChainVerificationResult as RustChainVerificationResult,
 };
-use crate::warrant::{OwnedAttenuationBuilder, TrustLevel, Warrant as RustWarrant, WarrantType};
+use crate::warrant::{
+    OwnedAttenuationBuilder, OwnedIssuanceBuilder, TrustLevel, Warrant as RustWarrant, WarrantType,
+};
 use crate::wire;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
@@ -461,6 +463,50 @@ impl PyCel {
     }
 }
 
+/// Python wrapper for Regex constraint.
+#[pyclass(name = "Regex")]
+#[derive(Clone)]
+pub struct PyRegex {
+    inner: RegexConstraint,
+}
+
+#[pymethods]
+impl PyRegex {
+    #[new]
+    fn new(pattern: &str) -> PyResult<Self> {
+        let inner = RegexConstraint::new(pattern).map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Regex('{}')", self.inner.pattern)
+    }
+
+    #[getter]
+    fn pattern(&self) -> String {
+        self.inner.pattern.clone()
+    }
+}
+
+/// Python wrapper for Wildcard constraint.
+#[pyclass(name = "Wildcard")]
+#[derive(Clone)]
+pub struct PyWildcard {
+    inner: Wildcard,
+}
+
+#[pymethods]
+impl PyWildcard {
+    #[new]
+    fn new() -> Self {
+        Self { inner: Wildcard }
+    }
+
+    fn __repr__(&self) -> String {
+        "Wildcard()".to_string()
+    }
+}
+
 /// Python wrapper for Keypair.
 #[pyclass(name = "Keypair")]
 pub struct PyKeypair {
@@ -518,6 +564,7 @@ impl PyKeypair {
     }
 
     /// Get the public key as a PublicKey object.
+    #[getter]
     fn public_key(&self) -> PyPublicKey {
         PyPublicKey {
             inner: self.inner.public_key(),
@@ -609,15 +656,15 @@ fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<PyObjec
             #[allow(deprecated)]
             Ok(PyCel { inner: c.clone() }.into_py(py))
         }
-        Constraint::Wildcard(_w) => {
-            // Wildcard not yet exposed to Python, return as string literal
+        Constraint::Wildcard(w) =>
+        {
             #[allow(deprecated)]
-            Ok("*".to_object(py))
+            Ok(PyWildcard { inner: w.clone() }.into_py(py))
         }
-        Constraint::Regex(r) => {
-            // Regex not yet exposed to Python, return pattern as string
+        Constraint::Regex(r) =>
+        {
             #[allow(deprecated)]
-            Ok(r.pattern.to_object(py))
+            Ok(PyRegex { inner: r.clone() }.into_py(py))
         }
     }
 }
@@ -646,9 +693,13 @@ fn py_to_constraint(obj: &Bound<'_, PyAny>) -> PyResult<Constraint> {
         Ok(Constraint::Not(n.inner))
     } else if let Ok(c) = obj.extract::<PyCel>() {
         Ok(Constraint::Cel(c.inner))
+    } else if let Ok(r) = obj.extract::<PyRegex>() {
+        Ok(Constraint::Regex(r.inner))
+    } else if let Ok(w) = obj.extract::<PyWildcard>() {
+        Ok(Constraint::Wildcard(w.inner))
     } else {
         Err(PyValueError::new_err(
-            "constraint must be Pattern, Exact, OneOf, NotOneOf, Range, Contains, Subset, All, AnyOf, Not, or CEL",
+            "constraint must be Pattern, Exact, OneOf, NotOneOf, Range, Contains, Subset, All, AnyOf, Not, CEL, Regex, or Wildcard",
         ))
     }
 }
@@ -723,6 +774,54 @@ impl PyTrustLevel {
         Ok(Self { inner })
     }
 
+    #[classattr]
+    #[allow(non_snake_case)]
+    fn Untrusted() -> Self {
+        Self {
+            inner: TrustLevel::Untrusted,
+        }
+    }
+
+    #[classattr]
+    #[allow(non_snake_case)]
+    fn External() -> Self {
+        Self {
+            inner: TrustLevel::External,
+        }
+    }
+
+    #[classattr]
+    #[allow(non_snake_case)]
+    fn Partner() -> Self {
+        Self {
+            inner: TrustLevel::Partner,
+        }
+    }
+
+    #[classattr]
+    #[allow(non_snake_case)]
+    fn Internal() -> Self {
+        Self {
+            inner: TrustLevel::Internal,
+        }
+    }
+
+    #[classattr]
+    #[allow(non_snake_case)]
+    fn Privileged() -> Self {
+        Self {
+            inner: TrustLevel::Privileged,
+        }
+    }
+
+    #[classattr]
+    #[allow(non_snake_case)]
+    fn System() -> Self {
+        Self {
+            inner: TrustLevel::System,
+        }
+    }
+
     /// Get the numeric value of the trust level.
     fn value(&self) -> u8 {
         self.inner as u8
@@ -743,6 +842,10 @@ impl PyTrustLevel {
 
     fn __lt__(&self, other: &Self) -> bool {
         self.inner < other.inner
+    }
+
+    fn __eq__(&self, other: &Self) -> bool {
+        self.inner == other.inner
     }
 
     fn __repr__(&self) -> String {
@@ -1299,6 +1402,31 @@ impl PyAttenuationBuilder {
         self.inner.set_intent(intent);
     }
 
+    /// Set a single tool for issuable_tools (for issuer warrants).
+    ///
+    /// This replaces the entire issuable_tools list with a single tool.
+    /// For multiple tools, use `with_tools()` instead.
+    fn with_tool(&mut self, tool: &str) {
+        self.inner.set_tool(tool);
+    }
+
+    /// Set multiple tools for issuable_tools (for issuer warrants).
+    ///
+    /// This replaces the entire issuable_tools list.
+    fn with_tools(&mut self, tools: Vec<String>) {
+        self.inner.set_tools(tools);
+    }
+
+    /// Drop tools from issuable_tools (for issuer warrants).
+    fn drop_tools(&mut self, tools: Vec<String>) {
+        self.inner.drop_tools(tools);
+    }
+
+    /// Make this warrant terminal (cannot be delegated further).
+    fn terminal(&mut self) {
+        self.inner.set_terminal();
+    }
+
     /// Get the parent warrant.
     #[getter]
     fn parent(&self) -> PyWarrant {
@@ -1401,6 +1529,167 @@ impl PyAttenuationBuilder {
     }
 }
 
+/// Python wrapper for IssuanceBuilder (owned, no lifetime issues).
+///
+/// Provides a fluent API for issuing execution warrants from issuer warrants.
+#[pyclass(name = "IssuanceBuilder")]
+pub struct PyIssuanceBuilder {
+    inner: OwnedIssuanceBuilder,
+}
+
+#[pymethods]
+impl PyIssuanceBuilder {
+    /// Set the tool name for the execution warrant.
+    fn with_tool(&mut self, tool: &str) {
+        self.inner.set_tool(tool);
+    }
+
+    /// Set multiple tools for the execution warrant.
+    fn with_tools(&mut self, tools: Vec<String>) {
+        self.inner.set_tools(tools);
+    }
+
+    /// Add or override a constraint.
+    fn with_constraint(&mut self, field: &str, constraint: &Bound<'_, PyAny>) -> PyResult<()> {
+        let constraint = py_to_constraint(constraint)?;
+        self.inner.set_constraint(field, constraint);
+        Ok(())
+    }
+
+    /// Set the trust level for the execution warrant.
+    fn with_trust_level(&mut self, level: &PyTrustLevel) {
+        self.inner.set_trust_level(level.inner);
+    }
+
+    /// Set TTL in seconds.
+    fn with_ttl(&mut self, seconds: u64) {
+        self.inner.set_ttl(Duration::from_secs(seconds));
+    }
+
+    /// Set the maximum delegation depth.
+    fn with_max_depth(&mut self, max_depth: u32) {
+        self.inner.set_max_depth(max_depth);
+    }
+
+    /// Set the session ID.
+    fn with_session_id(&mut self, session_id: &str) {
+        self.inner.set_session_id(session_id);
+    }
+
+    /// Set the agent ID.
+    fn with_agent_id(&mut self, agent_id: &str) {
+        self.inner.set_agent_id(agent_id);
+    }
+
+    /// Set the authorized holder for the execution warrant.
+    fn with_holder(&mut self, holder: &PyPublicKey) {
+        self.inner.set_authorized_holder(holder.inner.clone());
+    }
+
+    /// Set required approvers.
+    fn with_required_approvers(&mut self, approvers: &Bound<'_, PyAny>) -> PyResult<()> {
+        let py_list = approvers.downcast::<pyo3::types::PyList>()?;
+        let mut rust_approvers = Vec::new();
+        for item in py_list.iter() {
+            let pk: PyPublicKey = item.extract()?;
+            rust_approvers.push(pk.inner);
+        }
+        self.inner.set_required_approvers(rust_approvers);
+        Ok(())
+    }
+
+    /// Set minimum approvals.
+    fn with_min_approvals(&mut self, min: u32) {
+        self.inner.set_min_approvals(min);
+    }
+
+    /// Set the intent/purpose for this issuance.
+    fn with_intent(&mut self, intent: &str) {
+        self.inner.set_intent(intent);
+    }
+
+    /// Make this warrant terminal (cannot be delegated further).
+    fn terminal(&mut self) {
+        self.inner.set_terminal();
+    }
+
+    /// Get the issuer warrant.
+    #[getter]
+    fn issuer(&self) -> PyWarrant {
+        PyWarrant {
+            inner: self.inner.issuer().clone(),
+        }
+    }
+
+    /// Get the configured tools (if set).
+    #[getter]
+    fn tools(&self) -> Option<Vec<String>> {
+        self.inner.tools().map(|t| t.to_vec())
+    }
+
+    /// Get the configured TTL in seconds (if set).
+    #[getter]
+    fn ttl_seconds(&self) -> Option<u64> {
+        self.inner.ttl_seconds()
+    }
+
+    /// Get the configured holder (if set).
+    #[getter]
+    fn holder(&self) -> Option<PyPublicKey> {
+        self.inner
+            .holder()
+            .map(|pk| PyPublicKey { inner: pk.clone() })
+    }
+
+    /// Get the configured trust level.
+    #[getter]
+    fn trust_level(&self) -> Option<PyTrustLevel> {
+        self.inner
+            .trust_level()
+            .map(|tl| PyTrustLevel { inner: tl })
+    }
+
+    /// Get the configured intent.
+    #[getter]
+    fn intent(&self) -> Option<String> {
+        self.inner.intent().map(|s| s.to_string())
+    }
+
+    /// Get the constraints being configured as a Python dict.
+    fn constraints_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+        for (field, constraint) in self.inner.constraints().iter() {
+            let py_constraint = constraint_to_py(py, constraint)?;
+            dict.set_item(field, py_constraint)?;
+        }
+        Ok(dict)
+    }
+
+    /// Build and sign the execution warrant.
+    ///
+    /// # Arguments
+    ///
+    /// * `keypair` - The keypair of the issuer warrant holder
+    /// * `issuer_keypair` - The keypair that signed the issuer warrant
+    fn build(&self, keypair: &PyKeypair, issuer_keypair: &PyKeypair) -> PyResult<PyWarrant> {
+        let warrant = self
+            .inner
+            .clone()
+            .build(&keypair.inner, &issuer_keypair.inner)
+            .map_err(to_py_err)?;
+        Ok(PyWarrant { inner: warrant })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "IssuanceBuilder(issuer={}, tools={:?}, holder={:?})",
+            self.inner.issuer().id(),
+            self.inner.tools(),
+            self.inner.holder().is_some()
+        )
+    }
+}
+
 /// Python wrapper for Warrant.
 #[pyclass(name = "Warrant", subclass)]
 pub struct PyWarrant {
@@ -1411,9 +1700,9 @@ pub struct PyWarrant {
 impl PyWarrant {
     /// Issue a new warrant.
     #[staticmethod]
-    #[pyo3(signature = (tool, keypair, constraints=None, ttl_seconds=3600, holder=None, session_id=None, trust_level=None))]
+    #[pyo3(signature = (tools, keypair, constraints=None, ttl_seconds=3600, holder=None, session_id=None, trust_level=None))]
     fn issue(
-        tool: &str,
+        tools: &Bound<'_, PyAny>,
         keypair: &PyKeypair,
         constraints: Option<&Bound<'_, PyDict>>,
         ttl_seconds: u64,
@@ -1421,9 +1710,17 @@ impl PyWarrant {
         session_id: Option<&str>,
         trust_level: Option<&PyTrustLevel>,
     ) -> PyResult<Self> {
-        let mut builder = RustWarrant::builder()
-            .tool(tool)
-            .ttl(Duration::from_secs(ttl_seconds));
+        let mut builder = RustWarrant::builder().ttl(Duration::from_secs(ttl_seconds));
+
+        if let Ok(tool_str) = tools.extract::<String>() {
+            builder = builder.tool(tool_str);
+        } else if let Ok(tools_list) = tools.extract::<Vec<String>>() {
+            builder = builder.tools(tools_list);
+        } else {
+            return Err(PyValueError::new_err(
+                "tools must be a string or list of strings",
+            ));
+        }
 
         // Set trust level if provided
         if let Some(tl) = trust_level {
@@ -1453,16 +1750,114 @@ impl PyWarrant {
         Ok(Self { inner: warrant })
     }
 
+    /// Issue a new issuer warrant.
+    ///
+    /// Issuer warrants can issue execution warrants but cannot execute tools themselves.
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (issuable_tools, trust_ceiling, keypair, constraint_bounds=None, max_issue_depth=None, ttl_seconds=3600, holder=None, session_id=None, trust_level=None))]
+    fn issue_issuer(
+        issuable_tools: Vec<String>,
+        trust_ceiling: &PyTrustLevel,
+        keypair: &PyKeypair,
+        constraint_bounds: Option<&Bound<'_, PyDict>>,
+        max_issue_depth: Option<u32>,
+        ttl_seconds: u64,
+        holder: Option<&PyPublicKey>,
+        session_id: Option<&str>,
+        trust_level: Option<&PyTrustLevel>,
+    ) -> PyResult<Self> {
+        let mut builder = RustWarrant::builder()
+            .r#type(WarrantType::Issuer)
+            .issuable_tools(issuable_tools)
+            .trust_ceiling(trust_ceiling.inner)
+            .ttl(Duration::from_secs(ttl_seconds));
+
+        if let Some(depth) = max_issue_depth {
+            builder = builder.max_issue_depth(depth);
+        }
+
+        // Set trust level if provided
+        if let Some(tl) = trust_level {
+            builder = builder.trust_level(tl.inner);
+        }
+
+        // If holder is provided, use it. Otherwise, default to the issuer (self-signed).
+        if let Some(h) = holder {
+            builder = builder.authorized_holder(h.inner.clone());
+        } else {
+            builder = builder.authorized_holder(keypair.inner.public_key());
+        }
+
+        if let Some(sid) = session_id {
+            builder = builder.session_id(sid);
+        }
+
+        if let Some(bounds_dict) = constraint_bounds {
+            for (key, value) in bounds_dict.iter() {
+                let field: String = key.extract()?;
+                let constraint = py_to_constraint(&value)?;
+                builder = builder.constraint_bound(field, constraint);
+            }
+        }
+
+        let warrant = builder.build(&keypair.inner).map_err(to_py_err)?;
+        Ok(Self { inner: warrant })
+    }
+
+    /// Create an IssuanceBuilder for issuing execution warrants from this issuer warrant.
+    ///
+    /// This method can only be called on issuer warrants. It returns a builder that
+    /// validates the issued execution warrant complies with the issuer's constraints.
+    ///
+    /// Returns:
+    ///     IssuanceBuilder for fluent API
+    ///
+    /// Raises:
+    ///     ValidationError: If this is not an issuer warrant
+    fn issue_execution(&self) -> PyResult<PyIssuanceBuilder> {
+        // Validate this is an issuer warrant
+        if self.inner.r#type() != WarrantType::Issuer {
+            return Err(PyValueError::new_err(
+                "can only issue execution warrants from issuer warrants",
+            ));
+        }
+
+        Ok(PyIssuanceBuilder {
+            inner: OwnedIssuanceBuilder::new(self.inner.clone()),
+        })
+    }
+
     /// Get the warrant ID.
     #[getter]
     fn id(&self) -> String {
         self.inner.id().to_string()
     }
 
-    /// Get the tool name.
+    /// Get the tool names.
     #[getter]
-    fn tool(&self) -> Option<String> {
-        self.inner.tool().map(|s| s.to_string())
+    fn tools(&self) -> Option<Vec<String>> {
+        self.inner.tools().map(|t| t.to_vec())
+    }
+
+    /// Get issuable tools (Issuer warrants only).
+    #[getter]
+    fn issuable_tools(&self) -> Option<Vec<String>> {
+        self.inner.issuable_tools().map(|t| t.to_vec())
+    }
+
+    /// Get trust ceiling (Issuer warrants only).
+    #[getter]
+    fn trust_ceiling(&self) -> Option<PyTrustLevel> {
+        self.inner
+            .trust_ceiling()
+            .map(|t| PyTrustLevel { inner: t })
+    }
+
+    /// Get max issue depth (Issuer warrants only).
+    #[getter]
+    fn max_issue_depth(&self) -> Option<u32> {
+        self.inner.max_issue_depth()
     }
 
     /// Get the delegation depth.
@@ -1534,6 +1929,20 @@ impl PyWarrant {
         if let Some(constraints) = self.inner.constraints() {
             let dict = PyDict::new(py);
             for (field, constraint) in constraints.iter() {
+                let py_constraint = constraint_to_py(py, constraint)?;
+                dict.set_item(field, py_constraint)?;
+            }
+            Ok(Some(dict))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Get constraint bounds as a Python dict (Issuer warrants only).
+    fn constraint_bounds_dict<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        if let Some(bounds) = self.inner.constraint_bounds() {
+            let dict = PyDict::new(py);
+            for (field, constraint) in bounds.iter() {
                 let py_constraint = constraint_to_py(py, constraint)?;
                 dict.set_item(field, py_constraint)?;
             }
@@ -1739,7 +2148,10 @@ impl PyWarrant {
             "Warrant(id='{}', type={:?}, tool={}, depth={})",
             self.inner.id(),
             self.inner.r#type(),
-            self.inner.tool().unwrap_or("None"),
+            self.inner
+                .tools()
+                .map(|t| format!("{:?}", t))
+                .unwrap_or_else(|| "None".to_string()),
             self.inner.depth()
         )
     }
@@ -1846,6 +2258,7 @@ impl PyExtractionResult {
 
 /// Python wrapper for PublicKey.
 #[pyclass(name = "PublicKey")]
+#[derive(Clone)]
 pub struct PyPublicKey {
     inner: RustPublicKey,
 }
@@ -2320,6 +2733,8 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyExact>()?;
     m.add_class::<PyOneOf>()?;
     m.add_class::<PyRange>()?;
+    m.add_class::<PyRegex>()?;
+    m.add_class::<PyWildcard>()?;
     m.add_class::<PyCel>()?;
     m.add_class::<PyNotOneOf>()?;
     m.add_class::<PyContains>()?;
@@ -2333,6 +2748,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySignature>()?;
     m.add_class::<PyWarrant>()?;
     m.add_class::<PyAttenuationBuilder>()?;
+    m.add_class::<PyIssuanceBuilder>()?;
     // Diff types
     m.add_class::<PyChangeType>()?;
     m.add_class::<PyToolsDiff>()?;
@@ -2353,6 +2769,8 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Constants
     m.add("MAX_DELEGATION_DEPTH", crate::MAX_DELEGATION_DEPTH)?;
+    m.add("MAX_ISSUER_CHAIN_LENGTH", crate::MAX_ISSUER_CHAIN_LENGTH)?;
+    m.add("MAX_WARRANT_SIZE", crate::MAX_WARRANT_SIZE)?;
     m.add("WIRE_VERSION", crate::WIRE_VERSION)?;
     m.add("WARRANT_HEADER", wire::WARRANT_HEADER)?;
 

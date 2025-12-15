@@ -11,7 +11,7 @@ This Python wrapper adds:
 - Backward compatibility with existing Python API
 """
 
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 
 from tenuo_core import (  # type: ignore[import-untyped]
     Warrant,
@@ -87,11 +87,6 @@ class AttenuationBuilder:
         self._rust_builder.with_constraint(field, constraint)
         return self
     
-    def with_tool(self, tool: str) -> 'AttenuationBuilder':
-        """Set the tool (for execution warrants from issuer warrants)."""
-        # Note: tool changing is not supported in attenuation
-        return self
-    
     def with_ttl(self, seconds: int) -> 'AttenuationBuilder':
         """Set TTL in seconds."""
         self._rust_builder.with_ttl(seconds)
@@ -110,6 +105,45 @@ class AttenuationBuilder:
     def with_intent(self, intent: str) -> 'AttenuationBuilder':
         """Set human-readable intent for this delegation."""
         self._rust_builder.with_intent(intent)
+        return self
+
+    def with_tool(self, tool: str) -> 'AttenuationBuilder':
+        """Set a single tool for issuable_tools (for issuer warrants).
+        
+        This replaces the entire issuable_tools list with a single tool.
+        For multiple tools, use with_tools() instead.
+        
+        Args:
+            tool: The tool name to allow
+            
+        Returns:
+            Self for method chaining
+        """
+        self._rust_builder.with_tool(tool)
+        return self
+
+    def with_tools(self, tools: List[str]) -> 'AttenuationBuilder':
+        """Set multiple tools for issuable_tools (for issuer warrants).
+        
+        This replaces the entire issuable_tools list.
+        
+        Args:
+            tools: List of tool names to allow
+            
+        Returns:
+            Self for method chaining
+        """
+        self._rust_builder.with_tools(tools)
+        return self
+
+    def drop_tools(self, tools: List[str]) -> 'AttenuationBuilder':
+        """Drop tools from issuable_tools (for issuer warrants)."""
+        self._rust_builder.drop_tools(tools)
+        return self
+
+    def terminal(self) -> 'AttenuationBuilder':
+        """Make this warrant terminal (cannot be delegated further)."""
+        self._rust_builder.terminal()
         return self
     
     def diff(self) -> str:

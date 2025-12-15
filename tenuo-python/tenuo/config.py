@@ -86,7 +86,7 @@ class TenuoConfig:
             
             # In dev mode with self-signed, add issuer as trusted root
             if self.dev_mode and self.allow_self_signed and self.issuer_keypair:
-                auth.add_trusted_root(self.issuer_keypair.public_key())
+                auth.add_trusted_root(self.issuer_keypair.public_key)
             
             self._authorizer = auth
         

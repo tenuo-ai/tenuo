@@ -46,6 +46,18 @@ Each task carries exactly the authority it needs. No more, no less.
 
 ---
 
+## Protocol Limits
+
+| Limit | Value | Purpose |
+|-------|-------|---------|
+| **MAX_DELEGATION_DEPTH** | 64 | Maximum warrant depth; prevents unbounded chains |
+| **MAX_ISSUER_CHAIN_LENGTH** | 8 | Maximum chain links in warrant; prevents DoS/stack overflow during verification |
+| **MAX_WARRANT_SIZE** | 1 MB | Maximum serialized warrant size; prevents memory exhaustion |
+| **MAX_CONSTRAINT_DEPTH** | 16 | Maximum nesting depth for constraints; prevents stack overflow |
+| **PoP_TIMESTAMP_WINDOW** | 30s | Timestamp window for replay protection (~2 min with 4 windows) |
+
+---
+
 ## Security Properties
 
 | Property | Mechanism |
@@ -160,7 +172,7 @@ Self-contained capability token.
 ```python
 # Create (at gateway)
 warrant = Warrant.issue(
-    tool="search,read_file",
+    tools=["search", "read_file"],
     keypair=issuer_keypair,
     constraints={"path": Pattern("/data/*")},
     ttl_seconds=300,
@@ -170,7 +182,6 @@ warrant = Warrant.issue(
 
 # Attenuate (local)
 child = warrant.attenuate(
-    tool="read_file",
     constraints={"path": Pattern("/data/project-1/*")},
     keypair=agent_keypair,
 )
@@ -179,7 +190,7 @@ child = warrant.attenuate(
 builder = warrant.attenuate_builder()
 builder.with_constraint("path", Exact("/data/project-1/report.pdf"))
 builder.with_ttl(60)
-builder.with_holder(worker_keypair.public_key())
+builder.with_holder(worker_keypair.public_key)
 builder.with_intent("Read Q3 report for analysis")
 print(builder.diff())  # Preview changes before delegation
 child = builder.delegate_to(agent_keypair, agent_keypair)
@@ -251,7 +262,7 @@ async def tenuo_middleware(request: Request, call_next):
 async def process_message(message: QueueMessage):
     warrant = Warrant.from_base64(message.metadata["tenuo_warrant"])
     
-    if not warrant.is_bound_to(KEYPAIR.public_key()):
+    if not warrant.is_bound_to(KEYPAIR.public_key):
         raise AuthorizationError("Warrant not bound to this agent")
     if warrant.is_expired:
         raise AuthorizationError("Warrant expired")
@@ -281,9 +292,9 @@ from tenuo import Keypair, Warrant, Pattern
 # Create warrant and keypair
 keypair = Keypair.generate()
 warrant = Warrant.issue(
-    tool="search,read_file",
+    tools=["search", "read_file"],
     keypair=keypair,
-    holder=keypair.public_key(),
+    holder=keypair.public_key,
     constraints={"path": Pattern("/data/*")},
     ttl_seconds=3600
 )

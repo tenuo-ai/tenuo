@@ -263,7 +263,7 @@ pub struct WarrantPayload {
     // =========================================================================
     /// The tool(s) this warrant authorizes (None for issuer warrants).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool: Option<String>,
+    pub tools: Option<Vec<String>>,
     /// Constraints on tool arguments (None for issuer warrants).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub constraints: Option<ConstraintSet>,
@@ -417,8 +417,8 @@ impl Warrant {
     }
 
     /// Get the tool name (None for issuer warrants).
-    pub fn tool(&self) -> Option<&str> {
-        self.payload.tool.as_deref()
+    pub fn tools(&self) -> Option<&[String]> {
+        self.payload.tools.as_deref()
     }
 
     /// Get the constraints (None for issuer warrants).
@@ -497,7 +497,7 @@ impl Warrant {
         // Validate warrant type consistency
         match self.payload.r#type {
             WarrantType::Execution => {
-                if self.payload.tool.is_none() {
+                if self.payload.tools.is_none() {
                     return Err(Error::Validation(
                         "execution warrant must have a tool".to_string(),
                     ));
@@ -519,7 +519,7 @@ impl Warrant {
                 }
             }
             WarrantType::Issuer => {
-                if self.payload.tool.is_some() {
+                if self.payload.tools.is_some() {
                     return Err(Error::Validation(
                         "issuer warrant cannot have a tool".to_string(),
                     ));
@@ -570,6 +570,16 @@ impl Warrant {
 
         // Validate constraint depth
         self.validate_constraint_depth()?;
+
+        // SECURITY: Validate issuer chain length to prevent stack overflow attacks
+        // and excessive memory consumption during verification.
+        if self.payload.issuer_chain.len() > crate::MAX_ISSUER_CHAIN_LENGTH {
+            return Err(Error::Validation(format!(
+                "issuer chain length {} exceeds maximum {} (potential DoS attack)",
+                self.payload.issuer_chain.len(),
+                crate::MAX_ISSUER_CHAIN_LENGTH
+            )));
+        }
 
         // Validate issuer chain (if present)
         for (i, link) in self.payload.issuer_chain.iter().enumerate() {
@@ -806,19 +816,17 @@ impl Warrant {
         }
 
         // Check tool name
-        let warrant_tool =
-            self.payload.tool.as_ref().ok_or_else(|| {
-                Error::Validation("execution warrant must have a tool".to_string())
+        let warrant_tools =
+            self.payload.tools.as_ref().ok_or_else(|| {
+                Error::Validation("execution warrant must have tools".to_string())
             })?;
 
-        if warrant_tool != "*" {
-            let allowed_tools: Vec<&str> = warrant_tool.split(',').map(|s| s.trim()).collect();
-            if !allowed_tools.contains(&tool) {
-                return Err(Error::ConstraintNotSatisfied {
-                    field: "tool".to_string(),
-                    reason: format!("warrant is for tools '{:?}', not '{}'", allowed_tools, tool),
-                });
-            }
+        // Check if wildcard or if requested tool is in the list
+        if !warrant_tools.contains(&"*".to_string()) && !warrant_tools.iter().any(|t| t == tool) {
+            return Err(Error::ConstraintNotSatisfied {
+                field: "tool".to_string(),
+                reason: format!("warrant is for tools {:?}, not '{}'", warrant_tools, tool),
+            });
         }
 
         // Check constraints
@@ -862,19 +870,18 @@ impl Warrant {
             ));
         }
 
-        let warrant_tool =
-            self.payload.tool.as_ref().ok_or_else(|| {
-                Error::Validation("execution warrant must have a tool".to_string())
+        let warrant_tools =
+            self.payload.tools.as_ref().ok_or_else(|| {
+                Error::Validation("execution warrant must have tools".to_string())
             })?;
 
-        if warrant_tool != "*" {
-            let allowed_tools: Vec<&str> = warrant_tool.split(',').map(|s| s.trim()).collect();
-            if !allowed_tools.contains(&tool) {
-                return Err(Error::ConstraintNotSatisfied {
-                    field: "tool".to_string(),
-                    reason: format!("warrant is for tools '{:?}', not '{}'", allowed_tools, tool),
-                });
-            }
+        // Check if the requested tool is allowed
+        // "*" is a wildcard that allows any tool
+        if !warrant_tools.contains(&"*".to_string()) && !warrant_tools.iter().any(|t| t == tool) {
+            return Err(Error::ConstraintNotSatisfied {
+                field: "tool".to_string(),
+                reason: format!("warrant is for tools '{:?}', not '{}'", warrant_tools, tool),
+            });
         }
 
         if let Some(constraints) = &self.payload.constraints {
@@ -1054,7 +1061,7 @@ impl Warrant {
 pub struct WarrantBuilder {
     warrant_type: Option<WarrantType>,
     // Execution warrant fields
-    tool: Option<String>,
+    tools: Option<Vec<String>>,
     constraints: ConstraintSet,
     // Issuer warrant fields
     issuable_tools: Option<Vec<String>>,
@@ -1080,7 +1087,7 @@ impl WarrantBuilder {
     pub fn new() -> Self {
         Self {
             warrant_type: None,
-            tool: None,
+            tools: None,
             constraints: ConstraintSet::new(),
             issuable_tools: None,
             trust_ceiling: None,
@@ -1160,9 +1167,15 @@ impl WarrantBuilder {
         self
     }
 
-    /// Set the tool name.
+    /// Set the tool name (single tool).
     pub fn tool(mut self, tool: impl Into<String>) -> Self {
-        self.tool = Some(tool.into());
+        self.tools = Some(vec![tool.into()]);
+        self
+    }
+
+    /// Set multiple tools.
+    pub fn tools(mut self, tools: Vec<String>) -> Self {
+        self.tools = Some(tools);
         self
     }
 
@@ -1236,7 +1249,7 @@ impl WarrantBuilder {
         // Validate required fields based on warrant type
         match warrant_type {
             WarrantType::Execution => {
-                if self.tool.is_none() {
+                if self.tools.is_none() {
                     return Err(Error::Validation(
                         "execution warrant requires a tool".to_string(),
                     ));
@@ -1253,7 +1266,7 @@ impl WarrantBuilder {
                 }
             }
             WarrantType::Issuer => {
-                if self.tool.is_some() {
+                if self.tools.is_some() {
                     return Err(Error::Validation(
                         "issuer warrant cannot have a tool".to_string(),
                     ));
@@ -1336,7 +1349,7 @@ impl WarrantBuilder {
             r#type: warrant_type,
             id: self.id.unwrap_or_default(),
             authorized_holder,
-            tool: self.tool,
+            tools: self.tools,
             constraints: if self.constraints.is_empty() {
                 None
             } else {
@@ -1675,6 +1688,14 @@ impl<'a> AttenuationBuilder<'a> {
             // but users should be aware they're delegating to the same key
         }
 
+        // NOTE: Holder cycling (A → B → A) is NOT blocked for execution warrants because:
+        // - Monotonic attenuation guarantees privileges can only shrink, never expand
+        // - Even if B delegates back to A, A gets a strictly weaker warrant
+        // - The cycle detection in planes.rs prevents infinite loops via warrant ID tracking
+        //
+        // For issuer warrants, self-issuance IS blocked in IssuanceBuilder to prevent
+        // privilege escalation through the warrant creation mechanism.
+
         // Calculate expiration (must not exceed parent)
         let expires_at = if let Some(ttl) = self.ttl {
             let chrono_ttl = ChronoDuration::from_std(ttl)
@@ -1692,6 +1713,16 @@ impl<'a> AttenuationBuilder<'a> {
         // Determine effective min_approvals (inherit if not set)
         let effective_min = self.min_approvals.or(self.parent.payload.min_approvals);
 
+        // SECURITY: Check issuer chain length before adding another link
+        // This prevents building warrants with chains exceeding the protocol limit.
+        if self.parent.payload.issuer_chain.len() >= crate::MAX_ISSUER_CHAIN_LENGTH {
+            return Err(Error::Validation(format!(
+                "cannot delegate: issuer chain length {} would exceed maximum {}",
+                self.parent.payload.issuer_chain.len() + 1,
+                crate::MAX_ISSUER_CHAIN_LENGTH
+            )));
+        }
+
         // Build issuer chain link from parent
         let mut issuer_chain = self.parent.payload.issuer_chain.clone();
 
@@ -1701,13 +1732,13 @@ impl<'a> AttenuationBuilder<'a> {
             r#type: self.parent.payload.r#type, // Inherit type from parent
             id: WarrantId::new(),
             authorized_holder,
-            tool: match self.parent.payload.r#type {
+            tools: match self.parent.payload.r#type {
                 WarrantType::Execution => Some(
                     self.parent
                         .payload
-                        .tool
+                        .tools
                         .clone()
-                        .expect("execution warrant must have tool"),
+                        .expect("execution warrant must have tools"),
                 ),
                 WarrantType::Issuer => None,
             },
@@ -1767,7 +1798,7 @@ impl<'a> AttenuationBuilder<'a> {
             issuer_id: self.parent.payload.id.clone(),
             issuer_pubkey: self.parent.payload.issuer.clone(),
             issuer_type: self.parent.payload.r#type,
-            issuer_tools: self.parent.payload.tool.clone().map(|t| vec![t]),
+            issuer_tools: self.parent.payload.tools.clone(),
             issuer_constraints: self.parent.payload.constraints.clone(),
             issuer_trust: self.parent.payload.trust_level,
             issuer_expires_at: self.parent.payload.expires_at,
@@ -1934,6 +1965,22 @@ impl OwnedAttenuationBuilder {
         self
     }
 
+    /// Set max depth (mutable version for FFI).
+    pub fn set_max_depth(&mut self, max_depth: u32) {
+        self.max_depth = Some(max_depth);
+    }
+
+    /// Make this warrant terminal (cannot be delegated further).
+    pub fn terminal(mut self) -> Self {
+        self.max_depth = Some(self.parent.depth() + 1);
+        self
+    }
+
+    /// Make this warrant terminal (mutable version for FFI).
+    pub fn set_terminal(&mut self) {
+        self.max_depth = Some(self.parent.depth() + 1);
+    }
+
     /// Set or change the agent ID.
     pub fn agent_id(mut self, agent_id: impl Into<String>) -> Self {
         self.agent_id = Some(agent_id.into());
@@ -1959,6 +2006,40 @@ impl OwnedAttenuationBuilder {
     /// Set the intent/purpose for this delegation.
     pub fn set_intent(&mut self, intent: impl Into<String>) {
         self.intent = Some(intent.into());
+    }
+
+    /// Set a single tool for issuable_tools (for issuer warrants).
+    pub fn tool(mut self, tool: impl Into<String>) -> Self {
+        self.issuable_tools = Some(vec![tool.into()]);
+        self
+    }
+
+    /// Set a single tool (mutable version for FFI).
+    pub fn set_tool(&mut self, tool: impl Into<String>) {
+        self.issuable_tools = Some(vec![tool.into()]);
+    }
+
+    /// Set multiple tools for issuable_tools (for issuer warrants).
+    pub fn tools(mut self, tools: Vec<String>) -> Self {
+        self.issuable_tools = Some(tools);
+        self
+    }
+
+    /// Set multiple tools (mutable version for FFI).
+    pub fn set_tools(&mut self, tools: Vec<String>) {
+        self.issuable_tools = Some(tools);
+    }
+
+    /// Drop tools from issuable_tools (for issuer warrants).
+    pub fn drop_tools(&mut self, tools_to_drop: Vec<String>) {
+        if let Some(current) = &mut self.issuable_tools {
+            current.retain(|t| !tools_to_drop.contains(t));
+        } else if let Some(parent_tools) = &self.parent.payload.issuable_tools {
+            // If not set, start with parent's tools and remove
+            let mut current = parent_tools.clone();
+            current.retain(|t| !tools_to_drop.contains(t));
+            self.issuable_tools = Some(current);
+        }
     }
 
     /// Add required approvers.
@@ -1991,11 +2072,7 @@ impl OwnedAttenuationBuilder {
         use std::collections::HashMap;
 
         // Tools - for attenuation, tools stay the same
-        let parent_tools = self
-            .parent
-            .tool()
-            .map(|t| vec![t.to_string()])
-            .unwrap_or_default();
+        let parent_tools = self.parent.tools().map(|t| t.to_vec()).unwrap_or_default();
         let child_tools = parent_tools.clone(); // Attenuation doesn't change tools
         let tools = ToolsDiff::new(parent_tools, child_tools);
 
@@ -2177,6 +2254,11 @@ impl OwnedAttenuationBuilder {
             .authorized_holder
             .ok_or_else(|| Error::Validation("authorized_holder is required".to_string()))?;
 
+        // NOTE: Holder cycling (A → B → A) is NOT blocked for execution warrants because:
+        // - Monotonic attenuation guarantees privileges can only shrink, never expand
+        // - Even if B delegates back to A, A gets a strictly weaker warrant
+        // - The cycle detection in planes.rs prevents infinite loops via warrant ID tracking
+
         let expires_at = if let Some(ttl) = self.ttl {
             let chrono_ttl = ChronoDuration::from_std(ttl)
                 .map_err(|_| Error::InvalidTtl("TTL too large".to_string()))?;
@@ -2192,6 +2274,15 @@ impl OwnedAttenuationBuilder {
 
         let effective_min = self.min_approvals.or(self.parent.payload.min_approvals);
 
+        // SECURITY: Check issuer chain length before adding another link
+        if self.parent.payload.issuer_chain.len() >= crate::MAX_ISSUER_CHAIN_LENGTH {
+            return Err(Error::Validation(format!(
+                "cannot delegate: issuer chain length {} would exceed maximum {}",
+                self.parent.payload.issuer_chain.len() + 1,
+                crate::MAX_ISSUER_CHAIN_LENGTH
+            )));
+        }
+
         let mut issuer_chain = self.parent.payload.issuer_chain.clone();
 
         let payload = WarrantPayload {
@@ -2199,13 +2290,13 @@ impl OwnedAttenuationBuilder {
             r#type: self.parent.payload.r#type,
             id: WarrantId::new(),
             authorized_holder,
-            tool: match self.parent.payload.r#type {
+            tools: match self.parent.payload.r#type {
                 WarrantType::Execution => Some(
                     self.parent
                         .payload
-                        .tool
+                        .tools
                         .clone()
-                        .expect("execution warrant must have tool"),
+                        .expect("execution warrant must have tools"),
                 ),
                 WarrantType::Issuer => None,
             },
@@ -2263,7 +2354,7 @@ impl OwnedAttenuationBuilder {
             issuer_id: self.parent.payload.id.clone(),
             issuer_pubkey: self.parent.payload.issuer.clone(),
             issuer_type: self.parent.payload.r#type,
-            issuer_tools: self.parent.payload.tool.clone().map(|t| vec![t]),
+            issuer_tools: self.parent.payload.tools.clone(),
             issuer_constraints: self.parent.payload.constraints.clone(),
             issuer_trust: self.parent.payload.trust_level,
             issuer_expires_at: self.parent.payload.expires_at,
@@ -2342,7 +2433,7 @@ impl OwnedAttenuationBuilder {
 #[derive(Debug)]
 pub struct IssuanceBuilder<'a> {
     issuer: &'a Warrant,
-    tool: Option<String>,
+    tools: Option<Vec<String>>,
     constraints: ConstraintSet,
     trust_level: Option<TrustLevel>,
     ttl: Option<Duration>,
@@ -2359,7 +2450,7 @@ impl<'a> IssuanceBuilder<'a> {
     fn new(issuer: &'a Warrant) -> Self {
         Self {
             issuer,
-            tool: None,
+            tools: None,
             constraints: ConstraintSet::new(),
             trust_level: None,
             ttl: None,
@@ -2376,7 +2467,15 @@ impl<'a> IssuanceBuilder<'a> {
     ///
     /// The tool must be in the issuer's `issuable_tools` list.
     pub fn tool(mut self, tool: impl Into<String>) -> Self {
-        self.tool = Some(tool.into());
+        self.tools = Some(vec![tool.into()]);
+        self
+    }
+
+    /// Set multiple tools for the execution warrant.
+    ///
+    /// All tools must be in the issuer's `issuable_tools` list.
+    pub fn tools(mut self, tools: Vec<String>) -> Self {
+        self.tools = Some(tools);
         self
     }
 
@@ -2465,21 +2564,44 @@ impl<'a> IssuanceBuilder<'a> {
         }
 
         // Validate required fields
-        let tool = self.tool.ok_or(Error::Validation(
-            "execution warrant requires a tool".to_string(),
+        let tools = self.tools.ok_or(Error::Validation(
+            "execution warrant requires tools".to_string(),
         ))?;
         let authorized_holder = self.authorized_holder.ok_or(Error::Validation(
             "execution warrant requires authorized_holder".to_string(),
         ))?;
         let ttl = self.ttl.ok_or(Error::MissingField("ttl".to_string()))?;
 
-        // Validate tool is in issuable_tools
+        // SECURITY: Issuer cannot grant execution warrants to themselves
+        // This prevents privilege escalation where an issuer could convert their
+        // issuer warrant into execution capabilities for themselves.
+        if authorized_holder == self.issuer.payload.authorized_holder {
+            return Err(Error::Validation(
+                "issuer cannot grant execution warrants to themselves (self-issuance prohibited)"
+                    .to_string(),
+            ));
+        }
+
+        // SECURITY: Execution warrant holder cannot be the issuer warrant's issuer
+        // This prevents a more subtle privilege escalation where the issuer warrant's
+        // issuer could indirectly grant execution capabilities to themselves through
+        // the issuer warrant mechanism.
+        if authorized_holder == self.issuer.payload.issuer {
+            return Err(Error::Validation(
+                "execution warrant holder cannot be the issuer warrant's issuer (issuer-holder separation required)"
+                    .to_string(),
+            ));
+        }
+
+        // Validate all tools are in issuable_tools
         if let Some(issuable_tools) = &self.issuer.payload.issuable_tools {
-            if !issuable_tools.contains(&tool) {
-                return Err(Error::Validation(format!(
-                    "tool '{}' is not in issuer's issuable_tools: {:?}",
-                    tool, issuable_tools
-                )));
+            for tool in &tools {
+                if !issuable_tools.contains(tool) {
+                    return Err(Error::Validation(format!(
+                        "tool '{}' is not in issuer's issuable_tools: {:?}",
+                        tool, issuable_tools
+                    )));
+                }
             }
         } else {
             return Err(Error::Validation(
@@ -2555,6 +2677,15 @@ impl<'a> IssuanceBuilder<'a> {
             self.constraints.validate_depth()?;
         }
 
+        // SECURITY: Check issuer chain length before adding another link
+        if self.issuer.payload.issuer_chain.len() >= crate::MAX_ISSUER_CHAIN_LENGTH {
+            return Err(Error::Validation(format!(
+                "cannot issue: issuer chain length {} would exceed maximum {}",
+                self.issuer.payload.issuer_chain.len() + 1,
+                crate::MAX_ISSUER_CHAIN_LENGTH
+            )));
+        }
+
         // Build issuer chain link
         let mut issuer_chain = self.issuer.payload.issuer_chain.clone();
 
@@ -2571,7 +2702,7 @@ impl<'a> IssuanceBuilder<'a> {
             r#type: WarrantType::Execution,
             id: WarrantId::new(),
             authorized_holder,
-            tool: Some(tool),
+            tools: Some(tools),
             constraints: if self.constraints.is_empty() {
                 None
             } else {
@@ -2632,6 +2763,177 @@ impl<'a> IssuanceBuilder<'a> {
     }
 }
 
+/// Owned version of IssuanceBuilder for use in FFI contexts (e.g., Python bindings).
+///
+/// This builder owns the issuer warrant, avoiding lifetime issues in FFI.
+#[derive(Debug, Clone)]
+pub struct OwnedIssuanceBuilder {
+    issuer: Warrant,
+    tools: Option<Vec<String>>,
+    constraints: ConstraintSet,
+    trust_level: Option<TrustLevel>,
+    ttl: Option<Duration>,
+    max_depth: Option<u32>,
+    session_id: Option<String>,
+    agent_id: Option<String>,
+    authorized_holder: Option<PublicKey>,
+    required_approvers: Option<Vec<PublicKey>>,
+    min_approvals: Option<u32>,
+    intent: Option<String>,
+}
+
+impl OwnedIssuanceBuilder {
+    /// Create a new owned issuance builder.
+    pub fn new(issuer: Warrant) -> Self {
+        Self {
+            session_id: issuer.payload.session_id.clone(),
+            agent_id: issuer.payload.agent_id.clone(),
+            issuer,
+            tools: None,
+            constraints: ConstraintSet::new(),
+            trust_level: None,
+            ttl: None,
+            max_depth: None,
+            authorized_holder: None,
+            required_approvers: None,
+            min_approvals: None,
+            intent: None,
+        }
+    }
+
+    /// Get a reference to the issuer warrant.
+    pub fn issuer(&self) -> &Warrant {
+        &self.issuer
+    }
+
+    /// Get the configured tools (if any).
+    pub fn tools(&self) -> Option<&[String]> {
+        self.tools.as_deref()
+    }
+
+    /// Get the configured tool (if single tool is set).
+    pub fn tool(&self) -> Option<&str> {
+        self.tools
+            .as_ref()
+            .and_then(|t| t.first().map(|s| s.as_str()))
+    }
+
+    /// Get the current constraints being configured.
+    pub fn constraints(&self) -> &ConstraintSet {
+        &self.constraints
+    }
+
+    /// Get the configured TTL (if any).
+    pub fn ttl_seconds(&self) -> Option<u64> {
+        self.ttl.map(|d| d.as_secs())
+    }
+
+    /// Get the configured holder (if any).
+    pub fn holder(&self) -> Option<&PublicKey> {
+        self.authorized_holder.as_ref()
+    }
+
+    /// Get the configured trust level.
+    pub fn trust_level(&self) -> Option<TrustLevel> {
+        self.trust_level
+    }
+
+    /// Get the configured intent.
+    pub fn intent(&self) -> Option<&str> {
+        self.intent.as_deref()
+    }
+
+    /// Set the tool name for the execution warrant (mutable version for FFI).
+    pub fn set_tool(&mut self, tool: impl Into<String>) {
+        self.tools = Some(vec![tool.into()]);
+    }
+
+    /// Set multiple tools for the execution warrant (mutable version for FFI).
+    pub fn set_tools(&mut self, tools: Vec<String>) {
+        self.tools = Some(tools);
+    }
+
+    /// Set a constraint (mutable version for FFI).
+    pub fn set_constraint(&mut self, field: impl Into<String>, constraint: impl Into<Constraint>) {
+        self.constraints.insert(field, constraint);
+    }
+
+    /// Set the trust level (mutable version for FFI).
+    pub fn set_trust_level(&mut self, level: TrustLevel) {
+        self.trust_level = Some(level);
+    }
+
+    /// Set TTL (mutable version for FFI).
+    pub fn set_ttl(&mut self, ttl: Duration) {
+        self.ttl = Some(ttl);
+    }
+
+    /// Set the maximum delegation depth (mutable version for FFI).
+    pub fn set_max_depth(&mut self, max_depth: u32) {
+        self.max_depth = Some(max_depth);
+    }
+
+    /// Make this warrant terminal (cannot be delegated further).
+    pub fn terminal(mut self) -> Self {
+        self.max_depth = Some(self.issuer.depth() + 1);
+        self
+    }
+
+    /// Make this warrant terminal (mutable version for FFI).
+    pub fn set_terminal(&mut self) {
+        self.max_depth = Some(self.issuer.depth() + 1);
+    }
+
+    /// Set the session ID (mutable version for FFI).
+    pub fn set_session_id(&mut self, session_id: impl Into<String>) {
+        self.session_id = Some(session_id.into());
+    }
+
+    /// Set the agent ID (mutable version for FFI).
+    pub fn set_agent_id(&mut self, agent_id: impl Into<String>) {
+        self.agent_id = Some(agent_id.into());
+    }
+
+    /// Set the authorized holder (mutable version for FFI).
+    pub fn set_authorized_holder(&mut self, public_key: PublicKey) {
+        self.authorized_holder = Some(public_key);
+    }
+
+    /// Set required approvers (mutable version for FFI).
+    pub fn set_required_approvers(&mut self, approvers: Vec<PublicKey>) {
+        self.required_approvers = Some(approvers);
+    }
+
+    /// Set minimum approvals (mutable version for FFI).
+    pub fn set_min_approvals(&mut self, min: u32) {
+        self.min_approvals = Some(min);
+    }
+
+    /// Set the intent/purpose for this issuance (mutable version for FFI).
+    pub fn set_intent(&mut self, intent: impl Into<String>) {
+        self.intent = Some(intent.into());
+    }
+
+    /// Build and sign the execution warrant.
+    pub fn build(self, keypair: &Keypair, issuer_keypair: &Keypair) -> Result<Warrant> {
+        // Delegate to IssuanceBuilder
+        IssuanceBuilder {
+            issuer: &self.issuer,
+            tools: self.tools,
+            constraints: self.constraints,
+            trust_level: self.trust_level,
+            ttl: self.ttl,
+            max_depth: self.max_depth,
+            session_id: self.session_id,
+            agent_id: self.agent_id,
+            authorized_holder: self.authorized_holder,
+            required_approvers: self.required_approvers,
+            min_approvals: self.min_approvals,
+        }
+        .build(keypair, issuer_keypair)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2653,7 +2955,7 @@ mod tests {
             .build(&keypair)
             .unwrap();
 
-        assert_eq!(warrant.tool(), Some("upgrade_cluster"));
+        assert_eq!(warrant.tools(), Some(&["upgrade_cluster".to_string()][..]));
         assert_eq!(warrant.depth(), 0);
         assert!(warrant.parent_id().is_none());
         assert!(!warrant.is_expired());
@@ -2800,7 +3102,7 @@ mod tests {
     }
 
     #[test]
-    fn test_attenuation_depth_limit() {
+    fn test_attenuation_chain_length_limit() {
         let keypair = create_test_keypair();
 
         let mut warrant = Warrant::builder()
@@ -2810,12 +3112,43 @@ mod tests {
             .build(&keypair)
             .unwrap();
 
-        // Delegate up to max depth
-        for _ in 0..MAX_DELEGATION_DEPTH {
+        // Delegate up to max issuer chain length
+        // Note: MAX_ISSUER_CHAIN_LENGTH (8) < MAX_DELEGATION_DEPTH (64)
+        // Chain length limit kicks in first to prevent DoS attacks
+        for _ in 0..crate::MAX_ISSUER_CHAIN_LENGTH {
             warrant = warrant.attenuate().build(&keypair, &keypair).unwrap();
         }
 
-        // Next delegation should fail
+        // Next delegation should fail due to chain length limit
+        let result = warrant.attenuate().build(&keypair, &keypair);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("issuer chain length") && err_msg.contains("exceed maximum"),
+            "Expected chain length error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_attenuation_depth_limit_with_max_depth() {
+        let keypair = create_test_keypair();
+
+        // Create warrant with explicit max_depth of 3 (smaller than chain length limit)
+        let mut warrant = Warrant::builder()
+            .tool("test")
+            .ttl(Duration::from_secs(3600))
+            .max_depth(3)
+            .authorized_holder(keypair.public_key())
+            .build(&keypair)
+            .unwrap();
+
+        // Delegate up to max depth
+        for _ in 0..3 {
+            warrant = warrant.attenuate().build(&keypair, &keypair).unwrap();
+        }
+
+        // Next delegation should fail due to depth limit
         let result = warrant.attenuate().build(&keypair, &keypair);
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -3314,7 +3647,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(execution_warrant.r#type(), WarrantType::Execution);
-        assert_eq!(execution_warrant.tool(), Some("read_file"));
+        assert_eq!(
+            execution_warrant.tools(),
+            Some(&["read_file".to_string()][..])
+        );
         assert_eq!(
             execution_warrant.authorized_holder(),
             &holder_kp.public_key()
@@ -3324,8 +3660,119 @@ mod tests {
     }
 
     #[test]
+    fn test_issuer_cannot_issue_to_self() {
+        let issuer_kp = create_test_keypair();
+
+        // Create an issuer warrant held by issuer_kp
+        let issuer_warrant = Warrant::builder()
+            .r#type(WarrantType::Issuer)
+            .issuable_tools(vec!["read_file".to_string()])
+            .trust_ceiling(TrustLevel::Internal)
+            .ttl(Duration::from_secs(3600))
+            .authorized_holder(issuer_kp.public_key())
+            .build(&issuer_kp)
+            .unwrap();
+
+        // Try to issue an execution warrant to SELF (the issuer warrant holder)
+        // This should be rejected as it would allow privilege escalation
+        let result = issuer_warrant
+            .issue_execution_warrant()
+            .unwrap()
+            .tool("read_file")
+            .ttl(Duration::from_secs(60))
+            .authorized_holder(issuer_kp.public_key()) // Same as issuer warrant holder!
+            .build(&issuer_kp, &issuer_kp);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("self-issuance prohibited"),
+            "Expected self-issuance error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_issuer_holder_separation() {
+        // Test that execution warrant holder cannot be the issuer warrant's issuer
+        // (the key that signed the issuer warrant)
+        let issuer_kp = create_test_keypair(); // Signs issuer warrant AND will be execution holder
+        let holder_kp = create_test_keypair(); // Holds the issuer warrant
+
+        // Create an issuer warrant signed by issuer_kp, held by holder_kp
+        let issuer_warrant = Warrant::builder()
+            .r#type(WarrantType::Issuer)
+            .issuable_tools(vec!["read_file".to_string()])
+            .trust_ceiling(TrustLevel::Internal)
+            .ttl(Duration::from_secs(3600))
+            .authorized_holder(holder_kp.public_key())
+            .build(&issuer_kp)
+            .unwrap();
+
+        // Try to issue an execution warrant where the holder is the issuer warrant's issuer
+        // This should be rejected as it would allow indirect privilege escalation
+        let result = issuer_warrant
+            .issue_execution_warrant()
+            .unwrap()
+            .tool("read_file")
+            .ttl(Duration::from_secs(60))
+            .authorized_holder(issuer_kp.public_key()) // Same as issuer warrant's issuer!
+            .build(&holder_kp, &issuer_kp);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("issuer-holder separation required"),
+            "Expected issuer-holder separation error, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_holder_cycling_allowed_with_monotonicity() {
+        // Test that A → B → A delegation is allowed because monotonic attenuation
+        // already guarantees privileges can only shrink. B delegating back to A
+        // gives A a strictly weaker warrant than their original.
+        let keypair_a = create_test_keypair();
+        let keypair_b = create_test_keypair();
+
+        // A creates a root warrant for themselves
+        let root = Warrant::builder()
+            .tool("test")
+            .constraint("env", Pattern::new("*").unwrap())
+            .ttl(Duration::from_secs(3600))
+            .authorized_holder(keypair_a.public_key())
+            .build(&keypair_a)
+            .unwrap();
+
+        // A delegates to B with narrower constraints
+        let child_b = root
+            .attenuate()
+            .constraint("env", Pattern::new("staging-*").unwrap())
+            .authorized_holder(keypair_b.public_key())
+            .build(&keypair_b, &keypair_a)
+            .unwrap();
+
+        assert_eq!(child_b.depth(), 1);
+
+        // B delegates back to A - this IS allowed because A gets a weaker warrant
+        let result = child_b
+            .attenuate()
+            .authorized_holder(keypair_a.public_key())
+            .build(&keypair_a, &keypair_b);
+
+        // Should succeed - A now has a warrant limited to staging-*, not the original *
+        assert!(result.is_ok());
+        let child_a = result.unwrap();
+        assert_eq!(child_a.depth(), 2);
+        // A's new warrant is strictly weaker than their original due to monotonicity
+    }
+
+    #[test]
     fn test_issuance_validates_tool_in_issuable_tools() {
         let issuer_kp = create_test_keypair();
+        let holder_kp = create_test_keypair();
 
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
@@ -3342,7 +3789,7 @@ mod tests {
             .unwrap()
             .tool("send_email") // Not in issuable_tools
             .ttl(Duration::from_secs(60))
-            .authorized_holder(issuer_kp.public_key())
+            .authorized_holder(holder_kp.public_key())
             .build(&issuer_kp, &issuer_kp);
 
         assert!(result.is_err());
@@ -3355,6 +3802,7 @@ mod tests {
     #[test]
     fn test_issuance_validates_trust_level() {
         let issuer_kp = create_test_keypair();
+        let holder_kp = create_test_keypair();
 
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
@@ -3372,7 +3820,7 @@ mod tests {
             .tool("read_file")
             .trust_level(TrustLevel::Internal) // Exceeds External ceiling
             .ttl(Duration::from_secs(60))
-            .authorized_holder(issuer_kp.public_key())
+            .authorized_holder(holder_kp.public_key())
             .build(&issuer_kp, &issuer_kp);
 
         assert!(result.is_err());
@@ -3385,6 +3833,7 @@ mod tests {
     #[test]
     fn test_issuance_validates_constraint_bounds() {
         let issuer_kp = create_test_keypair();
+        let holder_kp = create_test_keypair();
 
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
@@ -3403,7 +3852,7 @@ mod tests {
             .tool("read_file")
             .constraint("path", Pattern::new("/etc/*").unwrap()) // Outside /data/*
             .ttl(Duration::from_secs(60))
-            .authorized_holder(issuer_kp.public_key())
+            .authorized_holder(holder_kp.public_key())
             .build(&issuer_kp, &issuer_kp);
 
         assert!(result.is_err());
@@ -3416,6 +3865,7 @@ mod tests {
     #[test]
     fn test_issuance_validates_max_issue_depth() {
         let issuer_kp = create_test_keypair();
+        let holder_kp = create_test_keypair();
 
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
@@ -3433,8 +3883,8 @@ mod tests {
             .unwrap()
             .tool("read_file")
             .ttl(Duration::from_secs(60))
-            .authorized_holder(issuer_kp.public_key())
-            .build(&issuer_kp, &issuer_kp) // issuer_kp is both holder and issuer
+            .authorized_holder(holder_kp.public_key())
+            .build(&issuer_kp, &issuer_kp)
             .unwrap();
 
         assert_eq!(exec1.depth(), 1);

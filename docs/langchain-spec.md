@@ -35,9 +35,9 @@ def read_file(file_path: str) -> str:
 # 2. Create keypair and warrant
 keypair = Keypair.generate()
 warrant = Warrant.issue(
-    tool="read_file",
+    tools="read_file",
     keypair=keypair,
-    holder=keypair.public_key(),
+    holder=keypair.public_key,
     constraints={"file_path": Pattern("/tmp/*")},
     ttl_seconds=3600
 )
@@ -181,9 +181,9 @@ def read_file(path: str) -> str:
 # Warrant setup
 keypair = Keypair.generate()
 warrant = Warrant.issue(
-    tool="read_file",
+    tools="read_file",
     keypair=keypair,
-    holder=keypair.public_key(),
+    holder=keypair.public_key,
     constraints={"file_path": Pattern("/tmp/*")},
     ttl_seconds=3600
 )

@@ -231,7 +231,7 @@ def main():
             },
             ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
             keypair=control_keypair,
-            holder=control_keypair.public_key() # Bind to self for demo
+            holder=control_keypair.public_key # Bind to self for demo
         )
         
         print("   ✓ Warrant created with constraints:")

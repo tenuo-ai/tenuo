@@ -22,9 +22,9 @@ from tenuo import Keypair, Warrant, Pattern, lockdown, set_warrant_context, set_
 # 1. Setup (normally done by control plane)
 keypair = Keypair.generate()
 warrant = Warrant.issue(
-    tool="delete_database",
+    tools="delete_database",  # Can also be a list: ["tool1", "tool2"]
     keypair=keypair,
-    holder=keypair.public_key(),
+    holder=keypair.public_key,
     constraints={"db_name": Pattern("test-*")},
     ttl_seconds=300,
 )
@@ -148,9 +148,9 @@ worker_keypair = Keypair.generate()
 
 # Issue a root warrant (Control Plane)
 root_warrant = Warrant.issue(
-    tool="delete_database",
+    tools="delete_database",
     keypair=root_keypair,
-    holder=root_keypair.public_key(),
+    holder=root_keypair.public_key,
     constraints={"db_name": Pattern("*")},
     ttl_seconds=3600
 )
@@ -161,13 +161,13 @@ worker_warrant = root_warrant.attenuate(
     constraints={"db_name": Pattern("test-*")},
     keypair=worker_keypair,       # Subject keypair
     parent_keypair=root_keypair,  # Issuer keypair
-    holder=worker_keypair.public_key()
+    holder=worker_keypair.public_key
 )
 
 # Option 2: Builder pattern with diff preview (recommended for audit trails)
 builder = root_warrant.attenuate_builder()
 builder.with_constraint("db_name", Pattern("test-*"))
-builder.with_holder(worker_keypair.public_key())
+builder.with_holder(worker_keypair.public_key)
 builder.with_intent("Test database cleanup")
 print(builder.diff())  # Preview changes before delegation
 worker_warrant = builder.delegate_to(root_keypair, root_keypair)
@@ -286,7 +286,8 @@ This demonstrates the complete flow: warrant issuance, attenuation, delegation, 
 | **Monotonic attenuation** | Capabilities only shrink, never expand |
 | **Offline verification** | No network calls, ~25μs latency |
 | **Holder binding** | Warrants bound to keys, stolen tokens useless |
-| **Depth limits** | Configurable delegation depth (max 64) |
+| **Depth limits** | Configurable delegation depth (max 64, chain max 8) |
+| **Chain length security** | Max 8 delegation chain links (prevents DoS/stack overflow) |
 | **Audit logging** | SIEM-compatible structured JSON events for all authorization decisions |
 | **MCP integration** | Native support for Model Context Protocol (AI agent tool calling) |
 

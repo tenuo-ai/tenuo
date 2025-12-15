@@ -6,6 +6,7 @@ Complete API documentation for the Tenuo Python SDK.
 
 ## Table of Contents
 
+- [Constants](#constants)
 - [Core Types](#core-types)
   - [Keypair](#keypair)
   - [PublicKey](#publickey)
@@ -17,6 +18,24 @@ Complete API documentation for the Tenuo Python SDK.
 - [Decorators & Context](#decorators--context)
 - [Exceptions](#exceptions)
 - [Audit Logging](#audit-logging)
+
+---
+
+## Constants
+
+Protocol-level constants exported from the SDK:
+
+```python
+from tenuo import MAX_DELEGATION_DEPTH, MAX_ISSUER_CHAIN_LENGTH, MAX_WARRANT_SIZE
+```
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `MAX_DELEGATION_DEPTH` | 64 | Maximum warrant delegation depth |
+| `MAX_ISSUER_CHAIN_LENGTH` | 8 | Maximum chain links in a warrant (DoS protection) |
+| `MAX_WARRANT_SIZE` | 1,048,576 | Maximum serialized warrant size in bytes (1 MB) |
+
+**Security Note**: `MAX_ISSUER_CHAIN_LENGTH` limits the embedded issuer chain to prevent stack overflow attacks during verification. Chains longer than 8 levels indicate a design smell and should be reconsidered.
 
 ---
 
@@ -40,9 +59,9 @@ from tenuo import Keypair
 
 #### Instance Methods
 
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `public_key()` | `PublicKey` | Get the public key |
+| Property/Method | Returns | Description |
+|-----------------|---------|-------------|
+| `public_key` | `PublicKey` | Get the public key (property) |
 | `public_key_bytes()` | `bytes` | Get public key as bytes (32 bytes) |
 | `secret_key_bytes()` | `bytes` | Get secret key as bytes (32 bytes) ⚠️ |
 | `sign(message: bytes)` | `Signature` | Sign a message |
@@ -159,9 +178,9 @@ from tenuo import Warrant, Keypair, Pattern, Exact
 
 # Issue a new warrant
 issuer_keypair = Keypair.generate()
-worker_public_key = Keypair.generate().public_key()
+worker_public_key = Keypair.generate().public_key
 root = Warrant.issue(
-    tool="manage_infrastructure",
+    tools="manage_infrastructure",  # Can also be a list: ["tool1", "tool2"]
     constraints={"cluster": Pattern("staging-*")},
     ttl_seconds=3600,
     keypair=issuer_keypair,
@@ -345,7 +364,7 @@ Authorizer(
 from tenuo import Authorizer, Keypair
 
 cp_kp = Keypair.generate()
-authorizer = Authorizer(trusted_roots=[cp_kp.public_key()])
+authorizer = Authorizer(trusted_roots=[cp_kp.public_key])
 
 # Verify root warrant
 authorizer.verify(root_warrant)

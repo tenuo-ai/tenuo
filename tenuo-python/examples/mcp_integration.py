@@ -57,7 +57,7 @@ def main():
         control_keypair = Keypair.generate()
         
         # Get public key object (method call, not property)
-        public_key = control_keypair.public_key()
+        public_key = control_keypair.public_key
         
         # Create authorizer with public key
         # HARDCODED: Using generated keypair for demo
@@ -84,18 +84,18 @@ def main():
         # MCP config extracts "max_size" (snake_case), but we'll use "maxSize" (camelCase)
         # In production, ensure warrant constraint names match MCP extraction names
         warrant = Warrant.issue(
-            tool="filesystem_read",
+            tools="filesystem_read",
             constraints={
                 "path": Pattern("/var/log/*"),  # HARDCODED: Only /var/log/ files for demo
                 "max_size": Range.max_value(1024 * 1024)  # HARDCODED: Match MCP extraction name "max_size"
             },
             ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
             keypair=control_keypair,
-            holder=control_keypair.public_key() # Bind to self for demo
+            holder=control_keypair.public_key # Bind to self for demo
         )
-        # Note: warrant.tool is a property (getter), not a method
+        # Note: warrant.tools is a property (getter) returning a list
         print("   [OK] Warrant created")
-        print(f"   Tool: {warrant.tool}")  # Property, not method
+        print(f"   Tools: {warrant.tools}")
         print("   Constraints: path=/var/log/*, max_size<=1MB")
     except Exception as e:
         print(f"   [ERR] Error creating warrant: {e}")
@@ -178,16 +178,16 @@ def demo_without_config(control_keypair):
     # Create warrant
     try:
         warrant = Warrant.issue(
-            tool="filesystem_read",
+            tools="filesystem_read",
             constraints={
                 "path": Pattern("/var/log/*"),
                 "maxSize": Range.max_value(1024 * 1024)
             },
             ttl_seconds=3600,
             keypair=control_keypair,
-            holder=control_keypair.public_key()
+            holder=control_keypair.public_key
         )
-        print(f"✓ Warrant created: {warrant.tool}")
+        print(f"✓ Warrant created: {warrant.tools}")
     except Exception as e:
         print(f"✗ Error: {e}")
         return
@@ -214,7 +214,7 @@ def demo_without_config(control_keypair):
         print(f"\n✓ Warrant authorization: {authorized}")
         
         # Full authorization with Authorizer
-        public_key = control_keypair.public_key()
+        public_key = control_keypair.public_key
         authorizer = Authorizer(trusted_roots=[public_key])
         try:
             authorizer.check(warrant, "filesystem_read", extracted_constraints, bytes(pop_sig))

@@ -25,16 +25,16 @@ def main():
     # 2. Create a root warrant with constraints
     print("2. Creating root warrant...")
     root_warrant = Warrant.issue(
-        tool="manage_infrastructure",
+        tools="manage_infrastructure",  # Can also be a list: ["tool1", "tool2"]
         constraints={
             "cluster": Pattern("staging-*"),
             "budget": Range.max_value(10000.0)
         },
         ttl_seconds=3600,
         keypair=control_keypair,
-        holder=control_keypair.public_key() # Bind to control plane initially
+        holder=control_keypair.public_key # Bind to control plane initially
     )
-    print(f"   Tool: {root_warrant.tool}")
+    print(f"   Tools: {root_warrant.tools}")
     print(f"   Depth: {root_warrant.depth}")
     print()
     
@@ -47,9 +47,9 @@ def main():
         },
         keypair=worker_keypair,       # Subject keypair (for binding)
         parent_keypair=control_keypair, # Issuer keypair (for signing)
-        holder=worker_keypair.public_key() # Explicit holder (optional if keypair matches)
+        holder=worker_keypair.public_key # Explicit holder (optional if keypair matches)
     )
-    print(f"   Worker tool: {worker_warrant.tool}")
+    print(f"   Worker tools: {worker_warrant.tools}")
     print(f"   Worker depth: {worker_warrant.depth} (attenuated)")
     print()
     
@@ -93,7 +93,7 @@ def main():
     # Deserialize
     deserialized = Warrant.from_base64(warrant_base64)
     print("   ✓ Deserialized successfully")
-    print(f"   Deserialized tool: {deserialized.tool}")
+    print(f"   Deserialized tools: {deserialized.tools}")
     print()
     
     print("=== Example completed successfully! ===")

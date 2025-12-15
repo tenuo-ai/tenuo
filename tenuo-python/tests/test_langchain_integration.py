@@ -187,7 +187,7 @@ class TestPassthrough:
     def test_passthrough_blocked_by_default(self):
         """Passthrough is blocked in production mode."""
         kp = Keypair.generate()
-        configure(issuer_key=kp, trusted_roots=[kp.public_key()])
+        configure(issuer_key=kp, trusted_roots=[kp.public_key])
         
         tools = protect_langchain_tools([search])
         

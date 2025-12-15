@@ -15,7 +15,7 @@ def test_set_clock_tolerance_preserves_roots():
     """
     # 1. Create authorizer with a root
     kp = Keypair.generate()
-    auth = Authorizer(trusted_roots=[kp.public_key()])
+    auth = Authorizer(trusted_roots=[kp.public_key])
     
     assert auth.trusted_root_count() == 1
     
@@ -27,7 +27,7 @@ def test_set_clock_tolerance_preserves_roots():
     
     # 4. Verify it actually works (functional test)
     warrant = Warrant.issue(
-        tool="test",
+        tools="test",
         keypair=kp,
         ttl_seconds=300
     )
@@ -44,11 +44,11 @@ def test_error_mapping_signature_invalid():
     # Actually, easiest way to trigger SignatureInvalid is to tamper with signature bytes
     # or use a warrant signed by a key NOT in trusted roots (if we enforce roots)
     
-    auth = Authorizer(trusted_roots=[kp.public_key()])
+    auth = Authorizer(trusted_roots=[kp.public_key])
     
     # Issue warrant signed by WRONG key
     warrant = Warrant.issue(
-        tool="test",
+        tools="test",
         keypair=wrong_kp,  # Not trusted
         ttl_seconds=300
     )
@@ -64,11 +64,11 @@ def test_error_mapping_signature_invalid():
 def test_error_mapping_expired():
     """Verify that Rust WarrantExpired maps to Python ExpiredError."""
     kp = Keypair.generate()
-    auth = Authorizer(trusted_roots=[kp.public_key()])
+    auth = Authorizer(trusted_roots=[kp.public_key])
     
     # Issue expired warrant
     warrant = Warrant.issue(
-        tool="test",
+        tools="test",
         keypair=kp,
         ttl_seconds=0 # Expires immediately
     )

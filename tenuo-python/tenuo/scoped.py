@@ -31,6 +31,9 @@ from tenuo_core import (  # type: ignore[import-untyped]
     Exact,
     OneOf,
     Range,
+    Regex,
+    Wildcard,
+    NotOneOf,
 )
 
 from .config import get_config, ConfigurationError
@@ -49,39 +52,29 @@ from .exceptions import (
 
 
 # Type alias for constraints
-Constraint = Union[Pattern, Exact, OneOf, Range, str, int, float, List[str]]
+Constraint = Union[Pattern, Exact, OneOf, Range, Regex, Wildcard, NotOneOf, str, int, float, List[str]]
 
 
-def _infer_constraint(key: str, value: Any) -> Any:
+def _ensure_constraint(key: str, value: Any) -> Any:
     """
-    Infer constraint type from key name and value.
+    Ensure value is a constraint object, wrapping in Exact if not.
     
-    Rules:
-    - String ending with '*': Pattern (glob)
-    - List of strings: OneOf
-    - Tuple of 2 numbers: Range
-    - Otherwise: Exact
+    NO TYPE INFERENCE is performed.
+    - "foo*" is Exact("foo*"), NOT Pattern("foo*")
+    - [1, 2] is Exact([1, 2]), NOT OneOf([1, 2])
+    
+    To use broader constraints, you must explicitly construct them:
+    - Pattern("foo*")
+    - OneOf([1, 2])
     """
     # Already a constraint object
     if hasattr(value, '__class__') and value.__class__.__name__ in (
-        'Pattern', 'Exact', 'OneOf', 'Range', 'NotOneOf', 'Contains', 'Subset'
+        'Pattern', 'Exact', 'OneOf', 'Range', 'NotOneOf', 'Contains', 'Subset', 'Regex', 'Wildcard', 'All', 'AnyOf', 'Not', 'CEL'
     ):
         return value
     
-    # String with glob
-    if isinstance(value, str) and value.endswith('*'):
-        return Pattern(value)
-    
-    # List -> OneOf
-    if isinstance(value, list):
-        return OneOf(value)
-    
-    # Tuple -> Range (min, max)
-    if isinstance(value, tuple) and len(value) == 2:
-        min_val, max_val = value
-        return Range(min_val, max_val)
-    
     # Default: Exact match
+    # We wrap everything else in Exact to be safe and explicit
     return Exact(str(value)) if not isinstance(value, (int, float, bool)) else Exact(value)
 
 
@@ -222,7 +215,7 @@ class ScopedTaskBuilder:
         
         try:
             # Validate tools
-            parent_tools = [parent.tool] if parent.tool else []
+            parent_tools = parent.tools if parent.tools else []
             child_tools = self.tools if self.tools else parent_tools
             
             invalid_tools = set(child_tools) - set(parent_tools)
@@ -346,9 +339,9 @@ def _enter_scoped_task_sync(
         if current_allowed is not None:
             # Check against the context's allowed tools (nested scoped_task)
             parent_tools = current_allowed
-        elif parent.tool:
+        elif parent.tools:
             # Fall back to warrant's tool field
-            parent_tools = parent.tool.split(",") if parent.tool else []
+            parent_tools = parent.tools
         else:
             parent_tools = []
         
@@ -370,7 +363,7 @@ def _enter_scoped_task_sync(
             parent_constraints = dict(pc)
     
     for key, child_value in constraints.items():
-        inferred = _infer_constraint(key, child_value)
+        inferred = _ensure_constraint(key, child_value)
         parent_value = parent_constraints.get(key)
         
         if parent_value is not None:
@@ -395,7 +388,7 @@ def _enter_scoped_task_sync(
     # Set in context and save token for restoration
     warrant_token = _warrant_context.set(child)
     
-    # Set allowed tools if specified (for narrowing beyond warrant.tool)
+    # Set allowed tools if specified (for narrowing beyond warrant.tools)
     allowed_tools_token = None
     if tools:
         allowed_tools_token = _allowed_tools_context.set(tools)
@@ -500,21 +493,20 @@ async def root_task(
     if not tools:
         raise ConfigurationError("root_task requires at least one tool")
     
-    # Join multiple tools with comma for multi-tool support
-    tool = ",".join(tools)
     
     # Build constraints dict
     constraint_dict = {}
     for key, value in constraints.items():
-        constraint_dict[key] = _infer_constraint(key, value)
+        constraint_dict[key] = _ensure_constraint(key, value)
     
     # Issue the warrant
+    # Issue the warrant
     warrant = Warrant.issue(
-        tool=tool,
+        tools=tools,
         keypair=issuer,
         constraints=constraint_dict if constraint_dict else None,
         ttl_seconds=effective_ttl,
-        holder=holder.public_key() if holder != issuer else None,
+        holder=holder.public_key if holder != issuer else None,
     )
     
     # Set in context
@@ -560,19 +552,16 @@ def root_task_sync(
     if not tools:
         raise ConfigurationError("root_task requires at least one tool")
     
-    # Join multiple tools with comma for multi-tool support
-    tool = ",".join(tools)
-    
     constraint_dict = {}
     for key, value in constraints.items():
-        constraint_dict[key] = _infer_constraint(key, value)
+        constraint_dict[key] = _ensure_constraint(key, value)
     
     warrant = Warrant.issue(
-        tool=tool,
+        tools=tools,
         keypair=issuer,
         constraints=constraint_dict if constraint_dict else None,
         ttl_seconds=effective_ttl,
-        holder=holder.public_key() if holder != issuer else None,
+        holder=holder.public_key if holder != issuer else None,
     )
     
     warrant_token = _warrant_context.set(warrant)

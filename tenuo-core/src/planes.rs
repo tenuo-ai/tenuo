@@ -626,6 +626,17 @@ impl DataPlane {
             }
         }
 
+        // SECURITY: Chain length limit to prevent DoS attacks
+        // This is separate from MAX_ISSUER_CHAIN_LENGTH as it limits the number
+        // of warrants passed for verification (vs embedded chain links)
+        if chain.len() > crate::MAX_ISSUER_CHAIN_LENGTH {
+            return Err(Error::ChainVerificationFailed(format!(
+                "chain length {} exceeds maximum {} (potential DoS attack)",
+                chain.len(),
+                crate::MAX_ISSUER_CHAIN_LENGTH
+            )));
+        }
+
         // CYCLE DETECTION: Track seen warrant IDs
         let mut seen_ids: HashSet<String> = HashSet::new();
         for warrant in chain {
@@ -634,6 +645,18 @@ impl DataPlane {
                 return Err(Error::ChainVerificationFailed(format!(
                     "cycle detected: warrant ID '{}' appears multiple times in chain",
                     id
+                )));
+            }
+        }
+
+        // SECURITY: Validate each warrant's issuer_chain length
+        for warrant in chain {
+            if warrant.issuer_chain().len() > crate::MAX_ISSUER_CHAIN_LENGTH {
+                return Err(Error::ChainVerificationFailed(format!(
+                    "warrant {} has issuer_chain length {} exceeding maximum {}",
+                    warrant.id(),
+                    warrant.issuer_chain().len(),
+                    crate::MAX_ISSUER_CHAIN_LENGTH
                 )));
             }
         }
@@ -792,12 +815,14 @@ impl DataPlane {
                 }
                 // Validate tool is within issuer's tools
                 if let Some(issuer_tools) = &link.issuer_tools {
-                    if let Some(child_tool) = child.tool() {
-                        if !issuer_tools.iter().any(|t| t == child_tool || t == "*") {
-                            return Err(Error::MonotonicityViolation(format!(
-                                "child tool '{}' not in issuer's tools: {:?}",
-                                child_tool, issuer_tools
-                            )));
+                    if let Some(child_tools) = child.tools() {
+                        for child_tool in child_tools {
+                            if !issuer_tools.iter().any(|t| t == child_tool || t == "*") {
+                                return Err(Error::MonotonicityViolation(format!(
+                                    "child tool '{}' not in issuer's tools: {:?}",
+                                    child_tool, issuer_tools
+                                )));
+                            }
                         }
                     }
                 }

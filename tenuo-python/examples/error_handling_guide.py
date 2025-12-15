@@ -283,7 +283,7 @@ def main():
     expired_warrant = Warrant.issue(
         tool="read_file",
         keypair=keypair,
-        holder=keypair.public_key(),
+        holder=keypair.public_key,
         constraints={"file_path": Pattern("/tmp/*")},
         ttl_seconds=1  # Very short TTL
     )
@@ -309,7 +309,7 @@ def main():
     restricted_warrant = Warrant.issue(
         tool="process_payment",
         keypair=keypair,
-        holder=keypair.public_key(),
+        holder=keypair.public_key,
         constraints={
             "amount": Range.max_value(1000.0),
             "currency": Pattern("USD|EUR")
@@ -352,7 +352,7 @@ def main():
     warrant = Warrant.issue(
         tool="read_file",
         keypair=keypair,
-        holder=keypair.public_key(),  # Bound to original keypair
+        holder=keypair.public_key,  # Bound to original keypair
         constraints={"file_path": Pattern("/tmp/*")},
         ttl_seconds=3600
     )

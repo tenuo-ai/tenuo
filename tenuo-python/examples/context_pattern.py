@@ -63,7 +63,7 @@ def main():
             },
             ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
             keypair=keypair,
-            holder=keypair.public_key() # Bind to self
+            holder=keypair.public_key # Bind to self
         )
     except Exception as e:
         print(f"[ERR] Error creating warrant: {e}")
@@ -141,14 +141,14 @@ def main():
         constraints={"cluster": Pattern("staging-*")},
         ttl_seconds=3600,
         keypair=keypair,
-        holder=keypair.public_key()
+        holder=keypair.public_key
     )
     warrant2 = Warrant.issue(
         tool="upgrade_cluster",
         constraints={"cluster": Pattern("production-*")},
         ttl_seconds=3600,
         keypair=keypair,
-        holder=keypair.public_key()
+        holder=keypair.public_key
     )
     
     with set_warrant_context(warrant1), set_keypair_context(keypair):

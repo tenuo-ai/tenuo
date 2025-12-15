@@ -37,7 +37,7 @@ class TestTenuoNode:
             # Capture what tools are allowed
             warrant = get_warrant_context()
             if warrant:
-                tools_seen.append(warrant.tool)
+                tools_seen.append(warrant.tools)
             return {"result": "done"}
         
         with root_task_sync(tools=["search", "read_file"]):

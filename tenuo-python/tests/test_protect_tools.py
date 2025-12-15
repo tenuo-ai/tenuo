@@ -17,6 +17,7 @@ from tenuo import (
     TOOL_SCHEMAS,
     Keypair,
     ToolNotAuthorized,
+    Pattern,
     ConfigurationError,
 )
 
@@ -100,7 +101,7 @@ class TestProtectToolsAuthorization:
         tools = [read_file]
         protect_tools(tools)
         
-        with root_task_sync(tools=["read_file"], path="/data/*"):
+        with root_task_sync(tools=["read_file"], path=Pattern("/data/*")):
             result = tools[0](path="/data/test.txt")
             assert "Contents of" in result
     
@@ -112,7 +113,7 @@ class TestProtectToolsAuthorization:
         tools = [read_file, send_email]
         protect_tools(tools)
         
-        with root_task_sync(tools=["read_file"], path="/data/*"):
+        with root_task_sync(tools=["read_file"], path=Pattern("/data/*")):
             # read_file is authorized
             result = tools[0](path="/data/test.txt")
             assert result is not None
@@ -139,7 +140,7 @@ class TestPassthrough:
     def test_passthrough_blocked_without_dev_mode(self):
         """Passthrough is blocked in production mode."""
         kp = Keypair.generate()
-        configure(issuer_key=kp, trusted_roots=[kp.public_key()])
+        configure(issuer_key=kp, trusted_roots=[kp.public_key])
         
         tools = [read_file]
         protect_tools(tools)

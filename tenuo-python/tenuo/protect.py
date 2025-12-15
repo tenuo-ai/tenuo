@@ -226,11 +226,11 @@ async def _execute_protected(
         raise ToolNotAuthorized(tool=tool_name)
     
     # Check tool is in warrant's allowlist
-    if warrant.tool and warrant.tool != tool_name:
-        if tool_name not in (warrant.tool or "").split(","):
+    if warrant.tools and tool_name not in warrant.tools:
+        if tool_name not in (warrant.tools or []):
             raise ToolNotAuthorized(
                 tool=tool_name,
-                authorized_tools=[warrant.tool] if warrant.tool else None,
+                authorized_tools=warrant.tools if warrant.tools else None,
             )
     
     # Critical tools ALWAYS require at least one constraint
@@ -270,10 +270,10 @@ async def _execute_protected(
         
         # Simple authorization - check tool name matches
         # Full constraint checking happens via warrant.authorize() if PoP is needed
-        if warrant.tool and tool_name not in warrant.tool.split(","):
+        if warrant.tools and tool_name not in warrant.tools:
             raise ToolNotAuthorized(
                 tool=tool_name,
-                authorized_tools=warrant.tool.split(","),
+                authorized_tools=warrant.tools,
             )
         
         # Check constraints match if we have any

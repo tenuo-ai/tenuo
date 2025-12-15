@@ -25,6 +25,8 @@ from tenuo_core import (  # type: ignore
     AnyOf,
     Not,
     CEL,
+    Regex,
+    Wildcard,
     # Chain Verification
     ChainStep,
     ChainVerificationResult,
@@ -34,6 +36,8 @@ from tenuo_core import (  # type: ignore
     ExtractionResult,
     # Constants
     MAX_DELEGATION_DEPTH,
+    MAX_ISSUER_CHAIN_LENGTH,
+    MAX_WARRANT_SIZE,
     WIRE_VERSION,
     WARRANT_HEADER,
 )
@@ -274,6 +278,8 @@ __all__ = [
     "AnyOf",
     "Not",
     "CEL",
+    "Regex",
+    "Wildcard",
     # Chain Verification
     "ChainStep",
     "ChainVerificationResult",
@@ -283,9 +289,15 @@ __all__ = [
     "ExtractionResult",
     # Constants
     "MAX_DELEGATION_DEPTH",
+    "MAX_ISSUER_CHAIN_LENGTH",
+    "MAX_WARRANT_SIZE",
     "WIRE_VERSION",
     "WARRANT_HEADER",
-    # Exceptions - Base & Mapping
+    
+    # =========================================================================
+    # Exceptions
+    # =========================================================================
+    # Base
     "TenuoError",
     "RUST_ERROR_MAP",
     "RUST_ERROR_VARIANTS",
@@ -293,12 +305,14 @@ __all__ = [
     "CryptoError",
     "SignatureInvalid",
     "MissingSignature",
-    "InvalidSignature",
+    "InvalidSignature",  # alias for SignatureInvalid
     # Exceptions - Scope violations
     "ScopeViolation",
     "ToolNotAuthorized",
     "ToolMismatch",
     "ConstraintViolation",
+    # Exceptions - Lifecycle
+    "RevokedError",
     "ExpiredError",
     "Unauthorized",
     # Exceptions - Monotonicity

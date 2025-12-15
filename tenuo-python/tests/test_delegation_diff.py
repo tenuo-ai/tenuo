@@ -16,9 +16,9 @@ def test_builder_basic():
     
     # Create root warrant
     root = Warrant.issue(
-        tool="file_operations",
+        tools="file_operations",
         keypair=control_kp,
-        holder=control_kp.public_key(),
+        holder=control_kp.public_key,
         constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
@@ -27,14 +27,14 @@ def test_builder_basic():
     builder = AttenuationBuilder(root)
     builder.with_constraint("path", Exact("/data/reports/q3.pdf"))
     builder.with_ttl(60)
-    builder.with_holder(worker_kp.public_key())
+    builder.with_holder(worker_kp.public_key)
     builder.with_intent("Q3 report access for worker")
     
     # Check builder state
     assert "path" in builder.constraints
     assert builder.ttl_seconds == 60
     assert builder.holder is not None
-    assert builder.holder.to_bytes() == worker_kp.public_key().to_bytes()  # Compare bytes
+    assert builder.holder.to_bytes() == worker_kp.public_key.to_bytes()  # Compare bytes
     assert builder.intent == "Q3 report access for worker"
 
 
@@ -44,9 +44,9 @@ def test_builder_diff_computation():
     worker_kp = Keypair.generate()
     
     root = Warrant.issue(
-        tool="file_operations",
+        tools="file_operations",
         keypair=control_kp,
-        holder=control_kp.public_key(),
+        holder=control_kp.public_key,
         constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
@@ -54,7 +54,7 @@ def test_builder_diff_computation():
     builder = AttenuationBuilder(root)
     builder.with_constraint("path", Exact("/data/reports/q3.pdf"))
     builder.with_ttl(60)
-    builder.with_holder(worker_kp.public_key())
+    builder.with_holder(worker_kp.public_key)
     
     # Get structured diff
     diff = builder.diff_structured()
@@ -73,9 +73,9 @@ def test_builder_human_readable_diff():
     worker_kp = Keypair.generate()
     
     root = Warrant.issue(
-        tool="file_operations",
+        tools="file_operations",
         keypair=control_kp,
-        holder=control_kp.public_key(),
+        holder=control_kp.public_key,
         constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
@@ -83,7 +83,7 @@ def test_builder_human_readable_diff():
     builder = AttenuationBuilder(root)
     builder.with_constraint("path", Exact("/data/reports/q3.pdf"))
     builder.with_ttl(60)
-    builder.with_holder(worker_kp.public_key())
+    builder.with_holder(worker_kp.public_key)
     builder.with_intent("Q3 report access")
     
     # Get human-readable diff
@@ -102,9 +102,9 @@ def test_builder_delegation():
     worker_kp = Keypair.generate()
     
     root = Warrant.issue(
-        tool="file_operations",
+        tools="file_operations",
         keypair=control_kp,
-        holder=control_kp.public_key(),
+        holder=control_kp.public_key,
         constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
@@ -112,15 +112,15 @@ def test_builder_delegation():
     builder = AttenuationBuilder(root)
     builder.with_constraint("path", Exact("/data/reports/q3.pdf"))
     builder.with_ttl(60)
-    builder.with_holder(worker_kp.public_key())
+    builder.with_holder(worker_kp.public_key)
     builder.with_intent("Q3 report access")
     
     # Delegate
     child = builder.delegate_to(control_kp, control_kp)
     
-    assert child.tool == "file_operations"
+    assert child.tools == ["file_operations"]
     assert child.depth == 1
-    assert child.authorized_holder.to_bytes() == worker_kp.public_key().to_bytes()  # Compare bytes
+    assert child.authorized_holder.to_bytes() == worker_kp.public_key.to_bytes()  # Compare bytes
     
     # Check receipt was attached
     receipt = child.delegation_receipt
@@ -135,9 +135,9 @@ def test_warrant_attenuate_builder_method():
     control_kp = Keypair.generate()
     
     root = Warrant.issue(
-        tool="file_operations",
+        tools="file_operations",
         keypair=control_kp,
-        holder=control_kp.public_key(),
+        holder=control_kp.public_key,
         constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
@@ -155,9 +155,9 @@ def test_delegation_receipt_to_dict():
     worker_kp = Keypair.generate()
     
     root = Warrant.issue(
-        tool="file_operations",
+        tools="file_operations",
         keypair=control_kp,
-        holder=control_kp.public_key(),
+        holder=control_kp.public_key,
         constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
@@ -165,7 +165,7 @@ def test_delegation_receipt_to_dict():
     builder = AttenuationBuilder(root)
     builder.with_constraint("path", Exact("/data/q3.pdf"))
     builder.with_ttl(60)
-    builder.with_holder(worker_kp.public_key())
+    builder.with_holder(worker_kp.public_key)
     builder.with_intent("Test delegation")
     
     child = builder.delegate_to(control_kp, control_kp)
@@ -189,9 +189,9 @@ def test_delegation_receipt_siem_json():
     worker_kp = Keypair.generate()
     
     root = Warrant.issue(
-        tool="file_operations",
+        tools="file_operations",
         keypair=control_kp,
-        holder=control_kp.public_key(),
+        holder=control_kp.public_key,
         constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
@@ -199,7 +199,7 @@ def test_delegation_receipt_siem_json():
     builder = AttenuationBuilder(root)
     builder.with_constraint("path", Exact("/data/q3.pdf"))
     builder.with_ttl(60)
-    builder.with_holder(worker_kp.public_key())
+    builder.with_holder(worker_kp.public_key)
     
     child = builder.delegate_to(control_kp, control_kp)
     receipt = child.delegation_receipt

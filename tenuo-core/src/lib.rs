@@ -85,8 +85,8 @@ pub use revocation::{
 };
 pub use revocation_manager::RevocationManager;
 pub use warrant::{
-    OwnedAttenuationBuilder, Warrant, WarrantBuilder, WarrantId, POP_TIMESTAMP_WINDOW_SECS,
-    WARRANT_ID_PREFIX,
+    OwnedAttenuationBuilder, OwnedIssuanceBuilder, Warrant, WarrantBuilder, WarrantId,
+    POP_TIMESTAMP_WINDOW_SECS, WARRANT_ID_PREFIX,
 };
 pub use wire::MAX_WARRANT_SIZE;
 
@@ -101,6 +101,18 @@ pub use diff::{
 /// Individual warrants can set a lower limit via `max_depth` in the payload.
 /// This constant prevents DoS attacks from extremely deep chains.
 pub const MAX_DELEGATION_DEPTH: u32 = 64;
+
+/// Maximum length of the embedded issuer chain.
+///
+/// This limits the number of ChainLink entries in a warrant's issuer_chain,
+/// preventing stack overflow attacks during verification and limiting memory
+/// consumption from maliciously large warrants.
+///
+/// This is separate from MAX_DELEGATION_DEPTH because:
+/// - issuer_chain length affects memory/CPU during verification
+/// - Chains longer than 8 rarely make sense in practice
+/// - Attackers could craft warrants with huge issuer_chains
+pub const MAX_ISSUER_CHAIN_LENGTH: usize = 8;
 
 /// Context string for Ed25519 signatures (prevents cross-protocol attacks).
 ///
@@ -129,7 +141,7 @@ mod tests {
             .build(&keypair)
             .unwrap();
 
-        assert_eq!(warrant.tool(), Some("upgrade_cluster"));
+        assert_eq!(warrant.tools(), Some(&["upgrade_cluster".to_string()][..]));
         assert!(warrant.verify(&keypair.public_key()).is_ok());
     }
 

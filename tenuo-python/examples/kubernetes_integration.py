@@ -193,7 +193,7 @@ class ControlPlane:
             constraints=constraints,
             ttl_seconds=ttl_seconds,  # HARDCODED default: 3600. In production, use env var or config.
             keypair=self.keypair,
-            holder=self.keypair.public_key() # Bind to self for demo
+            holder=self.keypair.public_key # Bind to self for demo
         )
     
     def issue_warrant_for_request(
@@ -220,7 +220,7 @@ class ControlPlane:
             constraints=constraints,
             ttl_seconds=ttl_seconds,
             keypair=self.keypair,
-            holder=self.keypair.public_key() # Bind to self for demo
+            holder=self.keypair.public_key # Bind to self for demo
         )
 
 
@@ -274,7 +274,7 @@ class KubernetesWarrantManager:
         )
         
         if self.pod_warrant:
-            print(f"✓ Loaded pod-level warrant (tool: {self.pod_warrant.tool})")
+            print(f"✓ Loaded pod-level warrant (tools: {self.pod_warrant.tools})")
         else:
             print("⚠ No pod-level warrant found - will use request-scoped warrants")
     
@@ -494,7 +494,7 @@ def main():
             },
             ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
             keypair=control_keypair,
-            holder=control_keypair.public_key() # Bind to self for demo
+            holder=control_keypair.public_key # Bind to self for demo
         )
         print(f"   ✓ Warrant issued (ID: {agent_warrant.id[:8]}...)")
         print("   ✓ Constraints: file_path=/tmp/*\n")

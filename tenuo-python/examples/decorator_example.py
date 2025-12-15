@@ -20,7 +20,7 @@ def main():
         },
         ttl_seconds=3600,
         keypair=keypair,
-        holder=keypair.public_key() # Bind to self
+        holder=keypair.public_key # Bind to self
     )
     
     # Define a function protected by the warrant

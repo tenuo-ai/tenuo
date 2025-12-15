@@ -60,7 +60,7 @@ def orchestrator_task(warrant: Warrant, keypair: Keypair, worker_keypair: Keypai
         Tuple of (research_warrant, write_warrant) for chain verification
     """
     print("\n[Orchestrator] Starting task: 'Research Q3 competitors'")
-    print(f"[Orchestrator] My warrant allows: {warrant.tool}")
+    print(f"[Orchestrator] My warrant allows: {warrant.tools}")
     
     # Phase 1: Research (delegate search + fetch only)
     # Note: Attenuation inherits tools from parent. We use constraints to restrict usage.
@@ -73,7 +73,7 @@ def orchestrator_task(warrant: Warrant, keypair: Keypair, worker_keypair: Keypai
     research_builder.with_constraint("max_results", Range.max_value(5))  # Limit results
     research_builder.with_constraint("url", Pattern("https://public.*"))  # Only public URLs
     research_builder.with_ttl(60)  # Short-lived
-    research_builder.with_holder(worker_keypair.public_key())
+    research_builder.with_holder(worker_keypair.public_key)
     research_builder.with_intent("Research Q3 competitors")
     
     # Optional: Preview diff before delegation
@@ -81,7 +81,7 @@ def orchestrator_task(warrant: Warrant, keypair: Keypair, worker_keypair: Keypai
     # print(research_builder.diff())
     
     research_warrant = research_builder.delegate_to(keypair, keypair)
-    print(f"  Attenuated: tools={research_warrant.tool} (inherited)")
+    print(f"  Attenuated: tools={research_warrant.tools} (inherited)")
     print("  Constraints: query=*competitor*, max_results<=5, url=https://public.*, ttl=60s")
     
     # Access receipt if needed for audit
@@ -97,9 +97,9 @@ def orchestrator_task(warrant: Warrant, keypair: Keypair, worker_keypair: Keypai
     # This is the cleanest pattern when you want to completely change the tool set
     print("\n[Orchestrator] Phase 2: Delegating write to Worker")
     write_warrant = Warrant.issue(
-        tool="write",  # Only write tool (new warrant, not attenuated)
+        tools="write",  # Only write tool (new warrant, not attenuated)
         keypair=keypair,
-        holder=worker_keypair.public_key(),
+        holder=worker_keypair.public_key,
         constraints={
             "path": Pattern("/output/reports/*"),  # Restricted path
         },
@@ -119,7 +119,7 @@ def orchestrator_task(warrant: Warrant, keypair: Keypair, worker_keypair: Keypai
 def worker_research(warrant: Warrant, keypair: Keypair):
     """Worker: Executes research with attenuated authority."""
     print("\n  [Worker/Research] Received research warrant")
-    print(f"  [Worker/Research] Warrant allows: {warrant.tool}")
+    print(f"  [Worker/Research] Warrant allows: {warrant.tools}")
     
     with set_warrant_context(warrant), set_keypair_context(keypair):
         # Allowed: search for competitors (matches constraint)
@@ -156,7 +156,7 @@ def worker_research(warrant: Warrant, keypair: Keypair):
 def worker_write(warrant: Warrant, keypair: Keypair):
     """Worker: Executes write with attenuated authority."""
     print("\n  [Worker/Write] Received write warrant")
-    print(f"  [Worker/Write] Warrant allows: {warrant.tool}")
+    print(f"  [Worker/Write] Warrant allows: {warrant.tools}")
     
     with set_warrant_context(warrant), set_keypair_context(keypair):
         # Allowed: write to authorized path
@@ -192,16 +192,16 @@ def main():
     orchestrator_keypair = Keypair.generate()
     worker_keypair = Keypair.generate()
     
-    print(f"\nControl Plane: {control_plane_keypair.public_key().to_bytes()[:8].hex()}...")
-    print(f"Orchestrator:  {orchestrator_keypair.public_key().to_bytes()[:8].hex()}...")
-    print(f"Worker:        {worker_keypair.public_key().to_bytes()[:8].hex()}...")
+    print(f"\nControl Plane: {control_plane_keypair.public_key.to_bytes()[:8].hex()}...")
+    print(f"Orchestrator:  {orchestrator_keypair.public_key.to_bytes()[:8].hex()}...")
+    print(f"Worker:        {worker_keypair.public_key.to_bytes()[:8].hex()}...")
     
     # Control Plane issues root warrant to Orchestrator
     print("\n[Control Plane] Issuing root warrant to Orchestrator")
     root_warrant = Warrant.issue(
-        tool="search,fetch,write",  # All tools allowed (comma-separated)
+        tools=["search", "fetch", "write"],  # All tools allowed (as list)
         keypair=control_plane_keypair,
-        holder=orchestrator_keypair.public_key(),
+        holder=orchestrator_keypair.public_key,
         constraints={
             "query": Pattern("*"),  # Any query allowed
             "url": Pattern("https://*"),  # Any HTTPS URL
@@ -212,8 +212,8 @@ def main():
     print("  Root warrant: tools=[search, fetch, write], ttl=1h")
     
     # Create Authorizer to verify delegation chain
-    authorizer = Authorizer(trusted_roots=[control_plane_keypair.public_key()])
-    print(f"\n[Authorizer] Created with trusted root: {control_plane_keypair.public_key().to_bytes()[:8].hex()}...")
+    authorizer = Authorizer(trusted_roots=[control_plane_keypair.public_key])
+    print(f"\n[Authorizer] Created with trusted root: {control_plane_keypair.public_key.to_bytes()[:8].hex()}...")
     
     # Orchestrator executes task, delegating to Worker
     research_warrant, write_warrant = orchestrator_task(root_warrant, orchestrator_keypair, worker_keypair)

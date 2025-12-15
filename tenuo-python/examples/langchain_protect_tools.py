@@ -50,7 +50,7 @@ warrant = Warrant.issue(
     },
     ttl_seconds=3600,
     keypair=keypair,
-    holder=keypair.public_key()
+    holder=keypair.public_key
 )
 
 # -----------------------------------------------------------------------------

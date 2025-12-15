@@ -29,9 +29,9 @@ def main():
     orchestrator_kp = Keypair.generate()
     worker_kp = Keypair.generate()
     
-    print(f"\nControl Plane: {control_kp.public_key().to_bytes()[:8].hex()}...")
-    print(f"Orchestrator:  {orchestrator_kp.public_key().to_bytes()[:8].hex()}...")
-    print(f"Worker:        {worker_kp.public_key().to_bytes()[:8].hex()}...")
+    print(f"\nControl Plane: {control_kp.public_key.to_bytes()[:8].hex()}...")
+    print(f"Orchestrator:  {orchestrator_kp.public_key.to_bytes()[:8].hex()}...")
+    print(f"Worker:        {worker_kp.public_key.to_bytes()[:8].hex()}...")
     
     # ============================================================================
     # Step 1: Control Plane issues root warrant
@@ -41,9 +41,9 @@ def main():
     print("=" * 70)
     
     root_warrant = Warrant.issue(
-        tool="read_file,send_email,search",  # Multiple tools
+        tools=["read_file", "send_email", "search"],  # Multiple tools as list
         keypair=control_kp,
-        holder=orchestrator_kp.public_key(),
+        holder=orchestrator_kp.public_key,
         constraints={
             "path": Pattern("/data/*"),  # Any path under /data
             "recipient": Pattern("*@company.com"),  # Company emails only
@@ -52,7 +52,7 @@ def main():
     )
     
     print(f"Root warrant ID: {root_warrant.id}")
-    print(f"Tools: {root_warrant.tool}")
+    print(f"Tools: {root_warrant.tools}")
     print("TTL: 3600s")
     print("Constraints: path=/data/*, recipient=*@company.com")
     
@@ -69,7 +69,7 @@ def main():
     # Configure child warrant
     builder.with_constraint("path", Exact("/data/q3.pdf"))  # Narrow to specific file
     builder.with_ttl(60)  # Reduce TTL to 60 seconds
-    builder.with_holder(worker_kp.public_key())  # Bind to worker
+    builder.with_holder(worker_kp.public_key)  # Bind to worker
     builder.with_intent("Read Q3 report for analysis")  # Human-readable intent
     
     # Preview human-readable diff
@@ -147,7 +147,7 @@ def main():
     print("=" * 70)
     
     # Verify the chain
-    authorizer = Authorizer(trusted_roots=[control_kp.public_key()])
+    authorizer = Authorizer(trusted_roots=[control_kp.public_key])
     chain_result = authorizer.verify_chain([root_warrant, child_warrant])
     
     print("\nChain Verification:")

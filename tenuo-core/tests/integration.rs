@@ -233,7 +233,7 @@ fn demo_http_transport() {
         "Verification failed: {:?}",
         verify_result.err()
     );
-    assert_eq!(received.tool(), Some("query_database"));
+    assert_eq!(received.tools(), Some(&["query_database".to_string()][..]));
     assert_eq!(received.session_id(), Some("session_abc123"));
 
     // Authorize a query

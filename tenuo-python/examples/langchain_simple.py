@@ -81,7 +81,7 @@ def main():
             constraints={"file_path": Pattern("/tmp/*")},  # HARDCODED: Only /tmp/ for demo safety
             ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
             keypair=keypair,
-            holder=keypair.public_key() # Bind to self for demo
+            holder=keypair.public_key # Bind to self for demo
         )
         print("   [OK] Warrant created: only /tmp/* files allowed\n")
     except Exception as e:

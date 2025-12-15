@@ -13,7 +13,7 @@ use tenuo_core::{
     constraints::{ConstraintValue, Pattern, Range},
     crypto::Keypair,
     warrant::Warrant,
-    wire, Error, MAX_DELEGATION_DEPTH,
+    wire, MAX_ISSUER_CHAIN_LENGTH,
 };
 
 // ============================================================================
@@ -61,8 +61,9 @@ proptest! {
     }
 
     /// Child warrant depth is always parent depth + 1.
+    /// Note: Limited to MAX_ISSUER_CHAIN_LENGTH to respect chain length security limit.
     #[test]
-    fn attenuation_increments_depth(depth_limit in 1u32..=MAX_DELEGATION_DEPTH) {
+    fn attenuation_increments_depth(depth_limit in 1u32..=(MAX_ISSUER_CHAIN_LENGTH as u32)) {
         let kp = Keypair::generate();
 
         let mut warrant = Warrant::builder()
@@ -299,7 +300,7 @@ proptest! {
         let decoded = wire::decode(&encoded).unwrap();
 
         prop_assert_eq!(decoded.id().as_str(), original.id().as_str());
-        prop_assert_eq!(decoded.tool(), original.tool());
+        prop_assert_eq!(decoded.tools(), original.tools());
         prop_assert!(decoded.verify(&kp.public_key()).is_ok());
 
         // Base64 roundtrip
@@ -316,9 +317,11 @@ proptest! {
 // ============================================================================
 
 proptest! {
-    /// Delegation depth cannot exceed MAX_DELEGATION_DEPTH.
+    /// Issuer chain length cannot exceed MAX_ISSUER_CHAIN_LENGTH.
+    /// Note: MAX_ISSUER_CHAIN_LENGTH (8) < MAX_DELEGATION_DEPTH (64),
+    /// so the chain length limit kicks in first as a DoS protection.
     #[test]
-    fn depth_cannot_exceed_max(extra_attempts in 1u32..5u32) {
+    fn chain_length_cannot_exceed_max(extra_attempts in 1u32..5u32) {
         let kp = Keypair::generate();
 
         let mut warrant = Warrant::builder()
@@ -328,24 +331,23 @@ proptest! {
             .build(&kp)
             .unwrap();
 
-        // Delegate up to max
-        for _ in 0..MAX_DELEGATION_DEPTH {
+        // Delegate up to max chain length
+        for _ in 0..MAX_ISSUER_CHAIN_LENGTH {
             warrant = warrant.attenuate().authorized_holder(kp.public_key()).build(&kp, &kp).unwrap();
         }
 
-        prop_assert_eq!(warrant.depth(), MAX_DELEGATION_DEPTH);
+        prop_assert_eq!(warrant.depth() as usize, MAX_ISSUER_CHAIN_LENGTH);
 
-        // Any further delegation should fail
+        // Any further delegation should fail due to chain length limit
         for _ in 0..extra_attempts {
             let result = warrant.attenuate().authorized_holder(kp.public_key()).build(&kp, &kp);
             prop_assert!(result.is_err());
-            match result.unwrap_err() {
-                Error::DepthExceeded(got, max) => {
-                    prop_assert_eq!(got, MAX_DELEGATION_DEPTH + 1);
-                    prop_assert_eq!(max, MAX_DELEGATION_DEPTH);
-                }
-                e => prop_assert!(false, "Expected DepthExceeded, got {:?}", e),
-            }
+            let err_msg = result.unwrap_err().to_string();
+            prop_assert!(
+                err_msg.contains("issuer chain length") && err_msg.contains("exceed maximum"),
+                "Expected chain length error, got: {}",
+                err_msg
+            );
         }
     }
 }
@@ -383,8 +385,9 @@ proptest! {
 
 proptest! {
     /// Parent ID is correctly set through delegation chain.
+    /// Note: Limited to MAX_ISSUER_CHAIN_LENGTH to respect chain length security limit.
     #[test]
-    fn parent_id_chain_is_correct(chain_length in 2u32..=10u32) {
+    fn parent_id_chain_is_correct(chain_length in 2u32..=(MAX_ISSUER_CHAIN_LENGTH as u32)) {
         let kp = Keypair::generate();
 
         let root = Warrant::builder()

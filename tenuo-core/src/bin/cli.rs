@@ -1002,8 +1002,13 @@ fn handle_issue(
             "holder": hex::encode(holder_pubkey.to_bytes()),
             "base64": warrant_b64,
         });
-        if let Some(tool) = warrant.tool() {
-            info["tool"] = serde_json::Value::String(tool.to_string());
+        if let Some(tools) = warrant.tools() {
+            info["tools"] = serde_json::Value::Array(
+                tools
+                    .iter()
+                    .map(|t| serde_json::Value::String(t.clone()))
+                    .collect(),
+            );
         }
         if let Some(issuable_tools) = warrant.issuable_tools() {
             info["issuable_tools"] = serde_json::Value::Array(
@@ -1065,14 +1070,12 @@ fn handle_attenuate(
     if let Some(tool_str) = &tool {
         match parent_warrant.r#type() {
             WarrantType::Execution => {
-                if let Some(parent_tool) = parent_warrant.tool() {
-                    let parent_tools: Vec<&str> =
-                        parent_tool.split(',').map(|s| s.trim()).collect();
+                if let Some(parent_tools) = parent_warrant.tools() {
                     let child_tools: Vec<&str> = tool_str.split(',').map(|s| s.trim()).collect();
 
-                    if parent_tool != "*" {
+                    if !parent_tools.contains(&"*".to_string()) {
                         for child_tool in &child_tools {
-                            if !parent_tools.contains(child_tool) {
+                            if !parent_tools.iter().any(|t| t == *child_tool) {
                                 return Err(format!(
                                     "Cannot attenuate: tool '{}' not in parent's allowed tools: {:?}",
                                     child_tool, parent_tools
@@ -1183,8 +1186,13 @@ fn handle_attenuate(
             "parent_id": child_warrant.parent_id().map(|id| id.to_string()),
             "base64": warrant_b64,
         });
-        if let Some(tool) = child_warrant.tool() {
-            info["tool"] = serde_json::Value::String(tool.to_string());
+        if let Some(tools) = child_warrant.tools() {
+            info["tools"] = serde_json::Value::Array(
+                tools
+                    .iter()
+                    .map(|t| serde_json::Value::String(t.clone()))
+                    .collect(),
+            );
         }
         if let Some(issuable_tools) = child_warrant.issuable_tools() {
             info["issuable_tools"] = serde_json::Value::Array(
@@ -1257,17 +1265,22 @@ fn print_attenuation_diff(
     let mut deltas: Vec<serde_json::Value> = Vec::new();
 
     // Tools diff
-    let parent_tool = parent.tool().map(|t| t.to_string());
-    let effective_child_tool = child_tool
-        .map(|t| t.to_string())
-        .or_else(|| parent_tool.clone());
+    // Tools diff
+    let parent_tools = parent.tools().map(|t| t.to_vec());
+    let effective_child_tools = child_tool
+        .map(|t| {
+            t.split(',')
+                .map(|s| s.trim().to_string())
+                .collect::<Vec<_>>()
+        })
+        .or_else(|| parent_tools.clone());
 
-    if parent_tool.as_deref() != effective_child_tool.as_deref() {
+    if parent_tools != effective_child_tools {
         deltas.push(serde_json::json!({
-            "field": "tool",
+            "field": "tools",
             "change": "narrowed",
-            "from": parent_tool,
-            "to": effective_child_tool,
+            "from": parent_tools,
+            "to": effective_child_tools,
         }));
     }
 
@@ -1346,38 +1359,27 @@ fn print_attenuation_diff(
         eprintln!("╠══════════════════════════════════════════════════════════════════╣");
 
         // Tools
-        if let Some(parent_tool) = parent.tool() {
+        // Tools
+        if let Some(parent_tools) = parent.tools() {
             eprintln!("║                                                                  ║");
             eprintln!("║  TOOLS                                                           ║");
-            if let Some(ct) = &effective_child_tool {
-                if ct != parent_tool {
-                    eprintln!(
-                        "║    ✓ {}                                                   ║",
-                        ct
-                    );
+            if let Some(ct) = &effective_child_tools {
+                if ct != &parent_tools.to_vec() {
+                    // Show added/kept tools
+                    for tool in ct {
+                        eprintln!("║    ✓ {:<51} ║", tool);
+                    }
                     // Show dropped tools
-                    let parent_tools: Vec<&str> =
-                        parent_tool.split(',').map(|s| s.trim()).collect();
-                    let child_tools: Vec<&str> = ct.split(',').map(|s| s.trim()).collect();
                     for pt in parent_tools {
-                        if !child_tools.contains(&pt) {
-                            eprintln!(
-                                "║    ✗ {}      DROPPED                                     ║",
-                                pt
-                            );
+                        if !ct.contains(pt) {
+                            eprintln!("║    ✗ {:<51} ║", format!("{} (DROPPED)", pt));
                         }
                     }
                 } else {
-                    eprintln!(
-                        "║    ✓ {} (unchanged)                                      ║",
-                        parent_tool
-                    );
+                    eprintln!("║    ✓ {:<51} ║", format!("{:?} (unchanged)", parent_tools));
                 }
             } else {
-                eprintln!(
-                    "║    ✓ {} (unchanged)                                      ║",
-                    parent_tool
-                );
+                eprintln!("║    ✓ {:<51} ║", format!("{:?} (unchanged)", parent_tools));
             }
         }
 
@@ -1714,7 +1716,7 @@ fn handle_verify(
             "warrant_id": leaf_warrant.id().as_str(),
             "holder": hex::encode(holder.to_bytes()),
             "expires_at": leaf_warrant.expires_at().to_rfc3339(),
-            "tools": leaf_warrant.tool().map(|t| t.to_string()).unwrap_or_default(),
+            "tools": leaf_warrant.tools().unwrap_or(&[]),
             "chain_verified": chain_valid,
             "chain_length": warrants.len(),
             "trusted_root": trusted_any,
@@ -1751,8 +1753,8 @@ fn handle_verify(
             eprintln!("Expires:     in {}s", remaining.num_seconds());
         }
 
-        if let Some(tool) = leaf_warrant.tool() {
-            eprintln!("Tools:       [{}]", tool);
+        if let Some(tools) = leaf_warrant.tools() {
+            eprintln!("Tools:       {:?}", tools);
         }
         if let Some(issuable_tools) = leaf_warrant.issuable_tools() {
             eprintln!("Issuable Tools: [{}]", issuable_tools.join(", "));
@@ -1840,8 +1842,8 @@ fn handle_inspect(
                 "Holder:      {}",
                 hex::encode(w.authorized_holder().to_bytes())
             );
-            if let Some(tool) = w.tool() {
-                println!("Tools:       [{}]", tool);
+            if let Some(tools) = w.tools() {
+                println!("Tools:       {:?}", tools);
             } else if let Some(issuable_tools) = w.issuable_tools() {
                 println!("Issuable Tools: [{}]", issuable_tools.join(", "));
             }
@@ -1880,7 +1882,7 @@ fn warrant_to_json(w: &Warrant) -> serde_json::Value {
         "id": w.id().as_str(),
         "issuer": hex::encode(w.issuer().to_bytes()),
         "expires_at": w.expires_at().to_rfc3339(),
-        "tool": w.tool().map(|t| t.to_string()),
+        "tools": w.tools(),
         "depth": w.depth(),
         "constraints": constraints,
     });
