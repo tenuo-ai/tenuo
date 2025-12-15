@@ -703,6 +703,57 @@ protected = protect_tools(
 
 ---
 
+## LangGraph Integration
+
+Tenuo provides decorators for scoping authority in LangGraph nodes.
+
+### Two-Layer Model
+
+Tenuo uses a two-layer security model for LangGraph:
+
+| Layer | Decorator | Purpose |
+|-------|-----------|---------|
+| **Scoping** | `@tenuo_node` | Narrows what's allowed in this node |
+| **Enforcement** | `@lockdown` | Checks warrant at tool invocation |
+
+**Both layers are required for security.** See [LangGraph Spec](./langgraph-spec.md) for details.
+
+### `@tenuo_node`
+
+Scope authority for a LangGraph node.
+
+```python
+from tenuo.langgraph import tenuo_node
+
+@tenuo_node(tools=["search"], query="*public*")
+async def researcher(state):
+    # Warrant scoped to: tools=["search"], query matches "*public*"
+    results = await search_tool(query=state["query"])
+    return {"results": results}
+```
+
+**Parameters:**
+- `tools`: List of tools this node is allowed to use
+- `ttl`: Optional TTL override (seconds)
+- `**constraints`: Constraint key-value pairs for scoping
+
+**Note:** `@tenuo_node` narrows scope but does NOT enforce. The tool wrapper (`@lockdown`) is the enforcement point.
+
+### `@require_warrant`
+
+Require a warrant in context without scoping.
+
+```python
+from tenuo.langgraph import require_warrant
+
+@require_warrant
+async def sensitive_node(state):
+    # Only runs if warrant exists in context
+    ...
+```
+
+---
+
 ## Exceptions
 
 Pythonic exceptions for error handling.
