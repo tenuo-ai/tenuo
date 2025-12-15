@@ -93,7 +93,34 @@ child = parent.attenuate(
 | **Container compromise** | Attacker has both keypair + warrant | Use separate containers with separate keypairs |
 | **Malicious node code** | Same trust boundary as auth logic | Code review, sandboxing |
 | **Control plane compromise** | Can mint arbitrary warrants | Secure control plane infrastructure |
-| **Raw API calls** | Bypass Tenuo entirely | Wrap ALL tools with `@lockdown` |
+| **Raw API calls** | Bypass Tenuo entirely | Wrap ALL tools with `@lockdown` + Network Policies |
+
+#### Defense in Depth: Network Policies
+
+Tenuo handles **authorization** — what an agent is *allowed* to do. For **exfiltration prevention** (stopping agents from making raw API calls that bypass Tenuo), use Kubernetes Network Policies:
+
+```yaml
+# Restrict agent egress to only approved services
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-egress
+spec:
+  podSelector:
+    matchLabels:
+      app: agent
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: tool-proxy  # Only allow calls to protected tool proxy
+```
+
+**Tenuo + Network Policies = complete coverage:**
+- Tenuo: Prevents unauthorized tool usage *through* your API
+- Network Policies: Prevents bypassing your API entirely
 
 ---
 

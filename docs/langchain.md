@@ -211,7 +211,10 @@ with set_warrant_context(warrant), set_keypair_context(keypair):
 
 ---
 
-## Error Handling
+## Error Handling & Troubleshooting
+
+When authorization fails, Tenuo raises `AuthorizationError` with a descriptive message:
+
 ```python
 from tenuo import AuthorizationError
 
@@ -220,6 +223,30 @@ try:
         read_file("/etc/passwd")
 except AuthorizationError as e:
     print(f"Authorization failed: {e}")
+```
+
+### Common Error Messages
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Tool 'read_file' not authorized` | Tool not in warrant's tools list | Add tool to warrant, or use a warrant with the tool |
+| `Constraint 'path' failed: warrant allows '/data/*', got '/etc/passwd'` | Argument violates constraint | Request file within allowed path, or attenuate warrant with broader constraint |
+| `No warrant in context` | Missing `set_warrant_context()` | Wrap call in context manager |
+| `No keypair in context` | Missing `set_keypair_context()` | Wrap call in context manager |
+| `Warrant expired` | TTL exceeded | Request fresh warrant |
+| `PoP signature invalid` | Wrong keypair for warrant | Ensure keypair matches warrant's `authorized_holder` |
+
+### Debugging Tips
+
+```python
+# Inspect warrant before use
+print(f"Tools: {warrant.tools}")
+print(f"Constraints: {warrant.constraints}")
+print(f"Expires: {warrant.expires_at}")
+print(f"Holder: {warrant.authorized_holder}")
+
+# Verify keypair matches
+assert warrant.authorized_holder == keypair.public_key, "Keypair mismatch!"
 ```
 
 ---

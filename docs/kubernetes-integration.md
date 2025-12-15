@@ -165,6 +165,7 @@ Fetch warrant during pod initialization.
 
 ```yaml
 spec:
+  serviceAccountName: agent-sa  # Required for authentication
   initContainers:
   - name: fetch-warrant
     image: curlimages/curl:latest
@@ -172,7 +173,10 @@ spec:
     - sh
     - -c
     - |
+      # Authenticate using K8s Service Account Token
+      TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
       curl -s http://control-plane:8080/v1/warrants \
+        -H "Authorization: Bearer $TOKEN" \
         -d '{"agent_id": "'$HOSTNAME'"}' \
         -o /tenuo/warrant.b64
     volumeMounts:
@@ -188,6 +192,11 @@ spec:
   - name: tenuo
     emptyDir: {}
 ```
+
+> ⚠️ **Production Note**: The control plane MUST verify the Kubernetes Service Account Token 
+> to authenticate the request. Without this, any pod could claim to be any agent.
+> Use [TokenReview API](https://kubernetes.io/docs/reference/kubernetes-api/authentication-resources/token-review-v1/)
+> or a service mesh (Istio, Linkerd) for mTLS-based identity.
 
 ```python
 # Read warrant from init container output

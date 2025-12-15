@@ -108,6 +108,52 @@ with root_task_sync(tools=["search", "write_file"], query="*", path="/*"):
 
 ---
 
+## Error Handling & Troubleshooting
+
+### Common Errors
+
+```python
+# Missing parent warrant context
+@tenuo_node(tools=["search"])
+async def researcher(state):
+    ...
+    
+# ERROR: "No parent warrant in context. @tenuo_node requires root_task() or parent scoped_task()"
+```
+
+**Fix**: Wrap graph invocation in `root_task()`:
+
+```python
+async with root_task(tools=["search", "write_file"]):
+    await app.ainvoke(initial_state)
+```
+
+### Error Messages Reference
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `No parent warrant in context` | `@tenuo_node` called outside `root_task()` | Wrap graph invocation in `root_task()` |
+| `Tool 'write_file' not in parent warrant` | Node requests tool parent doesn't have | Add tool to parent scope, or remove from node |
+| `Constraint 'path' failed` | Tool argument violates constraint | Request within allowed constraint bounds |
+| `MonotonicityViolation` | Trying to expand scope | Scopes can only narrow, not expand |
+
+### Debugging a Node
+
+```python
+@tenuo_node(tools=["read_file"], path="/data/*")
+async def my_node(state):
+    from tenuo import get_warrant_context
+    warrant = get_warrant_context()
+    
+    # Inspect active warrant
+    print(f"Node has tools: {warrant.tools}")
+    print(f"Node has constraints: {warrant.constraints}")
+    
+    # ... rest of node
+```
+
+---
+
 ## Important Notes
 
 1. **Raw calls bypass Tenuo**: `await http_client.get(...)` is not protected.

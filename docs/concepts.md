@@ -164,6 +164,37 @@ Warrants are **bound to keypairs**. To use a warrant, you must prove you hold th
 | **Execution (terminal)** | ✅ Yes | ❌ No | Leaf workers, Q-LLM |
 | **Issuer** | ❌ No | ✅ Yes (issues execution) | P-LLM, Planner, Control plane |
 
+#### Important Distinction: Root vs Issuer
+
+**Root Execution Warrant**: The first execution warrant in a task chain, typically minted by the control plane for a specific task. Starts at `depth=0` and can be attenuated.
+
+```python
+# Control plane mints root execution warrant for task
+root = Warrant.mint_execution(
+    tools=["read_file", "query_db"],
+    keypair=control_plane_kp,
+    authorized_holder=agent_kp.public_key,
+)
+```
+
+**Issuer Warrant**: A warrant type that *cannot execute tools* but can *issue new execution warrants*. Held by supervisory nodes (P-LLM, planners) that delegate but don't act.
+
+```python
+# P-LLM holds issuer warrant
+issuer = Warrant.issue_issuer(
+    issuable_tools=["read_file", "write_file"],
+    keypair=planner_kp,
+)
+
+# P-LLM issues execution warrants to workers (Q-LLMs)
+exec_warrant = issuer.issue_execution()
+    .with_tool("read_file")
+    .with_holder(worker_kp.public_key)
+    .build(planner_kp, planner_kp)
+```
+
+> **Summary**: Root execution warrants start tasks. Issuer warrants supervise without executing.
+
 ### Monotonic Attenuation
 
 Authority can only **shrink**, never expand:
