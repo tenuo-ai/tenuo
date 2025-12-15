@@ -132,12 +132,12 @@ from tenuo import Warrant
 |--------|-------------|
 
 | `Warrant.from_base64(s: str)` | Deserialize from base64 |
-| `Warrant.issue(tools: str, constraints: dict, ttl_seconds: int, keypair: Keypair, holder: Optional[PublicKey] = None, session_id: Optional[str] = None)` | Issue a new warrant |
+| `Warrant.issue(tools: Union[str, List[str]], constraints: dict, ttl_seconds: int, keypair: Keypair, holder: Optional[PublicKey] = None, session_id: Optional[str] = None)` | Issue a new warrant |
 
 
 #### `Warrant.issue()` Parameters
 
-- `tools`: The tool name to authorize (or comma-separated list like "search,read_file").
+- `tools`: The tool name(s) to authorize (string or list of strings).
 - `constraints`: A dictionary of constraints.
 - `ttl_seconds`: Time-to-live in seconds.
 - `keypair`: The issuer's keypair.
@@ -149,7 +149,7 @@ from tenuo import Warrant
 | Property | Type | Description |
 |----------|------|-------------|
 | `id` | `str` | Unique warrant ID |
-| `tools` | `str` | **Property**: The tool(s) authorized by this warrant |
+| `tools` | `List[str]` | **Property**: The tool(s) authorized by this warrant |
 | `depth` | `int` | Delegation depth (0 = root) |
 | `session_id` | `str \| None` | Session identifier |
 | `authorized_holder` | `PublicKey \| None` | Bound holder's public key |
@@ -167,7 +167,7 @@ from tenuo import Warrant
 | `to_base64()` | `str` | Serialize to base64 |
 | `is_expired()` | `bool` | Check if warrant has expired |
 | `expires_at()` | `str` | Get expiration time (RFC3339) |
-| `tools` | `str` | **Property**: The tool(s) authorized by this warrant |
+| `tools` | `List[str]` | **Property**: The tool(s) authorized by this warrant |
 | `session_id` | `str \| None` | **Property**: The session ID |
 | `delegation_receipt` | `DelegationReceipt \| None` | **Property**: Get delegation receipt if this warrant was created via delegation |
 
