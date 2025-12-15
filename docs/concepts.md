@@ -156,6 +156,14 @@ Warrants are **bound to keypairs**. To use a warrant, you must prove you hold th
 
 **Why?** If an attacker steals just the warrant token (from logs, network, checkpoint), they can't use it without the private key.
 
+### Warrant Types
+
+| Type | Can Execute? | Can Delegate? | Use Case |
+|------|--------------|---------------|----------|
+| **Execution (non-terminal)** | ✅ Yes | ✅ Yes (narrower) | Orchestrator delegating to workers |
+| **Execution (terminal)** | ✅ Yes | ❌ No | Leaf workers, Q-LLM |
+| **Issuer** | ❌ No | ✅ Yes (issues execution) | P-LLM, Planner, Control plane |
+
 ### Monotonic Attenuation
 
 Authority can only **shrink**, never expand:
@@ -166,6 +174,10 @@ Authority can only **shrink**, never expand:
 | **Constraints** | Child constraints must be tighter |
 | **TTL** | Child cannot outlive parent |
 | **Depth** | `max_depth` can only decrease |
+
+### Terminal Warrants
+
+A warrant is **terminal** when `depth >= max_depth`. Terminal warrants can execute tools but cannot delegate further. Use `.terminal()` when creating warrants for leaf workers.
 
 ### Stateless Verification
 

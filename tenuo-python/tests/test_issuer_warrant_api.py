@@ -212,14 +212,12 @@ class TestDelegateMethod:
 
 
 class TestAttenuateBuilderToolSelection:
-    """Test tool selection behavior via attenuate_builder and issue_execution."""
+    """Test tool selection/narrowing via attenuate_builder."""
     
-    def test_attenuate_builder_tools_only_for_issuer_warrants(self):
+    def test_attenuate_builder_can_narrow_tools(self):
         """
-        AttenuationBuilder.with_tools() only works for ISSUER warrants (issuable_tools).
-        It does NOT narrow tools for EXECUTION warrants.
-        
-        This is BY DESIGN. Use issue_execution() from issuer warrants to select tools.
+        AttenuationBuilder.with_tools() CAN narrow tools for execution warrants.
+        This enables "always shrinking authority" for non-terminal warrants.
         """
         kp = Keypair.generate()
         worker_kp = Keypair.generate()
@@ -231,28 +229,67 @@ class TestAttenuateBuilderToolSelection:
             ttl_seconds=3600,
         )
         
-        # AttenuationBuilder.with_tools affects issuable_tools, not tools
-        # So calling it on an execution warrant has no effect on tools
+        # Narrow to just read_file
         builder = parent.attenuate_builder()
-        builder.with_tools(["read_file"])  # This sets issuable_tools, not tools!
+        builder.with_tools(["read_file"])
         builder.with_holder(worker_kp.public_key)
         child = builder.delegate_to(kp, kp)
         
-        # Child still has ALL parent tools - by design
-        assert child.tools == parent.tools, (
-            "Execution warrant tools cannot be narrowed via attenuate(). "
-            "Use issue_execution() from issuer warrants instead."
+        # Child has ONLY the narrowed tools
+        assert child.tools == ["read_file"], (
+            f"Expected ['read_file'], got {child.tools}"
         )
+        assert "send_email" not in child.tools
+        assert "query_db" not in child.tools
+    
+    def test_attenuate_builder_with_tool_single(self):
+        """with_tool() narrows to a single tool."""
+        kp = Keypair.generate()
+        worker_kp = Keypair.generate()
+        
+        parent = Warrant.issue(
+            tools=["read_file", "send_email"],
+            keypair=kp,
+            ttl_seconds=3600,
+        )
+        
+        builder = parent.attenuate_builder()
+        builder.with_tool("send_email")  # Narrow to just send_email
+        builder.with_holder(worker_kp.public_key)
+        child = builder.delegate_to(kp, kp)
+        
+        assert child.tools == ["send_email"]
+    
+    def test_attenuate_rejects_tool_not_in_parent(self):
+        """Cannot add tools that weren't in parent."""
+        import pytest
+        
+        kp = Keypair.generate()
+        worker_kp = Keypair.generate()
+        
+        parent = Warrant.issue(
+            tools=["read_file"],
+            keypair=kp,
+            ttl_seconds=3600,
+        )
+        
+        builder = parent.attenuate_builder()
+        builder.with_tools(["read_file", "delete_file"])  # delete_file not in parent!
+        builder.with_holder(worker_kp.public_key)
+        
+        with pytest.raises(Exception) as exc_info:
+            builder.delegate_to(kp, kp)
+        
+        assert "delete_file" in str(exc_info.value) or "not in parent" in str(exc_info.value)
     
     def test_issue_execution_can_select_tools(self):
         """
-        To narrow tools, use an Issuer warrant + issue_execution().
-        This is the proper way to create execution warrants with specific tools.
+        Issuer warrants + issue_execution() is another way to select tools.
         """
         issuer_kp = Keypair.generate()
         worker_kp = Keypair.generate()
         
-        # Step 1: Create issuer warrant with all tools
+        # Create issuer warrant with all tools
         issuer_warrant = Warrant.issue_issuer(
             issuable_tools=["read_file", "send_email", "query_db"],
             trust_ceiling=TrustLevel.Internal,
@@ -260,14 +297,82 @@ class TestAttenuateBuilderToolSelection:
             ttl_seconds=3600,
         )
         
-        # Step 2: Issue execution warrant with ONLY read_file
+        # Issue execution warrant with ONLY read_file
         builder = issuer_warrant.issue_execution()
-        builder.with_tool("read_file")  # Select just one tool
+        builder.with_tool("read_file")
         builder.with_holder(worker_kp.public_key)
         builder.with_ttl(300)
         exec_warrant = builder.build(issuer_kp, issuer_kp)
         
-        # Execution warrant has ONLY the selected tool
         assert exec_warrant.tools == ["read_file"]
-        assert "send_email" not in exec_warrant.tools
-        assert "query_db" not in exec_warrant.tools
+
+
+class TestTerminalWarrants:
+    """Test terminal warrant behavior."""
+    
+    def test_is_terminal_property(self):
+        """Warrant.is_terminal() returns correct value."""
+        kp = Keypair.generate()
+        
+        # Non-terminal warrant (no max_depth or max_depth > depth)
+        warrant = Warrant.issue(
+            tools=["read_file"],
+            keypair=kp,
+            ttl_seconds=3600,
+        )
+        
+        # Should not be terminal (depth=0, no max_depth limit)
+        assert hasattr(warrant, 'is_terminal'), "Warrant should have is_terminal method"
+        assert not warrant.is_terminal(), "Root warrant with no max_depth should not be terminal"
+    
+    def test_terminal_warrant_via_builder(self):
+        """Creating a terminal warrant via .terminal() method."""
+        kp = Keypair.generate()
+        worker_kp = Keypair.generate()
+        
+        parent = Warrant.issue(
+            tools=["read_file"],
+            keypair=kp,
+            ttl_seconds=3600,
+        )
+        
+        # Create terminal child
+        builder = parent.attenuate_builder()
+        builder.terminal()  # Make it terminal
+        builder.with_holder(worker_kp.public_key)
+        child = builder.delegate_to(kp, kp)
+        
+        # Child should be terminal
+        assert child.is_terminal(), "Warrant created with .terminal() should be terminal"
+    
+    def test_terminal_warrant_cannot_delegate(self):
+        """Terminal warrants cannot delegate further."""
+        import pytest
+        
+        kp = Keypair.generate()
+        worker_kp = Keypair.generate()
+        another_kp = Keypair.generate()
+        
+        parent = Warrant.issue(
+            tools=["read_file"],
+            keypair=kp,
+            ttl_seconds=3600,
+        )
+        
+        # Create terminal child
+        builder = parent.attenuate_builder()
+        builder.terminal()
+        builder.with_holder(worker_kp.public_key)
+        terminal = builder.delegate_to(kp, kp)
+        
+        assert terminal.is_terminal()
+        
+        # Try to delegate from terminal warrant - should fail
+        builder2 = terminal.attenuate_builder()
+        builder2.with_holder(another_kp.public_key)
+        
+        with pytest.raises(Exception) as exc_info:
+            builder2.delegate_to(worker_kp, worker_kp)
+        
+        # Should fail due to depth exceeded
+        assert "depth" in str(exc_info.value).lower() or "exceed" in str(exc_info.value).lower()

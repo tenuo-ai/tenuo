@@ -118,20 +118,18 @@ Warrant.attenuate = _wrapped_attenuate  # type: ignore[method-assign]
 def _warrant_delegate(
     self: Warrant,
     holder: PublicKey,
+    tools: Optional[list] = None,
     **constraints
 ) -> Warrant:
     """
     Convenience method to delegate a warrant to a new holder.
     
-    This attenuates the warrant by adding/tightening constraints and 
-    assigning a new holder.
-    
-    NOTE: Tool narrowing is NOT supported via delegate(). Execution warrants
-    always inherit the parent's tools. To create a warrant with fewer tools,
-    use an Issuer warrant and call issue_execution() instead.
+    This attenuates the warrant by narrowing tools, adding/tightening constraints,
+    and assigning a new holder.
     
     Args:
         holder: The public key of the new holder
+        tools: Optional list of tools to narrow to (must be subset of parent's)
         **constraints: Constraints to apply (must be tighter than parent's)
         
     Returns:
@@ -139,12 +137,15 @@ def _warrant_delegate(
         
     Raises:
         RuntimeError: If no keypair in context
+        MonotonicityViolation: If tools aren't a subset of parent's
         
     Example:
         with set_keypair_context(my_keypair):
+            # Narrow tools AND constraints
             child = parent.delegate(
                 holder=worker.public_key,
-                path=Exact("/data/q3.pdf"),  # Tighten path constraint
+                tools=["read_file"],  # Narrow from parent's tools
+                path=Exact("/data/q3.pdf"),
             )
     """
     # Get context keypair (delegator)
@@ -153,6 +154,10 @@ def _warrant_delegate(
         raise RuntimeError("No active keypair context. Use inside a task context or set_keypair_context().")
     
     builder = self.attenuate_builder()
+
+    # Narrow tools if specified
+    if tools is not None:
+        builder.with_tools(tools)
 
     # Apply constraints
     from tenuo.scoped import _ensure_constraint

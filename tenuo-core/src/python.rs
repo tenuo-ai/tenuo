@@ -1402,18 +1402,33 @@ impl PyAttenuationBuilder {
         self.inner.set_intent(intent);
     }
 
+    /// Narrow execution warrant tools to a single tool.
+    ///
+    /// The tool must be in the parent warrant's tools.
+    /// This is for EXECUTION warrants. For ISSUER warrants, use `with_issuable_tool()`.
+    fn with_tool(&mut self, tool: &str) {
+        self.inner.set_exec_tool(tool);
+    }
+
+    /// Narrow execution warrant tools to a subset.
+    ///
+    /// All tools must be in the parent warrant's tools.
+    fn with_tools(&mut self, tools: Vec<String>) {
+        self.inner.set_exec_tools(tools);
+    }
+
     /// Set a single tool for issuable_tools (for issuer warrants).
     ///
     /// This replaces the entire issuable_tools list with a single tool.
-    /// For multiple tools, use `with_tools()` instead.
-    fn with_tool(&mut self, tool: &str) {
+    /// For multiple tools, use `with_issuable_tools()` instead.
+    fn with_issuable_tool(&mut self, tool: &str) {
         self.inner.set_tool(tool);
     }
 
     /// Set multiple tools for issuable_tools (for issuer warrants).
     ///
     /// This replaces the entire issuable_tools list.
-    fn with_tools(&mut self, tools: Vec<String>) {
+    fn with_issuable_tools(&mut self, tools: Vec<String>) {
         self.inner.set_tools(tools);
     }
 
@@ -1915,6 +1930,14 @@ impl PyWarrant {
     /// Check if the warrant has expired.
     fn is_expired(&self) -> bool {
         self.inner.is_expired()
+    }
+
+    /// Check if this warrant is terminal (cannot delegate further).
+    ///
+    /// A warrant is terminal when its depth equals or exceeds its max_depth.
+    /// Terminal warrants can still execute tools but cannot attenuate/delegate.
+    fn is_terminal(&self) -> bool {
+        self.inner.is_terminal()
     }
 
     /// Get the expiration time (RFC3339 string).

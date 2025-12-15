@@ -755,6 +755,19 @@ impl Warrant {
         Utc::now() > self.payload.expires_at
     }
 
+    /// Check if this warrant is terminal (cannot delegate further).
+    ///
+    /// A warrant is terminal when its depth equals or exceeds its max_depth,
+    /// meaning it has exhausted its delegation budget.
+    ///
+    /// Terminal warrants can still execute tools but cannot attenuate/delegate.
+    pub fn is_terminal(&self) -> bool {
+        match self.payload.max_depth {
+            Some(max) => self.payload.depth >= max,
+            None => false, // No limit means not terminal
+        }
+    }
+
     /// Check if the warrant has expired, with clock skew tolerance.
     ///
     /// In distributed systems, clocks can drift. This method allows a grace period
@@ -1400,6 +1413,7 @@ impl Default for WarrantBuilder {
 pub struct AttenuationBuilder<'a> {
     parent: &'a Warrant,
     // Execution warrant fields
+    exec_tools: Option<Vec<String>>, // For narrowing execution warrant tools
     constraints: ConstraintSet,
     // Issuer warrant fields
     issuable_tools: Option<Vec<String>>,
@@ -1441,6 +1455,7 @@ impl<'a> AttenuationBuilder<'a> {
 
         Self {
             parent,
+            exec_tools: None, // Will inherit from parent if not set
             constraints,
             issuable_tools,
             trust_ceiling,
@@ -1465,6 +1480,31 @@ impl<'a> AttenuationBuilder<'a> {
         constraint: impl Into<Constraint>,
     ) -> Self {
         self.constraints.insert(field, constraint);
+        self
+    }
+
+    /// Narrow execution warrant tools to a subset.
+    ///
+    /// The specified tools must be a subset of the parent's tools.
+    /// This enables the "always shrinking authority" principle for non-terminal warrants.
+    /// For ISSUER warrants, use `issuable_tool()` instead.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Parent has tools: ["read_file", "send_email", "query_db"]
+    /// let child = parent.attenuate()
+    ///     .with_tools(vec!["read_file".to_string()])  // Narrow to just read_file
+    ///     .authorized_holder(worker.public_key())
+    ///     .build(&keypair, &keypair)?;
+    /// ```
+    pub fn with_tools(mut self, tools: Vec<String>) -> Self {
+        self.exec_tools = Some(tools);
+        self
+    }
+
+    /// Narrow to a single tool (for execution warrants).
+    pub fn with_tool(mut self, tool: impl Into<String>) -> Self {
+        self.exec_tools = Some(vec![tool.into()]);
         self
     }
 
@@ -1636,6 +1676,26 @@ impl<'a> AttenuationBuilder<'a> {
         // Validate attenuation monotonicity based on warrant type
         match self.parent.payload.r#type {
             WarrantType::Execution => {
+                // For execution warrants, validate tool narrowing (if specified)
+                if let Some(ref child_tools) = self.exec_tools {
+                    if let Some(parent_tools) = &self.parent.payload.tools {
+                        // Child tools must be a subset of parent tools
+                        for tool in child_tools {
+                            if !parent_tools.contains(tool) {
+                                return Err(Error::MonotonicityViolation(format!(
+                                    "tool '{}' not in parent's tools {:?}",
+                                    tool, parent_tools
+                                )));
+                            }
+                        }
+                        // Must have at least one tool
+                        if child_tools.is_empty() {
+                            return Err(Error::Validation(
+                                "execution warrant must have at least one tool".to_string(),
+                            ));
+                        }
+                    }
+                }
                 // For execution warrants, validate constraint attenuation
                 if let Some(parent_constraints) = &self.parent.payload.constraints {
                     parent_constraints.validate_attenuation(&self.constraints)?;
@@ -1734,11 +1794,14 @@ impl<'a> AttenuationBuilder<'a> {
             authorized_holder,
             tools: match self.parent.payload.r#type {
                 WarrantType::Execution => Some(
-                    self.parent
-                        .payload
-                        .tools
-                        .clone()
-                        .expect("execution warrant must have tools"),
+                    // Use narrowed tools if specified, otherwise inherit from parent
+                    self.exec_tools.clone().unwrap_or_else(|| {
+                        self.parent
+                            .payload
+                            .tools
+                            .clone()
+                            .expect("execution warrant must have tools")
+                    }),
                 ),
                 WarrantType::Issuer => None,
             },
@@ -1843,6 +1906,7 @@ impl<'a> AttenuationBuilder<'a> {
 pub struct OwnedAttenuationBuilder {
     parent: Warrant,
     // Execution warrant fields
+    exec_tools: Option<Vec<String>>, // For narrowing execution warrant tools
     constraints: ConstraintSet,
     // Issuer warrant fields
     issuable_tools: Option<Vec<String>>,
@@ -1892,6 +1956,7 @@ impl OwnedAttenuationBuilder {
             required_approvers: parent.payload.required_approvers.clone(),
             min_approvals: parent.payload.min_approvals,
             parent,
+            exec_tools: None, // Will inherit from parent if not narrowed
             constraints,
             issuable_tools,
             trust_ceiling,
@@ -1946,6 +2011,33 @@ impl OwnedAttenuationBuilder {
     /// Set a constraint (mutable version for FFI).
     pub fn set_constraint(&mut self, field: impl Into<String>, constraint: impl Into<Constraint>) {
         self.constraints.insert(field, constraint);
+    }
+
+    /// Narrow execution warrant tools to a subset.
+    ///
+    /// The specified tools must be a subset of the parent's tools.
+    /// This is for EXECUTION warrants. For ISSUER warrants, use `issuable_tool()`.
+    pub fn with_tool(mut self, tool: impl Into<String>) -> Self {
+        self.exec_tools = Some(vec![tool.into()]);
+        self
+    }
+
+    /// Narrow execution warrant tools to a subset (multiple tools).
+    ///
+    /// The specified tools must be a subset of the parent's tools.
+    pub fn with_tools(mut self, tools: Vec<String>) -> Self {
+        self.exec_tools = Some(tools);
+        self
+    }
+
+    /// Set execution tools (mutable version for FFI).
+    pub fn set_exec_tools(&mut self, tools: Vec<String>) {
+        self.exec_tools = Some(tools);
+    }
+
+    /// Set single execution tool (mutable version for FFI).
+    pub fn set_exec_tool(&mut self, tool: impl Into<String>) {
+        self.exec_tools = Some(vec![tool.into()]);
     }
 
     /// Set a shorter TTL.
@@ -2215,6 +2307,27 @@ impl OwnedAttenuationBuilder {
         // Validate attenuation monotonicity
         match self.parent.payload.r#type {
             WarrantType::Execution => {
+                // For execution warrants, validate tool narrowing (if specified)
+                if let Some(ref child_tools) = self.exec_tools {
+                    if let Some(parent_tools) = &self.parent.payload.tools {
+                        // Child tools must be a subset of parent tools
+                        for tool in child_tools {
+                            if !parent_tools.contains(tool) {
+                                return Err(Error::MonotonicityViolation(format!(
+                                    "tool '{}' not in parent's tools {:?}",
+                                    tool, parent_tools
+                                )));
+                            }
+                        }
+                        // Must have at least one tool
+                        if child_tools.is_empty() {
+                            return Err(Error::Validation(
+                                "execution warrant must have at least one tool".to_string(),
+                            ));
+                        }
+                    }
+                }
+                // For execution warrants, validate constraint attenuation
                 if let Some(parent_constraints) = &self.parent.payload.constraints {
                     parent_constraints.validate_attenuation(&self.constraints)?;
                 }
@@ -2292,11 +2405,14 @@ impl OwnedAttenuationBuilder {
             authorized_holder,
             tools: match self.parent.payload.r#type {
                 WarrantType::Execution => Some(
-                    self.parent
-                        .payload
-                        .tools
-                        .clone()
-                        .expect("execution warrant must have tools"),
+                    // Use narrowed tools if specified, otherwise inherit from parent
+                    self.exec_tools.clone().unwrap_or_else(|| {
+                        self.parent
+                            .payload
+                            .tools
+                            .clone()
+                            .expect("execution warrant must have tools")
+                    }),
                 ),
                 WarrantType::Issuer => None,
             },

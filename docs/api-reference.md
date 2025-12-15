@@ -207,39 +207,73 @@ Warrant.issue_issuer(
 | `attenuate(constraints, keypair, ttl_seconds=None, holder=None)` | `Warrant` | Create narrower child warrant |
 | `attenuate_builder()` | `AttenuationBuilder` | Create builder for attenuation with diff preview |
 | `issue_execution()` | `IssuanceBuilder` | Create execution warrant from issuer warrant |
-| `delegate(holder, **constraints)` | `Warrant` | Convenience method to delegate (requires context) |
+| `delegate(holder, tools=None, **constraints)` | `Warrant` | Convenience method to delegate (requires context) |
 | `authorize(tool, args, signature?)` | `bool` | Check if action is authorized |
 | `verify(public_key)` | `bool` | Verify signature against issuer |
 | `create_pop_signature(keypair, tool, args)` | `list[int]` | Create PoP signature |
 | `to_base64()` | `str` | Serialize to base64 |
 | `is_expired()` | `bool` | Check if warrant has expired |
+| `is_terminal()` | `bool` | Check if warrant cannot delegate further |
 
 ⚠️ **Replay Window:** PoP signatures are valid for ~2 minutes to handle clock skew.
 
 #### Tool Narrowing
 
-**Execution warrants cannot have their tools narrowed via attenuation.** Child execution warrants always inherit all tools from their parent.
+Execution warrants **CAN have their tools narrowed** via attenuation. This follows the "always shrinking authority" principle.
 
-To create a warrant with specific tools, use an **Issuer warrant**:
+**Via AttenuationBuilder:**
 
 ```python
-# 1. Create issuer warrant with all tools
+# Parent has tools: ["read_file", "send_email", "query_db"]
+builder = parent.attenuate_builder()
+builder.with_tool("read_file")  # Narrow to single tool
+builder.with_holder(worker_kp.public_key)
+child = builder.delegate_to(kp, kp)
+# child.tools == ["read_file"]
+```
+
+**Via delegate() convenience method:**
+
+```python
+with set_keypair_context(my_keypair):
+    child = parent.delegate(
+        holder=worker.public_key,
+        tools=["read_file"],  # Narrow tools
+        path=Exact("/data/q3.pdf"),  # Narrow constraints
+    )
+```
+
+**Via Issuer warrant (alternative):**
+
+```python
+# Create issuer warrant, then issue execution with specific tools
 issuer_warrant = Warrant.issue_issuer(
-    issuable_tools=["read_file", "send_email", "query_db"],
+    issuable_tools=["read_file", "send_email"],
     trust_ceiling=TrustLevel.Internal,
     keypair=control_plane_kp,
     ttl_seconds=3600,
 )
 
-# 2. Issue execution warrant with only needed tools
 builder = issuer_warrant.issue_execution()
-builder.with_tool("read_file")  # Select specific tool
+builder.with_tool("read_file")
 builder.with_holder(worker_kp.public_key)
-builder.with_constraint("path", Pattern("/data/*"))
 builder.with_ttl(300)
-
 exec_warrant = builder.build(issuer_kp, issuer_kp)
-# exec_warrant.tools == ["read_file"]
+```
+
+#### Terminal Warrants
+
+A warrant is **terminal** when it cannot delegate further (`depth >= max_depth`).
+
+```python
+# Create terminal warrant
+builder = parent.attenuate_builder()
+builder.terminal()  # Mark as terminal
+builder.with_holder(worker_kp.public_key)
+terminal = builder.delegate_to(kp, kp)
+
+assert terminal.is_terminal()  # True
+# terminal.attenuate_builder().delegate_to(...) will fail
 ```
 
 ---
@@ -263,6 +297,42 @@ builder = issuer_warrant.issue_execution()
 | `with_ttl(seconds)` | `IssuanceBuilder` | Set TTL (required) |
 | `with_trust_level(level)` | `IssuanceBuilder` | Set trust level |
 | `build(keypair, issuer_keypair)` | `Warrant` | Build and sign the warrant |
+
+---
+
+### AttenuationBuilder
+
+Builder for attenuating (narrowing) existing warrants.
+
+```python
+builder = warrant.attenuate_builder()
+```
+
+#### Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `with_tool(tool)` | `AttenuationBuilder` | Narrow to single tool (execution warrants) |
+| `with_tools(tools)` | `AttenuationBuilder` | Narrow to subset of tools |
+| `with_issuable_tool(tool)` | `AttenuationBuilder` | Narrow issuable tools (issuer warrants) |
+| `with_issuable_tools(tools)` | `AttenuationBuilder` | Narrow issuable tools (issuer warrants) |
+| `with_constraint(field, constraint)` | `AttenuationBuilder` | Add/tighten constraint |
+| `with_holder(public_key)` | `AttenuationBuilder` | Set new holder |
+| `with_ttl(seconds)` | `AttenuationBuilder` | Set shorter TTL |
+| `terminal()` | `AttenuationBuilder` | Make warrant terminal (no further delegation) |
+| `diff()` | `str` | Preview changes (human-readable) |
+| `delegate_to(keypair, parent_keypair)` | `Warrant` | Build and sign the warrant |
+
+#### Example
+
+```python
+# Narrow tools AND constraints
+child = parent.attenuate_builder()
+    .with_tool("read_file")  # Only read_file (from parent's tools)
+    .with_constraint("path", Exact("/data/q3.pdf"))  # Tighter constraint
+    .with_holder(worker_kp.public_key)
+    .delegate_to(kp, kp)
+```
 
 ---
 

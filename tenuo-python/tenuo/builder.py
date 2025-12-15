@@ -108,27 +108,39 @@ class AttenuationBuilder:
         return self
 
     def with_tool(self, tool: str) -> 'AttenuationBuilder':
-        """Set a single tool for issuable_tools (for issuer warrants).
+        """Narrow to a single tool (for execution warrants).
         
-        This replaces the entire issuable_tools list with a single tool.
-        For multiple tools, use with_tools() instead.
+        The specified tool must be in the parent warrant's tools.
+        This enables "always shrinking authority" for non-terminal warrants.
+        
+        For ISSUER warrants (narrowing issuable_tools), this also works.
         
         Args:
-            tool: The tool name to allow
+            tool: The tool name to keep
             
         Returns:
             Self for method chaining
+            
+        Example:
+            # Parent has ["read_file", "send_email", "query_db"]
+            child = parent.attenuate_builder()
+                .with_tool("read_file")  # Narrow to just read_file
+                .with_holder(worker_key)
+                .delegate_to(kp, kp)
         """
         self._rust_builder.with_tool(tool)
         return self
 
     def with_tools(self, tools: List[str]) -> 'AttenuationBuilder':
-        """Set multiple tools for issuable_tools (for issuer warrants).
+        """Narrow to a subset of tools (for execution warrants).
         
-        This replaces the entire issuable_tools list.
+        The specified tools must all be in the parent warrant's tools.
+        This enables "always shrinking authority" for non-terminal warrants.
+        
+        For ISSUER warrants (narrowing issuable_tools), this also works.
         
         Args:
-            tools: List of tool names to allow
+            tools: List of tool names to keep
             
         Returns:
             Self for method chaining
@@ -136,8 +148,24 @@ class AttenuationBuilder:
         self._rust_builder.with_tools(tools)
         return self
 
+    def with_issuable_tool(self, tool: str) -> 'AttenuationBuilder':
+        """Set a single issuable tool (for ISSUER warrants only).
+        
+        For EXECUTION warrants, use with_tool() instead.
+        """
+        self._rust_builder.with_issuable_tool(tool)
+        return self
+
+    def with_issuable_tools(self, tools: List[str]) -> 'AttenuationBuilder':
+        """Set issuable tools (for ISSUER warrants only).
+        
+        For EXECUTION warrants, use with_tools() instead.
+        """
+        self._rust_builder.with_issuable_tools(tools)
+        return self
+
     def drop_tools(self, tools: List[str]) -> 'AttenuationBuilder':
-        """Drop tools from issuable_tools (for issuer warrants)."""
+        """Drop tools from issuable_tools (for issuer warrants only)."""
         self._rust_builder.drop_tools(tools)
         return self
 
