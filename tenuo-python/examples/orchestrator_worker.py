@@ -123,35 +123,69 @@ def worker_research(warrant: Warrant, keypair: Keypair):
     print(f"  [Worker/Research] Warrant allows: {warrant.tools}")
     
     with set_warrant_context(warrant), set_keypair_context(keypair):
-        # Allowed: search for competitors (matches constraint)
-        results = search(query="competitor analysis", max_results=3)
-        print(f"  [Worker/Research] Search succeeded: {len(results)} results")
-        
-        # Allowed: fetch public URL (matches constraint)
-        content = fetch(url="https://public.example.com/report")
-        print(f"  [Worker/Research] Fetch succeeded: {len(content)} chars")
-        
-        # NOT allowed: write (warrant has write tool, but no path constraint matches)
-        # The warrant inherited all tools, but constraints don't allow any write paths
+        print("\n  [Worker/Research] Demonstrating explicit warrant.authorize calls with signatures:")
+
+        # 1. Search (Allowed)
         try:
-            write(path="/output/reports/research.txt", content="data")
-            print("  [Worker/Research] ERROR: Write should have failed!")
-        except AuthorizationError:
-            print("  [Worker/Research] Write correctly blocked: no matching constraint")
-        
-        # NOT allowed: search outside constraint
+            print("  > Attempting: search(query='competitor analysis', max_results=3)")
+            args = {"query": "competitor analysis", "max_results": 3}
+            sig = warrant.create_pop_signature(keypair, "search", args)
+            if warrant.authorize("search", args, signature=bytes(sig)):
+                print("    [Allowed] Search executed")
+                search(query="competitor analysis", max_results=3) # Execute the actual tool
+            else:
+                print("    [Blocked] Search denied (unexpected)")
+        except Exception as e:
+            print(f"    [Error] {e}")
+            
+        # 2. Search (Blocked - wrong query)
         try:
-            search(query="internal salary data", max_results=3)
-            print("  [Worker/Research] ERROR: Query should have failed!")
-        except AuthorizationError:
-            print("  [Worker/Research] Query correctly blocked: constraint violation")
-        
-        # NOT allowed: fetch outside constraint
+            print("  > Attempting: search(query='internal salary data', max_results=3)")
+            args = {"query": "internal salary data", "max_results": 3}
+            sig = warrant.create_pop_signature(keypair, "search", args)
+            if warrant.authorize("search", args, signature=bytes(sig)):
+                print("    [Allowed] Search executed (unexpected)")
+            else:
+                print("    [Blocked] Search denied (constraint violation)")
+        except Exception as e:
+            print(f"    [Error] {e}")
+
+        # 3. Fetch (Allowed)
         try:
-            fetch(url="https://internal.example.com/secret")
-            print("  [Worker/Research] ERROR: Fetch should have failed!")
-        except AuthorizationError:
-            print("  [Worker/Research] Fetch correctly blocked: URL constraint violation")
+            print("  > Attempting: fetch(url='https://public.example.com/report')")
+            args = {"url": "https://public.example.com/report"}
+            sig = warrant.create_pop_signature(keypair, "fetch", args)
+            if warrant.authorize("fetch", args, signature=bytes(sig)):
+                print("    [Allowed] Fetch executed")
+                fetch(url="https://public.example.com/report") # Execute the actual tool
+            else:
+                print("    [Blocked] Fetch denied (unexpected)")
+        except Exception as e:
+            print(f"    [Error] {e}")
+
+        # 4. Fetch (Blocked - wrong URL)
+        try:
+            print("  > Attempting: fetch(url='https://internal.example.com/secret')")
+            args = {"url": "https://internal.example.com/secret"}
+            sig = warrant.create_pop_signature(keypair, "fetch", args)
+            if warrant.authorize("fetch", args, signature=bytes(sig)):
+                print("    [Allowed] Fetch executed (unexpected)")
+            else:
+                print("    [Blocked] Fetch denied (constraint violation)")
+        except Exception as e:
+            print(f"    [Error] {e}")
+
+        # 5. Write (Blocked - no matching constraint for path)
+        try:
+            print("  > Attempting: write(path='/output/reports/research.txt', content='data')")
+            args = {"path": "/output/reports/research.txt", "content": "data"}
+            sig = warrant.create_pop_signature(keypair, "write", args)
+            if warrant.authorize("write", args, signature=bytes(sig)):
+                print("    [Allowed] Write executed (unexpected)")
+            else:
+                print("    [Blocked] Write denied (no matching constraint)")
+        except Exception as e:
+            print(f"    [Error] {e}")
 
 
 def worker_write(warrant: Warrant, keypair: Keypair):
@@ -160,23 +194,44 @@ def worker_write(warrant: Warrant, keypair: Keypair):
     print(f"  [Worker/Write] Warrant allows: {warrant.tools}")
     
     with set_warrant_context(warrant), set_keypair_context(keypair):
-        # Allowed: write to authorized path
-        write(path="/output/reports/q3-analysis.txt", content="Q3 competitor analysis...")
-        print("  [Worker/Write] Write succeeded")
-        
-        # NOT allowed: search (not in this warrant's tools)
+        print("\n  [Worker/Write] Demonstrating explicit warrant.authorize calls with signatures:")
+
+        # 1. Write (Allowed)
         try:
-            search(query="more data", max_results=1)
-            print("  [Worker/Write] ERROR: Search should have failed!")
-        except AuthorizationError:
-            print("  [Worker/Write] Search correctly blocked: tool not authorized")
-        
-        # NOT allowed: write outside constraint
+            print("  > Attempting: write(path='/output/reports/q3-analysis.txt', content='Q3 competitor analysis...')")
+            args = {"path": "/output/reports/q3-analysis.txt", "content": "Q3 competitor analysis..."}
+            sig = warrant.create_pop_signature(keypair, "write", args)
+            if warrant.authorize("write", args, signature=bytes(sig)):
+                print("    [Allowed] Write executed")
+                write(path="/output/reports/q3-analysis.txt", content="Q3 competitor analysis...") # Execute the actual tool
+            else:
+                print("    [Blocked] Write denied (unexpected)")
+        except Exception as e:
+            print(f"    [Error] {e}")
+            
+        # 2. Write (Blocked - wrong path)
         try:
-            write(path="/etc/passwd", content="malicious")
-            print("  [Worker/Write] ERROR: Write should have failed!")
-        except AuthorizationError:
-            print("  [Worker/Write] Write correctly blocked: path constraint violation")
+            print("  > Attempting: write(path='/etc/passwd', content='malicious')")
+            args = {"path": "/etc/passwd", "content": "malicious"}
+            sig = warrant.create_pop_signature(keypair, "write", args)
+            if warrant.authorize("write", args, signature=bytes(sig)):
+                print("    [Allowed] Write executed (unexpected)")
+            else:
+                print("    [Blocked] Write denied (constraint violation)")
+        except Exception as e:
+            print(f"    [Error] {e}")
+
+        # 3. Search (Blocked - tool not authorized in this warrant)
+        try:
+            print("  > Attempting: search(query='more data', max_results=1)")
+            args = {"query": "more data", "max_results": 1}
+            sig = warrant.create_pop_signature(keypair, "search", args)
+            if warrant.authorize("search", args, signature=bytes(sig)):
+                print("    [Allowed] Search executed (unexpected)")
+            else:
+                print("    [Blocked] Search denied (tool not authorized)")
+        except Exception as e:
+            print(f"    [Error] {e}")
 
 
 # ============================================================================

@@ -465,7 +465,6 @@ from tenuo import (
 ```
 
 ### Pattern
-
 Glob-style pattern matching.
 
 ```python
@@ -473,6 +472,14 @@ Pattern("staging-*")      # Matches staging-web, staging-db
 Pattern("/tmp/**")        # Recursive: matches /tmp/foo/bar/file.txt
 Pattern("*-safe")         # Suffix: matches image-safe
 ```
+
+> [!IMPORTANT]
+> **Pattern vs Wildcard**: `Pattern("*")` is NOT the same as `Wildcard()`.
+> *   `Wildcard()` is a semantic "match anything" that can be attenuated to *any* other constraint.
+> *   `Pattern("*")` is a specific glob string. Due to the complexity of proving glob subsets, `tenuo-core` only supports subsetting for simple **Prefix** (`foo*`) or **Suffix** (`*bar`) patterns.
+> *   **Complex patterns** (e.g., `*foo*` or `a*b*c`) require exact equality for attenuation.
+>
+> **Best Practice**: Use `Wildcard()` in root warrants if you want to allow full flexibility for children to narrow down. Use `Pattern("*")` only if you specifically mean a glob match that will only be narrowed to other simple prefix/suffix patterns.
 
 ### Exact
 
