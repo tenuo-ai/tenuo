@@ -313,4 +313,5 @@ CaMeL is the architecture. Tenuo is the authorization primitive.
 - [Quick Start](./quickstart) — Get running in 5 minutes
 - [Protocol Details](./protocol) — How warrants work (for implementers)
 - [API Reference](./api-reference) — Function signatures
+- [Deployment Patterns](./deployment) — Envoy, Istio, nginx integration
 - [Security](./security) — Detailed threat model

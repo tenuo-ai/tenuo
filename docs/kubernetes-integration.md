@@ -241,6 +241,8 @@ print(f"Authorized tools: {warrant.tools}")
 
 ## See Also
 
+- [Deployment Patterns](./deployment.md) — Envoy, Istio, nginx integration
+- [Gateway Configuration](./gateway-config.md) — YAML config reference
 - [LangChain Integration](./langchain.md)
 - [API Reference](./api-reference.md)
 - [Protocol](./protocol.md)
