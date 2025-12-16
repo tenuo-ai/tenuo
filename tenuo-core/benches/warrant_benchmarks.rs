@@ -78,12 +78,18 @@ fn benchmark_warrant_authorization(c: &mut Criterion) {
     );
 
     // Create PoP signature for the benchmark
-    let pop_sig = warrant.create_pop_signature(&keypair, "upgrade_cluster", &args).unwrap();
+    let pop_sig = warrant
+        .create_pop_signature(&keypair, "upgrade_cluster", &args)
+        .unwrap();
 
     c.bench_function("warrant_authorize", |b| {
         b.iter(|| {
             warrant
-                .authorize(black_box("upgrade_cluster"), black_box(&args), Some(black_box(&pop_sig)))
+                .authorize(
+                    black_box("upgrade_cluster"),
+                    black_box(&args),
+                    Some(black_box(&pop_sig)),
+                )
                 .unwrap()
         })
     });
@@ -168,7 +174,7 @@ fn benchmark_deep_delegation_chain(c: &mut Criterion) {
 fn benchmark_authorization_denials(c: &mut Criterion) {
     let keypair = Keypair::generate();
     let wrong_keypair = Keypair::generate();
-    
+
     let warrant = Warrant::builder()
         .tool("read_file")
         .constraint("path", Pattern::new("/data/*").unwrap())
@@ -178,48 +184,56 @@ fn benchmark_authorization_denials(c: &mut Criterion) {
         .unwrap();
 
     // Benchmark 1: Wrong tool (fast path - should fail early)
-    let valid_args = HashMap::from([
-        ("path".to_string(), ConstraintValue::String("/data/report.txt".to_string())),
-    ]);
-    let pop_sig = warrant.create_pop_signature(&keypair, "read_file", &valid_args).unwrap();
-    
+    let valid_args = HashMap::from([(
+        "path".to_string(),
+        ConstraintValue::String("/data/report.txt".to_string()),
+    )]);
+    let pop_sig = warrant
+        .create_pop_signature(&keypair, "read_file", &valid_args)
+        .unwrap();
+
     c.bench_function("authorize_deny_wrong_tool", |b| {
         b.iter(|| {
             let result = warrant.authorize(
-                black_box("write_file"),  // Wrong tool
+                black_box("write_file"), // Wrong tool
                 black_box(&valid_args),
-                Some(black_box(&pop_sig))
+                Some(black_box(&pop_sig)),
             );
             assert!(result.is_err());
         })
     });
 
     // Benchmark 2: Constraint violation (mid path - pattern matching fails)
-    let invalid_args = HashMap::from([
-        ("path".to_string(), ConstraintValue::String("/etc/passwd".to_string())),
-    ]);
-    let invalid_pop = warrant.create_pop_signature(&keypair, "read_file", &invalid_args).unwrap();
-    
+    let invalid_args = HashMap::from([(
+        "path".to_string(),
+        ConstraintValue::String("/etc/passwd".to_string()),
+    )]);
+    let invalid_pop = warrant
+        .create_pop_signature(&keypair, "read_file", &invalid_args)
+        .unwrap();
+
     c.bench_function("authorize_deny_constraint_violation", |b| {
         b.iter(|| {
             let result = warrant.authorize(
                 black_box("read_file"),
                 black_box(&invalid_args),
-                Some(black_box(&invalid_pop))
+                Some(black_box(&invalid_pop)),
             );
             assert!(result.is_err());
         })
     });
 
     // Benchmark 3: Invalid PoP signature (crypto path - signature verification fails)
-    let wrong_pop = warrant.create_pop_signature(&wrong_keypair, "read_file", &valid_args).unwrap();
-    
+    let wrong_pop = warrant
+        .create_pop_signature(&wrong_keypair, "read_file", &valid_args)
+        .unwrap();
+
     c.bench_function("authorize_deny_invalid_pop", |b| {
         b.iter(|| {
             let result = warrant.authorize(
                 black_box("read_file"),
                 black_box(&valid_args),
-                Some(black_box(&wrong_pop))
+                Some(black_box(&wrong_pop)),
             );
             assert!(result.is_err());
         })
@@ -231,7 +245,7 @@ fn benchmark_authorization_denials(c: &mut Criterion) {
             let result = warrant.authorize(
                 black_box("read_file"),
                 black_box(&valid_args),
-                None  // No PoP
+                None, // No PoP
             );
             assert!(result.is_err());
         })
