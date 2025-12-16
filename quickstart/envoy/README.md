@@ -1,204 +1,104 @@
-# Envoy Quickstart (5 minutes)
+# Envoy Quickstart
 
-Get from zero to your first 403 in 5 minutes with Tenuo and standalone Envoy.
+Get your first 403 in under 5 minutes.
 
 ## Prerequisites
 
-- Kubernetes cluster
-- `kubectl` configured to access your cluster
+- Kubernetes cluster (minikube, kind, or cloud)
+- kubectl configured
+- curl
 
-## Quick Start
+## Steps
 
-### 1. Deploy Tenuo Authorizer
+### 1. Deploy Everything
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/tenuo-ai/tenuo/main/quickstart/envoy/authorizer.yaml
+kubectl apply -f https://raw.githubusercontent.com/horkosdev/tenuo/main/quickstart/envoy/all-in-one.yaml
 ```
 
-This creates:
-- `tenuo-system` namespace
-- Tenuo authorizer deployment (2 replicas)
-- Service exposing the authorizer on port 9090
+This creates the `tenuo-system` namespace with:
+- Tenuo authorizer (verifies warrants)
+- Envoy proxy (ext_authz filter)
+- httpbin (test backend)
 
-### 2. Deploy Envoy Proxy
+### 2. Wait for Pods
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/tenuo-ai/tenuo/main/quickstart/envoy/envoy.yaml
+kubectl wait --for=condition=ready pod -l app=envoy -n tenuo-system --timeout=60s
 ```
 
-This deploys Envoy configured with ext_authz filter pointing to Tenuo.
-
-### 3. Deploy Test Application
+### 3. Port Forward
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/tenuo-ai/tenuo/main/quickstart/envoy/httpbin.yaml
+kubectl port-forward -n tenuo-system svc/envoy 8080:8080 &
 ```
 
-### 4. Test: Time to First 403! 🎉
+### 4. Test Without Warrant
 
 ```bash
-# Port-forward to Envoy
-kubectl port-forward -n default svc/envoy 8080:8080
-
-# No warrant → 403 Forbidden
 curl -i http://localhost:8080/get
 ```
 
-**Expected output:**
+Expected:
 ```
 HTTP/1.1 403 Forbidden
+x-tenuo-deny-reason: missing_warrant
 ```
 
-### 5. Test with Valid Warrant
+### 5. Test With Warrant
 
-First, generate a warrant from your control plane:
+For demo purposes, the authorizer accepts a test warrant. In production, warrants come from your control plane.
 
 ```bash
-# Get a warrant (replace with your control plane endpoint)
-WARRANT=$(curl -s http://tenuo-control.tenuo-system:8080/v1/warrants \
-  -H "Content-Type: application/json" \
-  -d '{
-    "tool": "http_request",
-    "constraints": {"path": "/get"},
-    "ttl_seconds": 300
-  }' | jq -r '.warrant_base64')
+# Demo warrant (pre-signed, expires in 24h)
+WARRANT="eyJ0eXAiOiJKV1QiLCJhbGciOiJFZERTQSJ9..."
 
-# Generate PoP signature (using tenuo CLI)
-POP=$(tenuo sign --warrant "$WARRANT")
-
-# Make request with warrant and PoP
-curl -i \
-  -H "X-Tenuo-Warrant: $WARRANT" \
-  -H "X-Tenuo-PoP: $POP" \
-  http://localhost:8080/get
+curl -i -H "X-Tenuo-Warrant: $WARRANT" http://localhost:8080/get
 ```
 
-**Expected output:**
-```
-HTTP/1.1 200 OK
-```
+See the [Kubernetes Guide](../../docs/kubernetes.md) for issuing real warrants.
 
 ## Architecture
 
 ```
-┌─────────────┐
-│   Client    │
-└──────┬──────┘
-       │ 1. Request
-       ▼
-┌─────────────────────┐
-│  Envoy Proxy        │
-│  (ext_authz filter) │
-└──────┬──────────────┘
-       │ 2. Check Authorization
-       ▼
-┌─────────────────────┐
-│ Tenuo Authorizer    │◄─── Trusted Issuer Keys
-│ (gRPC ExtAuthz)     │
-└──────┬──────────────┘
-       │ 3. Allow/Deny
-       ▼
-┌─────────────────────┐
-│   httpbin Service   │
-└─────────────────────┘
+Client --> Envoy --> Tenuo Authorizer --> httpbin
+              |            |
+              |   (verify) |
+              |<-----------+
+              |
+              +--> (forward if 200)
 ```
 
-## How It Works
-
-1. **Request arrives** at Envoy proxy
-2. **Envoy ext_authz filter** calls Tenuo authorizer via gRPC
-3. **Tenuo validates**:
-   - Warrant signature (from trusted issuer)
-   - Warrant expiration
-   - Proof of Possession (PoP)
-   - Constraint matching
-4. **Envoy forwards** request if authorized, or returns 403
-
-## Configuration
-
-### Trusted Issuer Keys
-
-Update the `TENUO_TRUSTED_KEYS` in `authorizer.yaml`:
-
-```yaml
-data:
-  TENUO_TRUSTED_KEYS: "your-control-plane-public-key-hex"
-```
-
-Get your control plane's public key:
-
-```bash
-curl http://tenuo-control:8080/v1/public-key | jq -r '.public_key_hex'
-```
-
-### Envoy Filter Configuration
-
-The Envoy config uses the `envoy.filters.http.ext_authz` filter:
-
-```yaml
-- name: envoy.filters.http.ext_authz
-  typed_config:
-    "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
-    grpc_service:
-      envoy_grpc:
-        cluster_name: tenuo-authorizer
-      timeout: 1s
-    include_peer_certificate: true
-```
+1. Request arrives at Envoy with `X-Tenuo-Warrant` header
+2. Envoy's ext_authz filter calls Tenuo authorizer
+3. Tenuo verifies signature, expiry, and constraints
+4. Envoy forwards to backend only if Tenuo returns 200
 
 ## Troubleshooting
 
-### Check authorizer logs
-
+Check authorizer logs:
 ```bash
-kubectl logs -n tenuo-system -l app=tenuo-authorizer --tail=50
+kubectl logs -n tenuo-system -l app=tenuo-authorizer --tail=20
 ```
 
-### Check Envoy logs
-
+Check Envoy logs:
 ```bash
-kubectl logs -n default -l app=envoy --tail=50
+kubectl logs -n tenuo-system -l app=envoy --tail=20
 ```
 
-### Test authorizer directly
-
+List pods:
 ```bash
-kubectl port-forward -n tenuo-system svc/tenuo-authorizer 9090:9090
-
-# Send a test gRPC request (requires grpcurl)
-grpcurl -plaintext localhost:9090 list
+kubectl get pods -n tenuo-system
 ```
-
-## Envoy vs Istio
-
-| Feature | Standalone Envoy | Istio |
-|---------|------------------|-------|
-| **Setup** | Direct Envoy config | ExtensionProvider + AuthorizationPolicy |
-| **Complexity** | Lower | Higher (service mesh) |
-| **Control** | Full Envoy control | Istio abstractions |
-| **Use Case** | Simple proxy needs | Full service mesh features |
-
-**Choose Envoy if:**
-- You want a simple, standalone proxy
-- You don't need full service mesh features
-- You want direct control over Envoy configuration
-
-**Choose Istio if:**
-- You already have Istio deployed
-- You need service mesh features (mTLS, traffic management, etc.)
-- You prefer declarative policies over Envoy config
 
 ## Next Steps
 
-- [Istio Quickstart](../istio/README.md) - Alternative with Istio service mesh
-- [Kubernetes Integration Guide](../../docs/kubernetes.md)
-- [Gateway Configuration](../../docs/gateway-config.md)
-- [Helm Chart](../../charts/tenuo-authorizer/README.md)
+- [Istio Quickstart](../istio/README.md) - Service mesh alternative
+- [Kubernetes Guide](../../docs/kubernetes.md) - Production patterns
+- [Proxy Configs](../../docs/proxy-configs.md) - Full Envoy config reference
 
 ## Clean Up
 
 ```bash
-kubectl delete -f envoy.yaml
-kubectl delete -f httpbin.yaml
-kubectl delete -f authorizer.yaml
+kubectl delete -f https://raw.githubusercontent.com/horkosdev/tenuo/main/quickstart/envoy/all-in-one.yaml
 ```

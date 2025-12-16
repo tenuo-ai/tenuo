@@ -1,7 +1,7 @@
----
-# Sample httpbin deployment for testing Tenuo authorization
-# This is a simple HTTP testing service that echoes requests.
+# httpbin + AuthorizationPolicy for Istio Quickstart
+# Apply with: kubectl apply -f httpbin.yaml
 
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -14,9 +14,6 @@ kind: Service
 metadata:
   name: httpbin
   namespace: default
-  labels:
-    app: httpbin
-    service: httpbin
 spec:
   ports:
   - name: http
@@ -36,17 +33,33 @@ spec:
   selector:
     matchLabels:
       app: httpbin
-      version: v1
   template:
     metadata:
       labels:
         app: httpbin
-        version: v1
     spec:
       serviceAccountName: httpbin
       containers:
       - name: httpbin
         image: docker.io/kennethreitz/httpbin
-        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 80
+
+---
+# AuthorizationPolicy: require Tenuo auth for /api/* paths
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: tenuo-authz
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: httpbin
+  action: CUSTOM
+  provider:
+    name: tenuo-ext-authz
+  rules:
+  - to:
+    - operation:
+        paths: ["/api/*", "/get", "/post", "/put", "/delete"]

@@ -1,8 +1,7 @@
----
-# Tenuo Authorizer Deployment for Envoy
-# This is the same authorizer used in the Istio quickstart
-# It works with both Istio and standalone Envoy
+# Tenuo Authorizer for Istio
+# Apply with: kubectl apply -f tenuo.yaml
 
+---
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -17,20 +16,22 @@ metadata:
 data:
   gateway.yaml: |
     version: "1"
-    
     settings:
       warrant_header: "X-Tenuo-Warrant"
       pop_header: "X-Tenuo-PoP"
       clock_tolerance_secs: 30
-      # Add your control plane's public key here
-      # Get it from: curl http://tenuo-control:8080/v1/public-key
+      debug_mode: true
+      # Demo key - replace in production
       trusted_roots:
         - "f32e74b5b8569dc288db0109b7ec0d8eb3b4e5be7b07c647171d53fd31e7391f"
-    
-    # Minimal config - no tools or routes defined
-    # Requests will be denied unless a valid warrant is provided
-    tools: {}
-    routes: []
+    tools:
+      http_request:
+        extract:
+          path: "$.path"
+          method: "$.method"
+    routes:
+      - path_prefix: "/"
+        tool: http_request
 
 ---
 apiVersion: apps/v1
@@ -38,10 +39,8 @@ kind: Deployment
 metadata:
   name: tenuo-authorizer
   namespace: tenuo-system
-  labels:
-    app: tenuo-authorizer
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: tenuo-authorizer
@@ -54,16 +53,9 @@ spec:
       - name: authorizer
         image: tenuo/authorizer:latest
         imagePullPolicy: IfNotPresent
-        args:
-          - "serve"
-          - "--port"
-          - "9090"
-          - "--config"
-          - "/etc/tenuo/gateway.yaml"
+        args: ["serve", "--port", "9090", "--config", "/etc/tenuo/gateway.yaml"]
         ports:
-        - name: grpc
-          containerPort: 9090
-          protocol: TCP
+        - containerPort: 9090
         env:
         - name: RUST_LOG
           value: "info"
@@ -78,24 +70,6 @@ spec:
           limits:
             memory: "128Mi"
             cpu: "200m"
-        livenessProbe:
-          grpc:
-            port: 9090
-          initialDelaySeconds: 5
-          periodSeconds: 10
-        readinessProbe:
-          grpc:
-            port: 9090
-          initialDelaySeconds: 3
-          periodSeconds: 5
-        securityContext:
-          readOnlyRootFilesystem: true
-          runAsNonRoot: true
-          runAsUser: 1000
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-            - ALL
       volumes:
       - name: config
         configMap:
@@ -107,14 +81,9 @@ kind: Service
 metadata:
   name: tenuo-authorizer
   namespace: tenuo-system
-  labels:
-    app: tenuo-authorizer
 spec:
-  type: ClusterIP
   ports:
-  - name: grpc
-    port: 9090
+  - port: 9090
     targetPort: 9090
-    protocol: TCP
   selector:
     app: tenuo-authorizer

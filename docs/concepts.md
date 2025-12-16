@@ -253,7 +253,7 @@ Tenuo integrates with existing service meshes via external authorization:
 └────────────┘     └─────────────┘     └─────────────────┘     └─────────┘
 ```
 
-**Supported integrations**: Envoy, Istio, nginx, Kubernetes sidecars. See [Deployment Patterns](./deployment).
+**Supported integrations**: Envoy, Istio, nginx, Kubernetes sidecars. See [Proxy Configs](./proxy-configs).
 
 ### What v0.1 Provides
 
@@ -335,6 +335,6 @@ See [Related Work](./related-work) for comparison with other approaches.
 - [Quick Start](./quickstart) — Get running in 5 minutes
 - [Protocol Details](./protocol) — How warrants work (for implementers)
 - [API Reference](./api-reference) — Function signatures
-- [Deployment Patterns](./deployment) — Envoy, Istio, nginx integration
+- [Proxy Configs](./proxy-configs) — Envoy, Istio, nginx integration
 - [Security](./security) — Detailed threat model
 - [Related Work](./related-work) — CaMeL, FIDES, and other approaches
