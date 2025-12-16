@@ -134,6 +134,31 @@ with set_warrant_context(warrant), set_keypair_context(keypair):
     upgrade_cluster(cluster="staging-web", budget=500.0)
 ```
 
+### 5. LangChain One-Liner (Recommended)
+
+```python
+from tenuo import Keypair, root_task_sync
+from tenuo.langchain import secure_agent
+
+# One line to secure your LangChain tools
+kp = Keypair.generate()
+tools = secure_agent([search, calculator], issuer_keypair=kp)
+
+# Run with scoped authority
+with root_task_sync(tools=["search", "calculator"]):
+    result = executor.invoke({"input": "What is 2+2?"})
+```
+
+### 6. LangGraph Drop-in
+
+```python
+from tenuo.langgraph import TenuoToolNode
+
+# Drop-in replacement for ToolNode
+tool_node = TenuoToolNode([search, calculator])
+graph.add_node("tools", tool_node)
+```
+
 ---
 
 ## Rust Quick Start
@@ -256,6 +281,24 @@ tenuo inspect --warrant worker.warrant
 | `Regex` | `Regex(r"^user_\d+$")` | "user_123", "user_456" |
 
 See [Constraints](./constraints) for the full list.
+
+---
+
+## Debugging Authorization Failures
+
+Tenuo provides diff-style error messages when authorization fails:
+
+```
+Access denied for tool 'read_file'
+
+  ❌ path:
+     Expected: Pattern("/data/*")
+     Received: '/etc/passwd'
+     Reason: Pattern does not match
+  ✅ size: OK
+```
+
+This makes it easy to see exactly which constraint failed and why.
 
 ---
 

@@ -156,79 +156,110 @@ except AuthorizationError as e:
 
 ## LangChain Integration
 
-Tenuo integrates seamlessly with LangChain agents and tools. The key pattern is to:
+### `secure_agent()` - One-Liner Setup (Recommended)
 
-1. **Decorate your tool functions** with `@lockdown(tool="...")`
-2. **Set the warrant in context** before running the agent
-3. **All tool calls are automatically protected**
-
-### Simple Example
+The simplest way to protect LangChain tools:
 
 ```python
-from tenuo import Keypair, Warrant, Pattern, lockdown, set_warrant_context, set_keypair_context
-from langchain.tools import Tool
+from tenuo import Keypair, root_task_sync
+from tenuo.langchain import secure_agent
+from langchain_community.tools import DuckDuckGoSearchRun
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_openai import ChatOpenAI
 
-# 1. Create protected tool function
-@lockdown(tool="read_file", extract_args=lambda file_path, **kwargs: {"file_path": file_path})
+# One line to secure your tools
+kp = Keypair.generate()
+tools = secure_agent(
+    [DuckDuckGoSearchRun()],
+    issuer_keypair=kp,
+    warn_on_missing_warrant=True  # Loud warnings if you forget context
+)
+
+# Create agent as normal
+llm = ChatOpenAI(model="gpt-3.5-turbo")
+agent = create_openai_tools_agent(llm, tools, prompt)
+executor = AgentExecutor(agent=agent, tools=tools)
+
+# Run with scoped authority
+with root_task_sync(tools=["duckduckgo_search"], query="*"):
+    result = executor.invoke({"input": "What's the latest AI news?"})
+```
+
+### Protecting Custom Tool Functions
+
+For your own tools, use the `@lockdown` decorator:
+
+```python
+from tenuo import lockdown, set_warrant_context, set_keypair_context
+
+@lockdown(tool="read_file")
 def read_file(file_path: str) -> str:
     """Read a file. Protected by Tenuo."""
     with open(file_path, 'r') as f:
         return f.read()
 
-# 2. Create warrant that restricts access
-keypair = Keypair.generate()
-warrant = Warrant.issue(
-    tools="read_file",
-    constraints={"file_path": Pattern("/tmp/*")},  # Only /tmp/ files
-    ttl_seconds=3600,
-    keypair=keypair,
-    holder=keypair.public_key
-)
-
-# 3. Create LangChain tools and agent
-tools = [Tool(name="read_file", func=read_file, description="Read a file")]
-llm = ChatOpenAI(model="gpt-3.5-turbo")
-agent = create_openai_tools_agent(llm, tools)
-executor = AgentExecutor(agent=agent, tools=tools)
-
-# 4. Run agent with warrant protection
-# Set BOTH warrant and keypair in context (required for PoP)
+# Set context and call
 with set_warrant_context(warrant), set_keypair_context(keypair):
-    response = executor.invoke({"input": "Read /tmp/test.txt"})
-    # Agent can only access files matching Pattern("/tmp/*")
+    content = read_file("/tmp/test.txt")
 ```
 
-See `examples/langchain_simple.py` for a complete working example, or `examples/langchain_integration.py` for an advanced example with callbacks.
+See `examples/langchain_simple.py` for a complete working example.
 
-### Protecting Third-Party Tools
+## LangGraph Integration
 
-For tools you don't own (e.g., from `langchain_community`), use `protect_tools()` to wrap them at runtime:
+### `TenuoToolNode` - Drop-in ToolNode Replacement
+
+For LangGraph users, `TenuoToolNode` is a drop-in replacement for `ToolNode`:
 
 ```python
-from tenuo.langchain import protect_tools
-from langchain_community.tools import DuckDuckGoSearchRun
+from tenuo import root_task_sync
+from tenuo.langgraph import TenuoToolNode
 
-# Create warrant and keypair first
-keypair = Keypair.generate()
-warrant = Warrant.issue(
-    tools="search",
-    keypair=keypair,
-    holder=keypair.public_key,
-    constraints={"query": Pattern("*")},  # Or specific constraints
-    ttl_seconds=3600
-)
+# Before (manual protection):
+# protected = protect_langchain_tools(tools)
+# tool_node = ToolNode(protected)
 
-# Wrap tools at setup time
-secure_tools = protect_tools(
-    tools=[DuckDuckGoSearchRun()],
-    warrant=warrant,
-    keypair=keypair,
-)
+# After (automatic protection):
+tool_node = TenuoToolNode([search, calculator])
+
+graph.add_node("tools", tool_node)
+
+# Run with authorization
+with root_task_sync(tools=["search", "calculator"]):
+    result = graph.invoke({"messages": [...]})
 ```
 
-See `examples/langchain_protect_tools.py` for a complete example.
+### Scoping Graph Nodes
+
+Use `@tenuo_node` to scope authority for specific nodes:
+
+```python
+from tenuo.langgraph import tenuo_node
+
+@tenuo_node(tools=["search"], query="*public*")
+async def researcher(state):
+    # Only search tool allowed, query must contain "public"
+    return await search_tool(state["query"])
+```
+
+## Diff-Style Error Messages
+
+When authorization fails, Tenuo provides detailed error messages showing exactly what went wrong:
+
+```python
+from tenuo import AuthorizationDenied
+
+# Error output shows expected vs received:
+# Access denied for tool 'read_file'
+#
+#   ❌ path:
+#      Expected: Pattern("/data/*")
+#      Received: '/etc/passwd'
+#      Reason: Pattern does not match
+#   ✅ size: OK
+```
+
+This makes debugging authorization issues fast and straightforward.
 
 ## MCP Integration
 
