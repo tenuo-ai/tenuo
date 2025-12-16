@@ -49,6 +49,20 @@ routes:
 | `pop_header` | string | `X-Tenuo-PoP` | HTTP header containing hex-encoded PoP signature |
 | `clock_tolerance_secs` | int | `30` | Seconds of tolerance for expiration checks |
 | `trusted_roots` | list | `[]` | Hex-encoded public keys of trusted control planes |
+| `debug_mode` | bool | `false` | Enable detailed deny reasons in response headers |
+
+> ⚠️ **Security Warning**: Never enable `debug_mode` in production! It exposes internal authorization details that could help attackers understand your security model.
+
+### Debug Mode
+
+When `debug_mode: true` is set, denied requests include an `X-Tenuo-Deny-Reason` header with details:
+
+```http
+HTTP/1.1 403 Forbidden
+X-Tenuo-Deny-Reason: constraint_violation: replicas=50 exceeds Range(max=10)
+```
+
+This is useful for development and troubleshooting but should **never** be enabled in production.
 
 ---
 

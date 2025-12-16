@@ -321,18 +321,80 @@ fn read_warrant(warrant: Option<String>) -> Result<String, Box<dyn std::error::E
 use axum::{
     body::Bytes,
     extract::{Path, Query, State},
-    http::{HeaderMap, Method, StatusCode},
-    response::IntoResponse,
+    http::{header::HeaderName, HeaderMap, HeaderValue, Method, StatusCode},
+    response::{IntoResponse, Response},
     routing::any,
     Json, Router,
 };
 use serde_json::{json, Value};
 use std::net::SocketAddr;
+use tracing::{info, warn};
 
 /// Shared state for the HTTP server
 struct AppState {
     authorizer: Authorizer,
     config: CompiledGatewayConfig,
+    debug_mode: bool,
+}
+
+/// Structured denial reason for logging
+#[derive(Debug, serde::Serialize)]
+struct DenyReason {
+    level: &'static str,
+    event: &'static str,
+    reason: String,
+    tool: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    constraint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expected: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actual: Option<Value>,
+    warrant_id: String,
+    request_id: String,
+}
+
+impl DenyReason {
+    fn new(tool: &str, warrant_id: &str, request_id: &str) -> Self {
+        Self {
+            level: "warn",
+            event: "authorization_denied",
+            reason: String::new(),
+            tool: tool.to_string(),
+            constraint: None,
+            expected: None,
+            actual: None,
+            warrant_id: warrant_id.to_string(),
+            request_id: request_id.to_string(),
+        }
+    }
+
+    fn with_reason(mut self, reason: impl Into<String>) -> Self {
+        self.reason = reason.into();
+        self
+    }
+
+    fn with_constraint(mut self, name: &str, expected: &str, actual: Value) -> Self {
+        self.reason = "constraint_violation".to_string();
+        self.constraint = Some(name.to_string());
+        self.expected = Some(expected.to_string());
+        self.actual = Some(actual);
+        self
+    }
+
+    /// Format as a human-readable header value
+    fn to_header_value(&self) -> String {
+        if let (Some(constraint), Some(expected), Some(actual)) =
+            (&self.constraint, &self.expected, &self.actual)
+        {
+            format!(
+                "{}: {}={} exceeds {}",
+                self.reason, constraint, actual, expected
+            )
+        } else {
+            self.reason.clone()
+        }
+    }
 }
 
 /// Start the HTTP authorization server
@@ -344,6 +406,7 @@ async fn serve_http(
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Load and compile gateway configuration
     let config = GatewayConfig::from_file(config_path)?;
+    let debug_mode = config.settings.debug_mode;
     let compiled = CompiledGatewayConfig::compile(config)?;
 
     eprintln!("┌─────────────────────────────────────────────────────────");
@@ -351,12 +414,16 @@ async fn serve_http(
     eprintln!("├─────────────────────────────────────────────────────────");
     eprintln!("│ Listening on: {}:{}", bind, port);
     eprintln!("│ Config: {}", config_path.display());
+    if debug_mode {
+        eprintln!("│ ⚠️  Debug mode: ENABLED (not for production!)");
+    }
     eprintln!("└─────────────────────────────────────────────────────────");
     eprintln!();
 
     let state = Arc::new(AppState {
         authorizer,
         config: compiled,
+        debug_mode,
     });
 
     // Build the router - catch all requests
@@ -380,8 +447,11 @@ async fn handle_request(
     Path(path): Path<String>,
     Query(query): Query<HashMap<String, String>>,
     body: Bytes,
-) -> impl IntoResponse {
+) -> Response {
     let path = format!("/{}", path);
+
+    // Generate request ID for tracing
+    let request_id = format!("req_{}", uuid::Uuid::now_v7().simple());
 
     // 1. Match route
     let route_match = match state.config.match_route(method.as_str(), &path) {
@@ -391,9 +461,11 @@ async fn handle_request(
                 StatusCode::NOT_FOUND,
                 Json(json!({
                     "error": "no_route",
-                    "message": format!("No route matches {} {}", method, path)
+                    "message": format!("No route matches {} {}", method, path),
+                    "request_id": request_id
                 })),
-            );
+            )
+                .into_response();
         }
     };
 
@@ -407,19 +479,29 @@ async fn handle_request(
                     StatusCode::BAD_REQUEST,
                     Json(json!({
                         "error": "invalid_header",
-                        "message": format!("Invalid {} header encoding", warrant_header)
+                        "message": format!("Invalid {} header encoding", warrant_header),
+                        "request_id": request_id
                     })),
-                );
+                )
+                    .into_response();
             }
         },
         None => {
+            warn!(
+                request_id = %request_id,
+                event = "authorization_denied",
+                reason = "missing_warrant",
+                "Missing warrant header"
+            );
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(json!({
                     "error": "missing_warrant",
-                    "message": format!("Missing {} header", warrant_header)
+                    "message": format!("Missing {} header", warrant_header),
+                    "request_id": request_id
                 })),
-            );
+            )
+                .into_response();
         }
     };
 
@@ -427,15 +509,26 @@ async fn handle_request(
     let warrant = match wire::decode_base64(&warrant_b64) {
         Ok(w) => w,
         Err(e) => {
+            warn!(
+                request_id = %request_id,
+                event = "authorization_denied",
+                reason = "invalid_warrant",
+                error = %e,
+                "Failed to decode warrant"
+            );
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({
                     "error": "invalid_warrant",
-                    "message": format!("Failed to decode warrant: {}", e)
+                    "message": format!("Failed to decode warrant: {}", e),
+                    "request_id": request_id
                 })),
-            );
+            )
+                .into_response();
         }
     };
+
+    let warrant_id = warrant.id().as_str().to_string();
 
     // 4. Parse body as JSON (if present)
     let json_body: Value = if body.is_empty() {
@@ -455,7 +548,7 @@ async fn handle_request(
         }
     }
 
-    let mut ctx = RequestContext::with_body(json_body);
+    let mut ctx = RequestContext::with_body(json_body.clone());
     ctx.path_params = route_match.path_params.clone();
     ctx.query_params = query;
     ctx.headers = http_headers;
@@ -464,15 +557,27 @@ async fn handle_request(
     let extraction_result = match state.config.extract_constraints(&route_match, &ctx) {
         Ok(r) => r,
         Err(e) => {
+            warn!(
+                request_id = %request_id,
+                warrant_id = %warrant_id,
+                event = "authorization_denied",
+                reason = "extraction_failed",
+                field = %e.field,
+                hint = %e.hint,
+                "Failed to extract constraints"
+            );
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({
                     "error": "extraction_failed",
                     "message": format!("Failed to extract constraints: {}", e),
                     "field": e.field,
-                    "hint": e.hint
+                    "hint": e.hint,
+                    "request_id": request_id,
+                    "warrant_id": warrant_id
                 })),
-            );
+            )
+                .into_response();
         }
     };
 
@@ -501,23 +606,137 @@ async fn handle_request(
     );
 
     match result {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(json!({
-                "authorized": true,
-                "warrant_id": warrant.id().as_str(),
-                "tool": extraction_result.tool,
-            })),
-        ),
-        Err(e) => (
-            StatusCode::FORBIDDEN,
-            Json(json!({
-                "authorized": false,
-                "error": "authorization_failed",
-                "message": format!("{}", e),
-                "warrant_id": warrant.id().as_str(),
-                "tool": extraction_result.tool,
-            })),
-        ),
+        Ok(()) => {
+            info!(
+                request_id = %request_id,
+                warrant_id = %warrant_id,
+                tool = %extraction_result.tool,
+                event = "authorization_success",
+                "Request authorized"
+            );
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "authorized": true,
+                    "warrant_id": warrant_id,
+                    "tool": extraction_result.tool,
+                    "request_id": request_id
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            // Parse the error to extract structured deny reason
+            let deny_reason = parse_deny_reason(
+                &e,
+                &extraction_result.tool,
+                &warrant_id,
+                &request_id,
+                &extraction_result.constraints,
+            );
+
+            // Log structured denial
+            if let Ok(log_json) = serde_json::to_string(&deny_reason) {
+                // Output as structured JSON log
+                eprintln!("{}", log_json);
+            }
+
+            // Also log with tracing for structured logging systems
+            warn!(
+                request_id = %request_id,
+                warrant_id = %warrant_id,
+                tool = %extraction_result.tool,
+                event = "authorization_denied",
+                reason = %deny_reason.reason,
+                constraint = ?deny_reason.constraint,
+                expected = ?deny_reason.expected,
+                actual = ?deny_reason.actual,
+                "Authorization denied"
+            );
+
+            // Build response
+            let mut response = (
+                StatusCode::FORBIDDEN,
+                Json(json!({
+                    "authorized": false,
+                    "error": "authorization_failed",
+                    "message": format!("{}", e),
+                    "warrant_id": warrant_id,
+                    "tool": extraction_result.tool,
+                    "request_id": request_id
+                })),
+            )
+                .into_response();
+
+            // Add debug header if enabled
+            if state.debug_mode {
+                if let Ok(header_value) = HeaderValue::from_str(&deny_reason.to_header_value()) {
+                    response
+                        .headers_mut()
+                        .insert(HeaderName::from_static("x-tenuo-deny-reason"), header_value);
+                }
+            }
+
+            response
+        }
     }
+}
+
+/// Parse an error into a structured DenyReason
+fn parse_deny_reason(
+    error: &tenuo_core::Error,
+    tool: &str,
+    warrant_id: &str,
+    request_id: &str,
+    constraints: &HashMap<String, ConstraintValue>,
+) -> DenyReason {
+    use tenuo_core::Error;
+
+    let mut deny = DenyReason::new(tool, warrant_id, request_id);
+
+    match error {
+        Error::ConstraintNotSatisfied { field, reason } => {
+            // Try to extract the actual value from constraints
+            let actual = constraints
+                .get(field)
+                .map(|v| match v {
+                    ConstraintValue::String(s) => json!(s),
+                    ConstraintValue::Integer(i) => json!(i),
+                    ConstraintValue::Float(f) => json!(f),
+                    ConstraintValue::Boolean(b) => json!(b),
+                    ConstraintValue::List(l) => json!(l),
+                    ConstraintValue::Object(o) => json!(o),
+                    ConstraintValue::Null => json!(null),
+                })
+                .unwrap_or(json!(null));
+
+            deny = deny.with_constraint(field, reason, actual);
+        }
+        Error::WarrantExpired(ts) => {
+            deny = deny.with_reason(format!("warrant_expired: {}", ts));
+        }
+        Error::WarrantRevoked(id) => {
+            deny = deny.with_reason(format!("warrant_revoked: {}", id));
+        }
+        Error::SignatureInvalid(msg) => {
+            deny = deny.with_reason(format!("signature_invalid: {}", msg));
+        }
+        Error::MissingSignature(msg) => {
+            deny = deny.with_reason(format!("missing_pop: {}", msg));
+        }
+        Error::Unauthorized(msg) => {
+            deny = deny.with_reason(format!("unauthorized: {}", msg));
+        }
+        Error::DepthExceeded(current, max) => {
+            deny = deny.with_reason(format!("depth_exceeded: {} > {}", current, max));
+        }
+        Error::ChainVerificationFailed(msg) => {
+            deny = deny.with_reason(format!("chain_verification_failed: {}", msg));
+        }
+        _ => {
+            deny = deny.with_reason(format!("{}", error));
+        }
+    }
+
+    deny
 }

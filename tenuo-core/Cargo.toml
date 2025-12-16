@@ -30,8 +30,8 @@ data-plane = []
 # Python bindings
 python = ["pyo3"]
 
-# Server features (adds HTTP/gRPC dependencies)
-server = ["tokio", "axum", "tower"]
+# Server features (adds HTTP/gRPC + structured logging dependencies)
+server = ["tokio", "axum", "tower", "tracing"]
 
 # ============================================================================
 # Binary Targets
@@ -120,6 +120,7 @@ pyo3 = { version = "0.24", features = ["extension-module", "abi3-py38"], optiona
 tokio = { version = "1.35", features = ["full"], optional = true }
 axum = { version = "0.7", optional = true }
 tower = { version = "0.4", optional = true }
+tracing = { version = "0.1", optional = true }
 
 # CLI dependencies
 clap = { version = "4.4", features = ["derive", "env"] }

@@ -306,6 +306,130 @@ print(f"Authorized tools: {warrant.tools}")
 
 ---
 
+## Debugging Denials
+
+When authorization fails, understanding *why* is critical for debugging. Tenuo provides structured denial logging and optional debug headers.
+
+### Structured Denial Logs
+
+The authorizer outputs JSON-formatted denial logs:
+
+```json
+{
+  "level": "warn",
+  "event": "authorization_denied",
+  "reason": "constraint_violation",
+  "tool": "scale_cluster",
+  "constraint": "replicas",
+  "expected": "Range(max=10)",
+  "actual": 50,
+  "warrant_id": "tnu_wrt_abc123",
+  "request_id": "req_xyz789"
+}
+```
+
+### Tailing Authorization Denials
+
+```bash
+# Tail authorizer logs and filter for denials
+kubectl logs -l app=tenuo-authorizer -f | jq 'select(.event == "authorization_denied")'
+
+# Filter by specific tool
+kubectl logs -l app=tenuo-authorizer -f | jq 'select(.event == "authorization_denied" and .tool == "scale_cluster")'
+
+# Count denials by reason
+kubectl logs -l app=tenuo-authorizer --since=1h | \
+  jq -r 'select(.event == "authorization_denied") | .reason' | \
+  sort | uniq -c | sort -rn
+```
+
+### Debug Mode (Non-Production Only)
+
+Enable debug mode to get detailed deny reasons in HTTP response headers:
+
+```yaml
+# gateway-config.yaml
+settings:
+  debug_mode: true  # ⚠️ Only in non-production!
+  warrant_header: "X-Tenuo-Warrant"
+  pop_header: "X-Tenuo-PoP"
+```
+
+When enabled, denied requests include the `X-Tenuo-Deny-Reason` header:
+
+```http
+HTTP/1.1 403 Forbidden
+X-Tenuo-Deny-Reason: constraint_violation: replicas=50 exceeds Range(max=10)
+```
+
+### Enabling Debug Mode Temporarily
+
+```bash
+# Option 1: Via environment variable
+kubectl set env deployment/tenuo-authorizer DEBUG=true
+# ... reproduce issue ...
+kubectl set env deployment/tenuo-authorizer DEBUG-
+
+# Option 2: Via ConfigMap (requires restart)
+kubectl patch configmap tenuo-config -p '{"data":{"debug_mode":"true"}}'
+kubectl rollout restart deployment/tenuo-authorizer
+# ... reproduce issue ...
+kubectl patch configmap tenuo-config -p '{"data":{"debug_mode":"false"}}'
+kubectl rollout restart deployment/tenuo-authorizer
+```
+
+### Common Denial Reasons
+
+| Reason | Description | Fix |
+|--------|-------------|-----|
+| `constraint_violation` | Request value exceeds warrant constraints | Attenuate warrant with wider constraints |
+| `warrant_expired` | Warrant TTL has passed | Issue new warrant or increase TTL |
+| `missing_pop` | PoP signature not provided | Ensure client sends X-Tenuo-PoP header |
+| `signature_invalid` | PoP signature doesn't match | Check keypair matches warrant holder |
+| `unauthorized` | Tool not in warrant's allowed list | Issue warrant with correct tools |
+| `chain_verification_failed` | Delegation chain is invalid | Check issuer chain integrity |
+
+### Testing Authorization Locally
+
+```bash
+# Test a specific warrant against the authorizer
+export WARRANT=$(cat warrant.b64)
+curl -X POST http://localhost:9090/api/v1/clusters/prod/scale \
+  -H "X-Tenuo-Warrant: $WARRANT" \
+  -H "Content-Type: application/json" \
+  -d '{"spec": {"replicas": 5}}' \
+  -v 2>&1 | grep -E "(X-Tenuo-|HTTP/)"
+
+# Verify warrant without making a request
+echo $WARRANT | tenuo-authorizer check
+```
+
+### Prometheus Metrics
+
+The authorizer exposes metrics for monitoring:
+
+```yaml
+# PodMonitor for scraping
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: tenuo-authorizer
+spec:
+  selector:
+    matchLabels:
+      app: tenuo-authorizer
+  podMetricsEndpoints:
+  - port: metrics
+    path: /metrics
+```
+
+Key metrics:
+- `tenuo_authorization_total{result="allowed|denied",tool="..."}` — Total authorization decisions
+- `tenuo_authorization_duration_seconds` — Authorization latency histogram
+- `tenuo_warrant_expiry_seconds` — Time until warrant expiration
+
+---
+
 ## See Also
 
 - [**Istio Quickstart (5 min)**](../quickstart/istio/README.md) — Get to first-403 in 5 minutes

@@ -85,6 +85,10 @@ pub struct GatewaySettings {
     /// Trusted root public keys (hex)
     #[serde(default, alias = "trusted_issuers")]
     pub trusted_roots: Vec<String>,
+    /// Enable debug mode (returns detailed deny reasons in response headers)
+    /// WARNING: Only enable in non-production environments!
+    #[serde(default)]
+    pub debug_mode: bool,
 }
 
 fn default_warrant_header() -> String {
@@ -106,6 +110,7 @@ impl Default for GatewaySettings {
             pop_header: default_pop_header(),
             clock_tolerance_secs: default_clock_tolerance(),
             trusted_roots: Vec::new(),
+            debug_mode: false,
         }
     }
 }
