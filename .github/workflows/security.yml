@@ -42,6 +42,8 @@ jobs:
         run: |
           source ../.venv/bin/activate
           maturin develop
+          # Add tenuo Python package to path
+          echo "$(pwd)" > ../.venv/lib/python3.11/site-packages/tenuo.pth
       
       - name: Run security tests
         working-directory: tenuo-python
