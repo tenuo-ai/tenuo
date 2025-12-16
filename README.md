@@ -100,7 +100,7 @@ Tenuo implements **Subtractive Delegation**:
 - **Worker** receives an attenuated Warrant (narrower scope) for a specific task
 - **Verification** happens offline using Ed25519 signatures. No central bottleneck.
 
-Warrants can only **shrink** when delegated: a $1000 budget becomes $500, access to `staging-*` narrows to `staging-web`. Verification is 100% offline in ~25μs.
+Warrants can only **shrink** when delegated: a $1000 budget becomes $500, access to `staging-*` narrows to `staging-web`. Verification is 100% offline in ~27μs.
 
 ## Warrant Types
 
@@ -233,7 +233,7 @@ See the [CLI Specification](docs/cli-spec.md) for full reference.
 
 Building a high-performance sidecar or gateway? Use the engine directly.
 
-**Latency:** ~20μs verification. **Stack:** Pure Rust, `no_std` compatible core.
+**Latency:** ~27μs verification. **Stack:** Pure Rust, `no_std` compatible core.
 
 ```toml
 [dependencies]
@@ -286,7 +286,7 @@ This demonstrates the complete flow: warrant issuance, attenuation, delegation, 
 | Feature | Description |
 |---------|-------------|
 | **Monotonic attenuation** | Capabilities only shrink, never expand |
-| **Offline verification** | No network calls, ~25μs latency |
+| **Offline verification** | No network calls, ~27μs latency |
 | **Holder binding** | Warrants bound to keys, stolen tokens useless |
 | **Depth limits** | Configurable delegation depth (max 64, chain max 8) |
 | **Chain length security** | Max 8 delegation chain links (prevents DoS/stack overflow) |

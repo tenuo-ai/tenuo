@@ -18,6 +18,7 @@ fn benchmark_warrant_creation(c: &mut Criterion) {
             Warrant::builder()
                 .tool("test")
                 .ttl(Duration::from_secs(60))
+                .authorized_holder(keypair.public_key())
                 .build(black_box(&keypair))
                 .unwrap()
         })
@@ -31,6 +32,7 @@ fn benchmark_warrant_creation(c: &mut Criterion) {
                 .constraint("version", Pattern::new("1.28.*").unwrap())
                 .constraint("replicas", Range::new(Some(1.0), Some(10.0)))
                 .ttl(Duration::from_secs(600))
+                .authorized_holder(keypair.public_key())
                 .build(black_box(&keypair))
                 .unwrap()
         })
@@ -43,6 +45,7 @@ fn benchmark_warrant_verification(c: &mut Criterion) {
         .tool("test")
         .constraint("cluster", Pattern::new("staging-*").unwrap())
         .ttl(Duration::from_secs(600))
+        .authorized_holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -60,6 +63,7 @@ fn benchmark_warrant_authorization(c: &mut Criterion) {
         .constraint("cluster", Pattern::new("staging-*").unwrap())
         .constraint("version", Pattern::new("1.28.*").unwrap())
         .ttl(Duration::from_secs(600))
+        .authorized_holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -73,10 +77,13 @@ fn benchmark_warrant_authorization(c: &mut Criterion) {
         ConstraintValue::String("1.28.5".to_string()),
     );
 
+    // Create PoP signature for the benchmark
+    let pop_sig = warrant.create_pop_signature(&keypair, "upgrade_cluster", &args).unwrap();
+
     c.bench_function("warrant_authorize", |b| {
         b.iter(|| {
             warrant
-                .authorize(black_box("upgrade_cluster"), black_box(&args), None)
+                .authorize(black_box("upgrade_cluster"), black_box(&args), Some(black_box(&pop_sig)))
                 .unwrap()
         })
     });
@@ -90,6 +97,7 @@ fn benchmark_warrant_attenuation(c: &mut Criterion) {
         .tool("upgrade_cluster")
         .constraint("cluster", Pattern::new("staging-*").unwrap())
         .ttl(Duration::from_secs(600))
+        .authorized_holder(parent_keypair.public_key())
         .build(&parent_keypair)
         .unwrap();
 
@@ -111,6 +119,7 @@ fn benchmark_wire_encoding(c: &mut Criterion) {
         .constraint("cluster", Pattern::new("staging-*").unwrap())
         .constraint("version", Pattern::new("1.28.*").unwrap())
         .ttl(Duration::from_secs(600))
+        .authorized_holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -138,18 +147,93 @@ fn benchmark_wire_encoding(c: &mut Criterion) {
 fn benchmark_deep_delegation_chain(c: &mut Criterion) {
     let keypair = Keypair::generate();
 
-    c.bench_function("delegation_chain_depth_10", |b| {
+    c.bench_function("delegation_chain_depth_8", |b| {
         b.iter(|| {
             let mut warrant = Warrant::builder()
                 .tool("test")
                 .ttl(Duration::from_secs(3600))
+                .authorized_holder(keypair.public_key())
                 .build(&keypair)
                 .unwrap();
 
-            for _ in 0..10 {
+            // Create chain of depth 8 (max allowed)
+            for _ in 0..8 {
                 warrant = warrant.attenuate().build(&keypair, &keypair).unwrap();
             }
             warrant
+        })
+    });
+}
+
+fn benchmark_authorization_denials(c: &mut Criterion) {
+    let keypair = Keypair::generate();
+    let wrong_keypair = Keypair::generate();
+    
+    let warrant = Warrant::builder()
+        .tool("read_file")
+        .constraint("path", Pattern::new("/data/*").unwrap())
+        .ttl(Duration::from_secs(600))
+        .authorized_holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    // Benchmark 1: Wrong tool (fast path - should fail early)
+    let valid_args = HashMap::from([
+        ("path".to_string(), ConstraintValue::String("/data/report.txt".to_string())),
+    ]);
+    let pop_sig = warrant.create_pop_signature(&keypair, "read_file", &valid_args).unwrap();
+    
+    c.bench_function("authorize_deny_wrong_tool", |b| {
+        b.iter(|| {
+            let result = warrant.authorize(
+                black_box("write_file"),  // Wrong tool
+                black_box(&valid_args),
+                Some(black_box(&pop_sig))
+            );
+            assert!(result.is_err());
+        })
+    });
+
+    // Benchmark 2: Constraint violation (mid path - pattern matching fails)
+    let invalid_args = HashMap::from([
+        ("path".to_string(), ConstraintValue::String("/etc/passwd".to_string())),
+    ]);
+    let invalid_pop = warrant.create_pop_signature(&keypair, "read_file", &invalid_args).unwrap();
+    
+    c.bench_function("authorize_deny_constraint_violation", |b| {
+        b.iter(|| {
+            let result = warrant.authorize(
+                black_box("read_file"),
+                black_box(&invalid_args),
+                Some(black_box(&invalid_pop))
+            );
+            assert!(result.is_err());
+        })
+    });
+
+    // Benchmark 3: Invalid PoP signature (crypto path - signature verification fails)
+    let wrong_pop = warrant.create_pop_signature(&wrong_keypair, "read_file", &valid_args).unwrap();
+    
+    c.bench_function("authorize_deny_invalid_pop", |b| {
+        b.iter(|| {
+            let result = warrant.authorize(
+                black_box("read_file"),
+                black_box(&valid_args),
+                Some(black_box(&wrong_pop))
+            );
+            assert!(result.is_err());
+        })
+    });
+
+    // Benchmark 4: Missing PoP signature
+    c.bench_function("authorize_deny_missing_pop", |b| {
+        b.iter(|| {
+            let result = warrant.authorize(
+                black_box("read_file"),
+                black_box(&valid_args),
+                None  // No PoP
+            );
+            assert!(result.is_err());
         })
     });
 }
@@ -159,6 +243,7 @@ criterion_group!(
     benchmark_warrant_creation,
     benchmark_warrant_verification,
     benchmark_warrant_authorization,
+    benchmark_authorization_denials,
     benchmark_warrant_attenuation,
     benchmark_wire_encoding,
     benchmark_deep_delegation_chain,

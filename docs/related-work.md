@@ -93,7 +93,7 @@ A complete defense may use both:
 | **Model** | Capability tokens (warrants) | Taint labels (confidentiality/integrity) |
 | **Enforcement** | Tool invocation time | Data propagation time |
 | **Scope** | Per-task authority | Per-data-item provenance |
-| **Overhead** | ~25μs verification | Depends on taint propagation |
+| **Overhead** | ~27μs verification | Depends on taint propagation |
 
 ---
 
