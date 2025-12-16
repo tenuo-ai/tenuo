@@ -215,8 +215,8 @@ class TenuoToolNode:
     def __call__(self, state: Any, config: Any = None) -> Any:
         """Execute the tool node (delegates to underlying ToolNode)."""
         if config is not None:
-            return self._tool_node(state, config)
-        return self._tool_node(state)
+            return self._tool_node(state, config)  # type: ignore[operator]
+        return self._tool_node(state)  # type: ignore[operator]
     
     async def __acall__(self, state: Any, config: Any = None) -> Any:
         """Async execution (delegates to underlying ToolNode)."""
