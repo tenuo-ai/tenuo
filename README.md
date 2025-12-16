@@ -1,6 +1,10 @@
-# Tenuo
+<p align="center">
+  <img src="docs/images/tenuo-logo.svg" alt="tenuo" width="200">
+</p>
 
-**Capability tokens for AI agents.**
+<p align="center">
+  <strong>Capability tokens for AI agents.</strong>
+</p>
 
 Tenuo is a cryptographic authorization primitive for AI agents.
 It replaces ambient identity-based permissions with task-scoped capabilities that attenuate as they delegate. Offline verification in ~27μs.
