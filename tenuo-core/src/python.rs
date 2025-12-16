@@ -1536,7 +1536,6 @@ impl PyAttenuationBuilder {
         keypair: &PyKeypair,
         parent_keypair: &PyKeypair,
     ) -> PyResult<(PyWarrant, PyDelegationReceipt)> {
-        panic!("DEBUG PANIC: delegate_to_with_receipt called");
         let (warrant, receipt) = self
             .inner
             .clone()

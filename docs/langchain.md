@@ -89,13 +89,12 @@ warrant = Warrant.from_base64(cli_warrant_string)
 ---
 
 ## The `@lockdown` Decorator
+
 ```python
-@lockdown(
-    tool="read_file",
-    extract_args=lambda file_path, **kwargs: {"file_path": file_path}
-)
-def read_file(file_path: str) -> str:
-    ...
+@lockdown(tool="read_file")
+def read_file(file_path: str, max_size: int = 1000) -> str:
+    with open(file_path) as f:
+        return f.read()[:max_size]
 ```
 
 **Parameters:**
@@ -103,15 +102,65 @@ def read_file(file_path: str) -> str:
 | Parameter | Description |
 |-----------|-------------|
 | `tool` | Tool name to check against warrant (required) |
-| `extract_args` | Function to extract constraint-relevant args (optional) |
+| `extract_args` | Optional function to extract args. If omitted, uses automatic extraction (recommended). |
+| `mapping` | Optional dict to rename parameters: `{"param_name": "constraint_name"}` |
 
 **Behavior:**
 
 1. Retrieves current warrant from context
-2. Verifies tool is in warrant's allowed tools
-3. Verifies extracted args satisfy warrant constraints
-4. Generates PoP signature using context keypair
-5. Executes function if authorized, raises `AuthorizationError` if not
+2. **Extracts arguments** (automatic via `inspect.signature()` or custom via `extract_args`)
+3. **Includes default values** (security: prevents bypass via omission)
+4. Verifies tool is in warrant's allowed tools
+5. Verifies extracted args satisfy warrant constraints
+6. Generates PoP signature using context keypair
+7. Executes function if authorized, raises `AuthorizationError` if not
+
+### Automatic Extraction (Recommended)
+
+When no `extract_args` is provided, Tenuo automatically extracts **all** parameters including defaults:
+
+```python
+@lockdown(tool="transfer")
+def transfer(from_account: str, to_account: str, amount: float, memo: str = ""):
+    ...
+
+# Called as: transfer("acct1", "acct2", 100.0)
+# Extracted: {from_account: "acct1", to_account: "acct2", amount: 100.0, memo: ""}
+#                                                                          ↑ default included
+```
+
+✅ **Security:** Defaults are ALWAYS included (prevents bypass via omission).
+
+### Custom Extraction
+
+For parameter renaming or complex logic:
+
+```python
+@lockdown(
+    tool="read_file",
+    extract_args=lambda file_path, **kwargs: {"path": file_path}  # Rename to match constraint
+)
+def read_file(file_path: str) -> str:
+    ...
+```
+
+⚠️ **Warning:** If you provide `extract_args`, YOU are responsible for extracting ALL security-relevant parameters.
+
+### Parameter Mapping (Simpler Alternative)
+
+For simple renames, use `mapping` instead:
+
+```python
+@lockdown(
+    tool="read_file",
+    mapping={"file_path": "path"}  # Rename after automatic extraction
+)
+def read_file(file_path: str, max_size: int = 1000):
+    ...
+# Extracted: {path: "...", max_size: 1000}
+```
+
+See [Argument Extraction](./argument-extraction) for comprehensive documentation and security considerations.
 
 ---
 
@@ -284,7 +333,8 @@ For automatic attenuation in multi-agent graphs, see [LangGraph Integration](./l
 
 ## See Also
 
-- [CLI Reference](./cli)
-- [Python API Reference](./api-reference.md)
-- [LangGraph Integration](./langgraph.md)
-- [Protocol](./protocol.md)
+- [Argument Extraction](./argument-extraction) - How extraction works and security considerations
+- [Python API Reference](./api-reference) - Full `@lockdown` documentation
+- [CLI Reference](./cli) - Command-line tools
+- [LangGraph Integration](./langgraph) - Multi-agent graph scoping
+- [Protocol](./protocol) - Cryptographic protocol details

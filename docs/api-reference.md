@@ -747,7 +747,7 @@ See `examples/mcp_integration.py` for a complete example.
 
 ### `@lockdown`
 
-Decorator for function-level authorization.
+Decorator for function-level authorization with automatic argument extraction.
 
 ```python
 from tenuo import lockdown
@@ -760,6 +760,7 @@ from tenuo import lockdown
     warrant_or_tool=None,  # Warrant instance OR tool name string
     tool=None,             # Tool name (if not passed as first arg)
     keypair=None,          # Keypair for PoP (or use context)
+    extract_args=None,     # Optional custom extractor function
     mapping=None,          # Arg name → constraint name mapping
 )
 ```
@@ -771,7 +772,52 @@ from tenuo import lockdown
 | `warrant_or_tool` | `Warrant \| str` | No | Warrant instance or tool name as first positional arg |
 | `tool` | `str` | Yes* | Tool name for authorization (*not needed if tool passed as first arg) |
 | `keypair` | `Keypair` | No | Keypair for PoP (or use context) |
-| `mapping` | `dict[str, str]` | No | Arg name → constraint name mapping |
+| `extract_args` | `Callable` | No | Custom argument extractor. If None, uses automatic extraction. |
+| `mapping` | `dict[str, str]` | No | Rename parameters: `{"param": "constraint_key"}` |
+
+#### Argument Extraction
+
+`@lockdown` automatically extracts all function arguments **including defaults** using Python's `inspect.signature()`:
+
+```python
+@lockdown(tool="query")
+def query_db(query: str, table: str = "users", limit: int = 100):
+    ...
+
+# All arguments extracted automatically:
+query_db("SELECT *")  
+# → {query: "SELECT *", table: "users", limit: 100}
+#                        ↑ defaults included
+```
+
+✅ **Security:** Defaults are always included (prevents bypass via omission).
+
+**Custom extraction:**
+```python
+@lockdown(
+    tool="transfer",
+    extract_args=lambda from_account, to_account, amount, **kw: {
+        "source": from_account,
+        "destination": to_account,
+        "amount": amount
+    }
+)
+def transfer(from_account: str, to_account: str, amount: float):
+    ...
+```
+
+**Parameter mapping (simpler):**
+```python
+@lockdown(
+    tool="read_file",
+    mapping={"file_path": "path"}  # Rename after extraction
+)
+def read_file(file_path: str):
+    ...
+# Extracted as: {path: "..."}
+```
+
+See [Argument Extraction](./argument-extraction) for comprehensive documentation.
 
 #### Patterns
 
@@ -787,7 +833,7 @@ async with root_task(tools=["read_file"], path="/data/*"):
     read_file("/data/test.txt")
 ```
 
-**Explicit warrant (positional):**
+**Explicit warrant:**
 
 ```python
 @lockdown(warrant, tool="read_file", keypair=agent_kp)
@@ -798,7 +844,7 @@ def read_file(path: str) -> str:
 **Tool as first arg:**
 
 ```python
-@lockdown("read_file")  # tool name as positional arg
+@lockdown("read_file")  # Shorthand: tool name as positional arg
 def read_file(path: str) -> str:
     return open(path).read()
 ```

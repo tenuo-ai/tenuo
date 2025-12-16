@@ -37,6 +37,8 @@ routes:
     tool: "tool_name"
 ```
 
+> See [Argument Extraction → Gateway Integration](./argument-extraction#gateway-integration-http-requests) for detailed extraction mechanics and security considerations.
+
 ---
 
 ## Settings

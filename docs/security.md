@@ -196,7 +196,8 @@ with root_task(tools=["read_file", "write_file", "delete_file"], path="/*"):
 
 ## See Also
 
-- [Protocol](./protocol.md) — Full protocol details
-- [Deployment Patterns](./deployment.md) — Envoy, Istio, nginx integration
-- [API Reference](./api-reference.md) — Function signatures
-- [Constraints](./constraints.md) — Constraint types and usage
+- [Argument Extraction](./argument-extraction) — How tool arguments are extracted and validated
+- [Protocol](./protocol) — Full protocol details
+- [Deployment Patterns](./deployment) — Envoy, Istio, nginx integration
+- [API Reference](./api-reference) — Function signatures
+- [Constraints](./constraints) — Constraint types and usage

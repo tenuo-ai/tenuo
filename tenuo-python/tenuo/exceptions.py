@@ -277,7 +277,6 @@ class PatternExpanded(MonotonicityError):
     rust_variant = "PatternExpanded"
     
     def __init__(self, parent_pattern: str, child_pattern: str):
-        print(f"DEBUG: PatternExpanded.__init__ called with {parent_pattern!r}, {child_pattern!r}")
         super().__init__(f"Child pattern '{child_pattern}' is broader than parent '{parent_pattern}'")
         self.details = {"parent_pattern": parent_pattern, "child_pattern": child_pattern}
 
