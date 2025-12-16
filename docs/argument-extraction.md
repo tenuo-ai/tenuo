@@ -9,6 +9,18 @@ description: How Tenuo extracts and validates tool arguments for authorization
 
 ---
 
+## Quick Reference
+
+| Integration | Extraction Method | Configuration |
+|-------------|-------------------|---------------|
+| Python SDK | `inspect.signature().bind()` | Automatic or `extract_args` |
+| LangChain | Same as Python SDK | `@lockdown` or `protect_tools` |
+| LangGraph | Tool-level (not node-level) | `@lockdown` on tools |
+| Gateway | YAML config | `from: path/query/body/header/literal` |
+| MCP | YAML config | Same as Gateway |
+
+---
+
 ## Overview
 
 Tenuo enforces constraints by comparing **tool arguments** against **warrant constraints**. The extraction mechanism varies by integration pattern but follows the same security principles:
@@ -208,12 +220,12 @@ Content-Type: application/json
 }
 ```
 
-**Extracted constraints:**
+**Extracted constraints** (Python dict):
 ```python
 {
     "cluster": "staging-web",      # From path
     "replicas": 5,                  # From body (converted to int)
-    "dry_run": true,               # From query (converted to bool)
+    "dry_run": True,               # From query (converted to Python bool)
     "tenant_id": "acme-corp",      # From header
     "environment": "production"     # From literal
 }
@@ -251,7 +263,7 @@ constraints:
   dry_run:
     from: query
     path: "dry_run"
-    type: boolean  # "true" → true, "1" → true
+    type: boolean  # "true" → True, "1" → True (Python bool)
 ```
 
 **Conversion failures:**
@@ -513,7 +525,7 @@ read_file()  # Missing required arg → TypeError → Authorization denied ✅
 
 ```python
 import inspect
-from tenuo import lockdown, Warrant, Keypair, set_warrant_context, set_keypair_context
+from tenuo import lockdown, Warrant, Keypair, Exact, set_warrant_context, set_keypair_context
 
 def test_extraction():
     kp = Keypair.generate()
@@ -630,3 +642,4 @@ pub fn extract(&self, ctx: &RequestContext) -> Option<ConstraintValue> {
 - [Gateway Configuration](./gateway-config) - HTTP extraction reference
 - [LangGraph Integration](./langgraph) - Node scoping patterns
 - [Security](./security) - Authorization model overview
+- [Constraints](./constraints) - Constraint types and validation
