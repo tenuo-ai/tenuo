@@ -5,11 +5,7 @@ description: Get started with Tenuo in 5 minutes
 
 # Quick Start
 
-Get Tenuo running in 5 minutes.
-
-📊 **Visual learner?** See the [Demo Walkthrough](./demo.html) for a step-by-step flow.
-
----
+Get Tenuo running in 5 minutes. For a visual walkthrough, see the [Demo](./demo.html).
 
 ## What is Tenuo?
 
@@ -37,30 +33,23 @@ Tenuo is a capability-based authorization library for AI agent workflows. It use
 
 Tenuo adds a **delegation layer** on top of your existing IAM. It tracks *who* delegated authority, *what limits* apply, and *why* an agent is acting.
 
----
-
 ## Installation
 
-### Python
-
+**Python**
 ```bash
 pip install tenuo
 ```
 
-### Rust
-
+**Rust**
 ```toml
 [dependencies]
 tenuo-core = "0.1"
 ```
 
-### CLI
-
+**CLI**
 ```bash
 cargo install tenuo-cli
 ```
-
----
 
 ## Python Quick Start
 
@@ -69,10 +58,8 @@ cargo install tenuo-cli
 ```python
 from tenuo import Keypair, Warrant, Pattern, Range
 
-# Generate a keypair (issuer)
 keypair = Keypair.generate()
 
-# Issue a warrant
 warrant = Warrant.issue(
     tools="manage_infrastructure",
     keypair=keypair,
@@ -159,8 +146,6 @@ tool_node = TenuoToolNode([search, calculator])
 graph.add_node("tools", tool_node)
 ```
 
----
-
 ## Rust Quick Start
 
 ### 1. Create a Warrant
@@ -206,20 +191,14 @@ let sig = worker_warrant.create_pop_signature(
 authorizer.authorize(&chain, "manage_infrastructure", &args, Some(&sig), &[])?;
 ```
 
----
-
 ## CLI Quick Start
 
-### Generate Keys
-
 ```bash
+# Generate keys
 tenuo keygen --out root.pem
 tenuo keygen --out worker.pem
-```
 
-### Issue a Warrant
-
-```bash
+# Issue a warrant
 tenuo issue \
   --tool manage_infrastructure \
   --signing-key root.pem \
@@ -227,11 +206,8 @@ tenuo issue \
   --constraint "budget=range:..10000" \
   --ttl 3600 \
   --out root.warrant
-```
 
-### Attenuate
-
-```bash
+# Attenuate for a worker
 tenuo attenuate \
   --warrant root.warrant \
   --signing-key root.pem \
@@ -239,36 +215,17 @@ tenuo attenuate \
   --constraint "cluster=exact:staging-web" \
   --constraint "budget=range:..1000" \
   --out worker.warrant
-```
 
-### Verify
-
-```bash
-tenuo verify \
-  --warrant worker.warrant \
-  --tool manage_infrastructure \
+# Verify and inspect
+tenuo verify --warrant worker.warrant --tool manage_infrastructure \
   --args '{"cluster": "staging-web", "budget": 500}'
-```
-
-### Inspect
-
-```bash
 tenuo inspect --warrant worker.warrant
 ```
 
----
-
 ## Key Concepts
 
-| Concept | Description |
-|---------|-------------|
-| **Warrant** | Signed token granting specific capabilities |
-| **Attenuation** | Creating a child warrant with narrower scope |
-| **Constraint** | Rule that limits what a warrant can authorize |
-| **PoP** | Proof-of-Possession signature proving holder identity |
-| **Chain** | Sequence of warrants from root to current holder |
-
----
+A **warrant** is a signed token granting specific capabilities. **Attenuation** creates a child warrant with narrower scope. **Constraints** are rules limiting what a warrant can authorize (Pattern, Range, Exact, etc.). 
+**PoP** (Proof-of-Possession) is a signature proving holder identity. A **chain** is the sequence of warrants from root to current holder.
 
 ## Constraint Types
 
@@ -281,8 +238,6 @@ tenuo inspect --warrant worker.warrant
 | `Regex` | `Regex(r"^user_\d+$")` | "user_123", "user_456" |
 
 See [Constraints](./constraints) for the full list.
-
----
 
 ## Debugging Authorization Failures
 
@@ -299,8 +254,6 @@ Access denied for tool 'read_file'
 ```
 
 This makes it easy to see exactly which constraint failed and why.
-
----
 
 ## Gateway Quickstarts
 
@@ -340,4 +293,4 @@ result = compiled.extract_constraints("filesystem_read", {"path": "/var/log/app.
 authorized = warrant.authorize("filesystem_read", result.constraints, pop_sig)
 ```
 
-See [API Reference → MCP Integration](./api-reference#mcp-integration) for details.
+See [API Reference](./api-reference) for full documentation.

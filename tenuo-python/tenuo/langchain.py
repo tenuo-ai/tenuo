@@ -172,7 +172,6 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         warrant = get_warrant_context()
         schema = self._schemas.get(self.name)
         
-        # No warrant in context
         if warrant is None:
             if allow_passthrough():
                 logger.warning(
@@ -181,7 +180,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                 return
             raise ToolNotAuthorized(tool=self.name)
         
-        # Check allowed tools from scoped_task context (takes precedence)
+        # scoped_task's allowed_tools takes precedence over warrant.tools
         allowed_tools = get_allowed_tools_context()
         if allowed_tools is not None:
             if self.name not in allowed_tools:
@@ -196,7 +195,6 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                 authorized_tools=warrant.tools if warrant.tools else None,
             )
         
-        # Critical tools require constraints
         if schema and schema.risk_level == "critical":
             constraints = _get_constraints_dict(warrant)
             has_relevant = any(
@@ -208,7 +206,6 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                     f"Recommended: {schema.recommended_constraints}."
                 )
         
-        # Strict mode
         if self.strict and schema and schema.require_at_least_one:
             constraints = _get_constraints_dict(warrant)
             if not constraints:
@@ -216,7 +213,6 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                     f"Strict mode: tool '{self.name}' requires at least one constraint."
                 )
         
-        # Check constraints
         constraints = _get_constraints_dict(warrant)
         for key, constraint in constraints.items():
             if key in tool_input:
@@ -231,18 +227,14 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                             value=value,
                         ) from e
         
-        # Audit success
         log_authorization_success(warrant, self.name, tool_input)
     
     def _run(self, *args: Any, **kwargs: Any) -> Any:
         """Synchronous tool execution with authorization."""
-        # Build tool input from args/kwargs
         tool_input = self._build_tool_input(args, kwargs)
-        
-        # Check authorization
         self._check_authorization(tool_input)
         
-        # Execute wrapped tool - prefer func over _run for @tool decorated functions
+        # Prefer func over _run for @tool decorated functions
         if hasattr(self.wrapped, 'func') and self.wrapped.func is not None:
             return self.wrapped.func(*args, **kwargs)
         elif hasattr(self.wrapped, '_run'):
@@ -253,13 +245,9 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
     
     async def _arun(self, *args: Any, **kwargs: Any) -> Any:
         """Asynchronous tool execution with authorization."""
-        # Build tool input from args/kwargs
         tool_input = self._build_tool_input(args, kwargs)
-        
-        # Check authorization
         self._check_authorization(tool_input)
         
-        # Execute wrapped tool - prefer func over _arun for @tool decorated functions
         if hasattr(self.wrapped, 'coroutine') and self.wrapped.coroutine is not None:
             return await self.wrapped.coroutine(*args, **kwargs)
         elif hasattr(self.wrapped, 'func') and self.wrapped.func is not None:
@@ -407,7 +395,6 @@ def protect_tool(
     
     @wraps(callable_func)
     def protected_tool(*args: Any, **kwargs: Any) -> Any:
-        # Get context (or use provided)
         current_warrant = warrant or get_warrant_context()
         current_keypair = keypair or get_keypair_context()
         
@@ -423,7 +410,6 @@ def protect_tool(
                 "Either pass keypair explicitly or set it in context."
             )
         
-        # Check warrant expiry
         if current_warrant.is_expired():
             expires_at = current_warrant.expires_at() if hasattr(current_warrant, 'expires_at') else "unknown"
             audit_logger.log(AuditEvent(
@@ -439,7 +425,6 @@ def protect_tool(
                 f"Cannot authorize tool '{tool_name}'."
             )
             
-        # Extract args for auth check
         if extract_args:
             sig = inspect.signature(callable_func)
             bound = sig.bind(*args, **kwargs)
@@ -453,12 +438,10 @@ def protect_tool(
                 if i < len(params):
                     auth_args[params[i]] = arg_val
             
-        # Create PoP signature
         signature = current_warrant.create_pop_signature(
             current_keypair, tool_name, auth_args
         )
             
-        # Authorize
         if not current_warrant.authorize(tool_name, auth_args, bytes(signature)):
             audit_logger.log(AuditEvent(
                 event_type=AuditEventType.AUTHORIZATION_FAILURE,
@@ -474,7 +457,6 @@ def protect_tool(
                 f"Warrant does not authorize tool '{tool_name}' with args {auth_args}"
             )
             
-        # Audit log the success
         audit_logger.log(AuditEvent(
             event_type=AuditEventType.AUTHORIZATION_SUCCESS,
             warrant_id=current_warrant.id,
@@ -485,7 +467,6 @@ def protect_tool(
             details=f"Authorization successful for tool '{tool_name}'",
         ))
             
-        # Execute original
         logger.debug(f"Authorized access to '{tool_name}' with args {auth_args}")
         return callable_func(*args, **kwargs)
     
@@ -524,7 +505,6 @@ def protect_tools(
     """
     from .config_utils import build_constraint
     
-    # Load config if provided
     parsed_config: Optional[LangChainConfig] = None
     if config is not None:
         if isinstance(config, LangChainConfig):
@@ -539,8 +519,6 @@ def protect_tools(
     protected = []
     for tool in tools:
         tool_name = _get_tool_name(tool)
-        
-        # Get tool-specific config if available
         tool_config = parsed_config.tools.get(tool_name) if parsed_config else None
         
         if tool_config and tool_config.constraints:
@@ -629,7 +607,6 @@ def secure_agent(
             "Install with: pip install langchain-core"
         )
     
-    # Configure Tenuo if keypair provided
     if issuer_keypair is not None:
         from .config import configure, is_configured
         if not is_configured():
@@ -640,14 +617,12 @@ def secure_agent(
                 warn_on_missing_warrant=warn_on_missing_warrant,
             )
         else:
-            # Update mode settings even if already configured
             from .config import get_config
             config = get_config()
             if config:
                 object.__setattr__(config, 'strict_mode', strict_mode)
                 object.__setattr__(config, 'warn_on_missing_warrant', warn_on_missing_warrant)
     
-    # Protect tools
     merged_schemas = {**TOOL_SCHEMAS, **(schemas or {})}
     return [TenuoTool(t, strict=strict_mode, schemas=merged_schemas) for t in tools]
 

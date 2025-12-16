@@ -331,16 +331,11 @@ def lockdown(
             callsite = _get_callsite()
             func_name = f"{func.__module__}.{func.__qualname__}"
             
-            # Get warrant: explicit or from context
-            warrant_to_use = active_warrant
-            if warrant_to_use is None:
-                warrant_to_use = get_warrant_context()
+            warrant_to_use = active_warrant or get_warrant_context()
             
             if warrant_to_use is None:
-                # Handle missing warrant based on configuration
                 error_code = AuthErrorCode.MISSING_CONTEXT
                 
-                # Log with structured audit event (includes callsite)
                 audit_logger.log(AuditEvent(
                     event_type=AuditEventType.AUTHORIZATION_FAILURE,
                     tool=tool_name,
@@ -353,10 +348,9 @@ def lockdown(
                     },
                 ))
                 
-                # Check strict_mode or tripwire
                 should_fail = config.strict_mode
                 
-                # Tripwire: auto-flip to strict after N warnings
+                # Tripwire: auto-flip to strict after threshold is reached
                 if config.max_missing_warrant_warnings > 0:
                     config._missing_warrant_count += 1
                     if config._missing_warrant_count >= config.max_missing_warrant_warnings:
@@ -395,7 +389,6 @@ def lockdown(
                     return func(*args, **kwargs)
                 
                 else:
-                    # Default: raise exception
                     error_msg = _make_actionable_error(
                         error_code=error_code,
                         tool_name=tool_name,
@@ -436,10 +429,7 @@ def lockdown(
                     expired_at=expires_at
                 )
             
-            # Get keypair: explicit or from context (REQUIRED - PoP is mandatory)
-            keypair_to_use = active_keypair
-            if keypair_to_use is None:
-                keypair_to_use = get_keypair_context()
+            keypair_to_use = active_keypair or get_keypair_context()
             
             # PoP is MANDATORY - keypair must always be available
             if keypair_to_use is None:
@@ -467,16 +457,13 @@ def lockdown(
                 )
                 raise MissingKeypair(tool=tool_name)
             
-            # Extract arguments for authorization
             if extract_args:
                 auth_args = extract_args(*args, **kwargs)
             else:
-                # Try to infer from function signature
                 import inspect
                 sig = inspect.signature(func)
                 
                 try:
-                    # Robustly bind arguments to parameters
                     bound = sig.bind(*args, **kwargs)
                     bound.apply_defaults()
                     auth_args = dict(bound.arguments)
@@ -495,25 +482,19 @@ def lockdown(
                     ))
                     raise
 
-                # Apply mapping if provided
                 if mapping:
                     mapped_args = {}
                     for arg_name, value in auth_args.items():
-                        # If arg_name is in mapping, use the mapped name
                         constraint_name = mapping.get(arg_name, arg_name)
                         mapped_args[constraint_name] = value
                     auth_args = mapped_args
             
-            # Create PoP signature (ALWAYS - PoP is mandatory)
-            # Keypair is guaranteed to be present (validated above)
             pop_signature = warrant_to_use.create_pop_signature(
                 keypair_to_use, tool_name, auth_args
             )
             
-            # Check authorization (with PoP signature if required)
-            # Note: pop_signature is list[int], must convert to bytes
+            # pop_signature is list[int], convert to bytes
             if not warrant_to_use.authorize(tool_name, auth_args, signature=bytes(pop_signature)):
-                # Determine specific failure type
                 warrant_tools = warrant_to_use.tools if hasattr(warrant_to_use, 'tools') else []
                 if tool_name not in (warrant_tools or []):
                     error_code = AuthErrorCode.SCOPE_VIOLATION
@@ -552,7 +533,6 @@ def lockdown(
                     value=auth_args
                 )
             
-            # Log authorization success
             audit_logger.log(AuditEvent(
                 event_type=AuditEventType.AUTHORIZATION_SUCCESS,
                 warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else None,
@@ -567,7 +547,6 @@ def lockdown(
                 },
             ))
             
-            # Execute the function
             return func(*args, **kwargs)
         
         return wrapper
