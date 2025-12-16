@@ -893,7 +893,34 @@ from tenuo import (
 
 See [LangChain Integration Guide](./langchain) for full documentation.
 
-### Quick Example
+### `secure_agent()` (Recommended)
+
+One-liner to secure LangChain tools. This is the recommended entry point.
+
+```python
+from tenuo import Keypair, root_task_sync
+from tenuo.langchain import secure_agent
+
+# One line to secure your tools
+kp = Keypair.generate()
+tools = secure_agent([search, calculator], issuer_keypair=kp)
+
+# Use with scoped authority
+with root_task_sync(tools=["search", "calculator"]):
+    result = executor.invoke({"input": "What is 2+2?"})
+```
+
+#### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `tools` | `List[BaseTool]` | *required* | LangChain tools to protect |
+| `issuer_keypair` | `Keypair` | `None` | Keypair for issuing warrants (enables dev_mode) |
+| `strict_mode` | `bool` | `False` | Fail on any missing warrant |
+| `warn_on_missing_warrant` | `bool` | `True` | Log warnings for unprotected calls |
+| `schemas` | `Dict[str, ToolSchema]` | `None` | Custom tool schemas |
+
+### Legacy Example
 
 ```python
 from tenuo import configure, root_task, protect_tools, Keypair
@@ -960,6 +987,37 @@ async def sensitive_node(state):
     ...
 ```
 
+### `TenuoToolNode` (Recommended)
+
+Drop-in replacement for LangGraph's `ToolNode` with automatic Tenuo protection.
+
+```python
+from tenuo.langgraph import TenuoToolNode
+from tenuo import root_task_sync
+
+# Before (manual protection):
+# tools = [search, calculator]
+# protected = protect_langchain_tools(tools)
+# tool_node = ToolNode(protected)
+
+# After (automatic protection):
+tool_node = TenuoToolNode([search, calculator])
+
+graph.add_node("tools", tool_node)
+
+# Run with authorization
+with root_task_sync(tools=["search", "calculator"]):
+    result = graph.invoke(...)
+```
+
+#### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `tools` | `List[BaseTool]` | *required* | LangChain tools to protect |
+| `strict` | `bool` | `False` | Require constraints for high-risk tools |
+| `**kwargs` | `Any` | — | Additional arguments passed to ToolNode |
+
 ---
 
 ## Exceptions
@@ -973,9 +1031,38 @@ from tenuo import TenuoError, AuthorizationError, WarrantError
 ```
 TenuoError (base)
 ├── AuthorizationError    # Authorization failed
+├── AuthorizationDenied   # Authorization failed (diff-style)
 ├── WarrantError          # Warrant creation/validation failed
 ├── ConstraintError       # Invalid constraint definition
 └── ConfigurationError    # Invalid configuration
+```
+
+### `AuthorizationDenied` (Diff-Style Errors)
+
+Authorization denied with detailed diff-style error messages showing exactly what failed.
+
+```python
+from tenuo import AuthorizationDenied, ConstraintResult, Pattern
+
+# Example error output:
+# Access denied for tool 'read_file'
+#
+#   ❌ path:
+#      Expected: Pattern("/data/*")
+#      Received: '/etc/passwd'
+#      Reason: Pattern does not match
+#   ✅ size: OK
+
+# Create from constraint check
+error = AuthorizationDenied.from_constraint_check(
+    tool="read_file",
+    constraints={"path": Pattern("/data/*"), "size": Range(max=1000)},
+    args={"path": "/etc/passwd", "size": 500},
+    failed_field="path",
+    failed_reason="Pattern does not match",
+)
+
+print(error)  # Shows detailed diff
 ```
 
 ---

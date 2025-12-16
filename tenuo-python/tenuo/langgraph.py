@@ -132,7 +132,116 @@ def require_warrant(fn: F) -> F:
         return sync_wrapper  # type: ignore
 
 
+# =============================================================================
+# DX: TenuoToolNode - Drop-in ToolNode replacement
+# =============================================================================
+
+# Try to import ToolNode from langgraph
+try:
+    from langgraph.prebuilt import ToolNode  # type: ignore[import-not-found]
+    LANGGRAPH_TOOLNODE_AVAILABLE = True
+except ImportError:
+    ToolNode = object  # type: ignore[assignment]
+    LANGGRAPH_TOOLNODE_AVAILABLE = False
+
+
+class TenuoToolNode:
+    """
+    Drop-in replacement for LangGraph's ToolNode with automatic Tenuo protection.
+    
+    This is the recommended way to use tools in LangGraph with Tenuo.
+    It automatically wraps tools with authorization checks.
+    
+    Example:
+        from tenuo.langgraph import TenuoToolNode
+        from tenuo import root_task_sync
+        
+        # Before (manual protection):
+        # tools = [search, calculator]
+        # protected = protect_langchain_tools(tools)
+        # tool_node = ToolNode(protected)
+        
+        # After (automatic protection):
+        tool_node = TenuoToolNode([search, calculator])
+        
+        # Build graph as normal
+        graph.add_node("tools", tool_node)
+        
+        # Run with authorization
+        with root_task_sync(tools=["search", "calculator"]):
+            result = graph.invoke(...)
+    
+    Args:
+        tools: List of LangChain BaseTool objects
+        strict: If True, require constraints for high-risk tools
+        **kwargs: Additional arguments passed to ToolNode
+    
+    Raises:
+        ImportError: If langgraph is not installed
+    """
+    
+    def __init__(
+        self,
+        tools: list,
+        *,
+        strict: bool = False,
+        **kwargs: Any,
+    ):
+        if not LANGGRAPH_TOOLNODE_AVAILABLE:
+            raise ImportError(
+                "LangGraph is required for TenuoToolNode. "
+                "Install with: pip install langgraph"
+            )
+        
+        # Import and wrap tools
+        from .langchain import protect_langchain_tools, LANGCHAIN_AVAILABLE
+        if not LANGCHAIN_AVAILABLE:
+            raise ImportError(
+                "LangChain is required for TenuoToolNode. "
+                "Install with: pip install langchain-core"
+            )
+        
+        # Wrap tools with Tenuo protection
+        protected_tools = protect_langchain_tools(tools, strict=strict)
+        
+        # Create the underlying ToolNode
+        self._tool_node = ToolNode(protected_tools, **kwargs)
+        
+        # Store for introspection
+        self._tools = tools
+        self._protected_tools = protected_tools
+        self._strict = strict
+    
+    def __call__(self, state: Any, config: Any = None) -> Any:
+        """Execute the tool node (delegates to underlying ToolNode)."""
+        if config is not None:
+            return self._tool_node(state, config)
+        return self._tool_node(state)
+    
+    async def __acall__(self, state: Any, config: Any = None) -> Any:
+        """Async execution (delegates to underlying ToolNode)."""
+        if hasattr(self._tool_node, '__acall__'):
+            if config is not None:
+                return await self._tool_node.__acall__(state, config)
+            return await self._tool_node.__acall__(state)
+        # Fallback to sync
+        return self(state, config)
+    
+    @property
+    def tools(self) -> list:
+        """Get the protected tools."""
+        return self._protected_tools
+    
+    @property
+    def original_tools(self) -> list:
+        """Get the original unprotected tools."""
+        return self._tools
+
+
 __all__ = [
     "tenuo_node",
     "require_warrant",
+    # DX: Drop-in ToolNode replacement
+    "TenuoToolNode",
+    "LANGGRAPH_TOOLNODE_AVAILABLE",
 ]

@@ -116,6 +116,9 @@ from .exceptions import (
     UnknownProvider,
     # Config
     ConfigurationError,
+    # DX (diff-style errors)
+    AuthorizationDenied,
+    ConstraintResult,
     # Legacy aliases
     WarrantError,
     AuthorizationError,
@@ -177,6 +180,7 @@ from .schemas import (
 from .langchain import (
     protect_langchain_tools,
     TenuoTool,
+    secure_agent,  # DX: One-liner entry point
     LANGCHAIN_AVAILABLE,
 )
 
@@ -184,6 +188,8 @@ from .langchain import (
 from .langgraph import (
     tenuo_node,
     require_warrant,
+    TenuoToolNode,  # DX: Drop-in ToolNode replacement
+    LANGGRAPH_TOOLNODE_AVAILABLE,
 )
 
 # Tier 1 API - Error explanation
@@ -247,10 +253,13 @@ __all__ = [
     # LangChain
     "protect_langchain_tools",
     "TenuoTool",
+    "secure_agent",  # DX: One-liner entry point
     "LANGCHAIN_AVAILABLE",
     # LangGraph
     "tenuo_node",
     "require_warrant",
+    "TenuoToolNode",  # DX: Drop-in ToolNode replacement
+    "LANGGRAPH_TOOLNODE_AVAILABLE",
     # Error explanation
     "explain",
     "explain_str",
@@ -371,6 +380,9 @@ __all__ = [
     "UnknownProvider",
     # Exceptions - Config
     "ConfigurationError",
+    # Exceptions - DX (diff-style errors)
+    "AuthorizationDenied",
+    "ConstraintResult",
     # Exceptions - Legacy aliases
     "WarrantError",
     "AuthorizationError",

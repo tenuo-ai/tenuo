@@ -578,7 +578,89 @@ def protect_tools(
     return protected
 
 
+# =============================================================================
+# DX: One-liner secure_agent()
+# =============================================================================
+
+def secure_agent(
+    tools: List[Any],
+    *,
+    issuer_keypair: Optional[Any] = None,
+    strict_mode: bool = False,
+    warn_on_missing_warrant: bool = True,
+    schemas: Optional[Dict[str, ToolSchema]] = None,
+) -> List[Any]:
+    """
+    One-liner to secure LangChain tools with Tenuo authorization.
+    
+    This is the recommended entry point for LangChain users. It:
+    1. Configures Tenuo globally (if issuer_keypair provided)
+    2. Wraps tools with protection
+    3. Sets up warnings for missing warrants by default
+    
+    Args:
+        tools: List of LangChain BaseTool objects to protect
+        issuer_keypair: Keypair for issuing warrants (enables dev_mode if provided)
+        strict_mode: If True, fail on any missing warrant (default: False)
+        warn_on_missing_warrant: If True, log warnings for unprotected calls (default: True)
+        schemas: Optional custom tool schemas for risk level checking
+    
+    Returns:
+        List of protected TenuoTool objects
+    
+    Example:
+        from tenuo import Keypair, root_task_sync
+        from tenuo.langchain import secure_agent
+        from langchain.agents import create_openai_tools_agent, AgentExecutor
+        
+        # One line to secure your tools
+        kp = Keypair.generate()
+        tools = secure_agent([search, calculator], issuer_keypair=kp)
+        
+        # Create agent as normal
+        agent = create_openai_tools_agent(llm, tools, prompt)
+        executor = AgentExecutor(agent=agent, tools=tools)
+        
+        # Run with authorization
+        with root_task_sync(tools=["search", "calculator"]):
+            result = executor.invoke({"input": "What is 2+2?"})
+    
+    Note:
+        This function is idempotent - calling it multiple times with the same
+        issuer_keypair will not reconfigure Tenuo.
+    """
+    if not LANGCHAIN_AVAILABLE:
+        raise ImportError(
+            "LangChain is required for secure_agent(). "
+            "Install with: pip install langchain-core"
+        )
+    
+    # Configure Tenuo if keypair provided
+    if issuer_keypair is not None:
+        from .config import configure, is_configured
+        if not is_configured():
+            configure(
+                issuer_key=issuer_keypair,
+                dev_mode=True,  # Auto-enable dev mode for one-liner usage
+                strict_mode=strict_mode,
+                warn_on_missing_warrant=warn_on_missing_warrant,
+            )
+        else:
+            # Update mode settings even if already configured
+            from .config import get_config
+            config = get_config()
+            if config:
+                object.__setattr__(config, 'strict_mode', strict_mode)
+                object.__setattr__(config, 'warn_on_missing_warrant', warn_on_missing_warrant)
+    
+    # Protect tools
+    merged_schemas = {**TOOL_SCHEMAS, **(schemas or {})}
+    return [TenuoTool(t, strict=strict_mode, schemas=merged_schemas) for t in tools]
+
+
 __all__ = [
+    # DX: One-liner entry point
+    "secure_agent",
     # Tier 1 API (context-based)
     "protect_langchain_tools",
     "TenuoTool",

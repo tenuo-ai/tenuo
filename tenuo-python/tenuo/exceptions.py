@@ -689,6 +689,167 @@ class ConfigurationError(TenuoError):
 
 
 # =============================================================================
+# Diff-Style Authorization Error (DX improvement)
+# =============================================================================
+
+class ConstraintResult:
+    """Result of checking a single constraint."""
+    
+    def __init__(
+        self,
+        name: str,
+        passed: bool,
+        constraint_repr: str,
+        value: Any,
+        explanation: str = "",
+    ):
+        self.name = name
+        self.passed = passed
+        self.constraint_repr = constraint_repr
+        self.value = value
+        self.explanation = explanation
+    
+    def __str__(self) -> str:
+        icon = "✅" if self.passed else "❌"
+        if self.passed:
+            return f"{icon} {self.name}: OK"
+        return f"{icon} {self.name}: {self.explanation}"
+
+
+class AuthorizationDenied(ScopeViolation):
+    """
+    Authorization denied with diff-style error message.
+    
+    This exception provides a detailed breakdown of why authorization failed,
+    showing which constraints passed and which failed with expected vs received values.
+    
+    Example output:
+        AuthorizationDenied: Access denied for tool 'read_file'
+          ❌ path: Pattern("/data/*") does not match "/etc/passwd"
+          ✅ size: OK
+    """
+    error_code = "authorization_denied"
+    rust_variant = "Unauthorized"
+    
+    def __init__(
+        self,
+        tool: str,
+        constraint_results: Optional[list[ConstraintResult]] = None,
+        reason: str = "",
+    ):
+        self.tool = tool
+        self.constraint_results = constraint_results or []
+        self.reason = reason
+        
+        # Build the message
+        message = self._build_message()
+        super().__init__(message, {
+            "tool": tool,
+            "constraints": [
+                {
+                    "name": r.name,
+                    "passed": r.passed,
+                    "constraint": r.constraint_repr,
+                    "value": str(r.value),
+                    "explanation": r.explanation,
+                }
+                for r in self.constraint_results
+            ],
+        })
+    
+    def _build_message(self) -> str:
+        """Build the diff-style error message."""
+        lines = [f"Access denied for tool '{self.tool}'"]
+        
+        if self.reason:
+            lines.append(f"  Reason: {self.reason}")
+        
+        if self.constraint_results:
+            lines.append("")
+            # Show failed constraints first
+            failed = [r for r in self.constraint_results if not r.passed]
+            passed = [r for r in self.constraint_results if r.passed]
+            
+            for result in failed:
+                lines.append(f"  ❌ {result.name}:")
+                lines.append(f"     Expected: {result.constraint_repr}")
+                lines.append(f"     Received: {repr(result.value)}")
+                if result.explanation:
+                    lines.append(f"     Reason: {result.explanation}")
+            
+            for result in passed:
+                lines.append(f"  ✅ {result.name}: OK")
+        
+        return "\n".join(lines)
+    
+    @classmethod
+    def from_constraint_check(
+        cls,
+        tool: str,
+        constraints: dict[str, Any],
+        args: dict[str, Any],
+        failed_field: str,
+        failed_reason: str,
+    ) -> "AuthorizationDenied":
+        """
+        Create from a constraint check failure.
+        
+        Args:
+            tool: Tool name
+            constraints: Dict of constraint name -> constraint object
+            args: Dict of argument name -> value
+            failed_field: The field that failed
+            failed_reason: Why it failed
+        """
+        results = []
+        for name, constraint in constraints.items():
+            value = args.get(name, "<not provided>")
+            if name == failed_field:
+                results.append(ConstraintResult(
+                    name=name,
+                    passed=False,
+                    constraint_repr=_constraint_repr(constraint),
+                    value=value,
+                    explanation=failed_reason,
+                ))
+            else:
+                results.append(ConstraintResult(
+                    name=name,
+                    passed=True,
+                    constraint_repr=_constraint_repr(constraint),
+                    value=value,
+                ))
+        
+        return cls(tool=tool, constraint_results=results)
+
+
+def _constraint_repr(constraint: Any) -> str:
+    """Get a human-readable representation of a constraint."""
+    # Try common constraint types
+    if hasattr(constraint, 'pattern'):
+        return f'Pattern("{constraint.pattern}")'
+    if hasattr(constraint, 'value'):
+        return f'Exact("{constraint.value}")'
+    if hasattr(constraint, 'values'):
+        return f'OneOf({list(constraint.values)})'
+    if hasattr(constraint, 'min') or hasattr(constraint, 'max'):
+        min_val = getattr(constraint, 'min', None)
+        max_val = getattr(constraint, 'max', None)
+        if min_val is not None and max_val is not None:
+            return f'Range({min_val}, {max_val})'
+        elif min_val is not None:
+            return f'Range(min={min_val})'
+        elif max_val is not None:
+            return f'Range(max={max_val})'
+    if hasattr(constraint, 'regex'):
+        return f'Regex("{constraint.regex}")'
+    if hasattr(constraint, 'expression'):
+        return f'CEL("{constraint.expression}")'
+    # Fallback to repr
+    return repr(constraint)
+
+
+# =============================================================================
 # Legacy Aliases (for backwards compatibility)
 # =============================================================================
 
