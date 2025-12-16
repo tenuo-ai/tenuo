@@ -47,7 +47,6 @@ import yaml
 from .config import allow_passthrough
 from .decorators import get_warrant_context, get_keypair_context, get_allowed_tools_context
 from .exceptions import (
-    TenuoError,
     ToolNotAuthorized,
     ConstraintViolation,
     ConfigurationError,
