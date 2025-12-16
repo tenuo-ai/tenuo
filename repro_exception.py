@@ -1,5 +1,8 @@
 
 import pytest
+import sys
+import tenuo
+print(f"DEBUG: tenuo file: {tenuo.__file__}")
 from tenuo import Warrant, Keypair, Pattern, ConstraintViolation, TenuoError
 
 def test_pattern_expanded_mapping():

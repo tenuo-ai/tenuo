@@ -548,14 +548,33 @@ Not(Exact("blocked"))                              # Negation
 
 ### CEL
 
-Common Expression Language for complex logic.
+Common Expression Language for complex authorization logic.
 
 ```python
 from tenuo import CEL
 
-CEL('value.startsWith("staging") && size(value) < 20')
-CEL('value > 0 && value <= 1000')
+# Simple comparison
+CEL('amount < 10000 && amount > 0')
+
+# Multi-parameter logic
+CEL('budget < revenue * 0.1 && currency == "USD"')
+
+# With standard library functions
+CEL('time_since(created_at) < 3600')  # Within last hour
+CEL('net_in_cidr(ip, "10.0.0.0/8")')  # From private network
 ```
+
+**Standard Library:**
+- **Time**: `time_now(null)`, `time_is_expired(ts)`, `time_since(ts)`
+- **Network**: `net_in_cidr(ip, cidr)`, `net_is_private(ip)`
+
+See [Constraints → CEL](./constraints#cel-common-expression-language) for full documentation and examples.
+
+**Security:**
+- Sandboxed execution (no arbitrary code)
+- Must return boolean
+- Expressions cached (max 1000)
+- No side effects (pure evaluation)
 
 ---
 

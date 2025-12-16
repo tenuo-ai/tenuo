@@ -35,8 +35,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 fn to_py_err(e: crate::error::Error) -> PyErr {
-    // Debug print
-    println!("DEBUG: to_py_err called with: {}", e);
     Python::with_gil(|py| {
         let exceptions = match py.import("tenuo.exceptions") {
             Ok(m) => m,
@@ -44,12 +42,6 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
         };
 
         let (exc_name, args) = match &e {
-            // ... (keep existing match arms) ...
-            // I need to include the match arms here or use a smaller replacement range.
-            // I'll use a smaller range to just fix the start and the error handling part.
-            // But I have to be careful with the match block.
-            // Let's just replace the start first.
-
             // Crypto
             crate::error::Error::SignatureInvalid(m) => ("SignatureInvalid", PyTuple::new_bound(py, [m.as_str()])),
             crate::error::Error::MissingSignature(m) => ("MissingSignature", PyTuple::new_bound(py, [m.as_str()])),
@@ -137,14 +129,12 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
             crate::error::Error::UnknownProvider(m) => ("UnknownProvider", PyTuple::new_bound(py, [m.as_str()])),
         };
 
-SYNTAX ERROR HERE
+        match exceptions.getattr(exc_name) {
             Ok(cls) => {
                 // Call constructor with the tuple of arguments
                 // Note: call1 takes a tuple of arguments. Our 'args' IS that tuple.
                 PyErr::from_value(cls.call1(args).unwrap_or_else(|e| {
                     // Fallback if constructor fails
-                    // Debug print to see why
-                    eprintln!("Failed to construct exception {}: {}", exc_name, e);
                     PyRuntimeError::new_err(e.to_string())
                         .value(py)
                         .as_any()
@@ -152,7 +142,6 @@ SYNTAX ERROR HERE
                 }))
             }
             Err(e) => {
-                eprintln!("Failed to get exception class {}: {}", exc_name, e);
                 PyRuntimeError::new_err(e.to_string())
             }
         }
@@ -1547,6 +1536,7 @@ impl PyAttenuationBuilder {
         keypair: &PyKeypair,
         parent_keypair: &PyKeypair,
     ) -> PyResult<(PyWarrant, PyDelegationReceipt)> {
+        panic!("DEBUG PANIC: delegate_to_with_receipt called");
         let (warrant, receipt) = self
             .inner
             .clone()

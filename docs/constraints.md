@@ -354,14 +354,23 @@ Not(Exact("production"))
 
 ### CEL (Common Expression Language)
 
-Complex logic using CEL expressions.
+Complex logic using CEL expressions for advanced authorization rules.
 
 ```python
 from tenuo import CEL
 
-# Custom logic: budget < revenue * 0.1
-CEL("args.budget < args.revenue * 0.1")
+# Simple comparison
+CEL("amount < 10000 && amount > 0")
+
+# Multi-parameter validation
+CEL("budget < revenue * 0.1 && currency == 'USD'")
 ```
+
+**How it works:**
+- CEL expressions evaluate to **boolean** (true/false)
+- For **object values**, each field becomes a top-level variable
+- For **primitive values**, the value is available as `value`
+- Expressions are **compiled once** and cached for performance (max 1000 entries)
 
 **Example:**
 ```python
@@ -371,11 +380,177 @@ warrant = Warrant.issue(
     constraints={
         "budget_check": CEL("budget < revenue * 0.1 && budget > 0")
     },
-    ...
+    keypair=keypair,
+    ttl_seconds=3600
+)
+
+# When tool is called with:
+# create_campaign(budget=5000, revenue=100000, ...)
+# CEL evaluates: 5000 < 100000 * 0.1 && 5000 > 0 → true ✅
+```
+
+#### Standard Library Functions
+
+Tenuo provides built-in functions for common use cases:
+
+**Time Functions:**
+
+```python
+# Check if timestamp hasn't expired
+CEL("!time_is_expired(deadline)")
+
+# Only allow if created within last hour
+CEL("time_since(created_at) < 3600")
+
+# Get current time (requires dummy arg due to library limitation)
+CEL("time_now(null).startsWith('2024')")
+```
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `time_now(unused)` | `(_) -> String` | Returns current time in RFC3339 format |
+| `time_is_expired(ts)` | `(String) -> bool` | Checks if RFC3339 timestamp has passed |
+| `time_since(ts)` | `(String) -> i64` | Seconds since RFC3339 timestamp (0 if invalid/future) |
+
+**Network Functions:**
+
+```python
+# Only allow requests from internal network
+CEL("net_in_cidr(ip, '10.0.0.0/8') || net_in_cidr(ip, '192.168.0.0/16')")
+
+# Block public IPs
+CEL("net_is_private(source_ip)")
+```
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `net_in_cidr(ip, cidr)` | `(String, String) -> bool` | Check if IP (v4/v6) is in CIDR block |
+| `net_is_private(ip)` | `(String) -> bool` | Check if IP is in private range (RFC 1918) |
+
+**Time-bounded Example:**
+```python
+# Only allow if order created within last 24 hours
+warrant = Warrant.issue(
+    tools=["process_order"],
+    constraints={
+        "freshness": CEL("time_since(created_at) < 86400")
+    },
+    keypair=keypair,
+    ttl_seconds=3600
 )
 ```
 
-⚠️ **Note**: CEL expressions have access to `args` (tool arguments) and can reference multiple parameters.
+**Network Example:**
+```python
+# Only allow API calls from private network
+warrant = Warrant.issue(
+    tools=["api_call"],
+    constraints={
+        "network": CEL("net_in_cidr(source_ip, '10.0.0.0/8')")
+    },
+    keypair=keypair,
+    ttl_seconds=3600
+)
+```
+
+#### CEL Attenuation
+
+Child CEL constraints are automatically combined with parent using AND logic:
+
+```python
+# Parent: budget < 10000
+parent = Warrant.issue(
+    tools=["spend"],
+    constraints={"budget_rule": CEL("budget < 10000")},
+    keypair=kp,
+    ttl_seconds=3600
+)
+
+# Child: Add additional constraint (auto-AND'd)
+child = parent.attenuate(
+    constraints={"budget_rule": CEL("currency == 'USD'")},
+    holder=worker_kp.public_key
+)
+
+# Effective child expression: (budget < 10000) && (currency == 'USD')
+```
+
+**Syntactic Monotonicity (Conservative Approach)**
+
+⚠️ Tenuo enforces **Syntactic Monotonicity** for CEL, not Semantic Monotonicity.
+
+Child expression must **literally** be `(parent) && new_predicate`. It cannot be a semantically equivalent but differently structured expression.
+
+```python
+# Parent CEL
+parent = Warrant.issue(
+    tools=["api_call"],
+    constraints={"network": CEL("net_in_cidr(ip, '10.0.0.0/8')")},
+    keypair=kp,
+    ttl_seconds=3600
+)
+
+# ❌ REJECTED: Semantically narrower but not syntactically derived
+child = parent.attenuate(
+    constraints={"network": CEL("net_in_cidr(ip, '10.1.0.0/16')")},  # FAILS
+    holder=worker_kp.public_key
+)
+# Even though 10.1.0.0/16 ⊂ 10.0.0.0/8, this is REJECTED
+
+# ✅ ALLOWED: Syntactically derived (AND'd)
+child = parent.attenuate(
+    constraints={"network": CEL("(net_in_cidr(ip, '10.0.0.0/8')) && net_in_cidr(ip, '10.1.0.0/16')")},
+    holder=worker_kp.public_key
+)
+# Now it's ALLOWED because it's (parent) && additional_check
+```
+
+**Why Syntactic?**
+
+Semantic analysis (proving one expression is strictly narrower) requires:
+- Automated theorem proving
+- Understanding domain semantics (CIDR blocks, time logic, etc.)
+- Potential false negatives or security holes
+
+Syntactic monotonicity is **conservative but secure**: If the child is `(parent) && X`, it's guaranteed to be narrower or equal.
+
+**Recommendation**: Use simpler constraint types (Pattern, Range, OneOf) when possible. Reserve CEL for truly complex logic that can't be expressed otherwise.
+
+#### Security Properties
+
+✅ **Sandboxed Execution**: CEL cannot execute arbitrary code, only evaluate expressions  
+✅ **Deterministic**: Same inputs always produce same results  
+✅ **Cached Programs**: Compiled expressions cached (max 1000) for performance  
+✅ **Type Safe**: Must return boolean or evaluation fails  
+✅ **No Side Effects**: Expressions are pure - no I/O, no state mutation  
+✅ **Safe Standard Library**: Only time/network parsing functions, no file/network I/O
+
+#### Security Considerations
+
+**DoS Protection:**
+
+While CEL expressions are sandboxed, extremely complex expressions could still consume CPU:
+
+```python
+# ⚠️ Potentially expensive (though bounded by compilation)
+CEL("(((((a && b) || (c && d)) && ((e || f) && (g || h))) || ...) ...")
+```
+
+**Mitigations in place:**
+- **Compilation fails** on malformed expressions (syntax errors caught early)
+- **Cache limit** (1000 entries) prevents unbounded memory growth
+- `cel-interpreter` v0.8.1 (no known DoS vulnerabilities)
+
+**Best Practices:**
+- **Keep expressions simple** - prefer built-in constraint types when possible
+- **Test expressions** before deployment with representative inputs
+- **Use syntactic attenuation** - child must be `(parent) && X` for safety
+
+⚠️ **Important Notes**:
+- CEL expressions **must return boolean**. Non-boolean results cause `CelError`.
+- The constraint key (e.g., `"budget_check"`) is informational; the expression defines the logic.
+- **Syntactic monotonicity** is enforced for attenuation (see above).
+- Standard library functions are safe and deterministic (no I/O beyond time/IP parsing).
 
 ---
 
