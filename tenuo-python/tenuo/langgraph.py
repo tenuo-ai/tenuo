@@ -136,14 +136,6 @@ def require_warrant(fn: F) -> F:
 # DX: TenuoToolNode - Drop-in ToolNode replacement
 # =============================================================================
 
-# Try to import ToolNode from langgraph
-try:
-    from langgraph.prebuilt import ToolNode  # type: ignore[import-not-found]
-    LANGGRAPH_TOOLNODE_AVAILABLE = True
-except ImportError:
-    ToolNode = None  # type: ignore[misc,assignment]
-    LANGGRAPH_TOOLNODE_AVAILABLE = False
-
 
 class TenuoToolNode:
     """
@@ -177,7 +169,7 @@ class TenuoToolNode:
         **kwargs: Additional arguments passed to ToolNode
     
     Raises:
-        ImportError: If langgraph is not installed
+        ImportError: If langgraph or langchain is not installed
     """
     
     def __init__(
@@ -187,13 +179,15 @@ class TenuoToolNode:
         strict: bool = False,
         **kwargs: Any,
     ):
-        if not LANGGRAPH_TOOLNODE_AVAILABLE:
+        # Import dependencies at runtime (langgraph is optional)
+        try:
+            from langgraph.prebuilt import ToolNode
+        except ImportError:
             raise ImportError(
                 "LangGraph is required for TenuoToolNode. "
                 "Install with: pip install langgraph"
             )
         
-        # Import and wrap tools
         from .langchain import protect_langchain_tools, LANGCHAIN_AVAILABLE
         if not LANGCHAIN_AVAILABLE:
             raise ImportError(
@@ -205,7 +199,7 @@ class TenuoToolNode:
         protected_tools = protect_langchain_tools(tools, strict=strict)
         
         # Create the underlying ToolNode
-        self._tool_node = ToolNode(protected_tools, **kwargs)  # type: ignore[misc]
+        self._tool_node: Any = ToolNode(protected_tools, **kwargs)
         
         # Store for introspection
         self._tools = tools
@@ -215,8 +209,8 @@ class TenuoToolNode:
     def __call__(self, state: Any, config: Any = None) -> Any:
         """Execute the tool node (delegates to underlying ToolNode)."""
         if config is not None:
-            return self._tool_node(state, config)  # type: ignore[operator]
-        return self._tool_node(state)  # type: ignore[operator]
+            return self._tool_node(state, config)
+        return self._tool_node(state)
     
     async def __acall__(self, state: Any, config: Any = None) -> Any:
         """Async execution (delegates to underlying ToolNode)."""
