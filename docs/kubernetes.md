@@ -56,8 +56,8 @@ This guide covers how to deploy and operate Tenuo in Kubernetes.
 
 Get a working setup in 5 minutes:
 
-- 🚀 **[Envoy Quickstart](https://github.com/tenuo/tenuo/tree/main/quickstart/envoy)** — Standalone proxy
-- 🚀 **[Istio Quickstart](https://github.com/tenuo/tenuo/tree/main/quickstart/istio)** — Service mesh
+- [Envoy Quickstart](./quickstart/envoy/) - Standalone proxy
+- [Istio Quickstart](./quickstart/istio/) - Service mesh
 
 ---
 
@@ -83,7 +83,7 @@ Is warrant scope static for the pod lifetime?
 
 ## Pattern: Control Plane Fetch (Recommended)
 
-Fetch a warrant from your control plane when each task starts. This is the pattern from the blog post.
+Fetch a warrant from your control plane when each task starts. This is the canonical pattern that Tenuo was designed for.
 
 **When to use:** Production systems where you want task-scoped, short-lived authority.
 
@@ -331,8 +331,8 @@ spec:
 
 ## See Also
 
-- [Proxy Configs Reference](./proxy-configs.md) — Full Envoy, Istio, nginx configs
-- [Envoy Quickstart](https://github.com/tenuo/tenuo/tree/main/quickstart/envoy)
-- [Istio Quickstart](https://github.com/tenuo/tenuo/tree/main/quickstart/istio)
-- [LangChain Integration](./langchain.md)
+- [Proxy Configs Reference](./proxy-configs) - Full Envoy, Istio, nginx configs
+- [Envoy Quickstart](./quickstart/envoy/)
+- [Istio Quickstart](./quickstart/istio/)
+- [LangChain Integration](./langchain)
 - [Security Model](./security.md)

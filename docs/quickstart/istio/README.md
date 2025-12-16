@@ -18,21 +18,21 @@ kubectl get pods -n istio-system
 ### 1. Deploy Tenuo Authorizer
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/horkosdev/tenuo/main/quickstart/istio/tenuo.yaml
+kubectl apply -f https://raw.githubusercontent.com/horkosdev/tenuo/main/docs/quickstart/istio/tenuo.yaml
 ```
 
 ### 2. Configure Istio ExtensionProvider
 
 ```bash
 kubectl patch configmap istio -n istio-system --type merge \
-  --patch-file https://raw.githubusercontent.com/horkosdev/tenuo/main/quickstart/istio/mesh-config.yaml
+  --patch-file https://raw.githubusercontent.com/horkosdev/tenuo/main/docs/quickstart/istio/mesh-config.yaml
 kubectl rollout restart deployment/istiod -n istio-system
 ```
 
 ### 3. Deploy Test App
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/horkosdev/tenuo/main/quickstart/istio/httpbin.yaml
+kubectl apply -f https://raw.githubusercontent.com/horkosdev/tenuo/main/docs/quickstart/istio/httpbin.yaml
 ```
 
 This deploys httpbin with an AuthorizationPolicy that routes requests to Tenuo.
@@ -72,7 +72,7 @@ WARRANT="eyJ0eXAiOiJKV1QiLCJhbGciOiJFZERTQSJ9..."
 curl -i -H "X-Tenuo-Warrant: $WARRANT" http://localhost:8080/get
 ```
 
-See the [Kubernetes Guide](../../docs/kubernetes.md) for issuing real warrants.
+See the [Kubernetes Guide](../../kubernetes) for issuing real warrants.
 
 ## Architecture
 
@@ -146,13 +146,13 @@ kubectl get configmap istio -n istio-system -o yaml | grep -A10 extensionProvide
 
 ## Next Steps
 
-- [Envoy Quickstart](../envoy/README.md) - Standalone proxy alternative
-- [Kubernetes Guide](../../docs/kubernetes.md) - Production patterns
-- [Proxy Configs](../../docs/proxy-configs.md) - Full Istio config reference
+- [Envoy Quickstart](../envoy/) - Standalone proxy alternative
+- [Kubernetes Guide](../../kubernetes) - Production patterns
+- [Proxy Configs](../../proxy-configs) - Full Istio config reference
 
 ## Clean Up
 
 ```bash
-kubectl delete -f https://raw.githubusercontent.com/horkosdev/tenuo/main/quickstart/istio/httpbin.yaml
-kubectl delete -f https://raw.githubusercontent.com/horkosdev/tenuo/main/quickstart/istio/tenuo.yaml
+kubectl delete -f https://raw.githubusercontent.com/horkosdev/tenuo/main/docs/quickstart/istio/httpbin.yaml
+kubectl delete -f https://raw.githubusercontent.com/horkosdev/tenuo/main/docs/quickstart/istio/tenuo.yaml
 ```

@@ -201,7 +201,7 @@ helm install tenuo-authorizer ./charts/tenuo-authorizer \
   --set config.trustedRoots[0]="YOUR_KEY_HERE"
 ```
 
-2. Configure Istio ExtensionProvider (see [Istio Quickstart](../../quickstart/istio/README.md))
+2. Configure Istio ExtensionProvider (see [Istio Quickstart](../../docs/quickstart/istio/))
 
 3. Apply AuthorizationPolicy to your services
 
@@ -251,5 +251,5 @@ kubectl get configmap tenuo-authorizer-config -o yaml
 ## See Also
 
 - [Kubernetes Integration Guide](../../docs/kubernetes.md)
-- [Istio Quickstart](../../quickstart/istio/README.md)
+- [Istio Quickstart](../../docs/quickstart/istio/)
 - [Gateway Configuration Reference](../../docs/gateway-config.md)

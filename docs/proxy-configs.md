@@ -556,88 +556,14 @@ async def write_file(path: str, content: str):
 
 ---
 
-## Gateway Configuration Reference
+## Gateway Configuration
 
-The `tenuo-authorizer` uses a YAML config to map HTTP requests to tool authorizations.
-
-```yaml
-# gateway.yaml
-version: "1"
-
-settings:
-  warrant_header: "X-Tenuo-Warrant"
-  pop_header: "X-Tenuo-PoP"
-  clock_tolerance_secs: 30
-  debug_mode: false  # Set true for X-Tenuo-Deny-Reason header
-
-# Map tools to constraint extraction rules
-tools:
-  read_file:
-    description: "Read a file from disk"
-    constraints:
-      path:
-        from: body
-        json_path: "$.path"
-        required: true
-  
-  write_file:
-    description: "Write content to a file"
-    constraints:
-      path:
-        from: body
-        json_path: "$.path"
-        required: true
-      content:
-        from: body
-        json_path: "$.content"
-        required: true
-  
-  query_database:
-    description: "Execute a database query"
-    constraints:
-      table:
-        from: body
-        json_path: "$.table"
-        required: true
-      operation:
-        from: body
-        json_path: "$.operation"
-        required: true
-
-# Map HTTP routes to tools
-routes:
-  - pattern: "/api/files/read"
-    methods: ["POST"]
-    tool: "read_file"
-  
-  - pattern: "/api/files/write"
-    methods: ["POST"]
-    tool: "write_file"
-  
-  - pattern: "/api/db/query"
-    methods: ["POST"]
-    tool: "query_database"
-  
-  # Wildcard matching
-  - pattern: "/api/files/{action}"
-    methods: ["GET", "POST"]
-    tool: "read_file"
-```
-
-### Constraint Extraction Sources
-
-| Source | Description | Example |
-|--------|-------------|---------|
-| `body` | JSON request body | `json_path: "$.path"` |
-| `header` | HTTP header | `header: "X-Database"` |
-| `query` | Query parameter | `param: "table"` |
-| `path` | URL path segment | `segment: "action"` |
-
+See [Gateway Configuration Reference](./gateway-config.md) for the full YAML schema.
 ---
 
 ## See Also
 
-- [Kubernetes Integration](./kubernetes.md) — Patterns, decisions, debugging
-- [Envoy Quickstart](https://github.com/tenuo/tenuo/tree/main/quickstart/envoy)
-- [Istio Quickstart](https://github.com/tenuo/tenuo/tree/main/quickstart/istio)
-- [API Reference](./api-reference.md)
+- [Kubernetes Integration](./kubernetes) - Patterns, decisions, debugging
+- [Envoy Quickstart](./quickstart/envoy/)
+- [Istio Quickstart](./quickstart/istio/)
+- [API Reference](./api-reference)

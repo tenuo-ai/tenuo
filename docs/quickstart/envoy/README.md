@@ -13,7 +13,7 @@ Get your first 403 in under 5 minutes.
 ### 1. Deploy Everything
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/horkosdev/tenuo/main/quickstart/envoy/all-in-one.yaml
+kubectl apply -f https://raw.githubusercontent.com/horkosdev/tenuo/main/docs/quickstart/envoy/all-in-one.yaml
 ```
 
 This creates the `tenuo-system` namespace with:
@@ -56,7 +56,7 @@ WARRANT="eyJ0eXAiOiJKV1QiLCJhbGciOiJFZERTQSJ9..."
 curl -i -H "X-Tenuo-Warrant: $WARRANT" http://localhost:8080/get
 ```
 
-See the [Kubernetes Guide](../../docs/kubernetes.md) for issuing real warrants.
+See the [Kubernetes Guide](../../kubernetes) for issuing real warrants.
 
 ## Architecture
 
@@ -93,12 +93,12 @@ kubectl get pods -n tenuo-system
 
 ## Next Steps
 
-- [Istio Quickstart](../istio/README.md) - Service mesh alternative
-- [Kubernetes Guide](../../docs/kubernetes.md) - Production patterns
-- [Proxy Configs](../../docs/proxy-configs.md) - Full Envoy config reference
+- [Istio Quickstart](../istio/) - Service mesh alternative
+- [Kubernetes Guide](../../kubernetes) - Production patterns
+- [Proxy Configs](../../proxy-configs) - Full Envoy config reference
 
 ## Clean Up
 
 ```bash
-kubectl delete -f https://raw.githubusercontent.com/horkosdev/tenuo/main/quickstart/envoy/all-in-one.yaml
+kubectl delete -f https://raw.githubusercontent.com/horkosdev/tenuo/main/docs/quickstart/envoy/all-in-one.yaml
 ```

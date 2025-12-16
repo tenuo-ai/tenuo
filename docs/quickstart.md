@@ -302,12 +302,20 @@ This makes it easy to see exactly which constraint failed and why.
 
 ---
 
+## Gateway Quickstarts
+
+Deploy Tenuo as a gateway authorizer:
+
+- **[Envoy Quickstart](./quickstart/envoy/)** - Standalone Envoy proxy (5 min)
+- **[Istio Quickstart](./quickstart/istio/)** - Istio service mesh (5 min)
+
+---
+
 ## Next Steps
 
 - **[Concepts](./concepts)** — Why Tenuo? Threat model, core invariants
-- **[Protocol](./protocol)** — How it works under the hood
-- **[API Reference](./api-reference)** — Complete Python SDK docs (includes MCP)
-- **[CLI Reference](./cli)** — Full CLI documentation
+- **[Kubernetes Guide](./kubernetes)** — Production deployment patterns
+- **[API Reference](./api-reference)** — Complete Python SDK docs
 - **[LangChain](./langchain)** — Protect LangChain tools
 - **[LangGraph](./langgraph)** — Scope LangGraph nodes
 - **[Security](./security)** — Threat model, best practices
