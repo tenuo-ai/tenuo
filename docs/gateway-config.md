@@ -294,6 +294,6 @@ For production use, the configuration is compiled into optimized data structures
 
 ## See Also
 
-- [Deployment Patterns](./deployment.md) — Envoy, Istio, nginx integration
-- [CLI Reference](./cli.md) — Command-line usage
-- [Protocol](./protocol.md) — Warrant format and verification
+- [Deployment Patterns](./deployment) — Envoy, Istio, nginx integration
+- [CLI Reference](./cli) — Command-line usage
+- [Protocol](./protocol) — Warrant format and verification

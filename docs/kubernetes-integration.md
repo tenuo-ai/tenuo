@@ -11,7 +11,7 @@ Tenuo provides primitives. You build the integration that fits your setup.
 
 Get started in 5 minutes with one of these quickstart guides:
 
-### 🚀 [Istio Quickstart](../quickstart/istio/README.md)
+### 🚀 [Istio Quickstart](https://github.com/horkosdev/tenuo/tree/main/quickstart/istio)
 **Best for:** Teams already using Istio service mesh
 
 - Uses Istio's `ExtensionProvider` + `AuthorizationPolicy`
@@ -19,7 +19,7 @@ Get started in 5 minutes with one of these quickstart guides:
 - Integrates with existing Istio setup
 - **Time to first 403:** 5 minutes
 
-### 🚀 [Envoy Quickstart](../quickstart/envoy/README.md)
+### 🚀 [Envoy Quickstart](https://github.com/horkosdev/tenuo/tree/main/quickstart/envoy)
 **Best for:** Standalone Envoy proxy without service mesh
 
 - Direct Envoy `ext_authz` filter configuration
@@ -28,8 +28,6 @@ Get started in 5 minutes with one of these quickstart guides:
 - **Time to first 403:** 5 minutes
 
 ---
-
-## Primitives
 
 ## Primitives
 
@@ -454,10 +452,10 @@ Key metrics:
 
 ## See Also
 
-- [**Istio Quickstart (5 min)**](../quickstart/istio/README.md) — Service mesh integration
-- [**Envoy Quickstart (5 min)**](../quickstart/envoy/README.md) — Standalone proxy setup
-- [Deployment Patterns](./deployment.md) — Envoy, Istio, nginx integration
-- [Gateway Configuration](./gateway-config.md) — YAML config reference
-- [LangChain Integration](./langchain.md)
-- [API Reference](./api-reference.md)
-- [Protocol](./protocol.md)
+- [**Istio Quickstart (5 min)**](https://github.com/horkosdev/tenuo/tree/main/quickstart/istio) — Service mesh integration
+- [**Envoy Quickstart (5 min)**](https://github.com/horkosdev/tenuo/tree/main/quickstart/envoy) — Standalone proxy setup
+- [Deployment Patterns](./deployment) — Envoy, Istio, nginx integration
+- [Gateway Configuration](./gateway-config) — YAML config reference
+- [LangChain Integration](./langchain)
+- [API Reference](./api-reference)
+- [Protocol](./protocol)

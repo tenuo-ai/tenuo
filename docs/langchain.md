@@ -19,7 +19,7 @@ Tenuo integrates with LangChain using a **zero-intrusion** pattern:
 3. Warrants are passed through context, not function arguments
 4. Fail-closed: missing or invalid warrants block execution
 
-> **Note**: LangChain integration uses `Warrant.issue()` directly. You don't need `configure()` unless you're using LangGraph's `@tenuo_node` or `root_task()`. See [LangGraph Integration](./langgraph.md) for the `configure()` pattern.
+> **Note**: LangChain integration uses `Warrant.issue()` directly. You don't need `configure()` unless you're using LangGraph's `@tenuo_node` or `root_task()`. See [LangGraph Integration](./langgraph) for the `configure()` pattern.
 
 ---
 
@@ -327,7 +327,7 @@ Constraints restrict tool arguments. They mirror CLI constraint types:
 - **Manual attenuation**: Delegation requires explicit warrant creation
 - **Single warrant**: Context holds one warrant at a time
 
-For automatic attenuation in multi-agent graphs, see [LangGraph Integration](./langgraph.md).
+For automatic attenuation in multi-agent graphs, see [LangGraph Integration](./langgraph).
 
 ---
 

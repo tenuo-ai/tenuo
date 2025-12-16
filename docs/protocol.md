@@ -501,7 +501,7 @@ For non-Rust implementations:
 
 ## See Also
 
-- [Concepts](./concepts.md) — Why Tenuo? Problem/solution overview
-- [API Reference](./api-reference.md) — Function signatures
-- [Constraints](./constraints.md) — Constraint types and usage
-- [Security](./security.md) — Detailed threat model
+- [Concepts](./concepts) — Why Tenuo? Problem/solution overview
+- [API Reference](./api-reference) — Function signatures
+- [Constraints](./constraints) — Constraint types and usage
+- [Security](./security) — Detailed threat model

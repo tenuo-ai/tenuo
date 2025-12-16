@@ -720,6 +720,6 @@ with root_task(tools=["query"], table=OneOf(["users", "orders"])):
 
 ## See Also
 
-- [API Reference](./api-reference.md) — Full constraint API
-- [Security](./security.md) — How constraints fit into the security model
-- [LangGraph Integration](./langgraph.md) — Using constraints with LangGraph
+- [API Reference](./api-reference) — Full constraint API
+- [Security](./security) — How constraints fit into the security model
+- [LangGraph Integration](./langgraph) — Using constraints with LangGraph
