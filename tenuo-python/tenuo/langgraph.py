@@ -137,6 +137,14 @@ def require_warrant(fn: F) -> F:
 # =============================================================================
 
 
+# Check if LangGraph is available (for pytest.mark.skipif, etc.)
+try:
+    import langgraph.prebuilt  # noqa: F401
+    LANGGRAPH_TOOLNODE_AVAILABLE = True
+except ImportError:
+    LANGGRAPH_TOOLNODE_AVAILABLE = False
+
+
 class TenuoToolNode:
     """
     Drop-in replacement for LangGraph's ToolNode with automatic Tenuo protection.

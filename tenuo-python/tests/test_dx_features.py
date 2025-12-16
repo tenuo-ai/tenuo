@@ -18,7 +18,6 @@ from tenuo import (
     AuthorizationDenied,
     ConstraintResult,
     LANGCHAIN_AVAILABLE,
-    LANGGRAPH_TOOLNODE_AVAILABLE,
 )
 
 
@@ -127,10 +126,6 @@ class TestSecureAgent:
 # Test: TenuoToolNode
 # =============================================================================
 
-@pytest.mark.skipif(
-    not LANGGRAPH_TOOLNODE_AVAILABLE,
-    reason="LangGraph ToolNode not available"
-)
 class TestTenuoToolNode:
     """Tests for TenuoToolNode (requires langgraph)."""
     

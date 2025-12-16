@@ -40,6 +40,7 @@ dev = [
     "langchain",
     "langchain-core",
     "langchain-openai",
+    "langgraph",
     "fastapi",
     "uvicorn",
     "pydantic",

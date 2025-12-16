@@ -5,7 +5,7 @@ description: Complete Python SDK documentation
 
 # Tenuo Python SDK API Reference
 
-Complete API documentation for the Tenuo Python SDK.
+Complete API documentation for the Tenuo Python SDK. For wire format details, see [Protocol Specification](protocol).
 
 ## Table of Contents
 
