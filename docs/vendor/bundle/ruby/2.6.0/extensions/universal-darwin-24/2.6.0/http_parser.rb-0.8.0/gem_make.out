@@ -1,0 +1,12 @@
+current directory: /Users/aimable/Development/tenuo/docs/vendor/bundle/ruby/2.6.0/gems/http_parser.rb-0.8.0/ext/ruby_http_parser
+/System/Library/Frameworks/Ruby.framework/Versions/2.6/usr/bin/ruby -I /System/Library/Frameworks/Ruby.framework/Versions/2.6/usr/lib/ruby/2.6.0 -r ./siteconf20251216-94937-9kqlo5.rb extconf.rb
+creating Makefile
+
+current directory: /Users/aimable/Development/tenuo/docs/vendor/bundle/ruby/2.6.0/gems/http_parser.rb-0.8.0/ext/ruby_http_parser
+make "DESTDIR=" clean
+
+current directory: /Users/aimable/Development/tenuo/docs/vendor/bundle/ruby/2.6.0/gems/http_parser.rb-0.8.0/ext/ruby_http_parser
+make "DESTDIR="
+make: *** No rule to make target `/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.2.sdk/System/Library/Frameworks/Ruby.framework/Versions/2.6/usr/include/ruby-2.6.0/universal-darwin24/ruby/config.h', needed by `ruby_http_parser.o'.  Stop.
+
+make failed, exit code 2
