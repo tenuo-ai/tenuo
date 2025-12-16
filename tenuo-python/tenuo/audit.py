@@ -123,6 +123,9 @@ class AuditEvent:
     error_code: Optional[str] = None
     related_ids: Optional[list] = None
     
+    # Structured metadata (callsite, function name, etc.)
+    metadata: Optional[Dict[str, Any]] = None
+    
     def __post_init__(self):
         """Auto-infer severity from event type if not provided."""
         if self.severity is None:

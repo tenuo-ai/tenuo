@@ -1,0 +1,131 @@
+# Kubernetes Operations Gateway Configuration
+# Use this template for Kubernetes cluster management
+
+version: "1"
+
+settings:
+  warrant_header: "X-Tenuo-Warrant"
+  pop_header: "X-Tenuo-PoP"
+  clock_tolerance_secs: 30
+  
+  # Add your control plane's public key here
+  trusted_roots:
+    - "YOUR_CONTROL_PLANE_PUBLIC_KEY_HEX"
+  
+  # Debug mode (adds X-Tenuo-Deny-Reason header on 403)
+  # WARNING: Do not enable in production!
+  # debug_mode: false
+
+tools:
+  manage_infrastructure:
+    description: "Kubernetes cluster management operations"
+    constraints:
+      cluster:
+        from: path
+        path: "cluster"
+        description: "Target cluster name (e.g., staging-web, prod-api)"
+        required: true
+      
+      action:
+        from: path
+        path: "action"
+        description: "Operation to perform (scale, upgrade, restart)"
+        required: true
+      
+      namespace:
+        from: query
+        path: "namespace"
+        description: "Kubernetes namespace"
+        default: "default"
+      
+      replicas:
+        from: body
+        path: "spec.replicas"
+        description: "Desired replica count"
+        type: integer
+      
+      cost:
+        from: body
+        path: "metadata.estimatedCost"
+        description: "Estimated cost in USD"
+        type: float
+  
+  manage_pods:
+    description: "Pod-level operations"
+    constraints:
+      cluster:
+        from: path
+        path: "cluster"
+        description: "Target cluster name"
+        required: true
+      
+      namespace:
+        from: path
+        path: "namespace"
+        description: "Kubernetes namespace"
+        required: true
+      
+      pod_name:
+        from: path
+        path: "pod"
+        description: "Pod name"
+        required: true
+      
+      action:
+        from: path
+        path: "action"
+        description: "Pod action (logs, exec, delete)"
+        required: true
+      
+      container:
+        from: query
+        path: "container"
+        description: "Container name within pod"
+  
+  manage_deployments:
+    description: "Deployment-level operations"
+    constraints:
+      cluster:
+        from: path
+        path: "cluster"
+        description: "Target cluster name"
+        required: true
+      
+      namespace:
+        from: path
+        path: "namespace"
+        description: "Kubernetes namespace"
+        required: true
+      
+      deployment:
+        from: path
+        path: "deployment"
+        description: "Deployment name"
+        required: true
+      
+      replicas:
+        from: body
+        path: "spec.replicas"
+        description: "Desired replica count"
+        type: integer
+      
+      image:
+        from: body
+        path: "spec.template.spec.containers.0.image"
+        description: "Container image"
+
+routes:
+  # Cluster-level operations
+  - pattern: "/api/v1/clusters/{cluster}/{action}"
+    method: ["POST", "PUT", "DELETE"]
+    tool: "manage_infrastructure"
+  
+  # Pod operations
+  - pattern: "/api/v1/clusters/{cluster}/namespaces/{namespace}/pods/{pod}/{action}"
+    method: ["GET", "POST", "DELETE"]
+    tool: "manage_pods"
+  
+  # Deployment operations
+  - pattern: "/api/v1/clusters/{cluster}/namespaces/{namespace}/deployments/{deployment}"
+    method: ["GET", "PUT", "PATCH", "DELETE"]
+    tool: "manage_deployments"

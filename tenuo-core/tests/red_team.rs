@@ -19,10 +19,10 @@ use chrono::{Duration as ChronoDuration, Utc};
 use std::collections::HashMap;
 use std::time::Duration;
 use tenuo_core::{
-    constraints::{Constraint, ConstraintSet, ConstraintValue, Exact, OneOf, Pattern, All},
+    constraints::{All, Constraint, ConstraintSet, ConstraintValue, Exact, OneOf, Pattern},
     crypto::Keypair,
     planes::{Authorizer, DataPlane},
-    warrant::{Warrant, WarrantType, TrustLevel},
+    warrant::{TrustLevel, Warrant, WarrantType},
     wire, MAX_DELEGATION_DEPTH, MAX_ISSUER_CHAIN_LENGTH,
 };
 
@@ -58,23 +58,26 @@ fn test_chainlink_scope_binding() {
     // Verify that child has embedded issuer scope from parent
     let chain = child.issuer_chain();
     assert!(!chain.is_empty(), "Child should have issuer_chain");
-    
+
     let link = &chain[0];
     assert_eq!(link.issuer_id, *parent.id());
     assert_eq!(link.issuer_tools, parent.tools().map(|t| t.to_vec()));
-    
+
     println!("✅ ChainLink correctly embeds issuer scope");
-    
+
     // The signature covers both child payload AND issuer scope
     // If we could tamper with issuer_tools, the signature would fail
     // We verify this property by checking the signing logic:
-    
+
     let child_payload_bytes = child.payload_bytes_without_chain().unwrap();
     let verify_link_result = link.verify_signature(&child_payload_bytes);
-    
-    assert!(verify_link_result.is_ok(), "ChainLink signature should verify");
+
+    assert!(
+        verify_link_result.is_ok(),
+        "ChainLink signature should verify"
+    );
     println!("✅ ChainLink signature binds child payload and issuer scope");
-    
+
     // Verify full chain
     let _data_plane = DataPlane::new();
     // Chain verification happens via embedded issuer_chain
@@ -104,23 +107,23 @@ fn test_cbor_payload_canonical_binding() {
 
     // Serialize
     let bytes1 = wire::encode(&warrant).unwrap();
-    
+
     // Deserialize
     let decoded = wire::decode(&bytes1).unwrap();
-    
+
     // Re-serialize
     let bytes2 = wire::encode(&decoded).unwrap();
-    
+
     // Must be byte-identical (deterministic CBOR)
     assert_eq!(
         bytes1, bytes2,
         "Serialization must be deterministic (canonical binding)"
     );
-    
+
     // Verify payload_bytes matches what's stored
     // The deserialization already checked canonical binding
     // Here we verify round-trip is lossless
-    
+
     println!("✅ CBOR canonical binding verified (round-trip deterministic)");
 }
 
@@ -138,7 +141,7 @@ fn test_payload_bytes_mismatch_detection() {
     // This test verifies the check exists by confirming that:
     // 1. Valid warrants pass (canonical bytes match)
     // 2. Round-trip preserves canonical bytes
-    
+
     let warrant = Warrant::builder()
         .tool("read")
         .constraint("path", Pattern::new("/data/*").unwrap())
@@ -149,20 +152,20 @@ fn test_payload_bytes_mismatch_detection() {
 
     // Serialize
     let bytes1 = wire::encode(&warrant).unwrap();
-    
+
     // Deserialize (canonical binding check happens here)
     let decoded = wire::decode(&bytes1).unwrap();
-    
+
     // Re-serialize
     let bytes2 = wire::encode(&decoded).unwrap();
-    
+
     // Must be identical
     assert_eq!(bytes1, bytes2, "Round-trip must preserve canonical bytes");
-    
+
     // The payload_bytes field is set during build() to be canonical
     // The deserialize() checks that recomputed canonical matches stored payload_bytes
     // If there was a mismatch, deserialize() would have failed
-    
+
     println!("✅ CBOR payload_bytes canonical binding enforced at deserialization");
     println!("   (See Warrant::deserialize for the check)");
 }
@@ -195,27 +198,27 @@ fn test_signature_reuse_across_warrants() {
 
     // ATTACK: Different warrants have different payload_bytes
     // If we could reuse signature A on warrant B, it would be catastrophic
-    
+
     // Verify payloads are different
     assert_ne!(
         warrant_a.payload_bytes(),
         warrant_b.payload_bytes(),
         "Different warrants must have different payload_bytes"
     );
-    
+
     // Verify that each warrant's signature only validates its own payload
     assert!(warrant_a.verify_signature().is_ok());
     assert!(warrant_b.verify_signature().is_ok());
-    
+
     // Test cross-verification (sig_a on warrant_b's bytes)
     let sig_a = warrant_a.signature();
     let verify_result = warrant_b.issuer().verify(warrant_b.payload_bytes(), sig_a);
-    
+
     assert!(
         verify_result.is_err(),
         "Signature from warrant A should not verify warrant B's payload"
     );
-    
+
     println!("✅ Signature reuse blocked (payload_bytes binding enforced)");
 }
 
@@ -246,14 +249,14 @@ fn test_parent_child_relationship_integrity() {
 
     // Verify parent_id is set correctly
     assert_eq!(child.parent_id(), Some(parent.id()));
-    
+
     // Verify depth increased
     assert_eq!(child.depth(), parent.depth() + 1);
-    
+
     // Verify issuer_chain contains parent info
     assert!(!child.issuer_chain().is_empty());
     assert_eq!(child.issuer_chain()[0].issuer_id, *parent.id());
-    
+
     println!("✅ Parent-child relationship correctly maintained (cycles prevented by design)");
 }
 
@@ -280,16 +283,14 @@ fn test_trust_ceiling_violation() {
         .unwrap();
 
     // ATTACK: Try to issue execution warrant with System trust level (exceeds Internal ceiling)
-    let result = issuer
-        .issue_execution_warrant()
-        .and_then(|builder| {
-            builder
-                .tool("read")
-                .ttl(Duration::from_secs(3600))  // Add required ttl
-                .trust_level(TrustLevel::System) // Exceeds ceiling
-                .authorized_holder(worker_kp.public_key())
-                .build(&issuer_kp, &issuer_kp)
-        });
+    let result = issuer.issue_execution_warrant().and_then(|builder| {
+        builder
+            .tool("read")
+            .ttl(Duration::from_secs(3600)) // Add required ttl
+            .trust_level(TrustLevel::System) // Exceeds ceiling
+            .authorized_holder(worker_kp.public_key())
+            .build(&issuer_kp, &issuer_kp)
+    });
 
     assert!(
         result.is_err(),
@@ -350,10 +351,7 @@ fn test_pop_future_timestamp() {
 
     let result = authorizer.authorize(&warrant, "transfer", &args, Some(&future_sig), &[]);
 
-    assert!(
-        result.is_err(),
-        "Future timestamp PoP should be rejected"
-    );
+    assert!(result.is_err(), "Future timestamp PoP should be rejected");
 
     let err = result.unwrap_err();
     println!("✅ Future timestamp PoP blocked: {}", err);
@@ -410,6 +408,79 @@ fn test_pop_old_timestamp_replay() {
     let err = result.unwrap_err();
     // PoP verification failure (could mention timestamp, window, or just "PoP failed")
     println!("✅ Old timestamp PoP replay blocked: {}", err);
+}
+
+/// Attack: Race condition at PoP timestamp window boundary.
+///
+/// Create PoP at window boundary, verify concurrently to exploit TOCTOU
+/// between window check and signature verification.
+///
+/// Expected: No race condition (window check and sig verify are atomic).
+///
+/// Note: The 30-second window makes this attack impractical in practice.
+/// This test documents the design property rather than exercising a real attack.
+#[test]
+fn test_pop_concurrent_window_boundary() {
+    use std::sync::Arc;
+    use std::thread;
+
+    let keypair = Arc::new(Keypair::generate());
+
+    let warrant = Arc::new(
+        Warrant::builder()
+            .tool("transfer")
+            .ttl(Duration::from_secs(3600))
+            .authorized_holder(keypair.public_key())
+            .build(&keypair)
+            .unwrap(),
+    );
+
+    let args: HashMap<String, ConstraintValue> =
+        [("amount".to_string(), ConstraintValue::Integer(100))]
+            .into_iter()
+            .collect();
+    let args = Arc::new(args);
+
+    let authorizer = Arc::new(Authorizer::new().with_trusted_root(keypair.public_key()));
+
+    // Create PoP signature (at current window)
+    let sig = warrant
+        .create_pop_signature(&keypair, "transfer", &args)
+        .unwrap();
+    let sig = Arc::new(sig);
+
+    // Spawn multiple threads to verify concurrently
+    let mut handles = vec![];
+
+    for _ in 0..10 {
+        let w = Arc::clone(&warrant);
+        let a = Arc::clone(&args);
+        let s = Arc::clone(&sig);
+        let auth = Arc::clone(&authorizer);
+
+        handles.push(thread::spawn(move || {
+            auth.authorize(&w, "transfer", &a, Some(&s), &[])
+        }));
+    }
+
+    // All should either succeed or fail consistently (no TOCTOU)
+    let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+    let successes = results.iter().filter(|r| r.is_ok()).count();
+    let failures = results.iter().filter(|r| r.is_err()).count();
+
+    // Should be all success or all failure, not a mix
+    assert!(
+        successes == 10 || failures == 10,
+        "Concurrent PoP verification should be consistent: {} success, {} failure",
+        successes,
+        failures
+    );
+
+    println!(
+        "✅ Concurrent PoP verification is consistent ({} success, {} failure)",
+        successes, failures
+    );
 }
 
 // ============================================================================
@@ -533,25 +604,30 @@ fn test_execution_warrant_tool_addition() {
     // AttenuationBuilder doesn't expose exec_tools publicly
     // But we can test via the internal validation by checking that
     // a child warrant with extra tools would fail authorization
-    
+
     // The parent only has "read"
     assert_eq!(parent.tools(), Some(&["read".to_string()][..]));
-    
+
     // Create a child (should only inherit or narrow tools, not add)
     let child = parent.attenuate().build(&keypair, &keypair).unwrap();
-    
+
     // Child should have same or fewer tools
     assert_eq!(child.tools(), Some(&["read".to_string()][..]));
-    
+
     // If child tries to authorize "write", it should fail
     let args: HashMap<String, ConstraintValue> = HashMap::new();
-    let sig = child.create_pop_signature(&keypair, "write", &args).unwrap();
-    
+    let sig = child
+        .create_pop_signature(&keypair, "write", &args)
+        .unwrap();
+
     let authorizer = Authorizer::new().with_trusted_root(keypair.public_key());
     let result = authorizer.authorize(&child, "write", &args, Some(&sig), &[]);
-    
-    assert!(result.is_err(), "Child should not have tools parent didn't have");
-    
+
+    assert!(
+        result.is_err(),
+        "Child should not have tools parent didn't have"
+    );
+
     println!("✅ Tool addition prevented (child inherits parent tools only)");
 }
 
@@ -573,16 +649,16 @@ fn test_issuer_warrant_tool_addition() {
 
     // ATTACK: Issuer warrants attenuate via same builder
     // The issuable_tools should not expand
-    
+
     // Parent has only "read" as issuable
     assert_eq!(parent.issuable_tools(), Some(&["read".to_string()][..]));
-    
+
     // Attenuate (should inherit or narrow)
     let child = parent.attenuate().build(&keypair, &keypair).unwrap();
-    
+
     // Child should have same or fewer issuable_tools
     assert_eq!(child.issuable_tools(), Some(&["read".to_string()][..]));
-    
+
     println!("✅ Issuable tool addition prevented (monotonic attenuation)");
 }
 
@@ -681,7 +757,7 @@ fn test_constraint_depth_dos() {
 /// Attack: Deserialize warrant with deeply nested constraint from CBOR.
 ///
 /// Expected: Deserialization fails with ConstraintDepthExceeded.
-/// 
+///
 /// Note: This tests the runtime deserialization guard. The build-time test
 /// is in test_constraint_depth_dos().
 #[test]
@@ -710,21 +786,21 @@ fn test_constraint_depth_deserialization_limit() {
 
     let err = result.unwrap_err();
     println!("✅ Constraint depth limit enforced at build: {}", err);
-    
+
     // Also test round-trip if we could somehow bypass build check
     // (Verifies deserialization guard is also in place)
-    
+
     // Manually create a ConstraintSet with deep nesting
     let mut constraints = ConstraintSet::new();
     constraints.insert("test", nested);
-    
+
     // Validate depth
     let validate_result = constraints.validate_depth();
     assert!(
         validate_result.is_err(),
         "ConstraintSet.validate_depth() should catch deep nesting"
     );
-    
+
     println!("✅ ConstraintSet.validate_depth() catches deep nesting");
 }
 
@@ -734,7 +810,11 @@ fn test_constraint_depth_deserialization_limit() {
 
 /// Attack: Create warrant with huge payload to cause memory exhaustion.
 ///
-/// Expected: PayloadTooLarge error.
+/// Expected: PayloadTooLarge error OR warrant under MAX_WARRANT_SIZE.
+///
+/// Note: This test documents the current behavior. Large warrants that fit
+/// under MAX_WARRANT_SIZE are allowed - this is intentional as there's no
+/// compelling security reason to limit tool count below the size limit.
 #[test]
 fn test_warrant_size_limit() {
     let keypair = Keypair::generate();
@@ -752,32 +832,28 @@ fn test_warrant_size_limit() {
         .authorized_holder(keypair.public_key())
         .build(&keypair);
 
-    // Depending on implementation, this might:
-    // 1. Succeed (no size limit enforced)
-    // 2. Fail with PayloadTooLarge
-    // 3. Fail with serialization error
-
     match result {
         Ok(warrant) => {
-            // Check if serialization is reasonable
             let bytes = wire::encode(&warrant).unwrap();
-            println!(
-                "⚠️ Large warrant created ({} tools, {} bytes)",
-                warrant.tools().map(|t| t.len()).unwrap_or(0),
-                bytes.len()
+            let tool_count = warrant.tools().map(|t| t.len()).unwrap_or(0);
+
+            // MUST NOT exceed MAX_WARRANT_SIZE
+            assert!(
+                bytes.len() <= tenuo_core::MAX_WARRANT_SIZE,
+                "Warrant size {} exceeds MAX_WARRANT_SIZE {}",
+                bytes.len(),
+                tenuo_core::MAX_WARRANT_SIZE
             );
 
-            // If it's bigger than MAX_WARRANT_SIZE, it should have been rejected
-            if bytes.len() > tenuo_core::MAX_WARRANT_SIZE {
-                panic!(
-                    "Warrant size {} exceeds MAX_WARRANT_SIZE {}",
-                    bytes.len(),
-                    tenuo_core::MAX_WARRANT_SIZE
-                );
-            }
+            println!(
+                "✅ Large warrant under size limit ({} tools, {} bytes, max {})",
+                tool_count,
+                bytes.len(),
+                tenuo_core::MAX_WARRANT_SIZE
+            );
         }
         Err(e) => {
-            println!("✅ Large warrant blocked: {}", e);
+            println!("✅ Large warrant blocked at build time: {}", e);
         }
     }
 }
@@ -788,7 +864,17 @@ fn test_warrant_size_limit() {
 
 /// Attack: Use child warrant without parent in chain.
 ///
-/// Expected: Chain verification fails (missing parent).
+/// Expected: SUCCEEDS - this is intentional design.
+///
+/// Tenuo embeds the issuer chain inside child warrants, making them
+/// self-contained. This is NOT a vulnerability - it's the design choice
+/// that enables stateless verification without requiring a separate
+/// chain of parent warrants to be passed around.
+///
+/// The security is maintained because:
+/// 1. ChainLink signature covers both child payload AND issuer scope
+/// 2. Root trust is verified against trusted_roots
+/// 3. Tampering with embedded chain invalidates signatures
 #[test]
 fn test_orphaned_child_warrant() {
     let parent_kp = Keypair::generate();
@@ -808,7 +894,7 @@ fn test_orphaned_child_warrant() {
         .unwrap();
 
     // ATTACK: Verify child alone (without parent in chain)
-    let data_plane = DataPlane::new();
+    let _data_plane = DataPlane::new();
 
     // Child has parent_id but if we try to verify without the parent:
     // This might succeed if chain is embedded, or fail if parent is required
@@ -831,7 +917,7 @@ fn test_orphaned_child_warrant() {
         result.is_ok(),
         "Self-contained chain verification should work (chain embedded in warrant)"
     );
-    
+
     println!("✅ Embedded chain allows self-contained verification");
     println!("   (Root trust verified via embedded issuer_chain)");
 }
@@ -937,13 +1023,17 @@ fn test_pop_tool_binding() {
 
     let authorizer = Authorizer::new().with_trusted_root(keypair.public_key());
 
-    let args: HashMap<String, ConstraintValue> =
-        [("file".to_string(), ConstraintValue::String("test.txt".to_string()))]
-            .into_iter()
-            .collect();
+    let args: HashMap<String, ConstraintValue> = [(
+        "file".to_string(),
+        ConstraintValue::String("test.txt".to_string()),
+    )]
+    .into_iter()
+    .collect();
 
     // Create PoP for "read"
-    let read_sig = warrant.create_pop_signature(&keypair, "read", &args).unwrap();
+    let read_sig = warrant
+        .create_pop_signature(&keypair, "read", &args)
+        .unwrap();
 
     // ATTACK: Use that signature for "write"
     let result = authorizer.authorize(&warrant, "write", &args, Some(&read_sig), &[]);
@@ -978,16 +1068,16 @@ fn test_trust_level_amplification() {
 
     // ATTACK: Try to elevate trust level during attenuation
     // Trust level should not increase
-    
+
     assert_eq!(parent.trust_level(), Some(TrustLevel::Internal));
-    
+
     // Attenuate (should inherit or lower trust)
     let child = parent.attenuate().build(&keypair, &keypair).unwrap();
-    
+
     // Child should have same or lower trust
     // (AttenuationBuilder doesn't allow setting higher trust)
     assert_eq!(child.trust_level(), Some(TrustLevel::Internal));
-    
+
     println!("✅ Trust level amplification prevented (monotonic attenuation)");
 }
 
@@ -1148,7 +1238,7 @@ fn test_cbor_canonical_map_key_ordering() {
     );
 
     println!("✅ CBOR serialization is deterministic (sorted map keys)");
-    
+
     // Verify signature still works after round-trip
     assert!(decoded.verify_signature().is_ok());
     println!("✅ Signature verifies after round-trip (canonical bytes preserved)");
@@ -1190,7 +1280,7 @@ fn test_untrusted_root_rejection() {
     // The warrant should be rejected because attacker_kp is not in trusted_roots
     // However, if the warrant has no issuer_chain, it might verify against its own issuer key
     // The Authorizer should check that the root is trusted
-    
+
     if result.is_ok() {
         println!("⚠️ Untrusted root was accepted (check Authorizer.authorize root trust logic)");
         println!("   This might be expected if the warrant is self-signed and has no chain");
@@ -1225,14 +1315,17 @@ fn test_dynamic_trusted_root_addition() {
 
     // Try to authorize before root is trusted
     let before_result = authorizer.authorize(&warrant, "test", &args, Some(&sig), &[]);
-    
+
     // Root warrants (no issuer_chain) might still verify if trust check isn't enforced
     // This tests the Authorizer behavior
     if before_result.is_ok() {
         println!("⚠️ Warrant accepted before root trusted (self-signed root verification)");
         println!("   Note: Root trust enforcement depends on Authorizer configuration");
     } else {
-        println!("✅ Warrant rejected before root trusted: {:?}", before_result.err());
+        println!(
+            "✅ Warrant rejected before root trusted: {:?}",
+            before_result.err()
+        );
     }
 
     // Add new root
@@ -1240,8 +1333,11 @@ fn test_dynamic_trusted_root_addition() {
 
     // Should succeed after adding root
     let after_result = authorizer.authorize(&warrant, "test", &args, Some(&sig), &[]);
-    
-    assert!(after_result.is_ok(), "Warrant should verify after root added");
+
+    assert!(
+        after_result.is_ok(),
+        "Warrant should verify after root added"
+    );
 
     println!("✅ Dynamic trusted root addition works (root can be added at runtime)");
 }
@@ -1277,7 +1373,9 @@ fn test_unicode_lookalike_bypass() {
     .into_iter()
     .collect();
 
-    let sig = warrant.create_pop_signature(&keypair, "read", &args).unwrap();
+    let sig = warrant
+        .create_pop_signature(&keypair, "read", &args)
+        .unwrap();
     let result = authorizer.authorize(&warrant, "read", &args, Some(&sig), &[]);
 
     assert!(
@@ -1314,13 +1412,12 @@ fn test_case_sensitivity_bypass() {
     .into_iter()
     .collect();
 
-    let sig = warrant.create_pop_signature(&keypair, "deploy", &args).unwrap();
+    let sig = warrant
+        .create_pop_signature(&keypair, "deploy", &args)
+        .unwrap();
     let result = authorizer.authorize(&warrant, "deploy", &args, Some(&sig), &[]);
 
-    assert!(
-        result.is_err(),
-        "Case variation should not match pattern"
-    );
+    assert!(result.is_err(), "Case variation should not match pattern");
     println!("✅ Case variation blocked (case-sensitive matching)");
 }
 

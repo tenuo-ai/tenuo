@@ -108,6 +108,11 @@ configure(
 - Surfaces integration issues without breaking tests
 - **Recommended for development/staging**
 
+**Tripwire** (`max_missing_warrant_warnings=N`):
+- Auto-flip to strict mode after N warnings
+- Prevents "warn fatigue" in production
+- `0` = disabled (default)
+
 See [Integration Safety](./integration-safety) for detailed guide.
 
 #### Errors

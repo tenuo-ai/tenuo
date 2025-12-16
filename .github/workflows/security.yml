@@ -1,0 +1,74 @@
+name: Security Tests
+
+on:
+  push:
+    branches: [main, camel]
+  pull_request:
+    branches: [main, camel]
+  schedule:
+    # Run security tests weekly on Sunday at 3am UTC
+    - cron: '0 3 * * 0'
+
+jobs:
+  python-security:
+    runs-on: ubuntu-latest
+    name: Python Red Team Tests
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov
+          pip install -e tenuo-python[dev]
+      
+      - name: Run security tests
+        run: |
+          pytest tenuo-python/tests/security/ -v --tb=short -m security
+      
+      - name: Run integration responsibility tests
+        run: |
+          pytest tenuo-python/tests/security/ -v --tb=short -m integration_responsibility
+
+  rust-security:
+    runs-on: ubuntu-latest
+    name: Rust Red Team Tests
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tenuo-core
+      
+      - name: Run red team tests
+        working-directory: tenuo-core
+        run: |
+          cargo test --test red_team -- --nocapture
+
+  security-audit:
+    runs-on: ubuntu-latest
+    name: Dependency Audit
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Rust audit
+        uses: rustsec/audit-check@v1.4.1
+        with:
+          working-directory: tenuo-core
+      
+      - name: Python audit
+        run: |
+          pip install pip-audit
+          pip-audit --requirement tenuo-python/requirements.txt || true

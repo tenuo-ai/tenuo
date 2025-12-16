@@ -1,14 +1,12 @@
 ---
-# Tenuo Authorizer Deployment for Istio
-# This deployment runs the Tenuo authorizer as an external authorization service
-# that Istio will call to validate requests.
+# Tenuo Authorizer Deployment for Envoy
+# This is the same authorizer used in the Istio quickstart
+# It works with both Istio and standalone Envoy
 
 apiVersion: v1
 kind: Namespace
 metadata:
   name: tenuo-system
-  labels:
-    istio-injection: enabled
 
 ---
 apiVersion: v1
@@ -71,7 +69,7 @@ spec:
           value: "info"
         volumeMounts:
         - name: config
-          mountPath: "/etc/tenuo"
+          mountPath: /etc/tenuo
           readOnly: true
         resources:
           requests:

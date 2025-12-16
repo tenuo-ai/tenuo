@@ -22,7 +22,8 @@ Thank you for your interest in contributing to Tenuo! We welcome contributions f
     ```bash
     python3 -m venv .venv
     source .venv/bin/activate
-    pip install -r tenuo-python/requirements-dev.txt
+    cd tenuo-python
+    pip install -e ".[dev]"
     ```
 
 3.  Build the project:
@@ -67,4 +68,4 @@ Please ensure this script passes before submitting a Pull Request.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the project's [MIT License](LICENSE).
+By contributing, you agree that your contributions will be licensed under the project's [MIT OR Apache-2.0 License](LICENSE).

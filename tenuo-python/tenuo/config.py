@@ -69,6 +69,10 @@ class TenuoConfig:
     strict_mode: bool = False  # Panic on missing warrant (fail-closed enforcement)
     warn_on_missing_warrant: bool = False  # Warn loudly if tool called without warrant
     
+    # Tripwire: flip to hard-fail after N warnings (0 = disabled)
+    max_missing_warrant_warnings: int = 0
+    _missing_warrant_count: int = field(default=0, repr=False)
+    
     # Cached authorizer (lazily created)
     _authorizer: Optional[Authorizer] = field(default=None, repr=False)
     
@@ -121,6 +125,7 @@ def configure(
     allow_self_signed: bool = False,
     strict_mode: bool = False,
     warn_on_missing_warrant: bool = False,
+    max_missing_warrant_warnings: int = 0,
 ) -> None:
     """
     Configure Tenuo globally.
@@ -137,6 +142,9 @@ def configure(
         dev_mode: Enable development mode (relaxed security)
         allow_passthrough: Allow tool calls without warrants (dev_mode only)
         allow_self_signed: Trust self-signed warrants (dev_mode only)
+        strict_mode: Raise RuntimeError on missing warrant (fail-closed)
+        warn_on_missing_warrant: Emit warnings for missing warrant contexts
+        max_missing_warrant_warnings: Tripwire - auto-flip to strict after N warnings (0=disabled)
     
     Raises:
         ConfigurationError: If invalid configuration
@@ -197,6 +205,7 @@ def configure(
         allow_self_signed=allow_self_signed,
         strict_mode=strict_mode,
         warn_on_missing_warrant=warn_on_missing_warrant,
+        max_missing_warrant_warnings=max_missing_warrant_warnings,
     )
 
 

@@ -25,11 +25,27 @@ Example with ContextVar (LangChain/FastAPI pattern):
 Audit Logging:
     All authorization decisions are logged as structured JSON events.
     Configure via: tenuo.audit.audit_logger.configure(service_name="my-service")
+
+IMPORTANT: Async Context Sharp Edges
+====================================
+Python contextvars work correctly with:
+- `async def` functions and `await`
+- `asyncio.gather()` / `asyncio.wait()`
+
+But NOT automatically with:
+- `asyncio.create_task()` called BEFORE context is set
+- `concurrent.futures.ThreadPoolExecutor` / `ProcessPoolExecutor`
+- Callbacks scheduled with `loop.call_soon()` / `loop.call_later()`
+
+For thread pools, use `contextvars.copy_context().run(fn)` or
+the helper `tenuo.spawn()` when available.
 """
 
 from functools import wraps
 from typing import Callable, List, Optional, Union
 from contextvars import ContextVar
+import traceback
+import warnings
 from .exceptions import (
     ScopeViolation,
     ConstraintViolation,
@@ -38,13 +54,83 @@ from .exceptions import (
 )
 from .audit import audit_logger, AuditEvent, AuditEventType
 
+
+# =============================================================================
+# Error Codes for Structured Logging
+# =============================================================================
+
+class AuthErrorCode:
+    """Standard error codes for authorization failures."""
+    MISSING_CONTEXT = "MISSING_CONTEXT"  # No warrant in context
+    INVALID_WARRANT = "INVALID_WARRANT"  # Warrant malformed or wrong type
+    EXPIRED = "EXPIRED"                   # Warrant has expired
+    SCOPE_VIOLATION = "SCOPE_VIOLATION"  # Tool not in warrant.tools
+    CONSTRAINT_VIOLATION = "CONSTRAINT_VIOLATION"  # Args don't satisfy constraints
+    POP_MISSING = "POP_MISSING"          # Keypair not available for PoP
+    POP_INVALID = "POP_INVALID"          # PoP signature invalid
+    HOLDER_MISMATCH = "HOLDER_MISMATCH"  # Wrong keypair for warrant holder
+
+
 # Custom warning category for integration issues
 class SecurityWarning(UserWarning):
     """Warning for potential security/integration issues."""
     pass
 
-# Runtime imports
-from tenuo_core import Warrant, Keypair  # type: ignore[import-untyped]
+
+def _get_callsite() -> str:
+    """
+    Get the callsite (filename:line) of the tool invocation.
+    
+    Walks up the stack to find the first frame outside tenuo internals.
+    """
+    for frame_info in traceback.extract_stack():
+        # Skip tenuo internals
+        if '/tenuo/' in frame_info.filename or frame_info.filename.endswith('decorators.py'):
+            continue
+        return f"{frame_info.filename}:{frame_info.lineno}"
+    return "unknown"
+
+
+def _make_actionable_error(
+    error_code: str,
+    tool_name: str,
+    func_name: str,
+    callsite: str,
+    details: str,
+) -> str:
+    """Create an actionable error message that helps developers fix the issue."""
+    base = f"[{error_code}] {details}\n"
+    base += f"\n  Tool: {tool_name}"
+    base += f"\n  Function: {func_name}"
+    base += f"\n  Location: {callsite}"
+    
+    # Add specific fix suggestions based on error code
+    if error_code == AuthErrorCode.MISSING_CONTEXT:
+        base += "\n\nTo fix:"
+        base += "\n  1. Wrap the call with: async with root_task(tools=[...]):"
+        base += "\n  2. Or use: with set_warrant_context(warrant), set_keypair_context(keypair):"
+        base += f"\n  3. Or pass warrant explicitly: @lockdown(warrant, tool='{tool_name}')"
+    elif error_code == AuthErrorCode.POP_MISSING:
+        base += "\n\nTo fix:"
+        base += "\n  1. Add keypair to context: with set_keypair_context(keypair):"
+        base += "\n  2. Or use root_task() which handles this automatically"
+    elif error_code == AuthErrorCode.EXPIRED:
+        base += "\n\nTo fix:"
+        base += "\n  1. Issue a new warrant with root_task()"
+        base += "\n  2. Or check TTL configuration"
+    elif error_code == AuthErrorCode.SCOPE_VIOLATION:
+        base += "\n\nTo fix:"
+        base += f"\n  1. Add '{tool_name}' to warrant tools: root_task(tools=['{tool_name}', ...])"
+        base += "\n  2. Or use scoped_task to narrow from parent warrant"
+    elif error_code == AuthErrorCode.CONSTRAINT_VIOLATION:
+        base += "\n\nTo fix:"
+        base += "\n  1. Check if the function arguments satisfy the warrant constraints"
+        base += "\n  2. Or issue a warrant with appropriate constraints"
+    
+    return base
+
+# Runtime imports (after class definitions above)
+from tenuo_core import Warrant, Keypair  # type: ignore[import-untyped]  # noqa: E402
 
 # Context variable for warrant storage (works with both threads and asyncio)
 # This allows warrants to be passed through async call stacks without explicit threading
@@ -239,36 +325,112 @@ def lockdown(
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
+            from .config import get_config
+            
+            config = get_config()
+            callsite = _get_callsite()
+            func_name = f"{func.__module__}.{func.__qualname__}"
+            
             # Get warrant: explicit or from context
             warrant_to_use = active_warrant
             if warrant_to_use is None:
                 warrant_to_use = get_warrant_context()
             
             if warrant_to_use is None:
-                # Log authorization failure - no warrant
+                # Handle missing warrant based on configuration
+                error_code = AuthErrorCode.MISSING_CONTEXT
+                
+                # Log with structured audit event (includes callsite)
                 audit_logger.log(AuditEvent(
                     event_type=AuditEventType.AUTHORIZATION_FAILURE,
                     tool=tool_name,
                     action="denied",
-                    error_code="no_warrant",
-                    details=f"No warrant available for {tool_name}",
+                    error_code=error_code,
+                    details=f"No warrant context for {tool_name}",
+                    metadata={
+                        "callsite": callsite,
+                        "function": func_name,
+                    },
                 ))
-                raise ScopeViolation(
-                    f"No warrant available for {tool_name}. "
-                    "Either pass warrant explicitly or set it in context using set_warrant_context()."
-                )
+                
+                # Check strict_mode or tripwire
+                should_fail = config.strict_mode
+                
+                # Tripwire: auto-flip to strict after N warnings
+                if config.max_missing_warrant_warnings > 0:
+                    config._missing_warrant_count += 1
+                    if config._missing_warrant_count >= config.max_missing_warrant_warnings:
+                        should_fail = True
+                        warnings.warn(
+                            f"Tripwire triggered: {config._missing_warrant_count} missing warrant warnings "
+                            f"reached threshold ({config.max_missing_warrant_warnings}). "
+                            "Switching to strict mode (hard fail).",
+                            SecurityWarning,
+                            stacklevel=2,
+                        )
+                
+                if should_fail:
+                    error_msg = _make_actionable_error(
+                        error_code=error_code,
+                        tool_name=tool_name,
+                        func_name=func_name,
+                        callsite=callsite,
+                        details=f"No warrant context available for tool '{tool_name}'.",
+                    )
+                    raise RuntimeError(error_msg)
+                
+                elif config.warn_on_missing_warrant:
+                    warning_msg = (
+                        f"[{error_code}] Tool '{tool_name}' called without warrant context.\n"
+                        f"  Function: {func_name}\n"
+                        f"  Location: {callsite}\n"
+                        "  This would fail in strict_mode. Add root_task() or set_warrant_context()."
+                    )
+                    warnings.warn(warning_msg, SecurityWarning, stacklevel=2)
+                    # Passthrough allowed - continue without authorization
+                    return func(*args, **kwargs)
+                
+                elif config.allow_passthrough:
+                    # Dev mode passthrough - just execute
+                    return func(*args, **kwargs)
+                
+                else:
+                    # Default: raise exception
+                    error_msg = _make_actionable_error(
+                        error_code=error_code,
+                        tool_name=tool_name,
+                        func_name=func_name,
+                        callsite=callsite,
+                        details=f"No warrant context available for tool '{tool_name}'.",
+                    )
+                    raise ScopeViolation(error_msg)
             
             # Check warrant expiry BEFORE any further processing
             if warrant_to_use.is_expired():
                 expires_at = warrant_to_use.expires_at() if hasattr(warrant_to_use, 'expires_at') else "unknown"
+                error_code = AuthErrorCode.EXPIRED
+                
                 audit_logger.log(AuditEvent(
                     event_type=AuditEventType.WARRANT_EXPIRED,
                     warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else None,
                     tool=tool_name,
                     action="denied",
-                    error_code="warrant_expired",
+                    error_code=error_code,
                     details=f"Warrant expired at {expires_at}",
+                    metadata={
+                        "callsite": callsite,
+                        "function": func_name,
+                        "expires_at": str(expires_at),
+                    },
                 ))
+                
+                error_msg = _make_actionable_error(
+                    error_code=error_code,
+                    tool_name=tool_name,
+                    func_name=func_name,
+                    callsite=callsite,
+                    details=f"Warrant expired at {expires_at}.",
+                )
                 raise ExpiredError(
                     warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else "unknown",
                     expired_at=expires_at
@@ -281,14 +443,28 @@ def lockdown(
             
             # PoP is MANDATORY - keypair must always be available
             if keypair_to_use is None:
+                error_code = AuthErrorCode.POP_MISSING
+                
                 audit_logger.log(AuditEvent(
                     event_type=AuditEventType.POP_FAILED,
                     warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else None,
                     tool=tool_name,
                     action="denied",
-                    error_code="no_keypair_for_pop",
+                    error_code=error_code,
                     details=f"Proof-of-Possession is mandatory but no keypair available for {tool_name}",
+                    metadata={
+                        "callsite": callsite,
+                        "function": func_name,
+                    },
                 ))
+                
+                error_msg = _make_actionable_error(
+                    error_code=error_code,
+                    tool_name=tool_name,
+                    func_name=func_name,
+                    callsite=callsite,
+                    details="Proof-of-Possession is mandatory but no keypair available.",
+                )
                 raise MissingKeypair(tool=tool_name)
             
             # Extract arguments for authorization
@@ -337,7 +513,15 @@ def lockdown(
             # Check authorization (with PoP signature if required)
             # Note: pop_signature is list[int], must convert to bytes
             if not warrant_to_use.authorize(tool_name, auth_args, signature=bytes(pop_signature)):
-                # Log authorization failure
+                # Determine specific failure type
+                warrant_tools = warrant_to_use.tools if hasattr(warrant_to_use, 'tools') else []
+                if tool_name not in (warrant_tools or []):
+                    error_code = AuthErrorCode.SCOPE_VIOLATION
+                    details = f"Tool '{tool_name}' not in warrant.tools: {warrant_tools}"
+                else:
+                    error_code = AuthErrorCode.CONSTRAINT_VIOLATION
+                    details = f"Arguments do not satisfy warrant constraints for '{tool_name}'"
+                
                 audit_logger.log(AuditEvent(
                     event_type=AuditEventType.AUTHORIZATION_FAILURE,
                     warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else None,
@@ -345,12 +529,26 @@ def lockdown(
                     action="denied",
                     constraints=auth_args,
                     trace_id=warrant_to_use.session_id if hasattr(warrant_to_use, 'session_id') else None,
-                    error_code="constraint_violation",
-                    details=f"Warrant does not authorize {tool_name} with provided args",
+                    error_code=error_code,
+                    details=details,
+                    metadata={
+                        "callsite": callsite,
+                        "function": func_name,
+                        "warrant_tools": warrant_tools,
+                        "provided_args": {k: str(v)[:100] for k, v in auth_args.items()},  # Truncate for safety
+                    },
                 ))
+                
+                error_msg = _make_actionable_error(
+                    error_code=error_code,
+                    tool_name=tool_name,
+                    func_name=func_name,
+                    callsite=callsite,
+                    details=details,
+                )
                 raise ConstraintViolation(
                     field="authorization",
-                    reason=f"Warrant does not authorize {tool_name} with provided args",
+                    reason=error_msg,
                     value=auth_args
                 )
             
@@ -363,6 +561,10 @@ def lockdown(
                 constraints=auth_args,
                 trace_id=warrant_to_use.session_id if hasattr(warrant_to_use, 'session_id') else None,
                 details=f"Authorization successful for {tool_name}",
+                metadata={
+                    "callsite": callsite,
+                    "function": func_name,
+                },
             ))
             
             # Execute the function

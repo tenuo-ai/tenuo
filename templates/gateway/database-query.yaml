@@ -1,0 +1,98 @@
+# Database Query Gateway Configuration
+# Use this template for database access control
+
+version: "1"
+
+settings:
+  warrant_header: "X-Tenuo-Warrant"
+  pop_header: "X-Tenuo-PoP"
+  clock_tolerance_secs: 30
+  
+  # Add your control plane's public key here
+  trusted_roots:
+    - "YOUR_CONTROL_PLANE_PUBLIC_KEY_HEX"
+  
+  # Debug mode (adds X-Tenuo-Deny-Reason header on 403)
+  # WARNING: Do not enable in production!
+  # debug_mode: false
+
+tools:
+  database_query:
+    description: "Execute database queries"
+    constraints:
+      database:
+        from: path
+        path: "database"
+        description: "Database name"
+        required: true
+      
+      table:
+        from: body
+        path: "query.table"
+        description: "Target table name"
+        required: true
+      
+      operation:
+        from: body
+        path: "query.operation"
+        description: "SQL operation type"
+        required: true
+        # Warrant should constrain this with OneOf constraint
+      
+      row_limit:
+        from: body
+        path: "query.limit"
+        description: "Maximum rows to return"
+        type: integer
+        default: 100
+      
+      timeout_ms:
+        from: body
+        path: "query.timeout_ms"
+        description: "Query timeout in milliseconds"
+        type: integer
+        default: 5000
+  
+  database_mutation:
+    description: "Modify database records"
+    constraints:
+      database:
+        from: path
+        path: "database"
+        description: "Database name"
+        required: true
+      
+      table:
+        from: body
+        path: "mutation.table"
+        description: "Target table name"
+        required: true
+      
+      operation:
+        from: body
+        path: "mutation.operation"
+        description: "Mutation type (insert, update, delete)"
+        required: true
+      
+      affected_rows:
+        from: body
+        path: "mutation.max_affected_rows"
+        description: "Maximum rows that can be affected"
+        type: integer
+        default: 1
+      
+      requires_approval:
+        from: body
+        path: "mutation.requires_approval"
+        description: "Whether this mutation requires approval"
+        type: boolean
+        default: false
+
+routes:
+  - pattern: "/api/v1/databases/{database}/query"
+    method: ["POST"]
+    tool: "database_query"
+  
+  - pattern: "/api/v1/databases/{database}/mutate"
+    method: ["POST", "PUT", "DELETE"]
+    tool: "database_mutation"

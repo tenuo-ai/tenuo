@@ -1,13 +1,8 @@
 
 import pytest
 import sys
-import datetime
 from tenuo import (
-    Warrant, Keypair, Pattern, Range, Exact, NotOneOf,
-    ConstraintViolation, PatternExpanded, RangeExpanded,
-    InvalidPattern, InvalidRange, InvalidWarrantId,
-    ExpiredError, RevokedError, SignatureInvalid,
-    MissingSignature, ToolMismatch, ParentRequired
+    Warrant, Keypair, Pattern, Range, Exact, PatternExpanded, RangeExpanded
 )
 
 class TestErrorMapping:
@@ -87,7 +82,7 @@ class TestErrorMapping:
     def test_expired_error(self, keypair):
         """Verify ExpiredError mapping."""
         # Issue warrant with 0 TTL
-        warrant = Warrant.issue(
+        _warrant = Warrant.issue(
             tools="test",
             ttl_seconds=0,
             keypair=keypair

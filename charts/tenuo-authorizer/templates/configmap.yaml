@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tenuo-authorizer.fullname" . }}-config
+  labels:
+    {{- include "tenuo-authorizer.labels" . | nindent 4 }}
+data:
+  gateway.yaml: |
+    version: "1"
+    
+    settings:
+      warrant_header: {{ .Values.config.warrantHeader | quote }}
+      pop_header: {{ .Values.config.popHeader | quote }}
+      clock_tolerance_secs: {{ .Values.config.clockToleranceSecs }}
+      {{- if .Values.config.trustedRoots }}
+      trusted_roots:
+        {{- range .Values.config.trustedRoots }}
+        - {{ . | quote }}
+        {{- end }}
+      {{- else }}
+      trusted_roots: []
+      {{- end }}
+      {{- if .Values.config.debugMode }}
+      debug_mode: true
+      {{- end }}
+    
+    {{- if .Values.gateway.tools }}
+    tools:
+      {{- toYaml .Values.gateway.tools | nindent 6 }}
+    {{- else }}
+    tools: {}
+    {{- end }}
+    
+    {{- if .Values.gateway.routes }}
+    routes:
+      {{- toYaml .Values.gateway.routes | nindent 6 }}
+    {{- else }}
+    routes: []
+    {{- end }}

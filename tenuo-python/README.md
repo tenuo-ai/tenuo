@@ -60,13 +60,7 @@ worker_warrant = warrant.attenuate(
 )
 
 # Authorize an action (requires Proof-of-Possession)
-# Note: For most use cases, use @lockdown decorator which handles PoP automatically.
-# This manual approach is shown for understanding the underlying mechanism.
-#
-# ⚠️ SECURITY NOTE: PoP Replay Window
-# PoP signatures are valid for ~2 minutes (30-second windows) to handle clock skew.
-# For high-security operations, implement request deduplication using
-# (warrant_id, tool, args) as a cache key with 2-minute TTL.
+# See docs/security.md for PoP replay prevention best practices.
 #
 # 1. Create a PoP signature using the worker's private key
 args = {"cluster": "staging-web", "budget": 500.0}
@@ -302,6 +296,7 @@ python examples/mcp_integration.py
 - **[Constraints](../docs/constraints.md)**: Constraint types and usage
 - **[LangChain Integration](../docs/langchain.md)**: Tool protection
 - **[Security Model](../docs/security.md)**: Threat model, best practices
+- **[Integration Safety](../docs/integration-safety.md)**: Strict mode, warnings, fail-safe mechanisms
 - **[CLI Specification](../docs/cli-spec.md)**: CLI reference
 - **[Examples](examples/README.md)**: Python usage examples
 

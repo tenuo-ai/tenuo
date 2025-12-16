@@ -1,0 +1,157 @@
+# Default values for tenuo-authorizer
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+replicaCount: 2
+
+image:
+  repository: tenuo/authorizer
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Tenuo configuration
+config:
+  # HTTP headers for warrant and PoP
+  warrantHeader: "X-Tenuo-Warrant"
+  popHeader: "X-Tenuo-PoP"
+  
+  # Clock tolerance for expiration checks (seconds)
+  clockToleranceSecs: 30
+  
+  # Trusted issuer public keys (hex-encoded)
+  # These are the control plane keys that can issue root warrants
+  trustedRoots: []
+    # - "f32e74b5b8569dc288db0109b7ec0d8eb3b4e5be7b07c647171d53fd31e7391f"
+    # - "a1b2c3d4e5f6..."
+  
+  # Debug mode (adds X-Tenuo-Deny-Reason header on 403)
+  # WARNING: Do not enable in production
+  debugMode: false
+
+# Gateway configuration
+# Define tools and routes for request matching and constraint extraction
+gateway:
+  # Tool definitions with extraction rules
+  tools: {}
+    # Example:
+    # manage_infrastructure:
+    #   description: "Kubernetes cluster management"
+    #   constraints:
+    #     cluster:
+    #       from: path
+    #       path: "cluster"
+    #       required: true
+  
+  # Route matching configuration
+  routes: []
+    # Example:
+    # - pattern: "/api/v1/clusters/{cluster}/{action}"
+    #   method: ["POST", "PUT"]
+    #   tool: "manage_infrastructure"
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Automatically mount a ServiceAccount's API credentials?
+  automount: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+
+service:
+  type: ClusterIP
+  port: 9090
+  annotations: {}
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+# Liveness and readiness probes
+livenessProbe:
+  grpc:
+    port: 9090
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+readinessProbe:
+  grpc:
+    port: 9090
+  initialDelaySeconds: 3
+  periodSeconds: 5
+  timeoutSeconds: 2
+  failureThreshold: 2
+
+# Autoscaling configuration
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  # maxUnavailable: 1
+
+# Additional volumes on the output Deployment definition.
+volumes: []
+# - name: foo
+#   secret:
+#     secretName: mysecret
+#     optional: false
+
+# Additional volumeMounts on the output Deployment definition.
+volumeMounts: []
+# - name: foo
+#   mountPath: "/etc/foo"
+#   readOnly: true
+
+nodeSelector: {}
+
+tolerations: []
+
+# Pod anti-affinity to spread replicas across nodes for HA
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - tenuo-authorizer
+          topologyKey: kubernetes.io/hostname
+

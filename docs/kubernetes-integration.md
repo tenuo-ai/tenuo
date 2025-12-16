@@ -7,7 +7,29 @@ description: Deployment patterns for Kubernetes
 
 Tenuo provides primitives. You build the integration that fits your setup.
 
+## Quickstart Guides
+
+Get started in 5 minutes with one of these quickstart guides:
+
+### 🚀 [Istio Quickstart](../quickstart/istio/README.md)
+**Best for:** Teams already using Istio service mesh
+
+- Uses Istio's `ExtensionProvider` + `AuthorizationPolicy`
+- Declarative policy-based configuration
+- Integrates with existing Istio setup
+- **Time to first 403:** 5 minutes
+
+### 🚀 [Envoy Quickstart](../quickstart/envoy/README.md)
+**Best for:** Standalone Envoy proxy without service mesh
+
+- Direct Envoy `ext_authz` filter configuration
+- No service mesh required
+- Full control over Envoy config
+- **Time to first 403:** 5 minutes
+
 ---
+
+## Primitives
 
 ## Primitives
 
@@ -432,7 +454,8 @@ Key metrics:
 
 ## See Also
 
-- [**Istio Quickstart (5 min)**](../quickstart/istio/README.md) — Get to first-403 in 5 minutes
+- [**Istio Quickstart (5 min)**](../quickstart/istio/README.md) — Service mesh integration
+- [**Envoy Quickstart (5 min)**](../quickstart/envoy/README.md) — Standalone proxy setup
 - [Deployment Patterns](./deployment.md) — Envoy, Istio, nginx integration
 - [Gateway Configuration](./gateway-config.md) — YAML config reference
 - [LangChain Integration](./langchain.md)

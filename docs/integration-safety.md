@@ -47,7 +47,7 @@ def buggy_wrapper(warrant, arg):
 
 **Fail-closed enforcement**: Panic if a tool is called without warrant context.
 
-###configure(strict_mode=True)
+### configure(strict_mode=True)
 
 ```python
 from tenuo import configure, Keypair
@@ -69,10 +69,29 @@ def read_file(path: str):
 
 # ❌ Called without warrant context
 read_file("/data/test.txt")
-# RuntimeError: STRICT MODE VIOLATION: Tool 'read_file' called without warrant context.
-# This indicates an integration bug where @lockdown is used but no warrant is set.
-# Fix: Ensure set_warrant_context() or root_task() is active before calling this tool.
 ```
+
+**Actionable Error Message:**
+
+```
+RuntimeError: [MISSING_CONTEXT] No warrant context available for tool 'read_file'.
+
+  Tool: read_file
+  Function: my_module.read_file
+  Location: /app/handlers.py:42
+
+To fix:
+  1. Wrap the call with: async with root_task(tools=[...]):
+  2. Or use: with set_warrant_context(warrant), set_keypair_context(keypair):
+  3. Or pass warrant explicitly: @lockdown(warrant, tool='read_file')
+```
+
+The error includes:
+- **Error code** (`MISSING_CONTEXT`, `EXPIRED`, `SCOPE_VIOLATION`, etc.)
+- **Tool name** being called
+- **Function** full path (`module.function`)
+- **Callsite** (`filename:line`)
+- **Fix suggestions** specific to the error type
 
 **When to use:**
 - ✅ **Development/staging** - Catch integration bugs early
@@ -121,7 +140,39 @@ read_file("/data/test.txt")
 
 ---
 
-## Solution 3: Audit Log Monitoring
+## Solution 3: Tripwire Mode
+
+**Auto-escalate to strict mode** after N warnings. Prevents "warn fatigue" where warnings become noise.
+
+### configure(max_missing_warrant_warnings=10)
+
+```python
+configure(
+    issuer_key=Keypair.generate(),
+    warn_on_missing_warrant=True,
+    max_missing_warrant_warnings=10,  # ← Auto-flip to strict after 10 warnings
+)
+```
+
+**Behavior:**
+
+```python
+# First 9 calls: warnings
+for i in range(9):
+    unprotected_tool()  # UserWarning: Tool 'tool' called without warrant context
+
+# 10th call: tripwire triggers
+unprotected_tool()
+# UserWarning: Tripwire triggered: 10 missing warrant warnings reached threshold (10).
+#              Switching to strict mode (hard fail).
+# RuntimeError: [MISSING_CONTEXT] No warrant context available for tool 'tool'.
+```
+
+**Use case:** Production deployment with safety net. Start with warnings, auto-escalate if someone is flooding the system without warrants.
+
+---
+
+## Solution 4: Audit Log Monitoring
 
 Even without strict/warning modes, ALL authorization failures are logged.
 
@@ -299,6 +350,95 @@ def my_wrapper(warrant, arg):
 
 ---
 
+## Async Context Sharp Edges
+
+Python `contextvars` work correctly in most async scenarios, but there are known pitfalls:
+
+### ✅ Works Correctly
+
+```python
+# async/await - context propagates
+async with root_task(tools=["search"]):
+    result = await search("query")  # ✅ Has warrant context
+
+# asyncio.gather - context propagates
+async with root_task(tools=["search", "read"]):
+    results = await asyncio.gather(
+        search("query"),   # ✅ Has warrant context
+        read_file("path")  # ✅ Has warrant context
+    )
+```
+
+### ⚠️ Known Issues
+
+```python
+# 1. create_task BEFORE context is set
+task = asyncio.create_task(search("query"))  # ❌ No context yet!
+async with root_task(tools=["search"]):      # Context set after task created
+    await task  # Task runs without context
+
+# 2. Thread pool executors
+async with root_task(tools=["search"]):
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, sync_search, "query")  # ❌ Different thread
+
+# 3. Manual threads
+async with root_task(tools=["search"]):
+    thread = Thread(target=sync_search, args=("query",))
+    thread.start()  # ❌ Threads don't inherit contextvars
+```
+
+### Mitigations
+
+```python
+# For create_task: create INSIDE the context
+async with root_task(tools=["search"]):
+    task = asyncio.create_task(search("query"))  # ✅ Context copied at creation
+    await task
+
+# For thread pools: use copy_context
+import contextvars
+
+async with root_task(tools=["search"]):
+    ctx = contextvars.copy_context()
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, ctx.run, sync_search, "query")  # ✅
+
+# For manual threads: use copy_context
+async with root_task(tools=["search"]):
+    ctx = contextvars.copy_context()
+    thread = Thread(target=ctx.run, args=(sync_search, "query"))
+    thread.start()  # ✅
+```
+
+**Best Practice**: Enable `strict_mode=True` in development to surface these issues early.
+
+---
+
+## Error Codes
+
+Tenuo uses structured error codes for all authorization failures:
+
+| Code | Meaning |
+|------|---------|
+| `MISSING_CONTEXT` | No warrant in context |
+| `INVALID_WARRANT` | Warrant malformed or wrong type |
+| `EXPIRED` | Warrant has expired |
+| `SCOPE_VIOLATION` | Tool not in warrant.tools |
+| `CONSTRAINT_VIOLATION` | Args don't satisfy constraints |
+| `POP_MISSING` | Keypair not available for PoP |
+| `POP_INVALID` | PoP signature invalid |
+| `HOLDER_MISMATCH` | Wrong keypair for warrant holder |
+
+All errors include:
+- Error code
+- Tool name
+- Function name and module
+- Callsite (filename:line)
+- Specific fix suggestions
+
+---
+
 ## Limitations
 
 ### ⚠️ Strict Mode Cannot Detect
@@ -321,6 +461,23 @@ def my_wrapper(warrant, arg):
 - ✅ Missing `set_warrant_context()` or `root_task()`
 - ✅ Tools called outside authorization scope
 - ✅ Context isolation issues (threads, async)
+
+### ⚠️ Static Analysis Gap
+
+Strict mode only catches runtime issues. Tools without `@lockdown` are invisible to Tenuo entirely.
+
+```python
+# This function is NEVER checked by Tenuo
+def dangerous_tool(arg: str):
+    delete_database(arg)  # No @lockdown = no protection
+
+# Tenuo only sees functions it decorates
+@lockdown(tool="safe_tool")
+def safe_tool(arg: str):
+    read_data(arg)  # ✅ Protected
+```
+
+**Future**: We're exploring a `tenuo lint` command to statically detect unprotected functions.
 
 ---
 
@@ -492,7 +649,7 @@ finally:
 
 ## See Also
 
-- [Red Team Tests](../tenuo-python/red_team.py) - Attack scenarios that strict mode catches
+- [Security Tests](../tenuo-python/tests/security/) - Attack scenarios that strict mode catches
 - [API Reference → configure()](./api-reference#configuration) - Full configuration options
 - [Security Model](./security) - Overall security guarantees
 - [Argument Extraction](./argument-extraction) - How authorization works

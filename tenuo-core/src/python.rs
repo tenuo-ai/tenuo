@@ -43,90 +43,178 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
 
         let (exc_name, args) = match &e {
             // Crypto
-            crate::error::Error::SignatureInvalid(m) => ("SignatureInvalid", PyTuple::new_bound(py, [m.as_str()])),
-            crate::error::Error::MissingSignature(m) => ("MissingSignature", PyTuple::new_bound(py, [m.as_str()])),
-            crate::error::Error::CryptoError(m) => ("CryptoError", PyTuple::new_bound(py, [m.as_str()])),
+            crate::error::Error::SignatureInvalid(m) => {
+                ("SignatureInvalid", PyTuple::new(py, [m.as_str()]))
+            }
+            crate::error::Error::MissingSignature(m) => {
+                ("MissingSignature", PyTuple::new(py, [m.as_str()]))
+            }
+            crate::error::Error::CryptoError(m) => ("CryptoError", PyTuple::new(py, [m.as_str()])),
 
             // Lifecycle
-            crate::error::Error::WarrantRevoked(id) => ("RevokedError", PyTuple::new_bound(py, [id.as_str()])),
+            crate::error::Error::WarrantRevoked(id) => {
+                ("RevokedError", PyTuple::new(py, [id.as_str()]))
+            }
             crate::error::Error::WarrantExpired(t) => {
                 // Python ExpiredError expects (warrant_id, expired_at)
                 // We don't have warrant_id here easily, so pass "unknown"
-                ("ExpiredError", PyTuple::new_bound(py, ["unknown", t.to_rfc3339().as_str()]))
+                (
+                    "ExpiredError",
+                    PyTuple::new(py, ["unknown", t.to_rfc3339().as_str()]),
+                )
             }
             crate::error::Error::DepthExceeded(d, m) => {
-                ("DepthExceeded", PyTuple::new_bound(py, [*d, *m]))
+                ("DepthExceeded", PyTuple::new(py, [*d, *m]))
             }
-            crate::error::Error::InvalidWarrantId(m) => ("InvalidWarrantId", PyTuple::new_bound(py, [m.as_str()])),
-            crate::error::Error::InvalidTtl(m) => ("InvalidTtl", PyTuple::new_bound(py, [m.as_str()])),
+            crate::error::Error::InvalidWarrantId(m) => {
+                ("InvalidWarrantId", PyTuple::new(py, [m.as_str()]))
+            }
+            crate::error::Error::InvalidTtl(m) => ("InvalidTtl", PyTuple::new(py, [m.as_str()])),
             crate::error::Error::ConstraintDepthExceeded { depth, max } => {
-                ("ConstraintDepthExceeded", PyTuple::new_bound(py, [*depth, *max]))
+                ("ConstraintDepthExceeded", PyTuple::new(py, [*depth, *max]))
             }
             crate::error::Error::PayloadTooLarge { size, max } => {
-                ("PayloadTooLarge", PyTuple::new_bound(py, [*size, *max]))
+                ("PayloadTooLarge", PyTuple::new(py, [*size, *max]))
             }
-            crate::error::Error::ParentRequired => {
-                ("ParentRequired", PyTuple::empty_bound(py))
-            }
+            crate::error::Error::ParentRequired => ("ParentRequired", Ok(PyTuple::empty(py))),
             crate::error::Error::ToolMismatch { parent, child } => (
                 "ToolMismatch",
-                PyTuple::new_bound(py, [parent.as_str(), child.as_str()]),
+                PyTuple::new(py, [parent.as_str(), child.as_str()]),
             ),
 
             // Monotonicity
-            crate::error::Error::MonotonicityViolation(m) => ("MonotonicityError", PyTuple::new_bound(py, [m.as_str()])),
-            crate::error::Error::IncompatibleConstraintTypes { parent_type, child_type } => {
-                ("IncompatibleConstraintTypes", PyTuple::new_bound(py, [parent_type.as_str(), child_type.as_str()]))
+            crate::error::Error::MonotonicityViolation(m) => {
+                ("MonotonicityError", PyTuple::new(py, [m.as_str()]))
             }
-            crate::error::Error::WildcardExpansion { parent_type } => ("WildcardExpansion", PyTuple::new_bound(py, [parent_type.as_str()])),
-            crate::error::Error::EmptyResultSet { parent_type, count } => ("EmptyResultSet", PyTuple::new_bound(py, [parent_type.as_str(), &count.to_string()])), // count is usize, convert to string or int? Python expects int? Let's check.
+            crate::error::Error::IncompatibleConstraintTypes {
+                parent_type,
+                child_type,
+            } => (
+                "IncompatibleConstraintTypes",
+                PyTuple::new(py, [parent_type.as_str(), child_type.as_str()]),
+            ),
+            crate::error::Error::WildcardExpansion { parent_type } => (
+                "WildcardExpansion",
+                PyTuple::new(py, [parent_type.as_str()]),
+            ),
+            crate::error::Error::EmptyResultSet { parent_type, count } => (
+                "EmptyResultSet",
+                PyTuple::new(py, [parent_type.as_str(), &count.to_string()]),
+            ), // count is usize, convert to string or int? Python expects int? Let's check.
             // EmptyResultSet(parent_type: str, count: int)
-            // But PyTuple::new_bound takes ToPyObject. usize implements it.
-            
-            crate::error::Error::ExclusionRemoved { value } => ("ExclusionRemoved", PyTuple::new_bound(py, [value.as_str()])),
+            // But PyTuple::new takes ToPyObject. usize implements it.
+            crate::error::Error::ExclusionRemoved { value } => {
+                ("ExclusionRemoved", PyTuple::new(py, [value.as_str()]))
+            }
             crate::error::Error::ValueNotInParentSet { value } => {
-                ("ValueNotInParentSet", PyTuple::new_bound(py, [value.as_str()]))
+                ("ValueNotInParentSet", PyTuple::new(py, [value.as_str()]))
             }
-            crate::error::Error::RangeExpanded { bound, parent_value, child_value } => ("RangeExpanded", PyTuple::new_bound(py, [bound.as_str(), &parent_value.to_string(), &child_value.to_string()])), // float to string to avoid precision issues? Or pass float? Python expects float.
-            
-            crate::error::Error::PatternExpanded { parent, child } => ("PatternExpanded", PyTuple::new_bound(py, [parent.as_str(), child.as_str()])),
+            crate::error::Error::RangeExpanded {
+                bound,
+                parent_value,
+                child_value,
+            } => (
+                "RangeExpanded",
+                PyTuple::new(
+                    py,
+                    [
+                        bound.as_str(),
+                        &parent_value.to_string(),
+                        &child_value.to_string(),
+                    ],
+                ),
+            ), // float to string to avoid precision issues? Or pass float? Python expects float.
+
+            crate::error::Error::PatternExpanded { parent, child } => (
+                "PatternExpanded",
+                PyTuple::new(py, [parent.as_str(), child.as_str()]),
+            ),
             crate::error::Error::RequiredValueRemoved { value } => {
-                ("RequiredValueRemoved", PyTuple::new_bound(py, [value.as_str()]))
+                ("RequiredValueRemoved", PyTuple::new(py, [value.as_str()]))
             }
-            crate::error::Error::ExactValueMismatch { parent, child } => ("ExactValueMismatch", PyTuple::new_bound(py, [parent.as_str(), child.as_str()])),
+            crate::error::Error::ExactValueMismatch { parent, child } => (
+                "ExactValueMismatch",
+                PyTuple::new(py, [parent.as_str(), child.as_str()]),
+            ),
 
             // Constraints
-            crate::error::Error::ConstraintNotSatisfied { field, reason } => {
-                ("ConstraintViolation", PyTuple::new_bound(py, [field.as_str(), reason.as_str()]))
-            }
+            crate::error::Error::ConstraintNotSatisfied { field, reason } => (
+                "ConstraintViolation",
+                PyTuple::new(py, [field.as_str(), reason.as_str()]),
+            ),
 
             // Syntax
             // Python InvalidPattern(pattern, reason)
             // Rust InvalidPattern(msg) -> We only have msg. Pass msg as pattern? Or split?
             // Let's pass msg as pattern for now, reason empty.
-            crate::error::Error::InvalidPattern(m) => ("InvalidPattern", PyTuple::new_bound(py, [m.as_str()])),
-            crate::error::Error::InvalidRange(m) => ("InvalidRange", PyTuple::new_bound(py, [m.as_str()])),
-            crate::error::Error::InvalidRegex(m) => ("InvalidRegex", PyTuple::new_bound(py, [m.as_str()])),
-            crate::error::Error::CelError(m) => ("CelError", PyTuple::new_bound(py, [m.as_str()])),
+            crate::error::Error::InvalidPattern(m) => {
+                ("InvalidPattern", PyTuple::new(py, [m.as_str()]))
+            }
+            crate::error::Error::InvalidRange(m) => {
+                ("InvalidRange", PyTuple::new(py, [m.as_str()]))
+            }
+            crate::error::Error::InvalidRegex(m) => {
+                ("InvalidRegex", PyTuple::new(py, [m.as_str()]))
+            }
+            crate::error::Error::CelError(m) => ("CelError", PyTuple::new(py, [m.as_str()])),
 
             // Serialization
-            crate::error::Error::SerializationError(m) => ("SerializationError", PyTuple::new_bound(py, [m.as_str()])),
-            crate::error::Error::DeserializationError(m) => ("DeserializationError", PyTuple::new_bound(py, [m.as_str()])),
-            crate::error::Error::UnsupportedVersion(v) => ("UnsupportedVersion", PyTuple::new_bound(py, [*v])),
+            crate::error::Error::SerializationError(m) => {
+                ("SerializationError", PyTuple::new(py, [m.as_str()]))
+            }
+            crate::error::Error::DeserializationError(m) => {
+                ("DeserializationError", PyTuple::new(py, [m.as_str()]))
+            }
+            crate::error::Error::UnsupportedVersion(v) => {
+                ("UnsupportedVersion", PyTuple::new(py, [*v]))
+            }
 
             // General
-            crate::error::Error::MissingField(m) => ("MissingField", PyTuple::new_bound(py, [m.as_str()])),
-            crate::error::Error::ChainVerificationFailed(m) => ("ChainError", PyTuple::new_bound(py, [m.as_str()])), // ChainError takes message? Yes.
-            crate::error::Error::Validation(m) => ("ValidationError", PyTuple::new_bound(py, [m.as_str()])),
-            crate::error::Error::Unauthorized(m) => ("Unauthorized", PyTuple::new_bound(py, [m.as_str()])),
+            crate::error::Error::MissingField(m) => {
+                ("MissingField", PyTuple::new(py, [m.as_str()]))
+            }
+            crate::error::Error::ChainVerificationFailed(m) => {
+                ("ChainError", PyTuple::new(py, [m.as_str()]))
+            } // ChainError takes message? Yes.
+            crate::error::Error::Validation(m) => {
+                ("ValidationError", PyTuple::new(py, [m.as_str()]))
+            }
+            crate::error::Error::Unauthorized(m) => {
+                ("Unauthorized", PyTuple::new(py, [m.as_str()]))
+            }
 
             // Approval
-            crate::error::Error::ApprovalExpired { approved_at, expired_at } => ("ApprovalExpired", PyTuple::new_bound(py, [approved_at.to_rfc3339().as_str(), expired_at.to_rfc3339().as_str()])),
-            crate::error::Error::InsufficientApprovals { required, received } => {
-                ("InsufficientApprovals", PyTuple::new_bound(py, [*required, *received]))
+            crate::error::Error::ApprovalExpired {
+                approved_at,
+                expired_at,
+            } => (
+                "ApprovalExpired",
+                PyTuple::new(
+                    py,
+                    [
+                        approved_at.to_rfc3339().as_str(),
+                        expired_at.to_rfc3339().as_str(),
+                    ],
+                ),
+            ),
+            crate::error::Error::InsufficientApprovals { required, received } => (
+                "InsufficientApprovals",
+                PyTuple::new(py, [*required, *received]),
+            ),
+            crate::error::Error::InvalidApproval(m) => {
+                ("InvalidApproval", PyTuple::new(py, [m.as_str()]))
             }
-            crate::error::Error::InvalidApproval(m) => ("InvalidApproval", PyTuple::new_bound(py, [m.as_str()])),
-            crate::error::Error::UnknownProvider(m) => ("UnknownProvider", PyTuple::new_bound(py, [m.as_str()])),
+            crate::error::Error::UnknownProvider(m) => {
+                ("UnknownProvider", PyTuple::new(py, [m.as_str()]))
+            }
+        };
+
+        // Unwrap the args Result (PyTuple::new can fail on conversion)
+        let args = match args {
+            Ok(a) => a,
+            Err(e) => {
+                return PyRuntimeError::new_err(format!("Failed to create args tuple: {}", e))
+            }
         };
 
         match exceptions.getattr(exc_name) {
@@ -141,9 +229,7 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                         .clone()
                 }))
             }
-            Err(e) => {
-                PyRuntimeError::new_err(e.to_string())
-            }
+            Err(e) => PyRuntimeError::new_err(e.to_string()),
         }
     })
 }

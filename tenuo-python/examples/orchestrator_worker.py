@@ -18,8 +18,7 @@ from tenuo import (
     Keypair, Warrant, Pattern, Range, Wildcard,
     Authorizer,
     ChainVerificationResult,
-    lockdown, set_warrant_context, set_keypair_context,
-    AuthorizationError
+    lockdown, set_warrant_context, set_keypair_context
 )
 
 # ============================================================================
