@@ -1,0 +1,52 @@
+---
+# Sample httpbin deployment for testing Tenuo authorization
+# This is a simple HTTP testing service that echoes requests.
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: httpbin
+  namespace: default
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpbin
+  namespace: default
+  labels:
+    app: httpbin
+    service: httpbin
+spec:
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 80
+  selector:
+    app: httpbin
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: httpbin
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: httpbin
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: httpbin
+        version: v1
+    spec:
+      serviceAccountName: httpbin
+      containers:
+      - name: httpbin
+        image: docker.io/kennethreitz/httpbin
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80

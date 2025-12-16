@@ -1,0 +1,32 @@
+---
+# Istio ExtensionProvider Configuration
+# This configures Istio to use Tenuo as an external authorization service.
+#
+# Apply this by patching the istio ConfigMap:
+# kubectl patch configmap istio -n istio-system --type merge -p "$(cat extension-provider.yaml)"
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio
+  namespace: istio-system
+data:
+  mesh: |
+    extensionProviders:
+    - name: tenuo-authorizer
+      envoyExtAuthzGrpc:
+        service: tenuo-authorizer.tenuo-system.svc.cluster.local
+        port: 9090
+        # Include request body for constraint extraction
+        includeRequestBodyInCheck:
+          maxRequestBytes: 8192
+          allowPartialMessage: true
+        # Pass these headers to the authorizer
+        includeHeadersInCheck:
+        - "x-tenuo-warrant"
+        - "x-tenuo-pop"
+        - "authorization"
+        # Timeout for authorization check
+        timeout: 1s
+        # On failure, deny the request
+        statusOnError: "503"

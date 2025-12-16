@@ -1,0 +1,104 @@
+---
+# Tenuo Authorizer Deployment for Istio
+# This deployment runs the Tenuo authorizer as an external authorization service
+# that Istio will call to validate requests.
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenuo-system
+  labels:
+    istio-injection: enabled
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tenuo-config
+  namespace: tenuo-system
+data:
+  # Add your control plane's public key here
+  # Get it from: curl http://tenuo-control:8080/v1/public-key
+  TENUO_TRUSTED_KEYS: "f32e74b5b8569dc288db0109b7ec0d8eb3b4e5be7b07c647171d53fd31e7391f"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tenuo-authorizer
+  namespace: tenuo-system
+  labels:
+    app: tenuo-authorizer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: tenuo-authorizer
+  template:
+    metadata:
+      labels:
+        app: tenuo-authorizer
+    spec:
+      containers:
+      - name: authorizer
+        image: tenuo/authorizer:latest
+        imagePullPolicy: IfNotPresent
+        args:
+          - "serve"
+          - "--port"
+          - "9090"
+        ports:
+        - name: grpc
+          containerPort: 9090
+          protocol: TCP
+        env:
+        - name: TENUO_TRUSTED_KEYS
+          valueFrom:
+            configMapKeyRef:
+              name: tenuo-config
+              key: TENUO_TRUSTED_KEYS
+        - name: RUST_LOG
+          value: "info"
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+        livenessProbe:
+          grpc:
+            port: 9090
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          grpc:
+            port: 9090
+          initialDelaySeconds: 3
+          periodSeconds: 5
+        securityContext:
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tenuo-authorizer
+  namespace: tenuo-system
+  labels:
+    app: tenuo-authorizer
+spec:
+  type: ClusterIP
+  ports:
+  - name: grpc
+    port: 9090
+    targetPort: 9090
+    protocol: TCP
+  selector:
+    app: tenuo-authorizer
