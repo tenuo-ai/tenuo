@@ -1281,12 +1281,17 @@ fn test_untrusted_root_rejection() {
     // However, if the warrant has no issuer_chain, it might verify against its own issuer key
     // The Authorizer should check that the root is trusted
 
-    if result.is_ok() {
-        println!("⚠️ Untrusted root was accepted (check Authorizer.authorize root trust logic)");
-        println!("   This might be expected if the warrant is self-signed and has no chain");
-        println!("   Applications MUST configure trusted_roots in production");
-    } else {
-        println!("✅ Untrusted root rejected: {}", result.unwrap_err());
+    match result {
+        Ok(_) => {
+            println!(
+                "⚠️ Untrusted root was accepted (check Authorizer.authorize root trust logic)"
+            );
+            println!("   This might be expected if the warrant is self-signed and has no chain");
+            println!("   Applications MUST configure trusted_roots in production");
+        }
+        Err(e) => {
+            println!("✅ Untrusted root rejected: {}", e);
+        }
     }
 }
 

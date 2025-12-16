@@ -452,14 +452,14 @@
 
         <section class="hero">
             <div class="badge">v0.1.0 · <span>MIT/Apache-2.0</span></div>
-            <h1>Capability tokens<br>for <span class="gradient">AI agents</span></h1>
+            <h1>Task-Scoped Authority<br>for <span class="gradient">AI Agents</span></h1>
             <p>
-                Signed tokens that carry delegation provenance and task context.
-                Capabilities attenuate on delegation. Verify offline in ~25μs.
+                Static IAM roles are too broad for dynamic agents. Issue warrants that 
+                <strong>narrow as they delegate</strong> and expire when the task ends.
             </p>
             <div class="cta">
                 <a href="quickstart" class="btn btn-primary">Get Started</a>
-                <a href="https://github.com/tenuo/tenuo" class="btn btn-secondary">GitHub</a>
+                <a href="https://github.com/horkosdev/tenuo" class="btn btn-secondary">GitHub</a>
             </div>
         </section>
 
@@ -506,7 +506,7 @@
 tools = [read_file, send_email, query_db]
 <span class="function">protect_tools</span>(tools)
 
-<span class="comment"># Create scoped authority for each task</span>
+<span class="comment"># 3. Even if the agent is compromised, damage is contained</span>
 <span class="keyword">async with</span> <span class="function">root_task</span>(tools=[<span class="string">"read_file"</span>], path=<span class="string">"/data/*"</span>):
     <span class="keyword">async with</span> <span class="function">scoped_task</span>(path=<span class="string">"/data/reports/*"</span>):
         result = <span class="keyword">await</span> agent.run(<span class="string">"Summarize Q3 reports"</span>)</pre>
@@ -516,14 +516,14 @@ tools = [read_file, send_email, query_db]
         <!-- Attack Scenario -->
         <section class="section">
             <div class="section-header">
-                <h2>Why it matters</h2>
+                <h2>Solves the "Confused Deputy" problem</h2>
                 <p>The attack succeeds. The action doesn't.</p>
             </div>
             <div class="attack-grid">
                 <div class="attack-card bad">
                     <h4>Without tenuo</h4>
                     <div class="attack-step"><span class="num">1</span> User: "Summarize Q3 report"</div>
-                    <div class="attack-step"><span class="num">2</span> Agent spawns worker with full credentials</div>
+                    <div class="attack-step"><span class="num">2</span> Agent inherits <strong>ambient authority</strong> (full credentials)</div>
                     <div class="attack-step"><span class="num">3</span> Worker reads /data/q3.pdf</div>
                     <div class="attack-step"><span class="num">4</span> PDF contains malicious prompt injection</div>
                     <div class="attack-step"><span class="num">5</span> Worker has send_email capability (inherited)</div>

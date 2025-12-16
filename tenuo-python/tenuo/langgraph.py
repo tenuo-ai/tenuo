@@ -141,7 +141,7 @@ try:
     from langgraph.prebuilt import ToolNode  # type: ignore[import-not-found]
     LANGGRAPH_TOOLNODE_AVAILABLE = True
 except ImportError:
-    ToolNode = object  # type: ignore[assignment]
+    ToolNode = None  # type: ignore[misc,assignment]
     LANGGRAPH_TOOLNODE_AVAILABLE = False
 
 
@@ -205,7 +205,7 @@ class TenuoToolNode:
         protected_tools = protect_langchain_tools(tools, strict=strict)
         
         # Create the underlying ToolNode
-        self._tool_node = ToolNode(protected_tools, **kwargs)
+        self._tool_node = ToolNode(protected_tools, **kwargs)  # type: ignore[misc]
         
         # Store for introspection
         self._tools = tools
