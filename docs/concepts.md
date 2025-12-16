@@ -7,7 +7,7 @@ description: Why Tenuo? Problem/solution, threat model, core invariants
 
 > Should I use this? What problem does it solve?
 
-📊 **Visual learner?** See the [Demo Walkthrough](./demo-infographic.html) or [Architecture Infographic](./architecture-infographic.html).
+📊 **Visual learner?** See the [Demo Walkthrough](./demo.html) or [Architecture Infographic](./architecture-infographic.html).
 
 ---
 

@@ -438,5 +438,5 @@ async def read_file(path: str):
 ## See Also
 
 - [Gateway Configuration](./gateway-config) — YAML config reference
-- [Kubernetes Integration](./kubernetes-integration) — K8s-specific patterns
+- [Kubernetes Integration](./kubernetes) — K8s-specific patterns
 - [API Reference](./api-reference) — Python SDK documentation

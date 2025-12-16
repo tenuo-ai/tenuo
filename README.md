@@ -371,7 +371,7 @@ Your services keep their existing IAM. Tenuo adds a **delegation layer** that tr
 ### Integration Guides
 - **[LangChain](docs/langchain.md)**: Tool protection for LangChain
 - **[LangGraph](docs/langgraph.md)**: Node scoping for LangGraph
-- **[Kubernetes](docs/kubernetes-integration.md)**: Deployment patterns
+- **[Kubernetes](docs/kubernetes.md)**: Deployment patterns
 
 ### Security
 - **[Security Model](docs/security.md)**: Threat model, PoP, best practices

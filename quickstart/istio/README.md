@@ -198,7 +198,7 @@ grpcurl -plaintext localhost:9090 list
 
 ## Next Steps
 
-- [Kubernetes Integration Guide](../../docs/kubernetes-integration.md)
+- [Kubernetes Integration Guide](../../docs/kubernetes.md)
 - [Gateway Configuration](../../docs/gateway-config.md)
 - [Control Plane Setup](../../tenuo-core/deploy/kubernetes/control-plane.yaml)
 

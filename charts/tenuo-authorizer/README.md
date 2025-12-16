@@ -250,6 +250,6 @@ kubectl get configmap tenuo-authorizer-config -o yaml
 
 ## See Also
 
-- [Kubernetes Integration Guide](../../docs/kubernetes-integration.md)
+- [Kubernetes Integration Guide](../../docs/kubernetes.md)
 - [Istio Quickstart](../../quickstart/istio/README.md)
 - [Gateway Configuration Reference](../../docs/gateway-config.md)

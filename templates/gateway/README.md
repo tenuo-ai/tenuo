@@ -84,5 +84,5 @@ Constraints can extract values from:
 ## See Also
 
 - [Gateway Configuration Reference](../../docs/gateway-config.md)
-- [Kubernetes Integration Guide](../../docs/kubernetes-integration.md)
+- [Kubernetes Integration Guide](../../docs/kubernetes.md)
 - [Example Configurations](../../examples/)

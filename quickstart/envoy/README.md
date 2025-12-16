@@ -191,7 +191,7 @@ grpcurl -plaintext localhost:9090 list
 ## Next Steps
 
 - [Istio Quickstart](../istio/README.md) - Alternative with Istio service mesh
-- [Kubernetes Integration Guide](../../docs/kubernetes-integration.md)
+- [Kubernetes Integration Guide](../../docs/kubernetes.md)
 - [Gateway Configuration](../../docs/gateway-config.md)
 - [Helm Chart](../../charts/tenuo-authorizer/README.md)
 

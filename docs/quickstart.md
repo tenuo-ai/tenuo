@@ -7,7 +7,7 @@ description: Get started with Tenuo in 5 minutes
 
 Get Tenuo running in 5 minutes.
 
-📊 **Visual learner?** See the [Demo Walkthrough](./demo-infographic.html) for a step-by-step flow.
+📊 **Visual learner?** See the [Demo Walkthrough](./demo.html) for a step-by-step flow.
 
 ---
 
