@@ -196,6 +196,7 @@ with root_task(tools=["read_file", "write_file", "delete_file"], path="/*"):
 
 ## See Also
 
+- [Integration Safety](./integration-safety) — **Fail-safe mechanisms for integration bugs** ⚠️
 - [Argument Extraction](./argument-extraction) — How tool arguments are extracted and validated
 - [Protocol](./protocol) — Full protocol details
 - [Deployment Patterns](./deployment) — Envoy, Istio, nginx integration

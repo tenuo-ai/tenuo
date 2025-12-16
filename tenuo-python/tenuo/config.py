@@ -65,6 +65,10 @@ class TenuoConfig:
     allow_passthrough: bool = False
     allow_self_signed: bool = False
     
+    # Integration safety flags
+    strict_mode: bool = False  # Panic on missing warrant (fail-closed enforcement)
+    warn_on_missing_warrant: bool = False  # Warn loudly if tool called without warrant
+    
     # Cached authorizer (lazily created)
     _authorizer: Optional[Authorizer] = field(default=None, repr=False)
     
@@ -115,6 +119,8 @@ def configure(
     dev_mode: bool = False,
     allow_passthrough: bool = False,
     allow_self_signed: bool = False,
+    strict_mode: bool = False,
+    warn_on_missing_warrant: bool = False,
 ) -> None:
     """
     Configure Tenuo globally.
@@ -171,6 +177,13 @@ def configure(
             "Provide trusted_roots=[...] or enable dev_mode=True for development."
         )
     
+    # Validate strict_mode
+    if strict_mode and allow_passthrough:
+        raise ConfigurationError(
+            "strict_mode=True is incompatible with allow_passthrough=True. "
+            "Strict mode enforces warrant presence; passthrough allows missing warrants."
+        )
+    
     # Update global config
     _config = TenuoConfig(
         issuer_keypair=issuer_key,
@@ -182,6 +195,8 @@ def configure(
         dev_mode=dev_mode,
         allow_passthrough=allow_passthrough,
         allow_self_signed=allow_self_signed,
+        strict_mode=strict_mode,
+        warn_on_missing_warrant=warn_on_missing_warrant,
     )
 
 
@@ -223,4 +238,7 @@ __all__ = [
     "allow_passthrough",
     "TenuoConfig",
     "DEFAULT_TTL_SECONDS",
+    "DEFAULT_CLOCK_TOLERANCE_SECS",
+    "DEFAULT_POP_WINDOW_SECS",
+    "DEFAULT_POP_MAX_WINDOWS",
 ]

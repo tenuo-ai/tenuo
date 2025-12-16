@@ -38,6 +38,11 @@ from .exceptions import (
 )
 from .audit import audit_logger, AuditEvent, AuditEventType
 
+# Custom warning category for integration issues
+class SecurityWarning(UserWarning):
+    """Warning for potential security/integration issues."""
+    pass
+
 # Runtime imports
 from tenuo_core import Warrant, Keypair  # type: ignore[import-untyped]
 

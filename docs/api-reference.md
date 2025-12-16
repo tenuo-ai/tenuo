@@ -91,11 +91,24 @@ configure(
 - `trusted_roots` required
 - All warrants must chain to a trusted root
 - PoP mandatory
+- Missing warrants → `Unauthorized` error
 
 **Development Mode** (`dev_mode=True`):
 - `trusted_roots` optional
 - `allow_self_signed=True` enables single-keypair testing
 - `allow_passthrough=True` skips authorization entirely (dangerous)
+
+**Strict Mode** (`strict_mode=True`):
+- Missing warrant → `RuntimeError` (panic/crash)
+- Catches integration bugs (missing decorators, forgotten context)
+- **Recommended for CI/CD**
+
+**Warning Mode** (`warn_on_missing_warrant=True`):
+- Missing warrant → Python warning + audit log
+- Surfaces integration issues without breaking tests
+- **Recommended for development/staging**
+
+See [Integration Safety](./integration-safety) for detailed guide.
 
 #### Errors
 
