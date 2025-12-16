@@ -27,6 +27,38 @@ with set_warrant_context(warrant), set_keypair_context(keypair):
 
 ---
 
+## Choosing a Pattern
+
+| Pattern | Granularity | Complexity | Best For |
+|---------|-------------|------------|----------|
+| **Environment Variable** | Per-pod | Low | Static workloads, batch jobs |
+| **Request Header** | Per-request | Medium | Ingress/mesh with warrant injection |
+| **Control Plane Fetch** | Per-request | High | Task-scoped authority (recommended) |
+
+### Decision Guide
+```
+Is warrant scope static for the pod lifetime?
+├── Yes → Environment Variable
+└── No → Does your mesh/ingress inject warrants?
+    ├── Yes → Request Header
+    └── No → Control Plane Fetch
+```
+
+### Warning: Environment Variable Anti-Pattern
+
+Using env var warrants with long TTLs defeats Tenuo's task-scoped authority model:
+```yaml
+# ❌ Anti-pattern: 24-hour warrant in env var
+env:
+  - name: TENUO_WARRANT
+    value: "eyJ..." # TTL: 86400s
+
+# ✅ Better: Short-lived, per-request warrants
+# Fetched from control plane at task start
+```
+
+---
+
 ## Pattern: Environment Variable
 
 Warrant and keypair loaded at pod startup from K8s Secret.
@@ -203,6 +235,41 @@ spec:
 with open("/tenuo/warrant.b64") as f:
     warrant = Warrant.from_base64(f.read().strip())
 ```
+
+---
+
+## Key Rotation
+
+Rotate control plane signing keys without downtime by maintaining multiple trusted issuers during the transition.
+
+### 1. Add new key to trusted roots
+```yaml
+settings:
+  trusted_issuers:
+    - "OLD_KEY_HEX"
+    - "NEW_KEY_HEX"  # Add new key
+```
+
+### 2. Roll out config change
+```bash
+kubectl rollout restart deployment/tenuo-authorizer
+```
+
+### 3. Start issuing warrants with new key
+Update control plane to sign with new key.
+
+### 4. Wait for old warrants to expire
+Monitor for warrants signed by old key (max TTL window).
+
+### 5. Remove old key
+```yaml
+settings:
+  trusted_issuers:
+    - "NEW_KEY_HEX"  # Old key removed
+```
+
+### Rollback
+If issues arise, re-add old key to `trusted_issuers`.
 
 ---
 
