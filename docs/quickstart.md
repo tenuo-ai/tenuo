@@ -85,7 +85,8 @@ worker_warrant = warrant.attenuate(
         "cluster": Exact("staging-web"),    # Narrowed from staging-*
         "budget": Range(max=1000.0)         # Reduced to $1,000
     },
-    keypair=worker_keypair
+    keypair=worker_keypair,
+    parent_keypair=keypair  # Parent must sign the delegation
 )
 ```
 
