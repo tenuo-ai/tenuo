@@ -394,12 +394,7 @@ def protect_tool(
         Wrapped function that enforces authorization before execution.
     """
     from .audit import audit_logger, AuditEvent, AuditEventType
-    
-    # Import AuthorizationError
-    try:
-        from tenuo import AuthorizationError
-    except ImportError:
-        AuthorizationError = TenuoError  # type: ignore
+    from .exceptions import ScopeViolation as AuthorizationError
     
     tool_name = name or _get_tool_name(tool)
     
