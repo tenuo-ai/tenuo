@@ -10,6 +10,8 @@ If an agent is prompt-injected, the authority still can’t escape its bounds.
 [![PyPI](https://img.shields.io/pypi/v/tenuo.svg)](https://pypi.org/project/tenuo/)
 [![Docs](https://img.shields.io/badge/docs-tenuo.ai-blue)](https://tenuo.ai)
 
+> **v0.1** — Early release. Cryptographic core is stable; integration APIs are evolving.
+
 ```bash
 pip install tenuo
 ```

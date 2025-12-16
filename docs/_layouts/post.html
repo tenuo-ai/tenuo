@@ -19,6 +19,10 @@
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/images/favicon-t.svg">
 
+    <!-- Syntax highlighting -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
@@ -42,7 +46,7 @@
             font-family: 'Inter', -apple-system, sans-serif;
             background: var(--bg);
             color: var(--text);
-            line-height: 1.8;
+            line-height: 1.6;
         }
 
         .container {
@@ -146,9 +150,10 @@
             background: var(--surface);
             border: 1px solid var(--border);
             border-radius: 8px;
-            padding: 20px;
+            padding: 16px;
             overflow-x: auto;
-            margin: 24px 0;
+            margin: 16px 0;
+            line-height: 1.5;
         }
 
         .post-content pre code {
@@ -156,21 +161,26 @@
             padding: 0;
         }
 
+        .post-content pre code.hljs {
+            background: transparent;
+            padding: 0;
+        }
+
         .post-content ul,
         .post-content ol {
-            margin-bottom: 20px;
+            margin-bottom: 14px;
             padding-left: 24px;
             color: #ccc;
         }
 
         .post-content li {
-            margin-bottom: 8px;
+            margin-bottom: 4px;
         }
 
         .post-content blockquote {
             border-left: 3px solid var(--accent);
             padding-left: 20px;
-            margin: 24px 0;
+            margin: 16px 0;
             color: var(--muted);
             font-style: italic;
         }
@@ -178,7 +188,7 @@
         .post-content hr {
             border: none;
             border-top: 1px solid var(--border);
-            margin: 48px 0;
+            margin: 32px 0;
         }
 
         .post-content img {
@@ -189,7 +199,7 @@
         .post-content table {
             width: 100%;
             border-collapse: collapse;
-            margin: 24px 0;
+            margin: 16px 0;
             font-size: 0.9rem;
         }
 
@@ -263,6 +273,8 @@
             MIT/Apache-2.0
         </p>
     </footer>
+
+    <script>hljs.highlightAll();</script>
 </body>
 
 </html>
