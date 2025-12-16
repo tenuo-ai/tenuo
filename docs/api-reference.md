@@ -1100,4 +1100,4 @@ audit_logger.log_authorization_success(
 - [CLI Reference](./cli) — Command-line interface
 - [Constraints Guide](./constraints) — Detailed constraint usage
 - [Security](./security) — Threat model and protections
-- [Examples](https://github.com/horkosdev/tenuo/tree/main/tenuo-python/examples) — Python usage examples
+- [Examples](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples) — Python usage examples

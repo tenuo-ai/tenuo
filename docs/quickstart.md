@@ -63,10 +63,10 @@ keypair = Keypair.generate()
 warrant = Warrant.issue(
     tools="manage_infrastructure",
     keypair=keypair,
-    holder=keypair.public_key(),
+    holder=keypair.public_key, 
     constraints={
         "cluster": Pattern("staging-*"),    # Glob pattern
-        "budget": Range(max=10000.0)        # Max $10,000
+        "budget": Range.max_value(10000.0)  # Max $10,000
     },
     ttl_seconds=3600
 )
@@ -83,7 +83,7 @@ worker_keypair = Keypair.generate()
 worker_warrant = warrant.attenuate(
     constraints={
         "cluster": Exact("staging-web"),    # Narrowed from staging-*
-        "budget": Range(max=1000.0)         # Reduced to $1,000
+        "budget": Range.max_value(1000.0)   # Reduced to $1,000
     },
     keypair=worker_keypair,
     parent_keypair=keypair  # Parent must sign the delegation

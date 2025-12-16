@@ -388,7 +388,7 @@ If you discover a security vulnerability, please email **security@tenuo.ai** ins
 ## License
 
 Licensed under either of:
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- MIT license (http://opensource.org/licenses/MIT)
+- Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 
-at your option.
+at your option. See [LICENSE](LICENSE) for details.

@@ -48,10 +48,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/tenuo/tenuo"
+Homepage = "https://github.com/tenuo-ai/tenuo"
 Documentation = "https://tenuo.github.io/tenuo/"
-Repository = "https://github.com/tenuo/tenuo"
-Issues = "https://github.com/tenuo/tenuo/issues"
+Repository = "https://github.com/tenuo-ai/tenuo"
+Issues = "https://github.com/tenuo-ai/tenuo/issues"
 
 [tool.maturin]
 module-name = "tenuo_core"

@@ -649,7 +649,7 @@ finally:
 
 ## See Also
 
-- [Security Tests](https://github.com/horkosdev/tenuo/tree/main/tenuo-python/tests/security) - Attack scenarios that strict mode catches
+- [Security Tests](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/tests/security) - Attack scenarios that strict mode catches
 - [API Reference → configure()](./api-reference#configuration) - Full configuration options
 - [Security Model](./security) - Overall security guarantees
 - [Argument Extraction](./argument-extraction) - How authorization works

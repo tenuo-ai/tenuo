@@ -14,7 +14,7 @@ Thank you for your interest in contributing to Tenuo! We welcome contributions f
 
 1.  Clone the repository:
     ```bash
-    git clone https://github.com/tenuo/tenuo.git
+    git clone https://github.com/tenuo-ai/tenuo.git
     cd tenuo
     ```
 

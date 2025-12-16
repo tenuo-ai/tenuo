@@ -165,7 +165,7 @@ If you reference Tenuo in academic work:
 @software{tenuo2025,
   title = {Tenuo: Capability-Based Authorization for AI Agents},
   year = {2025},
-  url = {https://github.com/tenuo/tenuo}
+  url = {https://github.com/tenuo-ai/tenuo}
 }
 ```
 ---

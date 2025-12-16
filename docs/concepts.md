@@ -143,7 +143,7 @@ Warrants are **bound to keypairs**. To use a warrant, you must prove you hold th
 root = Warrant.issue(
     tools=["read_file", "query_db"],
     keypair=control_plane_kp,
-    holder=agent_kp.public_key(),
+    holder=agent_kp.public_key,
     ttl_seconds=3600
 )
 ```

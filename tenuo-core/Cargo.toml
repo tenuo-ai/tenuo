@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Tenuo Contributors"]
 description = "Agent Capability Flow Control - Rust core library"
-license = "Apache-2.0"
-repository = "https://github.com/tenuo/tenuo"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tenuo-ai/tenuo"
 keywords = ["authorization", "capabilities", "agents", "security", "warrants"]
 categories = ["authentication", "cryptography", "ai", "security"]
 

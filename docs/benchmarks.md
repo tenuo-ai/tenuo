@@ -17,7 +17,7 @@ Benchmarks measure the core operations of the lifecycle:
 3. **Verification:** Checking signatures, expiration, and chain integrity.
 4. **Authorization:** Validating tool arguments against constraints.
 
-Tests were run on **Apple M3 Max** using the code in [`tenuo-core/benches/warrant_benchmarks.rs`](https://github.com/tenuo/tenuo/blob/main/tenuo-core/benches/warrant_benchmarks.rs).
+Tests were run on **Apple M3 Max** using the code in [`tenuo-core/benches/warrant_benchmarks.rs`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-core/benches/warrant_benchmarks.rs).
 
 > **Note:** These are **microbenchmarks** measuring individual Rust operations in isolation. They represent the theoretical lower bound of Tenuo's performance. End-to-end benchmarks including Python bindings, network overhead, and integration with real agent frameworks will be published separately.
 
@@ -106,7 +106,7 @@ We believe in reproducible benchmarks. You can run the suite on your own hardwar
 
 ```bash
 # Clone the repo
-git clone https://github.com/tenuo/tenuo
+git clone https://github.com/tenuo-ai/tenuo
 cd tenuo/tenuo-core
 
 # Run benchmarks
@@ -119,7 +119,7 @@ Criterion will output an HTML report at `target/criterion/report/index.html`. Op
 - Outlier detection
 - Performance regression detection
 
-Full benchmark source code is available in [`warrant_benchmarks.rs`](https://github.com/tenuo/tenuo/blob/main/tenuo-core/benches/warrant_benchmarks.rs).
+Full benchmark source code is available in [`warrant_benchmarks.rs`](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-core/benches/warrant_benchmarks.rs).
 
 ---
 
