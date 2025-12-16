@@ -8,7 +8,7 @@ Adversarial tests verifying Tenuo's security properties.
 # Verify all security properties in 30 seconds
 pytest tests/security/ -v --tb=short
 
-# Expected: 39 passed, 0 failed
+# Expected: 43 passed, 0 failed
 ```
 
 ## Running
@@ -33,10 +33,10 @@ pytest tests/security/ -m integration_responsibility -v
 |----------|------|-------|--------|
 | Signature/Trust | `test_signature_trust.py` | 5 | ✅ All pass |
 | Monotonicity | `test_monotonicity.py` | 11 | ✅ All pass |
-| PoP Binding | `test_pop_binding.py` | 5 | ✅ All pass |
+| PoP Binding | `test_pop_binding.py` | 6 | ✅ All pass |
 | Delegation Limits | `test_delegation_limits.py` | 6 | ✅ All pass |
-| Implementation | `test_implementation.py` | 7 | ✅ All pass |
-| Edge Cases | `test_edge_cases.py` | 5 | ✅ All pass |
+| Implementation | `test_implementation.py` | 9 | ✅ All pass |
+| Edge Cases | `test_edge_cases.py` | 6 | ✅ All pass |
 
 ## Test Markers
 

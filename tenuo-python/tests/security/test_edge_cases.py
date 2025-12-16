@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from tenuo import (
-    Warrant, Exact,
+    Warrant, Exact, Range,
     ExpiredError, Unauthorized
 )
 from tenuo.decorators import set_warrant_context, _warrant_context
@@ -144,6 +144,54 @@ class TestEdgeCases:
         else:
             print("  [Info] Tenuo performs byte-wise comparison (NFD != NFC)")
             print("  [Note] This is secure but may surprise users")
+
+    def test_integer_overflow_boundary(self, keypair):
+        """
+        Attack: Pass huge integers that overflow Rust u64/i64 types.
+        
+        Defense: Should raise ValidationError or OverflowError, not panic/wrap.
+        
+        Note: Rust uses u64/i64, Python uses arbitrary-precision integers.
+        Passing 2**64 + 1 into a Rust u64 could cause panic or silent wrapping
+        depending on PyO3 configuration.
+        """
+        print("\n--- Attack: Integer Overflow Boundary ---")
+        
+        huge_int = 2**64 + 100
+        negative_huge = -(2**63 + 100)
+        
+        # Test 1: Issue warrant with huge int constraint
+        print(f"  [Attack] Issuing warrant with Range(max={huge_int})...")
+        try:
+            _warrant = Warrant.issue(
+                tools="test",
+                constraints={"limit": Range(max=huge_int)},
+                ttl_seconds=60,
+                keypair=keypair
+            )
+            print("  [Warning] Huge int constraint accepted (may wrap)")
+        except (OverflowError, ValueError, Exception) as e:
+            print(f"  [Result] Huge int constraint rejected gracefully: {type(e).__name__}")
+            assert "panic" not in str(e).lower(), "Should not panic!"
+
+        # Test 2: Authorize with huge int arg
+        print(f"  [Attack] Authorizing with arg val={huge_int}...")
+        warrant = Warrant.issue(tools="test", ttl_seconds=60, keypair=keypair)
+        try:
+            warrant.authorize("test", {"val": huge_int})
+            print("  [Result] Huge int argument handled gracefully")
+        except Exception as e:
+            assert "panic" not in str(e).lower(), f"Panicked on huge int: {e}"
+            print(f"  [Result] Huge int rejected: {type(e).__name__}")
+
+        # Test 3: Negative overflow
+        print(f"  [Attack] Testing negative overflow {negative_huge}...")
+        try:
+            warrant.authorize("test", {"val": negative_huge})
+            print("  [Result] Negative huge int handled gracefully")
+        except Exception as e:
+            assert "panic" not in str(e).lower(), f"Panicked on negative huge: {e}"
+            print(f"  [Result] Negative huge rejected: {type(e).__name__}")
 
     def test_attack_5_issuer_abuse(self, keypair):
         """

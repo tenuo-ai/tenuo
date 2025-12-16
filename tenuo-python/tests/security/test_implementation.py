@@ -15,7 +15,7 @@ import base64
 import json
 
 from tenuo import (
-    Warrant, Pattern, Range, lockdown, set_warrant_context, set_keypair_context,
+    Warrant, Pattern, Range, Exact, lockdown, set_warrant_context, set_keypair_context,
     Unauthorized
 )
 
@@ -232,3 +232,61 @@ class TestImplementation:
                  
         except Exception as e:
             print(f"  [Result] Attack 19 blocked with error: {e}")
+
+    def test_null_byte_injection(self, keypair):
+        """
+        Attack: Inject null bytes to truncate paths in underlying C libs.
+        
+        Defense: Tenuo treats null bytes as literal characters, not terminators.
+        
+        Note: Some C-based libraries (OpenSSL, system calls) truncate strings
+        at \0. If Tenuo passed /safe/path\0../../etc/passwd to such a library
+        after matching against /safe/path, it could be exploited.
+        """
+        print("\n--- Attack: Null Byte Injection ---")
+        
+        warrant = Warrant.issue(
+            tools="read",
+            constraints={"path": Exact("/safe/path")},
+            ttl_seconds=60,
+            keypair=keypair
+        )
+        
+        # Attack: /safe/path\0/../../etc/passwd
+        # If a layer truncates at \0, it might match /safe/path
+        malicious_path = "/safe/path\x00/../../etc/passwd"
+        
+        print(f"  [Attack] Testing path with null byte: {repr(malicious_path)}")
+        
+        if warrant.authorize("read", {"path": malicious_path}):
+            print("  [WARNING] Null byte truncation detected!")
+            print("  [WARNING] Path with embedded null matched safe path constraint!")
+            assert False, "Null byte injection should be blocked"
+        else:
+            print("  [Result] Null byte injection blocked (literal comparison)")
+            print("  [Info] /safe/path\\x00... != /safe/path")
+
+    def test_null_byte_in_tool_name(self, keypair):
+        """
+        Attack: Inject null byte in tool name.
+        
+        Defense: Tool names should be validated or matched literally.
+        """
+        print("\n--- Attack: Null Byte in Tool Name ---")
+        
+        warrant = Warrant.issue(
+            tools="safe_tool",
+            ttl_seconds=60,
+            keypair=keypair
+        )
+        
+        # Try to match "safe_tool" by passing "safe_tool\0_evil"
+        malicious_tool = "safe_tool\x00_evil_suffix"
+        
+        print(f"  [Attack] Testing tool name: {repr(malicious_tool)}")
+        
+        if warrant.authorize(malicious_tool, {}):
+            print("  [WARNING] Null byte truncation in tool name!")
+            assert False, "Tool name null byte injection should fail"
+        else:
+            print("  [Result] Null byte in tool name blocked")

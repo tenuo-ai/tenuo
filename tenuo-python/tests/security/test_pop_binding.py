@@ -160,3 +160,33 @@ class TestPopBinding:
         # Note: Can't easily test window expiry without waiting 120+ seconds
         print("  [Info] PoP window is ~120 seconds. After expiry, replay should fail.")
         print("  [Info] Attack 35: Would fail after window expires (Not tested due to time)")
+
+    def test_pop_argument_ordering_determinism(self, keypair):
+        """
+        Attack: Pass arguments in different orders to cause signature mismatch.
+        
+        Defense: PoP generation must sort keys deterministically (canonical CBOR).
+        
+        Note: Python dicts preserve insertion order since 3.7, so if the binding
+        doesn't sort keys before CBOR serialization, different orderings would
+        produce different signatures, causing flaky verification.
+        """
+        print("\n--- Attack: Argument Ordering Non-Determinism ---")
+        
+        warrant = Warrant.issue(tools="test", ttl_seconds=60, keypair=keypair)
+        
+        # Dicts preserve insertion order in modern Python
+        args1 = {"a": 1, "b": 2, "c": 3}
+        args2 = {"c": 3, "a": 1, "b": 2}
+        args3 = {"b": 2, "c": 3, "a": 1}
+        
+        print("  [Attack] Creating PoP signatures with different arg orderings...")
+        sig1 = warrant.create_pop_signature(keypair, "test", args1)
+        sig2 = warrant.create_pop_signature(keypair, "test", args2)
+        sig3 = warrant.create_pop_signature(keypair, "test", args3)
+        
+        print(f"  [Check] sig1 == sig2: {sig1 == sig2}")
+        print(f"  [Check] sig2 == sig3: {sig2 == sig3}")
+        
+        assert sig1 == sig2 == sig3, "PoP signature must be deterministic regardless of arg order"
+        print("  [Result] All signatures match - keys are sorted before signing")
