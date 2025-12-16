@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 420">
+  <defs>
+    <marker id="time-arrow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8"/>
+    </marker>
+  </defs>
+
+  <style>
+    .title { font: bold 14px system-ui, sans-serif; fill: #1e293b; }
+    .label { font: 12px system-ui, sans-serif; fill: #64748b; }
+    .task-label { font: 11px system-ui, sans-serif; fill: #475569; }
+    .axis-label { font: 11px system-ui, sans-serif; fill: #94a3b8; }
+  </style>
+
+  <!-- Background -->
+  <rect width="800" height="420" fill="#f8fafc"/>
+
+  <!-- ==================== TRADITIONAL IAM ==================== -->
+  <text x="400" y="28" class="title" text-anchor="middle">TRADITIONAL IAM</text>
+  <text x="400" y="46" class="label" text-anchor="middle">Authority bound to pod lifetime</text>
+
+  <!-- Row labels -->
+  <text x="95" y="83" class="axis-label" text-anchor="end">Role</text>
+  <text x="95" y="123" class="axis-label" text-anchor="end">Task</text>
+
+  <!-- IAM Role bar (full width) -->
+  <rect x="110" y="65" width="620" height="35" rx="4" fill="#fee2e2" stroke="#fca5a5" stroke-width="1"/>
+  <text x="420" y="88" text-anchor="middle" class="task-label" style="fill: #dc2626">IAM Role: read / write / network / admin</text>
+
+  <!-- Tasks (small) -->
+  <rect x="140" y="108" width="80" height="30" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1"/>
+  <text x="180" y="128" text-anchor="middle" class="task-label">read</text>
+
+  <rect x="290" y="108" width="120" height="30" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1"/>
+  <text x="350" y="128" text-anchor="middle" class="task-label">analyze</text>
+
+  <rect x="490" y="108" width="80" height="30" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1"/>
+  <text x="530" y="128" text-anchor="middle" class="task-label">write</text>
+
+  <rect x="640" y="108" width="90" height="30" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="685" y="128" text-anchor="middle" class="task-label" style="fill: #94a3b8">idle</text>
+
+  <!-- Time axis with arrow -->
+  <line x1="110" y1="160" x2="740" y2="160" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#time-arrow)"/>
+  <text x="110" y="178" class="axis-label">Deploy</text>
+  <text x="755" y="165" class="axis-label">time</text>
+
+  <!-- Mismatch indicator -->
+  <text x="420" y="152" text-anchor="middle" class="label" style="fill: #dc2626">↑ Authority exceeds need ↑</text>
+
+  <!-- ==================== TENUO ==================== -->
+  <text x="400" y="218" class="title" text-anchor="middle">TENUO</text>
+  <text x="400" y="236" class="label" text-anchor="middle">Authority bound to task lifetime</text>
+
+  <!-- Row labels -->
+  <text x="95" y="278" class="axis-label" text-anchor="end">Task</text>
+  <text x="95" y="318" class="axis-label" text-anchor="end">Warrant</text>
+
+  <!-- Task-scoped warrants (matching tasks exactly) -->
+  <rect x="140" y="260" width="80" height="30" rx="4" fill="#dcfce7" stroke="#86efac" stroke-width="1"/>
+  <text x="180" y="280" text-anchor="middle" class="task-label">read</text>
+  
+  <rect x="140" y="300" width="80" height="30" rx="4" fill="#dcfce7" stroke="#22c55e" stroke-width="2"/>
+  <text x="180" y="320" text-anchor="middle" class="task-label">read</text>
+
+  <rect x="290" y="260" width="120" height="30" rx="4" fill="#dcfce7" stroke="#86efac" stroke-width="1"/>
+  <text x="350" y="280" text-anchor="middle" class="task-label">analyze</text>
+  
+  <rect x="290" y="300" width="120" height="30" rx="4" fill="#dcfce7" stroke="#22c55e" stroke-width="2"/>
+  <text x="350" y="320" text-anchor="middle" class="task-label">read+analyze</text>
+
+  <rect x="490" y="260" width="80" height="30" rx="4" fill="#dcfce7" stroke="#86efac" stroke-width="1"/>
+  <text x="530" y="280" text-anchor="middle" class="task-label">write</text>
+  
+  <rect x="490" y="300" width="80" height="30" rx="4" fill="#dcfce7" stroke="#22c55e" stroke-width="2"/>
+  <text x="530" y="320" text-anchor="middle" class="task-label">write</text>
+
+  <!-- No warrant for idle -->
+  <rect x="640" y="260" width="90" height="30" rx="4" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="685" y="280" text-anchor="middle" class="task-label" style="fill: #94a3b8">idle</text>
+  
+  <text x="685" y="320" text-anchor="middle" class="task-label" style="fill: #94a3b8">—</text>
+
+  <!-- Time axis with arrow -->
+  <line x1="110" y1="355" x2="740" y2="355" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#time-arrow)"/>
+  <text x="110" y="373" class="axis-label">Deploy</text>
+  <text x="755" y="360" class="axis-label">time</text>
+
+  <!-- Match indicator -->
+  <text x="420" y="347" text-anchor="middle" class="label" style="fill: #22c55e">↑ Authority matches need ↑</text>
+
+</svg>

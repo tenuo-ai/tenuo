@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ page.title }} - Tenuo Blog</title>
+
+    <!-- SEO -->
+    <meta name="description" content="{{ page.description | default: 'Tenuo Blog' }}">
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="article">
+    <meta property="og:url" content="https://tenuo.ai{{ page.url }}">
+    <meta property="og:title" content="{{ page.title }}">
+    <meta property="og:description" content="{{ page.description | default: 'Tenuo Blog' }}">
+    <meta property="og:image" content="https://tenuo.ai/images/og-preview.png">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/images/favicon-t.svg">
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg: #000;
+            --surface: #111;
+            --border: #222;
+            --text: #fff;
+            --muted: #888;
+            --accent: #00d4ff;
+            --accent2: #a855f7;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.8;
+        }
+
+        .container {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 24px 0;
+            border-bottom: 1px solid var(--border);
+            max-width: 1100px;
+            margin: 0 auto;
+            padding-left: 24px;
+            padding-right: 24px;
+        }
+
+        .nav-logo {
+            font-size: 1.25rem;
+            font-weight: 600;
+            text-decoration: none;
+            color: var(--text);
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 32px;
+        }
+
+        .nav-links a {
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--text);
+        }
+
+        article {
+            padding: 60px 0;
+        }
+
+        .post-header {
+            margin-bottom: 48px;
+            text-align: center;
+        }
+
+        .post-meta {
+            color: var(--muted);
+            font-size: 0.9rem;
+            margin-bottom: 16px;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            letter-spacing: -1px;
+            line-height: 1.2;
+        }
+
+        .post-content h2 {
+            font-size: 1.5rem;
+            margin-top: 48px;
+            margin-bottom: 16px;
+        }
+
+        .post-content h3 {
+            font-size: 1.25rem;
+            margin-top: 32px;
+            margin-bottom: 12px;
+        }
+
+        .post-content p {
+            margin-bottom: 20px;
+            color: #ccc;
+        }
+
+        .post-content a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .post-content a:hover {
+            text-decoration: underline;
+        }
+
+        .post-content code {
+            font-family: 'JetBrains Mono', monospace;
+            background: var(--surface);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+
+        .post-content pre {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            overflow-x: auto;
+            margin: 24px 0;
+        }
+
+        .post-content pre code {
+            background: none;
+            padding: 0;
+        }
+
+        .post-content ul,
+        .post-content ol {
+            margin-bottom: 20px;
+            padding-left: 24px;
+            color: #ccc;
+        }
+
+        .post-content li {
+            margin-bottom: 8px;
+        }
+
+        .post-content blockquote {
+            border-left: 3px solid var(--accent);
+            padding-left: 20px;
+            margin: 24px 0;
+            color: var(--muted);
+            font-style: italic;
+        }
+
+        .post-content hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 48px 0;
+        }
+
+        .post-content img {
+            max-width: 100%;
+            border-radius: 8px;
+        }
+
+        footer {
+            padding: 48px 0;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            color: var(--muted);
+            font-size: 0.85rem;
+        }
+
+        footer a {
+            color: var(--muted);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            color: var(--text);
+        }
+    </style>
+</head>
+
+<body>
+    <nav>
+        <a href="/" class="nav-logo">tenuo</a>
+        <div class="nav-links">
+            <a href="/quickstart">Docs</a>
+            <a href="/blog">Blog</a>
+            <a href="https://github.com/tenuo-ai/tenuo">GitHub</a>
+        </div>
+    </nav>
+
+    <div class="container">
+        <article>
+            <header class="post-header">
+                <div class="post-meta">{{ page.date | date: "%B %d, %Y" }}{% if page.author %} · {{ page.author }}{% endif %}</div>
+                <h1>{{ page.title }}</h1>
+            </header>
+            <div class="post-content">
+                {{ content }}
+            </div>
+        </article>
+    </div>
+
+    <footer>
+        <p>
+            <a href="https://github.com/tenuo-ai/tenuo">GitHub</a> ·
+            <a href="/quickstart">Docs</a> ·
+            <a href="/api-reference">API</a> ·
+            MIT/Apache-2.0
+        </p>
+    </footer>
+</body>
+
+</html>

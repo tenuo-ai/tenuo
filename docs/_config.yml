@@ -1,41 +1,28 @@
-# Jekyll configuration for Tenuo documentation
-# https://jekyllrb.com/docs/configuration/
-
-title: Tenuo Documentation
-description: Capability-based authorization for AI agents
+title: Tenuo
+description: Capability tokens for AI agents
 url: "https://tenuo.ai"
 baseurl: ""
 
-# Use GitHub Pages default theme (can customize later)
-theme: jekyll-theme-minimal
-
-# Markdown settings
+# Build settings
 markdown: kramdown
-kramdown:
-  input: GFM
-  hard_wrap: false
-  syntax_highlighter: rouge
+highlighter: rouge
 
-# Exclude from processing (underscore dirs excluded by default, but be explicit)
+# Exclude from build
 exclude:
-  - _internal/        # Internal design docs, not published
-  - reference/        # Generated Rust API docs (cargo doc), has own HTML
   - Gemfile
   - Gemfile.lock
+  - node_modules
+  - vendor
 
-# Include HTML files as-is
-include:
-  - index.html
+# Collections (if needed for blog)
+collections:
+  posts:
+    output: true
+    permalink: /blog/:title/
 
-# Defaults for markdown pages
 defaults:
   - scope:
       path: ""
-      type: "pages"
+      type: "posts"
     values:
-      layout: "default"
-
-# Plugins (GitHub Pages compatible)
-plugins:
-  - jekyll-seo-tag
-  - jekyll-sitemap
+      layout: "post"
