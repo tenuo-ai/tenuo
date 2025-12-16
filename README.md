@@ -379,7 +379,7 @@ Your services keep their existing IAM. Tenuo adds a **delegation layer** that tr
 
 ## Contributing
 
-Contributions welcome! Please open an issue or PR.
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ### Security Issues
 
