@@ -1,6 +1,7 @@
 ---
 title: Argument Extraction
 description: How Tenuo extracts and validates tool arguments for authorization
+category: Deep Dive
 ---
 
 # Argument Extraction

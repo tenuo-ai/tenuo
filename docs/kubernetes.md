@@ -331,8 +331,8 @@ spec:
 
 ## See Also
 
-- [Proxy Configs Reference](./proxy-configs) - Full Envoy, Istio, nginx configs
-- [Envoy Quickstart](./quickstart/envoy/)
-- [Istio Quickstart](./quickstart/istio/)
-- [LangChain Integration](./langchain)
+- [Proxy Configs Reference](./proxy-configs.md) — Full Envoy, Istio, nginx configs
+- [Envoy Quickstart](https://github.com/tenuo/tenuo/tree/main/quickstart/envoy)
+- [Istio Quickstart](https://github.com/tenuo/tenuo/tree/main/quickstart/istio)
+- [LangChain Integration](./langchain.md)
 - [Security Model](./security.md)

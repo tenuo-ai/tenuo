@@ -559,6 +559,7 @@ async def write_file(path: str, content: str):
 ## Gateway Configuration
 
 See [Gateway Configuration Reference](./gateway-config.md) for the full YAML schema.
+
 ---
 
 ## See Also

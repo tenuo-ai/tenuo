@@ -104,8 +104,8 @@ Tenuo builds on established capability-based authorization patterns:
 | System | Contribution | Tenuo Difference |
 |--------|--------------|------------------|
 | [Macaroons](https://research.google/pubs/pub41892/) (Google, 2014) | Contextual caveats, attenuation | Tenuo adds PoP binding, AI-specific constraints |
-| [Biscuit](https://www.biscuitsec.org/) (Clever Cloud) | Offline attenuation, Datalog authorization | Tenuo uses simpler constraint predicates |
-| [UCAN](https://ucan.xyz/) (Fission) | Decentralized capability chains | Tenuo focused on centralized control plane model |
+| [Biscuit](https://www.biscuitsec.org/) (Clever Cloud, 2019) | Offline attenuation, Datalog authorization | Tenuo uses simpler constraint predicates |
+| [UCAN](https://ucan.xyz/) (Fission, 2021) | Decentralized capability chains | Tenuo focused on centralized control plane model |
 
 ### Why Not Just Use Biscuit?
 
@@ -155,6 +155,19 @@ The approaches are complementary: model-level defenses reduce the likelihood of 
 | ABAC attributes | CEL expressions |
 | Macaroons | Attenuated warrants |
 
+
+---
+
+## Citation
+
+If you reference Tenuo in academic work:
+```bibtex
+@software{tenuo2025,
+  title = {Tenuo: Capability-Based Authorization for AI Agents},
+  year = {2025},
+  url = {https://github.com/tenuo/tenuo}
+}
+```
 ---
 
 ## See Also
