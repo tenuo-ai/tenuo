@@ -30,17 +30,23 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: Install dependencies and build
+      - name: Create venv and install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install maturin pytest langchain langchain-core langgraph
+      
+      - name: Build Rust extension
         working-directory: tenuo-python
         run: |
-          python -m pip install --upgrade pip
-          pip install maturin pytest
+          source ../.venv/bin/activate
           maturin develop
-          pip install langchain langchain-core langgraph
       
       - name: Run security tests
         working-directory: tenuo-python
         run: |
+          source ../.venv/bin/activate
           pytest tests/security/ -v --tb=short
 
   rust-security:
