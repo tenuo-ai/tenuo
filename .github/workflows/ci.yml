@@ -24,6 +24,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@56f84321dbccf38fb67ce29ab63e4754056677e0 # stable
         with:
+          toolchain: stable
           components: clippy, rustfmt
 
       - name: Cache Rust
@@ -78,6 +79,8 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@56f84321dbccf38fb67ce29ab63e4754056677e0 # stable
+        with:
+          toolchain: stable
 
       - name: Cache Rust
         uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
@@ -133,6 +136,8 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@56f84321dbccf38fb67ce29ab63e4754056677e0 # stable
+        with:
+          toolchain: stable
 
       - name: Cache Rust
         uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2.7.8
