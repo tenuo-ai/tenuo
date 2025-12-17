@@ -6,9 +6,9 @@
   <strong>Capability tokens for AI agents.</strong>
 </p>
 
-Tenuo is a cryptographic authorization primitive for AI agents. **Think prepaid expense card, not corporate Amex**: ephemeral, scoped capability tokens that expire when the task ends.
+Tenuo is a cryptographic authorization primitive for AI agents. **Think prepaid debit card, not corporate Amex**: ephemeral, scoped capability tokens that expire when the task ends.
 
-It constrains ambient identity-based permissions with task-scoped capabilities that attenuate as they delegate. Offline verification in ~27μs on commodity hardware (benchmarks in repo).
+It constrains ambient identity-based permissions with task-scoped capabilities that attenuate as they delegate. Offline verification in ~27μs.
 If an agent is prompt-injected, the authority still can't escape its bounds.
 
 [![Crates.io](https://img.shields.io/crates/v/tenuo-core.svg)](https://crates.io/crates/tenuo-core)
