@@ -344,7 +344,7 @@ The tradeoff: Datalog can express recursive policies that Tenuo cannot. But for 
 | AI agents with tool calling | Tenuo |
 | LangChain / LangGraph | Tenuo |
 
-General-purpose capability tokens? Biscuit is mature. AI agents processing untrusted input? That's Tenuo.
+Biscuit and UCAN are excellent general-purpose capability systems. Tenuo is intentionally narrower: agent tool execution under untrusted inputs.
 
 ## Part 7: What Ships Today
 
@@ -369,9 +369,9 @@ Full examples in [GitHub](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-pyth
 
 **Performance:** Warrant verification takes ~27µs. Full chain validation (8 hops, signature checks, constraint evaluation) peaks at ~250µs. Denials fail fast at ~200ns. Orders of magnitude below LLM inference or network I/O.
 
-v0.1. Early and opinionated.
+v0.1. Early and opinionated. I expect parts of this design to change as people try to break it.
 
-**Next Iteration:** Multi-sig approvals, cascading revocation.
+**Next Iteration:** Multi-sig approvals, cascading revocation, SecureGraph
 
 ---
 

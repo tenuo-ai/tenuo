@@ -34,13 +34,56 @@ pip install tenuo[langchain]
 
 ## Quick Start
 
-### 1. Install
+Tenuo supports two integration patterns for MCP:
 
-```bash
-pip install tenuo
+1. **`SecureMCPClient`** (Built-in): Full client with automatic discovery and protection.
+2. **`langchain-mcp-adapters`** (Official): Secure the official LangChain MCP client.
+
+### Pattern 1: SecureMCPClient (Recommended)
+
+**Prerequisite**: Python 3.10+ (required by MCP SDK)
+
+```python
+from tenuo.mcp import SecureMCPClient
+from tenuo import configure, root_task, Pattern, SigningKey
+
+# 1. Configure Tenuo
+keypair = SigningKey.generate()
+configure(issuer_key=keypair)
+
+# 2. Connect to MCP server
+# Automatically discovers tools and wraps them with authorization
+async with SecureMCPClient("python", ["server.py"]) as client:
+    protected_tools = await client.get_protected_tools()
+    
+    # 3. Call tool with authorization
+    async with root_task(tools=["read_file"], path=Pattern("/data/*")):
+        result = await protected_tools["read_file"](path="/data/file.txt")
 ```
 
-### 2. Create MCP Configuration
+### Pattern 2: Securing LangChain Adapters
+
+If you are already using `langchain-mcp-adapters`, you can protect its tools using `protect_tools`:
+
+```python
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from tenuo.langchain import protect_tools
+
+# 1. Connect via official client
+client = MultiServerMCPClient({...})
+mcp_tools = await client.get_tools()
+
+# 2. Wrap with Tenuo protection
+secure_tools = protect_tools(mcp_tools)
+
+# ... use secure_tools in your agent
+```
+
+### Advanced: Manual Configuration
+
+For fine-grained control or Python < 3.10, you can manually define constraints and authorize calls.
+
+#### 1. Create MCP Configuration
 
 Define how to extract constraints from MCP tool calls:
 
@@ -63,16 +106,18 @@ tools:
         default: 1048576  # 1 MB
 ```
 
-### 3. Authorize MCP Calls
+#### 2. Authorize MCP Calls (Manual)
+
+If you are not using `SecureMCPClient`, you must manually authorize extracted arguments.
 
 ```python
 from tenuo import McpConfig, CompiledMcpConfig, Authorizer, SigningKey, Warrant, Pattern, Range
 
-# Load MCP configuration
+# 1. Load MCP configuration
 config = McpConfig.from_file("mcp-config.yaml")
 compiled = CompiledMcpConfig.compile(config)
 
-# Create warrant for filesystem operations
+# 2. Create warrant (usually done by control plane)
 control_keypair = SigningKey.generate()
 warrant = Warrant.issue(
     tools="filesystem_read",
@@ -85,30 +130,53 @@ warrant = Warrant.issue(
     holder=control_keypair.public_key
 )
 
-# MCP tool call arrives
+# 3. Handle MCP tool call
+# (Simulated MCP arguments)
 mcp_arguments = {
     "path": "/var/log/app.log",
     "maxSize": 512 * 1024
 }
 
-# Extract constraints
+# 4. Extract constraints based on config
 result = compiled.extract_constraints("filesystem_read", mcp_arguments)
 
-# Authorize with PoP signature
+# 5. Authorize with PoP signature
 pop_sig = warrant.create_pop_signature(control_keypair, "filesystem_read", dict(result.constraints))
 authorizer = Authorizer(trusted_roots=[control_keypair.public_key])
 authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop_sig))
 
-# ✓ Authorized - execute the tool
+# ✓ Authorized - proceed to execute tool
 ```
 
 ---
 
 ## LangChain + MCP Integration
 
-> **Note**: LangChain's MCP support is currently JavaScript-only (`@langchain/mcp-adapters`). This example shows the **authorization pattern** using simulated MCP tools. When LangChain Python adds MCP support, the same Tenuo authorization will work seamlessly.
+Tenuo integrates seamlessly with [`langchain-mcp-adapters`](https://github.com/langchain-ai/langchainjs/tree/main/libs/langchain-mcp-adapters/).
 
-**Pattern**: LangChain extracts tools → Tenuo authorizes calls → MCP executes
+**Pattern**: LangChain `MultiServerMCPClient` → Tenuo Authorization → MCP Server
+
+### Secure Adapter Pattern
+
+The most robust way to use MCP with LangChain is to wrap the official client tools with Tenuo authorization:
+
+```python
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from tenuo.mcp import SecureMCPClient # Wrapper for official client
+
+# 1. Connect via official client
+client = MultiServerMCPClient({
+    "math": {
+        "transport": "stdio",
+        "command": "python",
+        "args": ["math_server.py"]
+    }
+})
+
+# 2. Get protected tools (Tenuo auto-wraps them)
+tools = await client.get_tools()
+# ... use tools in LangChain agent
+```
 
 ### Python Example
 

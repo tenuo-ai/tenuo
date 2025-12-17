@@ -122,6 +122,32 @@ def _json_schema_to_python_type(schema: Dict[str, Any]) -> type:
     return type_mapping.get(schema_type, Any)
 
 
+def protect_langchain_mcp_client(client: Any) -> List[Any]:
+    """
+    Wrap all tools from a LangChain MultiServerMCPClient with Tenuo protection.
+    
+    Args:
+        client: langchain_mcp_adapters.client.MultiServerMCPClient instance
+        
+    Returns:
+        List of LangChain StructuredTool objects with Tenuo protection
+    """
+    if not LANGCHAIN_AVAILABLE:
+        raise ImportError(
+            "LangChain not installed. Install with: pip install tenuo[langchain]"
+        )
+    
+    # This is a bit tricky because the official client is stateless by default.
+    # We need to wrap the tool calls it makes.
+    
+    # 1. Get tools from the client
+    # Note: client.get_tools() is async
+    raise NotImplementedError(
+        "Direct wrapping of MultiServerMCPClient is coming soon. "
+        "Use SecureMCPClient for now which provides the same functionality with native protection."
+    )
+
+
 class MCPToolAdapter:
     """
     Adapter for converting MCP client tools to LangChain tools.
