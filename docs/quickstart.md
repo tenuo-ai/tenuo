@@ -263,19 +263,6 @@ Deploy Tenuo as a gateway authorizer:
 - **[Envoy Quickstart](./quickstart/envoy/)** - Standalone Envoy proxy (5 min)
 - **[Istio Quickstart](./quickstart/istio/)** - Istio service mesh (5 min)
 
----
-
-## Next Steps
-
-- **[Concepts](./concepts)** — Why Tenuo? Threat model, core invariants
-- **[Kubernetes Guide](./kubernetes)** — Production deployment patterns
-- **[API Reference](./api-reference)** — Complete Python SDK docs
-- **[LangChain](./langchain)** — Protect LangChain tools
-- **[LangGraph](./langgraph)** — Scope LangGraph nodes
-- **[Security](./security)** — Threat model, best practices
-
----
-
 ## MCP Integration
 
 Tenuo supports [Model Context Protocol](https://modelcontextprotocol.io) natively:
@@ -293,5 +280,13 @@ result = compiled.extract_constraints("filesystem_read", {"path": "/var/log/app.
 # Authorize using extracted constraints
 authorized = warrant.authorize("filesystem_read", result.constraints, pop_sig)
 ```
+---
 
-See [API Reference](./api-reference) for full documentation.
+## Next Steps
+
+- **[Concepts](./concepts)** — Why Tenuo? Threat model, core invariants
+- **[Kubernetes Guide](./kubernetes)** — Production deployment patterns
+- **[API Reference](./api-reference)** — Complete Python SDK docs
+- **[LangChain](./langchain)** — Protect LangChain tools
+- **[LangGraph](./langgraph)** — Scope LangGraph nodes
+- **[Security](./security)** — Threat model, best practices

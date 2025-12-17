@@ -313,10 +313,7 @@ async fn enroll(
             vec![
                 ("cluster", Pattern::new("staging-*").unwrap().into()),
                 ("action", tenuo_core::constraints::Wildcard::new().into()),
-                (
-                    "replicas",
-                    tenuo_core::constraints::Range::max(15.0).into(),
-                ),
+                ("replicas", tenuo_core::constraints::Range::max(15.0).into()),
             ]
         };
 
