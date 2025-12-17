@@ -100,7 +100,10 @@ jobs:
           source ../.venv/bin/activate || source ../.venv/Scripts/activate
           pip install maturin
           maturin develop
-          pip install -e .
+          # Install the Python wrapper package
+          uv pip install -e .
+          # Verify installation
+          python -c "import tenuo; print(f'Tenuo installed: {tenuo.__file__}')"
 
       - name: Install dev dependencies
         working-directory: tenuo-python
@@ -169,7 +172,10 @@ jobs:
           source ../.venv/bin/activate || source ../.venv/Scripts/activate
           pip install maturin
           maturin develop
-          pip install -e .
+          # Install the Python wrapper package
+          uv pip install -e .
+          # Verify installation
+          python -c "import tenuo; print(f'Tenuo installed: {tenuo.__file__}')"
 
       - name: Install LangChain (oldest)
         if: matrix.langchain-version == '0.2.0'
