@@ -29,22 +29,37 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 
+# Core runtime dependencies
+dependencies = [
+    "PyYAML>=6.0",     # Used in langchain.py config loading
+    "pydantic>=2.0",   # Used for LangChain tool schemas
+]
+
 [project.optional-dependencies]
+# Feature flags for users
+langchain = [
+    "langchain-core>=0.1",
+]
+langgraph = [
+    "langgraph>=0.0.10",
+    "tenuo[langchain]",  # LangGraph integration needs LangChain tools
+]
+
+# Development dependencies (includes features + tools)
 dev = [
     "maturin>=1.0",
     "pytest>=7.0",
+    "pytest-asyncio",
     "ruff>=0.1.0",
     "mypy>=1.0",
     "types-PyYAML",
     "types-requests",
-    "langchain",
-    "langchain-core",
-    "langchain-openai",
-    "langgraph",
-    "fastapi",
+    "fastapi",         # For examples/demos
     "uvicorn",
-    "pydantic",
-    "PyYAML",
+    "langchain",       # Full langchain for testing
+    "langchain-openai",
+    # Include optional groups in dev
+    "tenuo[langchain,langgraph]",
 ]
 
 [project.urls]

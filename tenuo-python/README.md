@@ -13,21 +13,9 @@ Python bindings for [Tenuo](https://github.com/tenuo-ai/tenuo), providing crypto
 pip install tenuo
 ```
 
-Or from source:
-
-```bash
-pip install maturin
-cd tenuo-python
-maturin develop
-```
+## Quick Start
 
 The package provides a clean Python API that wraps the Rust extension:
-
-```python
-from tenuo import Keypair, Warrant, Pattern, Exact, Range
-```
-
-## Quick Start
 
 ```python
 from tenuo import Keypair, Warrant, Pattern, Exact, Range
@@ -74,6 +62,36 @@ authorized = worker_warrant.authorize(
     signature=bytes(pop_signature)
 )
 print(f"Authorized: {authorized}")  # True
+```
+
+## Installation Options
+
+### With Framework Support
+
+For LangChain integration:
+```bash
+pip install tenuo[langchain]
+```
+
+For LangGraph integration (includes LangChain):
+```bash
+pip install tenuo[langgraph]
+```
+
+### Development
+
+```bash
+pip install tenuo[dev]
+```
+
+This includes all optional dependencies plus development tools (pytest, mypy, ruff).
+
+### From Source
+
+```bash
+pip install maturin
+cd tenuo-python
+maturin develop
 ```
 
 ## Security Considerations

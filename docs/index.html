@@ -8,7 +8,7 @@
 
     <!-- SEO -->
     <meta name="description"
-        content="Tenuo is an open-source capability token engine for AI agents. Rust core, Python bindings, ~27μs verification. Stop ambient authority.">
+        content="Tenuo is an open-source capability token library for AI agents. Rust core, Python bindings, ~27μs verification. Stop ambient authority.">
     <meta name="keywords"
         content="AI agents, capability tokens, authorization, LangChain, LangGraph, security, Rust, Python">
     <meta name="author" content="Tenuo">
@@ -594,7 +594,7 @@
             <div class="feature">
                 <div class="feature-icon">📋</div>
                 <h3>Task-scoped authority</h3>
-                <p>Constraints scope authority to exactly what each task needs. Replicas, paths, tools.</p>
+                <p>Constraints scope authority to exactly what each task needs. Tools, paths, arguments, TTLs.</p>
             </div>
             <div class="feature">
                 <div class="feature-icon">⬇️</div>
@@ -632,7 +632,7 @@ tools = [read_file, send_email, query_db]
         <section class="section">
             <div class="section-header">
                 <h2>Solves the "Confused Deputy" problem</h2>
-                <p>The attack succeeds. The action doesn't.</p>
+                <p>The model fails, not the agent.</p>
             </div>
             <div class="attack-grid">
                 <div class="attack-card bad">

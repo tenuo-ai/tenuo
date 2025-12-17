@@ -20,6 +20,7 @@ If an agent is prompt-injected, the authority still can’t escape its bounds.
 pip install tenuo
 ```
 
+
 ## Quick Start
 
 ```python
@@ -145,6 +146,9 @@ tool_node = TenuoToolNode(tools)
 ```
 
 **Kubernetes** — Deploy as sidecar or gateway. See [quickstart](https://github.com/tenuo-ai/tenuo/tree/main/docs/quickstart).
+
+> **Note**: For LangChain/LangGraph support, install with `pip install tenuo[langchain]` or `pip install tenuo[langgraph]`
+
 
 ---
 
