@@ -8,7 +8,7 @@
 
 Tenuo is a cryptographic authorization primitive for AI agents.
 It constrains ambient identity-based permissions with task-scoped capabilities that attenuate as they delegate. Offline verification in ~27μs.
-If an agent is prompt-injected, the authority still can’t escape its bounds.
+If an agent is prompt-injected, the authority still can't escape its bounds.
 
 [![Crates.io](https://img.shields.io/crates/v/tenuo-core.svg)](https://crates.io/crates/tenuo-core)
 [![PyPI](https://img.shields.io/pypi/v/tenuo.svg)](https://pypi.org/project/tenuo/)
@@ -19,7 +19,6 @@ If an agent is prompt-injected, the authority still can’t escape its bounds.
 ```bash
 pip install tenuo
 ```
-
 
 ## Quick Start
 
@@ -37,7 +36,7 @@ warrant = Warrant.issue(
 )
 
 # Protect a tool
-@lockdown(tool="read_file") # Enforces warrant constraints at call time
+@lockdown(tool="read_file")
 def read_file(path: str):
     return open(path).read()
 
@@ -121,13 +120,23 @@ Tenuo supports two types of warrants for separation of concerns:
 
 ---
 
-## Try It
+## Requirements
+
+| Component | Supported |
+|-----------|-----------|
+| **Python** | 3.8, 3.9, 3.10, 3.11, 3.12 |
+| **OS** | Linux, macOS, Windows |
+| **Rust** | 1.70+ (only for building from source) |
+
+### Optional Dependencies
+
 ```bash
-# Run the demo (Docker required)
-docker compose up orchestrator worker
+pip install tenuo                # Core only
+pip install tenuo[langchain]     # + LangChain (langchain-core ≥0.2)
+pip install tenuo[langgraph]     # + LangGraph (includes LangChain)
 ```
 
-See the [examples](./tenuo-python/examples) for LangChain, LangGraph, and multi-agent patterns.
+LangChain/LangGraph are optional to keep the core package lightweight. If you see `ImportError: langchain_core not found`, install the appropriate extra.
 
 ---
 
@@ -147,8 +156,15 @@ tool_node = TenuoToolNode(tools)
 
 **Kubernetes** — Deploy as sidecar or gateway. See [quickstart](https://github.com/tenuo-ai/tenuo/tree/main/docs/quickstart).
 
-> **Note**: For LangChain/LangGraph support, install with `pip install tenuo[langchain]` or `pip install tenuo[langgraph]`
+---
 
+## Try It
+
+```bash
+docker compose up orchestrator worker
+```
+
+See the [examples](./tenuo-python/examples) for LangChain, LangGraph, and multi-agent patterns.
 
 ---
 
