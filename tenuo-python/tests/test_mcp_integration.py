@@ -229,3 +229,86 @@ tools:
     
     assert constraints["table"] == "users"
     assert constraints["op"] == "SELECT"
+
+
+@pytest.mark.asyncio
+async def test_discover_and_protect_usage(mcp_server_script):
+    """Test discover_and_protect as context manager."""
+    if not mcp_server_script.exists():
+        pytest.skip("MCP server script not found")
+    
+    from tenuo import SigningKey, configure, root_task, Pattern
+    from tenuo.mcp.client import discover_and_protect
+    
+    # Configure Tenuo
+    keypair = SigningKey.generate()
+    configure(issuer_key=keypair, dev_mode=True)
+    
+    # Create test file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
+        tf.write("context_manager_test")
+        test_file = tf.name
+        
+    try:
+        async with discover_and_protect("python", [str(mcp_server_script)]) as tools:
+            assert "read_file" in tools
+            read_file = tools["read_file"]
+            
+            async with root_task(tools=["read_file"], path=Pattern("/tmp/*")):
+                result = await read_file(path=test_file)
+                assert "context_manager_test" in result[0].text
+    finally:
+        os.unlink(test_file)
+
+
+@pytest.mark.asyncio
+async def test_config_auto_registration(mcp_server_script):
+    """Test that config is automatically registered when config_path is provided."""
+    if not mcp_server_script.exists():
+        pytest.skip("MCP server script not found")
+        
+    from tenuo import get_config, SigningKey, configure
+    
+    # Reset config
+    from tenuo.config import reset_config
+    reset_config()
+    
+    # Setup minimal config
+    keypair = SigningKey.generate()
+    configure(issuer_key=keypair, dev_mode=True)
+    
+    # Ensure no MCP config initially
+    assert get_config().mcp_config is None
+    
+    # Create MCP config file
+    config_yaml = """
+version: "1"
+tools:
+  read_file:
+    constraints:
+      max_size:
+        from: body
+        path: "max_size"
+        type: integer
+        default: 12345
+"""
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        f.write(config_yaml)
+        config_path = f.name
+        
+    try:
+        # Initialize client with config_path (no register_config arg)
+        # Should default to registering
+        async with SecureMCPClient(
+            command="python", 
+            args=[str(mcp_server_script)],
+            config_path=config_path
+        ) as _client:  # noqa: F841
+            # Check global config
+            conf = get_config()
+            assert conf.mcp_config is not None
+            # Verify it's the right config by checking compiled output or similar
+            # Deep inspection might be hard, but presence is good enough for this test
+            
+    finally:
+        os.unlink(config_path)

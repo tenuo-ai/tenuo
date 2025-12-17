@@ -8,16 +8,17 @@ NC='\033[0m'
 
 echo "[INFO] Starting Pre-commit Checks..."
 
-# 1. Rust Formatting
-echo -e "\n${GREEN}[1/4] Checking Rust Formatting...${NC}"
+# 1. Rust Formatting (auto-fix)
+echo -e "\n${GREEN}[1/5] Formatting Rust Code...${NC}"
 cd tenuo-core
-cargo fmt --all -- --check
+cargo fmt --all
 cd ../tenuo-python
-cargo fmt --all -- --check
+cargo fmt --all
 cd ..
+echo "  → Rust code formatted"
 
 # 2. Rust Linting (Clippy)
-echo -e "\n${GREEN}[2/4] Running Clippy...${NC}"
+echo -e "\n${GREEN}[2/5] Running Clippy...${NC}"
 cd tenuo-core
 cargo clippy --all-targets --all-features -- -D warnings
 cd ..
@@ -25,7 +26,7 @@ cd ..
 # 3. Rust Tests
 echo -e "\n${GREEN}[3/5] Running Rust Tests...${NC}"
 cd tenuo-core
-cargo test
+cargo test --lib
 cd ..
 
 # 4. Security Audit

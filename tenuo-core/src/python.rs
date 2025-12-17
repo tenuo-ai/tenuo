@@ -207,6 +207,35 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
             crate::error::Error::UnknownProvider(m) => {
                 ("UnknownProvider", PyTuple::new(py, [m.as_str()]))
             }
+
+            // Issuance errors
+            crate::error::Error::TrustLevelExceeded { requested, ceiling } => (
+                "TrustLevelExceeded",
+                PyTuple::new(py, [requested.as_str(), ceiling.as_str()]),
+            ),
+            crate::error::Error::UnauthorizedToolIssuance { tool, allowed } => (
+                "UnauthorizedToolIssuance",
+                PyTuple::new(
+                    py,
+                    [
+                        tool.as_str(),
+                        &format!("{:?}", allowed), // Convert Vec<String> to string repr
+                    ],
+                ),
+            ),
+            crate::error::Error::SelfIssuanceProhibited { reason } => (
+                "SelfIssuanceProhibited",
+                PyTuple::new(py, [reason.as_str()]),
+            ),
+            crate::error::Error::IssueDepthExceeded { depth, max } => {
+                ("IssueDepthExceeded", PyTuple::new(py, [*depth, *max]))
+            }
+            crate::error::Error::InvalidWarrantType { message } => {
+                ("InvalidWarrantType", PyTuple::new(py, [message.as_str()]))
+            }
+            crate::error::Error::IssuerChainTooLong { length, max } => {
+                ("IssuerChainTooLong", PyTuple::new(py, [*length, *max]))
+            }
         };
 
         // Unwrap the args Result (PyTuple::new can fail on conversion)
@@ -1605,7 +1634,11 @@ impl PyAttenuationBuilder {
     ///
     /// * `keypair` - The keypair of the delegator
     /// * `parent_keypair` - The keypair that signed the parent warrant
-    fn delegate_to(&self, keypair: &PySigningKey, parent_keypair: &PySigningKey) -> PyResult<PyWarrant> {
+    fn delegate_to(
+        &self,
+        keypair: &PySigningKey,
+        parent_keypair: &PySigningKey,
+    ) -> PyResult<PyWarrant> {
         let warrant = self
             .inner
             .clone()

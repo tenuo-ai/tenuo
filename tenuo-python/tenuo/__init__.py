@@ -74,6 +74,13 @@ from .exceptions import (
     # Trust violations
     TrustViolation,
     TrustLevelExceeded,
+    # Issuance errors
+    IssuanceError,
+    UnauthorizedToolIssuance,
+    SelfIssuanceProhibited,
+    IssueDepthExceeded,
+    InvalidWarrantType,
+    IssuerChainTooLong,
     # PoP errors
     PopError,
     MissingSigningKey,
@@ -338,6 +345,13 @@ __all__ = [
     # Exceptions - Trust violations
     "TrustViolation",
     "TrustLevelExceeded",
+    # Exceptions - Issuance errors
+    "IssuanceError",
+    "UnauthorizedToolIssuance",
+    "SelfIssuanceProhibited",
+    "IssueDepthExceeded",
+    "InvalidWarrantType",
+    "IssuerChainTooLong",
     # Exceptions - PoP errors
     "PopError",
     "MissingSigningKey",

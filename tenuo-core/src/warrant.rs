@@ -574,49 +574,49 @@ impl Warrant {
         match self.payload.r#type {
             WarrantType::Execution => {
                 if self.payload.tools.is_none() {
-                    return Err(Error::Validation(
-                        "execution warrant must have a tool".to_string(),
-                    ));
+                    return Err(Error::InvalidWarrantType {
+                        message: "execution warrant must have a tool".to_string(),
+                    });
                 }
                 if self.payload.issuable_tools.is_some() {
-                    return Err(Error::Validation(
-                        "execution warrant cannot have issuable_tools".to_string(),
-                    ));
+                    return Err(Error::InvalidWarrantType {
+                        message: "execution warrant cannot have issuable_tools".to_string(),
+                    });
                 }
                 if self.payload.trust_ceiling.is_some() {
-                    return Err(Error::Validation(
-                        "execution warrant cannot have trust_ceiling".to_string(),
-                    ));
+                    return Err(Error::InvalidWarrantType {
+                        message: "execution warrant cannot have trust_ceiling".to_string(),
+                    });
                 }
                 if self.payload.max_issue_depth.is_some() {
-                    return Err(Error::Validation(
-                        "execution warrant cannot have max_issue_depth".to_string(),
-                    ));
+                    return Err(Error::InvalidWarrantType {
+                        message: "execution warrant cannot have max_issue_depth".to_string(),
+                    });
                 }
             }
             WarrantType::Issuer => {
                 if self.payload.tools.is_some() {
-                    return Err(Error::Validation(
-                        "issuer warrant cannot have a tool".to_string(),
-                    ));
+                    return Err(Error::InvalidWarrantType {
+                        message: "issuer warrant cannot have a tool".to_string(),
+                    });
                 }
                 if self.payload.constraints.is_some() {
-                    return Err(Error::Validation(
-                        "issuer warrant cannot have constraints (use constraint_bounds)"
+                    return Err(Error::InvalidWarrantType {
+                        message: "issuer warrant cannot have constraints (use constraint_bounds)"
                             .to_string(),
-                    ));
+                    });
                 }
                 if self.payload.issuable_tools.is_none()
                     || self.payload.issuable_tools.as_ref().unwrap().is_empty()
                 {
-                    return Err(Error::Validation(
-                        "issuer warrant must have at least one issuable_tool".to_string(),
-                    ));
+                    return Err(Error::InvalidWarrantType {
+                        message: "issuer warrant must have at least one issuable_tool".to_string(),
+                    });
                 }
                 if self.payload.trust_ceiling.is_none() {
-                    return Err(Error::Validation(
-                        "issuer warrant must have trust_ceiling".to_string(),
-                    ));
+                    return Err(Error::InvalidWarrantType {
+                        message: "issuer warrant must have trust_ceiling".to_string(),
+                    });
                 }
             }
         }
@@ -626,10 +626,10 @@ impl Warrant {
             (self.payload.trust_level, self.payload.trust_ceiling)
         {
             if trust_level > trust_ceiling {
-                return Err(Error::Validation(format!(
-                    "trust_level ({:?}) cannot exceed trust_ceiling ({:?})",
-                    trust_level, trust_ceiling
-                )));
+                return Err(Error::TrustLevelExceeded {
+                    requested: format!("{:?}", trust_level),
+                    ceiling: format!("{:?}", trust_ceiling),
+                });
             }
         }
 
@@ -637,10 +637,10 @@ impl Warrant {
         if let Some(max_issue) = self.payload.max_issue_depth {
             let effective_max = self.effective_max_depth();
             if max_issue > effective_max {
-                return Err(Error::Validation(format!(
-                    "max_issue_depth ({}) cannot exceed max_depth ({})",
-                    max_issue, effective_max
-                )));
+                return Err(Error::IssueDepthExceeded {
+                    depth: max_issue,
+                    max: effective_max,
+                });
             }
         }
 
@@ -650,11 +650,10 @@ impl Warrant {
         // SECURITY: Validate issuer chain length to prevent stack overflow attacks
         // and excessive memory consumption during verification.
         if self.payload.issuer_chain.len() > crate::MAX_ISSUER_CHAIN_LENGTH {
-            return Err(Error::Validation(format!(
-                "issuer chain length {} exceeds maximum {} (potential DoS attack)",
-                self.payload.issuer_chain.len(),
-                crate::MAX_ISSUER_CHAIN_LENGTH
-            )));
+            return Err(Error::IssuerChainTooLong {
+                length: self.payload.issuer_chain.len(),
+                max: crate::MAX_ISSUER_CHAIN_LENGTH,
+            });
         }
 
         // Validate issuer chain (if present)
@@ -899,9 +898,9 @@ impl Warrant {
 
         // Only execution warrants can authorize actions
         if self.payload.r#type != WarrantType::Execution {
-            return Err(Error::Validation(
-                "only execution warrants can authorize actions".to_string(),
-            ));
+            return Err(Error::InvalidWarrantType {
+                message: "only execution warrants can authorize actions".to_string(),
+            });
         }
 
         // Check tool name
@@ -954,15 +953,18 @@ impl Warrant {
         }
 
         if self.payload.r#type != WarrantType::Execution {
-            return Err(Error::Validation(
-                "only execution warrants can authorize actions".to_string(),
-            ));
+            return Err(Error::InvalidWarrantType {
+                message: "only execution warrants can authorize actions".to_string(),
+            });
         }
 
         let warrant_tools =
-            self.payload.tools.as_ref().ok_or_else(|| {
-                Error::Validation("execution warrant must have tools".to_string())
-            })?;
+            self.payload
+                .tools
+                .as_ref()
+                .ok_or_else(|| Error::InvalidWarrantType {
+                    message: "execution warrant must have tools".to_string(),
+                })?;
 
         // Check if the requested tool is allowed
         // "*" is a wildcard that allows any tool
@@ -1137,9 +1139,9 @@ impl Warrant {
     /// Returns an error if this warrant is not an issuer warrant.
     pub fn issue_execution_warrant(&self) -> Result<IssuanceBuilder<'_>> {
         if self.payload.r#type != WarrantType::Issuer {
-            return Err(Error::Validation(
-                "can only issue execution warrants from issuer warrants".to_string(),
-            ));
+            return Err(Error::InvalidWarrantType {
+                message: "can only issue execution warrants from issuer warrants".to_string(),
+            });
         }
         Ok(IssuanceBuilder::new(self))
     }
@@ -1339,37 +1341,37 @@ impl WarrantBuilder {
         match warrant_type {
             WarrantType::Execution => {
                 if self.tools.is_none() {
-                    return Err(Error::Validation(
-                        "execution warrant requires a tool".to_string(),
-                    ));
+                    return Err(Error::InvalidWarrantType {
+                        message: "execution warrant requires a tool".to_string(),
+                    });
                 }
                 if self.issuable_tools.is_some() {
-                    return Err(Error::Validation(
-                        "execution warrant cannot have issuable_tools".to_string(),
-                    ));
+                    return Err(Error::InvalidWarrantType {
+                        message: "execution warrant cannot have issuable_tools".to_string(),
+                    });
                 }
                 if self.trust_ceiling.is_some() {
-                    return Err(Error::Validation(
-                        "execution warrant cannot have trust_ceiling".to_string(),
-                    ));
+                    return Err(Error::InvalidWarrantType {
+                        message: "execution warrant cannot have trust_ceiling".to_string(),
+                    });
                 }
             }
             WarrantType::Issuer => {
                 if self.tools.is_some() {
-                    return Err(Error::Validation(
-                        "issuer warrant cannot have a tool".to_string(),
-                    ));
+                    return Err(Error::InvalidWarrantType {
+                        message: "issuer warrant cannot have a tool".to_string(),
+                    });
                 }
                 if self.issuable_tools.is_none() || self.issuable_tools.as_ref().unwrap().is_empty()
                 {
-                    return Err(Error::Validation(
-                        "issuer warrant requires at least one issuable_tool".to_string(),
-                    ));
+                    return Err(Error::InvalidWarrantType {
+                        message: "issuer warrant requires at least one issuable_tool".to_string(),
+                    });
                 }
                 if self.trust_ceiling.is_none() {
-                    return Err(Error::Validation(
-                        "issuer warrant requires trust_ceiling".to_string(),
-                    ));
+                    return Err(Error::InvalidWarrantType {
+                        message: "issuer warrant requires trust_ceiling".to_string(),
+                    });
                 }
             }
         }
@@ -1391,10 +1393,10 @@ impl WarrantBuilder {
         if let Some(max_issue) = self.max_issue_depth {
             if let Some(max_delegation) = self.max_depth {
                 if max_issue > max_delegation {
-                    return Err(Error::Validation(format!(
-                        "max_issue_depth ({}) cannot exceed max_depth ({})",
-                        max_issue, max_delegation
-                    )));
+                    return Err(Error::IssueDepthExceeded {
+                        depth: max_issue,
+                        max: max_delegation,
+                    });
                 }
             }
         }
@@ -1402,10 +1404,10 @@ impl WarrantBuilder {
         // Validate trust_level doesn't exceed trust_ceiling for issuer warrants
         if let (Some(trust_level), Some(trust_ceiling)) = (self.trust_level, self.trust_ceiling) {
             if trust_level > trust_ceiling {
-                return Err(Error::Validation(format!(
-                    "trust_level ({:?}) cannot exceed trust_ceiling ({:?})",
-                    trust_level, trust_ceiling
-                )));
+                return Err(Error::TrustLevelExceeded {
+                    requested: format!("{:?}", trust_level),
+                    ceiling: format!("{:?}", trust_ceiling),
+                });
             }
         }
 
@@ -1852,11 +1854,10 @@ impl<'a> AttenuationBuilder<'a> {
         // SECURITY: Check issuer chain length before adding another link
         // This prevents building warrants with chains exceeding the protocol limit.
         if self.parent.payload.issuer_chain.len() >= crate::MAX_ISSUER_CHAIN_LENGTH {
-            return Err(Error::Validation(format!(
-                "cannot delegate: issuer chain length {} would exceed maximum {}",
-                self.parent.payload.issuer_chain.len() + 1,
-                crate::MAX_ISSUER_CHAIN_LENGTH
-            )));
+            return Err(Error::IssuerChainTooLong {
+                length: self.parent.payload.issuer_chain.len() + 1,
+                max: crate::MAX_ISSUER_CHAIN_LENGTH,
+            });
         }
 
         // Build issuer chain link from parent
@@ -2479,11 +2480,10 @@ impl OwnedAttenuationBuilder {
 
         // SECURITY: Check issuer chain length before adding another link
         if self.parent.payload.issuer_chain.len() >= crate::MAX_ISSUER_CHAIN_LENGTH {
-            return Err(Error::Validation(format!(
-                "cannot delegate: issuer chain length {} would exceed maximum {}",
-                self.parent.payload.issuer_chain.len() + 1,
-                crate::MAX_ISSUER_CHAIN_LENGTH
-            )));
+            return Err(Error::IssuerChainTooLong {
+                length: self.parent.payload.issuer_chain.len() + 1,
+                max: crate::MAX_ISSUER_CHAIN_LENGTH,
+            });
         }
 
         let mut issuer_chain = self.parent.payload.issuer_chain.clone();
@@ -2797,10 +2797,9 @@ impl<'a> IssuanceBuilder<'a> {
         // This prevents privilege escalation where an issuer could convert their
         // issuer warrant into execution capabilities for themselves.
         if authorized_holder == self.issuer.payload.authorized_holder {
-            return Err(Error::Validation(
-                "issuer cannot grant execution warrants to themselves (self-issuance prohibited)"
-                    .to_string(),
-            ));
+            return Err(Error::SelfIssuanceProhibited {
+                reason: "issuer cannot grant execution warrants to themselves".to_string(),
+            });
         }
 
         // SECURITY: Execution warrant holder cannot be the issuer warrant's issuer
@@ -2808,36 +2807,35 @@ impl<'a> IssuanceBuilder<'a> {
         // issuer could indirectly grant execution capabilities to themselves through
         // the issuer warrant mechanism.
         if authorized_holder == self.issuer.payload.issuer {
-            return Err(Error::Validation(
-                "execution warrant holder cannot be the issuer warrant's issuer (issuer-holder separation required)"
-                    .to_string(),
-            ));
+            return Err(Error::SelfIssuanceProhibited {
+                reason: "execution warrant holder cannot be the issuer warrant's issuer (issuer-holder separation required)".to_string(),
+            });
         }
 
         // Validate all tools are in issuable_tools
         if let Some(issuable_tools) = &self.issuer.payload.issuable_tools {
             for tool in &tools {
                 if !issuable_tools.contains(tool) {
-                    return Err(Error::Validation(format!(
-                        "tool '{}' is not in issuer's issuable_tools: {:?}",
-                        tool, issuable_tools
-                    )));
+                    return Err(Error::UnauthorizedToolIssuance {
+                        tool: tool.clone(),
+                        allowed: issuable_tools.clone(),
+                    });
                 }
             }
         } else {
-            return Err(Error::Validation(
-                "issuer warrant must have issuable_tools".to_string(),
-            ));
+            return Err(Error::InvalidWarrantType {
+                message: "issuer warrant must have issuable_tools".to_string(),
+            });
         }
 
         // Validate trust_level <= trust_ceiling
         if let Some(trust_level) = self.trust_level {
             if let Some(trust_ceiling) = self.issuer.payload.trust_ceiling {
                 if trust_level > trust_ceiling {
-                    return Err(Error::Validation(format!(
-                        "trust_level ({:?}) cannot exceed issuer's trust_ceiling ({:?})",
-                        trust_level, trust_ceiling
-                    )));
+                    return Err(Error::TrustLevelExceeded {
+                        requested: format!("{:?}", trust_level),
+                        ceiling: format!("{:?}", trust_ceiling),
+                    });
                 }
             }
         }
@@ -2863,10 +2861,10 @@ impl<'a> IssuanceBuilder<'a> {
         let new_depth = self.issuer.payload.depth + 1;
         if let Some(max_issue_depth) = self.issuer.payload.max_issue_depth {
             if new_depth > max_issue_depth {
-                return Err(Error::Validation(format!(
-                    "issued warrant depth ({}) exceeds issuer's max_issue_depth ({})",
-                    new_depth, max_issue_depth
-                )));
+                return Err(Error::IssueDepthExceeded {
+                    depth: new_depth,
+                    max: max_issue_depth,
+                });
             }
         }
 
@@ -2874,10 +2872,10 @@ impl<'a> IssuanceBuilder<'a> {
         if let Some(max_depth) = self.max_depth {
             if let Some(max_issue_depth) = self.issuer.payload.max_issue_depth {
                 if max_depth > max_issue_depth {
-                    return Err(Error::Validation(format!(
-                        "max_depth ({}) exceeds issuer's max_issue_depth ({})",
-                        max_depth, max_issue_depth
-                    )));
+                    return Err(Error::IssueDepthExceeded {
+                        depth: max_depth,
+                        max: max_issue_depth,
+                    });
                 }
             }
         }
@@ -2900,11 +2898,10 @@ impl<'a> IssuanceBuilder<'a> {
 
         // SECURITY: Check issuer chain length before adding another link
         if self.issuer.payload.issuer_chain.len() >= crate::MAX_ISSUER_CHAIN_LENGTH {
-            return Err(Error::Validation(format!(
-                "cannot issue: issuer chain length {} would exceed maximum {}",
-                self.issuer.payload.issuer_chain.len() + 1,
-                crate::MAX_ISSUER_CHAIN_LENGTH
-            )));
+            return Err(Error::IssuerChainTooLong {
+                length: self.issuer.payload.issuer_chain.len() + 1,
+                max: crate::MAX_ISSUER_CHAIN_LENGTH,
+            });
         }
 
         // Build issuer chain link
@@ -3357,7 +3354,7 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(
-            err_msg.contains("issuer chain length") && err_msg.contains("exceed maximum"),
+            err_msg.contains("issuer chain too long"),
             "Expected chain length error, got: {}",
             err_msg
         );
@@ -4029,7 +4026,7 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("not in issuer's issuable_tools"));
+            .contains("unauthorized tool issuance"));
     }
 
     #[test]
@@ -4060,7 +4057,7 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("cannot exceed issuer's trust_ceiling"));
+            .contains("trust level exceeded"));
     }
 
     #[test]
@@ -4149,68 +4146,68 @@ mod tests {
             .contains("can only issue execution warrants from issuer warrants"));
     }
 
-#[test]
-fn test_trust_level_ordering() {
-    assert!(TrustLevel::System > TrustLevel::Privileged);
-    assert!(TrustLevel::Privileged > TrustLevel::Internal);
-    assert!(TrustLevel::Internal > TrustLevel::Partner);
-    assert!(TrustLevel::Partner > TrustLevel::External);
-    assert!(TrustLevel::External > TrustLevel::Untrusted);
+    #[test]
+    fn test_trust_level_ordering() {
+        assert!(TrustLevel::System > TrustLevel::Privileged);
+        assert!(TrustLevel::Privileged > TrustLevel::Internal);
+        assert!(TrustLevel::Internal > TrustLevel::Partner);
+        assert!(TrustLevel::Partner > TrustLevel::External);
+        assert!(TrustLevel::External > TrustLevel::Untrusted);
 
-    // Explicit check of values to prevent reordering
-    assert_eq!(TrustLevel::Untrusted as u8, 0);
-    assert_eq!(TrustLevel::External as u8, 10);
-    assert_eq!(TrustLevel::Partner as u8, 20);
-    assert_eq!(TrustLevel::Internal as u8, 30);
-    assert_eq!(TrustLevel::Privileged as u8, 40);
-    assert_eq!(TrustLevel::System as u8, 50);
-}
-
-#[test]
-fn test_effective_max_depth_latching() {
-    // 1. Root warrant (None/Unlimited)
-    let root_kp = create_test_keypair();
-    let root = Warrant::builder()
-        .tool("test")
-        .ttl(Duration::from_secs(3600))
-        // max_depth: None (defaults to MAX_DELEGATION_DEPTH=64)
-        .authorized_holder(root_kp.public_key())
-        .build(&root_kp)
-        .unwrap();
-
-    assert_eq!(root.effective_max_depth(), MAX_DELEGATION_DEPTH);
-
-    // 2. Child warrant sets limit (Some(5))
-    let child = root
-        .attenuate()
-        .max_depth(5)
-        .build(&root_kp, &root_kp)
-        .unwrap();
-
-    assert_eq!(child.effective_max_depth(), 5);
-
-    // 3. Grandchild tries to increase limit (Some(10)) - Should fail/latch
-    // The build() method calls validate which checks monotonicity
-    let result = child
-        .attenuate()
-        .max_depth(10)
-        .build(&root_kp, &root_kp);
-
-    // Expect error because 10 > 5
-    assert!(result.is_err());
-    let err = result.unwrap_err();
-    match err {
-        // We expect MonotonicityViolation or Validation error depending on implementation
-        Error::MonotonicityViolation(_) | Error::Validation(_) => {},
-        _ => panic!("Expected monitoring violation or validation error, got {:?}", err),
+        // Explicit check of values to prevent reordering
+        assert_eq!(TrustLevel::Untrusted as u8, 0);
+        assert_eq!(TrustLevel::External as u8, 10);
+        assert_eq!(TrustLevel::Partner as u8, 20);
+        assert_eq!(TrustLevel::Internal as u8, 30);
+        assert_eq!(TrustLevel::Privileged as u8, 40);
+        assert_eq!(TrustLevel::System as u8, 50);
     }
 
-    // 4. Grandchild with lower limit (Some(3)) - Should succeed
-    let grandchild = child
-        .attenuate()
-        .max_depth(3)
-        .build(&root_kp, &root_kp)
-        .unwrap();
-    assert_eq!(grandchild.effective_max_depth(), 3);
-}
+    #[test]
+    fn test_effective_max_depth_latching() {
+        // 1. Root warrant (None/Unlimited)
+        let root_kp = create_test_keypair();
+        let root = Warrant::builder()
+            .tool("test")
+            .ttl(Duration::from_secs(3600))
+            // max_depth: None (defaults to MAX_DELEGATION_DEPTH=64)
+            .authorized_holder(root_kp.public_key())
+            .build(&root_kp)
+            .unwrap();
+
+        assert_eq!(root.effective_max_depth(), MAX_DELEGATION_DEPTH);
+
+        // 2. Child warrant sets limit (Some(5))
+        let child = root
+            .attenuate()
+            .max_depth(5)
+            .build(&root_kp, &root_kp)
+            .unwrap();
+
+        assert_eq!(child.effective_max_depth(), 5);
+
+        // 3. Grandchild tries to increase limit (Some(10)) - Should fail/latch
+        // The build() method calls validate which checks monotonicity
+        let result = child.attenuate().max_depth(10).build(&root_kp, &root_kp);
+
+        // Expect error because 10 > 5
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        match err {
+            // We expect MonotonicityViolation or Validation error depending on implementation
+            Error::MonotonicityViolation(_) | Error::Validation(_) => {}
+            _ => panic!(
+                "Expected monitoring violation or validation error, got {:?}",
+                err
+            ),
+        }
+
+        // 4. Grandchild with lower limit (Some(3)) - Should succeed
+        let grandchild = child
+            .attenuate()
+            .max_depth(3)
+            .build(&root_kp, &root_kp)
+            .unwrap();
+        assert_eq!(grandchild.effective_max_depth(), 3);
+    }
 }

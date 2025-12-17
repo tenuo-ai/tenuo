@@ -28,6 +28,12 @@ Error Hierarchy:
     │   └── ExactValueMismatch
     ├── TrustViolation (trust level issues)
     │   └── TrustLevelExceeded
+    ├── IssuanceError (issuer warrant operations)
+    │   ├── UnauthorizedToolIssuance
+    │   ├── SelfIssuanceProhibited
+    │   ├── IssueDepthExceeded
+    │   ├── InvalidWarrantType
+    │   └── IssuerChainTooLong
     ├── PopError (Proof-of-Possession failures)
     │   ├── MissingSigningKey
     │   ├── SignatureMismatch
@@ -312,14 +318,84 @@ class TrustViolation(TenuoError):
 
 
 class TrustLevelExceeded(TrustViolation):
-    """Cannot delegate to higher trust level."""
+    """Requested trust level exceeds the issuer's trust ceiling."""
     error_code = "trust_level_exceeded"
-    rust_variant = ""
+    rust_variant = "TrustLevelExceeded"
     
-    def __init__(self, parent_level: str, child_level: str):
+    def __init__(self, requested: str, ceiling: str):
         super().__init__(
-            f"Cannot delegate from {parent_level} to {child_level}",
-            {"parent_level": parent_level, "child_level": child_level}
+            f"Trust level exceeded: requested {requested} exceeds ceiling {ceiling}",
+            {"requested": requested, "ceiling": ceiling}
+        )
+
+
+# =============================================================================
+# Issuance Errors (Issuer Warrant Operations)
+# =============================================================================
+
+class IssuanceError(TenuoError):
+    """Error during warrant issuance from an issuer warrant."""
+    error_code = "issuance_error"
+    rust_variant = ""
+
+
+class UnauthorizedToolIssuance(IssuanceError):
+    """Tool not authorized for issuance by the issuer warrant."""
+    error_code = "unauthorized_tool_issuance"
+    rust_variant = "UnauthorizedToolIssuance"
+    
+    def __init__(self, tool: str, allowed: list[str]):
+        super().__init__(
+            f"Unauthorized tool issuance: '{tool}' not in issuable_tools {allowed}",
+            {"tool": tool, "allowed": allowed}
+        )
+
+
+class SelfIssuanceProhibited(IssuanceError):
+    """Self-issuance is prohibited (issuer cannot grant execution to themselves)."""
+    error_code = "self_issuance_prohibited"
+    rust_variant = "SelfIssuanceProhibited"
+    
+    def __init__(self, reason: str):
+        super().__init__(
+            f"Self-issuance prohibited: {reason}",
+            {"reason": reason}
+        )
+
+
+class IssueDepthExceeded(IssuanceError):
+    """Issued warrant depth exceeds issuer's max_issue_depth."""
+    error_code = "issue_depth_exceeded"
+    rust_variant = "IssueDepthExceeded"
+    
+    def __init__(self, depth: int, max_depth: int):
+        super().__init__(
+            f"Issue depth exceeded: depth {depth} exceeds max_issue_depth {max_depth}",
+            {"depth": depth, "max": max_depth}
+        )
+
+
+class InvalidWarrantType(IssuanceError):
+    """Invalid warrant type for the operation."""
+    error_code = "invalid_warrant_type"
+    rust_variant = "InvalidWarrantType"
+    
+    def __init__(self, message: str):
+        super().__init__(
+            f"Invalid warrant type: {message}",
+            {"message": message}
+        )
+
+
+class IssuerChainTooLong(IssuanceError):
+    """Issuer chain length would exceed protocol maximum."""
+    error_code = "issuer_chain_too_long"
+    rust_variant = "IssuerChainTooLong"
+    
+    def __init__(self, length: int, max_length: int):
+        super().__init__(
+            f"Issuer chain too long: length {length} would exceed maximum {max_length}",
+            {"length": length, "max": max_length}
         )
 
 

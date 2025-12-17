@@ -4,7 +4,7 @@ Secure MCP Client with Tenuo Authorization.
 Wraps the MCP Python SDK to add cryptographic authorization for tool calls.
 """
 
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Dict, List, Optional
 
 from ..config import is_configured
@@ -51,7 +51,7 @@ class SecureMCPClient:
         args: List[str],
         env: Optional[Dict[str, str]] = None,
         config_path: Optional[str] = None,
-        register_config: bool = False,
+        register_config: Optional[bool] = None,
         inject_warrant: bool = False,
     ):
         """
@@ -62,7 +62,8 @@ class SecureMCPClient:
             args: Arguments to pass to server (e.g., ["server.py"])
             env: Environment variables for server process
             config_path: Path to mcp-config.yaml (optional)
-            register_config: If True, register config globally for @lockdown (default: False)
+            register_config: If True, register config globally for @lockdown. 
+                           Defaults to True if config_path is provided, else False.
             inject_warrant: If True, automatically inject warrants into tool calls (default: False)
         
         Note:
@@ -95,8 +96,12 @@ class SecureMCPClient:
             self.mcp_config = McpConfig.from_file(config_path)
             self.compiled_config = CompiledMcpConfig.compile(self.mcp_config)
             
+            # Default logic: If config_path provided, we assume you want to register it
+            # unless explicitly disabled.
+            should_register = register_config if register_config is not None else True
+            
             # Optionally register with global config
-            if register_config:
+            if should_register:
                 from ..config import get_config, configure as tenuo_configure
                 import warnings
                 
@@ -316,16 +321,17 @@ class SecureMCPClient:
         return self._wrapped_tools
 
 
+@asynccontextmanager
 async def discover_and_protect(
     command: str,
     args: List[str],
     env: Optional[Dict[str, str]] = None,
     config_path: Optional[str] = None,
-) -> Dict[str, Callable]:
+):  # type: ignore[misc]
     """
     Discover MCP tools and return protected wrappers.
     
-    Convenience function for one-liner tool discovery.
+    Convenience context manager for one-liner tool discovery.
     
     Args:
         command: Command to run MCP server
@@ -333,14 +339,13 @@ async def discover_and_protect(
         env: Environment variables
         config_path: Path to mcp-config.yaml
     
-    Returns:
+    Yields:
         Dict of tool_name -> protected async function
     
     Example:
-        tools = await discover_and_protect("python", ["server.py"])
-        
-        with root_task_sync(tools=["read_file"], path="/data/*"):
-            result = await tools["read_file"](path="/data/file.txt")
+        async with discover_and_protect("python", ["server.py"]) as tools:
+            with root_task_sync(tools=["read_file"], path="/data/*"):
+                result = await tools["read_file"](path="/data/file.txt")
     """
     async with SecureMCPClient(command, args, env, config_path) as client:
-        return await client.get_protected_tools()
+        yield await client.get_protected_tools()

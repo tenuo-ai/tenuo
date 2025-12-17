@@ -174,6 +174,33 @@ pub enum Error {
     ChainVerificationFailed(String),
 
     // =========================================================================
+    // Issuance Errors (Issuer Warrant Operations)
+    // =========================================================================
+    /// Trust level exceeds the issuer's trust ceiling.
+    #[error("trust level exceeded: requested {requested:?} exceeds ceiling {ceiling:?}")]
+    TrustLevelExceeded { requested: String, ceiling: String },
+
+    /// Tool not authorized for issuance by the issuer warrant.
+    #[error("unauthorized tool issuance: '{tool}' not in issuable_tools {allowed:?}")]
+    UnauthorizedToolIssuance { tool: String, allowed: Vec<String> },
+
+    /// Self-issuance is prohibited (issuer cannot grant execution to themselves).
+    #[error("self-issuance prohibited: {reason}")]
+    SelfIssuanceProhibited { reason: String },
+
+    /// Issued warrant depth exceeds issuer's max_issue_depth.
+    #[error("issue depth exceeded: depth {depth} exceeds max_issue_depth {max}")]
+    IssueDepthExceeded { depth: u32, max: u32 },
+
+    /// Invalid warrant type for the operation.
+    #[error("invalid warrant type: {message}")]
+    InvalidWarrantType { message: String },
+
+    /// Issuer chain length would exceed protocol maximum.
+    #[error("issuer chain too long: length {length} would exceed maximum {max}")]
+    IssuerChainTooLong { length: usize, max: usize },
+
+    // =========================================================================
     // Approval Errors
     // =========================================================================
     /// Approval has expired.
