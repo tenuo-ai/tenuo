@@ -88,7 +88,7 @@ jobs:
           source ../.venv/bin/activate
           pip install maturin
           maturin develop
-          echo "$(pwd)" > ../.venv/lib/python${{ matrix.python-version }}/site-packages/tenuo.pth
+          pip install -e .
 
       - name: Build and Install Tenuo (Windows)
         if: runner.os == 'Windows'
@@ -98,7 +98,7 @@ jobs:
           source ../.venv/Scripts/activate
           pip install maturin
           maturin develop
-          echo "$(pwd)" > ../.venv/Lib/site-packages/tenuo.pth
+          pip install -e .
 
       - name: Install dev dependencies (Unix)
         if: runner.os != 'Windows'
@@ -198,7 +198,7 @@ jobs:
           source ../.venv/bin/activate
           pip install maturin
           maturin develop
-          echo "$(pwd)" > ../.venv/lib/python3.10/site-packages/tenuo.pth
+          pip install -e .
 
       - name: Install LangChain (oldest)
         if: matrix.langchain-version == '0.2.0'
