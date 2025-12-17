@@ -75,6 +75,7 @@ Issues = "https://github.com/tenuo-ai/tenuo/issues"
 [tool.maturin]
 module-name = "tenuo_core"
 python-source = "."
+python-packages = ["tenuo"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
