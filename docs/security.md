@@ -117,6 +117,72 @@ spec:
 - Tenuo: Prevents unauthorized tool usage *through* your API
 - Network Policies: Prevents bypassing your API entirely
 
+## Control Plane Deployment Models
+
+The control plane holds the **root signing key** and issues the initial warrant for each agent network. It is *not* in the data path. Ttool execution never touches it, so it can be secured with high-latency/high-security patterns without affecting agent performance.
+
+Choose a model based on your threat model.
+
+### Level 1: Embedded (Development)
+
+The orchestrator holds the root key directly.
+```python
+# Development only
+root_key = Keypair.from_env("TENUO_ROOT_KEY")
+warrant = Warrant.issue(..., keypair=root_key)
+```
+
+| | |
+|---|---|
+| **Architecture** | Orchestrator process holds key |
+| **Pros** | Zero infrastructure overhead |
+| **Cons** | RCE on orchestrator exposes root key |
+| **Use case** | Local dev, CI/CD, non-critical agents |
+
+---
+
+### Level 2: Isolated Signing Service (Production)
+
+Root key held by a dedicated service. Orchestrator authenticates (mTLS, IAM) to request warrants.
+```
+Orchestrator  →  gRPC/mTLS  →  Signing Service (holds key)
+```
+
+| | |
+|---|---|
+| **Architecture** | Separate service holds key |
+| **Pros** | Key isolation; RCE can only request warrants (rate-limited, logged), not exfiltrate key |
+| **Cons** | One additional service to run |
+| **Use case** | Production Kubernetes, standard SaaS |
+
+---
+
+### Level 3: Hardware Root of Trust (High Assurance)
+
+Root key never leaves HSM or Cloud KMS. Signing requests go to KMS API.
+```
+Orchestrator  →  AWS KMS / GCP KMS / HSM  →  Signed warrant
+```
+
+| | |
+|---|---|
+| **Architecture** | Cloud KMS or on-prem HSM |
+| **Pros** | Key is non-exportable; instant revocation via IAM |
+| **Cons** | ~50-100ms issuance latency (verification still ~27μs) |
+| **Use case** | FinTech, HealthTech, multi-tenant, regulated industries |
+
+> **Note:** Tenuo doesn't call KMS directly. You implement a signing service that uses KMS internally and exposes `Warrant.issue()` semantics.
+
+---
+
+### Summary
+
+| Threat | Recommended | Why |
+|--------|-------------|-----|
+| Prompt injection | Level 2+ | Key isolated from agent memory |
+| Container breakout | Level 3 | Key in hardware/cloud provider |
+| Rogue insider | Level 3 | Audit logs in KMS, no key export |
+| Dev/test | Level 1 | Speed over security |
 
 ## Cycle Protection
 
