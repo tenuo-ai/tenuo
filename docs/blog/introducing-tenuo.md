@@ -372,7 +372,7 @@ Full examples in [GitHub](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-pyth
 
 v0.1. Early and opinionated. I expect parts of this design to change as people try to break it.
 
-**Next Iteration:** Multi-sig approvals, cascading revocation, SecureGraph
+**Next Iteration:** Multi-sig approvals, cascading revocation, SecureGraph.
 
 ---
 
