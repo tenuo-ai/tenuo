@@ -277,25 +277,29 @@ This makes debugging authorization issues fast and straightforward.
 
 ## MCP Integration
 
-Tenuo provides native support for the [Model Context Protocol](https://modelcontextprotocol.io):
+Tenuo provides full [Model Context Protocol](https://modelcontextprotocol.io) client integration:
 
 ```python
-from tenuo import McpConfig, CompiledMcpConfig, Warrant
+from tenuo.mcp import SecureMCPClient
+from tenuo import configure, root_task_sync, Pattern, SigningKey
 
-# Load MCP configuration
-config = McpConfig.from_file("mcp-config.yaml")
-compiled = CompiledMcpConfig.compile(config)
+# Configure Tenuo
+keypair = SigningKey.generate()
+configure(issuer_key=keypair)
 
-# Extract constraints from MCP tool call
-arguments = {"path": "/var/log/app.log", "maxSize": 1024}
-result = compiled.extract_constraints("filesystem_read", arguments)
-
-# Authorize (with warrant chain and PoP signature)
-# See examples/mcp_integration.py for complete PoP signature handling
-# The example demonstrates how to create the PoP signature and authorize the request
+# Connect to MCP server
+async with SecureMCPClient("python", ["mcp_server.py"]) as client:
+    # Auto-discover and protect tools
+    protected_tools = await client.get_protected_tools()
+    
+    # Use with warrant authorization
+    async with root_task(tools=["read_file"], path=Pattern("/data/*")):
+        result = await protected_tools["read_file"](path="/data/file.txt")
 ```
 
-See `examples/mcp_integration.py` for a complete example.
+**Requires Python ≥3.10** (MCP SDK limitation)
+
+See `examples/mcp_client_demo.py` for a complete end-to-end example with a real MCP server.
 
 ## Audit Logging
 

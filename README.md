@@ -116,7 +116,7 @@ Tenuo supports two types of warrants for separation of concerns:
 | **Holder binding (PoP)** | Stolen tokens are useless without the key |
 | **Constraint types** | `Exact`, `Pattern`, `Range`, `OneOf`, `Regex` |
 | **Monotonic attenuation** | Capabilities only shrink, never expand |
-| **Framework integrations** | LangChain, LangGraph, MCP |
+| **Framework integrations** | LangChain, LangGraph, MCP (full client) |
 
 ---
 
@@ -134,9 +134,10 @@ Tenuo supports two types of warrants for separation of concerns:
 pip install tenuo                # Core only
 pip install tenuo[langchain]     # + LangChain (langchain-core ≥0.2)
 pip install tenuo[langgraph]     # + LangGraph (includes LangChain)
+pip install tenuo[mcp]           # + MCP client (Python ≥3.10 required)
 ```
 
-LangChain/LangGraph are optional to keep the core package lightweight. If you see `ImportError: langchain_core not found`, install the appropriate extra.
+LangChain/LangGraph are optional to keep the core package lightweight. MCP integration requires Python ≥3.10 (MCP SDK limitation).
 
 ---
 
@@ -152,6 +153,14 @@ secure_tools = protect_tools([search_tool, file_tool])
 ```python
 from tenuo.langgraph import TenuoToolNode
 tool_node = TenuoToolNode(tools)
+```
+
+**MCP (Model Context Protocol)**
+```python
+from tenuo.mcp import SecureMCPClient
+
+async with SecureMCPClient("python", ["mcp_server.py"]) as client:
+    tools = await client.get_protected_tools()
 ```
 
 **Kubernetes** — Deploy as sidecar or gateway. See [quickstart](https://github.com/tenuo-ai/tenuo/tree/main/docs/quickstart).

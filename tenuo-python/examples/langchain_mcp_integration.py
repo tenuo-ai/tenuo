@@ -136,13 +136,12 @@ def main():
     # =========================================================================
     print("\n4. Issuing root warrant...")
     
+    # Issue warrant for filesystem_read only (simpler demo)
     root_warrant = Warrant.issue(
-        tools=["filesystem_read", "database_query"],
+        tools="filesystem_read",
         constraints={
             "path": Pattern("/var/log/*"),
             "max_size": Range.max_value(1024 * 1024),  # Match MCP extraction name
-            "table": Pattern("logs_*"),
-            "operation": Pattern("select"),
         },
         ttl_seconds=3600,
         keypair=control_keypair,
@@ -151,7 +150,8 @@ def main():
     
     print("   ✓ Root warrant issued")
     print(f"   Tools: {root_warrant.tools}")
-    print("   Constraints: path=/var/log/*, max_size≤1MB, table=logs_*, operation=select")
+    print("   Constraints: path=/var/log/*, max_size≤1MB")
+
     
     # =========================================================================
     # 5. Execute MCP Tools with Authorization
@@ -177,27 +177,17 @@ def main():
         print("\n   Test 2: Unauthorized filesystem read (path violation)")
         try:
             result = filesystem_read("/etc/passwd", max_size=512 * 1024)
-            print(f"      ✗ Should have been blocked!")
+            print("      ✗ Should have been blocked!")
         except Exception as e:
             print(f"      ✓ Blocked as expected: {type(e).__name__}")
         
         # =====================================================================
-        # Test 3: Authorized database query
+        # Test 3: Size limit violation
         # =====================================================================
-        print("\n   Test 3: Authorized database query")
+        print("\n   Test 3: Size limit violation")
         try:
-            result = database_query("logs_access", "select", limit=50)
-            print(f"      ✓ Success: {result}")
-        except Exception as e:
-            print(f"      ✗ Failed: {e}")
-        
-        # =====================================================================
-        # Test 4: Unauthorized database query (table violation)
-        # =====================================================================
-        print("\n   Test 4: Unauthorized database query (table violation)")
-        try:
-            result = database_query("users", "select", limit=50)
-            print(f"      ✗ Should have been blocked!")
+            result = filesystem_read("/var/log/app.log", max_size=2 * 1024 * 1024)  # 2MB > 1MB limit
+            print("      ✗ Should have been blocked!")
         except Exception as e:
             print(f"      ✓ Blocked as expected: {type(e).__name__}")
     
@@ -299,7 +289,7 @@ def demo_without_config():
         print("Test 2: Unauthorized read (path violation)")
         try:
             result = filesystem_read("/etc/passwd")
-            print(f"   ✗ Should have been blocked!\n")
+            print("   ✗ Should have been blocked!\n")
         except Exception as e:
             print(f"   ✓ Blocked: {type(e).__name__}\n")
     

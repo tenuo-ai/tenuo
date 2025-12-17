@@ -1,10 +1,10 @@
 # MCP Integration
 
-Tenuo provides native authorization for [Model Context Protocol (MCP)](https://modelcontextprotocol.io) servers.
+Tenuo provides full [Model Context Protocol (MCP)](https://modelcontextprotocol.io) client integration with cryptographic authorization.
 
-**The Gap**: LangChain connects to MCP servers. Tenuo secures them.
+**Full Stack**: Connect to MCP servers → Discover tools → Auto-protect with warrants → Execute securely.
 
-> **Note**: This guide shows how to authorize MCP tool calls with Tenuo warrants. It does NOT require an actual MCP server - the examples use simulated MCP tools to demonstrate the authorization pattern.
+> **New in v0.1**: `SecureMCPClient` provides end-to-end MCP integration. Requires Python ≥3.10 (MCP SDK limitation).
 
 ---
 

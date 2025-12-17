@@ -348,7 +348,7 @@ General-purpose capability tokens? Biscuit is mature. AI agents processing untru
 
 ## Part 7: What Ships Today
 
-Rust core with Python bindings. Integrations for LangChain, LangGraph, and MCP.
+Rust core with Python bindings. Integrations for LangChain, LangGraph, and MCP (full client with tool discovery).
 
 **LangChain**: wrap existing tools:
 ```python
