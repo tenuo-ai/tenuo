@@ -10,7 +10,7 @@ use std::time::Duration;
 use tenuo_core::{
     approval::{compute_request_hash, Approval},
     constraints::Pattern,
-    crypto::Keypair,
+    crypto::SigningKey,
     planes::Authorizer,
     warrant::Warrant,
 };
@@ -25,9 +25,9 @@ use tenuo_core::{
 /// Expected: Rejected (duplicates don't count).
 #[test]
 fn test_duplicate_approvals_rejected() {
-    let root_key = Keypair::generate();
-    let approver_1 = Keypair::generate();
-    let approver_2 = Keypair::generate();
+    let root_key = SigningKey::generate();
+    let approver_1 = SigningKey::generate();
+    let approver_2 = SigningKey::generate();
 
     // Require 2-of-2 approvals
     let warrant = Warrant::builder()

@@ -23,7 +23,7 @@
 //! use std::time::Duration;
 //!
 //! // Create a keypair for the control plane
-//! let keypair = Keypair::generate();
+//! let keypair = SigningKey::generate();
 //!
 //! // Issue a warrant for cluster upgrades
 //! let warrant = Warrant::builder()
@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn test_basic_warrant_creation() {
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
 
         let warrant = Warrant::builder()
             .tool("upgrade_cluster")
@@ -150,8 +150,8 @@ mod tests {
 
     #[test]
     fn test_attenuation_narrows_constraints() {
-        let keypair = Keypair::generate();
-        let child_keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
+        let child_keypair = SigningKey::generate();
 
         let parent = Warrant::builder()
             .tool("upgrade_cluster")

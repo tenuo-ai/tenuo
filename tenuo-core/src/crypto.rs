@@ -299,14 +299,14 @@ mod tests {
 
     #[test]
     fn test_keypair_generation() {
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
         let public_key = keypair.public_key();
         assert_eq!(public_key.to_bytes().len(), 32);
     }
 
     #[test]
     fn test_sign_and_verify() {
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
         let message = b"test message";
         let signature = keypair.sign(message);
 
@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn test_verify_wrong_message_fails() {
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
         let message = b"test message";
         let signature = keypair.sign(message);
 
@@ -328,8 +328,8 @@ mod tests {
 
     #[test]
     fn test_verify_wrong_key_fails() {
-        let keypair1 = Keypair::generate();
-        let keypair2 = Keypair::generate();
+        let keypair1 = SigningKey::generate();
+        let keypair2 = SigningKey::generate();
         let message = b"test message";
         let signature = keypair1.sign(message);
 
@@ -338,9 +338,9 @@ mod tests {
 
     #[test]
     fn test_keypair_from_bytes() {
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
         let bytes = keypair.secret_key_bytes();
-        let restored = Keypair::from_bytes(&bytes);
+        let restored = SigningKey::from_bytes(&bytes);
 
         assert_eq!(
             keypair.public_key().to_bytes(),
@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_context_prefix_prevents_cross_protocol() {
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
         let message = b"test message";
         let signature = keypair.sign(message);
 
@@ -368,9 +368,9 @@ mod tests {
 
     #[test]
     fn test_batch_verification() {
-        let kp1 = Keypair::generate();
-        let kp2 = Keypair::generate();
-        let kp3 = Keypair::generate();
+        let kp1 = SigningKey::generate();
+        let kp2 = SigningKey::generate();
+        let kp3 = SigningKey::generate();
 
         let msg1 = b"message 1";
         let msg2 = b"message 2";

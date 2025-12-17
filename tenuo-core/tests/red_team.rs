@@ -20,7 +20,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tenuo_core::{
     constraints::{All, Constraint, ConstraintSet, ConstraintValue, Exact, OneOf, Pattern},
-    crypto::Keypair,
+    crypto::SigningKey,
     planes::{Authorizer, DataPlane},
     warrant::{TrustLevel, Warrant, WarrantType},
     wire, MAX_DELEGATION_DEPTH, MAX_ISSUER_CHAIN_LENGTH,
@@ -37,8 +37,8 @@ use tenuo_core::{
 /// property indirectly: verify that chain verification enforces scope consistency.
 #[test]
 fn test_chainlink_scope_binding() {
-    let parent_kp = Keypair::generate();
-    let child_kp = Keypair::generate();
+    let parent_kp = SigningKey::generate();
+    let child_kp = SigningKey::generate();
 
     // Create parent with limited tools
     let parent = Warrant::builder()
@@ -95,7 +95,7 @@ fn test_chainlink_scope_binding() {
 /// We test the property by verifying serialize→deserialize→serialize is deterministic.
 #[test]
 fn test_cbor_payload_canonical_binding() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     let warrant = Warrant::builder()
         .tool("read")
@@ -133,7 +133,7 @@ fn test_cbor_payload_canonical_binding() {
 /// This test verifies the check is active.
 #[test]
 fn test_payload_bytes_mismatch_detection() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     // The canonical binding check is enforced during deserialization in Warrant::deserialize
     // It verifies that: recomputed_canonical_bytes == stored_payload_bytes
@@ -179,7 +179,7 @@ fn test_payload_bytes_mismatch_detection() {
 /// Expected: Signature verification fails (different payload_bytes).
 #[test]
 fn test_signature_reuse_across_warrants() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     // Create two warrants with different tools
     let warrant_a = Warrant::builder()
@@ -236,7 +236,7 @@ fn test_signature_reuse_across_warrants() {
 /// We test that parent_id is correctly set and depth increases.
 #[test]
 fn test_parent_child_relationship_integrity() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     let parent = Warrant::builder()
         .tool("read")
@@ -269,8 +269,8 @@ fn test_parent_child_relationship_integrity() {
 /// Expected: Validation error (child trust exceeds ceiling).
 #[test]
 fn test_trust_ceiling_violation() {
-    let issuer_kp = Keypair::generate();
-    let worker_kp = Keypair::generate();
+    let issuer_kp = SigningKey::generate();
+    let worker_kp = SigningKey::generate();
 
     // Create issuer warrant with Internal ceiling
     let issuer = Warrant::builder()
@@ -311,7 +311,7 @@ fn test_trust_ceiling_violation() {
 /// Expected: PoP verification rejects future timestamps.
 #[test]
 fn test_pop_future_timestamp() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     let warrant = Warrant::builder()
         .tool("transfer")
@@ -362,7 +362,7 @@ fn test_pop_future_timestamp() {
 /// Expected: Rejected if outside max_windows (typically 4 * 30s = 2 minutes).
 #[test]
 fn test_pop_old_timestamp_replay() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     let warrant = Warrant::builder()
         .tool("transfer")
@@ -424,7 +424,7 @@ fn test_pop_concurrent_window_boundary() {
     use std::sync::Arc;
     use std::thread;
 
-    let keypair = Arc::new(Keypair::generate());
+    let keypair = Arc::new(SigningKey::generate());
 
     let warrant = Arc::new(
         Warrant::builder()
@@ -492,7 +492,7 @@ fn test_pop_concurrent_window_boundary() {
 /// Expected: DepthExceeded error at depth 64.
 #[test]
 fn test_delegation_depth_limit() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     let mut current = Warrant::builder()
         .tool("read")
@@ -541,7 +541,7 @@ fn test_delegation_depth_limit() {
 /// Expected: Validation error at chain length 8.
 #[test]
 fn test_issuer_chain_length_limit() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     let mut current = Warrant::builder()
         .r#type(WarrantType::Issuer)
@@ -591,7 +591,7 @@ fn test_issuer_chain_length_limit() {
 /// Expected: Validation error (tools can only shrink).
 #[test]
 fn test_execution_warrant_tool_addition() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     let parent = Warrant::builder()
         .tool("read")
@@ -636,7 +636,7 @@ fn test_execution_warrant_tool_addition() {
 /// Expected: Validation error.
 #[test]
 fn test_issuer_warrant_tool_addition() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     let parent = Warrant::builder()
         .r#type(WarrantType::Issuer)
@@ -671,9 +671,9 @@ fn test_issuer_warrant_tool_addition() {
 /// Expected: PoP signature verification fails.
 #[test]
 fn test_holder_mismatch_pop_fails() {
-    let issuer_kp = Keypair::generate();
-    let holder_kp = Keypair::generate();
-    let attacker_kp = Keypair::generate();
+    let issuer_kp = SigningKey::generate();
+    let holder_kp = SigningKey::generate();
+    let attacker_kp = SigningKey::generate();
 
     // Create warrant bound to holder_kp
     let warrant = Warrant::builder()
@@ -730,7 +730,7 @@ fn test_constraint_depth_dos() {
     }
 
     // Try to create warrant with this constraint
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     let result = Warrant::builder()
         .tool("test")
@@ -769,7 +769,7 @@ fn test_constraint_depth_deserialization_limit() {
         nested = Constraint::All(All::new(vec![nested]));
     }
 
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     // Try to serialize and deserialize
     let result = Warrant::builder()
@@ -817,7 +817,7 @@ fn test_constraint_depth_deserialization_limit() {
 /// compelling security reason to limit tool count below the size limit.
 #[test]
 fn test_warrant_size_limit() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     // Create warrant with many tools (should work up to a limit)
     let mut tools = Vec::new();
@@ -877,8 +877,8 @@ fn test_warrant_size_limit() {
 /// 3. Tampering with embedded chain invalidates signatures
 #[test]
 fn test_orphaned_child_warrant() {
-    let parent_kp = Keypair::generate();
-    let child_kp = Keypair::generate();
+    let parent_kp = SigningKey::generate();
+    let child_kp = SigningKey::generate();
 
     let parent = Warrant::builder()
         .tool("read")
@@ -927,8 +927,8 @@ fn test_orphaned_child_warrant() {
 /// Expected: Chain verification fails.
 #[test]
 fn test_chain_wrong_order() {
-    let parent_kp = Keypair::generate();
-    let child_kp = Keypair::generate();
+    let parent_kp = SigningKey::generate();
+    let child_kp = SigningKey::generate();
 
     let parent = Warrant::builder()
         .tool("read")
@@ -965,7 +965,7 @@ fn test_chain_wrong_order() {
 /// Expected: PoP signature verification fails.
 #[test]
 fn test_pop_args_binding() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     let warrant = Warrant::builder()
         .tool("read_file")
@@ -1012,7 +1012,7 @@ fn test_pop_args_binding() {
 /// Expected: PoP signature verification fails.
 #[test]
 fn test_pop_tool_binding() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     let warrant = Warrant::builder()
         .tools(vec!["read".to_string(), "write".to_string()])
@@ -1056,7 +1056,7 @@ fn test_pop_tool_binding() {
 /// Expected: Validation error (trust can only shrink).
 #[test]
 fn test_trust_level_amplification() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     let parent = Warrant::builder()
         .tool("query")
@@ -1090,7 +1090,7 @@ fn test_trust_level_amplification() {
 /// Expected: DepthExceeded error.
 #[test]
 fn test_terminal_warrant_delegation() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     // Create warrant with max_depth=1
     let parent = Warrant::builder()
@@ -1133,7 +1133,7 @@ fn test_non_deterministic_cbor() {
     // The important property is that we use ciborium which enforces determinism
 
     // We can at least verify round-trip is deterministic
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     let warrant = Warrant::builder()
         .tool("read")
@@ -1164,9 +1164,9 @@ fn test_non_deterministic_cbor() {
 /// Expected: Chain verification fails (broken chain).
 #[test]
 fn test_mixed_chain_attack() {
-    let root1_kp = Keypair::generate();
-    let root2_kp = Keypair::generate();
-    let child_kp = Keypair::generate();
+    let root1_kp = SigningKey::generate();
+    let root2_kp = SigningKey::generate();
+    let child_kp = SigningKey::generate();
 
     // Create two separate chains
     let chain1_parent = Warrant::builder()
@@ -1210,7 +1210,7 @@ fn test_mixed_chain_attack() {
 /// Expected: Only the canonically signed bytes are accepted.
 #[test]
 fn test_cbor_canonical_map_key_ordering() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     // Create warrant with multiple constraints (keys will be sorted)
     let mut constraints = ConstraintSet::new();
@@ -1253,8 +1253,8 @@ fn test_cbor_canonical_map_key_ordering() {
 /// Expected: Authorizer rejects if trusted_roots don't include the issuer.
 #[test]
 fn test_untrusted_root_rejection() {
-    let trusted_kp = Keypair::generate();
-    let attacker_kp = Keypair::generate();
+    let trusted_kp = SigningKey::generate();
+    let attacker_kp = SigningKey::generate();
 
     // Attacker creates valid warrant with their key
     let attacker_warrant = Warrant::builder()
@@ -1300,8 +1300,8 @@ fn test_untrusted_root_rejection() {
 /// This tests that Authorizer.add_trusted_root is safe.
 #[test]
 fn test_dynamic_trusted_root_addition() {
-    let trusted_kp = Keypair::generate();
-    let new_root_kp = Keypair::generate();
+    let trusted_kp = SigningKey::generate();
+    let new_root_kp = SigningKey::generate();
 
     let mut authorizer = Authorizer::new().with_trusted_root(trusted_kp.public_key());
 
@@ -1358,7 +1358,7 @@ fn test_dynamic_trusted_root_addition() {
 /// Expected: Does not match (byte-wise comparison).
 #[test]
 fn test_unicode_lookalike_bypass() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     let warrant = Warrant::builder()
         .tool("read")
@@ -1397,7 +1397,7 @@ fn test_unicode_lookalike_bypass() {
 /// Expected: Does not match (case-sensitive).
 #[test]
 fn test_case_sensitivity_bypass() {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     let warrant = Warrant::builder()
         .tool("deploy")

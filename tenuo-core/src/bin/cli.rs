@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tenuo_core::{
     constraints::{Constraint, ConstraintValue, Exact, OneOf, Pattern, Range, RegexConstraint},
-    crypto::{Keypair, PublicKey, Signature},
+    crypto::{PublicKey, Signature, SigningKey},
     extraction::RequestContext,
     gateway_config::GatewayConfig,
     planes::DataPlane,
@@ -465,7 +465,7 @@ fn parse_duration(s: &str) -> Result<Duration, String> {
 }
 
 /// Load private key from PEM file or raw bytes
-fn load_private_key(path: &PathBuf) -> Result<Keypair, Box<dyn std::error::Error>> {
+fn load_private_key(path: &PathBuf) -> Result<SigningKey, Box<dyn std::error::Error>> {
     let content = fs::read_to_string(path)?;
     let content = content.trim();
 
@@ -482,12 +482,12 @@ fn load_private_key(path: &PathBuf) -> Result<Keypair, Box<dyn std::error::Error
                         let bytes = octet_string.as_bytes();
                         if bytes.len() == 32 {
                             let arr: [u8; 32] = bytes.try_into()?;
-                            return Ok(Keypair::from_bytes(&arr));
+                            return Ok(SigningKey::from_bytes(&arr));
                         }
                     }
                     if info.private_key.len() == 32 {
                         let arr: [u8; 32] = info.private_key.try_into()?;
-                        return Ok(Keypair::from_bytes(&arr));
+                        return Ok(SigningKey::from_bytes(&arr));
                     }
                 }
             }
@@ -518,7 +518,7 @@ fn load_private_key(path: &PathBuf) -> Result<Keypair, Box<dyn std::error::Error
             if let Ok(bytes) = hex::decode(&hex_str) {
                 if bytes.len() == 32 {
                     let arr: [u8; 32] = bytes.try_into().map_err(|_| "Invalid key length")?;
-                    return Ok(Keypair::from_bytes(&arr));
+                    return Ok(SigningKey::from_bytes(&arr));
                 }
             }
         }
@@ -529,7 +529,7 @@ fn load_private_key(path: &PathBuf) -> Result<Keypair, Box<dyn std::error::Error
     if let Ok(bytes) = hex::decode(content) {
         if bytes.len() == 32 {
             let arr: [u8; 32] = bytes.try_into().map_err(|_| "Invalid key length")?;
-            return Ok(Keypair::from_bytes(&arr));
+            return Ok(SigningKey::from_bytes(&arr));
         }
     }
 
@@ -537,7 +537,7 @@ fn load_private_key(path: &PathBuf) -> Result<Keypair, Box<dyn std::error::Error
     if let Ok(bytes) = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, content) {
         if bytes.len() == 32 {
             let arr: [u8; 32] = bytes.try_into().map_err(|_| "Invalid key length")?;
-            return Ok(Keypair::from_bytes(&arr));
+            return Ok(SigningKey::from_bytes(&arr));
         }
     }
 
@@ -641,7 +641,7 @@ fn load_public_key(input: &str) -> Result<PublicKey, Box<dyn std::error::Error>>
 }
 
 /// Encode private key to PEM (PKCS#8)
-fn encode_private_key_pem(keypair: &Keypair) -> Result<String, Box<dyn std::error::Error>> {
+fn encode_private_key_pem(keypair: &SigningKey) -> Result<String, Box<dyn std::error::Error>> {
     let secret = keypair.secret_key_bytes();
 
     // For Ed25519, the private key is an OctetString wrapping the 32-byte seed
@@ -851,7 +851,7 @@ fn handle_keygen(
         return Ok(());
     }
 
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
     let pubkey = keypair.public_key();
 
     if raw {

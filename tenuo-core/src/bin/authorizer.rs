@@ -260,7 +260,7 @@ fn build_authorizer(
         let dummy = [0u8; 32];
         PublicKey::from_bytes(&dummy).unwrap_or_else(|_| {
             // Generate a valid but useless key
-            tenuo_core::Keypair::generate().public_key()
+            tenuo_core::SigningKey::generate().public_key()
         })
     };
 

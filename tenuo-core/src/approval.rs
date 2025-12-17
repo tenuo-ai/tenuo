@@ -249,7 +249,7 @@ impl RegistrationProof {
     ///
     /// The signed payload is: context || provider || external_id || public_key || timestamp
     pub fn create(
-        keypair: &crate::crypto::Keypair,
+        keypair: &crate::crypto::SigningKey,
         provider: &str,
         external_id: &str,
         timestamp: i64,
@@ -307,7 +307,7 @@ impl RotationProof {
     ///
     /// The signed payload is: context || provider || external_id || new_key || timestamp
     pub fn create(
-        old_keypair: &crate::crypto::Keypair,
+        old_keypair: &crate::crypto::SigningKey,
         provider: &str,
         external_id: &str,
         new_key: &PublicKey,
@@ -383,7 +383,7 @@ impl RotationProof {
 /// ## Example
 ///
 /// ```rust,ignore
-/// let admin_keypair = Keypair::generate();
+/// let admin_keypair = SigningKey::generate();
 /// let admin = Notary::new("admin-1", admin_keypair.public_key())
 ///     .with_deployment("orchestrator-prod-us-east-1");
 ///
@@ -1120,7 +1120,7 @@ impl WarrantTracker for NotaryRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::Keypair;
+    use crate::crypto::SigningKey;
     use std::collections::HashMap;
 
     #[test]
@@ -1154,7 +1154,7 @@ mod tests {
         );
 
         // Test that holder affects the hash
-        let holder = crate::crypto::Keypair::generate();
+        let holder = crate::crypto::SigningKey::generate();
         let hash_with_holder =
             compute_request_hash("wrt_123", "delete", &args1, Some(&holder.public_key()));
         assert_ne!(
@@ -1168,7 +1168,7 @@ mod tests {
         let mut registry = NotaryRegistry::new();
 
         // Create a notary (admin)
-        let admin_keypair = Keypair::generate();
+        let admin_keypair = SigningKey::generate();
         let admin = Notary::new("admin-1", admin_keypair.public_key()).with_name("Test Admin");
 
         // Register a provider
@@ -1176,7 +1176,7 @@ mod tests {
         assert!(registry.has_provider("aws-iam"));
 
         // Create a key binding
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
         let binding = KeyBinding {
             id: "kb_test_123".to_string(),
             external_id: "arn:aws:iam::123:user/admin".to_string(),
@@ -1220,13 +1220,13 @@ mod tests {
         let mut registry = NotaryRegistry::new();
 
         // Create notary for provider registration
-        let system_keypair = Keypair::generate();
+        let system_keypair = SigningKey::generate();
         let system = Notary::new("system", system_keypair.public_key());
 
         registry.register_provider("test", "Test Provider", "system");
 
-        let old_keypair = Keypair::generate();
-        let new_keypair = Keypair::generate();
+        let old_keypair = SigningKey::generate();
+        let new_keypair = SigningKey::generate();
 
         let binding = KeyBinding {
             id: "kb_rotate".to_string(),
@@ -1285,14 +1285,14 @@ mod tests {
     fn test_key_revocation() {
         let mut registry = NotaryRegistry::new();
 
-        let system_keypair = Keypair::generate();
+        let system_keypair = SigningKey::generate();
         let system = Notary::new("system", system_keypair.public_key());
-        let security_keypair = Keypair::generate();
+        let security_keypair = SigningKey::generate();
         let security = Notary::new("security-team", security_keypair.public_key());
 
         registry.register_provider("test", "Test Provider", "system");
 
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
         let binding = KeyBinding {
             id: "kb_revoke".to_string(),
             external_id: "user@example.com".to_string(),
@@ -1338,10 +1338,10 @@ mod tests {
     fn test_unknown_provider_fails() {
         let mut registry = NotaryRegistry::new();
 
-        let notary_keypair = Keypair::generate();
+        let notary_keypair = SigningKey::generate();
         let notary = Notary::new("test-notary", notary_keypair.public_key());
 
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
         let binding = KeyBinding {
             id: "kb_fail".to_string(),
             external_id: "user@example.com".to_string(),

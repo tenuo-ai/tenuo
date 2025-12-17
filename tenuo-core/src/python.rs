@@ -10,7 +10,7 @@ use crate::constraints::{
     Pattern, Range, RegexConstraint, Subset, Wildcard,
 };
 use crate::crypto::{
-    Keypair as RustKeypair, PublicKey as RustPublicKey, Signature as RustSignature,
+    PublicKey as RustPublicKey, Signature as RustSignature, SigningKey as RustSigningKey,
 };
 use crate::diff::{
     ChangeType as RustChangeType, ConstraintDiff as RustConstraintDiff,
@@ -609,7 +609,7 @@ impl PyWildcard {
 /// Python wrapper for Keypair.
 #[pyclass(name = "Keypair")]
 pub struct PyKeypair {
-    inner: RustKeypair,
+    inner: RustSigningKey,
 }
 
 #[pymethods]
@@ -617,14 +617,14 @@ impl PyKeypair {
     #[new]
     fn new() -> Self {
         Self {
-            inner: RustKeypair::generate(),
+            inner: RustSigningKey::generate(),
         }
     }
 
     #[staticmethod]
     fn generate() -> Self {
         Self {
-            inner: RustKeypair::generate(),
+            inner: RustSigningKey::generate(),
         }
     }
 
@@ -634,7 +634,7 @@ impl PyKeypair {
             .try_into()
             .map_err(|_| PyValueError::new_err("secret key must be exactly 32 bytes"))?;
         Ok(Self {
-            inner: RustKeypair::from_bytes(&arr),
+            inner: RustSigningKey::from_bytes(&arr),
         })
     }
 
@@ -673,7 +673,7 @@ impl PyKeypair {
     /// Create a Keypair from a PEM string.
     #[staticmethod]
     fn from_pem(pem: &str) -> PyResult<Self> {
-        let inner = RustKeypair::from_pem(pem).map_err(to_py_err)?;
+        let inner = RustSigningKey::from_pem(pem).map_err(to_py_err)?;
         Ok(Self { inner })
     }
 

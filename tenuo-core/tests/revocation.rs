@@ -8,7 +8,7 @@
 use chrono::Utc;
 use std::time::Duration;
 use tenuo_core::{
-    crypto::Keypair,
+    crypto::SigningKey,
     planes::{ControlPlane, DataPlane},
     revocation::{RevocationRequest, SignedRevocationList},
     revocation_manager::RevocationManager,
@@ -22,7 +22,7 @@ use tenuo_core::{
 
 #[test]
 fn test_single_warrant_revocation() {
-    let kp = Keypair::generate();
+    let kp = SigningKey::generate();
     let warrant = Warrant::builder()
         .tool("test")
         .ttl(Duration::from_secs(600))
@@ -59,8 +59,8 @@ fn test_single_warrant_revocation() {
 
 #[test]
 fn test_chain_revocation_child() {
-    let root_kp = Keypair::generate();
-    let child_kp = Keypair::generate();
+    let root_kp = SigningKey::generate();
+    let child_kp = SigningKey::generate();
 
     let root = Warrant::builder()
         .tool("test")
@@ -102,8 +102,8 @@ fn test_chain_revocation_child() {
 
 #[test]
 fn test_chain_revocation_parent_cascades() {
-    let root_kp = Keypair::generate();
-    let child_kp = Keypair::generate();
+    let root_kp = SigningKey::generate();
+    let child_kp = SigningKey::generate();
 
     let root = Warrant::builder()
         .tool("test")
@@ -139,8 +139,8 @@ fn test_chain_revocation_parent_cascades() {
 
 #[test]
 fn test_cascading_revocation_multiple_warrants() {
-    let cp_keypair = Keypair::generate();
-    let issuer_keypair = Keypair::generate();
+    let cp_keypair = SigningKey::generate();
+    let issuer_keypair = SigningKey::generate();
 
     let control_plane = ControlPlane::new(cp_keypair.clone());
     let mut data_plane = DataPlane::new();
@@ -192,8 +192,8 @@ fn test_cascading_revocation_multiple_warrants() {
 
 #[test]
 fn test_revocation_request_flow() {
-    let cp_keypair = Keypair::generate();
-    let issuer_keypair = Keypair::generate();
+    let cp_keypair = SigningKey::generate();
+    let issuer_keypair = SigningKey::generate();
 
     let mut manager = RevocationManager::new();
 

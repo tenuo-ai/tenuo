@@ -120,12 +120,12 @@ pub const WARRANT_ID_HEADER: &str = "X-Tenuo-Warrant-Id";
 mod tests {
     use super::*;
     use crate::constraints::Pattern;
-    use crate::crypto::Keypair;
+    use crate::crypto::SigningKey;
     use std::time::Duration;
 
     #[test]
     fn test_encode_decode_roundtrip() {
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
         let warrant = Warrant::builder()
             .tool("test_tool")
             .constraint("arg", Pattern::new("value-*").unwrap())
@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn test_base64_roundtrip() {
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
         let warrant = Warrant::builder()
             .tool("test")
             .ttl(Duration::from_secs(60))
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn test_version_check() {
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
         let warrant = Warrant::builder()
             .tool("test")
             .ttl(Duration::from_secs(60))
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_compact_encoding() {
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
 
         // Minimal warrant
         let minimal = Warrant::builder()
@@ -220,7 +220,7 @@ mod tests {
     fn test_deterministic_serialization() {
         // This test verifies that serialization is deterministic
         // (critical for signature verification after roundtrip)
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
 
         // Create a warrant with multiple constraints in different "insertion" order
         // to verify BTreeMap provides consistent ordering
@@ -264,7 +264,7 @@ mod tests {
         // This is critical for warrant ID consistency and signature verification.
         use crate::constraints::{All, Constraint, Pattern, Range};
 
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
 
         // Create a warrant with All constraint containing multiple constraints
         // in different orders to verify Vec serialization is deterministic

@@ -17,7 +17,7 @@
 //! let srl = manager.generate_srl(&cp_keypair, 1)?;
 //! ```
 
-use crate::crypto::{Keypair, PublicKey};
+use crate::crypto::{PublicKey, SigningKey};
 use crate::error::Result;
 use crate::revocation::{RevocationRequest, SignedRevocationList};
 use chrono::{DateTime, Utc};
@@ -85,7 +85,7 @@ impl RevocationManager {
     /// # Arguments
     /// * `signer` - The keypair to sign the SRL (usually Control Plane)
     /// * `version` - The version number for the new SRL
-    pub fn generate_srl(&self, signer: &Keypair, version: u64) -> Result<SignedRevocationList> {
+    pub fn generate_srl(&self, signer: &SigningKey, version: u64) -> Result<SignedRevocationList> {
         let mut builder = SignedRevocationList::builder().version(version);
 
         // Add revoked warrant IDs
@@ -101,7 +101,7 @@ impl RevocationManager {
     /// Use this when `NotaryRegistry.revoke_key()` returns affected warrant IDs.
     pub fn generate_srl_with_cascade(
         &self,
-        signer: &Keypair,
+        signer: &SigningKey,
         version: u64,
         cascade_ids: impl IntoIterator<Item = impl AsRef<str>>,
     ) -> Result<SignedRevocationList> {
@@ -138,13 +138,13 @@ impl RevocationManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::Keypair;
+    use crate::crypto::SigningKey;
 
     #[test]
     fn test_revocation_manager_flow() {
-        let cp = Keypair::generate();
-        let issuer = Keypair::generate();
-        let holder = Keypair::generate();
+        let cp = SigningKey::generate();
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
         let mut manager = RevocationManager::new();
 
         // 1. Submit a valid request
@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn test_cascade_from_key_revocation() {
-        let cp = Keypair::generate();
+        let cp = SigningKey::generate();
         let manager = RevocationManager::new();
 
         // Simulate cascading revocation: NotaryRegistry.revoke_key()

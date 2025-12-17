@@ -39,7 +39,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use tenuo_core::{constraints::Pattern, crypto::Keypair, planes::ControlPlane, wire};
+use tenuo_core::{constraints::Pattern, crypto::SigningKey, planes::ControlPlane, wire};
 use tokio::sync::RwLock;
 
 /// Application state
@@ -93,11 +93,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let keypair = if let Ok(secret_hex) = std::env::var("TENUO_SECRET_KEY") {
         let bytes = hex::decode(&secret_hex)?;
         let arr: [u8; 32] = bytes.try_into().map_err(|_| "invalid key length")?;
-        Keypair::from_bytes(&arr)
+        SigningKey::from_bytes(&arr)
     } else {
         eprintln!("WARNING: No TENUO_SECRET_KEY set, generating ephemeral keypair");
         eprintln!("         This is fine for development but NOT for production!");
-        Keypair::generate()
+        SigningKey::generate()
     };
 
     let control_plane = ControlPlane::new(keypair);

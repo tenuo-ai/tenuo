@@ -5,13 +5,13 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tenuo_core::{
     constraints::{ConstraintValue, Exact, Pattern, Range},
-    crypto::Keypair,
+    crypto::SigningKey,
     warrant::Warrant,
     wire,
 };
 
 fn benchmark_warrant_creation(c: &mut Criterion) {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     c.bench_function("warrant_create_minimal", |b| {
         b.iter(|| {
@@ -40,7 +40,7 @@ fn benchmark_warrant_creation(c: &mut Criterion) {
 }
 
 fn benchmark_warrant_verification(c: &mut Criterion) {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
     let warrant = Warrant::builder()
         .tool("test")
         .constraint("cluster", Pattern::new("staging-*").unwrap())
@@ -57,7 +57,7 @@ fn benchmark_warrant_verification(c: &mut Criterion) {
 }
 
 fn benchmark_warrant_authorization(c: &mut Criterion) {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
     let warrant = Warrant::builder()
         .tool("upgrade_cluster")
         .constraint("cluster", Pattern::new("staging-*").unwrap())
@@ -96,8 +96,8 @@ fn benchmark_warrant_authorization(c: &mut Criterion) {
 }
 
 fn benchmark_warrant_attenuation(c: &mut Criterion) {
-    let parent_keypair = Keypair::generate();
-    let child_keypair = Keypair::generate();
+    let parent_keypair = SigningKey::generate();
+    let child_keypair = SigningKey::generate();
 
     let parent = Warrant::builder()
         .tool("upgrade_cluster")
@@ -119,7 +119,7 @@ fn benchmark_warrant_attenuation(c: &mut Criterion) {
 }
 
 fn benchmark_wire_encoding(c: &mut Criterion) {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
     let warrant = Warrant::builder()
         .tool("upgrade_cluster")
         .constraint("cluster", Pattern::new("staging-*").unwrap())
@@ -151,7 +151,7 @@ fn benchmark_wire_encoding(c: &mut Criterion) {
 }
 
 fn benchmark_deep_delegation_chain(c: &mut Criterion) {
-    let keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
 
     c.bench_function("delegation_chain_depth_8", |b| {
         b.iter(|| {
@@ -172,8 +172,8 @@ fn benchmark_deep_delegation_chain(c: &mut Criterion) {
 }
 
 fn benchmark_authorization_denials(c: &mut Criterion) {
-    let keypair = Keypair::generate();
-    let wrong_keypair = Keypair::generate();
+    let keypair = SigningKey::generate();
+    let wrong_keypair = SigningKey::generate();
 
     let warrant = Warrant::builder()
         .tool("read_file")

@@ -11,7 +11,7 @@
 use chrono::Utc;
 use std::env;
 use std::time::Duration;
-use tenuo_core::{wire, Exact, Keypair, OneOf, Range, Warrant};
+use tenuo_core::{wire, Exact, OneOf, Range, SigningKey, Warrant};
 use uuid::Uuid;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("└─────────────────────────────────────────────────────────────────┘");
 
     // 1. Generate our OWN keypair (Orchestrator Identity)
-    let orchestrator_keypair = Keypair::generate();
+    let orchestrator_keypair = SigningKey::generate();
     let pubkey_hex = hex::encode(orchestrator_keypair.public_key().to_bytes());
     println!("  Orchestrator Public Key: {}", pubkey_hex);
 
@@ -83,7 +83,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let cp_key_bytes: [u8; 32] = hex::decode(cp_key_hex)?
             .try_into()
             .map_err(|_| "Control plane key must be 32 bytes")?;
-        Keypair::from_bytes(&cp_key_bytes)
+        SigningKey::from_bytes(&cp_key_bytes)
     } else {
         // For demo, if not provided, we can't create proper chain link signature
         // In production, this should always be provided
@@ -91,7 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "  ⚠️  WARNING: TENUO_CONTROL_PLANE_KEY not set - chain link signature will be invalid"
         );
         println!("     In production, the control plane must sign chain links");
-        Keypair::generate() // Placeholder - won't match root_warrant.issuer()
+        SigningKey::generate() // Placeholder - won't match root_warrant.issuer()
     };
 
     println!("\n  ✓ Root Warrant Received via Enrollment Protocol:");
@@ -130,14 +130,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // and sends ONLY the public key to the orchestrator.
     //
     // Production flow:
-    //   1. Worker: keypair = Keypair::generate()
+    //   1. Worker: keypair = SigningKey::generate()
     //   2. Worker: send(orchestrator, keypair.public_key())
     //   3. Orchestrator: receives worker_public_key
     //   4. Orchestrator: attenuate().authorized_holder(worker_public_key)
     //
     // For this demo, we generate on behalf of worker for simplicity.
     // ─────────────────────────────────────────────────────────────────────────
-    let worker_keypair = Keypair::generate();
+    let worker_keypair = SigningKey::generate();
     println!("\n  [DEMO] Simulating worker key registration:");
     println!("    In production: Worker generates key, sends ONLY public key");
     println!(
@@ -217,7 +217,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  This is enforced via multi-sig: the warrant lists required approvers.\n");
 
     // Create an "approver" keypair (simulates an admin mapped via Notary Registry)
-    let admin_keypair = Keypair::generate();
+    let admin_keypair = SigningKey::generate();
     println!("  Generated Admin Keypair (simulating Notary-bound identity):");
     println!(
         "    • Public Key: {}",

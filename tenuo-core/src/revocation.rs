@@ -43,7 +43,7 @@
 //! }
 //! ```
 
-use crate::crypto::{Keypair, PublicKey, Signature};
+use crate::crypto::{PublicKey, Signature, SigningKey};
 use crate::error::{Error, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -92,7 +92,7 @@ impl RevocationRequest {
     pub fn new(
         warrant_id: impl Into<String>,
         reason: impl Into<String>,
-        requestor_keypair: &Keypair,
+        requestor_keypair: &SigningKey,
     ) -> Result<Self> {
         let warrant_id = warrant_id.into();
         let reason = reason.into();
@@ -314,7 +314,7 @@ impl SignedRevocationList {
     /// Create an empty signed revocation list.
     ///
     /// Useful for initialization before receiving a real SRL.
-    pub fn empty(keypair: &Keypair) -> Result<Self> {
+    pub fn empty(keypair: &SigningKey) -> Result<Self> {
         Self::builder().version(0).build(keypair)
     }
 
@@ -466,7 +466,7 @@ impl SrlBuilder {
     }
 
     /// Build and sign the revocation list.
-    pub fn build(self, keypair: &Keypair) -> Result<SignedRevocationList> {
+    pub fn build(self, keypair: &SigningKey) -> Result<SignedRevocationList> {
         let payload = SrlPayload {
             revoked_ids: self.revoked_ids.clone(),
             version: self.version,
@@ -508,7 +508,7 @@ mod tests {
 
     #[test]
     fn test_signed_revocation_list_basic() {
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
 
         let srl = SignedRevocationList::builder()
             .revoke("tnu_wrt_compromised_1")
@@ -531,8 +531,8 @@ mod tests {
 
     #[test]
     fn test_signed_revocation_list_wrong_key() {
-        let keypair = Keypair::generate();
-        let other_keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
+        let other_keypair = SigningKey::generate();
 
         let srl = SignedRevocationList::builder()
             .revoke("tnu_wrt_test")
@@ -546,7 +546,7 @@ mod tests {
 
     #[test]
     fn test_signed_revocation_list_serialization() {
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
 
         let srl = SignedRevocationList::builder()
             .revoke("tnu_wrt_test1")
@@ -570,7 +570,7 @@ mod tests {
 
     #[test]
     fn test_anti_rollback_version() {
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
 
         let v1 = SignedRevocationList::builder()
             .revoke("tnu_wrt_old")
@@ -595,7 +595,7 @@ mod tests {
 
     #[test]
     fn test_empty_srl() {
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
         let srl = SignedRevocationList::empty(&keypair).unwrap();
 
         assert!(srl.verify(&keypair.public_key()).is_ok());
@@ -605,7 +605,7 @@ mod tests {
 
     #[test]
     fn test_pruning_expired_warrants() {
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
 
         // Create initial SRL with 3 revocations
         let v1 = SignedRevocationList::builder()
@@ -635,7 +635,7 @@ mod tests {
 
     #[test]
     fn test_from_existing_adds_new_revocations() {
-        let keypair = Keypair::generate();
+        let keypair = SigningKey::generate();
 
         let v1 = SignedRevocationList::builder()
             .revoke("tnu_wrt_old")
@@ -662,7 +662,7 @@ mod tests {
 
     #[test]
     fn test_revocation_request_creation_and_verification() {
-        let requestor = Keypair::generate();
+        let requestor = SigningKey::generate();
 
         let request =
             RevocationRequest::new("tnu_wrt_compromised", "Key compromise detected", &requestor)
@@ -678,7 +678,7 @@ mod tests {
 
     #[test]
     fn test_revocation_request_serialization() {
-        let requestor = Keypair::generate();
+        let requestor = SigningKey::generate();
 
         let request =
             RevocationRequest::new("tnu_wrt_test", "Test revocation", &requestor).unwrap();
@@ -696,9 +696,9 @@ mod tests {
 
     #[test]
     fn test_revocation_request_authorization_control_plane() {
-        let control_plane = Keypair::generate();
-        let issuer = Keypair::generate();
-        let holder = Keypair::generate();
+        let control_plane = SigningKey::generate();
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
 
         // Control Plane can revoke anything
         let request =
@@ -713,9 +713,9 @@ mod tests {
 
     #[test]
     fn test_revocation_request_authorization_issuer() {
-        let control_plane = Keypair::generate();
-        let issuer = Keypair::generate();
-        let holder = Keypair::generate();
+        let control_plane = SigningKey::generate();
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
 
         // Issuer can revoke warrants they issued
         let request = RevocationRequest::new(
@@ -734,9 +734,9 @@ mod tests {
 
     #[test]
     fn test_revocation_request_authorization_holder_surrender() {
-        let control_plane = Keypair::generate();
-        let issuer = Keypair::generate();
-        let holder = Keypair::generate();
+        let control_plane = SigningKey::generate();
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
 
         // Holder can surrender their own warrant
         let request =
@@ -751,10 +751,10 @@ mod tests {
 
     #[test]
     fn test_revocation_request_unauthorized() {
-        let control_plane = Keypair::generate();
-        let issuer = Keypair::generate();
-        let holder = Keypair::generate();
-        let random_attacker = Keypair::generate();
+        let control_plane = SigningKey::generate();
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let random_attacker = SigningKey::generate();
 
         // Random party cannot revoke
         let request = RevocationRequest::new(
@@ -773,9 +773,9 @@ mod tests {
 
     #[test]
     fn test_revocation_request_full_validation() {
-        let control_plane = Keypair::generate();
-        let issuer = Keypair::generate();
-        let holder = Keypair::generate();
+        let control_plane = SigningKey::generate();
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
         let warrant_id = "tnu_wrt_valid_123";
         let expires_at = Utc::now() + chrono::Duration::hours(1);
 
@@ -796,8 +796,8 @@ mod tests {
 
     #[test]
     fn test_revocation_request_wrong_warrant_id() {
-        let control_plane = Keypair::generate();
-        let issuer = Keypair::generate();
+        let control_plane = SigningKey::generate();
+        let issuer = SigningKey::generate();
         let expires_at = Utc::now() + chrono::Duration::hours(1);
 
         // Request for one warrant, but validating against different warrant
@@ -818,10 +818,10 @@ mod tests {
 
     #[test]
     fn test_revocation_request_unauthorized_requestor() {
-        let control_plane = Keypair::generate();
-        let issuer = Keypair::generate();
-        let holder = Keypair::generate();
-        let attacker = Keypair::generate();
+        let control_plane = SigningKey::generate();
+        let issuer = SigningKey::generate();
+        let holder = SigningKey::generate();
+        let attacker = SigningKey::generate();
         let warrant_id = "tnu_wrt_target";
         let expires_at = Utc::now() + chrono::Duration::hours(1);
 
@@ -843,8 +843,8 @@ mod tests {
 
     #[test]
     fn test_revocation_request_expired_warrant() {
-        let control_plane = Keypair::generate();
-        let issuer = Keypair::generate();
+        let control_plane = SigningKey::generate();
+        let issuer = SigningKey::generate();
         let warrant_id = "tnu_wrt_already_expired";
         let expires_at = Utc::now() - chrono::Duration::hours(1); // Already expired
 

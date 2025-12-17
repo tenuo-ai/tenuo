@@ -37,7 +37,7 @@
 //! - **Type-Safe**: Rust's type system prevents misuse
 
 use crate::constraints::{Constraint, ConstraintSet, ConstraintValue};
-use crate::crypto::{Keypair, PublicKey, Signature};
+use crate::crypto::{PublicKey, Signature, SigningKey};
 use crate::error::{Error, Result};
 use crate::MAX_DELEGATION_DEPTH;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -1046,7 +1046,7 @@ impl Warrant {
     ///   `(warrant_id, tool, args)` as a cache key with 2-minute TTL
     pub fn create_pop_signature(
         &self,
-        keypair: &Keypair,
+        keypair: &SigningKey,
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
     ) -> Result<Signature> {
@@ -1331,7 +1331,7 @@ impl WarrantBuilder {
     }
 
     /// Build and sign the warrant.
-    pub fn build(self, keypair: &Keypair) -> Result<Warrant> {
+    pub fn build(self, keypair: &SigningKey) -> Result<Warrant> {
         // Determine warrant type (default to EXECUTION for backward compatibility)
         let warrant_type = self.warrant_type.unwrap_or(WarrantType::Execution);
 
@@ -1699,7 +1699,7 @@ impl<'a> AttenuationBuilder<'a> {
     ///
     /// * `keypair` - The keypair of the delegator (who is creating the child warrant)
     /// * `parent_keypair` - The keypair of the parent warrant issuer (for chain link signature)
-    pub fn build(self, keypair: &Keypair, parent_keypair: &Keypair) -> Result<Warrant> {
+    pub fn build(self, keypair: &SigningKey, parent_keypair: &SigningKey) -> Result<Warrant> {
         // Use checked arithmetic to prevent overflow
         let new_depth = self
             .parent
@@ -2353,7 +2353,7 @@ impl OwnedAttenuationBuilder {
     }
 
     /// Build and sign the attenuated warrant.
-    pub fn build(self, keypair: &Keypair, parent_keypair: &Keypair) -> Result<Warrant> {
+    pub fn build(self, keypair: &SigningKey, parent_keypair: &SigningKey) -> Result<Warrant> {
         let new_depth = self
             .parent
             .payload
@@ -2612,8 +2612,8 @@ impl OwnedAttenuationBuilder {
     /// A tuple of (child_warrant, delegation_receipt)
     pub fn build_with_receipt(
         self,
-        keypair: &Keypair,
-        parent_keypair: &Keypair,
+        keypair: &SigningKey,
+        parent_keypair: &SigningKey,
     ) -> Result<(Warrant, crate::diff::DelegationReceipt)> {
         // Capture diff before build consumes self
         let mut diff = self.diff();
@@ -2778,7 +2778,7 @@ impl<'a> IssuanceBuilder<'a> {
     ///
     /// * `keypair` - The keypair of the issuer warrant holder (who is creating the execution warrant)
     /// * `issuer_keypair` - The keypair of the issuer warrant issuer (for chain link signature)
-    pub fn build(self, keypair: &Keypair, issuer_keypair: &Keypair) -> Result<Warrant> {
+    pub fn build(self, keypair: &SigningKey, issuer_keypair: &SigningKey) -> Result<Warrant> {
         // Validate issuer is not expired
         if self.issuer.is_expired() {
             return Err(Error::WarrantExpired(self.issuer.payload.expires_at));
@@ -3148,7 +3148,7 @@ impl OwnedIssuanceBuilder {
     }
 
     /// Build and sign the execution warrant.
-    pub fn build(self, keypair: &Keypair, issuer_keypair: &Keypair) -> Result<Warrant> {
+    pub fn build(self, keypair: &SigningKey, issuer_keypair: &SigningKey) -> Result<Warrant> {
         // Delegate to IssuanceBuilder
         IssuanceBuilder {
             issuer: &self.issuer,
@@ -3172,8 +3172,8 @@ mod tests {
     use super::*;
     use crate::constraints::{Exact, Pattern, Range};
 
-    fn create_test_keypair() -> Keypair {
-        Keypair::generate()
+    fn create_test_keypair() -> SigningKey {
+        SigningKey::generate()
     }
 
     #[test]

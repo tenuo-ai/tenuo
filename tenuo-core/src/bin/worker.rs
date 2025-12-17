@@ -15,7 +15,7 @@ use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 use tenuo_core::approval::{compute_request_hash, Approval};
-use tenuo_core::{Authorizer, ConstraintValue, Keypair, PublicKey, Range, Warrant};
+use tenuo_core::{Authorizer, ConstraintValue, PublicKey, Range, SigningKey, Warrant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n╔══════════════════════════════════════════════════════════════════╗");
@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // =========================================================================
     // ─────────────────────────────────────────────────────────────────────────
     // PRODUCTION PATTERN:
-    //   1. Worker generates its own keypair: keypair = Keypair::generate()
+    //   1. Worker generates its own keypair: keypair = SigningKey::generate()
     //   2. Worker sends ONLY public key to orchestrator
     //   3. Worker keeps private key locally (NEVER shared)
     //
@@ -114,7 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "\n  ⚠️  [DEMO ONLY] Loading pre-shared keypair from: {}",
         worker_key_path
     );
-    println!("    PRODUCTION: Worker generates key locally with Keypair::generate()");
+    println!("    PRODUCTION: Worker generates key locally with SigningKey::generate()");
     println!("    PRODUCTION: Only PUBLIC key is sent to orchestrator");
 
     // Simple wait loop (similar to chain)
@@ -127,7 +127,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let worker_key_bytes: [u8; 32] = hex::decode(worker_key_hex.trim())?
         .try_into()
         .map_err(|_| "Worker key must be 32 bytes")?;
-    let worker_keypair = Keypair::from_bytes(&worker_key_bytes);
+    let worker_keypair = SigningKey::from_bytes(&worker_key_bytes);
     println!("  ✓ Worker keypair ready (private key for PoP signing)");
 
     // =========================================================================
@@ -340,7 +340,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Worker can create sub-agent warrants up to max_depth
-    let sub_agent_keypair = Keypair::generate();
+    let sub_agent_keypair = SigningKey::generate();
 
     // Try to create depth 2 warrant (should work if max_depth >= 2)
     println!(
@@ -355,7 +355,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let orch_key_bytes: [u8; 32] = hex::decode(orch_key_hex)?
             .try_into()
             .map_err(|_| "Orchestrator key must be 32 bytes")?;
-        Keypair::from_bytes(&orch_key_bytes)
+        SigningKey::from_bytes(&orch_key_bytes)
     } else {
         // For demo, if not provided, we can't create proper chain link signature
         // In production, this should always be provided
@@ -363,7 +363,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "  ⚠️  WARNING: TENUO_ORCHESTRATOR_KEY not set - chain link signature will be invalid"
         );
         println!("     In production, the orchestrator must sign chain links");
-        Keypair::generate() // Placeholder - won't match leaf_warrant.issuer()
+        SigningKey::generate() // Placeholder - won't match leaf_warrant.issuer()
     };
 
     match leaf_warrant
@@ -403,7 +403,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         deep_warrant.depth() + 1
                     );
 
-                    let another_keypair = Keypair::generate();
+                    let another_keypair = SigningKey::generate();
                     match deep_warrant
                         .attenuate()
                         .constraint("replicas", Range::max(2.0))
@@ -478,7 +478,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let admin_key_bytes: [u8; 32] = hex::decode(admin_key_hex.trim())?
                 .try_into()
                 .map_err(|_| "Admin key must be 32 bytes")?;
-            Some(Keypair::from_bytes(&admin_key_bytes))
+            Some(SigningKey::from_bytes(&admin_key_bytes))
         } else {
             println!("  ⚠ Admin key not found at {}", admin_key_path);
             None

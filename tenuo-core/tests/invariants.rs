@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tenuo_core::{
     constraints::{ConstraintValue, Pattern, Range},
-    crypto::Keypair,
+    crypto::SigningKey,
     warrant::Warrant,
     wire, MAX_ISSUER_CHAIN_LENGTH,
 };
@@ -39,8 +39,8 @@ proptest! {
         ttl_parent in arb_ttl_secs(),
         ttl_child in arb_ttl_secs(),
     ) {
-        let parent_kp = Keypair::generate();
-        let child_kp = Keypair::generate();
+        let parent_kp = SigningKey::generate();
+        let child_kp = SigningKey::generate();
 
         let parent = Warrant::builder()
             .tool("test_tool")
@@ -64,7 +64,7 @@ proptest! {
     /// Note: Limited to MAX_ISSUER_CHAIN_LENGTH to respect chain length security limit.
     #[test]
     fn attenuation_increments_depth(depth_limit in 1u32..=(MAX_ISSUER_CHAIN_LENGTH as u32)) {
-        let kp = Keypair::generate();
+        let kp = SigningKey::generate();
 
         let mut warrant = Warrant::builder()
             .tool("test")
@@ -86,8 +86,8 @@ proptest! {
     fn attenuation_pattern_cannot_widen(
         prefix in "[a-z]{1,3}",
     ) {
-        let parent_kp = Keypair::generate();
-        let child_kp = Keypair::generate();
+        let parent_kp = SigningKey::generate();
+        let child_kp = SigningKey::generate();
 
         // Parent has narrow pattern
         let parent = Warrant::builder()
@@ -114,8 +114,8 @@ proptest! {
         parent_max in 100.0f64..10000.0f64,
         child_delta in 1.0f64..1000.0f64,
     ) {
-        let parent_kp = Keypair::generate();
-        let child_kp = Keypair::generate();
+        let parent_kp = SigningKey::generate();
+        let child_kp = SigningKey::generate();
 
         let parent = Warrant::builder()
             .tool("test")
@@ -158,7 +158,7 @@ proptest! {
     ) {
         prop_assume!(tool1 != tool2);
 
-        let kp = Keypair::generate();
+        let kp = SigningKey::generate();
         let warrant = Warrant::builder()
             .tool(&tool1)
             .ttl(Duration::from_secs(600))
@@ -187,7 +187,7 @@ proptest! {
         prefix in "[a-z]{1,3}",
         suffix in "[a-z]{1,5}",
     ) {
-        let kp = Keypair::generate();
+        let kp = SigningKey::generate();
 
         let warrant = Warrant::builder()
             .tool("test")
@@ -222,7 +222,7 @@ proptest! {
         max_val in 100.0f64..10000.0f64,
         delta in 1.0f64..1000.0f64,
     ) {
-        let kp = Keypair::generate();
+        let kp = SigningKey::generate();
 
         let warrant = Warrant::builder()
             .tool("transfer")
@@ -263,8 +263,8 @@ proptest! {
         tool in arb_tool_name(),
         ttl in arb_ttl_secs(),
     ) {
-        let issuer_kp = Keypair::generate();
-        let attacker_kp = Keypair::generate();
+        let issuer_kp = SigningKey::generate();
+        let attacker_kp = SigningKey::generate();
 
         let warrant = Warrant::builder()
             .tool(&tool)
@@ -286,7 +286,7 @@ proptest! {
         tool in arb_tool_name(),
         ttl in arb_ttl_secs(),
     ) {
-        let kp = Keypair::generate();
+        let kp = SigningKey::generate();
 
         let original = Warrant::builder()
             .tool(&tool)
@@ -322,7 +322,7 @@ proptest! {
     /// so the chain length limit kicks in first as a DoS protection.
     #[test]
     fn chain_length_cannot_exceed_max(extra_attempts in 1u32..5u32) {
-        let kp = Keypair::generate();
+        let kp = SigningKey::generate();
 
         let mut warrant = Warrant::builder()
             .tool("test")
@@ -360,7 +360,7 @@ proptest! {
     /// Every warrant gets a unique ID.
     #[test]
     fn warrant_ids_are_unique(count in 10usize..100usize) {
-        let kp = Keypair::generate();
+        let kp = SigningKey::generate();
 
         let mut ids = std::collections::HashSet::new();
 
@@ -388,7 +388,7 @@ proptest! {
     /// Note: Limited to MAX_ISSUER_CHAIN_LENGTH to respect chain length security limit.
     #[test]
     fn parent_id_chain_is_correct(chain_length in 2u32..=(MAX_ISSUER_CHAIN_LENGTH as u32)) {
-        let kp = Keypair::generate();
+        let kp = SigningKey::generate();
 
         let root = Warrant::builder()
             .tool("test")

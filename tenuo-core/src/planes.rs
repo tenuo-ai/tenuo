@@ -31,7 +31,7 @@
 
 use crate::approval::WarrantTracker;
 use crate::constraints::{Constraint, ConstraintValue};
-use crate::crypto::{Keypair, PublicKey};
+use crate::crypto::{PublicKey, SigningKey};
 use crate::error::{Error, Result};
 use crate::revocation::RevocationRequest;
 use crate::warrant::{Warrant, WarrantType};
@@ -186,14 +186,14 @@ pub struct ChainStep {
 #[derive(Debug)]
 pub struct ControlPlane {
     /// The root keypair for signing warrants.
-    keypair: Keypair,
+    keypair: SigningKey,
     /// Optional: known child public keys for delegation tracking.
     known_delegates: HashSet<[u8; 32]>,
 }
 
 impl ControlPlane {
     /// Create a new control plane with the given root keypair.
-    pub fn new(keypair: Keypair) -> Self {
+    pub fn new(keypair: SigningKey) -> Self {
         Self {
             keypair,
             known_delegates: HashSet::new(),
@@ -202,7 +202,7 @@ impl ControlPlane {
 
     /// Generate a new control plane with a fresh keypair.
     pub fn generate() -> Self {
-        Self::new(Keypair::generate())
+        Self::new(SigningKey::generate())
     }
 
     /// Get the public key (share this with data planes).
@@ -350,7 +350,7 @@ pub struct DataPlane {
     /// Trusted issuer public keys, keyed by name.
     trusted_issuers: HashMap<String, PublicKey>,
     /// Optional: own keypair for attenuating warrants.
-    own_keypair: Option<Keypair>,
+    own_keypair: Option<SigningKey>,
     /// Clock skew tolerance for expiration checks.
     clock_tolerance: chrono::Duration,
     /// Signed revocation list.
@@ -388,7 +388,7 @@ impl DataPlane {
     }
 
     /// Create a data plane that can also attenuate warrants.
-    pub fn with_keypair(keypair: Keypair) -> Self {
+    pub fn with_keypair(keypair: SigningKey) -> Self {
         Self {
             trusted_issuers: HashMap::new(),
             own_keypair: Some(keypair),
@@ -1043,7 +1043,7 @@ impl DataPlane {
         &self,
         parent: &Warrant,
         constraints: &[(&str, Constraint)],
-        parent_keypair: &Keypair,
+        parent_keypair: &SigningKey,
     ) -> Result<Warrant> {
         let keypair = self.own_keypair.as_ref().ok_or_else(|| {
             Error::CryptoError("data plane has no keypair for attenuation".to_string())
@@ -1982,7 +1982,7 @@ mod tests {
         // Note: warrant is bound to control_plane's key, but we can't access the private key
         // from DataPlane. In production, the holder would have their own keypair.
         // For this test, we'll create a warrant bound to a test keypair instead.
-        let holder_keypair = Keypair::generate();
+        let holder_keypair = SigningKey::generate();
         let warrant_for_holder = control_plane
             .issue_bound_warrant(
                 "upgrade_cluster",
@@ -2019,7 +2019,7 @@ mod tests {
             .unwrap();
 
         // Orchestrator data plane (has its own keypair)
-        let orchestrator = DataPlane::with_keypair(Keypair::generate());
+        let orchestrator = DataPlane::with_keypair(SigningKey::generate());
 
         let worker_warrant = orchestrator
             .attenuate(
@@ -2046,7 +2046,7 @@ mod tests {
             .unwrap();
 
         // Minimal authorizer - just the public key
-        let holder_keypair = Keypair::generate();
+        let holder_keypair = SigningKey::generate();
         let warrant_for_holder = control_plane
             .issue_bound_warrant(
                 "test",
@@ -2091,7 +2091,7 @@ mod tests {
     #[test]
     fn test_chain_verification_delegation() {
         let control_plane = ControlPlane::generate();
-        let orchestrator_keypair = Keypair::generate();
+        let orchestrator_keypair = SigningKey::generate();
 
         // Root warrant
         let root = control_plane
@@ -2122,8 +2122,8 @@ mod tests {
     #[test]
     fn test_chain_verification_three_levels() {
         let control_plane = ControlPlane::generate();
-        let orchestrator_keypair = Keypair::generate();
-        let worker_keypair = Keypair::generate();
+        let orchestrator_keypair = SigningKey::generate();
+        let worker_keypair = SigningKey::generate();
 
         // Root → Orchestrator → Worker
         let root = control_plane
@@ -2163,7 +2163,7 @@ mod tests {
     #[test]
     fn test_chain_verification_and_authorization() {
         let control_plane = ControlPlane::generate();
-        let agent_keypair = Keypair::generate();
+        let agent_keypair = SigningKey::generate();
 
         let root = control_plane
             .issue_warrant(
@@ -2227,7 +2227,7 @@ mod tests {
     #[test]
     fn test_chain_verification_fails_broken_linkage() {
         let control_plane = ControlPlane::generate();
-        let agent_keypair = Keypair::generate();
+        let agent_keypair = SigningKey::generate();
 
         // Two unrelated warrants
         let warrant1 = control_plane
@@ -2272,7 +2272,7 @@ mod tests {
     #[test]
     fn test_authorizer_chain_verification() {
         let control_plane = ControlPlane::generate();
-        let agent_keypair = Keypair::generate();
+        let agent_keypair = SigningKey::generate();
 
         let root = control_plane
             .issue_warrant(
@@ -2330,7 +2330,7 @@ mod tests {
     fn test_cascading_revocation() {
         // If ANY warrant in the chain is revoked, the entire chain is invalid
         let control_plane = ControlPlane::generate();
-        let orchestrator_keypair = Keypair::generate();
+        let orchestrator_keypair = SigningKey::generate();
 
         let root = control_plane
             .issue_warrant("test", &[], Duration::from_secs(60))
@@ -2399,7 +2399,7 @@ mod tests {
 
         // Create PoP signature (warrant is bound to control_plane's key)
         // In a real scenario, the holder would have their own keypair
-        let holder_keypair = Keypair::generate();
+        let holder_keypair = SigningKey::generate();
         let warrant_for_holder = control_plane
             .issue_bound_warrant(
                 "test",
@@ -2420,8 +2420,8 @@ mod tests {
 
     #[test]
     fn test_authorize_requires_approval_when_multisig() {
-        let issuer_keypair = Keypair::generate();
-        let admin_keypair = Keypair::generate();
+        let issuer_keypair = SigningKey::generate();
+        let admin_keypair = SigningKey::generate();
 
         // Create warrant WITH multi-sig requirement
         let warrant = Warrant::builder()
@@ -2452,8 +2452,8 @@ mod tests {
         use crate::approval::{compute_request_hash, Approval};
         use chrono::{Duration as ChronoDuration, Utc};
 
-        let issuer_keypair = Keypair::generate();
-        let admin_keypair = Keypair::generate();
+        let issuer_keypair = SigningKey::generate();
+        let admin_keypair = SigningKey::generate();
 
         // Create warrant WITH multi-sig requirement
         let warrant = Warrant::builder()
@@ -2518,9 +2518,9 @@ mod tests {
         use crate::approval::{compute_request_hash, Approval};
         use chrono::{Duration as ChronoDuration, Utc};
 
-        let issuer_keypair = Keypair::generate();
-        let admin_keypair = Keypair::generate();
-        let other_keypair = Keypair::generate(); // Not in required_approvers
+        let issuer_keypair = SigningKey::generate();
+        let admin_keypair = SigningKey::generate();
+        let other_keypair = SigningKey::generate(); // Not in required_approvers
 
         // Create warrant requiring admin's approval
         let warrant = Warrant::builder()
@@ -2585,10 +2585,10 @@ mod tests {
         use crate::approval::{compute_request_hash, Approval};
         use chrono::{Duration as ChronoDuration, Utc};
 
-        let issuer_keypair = Keypair::generate();
-        let admin1 = Keypair::generate();
-        let admin2 = Keypair::generate();
-        let admin3 = Keypair::generate();
+        let issuer_keypair = SigningKey::generate();
+        let admin1 = SigningKey::generate();
+        let admin2 = SigningKey::generate();
+        let admin3 = SigningKey::generate();
 
         // Create warrant requiring 2-of-3 approvals
         let warrant = Warrant::builder()
@@ -2617,7 +2617,7 @@ mod tests {
         );
 
         // Helper to create approval
-        let make_approval = |kp: &Keypair, id: &str| {
+        let make_approval = |kp: &SigningKey, id: &str| {
             let mut signable = Vec::new();
             signable.extend_from_slice(&request_hash);
             signable.extend_from_slice(id.as_bytes());
@@ -2672,8 +2672,8 @@ mod tests {
     #[test]
     fn test_verify_chain_strict_matching_sessions() {
         let control_plane = ControlPlane::generate();
-        let orchestrator_keypair = Keypair::generate();
-        let worker_keypair = Keypair::generate();
+        let orchestrator_keypair = SigningKey::generate();
+        let worker_keypair = SigningKey::generate();
 
         // Create chain with matching session IDs
         let root = Warrant::builder()
@@ -2704,8 +2704,8 @@ mod tests {
     #[test]
     fn test_verify_chain_strict_mismatched_sessions() {
         let control_plane = ControlPlane::generate();
-        let orchestrator_keypair = Keypair::generate();
-        let worker_keypair = Keypair::generate();
+        let orchestrator_keypair = SigningKey::generate();
+        let worker_keypair = SigningKey::generate();
 
         // Create root with session_123
         let root = Warrant::builder()
@@ -2748,8 +2748,8 @@ mod tests {
     #[test]
     fn test_verify_chain_strict_mixed_session_ids() {
         let control_plane = ControlPlane::generate();
-        let orchestrator_keypair = Keypair::generate();
-        let worker_keypair = Keypair::generate();
+        let orchestrator_keypair = SigningKey::generate();
+        let worker_keypair = SigningKey::generate();
 
         // Root has session ID
         let root = Warrant::builder()
@@ -2788,7 +2788,7 @@ mod tests {
     #[test]
     fn test_authorizer_verify_chain_strict() {
         let control_plane = ControlPlane::generate();
-        let orchestrator_keypair = Keypair::generate();
+        let orchestrator_keypair = SigningKey::generate();
 
         let root = Warrant::builder()
             .tool("test")
@@ -2835,7 +2835,7 @@ mod tests {
     #[test]
     fn test_issue_bound_warrant_and_audit_serialization() {
         let control_plane = ControlPlane::generate();
-        let holder_key = Keypair::generate().public_key();
+        let holder_key = SigningKey::generate().public_key();
 
         // 1. Issue bound warrant
         let warrant = control_plane

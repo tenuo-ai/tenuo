@@ -1,5 +1,5 @@
 use std::time::Duration;
-use tenuo_core::crypto::Keypair;
+use tenuo_core::crypto::SigningKey;
 use tenuo_core::planes::DataPlane;
 use tenuo_core::revocation::RevocationRequest;
 use tenuo_core::warrant::Warrant;
@@ -7,8 +7,8 @@ use tenuo_core::warrant::Warrant;
 #[test]
 fn test_parental_revocation() {
     // 1. Setup
-    let issuer = Keypair::generate();
-    let holder = Keypair::generate();
+    let issuer = SigningKey::generate();
+    let holder = SigningKey::generate();
     let data_plane = DataPlane::new_with_issuers(vec![issuer.public_key()]);
 
     // 2. Issue Warrant
@@ -42,8 +42,8 @@ fn test_parental_revocation() {
 #[test]
 fn test_self_revocation() {
     // Holder surrenders warrant
-    let issuer = Keypair::generate();
-    let holder = Keypair::generate();
+    let issuer = SigningKey::generate();
+    let holder = SigningKey::generate();
     let data_plane = DataPlane::new_with_issuers(vec![issuer.public_key()]);
 
     let warrant = Warrant::builder()
@@ -63,8 +63,8 @@ fn test_self_revocation() {
 
 #[test]
 fn test_unauthorized_revocation() {
-    let issuer = Keypair::generate();
-    let attacker = Keypair::generate();
+    let issuer = SigningKey::generate();
+    let attacker = SigningKey::generate();
     let data_plane = DataPlane::new_with_issuers(vec![issuer.public_key()]);
 
     let warrant = Warrant::builder()

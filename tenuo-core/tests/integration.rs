@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tenuo_core::{
     constraints::{ConstraintValue, Exact, OneOf, Pattern, Range},
-    crypto::Keypair,
+    crypto::SigningKey,
     warrant::Warrant,
     wire,
 };
@@ -18,13 +18,13 @@ use tenuo_core::{
 #[test]
 fn demo_kubernetes_upgrade_delegation_chain() {
     // Control plane has root authority
-    let control_plane_kp = Keypair::generate();
+    let control_plane_kp = SigningKey::generate();
 
     // Orchestrator agent
-    let orchestrator_kp = Keypair::generate();
+    let orchestrator_kp = SigningKey::generate();
 
     // Worker agent
-    let worker_kp = Keypair::generate();
+    let worker_kp = SigningKey::generate();
 
     // Step 1: Control plane issues broad warrant
     let root_warrant = Warrant::builder()
@@ -113,9 +113,9 @@ fn demo_kubernetes_upgrade_delegation_chain() {
 /// with constraints propagating through delegation.
 #[test]
 fn demo_finance_delegation_with_budget() {
-    let cfo_kp = Keypair::generate();
-    let finance_agent_kp = Keypair::generate();
-    let payment_worker_kp = Keypair::generate();
+    let cfo_kp = SigningKey::generate();
+    let finance_agent_kp = SigningKey::generate();
+    let payment_worker_kp = SigningKey::generate();
 
     // CFO authorizes finance agent for transfers up to $100k
     let cfo_warrant = Warrant::builder()
@@ -200,7 +200,7 @@ fn demo_finance_delegation_with_budget() {
 /// on the receiving service.
 #[test]
 fn demo_http_transport() {
-    let issuer_kp = Keypair::generate();
+    let issuer_kp = SigningKey::generate();
 
     // Create a warrant
     let warrant = Warrant::builder()
@@ -273,7 +273,7 @@ fn demo_http_transport() {
 /// replay across sessions.
 #[test]
 fn demo_session_binding() {
-    let kp = Keypair::generate();
+    let kp = SigningKey::generate();
 
     let session_1_warrant = Warrant::builder()
         .tool("execute_task")
@@ -314,10 +314,10 @@ fn demo_session_binding() {
 /// full chain-of-custody reconstruction.
 #[test]
 fn demo_audit_chain_reconstruction() {
-    let root_kp = Keypair::generate();
-    let level1_kp = Keypair::generate();
-    let level2_kp = Keypair::generate();
-    let level3_kp = Keypair::generate();
+    let root_kp = SigningKey::generate();
+    let level1_kp = SigningKey::generate();
+    let level2_kp = SigningKey::generate();
+    let level3_kp = SigningKey::generate();
 
     // Build a 4-level delegation chain
     let root = Warrant::builder()
@@ -384,8 +384,8 @@ fn demo_audit_chain_reconstruction() {
 /// Shows how different constraint types can be combined and narrowed.
 #[test]
 fn demo_mixed_constraint_narrowing() {
-    let parent_kp = Keypair::generate();
-    let child_kp = Keypair::generate();
+    let parent_kp = SigningKey::generate();
+    let child_kp = SigningKey::generate();
 
     // Parent has multiple constraint types
     let parent = Warrant::builder()
@@ -446,8 +446,8 @@ fn demo_mixed_constraint_narrowing() {
 /// Test that monotonicity violations are rejected at attenuation time.
 #[test]
 fn test_monotonicity_violation_rejected() {
-    let parent_kp = Keypair::generate();
-    let child_kp = Keypair::generate();
+    let parent_kp = SigningKey::generate();
+    let child_kp = SigningKey::generate();
 
     let parent = Warrant::builder()
         .tool("test")
