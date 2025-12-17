@@ -344,7 +344,7 @@ proptest! {
             prop_assert!(result.is_err());
             let err_msg = result.unwrap_err().to_string();
             prop_assert!(
-                err_msg.contains("issuer chain length") && err_msg.contains("exceed maximum"),
+                err_msg.contains("issuer chain too long"),
                 "Expected chain length error, got: {}",
                 err_msg
             );

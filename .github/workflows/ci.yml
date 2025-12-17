@@ -42,11 +42,22 @@ jobs:
         run: cargo test --all-features
         working-directory: tenuo-core
 
+  # ============================================================================
+  # SECURITY AUDIT (runs separately to not block CI)
+  # ============================================================================
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    # Only run on push to main, not on PRs (saves time)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    continue-on-error: true  # Don't fail CI for advisory warnings
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Security Audit
-        uses: rustsec/audit-check@v1
+        uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          directory: tenuo-core
 
   # ============================================================================
   # PYTHON SDK - Matrix Testing

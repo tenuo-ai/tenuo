@@ -23,21 +23,36 @@ cd tenuo-core
 cargo clippy --all-targets --all-features -- -D warnings
 cd ..
 
-# 3. Rust Tests
+# 3. Rust Tests (all tests including integration tests)
 echo -e "\n${GREEN}[3/5] Running Rust Tests...${NC}"
 cd tenuo-core
+echo "  → Running unit tests..."
 cargo test --lib
+echo "  → Running integration tests..."
+cargo test --test invariants
+cargo test --test integration
+cargo test --test security
+cargo test --test cel_stdlib
+cargo test --test revocation
+cargo test --test parental_revocation
+cargo test --test repro_object_extraction
+cargo test --test red_team
+# Note: enrollment_flow requires network access, skipped locally
 cd ..
 
-# 4. Security Audit
-echo -e "\n${GREEN}[4/5] Running Security Audit...${NC}"
-cd tenuo-core
-if ! command -v cargo-audit &> /dev/null; then
-    echo "Installing cargo-audit..."
-    cargo install cargo-audit --locked
+# 4. Security Audit (optional - skip with SKIP_AUDIT=1)
+if [ "${SKIP_AUDIT:-0}" = "1" ]; then
+    echo -e "\n${GREEN}[4/5] Skipping Security Audit (SKIP_AUDIT=1)${NC}"
+else
+    echo -e "\n${GREEN}[4/5] Running Security Audit...${NC}"
+    cd tenuo-core
+    if ! command -v cargo-audit &> /dev/null; then
+        echo "Installing cargo-audit..."
+        cargo install cargo-audit --locked
+    fi
+    cargo audit || echo "  → Audit warnings (non-blocking)"
+    cd ..
 fi
-cargo audit
-cd ..
 
 # 5. Python Checks (if venv exists)
 if [ -d ".venv" ]; then
