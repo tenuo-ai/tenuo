@@ -43,11 +43,10 @@ langgraph = [
     "langgraph>=0.0.10",
     "tenuo[langchain]",  # LangGraph integration needs LangChain tools
 ]
-mcp = [
-    # Model Context Protocol SDK (requires Python 3.10+)
-    # Not yet on PyPI - install from GitHub for now
-    'mcp @ git+https://github.com/modelcontextprotocol/python-sdk.git ; python_version >= "3.10"',
-]
+# MCP integration requires manual install:
+#   pip install mcp  (when available on PyPI)
+#   or: pip install git+https://github.com/modelcontextprotocol/python-sdk.git
+# mcp = ["mcp>=0.1.0; python_version >= '3.10'"]
 
 # Development dependencies (includes features + tools)
 dev = [
