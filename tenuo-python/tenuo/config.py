@@ -25,7 +25,7 @@ Usage:
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Any, List, Optional
 from contextvars import ContextVar
 
 from tenuo_core import SigningKey, PublicKey, Authorizer  # type: ignore[import-untyped]
@@ -55,6 +55,9 @@ class TenuoConfig:
     
     # Clock tolerance for expiration checks (seconds)
     clock_tolerance: int = DEFAULT_CLOCK_TOLERANCE_SECS
+    
+    # MCP configuration (for tool discovery and constraint extraction)
+    mcp_config: Optional[Any] = None  # CompiledMcpConfig
     
     # PoP window configuration
     pop_window_secs: int = DEFAULT_POP_WINDOW_SECS
@@ -120,6 +123,7 @@ def configure(
     clock_tolerance: int = DEFAULT_CLOCK_TOLERANCE_SECS,
     pop_window_secs: int = DEFAULT_POP_WINDOW_SECS,
     pop_max_windows: int = DEFAULT_POP_MAX_WINDOWS,
+    mcp_config: Optional[Any] = None,
     dev_mode: bool = False,
     allow_passthrough: bool = False,
     allow_self_signed: bool = False,
@@ -139,6 +143,7 @@ def configure(
         clock_tolerance: Clock tolerance for expiration checks (default: 30)
         pop_window_secs: PoP window size in seconds (default: 30)
         pop_max_windows: Number of PoP windows to accept (default: 4)
+        mcp_config: CompiledMcpConfig for MCP tool authorization (optional)
         dev_mode: Enable development mode (relaxed security)
         allow_passthrough: Allow tool calls without warrants (dev_mode only)
         allow_self_signed: Trust self-signed warrants (dev_mode only)

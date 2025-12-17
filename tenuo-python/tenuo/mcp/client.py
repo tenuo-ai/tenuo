@@ -76,13 +76,38 @@ class SecureMCPClient:
         self._tools: Optional[List[MCPTool]] = None
         self._wrapped_tools: Dict[str, Callable] = {}
         
-        # Load MCP config if provided
+        # Load and register MCP config if provided
         self.mcp_config = None
         self.compiled_config = None
         if config_path:
             from tenuo import McpConfig, CompiledMcpConfig
+            from ..config import get_config, configure as tenuo_configure
+            
             self.mcp_config = McpConfig.from_file(config_path)
             self.compiled_config = CompiledMcpConfig.compile(self.mcp_config)
+            
+            # Register with global config so @lockdown can see it
+            existing_config = get_config()
+            if existing_config:
+                # Preserve existing settings, just add MCP config
+                tenuo_configure(
+                    issuer_key=existing_config.issuer_keypair,
+                    trusted_roots=existing_config.trusted_roots,
+                    default_ttl=existing_config.default_ttl,
+                    clock_tolerance=existing_config.clock_tolerance,
+                    pop_window_secs=existing_config.pop_window_secs,
+                    pop_max_windows=existing_config.pop_max_windows,
+                    mcp_config=self.compiled_config,  # ← Register MCP config
+                    dev_mode=existing_config.dev_mode,
+                    allow_passthrough=existing_config.allow_passthrough,
+                    allow_self_signed=existing_config.allow_self_signed,
+                    strict_mode=existing_config.strict_mode,
+                    warn_on_missing_warrant=existing_config.warn_on_missing_warrant,
+                    max_missing_warrant_warnings=existing_config.max_missing_warrant_warnings,
+                )
+            else:
+                # No existing config, just register MCP
+                tenuo_configure(mcp_config=self.compiled_config)
     
     async def __aenter__(self):
         """Connect to MCP server."""

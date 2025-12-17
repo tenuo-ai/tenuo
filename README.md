@@ -184,6 +184,7 @@ See the [examples](./tenuo-python/examples) for LangChain, LangGraph, and multi-
 | **[Quickstart](https://tenuo.ai/quickstart)** | Get running in 5 minutes |
 | **[Concepts](https://tenuo.ai/concepts)** | Why capability tokens? |
 | **[LangChain](https://tenuo.ai/langchain)** | Tool protection |
+| **[MCP Integration](https://tenuo.ai/mcp)** | Model Context Protocol client |
 | **[Kubernetes](https://tenuo.ai/kubernetes)** | Deployment patterns |
 | **[Security](https://tenuo.ai/security)** | Threat model |
 | **[API Reference](https://tenuo.ai/api-reference)** | Full SDK docs |
