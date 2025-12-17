@@ -29,7 +29,7 @@ Architecture:
 
 from tenuo import (
     SigningKey, Warrant, Pattern, Exact,
-    lockdown, set_warrant_context, set_keypair_context, AuthorizationError
+    lockdown, set_warrant_context, set_signing_key_context, AuthorizationError
 )
 from typing import Optional, Dict, Any
 import os
@@ -335,9 +335,9 @@ async def tenuo_middleware(request: Request, call_next):
     
     # Set warrant in context for this request
     # In production, load agent keypair from secure storage
-    # with set_warrant_context(warrant), set_keypair_context(agent_keypair):
+    # with set_warrant_context(warrant), set_signing_key_context(agent_keypair):
     # For demo, we assume agent_keypair is available globally or loaded
-    # with set_warrant_context(warrant), set_keypair_context(agent_keypair): # Simplified for middleware demo
+    # with set_warrant_context(warrant), set_signing_key_context(agent_keypair): # Simplified for middleware demo
     with set_warrant_context(warrant): # WARNING: This will fail PoP check if keypair not set!
         response = await call_next(request)
         return response
@@ -574,7 +574,7 @@ def main():
     # ========================================================================
     print("5. Testing protection with loaded warrant...")
     try:
-        with set_warrant_context(agent_warrant), set_keypair_context(control_keypair):
+        with set_warrant_context(agent_warrant), set_signing_key_context(control_keypair):
             # Test authorized access
             # HARDCODED PATH: /tmp/test.txt for demo
             # In production: Use tempfile or env-specified test directory

@@ -18,7 +18,7 @@ from tenuo import (
     SigningKey, Warrant, Pattern, Range, Wildcard,
     Authorizer,
     ChainVerificationResult,
-    lockdown, set_warrant_context, set_keypair_context
+    lockdown, set_warrant_context, set_signing_key_context
 )
 
 # ============================================================================
@@ -121,7 +121,7 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
     print("\n  [Worker/Research] Received research warrant")
     print(f"  [Worker/Research] Warrant allows: {warrant.tools}")
     
-    with set_warrant_context(warrant), set_keypair_context(keypair):
+    with set_warrant_context(warrant), set_signing_key_context(keypair):
         print("\n  [Worker/Research] Demonstrating explicit warrant.authorize calls with signatures:")
 
         # 1. Search (Allowed)
@@ -192,7 +192,7 @@ def worker_write(warrant: Warrant, keypair: SigningKey):
     print("\n  [Worker/Write] Received write warrant")
     print(f"  [Worker/Write] Warrant allows: {warrant.tools}")
     
-    with set_warrant_context(warrant), set_keypair_context(keypair):
+    with set_warrant_context(warrant), set_signing_key_context(keypair):
         print("\n  [Worker/Write] Demonstrating explicit warrant.authorize calls with signatures:")
 
         # 1. Write (Allowed)

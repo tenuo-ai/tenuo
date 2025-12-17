@@ -326,7 +326,7 @@ child = builder.delegate_to(kp, kp)
 **Via delegate() convenience method:**
 
 ```python
-with set_keypair_context(my_keypair):
+with set_signing_key_context(my_keypair):
     child = parent.delegate(
         holder=worker.public_key,
         tools=["read_file"],  # Narrow tools
@@ -873,17 +873,17 @@ def read_file(path: str) -> str:
 from tenuo import (
     set_warrant_context,
     get_warrant_context,
-    set_keypair_context,
-    get_keypair_context,
+    set_signing_key_context,
+    get_signing_key_context,
 )
 ```
 
 | Function | Returns | Description |
 |----------|---------|-------------|
 | `set_warrant_context(warrant)` | Context manager | Set warrant in async-safe context |
-| `set_keypair_context(keypair)` | Context manager | Set keypair in async-safe context |
+| `set_signing_key_context(keypair)` | Context manager | Set keypair in async-safe context |
 | `get_warrant_context()` | `Warrant \| None` | Get current warrant |
-| `get_keypair_context()` | `SigningKey \| None` | Get current keypair |
+| `get_signing_key_context()` | `SigningKey \| None` | Get current keypair |
 
 > **Important**: Context is a **convenience layer** for tool protection within a single process. For distributed systems, serialized state, or checkpointing, warrants must travel in request state (e.g., `tenuo_warrant` field). Context does not survive serialization boundaries.
 

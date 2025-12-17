@@ -12,7 +12,7 @@ Tests cover:
 import pytest
 from tenuo import (
     SigningKey, Warrant, Pattern, Exact,
-    lockdown, set_warrant_context, set_keypair_context,
+    lockdown, set_warrant_context, set_signing_key_context,
     AuthorizationError
 )
 
@@ -33,7 +33,7 @@ def test_pattern_constraint_matching():
         ttl_seconds=60
     )
     
-    with set_warrant_context(warrant), set_keypair_context(kp):
+    with set_warrant_context(warrant), set_signing_key_context(kp):
         # Should match
         assert access_file(path="/data/file.txt") == "accessed /data/file.txt"
         assert access_file(path="/data/subdir/file.txt") == "accessed /data/subdir/file.txt"
@@ -59,7 +59,7 @@ def test_exact_constraint_matching():
         ttl_seconds=60
     )
     
-    with set_warrant_context(warrant), set_keypair_context(kp):
+    with set_warrant_context(warrant), set_signing_key_context(kp):
         # Should match exact value
         assert delete_database(db_name="test-db") == "deleted test-db"
         
@@ -90,7 +90,7 @@ def test_multiple_constraints():
         ttl_seconds=60
     )
     
-    with set_warrant_context(warrant), set_keypair_context(kp):
+    with set_warrant_context(warrant), set_signing_key_context(kp):
         # Both constraints satisfied
         result = transfer(account="checking-001", amount="100")
         assert result == "transferred $100 from checking-001"
@@ -137,12 +137,12 @@ def test_constraint_attenuation():
         return f"accessed {path}"
     
     # Parent can access broader paths
-    with set_warrant_context(parent), set_keypair_context(kp):
+    with set_warrant_context(parent), set_signing_key_context(kp):
         assert access_file(path="/data/file.txt") == "accessed /data/file.txt"
         assert access_file(path="/data/reports/q3.pdf") == "accessed /data/reports/q3.pdf"
     
     # Child can only access narrower paths
-    with set_warrant_context(child), set_keypair_context(kp):
+    with set_warrant_context(child), set_signing_key_context(kp):
         assert access_file(path="/data/reports/q3.pdf") == "accessed /data/reports/q3.pdf"
         
         with pytest.raises(AuthorizationError):
@@ -180,12 +180,12 @@ def test_constraint_field_addition():
         return f"{method} {endpoint}"
     
     # Parent doesn't require method constraint
-    with set_warrant_context(parent), set_keypair_context(kp):
+    with set_warrant_context(parent), set_signing_key_context(kp):
         assert call_api(endpoint="/api/data", method="GET") == "GET /api/data"
         assert call_api(endpoint="/api/data", method="POST") == "POST /api/data"
     
     # Child requires both constraints
-    with set_warrant_context(child), set_keypair_context(kp):
+    with set_warrant_context(child), set_signing_key_context(kp):
         assert call_api(endpoint="/api/users/123", method="GET") == "GET /api/users/123"
         
         # Wrong method
@@ -213,7 +213,7 @@ def test_missing_constraint_parameter():
         ttl_seconds=60
     )
     
-    with set_warrant_context(warrant), set_keypair_context(kp):
+    with set_warrant_context(warrant), set_signing_key_context(kp):
         # Should work with required parameter
         result = protected_function(required="value")
         assert result == "value-default"

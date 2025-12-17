@@ -264,7 +264,7 @@ Full implementation for fetching warrants per-task.
 ```python
 import os
 import httpx
-from tenuo import Warrant, SigningKey, set_warrant_context, set_keypair_context
+from tenuo import Warrant, SigningKey, set_warrant_context, set_signing_key_context
 
 # Load keypair once at startup
 keypair = SigningKey.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
@@ -305,7 +305,7 @@ async def handle_task(user_request: str):
         ttl=60
     )
     
-    with set_warrant_context(warrant), set_keypair_context(keypair):
+    with set_warrant_context(warrant), set_signing_key_context(keypair):
         result = await agent.invoke({"input": user_request})
     
     # Warrant expires automatically — no cleanup needed
@@ -355,7 +355,7 @@ Warrant passed via HTTP header, validated in middleware.
 
 ```python
 from fastapi import FastAPI, Request, HTTPException
-from tenuo import Warrant, SigningKey, set_warrant_context, set_keypair_context
+from tenuo import Warrant, SigningKey, set_warrant_context, set_signing_key_context
 import os
 
 app = FastAPI()
@@ -382,7 +382,7 @@ async def tenuo_middleware(request: Request, call_next):
     if warrant.is_expired():
         raise HTTPException(401, "Warrant expired")
     
-    with set_warrant_context(warrant), set_keypair_context(keypair):
+    with set_warrant_context(warrant), set_signing_key_context(keypair):
         return await call_next(request)
 ```
 
@@ -437,14 +437,14 @@ spec:
 
 ```python
 import os
-from tenuo import Warrant, SigningKey, set_warrant_context, set_keypair_context
+from tenuo import Warrant, SigningKey, set_warrant_context, set_signing_key_context
 
 # Load once at startup
 warrant = Warrant.from_base64(os.getenv("TENUO_WARRANT_BASE64"))
 keypair = SigningKey.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
 
 def run_agent(prompt: str):
-    with set_warrant_context(warrant), set_keypair_context(keypair):
+    with set_warrant_context(warrant), set_signing_key_context(keypair):
         return agent.invoke({"input": prompt})
 ```
 
@@ -510,7 +510,7 @@ For simple deployments without a sidecar or gateway.
 from fastapi import FastAPI, Request, HTTPException
 from tenuo import (
     Authorizer, Warrant, SigningKey, PublicKey,
-    set_warrant_context, set_keypair_context, lockdown
+    set_warrant_context, set_signing_key_context, lockdown
 )
 import os
 
@@ -536,7 +536,7 @@ async def tenuo_middleware(request: Request, call_next):
     except Exception as e:
         raise HTTPException(403, f"Authorization failed: {e}")
     
-    with set_warrant_context(warrant), set_keypair_context(keypair):
+    with set_warrant_context(warrant), set_signing_key_context(keypair):
         return await call_next(request)
 
 

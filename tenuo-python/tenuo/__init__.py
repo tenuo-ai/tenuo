@@ -6,7 +6,7 @@ A pure Python wrapper around the Rust tenuo_core extension.
 
 from tenuo_core import (  # type: ignore
     # Core types
-    Keypair,  # Deprecated, use SigningKey
+    SigningKey,
     Warrant,
     WarrantType,
     TrustLevel,
@@ -77,7 +77,6 @@ from .exceptions import (
     # PoP errors
     PopError,
     MissingSigningKey,
-    MissingKeypair,
     SignatureMismatch,
     PopExpired,
     # Chain errors
@@ -130,11 +129,9 @@ from .decorators import (
     lockdown,
     get_warrant_context,
     set_warrant_context,
-    get_keypair_context,
-    set_keypair_context,
+    get_signing_key_context,
     set_signing_key_context,
     WarrantContext,
-    KeypairContext,
     SigningKeyContext,
 )
 from .audit import (
@@ -222,9 +219,6 @@ from .warrant_ext import (
 # This adds the delegation_receipt property to Warrant
 import tenuo.warrant_ext  # noqa: F401
 
-# Preferred name for clarity (Keypair is deprecated but kept for backward compat)
-SigningKey = Keypair
-
 # Re-export everything for clean imports
 __all__ = [
     # =========================================================================
@@ -274,7 +268,6 @@ __all__ = [
     # Tier 2 API (Explicit control)
     # =========================================================================
     # Core types
-    "Keypair",  # Deprecated, use SigningKey
     "SigningKey",
     "Warrant",
     "WarrantType",
@@ -348,7 +341,6 @@ __all__ = [
     # Exceptions - PoP errors
     "PopError",
     "MissingSigningKey",
-    "MissingKeypair",
     "SignatureMismatch",
     "PopExpired",
     # Exceptions - Chain errors
@@ -400,11 +392,9 @@ __all__ = [
     "lockdown",
     "get_warrant_context",
     "set_warrant_context",
-    "get_keypair_context",
-    "set_keypair_context",
+    "get_signing_key_context",
     "set_signing_key_context",
     "WarrantContext",
-    "KeypairContext",
     "SigningKeyContext",
     
     # Audit logging (SIEM compatible)

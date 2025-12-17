@@ -751,7 +751,7 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
 )
 
 <span class="comment"># Set warrant in context before running agent</span>
-<span class="keyword">with</span> <span class="function">set_warrant_context</span>(<span class="type">warrant</span>), <span class="function">set_keypair_context</span>(<span class="type">keypair</span>):
+<span class="keyword">with</span> <span class="function">set_warrant_context</span>(<span class="type">warrant</span>), <span class="function">set_signing_key_context</span>(<span class="type">keypair</span>):
     <span class="comment"># All @lockdown functions will use this warrant</span>
     <span class="type">response</span> = <span class="type">agent_executor</span>.<span class="function">invoke</span>({
         <span class="string">"input"</span>: <span class="string">"Read the file /tmp/data.txt"</span>

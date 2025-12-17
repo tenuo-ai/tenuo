@@ -12,7 +12,7 @@ This demonstrates the recommended production pattern using Tenuo's current API.
 
 from tenuo import (
     SigningKey, Warrant, Pattern,
-    lockdown, set_warrant_context, set_keypair_context,
+    lockdown, set_warrant_context, set_signing_key_context,
     AuthorizationError
 )
 
@@ -108,7 +108,7 @@ print("\nTesting authorization with attenuated warrant:")
 # Test 1: Allowed - within narrow constraints
 print("\n  Test 1: path=/data/reports/q3.txt")
 try:
-    with set_warrant_context(worker_warrant), set_keypair_context(worker_kp):
+    with set_warrant_context(worker_warrant), set_signing_key_context(worker_kp):
         result = file_operations(path="/data/reports/q3.txt", operation="read")
         print(f"    ✓ ALLOWED: {result}")
 except AuthorizationError as e:
@@ -117,7 +117,7 @@ except AuthorizationError as e:
 # Test 2: Blocked - outside narrow constraints (but within root)
 print("\n  Test 2: path=/data/secrets/passwords.txt")
 try:
-    with set_warrant_context(worker_warrant), set_keypair_context(worker_kp):
+    with set_warrant_context(worker_warrant), set_signing_key_context(worker_kp):
         result = file_operations(path="/data/secrets/passwords.txt", operation="read")
         print(f"    ✗ ALLOWED: {result} (UNEXPECTED!)")
 except AuthorizationError:
@@ -126,7 +126,7 @@ except AuthorizationError:
 # Test 3: Blocked - completely outside bounds
 print("\n  Test 3: path=/etc/passwd")
 try:
-    with set_warrant_context(worker_warrant), set_keypair_context(worker_kp):
+    with set_warrant_context(worker_warrant), set_signing_key_context(worker_kp):
         result = file_operations(path="/etc/passwd", operation="read")
         print(f"    ✗ ALLOWED: {result} (UNEXPECTED!)")
 except AuthorizationError:
@@ -145,7 +145,7 @@ print("\nOrchestrator can access paths worker cannot:")
 # Orchestrator can access /data/secrets (within root constraints)
 print("\n  Orchestrator accessing /data/secrets/config.json:")
 try:
-    with set_warrant_context(root_warrant), set_keypair_context(orchestrator_kp):
+    with set_warrant_context(root_warrant), set_signing_key_context(orchestrator_kp):
         result = file_operations(path="/data/secrets/config.json", operation="read")
         print(f"    ✓ ALLOWED: {result}")
         print("    ℹ️  Orchestrator has broader /data/* access")

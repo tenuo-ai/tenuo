@@ -27,10 +27,6 @@ pub struct SigningKey {
     signing_key: Ed25519SigningKey,
 }
 
-/// Deprecated alias for backward compatibility. Use `SigningKey` instead.
-#[deprecated(since = "0.1.1", note = "Use `SigningKey` instead")]
-pub type Keypair = SigningKey;
-
 impl SigningKey {
     /// Generate a new random signing key.
     pub fn generate() -> Self {

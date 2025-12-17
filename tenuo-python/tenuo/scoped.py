@@ -42,7 +42,7 @@ from .decorators import (
     _keypair_context,
     _allowed_tools_context,
     get_warrant_context,
-    get_keypair_context,
+    get_signing_key_context,
 )
 from .exceptions import (
     ScopeViolation,
@@ -318,7 +318,7 @@ def _enter_scoped_task_sync(
 ) -> Warrant:
     """Enter scoped task context (sync version)."""
     parent = get_warrant_context()
-    keypair = get_keypair_context()
+    keypair = get_signing_key_context()
     
     if parent is None:
         raise ScopeViolation(

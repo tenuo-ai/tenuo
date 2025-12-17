@@ -8,7 +8,7 @@ automatically used by all @lockdown-decorated functions in the call stack.
 
 from tenuo import (
     SigningKey, Warrant, Pattern, Range,
-    lockdown, set_warrant_context, set_keypair_context, AuthorizationError
+    lockdown, set_warrant_context, set_signing_key_context, AuthorizationError
 )
 
 
@@ -74,7 +74,7 @@ def main():
     # ========================================================================
     print("1. Setting warrant in context and processing request...")
     try:
-        with set_warrant_context(warrant), set_keypair_context(keypair):
+        with set_warrant_context(warrant), set_signing_key_context(keypair):
             # All @lockdown functions in this context will use the warrant
             # HARDCODED VALUES: cluster="staging-web", replicas=5, action="restart"
             # In production: These come from request parameters
@@ -105,7 +105,7 @@ def main():
         """
         try:
             # In production, keypair would also be loaded (e.g. agent identity)
-            with set_warrant_context(request_warrant), set_keypair_context(keypair):
+            with set_warrant_context(request_warrant), set_signing_key_context(keypair):
                 # Process the request - all protected functions use context warrant
                 # HARDCODED VALUES: cluster="staging-web", replicas=3
                 scale_cluster(cluster="staging-web", replicas=3)
@@ -151,7 +151,7 @@ def main():
         holder=keypair.public_key
     )
     
-    with set_warrant_context(warrant1), set_keypair_context(keypair):
+    with set_warrant_context(warrant1), set_signing_key_context(keypair):
         print("   Outer context: staging-*")
         scale_cluster(cluster="staging-web", replicas=5)
         

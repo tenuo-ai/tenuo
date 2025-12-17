@@ -1549,7 +1549,7 @@ Gateway                          Agent
 
 ```python
 from tenuo import Warrant, SigningKey
-from tenuo.context import set_warrant_context, set_keypair_context
+from tenuo.context import set_warrant_context, set_signing_key_context
 
 KEYPAIR = SigningKey.from_file("/var/run/secrets/tenuo/keypair")
 
@@ -1564,7 +1564,7 @@ async def tenuo_middleware(request: Request, call_next):
     if warrant.is_expired():
         raise HTTPException(403, "Warrant expired")
     
-    with set_warrant_context(warrant), set_keypair_context(KEYPAIR):
+    with set_warrant_context(warrant), set_signing_key_context(KEYPAIR):
         return await call_next(request)
 ```
 
@@ -1579,7 +1579,7 @@ async def process_message(message: QueueMessage):
     if warrant.is_expired():
         raise AuthorizationError("Warrant expired")
     
-    with set_warrant_context(warrant), set_keypair_context(KEYPAIR):
+    with set_warrant_context(warrant), set_signing_key_context(KEYPAIR):
         return await handler(message.body)
 ```
 
@@ -1588,15 +1588,15 @@ async def process_message(message: QueueMessage):
 ```python
 from tenuo.context import (
     set_warrant_context,
-    set_keypair_context,
+    set_signing_key_context,
     get_warrant_context,
-    get_keypair_context,
+    get_signing_key_context,
     scoped_task,
 )
 
 # Get current context
 warrant = get_warrant_context()
-keypair = get_keypair_context()
+keypair = get_signing_key_context()
 
 # Scoped task (attenuate + set context)
 with scoped_task(tool="read_file", path="/data/q3.pdf"):
@@ -1694,11 +1694,11 @@ agent = AgentExecutor(agent=base_agent, tools=secure_tools)
 ### Manual Protection
 
 ```python
-from tenuo.context import get_warrant_context, get_keypair_context
+from tenuo.context import get_warrant_context, get_signing_key_context
 
 def protected_read_file(path: str) -> str:
     warrant = get_warrant_context()
-    keypair = get_keypair_context()
+    keypair = get_signing_key_context()
     
     if not warrant:
         raise AuthorizationError("No warrant available")
@@ -2188,9 +2188,9 @@ Warrant.narrow() -> Attenuator  # Alias
 
 ```python
 set_warrant_context(warrant) -> ContextManager
-set_keypair_context(keypair) -> ContextManager
+set_signing_key_context(keypair) -> ContextManager
 get_warrant_context() -> Optional[Warrant]
-get_keypair_context() -> Optional[SigningKey]
+get_signing_key_context() -> Optional[SigningKey]
 scoped_task(tool, **constraints) -> ContextManager
 ```
 

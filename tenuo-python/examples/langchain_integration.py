@@ -14,7 +14,7 @@ Note: This example uses OpenAI, but the pattern works with any LLM provider.
 
 from tenuo import (
     SigningKey, Warrant, Pattern,
-    lockdown, set_warrant_context, set_keypair_context, AuthorizationError
+    lockdown, set_warrant_context, set_signing_key_context, AuthorizationError
 )
 from typing import Dict, Any, Optional
 import os
@@ -269,7 +269,7 @@ def main():
             print("   Continuing with authorization test...\n")
         
         # Test authorized access
-        with set_warrant_context(agent_warrant), set_keypair_context(control_keypair):
+        with set_warrant_context(agent_warrant), set_signing_key_context(control_keypair):
             try:
                 read_file_tool(test_file)
                 print(f"   ✓ read_file('{test_file}'): Allowed (matches Pattern('/tmp/*'))")
@@ -280,7 +280,7 @@ def main():
         
         # Test blocked access
         try:
-            with set_warrant_context(agent_warrant), set_keypair_context(control_keypair):
+            with set_warrant_context(agent_warrant), set_signing_key_context(control_keypair):
                 read_file_tool("/etc/passwd")  # HARDCODED: Protected system file for demo
             print("   ✗ Should have been blocked!")
         except AuthorizationError as e:
@@ -303,7 +303,7 @@ def main():
         print("2. Demonstrating protection...")
         test_file = "/tmp/test.txt"  # HARDCODED: Demo test file
         try:
-            with set_warrant_context(agent_warrant), set_keypair_context(control_keypair):
+            with set_warrant_context(agent_warrant), set_signing_key_context(control_keypair):
                 read_file_tool(test_file)
                 print(f"   ✓ read_file('{test_file}') authorized")
         except AuthorizationError as e:
@@ -312,7 +312,7 @@ def main():
             print(f"   ✗ Error: {e}")
         
         try:
-            with set_warrant_context(agent_warrant), set_keypair_context(control_keypair):
+            with set_warrant_context(agent_warrant), set_signing_key_context(control_keypair):
                 read_file_tool("/etc/passwd")  # HARDCODED: Protected file for demo
         except AuthorizationError as e:
             print(f"   ✓ read_file('/etc/passwd') correctly blocked: {str(e)[:60]}...")

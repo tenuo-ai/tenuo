@@ -15,7 +15,7 @@ Note on memory management:
 
 from typing import Optional, Dict, Any, List, TYPE_CHECKING, Union
 from tenuo_core import Warrant, PublicKey  # type: ignore[import-untyped]
-from .decorators import get_keypair_context
+from .decorators import get_signing_key_context
 
 if TYPE_CHECKING:
     from .builder import AttenuationBuilder
@@ -149,7 +149,7 @@ def _warrant_delegate(
             )
     """
     # Get context keypair (delegator)
-    keypair = get_keypair_context()
+    keypair = get_signing_key_context()
     if not keypair:
         raise RuntimeError("No active keypair context. Use inside a task context or set_keypair_context().")
     

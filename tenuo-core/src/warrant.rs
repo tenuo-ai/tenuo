@@ -4148,4 +4148,69 @@ mod tests {
             .to_string()
             .contains("can only issue execution warrants from issuer warrants"));
     }
+
+#[test]
+fn test_trust_level_ordering() {
+    assert!(TrustLevel::System > TrustLevel::Privileged);
+    assert!(TrustLevel::Privileged > TrustLevel::Internal);
+    assert!(TrustLevel::Internal > TrustLevel::Partner);
+    assert!(TrustLevel::Partner > TrustLevel::External);
+    assert!(TrustLevel::External > TrustLevel::Untrusted);
+
+    // Explicit check of values to prevent reordering
+    assert_eq!(TrustLevel::Untrusted as u8, 0);
+    assert_eq!(TrustLevel::External as u8, 10);
+    assert_eq!(TrustLevel::Partner as u8, 20);
+    assert_eq!(TrustLevel::Internal as u8, 30);
+    assert_eq!(TrustLevel::Privileged as u8, 40);
+    assert_eq!(TrustLevel::System as u8, 50);
+}
+
+#[test]
+fn test_effective_max_depth_latching() {
+    // 1. Root warrant (None/Unlimited)
+    let root_kp = create_test_keypair();
+    let root = Warrant::builder()
+        .tool("test")
+        .ttl(Duration::from_secs(3600))
+        // max_depth: None (defaults to MAX_DELEGATION_DEPTH=64)
+        .authorized_holder(root_kp.public_key())
+        .build(&root_kp)
+        .unwrap();
+
+    assert_eq!(root.effective_max_depth(), MAX_DELEGATION_DEPTH);
+
+    // 2. Child warrant sets limit (Some(5))
+    let child = root
+        .attenuate()
+        .max_depth(5)
+        .build(&root_kp, &root_kp)
+        .unwrap();
+
+    assert_eq!(child.effective_max_depth(), 5);
+
+    // 3. Grandchild tries to increase limit (Some(10)) - Should fail/latch
+    // The build() method calls validate which checks monotonicity
+    let result = child
+        .attenuate()
+        .max_depth(10)
+        .build(&root_kp, &root_kp);
+
+    // Expect error because 10 > 5
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    match err {
+        // We expect MonotonicityViolation or Validation error depending on implementation
+        Error::MonotonicityViolation(_) | Error::Validation(_) => {},
+        _ => panic!("Expected monitoring violation or validation error, got {:?}", err),
+    }
+
+    // 4. Grandchild with lower limit (Some(3)) - Should succeed
+    let grandchild = child
+        .attenuate()
+        .max_depth(3)
+        .build(&root_kp, &root_kp)
+        .unwrap();
+    assert_eq!(grandchild.effective_max_depth(), 3);
+}
 }

@@ -15,7 +15,7 @@ import base64
 import json
 
 from tenuo import (
-    Warrant, Pattern, Range, Exact, lockdown, set_warrant_context, set_keypair_context,
+    Warrant, Pattern, Range, Exact, lockdown, set_warrant_context, set_signing_key_context,
     Unauthorized
 )
 
@@ -197,7 +197,7 @@ class TestImplementation:
         
         print("  [Attack 32] Calling query_db without limit parameter...")
         
-        with set_warrant_context(warrant), set_keypair_context(keypair):
+        with set_warrant_context(warrant), set_signing_key_context(keypair):
             try:
                 result = query_db("SELECT *")
                 print(f"  [CRITICAL] Attack 32 SUCCEEDED: {result}")

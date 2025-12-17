@@ -3,7 +3,7 @@
 Basic Tenuo Python SDK Usage Example
 
 Demonstrates:
-- Keypair generation
+- SigningKey generation
 - Warrant creation with constraints
 - Warrant attenuation (delegation)
 - Authorization checks
@@ -14,12 +14,12 @@ from tenuo import SigningKey, Warrant, Pattern, Exact, Range
 def main():
     print("=== Tenuo Python SDK - Basic Usage ===\n")
     
-    # 1. Generate keypairs
-    print("1. Generating keypairs...")
-    control_keypair = SigningKey.generate()
-    worker_keypair = SigningKey.generate()
-    print(f"   Control plane public key: {bytes(control_keypair.public_key_bytes())[:16].hex()}...")
-    print(f"   Worker public key: {bytes(worker_keypair.public_key_bytes())[:16].hex()}...")
+    # 1. Generate signing_keys
+    print("1. Generating signing_keys...")
+    control_signing_key = SigningKey.generate()
+    worker_signing_key = SigningKey.generate()
+    print(f"   Control plane public key: {bytes(control_signing_key.public_key_bytes())[:16].hex()}...")
+    print(f"   Worker public key: {bytes(worker_signing_key.public_key_bytes())[:16].hex()}...")
     print()
     
     # 2. Create a root warrant with constraints
@@ -31,8 +31,8 @@ def main():
             "replicas": Range.max_value(15)
         },
         ttl_seconds=3600,
-        keypair=control_keypair,
-        holder=control_keypair.public_key # Bind to control plane initially
+        signing_key=control_signing_key,
+        holder=control_signing_key.public_key # Bind to control plane initially
     )
     print(f"   Tools: {root_warrant.tools}")
     print(f"   Depth: {root_warrant.depth}")
@@ -45,9 +45,9 @@ def main():
             "cluster": Exact("staging-web"),
             "replicas": Range.max_value(10)
         },
-        keypair=worker_keypair,       # Subject keypair (for binding)
-        parent_keypair=control_keypair, # Issuer keypair (for signing)
-        holder=worker_keypair.public_key # Explicit holder (optional if keypair matches)
+        signing_key=worker_signing_key,       # Subject signing_key (for binding)
+        parent_signing_key=control_signing_key, # Issuer signing_key (for signing)
+        holder=worker_signing_key.public_key # Explicit holder (optional if signing_key matches)
     )
     print(f"   Worker tools: {worker_warrant.tools}")
     print(f"   Worker depth: {worker_warrant.depth} (attenuated)")
@@ -57,29 +57,29 @@ def main():
     print("4. Testing authorization...")
     
     # Helper to authorize with PoP
-    def check_auth(warrant, tool, args, keypair):
+    def check_auth(warrant, tool, args, signing_key):
         # Create Proof-of-Possession signature
-        signature = warrant.create_pop_signature(keypair, tool, args)
+        signature = warrant.create_pop_signature(signing_key, tool, args)
         # Note: signature is returned as list[int], must convert to bytes
         return warrant.authorize(tool, args, bytes(signature))
 
     # Allowed: matches constraints
     args1 = {"cluster": "staging-web", "replicas": 5}
-    if check_auth(worker_warrant, "manage_infrastructure", args1, worker_keypair):
+    if check_auth(worker_warrant, "manage_infrastructure", args1, worker_signing_key):
         print("   ✓ Allowed: cluster=staging-web, replicas=5 -> True")
     else:
         print("   ✗ Allowed: cluster=staging-web, replicas=5 -> False (Unexpected)")
     
     # Denied: replicas too high
     args2 = {"cluster": "staging-web", "replicas": 20}
-    if not check_auth(worker_warrant, "manage_infrastructure", args2, worker_keypair):
+    if not check_auth(worker_warrant, "manage_infrastructure", args2, worker_signing_key):
         print("   ✓ Denied: cluster=staging-web, replicas=20 -> False")
     else:
         print("   ✗ Denied: cluster=staging-web, replicas=20 -> True (Unexpected)")
     
     # Denied: wrong cluster
     args3 = {"cluster": "production-web", "replicas": 5}
-    if not check_auth(worker_warrant, "manage_infrastructure", args3, worker_keypair):
+    if not check_auth(worker_warrant, "manage_infrastructure", args3, worker_signing_key):
         print("   ✓ Denied: cluster=production-web, replicas=5 -> False")
     else:
         print("   ✗ Denied: cluster=production-web, replicas=5 -> True (Unexpected)")

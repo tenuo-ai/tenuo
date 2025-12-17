@@ -4,7 +4,7 @@ from tenuo import (
     SigningKey,
     TrustLevel,
     Pattern,
-    set_keypair_context,
+    set_signing_key_context,
 )
 
 def test_issuer_warrant_creation():
@@ -53,7 +53,7 @@ def test_delegate_shortcut():
     worker_kp = SigningKey.generate()
     
     # Set context for delegate() to find the keypair
-    set_keypair_context(kp)
+    set_signing_key_context(kp)
     
     parent = Warrant.issue(
         tools="read_file",
@@ -63,7 +63,7 @@ def test_delegate_shortcut():
     )
     
     # Delegate using shortcut within context
-    with set_keypair_context(kp):
+    with set_signing_key_context(kp):
         child = parent.delegate(
             holder=worker_kp.public_key,
             path=Pattern("/data/reports/*")

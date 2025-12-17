@@ -217,9 +217,9 @@ class SecureMCPClient:
             call_args = args.copy()
             
             if should_inject:
-                from ..decorators import get_warrant_context, get_keypair_context
+                from ..decorators import get_warrant_context, get_signing_key_context
                 warrant = get_warrant_context()
-                keypair = get_keypair_context()
+                keypair = get_signing_key_context()
                 
                 if warrant is not None and keypair is not None:
                     from tenuo_core import wire  # type: ignore[import-not-found,import-untyped]

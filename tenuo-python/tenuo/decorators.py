@@ -154,12 +154,12 @@ def get_warrant_context() -> Optional[Warrant]:
     return _warrant_context.get()
 
 
-def get_keypair_context() -> Optional[SigningKey]:
+def get_signing_key_context() -> Optional[SigningKey]:
     """
-    Get the current keypair from context.
+    Get the current signing key from context.
     
     Returns:
-        The keypair in the current context, or None if not set.
+        The signing key in the current context, or None if not set.
     """
     return _keypair_context.get()
 
@@ -252,11 +252,6 @@ class SigningKeyContext:
         if self.token is not None:
             _keypair_context.reset(self.token)
         return False
-
-
-# Aliases for backward compatibility
-set_keypair_context = set_signing_key_context
-KeypairContext = SigningKeyContext
 
 
 def lockdown(
@@ -434,7 +429,7 @@ def lockdown(
                     expired_at=expires_at
                 )
             
-            keypair_to_use = active_keypair or get_keypair_context()
+            keypair_to_use = active_keypair or get_signing_key_context()
             
             # PoP is MANDATORY - keypair must always be available
             if keypair_to_use is None:

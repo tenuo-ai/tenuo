@@ -188,7 +188,7 @@ def write_file(path: str, content: str):
     open(path, 'w').write(content)
 
 async def execute(warrant: Warrant, data: str = None):
-    with set_warrant_context(warrant), set_keypair_context(worker_keypair):
+    with set_warrant_context(warrant), set_signing_key_context(worker_keypair):
         # These calls are checked against the warrant
         content = read_file("/data/reports/q3.md")  # ✓ If in scope
         write_file("/etc/passwd", "x")              # ✗ Path not in warrant

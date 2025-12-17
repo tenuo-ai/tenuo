@@ -535,7 +535,7 @@ read_file()  # Missing required arg → TypeError → Authorization denied ✅
 
 ```python
 import inspect
-from tenuo import lockdown, Warrant, SigningKey, Exact, set_warrant_context, set_keypair_context
+from tenuo import lockdown, Warrant, SigningKey, Exact, set_warrant_context, set_signing_key_context
 
 def test_extraction():
     kp = SigningKey.generate()
@@ -545,7 +545,7 @@ def test_extraction():
     def func(a: int, b: int = 2):
         return f"a={a}, b={b}"
     
-    with set_warrant_context(w), set_keypair_context(kp):
+    with set_warrant_context(w), set_signing_key_context(kp):
         # Test default inclusion
         result = func(1)  # Should pass (a=1, b=2 extracted)
         assert result == "a=1, b=2"

@@ -606,14 +606,14 @@ impl PyWildcard {
     }
 }
 
-/// Python wrapper for Keypair.
-#[pyclass(name = "Keypair")]
-pub struct PyKeypair {
+/// Python wrapper for SigningKey.
+#[pyclass(name = "SigningKey")]
+pub struct PySigningKey {
     inner: RustSigningKey,
 }
 
 #[pymethods]
-impl PyKeypair {
+impl PySigningKey {
     #[new]
     fn new() -> Self {
         Self {
@@ -652,12 +652,12 @@ impl PyKeypair {
     ///
     /// **Recommendations:**
     /// - Only call this method when absolutely necessary (e.g., for key backup/export)
-    /// - Minimize the lifetime of Keypair objects
+    /// - Minimize the lifetime of SigningKey objects
     /// - Avoid storing the returned bytes in long-lived variables
     /// - Consider using Rust directly for production key management
     ///
     /// For most use cases, you should not need to access the secret key bytes directly.
-    /// Use the Keypair object for signing operations instead.
+    /// Use the SigningKey object for signing operations instead.
     fn secret_key_bytes(&self) -> Vec<u8> {
         self.inner.secret_key_bytes().to_vec()
     }
@@ -670,14 +670,14 @@ impl PyKeypair {
         }
     }
 
-    /// Create a Keypair from a PEM string.
+    /// Create a SigningKey from a PEM string.
     #[staticmethod]
     fn from_pem(pem: &str) -> PyResult<Self> {
         let inner = RustSigningKey::from_pem(pem).map_err(to_py_err)?;
         Ok(Self { inner })
     }
 
-    /// Convert the Keypair to a PEM string.
+    /// Convert the SigningKey to a PEM string.
     fn to_pem(&self) -> String {
         self.inner.to_pem()
     }
@@ -1605,7 +1605,7 @@ impl PyAttenuationBuilder {
     ///
     /// * `keypair` - The keypair of the delegator
     /// * `parent_keypair` - The keypair that signed the parent warrant
-    fn delegate_to(&self, keypair: &PyKeypair, parent_keypair: &PyKeypair) -> PyResult<PyWarrant> {
+    fn delegate_to(&self, keypair: &PySigningKey, parent_keypair: &PySigningKey) -> PyResult<PyWarrant> {
         let warrant = self
             .inner
             .clone()
@@ -1619,8 +1619,8 @@ impl PyAttenuationBuilder {
     /// This is a convenience method for workflows that need the receipt immediately.
     fn delegate_to_with_receipt(
         &self,
-        keypair: &PyKeypair,
-        parent_keypair: &PyKeypair,
+        keypair: &PySigningKey,
+        parent_keypair: &PySigningKey,
     ) -> PyResult<(PyWarrant, PyDelegationReceipt)> {
         let (warrant, receipt) = self
             .inner
@@ -1785,7 +1785,7 @@ impl PyIssuanceBuilder {
     ///
     /// * `keypair` - The keypair of the issuer warrant holder
     /// * `issuer_keypair` - The keypair that signed the issuer warrant
-    fn build(&self, keypair: &PyKeypair, issuer_keypair: &PyKeypair) -> PyResult<PyWarrant> {
+    fn build(&self, keypair: &PySigningKey, issuer_keypair: &PySigningKey) -> PyResult<PyWarrant> {
         let warrant = self
             .inner
             .clone()
@@ -1817,7 +1817,7 @@ impl PyWarrant {
     #[pyo3(signature = (tools, keypair, constraints=None, ttl_seconds=3600, holder=None, session_id=None, trust_level=None))]
     fn issue(
         tools: &Bound<'_, PyAny>,
-        keypair: &PyKeypair,
+        keypair: &PySigningKey,
         constraints: Option<&Bound<'_, PyDict>>,
         ttl_seconds: u64,
         holder: Option<&PyPublicKey>,
@@ -1873,7 +1873,7 @@ impl PyWarrant {
     fn issue_issuer(
         issuable_tools: Vec<String>,
         trust_ceiling: &PyTrustLevel,
-        keypair: &PyKeypair,
+        keypair: &PySigningKey,
         constraint_bounds: Option<&Bound<'_, PyDict>>,
         max_issue_depth: Option<u32>,
         ttl_seconds: u64,
@@ -2099,8 +2099,8 @@ impl PyWarrant {
     fn attenuate(
         &self,
         constraints: &Bound<'_, PyDict>,
-        keypair: &PyKeypair,
-        parent_keypair: &PyKeypair,
+        keypair: &PySigningKey,
+        parent_keypair: &PySigningKey,
         ttl_seconds: Option<u64>,
         holder: Option<&PyPublicKey>,
         trust_level: Option<&PyTrustLevel>,
@@ -2197,7 +2197,7 @@ impl PyWarrant {
     /// The keypair should match the authorized_holder on the warrant.
     ///
     /// Args:
-    ///     keypair: The PyKeypair to sign with
+    ///     keypair: The PySigningKey to sign with
     ///     tool: Tool name being called
     ///     args: Dictionary of argument name -> value
     ///
@@ -2205,7 +2205,7 @@ impl PyWarrant {
     ///     64-byte signature as bytes
     fn create_pop_signature(
         &self,
-        keypair: &PyKeypair,
+        keypair: &PySigningKey,
         tool: &str,
         args: &Bound<'_, PyDict>,
     ) -> PyResult<Vec<u8>> {
@@ -2876,9 +2876,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAnyOf>()?;
     m.add_class::<PyNot>()?;
     // Core types
-    m.add_class::<PyKeypair>()?;
-    // Add SigningKey as an alias for Keypair
-    m.add("SigningKey", m.getattr("Keypair")?)?;
+    m.add_class::<PySigningKey>()?;
     m.add_class::<PyPublicKey>()?;
     m.add_class::<PySignature>()?;
     m.add_class::<PyWarrant>()?;

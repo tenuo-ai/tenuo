@@ -12,8 +12,8 @@ Tests cover:
 import pytest
 from tenuo import (
     SigningKey, Warrant, Pattern, Exact,
-    lockdown, set_warrant_context, set_keypair_context,
-    get_warrant_context, get_keypair_context,
+    lockdown, set_warrant_context, set_signing_key_context,
+    get_warrant_context, get_signing_key_context,
     AuthorizationError, TrustLevel
 )
 
@@ -40,13 +40,13 @@ def test_lockdown_requires_keypair_context():
     )
     
     # Should fail without keypair context
-    from tenuo import MissingKeypair
+    from tenuo import MissingSigningKey
     with set_warrant_context(warrant):
-        with pytest.raises(MissingKeypair):
+        with pytest.raises(MissingSigningKey):
             protected_function(value="test")
     
     # Should succeed with keypair context
-    with set_warrant_context(warrant), set_keypair_context(kp):
+    with set_warrant_context(warrant), set_signing_key_context(kp):
         result = protected_function(value="test")
         assert result == "processed: test"
 
@@ -91,10 +91,10 @@ def test_context_based_pop_retrieval():
     )
     
     # Set contexts
-    with set_warrant_context(warrant), set_keypair_context(kp):
+    with set_warrant_context(warrant), set_signing_key_context(kp):
         # Verify contexts are set
         assert get_warrant_context() is not None
-        assert get_keypair_context() is not None
+        assert get_signing_key_context() is not None
         
         # Should work with contexts
         result = read_file(path="/data/test.txt")
@@ -118,7 +118,7 @@ def test_pop_prevents_replay_attacks():
     )
     
     # Each call should generate a new PoP signature
-    with set_warrant_context(warrant), set_keypair_context(kp):
+    with set_warrant_context(warrant), set_signing_key_context(kp):
         result1 = delete_file(path="/tmp/test.txt")
         result2 = delete_file(path="/tmp/test.txt")
         
@@ -162,7 +162,7 @@ def test_pop_prevents_cross_tenant_misuse():
         return f"accessed {resource}"
     
     # Tenant A tries to use their own keypair (wrong key)
-    with set_warrant_context(warrant), set_keypair_context(tenant_a_kp):
+    with set_warrant_context(warrant), set_signing_key_context(tenant_a_kp):
         try:
             sensitive_operation(resource="secret-data")
             assert False, "Should have raised AuthorizationError - wrong keypair!"
@@ -172,7 +172,7 @@ def test_pop_prevents_cross_tenant_misuse():
             pass  # Success - access was denied
     
     # SUCCESS SCENARIO: Tenant B's agent uses the warrant with THEIR keypair
-    with set_warrant_context(warrant), set_keypair_context(tenant_b_agent_kp):
+    with set_warrant_context(warrant), set_signing_key_context(tenant_b_agent_kp):
         result = sensitive_operation(resource="secret-data")
         assert result == "accessed secret-data"
 
@@ -273,7 +273,7 @@ def test_warrant_chain_verification():
     def access_file(path: str) -> str:
         return f"accessed {path}"
     
-    with set_warrant_context(child), set_keypair_context(worker_kp):
+    with set_warrant_context(child), set_signing_key_context(worker_kp):
         # Should work for narrower path
         result = access_file(path="/data/reports/q3.pdf")
         assert result == "accessed /data/reports/q3.pdf"
@@ -336,7 +336,7 @@ def test_trust_level_enforcement():
     def read_data(sensitivity: str) -> str:
         return f"data with sensitivity: {sensitivity}"
     
-    with set_warrant_context(warrant), set_keypair_context(kp):
+    with set_warrant_context(warrant), set_signing_key_context(kp):
         result = read_data(sensitivity="public")
         assert result == "data with sensitivity: public"
 
@@ -387,19 +387,19 @@ def test_context_isolation():
     )
     
     # Set first context
-    with set_warrant_context(warrant1), set_keypair_context(kp1):
+    with set_warrant_context(warrant1), set_signing_key_context(kp1):
         assert get_warrant_context() is not None
-        assert get_keypair_context() is not None
+        assert get_signing_key_context() is not None
     
     # Context should be cleared
     assert get_warrant_context() is None
-    assert get_keypair_context() is None
+    assert get_signing_key_context() is None
     
     # Set second context
-    with set_warrant_context(warrant2), set_keypair_context(kp2):
+    with set_warrant_context(warrant2), set_signing_key_context(kp2):
         # Should be different contexts
         assert get_warrant_context() is not None
-        assert get_keypair_context() is not None
+        assert get_signing_key_context() is not None
 
 
 def test_nested_contexts():
@@ -453,7 +453,7 @@ def test_authorization_fails_without_warrant():
     kp = SigningKey.generate()
     
     # Should fail without warrant context
-    with set_keypair_context(kp):
+    with set_signing_key_context(kp):
         with pytest.raises(AuthorizationError, match="No warrant"):
             protected_function(value="test")
 
@@ -476,7 +476,7 @@ def test_authorization_fails_with_wrong_tool():
         ttl_seconds=60
     )
     
-    with set_warrant_context(warrant), set_keypair_context(kp):
+    with set_warrant_context(warrant), set_signing_key_context(kp):
         with pytest.raises(AuthorizationError):
             protected_function(value="test")
 
@@ -499,7 +499,7 @@ def test_authorization_fails_with_constraint_violation():
         ttl_seconds=60
     )
     
-    with set_warrant_context(warrant), set_keypair_context(kp):
+    with set_warrant_context(warrant), set_signing_key_context(kp):
         # Should work for allowed path
         result = read_file(path="/allowed/file.txt")
         assert result == "content of /allowed/file.txt"
@@ -530,6 +530,6 @@ def test_authorization_fails_with_expired_warrant():
     import time
     time.sleep(1)  # Wait for expiration
     
-    with set_warrant_context(warrant), set_keypair_context(kp):
+    with set_warrant_context(warrant), set_signing_key_context(kp):
         with pytest.raises(AuthorizationError):
             protected_function(value="test")

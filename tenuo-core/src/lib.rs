@@ -14,8 +14,6 @@
 //! - **Constraints**: Restrictions on argument values (Pattern, Exact, OneOf, Range, CEL)
 //!
 
-// Allow deprecated Keypair usage internally during migration
-#![allow(deprecated)]
 //! ## Example
 //!
 //! ```rust,ignore
@@ -77,7 +75,7 @@ pub use constraints::{
     All, Any, CelConstraint, Constraint, ConstraintSet, ConstraintValue, Contains, Exact, Not,
     NotOneOf, OneOf, Pattern, Range, RegexConstraint, Subset, Wildcard, MAX_CONSTRAINT_DEPTH,
 };
-pub use crypto::{Keypair, PublicKey, Signature, SigningKey};
+pub use crypto::{PublicKey, Signature, SigningKey};
 pub use error::{Error, Result};
 pub use planes::{
     Authorizer, AuthorizerBuilder, ChainStep, ChainVerificationResult, ControlPlane, DataPlane,

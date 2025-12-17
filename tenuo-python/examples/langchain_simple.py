@@ -15,7 +15,7 @@ Requirements:
 
 from tenuo import (
     SigningKey, Warrant, Pattern,
-    lockdown, set_warrant_context, set_keypair_context, AuthorizationError
+    lockdown, set_warrant_context, set_signing_key_context, AuthorizationError
 )
 
 # Try to import LangChain
@@ -97,7 +97,7 @@ def main():
         
         # Show it works without LangChain
         try:
-            with set_warrant_context(warrant), set_keypair_context(keypair):
+            with set_warrant_context(warrant), set_signing_key_context(keypair):
                 # Test authorized access
                 # HARDCODED PATH: /tmp/test.txt for demo
                 try:
@@ -137,7 +137,7 @@ def main():
         
         # Show it works without LangChain/LLM
         try:
-            with set_warrant_context(warrant), set_keypair_context(keypair):
+            with set_warrant_context(warrant), set_signing_key_context(keypair):
                 # Test authorized access
                 try:
                     read_file("/tmp/test.txt")
@@ -210,7 +210,7 @@ def main():
     
     # Set warrant in context and run agent
     try:
-        with set_warrant_context(warrant), set_keypair_context(keypair):
+        with set_warrant_context(warrant), set_signing_key_context(keypair):
             # This should work - file is in /tmp/
             try:
                 response = executor.invoke({

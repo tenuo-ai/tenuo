@@ -345,10 +345,6 @@ class MissingSigningKey(PopError):
         )
 
 
-# Alias for backwards compatibility
-MissingKeypair = MissingSigningKey
-
-
 class SignatureMismatch(PopError):
     """PoP signature does not match authorized_holder."""
     error_code = "signature_mismatch"

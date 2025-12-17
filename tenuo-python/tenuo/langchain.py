@@ -45,7 +45,7 @@ import logging
 import yaml
 
 from .config import allow_passthrough
-from .decorators import get_warrant_context, get_keypair_context, get_allowed_tools_context
+from .decorators import get_warrant_context, get_signing_key_context, get_allowed_tools_context
 from .exceptions import (
     ToolNotAuthorized,
     ConstraintViolation,
@@ -396,7 +396,7 @@ def protect_tool(
     @wraps(callable_func)
     def protected_tool(*args: Any, **kwargs: Any) -> Any:
         current_warrant = warrant or get_warrant_context()
-        current_keypair = keypair or get_keypair_context()
+        current_keypair = keypair or get_signing_key_context()
         
         if not current_warrant:
             raise AuthorizationError(

@@ -137,7 +137,7 @@ def scale_cluster(cluster: str, replicas: int):
 
 **ContextVar pattern (LangChain/FastAPI):**
 ```python
-from tenuo import lockdown, set_warrant_context, set_keypair_context
+from tenuo import lockdown, set_warrant_context, set_signing_key_context
 
 # Set warrant in context (e.g., in FastAPI middleware or LangChain callback)
 @lockdown(tool="scale_cluster")  # No explicit warrant - uses context
@@ -147,7 +147,7 @@ def scale_cluster(cluster: str, replicas: int):
 
 # In your request handler:
 # Set BOTH warrant and keypair in context (required for PoP)
-with set_warrant_context(warrant), set_keypair_context(keypair):
+with set_warrant_context(warrant), set_signing_key_context(keypair):
     scale_cluster(cluster="staging-web", replicas=5)
 ```
 
@@ -204,7 +204,7 @@ with root_task_sync(tools=["duckduckgo_search"], query="*"):
 For your own tools, use the `@lockdown` decorator:
 
 ```python
-from tenuo import lockdown, set_warrant_context, set_keypair_context
+from tenuo import lockdown, set_warrant_context, set_signing_key_context
 
 @lockdown(tool="read_file")
 def read_file(file_path: str) -> str:
@@ -213,7 +213,7 @@ def read_file(file_path: str) -> str:
         return f.read()
 
 # Set context and call
-with set_warrant_context(warrant), set_keypair_context(keypair):
+with set_warrant_context(warrant), set_signing_key_context(keypair):
     content = read_file("/tmp/test.txt")
 ```
 

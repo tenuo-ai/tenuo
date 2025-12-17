@@ -19,7 +19,7 @@ Key Patterns:
 
 from tenuo import (
     SigningKey, Warrant, Pattern, Range,
-    lockdown, set_warrant_context, set_keypair_context,
+    lockdown, set_warrant_context, set_signing_key_context,
     AuthorizationError, WarrantError, TenuoError
 )
 import time
@@ -88,7 +88,7 @@ class TenuoErrorClassifier:
                 return (
                     ErrorCategory.POP_FAILED,
                     ErrorSeverity.FATAL,
-                    "PoP signature failed. Keypair does not match warrant holder. Check keypair configuration."
+                    "PoP signature failed. SigningKey does not match warrant holder. Check signing_key configuration."
                 )
             elif "no warrant" in error_msg or "missing" in error_msg:
                 return (
@@ -271,7 +271,7 @@ def main():
     print("Tenuo Error Handling Guide")
     print("=" * 60)
     
-    keypair = SigningKey.generate()
+    signing_key = SigningKey.generate()
     handler = TenuoErrorHandler()
     
     # ========================================================================
@@ -282,8 +282,8 @@ def main():
     
     expired_warrant = Warrant.issue(
         tools="read_file",
-        keypair=keypair,
-        holder=keypair.public_key,
+        signing_key=signing_key,
+        holder=signing_key.public_key,
         constraints={"file_path": Pattern("/tmp/*")},
         ttl_seconds=1  # Very short TTL
     )
@@ -291,7 +291,7 @@ def main():
     time.sleep(2)  # Wait for expiration
     
     def try_read():
-        with set_warrant_context(expired_warrant), set_keypair_context(keypair):
+        with set_warrant_context(expired_warrant), set_signing_key_context(signing_key):
             return read_file("/tmp/test.txt")
     
     result, error_info = safe_execute(try_read, handler, {"warrant_id": expired_warrant.id})
@@ -308,8 +308,8 @@ def main():
     
     restricted_warrant = Warrant.issue(
         tools="process_payment",
-        keypair=keypair,
-        holder=keypair.public_key,
+        signing_key=signing_key,
+        holder=signing_key.public_key,
         constraints={
             "amount": Range.max_value(1000.0),
             "currency": Pattern("USD|EUR")
@@ -318,7 +318,7 @@ def main():
     )
     
     def try_payment():
-        with set_warrant_context(restricted_warrant), set_keypair_context(keypair):
+        with set_warrant_context(restricted_warrant), set_signing_key_context(signing_key):
             return process_payment(amount=2000.0, currency="USD")  # Exceeds max
     
     result, error_info = safe_execute(try_payment, handler, {"warrant_id": restricted_warrant.id})
@@ -343,29 +343,29 @@ def main():
         print(f"  Recommendation: {error_info['recommendation']}")
     
     # ========================================================================
-    # Example 4: Wrong Keypair (PoP Failure)
+    # Example 4: Wrong SigningKey (PoP Failure)
     # ========================================================================
-    print("\n4. PoP Failure (Wrong Keypair)")
+    print("\n4. PoP Failure (Wrong SigningKey)")
     print("-" * 60)
     
-    wrong_keypair = SigningKey.generate()  # Different keypair
+    wrong_signing_key = SigningKey.generate()  # Different signing_key
     warrant = Warrant.issue(
         tools="read_file",
-        keypair=keypair,
-        holder=keypair.public_key,  # Bound to original keypair
+        signing_key=signing_key,
+        holder=signing_key.public_key,  # Bound to original signing_key
         constraints={"file_path": Pattern("/tmp/*")},
         ttl_seconds=3600
     )
     
-    def try_with_wrong_keypair():
-        with set_warrant_context(warrant), set_keypair_context(wrong_keypair):
+    def try_with_wrong_signing_key():
+        with set_warrant_context(warrant), set_signing_key_context(wrong_signing_key):
             return read_file("/tmp/test.txt")
     
-    result, error_info = safe_execute(try_with_wrong_keypair, handler)
+    result, error_info = safe_execute(try_with_wrong_signing_key, handler)
     if error_info:
         print(f"✓ Correctly handled: {error_info['category']}")
         print(f"  Recommendation: {error_info['recommendation']}")
-        print("  This is a security violation - keypair mismatch")
+        print("  This is a security violation - signing_key mismatch")
     
     # ========================================================================
     # Example 5: Error Classification Summary
@@ -403,8 +403,8 @@ def main():
 
 2. POP FAILED:
    - Fatal error - do not retry
-   - Check keypair configuration
-   - Verify keypair matches warrant's authorized_holder
+   - Check signing_key configuration
+   - Verify signing_key matches warrant's authorized_holder
    - Log security event
 
 3. CONSTRAINT VIOLATION:

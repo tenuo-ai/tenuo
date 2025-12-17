@@ -29,7 +29,7 @@ warrant = root_warrant.attenuate(
     ...
 )
 
-with set_warrant_context(warrant), set_keypair_context(worker_keypair):
+with set_warrant_context(warrant), set_signing_key_context(worker_keypair):
     await protected_tool(...)
 ```
 

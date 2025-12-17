@@ -12,7 +12,7 @@ Scenario:
 from typing import Type
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
-from tenuo import SigningKey, Warrant, Pattern, set_warrant_context, set_keypair_context, AuthorizationError
+from tenuo import SigningKey, Warrant, Pattern, set_warrant_context, set_signing_key_context, AuthorizationError
 from tenuo.langchain import protect_tools
 
 # -----------------------------------------------------------------------------
@@ -78,7 +78,7 @@ print(f"Protected tool name: {protected_search.name}")  # type: ignore
 print("-" * 40)
 
 # Set the warrant context
-with set_warrant_context(warrant), set_keypair_context(keypair):
+with set_warrant_context(warrant), set_signing_key_context(keypair):
     try:
         # Allowed query
         print("Attempting: 'safe query'...")

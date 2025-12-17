@@ -111,14 +111,14 @@ print(f"Authorized: {authorized}")  # True
 ### 4. Protect Tools with Decorators
 
 ```python
-from tenuo import lockdown, set_warrant_context, set_keypair_context
+from tenuo import lockdown, set_warrant_context, set_signing_key_context
 
 @lockdown(tool="scale_cluster")
 def scale_cluster(cluster: str, replicas: int):
     print(f"Scaling {cluster} to {replicas} replicas")
 
 # Set context for all decorated functions
-with set_warrant_context(warrant), set_keypair_context(keypair):
+with set_warrant_context(warrant), set_signing_key_context(keypair):
     scale_cluster(cluster="staging-web", replicas=5)
 ```
 

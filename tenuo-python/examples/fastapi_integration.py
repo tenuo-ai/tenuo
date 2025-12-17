@@ -6,12 +6,12 @@ This example demonstrates a complete FastAPI application with Tenuo authorizatio
 - Middleware for warrant extraction and context setting
 - Multiple protected endpoints
 - Error handling and proper HTTP responses
-- Keypair loading from secrets
+- SigningKey loading from secrets
 - Request-scoped warrant validation
 
 Key Patterns:
 1. Warrant extracted from X-Tenuo-Warrant header
-2. Keypair loaded from file (K8s secret mount)
+2. SigningKey loaded from file (K8s secret mount)
 3. Context set per-request in middleware
 4. Protected endpoints use @lockdown decorator
 5. Proper error handling with HTTP status codes
@@ -23,7 +23,7 @@ from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from tenuo import (
     SigningKey, Warrant, Pattern, Range,
-    lockdown, set_warrant_context, set_keypair_context,
+    lockdown, set_warrant_context, set_signing_key_context,
     AuthorizationError, WarrantError
 )
 import os
@@ -38,19 +38,19 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 # In production, load from environment or K8s secret
-KEYPAIR_PATH = os.getenv("TENUO_KEYPAIR_PATH", "/var/run/secrets/tenuo/keypair")
+KEYPAIR_PATH = os.getenv("TENUO_KEYPAIR_PATH", "/var/run/secrets/tenuo/signing_key")
 WARRANT_HEADER = "X-Tenuo-Warrant"
 
 # ============================================================================
-# Keypair Loading (Agent Identity)
+# SigningKey Loading (Agent Identity)
 # ============================================================================
 
-def load_agent_keypair() -> SigningKey:
+def load_agent_signing_key() -> SigningKey:
     """
-    Load agent keypair from file (e.g., K8s secret mount).
+    Load agent signing_key from file (e.g., K8s secret mount).
     
     In production:
-    - Load from /var/run/secrets/tenuo/keypair (K8s Secret)
+    - Load from /var/run/secrets/tenuo/signing_key (K8s Secret)
     - Or from environment variable (for local dev)
     - Or from AWS Secrets Manager / HashiCorp Vault
     """
@@ -60,16 +60,16 @@ def load_agent_keypair() -> SigningKey:
                 return SigningKey.from_pem(f.read())
         else:
             # Fallback: generate for demo (NOT for production!)
-            logger.warning(f"Keypair file not found at {KEYPAIR_PATH}, generating demo keypair")
+            logger.warning(f"SigningKey file not found at {KEYPAIR_PATH}, generating demo signing_key")
             return SigningKey.generate()
     except Exception as e:
-        logger.error(f"Failed to load keypair: {e}")
+        logger.error(f"Failed to load signing_key: {e}")
         raise
 
 
-# Load keypair at startup
-AGENT_KEYPAIR = load_agent_keypair()
-logger.info(f"Agent keypair loaded (public key: {AGENT_KEYPAIR.public_key.to_bytes()[:8].hex()}...)")
+# Load signing_key at startup
+AGENT_KEYPAIR = load_agent_signing_key()
+logger.info(f"Agent signing_key loaded (public key: {AGENT_KEYPAIR.public_key.to_bytes()[:8].hex()}...)")
 
 # ============================================================================
 # FastAPI App
@@ -189,7 +189,7 @@ async def root():
 @app.get("/health")
 async def health():
     """Health check endpoint (no warrant required)."""
-    return {"status": "healthy", "agent_keypair_loaded": True}
+    return {"status": "healthy", "agent_signing_key_loaded": True}
 
 
 @app.get("/api/files/{file_path:path}")
@@ -203,9 +203,9 @@ async def read_file_endpoint(file_path: str, warrant: Warrant = Depends(get_warr
     
     Note: Warrant expiration and authorization are handled by @lockdown decorator.
     """
-    # Set warrant and keypair in context for this request
+    # Set warrant and signing_key in context for this request
     # This ensures contextvars propagate correctly through async boundaries
-    with set_warrant_context(warrant), set_keypair_context(AGENT_KEYPAIR):
+    with set_warrant_context(warrant), set_signing_key_context(AGENT_KEYPAIR):
         try:
             content = read_file(file_path)
             return {
@@ -234,7 +234,7 @@ async def write_file_endpoint(file_path: str, content: dict, warrant: Warrant = 
     - X-Tenuo-Warrant header with warrant authorizing "write_file"
     - Warrant constraints must allow the requested file_path
     """
-    with set_warrant_context(warrant), set_keypair_context(AGENT_KEYPAIR):
+    with set_warrant_context(warrant), set_signing_key_context(AGENT_KEYPAIR):
         try:
             write_file(file_path, content.get("content", ""))
             return {
@@ -266,7 +266,7 @@ async def manage_cluster_endpoint(cluster: str, request: dict, warrant: Warrant 
     action = request.get("action", "status")
     replicas = request.get("replicas", 1)
     
-    with set_warrant_context(warrant), set_keypair_context(AGENT_KEYPAIR):
+    with set_warrant_context(warrant), set_signing_key_context(AGENT_KEYPAIR):
         try:
             result = manage_cluster(cluster, action, replicas)
             return result
@@ -327,7 +327,7 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
     """
     read_warrant = Warrant.issue(
         tools="read_file",
-        keypair=AGENT_KEYPAIR,
+        signing_key=AGENT_KEYPAIR,
         holder=AGENT_KEYPAIR.public_key,
         constraints={"file_path": Pattern("/tmp/*")},
         ttl_seconds=3600
@@ -335,7 +335,7 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
     
     write_warrant = Warrant.issue(
         tools="write_file",
-        keypair=AGENT_KEYPAIR,
+        signing_key=AGENT_KEYPAIR,
         holder=AGENT_KEYPAIR.public_key,
         constraints={"file_path": Pattern("/tmp/*")},
         ttl_seconds=3600
@@ -343,7 +343,7 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
     
     cluster_warrant = Warrant.issue(
         tools="manage_cluster",
-        keypair=AGENT_KEYPAIR,
+        signing_key=AGENT_KEYPAIR,
         holder=AGENT_KEYPAIR.public_key,
         constraints={
             "cluster": Pattern("staging-*"),
@@ -365,7 +365,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("Tenuo FastAPI Integration Example")
     print("=" * 60)
-    print(f"\nAgent keypair loaded: {AGENT_KEYPAIR.public_key.to_bytes()[:8].hex()}...")
+    print(f"\nAgent signing_key loaded: {AGENT_KEYPAIR.public_key.to_bytes()[:8].hex()}...")
     print("\nTo test, create a warrant and include it in the X-Tenuo-Warrant header:")
     print("\nExample:")
     warrants = create_demo_warrants()

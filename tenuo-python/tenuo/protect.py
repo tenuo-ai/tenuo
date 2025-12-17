@@ -25,7 +25,7 @@ from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 from .config import allow_passthrough
-from .decorators import get_warrant_context, get_keypair_context
+from .decorators import get_warrant_context, get_signing_key_context
 from .schemas import ToolSchema, TOOL_SCHEMAS, _get_tool_name
 from .exceptions import (
     TenuoError,
@@ -202,7 +202,7 @@ def _check_authorization(
 ) -> None:
     """Check authorization - shared by sync and async paths."""
     warrant = get_warrant_context()
-    _ = get_keypair_context()  # Reserved for PoP signature creation
+    _ = get_signing_key_context()  # Reserved for PoP signature creation
     schema = schemas.get(tool_name)
     
     # No warrant in context

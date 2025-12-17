@@ -157,7 +157,7 @@ class TestDelegateMethod:
     
     def test_delegate_narrows_constraints(self):
         """delegate() should narrow constraints."""
-        from tenuo import configure, root_task_sync, set_keypair_context, Pattern
+        from tenuo import configure, root_task_sync, set_signing_key_context, Pattern
         from tenuo.config import reset_config
         
         reset_config()
@@ -167,7 +167,7 @@ class TestDelegateMethod:
         configure(issuer_key=kp, dev_mode=True)
         
         with root_task_sync(tools=["read_file"], path=Pattern("/data/*")) as parent:
-            with set_keypair_context(kp):
+            with set_signing_key_context(kp):
                 child = parent.delegate(
                     holder=worker_kp.public_key,
                     path=Exact("/data/q3.pdf"),  # Narrower constraint
@@ -187,7 +187,7 @@ class TestDelegateMethod:
         This is BY DESIGN. To narrow tools, use an Issuer warrant
         and call issue_execution() instead.
         """
-        from tenuo import configure, root_task_sync, set_keypair_context
+        from tenuo import configure, root_task_sync, set_signing_key_context
         from tenuo.config import reset_config
         
         reset_config()
@@ -197,7 +197,7 @@ class TestDelegateMethod:
         configure(issuer_key=kp, dev_mode=True)
         
         with root_task_sync(tools=["read_file", "send_email"]) as parent:
-            with set_keypair_context(kp):
+            with set_signing_key_context(kp):
                 child = parent.delegate(
                     holder=worker_kp.public_key,
                     # No tool param - by design, can't narrow tools

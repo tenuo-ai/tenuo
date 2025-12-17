@@ -26,7 +26,7 @@ from tenuo import (
     Range,
     lockdown,
     set_warrant_context,
-    set_keypair_context,
+    set_signing_key_context,
 )
 
 
@@ -159,7 +159,7 @@ def main():
     print("\n5. Executing MCP tools with authorization...\n")
     
     # Set warrant context for authorization
-    with set_warrant_context(root_warrant), set_keypair_context(worker_keypair):
+    with set_warrant_context(root_warrant), set_signing_key_context(worker_keypair):
         
         # =====================================================================
         # Test 1: Authorized filesystem read
@@ -278,7 +278,7 @@ def demo_without_config():
     print("✓ Warrant issued: filesystem_read, path=/var/log/*, max_size≤1MB\n")
     
     # Execute with authorization
-    with set_warrant_context(warrant), set_keypair_context(worker_keypair):
+    with set_warrant_context(warrant), set_signing_key_context(worker_keypair):
         print("Test 1: Authorized read")
         try:
             result = filesystem_read("/var/log/app.log", max_size=512 * 1024)

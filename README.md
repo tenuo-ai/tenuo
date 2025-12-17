@@ -23,7 +23,7 @@ pip install tenuo
 ## Quick Start
 
 ```python
-from tenuo import SigningKey, Warrant, Pattern, lockdown, set_warrant_context, set_keypair_context
+from tenuo import SigningKey, Warrant, Pattern, lockdown, set_warrant_context, set_signing_key_context
 
 # Issue a warrant
 keypair = SigningKey.generate()
@@ -41,7 +41,7 @@ def read_file(path: str):
     return open(path).read()
 
 # Execute with authorization
-with set_warrant_context(warrant), set_keypair_context(keypair):
+with set_warrant_context(warrant), set_signing_key_context(keypair):
     read_file("/data/report.txt")  # ✓ Allowed
     read_file("/etc/passwd")       # ✗ Blocked
 ```

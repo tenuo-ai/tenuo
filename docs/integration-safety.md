@@ -82,7 +82,7 @@ RuntimeError: [MISSING_CONTEXT] No warrant context available for tool 'read_file
 
 To fix:
   1. Wrap the call with: async with root_task(tools=[...]):
-  2. Or use: with set_warrant_context(warrant), set_keypair_context(keypair):
+  2. Or use: with set_warrant_context(warrant), set_signing_key_context(keypair):
   3. Or pass warrant explicitly: @lockdown(warrant, tool='read_file')
 ```
 
