@@ -54,10 +54,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Security Audit
-        uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run Security Audit
+        working-directory: tenuo-core
+        run: cargo audit
 
   # ============================================================================
   # PYTHON SDK - Matrix Testing
@@ -117,21 +122,21 @@ jobs:
         shell: bash
         run: |
           source ../.venv/bin/activate || source ../.venv/Scripts/activate
-          ruff check .
+          python -m ruff check .
 
       - name: Type Check with MyPy
         working-directory: tenuo-python
         shell: bash
         run: |
           source ../.venv/bin/activate || source ../.venv/Scripts/activate
-          mypy .
+          python -m mypy .
 
       - name: Run Tests
         working-directory: tenuo-python
         shell: bash
         run: |
           source ../.venv/bin/activate || source ../.venv/Scripts/activate
-          pytest
+          python -m pytest
 
   # ============================================================================
   # LANGCHAIN COMPATIBILITY - Test oldest and latest versions
@@ -198,7 +203,7 @@ jobs:
         shell: bash
         run: |
           source ../.venv/bin/activate || source ../.venv/Scripts/activate
-          pytest tests/ -k "langchain or langgraph" -v
+          python -m pytest tests/ -k "langchain or langgraph" -v
 
   # ============================================================================
   # DOCKER
