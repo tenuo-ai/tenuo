@@ -99,15 +99,30 @@ jobs:
         working-directory: tenuo-python
         run: |
           pip install maturin
+          echo "=== Building wheel ==="
           maturin build --release
-          pip install --find-links target/wheels tenuo
+          echo "=== Wheel files ==="
+          ls -la target/wheels/
+          echo "=== Wheel contents ==="
+          python -c "import zipfile; z=zipfile.ZipFile(list(__import__('pathlib').Path('target/wheels').glob('*.whl'))[0]); print('\n'.join(z.namelist()[:30]))"
+          echo "=== Installing wheel ==="
+          pip install target/wheels/*.whl
+          echo "=== Pip show tenuo ==="
+          pip show tenuo || echo "tenuo not found in pip"
+          echo "=== Site packages ==="
+          ls -la $(python -c "import site; print(site.getsitepackages()[0])") | head -20
+          echo "=== Installing other deps ==="
           pip install pytest ruff mypy
           pip install langchain langchain-core langchain-openai langgraph
           pip install fastapi uvicorn pydantic PyYAML
           pip install types-PyYAML types-requests
 
       - name: Verify import
-        run: python -c "import tenuo; print(f'tenuo {tenuo.__version__} from {tenuo.__file__}')"
+        run: |
+          echo "=== Checking if tenuo_core exists ==="
+          python -c "import tenuo_core; print('tenuo_core OK')" || echo "tenuo_core not found"
+          echo "=== Checking if tenuo exists ==="
+          python -c "import tenuo; print(f'tenuo {tenuo.__version__} from {tenuo.__file__}')"
 
       - name: Lint
         working-directory: tenuo-python
