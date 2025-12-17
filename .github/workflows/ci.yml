@@ -139,6 +139,9 @@ jobs:
           pip install target/wheels/*.whl
           pip install -e .
 
+      - name: Verify import
+        run: python -c "import tenuo; print(f'tenuo {tenuo.__version__}')"
+
       - name: Install LangChain ${{ matrix.langchain-version }}
         run: |
           pip install pytest pydantic PyYAML
@@ -151,7 +154,7 @@ jobs:
 
       - name: Test LangChain integration
         working-directory: tenuo-python
-        run: pytest tests/ -k "langchain or langgraph" -v
+        run: pytest tests/test_langchain_integration.py tests/test_langgraph.py -v
 
   # ============================================================================
   # SECURITY AUDIT (weekly + main pushes)

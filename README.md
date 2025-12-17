@@ -6,15 +6,16 @@
   <strong>Capability tokens for AI agents.</strong>
 </p>
 
-Tenuo is a cryptographic authorization primitive for AI agents.
-It constrains ambient identity-based permissions with task-scoped capabilities that attenuate as they delegate. Offline verification in ~27μs.
+Tenuo is a cryptographic authorization primitive for AI agents. **Think prepaid expense card, not corporate Amex**: ephemeral, scoped capability tokens that expire when the task ends.
+
+It constrains ambient identity-based permissions with task-scoped capabilities that attenuate as they delegate. Offline verification in ~27μs on commodity hardware (benchmarks in repo).
 If an agent is prompt-injected, the authority still can't escape its bounds.
 
 [![Crates.io](https://img.shields.io/crates/v/tenuo-core.svg)](https://crates.io/crates/tenuo-core)
 [![PyPI](https://img.shields.io/pypi/v/tenuo.svg)](https://pypi.org/project/tenuo/)
 [![Docs](https://img.shields.io/badge/docs-tenuo.ai-blue)](https://tenuo.ai)
 
-> **v0.1** — Early release. Cryptographic core is stable; integration APIs are evolving.
+> **v0.1** - Early release. Cryptographic core is stable; integration APIs are evolving.
 
 ```bash
 pip install tenuo
@@ -84,7 +85,7 @@ Tenuo implements **Subtractive Delegation**.
 1. **Control plane** issues a root warrant
 2. **Orchestrator** attenuates it (scope can only shrink)
 3. **Worker** proves possession and executes
-4. **Warrant expires** — no revocation needed
+4. **Warrant expires** - no revocation needed
 
 Warrants can only **shrink** when delegated: 15 replicas becomes 10, access to `staging-*` narrows to `staging-web`. Verification is 100% offline in ~27μs on commodity hardware (benchmarks in repo).
 
@@ -126,7 +127,7 @@ Tenuo supports two types of warrants for separation of concerns:
 |-----------|-----------|
 | **Python** | 3.9, 3.10, 3.11, 3.12 |
 | **OS** | Linux, macOS, Windows |
-| **Rust** | 1.70+ (only for building from source) |
+| **Rust** | Not required (binary wheels provided). 1.70+ only if building from source. |
 
 ### Optional Dependencies
 
@@ -146,6 +147,7 @@ LangChain/LangGraph are optional to keep the core package lightweight. MCP integ
 **LangChain**
 ```python
 from tenuo.langchain import protect_tools
+# Wrap tools so every invocation requires a valid warrant
 secure_tools = protect_tools([search_tool, file_tool])
 ```
 
