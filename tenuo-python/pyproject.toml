@@ -38,7 +38,7 @@ dependencies = [
 [project.optional-dependencies]
 # Feature flags for users
 langchain = [
-    "langchain-core>=0.1",
+    "langchain-core>=0.2",
 ]
 langgraph = [
     "langgraph>=0.0.10",

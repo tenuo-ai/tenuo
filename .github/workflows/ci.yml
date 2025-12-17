@@ -48,11 +48,128 @@ jobs:
           cargo audit
 
   # ============================================================================
-  # PYTHON SDK
+  # PYTHON SDK - Matrix Testing
   # ============================================================================
   python-sdk:
-    name: Python SDK
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tenuo-python
+          key: ${{ matrix.os }}-${{ matrix.python-version }}
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Create venv
+        run: uv venv
+
+      - name: Build and Install Tenuo (Unix)
+        if: runner.os != 'Windows'
+        working-directory: tenuo-python
+        run: |
+          source ../.venv/bin/activate
+          pip install maturin
+          maturin develop
+          echo "$(pwd)" > ../.venv/lib/python${{ matrix.python-version }}/site-packages/tenuo.pth
+
+      - name: Build and Install Tenuo (Windows)
+        if: runner.os == 'Windows'
+        working-directory: tenuo-python
+        shell: bash
+        run: |
+          source ../.venv/Scripts/activate
+          pip install maturin
+          maturin develop
+          echo "$(pwd)" > ../.venv/Lib/site-packages/tenuo.pth
+
+      - name: Install dev dependencies (Unix)
+        if: runner.os != 'Windows'
+        working-directory: tenuo-python
+        run: |
+          source ../.venv/bin/activate
+          uv pip install pytest ruff mypy langchain langchain-core langchain-openai langgraph fastapi uvicorn pydantic PyYAML types-PyYAML types-requests
+
+      - name: Install dev dependencies (Windows)
+        if: runner.os == 'Windows'
+        working-directory: tenuo-python
+        shell: bash
+        run: |
+          source ../.venv/Scripts/activate
+          uv pip install pytest ruff mypy langchain langchain-core langchain-openai langgraph fastapi uvicorn pydantic PyYAML types-PyYAML types-requests
+
+      - name: Lint with Ruff (Unix)
+        if: runner.os != 'Windows'
+        working-directory: tenuo-python
+        run: |
+          source ../.venv/bin/activate
+          ruff check .
+
+      - name: Lint with Ruff (Windows)
+        if: runner.os == 'Windows'
+        working-directory: tenuo-python
+        shell: bash
+        run: |
+          source ../.venv/Scripts/activate
+          ruff check .
+
+      - name: Type Check with MyPy (Unix)
+        if: runner.os != 'Windows'
+        working-directory: tenuo-python
+        run: |
+          source ../.venv/bin/activate
+          mypy .
+
+      - name: Type Check with MyPy (Windows)
+        if: runner.os == 'Windows'
+        working-directory: tenuo-python
+        shell: bash
+        run: |
+          source ../.venv/Scripts/activate
+          mypy .
+
+      - name: Run Tests (Unix)
+        if: runner.os != 'Windows'
+        working-directory: tenuo-python
+        run: |
+          source ../.venv/bin/activate
+          pytest
+
+      - name: Run Tests (Windows)
+        if: runner.os == 'Windows'
+        working-directory: tenuo-python
+        shell: bash
+        run: |
+          source ../.venv/Scripts/activate
+          pytest
+
+  # ============================================================================
+  # LANGCHAIN COMPATIBILITY - Test oldest and latest versions
+  # ============================================================================
+  langchain-compat:
+    name: LangChain ${{ matrix.langchain-version }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        langchain-version: ['0.2.0', 'latest']
     steps:
       - uses: actions/checkout@v4
 
@@ -81,32 +198,27 @@ jobs:
           source ../.venv/bin/activate
           pip install maturin
           maturin develop
-          # Ensure Python wrapper is importable
           echo "$(pwd)" > ../.venv/lib/python3.10/site-packages/tenuo.pth
 
-      - name: Install dev dependencies
+      - name: Install LangChain (oldest)
+        if: matrix.langchain-version == '0.2.0'
         working-directory: tenuo-python
         run: |
           source ../.venv/bin/activate
-          uv pip install pytest ruff mypy langchain langchain-core langchain-openai langgraph fastapi uvicorn pydantic PyYAML types-PyYAML types-requests
+          uv pip install pytest langchain-core==0.2.0 pydantic PyYAML
 
-      - name: Lint with Ruff
+      - name: Install LangChain (latest)
+        if: matrix.langchain-version == 'latest'
         working-directory: tenuo-python
         run: |
           source ../.venv/bin/activate
-          ruff check .
+          uv pip install pytest langchain langchain-core langchain-openai langgraph pydantic PyYAML
 
-      - name: Type Check with MyPy
+      - name: Run LangChain Integration Tests
         working-directory: tenuo-python
         run: |
           source ../.venv/bin/activate
-          mypy .
-
-      - name: Run Tests
-        working-directory: tenuo-python
-        run: |
-          source ../.venv/bin/activate
-          pytest
+          pytest tests/ -k "langchain or langgraph" -v
 
   # ============================================================================
   # DOCKER
