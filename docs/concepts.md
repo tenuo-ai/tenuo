@@ -164,6 +164,101 @@ exec_warrant = issuer.issue_execution()
 
 Root execution warrants start tasks. Issuer warrants supervise without executing.
 
+
+### Warrant Lifecycle
+
+Warrants are **immutable and short-lived by design**. There is no renewal API.
+
+#### Why No Renewal?
+
+| Renewal model | Tenuo model |
+|---------------|-------------|
+| Extend expiry of existing token | Issue new warrant per phase |
+| Authority persists | Authority re-evaluated at each boundary |
+| Single audit event | Clear audit trail per phase |
+
+Renewal implies long-lived authority. Tenuo's model is the opposite: authority is scoped to a task phase and dies with it.
+
+#### Patterns for Long-Running Work
+
+***Pattern 1: Phase Decomposition (Recommended)***
+
+The orchestrator decomposes work into phases. Each phase gets a fresh warrant.
+```python
+async def orchestrator(task: str):
+    for phase in planner.decompose(task):
+        warrant = orchestrator_warrant.attenuate(
+            tools=phase.tools,
+            constraints=phase.constraints,
+            ttl=60,
+            holder=worker_keypair.public_key
+        )
+        await worker.execute(phase, warrant)
+        # Warrant expires. Next phase gets a new one.
+```
+
+This is the [CaMeL](https://arxiv.org/abs/2503.18813) model: the privileged planner issues scoped tokens to workers for each action.
+
+**Best for:** LangGraph, multi-agent orchestration, batch processing.
+
+
+***Pattern 2: Orchestrator Push***
+
+For streaming workers, the orchestrator periodically pushes fresh warrants.
+```python
+async def orchestrator():
+    while task_active:
+        warrant = orchestrator_warrant.attenuate(ttl=300)
+        await worker.update_warrant(warrant)
+        await asyncio.sleep(240)  # Push before expiry
+
+async def worker():
+    while True:
+        # Warrant context updated externally by orchestrator
+        await process_next_item()
+```
+
+**Best for:** Queue consumers, long-running workers with external coordination.
+
+
+***Pattern 3: Sidecar Refresh***
+
+A sidecar container manages warrant refresh transparently. Worker code is unchanged.
+```yaml
+containers:
+  - name: warrant-refresher
+    image: tenuo/refresher:0.1
+    env:
+      - name: ORCHESTRATOR_URL
+        value: "http://orchestrator:8080"
+      - name: REFRESH_INTERVAL
+        value: "240"
+  - name: worker
+    # Worker reads warrant from shared volume or localhost
+```
+
+**Best for:** Platform teams managing many workers, retrofitting existing code.
+
+***Pattern 4: Worker Pull (Use With Caution)***
+
+Worker requests its own warrant refresh.
+```python
+async def worker():
+    while True:
+        if warrant.expires_soon():
+            warrant = await control_plane.get_warrant(...)
+        await process_item()
+```
+
+**Tradeoff:** Worker now has direct control plane access. This weakens isolation — a compromised worker can request warrants directly. Use only when orchestrator push isn't feasible.
+
+**Mitigations if you must use this:**
+- Rate limit warrant requests per worker
+- Scope worker's control plane access to specific tools
+- Monitor for anomalous request patterns
+
+
+
 ### Monotonic Attenuation
 
 Authority can only **shrink**, never expand:

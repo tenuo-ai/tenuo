@@ -59,7 +59,7 @@ child = parent.attenuate(
 
 # This would FAIL:
 child = parent.attenuate(
-    tools=["read", "execute"],  # ❌ FAILS
+    tools=["read", "execute"],  # FAILS
     ...
 )
 ```
