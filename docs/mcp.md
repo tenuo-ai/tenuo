@@ -1,6 +1,6 @@
-# MCP Integration
+## MCP Integration
 
-Tenuo provides full [Model Context Protocol (MCP)](https://modelcontextprotocol.io) client integration with cryptographic authorization.
+Tenuo provides full Model Context Protocol (MCP) client integration with cryptographic authorization.
 
 **Full Stack**: Connect to MCP servers → Discover tools → Auto-protect with warrants → Execute securely.
 
@@ -234,7 +234,7 @@ with root_task_sync(tools=["filesystem_read"], path="/var/log/*"):
 
 Define how to extract constraints from MCP tool call arguments.
 
-> 💡 **Remember**: This configuration defines **extraction**, not **policy**. It tells Tenuo where to find the arguments in the JSON-RPC call. The actual limits (e.g., which paths are allowed) are defined in the **Warrant**. See [Argument Extraction](./argument-extraction) for a deep dive.
+> Remember: This configuration defines extraction, not policy. It tells Tenuo where to find the arguments in the JSON-RPC call. The actual limits (e.g., which paths are allowed) are defined in the Warrant. See [Argument Extraction](./argument-extraction) for a deep dive.
 
 ### Extraction Sources
 
@@ -420,7 +420,7 @@ worker_warrant = root_warrant.attenuate_builder() \
 compiled = CompiledMcpConfig.compile(config)
 warnings = compiled.validate()
 for warning in warnings:
-    print(f"⚠️  {warning}")
+    print(warning)
 ```
 
 Warns about incompatible extraction sources (path, query, header).
@@ -627,15 +627,15 @@ max_size:
 ## Scope & Boundaries
 
 ### Tenuo Provides
-- **Secure Client**: A wrapper around the official MCP SDK that adds authorization.
-- **Tool discovery**: Automatic wrapping of discovered tools with `@lockdown`.
-- **Warrant propagation**: Injecting warrants into `_tenuo` field for server-side verification.
-- **Constraint extraction**: Config-driven extraction from MCP arguments.
+- Secure Client: A wrapper around the official MCP SDK that adds authorization.
+- Tool discovery: Automatic wrapping of discovered tools with `@lockdown`.
+- Warrant propagation: Injecting warrants into `_tenuo` field for server-side verification.
+- Constraint extraction: Config-driven extraction from MCP arguments.
 
 ### Tenuo Does NOT Provide
-- **MCP Server Library**: Use [`fastmcp`](https://github.com/j-parker/fastmcp) or the official SDK to build servers.
-- **MCP Transport**: Tenuo relies on standard transports (stdio, SSE, HTTP).
-- **Prompt Injection Detection**: Tenuo assumes injection will happen and makes unauthorized actions impossible.
+- MCP Server Library: Use [`fastmcp`](https://github.com/j-parker/fastmcp) or the official SDK to build servers.
+- MCP Transport: Tenuo relies on standard transports (stdio, SSE, HTTP).
+- Prompt Injection Detection: Tenuo assumes injection will happen and makes unauthorized actions impossible.
 
 ---
 
