@@ -9,15 +9,15 @@ Demonstrates:
 - Authorization checks
 """
 
-from tenuo import Keypair, Warrant, Pattern, Exact, Range
+from tenuo import SigningKey, Warrant, Pattern, Exact, Range
 
 def main():
     print("=== Tenuo Python SDK - Basic Usage ===\n")
     
     # 1. Generate keypairs
     print("1. Generating keypairs...")
-    control_keypair = Keypair.generate()
-    worker_keypair = Keypair.generate()
+    control_keypair = SigningKey.generate()
+    worker_keypair = SigningKey.generate()
     print(f"   Control plane public key: {bytes(control_keypair.public_key_bytes())[:16].hex()}...")
     print(f"   Worker public key: {bytes(worker_keypair.public_key_bytes())[:16].hex()}...")
     print()

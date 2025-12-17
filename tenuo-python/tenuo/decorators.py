@@ -130,14 +130,14 @@ def _make_actionable_error(
     return base
 
 # Runtime imports (after class definitions above)
-from tenuo_core import Warrant, Keypair  # type: ignore[import-untyped]  # noqa: E402
+from tenuo_core import Warrant, SigningKey  # type: ignore[import-untyped]  # noqa: E402
 
 # Context variable for warrant storage (works with both threads and asyncio)
 # This allows warrants to be passed through async call stacks without explicit threading
 _warrant_context: ContextVar[Optional[Warrant]] = ContextVar('_warrant_context', default=None)
 
 # Context variable for keypair storage (for PoP signatures)
-_keypair_context: ContextVar[Optional[Keypair]] = ContextVar('_keypair_context', default=None)
+_keypair_context: ContextVar[Optional[SigningKey]] = ContextVar('_keypair_context', default=None)
 
 # Context variable for allowed tools (narrower than warrant.tools)
 # Used by scoped_task to restrict tools beyond what the warrant allows
@@ -154,7 +154,7 @@ def get_warrant_context() -> Optional[Warrant]:
     return _warrant_context.get()
 
 
-def get_keypair_context() -> Optional[Keypair]:
+def get_keypair_context() -> Optional[SigningKey]:
     """
     Get the current keypair from context.
     
@@ -198,7 +198,7 @@ def set_warrant_context(warrant: Warrant) -> 'WarrantContext':
     return WarrantContext(warrant)
 
 
-def set_keypair_context(keypair: Keypair) -> 'KeypairContext':
+def set_keypair_context(keypair: SigningKey) -> 'KeypairContext':
     """
     Create a context manager to set a keypair in the current context.
     
@@ -240,7 +240,7 @@ class WarrantContext:
 class KeypairContext:
     """Context manager for setting keypair in ContextVar (for PoP)."""
     
-    def __init__(self, keypair: Keypair):
+    def __init__(self, keypair: SigningKey):
         self.keypair = keypair
         self.token = None
     
@@ -257,7 +257,7 @@ class KeypairContext:
 def lockdown(
     warrant_or_tool: Optional[Union[Warrant, str]] = None,
     tool: Optional[str] = None,
-    keypair: Optional[Keypair] = None,
+    keypair: Optional[SigningKey] = None,
     extract_args: Optional[Callable[..., dict]] = None,
     mapping: Optional[dict[str, str]] = None
 ):
@@ -290,7 +290,7 @@ def lockdown(
         warrant_or_tool: If Warrant instance, use it explicitly. If str, treat as tool name.
                         If None, tool must be provided as keyword arg.
         tool: The tool name to authorize (required if warrant_or_tool is not a string)
-        keypair: Keypair for PoP signature (required - or use set_keypair_context)
+        keypair: SigningKey for PoP signature (required - or use set_keypair_context)
         extract_args: Optional function to extract args from function arguments.
                      If None, uses the function's kwargs as args.
         mapping: Optional dictionary mapping function argument names to constraint names.
@@ -302,7 +302,7 @@ def lockdown(
     """
     # Determine warrant and tool
     active_warrant: Optional[Warrant] = None
-    active_keypair: Optional[Keypair] = keypair
+    active_keypair: Optional[SigningKey] = keypair
     tool_name: Optional[str] = None
     
     if isinstance(warrant_or_tool, Warrant):

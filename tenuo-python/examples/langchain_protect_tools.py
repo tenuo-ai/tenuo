@@ -12,7 +12,7 @@ Scenario:
 from typing import Type
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
-from tenuo import Keypair, Warrant, Pattern, set_warrant_context, set_keypair_context, AuthorizationError
+from tenuo import SigningKey, Warrant, Pattern, set_warrant_context, set_keypair_context, AuthorizationError
 from tenuo.langchain import protect_tools
 
 # -----------------------------------------------------------------------------
@@ -40,7 +40,7 @@ class ThirdPartySearchTool(BaseTool):
 # -----------------------------------------------------------------------------
 
 # Generate identity
-keypair = Keypair.generate()
+keypair = SigningKey.generate()
 
 # Create a warrant that authorizes "search" but only for queries starting with "safe"
 warrant = Warrant.issue(

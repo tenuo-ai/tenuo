@@ -13,7 +13,7 @@ Note: This example uses OpenAI, but the pattern works with any LLM provider.
 """
 
 from tenuo import (
-    Keypair, Warrant, Pattern,
+    SigningKey, Warrant, Pattern,
     lockdown, set_warrant_context, set_keypair_context, AuthorizationError
 )
 from typing import Dict, Any, Optional
@@ -135,7 +135,7 @@ class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else objec
         agent_executor.invoke(inputs, {"callbacks": [callback]})
     """
     
-    def __init__(self, warrant: Warrant, keypair: Keypair):
+    def __init__(self, warrant: Warrant, keypair: SigningKey):
         if LANGCHAIN_AVAILABLE:
             super().__init__()
         self.warrant = warrant
@@ -219,7 +219,7 @@ def main():
     try:
         # SIMULATION: Generate keypair for demo
         # In production: Control plane keypair is loaded from secure storage (K8s Secret, HSM, etc.)
-        control_keypair = Keypair.generate()
+        control_keypair = SigningKey.generate()
         
         # SIMULATION: Create warrant with hardcoded constraints
         # In production: Constraints come from policy engine, user request, or configuration

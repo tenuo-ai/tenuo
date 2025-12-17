@@ -26,7 +26,7 @@ from contextvars import Token
 
 from tenuo_core import (  # type: ignore[import-untyped]
     Warrant,
-    Keypair,
+    SigningKey,
     Pattern,
     Exact,
     OneOf,
@@ -451,7 +451,7 @@ async def root_task(
     *,
     tools: List[str],
     ttl: Optional[int] = None,
-    holder_key: Optional[Keypair] = None,
+    holder_key: Optional[SigningKey] = None,
     **constraints: Any,
 ) -> AsyncIterator[Warrant]:
     """
@@ -525,7 +525,7 @@ def root_task_sync(
     *,
     tools: List[str],
     ttl: Optional[int] = None,
-    holder_key: Optional[Keypair] = None,
+    holder_key: Optional[SigningKey] = None,
     **constraints: Any,
 ) -> Iterator[Warrant]:
     """

@@ -28,7 +28,7 @@ Architecture:
 """
 
 from tenuo import (
-    Keypair, Warrant, Pattern, Exact,
+    SigningKey, Warrant, Pattern, Exact,
     lockdown, set_warrant_context, set_keypair_context, AuthorizationError
 )
 from typing import Optional, Dict, Any
@@ -163,7 +163,7 @@ class ControlPlane:
     - Stores root keypair in secure storage (K8s Secret, HSM, etc.)
     """
     
-    def __init__(self, keypair: Keypair):
+    def __init__(self, keypair: SigningKey):
         self.keypair = keypair
     
     def issue_agent_warrant(
@@ -479,8 +479,8 @@ def main():
     try:
         # SIMULATION: Generate keypair for demo
         # In production: Control plane keypair is loaded from secure storage (K8s Secret, HSM, etc.)
-        control_keypair = Keypair.generate()
-        control_keypair = Keypair.generate()
+        control_keypair = SigningKey.generate()
+        control_keypair = SigningKey.generate()
         # control_plane = ControlPlane(control_keypair)
         
         # SIMULATION: Create warrant with hardcoded constraints

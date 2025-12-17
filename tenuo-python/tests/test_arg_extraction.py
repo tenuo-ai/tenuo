@@ -1,9 +1,9 @@
 import pytest
-from tenuo import lockdown, Warrant, Keypair, Exact
+from tenuo import lockdown, Warrant, SigningKey, Exact
 
 @pytest.fixture
 def keypair():
-    return Keypair.generate()
+    return SigningKey.generate()
 
 @pytest.fixture
 def warrant(keypair):

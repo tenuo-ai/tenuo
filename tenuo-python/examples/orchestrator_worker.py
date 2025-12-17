@@ -15,7 +15,7 @@ different authority per task phase.
 """
 
 from tenuo import (
-    Keypair, Warrant, Pattern, Range, Wildcard,
+    SigningKey, Warrant, Pattern, Range, Wildcard,
     Authorizer,
     ChainVerificationResult,
     lockdown, set_warrant_context, set_keypair_context
@@ -47,7 +47,7 @@ def write(path: str, content: str) -> None:
 # Agents (Simulated)
 # ============================================================================
 
-def orchestrator_task(warrant: Warrant, keypair: Keypair, worker_keypair: Keypair):
+def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: SigningKey):
     """
     Orchestrator: Receives broad authority, delegates narrow slices to workers.
     
@@ -116,7 +116,7 @@ def orchestrator_task(warrant: Warrant, keypair: Keypair, worker_keypair: Keypai
     return research_warrant, write_warrant
 
 
-def worker_research(warrant: Warrant, keypair: Keypair):
+def worker_research(warrant: Warrant, keypair: SigningKey):
     """Worker: Executes research with attenuated authority."""
     print("\n  [Worker/Research] Received research warrant")
     print(f"  [Worker/Research] Warrant allows: {warrant.tools}")
@@ -187,7 +187,7 @@ def worker_research(warrant: Warrant, keypair: Keypair):
             print(f"    [Error] {e}")
 
 
-def worker_write(warrant: Warrant, keypair: Keypair):
+def worker_write(warrant: Warrant, keypair: SigningKey):
     """Worker: Executes write with attenuated authority."""
     print("\n  [Worker/Write] Received write warrant")
     print(f"  [Worker/Write] Warrant allows: {warrant.tools}")
@@ -243,9 +243,9 @@ def main():
     print("=" * 60)
     
     # Setup: Control Plane, Orchestrator, Worker identities
-    control_plane_keypair = Keypair.generate()
-    orchestrator_keypair = Keypair.generate()
-    worker_keypair = Keypair.generate()
+    control_plane_keypair = SigningKey.generate()
+    orchestrator_keypair = SigningKey.generate()
+    worker_keypair = SigningKey.generate()
     
     print(f"\nControl Plane: {control_plane_keypair.public_key.to_bytes()[:8].hex()}...")
     print(f"Orchestrator:  {orchestrator_keypair.public_key.to_bytes()[:8].hex()}...")

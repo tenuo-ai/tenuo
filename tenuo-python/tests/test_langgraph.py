@@ -7,7 +7,7 @@ from tenuo import (
     configure,
     reset_config,
     root_task_sync,
-    Keypair,
+    SigningKey,
     ScopeViolation,
 )
 from tenuo.langgraph import tenuo_node, require_warrant
@@ -27,7 +27,7 @@ class TestTenuoNode:
     
     def test_decorator_scopes_authority(self):
         """@tenuo_node scopes authority for node execution."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         tools_seen = []
@@ -46,7 +46,7 @@ class TestTenuoNode:
     
     def test_decorator_with_constraints(self):
         """@tenuo_node applies constraints."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         @tenuo_node(tools=["read_file"], path="/data/*")
@@ -59,7 +59,7 @@ class TestTenuoNode:
     
     def test_decorator_requires_parent_warrant(self):
         """@tenuo_node fails without parent warrant."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         @tenuo_node(tools=["search"])
@@ -72,7 +72,7 @@ class TestTenuoNode:
     
     def test_decorator_narrows_tools(self):
         """@tenuo_node narrows tool allowlist."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         @tenuo_node(tools=["search"])
@@ -102,7 +102,7 @@ class TestRequireWarrant:
     
     def test_allows_with_warrant(self):
         """@require_warrant allows execution with warrant."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         @require_warrant
@@ -115,7 +115,7 @@ class TestRequireWarrant:
     
     def test_blocks_without_warrant(self):
         """@require_warrant blocks execution without warrant."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         @require_warrant
@@ -142,7 +142,7 @@ class TestTenuoNodeAsync:
     
     def test_async_node_sync_invocation(self):
         """@tenuo_node async function can be set up (invocation tested separately)."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         @tenuo_node(tools=["search"])
@@ -160,7 +160,7 @@ class TestNestedNodes:
     
     def test_nested_narrowing(self):
         """Nested @tenuo_node further narrows scope."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         @tenuo_node(tools=["search"])
@@ -178,7 +178,7 @@ class TestNestedNodes:
     
     def test_inner_cannot_widen_scope(self):
         """Inner @tenuo_node cannot request tools not in outer scope."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         @tenuo_node(tools=["search"])

@@ -3,7 +3,7 @@ Tests for delegation diff and builder functionality.
 """
 
 from tenuo import (
-    Keypair, Warrant, Pattern, Exact,
+    SigningKey, Warrant, Pattern, Exact,
     DelegationDiff, DelegationReceipt, ChangeType,
 )
 from tenuo.builder import AttenuationBuilder
@@ -11,8 +11,8 @@ from tenuo.builder import AttenuationBuilder
 
 def test_builder_basic():
     """Test basic builder functionality."""
-    control_kp = Keypair.generate()
-    worker_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
+    worker_kp = SigningKey.generate()
     
     # Create root warrant
     root = Warrant.issue(
@@ -40,8 +40,8 @@ def test_builder_basic():
 
 def test_builder_diff_computation():
     """Test diff computation before delegation."""
-    control_kp = Keypair.generate()
-    worker_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
+    worker_kp = SigningKey.generate()
     
     root = Warrant.issue(
         tools="file_operations",
@@ -69,8 +69,8 @@ def test_builder_diff_computation():
 
 def test_builder_human_readable_diff():
     """Test human-readable diff output."""
-    control_kp = Keypair.generate()
-    worker_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
+    worker_kp = SigningKey.generate()
     
     root = Warrant.issue(
         tools="file_operations",
@@ -98,8 +98,8 @@ def test_builder_human_readable_diff():
 
 def test_builder_delegation():
     """Test actual delegation via builder."""
-    control_kp = Keypair.generate()
-    worker_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
+    worker_kp = SigningKey.generate()
     
     root = Warrant.issue(
         tools="file_operations",
@@ -132,7 +132,7 @@ def test_builder_delegation():
 
 def test_warrant_attenuate_builder_method():
     """Test attenuate_builder method on Warrant."""
-    control_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
     
     root = Warrant.issue(
         tools="file_operations",
@@ -151,8 +151,8 @@ def test_warrant_attenuate_builder_method():
 
 def test_delegation_receipt_to_dict():
     """Test receipt serialization using actual delegation."""
-    control_kp = Keypair.generate()
-    worker_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
+    worker_kp = SigningKey.generate()
     
     root = Warrant.issue(
         tools="file_operations",
@@ -185,8 +185,8 @@ def test_delegation_receipt_to_dict():
 def test_delegation_receipt_siem_json():
     """Test SIEM JSON format using actual delegation."""
     import json
-    control_kp = Keypair.generate()
-    worker_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
+    worker_kp = SigningKey.generate()
     
     root = Warrant.issue(
         tools="file_operations",

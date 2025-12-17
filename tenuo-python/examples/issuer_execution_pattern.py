@@ -11,7 +11,7 @@ This demonstrates the recommended production pattern using Tenuo's current API.
 """
 
 from tenuo import (
-    Keypair, Warrant, Pattern,
+    SigningKey, Warrant, Pattern,
     lockdown, set_warrant_context, set_keypair_context,
     AuthorizationError
 )
@@ -26,15 +26,15 @@ print("="*70)
 
 # Tier 1: Control Plane (highest authority)
 print("\n1. Setting up three-tier architecture:")
-control_kp = Keypair.generate()
+control_kp = SigningKey.generate()
 print("   ✓ Control Plane (root authority)")
 
 # Tier 2: Orchestrator (planning/coordination)
-orchestrator_kp = Keypair.generate()
+orchestrator_kp = SigningKey.generate()
 print("   ✓ Orchestrator (planning/coordination)")
 
 # Tier 3: Worker (execution)
-worker_kp = Keypair.generate()
+worker_kp = SigningKey.generate()
 print("   ✓ Worker (execution)")
 
 # ============================================================================

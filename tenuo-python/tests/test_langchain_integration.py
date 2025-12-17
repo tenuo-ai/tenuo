@@ -9,7 +9,7 @@ from tenuo import (
     configure,
     reset_config,
     root_task_sync,
-    Keypair,
+    SigningKey,
     ToolNotAuthorized,
     ConfigurationError,
     LANGCHAIN_AVAILABLE,
@@ -64,7 +64,7 @@ class TestProtectLangchainTools:
     
     def test_wraps_tools(self):
         """protect_langchain_tools wraps tools in TenuoTool."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         tools = protect_langchain_tools([search, read_file])
@@ -74,7 +74,7 @@ class TestProtectLangchainTools:
     
     def test_preserves_tool_names(self):
         """Wrapped tools preserve original names."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         tools = protect_langchain_tools([search, read_file])
@@ -84,7 +84,7 @@ class TestProtectLangchainTools:
     
     def test_preserves_descriptions(self):
         """Wrapped tools preserve original descriptions."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         tools = protect_langchain_tools([search])
@@ -93,7 +93,7 @@ class TestProtectLangchainTools:
     
     def test_allows_authorized_tool(self):
         """Protected tool allows execution with valid warrant."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         tools = protect_langchain_tools([search])
@@ -104,7 +104,7 @@ class TestProtectLangchainTools:
     
     def test_blocks_without_warrant(self):
         """Protected tool blocks execution without warrant."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         tools = protect_langchain_tools([search])
@@ -115,7 +115,7 @@ class TestProtectLangchainTools:
     
     def test_blocks_unauthorized_tool(self):
         """Protected tool blocks execution for unauthorized tools."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         tools = protect_langchain_tools([search, read_file])
@@ -132,7 +132,7 @@ class TestProtectLangchainTools:
     
     def test_multiple_tools_authorized(self):
         """Multiple tools can be authorized."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         tools = protect_langchain_tools([search, read_file])
@@ -150,7 +150,7 @@ class TestTenuoTool:
     
     def test_is_langchain_tool(self):
         """TenuoTool is a valid LangChain BaseTool."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         from langchain_core.tools import BaseTool
@@ -160,7 +160,7 @@ class TestTenuoTool:
     
     def test_run_method(self):
         """TenuoTool._run executes with authorization."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         wrapped = TenuoTool(search)
@@ -171,7 +171,7 @@ class TestTenuoTool:
     
     def test_invoke_method(self):
         """TenuoTool.invoke executes with authorization."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         wrapped = TenuoTool(search)
@@ -186,7 +186,7 @@ class TestPassthrough:
     
     def test_passthrough_blocked_by_default(self):
         """Passthrough is blocked in production mode."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, trusted_roots=[kp.public_key])
         
         tools = protect_langchain_tools([search])
@@ -196,7 +196,7 @@ class TestPassthrough:
     
     def test_passthrough_allowed_in_dev_mode(self):
         """Passthrough is allowed in dev mode with allow_passthrough."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(
             issuer_key=kp,
             dev_mode=True,
@@ -215,7 +215,7 @@ class TestStrictMode:
     
     def test_strict_mode_requires_constraints(self):
         """Strict mode requires constraints for require_at_least_one tools."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         from tenuo import ToolSchema, register_schema
@@ -236,7 +236,7 @@ class TestStrictMode:
     
     def test_non_strict_allows_without_constraints(self):
         """Non-strict mode allows tools without constraints."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         tools = protect_langchain_tools([search], strict=False)
@@ -253,7 +253,7 @@ class TestWithScopedTask:
         """scoped_task narrows available tools."""
         from tenuo import scoped_task
         
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         tools = protect_langchain_tools([search, read_file])

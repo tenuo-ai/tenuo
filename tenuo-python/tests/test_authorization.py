@@ -11,7 +11,7 @@ Tests cover:
 
 import pytest
 from tenuo import (
-    Keypair, Warrant, Pattern, Exact,
+    SigningKey, Warrant, Pattern, Exact,
     lockdown, set_warrant_context, set_keypair_context,
     get_warrant_context, get_keypair_context,
     AuthorizationError, TrustLevel
@@ -30,7 +30,7 @@ def test_lockdown_requires_keypair_context():
         return f"processed: {value}"
     
     # Create warrant
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     warrant = Warrant.issue(
         tools="test_tool",
         keypair=kp,
@@ -54,7 +54,7 @@ def test_lockdown_requires_keypair_context():
 def test_lockdown_with_explicit_keypair():
     """Test that @lockdown accepts explicit keypair parameter in decorator."""
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     warrant = Warrant.issue(
         tools="test_tool",
         keypair=kp,
@@ -81,7 +81,7 @@ def test_context_based_pop_retrieval():
     def read_file(path: str) -> str:
         return f"content of {path}"
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     warrant = Warrant.issue(
         tools="read_file",
         keypair=kp,
@@ -108,7 +108,7 @@ def test_pop_prevents_replay_attacks():
     def delete_file(path: str) -> str:
         return f"deleted {path}"
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     warrant = Warrant.issue(
         tools="delete_file",
         keypair=kp,
@@ -135,10 +135,10 @@ def test_pop_prevents_cross_tenant_misuse():
     This proves PoP is strictly enforced - stolen or misdirected warrants are useless.
     """
     # Tenant A (control plane / issuer)
-    tenant_a_kp = Keypair.generate()
+    tenant_a_kp = SigningKey.generate()
     
     # Tenant B's agent (intended holder)
-    tenant_b_agent_kp = Keypair.generate()
+    tenant_b_agent_kp = SigningKey.generate()
     
     # Tenant A mints a warrant FOR Tenant B's agent
     # The authorized_holder is set to Tenant B's public key
@@ -182,8 +182,8 @@ def test_pop_signature_must_match_authorized_holder():
     Verify that PoP verification strictly checks the authorized_holder.
     Using any other keypair must fail, even if it's a valid Ed25519 signature.
     """
-    correct_kp = Keypair.generate()
-    wrong_kp = Keypair.generate()
+    correct_kp = SigningKey.generate()
+    wrong_kp = SigningKey.generate()
     
     warrant = Warrant.issue(
         tools="test_tool",
@@ -217,7 +217,7 @@ def test_pop_signature_must_match_authorized_holder():
 def test_warrant_has_depth_property():
     """Test that warrants expose depth property."""
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     
     # Root warrant has depth 0
     root = Warrant.issue(
@@ -243,8 +243,8 @@ def test_warrant_has_depth_property():
 def test_warrant_chain_verification():
     """Test that warrant chains are properly verified."""
     
-    control_kp = Keypair.generate()
-    worker_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
+    worker_kp = SigningKey.generate()
     
     # Root warrant
     root = Warrant.issue(
@@ -290,7 +290,7 @@ def test_warrant_chain_verification():
 def test_trust_level_monotonicity():
     """Test that trust levels can only decrease during delegation."""
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     
     # Create warrant with Internal trust level (value 30)
     root = Warrant.issue(
@@ -320,7 +320,7 @@ def test_trust_level_monotonicity():
 def test_trust_level_enforcement():
     """Test that operations respect trust level boundaries."""
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     
     # Create warrant with External trust level (value 10)
     warrant = Warrant.issue(
@@ -367,8 +367,8 @@ def test_trust_levels_hierarchy():
 def test_context_isolation():
     """Test that contexts are properly isolated between calls."""
     
-    kp1 = Keypair.generate()
-    kp2 = Keypair.generate()
+    kp1 = SigningKey.generate()
+    kp2 = SigningKey.generate()
     
     warrant1 = Warrant.issue(
         tools="tool1",
@@ -405,7 +405,7 @@ def test_context_isolation():
 def test_nested_contexts():
     """Test that nested contexts work correctly."""
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     
     warrant1 = Warrant.issue(
         tools="tool1",
@@ -450,7 +450,7 @@ def test_authorization_fails_without_warrant():
     def protected_function(value: str) -> str:
         return f"processed: {value}"
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     
     # Should fail without warrant context
     with set_keypair_context(kp):
@@ -465,7 +465,7 @@ def test_authorization_fails_with_wrong_tool():
     def protected_function(value: str) -> str:
         return f"processed: {value}"
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     
     # Create warrant for wrong tool
     warrant = Warrant.issue(
@@ -488,7 +488,7 @@ def test_authorization_fails_with_constraint_violation():
     def read_file(path: str) -> str:
         return f"content of {path}"
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     
     # Create warrant with specific path constraint
     warrant = Warrant.issue(
@@ -516,7 +516,7 @@ def test_authorization_fails_with_expired_warrant():
     def protected_function(value: str) -> str:
         return f"processed: {value}"
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     
     # Create warrant with very short TTL
     warrant = Warrant.issue(

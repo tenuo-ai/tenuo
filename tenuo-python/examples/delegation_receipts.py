@@ -14,7 +14,7 @@ Key Features:
 """
 
 from tenuo import (
-    Keypair, Warrant, Pattern, Exact,
+    SigningKey, Warrant, Pattern, Exact,
     Authorizer
 )
 
@@ -25,9 +25,9 @@ def main():
     print("=" * 70)
     
     # Setup: Control Plane, Orchestrator, Worker identities
-    control_kp = Keypair.generate()
-    orchestrator_kp = Keypair.generate()
-    worker_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
+    orchestrator_kp = SigningKey.generate()
+    worker_kp = SigningKey.generate()
     
     print(f"\nControl Plane: {control_kp.public_key.to_bytes()[:8].hex()}...")
     print(f"Orchestrator:  {orchestrator_kp.public_key.to_bytes()[:8].hex()}...")

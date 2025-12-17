@@ -8,7 +8,7 @@ import pytest
 from dataclasses import dataclass
 
 from tenuo import (
-    Keypair,
+    SigningKey,
     Pattern,
     Range,
     reset_config,
@@ -28,7 +28,7 @@ from tenuo import (
 @pytest.fixture
 def keypair():
     """Generate a test keypair."""
-    return Keypair.generate()
+    return SigningKey.generate()
 
 
 @pytest.fixture(autouse=True)

@@ -11,7 +11,7 @@ from tenuo import (
     root_task,
     scoped_task,
     protect_tools,
-    Keypair,
+    SigningKey,
     ToolSchema,
     register_schema,
     Pattern,
@@ -29,7 +29,7 @@ async def delete_file(path: str) -> str:
 # 2. Configure Tenuo (once at startup)
 # In production, you would provide trusted_roots.
 # In dev, we use dev_mode=True.
-issuer_key = Keypair.generate()
+issuer_key = SigningKey.generate()
 configure(issuer_key=issuer_key, dev_mode=True)
 
 # 3. Protect your tools

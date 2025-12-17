@@ -1,5 +1,5 @@
 
-from tenuo import Keypair, Warrant, Pattern, Exact, Range
+from tenuo import SigningKey, Warrant, Pattern, Exact, Range
 
 def test_full_warrant_lifecycle():
     """
@@ -11,8 +11,8 @@ def test_full_warrant_lifecycle():
     5. Serialization
     """
     # 1. Generate keypairs
-    control_keypair = Keypair.generate()
-    worker_keypair = Keypair.generate()
+    control_keypair = SigningKey.generate()
+    worker_keypair = SigningKey.generate()
     
     assert len(control_keypair.public_key_bytes()) == 32
     assert len(worker_keypair.public_key_bytes()) == 32
@@ -67,7 +67,7 @@ def test_full_warrant_lifecycle():
     assert check_auth(worker_warrant, "manage_infrastructure", args3, worker_keypair) is False
     
     # Denied: wrong keypair (PoP failure)
-    wrong_keypair = Keypair.generate()
+    wrong_keypair = SigningKey.generate()
     assert check_auth(worker_warrant, "manage_infrastructure", args1, wrong_keypair) is False
     
     # 5. Serialization

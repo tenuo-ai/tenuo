@@ -18,7 +18,7 @@ from tenuo import (
     root_task,
     scoped_task,
     protect_tools,
-    Keypair,
+    SigningKey,
     ConfigurationError,
     ScopeViolation,
     MonotonicityError,
@@ -34,7 +34,7 @@ from tenuo.decorators import get_warrant_context
 
 @pytest.fixture
 def keypair():
-    return Keypair.generate()
+    return SigningKey.generate()
 
 @pytest.fixture
 def setup_config(keypair):

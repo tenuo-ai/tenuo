@@ -1,11 +1,11 @@
 """Test tool selection methods in AttenuationBuilder."""
-from tenuo import Keypair, Warrant, TrustLevel
+from tenuo import SigningKey, Warrant, TrustLevel
 
 
 def test_with_issuable_tool_single():
     """Test with_issuable_tool() sets a single tool for issuer warrants."""
-    parent_kp = Keypair.generate()
-    child_kp = Keypair.generate()
+    parent_kp = SigningKey.generate()
+    child_kp = SigningKey.generate()
     
     # Create issuer warrant with multiple tools
     issuer = Warrant.issue_issuer(
@@ -24,8 +24,8 @@ def test_with_issuable_tool_single():
 
 def test_with_issuable_tools_multiple():
     """Test with_issuable_tools() sets multiple tools for issuer warrants."""
-    parent_kp = Keypair.generate()
-    child_kp = Keypair.generate()
+    parent_kp = SigningKey.generate()
+    child_kp = SigningKey.generate()
     
     # Create issuer warrant with multiple tools
     issuer = Warrant.issue_issuer(
@@ -44,8 +44,8 @@ def test_with_issuable_tools_multiple():
 
 def test_drop_tools():
     """Test drop_tools() removes specific tools."""
-    parent_kp = Keypair.generate()
-    child_kp = Keypair.generate()
+    parent_kp = SigningKey.generate()
+    child_kp = SigningKey.generate()
     
     # Create issuer warrant with multiple tools
     issuer = Warrant.issue_issuer(
@@ -64,8 +64,8 @@ def test_drop_tools():
 
 def test_issuable_tool_selection_combinations():
     """Test combining tool selection methods for issuer warrants."""
-    parent_kp = Keypair.generate()
-    child_kp = Keypair.generate()
+    parent_kp = SigningKey.generate()
+    child_kp = SigningKey.generate()
     
     # Create issuer warrant
     issuer = Warrant.issue_issuer(
@@ -89,8 +89,8 @@ def test_issuable_tool_selection_combinations():
 
 def test_with_issuable_tool_replaces_all():
     """Test that with_issuable_tool() replaces entire tool list for issuer warrants."""
-    parent_kp = Keypair.generate()
-    child_kp = Keypair.generate()
+    parent_kp = SigningKey.generate()
+    child_kp = SigningKey.generate()
     
     # Create issuer warrant
     issuer = Warrant.issue_issuer(

@@ -14,7 +14,7 @@ Requirements:
 """
 
 from tenuo import (
-    Keypair, Warrant, Pattern,
+    SigningKey, Warrant, Pattern,
     lockdown, set_warrant_context, set_keypair_context, AuthorizationError
 )
 
@@ -71,7 +71,7 @@ def main():
     try:
         # SIMULATION: Generate keypair for demo
         # In production: Control plane keypair is loaded from secure storage
-        keypair = Keypair.generate()
+        keypair = SigningKey.generate()
         
         # SIMULATION: Create warrant with hardcoded constraints
         # HARDCODED: Pattern("/tmp/*"), ttl_seconds=3600

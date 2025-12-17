@@ -22,7 +22,7 @@ Run with: uvicorn fastapi_integration:app --reload
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from tenuo import (
-    Keypair, Warrant, Pattern, Range,
+    SigningKey, Warrant, Pattern, Range,
     lockdown, set_warrant_context, set_keypair_context,
     AuthorizationError, WarrantError
 )
@@ -45,7 +45,7 @@ WARRANT_HEADER = "X-Tenuo-Warrant"
 # Keypair Loading (Agent Identity)
 # ============================================================================
 
-def load_agent_keypair() -> Keypair:
+def load_agent_keypair() -> SigningKey:
     """
     Load agent keypair from file (e.g., K8s secret mount).
     
@@ -57,11 +57,11 @@ def load_agent_keypair() -> Keypair:
     try:
         if os.path.exists(KEYPAIR_PATH):
             with open(KEYPAIR_PATH, "r") as f:
-                return Keypair.from_pem(f.read())
+                return SigningKey.from_pem(f.read())
         else:
             # Fallback: generate for demo (NOT for production!)
             logger.warning(f"Keypair file not found at {KEYPAIR_PATH}, generating demo keypair")
-            return Keypair.generate()
+            return SigningKey.generate()
     except Exception as e:
         logger.error(f"Failed to load keypair: {e}")
         raise

@@ -2866,6 +2866,8 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyNot>()?;
     // Core types
     m.add_class::<PyKeypair>()?;
+    // Add SigningKey as an alias for Keypair
+    m.add("SigningKey", m.getattr("Keypair")?)?;
     m.add_class::<PyPublicKey>()?;
     m.add_class::<PySignature>()?;
     m.add_class::<PyWarrant>()?;

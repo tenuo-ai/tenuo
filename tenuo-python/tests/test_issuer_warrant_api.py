@@ -10,7 +10,7 @@ Verifies:
 import pytest
 from tenuo import (
     Warrant,
-    Keypair,
+    SigningKey,
     TrustLevel,
     Pattern,
     Exact,
@@ -27,7 +27,7 @@ class TestIssuerWarrantExists:
     
     def test_issue_issuer_creates_issuer_warrant(self):
         """issue_issuer() should create an issuer warrant."""
-        issuer_kp = Keypair.generate()
+        issuer_kp = SigningKey.generate()
         
         issuer_warrant = Warrant.issue_issuer(
             issuable_tools=["read_file", "send_email"],
@@ -45,8 +45,8 @@ class TestIssuerWarrantExists:
     
     def test_issue_issuer_with_holder(self):
         """issue_issuer() should accept a holder parameter."""
-        issuer_kp = Keypair.generate()
-        holder_kp = Keypair.generate()
+        issuer_kp = SigningKey.generate()
+        holder_kp = SigningKey.generate()
         
         issuer_warrant = Warrant.issue_issuer(
             issuable_tools=["read_file"],
@@ -64,7 +64,7 @@ class TestIssueExecutionExists:
     
     def test_issue_execution_exists(self):
         """Issuer warrant should have issue_execution() method."""
-        issuer_kp = Keypair.generate()
+        issuer_kp = SigningKey.generate()
         
         issuer_warrant = Warrant.issue_issuer(
             issuable_tools=["read_file"],
@@ -78,7 +78,7 @@ class TestIssueExecutionExists:
     
     def test_issue_execution_returns_builder(self):
         """issue_execution() should return an IssuanceBuilder."""
-        issuer_kp = Keypair.generate()
+        issuer_kp = SigningKey.generate()
         
         issuer_warrant = Warrant.issue_issuer(
             issuable_tools=["read_file"],
@@ -98,7 +98,7 @@ class TestIssueExecutionExists:
     
     def test_issue_execution_only_on_issuer_warrants(self):
         """issue_execution() should fail on execution warrants."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         
         # Create execution warrant (not issuer)
         exec_warrant = Warrant.issue(
@@ -112,8 +112,8 @@ class TestIssueExecutionExists:
     
     def test_issue_execution_full_flow(self):
         """Full flow: issue_issuer -> issue_execution -> build."""
-        issuer_kp = Keypair.generate()
-        worker_kp = Keypair.generate()
+        issuer_kp = SigningKey.generate()
+        worker_kp = SigningKey.generate()
         
         # Step 1: Create issuer warrant
         issuer_warrant = Warrant.issue_issuer(
@@ -145,7 +145,7 @@ class TestDelegateMethod:
     
     def test_delegate_exists(self):
         """Warrant should have delegate() method."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         
         warrant = Warrant.issue(
             tools=["read_file"],
@@ -162,8 +162,8 @@ class TestDelegateMethod:
         
         reset_config()
         
-        kp = Keypair.generate()
-        worker_kp = Keypair.generate()
+        kp = SigningKey.generate()
+        worker_kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         with root_task_sync(tools=["read_file"], path=Pattern("/data/*")) as parent:
@@ -192,8 +192,8 @@ class TestDelegateMethod:
         
         reset_config()
         
-        kp = Keypair.generate()
-        worker_kp = Keypair.generate()
+        kp = SigningKey.generate()
+        worker_kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         with root_task_sync(tools=["read_file", "send_email"]) as parent:
@@ -219,8 +219,8 @@ class TestAttenuateBuilderToolSelection:
         AttenuationBuilder.with_tools() CAN narrow tools for execution warrants.
         This enables "always shrinking authority" for non-terminal warrants.
         """
-        kp = Keypair.generate()
-        worker_kp = Keypair.generate()
+        kp = SigningKey.generate()
+        worker_kp = SigningKey.generate()
         
         # Create execution warrant with multiple tools
         parent = Warrant.issue(
@@ -244,8 +244,8 @@ class TestAttenuateBuilderToolSelection:
     
     def test_attenuate_builder_with_tool_single(self):
         """with_tool() narrows to a single tool."""
-        kp = Keypair.generate()
-        worker_kp = Keypair.generate()
+        kp = SigningKey.generate()
+        worker_kp = SigningKey.generate()
         
         parent = Warrant.issue(
             tools=["read_file", "send_email"],
@@ -264,8 +264,8 @@ class TestAttenuateBuilderToolSelection:
         """Cannot add tools that weren't in parent."""
         import pytest
         
-        kp = Keypair.generate()
-        worker_kp = Keypair.generate()
+        kp = SigningKey.generate()
+        worker_kp = SigningKey.generate()
         
         parent = Warrant.issue(
             tools=["read_file"],
@@ -286,8 +286,8 @@ class TestAttenuateBuilderToolSelection:
         """
         Issuer warrants + issue_execution() is another way to select tools.
         """
-        issuer_kp = Keypair.generate()
-        worker_kp = Keypair.generate()
+        issuer_kp = SigningKey.generate()
+        worker_kp = SigningKey.generate()
         
         # Create issuer warrant with all tools
         issuer_warrant = Warrant.issue_issuer(
@@ -312,7 +312,7 @@ class TestTerminalWarrants:
     
     def test_is_terminal_property(self):
         """Warrant.is_terminal() returns correct value."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         
         # Non-terminal warrant (no max_depth or max_depth > depth)
         warrant = Warrant.issue(
@@ -327,8 +327,8 @@ class TestTerminalWarrants:
     
     def test_terminal_warrant_via_builder(self):
         """Creating a terminal warrant via .terminal() method."""
-        kp = Keypair.generate()
-        worker_kp = Keypair.generate()
+        kp = SigningKey.generate()
+        worker_kp = SigningKey.generate()
         
         parent = Warrant.issue(
             tools=["read_file"],
@@ -349,9 +349,9 @@ class TestTerminalWarrants:
         """Terminal warrants cannot delegate further."""
         import pytest
         
-        kp = Keypair.generate()
-        worker_kp = Keypair.generate()
-        another_kp = Keypair.generate()
+        kp = SigningKey.generate()
+        worker_kp = SigningKey.generate()
+        another_kp = SigningKey.generate()
         
         parent = Warrant.issue(
             tools=["read_file"],

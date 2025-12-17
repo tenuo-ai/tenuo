@@ -33,12 +33,12 @@ def pytest_configure(config):
 @pytest.fixture
 def keypair():
     """Generate a fresh keypair for testing."""
-    from tenuo import Keypair
-    return Keypair.generate()
+    from tenuo import SigningKey
+    return SigningKey.generate()
 
 
 @pytest.fixture
 def attacker_keypair():
     """Generate a keypair representing an attacker."""
-    from tenuo import Keypair
-    return Keypair.generate()
+    from tenuo import SigningKey
+    return SigningKey.generate()

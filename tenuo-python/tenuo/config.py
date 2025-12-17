@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 from contextvars import ContextVar
 
-from tenuo_core import Keypair, PublicKey, Authorizer  # type: ignore[import-untyped]
+from tenuo_core import SigningKey, PublicKey, Authorizer  # type: ignore[import-untyped]
 
 from .exceptions import ConfigurationError
 
@@ -45,7 +45,7 @@ class TenuoConfig:
     """Global Tenuo configuration."""
     
     # Issuer keypair for minting warrants
-    issuer_keypair: Optional[Keypair] = None
+    issuer_keypair: Optional[SigningKey] = None
     
     # Trusted root public keys for verification
     trusted_roots: List[PublicKey] = field(default_factory=list)
@@ -114,7 +114,7 @@ _config_context: ContextVar[Optional[TenuoConfig]] = ContextVar('tenuo_config', 
 
 def configure(
     *,
-    issuer_key: Optional[Keypair] = None,
+    issuer_key: Optional[SigningKey] = None,
     trusted_roots: Optional[List[PublicKey]] = None,
     default_ttl: int = DEFAULT_TTL_SECONDS,
     clock_tolerance: int = DEFAULT_CLOCK_TOLERANCE_SECS,
@@ -133,7 +133,7 @@ def configure(
     Call this once at application startup before using root_task() or scoped_task().
     
     Args:
-        issuer_key: Keypair for signing warrants (required for root_task)
+        issuer_key: SigningKey for signing warrants (required for root_task)
         trusted_roots: Public keys to trust as warrant issuers
         default_ttl: Default warrant TTL in seconds (default: 300)
         clock_tolerance: Clock tolerance for expiration checks (default: 30)

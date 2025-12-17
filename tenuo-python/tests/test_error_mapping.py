@@ -2,7 +2,7 @@
 import pytest
 import sys
 from tenuo import (
-    Warrant, Keypair, Pattern, Range, Exact, PatternExpanded, RangeExpanded
+    Warrant, SigningKey, Pattern, Range, Exact, PatternExpanded, RangeExpanded
 )
 
 class TestErrorMapping:
@@ -12,7 +12,7 @@ class TestErrorMapping:
 
     @pytest.fixture
     def keypair(self):
-        return Keypair.generate()
+        return SigningKey.generate()
 
     def test_pattern_expanded(self, keypair):
         """Verify PatternExpanded mapping."""

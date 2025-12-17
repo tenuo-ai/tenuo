@@ -15,7 +15,7 @@ from tenuo import (
     recommended_constraints,
     check_constraints,
     TOOL_SCHEMAS,
-    Keypair,
+    SigningKey,
     ToolNotAuthorized,
     Pattern,
     ConfigurationError,
@@ -56,7 +56,7 @@ class TestProtectToolsInplace:
     
     def test_inplace_true_mutates_list(self):
         """protect_tools(inplace=True) mutates the original list."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         tools = [read_file, send_email]
@@ -69,7 +69,7 @@ class TestProtectToolsInplace:
     
     def test_inplace_false_returns_new_list(self):
         """protect_tools(inplace=False) returns a new list."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         tools = [read_file, send_email]
@@ -81,7 +81,7 @@ class TestProtectToolsInplace:
     
     def test_inplace_rejects_tuple(self):
         """protect_tools(inplace=True) rejects non-list."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         tools = (read_file, send_email)  # Tuple, not list
@@ -95,7 +95,7 @@ class TestProtectToolsAuthorization:
     
     def test_allows_authorized_tool(self):
         """Protected tool allows authorized execution."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         tools = [read_file]
@@ -107,7 +107,7 @@ class TestProtectToolsAuthorization:
     
     def test_blocks_unauthorized_tool(self):
         """Protected tool blocks unauthorized execution."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         tools = [read_file, send_email]
@@ -123,7 +123,7 @@ class TestProtectToolsAuthorization:
     
     def test_blocks_without_warrant(self):
         """Protected tool blocks execution without warrant."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         tools = [read_file]
@@ -139,7 +139,7 @@ class TestPassthrough:
     
     def test_passthrough_blocked_without_dev_mode(self):
         """Passthrough is blocked in production mode."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, trusted_roots=[kp.public_key])
         
         tools = [read_file]
@@ -150,7 +150,7 @@ class TestPassthrough:
     
     def test_passthrough_allowed_with_dev_mode(self):
         """Passthrough is allowed in dev mode with allow_passthrough."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(
             issuer_key=kp,
             dev_mode=True,
@@ -252,7 +252,7 @@ class TestProtectedToolDecorator:
     
     def test_decorator_protects_function(self):
         """@protected_tool protects a function."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         @protected_tool
@@ -265,7 +265,7 @@ class TestProtectedToolDecorator:
     
     def test_decorator_allows_with_warrant(self):
         """@protected_tool allows execution with warrant."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         @protected_tool
@@ -278,7 +278,7 @@ class TestProtectedToolDecorator:
     
     def test_decorator_with_schema(self):
         """@protected_tool registers custom schema."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         @protected_tool(schema=ToolSchema(
@@ -299,7 +299,7 @@ class TestStrictMode:
     
     def test_strict_requires_constraints(self):
         """strict=True requires constraints for require_at_least_one tools."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         @protected_tool(strict=True)
@@ -320,7 +320,7 @@ class TestStrictMode:
     
     def test_non_strict_allows_without_constraints(self):
         """strict=False allows execution without constraints for medium-risk."""
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         # read_file is medium risk

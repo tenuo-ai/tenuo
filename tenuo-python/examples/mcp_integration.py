@@ -8,7 +8,7 @@ Demonstrates:
 - Authorizing MCP operations
 """
 
-from tenuo import McpConfig, CompiledMcpConfig, Authorizer, Keypair, Warrant, Pattern, Range
+from tenuo import McpConfig, CompiledMcpConfig, Authorizer, SigningKey, Warrant, Pattern, Range
 
 def main():
     print("=== Tenuo Python SDK - MCP Integration ===\n")
@@ -38,7 +38,7 @@ def main():
         print("   (In production, ensure mcp-config.yaml exists)")
         # Continue with demo - we'll show the pattern even without config file
         # Note: control_keypair needs to be defined first
-        control_keypair = Keypair.generate()
+        control_keypair = SigningKey.generate()
         demo_without_config(control_keypair)
         return
     
@@ -54,7 +54,7 @@ def main():
     try:
         # SIMULATION: Generate keypair for demo
         # In production: Control plane keypair is loaded from secure storage
-        control_keypair = Keypair.generate()
+        control_keypair = SigningKey.generate()
         
         # Get public key object (method call, not property)
         public_key = control_keypair.public_key

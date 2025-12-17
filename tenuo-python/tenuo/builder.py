@@ -15,7 +15,7 @@ from typing import Dict, Optional, Any, List
 
 from tenuo_core import (  # type: ignore[import-untyped]
     Warrant,
-    Keypair,
+    SigningKey,
     PublicKey,
     TrustLevel,
     AttenuationBuilder as RustAttenuationBuilder,
@@ -193,8 +193,8 @@ class AttenuationBuilder:
     
     def delegate_to(
         self,
-        keypair: Keypair,
-        parent_keypair: Keypair,
+        keypair: SigningKey,
+        parent_keypair: SigningKey,
     ) -> Warrant:
         """Create the attenuated child warrant.
         
@@ -216,8 +216,8 @@ class AttenuationBuilder:
     
     def delegate_to_with_receipt(
         self,
-        keypair: Keypair,
-        parent_keypair: Keypair,
+        keypair: SigningKey,
+        parent_keypair: SigningKey,
     ) -> tuple:
         """Create the attenuated child warrant and return both warrant and receipt.
         

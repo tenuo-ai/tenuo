@@ -7,7 +7,7 @@ automatically used by all @lockdown-decorated functions in the call stack.
 """
 
 from tenuo import (
-    Keypair, Warrant, Pattern, Range,
+    SigningKey, Warrant, Pattern, Range,
     lockdown, set_warrant_context, set_keypair_context, AuthorizationError
 )
 
@@ -50,7 +50,7 @@ def main():
     try:
         # SIMULATION: Generate keypair for demo
         # In production: Control plane keypair is loaded from secure storage
-        keypair = Keypair.generate()
+        keypair = SigningKey.generate()
         
         # SIMULATION: Create warrant with hardcoded constraints
         # HARDCODED: Pattern("staging-*"), Range.max_value(10000.0), ttl_seconds=3600

@@ -11,7 +11,7 @@ Tests cover:
 
 import pytest
 from tenuo import (
-    Keypair, Warrant, Pattern, Exact,
+    SigningKey, Warrant, Pattern, Exact,
     lockdown, set_warrant_context, set_keypair_context,
     AuthorizationError
 )
@@ -24,7 +24,7 @@ def test_pattern_constraint_matching():
     def access_file(path: str) -> str:
         return f"accessed {path}"
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     warrant = Warrant.issue(
         tools="file_ops",
         keypair=kp,
@@ -50,7 +50,7 @@ def test_exact_constraint_matching():
     def delete_database(db_name: str) -> str:
         return f"deleted {db_name}"
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     warrant = Warrant.issue(
         tools="delete_db",
         keypair=kp,
@@ -78,7 +78,7 @@ def test_multiple_constraints():
     def transfer(account: str, amount: str) -> str:
         return f"transferred ${amount} from {account}"
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     warrant = Warrant.issue(
         tools="transfer_money",
         keypair=kp,
@@ -112,7 +112,7 @@ def test_multiple_constraints():
 def test_constraint_attenuation():
     """Test that constraints can only become more restrictive."""
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     
     # Parent with broad constraint
     parent = Warrant.issue(
@@ -152,7 +152,7 @@ def test_constraint_attenuation():
 def test_constraint_field_addition():
     """Test that new constraint fields can be added during attenuation."""
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     
     # Parent with one constraint
     parent = Warrant.issue(
@@ -204,7 +204,7 @@ def test_missing_constraint_parameter():
     def protected_function(required: str, optional: str = "default") -> str:
         return f"{required}-{optional}"
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     warrant = Warrant.issue(
         tools="test_tool",
         keypair=kp,

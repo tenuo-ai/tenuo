@@ -2,7 +2,7 @@ import pytest
 import time
 from tenuo import (
     Authorizer, 
-    Keypair, 
+    SigningKey, 
     Warrant, 
     ExpiredError,
     ValidationError
@@ -14,7 +14,7 @@ def test_set_clock_tolerance_preserves_roots():
     This was a critical bug where rebuilding the inner authorizer dropped keys.
     """
     # 1. Create authorizer with a root
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     auth = Authorizer(trusted_roots=[kp.public_key])
     
     assert auth.trusted_root_count() == 1
@@ -37,8 +37,8 @@ def test_set_clock_tolerance_preserves_roots():
 
 def test_error_mapping_signature_invalid():
     """Verify that Rust SignatureInvalid maps to Python SignatureInvalid."""
-    kp = Keypair.generate()
-    wrong_kp = Keypair.generate()
+    kp = SigningKey.generate()
+    wrong_kp = SigningKey.generate()
     
     # Create warrant signed by WRONG key (but valid signature structure)
     # Actually, easiest way to trigger SignatureInvalid is to tamper with signature bytes
@@ -63,7 +63,7 @@ def test_error_mapping_signature_invalid():
 
 def test_error_mapping_expired():
     """Verify that Rust WarrantExpired maps to Python ExpiredError."""
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     auth = Authorizer(trusted_roots=[kp.public_key])
     
     # Issue expired warrant

@@ -1,7 +1,7 @@
 """Test Issuer Warrant creation and delegation."""
 from tenuo import (
     Warrant,
-    Keypair,
+    SigningKey,
     TrustLevel,
     Pattern,
     set_keypair_context,
@@ -9,7 +9,7 @@ from tenuo import (
 
 def test_issuer_warrant_creation():
     """Test creating an Issuer Warrant."""
-    issuer_kp = Keypair.generate()
+    issuer_kp = SigningKey.generate()
     
     # Create an Issuer Warrant
     issuer_warrant = Warrant.issue_issuer(
@@ -26,7 +26,7 @@ def test_issuer_warrant_creation():
 
 def test_attenuate_builder_pattern():
     """Test that attenuate() returns a builder when no args are passed."""
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     warrant = Warrant.issue(
         tools="read_file",
         keypair=kp,
@@ -49,8 +49,8 @@ def test_attenuate_builder_pattern():
 
 def test_delegate_shortcut():
     """Test the delegate() shortcut method."""
-    kp = Keypair.generate()
-    worker_kp = Keypair.generate()
+    kp = SigningKey.generate()
+    worker_kp = SigningKey.generate()
     
     # Set context for delegate() to find the keypair
     set_keypair_context(kp)

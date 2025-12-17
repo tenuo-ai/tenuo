@@ -18,7 +18,7 @@ Key Patterns:
 """
 
 from tenuo import (
-    Keypair, Warrant, Pattern, Range,
+    SigningKey, Warrant, Pattern, Range,
     lockdown, set_warrant_context, set_keypair_context,
     AuthorizationError, WarrantError, TenuoError
 )
@@ -271,7 +271,7 @@ def main():
     print("Tenuo Error Handling Guide")
     print("=" * 60)
     
-    keypair = Keypair.generate()
+    keypair = SigningKey.generate()
     handler = TenuoErrorHandler()
     
     # ========================================================================
@@ -348,7 +348,7 @@ def main():
     print("\n4. PoP Failure (Wrong Keypair)")
     print("-" * 60)
     
-    wrong_keypair = Keypair.generate()  # Different keypair
+    wrong_keypair = SigningKey.generate()  # Different keypair
     warrant = Warrant.issue(
         tools="read_file",
         keypair=keypair,

@@ -5,7 +5,7 @@ This module provides two patterns for protecting LangChain tools with Tenuo:
 
 1. **Tier 1 API (Recommended)** - Uses context from root_task/scoped_task:
     ```python
-    from tenuo import configure, root_task_sync, Keypair
+    from tenuo import configure, root_task_sync, SigningKey
     from tenuo.langchain import protect_langchain_tools
     
     kp = Keypair.generate()
@@ -94,7 +94,7 @@ def protect_langchain_tools(
         List of TenuoTool wrapped tools
     
     Example:
-        from tenuo import configure, root_task_sync, Keypair
+        from tenuo import configure, root_task_sync, SigningKey
         from tenuo.langchain import protect_langchain_tools
         
         kp = Keypair.generate()
@@ -497,7 +497,7 @@ def protect_tools(
     Args:
         tools: List of tool functions to protect.
         warrant: Root warrant to enforce.
-        keypair: Keypair for PoP.
+        keypair: SigningKey for PoP.
         config: Optional config for per-tool constraints.
     
     Returns:
@@ -572,7 +572,7 @@ def secure_agent(
     
     Args:
         tools: List of LangChain BaseTool objects to protect
-        issuer_keypair: Keypair for issuing warrants (enables dev_mode if provided)
+        issuer_keypair: SigningKey for issuing warrants (enables dev_mode if provided)
         strict_mode: If True, fail on any missing warrant (default: False)
         warn_on_missing_warrant: If True, log warnings for unprotected calls (default: True)
         schemas: Optional custom tool schemas for risk level checking
@@ -581,7 +581,7 @@ def secure_agent(
         List of protected TenuoTool objects
     
     Example:
-        from tenuo import Keypair, root_task_sync
+        from tenuo import SigningKey, root_task_sync
         from tenuo.langchain import secure_agent
         from langchain.agents import create_openai_tools_agent, AgentExecutor
         

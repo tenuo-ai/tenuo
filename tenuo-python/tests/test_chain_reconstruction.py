@@ -3,7 +3,7 @@ Tests for chain reconstruction with diffs.
 """
 
 from tenuo import (
-    Keypair, Warrant, Pattern, Exact, Range,
+    SigningKey, Warrant, Pattern, Exact, Range,
     DelegationDiff, DelegationReceipt,
 )
 from tenuo.warrant_ext import get_chain_with_diffs, compute_diff
@@ -11,8 +11,8 @@ from tenuo.warrant_ext import get_chain_with_diffs, compute_diff
 
 def test_compute_diff_basic():
     """Test computing diff between two warrants."""
-    control_kp = Keypair.generate()
-    worker_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
+    worker_kp = SigningKey.generate()
     
     # Create parent
     parent = Warrant.issue(
@@ -45,9 +45,9 @@ def test_compute_diff_basic():
 
 def test_chain_reconstruction_simple():
     """Test reconstructing a simple 2-level chain."""
-    control_kp = Keypair.generate()
-    orchestrator_kp = Keypair.generate()
-    worker_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
+    orchestrator_kp = SigningKey.generate()
+    worker_kp = SigningKey.generate()
     
     # Root warrant
     root = Warrant.issue(
@@ -106,8 +106,8 @@ def test_chain_reconstruction_simple():
 
 def test_chain_reconstruction_with_store():
     """Test chain reconstruction with warrant store."""
-    control_kp = Keypair.generate()
-    orchestrator_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
+    orchestrator_kp = SigningKey.generate()
     
     # Root warrant
     root = Warrant.issue(
@@ -152,7 +152,7 @@ def test_chain_reconstruction_with_store():
 
 def test_multiple_constraint_changes():
     """Test diff with multiple constraint changes."""
-    control_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
     
     parent = Warrant.issue(
         tools="file_ops",
@@ -182,7 +182,7 @@ def test_multiple_constraint_changes():
 
 def test_trust_level_change():
     """Test diff with trust level change."""
-    control_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
     
     from tenuo import TrustLevel
     
@@ -208,7 +208,7 @@ def test_trust_level_change():
 
 def test_tool_dropping():
     """Test diff when tools are dropped."""
-    control_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
     
     # Parent with multiple tools (comma-separated)
     parent = Warrant.issue(
@@ -237,8 +237,8 @@ def test_receipt_serialization_roundtrip():
     import json
     from tenuo.builder import AttenuationBuilder
     
-    control_kp = Keypair.generate()
-    worker_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
+    worker_kp = SigningKey.generate()
     
     parent = Warrant.issue(
         tools="file_operations",
@@ -283,7 +283,7 @@ def test_receipt_serialization_roundtrip():
 
 def test_diff_with_no_changes():
     """Test diff when no changes are made (self-attenuation)."""
-    control_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
     
     parent = Warrant.issue(
         tools="read_file",
@@ -307,8 +307,8 @@ def test_diff_with_no_changes():
 
 def test_receipt_after_delegation():
     """Test that receipt is properly attached after delegation."""
-    control_kp = Keypair.generate()
-    worker_kp = Keypair.generate()
+    control_kp = SigningKey.generate()
+    worker_kp = SigningKey.generate()
     
     parent = Warrant.issue(
         tools="read_file",
