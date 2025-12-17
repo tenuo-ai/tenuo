@@ -264,7 +264,7 @@ Full implementation for fetching warrants per-task.
 ```python
 import os
 import httpx
-from tenuo import Warrant, Keypair, set_warrant_context, set_keypair_context
+from tenuo import Warrant, SigningKey, set_warrant_context, set_keypair_context
 
 # Load keypair once at startup
 keypair = SigningKey.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
@@ -355,7 +355,7 @@ Warrant passed via HTTP header, validated in middleware.
 
 ```python
 from fastapi import FastAPI, Request, HTTPException
-from tenuo import Warrant, Keypair, set_warrant_context, set_keypair_context
+from tenuo import Warrant, SigningKey, set_warrant_context, set_keypair_context
 import os
 
 app = FastAPI()
@@ -437,7 +437,7 @@ spec:
 
 ```python
 import os
-from tenuo import Warrant, Keypair, set_warrant_context, set_keypair_context
+from tenuo import Warrant, SigningKey, set_warrant_context, set_keypair_context
 
 # Load once at startup
 warrant = Warrant.from_base64(os.getenv("TENUO_WARRANT_BASE64"))
@@ -509,7 +509,7 @@ For simple deployments without a sidecar or gateway.
 ```python
 from fastapi import FastAPI, Request, HTTPException
 from tenuo import (
-    Authorizer, Warrant, Keypair, PublicKey,
+    Authorizer, Warrant, SigningKey, PublicKey,
     set_warrant_context, set_keypair_context, lockdown
 )
 import os

@@ -696,7 +696,7 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                     <h4 style="color: var(--accent-cyan); margin-bottom: 16px; font-size: 1.1rem;">Step 1: Decorate Your
                         Tool Functions</h4>
                     <div class="code-block" style="font-size: 0.85rem;">
-                        <pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> lockdown, Warrant, Pattern, Keypair
+                        <pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> lockdown, Warrant, Pattern, SigningKey
 
 <span class="comment"># Decorate your tool functions with @lockdown</span>
 <span class="decorator">@lockdown</span>(<span class="keyword">tool</span>=<span class="string">"read_file"</span>,
@@ -741,7 +741,7 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                         <pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> set_warrant_context
 
 <span class="comment"># Create warrant (in production, from control plane)</span>
-<span class="type">keypair</span> = <span class="function">Keypair.generate</span>()
+<span class="type">keypair</span> = <span class="function">SigningKey.generate</span>()
 <span class="type">warrant</span> = <span class="function">Warrant.issue</span>(
     <span class="keyword">tools</span>=<span class="string">"read_file"</span>,  <span class="comment"># str or List[str]</span>
     <span class="keyword">constraints</span>={<span class="string">"file_path"</span>: <span class="function">Pattern</span>(<span class="string">"/tmp/*"</span>)},  <span class="comment"># Only /tmp/ files</span>

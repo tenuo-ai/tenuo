@@ -295,7 +295,7 @@ print(f"Expires: {warrant.expires_at}")
 print(f"Holder: {warrant.authorized_holder}")
 
 # Verify keypair matches
-assert warrant.authorized_holder == keypair.public_key, "Keypair mismatch!"
+assert warrant.authorized_holder == keypair.public_key, "SigningKey mismatch!"
 ```
 
 ---

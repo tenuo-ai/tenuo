@@ -128,7 +128,7 @@ Choose a model based on your threat model.
 The orchestrator holds the root key directly.
 ```python
 # Development only
-root_key = Keypair.from_env("TENUO_ROOT_KEY")
+root_key = SigningKey.from_env("TENUO_ROOT_KEY")
 warrant = Warrant.issue(..., keypair=root_key)
 ```
 
@@ -248,7 +248,7 @@ with root_task(tools=["read_file", "write_file", "delete_file"], path="/*"):
     ...
 ```
 
-### 4. Separate Keypairs per Trust Boundary
+### 4. Separate SigningKeys per Trust Boundary
 - Control plane: One keypair
 - Each worker: Own keypair
 - Don't share keypairs across trust boundaries

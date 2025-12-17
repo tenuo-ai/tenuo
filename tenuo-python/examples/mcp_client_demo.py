@@ -52,9 +52,12 @@ async def main():
     print(f"2. Connecting to MCP server: {server_script.name}")
     
     try:
+        # register_config=True enables global configuration for @lockdown decorators
+        # This allows Tenuo to verify arguments without explicit extraction logic in code
         async with SecureMCPClient(
             command="python",
             args=[str(server_script)],
+            register_config=True,
         ) as client:
             print("   ✓ Connected to MCP server")
             

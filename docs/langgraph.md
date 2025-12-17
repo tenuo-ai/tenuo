@@ -14,7 +14,7 @@ description: Node scoping for LangGraph workflows
 
 ```python
 from langgraph.graph import StateGraph
-from tenuo import configure, Keypair, lockdown, root_task
+from tenuo import configure, SigningKey, lockdown, root_task
 from tenuo.langgraph import tenuo_node
 
 # Setup
@@ -90,7 +90,7 @@ Tenuo uses a **two-layer model** for LangGraph security:
 
 ```python
 from langgraph.graph import StateGraph
-from tenuo import configure, Keypair, lockdown, root_task
+from tenuo import configure, SigningKey, lockdown, root_task
 from tenuo.langgraph import tenuo_node
 
 # Setup (once at startup)

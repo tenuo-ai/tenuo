@@ -10,10 +10,10 @@ Example with explicit warrant:
         ...
 
 Example with ContextVar (LangChain/FastAPI pattern):
-    from tenuo import set_warrant_context, set_keypair_context
+    from tenuo import set_warrant_context, set_signing_key_context
     
     # Set warrant and keypair in context (e.g., in FastAPI middleware)
-    with set_warrant_context(warrant), set_keypair_context(keypair):
+    with set_warrant_context(warrant), set_signing_key_context(keypair):
         scale_cluster(cluster="staging-web", replicas=5)
     
     @lockdown(tool="manage_infrastructure")
@@ -50,7 +50,7 @@ from .exceptions import (
     ScopeViolation,
     ConstraintViolation,
     ExpiredError,
-    MissingKeypair,
+    MissingSigningKey,
 )
 from .audit import audit_logger, AuditEvent, AuditEventType
 
@@ -66,7 +66,7 @@ class AuthErrorCode:
     EXPIRED = "EXPIRED"                   # Warrant has expired
     SCOPE_VIOLATION = "SCOPE_VIOLATION"  # Tool not in warrant.tools
     CONSTRAINT_VIOLATION = "CONSTRAINT_VIOLATION"  # Args don't satisfy constraints
-    POP_MISSING = "POP_MISSING"          # Keypair not available for PoP
+    POP_MISSING = "POP_MISSING"          # SigningKey not available for PoP
     POP_INVALID = "POP_INVALID"          # PoP signature invalid
     HOLDER_MISMATCH = "HOLDER_MISMATCH"  # Wrong keypair for warrant holder
 
@@ -108,11 +108,11 @@ def _make_actionable_error(
     if error_code == AuthErrorCode.MISSING_CONTEXT:
         base += "\n\nTo fix:"
         base += "\n  1. Wrap the call with: async with root_task(tools=[...]):"
-        base += "\n  2. Or use: with set_warrant_context(warrant), set_keypair_context(keypair):"
+        base += "\n  2. Or use: with set_warrant_context(warrant), set_signing_key_context(keypair):"
         base += f"\n  3. Or pass warrant explicitly: @lockdown(warrant, tool='{tool_name}')"
     elif error_code == AuthErrorCode.POP_MISSING:
         base += "\n\nTo fix:"
-        base += "\n  1. Add keypair to context: with set_keypair_context(keypair):"
+        base += "\n  1. Add keypair to context: with set_signing_key_context(keypair):"
         base += "\n  2. Or use root_task() which handles this automatically"
     elif error_code == AuthErrorCode.EXPIRED:
         base += "\n\nTo fix:"
@@ -198,7 +198,7 @@ def set_warrant_context(warrant: Warrant) -> 'WarrantContext':
     return WarrantContext(warrant)
 
 
-def set_keypair_context(keypair: SigningKey) -> 'KeypairContext':
+def set_signing_key_context(keypair: SigningKey) -> 'SigningKeyContext':
     """
     Create a context manager to set a keypair in the current context.
     
@@ -213,11 +213,11 @@ def set_keypair_context(keypair: SigningKey) -> 'KeypairContext':
         A context manager that sets the keypair
     
     Example:
-        with set_warrant_context(warrant), set_keypair_context(keypair):
+        with set_warrant_context(warrant), set_signing_key_context(keypair):
             # @lockdown will automatically create PoP signatures
             process_request()
     """
-    return KeypairContext(keypair)
+    return SigningKeyContext(keypair)
 
 
 class WarrantContext:
@@ -237,7 +237,7 @@ class WarrantContext:
         return False
 
 
-class KeypairContext:
+class SigningKeyContext:
     """Context manager for setting keypair in ContextVar (for PoP)."""
     
     def __init__(self, keypair: SigningKey):
@@ -252,6 +252,11 @@ class KeypairContext:
         if self.token is not None:
             _keypair_context.reset(self.token)
         return False
+
+
+# Aliases for backward compatibility
+set_keypair_context = set_signing_key_context
+KeypairContext = SigningKeyContext
 
 
 def lockdown(
@@ -283,14 +288,14 @@ def lockdown(
             ...
         
         # Warrant AND keypair are set in context (BOTH required)
-        with set_warrant_context(warrant), set_keypair_context(keypair):
+        with set_warrant_context(warrant), set_signing_key_context(keypair):
             scale_cluster(cluster="staging-web", replicas=5)
     
     Args:
         warrant_or_tool: If Warrant instance, use it explicitly. If str, treat as tool name.
                         If None, tool must be provided as keyword arg.
         tool: The tool name to authorize (required if warrant_or_tool is not a string)
-        keypair: SigningKey for PoP signature (required - or use set_keypair_context)
+        keypair: SigningKey for PoP signature (required - or use set_signing_key_context)
         extract_args: Optional function to extract args from function arguments.
                      If None, uses the function's kwargs as args.
         mapping: Optional dictionary mapping function argument names to constraint names.
@@ -455,7 +460,7 @@ def lockdown(
                     callsite=callsite,
                     details="Proof-of-Possession is mandatory but no keypair available.",
                 )
-                raise MissingKeypair(tool=tool_name)
+                raise MissingSigningKey(tool=tool_name)
             
             if extract_args:
                 auth_args = extract_args(*args, **kwargs)

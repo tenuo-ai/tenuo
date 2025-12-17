@@ -12,7 +12,7 @@ Complete API documentation for the Tenuo Python SDK. For wire format details, se
 - [Configuration](#configuration)
 - [Constants](#constants)
 - [Core Types](#core-types)
-  - [Keypair](#keypair)
+  - [SigningKey](#keypair)
   - [PublicKey](#publickey)
   - [Signature](#signature)
   - [Warrant](#warrant)
@@ -54,7 +54,7 @@ from tenuo import MAX_DELEGATION_DEPTH, MAX_ISSUER_CHAIN_LENGTH, MAX_WARRANT_SIZ
 Initialize Tenuo globally. **Call once at application startup** before using `root_task()` or `scoped_task()`.
 
 ```python
-from tenuo import configure, Keypair
+from tenuo import configure, SigningKey
 
 # Development (self-signed warrants)
 kp = SigningKey.generate()
@@ -75,7 +75,7 @@ configure(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `issuer_key` | `Keypair` | None | Keypair for signing warrants (required for `root_task`) |
+| `issuer_key` | `SigningKey` | None | SigningKey for signing warrants (required for `root_task`) |
 | `trusted_roots` | `List[PublicKey]` | None | Public keys to trust as warrant issuers (**required in production**) |
 | `default_ttl` | `int` | 300 | Default warrant TTL in seconds |
 | `clock_tolerance` | `int` | 30 | Clock tolerance for expiration checks |
@@ -139,7 +139,7 @@ print(f"Dev mode: {config.dev_mode}")
 
 ## Core Types
 
-### Keypair
+### SigningKey
 
 Ed25519 keypair for signing and verification.
 
@@ -152,8 +152,8 @@ from tenuo import SigningKey
 | Method | Description |
 |--------|-------------|
 | `SigningKey.generate()` | Generate a new random keypair |
-| `Keypair.from_bytes(secret_key: bytes)` | Reconstruct keypair from 32-byte secret key |
-| `Keypair.from_pem(pem: str)` | Create a keypair from a PEM string |
+| `SigningKey.from_bytes(secret_key: bytes)` | Reconstruct keypair from 32-byte secret key |
+| `SigningKey.from_pem(pem: str)` | Create a keypair from a PEM string |
 
 #### Instance Methods
 
@@ -239,7 +239,7 @@ Warrant.issue(
     tools: Union[str, List[str]],
     constraints: dict,
     ttl_seconds: int,
-    keypair: Keypair,
+    keypair: SigningKey,
     holder: Optional[PublicKey] = None,
     session_id: Optional[str] = None
 )
@@ -250,7 +250,7 @@ Warrant.issue(
 | `tools` | `str \| List[str]` | Tool name(s) to authorize |
 | `constraints` | `dict` | Constraint dictionary |
 | `ttl_seconds` | `int` | Time-to-live in seconds |
-| `keypair` | `Keypair` | Issuer's keypair |
+| `keypair` | `SigningKey` | Issuer's keypair |
 | `holder` | `PublicKey` | Optional holder (defaults to issuer) |
 | `session_id` | `str` | Optional session ID |
 
@@ -260,7 +260,7 @@ Warrant.issue(
 Warrant.issue_issuer(
     issuable_tools: List[str],
     trust_ceiling: TrustLevel,
-    keypair: Keypair,
+    keypair: SigningKey,
     constraint_bounds: Optional[dict] = None,
     max_issue_depth: Optional[int] = None,
     ttl_seconds: int = 3600,
@@ -273,7 +273,7 @@ Warrant.issue_issuer(
 |-----------|------|-------------|
 | `issuable_tools` | `List[str]` | Tools this warrant can issue |
 | `trust_ceiling` | `TrustLevel` | Maximum trust level for issued warrants |
-| `keypair` | `Keypair` | Issuer's keypair |
+| `keypair` | `SigningKey` | Issuer's keypair |
 | `constraint_bounds` | `dict` | Optional constraint bounds |
 | `max_issue_depth` | `int` | Max depth for issued warrants |
 | `ttl_seconds` | `int` | Time-to-live in seconds |
@@ -617,7 +617,7 @@ async with root_task(tools=["read_file"], path="/data/*") as warrant:
 |-----------|------|----------|-------------|
 | `tools` | `List[str]` | Yes | Allowed tools |
 | `ttl` | `int` | No | TTL in seconds (default from `configure()`) |
-| `holder_key` | `Keypair` | No | Explicit holder (default: issuer) |
+| `holder_key` | `SigningKey` | No | Explicit holder (default: issuer) |
 | `**constraints` | `Any` | No | Constraint key-value pairs |
 
 #### Requirements
@@ -777,7 +777,7 @@ from tenuo import lockdown
 @lockdown(
     warrant_or_tool=None,  # Warrant instance OR tool name string
     tool=None,             # Tool name (if not passed as first arg)
-    keypair=None,          # Keypair for PoP (or use context)
+    keypair=None,          # SigningKey for PoP (or use context)
     extract_args=None,     # Optional custom extractor function
     mapping=None,          # Arg name → constraint name mapping
 )
@@ -789,7 +789,7 @@ from tenuo import lockdown
 |-----------|------|----------|-------------|
 | `warrant_or_tool` | `Warrant \| str` | No | Warrant instance or tool name as first positional arg |
 | `tool` | `str` | Yes* | Tool name for authorization (*not needed if tool passed as first arg) |
-| `keypair` | `Keypair` | No | Keypair for PoP (or use context) |
+| `keypair` | `SigningKey` | No | SigningKey for PoP (or use context) |
 | `extract_args` | `Callable` | No | Custom argument extractor. If None, uses automatic extraction. |
 | `mapping` | `dict[str, str]` | No | Rename parameters: `{"param": "constraint_key"}` |
 
@@ -883,7 +883,7 @@ from tenuo import (
 | `set_warrant_context(warrant)` | Context manager | Set warrant in async-safe context |
 | `set_keypair_context(keypair)` | Context manager | Set keypair in async-safe context |
 | `get_warrant_context()` | `Warrant \| None` | Get current warrant |
-| `get_keypair_context()` | `Keypair \| None` | Get current keypair |
+| `get_keypair_context()` | `SigningKey \| None` | Get current keypair |
 
 > **Important**: Context is a **convenience layer** for tool protection within a single process. For distributed systems, serialized state, or checkpointing, warrants must travel in request state (e.g., `tenuo_warrant` field). Context does not survive serialization boundaries.
 
@@ -915,7 +915,7 @@ with root_task_sync(tools=["search", "calculator"]):
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `tools` | `List[BaseTool]` | *required* | LangChain tools to protect |
-| `issuer_keypair` | `Keypair` | `None` | Keypair for issuing warrants (enables dev_mode) |
+| `issuer_keypair` | `SigningKey` | `None` | SigningKey for issuing warrants (enables dev_mode) |
 | `strict_mode` | `bool` | `False` | Fail on any missing warrant |
 | `warn_on_missing_warrant` | `bool` | `True` | Log warnings for unprotected calls |
 | `schemas` | `Dict[str, ToolSchema]` | `None` | Custom tool schemas |
@@ -923,7 +923,7 @@ with root_task_sync(tools=["search", "calculator"]):
 ### Legacy Example
 
 ```python
-from tenuo import configure, root_task, protect_tools, Keypair
+from tenuo import configure, root_task, protect_tools, SigningKey
 from langchain_community.tools import DuckDuckGoSearchRun
 
 # Setup

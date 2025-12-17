@@ -163,7 +163,7 @@ def configure(
         
         # Development
         configure(
-            issuer_key=Keypair.generate(),
+            issuer_key=SigningKey.generate(),
             dev_mode=True,
             allow_self_signed=True,
         )
@@ -203,6 +203,7 @@ def configure(
         trusted_roots=list(trusted_roots) if trusted_roots else [],
         default_ttl=default_ttl,
         clock_tolerance=clock_tolerance,
+        mcp_config=mcp_config,
         pop_window_secs=pop_window_secs,
         pop_max_windows=pop_max_windows,
         dev_mode=dev_mode,

@@ -29,7 +29,7 @@ Error Hierarchy:
     ├── TrustViolation (trust level issues)
     │   └── TrustLevelExceeded
     ├── PopError (Proof-of-Possession failures)
-    │   ├── MissingKeypair
+    │   ├── MissingSigningKey
     │   ├── SignatureMismatch
     │   └── PopExpired
     ├── ChainError (delegation chain issues)
@@ -333,16 +333,20 @@ class PopError(TenuoError):
     rust_variant = "SignatureInvalid"  # PoP failures are signature failures in Rust
 
 
-class MissingKeypair(PopError):
-    """No keypair available for PoP signature."""
-    error_code = "missing_keypair"
+class MissingSigningKey(PopError):
+    """No signing key available for PoP signature."""
+    error_code = "missing_signing_key"
     rust_variant = "MissingSignature"
     
     def __init__(self, tool: str):
         super().__init__(
-            f"No keypair available for PoP signature on tool '{tool}'",
+            f"No signing key available for PoP signature on tool '{tool}'",
             {"tool": tool}
         )
+
+
+# Alias for backwards compatibility
+MissingKeypair = MissingSigningKey
 
 
 class SignatureMismatch(PopError):

@@ -53,7 +53,7 @@ configure(issuer_key=keypair)
 
 # 2. Connect to MCP server
 # Automatically discovers tools and wraps them with authorization
-async with SecureMCPClient("python", ["server.py"]) as client:
+async with SecureMCPClient("python", ["server.py"], register_config=True) as client:
     protected_tools = await client.get_protected_tools()
     
     # 3. Call tool with authorization
@@ -302,23 +302,32 @@ tools:
 
 ### Automatic Extraction
 
-Tenuo extracts constraints from MCP arguments using YAML config:
+Tenuo extracts constraints from MCP arguments using YAML config.
+
+When using `SecureMCPClient(config_path="...", register_config=True)`, extraction happens automatically during tool calls.
+
+### Warrant Propagation (Mesh)
+
+To enable end-to-end authorization where the server verifies the warrant, set `inject_warrant=True`:
 
 ```python
-# MCP tool call
-arguments = {
-    "path": "/var/log/app.log",
-    "maxSize": 512 * 1024
-}
+async with SecureMCPClient(..., inject_warrant=True) as client:
+    tools = await client.get_protected_tools()
+    # Warrants now travel in arguments._tenuo
+    await tools["read_file"](path="/tmp/test.txt")
+```
 
+### Manual Extraction
+
+If not using `SecureMCPClient`, you can extract constraints manually:
+
+```python
 # Extract constraints
 result = compiled.extract_constraints("filesystem_read", arguments)
 
-# Result:
-# {
-#   "path": "/var/log/app.log",
-#   "max_size": 524288
-# }
+# Result contains:
+# result.constraints: { "path": "/var/log/app.log", "max_size": 524288 }
+# result.warrant_base64: "..."
 ```
 
 ### Nested Paths

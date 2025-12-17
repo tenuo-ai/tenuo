@@ -535,7 +535,7 @@ read_file()  # Missing required arg → TypeError → Authorization denied ✅
 
 ```python
 import inspect
-from tenuo import lockdown, Warrant, Keypair, Exact, set_warrant_context, set_keypair_context
+from tenuo import lockdown, Warrant, SigningKey, Exact, set_warrant_context, set_keypair_context
 
 def test_extraction():
     kp = SigningKey.generate()

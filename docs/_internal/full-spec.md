@@ -1308,13 +1308,13 @@ class PopPayload:
 ```python
 def create_pop(
     warrant: Warrant,
-    keypair: Keypair,
+    keypair: SigningKey,
     tool: str,
     args: dict,
 ) -> PopToken:
     # Verify keypair matches warrant holder
     if keypair.public_key() != warrant.holder:
-        raise KeypairMismatch()
+        raise SigningKeyMismatch()
     
     # Build payload
     payload = PopPayload(
@@ -1548,10 +1548,10 @@ Gateway                          Agent
 ### FastAPI
 
 ```python
-from tenuo import Warrant, Keypair
+from tenuo import Warrant, SigningKey
 from tenuo.context import set_warrant_context, set_keypair_context
 
-KEYPAIR = Keypair.from_file("/var/run/secrets/tenuo/keypair")
+KEYPAIR = SigningKey.from_file("/var/run/secrets/tenuo/keypair")
 
 @app.middleware("http")
 async def tenuo_middleware(request: Request, call_next):
@@ -2101,7 +2101,7 @@ Action: This operation requires a request from PRIVILEGED or higher source.
 |-------|------------------|-------|
 | `PopVerificationFailed` | `PoP Failed: {reason}` | Signature invalid, expired, or args mismatch |
 | `ChainVerificationFailed` | `Chain Failed: {reason}` | Signature chain broken or not anchored |
-| `KeypairMismatch` | `Keypair does not match warrant holder` | Wrong keypair for this warrant |
+| `SigningKeyMismatch` | `SigningKey does not match warrant holder` | Wrong keypair for this warrant |
 
 ### Delegation Errors
 
@@ -2117,7 +2117,7 @@ Action: This operation requires a request from PRIVILEGED or higher source.
 | Error | Message Template | Cause |
 |-------|------------------|-------|
 | `NoWarrantInContext` | `No warrant in context. Ensure middleware sets warrant.` | Missing warrant |
-| `NoKeypairInContext` | `No keypair in context. Ensure keypair is configured.` | Missing keypair |
+| `NoSigningKeyInContext` | `No keypair in context. Ensure keypair is configured.` | Missing keypair |
 
 ---
 
@@ -2152,7 +2152,7 @@ Event types:
 ```python
 # Warrants
 Warrant, WarrantType
-Keypair, PublicKey
+SigningKey, PublicKey
 
 # Constraints
 Exact, Pattern, Regex, OneOf, NotOneOf, Range, Wildcard
@@ -2190,7 +2190,7 @@ Warrant.narrow() -> Attenuator  # Alias
 set_warrant_context(warrant) -> ContextManager
 set_keypair_context(keypair) -> ContextManager
 get_warrant_context() -> Optional[Warrant]
-get_keypair_context() -> Optional[Keypair]
+get_keypair_context() -> Optional[SigningKey]
 scoped_task(tool, **constraints) -> ContextManager
 ```
 

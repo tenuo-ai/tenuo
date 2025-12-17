@@ -287,7 +287,7 @@ Authorization happens **locally** at the tool. No control plane calls during exe
 │                           YOUR APPLICATION                                   │
 │                                                                              │
 │   ┌─────────────┐     ┌─────────────┐     ┌─────────────┐                  │
-│   │  Keypair    │     │   Warrant   │     │  Authorizer │                  │
+│   │  SigningKey    │     │   Warrant   │     │  Authorizer │                  │
 │   │  (identity) │     │  (authority)│     │  (verify)   │                  │
 │   └──────┬──────┘     └──────┬──────┘     └──────┬──────┘                  │
 │          │                   │                   │                          │
@@ -321,7 +321,7 @@ Supported integrations: Envoy, Istio, nginx, Kubernetes sidecars. See [Proxy Con
 
 | Component | Description |
 |-----------|-------------|
-| **Keypair** | Ed25519 identity for signing |
+| **SigningKey** | Ed25519 identity for signing |
 | **Warrant** | Capability token with tools, constraints, TTL |
 | **Authorizer** | Local verification (no network) |
 | **@lockdown** | Decorator for tool protection |

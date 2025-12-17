@@ -50,7 +50,7 @@ def buggy_wrapper(warrant, arg):
 ### configure(strict_mode=True)
 
 ```python
-from tenuo import configure, Keypair
+from tenuo import configure, SigningKey
 
 configure(
     issuer_key=SigningKey.generate(),
@@ -107,7 +107,7 @@ The error includes:
 ### configure(warn_on_missing_warrant=True)
 
 ```python
-from tenuo import configure, Keypair
+from tenuo import configure, SigningKey
 
 configure(
     issuer_key=SigningKey.generate(),
@@ -225,7 +225,7 @@ jq 'select(.error_code == "strict_mode_violation")' /var/log/tenuo-audit.jsonl
 
 ```python
 # conftest.py or test setup
-from tenuo import configure, Keypair
+from tenuo import configure, SigningKey
 
 @pytest.fixture(scope="session", autouse=True)
 def tenuo_strict():
@@ -426,7 +426,7 @@ Tenuo uses structured error codes for all authorization failures:
 | `EXPIRED` | Warrant has expired |
 | `SCOPE_VIOLATION` | Tool not in warrant.tools |
 | `CONSTRAINT_VIOLATION` | Args don't satisfy constraints |
-| `POP_MISSING` | Keypair not available for PoP |
+| `POP_MISSING` | SigningKey not available for PoP |
 | `POP_INVALID` | PoP signature invalid |
 | `HOLDER_MISMATCH` | Wrong keypair for warrant holder |
 
@@ -515,7 +515,7 @@ if not warrant_to_use:
 ### Test Strict Mode
 
 ```python
-from tenuo import configure, lockdown, Keypair
+from tenuo import configure, lockdown, SigningKey
 import pytest
 
 def test_strict_mode_catches_missing_warrant():
@@ -533,7 +533,7 @@ def test_strict_mode_catches_missing_warrant():
 ### Test Warning Mode
 
 ```python
-from tenuo import configure, lockdown, Keypair
+from tenuo import configure, lockdown, SigningKey
 import warnings
 
 def test_warning_mode():

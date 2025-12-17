@@ -94,15 +94,15 @@ maturin develop
 
 ### Secret Key Management
 
-The `Keypair.secret_key_bytes()` method creates a copy of the secret key in Python's managed memory. Python's garbage collector does not guarantee secure erasure of secrets, and the key material may persist in memory until garbage collection occurs.
+The `SigningKey.secret_key_bytes()` method creates a copy of the secret key in Python's managed memory. Python's garbage collector does not guarantee secure erasure of secrets, and the key material may persist in memory until garbage collection occurs.
 
 **Best Practices:**
-- **Minimize keypair lifetime**: Create keypairs only when needed and let them go out of scope quickly
+- **Minimize signing key lifetime**: Create keys only when needed and let them go out of scope quickly
 - **Avoid `secret_key_bytes()` unless necessary**: Only call this method when absolutely required (e.g., for key backup/export)
 - **Don't store secret keys in long-lived variables**: Avoid keeping secret key bytes in variables that persist across function calls
 - **Use Rust for production key management**: For high-security deployments, consider using the Rust API directly, which provides better memory safety guarantees
 
-**For most use cases**, you should not need to access secret key bytes directly. The `Keypair` object handles signing operations internally, and you can use `public_key` (property) to share public keys.
+**For most use cases**, you should not need to access secret key bytes directly. The `SigningKey` object handles signing operations internally, and you can use `public_key` (property) to share public keys.
 
 ### Memory Safety
 

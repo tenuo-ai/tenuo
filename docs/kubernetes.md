@@ -220,12 +220,12 @@ Rotate signing keys without downtime.
 | Practice | Why |
 |----------|-----|
 | K8s Secrets, not ConfigMaps | Secrets can be encrypted at rest |
-| Keypair per workload | Limits blast radius |
+| SigningKey per workload | Limits blast radius |
 | Short TTLs (60-300s) | Stolen warrants expire quickly |
 | Network policies | Restrict control plane access |
 | Verify SA tokens in control plane | Prevent warrant spoofing |
 
-### Keypair Strategy
+### SigningKey Strategy
 
 | Strategy | Security | Complexity |
 |----------|----------|------------|

@@ -8,7 +8,7 @@ This module provides two patterns for protecting LangChain tools with Tenuo:
     from tenuo import configure, root_task_sync, SigningKey
     from tenuo.langchain import protect_langchain_tools
     
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     configure(issuer_key=kp, dev_mode=True)
     
     # Wrap LangChain tools
@@ -97,7 +97,7 @@ def protect_langchain_tools(
         from tenuo import configure, root_task_sync, SigningKey
         from tenuo.langchain import protect_langchain_tools
         
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
         tools = protect_langchain_tools([search_tool, file_tool])
@@ -586,7 +586,7 @@ def secure_agent(
         from langchain.agents import create_openai_tools_agent, AgentExecutor
         
         # One line to secure your tools
-        kp = Keypair.generate()
+        kp = SigningKey.generate()
         tools = secure_agent([search, calculator], issuer_keypair=kp)
         
         # Create agent as normal

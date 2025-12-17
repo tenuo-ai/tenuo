@@ -179,7 +179,7 @@ def deserialize(data: str, trusted_roots: List[PublicKey]) -> Warrant:
 
 A malicious node's forged warrant fails at step 5 — it's signed by an unknown key that doesn't chain to any trusted root.
 
-### SecureGraph Keypair Trust
+### SecureGraph SigningKey Trust
 
 SecureGraph needs a keypair to sign attenuated warrants. The root warrant must authorize it:
 
@@ -844,7 +844,7 @@ class SecureGraph:
     def __init__(
         self,
         graph: StateGraph,
-        keypair: Keypair,
+        keypair: SigningKey,
         trusted_roots: List[PublicKey],
         mode: AttenuationMode = AttenuationMode.STRICT,
         verify_on_deserialize: bool = True,

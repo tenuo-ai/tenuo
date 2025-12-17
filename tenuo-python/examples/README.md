@@ -33,7 +33,7 @@ pip install tenuo
     - Middleware for warrant extraction and context setting
     - Multiple protected endpoints
     - Error handling and proper HTTP responses
-    - Keypair loading from secrets
+    - SigningKey loading from secrets
     - Request-scoped warrant validation
 
 ### Error Handling

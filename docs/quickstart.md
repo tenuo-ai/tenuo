@@ -152,7 +152,7 @@ graph.add_node("tools", tool_node)
 ### 1. Create a Warrant
 
 ```rust
-use tenuo_core::{Keypair, Warrant, Pattern, Range};
+use tenuo_core::{SigningKey, Warrant, Pattern, Range};
 use std::time::Duration;
 
 let keypair = SigningKey::generate();

@@ -59,7 +59,7 @@ async with root_task(tools=["read_file"], path="/data/*"):
 **Target user**: Developer who needs control over delegation chains.
 
 ```python
-from tenuo import Warrant, Keypair
+from tenuo import Warrant, SigningKey
 
 # Create root warrant
 root = Warrant.builder() \
@@ -95,7 +95,7 @@ from typing import Optional
 
 # Async-safe context variables
 _warrant_context: ContextVar[Optional[Warrant]] = ContextVar('warrant', default=None)
-_keypair_context: ContextVar[Optional[Keypair]] = ContextVar('keypair', default=None)
+_keypair_context: ContextVar[Optional[SigningKey]] = ContextVar('keypair', default=None)
 
 def get_warrant() -> Optional[Warrant]:
     """Get the current warrant from async context."""
@@ -105,11 +105,11 @@ def set_warrant(warrant: Optional[Warrant]) -> None:
     """Set the current warrant in async context."""
     _warrant_context.set(warrant)
 
-def get_keypair() -> Optional[Keypair]:
+def get_keypair() -> Optional[SigningKey]:
     """Get the current keypair from async context."""
     return _keypair_context.get()
 
-def set_keypair(keypair: Optional[Keypair]) -> None:
+def set_keypair(keypair: Optional[SigningKey]) -> None:
     """Set the current keypair in async context."""
     _keypair_context.set(keypair)
 ```
@@ -126,7 +126,7 @@ async def root_task(
     *,
     tools: List[str],
     ttl: Optional[int] = None,  # seconds, defaults to config.default_ttl
-    holder_key: Optional[Keypair] = None,  # Explicit holder (advanced)
+    holder_key: Optional[SigningKey] = None,  # Explicit holder (advanced)
     **constraints
 ) -> AsyncIterator[Warrant]:
     """
@@ -197,8 +197,8 @@ def _create_root_warrant(
     tools: List[str],
     constraints: Dict[str, Any],
     ttl: int,
-    issuer: Keypair,
-    holder: Keypair,
+    issuer: SigningKey,
+    holder: SigningKey,
 ) -> Warrant:
     """Create a root warrant with the given parameters."""
     builder = Warrant.builder() \
@@ -280,7 +280,7 @@ def _attenuate_with_containment(
     tools: Optional[List[str]],
     constraints: Dict[str, Any],
     ttl: Optional[int],
-    keypair: Keypair,
+    keypair: SigningKey,
 ) -> Warrant:
     """
     Attenuate with containment semantics (Tier 1 simplicity).
@@ -1010,7 +1010,7 @@ def register_schema(tool_name: str, schema: ToolSchema) -> None:
 
 @dataclass
 class TenuoConfig:
-    issuer_keypair: Optional[Keypair] = None
+    issuer_keypair: Optional[SigningKey] = None
     default_ttl: int = 300
     allow_passthrough: bool = False
     passthrough_hook: Optional[Callable] = None
@@ -1360,7 +1360,7 @@ def generate_nonce(warrant_id: str) -> str:
 
 def create_pop(
     warrant: Warrant,
-    keypair: Keypair,
+    keypair: SigningKey,
     tool: str,
     args: Dict[str, Any],
     nonce: Optional[str] = None,
@@ -1371,7 +1371,7 @@ def create_pop(
     
     Args:
         warrant: The warrant being used
-        keypair: Keypair matching warrant's authorized_holder
+        keypair: SigningKey matching warrant's authorized_holder
         tool: Tool name being invoked
         args: Tool arguments
         nonce: Optional nonce (generated if not provided)
@@ -1718,7 +1718,7 @@ from .config import configure
 
 # Tier 2 (explicit)
 from .warrant import Warrant
-from .crypto import Keypair
+from .crypto import SigningKey
 from .context import get_warrant, set_warrant, get_keypair, set_keypair
 from .pop import create_pop, verify_pop, generate_nonce
 from .constraints import PrefixGlob, SuffixMatch, Exact, OneOf, Range
@@ -1749,7 +1749,7 @@ __all__ = [
     "configure",
     # Tier 2
     "Warrant",
-    "Keypair",
+    "SigningKey",
     "get_warrant",
     "set_warrant",
     "get_keypair",
