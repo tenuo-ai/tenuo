@@ -37,15 +37,11 @@ warrant = Warrant.issue(
 
 # Attenuate for a worker (capabilities shrink)
 worker_keypair = Keypair.generate()
-worker_warrant = warrant.attenuate(
-    constraints={
-        "cluster": Exact("staging-web"),
-        "replicas": Range.max_value(10)
-    },
-    keypair=worker_keypair,       # Subject keypair
-    parent_keypair=keypair,       # Parent signs the attenuation
-    holder=worker_keypair.public_key  # Bind to worker
-)
+worker_warrant = warrant.attenuate_builder() \
+    .with_constraint("cluster", Exact("staging-web")) \
+    .with_constraint("replicas", Range.max_value(10)) \
+    .with_holder(worker_keypair.public_key) \
+    .delegate_to(worker_keypair, keypair)
 
 # Authorize an action (requires Proof-of-Possession)
 # See docs/security.md for PoP replay prevention best practices.
@@ -340,13 +336,11 @@ python examples/mcp_integration.py
 
 ## Documentation
 
-- **[Concepts](../docs/concepts.md)**: Why Tenuo? Problem/solution
-- **[API Reference](../docs/api-reference.md)**: Python SDK reference
-- **[Constraints](../docs/constraints.md)**: Constraint types and usage
-- **[LangChain Integration](../docs/langchain.md)**: Tool protection
-- **[Security Model](../docs/security.md)**: Threat model, best practices
-- **[Integration Safety](../docs/integration-safety.md)**: Strict mode, warnings, fail-safe mechanisms
-- **[CLI Specification](../docs/cli-spec.md)**: CLI reference
+- **[Concepts](https://tenuo.ai/concepts)**: Why Tenuo? Problem/solution
+- **[API Reference](https://tenuo.ai/api-reference)**: Python SDK reference
+- **[Constraints](https://tenuo.ai/constraints)**: Constraint types and usage
+- **[LangChain Integration](https://tenuo.ai/langchain)**: Tool protection
+- **[Security Model](https://tenuo.ai/security)**: Threat model, best practices
 - **[Examples](examples/README.md)**: Python usage examples
 
 

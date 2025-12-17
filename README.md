@@ -7,7 +7,7 @@
 </p>
 
 Tenuo is a cryptographic authorization primitive for AI agents.
-It constraints ambient identity-based permissions with task-scoped capabilities that attenuate as they delegate. Offline verification in ~27μs.
+It constrains ambient identity-based permissions with task-scoped capabilities that attenuate as they delegate. Offline verification in ~27μs.
 If an agent is prompt-injected, the authority still can’t escape its bounds.
 
 [![Crates.io](https://img.shields.io/crates/v/tenuo-core.svg)](https://crates.io/crates/tenuo-core)
@@ -124,10 +124,10 @@ Tenuo supports two types of warrants for separation of concerns:
 ## Try It
 ```bash
 # Run the demo (Docker required)
- docker compose up orchestrator worker 
+docker compose up orchestrator worker
 ```
 
-See the [examples](./examples) for LangChain, LangGraph, and multi-agent patterns.
+See the [examples](./tenuo-python/examples) for LangChain, LangGraph, and multi-agent patterns.
 
 ---
 
@@ -154,8 +154,8 @@ tool_node = TenuoToolNode(tools)
 
 ## Documentation
 
-| | |
-|---|---|
+| Resource | Description |
+|----------|-------------|
 | **[Quickstart](https://tenuo.ai/quickstart)** | Get running in 5 minutes |
 | **[Concepts](https://tenuo.ai/concepts)** | Why capability tokens? |
 | **[LangChain](https://tenuo.ai/langchain)** | Tool protection |
