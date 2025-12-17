@@ -9,6 +9,9 @@ repository = "https://github.com/tenuo-ai/tenuo"
 keywords = ["authorization", "capabilities", "agents", "security", "warrants"]
 categories = ["authentication", "cryptography", "ai", "security"]
 
+[lints.rust]
+deprecated = "allow"  # Allow Keypair usage during SigningKey migration
+
 [lib]
 name = "tenuo_core"
 # When used as a Python extension dependency, only build as rlib to avoid linking issues

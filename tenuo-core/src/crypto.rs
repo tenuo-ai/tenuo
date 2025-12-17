@@ -12,27 +12,35 @@
 
 use crate::error::{Error, Result};
 use crate::SIGNATURE_CONTEXT;
-use ed25519_dalek::{Signature as DalekSignature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{
+    Signature as DalekSignature, Signer, SigningKey as Ed25519SigningKey, Verifier, VerifyingKey,
+};
 use pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 
-/// A keypair for signing warrants.
+/// A signing key for creating and signing warrants.
+///
+/// Contains an Ed25519 private key. The public key is derived on demand.
 #[derive(Debug)]
-pub struct Keypair {
-    signing_key: SigningKey,
+pub struct SigningKey {
+    signing_key: Ed25519SigningKey,
 }
 
-impl Keypair {
-    /// Generate a new random keypair.
+/// Deprecated alias for backward compatibility. Use `SigningKey` instead.
+#[deprecated(since = "0.1.1", note = "Use `SigningKey` instead")]
+pub type Keypair = SigningKey;
+
+impl SigningKey {
+    /// Generate a new random signing key.
     pub fn generate() -> Self {
-        let signing_key = SigningKey::generate(&mut OsRng);
+        let signing_key = Ed25519SigningKey::generate(&mut OsRng);
         Self { signing_key }
     }
 
-    /// Create a keypair from secret key bytes.
+    /// Create a signing key from secret key bytes.
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
-        let signing_key = SigningKey::from_bytes(bytes);
+        let signing_key = Ed25519SigningKey::from_bytes(bytes);
         Self { signing_key }
     }
 
@@ -65,14 +73,14 @@ impl Keypair {
         prefixed
     }
 
-    /// Create a keypair from a PEM string.
+    /// Create a signing key from a PEM string.
     pub fn from_pem(pem: &str) -> Result<Self> {
-        let signing_key = SigningKey::from_pkcs8_pem(pem)
+        let signing_key = Ed25519SigningKey::from_pkcs8_pem(pem)
             .map_err(|e| Error::CryptoError(format!("Invalid PEM: {}", e)))?;
         Ok(Self { signing_key })
     }
 
-    /// Convert the keypair to a PEM string.
+    /// Convert the signing key to a PEM string.
     pub fn to_pem(&self) -> String {
         self.signing_key
             .to_pkcs8_pem(LineEnding::LF)
@@ -81,10 +89,10 @@ impl Keypair {
     }
 }
 
-impl Clone for Keypair {
+impl Clone for SigningKey {
     fn clone(&self) -> Self {
         Self {
-            signing_key: SigningKey::from_bytes(&self.signing_key.to_bytes()),
+            signing_key: Ed25519SigningKey::from_bytes(&self.signing_key.to_bytes()),
         }
     }
 }
@@ -118,7 +126,7 @@ impl PublicKey {
 
     /// Verify a signature against a message.
     pub fn verify(&self, message: &[u8], signature: &Signature) -> Result<()> {
-        let prefixed = Keypair::prefix_message(message);
+        let prefixed = SigningKey::prefix_message(message);
         self.verifying_key
             .verify(&prefixed, &signature.inner)
             .map_err(|e| Error::SignatureInvalid(e.to_string()))
@@ -170,7 +178,7 @@ pub fn verify_batch(items: &[(&PublicKey, &[u8], &Signature)]) -> Result<()> {
     // Prepare prefixed messages
     let prefixed_messages: Vec<Vec<u8>> = items
         .iter()
-        .map(|(_, msg, _)| Keypair::prefix_message(msg))
+        .map(|(_, msg, _)| SigningKey::prefix_message(msg))
         .collect();
 
     // Extract components for batch verification
