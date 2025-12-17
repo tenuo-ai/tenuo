@@ -43,7 +43,7 @@ If you're skimming: Tenuo is a capability engine for AI agents that makes author
 
 In my [last post](https://niyikiza.com/posts/capability-delegation/), I used the valet key analogy: a key that starts the engine but won't open the trunk. You don't trust the valet to follow instructions. The key *is* the policy.
 
-A **warrant** is that key:
+A **Tenuo warrant** is that key:
 ```python
 warrant = Warrant.issue(
     tools=["read_file", "search"],
@@ -66,15 +66,16 @@ The warrant carries:
 - **Issuer chain**: Who delegated it (audit trail)
 
 Everything travels with the request. Verification is local.
+
 This solves access. It does not yet solve delegation.
 
 ## Part 2: The Expense Card Model
 
 Access control is binary: you have the key or you don't. Delegation needs gradients.
 
-Agents need graduated authority: limits that narrow as work flows across agents, and die when the work ends.
+Agentic systems need graduated authority: limits that narrow as work flows across agents, and die when the work ends.
 
-A CFO doesn't hand an intern the company Amex. They issue a card for *this specific trip*:
+A CFO doesn't hand an intern the company Amex. They issue a prepaid debig card for *this specific trip*:
 - $500 limit
 - Travel and meals only
 - Expires Friday
@@ -116,7 +117,7 @@ The intern can't:
 - Pivot the subsidiary to crypto (Scope violation)
 - Use the card tomorrow (TTL expired)
 
-And critically: the intern can't issue *themselves* a better card.
+And yeah, the intern can't issue *themselves* a better card.
 
 ```python
 # This raises MonotonicityError
@@ -146,7 +147,7 @@ A Kubernetes pod gets its IAM role at deploy time. That role lives until the pod
 2. **Control plane issues warrant.** Scoped to this task, expires in 60 seconds.
 3. **Orchestrator attenuates.** Worker gets narrower scope: only `read_file`, only `/data/*`.
 4. **Worker executes.** Every tool call passes through the authorizer sidecar.
-5. **Sidecar verifies.** Signature, tools, constraints, TTL, proof-of-possession. ~27μs.
+5. **Sidecar verifies.** Signature, tools, constraints, TTL, proof-of-possession.
 6. **Task ends.** Warrant expires. No revocation needed.
 
 Here's how authority flows through each layer:
