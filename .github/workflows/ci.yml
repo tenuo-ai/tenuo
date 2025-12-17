@@ -73,12 +73,13 @@ jobs:
           cache-dependency-path: tenuo-python/pyproject.toml
 
       - name: Install build tools
-        run: pip install maturin
+        run: pip install maturin build
 
       - name: Build and install Tenuo
         working-directory: tenuo-python
         run: |
-          maturin develop
+          maturin build --release
+          pip install target/wheels/*.whl
           pip install -e .
 
       - name: Install test dependencies
@@ -134,7 +135,8 @@ jobs:
         working-directory: tenuo-python
         run: |
           pip install maturin
-          maturin develop
+          maturin build --release
+          pip install target/wheels/*.whl
           pip install -e .
 
       - name: Install LangChain ${{ matrix.langchain-version }}
