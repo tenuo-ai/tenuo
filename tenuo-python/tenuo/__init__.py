@@ -76,6 +76,7 @@ from .exceptions import (
     TrustLevelExceeded,
     # PoP errors
     PopError,
+    MissingSigningKey,
     MissingKeypair,
     SignatureMismatch,
     PopExpired,
@@ -131,8 +132,10 @@ from .decorators import (
     set_warrant_context,
     get_keypair_context,
     set_keypair_context,
+    set_signing_key_context,
     WarrantContext,
     KeypairContext,
+    SigningKeyContext,
 )
 from .audit import (
     audit_logger,
@@ -344,6 +347,7 @@ __all__ = [
     "TrustLevelExceeded",
     # Exceptions - PoP errors
     "PopError",
+    "MissingSigningKey",
     "MissingKeypair",
     "SignatureMismatch",
     "PopExpired",
@@ -398,8 +402,10 @@ __all__ = [
     "set_warrant_context",
     "get_keypair_context",
     "set_keypair_context",
+    "set_signing_key_context",
     "WarrantContext",
     "KeypairContext",
+    "SigningKeyContext",
     
     # Audit logging (SIEM compatible)
     "audit_logger",
