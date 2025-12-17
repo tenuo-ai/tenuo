@@ -74,7 +74,10 @@ jobs:
 
       - name: Install Tenuo
         working-directory: tenuo-python
-        run: pip install .
+        run: |
+          pip install maturin
+          pip install . -v
+          pip list | grep tenuo
 
       - name: Install test dependencies
         run: |
@@ -127,7 +130,10 @@ jobs:
 
       - name: Install Tenuo
         working-directory: tenuo-python
-        run: pip install .
+        run: |
+          pip install maturin
+          pip install . -v
+          pip list | grep tenuo
 
       - name: Verify import
         run: python -c "import tenuo; print(f'tenuo {tenuo.__version__}')"
