@@ -529,7 +529,7 @@ import inspect
 from tenuo import lockdown, Warrant, Keypair, Exact, set_warrant_context, set_keypair_context
 
 def test_extraction():
-    kp = Keypair.generate()
+    kp = SigningKey.generate()
     w = Warrant.issue(tools=["test"], constraints={"a": Exact(1)}, keypair=kp, ttl_seconds=300)
     
     @lockdown(tool="test")

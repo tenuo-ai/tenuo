@@ -56,9 +56,9 @@ cargo install tenuo-cli
 ### 1. Create a Warrant
 
 ```python
-from tenuo import Keypair, Warrant, Pattern, Range
+from tenuo import SigningKey, Warrant, Pattern, Range
 
-keypair = Keypair.generate()
+keypair = SigningKey.generate()
 
 warrant = Warrant.issue(
     tools="manage_infrastructure",
@@ -78,7 +78,7 @@ warrant = Warrant.issue(
 from tenuo import Exact
 
 # Worker gets a narrower warrant
-worker_keypair = Keypair.generate()
+worker_keypair = SigningKey.generate()
 
 worker_warrant = warrant.attenuate(
     constraints={
@@ -125,11 +125,11 @@ with set_warrant_context(warrant), set_keypair_context(keypair):
 ### 5. LangChain One-Liner (Recommended)
 
 ```python
-from tenuo import Keypair, root_task_sync
+from tenuo import SigningKey, root_task_sync
 from tenuo.langchain import secure_agent
 
 # One line to secure your LangChain tools
-kp = Keypair.generate()
+kp = SigningKey.generate()
 tools = secure_agent([search, calculator], issuer_keypair=kp)
 
 # Run with scoped authority
@@ -155,7 +155,7 @@ graph.add_node("tools", tool_node)
 use tenuo_core::{Keypair, Warrant, Pattern, Range};
 use std::time::Duration;
 
-let keypair = Keypair::generate();
+let keypair = SigningKey::generate();
 let warrant = Warrant::builder()
     .tools(vec!["manage_infrastructure".to_string()])
     .constraint("cluster", Pattern::new("staging-*")?)
@@ -169,7 +169,7 @@ let warrant = Warrant::builder()
 ```rust
 use tenuo_core::Exact;
 
-let worker_keypair = Keypair::generate();
+let worker_keypair = SigningKey::generate();
 let worker_warrant = warrant.attenuate()
     .constraint("cluster", Exact::new("staging-web"))
     .constraint("replicas", Range::max(10.0))

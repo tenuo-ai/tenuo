@@ -57,7 +57,7 @@ Initialize Tenuo globally. **Call once at application startup** before using `ro
 from tenuo import configure, Keypair
 
 # Development (self-signed warrants)
-kp = Keypair.generate()
+kp = SigningKey.generate()
 configure(
     issuer_key=kp,
     dev_mode=True,
@@ -144,14 +144,14 @@ print(f"Dev mode: {config.dev_mode}")
 Ed25519 keypair for signing and verification.
 
 ```python
-from tenuo import Keypair
+from tenuo import SigningKey
 ```
 
 #### Class Methods
 
 | Method | Description |
 |--------|-------------|
-| `Keypair.generate()` | Generate a new random keypair |
+| `SigningKey.generate()` | Generate a new random keypair |
 | `Keypair.from_bytes(secret_key: bytes)` | Reconstruct keypair from 32-byte secret key |
 | `Keypair.from_pem(pem: str)` | Create a keypair from a PEM string |
 
@@ -898,11 +898,11 @@ See [LangChain Integration Guide](./langchain) for full documentation.
 One-liner to secure LangChain tools. This is the recommended entry point.
 
 ```python
-from tenuo import Keypair, root_task_sync
+from tenuo import SigningKey, root_task_sync
 from tenuo.langchain import secure_agent
 
 # One line to secure your tools
-kp = Keypair.generate()
+kp = SigningKey.generate()
 tools = secure_agent([search, calculator], issuer_keypair=kp)
 
 # Use with scoped authority
@@ -927,7 +927,7 @@ from tenuo import configure, root_task, protect_tools, Keypair
 from langchain_community.tools import DuckDuckGoSearchRun
 
 # Setup
-kp = Keypair.generate()
+kp = SigningKey.generate()
 configure(issuer_key=kp)
 
 # Protect tools

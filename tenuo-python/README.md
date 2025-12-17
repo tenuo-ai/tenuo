@@ -18,10 +18,10 @@ pip install tenuo
 The package provides a clean Python API that wraps the Rust extension:
 
 ```python
-from tenuo import Keypair, Warrant, Pattern, Exact, Range
+from tenuo import SigningKey, Warrant, Pattern, Exact, Range
 
 # Generate a keypair
-keypair = Keypair.generate()
+keypair = SigningKey.generate()
 
 # Issue a warrant with constraints
 warrant = Warrant.issue(
@@ -36,7 +36,7 @@ warrant = Warrant.issue(
 )
 
 # Attenuate for a worker (capabilities shrink)
-worker_keypair = Keypair.generate()
+worker_keypair = SigningKey.generate()
 worker_warrant = warrant.attenuate_builder() \
     .with_constraint("cluster", Exact("staging-web")) \
     .with_constraint("replicas", Range.max_value(10)) \
@@ -175,14 +175,14 @@ except AuthorizationError as e:
 The simplest way to protect LangChain tools:
 
 ```python
-from tenuo import Keypair, root_task_sync
+from tenuo import SigningKey, root_task_sync
 from tenuo.langchain import secure_agent
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_openai import ChatOpenAI
 
 # One line to secure your tools
-kp = Keypair.generate()
+kp = SigningKey.generate()
 tools = secure_agent(
     [DuckDuckGoSearchRun()],
     issuer_keypair=kp,

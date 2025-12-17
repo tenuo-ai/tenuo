@@ -267,7 +267,7 @@ import httpx
 from tenuo import Warrant, Keypair, set_warrant_context, set_keypair_context
 
 # Load keypair once at startup
-keypair = Keypair.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
+keypair = SigningKey.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
 
 def get_k8s_token() -> str:
     """Read the pod's service account token."""
@@ -361,7 +361,7 @@ import os
 app = FastAPI()
 
 # Load keypair once at startup
-keypair = Keypair.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
+keypair = SigningKey.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
 
 @app.middleware("http")
 async def tenuo_middleware(request: Request, call_next):
@@ -441,7 +441,7 @@ from tenuo import Warrant, Keypair, set_warrant_context, set_keypair_context
 
 # Load once at startup
 warrant = Warrant.from_base64(os.getenv("TENUO_WARRANT_BASE64"))
-keypair = Keypair.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
+keypair = SigningKey.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
 
 def run_agent(prompt: str):
     with set_warrant_context(warrant), set_keypair_context(keypair):
@@ -521,7 +521,7 @@ control_plane_key = PublicKey.from_hex(os.getenv("TRUSTED_ISSUER_KEY"))
 authorizer = Authorizer(trusted_roots=[control_plane_key])
 
 # Load service keypair
-keypair = Keypair.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
+keypair = SigningKey.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
 
 
 @app.middleware("http")

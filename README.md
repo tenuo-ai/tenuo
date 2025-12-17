@@ -23,10 +23,10 @@ pip install tenuo
 ## Quick Start
 
 ```python
-from tenuo import Keypair, Warrant, Pattern, lockdown, set_warrant_context, set_keypair_context
+from tenuo import SigningKey, Warrant, Pattern, lockdown, set_warrant_context, set_keypair_context
 
 # Issue a warrant
-keypair = Keypair.generate()
+keypair = SigningKey.generate()
 warrant = Warrant.issue(
     tools=["read_file"],
     constraints={"path": Pattern("/data/*")},

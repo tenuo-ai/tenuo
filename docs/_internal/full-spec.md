@@ -1669,9 +1669,9 @@ warrant = (parent.attenuate()
 
 ```python
 from tenuo.langchain import protect_tools
-from tenuo import Keypair, Warrant, Pattern
+from tenuo import SigningKey, Warrant, Pattern
 
-keypair = Keypair.generate()
+keypair = SigningKey.generate()
 warrant = Warrant.issue(
     tool="search,read_file",
     keypair=keypair,

@@ -18,7 +18,7 @@ from tenuo import configure, Keypair, lockdown, root_task
 from tenuo.langgraph import tenuo_node
 
 # Setup
-kp = Keypair.generate()
+kp = SigningKey.generate()
 configure(issuer_key=kp)
 
 # 1. Protect your tools (ENFORCEMENT layer)
@@ -94,7 +94,7 @@ from tenuo import configure, Keypair, lockdown, root_task
 from tenuo.langgraph import tenuo_node
 
 # Setup (once at startup)
-kp = Keypair.generate()
+kp = SigningKey.generate()
 configure(issuer_key=kp)
 
 # LAYER 2: Tool wrapper (ENFORCEMENT)

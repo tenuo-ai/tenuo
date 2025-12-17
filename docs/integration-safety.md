@@ -53,7 +53,7 @@ def buggy_wrapper(warrant, arg):
 from tenuo import configure, Keypair
 
 configure(
-    issuer_key=Keypair.generate(),
+    issuer_key=SigningKey.generate(),
     strict_mode=True,  # ← Enforce warrant presence
 )
 ```
@@ -110,7 +110,7 @@ The error includes:
 from tenuo import configure, Keypair
 
 configure(
-    issuer_key=Keypair.generate(),
+    issuer_key=SigningKey.generate(),
     warn_on_missing_warrant=True,  # ← Warn on missing warrants
 )
 ```
@@ -148,7 +148,7 @@ read_file("/data/test.txt")
 
 ```python
 configure(
-    issuer_key=Keypair.generate(),
+    issuer_key=SigningKey.generate(),
     warn_on_missing_warrant=True,
     max_missing_warrant_warnings=10,  # ← Auto-flip to strict after 10 warnings
 )
@@ -230,7 +230,7 @@ from tenuo import configure, Keypair
 @pytest.fixture(scope="session", autouse=True)
 def tenuo_strict():
     configure(
-        issuer_key=Keypair.generate(),
+        issuer_key=SigningKey.generate(),
         dev_mode=True,
         strict_mode=True,  # Fail tests if warrant missing
     )
@@ -519,7 +519,7 @@ from tenuo import configure, lockdown, Keypair
 import pytest
 
 def test_strict_mode_catches_missing_warrant():
-    configure(strict_mode=True, dev_mode=True, issuer_key=Keypair.generate())
+    configure(strict_mode=True, dev_mode=True, issuer_key=SigningKey.generate())
     
     @lockdown(tool="test")
     def my_tool():
@@ -537,7 +537,7 @@ from tenuo import configure, lockdown, Keypair
 import warnings
 
 def test_warning_mode():
-    configure(warn_on_missing_warrant=True, dev_mode=True, issuer_key=Keypair.generate())
+    configure(warn_on_missing_warrant=True, dev_mode=True, issuer_key=SigningKey.generate())
     
     @lockdown(tool="test")
     def my_tool():
@@ -582,7 +582,7 @@ pytest -W error::tenuo.decorators.SecurityWarning
 ```python
 # test_config.py
 configure(
-    issuer_key=Keypair.generate(),
+    issuer_key=SigningKey.generate(),
     dev_mode=True,
     strict_mode=True,  # Fail tests on missing warrants
 )
