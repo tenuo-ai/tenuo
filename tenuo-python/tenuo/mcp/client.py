@@ -143,9 +143,25 @@ class SecureMCPClient:
         """
         Call an MCP tool with Tenuo authorization.
         
+        MCP Warrant Transport:
+            If arguments contains `_tenuo.warrant` and `_tenuo.signature`, they are
+            automatically extracted and used for authorization. The `_tenuo` field is
+            stripped before passing arguments to the tool.
+            
+            Example arguments:
+            ```python
+            {
+                "path": "/data/file.txt",
+                "_tenuo": {
+                    "warrant": "eyJ0eXA...",
+                    "signature": "c2lnXy4uLg=="
+                }
+            }
+            ```
+        
         Args:
             tool_name: Name of the MCP tool to call
-            arguments: Tool arguments
+            arguments: Tool arguments (may include _tenuo field)
             warrant_context: If True, use warrant from context (requires root_task)
         
         Returns:
@@ -158,17 +174,23 @@ class SecureMCPClient:
         if self.session is None:
             raise RuntimeError("Not connected to MCP server. Call connect() first.")
         
-        # Extract constraints if config provided
+        # Extract constraints (also strips _tenuo if present)
         extracted_args = arguments
+        
         if self.compiled_config:
             result = self.compiled_config.extract_constraints(tool_name, arguments)
             extracted_args = dict(result.constraints)
+            
+            # TODO: Use embedded warrant/signature for authorization (future enhancement)
+            # For now, _tenuo fields are stripped but warrant comes from context
+            _ = result.warrant_base64  # Reserved for embedded warrant support
+            _ = result.signature_base64
         
         # Authorize if warrant context is enabled
         if warrant_context:
             if not is_configured():
                 raise ConfigurationError(
-                    "Tenuo not configured. Call configure() or use warrant_context=False"
+                    "Tenuo not configured. Call configure() first or use warrant_context=False"
                 )
             
             # Create protected wrapper

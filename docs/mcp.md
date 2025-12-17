@@ -4,8 +4,6 @@ Tenuo provides full [Model Context Protocol (MCP)](https://modelcontextprotocol.
 
 **Full Stack**: Connect to MCP servers → Discover tools → Auto-protect with warrants → Execute securely.
 
-> **New in v0.1**: `SecureMCPClient` provides end-to-end MCP integration. Requires Python ≥3.10 (MCP SDK limitation).
-
 ---
 
 ## Prerequisites

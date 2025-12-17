@@ -2355,6 +2355,8 @@ impl PyCompiledMcpConfig {
         Ok(PyExtractionResult {
             constraints: dict.into(),
             tool: result.tool,
+            warrant_base64: result.warrant_base64,
+            signature_base64: result.signature_base64,
         })
     }
 }
@@ -2366,14 +2368,23 @@ pub struct PyExtractionResult {
     constraints: PyObject,
     #[pyo3(get)]
     tool: String,
+    #[pyo3(get)]
+    warrant_base64: Option<String>,
+    #[pyo3(get)]
+    signature_base64: Option<String>,
 }
 
 #[pymethods]
 impl PyExtractionResult {
     fn __repr__(&self) -> String {
+        let auth_info = if self.warrant_base64.is_some() {
+            " +auth"
+        } else {
+            ""
+        };
         format!(
-            "ExtractionResult(tool='{}', constraints={{...}})",
-            self.tool
+            "ExtractionResult(tool='{}', constraints={{...}}{})",
+            self.tool, auth_info
         )
     }
 }

@@ -219,16 +219,26 @@ impl CompiledMcpConfig {
     /// `tool_name`: The name of the tool being called.
     /// `arguments`: The arguments object from the MCP request.
     ///
+    /// **Warrant Transport**: If arguments contains a `_tenuo` field with `warrant` and
+    /// `signature`, they are extracted and removed from the arguments before constraint
+    /// extraction. Access via `result.warrant_base64` and `result.signature_base64`.
+    ///
     /// # Example
     ///
     /// ```rust,ignore
     /// let arguments = json!({
     ///     "path": "/var/log/app.log",
-    ///     "maxSize": 1024
+    ///     "maxSize": 1024,
+    ///     "_tenuo": {
+    ///         "warrant": "eyJ0eXA...",
+    ///         "signature": "c2lnXy4uLg=="
+    ///     }
     /// });
     ///
     /// let result = compiled.extract_constraints("filesystem_read", &arguments)?;
     /// // result.constraints contains extracted values
+    /// // result.warrant_base64 contains the warrant
+    /// // result.signature_base64 contains the PoP signature
     /// ```
     pub fn extract_constraints(
         &self,
@@ -243,8 +253,12 @@ impl CompiledMcpConfig {
             required: true,
         })?;
 
-        // Create context from arguments (treated as body)
-        let ctx = RequestContext::with_body(arguments.clone());
+        // Extract and strip _tenuo metadata (warrant + signature)
+        let (clean_arguments, warrant_base64, signature_base64) =
+            Self::extract_and_strip_tenuo_meta(arguments);
+
+        // Create context from cleaned arguments (treated as body)
+        let ctx = RequestContext::with_body(clean_arguments);
 
         let (constraints, traces) = tool.extraction_rules.extract_all(&ctx)?;
 
@@ -252,7 +266,54 @@ impl CompiledMcpConfig {
             constraints,
             traces,
             tool: tool_name.to_string(),
+            warrant_base64,
+            signature_base64,
         })
+    }
+
+    /// Extract and remove `_tenuo` metadata from MCP arguments.
+    ///
+    /// MCP doesn't have HTTP headers, so warrants/signatures travel in a reserved
+    /// `_tenuo` field that gets stripped before tool execution:
+    ///
+    /// ```json
+    /// {
+    ///   "path": "/data/file.txt",
+    ///   "_tenuo": {
+    ///     "warrant": "eyJ0eXA...",
+    ///     "signature": "c2lnXy4uLg=="
+    ///   }
+    /// }
+    /// ```
+    ///
+    /// Returns: (clean_arguments, warrant_base64, signature_base64)
+    fn extract_and_strip_tenuo_meta(
+        arguments: &serde_json::Value,
+    ) -> (serde_json::Value, Option<String>, Option<String>) {
+        if let Some(obj) = arguments.as_object() {
+            // Check for _tenuo field
+            if let Some(tenuo_meta) = obj.get("_tenuo") {
+                // Extract warrant and signature
+                let warrant = tenuo_meta
+                    .get("warrant")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                let signature = tenuo_meta
+                    .get("signature")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                // Clone arguments without _tenuo
+                let mut clean = obj.clone();
+                clean.remove("_tenuo");
+
+                return (serde_json::Value::Object(clean), warrant, signature);
+            }
+        }
+
+        // No _tenuo field, return as-is
+        (arguments.clone(), None, None)
     }
 }
 

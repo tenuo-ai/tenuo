@@ -148,6 +148,10 @@ pub struct ExtractionResult {
     pub traces: Vec<ExtractionTrace>,
     /// Matched tool name
     pub tool: String,
+    /// Warrant (base64) extracted from `_tenuo.warrant` (MCP only)
+    pub warrant_base64: Option<String>,
+    /// PoP signature (base64) extracted from `_tenuo.signature` (MCP only)
+    pub signature_base64: Option<String>,
 }
 
 impl GatewayConfig {
@@ -211,6 +215,8 @@ impl GatewayConfig {
             constraints,
             traces,
             tool: route.tool.clone(),
+            warrant_base64: None, // HTTP uses headers, not embedded
+            signature_base64: None,
         })
     }
 
@@ -687,6 +693,8 @@ impl CompiledGatewayConfig {
             constraints,
             traces,
             tool: route_match.route.tool.to_string(),
+            warrant_base64: None, // HTTP uses headers, not embedded
+            signature_base64: None,
         })
     }
 }
