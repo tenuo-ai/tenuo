@@ -31,6 +31,15 @@ Tenuo enforces constraints by comparing **tool arguments** against **warrant con
 3. **Fail securely** - If extraction fails, authorization is denied
 4. **Type safety** - Arguments converted to appropriate types for constraint checking
 
+### Extraction vs. Policy
+
+> ⚠️ **Crucial Distinction**: YAML configuration (for Gateway and MCP) is for **argument extraction**, not **authorization policy**.
+>
+> - **Extraction (YAML)**: Tells Tenuo *where* to find the "path" or "amount" in a request (e.g., "look in the JSON body at key `maxSize`").
+> - **Policy (Warrants)**: Tells Tenuo *what* values are allowed (e.g., "max_size must be less than 1000").
+>
+> You do **not** define which users can do what in the YAML config. You define how to turn raw requests into structured arguments that can be checked against a warrant.
+
 ---
 
 ## Python SDK (`@lockdown`)

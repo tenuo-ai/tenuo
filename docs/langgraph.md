@@ -241,6 +241,7 @@ Declarative authority policy with automatic attenuation at graph edges. Stay tun
 
 ## See Also
 
+- [MCP Integration](./mcp) — Secure your AI agent interaction with MCP tools
 - [LangChain Integration](./langchain) — Tool protection for LangChain
 - [Protocol](./protocol) — Protocol fundamentals and cycle protection
 - [API Reference](./api-reference) — Full Python API documentation

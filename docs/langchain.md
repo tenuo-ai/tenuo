@@ -333,6 +333,7 @@ For automatic attenuation in multi-agent graphs, see [LangGraph Integration](./l
 
 ## See Also
 
+- [MCP Integration](./mcp) — Secure your AI agent tools with MCP
 - [Argument Extraction](./argument-extraction) - How extraction works and security considerations
 - [Python API Reference](./api-reference) - Full `@lockdown` documentation
 - [CLI Reference](./cli) - Command-line tools

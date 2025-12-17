@@ -7,6 +7,13 @@ description: YAML configuration reference for Tenuo authorizer
 
 The gateway configuration file defines how the Tenuo authorizer maps HTTP requests to tools and extracts constraint values.
 
+> ⚠️ **Important**: This configuration is for **argument extraction**, not **authorization policy**.
+>
+> - **Extraction**: Defines *where* to find data in an HTTP request (path, body, etc.).
+> - **Policy**: Defines *what* values are allowed. This is encoded in the **Warrant**, not this file.
+>
+> See [Argument Extraction](./argument-extraction) for more details.
+
 ---
 
 ## Basic Structure

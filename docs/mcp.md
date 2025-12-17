@@ -232,6 +232,10 @@ with root_task_sync(tools=["filesystem_read"], path="/var/log/*"):
 
 ## MCP Configuration
 
+Define how to extract constraints from MCP tool call arguments.
+
+> 💡 **Remember**: This configuration defines **extraction**, not **policy**. It tells Tenuo where to find the arguments in the JSON-RPC call. The actual limits (e.g., which paths are allowed) are defined in the **Warrant**. See [Argument Extraction](./argument-extraction) for a deep dive.
+
 ### Extraction Sources
 
 MCP tool calls provide an `arguments` JSON object. Use:
@@ -617,6 +621,21 @@ max_size:
   path: "maxSize"
   type: integer  # ← Add this
 ```
+
+---
+
+## Scope & Boundaries
+
+### Tenuo Provides
+- **Secure Client**: A wrapper around the official MCP SDK that adds authorization.
+- **Tool discovery**: Automatic wrapping of discovered tools with `@lockdown`.
+- **Warrant propagation**: Injecting warrants into `_tenuo` field for server-side verification.
+- **Constraint extraction**: Config-driven extraction from MCP arguments.
+
+### Tenuo Does NOT Provide
+- **MCP Server Library**: Use [`fastmcp`](https://github.com/j-parker/fastmcp) or the official SDK to build servers.
+- **MCP Transport**: Tenuo relies on standard transports (stdio, SSE, HTTP).
+- **Prompt Injection Detection**: Tenuo assumes injection will happen and makes unauthorized actions impossible.
 
 ---
 

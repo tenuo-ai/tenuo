@@ -5,12 +5,14 @@ Tests SecureMCPClient with a real MCP server.
 """
 
 import pytest
+import tempfile
+import os
 from pathlib import Path
 
 # Check if MCP is available
 try:
     from tenuo.mcp import SecureMCPClient, MCP_AVAILABLE
-    from tenuo import SigningKey, configure, root_task, Pattern
+    from tenuo import SigningKey, configure, root_task, Pattern, Range, McpConfig, CompiledMcpConfig
     pytestmark = pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
 except ImportError:
     pytestmark = pytest.mark.skip(reason="MCP integration not available")
@@ -114,15 +116,116 @@ async def test_mcp_tool_call_blocked(mcp_server_script):
 
 
 @pytest.mark.asyncio
-async def test_mcp_client_without_config(mcp_server_script):
-    """Test MCP client without mcp-config.yaml."""
+async def test_mcp_client_with_config_registration(mcp_server_script):
+    """Test that register_config=True works."""
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
     
-    # Should work without config (no constraint extraction)
+    # Create a simple config
+    config_yaml = """
+version: "1"
+tools:
+  read_file:
+    constraints:
+      max_size:
+        from: body
+        path: "max_size"
+        type: integer
+        default: 1000
+"""
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        f.write(config_yaml)
+        config_path = f.name
+    
+    try:
+        # Configure Tenuo
+        keypair = SigningKey.generate()
+        configure(issuer_key=keypair, dev_mode=True)
+        
+        async with SecureMCPClient(
+            command="python",
+            args=[str(mcp_server_script)],
+            config_path=config_path,
+            register_config=True
+        ) as client:
+            protected_tools = await client.get_protected_tools()
+            read_file = protected_tools["read_file"]
+            
+            # This should work and use the default max_size from config
+            async with root_task(tools=["read_file"], max_size=Range.max_value(2000)):
+                # Test file
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
+                    tf.write("small")
+                    test_file = tf.name
+                
+                try:
+                    result = await read_file(path=test_file)
+                    assert "small" in result[0].text
+                finally:
+                    os.unlink(test_file)
+    finally:
+        os.unlink(config_path)
+
+
+@pytest.mark.asyncio
+async def test_mcp_warrant_injection(mcp_server_script):
+    """Test that warrant injection works."""
+    if not mcp_server_script.exists():
+        pytest.skip("MCP server script not found")
+    
+    # Configure Tenuo
+    keypair = SigningKey.generate()
+    configure(issuer_key=keypair, dev_mode=True)
+    
     async with SecureMCPClient(
         command="python",
         args=[str(mcp_server_script)]
     ) as client:
-        tools = await client.get_tools()
-        assert len(tools) > 0
+        # Create test file
+        test_file = Path("/tmp/tenuo_injection_test.txt")
+        test_file.write_text("injection test")
+        
+        try:
+            async with root_task(tools=["read_file"], path=Pattern("/tmp/*")):
+                # Call tool with injection
+                result = await client.call_tool(
+                    "read_file",
+                    {"path": str(test_file)},
+                    inject_warrant=True
+                )
+                assert "injection test" in result[0].text
+        finally:
+            if test_file.exists():
+                test_file.unlink()
+
+
+@pytest.mark.asyncio
+async def test_mcp_nested_field_extraction():
+    """Test extraction of nested fields from MCP arguments."""
+    config_yaml = """
+version: "1"
+tools:
+  db_query:
+    constraints:
+      table:
+        from: body
+        path: "query.table"
+      op:
+        from: body
+        path: "query.operation"
+"""
+    config = McpConfig.from_yaml(config_yaml)
+    compiled = CompiledMcpConfig.compile(config)
+    
+    args = {
+        "query": {
+            "table": "users",
+            "operation": "SELECT"
+        }
+    }
+    
+    result = compiled.extract_constraints("db_query", args)
+    constraints = dict(result.constraints)
+    
+    assert constraints["table"] == "users"
+    assert constraints["op"] == "SELECT"

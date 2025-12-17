@@ -265,21 +265,10 @@ Deploy Tenuo as a gateway authorizer:
 
 ## MCP Integration
 
-Tenuo supports [Model Context Protocol](https://modelcontextprotocol.io) natively:
+Tenuo provides a full Model Context Protocol (MCP) client with automatic tool protection.
 
-```python
-from tenuo import McpConfig, CompiledMcpConfig
+- **[MCP Integration Guide](./mcp)** — Full documentation and examples
 
-# Load MCP config
-config = McpConfig.from_file("mcp-config.yaml")
-compiled = CompiledMcpConfig.compile(config)
-
-# Extract constraints from MCP tool call
-result = compiled.extract_constraints("filesystem_read", {"path": "/var/log/app.log"})
-
-# Authorize using extracted constraints
-authorized = warrant.authorize("filesystem_read", result.constraints, pop_sig)
-```
 ---
 
 ## Next Steps
