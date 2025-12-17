@@ -112,11 +112,11 @@ Tenuo supports two types of warrants for separation of concerns:
 
 | Feature | Description |
 |---------|-------------|
-| **Monotonic attenuation** | Capabilities only shrink, never expand |
 | **Offline verification** | No network calls, ~27μs |
 | **Holder binding (PoP)** | Stolen tokens are useless without the key |
 | **Constraint types** | `Exact`, `Pattern`, `Range`, `OneOf`, `Regex` |
 | **Framework integrations** | LangChain, LangGraph, MCP |
+| **Monotonic attenuation** | Capabilities only shrink, never expand |
 
 ---
 

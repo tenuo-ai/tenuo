@@ -6,7 +6,7 @@ A pure Python wrapper around the Rust tenuo_core extension.
 
 from tenuo_core import (  # type: ignore
     # Core types
-    Keypair,
+    Keypair,  # Deprecated, use SigningKey
     Warrant,
     WarrantType,
     TrustLevel,
@@ -219,6 +219,9 @@ from .warrant_ext import (
 # This adds the delegation_receipt property to Warrant
 import tenuo.warrant_ext  # noqa: F401
 
+# Preferred name for clarity (Keypair is deprecated but kept for backward compat)
+SigningKey = Keypair
+
 # Re-export everything for clean imports
 __all__ = [
     # =========================================================================
@@ -268,7 +271,8 @@ __all__ = [
     # Tier 2 API (Explicit control)
     # =========================================================================
     # Core types
-    "Keypair",
+    "Keypair",  # Deprecated, use SigningKey
+    "SigningKey",
     "Warrant",
     "WarrantType",
     "TrustLevel",
