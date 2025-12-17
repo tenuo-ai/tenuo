@@ -83,12 +83,24 @@ async def main():
                 path=Pattern("/tmp/*"),
                 max_size=Range.max_value(10000)
             ):
-                # Call MCP tool through protected wrapper
+                # Pattern A: Call through protected wrapper (local authorization)
+                print("\n   Pattern A: Local authorization (default)")
                 read_file = protected_tools["read_file"]
                 result = await read_file(path=str(test_file), max_size=1000)
                 
-                print("\n   ✓ Tool call authorized and executed")
+                print("   ✓ Tool call authorized locally")
                 print(f"   Result: {result[0].text if result else 'No content'}")
+                
+                # Pattern B: Inject warrant for remote authorization
+                print("\n   Pattern B: Remote authorization (warrant injection)")
+                _ = await client.call_tool(
+                    "read_file",
+                    {"path": str(test_file), "max_size": 1000},
+                    warrant_context=True,
+                    inject_warrant=True  # ← Injects _tenuo field
+                )
+                print("   ✓ Warrant injected into arguments._tenuo")
+                print("   (MCP server can extract and verify if configured)")
                 
                 # Try unauthorized call (should fail)
                 print("\n6. Testing constraint enforcement...")

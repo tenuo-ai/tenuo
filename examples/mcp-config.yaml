@@ -177,11 +177,31 @@ tools:
 # MCP tool calls only provide an "arguments" JSON object.
 # Therefore, extraction rules should use:
 #
-#   - from: body    (recommended) - Extract from arguments object
-#   - from: literal               - Use default/literal value
+#   - from: body    (default for MCP) - Extract from arguments object
+#   - from: literal                   - Use default/literal value
+#
+# Config sugar: "from: body" is implicit in MCP. These are equivalent:
+#   path: "path"              # Implicit from: body
+#   path: { from: body, path: "path" }  # Explicit
 #
 # Rules using from: path, from: query, or from: header will
 # not work in MCP context and will be flagged by validate().
+#
+# ============================================================
+# Warrant Transport in MCP
+# ============================================================
+# MCP doesn't have HTTP headers. Warrants travel in a reserved _tenuo field:
+#
+#   {
+#     "path": "/data/file.txt",
+#     "_tenuo": {
+#       "warrant": "eyJ0eXA...",    # Base64-encoded warrant chain
+#       "signature": "c2lnXy4uLg=="  # Base64-encoded PoP signature
+#     }
+#   }
+#
+# The _tenuo field is automatically stripped before tool execution.
+# Tools never see it - keeps the authorization layer separate.
 #
 # ============================================================
 # Wildcard Extraction

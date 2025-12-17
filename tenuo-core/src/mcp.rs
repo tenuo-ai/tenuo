@@ -93,11 +93,33 @@
 //! # Extraction Source Compatibility
 //!
 //! MCP tool calls only provide an `arguments` JSON object. Extraction rules should use:
-//! - `from: body` - Extract from the arguments object (recommended)
+//! - `from: body` - Extract from the arguments object (default for MCP)
 //! - `from: literal` - Use a default/literal value
+//!
+//! **Config Sugar**: `from: body` is implicit in MCP configs. These are equivalent:
+//! ```yaml
+//! # Explicit (verbose)
+//! constraints:
+//!   path:
+//!     from: body
+//!     path: "path"
+//!
+//! # Implicit (recommended for MCP)
+//! constraints:
+//!   path: "path"  # Defaults to from: body
+//! ```
 //!
 //! Rules using `from: path`, `from: query`, or `from: header` will not work in MCP context
 //! and will be flagged by `validate()`.
+//!
+//! # JSON-RPC Error Mapping
+//!
+//! MCP uses JSON-RPC 2.0. Map Tenuo errors to standard codes:
+//! - `ExtractionError` (missing required field) → `-32602` (Invalid params)
+//! - `ConstraintViolation` → `-32001` (Access denied, custom)
+//! - `ExpiredError` → `-32001` (Access denied)
+//!
+//! Use `to_jsonrpc_error()` helper to convert.
 
 use crate::extraction::{
     CompiledExtractionRules, ExtractionError, ExtractionSource, RequestContext,
@@ -314,6 +336,77 @@ impl CompiledMcpConfig {
 
         // No _tenuo field, return as-is
         (arguments.clone(), None, None)
+    }
+}
+
+/// Map Tenuo errors to JSON-RPC 2.0 error codes.
+///
+/// MCP uses JSON-RPC, so authorization failures should return standard codes:
+/// - `-32602`: Invalid params (missing required fields)
+/// - `-32001`: Access denied (authorization failure, custom code)
+///
+/// # Example
+///
+/// ```rust,ignore
+/// match compiled.extract_constraints(tool, args) {
+///     Ok(result) => { /* authorize and execute */ },
+///     Err(e) => {
+///         let (code, message) = to_jsonrpc_error(&e);
+///         return jsonrpc_error_response(id, code, message);
+///     }
+/// }
+/// ```
+pub fn to_jsonrpc_error(error: &ExtractionError) -> (i32, String) {
+    // JSON-RPC 2.0 error codes:
+    // -32700: Parse error
+    // -32600: Invalid Request
+    // -32601: Method not found
+    // -32602: Invalid params
+    // -32603: Internal error
+    // -32001 to -32099: Server error (custom)
+
+    if error.required {
+        // Missing required field or invalid value
+        (-32602, format!("Invalid params: {}", error.hint))
+    } else {
+        // Other extraction errors (shouldn't happen for optional fields)
+        (-32602, format!("Invalid params: {}", error.hint))
+    }
+}
+
+/// Map authorization errors to JSON-RPC codes.
+///
+/// For use after successful extraction when authorization fails:
+/// - `ConstraintViolation` → `-32001` (Access denied)
+/// - `ExpiredError` → `-32001` (Access denied)
+/// - `SignatureInvalid` → `-32001` (Access denied)
+///
+/// # Example
+///
+/// ```rust,ignore
+/// match authorizer.check(&warrant, tool, &constraints, signature) {
+///     Ok(_) => { /* execute tool */ },
+///     Err(e) => {
+///         let (code, message) = auth_error_to_jsonrpc(&e);
+///         return jsonrpc_error_response(id, code, message);
+///     }
+/// }
+/// ```
+pub fn auth_error_to_jsonrpc(error: &crate::error::Error) -> (i32, String) {
+    use crate::error::Error;
+
+    match error {
+        Error::ConstraintNotSatisfied { field, reason } => (
+            -32001,
+            format!(
+                "Access denied: Constraint '{}' not satisfied: {}",
+                field, reason
+            ),
+        ),
+        Error::WarrantExpired(_) => (-32001, "Access denied: Warrant expired".to_string()),
+        Error::SignatureInvalid(_) => (-32001, "Access denied: Invalid signature".to_string()),
+        Error::ToolMismatch { .. } => (-32001, "Access denied: Tool not authorized".to_string()),
+        _ => (-32001, format!("Access denied: {}", error)),
     }
 }
 

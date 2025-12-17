@@ -80,12 +80,19 @@ def mcp_tool_to_langchain(
     else:
         ArgsSchema = None
     
+    # Create sync wrapper (LangChain sometimes requires it even for async tools)
+    def _sync_not_supported(*args, **kwargs):
+        raise NotImplementedError(
+            f"MCP tool '{tool_name}' only supports async calls. "
+            "Use await or async agent executor."
+        )
+    
     # Create LangChain tool
     return StructuredTool(
         name=tool_name,
         description=description,
-        func=None,  # Sync version not provided
-        coroutine=protected_func,  # Async version
+        func=_sync_not_supported,  # Sync wrapper (raises error)
+        coroutine=protected_func,  # Async version (actual implementation)
         args_schema=ArgsSchema,
     )
 
@@ -94,7 +101,11 @@ def _json_schema_to_python_type(schema: Dict[str, Any]) -> type:
     """
     Convert JSON Schema type to Python type hint.
     
-    Simple mapping for common types. For complex schemas, defaults to Any.
+    Simple mapping for common types. Defaults to Any for unknown types (safe fallback).
+    
+    Note: Complex schemas (unions, nested objects) are simplified to their base type.
+    This is conservative but prevents Pydantic validation errors. If strict validation
+    is needed, users can manually create a Pydantic model.
     """
     schema_type = schema.get('type', 'string')
     
@@ -107,6 +118,7 @@ def _json_schema_to_python_type(schema: Dict[str, Any]) -> type:
         'object': dict,
     }
     
+    # Fallback to Any for unknown types (e.g., "null", unions, custom types)
     return type_mapping.get(schema_type, Any)
 
 

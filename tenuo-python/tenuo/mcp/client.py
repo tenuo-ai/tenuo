@@ -138,31 +138,33 @@ class SecureMCPClient:
         self,
         tool_name: str,
         arguments: Dict[str, Any],
-        warrant_context: bool = True
+        warrant_context: bool = True,
+        inject_warrant: bool = False,
     ) -> Any:
         """
         Call an MCP tool with Tenuo authorization.
         
         MCP Warrant Transport:
-            If arguments contains `_tenuo.warrant` and `_tenuo.signature`, they are
-            automatically extracted and used for authorization. The `_tenuo` field is
-            stripped before passing arguments to the tool.
+            When inject_warrant=True, the current warrant and PoP signature are injected
+            into arguments._tenuo before sending to the MCP server:
             
-            Example arguments:
             ```python
             {
                 "path": "/data/file.txt",
                 "_tenuo": {
-                    "warrant": "eyJ0eXA...",
-                    "signature": "c2lnXy4uLg=="
+                    "warrant": "eyJ0eXA...",  # Base64 encoded
+                    "signature": "c2lnXy4uLg=="  # Base64 encoded
                 }
             }
             ```
+            
+            The MCP server's Tenuo authorizer will strip _tenuo and verify authorization.
         
         Args:
             tool_name: Name of the MCP tool to call
-            arguments: Tool arguments (may include _tenuo field)
-            warrant_context: If True, use warrant from context (requires root_task)
+            arguments: Tool arguments
+            warrant_context: If True, authorize locally before sending
+            inject_warrant: If True, inject warrant into arguments._tenuo
         
         Returns:
             Tool result from MCP server
@@ -174,37 +176,54 @@ class SecureMCPClient:
         if self.session is None:
             raise RuntimeError("Not connected to MCP server. Call connect() first.")
         
-        # Extract constraints (also strips _tenuo if present)
-        extracted_args = arguments
-        
-        if self.compiled_config:
-            result = self.compiled_config.extract_constraints(tool_name, arguments)
-            extracted_args = dict(result.constraints)
-            
-            # TODO: Use embedded warrant/signature for authorization (future enhancement)
-            # For now, _tenuo fields are stripped but warrant comes from context
-            _ = result.warrant_base64  # Reserved for embedded warrant support
-            _ = result.signature_base64
-        
-        # Authorize if warrant context is enabled
+        # Authorize locally if warrant context is enabled
         if warrant_context:
             if not is_configured():
                 raise ConfigurationError(
                     "Tenuo not configured. Call configure() first or use warrant_context=False"
                 )
             
-            # Create protected wrapper
+            # Get warrant and keypair from context
+            from ..decorators import get_warrant_context, get_keypair_context
+            warrant = get_warrant_context()
+            keypair = get_keypair_context()
+            
+            if warrant is None:
+                raise ConfigurationError(
+                    "No warrant in context. Use root_task() or set_warrant_context()"
+                )
+            
+            # Create protected wrapper for local authorization
             @lockdown(tool=tool_name)
             async def _authorized_call(**kwargs):
-                # Actually call MCP server
-                response = await self.session.call_tool(tool_name, kwargs)
+                # Inject warrant if requested
+                call_args = kwargs.copy()
+                
+                if inject_warrant and warrant is not None and keypair is not None:
+                    # Serialize warrant and create PoP signature
+                    from tenuo import wire
+                    warrant_base64 = wire.encode_base64(warrant)
+                    
+                    # Create PoP signature for this specific call
+                    pop_sig = warrant.create_pop_signature(keypair, tool_name, kwargs)
+                    import base64
+                    signature_base64 = base64.b64encode(bytes(pop_sig)).decode('utf-8')
+                    
+                    # Inject into arguments
+                    call_args["_tenuo"] = {
+                        "warrant": warrant_base64,
+                        "signature": signature_base64
+                    }
+                
+                # Call MCP server
+                response = await self.session.call_tool(tool_name, call_args)
                 return response.content
             
-            # Call with authorization
-            return await _authorized_call(**extracted_args)
+            # Call with local authorization
+            return await _authorized_call(**arguments)
         else:
             # Call without authorization
-            response = await self.session.call_tool(tool_name, extracted_args)
+            response = await self.session.call_tool(tool_name, arguments)
             return response.content
     
     def create_protected_tool(self, mcp_tool: MCPTool) -> Callable:
