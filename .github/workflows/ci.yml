@@ -5,6 +5,7 @@ on:
     branches: [ "main", "camel" ]
   pull_request:
     branches: [ "main", "camel" ]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -42,10 +43,10 @@ jobs:
         working-directory: tenuo-core
 
       - name: Security Audit
-        working-directory: tenuo-core
-        run: |
-          cargo install cargo-audit --locked
-          cargo audit
+        uses: rustsec/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          directory: tenuo-core
 
   # ============================================================================
   # PYTHON SDK - Matrix Testing
@@ -65,10 +66,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: swatinem/rust-cache@v2
         with:
           workspaces: tenuo-python
-          key: ${{ matrix.os }}-${{ matrix.python-version }}
+          key: ${{ matrix.os }}-py${{ matrix.python-version }}
 
       - name: Install Python
         uses: actions/setup-python@v5
@@ -81,83 +82,36 @@ jobs:
       - name: Create venv
         run: uv venv
 
-      - name: Build and Install Tenuo (Unix)
-        if: runner.os != 'Windows'
+      - name: Build and Install Tenuo
         working-directory: tenuo-python
         run: |
-          source ../.venv/bin/activate
+          source ../.venv/bin/activate || source ../.venv/Scripts/activate
           pip install maturin
           maturin develop
           pip install -e .
 
-      - name: Build and Install Tenuo (Windows)
-        if: runner.os == 'Windows'
-        working-directory: tenuo-python
-        shell: bash
-        run: |
-          source ../.venv/Scripts/activate
-          pip install maturin
-          maturin develop
-          pip install -e .
-
-      - name: Install dev dependencies (Unix)
-        if: runner.os != 'Windows'
+      - name: Install dev dependencies
         working-directory: tenuo-python
         run: |
-          source ../.venv/bin/activate
+          source ../.venv/bin/activate || source ../.venv/Scripts/activate
           uv pip install pytest ruff mypy langchain langchain-core langchain-openai langgraph fastapi uvicorn pydantic PyYAML types-PyYAML types-requests
 
-      - name: Install dev dependencies (Windows)
-        if: runner.os == 'Windows'
-        working-directory: tenuo-python
-        shell: bash
-        run: |
-          source ../.venv/Scripts/activate
-          uv pip install pytest ruff mypy langchain langchain-core langchain-openai langgraph fastapi uvicorn pydantic PyYAML types-PyYAML types-requests
-
-      - name: Lint with Ruff (Unix)
-        if: runner.os != 'Windows'
+      - name: Lint with Ruff
         working-directory: tenuo-python
         run: |
-          source ../.venv/bin/activate
+          source ../.venv/bin/activate || source ../.venv/Scripts/activate
           ruff check .
 
-      - name: Lint with Ruff (Windows)
-        if: runner.os == 'Windows'
-        working-directory: tenuo-python
-        shell: bash
-        run: |
-          source ../.venv/Scripts/activate
-          ruff check .
-
-      - name: Type Check with MyPy (Unix)
-        if: runner.os != 'Windows'
+      - name: Type Check with MyPy
         working-directory: tenuo-python
         run: |
-          source ../.venv/bin/activate
+          source ../.venv/bin/activate || source ../.venv/Scripts/activate
           mypy .
 
-      - name: Type Check with MyPy (Windows)
-        if: runner.os == 'Windows'
-        working-directory: tenuo-python
-        shell: bash
-        run: |
-          source ../.venv/Scripts/activate
-          mypy .
-
-      - name: Run Tests (Unix)
-        if: runner.os != 'Windows'
+      - name: Run Tests
         working-directory: tenuo-python
         run: |
-          source ../.venv/bin/activate
-          pytest
-
-      - name: Run Tests (Windows)
-        if: runner.os == 'Windows'
-        working-directory: tenuo-python
-        shell: bash
-        run: |
-          source ../.venv/Scripts/activate
+          source ../.venv/bin/activate || source ../.venv/Scripts/activate
           pytest
 
   # ============================================================================
@@ -195,7 +149,7 @@ jobs:
       - name: Build and Install Tenuo
         working-directory: tenuo-python
         run: |
-          source ../.venv/bin/activate
+          source ../.venv/bin/activate || source ../.venv/Scripts/activate
           pip install maturin
           maturin develop
           pip install -e .
@@ -204,20 +158,20 @@ jobs:
         if: matrix.langchain-version == '0.2.0'
         working-directory: tenuo-python
         run: |
-          source ../.venv/bin/activate
+          source ../.venv/bin/activate || source ../.venv/Scripts/activate
           uv pip install pytest langchain-core==0.2.0 pydantic PyYAML
 
       - name: Install LangChain (latest)
         if: matrix.langchain-version == 'latest'
         working-directory: tenuo-python
         run: |
-          source ../.venv/bin/activate
+          source ../.venv/bin/activate || source ../.venv/Scripts/activate
           uv pip install pytest langchain langchain-core langchain-openai langgraph pydantic PyYAML
 
       - name: Run LangChain Integration Tests
         working-directory: tenuo-python
         run: |
-          source ../.venv/bin/activate
+          source ../.venv/bin/activate || source ../.venv/Scripts/activate
           pytest tests/ -k "langchain or langgraph" -v
 
   # ============================================================================

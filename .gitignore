@@ -1,7 +1,8 @@
 # Rust build artifacts
 target/
 **/*.rs.bk
-Cargo.lock
+# Cargo.lock should be checked in for reproducible builds
+# Cargo.lock
 .DS_Store
 *.key
 *.pub
