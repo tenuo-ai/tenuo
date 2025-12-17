@@ -98,18 +98,18 @@ def main():
     # For demo, we simulate the MCP tool behavior
     
     @lockdown(tool="filesystem_read")
-    def filesystem_read(path: str, maxSize: int = 1048576) -> str:
+    def filesystem_read(path: str, max_size: int = 1048576) -> str:
         """
         Read file from filesystem (MCP tool).
         
         In production, this would:
         1. Connect to MCP filesystem server
-        2. Send read request with path and maxSize
+        2. Send read request with path and max_size
         3. Return file contents
         
         For demo, we simulate the response.
         """
-        print(f"      [MCP] Reading file: {path} (max {maxSize} bytes)")
+        print(f"      [MCP] Reading file: {path} (max {max_size} bytes)")
         return f"[Simulated content of {path}]"
     
     @lockdown(tool="database_query")
@@ -166,7 +166,7 @@ def main():
         # =====================================================================
         print("   Test 1: Authorized filesystem read")
         try:
-            result = filesystem_read("/var/log/app.log", maxSize=512 * 1024)
+            result = filesystem_read("/var/log/app.log", max_size=512 * 1024)
             print(f"      ✓ Success: {result}")
         except Exception as e:
             print(f"      ✗ Failed: {e}")
@@ -176,8 +176,8 @@ def main():
         # =====================================================================
         print("\n   Test 2: Unauthorized filesystem read (path violation)")
         try:
-            result = filesystem_read("/etc/passwd", maxSize=512 * 1024)
-            print("      ✗ Should have been blocked!")
+            result = filesystem_read("/etc/passwd", max_size=512 * 1024)
+            print(f"      ✗ Should have been blocked!")
         except Exception as e:
             print(f"      ✓ Blocked as expected: {type(e).__name__}")
         
@@ -197,7 +197,7 @@ def main():
         print("\n   Test 4: Unauthorized database query (table violation)")
         try:
             result = database_query("users", "select", limit=50)
-            print("      ✗ Should have been blocked!")
+            print(f"      ✗ Should have been blocked!")
         except Exception as e:
             print(f"      ✓ Blocked as expected: {type(e).__name__}")
     
@@ -269,7 +269,7 @@ def demo_without_config():
     
     # Define simulated MCP tool
     @lockdown(tool="filesystem_read")
-    def filesystem_read(path: str, maxSize: int = 1048576) -> str:
+    def filesystem_read(path: str, max_size: int = 1048576) -> str:
         print(f"   [MCP] Reading: {path}")
         return f"[Content of {path}]"
     
@@ -291,7 +291,7 @@ def demo_without_config():
     with set_warrant_context(warrant), set_keypair_context(worker_keypair):
         print("Test 1: Authorized read")
         try:
-            result = filesystem_read("/var/log/app.log", maxSize=512 * 1024)
+            result = filesystem_read("/var/log/app.log", max_size=512 * 1024)
             print(f"   ✓ Success: {result}\n")
         except Exception as e:
             print(f"   ✗ Failed: {e}\n")
@@ -299,7 +299,7 @@ def demo_without_config():
         print("Test 2: Unauthorized read (path violation)")
         try:
             result = filesystem_read("/etc/passwd")
-            print("   ✗ Should have been blocked!\n")
+            print(f"   ✗ Should have been blocked!\n")
         except Exception as e:
             print(f"   ✓ Blocked: {type(e).__name__}\n")
     
