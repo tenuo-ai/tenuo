@@ -95,6 +95,7 @@ jobs:
 
       - name: Build and Install Tenuo
         working-directory: tenuo-python
+        shell: bash
         run: |
           source ../.venv/bin/activate || source ../.venv/Scripts/activate
           pip install maturin
@@ -103,24 +104,28 @@ jobs:
 
       - name: Install dev dependencies
         working-directory: tenuo-python
+        shell: bash
         run: |
           source ../.venv/bin/activate || source ../.venv/Scripts/activate
           uv pip install pytest ruff mypy langchain langchain-core langchain-openai langgraph fastapi uvicorn pydantic PyYAML types-PyYAML types-requests
 
       - name: Lint with Ruff
         working-directory: tenuo-python
+        shell: bash
         run: |
           source ../.venv/bin/activate || source ../.venv/Scripts/activate
           ruff check .
 
       - name: Type Check with MyPy
         working-directory: tenuo-python
+        shell: bash
         run: |
           source ../.venv/bin/activate || source ../.venv/Scripts/activate
           mypy .
 
       - name: Run Tests
         working-directory: tenuo-python
+        shell: bash
         run: |
           source ../.venv/bin/activate || source ../.venv/Scripts/activate
           pytest
@@ -159,6 +164,7 @@ jobs:
 
       - name: Build and Install Tenuo
         working-directory: tenuo-python
+        shell: bash
         run: |
           source ../.venv/bin/activate || source ../.venv/Scripts/activate
           pip install maturin
@@ -168,6 +174,7 @@ jobs:
       - name: Install LangChain (oldest)
         if: matrix.langchain-version == '0.2.0'
         working-directory: tenuo-python
+        shell: bash
         run: |
           source ../.venv/bin/activate || source ../.venv/Scripts/activate
           uv pip install pytest langchain-core==0.2.0 pydantic PyYAML
@@ -175,12 +182,14 @@ jobs:
       - name: Install LangChain (latest)
         if: matrix.langchain-version == 'latest'
         working-directory: tenuo-python
+        shell: bash
         run: |
           source ../.venv/bin/activate || source ../.venv/Scripts/activate
           uv pip install pytest langchain langchain-core langchain-openai langgraph pydantic PyYAML
 
       - name: Run LangChain Integration Tests
         working-directory: tenuo-python
+        shell: bash
         run: |
           source ../.venv/bin/activate || source ../.venv/Scripts/activate
           pytest tests/ -k "langchain or langgraph" -v
