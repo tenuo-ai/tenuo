@@ -13,10 +13,10 @@ def main():
     # Create a warrant
     keypair = Keypair.generate()
     warrant = Warrant.issue(
-        tools="upgrade_cluster",
+        tools="scale_cluster",
         constraints={
             "cluster": Pattern("staging-*"),
-            "budget": Range.max_value(10000.0)
+            "replicas": Range.max_value(15)
         },
         ttl_seconds=3600,
         keypair=keypair,
@@ -25,24 +25,24 @@ def main():
     
     # Define a function protected by the warrant
     # Note: We must pass keypair for Proof-of-Possession signing
-    @lockdown(warrant, tool="upgrade_cluster", keypair=keypair)
-    def upgrade_cluster(cluster: str, budget: float):
+    @lockdown(warrant, tool="scale_cluster", keypair=keypair)
+    def scale_cluster(cluster: str, replicas: int):
         """This function can only be called if the warrant authorizes it."""
-        print(f"[OK] Upgrading cluster {cluster} with budget ${budget}")
-        # ... actual upgrade logic here
+        print(f"[OK] Scaling cluster {cluster} to {replicas} replicas")
+        # ... actual scaling logic here
     
     # Test authorized call
     print("1. Testing authorized call...")
     try:
-        upgrade_cluster(cluster="staging-web", budget=5000.0)
+        scale_cluster(cluster="staging-web", replicas=5)
         print("   ✓ Function executed successfully\n")
     except AuthorizationError as e:
         print(f"   ✗ Authorization failed: {e}\n")
     
-    # Test unauthorized call (budget too high)
-    print("2. Testing unauthorized call (budget exceeds limit)...")
+    # Test unauthorized call (replicas too high)
+    print("2. Testing unauthorized call (replicas exceeds limit)...")
     try:
-        upgrade_cluster(cluster="staging-web", budget=15000.0)
+        scale_cluster(cluster="staging-web", replicas=20)
         print("   [ERR] Function should not have executed!\n")
     except AuthorizationError as e:
         print(f"   [OK] Authorization correctly blocked: {e}\n")
@@ -50,7 +50,7 @@ def main():
     # Test unauthorized call (wrong cluster)
     print("3. Testing unauthorized call (wrong cluster)...")
     try:
-        upgrade_cluster(cluster="production-web", budget=5000.0)
+        scale_cluster(cluster="production-web", replicas=5)
         print("   [ERR] Function should not have executed!\n")
     except AuthorizationError as e:
         print(f"   [OK] Authorization correctly blocked: {e}\n")

@@ -174,13 +174,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n  Leaf warrant constraints:");
     println!("    • cluster: staging-web (exact)");
     println!("    • action:  [upgrade, restart] (OneOf)");
-    println!("    • budget:  ≤$1,000\n");
+    println!("    • replicas: ≤10\n");
 
     // Test cases
     let test_cases = vec![
         // (name, tool, args, expected_allowed, explanation)
         (
-            "Upgrade staging-web with $500 budget",
+            "Scale staging-web to 5 replicas",
             "manage_infrastructure",
             vec![
                 (
@@ -188,7 +188,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ConstraintValue::String("staging-web".to_string()),
                 ),
                 ("action", ConstraintValue::String("upgrade".to_string())),
-                ("budget", ConstraintValue::Float(500.0)),
+                ("replicas", ConstraintValue::Float(5.0)),
             ],
             true,
             "Within all constraints",
@@ -202,7 +202,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ConstraintValue::String("staging-web".to_string()),
                 ),
                 ("action", ConstraintValue::String("restart".to_string())),
-                ("budget", ConstraintValue::Float(0.0)),
+                ("replicas", ConstraintValue::Float(0.0)),
             ],
             true,
             "Restart is an allowed action",
@@ -213,7 +213,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             vec![
                 ("cluster", ConstraintValue::String("staging-db".to_string())),
                 ("action", ConstraintValue::String("upgrade".to_string())),
-                ("budget", ConstraintValue::Float(500.0)),
+                ("replicas", ConstraintValue::Float(5.0)),
             ],
             false,
             "Blocked: only staging-web is allowed",
@@ -224,7 +224,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             vec![
                 ("cluster", ConstraintValue::String("prod-web".to_string())),
                 ("action", ConstraintValue::String("upgrade".to_string())),
-                ("budget", ConstraintValue::Float(500.0)),
+                ("replicas", ConstraintValue::Float(5.0)),
             ],
             false,
             "Blocked: no production access",
@@ -238,13 +238,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ConstraintValue::String("staging-web".to_string()),
                 ),
                 ("action", ConstraintValue::String("delete".to_string())),
-                ("budget", ConstraintValue::Float(0.0)),
+                ("replicas", ConstraintValue::Float(0.0)),
             ],
             false,
             "Blocked: delete is not in allowed actions",
         ),
         (
-            "Expensive upgrade ($5,000)",
+            "Scale to 20 replicas (exceeds limit)",
             "manage_infrastructure",
             vec![
                 (
@@ -252,10 +252,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ConstraintValue::String("staging-web".to_string()),
                 ),
                 ("action", ConstraintValue::String("upgrade".to_string())),
-                ("budget", ConstraintValue::Float(5000.0)),
+                ("replicas", ConstraintValue::Float(20.0)),
             ],
             false,
-            "Blocked: exceeds $1,000 budget limit",
+            "Blocked: exceeds 10 replica limit",
         ),
     ];
 
@@ -368,7 +368,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match leaf_warrant
         .attenuate()
-        .constraint("budget", Range::max(500.0)) // Further restrict
+        .constraint("replicas", Range::max(5.0)) // Further restrict
         .ttl(Duration::from_secs(300)) // 5 minutes
         .authorized_holder(sub_agent_keypair.public_key())
         .agent_id("sub-agent-tool-handler")
@@ -380,7 +380,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 sub_warrant.depth()
             );
             println!("    • ID: {}", sub_warrant.id());
-            println!("    • Budget: ≤$500 (narrowed from ≤$1,000)");
+            println!("    • Replicas: ≤5 (narrowed from ≤10)");
 
             // Now try to go even deeper
             println!(
@@ -390,7 +390,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             match sub_warrant
                 .attenuate()
-                .constraint("budget", Range::max(100.0))
+                .constraint("replicas", Range::max(3.0))
                 .ttl(Duration::from_secs(60))
                 .build(&sub_agent_keypair, &worker_keypair) // Worker signed the parent
             {
@@ -406,7 +406,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let another_keypair = Keypair::generate();
                     match deep_warrant
                         .attenuate()
-                        .constraint("budget", Range::max(50.0))
+                        .constraint("replicas", Range::max(2.0))
                         .build(&another_keypair, &sub_agent_keypair) // Sub-agent signed the parent
                     {
                         Ok(w) => {
@@ -496,7 +496,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "action".to_string(),
             ConstraintValue::String("delete".to_string()),
         );
-        args_no_approval.insert("budget".to_string(), ConstraintValue::Float(100.0));
+        args_no_approval.insert("replicas".to_string(), ConstraintValue::Float(3.0));
 
         let holder_sig = sensitive_warrant.create_pop_signature(
             &worker_keypair,

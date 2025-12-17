@@ -5,7 +5,7 @@ Supports both explicit warrant passing and ContextVar-based context (for LangCha
 
 Example with explicit warrant:
     @lockdown(warrant, tool="manage_infrastructure")
-    def upgrade_cluster(cluster: str, budget: float):
+    def scale_cluster(cluster: str, replicas: int):
         # This function can only be called if the warrant authorizes it
         ...
 
@@ -14,10 +14,10 @@ Example with ContextVar (LangChain/FastAPI pattern):
     
     # Set warrant and keypair in context (e.g., in FastAPI middleware)
     with set_warrant_context(warrant), set_keypair_context(keypair):
-        upgrade_cluster(cluster="staging-web", budget=5000.0)
+        scale_cluster(cluster="staging-web", replicas=5)
     
     @lockdown(tool="manage_infrastructure")
-    def upgrade_cluster(cluster: str, budget: float):
+    def scale_cluster(cluster: str, replicas: int):
         # Warrant and keypair are automatically retrieved from context
         # PoP signature is created automatically if warrant.requires_pop
         ...
@@ -274,17 +274,17 @@ def lockdown(
     
     1. Explicit warrant (simple case):
         @lockdown(warrant, tool="manage_infrastructure", keypair=keypair)
-        def upgrade_cluster(cluster: str, budget: float):
+        def scale_cluster(cluster: str, replicas: int):
             ...
     
     2. ContextVar-based (LangChain/FastAPI pattern):
         @lockdown(tool="manage_infrastructure")
-        def upgrade_cluster(cluster: str, budget: float):
+        def scale_cluster(cluster: str, replicas: int):
             ...
         
         # Warrant AND keypair are set in context (BOTH required)
         with set_warrant_context(warrant), set_keypair_context(keypair):
-            upgrade_cluster(cluster="staging-web", budget=5000.0)
+            scale_cluster(cluster="staging-web", replicas=5)
     
     Args:
         warrant_or_tool: If Warrant instance, use it explicitly. If str, treat as tool name.

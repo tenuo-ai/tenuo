@@ -11,7 +11,7 @@ Get Tenuo running in 5 minutes. For a visual walkthrough, see the [Demo](./demo.
 
 Tenuo is a capability-based authorization library for AI agent workflows. It uses signed tokens called **warrants** to control what actions agents can perform.
 
-**Core invariant**: When a warrant is delegated, its capabilities can only **shrink**. A $1000 budget becomes $500. Access to `staging-*` narrows to `staging-web`.
+**Core invariant**: When a warrant is delegated, its capabilities can only **shrink**. 15 replicas becomes 10. Access to `staging-*` narrows to `staging-web`.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -66,7 +66,7 @@ warrant = Warrant.issue(
     holder=keypair.public_key, 
     constraints={
         "cluster": Pattern("staging-*"),    # Glob pattern
-        "budget": Range.max_value(10000.0)  # Max $10,000
+        "replicas": Range.max_value(15)     # Max 15 replicas
     },
     ttl_seconds=3600
 )
@@ -83,7 +83,7 @@ worker_keypair = Keypair.generate()
 worker_warrant = warrant.attenuate(
     constraints={
         "cluster": Exact("staging-web"),    # Narrowed from staging-*
-        "budget": Range.max_value(1000.0)   # Reduced to $1,000
+        "replicas": Range.max_value(10)     # Reduced to 10 replicas
     },
     keypair=worker_keypair,
     parent_keypair=keypair  # Parent must sign the delegation
@@ -94,7 +94,7 @@ worker_warrant = warrant.attenuate(
 
 ```python
 # Worker signs a Proof-of-Possession
-args = {"cluster": "staging-web", "budget": 500.0}
+args = {"cluster": "staging-web", "replicas": 5}
 pop_sig = worker_warrant.create_pop_signature(
     worker_keypair, "manage_infrastructure", args
 )
@@ -113,13 +113,13 @@ print(f"Authorized: {authorized}")  # True
 ```python
 from tenuo import lockdown, set_warrant_context, set_keypair_context
 
-@lockdown(tool="upgrade_cluster")
-def upgrade_cluster(cluster: str, budget: float):
-    print(f"Upgrading {cluster} with budget {budget}")
+@lockdown(tool="scale_cluster")
+def scale_cluster(cluster: str, replicas: int):
+    print(f"Scaling {cluster} to {replicas} replicas")
 
 # Set context for all decorated functions
 with set_warrant_context(warrant), set_keypair_context(keypair):
-    upgrade_cluster(cluster="staging-web", budget=500.0)
+    scale_cluster(cluster="staging-web", replicas=5)
 ```
 
 ### 5. LangChain One-Liner (Recommended)
@@ -159,7 +159,7 @@ let keypair = Keypair::generate();
 let warrant = Warrant::builder()
     .tools(vec!["manage_infrastructure".to_string()])
     .constraint("cluster", Pattern::new("staging-*")?)
-    .constraint("budget", Range::max(10000.0))
+    .constraint("replicas", Range::max(15.0))
     .ttl(Duration::from_secs(3600))
     .build(&keypair)?;
 ```
@@ -172,7 +172,7 @@ use tenuo_core::Exact;
 let worker_keypair = Keypair::generate();
 let worker_warrant = warrant.attenuate()
     .constraint("cluster", Exact::new("staging-web"))
-    .constraint("budget", Range::max(1000.0))
+    .constraint("replicas", Range::max(10.0))
     .authorized_holder(worker_keypair.public_key())
     .build(&keypair)?;
 ```
@@ -204,7 +204,7 @@ tenuo issue \
   --tool manage_infrastructure \
   --signing-key root.pem \
   --constraint "cluster=pattern:staging-*" \
-  --constraint "budget=range:..10000" \
+  --constraint "replicas=range:..15" \
   --ttl 3600 \
   --out root.warrant
 
@@ -214,12 +214,12 @@ tenuo attenuate \
   --signing-key root.pem \
   --holder worker.pem \
   --constraint "cluster=exact:staging-web" \
-  --constraint "budget=range:..1000" \
+  --constraint "replicas=range:..10" \
   --out worker.warrant
 
 # Verify and inspect
 tenuo verify --warrant worker.warrant --tool manage_infrastructure \
-  --args '{"cluster": "staging-web", "budget": 500}'
+  --args '{"cluster": "staging-web", "replicas": 5}'
 tenuo inspect --warrant worker.warrant
 ```
 

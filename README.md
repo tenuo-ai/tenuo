@@ -7,7 +7,7 @@
 </p>
 
 Tenuo is a cryptographic authorization primitive for AI agents.
-It replaces ambient identity-based permissions with task-scoped capabilities that attenuate as they delegate. Offline verification in ~27μs.
+It constraints ambient identity-based permissions with task-scoped capabilities that attenuate as they delegate. Offline verification in ~27μs.
 If an agent is prompt-injected, the authority still can’t escape its bounds.
 
 [![Crates.io](https://img.shields.io/crates/v/tenuo-core.svg)](https://crates.io/crates/tenuo-core)
@@ -86,7 +86,7 @@ Tenuo implements **Subtractive Delegation**.
 3. **Worker** proves possession and executes
 4. **Warrant expires** — no revocation needed
 
-Warrants can only **shrink** when delegated: a $1000 budget becomes $500, access to `staging-*` narrows to `staging-web`. Verification is 100% offline in ~27μs on commodity hardware (benchmarks in repo).
+Warrants can only **shrink** when delegated: 15 replicas becomes 10, access to `staging-*` narrows to `staging-web`. Verification is 100% offline in ~27μs on commodity hardware (benchmarks in repo).
 
 ---
 

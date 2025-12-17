@@ -154,18 +154,18 @@ def write_file(file_path: str, content: str) -> None:
 
 
 @lockdown(tool="manage_cluster")
-def manage_cluster(cluster: str, action: str, budget: float) -> dict:
+def manage_cluster(cluster: str, action: str, replicas: int) -> dict:
     """
     Protected cluster management function.
-    Constraints on cluster name pattern and budget are enforced.
+    Constraints on cluster name pattern and replicas are enforced.
     """
     # Simulate cluster management
     return {
         "status": "success",
         "cluster": cluster,
         "action": action,
-        "budget_used": budget,
-        "message": f"Executed {action} on {cluster} with budget ${budget}"
+        "replicas": replicas,
+        "message": f"Executed {action} on {cluster} with {replicas} replicas"
     }
 
 # ============================================================================
@@ -261,14 +261,14 @@ async def manage_cluster_endpoint(cluster: str, request: dict, warrant: Warrant 
     
     Requires:
     - X-Tenuo-Warrant header with warrant authorizing "manage_cluster"
-    - Warrant constraints must allow the cluster name and budget
+    - Warrant constraints must allow the cluster name and replicas
     """
     action = request.get("action", "status")
-    budget = request.get("budget", 0.0)
+    replicas = request.get("replicas", 1)
     
     with set_warrant_context(warrant), set_keypair_context(AGENT_KEYPAIR):
         try:
-            result = manage_cluster(cluster, action, budget)
+            result = manage_cluster(cluster, action, replicas)
             return result
         except AuthorizationError as e:
             logger.warning(f"Authorization failed for cluster {cluster}: {e}")
@@ -347,7 +347,7 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
         holder=AGENT_KEYPAIR.public_key,
         constraints={
             "cluster": Pattern("staging-*"),
-            "budget": Range.max_value(10000.0)
+            "replicas": Range.max_value(15)
         },
         ttl_seconds=3600
     )

@@ -108,7 +108,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    • Constraints:");
     println!("      - cluster:   staging-*");
     println!("      - action:    * (Wildcard)");
-    println!("      - budget:    ≤ $10,000");
+    println!("      - replicas:  ≤ 15");
 
     // =========================================================================
     // Step 2: Establish Identities (Key Generation)
@@ -173,14 +173,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Narrowing capabilities:");
     println!("    • cluster: staging-*  → staging-web (exact)");
     println!("    • action:  * (any)    → [upgrade, restart] (OneOf)");
-    println!("    • budget:  ≤$10,000   → ≤$1,000 (reduced)");
+    println!("    • replicas: ≤15       → ≤10 (reduced)");
     println!("    • TTL:     1 hour     → 10 minutes (shortened)");
 
     let worker_warrant = root_warrant
         .attenuate()
         .constraint("cluster", Exact::new("staging-web"))
         .constraint("action", OneOf::new(vec!["upgrade", "restart"]))
-        .constraint("budget", Range::max(1000.0))
+        .constraint("replicas", Range::max(10.0))
         .ttl(Duration::from_secs(600)) // 10 minutes
         .authorized_holder(worker_keypair.public_key()) // PoP
         .agent_id("worker-agent-01") // Traceability
@@ -240,7 +240,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .attenuate()
         .constraint("cluster", Exact::new("staging-web"))
         .constraint("action", OneOf::new(vec!["delete", "scale-down"])) // Dangerous actions
-        .constraint("budget", Range::max(500.0))
+        .constraint("replicas", Range::max(5.0))
         .ttl(Duration::from_secs(300)) // 5 minutes (short for sensitive ops)
         .authorized_holder(worker_keypair.public_key())
         .agent_id("worker-agent-01-sensitive")
@@ -252,7 +252,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n  ✓ Multi-Sig Warrant Created:");
     println!("    • ID:          {}", sensitive_warrant.id());
     println!("    • Actions:     [delete, scale-down] (dangerous!)");
-    println!("    • Budget:      ≤$500");
+    println!("    • Replicas:    ≤5");
     println!("    • Approvers:   1 (admin required)");
     println!("    • Threshold:   1-of-1");
     println!("    • TTL:         5 minutes (short-lived for safety)");
@@ -270,12 +270,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Chain Structure:");
     println!("    ┌─────────────────────────────────────────────────────────────┐");
     println!("    │  [0] Root Warrant (Control Plane)                           │");
-    println!("    │      └── cluster: staging-*, action: *, budget: ≤$10k       │");
+    println!("    │      └── cluster: staging-*, action: *, replicas: ≤15       │");
     println!("    │              │                                              │");
     println!("    │              ▼  (attenuation)                               │");
     println!("    │  [1] Worker Warrant (Orchestrator)                          │");
     println!("    │      └── cluster: staging-web, action: upgrade|restart,     │");
-    println!("    │          budget: ≤$1k                                       │");
+    println!("    │          replicas: ≤10                                       │");
     println!("    └─────────────────────────────────────────────────────────────┘");
 
     // Serialize the chains for the worker

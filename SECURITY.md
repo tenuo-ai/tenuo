@@ -79,8 +79,3 @@ Security advisories will be published via:
 
 We gratefully acknowledge all valid security reports in our Hall of Fame and release notes. We do not currently offer monetary rewards.
 
-### Hall of Fame
-
-We thank the following researchers for responsibly disclosing vulnerabilities:
-
-*(This section will be populated as vulnerabilities are reported and fixed)*

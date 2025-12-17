@@ -178,7 +178,7 @@ struct EnrollmentRequest {
     /// Tool name for the warrant (default: "manage_infrastructure")
     #[serde(default = "default_tool")]
     tool: String,
-    /// Constraints as pattern strings (default: staging-*, wildcard action, $10k budget)
+    /// Constraints as pattern strings (default: staging-*, wildcard action, 15 replicas max)
     #[serde(default)]
     constraints: Option<std::collections::HashMap<String, String>>,
     /// TTL in seconds (default: 3600)
@@ -314,8 +314,8 @@ async fn enroll(
                 ("cluster", Pattern::new("staging-*").unwrap().into()),
                 ("action", tenuo_core::constraints::Wildcard::new().into()),
                 (
-                    "budget",
-                    tenuo_core::constraints::Range::max(10000.0).into(),
+                    "replicas",
+                    tenuo_core::constraints::Range::max(15.0).into(),
                 ),
             ]
         };

@@ -28,7 +28,7 @@ def main():
         tools="manage_infrastructure",  # Can also be a list: ["tool1", "tool2"]
         constraints={
             "cluster": Pattern("staging-*"),
-            "budget": Range.max_value(10000.0)
+            "replicas": Range.max_value(15)
         },
         ttl_seconds=3600,
         keypair=control_keypair,
@@ -43,7 +43,7 @@ def main():
     worker_warrant = root_warrant.attenuate(
         constraints={
             "cluster": Exact("staging-web"),
-            "budget": Range.max_value(1000.0)
+            "replicas": Range.max_value(10)
         },
         keypair=worker_keypair,       # Subject keypair (for binding)
         parent_keypair=control_keypair, # Issuer keypair (for signing)
@@ -64,25 +64,25 @@ def main():
         return warrant.authorize(tool, args, bytes(signature))
 
     # Allowed: matches constraints
-    args1 = {"cluster": "staging-web", "budget": 500.0}
+    args1 = {"cluster": "staging-web", "replicas": 5}
     if check_auth(worker_warrant, "manage_infrastructure", args1, worker_keypair):
-        print("   ✓ Allowed: cluster=staging-web, budget=500.0 -> True")
+        print("   ✓ Allowed: cluster=staging-web, replicas=5 -> True")
     else:
-        print("   ✗ Allowed: cluster=staging-web, budget=500.0 -> False (Unexpected)")
+        print("   ✗ Allowed: cluster=staging-web, replicas=5 -> False (Unexpected)")
     
-    # Denied: budget too high
-    args2 = {"cluster": "staging-web", "budget": 2000.0}
+    # Denied: replicas too high
+    args2 = {"cluster": "staging-web", "replicas": 20}
     if not check_auth(worker_warrant, "manage_infrastructure", args2, worker_keypair):
-        print("   ✓ Denied: cluster=staging-web, budget=2000.0 -> False")
+        print("   ✓ Denied: cluster=staging-web, replicas=20 -> False")
     else:
-        print("   ✗ Denied: cluster=staging-web, budget=2000.0 -> True (Unexpected)")
+        print("   ✗ Denied: cluster=staging-web, replicas=20 -> True (Unexpected)")
     
     # Denied: wrong cluster
-    args3 = {"cluster": "production-web", "budget": 500.0}
+    args3 = {"cluster": "production-web", "replicas": 5}
     if not check_auth(worker_warrant, "manage_infrastructure", args3, worker_keypair):
-        print("   ✓ Denied: cluster=production-web, budget=500.0 -> False")
+        print("   ✓ Denied: cluster=production-web, replicas=5 -> False")
     else:
-        print("   ✗ Denied: cluster=production-web, budget=500.0 -> True (Unexpected)")
+        print("   ✗ Denied: cluster=production-web, replicas=5 -> True (Unexpected)")
     print()
     
     # 5. Serialize warrant

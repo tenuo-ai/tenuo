@@ -498,8 +498,8 @@
                         <span class="warrant-value">* (Wildcard)</span>
                     </div>
                     <div class="warrant-field">
-                        <span class="warrant-key">budget:</span>
-                        <span class="warrant-value">≤ $10,000</span>
+                        <span class="warrant-key">replicas:</span>
+                        <span class="warrant-value">≤ 15</span>
                     </div>
                     <div class="warrant-field">
                         <span class="warrant-key">max_depth:</span>
@@ -561,8 +561,8 @@
                         <span class="warrant-value narrowed">[upgrade, restart] ← narrowed from * (OneOf)</span>
                     </div>
                     <div class="warrant-field">
-                        <span class="warrant-key">budget:</span>
-                        <span class="warrant-value narrowed">≤ $1,000 ← narrowed</span>
+                        <span class="warrant-key">replicas:</span>
+                        <span class="warrant-value narrowed">≤ 10 ← narrowed</span>
                     </div>
                     <div class="warrant-field">
                         <span class="warrant-key">max_depth:</span>
@@ -712,9 +712,9 @@
                         <div class="action-item">
                             <div class="action-status blocked">✗</div>
                             <div class="action-content">
-                                <div class="action-name">upgrade ($5,000) <span
+                                <div class="action-name">scale (20 replicas) <span
                                         style="color: var(--accent-red); font-size: 0.7rem;">~200ns</span></div>
-                                <div class="action-reason">Denied: Exceeds $1,000 budget limit</div>
+                                <div class="action-reason">Denied: Exceeds 10 replica limit</div>
                             </div>
                         </div>
                     </div>
@@ -751,8 +751,8 @@
                         <span>depth: 2 / 3</span>
                     </div>
                     <div class="warrant-field">
-                        <span class="warrant-key">budget:</span>
-                        <span class="warrant-value narrowed">≤ $500 ← further narrowed</span>
+                        <span class="warrant-key">replicas:</span>
+                        <span class="warrant-value narrowed">≤ 5 ← further narrowed</span>
                     </div>
                     <div class="warrant-field">
                         <span class="warrant-key">max_depth:</span>

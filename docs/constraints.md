@@ -595,14 +595,14 @@ child = parent.attenuate(constraints={"path": Pattern("/*")}, ...)
 ### Range Narrowing
 
 ```python
-# Parent: max 1000
-parent = Warrant.issue(constraints={"budget": Range.max_value(1000)}, ...)
+# Parent: max 15 replicas
+parent = Warrant.issue(constraints={"replicas": Range.max_value(15)}, ...)
 
-# ✅ Child: max 500 (narrower)
-child = parent.attenuate(constraints={"budget": Range.max_value(500)}, ...)
+# ✅ Child: max 10 (narrower)
+child = parent.attenuate(constraints={"replicas": Range.max_value(10)}, ...)
 
-# ❌ Child: max 2000 (wider - FAILS)
-child = parent.attenuate(constraints={"budget": Range.max_value(2000)}, ...)
+# ❌ Child: max 20 (wider - FAILS)
+child = parent.attenuate(constraints={"replicas": Range.max_value(20)}, ...)
 ```
 
 ### OneOf Narrowing
@@ -689,13 +689,13 @@ with root_task(tools=["read_file"], path=Pattern("/data/reports/*")):
     await read_file(path="/etc/passwd")           # ❌
 ```
 
-### Budget/Amount Limits
+### Replica/Capacity Limits
 
 ```python
-# Limit transaction amounts
-with root_task(tools=["transfer"], amount=Range.max_value(1000)):
-    await transfer(amount=500)   # ✅
-    await transfer(amount=5000)  # ❌
+# Limit replica counts
+with root_task(tools=["scale"], replicas=Range.max_value(15)):
+    await scale(replicas=5)   # ✅
+    await scale(replicas=20)  # ❌
 ```
 
 ### Environment Restrictions

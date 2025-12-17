@@ -40,7 +40,7 @@ warrant = Warrant.issue(
     tools="manage_infrastructure",  # Can also be a list: ["tool1", "tool2"]
     constraints={
         "cluster": Pattern("staging-*"),
-        "budget": Range.max_value(10000.0)
+        "replicas": Range.max_value(15)
     },
     ttl_seconds=3600,
     keypair=keypair,
@@ -52,7 +52,7 @@ worker_keypair = Keypair.generate()
 worker_warrant = warrant.attenuate(
     constraints={
         "cluster": Exact("staging-web"),
-        "budget": Range.max_value(1000.0)
+        "replicas": Range.max_value(10)
     },
     keypair=worker_keypair,       # Subject keypair
     parent_keypair=keypair,       # Parent signs the attenuation
@@ -63,7 +63,7 @@ worker_warrant = warrant.attenuate(
 # See docs/security.md for PoP replay prevention best practices.
 #
 # 1. Create a PoP signature using the worker's private key
-args = {"cluster": "staging-web", "budget": 500.0}
+args = {"cluster": "staging-web", "replicas": 5}
 pop_signature = worker_warrant.create_pop_signature(worker_keypair, "manage_infrastructure", args)
 
 # 2. Authorize with the signature
@@ -114,10 +114,10 @@ warrant = Warrant.issue(
     holder=keypair.public_key
 )
 
-@lockdown(warrant, tool="upgrade_cluster")
-def upgrade_cluster(cluster: str, budget: float):
+@lockdown(warrant, tool="scale_cluster")
+def scale_cluster(cluster: str, replicas: int):
     # This function can only be called if the warrant authorizes it
-    print(f"Upgrading {cluster} with budget {budget}")
+    print(f"Scaling {cluster} to {replicas} replicas")
     # ... implementation
 ```
 
@@ -126,15 +126,15 @@ def upgrade_cluster(cluster: str, budget: float):
 from tenuo import lockdown, set_warrant_context, set_keypair_context
 
 # Set warrant in context (e.g., in FastAPI middleware or LangChain callback)
-@lockdown(tool="upgrade_cluster")  # No explicit warrant - uses context
-def upgrade_cluster(cluster: str, budget: float):
+@lockdown(tool="scale_cluster")  # No explicit warrant - uses context
+def scale_cluster(cluster: str, replicas: int):
     # Warrant is automatically retrieved from context
-    print(f"Upgrading {cluster} with budget {budget}")
+    print(f"Scaling {cluster} to {replicas} replicas")
 
 # In your request handler:
 # Set BOTH warrant and keypair in context (required for PoP)
 with set_warrant_context(warrant), set_keypair_context(keypair):
-    upgrade_cluster(cluster="staging-web", budget=5000.0)
+    scale_cluster(cluster="staging-web", replicas=5)
 ```
 
 See `examples/context_pattern.py` for a complete LangChain/FastAPI integration example.
