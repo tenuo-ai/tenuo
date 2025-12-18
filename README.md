@@ -199,13 +199,15 @@ See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https:
 
 ---
 
-## Try It
+## Try the Demo
+
+Run the multi-agent demo locally:
 
 ```bash
 docker compose up orchestrator worker
 ```
 
-See the [examples](./tenuo-python/examples) for LangChain, LangGraph, and multi-agent patterns.
+This launches an orchestrator that delegates scoped warrants to workers. See the [examples](./tenuo-python/examples) for LangChain, LangGraph, and more patterns.
 
 ---
 
