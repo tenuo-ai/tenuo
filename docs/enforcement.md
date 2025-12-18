@@ -14,8 +14,9 @@ You can deploy Tenuo in four enforcement models, ranging from "Drop-in Safety" t
 | Model | Enforcement Point | Protects Against |
 |-------|-------------------|------------------|
 | In-Process | Inside your Python agent | Prompt injection (confused deputy) |
-| Sidecar/Gateway | Separate process, same pod or cluster | Compromised agent (RCE) |
-| MCP Proxy | Between agent and MCP server | Unauthorized tool discovery and use |
+| Sidecar | Separate process, same pod | Compromised agent (RCE) |
+| Gateway | Cluster ingress (Envoy/Istio) | Centralized policy |
+| MCP Proxy | Between agent and MCP server | Unauthorized tool discovery |
 
 Choose based on your threat model. They can be combined for defense in depth.
 
@@ -41,22 +42,18 @@ In this model, Tenuo runs **inside** your agent's process as a Python library / 
 def delete_file(path: str):
     os.remove(path)  # Never reached if unauthorized
 
-with set_warrant_context(warrant), set_keypair_context(keypair):
+with set_warrant_context(warrant), set_signing_key_context(keypair):
     delete_file("/etc/passwd")  # Raises AuthorizationError
 ```
 
-    1.  LLM generates a tool call: `delete_file("/etc/passwd")`
-    2.  The `@lockdown` decorator intercepts the call.
-    3.  It checks the current `Warrant` in the context.
-    4.  **Action:** If the warrant says `path: /data/*`, Tenuo raises an exception. The tool code never runs.
+1. LLM generates a tool call: `delete_file("/etc/passwd")`
+2. The `@lockdown` decorator intercepts the call
+3. It checks the current `Warrant` in the context
+4. If the warrant says `path: /data/*`, Tenuo raises `AuthorizationError`. The tool code never runs.
 
-* **Security Guarantee:** 
+**Security Guarantee:** Blocks confused deputy attacks. If prompt injection tricks the LLM into calling unauthorized tools, Tenuo stops it.
 
-Constrains Confused Deputy attacks. If prompt injection tricks the  LLM into calling unauthorized tools, Tenuo blocks it.
-
-However, if attacker gets remote code execution (RCE) on the agent server process, they can remove the decorator or call tools directly to bypass Tenuo. The agent process is the trust boundary.
-
->> ***This model Prevents confused deputy attacks caused by prompt injection inside a trusted process.***
+**Limitation:** If an attacker gets remote code execution (RCE) on the agent process, they can bypass Tenuo by calling tools directly. The agent process is the trust boundary. For RCE protection, use Model 2 (Sidecar).
 
 **Variant: Web Framework Middleware**
 
@@ -113,7 +110,7 @@ async def tenuo_guard(request: Request, call_next):
 **Flask:**
 
 ```python
-from flask import Flask, request, abort, jsonify
+from flask import Flask, request, abort
 from tenuo import Authorizer, Warrant, AuthorizationError
 
 app = Flask(__name__)
@@ -312,7 +309,7 @@ async with SecureMCPClient("python", ["mcp_server.py"]) as client:
     tools = await client.get_protected_tools()
     
     # Every call goes through Tenuo authorization
-    with set_warrant_context(warrant), set_keypair_context(keypair):
+    with set_warrant_context(warrant), set_signing_key_context(keypair):
         await tools["read_file"](path="/data/report.txt")  # Checked
         await tools["read_file"](path="/etc/passwd")       # Denied
 ```
