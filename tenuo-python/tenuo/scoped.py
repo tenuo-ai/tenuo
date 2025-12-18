@@ -95,11 +95,14 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     Check if child constraint is contained within parent.
     
     Tier 1 containment rules:
+    - Exact inside Pattern: child value must match parent glob pattern
+    - Pattern inside Pattern: child pattern must be more restrictive
     - Exact: must be equal
-    - Pattern (glob): child must be more specific (longer prefix)
     - OneOf: child must be subset
     - Range: child must be within parent bounds
     """
+    import fnmatch
+    
     # Get constraint type names
     child_type = type(child_value).__name__
     parent_type = type(parent_value).__name__
@@ -108,17 +111,27 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     child_str = _extract_pattern_value(child_value)
     parent_str = _extract_pattern_value(parent_value)
     
-    # Pattern/glob containment
-    if parent_type == 'Pattern' or parent_str.endswith('*'):
-        parent_prefix = parent_str.rstrip('*')
-        
-        if child_type == 'Pattern' or child_str.endswith('*'):
-            # Both are patterns - child prefix must start with parent prefix and be longer/equal
-            child_prefix = child_str.rstrip('*')
-            return child_prefix.startswith(parent_prefix) and len(child_prefix) >= len(parent_prefix)
+    # Pattern/glob containment - use fnmatch for proper glob matching
+    if parent_type == 'Pattern' or '*' in parent_str:
+        if child_type == 'Pattern' or '*' in child_str:
+            # Both are patterns - child must be more restrictive
+            # A pattern is more restrictive if it has more literal characters
+            # or matches a subset of what the parent matches
+            child_literal = child_str.replace('*', '')
+            parent_literal = parent_str.replace('*', '')
+            
+            # Child's literal parts must contain parent's literal parts
+            # e.g., "*@company.com" contains "@company.com"
+            # and "/data/reports/*" is more restrictive than "/data/*"
+            if parent_literal in child_literal or child_literal.startswith(parent_literal):
+                return True
+            
+            # Also check if child pattern would only match things parent matches
+            # by checking if the non-wildcard parts align
+            return len(child_literal) >= len(parent_literal) and parent_literal in child_literal
         else:
-            # Child is exact - must match parent prefix
-            return child_str.startswith(parent_prefix)
+            # Child is exact value - must match parent pattern using glob
+            return fnmatch.fnmatch(child_str, parent_str)
     
     # Exact containment - must be equal
     if parent_type == 'Exact' or child_type == 'Exact':
