@@ -171,7 +171,7 @@ async with SecureMCPClient("python", ["mcp_server.py"]) as client:
 
 ---
 
-## Docker Images
+## Docker & Kubernetes
 
 Official images on [Docker Hub](https://hub.docker.com/u/tenuo):
 
@@ -182,10 +182,17 @@ docker pull tenuo/control:latest     # Control plane (demo/reference)
 
 | Image | Description | Base |
 |-------|-------------|------|
-| `tenuo/authorizer` | Verifies warrants, checks PoP| Distroless |
+| `tenuo/authorizer` | Verifies warrants, checks PoP | Distroless |
 | `tenuo/control` | Issues root warrants (reference implementation) | Debian slim |
 
-See [Kubernetes guide](https://tenuo.ai/kubernetes) for deployment patterns.
+**Helm Chart** — Production-ready deployment with HA, autoscaling, and PodDisruptionBudget:
+
+```bash
+helm install tenuo-authorizer ./charts/tenuo-authorizer \
+  --set config.trustedRoots[0]="YOUR_CONTROL_PLANE_PUBLIC_KEY"
+```
+
+See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https://tenuo.ai/kubernetes) for deployment patterns.
 
 ---
 

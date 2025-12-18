@@ -93,9 +93,10 @@ resources:
     cpu: 50m
     memory: 64Mi
 
-# Liveness and readiness probes
+# Liveness and readiness probes (HTTP - authorizer exposes /health, /healthz, /ready)
 livenessProbe:
-  grpc:
+  httpGet:
+    path: /health
     port: 9090
   initialDelaySeconds: 5
   periodSeconds: 10
@@ -103,7 +104,8 @@ livenessProbe:
   failureThreshold: 3
 
 readinessProbe:
-  grpc:
+  httpGet:
+    path: /ready
     port: 9090
   initialDelaySeconds: 3
   periodSeconds: 5

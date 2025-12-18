@@ -61,6 +61,26 @@ Get a working setup in 5 minutes:
 
 ---
 
+## Helm Chart
+
+For production deployments, use the official Helm chart:
+
+```bash
+helm install tenuo-authorizer ./charts/tenuo-authorizer \
+  --namespace tenuo-system --create-namespace \
+  --set config.trustedRoots[0]="YOUR_CONTROL_PLANE_PUBLIC_KEY"
+```
+
+The chart includes:
+- **High Availability**: Pod anti-affinity, PodDisruptionBudget
+- **Autoscaling**: HPA support with sensible defaults
+- **Security**: Non-root, read-only filesystem, minimal capabilities
+- **Gateway Config**: Full tool/route extraction via ConfigMap
+
+See [charts/tenuo-authorizer/README.md](https://github.com/tenuo-ai/tenuo/tree/main/charts/tenuo-authorizer) for full configuration options.
+
+---
+
 ## Choosing a Pattern
 
 | Pattern | Warrant Scope | Complexity | Best For |

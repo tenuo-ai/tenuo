@@ -230,7 +230,7 @@ kubectl logs -l app.kubernetes.io/name=tenuo-authorizer --tail=50
 ### Test the service
 ```bash
 kubectl port-forward svc/tenuo-authorizer 9090:9090
-grpcurl -plaintext localhost:9090 list
+curl http://localhost:9090/health
 ```
 
 ### Verify configuration
