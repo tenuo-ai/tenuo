@@ -17,7 +17,7 @@
 //! ## Example
 //!
 //! ```rust,ignore
-//! use tenuo_core::{Warrant, Pattern, Keypair};
+//! use tenuo::{Warrant, Pattern, Keypair};
 //! use std::time::Duration;
 //!
 //! // Create a keypair for the control plane

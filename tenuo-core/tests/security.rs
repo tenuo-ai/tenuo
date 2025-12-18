@@ -7,7 +7,7 @@
 use chrono::Utc;
 use std::collections::HashMap;
 use std::time::Duration;
-use tenuo_core::{
+use tenuo::{
     approval::{compute_request_hash, Approval},
     constraints::Pattern,
     crypto::SigningKey,

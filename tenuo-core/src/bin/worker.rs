@@ -14,8 +14,8 @@ use std::fs;
 use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
-use tenuo_core::approval::{compute_request_hash, Approval};
-use tenuo_core::{Authorizer, ConstraintValue, PublicKey, Range, SigningKey, Warrant};
+use tenuo::approval::{compute_request_hash, Approval};
+use tenuo::{Authorizer, ConstraintValue, PublicKey, Range, SigningKey, Warrant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n╔══════════════════════════════════════════════════════════════════╗");

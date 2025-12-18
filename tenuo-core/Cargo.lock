@@ -2305,8 +2305,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "tenuo-core"
-version = "0.1.0-alpha.1"
+name = "tenuo"
+version = "0.1.0-alpha.2"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -2337,6 +2337,7 @@ dependencies = [
  "sha2",
  "smallvec",
  "spki",
+ "subtle",
  "tempfile",
  "thiserror",
  "tokio",

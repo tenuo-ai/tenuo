@@ -89,7 +89,7 @@ impl CompiledPath {
     /// # Examples
     ///
     /// ```
-    /// use tenuo_core::extraction::CompiledPath;
+    /// use tenuo::extraction::CompiledPath;
     ///
     /// let path = CompiledPath::compile("spec.replicas");
     /// assert_eq!(path.segments.len(), 2);
@@ -448,7 +448,7 @@ impl std::error::Error for ExtractionError {}
 /// # Examples
 ///
 /// ```
-/// use tenuo_core::{extraction::extract_json_path, constraints::ConstraintValue};
+/// use tenuo::{extraction::extract_json_path, constraints::ConstraintValue};
 /// use serde_json::json;
 ///
 /// let body = json!({

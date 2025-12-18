@@ -18,7 +18,7 @@
 use chrono::{Duration as ChronoDuration, Utc};
 use std::collections::HashMap;
 use std::time::Duration;
-use tenuo_core::{
+use tenuo::{
     constraints::{All, Constraint, ConstraintSet, ConstraintValue, Exact, OneOf, Pattern},
     crypto::SigningKey,
     planes::{Authorizer, DataPlane},
@@ -721,7 +721,7 @@ fn test_holder_mismatch_pop_fails() {
 /// Expected: ConstraintDepthExceeded during deserialization.
 #[test]
 fn test_constraint_depth_dos() {
-    use tenuo_core::constraints::All;
+    use tenuo::constraints::All;
 
     // Create deeply nested constraint (depth > 16)
     let mut nested = Constraint::Exact(Exact::new("value"));
@@ -839,17 +839,17 @@ fn test_warrant_size_limit() {
 
             // MUST NOT exceed MAX_WARRANT_SIZE
             assert!(
-                bytes.len() <= tenuo_core::MAX_WARRANT_SIZE,
+                bytes.len() <= tenuo::MAX_WARRANT_SIZE,
                 "Warrant size {} exceeds MAX_WARRANT_SIZE {}",
                 bytes.len(),
-                tenuo_core::MAX_WARRANT_SIZE
+                tenuo::MAX_WARRANT_SIZE
             );
 
             println!(
                 "✅ Large warrant under size limit ({} tools, {} bytes, max {})",
                 tool_count,
                 bytes.len(),
-                tenuo_core::MAX_WARRANT_SIZE
+                tenuo::MAX_WARRANT_SIZE
             );
         }
         Err(e) => {

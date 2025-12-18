@@ -1,11 +1,12 @@
 [package]
-name = "tenuo-core"
-version = "0.1.0-alpha.1"
+name = "tenuo"
+version = "0.1.0-alpha.2"
 edition = "2021"
 authors = ["Tenuo Contributors"]
 description = "Agent Capability Flow Control - Rust core library"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/tenuo-ai/tenuo"
+readme = "README.md"
 keywords = ["authorization", "capabilities", "agents", "security", "warrants"]
 categories = ["authentication", "cryptography", "ai", "security"]
 
@@ -13,7 +14,7 @@ categories = ["authentication", "cryptography", "ai", "security"]
 deprecated = "allow"  # Allow Keypair usage during SigningKey migration
 
 [lib]
-name = "tenuo_core"
+name = "tenuo"
 # When used as a Python extension dependency, only build as rlib to avoid linking issues
 # cdylib is only needed for standalone dynamic library usage
 crate-type = ["rlib"]
@@ -76,6 +77,7 @@ required-features = ["data-plane"]
 ed25519-dalek = { version = "2.1", features = ["rand_core", "serde", "batch", "pkcs8"] }
 rand = "0.8"
 sha2 = "0.10"
+subtle = "2.6"  # Constant-time comparison for secrets
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -115,9 +117,9 @@ thiserror = "1.0"
 uuid = { version = "1.6", features = ["v4", "v7", "serde"] }
 
 # Python bindings (optional)
-# Note: extension-module is only for the final Python package, not for library dependencies
+# Note: extension-module must NOT be here - it goes in the final cdylib (tenuo-python)
 # abi3-py38 allows building without linking Python at compile time
-pyo3 = { version = "0.24", features = ["extension-module", "abi3-py38"], optional = true }
+pyo3 = { version = "0.24", features = ["abi3-py38"], optional = true }
 
 # Server dependencies (optional)
 tokio = { version = "1.35", features = ["full"], optional = true }

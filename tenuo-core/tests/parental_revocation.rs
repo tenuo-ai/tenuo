@@ -1,8 +1,8 @@
 use std::time::Duration;
-use tenuo_core::crypto::SigningKey;
-use tenuo_core::planes::DataPlane;
-use tenuo_core::revocation::RevocationRequest;
-use tenuo_core::warrant::Warrant;
+use tenuo::crypto::SigningKey;
+use tenuo::planes::DataPlane;
+use tenuo::revocation::RevocationRequest;
+use tenuo::warrant::Warrant;
 
 #[test]
 fn test_parental_revocation() {

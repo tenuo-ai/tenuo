@@ -13,7 +13,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tenuo_core::{
+use tenuo::{
     constraints::{Constraint, ConstraintValue, Exact, OneOf, Pattern, Range, RegexConstraint},
     crypto::{PublicKey, Signature, SigningKey},
     extraction::RequestContext,
@@ -984,7 +984,7 @@ fn handle_issue(
     }
 
     if let Some(id_str) = id {
-        let warrant_id = tenuo_core::warrant::WarrantId::from_string(id_str)?;
+        let warrant_id = tenuo::warrant::WarrantId::from_string(id_str)?;
         builder = builder.id(warrant_id);
     }
 

@@ -9,7 +9,7 @@
 use proptest::prelude::*;
 use std::collections::HashMap;
 use std::time::Duration;
-use tenuo_core::{
+use tenuo::{
     constraints::{ConstraintValue, Pattern, Range},
     crypto::SigningKey,
     warrant::Warrant,

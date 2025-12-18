@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use tenuo_core::{extraction::extract_json_path, ConstraintValue};
+    use tenuo::{extraction::extract_json_path, ConstraintValue};
 
     #[test]
     fn test_extract_object() {

@@ -11,7 +11,7 @@ Tenuo is a cryptographic authorization primitive for AI agents. **Think prepaid 
 It constrains ambient identity-based permissions with task-scoped capabilities that attenuate as they delegate. Offline verification in ~27μs.
 If an agent is prompt-injected, the authority still can't escape its bounds.
 
-[![Crates.io](https://img.shields.io/crates/v/tenuo-core.svg)](https://crates.io/crates/tenuo-core)
+[![Crates.io](https://img.shields.io/crates/v/tenuo.svg)](https://crates.io/crates/tenuo)
 [![PyPI](https://img.shields.io/pypi/v/tenuo.svg)](https://pypi.org/project/tenuo/)
 [![Docs](https://img.shields.io/badge/docs-tenuo.ai-blue)](https://tenuo.ai)
 
@@ -206,10 +206,10 @@ Building a sidecar or gateway? Use the core directly:
 
 ```toml
 [dependencies]
-tenuo-core = "0.1"
+tenuo = "0.1"
 ```
 
-See [docs.rs/tenuo-core](https://docs.rs/tenuo-core) for Rust API and the [Kubernetes Integration Guide](https://tenuo.ai/kubernetes) for sidecar/gateway deployment patterns.
+See [docs.rs/tenuo](https://docs.rs/tenuo) for Rust API and the [Kubernetes Integration Guide](https://tenuo.ai/kubernetes) for sidecar/gateway deployment patterns.
 
 ---
 

@@ -3,7 +3,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::collections::HashMap;
 use std::time::Duration;
-use tenuo_core::{
+use tenuo::{
     constraints::{ConstraintValue, Exact, Pattern, Range},
     crypto::SigningKey,
     warrant::Warrant,

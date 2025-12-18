@@ -1117,7 +1117,7 @@ pub const DEFAULT_POP_MAX_WINDOWS: u32 = 4;
 /// # Example
 ///
 /// ```rust,ignore
-/// use tenuo_core::planes::AuthorizerBuilder;
+/// use tenuo::planes::AuthorizerBuilder;
 ///
 /// let authorizer = AuthorizerBuilder::new()
 ///     .trusted_root(control_plane_key)

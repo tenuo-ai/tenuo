@@ -43,7 +43,7 @@ pip install tenuo
 **Rust**
 ```toml
 [dependencies]
-tenuo-core = "0.1"
+tenuo = "0.1"
 ```
 
 **CLI**

@@ -47,7 +47,7 @@
 //! ```
 //!
 //! ```rust,ignore
-//! use tenuo_core::{Authorizer, CompiledMcpConfig, McpConfig, PublicKey, wire};
+//! use tenuo::{Authorizer, CompiledMcpConfig, McpConfig, PublicKey, wire};
 //! use serde_json::json;
 //!
 //! // Load and compile configuration

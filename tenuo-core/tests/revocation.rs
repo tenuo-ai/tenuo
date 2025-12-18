@@ -7,7 +7,7 @@
 
 use chrono::Utc;
 use std::time::Duration;
-use tenuo_core::{
+use tenuo::{
     crypto::SigningKey,
     planes::{ControlPlane, DataPlane},
     revocation::{RevocationRequest, SignedRevocationList},

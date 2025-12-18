@@ -1926,8 +1926,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "tenuo-core"
-version = "0.1.0-alpha.1"
+name = "tenuo"
+version = "0.1.0-alpha.2"
 dependencies = [
  "base64 0.22.1",
  "cel-interpreter",
@@ -1955,16 +1955,17 @@ dependencies = [
  "sha2",
  "smallvec",
  "spki",
+ "subtle",
  "thiserror",
  "uuid",
 ]
 
 [[package]]
 name = "tenuo-python"
-version = "0.1.0-alpha.1"
+version = "0.1.0-alpha.2"
 dependencies = [
  "pyo3",
- "tenuo-core",
+ "tenuo",
 ]
 
 [[package]]

@@ -39,7 +39,8 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
-use tenuo_core::{constraints::Pattern, crypto::SigningKey, planes::ControlPlane, wire};
+use subtle::ConstantTimeEq;
+use tenuo::{constraints::Pattern, crypto::SigningKey, planes::ControlPlane, wire};
 use tokio::sync::RwLock;
 
 /// Application state
@@ -89,15 +90,26 @@ struct HealthResponse {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Load or generate keypair
+    // Load keypair from environment (required in release builds)
     let keypair = if let Ok(secret_hex) = std::env::var("TENUO_SECRET_KEY") {
         let bytes = hex::decode(&secret_hex)?;
         let arr: [u8; 32] = bytes.try_into().map_err(|_| "invalid key length")?;
         SigningKey::from_bytes(&arr)
     } else {
-        eprintln!("WARNING: No TENUO_SECRET_KEY set, generating ephemeral keypair");
-        eprintln!("         This is fine for development but NOT for production!");
-        SigningKey::generate()
+        // In release builds, fail fast - ephemeral keys break warrant validity on restart
+        #[cfg(not(debug_assertions))]
+        {
+            eprintln!("ERROR: TENUO_SECRET_KEY is required in production.");
+            eprintln!("       Generate with: openssl rand -hex 32");
+            eprintln!("       Pod restarts with ephemeral keys invalidate all warrants.");
+            std::process::exit(1);
+        }
+        #[cfg(debug_assertions)]
+        {
+            eprintln!("WARNING: No TENUO_SECRET_KEY set, generating ephemeral keypair");
+            eprintln!("         This is fine for development but NOT for production!");
+            SigningKey::generate()
+        }
     };
 
     let control_plane = ControlPlane::new(keypair);
@@ -107,8 +119,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Public Key: {}", pubkey_hex);
 
     // Initialize Audit Logger
-    let logger = Arc::new(tenuo_core::audit::StdoutLogger::new());
-    tenuo_core::audit::set_global_logger(logger);
+    let logger = Arc::new(tenuo::audit::StdoutLogger::new());
+    tenuo::audit::set_global_logger(logger);
     eprintln!("Audit Logging: Enabled (stdout)");
 
     // Generate or load Enrollment Token
@@ -205,14 +217,19 @@ async fn enroll(
 ) -> Result<Json<IssueResponse>, (StatusCode, String)> {
     let mut state = state.write().await;
 
-    // 1. Verify Token
-    if req.enrollment_token != state.enrollment_token {
-        // Delay to prevent brute-force (simple mitigation)
+    // 1. Verify Token (constant-time comparison to prevent timing attacks)
+    let token_valid: bool = req
+        .enrollment_token
+        .as_bytes()
+        .ct_eq(state.enrollment_token.as_bytes())
+        .into();
+    if !token_valid {
+        // Delay to prevent brute-force (additional mitigation)
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        tenuo_core::audit::log_event(
-            tenuo_core::approval::AuditEvent::new(
-                tenuo_core::approval::AuditEventType::EnrollmentFailure,
+        tenuo::audit::log_event(
+            tenuo::approval::AuditEvent::new(
+                tenuo::approval::AuditEventType::EnrollmentFailure,
                 "control-plane",
                 "unknown",
             )
@@ -229,9 +246,9 @@ async fn enroll(
     let now = chrono::Utc::now().timestamp();
     let age = (now - req.timestamp).abs();
     if age > ENROLLMENT_POP_MAX_AGE_SECS {
-        tenuo_core::audit::log_event(
-            tenuo_core::approval::AuditEvent::new(
-                tenuo_core::approval::AuditEventType::EnrollmentFailure,
+        tenuo::audit::log_event(
+            tenuo::approval::AuditEvent::new(
+                tenuo::approval::AuditEventType::EnrollmentFailure,
                 "control-plane",
                 "unknown",
             )
@@ -262,7 +279,7 @@ async fn enroll(
             "Invalid public key length".to_string(),
         )
     })?;
-    let public_key = tenuo_core::crypto::PublicKey::from_bytes(&pubkey_arr)
+    let public_key = tenuo::crypto::PublicKey::from_bytes(&pubkey_arr)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
     let sig_bytes = hex::decode(&req.pop_signature_hex)
@@ -273,7 +290,7 @@ async fn enroll(
             "Invalid signature length".to_string(),
         )
     })?;
-    let signature = tenuo_core::crypto::Signature::from_bytes(&sig_arr).map_err(|_| {
+    let signature = tenuo::crypto::Signature::from_bytes(&sig_arr).map_err(|_| {
         (
             StatusCode::BAD_REQUEST,
             "Invalid signature format".to_string(),
@@ -294,7 +311,7 @@ async fn enroll(
     }
 
     // 3. Issue Root Warrant with configurable constraints
-    let constraints: Vec<(&str, tenuo_core::constraints::Constraint)> =
+    let constraints: Vec<(&str, tenuo::constraints::Constraint)> =
         if let Some(ref custom) = req.constraints {
             // Use custom constraints from request
             let mut result = Vec::new();
@@ -312,10 +329,10 @@ async fn enroll(
             // Default constraints
             vec![
                 ("cluster", Pattern::new("staging-*").unwrap().into()),
-                ("action", tenuo_core::constraints::Wildcard::new().into()),
+                ("action", tenuo::constraints::Wildcard::new().into()),
                 (
                     "replicas",
-                    tenuo_core::constraints::Range::max(15.0).unwrap().into(),
+                    tenuo::constraints::Range::max(15.0).unwrap().into(),
                 ),
             ]
         };
@@ -338,9 +355,9 @@ async fn enroll(
     // Track enrolled agent
     state.enrolled_agents.insert(public_key.to_bytes());
 
-    tenuo_core::audit::log_event(
-        tenuo_core::approval::AuditEvent::new(
-            tenuo_core::approval::AuditEventType::EnrollmentSuccess,
+    tenuo::audit::log_event(
+        tenuo::approval::AuditEvent::new(
+            tenuo::approval::AuditEventType::EnrollmentSuccess,
             "control-plane",
             "enrollment-token",
         )
@@ -387,7 +404,7 @@ async fn issue_warrant(
     }
 
     // Verify PoP signature (caller signs the request body)
-    let caller_pubkey = tenuo_core::crypto::PublicKey::from_bytes(&caller_bytes)
+    let caller_pubkey = tenuo::crypto::PublicKey::from_bytes(&caller_bytes)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     let sig_hex = req.signature_hex.as_ref().ok_or((
         StatusCode::UNAUTHORIZED,
@@ -402,7 +419,7 @@ async fn issue_warrant(
                 "Signature must be 64 bytes".to_string(),
             )
         })?;
-    let signature = tenuo_core::crypto::Signature::from_bytes(&sig_bytes)
+    let signature = tenuo::crypto::Signature::from_bytes(&sig_bytes)
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid signature".to_string()))?;
 
     // Verify signature over tool + constraints (simple PoP)
@@ -440,9 +457,9 @@ async fn issue_warrant(
     let warrant_base64 = wire::encode_base64(&warrant)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    tenuo_core::audit::log_event(
-        tenuo_core::approval::AuditEvent::new(
-            tenuo_core::approval::AuditEventType::WarrantIssued,
+    tenuo::audit::log_event(
+        tenuo::approval::AuditEvent::new(
+            tenuo::approval::AuditEventType::WarrantIssued,
             "control-plane",
             "api-request",
         )

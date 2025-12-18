@@ -1,13 +1,13 @@
 //! Tenuo Python SDK
 //!
-//! This crate re-exports the Python bindings from tenuo-core.
+//! This crate re-exports the Python bindings from tenuo.
 
 use pyo3::prelude::*;
 
-// Re-export the Python module from tenuo-core
+// Re-export the Python module from tenuo crate
 #[pymodule]
 fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    // Call the public module initialization function from tenuo-core
-    // Use ::tenuo_core to disambiguate from the pymodule name
-    ::tenuo_core::python::tenuo_core(m)
+    // Call the public module initialization function from tenuo crate
+    // The pymodule name stays "tenuo_core" for Python import compatibility
+    ::tenuo::python::tenuo_core(m)
 }

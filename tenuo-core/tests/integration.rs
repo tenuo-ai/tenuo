@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::time::Duration;
-use tenuo_core::{
+use tenuo::{
     constraints::{ConstraintValue, Exact, OneOf, Pattern, Range},
     crypto::SigningKey,
     warrant::Warrant,

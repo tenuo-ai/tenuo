@@ -56,7 +56,7 @@ use std::collections::HashMap;
 use std::io::{self, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tenuo_core::{
+use tenuo::{
     constraints::ConstraintValue,
     extraction::RequestContext,
     gateway_config::{CompiledGatewayConfig, GatewayConfig},
@@ -114,6 +114,11 @@ enum Commands {
         #[arg(short, long)]
         arg: Vec<String>,
 
+        /// PoP signature (hex-encoded, 64 bytes)
+        /// Required for authorization - proves holder possession
+        #[arg(short, long)]
+        pop: String,
+
         /// Output format: exit-code, json, or quiet
         #[arg(short, long, default_value = "exit-code")]
         output: String,
@@ -146,6 +151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             warrant,
             tool,
             arg,
+            pop,
             output,
         } => {
             // Read warrant
@@ -165,8 +171,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
 
-            // Check authorization (no approvals for CLI mode)
-            let result = authorizer.check(&w, &tool, &args, None, &[]);
+            // Parse PoP signature (required)
+            let pop_bytes =
+                hex::decode(&pop).map_err(|_| "Invalid PoP signature: must be hex-encoded")?;
+            let pop_arr: [u8; 64] = pop_bytes
+                .try_into()
+                .map_err(|_| "Invalid PoP signature: must be exactly 64 bytes")?;
+            let pop_signature = tenuo::Signature::from_bytes(&pop_arr)
+                .map_err(|_| "Invalid PoP signature format")?;
+
+            // Check authorization with PoP (no approvals for CLI mode)
+            let result = authorizer.check(&w, &tool, &args, Some(&pop_signature), &[]);
 
             match output.as_str() {
                 "exit-code" => match result {
@@ -260,7 +275,7 @@ fn build_authorizer(
         let dummy = [0u8; 32];
         PublicKey::from_bytes(&dummy).unwrap_or_else(|_| {
             // Generate a valid but useless key
-            tenuo_core::SigningKey::generate().public_key()
+            tenuo::SigningKey::generate().public_key()
         })
     };
 
@@ -426,8 +441,13 @@ async fn serve_http(
         debug_mode,
     });
 
-    // Build the router - catch all requests
+    // Build the router
+    // Health endpoint first (no auth required) for K8s probes
+    // Then catch-all for authorized requests
     let app = Router::new()
+        .route("/health", axum::routing::get(health_check))
+        .route("/healthz", axum::routing::get(health_check))
+        .route("/ready", axum::routing::get(health_check))
         .route("/{*path}", any(handle_request))
         .route("/", any(handle_request))
         .with_state(state);
@@ -437,6 +457,18 @@ async fn serve_http(
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Health check endpoint for Kubernetes probes
+/// Returns 200 OK with minimal JSON response
+async fn health_check() -> impl axum::response::IntoResponse {
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "healthy",
+            "service": "tenuo-authorizer"
+        })),
+    )
 }
 
 /// Handle an incoming HTTP request
@@ -583,14 +615,14 @@ async fn handle_request(
 
     // 7. Extract and parse PoP signature from header (if present)
     let pop_header = &state.config.settings.pop_header;
-    let pop_signature: Option<tenuo_core::Signature> = headers
+    let pop_signature: Option<tenuo::Signature> = headers
         .get(pop_header)
         .and_then(|v| v.to_str().ok())
         .and_then(|hex_str| hex::decode(hex_str).ok())
         .and_then(|bytes| {
             if bytes.len() == 64 {
                 let arr: [u8; 64] = bytes.try_into().ok()?;
-                tenuo_core::Signature::from_bytes(&arr).ok()
+                tenuo::Signature::from_bytes(&arr).ok()
             } else {
                 None
             }
@@ -654,13 +686,14 @@ async fn handle_request(
                 "Authorization denied"
             );
 
-            // Build response
+            // Build response with sanitized error (no internal details)
+            let (error_code, safe_message) = sanitize_error(&e);
             let mut response = (
                 StatusCode::FORBIDDEN,
                 Json(json!({
                     "authorized": false,
-                    "error": "authorization_failed",
-                    "message": format!("{}", e),
+                    "error": error_code,
+                    "message": safe_message,
                     "warrant_id": warrant_id,
                     "tool": extraction_result.tool,
                     "request_id": request_id
@@ -684,13 +717,13 @@ async fn handle_request(
 
 /// Parse an error into a structured DenyReason
 fn parse_deny_reason(
-    error: &tenuo_core::Error,
+    error: &tenuo::Error,
     tool: &str,
     warrant_id: &str,
     request_id: &str,
     constraints: &HashMap<String, ConstraintValue>,
 ) -> DenyReason {
-    use tenuo_core::Error;
+    use tenuo::Error;
 
     let mut deny = DenyReason::new(tool, warrant_id, request_id);
 
@@ -739,4 +772,39 @@ fn parse_deny_reason(
     }
 
     deny
+}
+
+/// Sanitize error for external API response.
+/// Maps internal errors to generic codes without leaking implementation details.
+fn sanitize_error(error: &tenuo::Error) -> (&'static str, &'static str) {
+    use tenuo::Error;
+
+    match error {
+        // Constraint violations - safe to expose field name
+        Error::ConstraintNotSatisfied { .. } => (
+            "constraint_violation",
+            "Request does not satisfy warrant constraints",
+        ),
+        // Expiration - safe to expose
+        Error::WarrantExpired(_) => ("warrant_expired", "Warrant has expired"),
+        // Revocation - safe to expose
+        Error::WarrantRevoked(_) => ("warrant_revoked", "Warrant has been revoked"),
+        // PoP failures - generic message, don't reveal signature details
+        Error::SignatureInvalid(_) => (
+            "invalid_signature",
+            "Proof-of-possession signature is invalid or expired",
+        ),
+        Error::MissingSignature(_) => (
+            "missing_signature",
+            "Proof-of-possession signature is required",
+        ),
+        // Chain verification - generic message
+        Error::ChainVerificationFailed(_) => ("invalid_chain", "Warrant chain verification failed"),
+        // Depth exceeded - safe to expose
+        Error::DepthExceeded(_, _) => ("depth_exceeded", "Delegation depth limit exceeded"),
+        // Generic unauthorized
+        Error::Unauthorized(_) => ("unauthorized", "Authorization denied"),
+        // All other errors - generic message to avoid leaking internals
+        _ => ("authorization_failed", "Authorization check failed"),
+    }
 }

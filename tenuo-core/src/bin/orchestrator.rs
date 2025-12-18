@@ -11,7 +11,7 @@
 use chrono::Utc;
 use std::env;
 use std::time::Duration;
-use tenuo_core::{wire, Exact, OneOf, Range, SigningKey, Warrant};
+use tenuo::{wire, Exact, OneOf, Range, SigningKey, Warrant};
 use uuid::Uuid;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

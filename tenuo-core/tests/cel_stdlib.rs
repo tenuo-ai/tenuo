@@ -1,5 +1,5 @@
-use tenuo_core::cel::evaluate_with_value_context;
-use tenuo_core::constraints::ConstraintValue;
+use tenuo::cel::evaluate_with_value_context;
+use tenuo::constraints::ConstraintValue;
 
 #[test]
 fn test_cel_time_functions() {

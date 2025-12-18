@@ -86,7 +86,7 @@
 //! These functions can be used in CEL constraints when creating warrants:
 //!
 //! ```rust,ignore
-//! use tenuo_core::{Warrant, CelConstraint};
+//! use tenuo::{Warrant, CelConstraint};
 //!
 //! let warrant = Warrant::builder()
 //!     .tool("api_call")
