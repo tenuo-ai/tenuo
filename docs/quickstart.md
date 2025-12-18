@@ -60,16 +60,14 @@ from tenuo import SigningKey, Warrant, Pattern, Range
 
 keypair = SigningKey.generate()
 
-warrant = Warrant.issue(
-    tools="manage_infrastructure",
-    keypair=keypair,
-    holder=keypair.public_key, 
-    constraints={
-        "cluster": Pattern("staging-*"),    # Glob pattern
-        "replicas": Range.max_value(15)     # Max 15 replicas
-    },
-    ttl_seconds=3600
-)
+# Fluent builder pattern (recommended)
+warrant = (Warrant.builder()
+    .tool("manage_infrastructure")
+    .constraint("cluster", Pattern("staging-*"))    # Glob pattern
+    .constraint("replicas", Range.max_value(15))    # Max 15 replicas
+    .holder(keypair.public_key)
+    .ttl(3600)
+    .issue(keypair))
 ```
 
 ### 2. Attenuate (Delegate with Narrower Scope)
@@ -80,14 +78,12 @@ from tenuo import Exact
 # Worker gets a narrower warrant
 worker_keypair = SigningKey.generate()
 
-worker_warrant = warrant.attenuate(
-    constraints={
-        "cluster": Exact("staging-web"),    # Narrowed from staging-*
-        "replicas": Range.max_value(10)     # Reduced to 10 replicas
-    },
-    keypair=worker_keypair,
-    parent_keypair=keypair  # Parent must sign the delegation
-)
+# Use attenuate_builder() for fluent delegation
+worker_warrant = (warrant.attenuate_builder()
+    .with_constraint("cluster", Exact("staging-web"))   # Narrowed from staging-*
+    .with_constraint("replicas", Range.max_value(10))   # Reduced to 10 replicas
+    .with_holder(worker_keypair.public_key)
+    .delegate_to(worker_keypair, keypair))  # Child signs, parent authorizes
 ```
 
 ### 3. Authorize an Action

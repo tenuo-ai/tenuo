@@ -23,25 +23,22 @@ from tenuo import SigningKey, Warrant, Pattern, Exact, Range
 # Generate a keypair
 keypair = SigningKey.generate()
 
-# Issue a warrant with constraints
-warrant = Warrant.issue(
-    tools="manage_infrastructure",  # Can also be a list: ["tool1", "tool2"]
-    constraints={
-        "cluster": Pattern("staging-*"),
-        "replicas": Range.max_value(15)
-    },
-    ttl_seconds=3600,
-    keypair=keypair,
-    holder=keypair.public_key  # Bind to self initially
-)
+# Issue a warrant with fluent builder (recommended)
+warrant = (Warrant.builder()
+    .tool("manage_infrastructure")      # Can also use .tools(["tool1", "tool2"])
+    .constraint("cluster", Pattern("staging-*"))
+    .constraint("replicas", Range.max_value(15))
+    .holder(keypair.public_key)         # Bind to self initially
+    .ttl(3600)
+    .issue(keypair))
 
 # Attenuate for a worker (capabilities shrink)
 worker_keypair = SigningKey.generate()
-worker_warrant = warrant.attenuate_builder() \
-    .with_constraint("cluster", Exact("staging-web")) \
-    .with_constraint("replicas", Range.max_value(10)) \
-    .with_holder(worker_keypair.public_key) \
-    .delegate_to(worker_keypair, keypair)
+worker_warrant = (warrant.attenuate_builder()
+    .with_constraint("cluster", Exact("staging-web"))
+    .with_constraint("replicas", Range.max_value(10))
+    .with_holder(worker_keypair.public_key)
+    .delegate_to(worker_keypair, keypair))
 
 # Authorize an action (requires Proof-of-Possession)
 # See docs/security.md for PoP replay prevention best practices.
@@ -120,13 +117,12 @@ Use the `@lockdown` decorator to enforce authorization. It supports two patterns
 ```python
 from tenuo import lockdown, Warrant, Pattern, Range
 
-warrant = Warrant.issue(
-    tools="upgrade_cluster",
-    constraints={"cluster": Pattern("staging-*")},
-    ttl_seconds=3600,
-    keypair=keypair,
-    holder=keypair.public_key
-)
+warrant = (Warrant.builder()
+    .tool("scale_cluster")
+    .constraint("cluster", Pattern("staging-*"))
+    .holder(keypair.public_key)
+    .ttl(3600)
+    .issue(keypair))
 
 @lockdown(warrant, tool="scale_cluster")
 def scale_cluster(cluster: str, replicas: int):

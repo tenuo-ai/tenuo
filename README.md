@@ -26,15 +26,14 @@ pip install tenuo
 ```python
 from tenuo import SigningKey, Warrant, Pattern, lockdown, set_warrant_context, set_signing_key_context
 
-# Issue a warrant
+# Issue a warrant with fluent builder
 keypair = SigningKey.generate()
-warrant = Warrant.issue(
-    tools=["read_file"],
-    constraints={"path": Pattern("/data/*")},
-    keypair=keypair,
-    holder=keypair.public_key,
-    ttl_seconds=300,
-)
+warrant = (Warrant.builder()
+    .tool("read_file")
+    .constraint("path", Pattern("/data/*"))
+    .holder(keypair.public_key)
+    .ttl(300)
+    .issue(keypair))
 
 # Protect a tool
 @lockdown(tool="read_file")
@@ -43,8 +42,8 @@ def read_file(path: str):
 
 # Execute with authorization
 with set_warrant_context(warrant), set_signing_key_context(keypair):
-    read_file("/data/report.txt")  # ✓ Allowed
-    read_file("/etc/passwd")       # ✗ Blocked
+    read_file("/data/report.txt")  # Allowed
+    read_file("/etc/passwd")       # Blocked
 ```
 
 The agent can be prompt-injected. The authorization layer doesn't care. The warrant says `/data/*`. The request says `/etc/passwd`. Denied.
