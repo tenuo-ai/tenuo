@@ -36,9 +36,13 @@ jobs:
         run: cargo check --locked
         working-directory: tenuo-core
 
-      - name: Format
+      - name: Format tenuo-core
         run: cargo fmt --all -- --check
         working-directory: tenuo-core
+
+      - name: Format tenuo-python
+        run: cargo fmt --all -- --check
+        working-directory: tenuo-python
 
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings

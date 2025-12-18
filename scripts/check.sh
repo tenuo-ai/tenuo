@@ -4,18 +4,42 @@ set -e
 # Colors
 GREEN='\033[0;32m'
 RED='\033[0;31m'
+YELLOW='\033[0;33m'
 NC='\033[0m'
+
+# Parse arguments
+CHECK_MODE=0
+for arg in "$@"; do
+    case $arg in
+        --check)
+            CHECK_MODE=1
+            shift
+            ;;
+    esac
+done
 
 echo "[INFO] Starting Pre-commit Checks..."
 
-# 1. Rust Formatting (auto-fix)
+# 1. Rust Formatting
 echo -e "\n${GREEN}[1/5] Formatting Rust Code...${NC}"
-cd tenuo-core
-cargo fmt --all
-cd ../tenuo-python
-cargo fmt --all
-cd ..
-echo "  → Rust code formatted"
+if [ "$CHECK_MODE" = "1" ]; then
+    # CI mode: fail if not formatted
+    echo "  → Checking format (CI mode)..."
+    cd tenuo-core
+    cargo fmt --all -- --check
+    cd ../tenuo-python
+    cargo fmt --all -- --check
+    cd ..
+    echo "  → Format check passed"
+else
+    # Local mode: auto-format
+    cd tenuo-core
+    cargo fmt --all
+    cd ../tenuo-python
+    cargo fmt --all
+    cd ..
+    echo "  → Rust code formatted"
+fi
 
 # 2. Rust Linting (Clippy)
 echo -e "\n${GREEN}[2/5] Running Clippy...${NC}"
@@ -86,3 +110,8 @@ else
 fi
 
 echo -e "\n${GREEN}[OK] All checks passed! You are ready to commit.${NC}"
+
+# Usage hint
+if [ "$CHECK_MODE" = "0" ]; then
+    echo -e "${YELLOW}Tip: Use './scripts/check.sh --check' for CI mode (fails on unformatted code)${NC}"
+fi
