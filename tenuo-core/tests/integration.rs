@@ -120,7 +120,7 @@ fn demo_finance_delegation_with_budget() {
     // CFO authorizes finance agent for transfers up to $100k
     let cfo_warrant = Warrant::builder()
         .tool("transfer_funds")
-        .constraint("amount", Range::max(100_000.0))
+        .constraint("amount", Range::max(100_000.0).unwrap())
         .constraint("currency", Exact::new("USD"))
         .ttl(Duration::from_secs(86400)) // 24 hours
         .authorized_holder(finance_agent_kp.public_key())
@@ -130,7 +130,7 @@ fn demo_finance_delegation_with_budget() {
     // Finance agent self-restricts to $10k for autonomous operations
     let finance_warrant = cfo_warrant
         .attenuate()
-        .constraint("amount", Range::max(10_000.0))
+        .constraint("amount", Range::max(10_000.0).unwrap())
         .authorized_holder(payment_worker_kp.public_key())
         .build(&finance_agent_kp, &finance_agent_kp)
         .unwrap();
@@ -138,7 +138,7 @@ fn demo_finance_delegation_with_budget() {
     // Payment worker gets even narrower: $1k max
     let worker_warrant = finance_warrant
         .attenuate()
-        .constraint("amount", Range::max(1_000.0))
+        .constraint("amount", Range::max(1_000.0).unwrap())
         .authorized_holder(payment_worker_kp.public_key())
         .build(&payment_worker_kp, &payment_worker_kp)
         .unwrap();
@@ -392,7 +392,7 @@ fn demo_mixed_constraint_narrowing() {
         .tool("data_export")
         .constraint("region", OneOf::new(["us-east", "us-west", "eu-west"]))
         .constraint("format", Pattern::new("*").unwrap())
-        .constraint("max_rows", Range::max(1_000_000.0))
+        .constraint("max_rows", Range::max(1_000_000.0).unwrap())
         .ttl(Duration::from_secs(600))
         .authorized_holder(child_kp.public_key())
         .build(&parent_kp)
@@ -403,7 +403,7 @@ fn demo_mixed_constraint_narrowing() {
         .attenuate()
         .constraint("region", OneOf::new(["us-east", "us-west"])) // Removed eu-west
         .constraint("format", Pattern::new("csv*").unwrap()) // Only CSV formats
-        .constraint("max_rows", Range::max(10_000.0)) // Much smaller limit
+        .constraint("max_rows", Range::max(10_000.0).unwrap()) // Much smaller limit
         .authorized_holder(child_kp.public_key())
         .build(&child_kp, &child_kp)
         .unwrap();
@@ -451,7 +451,7 @@ fn test_monotonicity_violation_rejected() {
 
     let parent = Warrant::builder()
         .tool("test")
-        .constraint("amount", Range::max(1000.0))
+        .constraint("amount", Range::max(1000.0).unwrap())
         .ttl(Duration::from_secs(600))
         .authorized_holder(child_kp.public_key())
         .build(&parent_kp)
@@ -460,7 +460,7 @@ fn test_monotonicity_violation_rejected() {
     // Attempt to increase range max (violation)
     let result = parent
         .attenuate()
-        .constraint("amount", Range::max(5000.0))
+        .constraint("amount", Range::max(5000.0).unwrap())
         .authorized_holder(child_kp.public_key())
         .build(&child_kp, &child_kp);
 

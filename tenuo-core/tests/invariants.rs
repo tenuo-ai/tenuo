@@ -119,7 +119,7 @@ proptest! {
 
         let parent = Warrant::builder()
             .tool("test")
-            .constraint("amount", Range::max(parent_max))
+            .constraint("amount", Range::max(parent_max).unwrap())
             .ttl(Duration::from_secs(600))
             .authorized_holder(child_kp.public_key())
             .build(&parent_kp)
@@ -128,7 +128,7 @@ proptest! {
         // Attempting to increase max should fail
         let result = parent
             .attenuate()
-            .constraint("amount", Range::max(parent_max + child_delta))
+            .constraint("amount", Range::max(parent_max + child_delta).unwrap())
             .authorized_holder(child_kp.public_key())
             .build(&child_kp, &child_kp);
 
@@ -137,7 +137,7 @@ proptest! {
         // Decreasing max should succeed
         let narrower = parent
             .attenuate()
-            .constraint("amount", Range::max(parent_max - child_delta.min(parent_max - 1.0)))
+            .constraint("amount", Range::max(parent_max - child_delta.min(parent_max - 1.0)).unwrap())
             .authorized_holder(child_kp.public_key())
             .build(&child_kp, &child_kp);
 
@@ -226,7 +226,7 @@ proptest! {
 
         let warrant = Warrant::builder()
             .tool("transfer")
-            .constraint("amount", Range::max(max_val))
+            .constraint("amount", Range::max(max_val).unwrap())
             .ttl(Duration::from_secs(600))
             .authorized_holder(kp.public_key())
             .build(&kp)

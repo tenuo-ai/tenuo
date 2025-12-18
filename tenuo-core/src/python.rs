@@ -535,24 +535,24 @@ pub struct PyRange {
 impl PyRange {
     #[new]
     #[pyo3(signature = (min=None, max=None))]
-    fn new(min: Option<f64>, max: Option<f64>) -> Self {
-        Self {
-            inner: Range::new(min, max),
-        }
+    fn new(min: Option<f64>, max: Option<f64>) -> PyResult<Self> {
+        Ok(Self {
+            inner: Range::new(min, max).map_err(to_py_err)?,
+        })
     }
 
     #[staticmethod]
-    fn max_value(max: f64) -> Self {
-        Self {
-            inner: Range::max(max),
-        }
+    fn max_value(max: f64) -> PyResult<Self> {
+        Ok(Self {
+            inner: Range::max(max).map_err(to_py_err)?,
+        })
     }
 
     #[staticmethod]
-    fn min_value(min: f64) -> Self {
-        Self {
-            inner: Range::min(min),
-        }
+    fn min_value(min: f64) -> PyResult<Self> {
+        Ok(Self {
+            inner: Range::min(min).map_err(to_py_err)?,
+        })
     }
 
     fn __repr__(&self) -> String {

@@ -70,7 +70,7 @@ if [ -d ".venv" ]; then
     ruff check .
     
     echo "  → Type checking with mypy..."
-    mypy .
+    mypy  # Uses mypy.ini config (files = tenuo/)
     
     echo "  → Running tests with pytest..."
     pytest

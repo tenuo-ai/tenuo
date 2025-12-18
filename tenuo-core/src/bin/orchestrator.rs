@@ -180,7 +180,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .attenuate()
         .constraint("cluster", Exact::new("staging-web"))
         .constraint("action", OneOf::new(vec!["upgrade", "restart"]))
-        .constraint("replicas", Range::max(10.0))
+        .constraint("replicas", Range::max(10.0)?)
         .ttl(Duration::from_secs(600)) // 10 minutes
         .authorized_holder(worker_keypair.public_key()) // PoP
         .agent_id("worker-agent-01") // Traceability
@@ -240,7 +240,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .attenuate()
         .constraint("cluster", Exact::new("staging-web"))
         .constraint("action", OneOf::new(vec!["delete", "scale-down"])) // Dangerous actions
-        .constraint("replicas", Range::max(5.0))
+        .constraint("replicas", Range::max(5.0)?)
         .ttl(Duration::from_secs(300)) // 5 minutes (short for sensitive ops)
         .authorized_holder(worker_keypair.public_key())
         .agent_id("worker-agent-01-sensitive")

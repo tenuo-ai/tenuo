@@ -368,7 +368,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match leaf_warrant
         .attenuate()
-        .constraint("replicas", Range::max(5.0)) // Further restrict
+        .constraint("replicas", Range::max(5.0)?) // Further restrict
         .ttl(Duration::from_secs(300)) // 5 minutes
         .authorized_holder(sub_agent_keypair.public_key())
         .agent_id("sub-agent-tool-handler")
@@ -390,7 +390,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             match sub_warrant
                 .attenuate()
-                .constraint("replicas", Range::max(3.0))
+                .constraint("replicas", Range::max(3.0)?)
                 .ttl(Duration::from_secs(60))
                 .build(&sub_agent_keypair, &worker_keypair) // Worker signed the parent
             {
@@ -406,7 +406,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let another_keypair = SigningKey::generate();
                     match deep_warrant
                         .attenuate()
-                        .constraint("replicas", Range::max(2.0))
+                        .constraint("replicas", Range::max(2.0)?)
                         .build(&another_keypair, &sub_agent_keypair) // Sub-agent signed the parent
                     {
                         Ok(w) => {

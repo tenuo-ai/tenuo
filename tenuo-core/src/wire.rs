@@ -270,11 +270,11 @@ mod tests {
         // in different orders to verify Vec serialization is deterministic
         let all_constraint1 = All::new([
             Constraint::Pattern(Pattern::new("staging-*").unwrap()),
-            Constraint::Range(Range::max(1000.0)),
+            Constraint::Range(Range::max(1000.0).unwrap()),
         ]);
 
         let all_constraint2 = All::new([
-            Constraint::Range(Range::max(1000.0)),
+            Constraint::Range(Range::max(1000.0).unwrap()),
             Constraint::Pattern(Pattern::new("staging-*").unwrap()),
         ]);
 

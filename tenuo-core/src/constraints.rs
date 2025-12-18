@@ -1021,45 +1021,49 @@ pub struct Range {
 impl Range {
     /// Create a new range constraint with inclusive bounds.
     ///
-    /// # Panics
-    /// Panics if min or max is NaN (NaN causes non-deterministic serialization).
-    pub fn new(min: Option<f64>, max: Option<f64>) -> Self {
+    /// # Errors
+    /// Returns `InvalidRange` if min or max is NaN (NaN causes non-deterministic serialization).
+    pub fn new(min: Option<f64>, max: Option<f64>) -> Result<Self> {
         // NaN values cause non-deterministic serialization and comparison issues
         if let Some(m) = min {
-            assert!(!m.is_nan(), "Range min cannot be NaN");
+            if m.is_nan() {
+                return Err(Error::InvalidRange("min cannot be NaN".to_string()));
+            }
         }
         if let Some(m) = max {
-            assert!(!m.is_nan(), "Range max cannot be NaN");
+            if m.is_nan() {
+                return Err(Error::InvalidRange("max cannot be NaN".to_string()));
+            }
         }
-        Self {
+        Ok(Self {
             min,
             max,
             min_inclusive: true,
             max_inclusive: true,
-        }
+        })
     }
 
     /// Create a range with only a maximum value.
     ///
-    /// # Panics
-    /// Panics if max is NaN.
-    pub fn max(max: f64) -> Self {
+    /// # Errors
+    /// Returns `InvalidRange` if max is NaN.
+    pub fn max(max: f64) -> Result<Self> {
         Self::new(None, Some(max))
     }
 
     /// Create a range with only a minimum value.
     ///
-    /// # Panics
-    /// Panics if min is NaN.
-    pub fn min(min: f64) -> Self {
+    /// # Errors
+    /// Returns `InvalidRange` if min is NaN.
+    pub fn min(min: f64) -> Result<Self> {
         Self::new(Some(min), None)
     }
 
     /// Create a range between min and max.
     ///
-    /// # Panics
-    /// Panics if min or max is NaN.
-    pub fn between(min: f64, max: f64) -> Self {
+    /// # Errors
+    /// Returns `InvalidRange` if min or max is NaN.
+    pub fn between(min: f64, max: f64) -> Result<Self> {
         Self::new(Some(min), Some(max))
     }
 
@@ -1723,12 +1727,41 @@ mod tests {
 
     #[test]
     fn test_range_matches() {
-        let range = Range::between(10.0, 100.0);
+        let range = Range::between(10.0, 100.0).unwrap();
         assert!(range.matches(&50i64.into()).unwrap());
         assert!(range.matches(&10i64.into()).unwrap());
         assert!(range.matches(&100i64.into()).unwrap());
         assert!(!range.matches(&5i64.into()).unwrap());
         assert!(!range.matches(&150i64.into()).unwrap());
+    }
+
+    #[test]
+    fn test_range_rejects_nan() {
+        // NaN in min
+        let result = Range::min(f64::NAN);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("NaN"));
+
+        // NaN in max
+        let result = Range::max(f64::NAN);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("NaN"));
+
+        // NaN in between
+        let result = Range::between(f64::NAN, 100.0);
+        assert!(result.is_err());
+
+        let result = Range::between(0.0, f64::NAN);
+        assert!(result.is_err());
+
+        // Valid values still work
+        assert!(Range::max(100.0).is_ok());
+        assert!(Range::min(0.0).is_ok());
+        assert!(Range::between(0.0, 100.0).is_ok());
+
+        // Infinity is allowed (it's a valid f64)
+        assert!(Range::max(f64::INFINITY).is_ok());
+        assert!(Range::min(f64::NEG_INFINITY).is_ok());
     }
 
     #[test]
@@ -1771,7 +1804,10 @@ mod tests {
 
     #[test]
     fn test_all_constraint() {
-        let all = All::new([Range::min(0.0).into(), Range::max(100.0).into()]);
+        let all = All::new([
+            Range::min(0.0).unwrap().into(),
+            Range::max(100.0).unwrap().into(),
+        ]);
 
         assert!(all.matches(&50i64.into()).unwrap());
         assert!(!all.matches(&(-10i64).into()).unwrap());
@@ -1797,11 +1833,11 @@ mod tests {
 
     #[test]
     fn test_range_attenuation() {
-        let parent = Range::max(10000.0);
-        let valid_child = Range::max(5000.0);
+        let parent = Range::max(10000.0).unwrap();
+        let valid_child = Range::max(5000.0).unwrap();
         assert!(parent.validate_attenuation(&valid_child).is_ok());
 
-        let invalid_child = Range::max(15000.0);
+        let invalid_child = Range::max(15000.0).unwrap();
         assert!(parent.validate_attenuation(&invalid_child).is_err());
     }
 
@@ -1865,7 +1901,7 @@ mod tests {
             .contains("incompatible constraint types"));
 
         // Range cannot narrow to Pattern
-        let parent = Constraint::Range(Range::max(1000.0));
+        let parent = Constraint::Range(Range::max(1000.0).unwrap());
         let child = Constraint::Pattern(Pattern::new("*").unwrap());
         let result = parent.validate_attenuation(&child);
         assert!(result.is_err());
@@ -1912,7 +1948,7 @@ mod tests {
         assert!(parent.validate_attenuation(&child).is_ok());
 
         // Wildcard -> Range
-        let child = Constraint::Range(Range::max(1000.0));
+        let child = Constraint::Range(Range::max(1000.0).unwrap());
         assert!(parent.validate_attenuation(&child).is_ok());
 
         // Wildcard -> Exact

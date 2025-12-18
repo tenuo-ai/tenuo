@@ -30,7 +30,7 @@ fn benchmark_warrant_creation(c: &mut Criterion) {
                 .tool("upgrade_cluster")
                 .constraint("cluster", Pattern::new("staging-*").unwrap())
                 .constraint("version", Pattern::new("1.28.*").unwrap())
-                .constraint("replicas", Range::new(Some(1.0), Some(10.0)))
+                .constraint("replicas", Range::new(Some(1.0), Some(10.0)).unwrap())
                 .ttl(Duration::from_secs(600))
                 .authorized_holder(keypair.public_key())
                 .build(black_box(&keypair))

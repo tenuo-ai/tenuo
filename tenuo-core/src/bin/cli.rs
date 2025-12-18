@@ -729,7 +729,7 @@ fn parse_constraint(s: &str) -> Result<(String, Constraint), String> {
             } else {
                 None
             };
-            Constraint::Range(Range::new(min, max))
+            Constraint::Range(Range::new(min, max).map_err(|e| e.to_string())?)
         }
         "oneof" => {
             let values: Vec<String> = value.split(',').map(|s| s.trim().to_string()).collect();
@@ -779,7 +779,7 @@ fn json_to_constraint(v: &serde_json::Value) -> Result<Constraint, Box<dyn std::
         if obj.contains_key("min") || obj.contains_key("max") {
             let min = obj.get("min").and_then(|v| v.as_f64());
             let max = obj.get("max").and_then(|v| v.as_f64());
-            return Ok(Constraint::Range(Range::new(min, max)));
+            return Ok(Constraint::Range(Range::new(min, max)?));
         }
         if let Some(enum_vals) = obj.get("enum") {
             let values: Vec<String> = enum_vals

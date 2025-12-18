@@ -213,12 +213,13 @@ class TestConstraintContainment:
     # -------------------------------------------------------------------------
     def test_exact_in_oneof(self):
         """Exact value should be contained if it's in the OneOf set."""
-        from tenuo_core import Exact, OneOf
-        parent = OneOf(["read", "write", "delete"])
+        from tenuo_core import OneOf  # noqa: F401
+        _parent = OneOf(["read", "write", "delete"])  # noqa: F841
         
-        # Note: This may or may not be supported depending on implementation
-        # The current implementation might not handle this case
-        # This test documents expected behavior
+        # Note: Cross-type containment (Exact in OneOf) is not yet implemented
+        # in _is_constraint_contained. This test documents expected behavior.
+        # TODO: Implement when needed - Exact("read") should be contained in
+        # OneOf(["read", "write", "delete"])
     
     # -------------------------------------------------------------------------
     # Edge Cases

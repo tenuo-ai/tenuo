@@ -3394,7 +3394,7 @@ mod tests {
 
         let parent = Warrant::builder()
             .tool("transfer_funds")
-            .constraint("amount", Range::max(10000.0))
+            .constraint("amount", Range::max(10000.0).unwrap())
             .ttl(Duration::from_secs(600))
             .authorized_holder(parent_keypair.public_key())
             .build(&parent_keypair)
@@ -3403,14 +3403,14 @@ mod tests {
         // Valid: narrower range
         let child = parent
             .attenuate()
-            .constraint("amount", Range::max(5000.0))
+            .constraint("amount", Range::max(5000.0).unwrap())
             .build(&child_keypair, &parent_keypair);
         assert!(child.is_ok());
 
         // Invalid: wider range
         let invalid = parent
             .attenuate()
-            .constraint("amount", Range::max(20000.0))
+            .constraint("amount", Range::max(20000.0).unwrap())
             .build(&child_keypair, &parent_keypair);
         assert!(invalid.is_err());
     }
