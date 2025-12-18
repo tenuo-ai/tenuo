@@ -65,29 +65,49 @@ with scoped_task(query=Pattern("*public*")):
 
 ### Pattern (Glob)
 
-Matches strings against glob patterns with `*` wildcard.
+Matches strings against Unix shell-style glob patterns.
 
 ```python
 from tenuo import Pattern
 
-# Matches anything under /data/
+# Suffix wildcard - matches paths starting with /data/
 Pattern("/data/*")
 
-# Matches any .csv file
-Pattern("*.csv")
+# Prefix wildcard - matches emails ending with @company.com
+Pattern("*@company.com")
+
+# Middle wildcard - matches specific file in any subdirectory
+Pattern("/data/*/config.yaml")
+
+# Single character - matches file1.txt, fileA.txt, etc.
+Pattern("file?.txt")
+
+# Character class - matches env-prod, env-staging, env-dev
+Pattern("env-[psd]*")
 
 # Exact match (no wildcard)
 Pattern("specific-value")
 ```
 
-**Examples:**
-| Pattern | Value | Match? |
-|---------|-------|--------|
-| `/data/*` | `/data/file.txt` | ✅ |
-| `/data/*` | `/data/reports/q3.csv` | ✅ |
-| `/data/*` | `/etc/passwd` | ❌ |
-| `*.csv` | `report.csv` | ✅ |
-| `*.csv` | `report.json` | ❌ |
+**Supported Glob Syntax:**
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `*` | Matches any characters (including none) | `staging-*` matches `staging-web` |
+| `?` | Matches exactly one character | `file?.txt` matches `file1.txt` |
+| `[abc]` | Matches any character in set | `[psd]*` matches `prod`, `staging`, `dev` |
+| `[!abc]` | Matches any character NOT in set | `[!0-9]*` matches non-numeric start |
+
+**Examples by Wildcard Position:**
+| Pattern | Value | Match? | Description |
+|---------|-------|--------|-------------|
+| `/data/*` | `/data/file.txt` | ✅ | Suffix wildcard |
+| `/data/*` | `/etc/passwd` | ❌ | Wrong prefix |
+| `*@company.com` | `cfo@company.com` | ✅ | Prefix wildcard |
+| `*@company.com` | `hacker@evil.com` | ❌ | Wrong suffix |
+| `/data/*/file.txt` | `/data/reports/file.txt` | ✅ | Middle wildcard |
+| `/data/*/file.txt` | `/data/reports/other.txt` | ❌ | Filename mismatch |
+| `file?.txt` | `file1.txt` | ✅ | Single char wildcard |
+| `file?.txt` | `file12.txt` | ❌ | Too many chars |
 
 > **⚠️ Important Distinction: `Wildcard()` vs `Pattern("*")` vs `"*"`**
 >
@@ -118,9 +138,10 @@ Pattern("specific-value")
 > **Best Practice**: Use `Wildcard()` in root warrants for maximum flexibility. Use `Pattern("*")` only if you specifically need glob matching semantics.
 >
 > **Attenuation Rules for Pattern**:
-> - Simple **prefix** patterns (`foo*`) can be narrowed to more specific prefixes
-> - Simple **suffix** patterns (`*bar`) can be narrowed to more specific suffixes  
-> - **Complex patterns** (e.g., `*foo*`, `a*b*c`) require exact equality for attenuation
+> - **Suffix wildcard** patterns (`/data/*`) can narrow to longer prefixes (`/data/reports/*`)
+> - **Prefix wildcard** patterns (`*@company.com`) can narrow to exact values (`cfo@company.com`)
+> - Patterns can always narrow to `Exact()` if the value matches the pattern
+> - Complex patterns with multiple wildcards can be narrowed if contained within parent
 
 ---
 
