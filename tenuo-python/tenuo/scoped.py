@@ -133,15 +133,23 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
             # Child is exact value - must match parent pattern using glob
             return fnmatch.fnmatch(child_str, parent_str)
     
-    # Exact containment - must be equal
+    # OneOf containment - check BEFORE Exact since Exact can be inside OneOf
+    if parent_type == 'OneOf':
+        parent_values = set(getattr(parent_value, 'values', []))
+        if child_type == 'OneOf':
+            # Child OneOf must be subset of parent OneOf
+            child_values = set(getattr(child_value, 'values', []))
+            return child_values.issubset(parent_values)
+        elif child_type == 'Exact':
+            # Exact value must be in the parent's OneOf set
+            return child_str in parent_values
+        else:
+            # Plain string value must be in the parent's OneOf set
+            return child_str in parent_values
+    
+    # Exact containment - must be equal (both Exact or one is Exact)
     if parent_type == 'Exact' or child_type == 'Exact':
         return child_str == parent_str
-    
-    # OneOf containment - child must be subset
-    if parent_type == 'OneOf' and child_type == 'OneOf':
-        parent_values = set(getattr(parent_value, 'values', []))
-        child_values = set(getattr(child_value, 'values', []))
-        return child_values.issubset(parent_values)
     
     # Range containment
     if parent_type == 'Range' and child_type == 'Range':
