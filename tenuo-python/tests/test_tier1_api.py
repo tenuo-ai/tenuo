@@ -211,6 +211,12 @@ class TestConstraintContainment:
     # -------------------------------------------------------------------------
     # Cross-Type Containment
     # -------------------------------------------------------------------------
+    # The following cross-type containments are supported:
+    #   Pattern → Exact (exact must match pattern)
+    #   OneOf → Exact (exact must be in set)
+    #   OneOf → string (string must be in set)
+    # -------------------------------------------------------------------------
+    
     def test_exact_in_oneof(self):
         """Exact value should be contained if it's in the OneOf set."""
         from tenuo_core import Exact, OneOf
@@ -224,6 +230,69 @@ class TestConstraintContainment:
         # Exact value NOT in the OneOf set should NOT be contained
         assert not _is_constraint_contained(Exact("execute"), parent)
         assert not _is_constraint_contained(Exact("admin"), parent)
+    
+    def test_string_in_oneof(self):
+        """Plain string value should be contained if it's in the OneOf set."""
+        from tenuo_core import OneOf
+        parent = OneOf(["staging", "production", "dev"])
+        
+        # Plain string in set
+        assert _is_constraint_contained("staging", parent)
+        assert _is_constraint_contained("production", parent)
+        
+        # Plain string NOT in set
+        assert not _is_constraint_contained("local", parent)
+        assert not _is_constraint_contained("test", parent)
+    
+    def test_exact_in_pattern(self):
+        """Exact value should be contained if it matches the pattern."""
+        from tenuo_core import Pattern, Exact
+        
+        # Suffix wildcard
+        assert _is_constraint_contained(Exact("/data/file.txt"), Pattern("/data/*"))
+        assert not _is_constraint_contained(Exact("/etc/passwd"), Pattern("/data/*"))
+        
+        # Prefix wildcard
+        assert _is_constraint_contained(Exact("admin@company.com"), Pattern("*@company.com"))
+        assert not _is_constraint_contained(Exact("hacker@evil.com"), Pattern("*@company.com"))
+        
+        # Middle wildcard
+        assert _is_constraint_contained(Exact("/var/log/app.log"), Pattern("/var/*/app.log"))
+        assert not _is_constraint_contained(Exact("/var/log/other.log"), Pattern("/var/*/app.log"))
+    
+    def test_string_in_pattern(self):
+        """Plain string value should be contained if it matches the pattern."""
+        from tenuo_core import Pattern
+        
+        # Suffix wildcard
+        assert _is_constraint_contained("/data/file.txt", Pattern("/data/*"))
+        assert not _is_constraint_contained("/etc/passwd", Pattern("/data/*"))
+        
+        # Prefix wildcard
+        assert _is_constraint_contained("user@company.com", Pattern("*@company.com"))
+        assert not _is_constraint_contained("user@other.com", Pattern("*@company.com"))
+    
+    # -------------------------------------------------------------------------
+    # Cross-Type Incompatibilities (should NOT be contained)
+    # -------------------------------------------------------------------------
+    def test_incompatible_range_exact(self):
+        """Range and Exact are incompatible types."""
+        from tenuo_core import Range, Exact
+        # Range parent cannot contain Exact child (different semantics)
+        assert not _is_constraint_contained(Exact("50"), Range(0, 100))
+    
+    def test_incompatible_oneof_pattern(self):
+        """OneOf parent cannot contain Pattern child (would need subset check)."""
+        from tenuo_core import OneOf, Pattern
+        # A Pattern inside OneOf doesn't make semantic sense
+        assert not _is_constraint_contained(Pattern("staging-*"), OneOf(["staging-web", "staging-api"]))
+    
+    def test_incompatible_pattern_oneof(self):
+        """Pattern parent with specific pattern won't match OneOf child."""
+        from tenuo_core import Pattern, OneOf
+        # OneOf child doesn't match specific pattern (not a simple string)
+        # Note: Pattern("*") WOULD match because "*" matches anything
+        assert not _is_constraint_contained(OneOf(["staging", "prod"]), Pattern("/data/*"))
     
     # -------------------------------------------------------------------------
     # Edge Cases

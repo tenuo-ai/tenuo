@@ -94,12 +94,27 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     """
     Check if child constraint is contained within parent.
     
-    Tier 1 containment rules:
-    - Exact inside Pattern: child value must match parent glob pattern
-    - Pattern inside Pattern: child pattern must be more restrictive
-    - Exact: must be equal
-    - OneOf: child must be subset
-    - Range: child must be within parent bounds
+    Tier 1 API Containment Rules (Python-side validation for scoped_task):
+    
+    Same-Type Containment:
+    - Pattern -> Pattern: child pattern must be more restrictive (more literal chars)
+    - Exact -> Exact: values must be equal
+    - OneOf -> OneOf: child must be a subset of parent
+    - Range -> Range: child bounds must be within parent bounds
+    - string -> string: values must be equal (fallback)
+    
+    Cross-Type Containment:
+    - Pattern -> Exact: exact value must match parent pattern (glob)
+    - Pattern -> string: string value must match parent pattern (glob)
+    - OneOf -> Exact: exact value must be in parent's set
+    - OneOf -> string: string value must be in parent's set
+    
+    Not Supported in Tier 1 (use Tier 2 API for full validation):
+    - Regex, NotOneOf, Contains, Subset, All, CEL
+    - Wildcard (only valid in root warrants)
+    
+    Returns:
+        True if child is contained within parent, False otherwise.
     """
     import fnmatch
     

@@ -600,6 +600,39 @@ When attenuating a warrant, child constraints must be **contained** within paren
 - **Exact**: Cannot change value at all
 - **No attenuation TO Wildcard**: Would re-widen authority
 
+### Cross-Type Containment
+
+Some constraint types can contain different types during attenuation:
+
+| Parent | Child | Containment Rule |
+|--------|-------|------------------|
+| `Pattern("*@co.com")` | `Exact("cfo@co.com")` | Child matches parent glob |
+| `OneOf(["a","b","c"])` | `Exact("b")` | Child value is in parent set |
+| `OneOf(["a","b","c"])` | `NotOneOf(["c"])` | Carves holes (allows `a`, `b`) |
+| `Regex(r"^dev-.*")` | `Exact("dev-web")` | Child matches parent regex |
+| `Wildcard()` | Any type | Universal parent |
+
+**Examples:**
+
+```python
+# Pattern -> Exact: exact value must match the pattern
+parent = Pattern("*@company.com")
+child = Exact("cfo@company.com")  # OK - matches pattern
+
+# OneOf -> Exact: exact value must be in the set
+parent = OneOf(["read", "write", "delete"])
+child = Exact("read")  # OK - "read" is in set
+
+# OneOf -> NotOneOf: carve holes from allowed set
+parent = OneOf(["staging", "production", "dev"])
+child = NotOneOf(["production"])  # OK - allows staging, dev only
+```
+
+**Incompatible Cross-Types** (will fail attenuation):
+- `Range` -> `Exact`: Different semantic domains
+- `Pattern` -> `Range`: String matching vs numeric bounds  
+- `OneOf` -> `Pattern`: Set membership vs glob matching
+
 ### Pattern Narrowing
 
 ```python
