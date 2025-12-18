@@ -53,6 +53,7 @@
 | Multi-sig approvals | 📋 Planned | M-of-N for sensitive actions |
 | Cascading revocation | 📋 Planned | Surgical or nuclear revocation |
 | `tenuo-mcp` package | 📋 Planned | Standalone MCP server wrapper |
+| Google A2A | 📋 Planned | Agent-to-Agent protocol integration |
 
 ---
 

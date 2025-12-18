@@ -2300,6 +2300,7 @@ compiled.validate()  # Check for incompatible extraction sources
 | `tenuo-mcp` standalone package | 📋 Planned |
 | Multi-sig approvals | 📋 Planned |
 | Cascading revocation | 📋 Planned |
+| Google A2A integration | 📋 Planned |
 
 ### v0.3: Ecosystem
 
@@ -2308,6 +2309,7 @@ compiled.validate()  # Check for incompatible extraction sources
 | Dynamic constraints `${state.*}` | 📋 Planned |
 | Human-in-the-loop patterns | 📋 Planned |
 | Additional framework integrations | 📋 Planned |
+| A2A authorization policies | 📋 Planned |
 
 ---
 
