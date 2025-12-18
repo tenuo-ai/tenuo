@@ -8,41 +8,14 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Build wheels for all platforms
+  # Build wheels for each platform (abi3 = one wheel per OS)
   build:
-    name: Build ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    name: Build ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # Linux
-          - os: ubuntu-latest
-            python-version: "3.9"
-          - os: ubuntu-latest
-            python-version: "3.10"
-          - os: ubuntu-latest
-            python-version: "3.11"
-          - os: ubuntu-latest
-            python-version: "3.12"
-          # macOS
-          - os: macos-latest
-            python-version: "3.9"
-          - os: macos-latest
-            python-version: "3.10"
-          - os: macos-latest
-            python-version: "3.11"
-          - os: macos-latest
-            python-version: "3.12"
-          # Windows
-          - os: windows-latest
-            python-version: "3.9"
-          - os: windows-latest
-            python-version: "3.10"
-          - os: windows-latest
-            python-version: "3.11"
-          - os: windows-latest
-            python-version: "3.12"
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -54,7 +27,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
 
       - name: Install maturin
         run: pip install maturin
@@ -66,8 +39,9 @@ jobs:
       - name: Upload wheel
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: wheel-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: wheel-${{ matrix.os }}
           path: tenuo-python/target/wheels/*.whl
+          if-no-files-found: error
 
   # Build source distribution
   sdist:
@@ -98,6 +72,7 @@ jobs:
         with:
           name: sdist
           path: tenuo-python/target/wheels/*.tar.gz
+          if-no-files-found: error
 
   # Publish to PyPI
   publish:
@@ -105,11 +80,29 @@ jobs:
     needs: [build, sdist]
     runs-on: ubuntu-latest
     steps:
-      - name: Download all artifacts
+      - name: Download Linux wheel
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          path: dist
-          merge-multiple: true
+          name: wheel-ubuntu-latest
+          path: dist/
+
+      - name: Download macOS wheel
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: wheel-macos-latest
+          path: dist/
+
+      - name: Download Windows wheel
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: wheel-windows-latest
+          path: dist/
+
+      - name: Download sdist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: sdist
+          path: dist/
 
       - name: List artifacts
         run: ls -la dist/
@@ -119,3 +112,4 @@ jobs:
         with:
           password: ${{ secrets.PYPI_TOKEN }}
           packages-dir: dist/
+          skip-existing: true
