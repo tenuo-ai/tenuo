@@ -2,8 +2,9 @@
 # The core logic is in Rust; Python files are bindings/wrappers
 
 # Mark Python SDK as vendored (thin wrappers around Rust core)
-tenuo-python/tenuo/*.py linguist-vendored
-tenuo-python/tenuo/**/*.py linguist-vendored
+# Python SDK should be counted (it's a major part of the product)
+# tenuo-python/tenuo/*.py linguist-vendored
+# tenuo-python/tenuo/**/*.py linguist-vendored
 
 # Exclude examples and tests from statistics
 tenuo-python/examples/*.py linguist-documentation
