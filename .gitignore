@@ -7,7 +7,12 @@ target/
 *.key
 *.pub
 test_cli_output/
+# Virtual environments
 .venv/
+.venv-*/
+venv/
+.env/
+env/
 verify_cli.sh
 reproduce_pickle.py
 # IDE
