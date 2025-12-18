@@ -236,6 +236,31 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
             crate::error::Error::IssuerChainTooLong { length, max } => {
                 ("IssuerChainTooLong", PyTuple::new(py, [*length, *max]))
             }
+
+            // Range security errors
+            crate::error::Error::RangeInclusivityExpanded {
+                bound,
+                value,
+                parent_inclusive: _,
+                child_inclusive: _,
+            } => (
+                "RangeExpanded",
+                PyTuple::new(
+                    py,
+                    [
+                        bound.as_str(),
+                        &format!("{} (inclusivity)", value),
+                        &format!("{} (inclusive)", value),
+                    ],
+                ),
+            ),
+            crate::error::Error::ValueNotInRange { value, min, max } => (
+                "RangeExpanded",
+                PyTuple::new(
+                    py,
+                    ["value", &format!("{:?}-{:?}", min, max), &value.to_string()],
+                ),
+            ),
         };
 
         // Unwrap the args Result (PyTuple::new can fail on conversion)
@@ -378,6 +403,18 @@ impl PyNotOneOf {
         }
     }
 
+    /// Get the excluded values.
+    #[getter]
+    fn excluded(&self) -> PyResult<Vec<PyObject>> {
+        Python::with_gil(|py| {
+            self.inner
+                .excluded
+                .iter()
+                .map(|v| constraint_value_to_py(py, v))
+                .collect()
+        })
+    }
+
     fn __repr__(&self) -> String {
         format!("NotOneOf({:?})", self.inner.excluded)
     }
@@ -407,6 +444,18 @@ impl PyContains {
         })
     }
 
+    /// Get the required values.
+    #[getter]
+    fn required(&self) -> PyResult<Vec<PyObject>> {
+        Python::with_gil(|py| {
+            self.inner
+                .required
+                .iter()
+                .map(|v| constraint_value_to_py(py, v))
+                .collect()
+        })
+    }
+
     fn __repr__(&self) -> String {
         format!("Contains({:?})", self.inner.required)
     }
@@ -433,6 +482,18 @@ impl PySubset {
         })?;
         Ok(Self {
             inner: Subset::new(rust_values),
+        })
+    }
+
+    /// Get the allowed values.
+    #[getter]
+    fn allowed(&self) -> PyResult<Vec<PyObject>> {
+        Python::with_gil(|py| {
+            self.inner
+                .allowed
+                .iter()
+                .map(|v| constraint_value_to_py(py, v))
+                .collect()
         })
     }
 
@@ -854,6 +915,31 @@ fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
         Err(PyValueError::new_err(
             "value must be str, int, float, bool, or list",
         ))
+    }
+}
+
+/// Convert a ConstraintValue back to a Python object.
+fn constraint_value_to_py(py: Python<'_>, value: &ConstraintValue) -> PyResult<PyObject> {
+    match value {
+        ConstraintValue::String(s) => Ok(s.to_object(py)),
+        ConstraintValue::Integer(i) => Ok(i.to_object(py)),
+        ConstraintValue::Float(f) => Ok(f.to_object(py)),
+        ConstraintValue::Boolean(b) => Ok(b.to_object(py)),
+        ConstraintValue::List(l) => {
+            let py_list: Vec<PyObject> = l
+                .iter()
+                .map(|v| constraint_value_to_py(py, v))
+                .collect::<PyResult<Vec<_>>>()?;
+            Ok(py_list.to_object(py))
+        }
+        ConstraintValue::Object(o) => {
+            let dict = pyo3::types::PyDict::new(py);
+            for (k, v) in o {
+                dict.set_item(k, constraint_value_to_py(py, v)?)?;
+            }
+            Ok(dict.to_object(py))
+        }
+        ConstraintValue::Null => Ok(py.None()),
     }
 }
 
@@ -2862,33 +2948,6 @@ impl PyAuthorizer {
         Ok(PyChainVerificationResult { inner: result })
     }
 }
-
-/// Helper to convert ConstraintValue to Python object
-fn constraint_value_to_py(py: Python<'_>, cv: &ConstraintValue) -> PyResult<PyObject> {
-    #[allow(deprecated)]
-    match cv {
-        ConstraintValue::String(s) => Ok(s.to_object(py)),
-        ConstraintValue::Integer(i) => Ok(i.to_object(py)),
-        ConstraintValue::Float(f) => Ok(f.to_object(py)),
-        ConstraintValue::Boolean(b) => Ok(b.to_object(py)),
-        ConstraintValue::Null => Ok(py.None()),
-        ConstraintValue::List(l) => {
-            let list = pyo3::types::PyList::empty(py);
-            for item in l {
-                list.append(constraint_value_to_py(py, item)?)?;
-            }
-            Ok(list.into())
-        }
-        ConstraintValue::Object(m) => {
-            let dict = PyDict::new(py);
-            for (k, v) in m {
-                dict.set_item(k, constraint_value_to_py(py, v)?)?;
-            }
-            Ok(dict.into())
-        }
-    }
-}
-
 /// Tenuo Python module.
 ///
 /// This function is public so it can be called from tenuo-python package.

@@ -609,6 +609,7 @@ Some constraint types can contain different types during attenuation:
 | `Wildcard()` | Any type | Universal parent - contains everything |
 | `Pattern("*@co.com")` | `Exact("cfo@co.com")` | Child matches parent glob |
 | `Regex(r"^dev-.*")` | `Exact("dev-web")` | Child matches parent regex |
+| `Range(0, 100)` | `Exact("50")` | Child numeric value within range |
 | `OneOf(["a","b","c"])` | `Exact("b")` | Child value is in parent set |
 | `OneOf(["a","b","c"])` | `NotOneOf(["c"])` | Carves holes (allows `a`, `b`) |
 
@@ -619,6 +620,7 @@ Some constraint types can contain different types during attenuation:
 | `Wildcard` parent | Contains ANY child constraint type |
 | `Wildcard` child | NEVER allowed (would widen permissions) |
 | `Regex` -> `Regex` | Must be IDENTICAL pattern (subset undecidable) |
+| `Range` inclusivity | Exclusive bounds cannot become inclusive at same value |
 
 **Examples:**
 
@@ -647,6 +649,11 @@ parent = Regex(r"^staging-.*$")
 child = Regex(r"^staging-.*$")      # OK - identical
 child = Regex(r"^staging-web$")     # FAILS - even if semantically narrower
 
+# Range -> Exact: numeric value must be within range
+parent = Range(0, 100)
+child = Exact("50")   # OK - 50 is in [0, 100]
+child = Exact("150")  # FAILS - 150 > 100
+
 # OneOf -> Exact: exact value must be in the set
 parent = OneOf(["read", "write", "delete"])
 child = Exact("read")  # OK - "read" is in set
@@ -654,10 +661,21 @@ child = Exact("read")  # OK - "read" is in set
 # OneOf -> NotOneOf: carve holes from allowed set
 parent = OneOf(["staging", "production", "dev"])
 child = NotOneOf(["production"])  # OK - allows staging, dev only
+
+# NotOneOf -> NotOneOf: must exclude MORE values
+parent = NotOneOf(["admin"])
+child = NotOneOf(["admin", "root"])  # OK - excludes more
+
+# Contains -> Contains: must require MORE values
+parent = Contains(["read"])
+child = Contains(["read", "write"])  # OK - requires more
+
+# Subset -> Subset: must allow FEWER values
+parent = Subset(["a", "b", "c"])
+child = Subset(["a", "b"])  # OK - allows fewer
 ```
 
 **Incompatible Cross-Types** (will fail attenuation):
-- `Range` -> `Exact`: Different semantic domains
 - `Pattern` -> `Range`: String matching vs numeric bounds  
 - `OneOf` -> `Pattern`: Set membership vs glob matching
 - Any type -> `Wildcard`: Would expand permissions

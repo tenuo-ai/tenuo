@@ -109,6 +109,25 @@ pub enum Error {
         child_value: f64,
     },
 
+    /// Range inclusivity was expanded (exclusive -> inclusive at same bound).
+    #[error(
+        "range inclusivity expanded: child made {bound} ({value}) inclusive when parent was exclusive"
+    )]
+    RangeInclusivityExpanded {
+        bound: String, // "min" or "max"
+        value: f64,
+        parent_inclusive: bool,
+        child_inclusive: bool,
+    },
+
+    /// Value is not within the specified range.
+    #[error("value {value} not in range [{min:?}, {max:?}]")]
+    ValueNotInRange {
+        value: f64,
+        min: Option<f64>,
+        max: Option<f64>,
+    },
+
     /// Pattern child is broader than parent.
     #[error("pattern expanded: child pattern '{child}' is broader than parent '{parent}'")]
     PatternExpanded { parent: String, child: String },

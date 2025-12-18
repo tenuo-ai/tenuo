@@ -368,6 +368,22 @@ impl Constraint {
             (Constraint::Range(parent), Constraint::Range(child)) => {
                 parent.validate_attenuation(child)
             }
+            // Range can narrow to Exact if value is within range
+            (Constraint::Range(parent), Constraint::Exact(child_exact)) => {
+                // Get numeric value from Exact
+                match child_exact.value.as_number() {
+                    Some(n) if parent.contains_value(n) => Ok(()),
+                    Some(n) => Err(Error::ValueNotInRange {
+                        value: n,
+                        min: parent.min,
+                        max: parent.max,
+                    }),
+                    None => Err(Error::IncompatibleConstraintTypes {
+                        parent_type: "Range".to_string(),
+                        child_type: "Exact (non-numeric)".to_string(),
+                    }),
+                }
+            }
 
             // Contains can add more required values
             (Constraint::Contains(parent), Constraint::Contains(child)) => {
@@ -1109,15 +1125,33 @@ impl Range {
     }
 
     /// Validate that `child` is a valid attenuation (subset of parent range).
+    ///
+    /// Checks both numeric bounds AND inclusivity flags:
+    /// - Child min must be >= parent min
+    /// - Child max must be <= parent max
+    /// - If parent bound is exclusive, child cannot make it inclusive (would widen)
     pub fn validate_attenuation(&self, child: &Range) -> Result<()> {
         // Child min must be >= parent min
         match (self.min, child.min) {
-            (Some(parent_min), Some(child_min)) if child_min < parent_min => {
-                return Err(Error::RangeExpanded {
-                    bound: "min".to_string(),
-                    parent_value: parent_min,
-                    child_value: child_min,
-                });
+            (Some(parent_min), Some(child_min)) => {
+                // Check numeric bound
+                if child_min < parent_min {
+                    return Err(Error::RangeExpanded {
+                        bound: "min".to_string(),
+                        parent_value: parent_min,
+                        child_value: child_min,
+                    });
+                }
+                // Check inclusivity: if parent is exclusive, child at same value cannot be inclusive
+                // (that would include the boundary value parent excluded)
+                if child_min == parent_min && !self.min_inclusive && child.min_inclusive {
+                    return Err(Error::RangeInclusivityExpanded {
+                        bound: "min".to_string(),
+                        value: parent_min,
+                        parent_inclusive: false,
+                        child_inclusive: true,
+                    });
+                }
             }
             (Some(parent_min), None) => {
                 return Err(Error::RangeExpanded {
@@ -1131,12 +1165,24 @@ impl Range {
 
         // Child max must be <= parent max
         match (self.max, child.max) {
-            (Some(parent_max), Some(child_max)) if child_max > parent_max => {
-                return Err(Error::RangeExpanded {
-                    bound: "max".to_string(),
-                    parent_value: parent_max,
-                    child_value: child_max,
-                });
+            (Some(parent_max), Some(child_max)) => {
+                // Check numeric bound
+                if child_max > parent_max {
+                    return Err(Error::RangeExpanded {
+                        bound: "max".to_string(),
+                        parent_value: parent_max,
+                        child_value: child_max,
+                    });
+                }
+                // Check inclusivity: if parent is exclusive, child at same value cannot be inclusive
+                if child_max == parent_max && !self.max_inclusive && child.max_inclusive {
+                    return Err(Error::RangeInclusivityExpanded {
+                        bound: "max".to_string(),
+                        value: parent_max,
+                        parent_inclusive: false,
+                        child_inclusive: true,
+                    });
+                }
             }
             (Some(parent_max), None) => {
                 return Err(Error::RangeExpanded {
@@ -1149,6 +1195,29 @@ impl Range {
         }
 
         Ok(())
+    }
+
+    /// Check if an exact value is within the range.
+    ///
+    /// Used for Range -> Exact attenuation validation.
+    pub fn contains_value(&self, value: f64) -> bool {
+        if value.is_nan() {
+            return false;
+        }
+
+        let min_ok = match self.min {
+            None => true,
+            Some(min) if self.min_inclusive => value >= min,
+            Some(min) => value > min,
+        };
+
+        let max_ok = match self.max {
+            None => true,
+            Some(max) if self.max_inclusive => value <= max,
+            Some(max) => value < max,
+        };
+
+        min_ok && max_ok
     }
 }
 
@@ -1839,6 +1908,149 @@ mod tests {
 
         let invalid_child = Range::max(15000.0).unwrap();
         assert!(parent.validate_attenuation(&invalid_child).is_err());
+    }
+
+    // =========================================================================
+    // Security Tests: Range Inclusivity (Finding 1)
+    // =========================================================================
+
+    #[test]
+    fn test_range_inclusivity_cannot_expand() {
+        // Parent: (0, 10) exclusive bounds - values must be > 0 and < 10
+        let parent = Range::between(0.0, 10.0)
+            .unwrap()
+            .min_exclusive()
+            .max_exclusive();
+
+        // Child: [0, 10] inclusive bounds - would include 0 and 10
+        let child_inclusive = Range::between(0.0, 10.0).unwrap(); // Default is inclusive
+
+        // This MUST fail - child would expand permissions to include boundary values
+        let result = parent.validate_attenuation(&child_inclusive);
+        assert!(
+            result.is_err(),
+            "Should reject: exclusive->inclusive at same bound expands permissions"
+        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("inclusivity expanded"));
+    }
+
+    #[test]
+    fn test_range_inclusivity_can_narrow() {
+        // Parent: [0, 10] inclusive bounds
+        let parent = Range::between(0.0, 10.0).unwrap();
+
+        // Child: (0, 10) exclusive bounds - more restrictive
+        let child_exclusive = Range::between(0.0, 10.0)
+            .unwrap()
+            .min_exclusive()
+            .max_exclusive();
+
+        // This MUST succeed - child is more restrictive
+        assert!(
+            parent.validate_attenuation(&child_exclusive).is_ok(),
+            "Should allow: inclusive->exclusive is valid narrowing"
+        );
+    }
+
+    #[test]
+    fn test_range_inclusivity_stricter_value_ok() {
+        // Parent: (0, 10) exclusive - values > 0 and < 10
+        let parent = Range::between(0.0, 10.0)
+            .unwrap()
+            .min_exclusive()
+            .max_exclusive();
+
+        // Child: [1, 9] inclusive at DIFFERENT values - doesn't include parent's boundaries
+        let child = Range::between(1.0, 9.0).unwrap();
+
+        // This is OK - child's bounds are strictly inside parent's exclusive range
+        assert!(
+            parent.validate_attenuation(&child).is_ok(),
+            "Should allow: child bounds strictly inside parent exclusive range"
+        );
+    }
+
+    // =========================================================================
+    // Security Tests: Range -> Exact (Finding 2)
+    // =========================================================================
+
+    #[test]
+    fn test_range_to_exact_valid() {
+        let parent = Constraint::Range(Range::between(0.0, 100.0).unwrap());
+
+        // Valid: Exact(50) is within [0, 100]
+        let child = Constraint::Exact(Exact::new(50));
+        assert!(
+            parent.validate_attenuation(&child).is_ok(),
+            "Should allow: Exact(50) is within Range(0, 100)"
+        );
+
+        // Valid: Exact at boundary (inclusive)
+        let child_at_min = Constraint::Exact(Exact::new(0));
+        assert!(
+            parent.validate_attenuation(&child_at_min).is_ok(),
+            "Should allow: Exact(0) at inclusive min bound"
+        );
+
+        let child_at_max = Constraint::Exact(Exact::new(100));
+        assert!(
+            parent.validate_attenuation(&child_at_max).is_ok(),
+            "Should allow: Exact(100) at inclusive max bound"
+        );
+    }
+
+    #[test]
+    fn test_range_to_exact_invalid() {
+        let parent = Constraint::Range(Range::between(0.0, 100.0).unwrap());
+
+        // Invalid: Exact(-1) is below range
+        let child_below = Constraint::Exact(Exact::new(-1));
+        assert!(
+            parent.validate_attenuation(&child_below).is_err(),
+            "Should reject: Exact(-1) below Range(0, 100)"
+        );
+
+        // Invalid: Exact(150) is above range
+        let child_above = Constraint::Exact(Exact::new(150));
+        assert!(
+            parent.validate_attenuation(&child_above).is_err(),
+            "Should reject: Exact(150) above Range(0, 100)"
+        );
+    }
+
+    #[test]
+    fn test_range_exclusive_to_exact_boundary() {
+        // Parent: (0, 100) exclusive bounds
+        let parent = Constraint::Range(
+            Range::between(0.0, 100.0)
+                .unwrap()
+                .min_exclusive()
+                .max_exclusive(),
+        );
+
+        // Invalid: Exact(0) at exclusive min bound
+        let child_at_min = Constraint::Exact(Exact::new(0));
+        assert!(
+            parent.validate_attenuation(&child_at_min).is_err(),
+            "Should reject: Exact(0) at exclusive min bound"
+        );
+
+        // Invalid: Exact(100) at exclusive max bound
+        let child_at_max = Constraint::Exact(Exact::new(100));
+        assert!(
+            parent.validate_attenuation(&child_at_max).is_err(),
+            "Should reject: Exact(100) at exclusive max bound"
+        );
+
+        // Valid: Exact(50) inside exclusive range
+        let child_inside = Constraint::Exact(Exact::new(50));
+        assert!(
+            parent.validate_attenuation(&child_inside).is_ok(),
+            "Should allow: Exact(50) inside exclusive range"
+        );
     }
 
     #[test]

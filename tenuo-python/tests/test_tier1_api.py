@@ -382,11 +382,13 @@ class TestConstraintContainment:
     # -------------------------------------------------------------------------
     # Cross-Type Incompatibilities (should NOT be contained)
     # -------------------------------------------------------------------------
-    def test_incompatible_range_exact(self):
-        """Range and Exact are incompatible types."""
+    def test_range_exact_cross_type(self):
+        """Range parent CAN contain Exact child if numeric value is within bounds."""
         from tenuo_core import Range, Exact
-        # Range parent cannot contain Exact child (different semantics)
-        assert not _is_constraint_contained(Exact("50"), Range(0, 100))
+        # Range parent can contain Exact child with numeric value
+        assert _is_constraint_contained(Exact("50"), Range(0, 100))  # In range
+        assert not _is_constraint_contained(Exact("200"), Range(0, 100))  # Out of range
+        assert not _is_constraint_contained(Exact("abc"), Range(0, 100))  # Non-numeric
     
     def test_incompatible_oneof_pattern(self):
         """OneOf parent cannot contain Pattern child (would need subset check)."""
@@ -416,6 +418,81 @@ class TestConstraintContainment:
         from tenuo_core import Pattern, Exact
         assert _is_constraint_contained(Exact("/data/file.txt"), Pattern("/data/file.txt"))
         assert not _is_constraint_contained(Exact("/data/other.txt"), Pattern("/data/file.txt"))
+    
+    # -------------------------------------------------------------------------
+    # NotOneOf Constraints
+    # -------------------------------------------------------------------------
+    def test_notoneof_superset_exclusions(self):
+        """NotOneOf child must exclude MORE values (superset of exclusions)."""
+        from tenuo_core import NotOneOf
+        parent = NotOneOf(["admin", "root"])
+        
+        # Child excludes MORE - valid narrowing (more restrictive)
+        assert _is_constraint_contained(NotOneOf(["admin", "root", "sudo"]), parent)
+        assert _is_constraint_contained(NotOneOf(["admin", "root"]), parent)  # Equal
+        
+        # Child excludes LESS - invalid (would allow more)
+        assert not _is_constraint_contained(NotOneOf(["admin"]), parent)
+        assert not _is_constraint_contained(NotOneOf(["other"]), parent)
+    
+    # -------------------------------------------------------------------------
+    # Contains Constraints
+    # -------------------------------------------------------------------------
+    def test_contains_superset_required(self):
+        """Contains child must require MORE values (superset of required)."""
+        from tenuo_core import Contains
+        parent = Contains(["read", "write"])
+        
+        # Child requires MORE - valid narrowing
+        assert _is_constraint_contained(Contains(["read", "write", "execute"]), parent)
+        assert _is_constraint_contained(Contains(["read", "write"]), parent)  # Equal
+        
+        # Child requires LESS - invalid (would accept more inputs)
+        assert not _is_constraint_contained(Contains(["read"]), parent)
+        assert not _is_constraint_contained(Contains(["other"]), parent)
+    
+    # -------------------------------------------------------------------------
+    # Subset Constraints
+    # -------------------------------------------------------------------------
+    def test_subset_fewer_allowed(self):
+        """Subset child must allow FEWER values (subset of allowed)."""
+        from tenuo_core import Subset
+        parent = Subset(["a", "b", "c", "d"])
+        
+        # Child allows FEWER - valid narrowing
+        assert _is_constraint_contained(Subset(["a", "b"]), parent)
+        assert _is_constraint_contained(Subset(["a"]), parent)
+        assert _is_constraint_contained(Subset(["a", "b", "c", "d"]), parent)  # Equal
+        
+        # Child allows MORE or different - invalid
+        assert not _is_constraint_contained(Subset(["a", "b", "c", "d", "e"]), parent)
+        assert not _is_constraint_contained(Subset(["x", "y"]), parent)
+    
+    # -------------------------------------------------------------------------
+    # Range -> Exact Cross-Type
+    # -------------------------------------------------------------------------
+    def test_range_to_exact_numeric(self):
+        """Range parent can contain Exact numeric child if within bounds."""
+        from tenuo_core import Range, Exact
+        parent = Range(0, 100)
+        
+        # Exact with numeric string within range
+        assert _is_constraint_contained(Exact("50"), parent)
+        assert _is_constraint_contained(Exact("0"), parent)   # At min
+        assert _is_constraint_contained(Exact("100"), parent)  # At max
+        
+        # Exact outside range
+        assert not _is_constraint_contained(Exact("-1"), parent)
+        assert not _is_constraint_contained(Exact("101"), parent)
+    
+    def test_range_to_exact_string_fails(self):
+        """Range -> Exact with non-numeric string should fail."""
+        from tenuo_core import Range, Exact
+        parent = Range(0, 100)
+        
+        # Non-numeric exact fails
+        assert not _is_constraint_contained(Exact("fifty"), parent)
+        assert not _is_constraint_contained(Exact("abc"), parent)
 
 # =============================================================================
 # Task Context Tests

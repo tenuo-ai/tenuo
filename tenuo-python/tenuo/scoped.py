@@ -105,7 +105,12 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     - Regex -> Regex: patterns must be IDENTICAL (subset is undecidable)
     - Exact -> Exact: values must be equal
     - OneOf -> OneOf: child must be a subset of parent
+    - NotOneOf -> NotOneOf: child must exclude MORE values (superset of exclusions)
     - Range -> Range: child bounds must be within parent bounds
+    - Contains -> Contains: child must require MORE values (superset of required)
+    - Subset -> Subset: child must allow FEWER values (subset of allowed)
+    - All -> All: each child constraint must be contained in parent
+    - CEL -> CEL: child expression must be syntactic extension of parent
     - string -> string: values must be equal (fallback)
     
     Cross-Type Containment:
@@ -115,9 +120,7 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     - Regex -> string: string value must match parent regex
     - OneOf -> Exact: exact value must be in parent's set
     - OneOf -> string: string value must be in parent's set
-    
-    Not Supported in Tier 1 (use Tier 2 API for full validation):
-    - NotOneOf, Contains, Subset, All, CEL
+    - Range -> Exact: exact numeric value must be within parent range
     
     Returns:
         True if child is contained within parent, False otherwise.
@@ -201,23 +204,121 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
             # Plain string value must be in the parent's OneOf set
             return child_str in parent_values
     
+    # Range containment - check BEFORE Exact since Range can contain Exact
+    if parent_type == 'Range':
+        p_min = getattr(parent_value, 'min', None)
+        p_max = getattr(parent_value, 'max', None)
+        
+        if child_type == 'Range':
+            c_min = getattr(child_value, 'min', None)
+            c_max = getattr(child_value, 'max', None)
+            
+            min_ok = p_min is None or (c_min is not None and c_min >= p_min)
+            max_ok = p_max is None or (c_max is not None and c_max <= p_max)
+            return min_ok and max_ok
+        elif child_type == 'Exact':
+            # Range -> Exact: value must be within range
+            try:
+                value = float(child_str)
+                min_ok = p_min is None or value >= p_min
+                max_ok = p_max is None or value <= p_max
+                return min_ok and max_ok
+            except (ValueError, TypeError):
+                return False
+        else:
+            # Range cannot contain non-Range/non-Exact types
+            return False
+    
     # Exact containment - must be equal (both Exact or one is Exact)
     if parent_type == 'Exact' or child_type == 'Exact':
         return child_str == parent_str
     
-    # Range containment
-    if parent_type == 'Range' and child_type == 'Range':
-        p_min = getattr(parent_value, 'min', None)
-        p_max = getattr(parent_value, 'max', None)
-        c_min = getattr(child_value, 'min', None)
-        c_max = getattr(child_value, 'max', None)
+    # =========================================================================
+    # NotOneOf - Child must exclude MORE values (superset of exclusions)
+    # =========================================================================
+    if parent_type == 'NotOneOf':
+        parent_excluded = set(getattr(parent_value, 'excluded', []))
+        if child_type == 'NotOneOf':
+            # Child must exclude at least everything parent excludes
+            child_excluded = set(getattr(child_value, 'excluded', []))
+            return parent_excluded.issubset(child_excluded)
+        else:
+            # Other types cannot attenuate to NotOneOf
+            return False
+    
+    # =========================================================================
+    # Contains - Child must require MORE values (superset of required)
+    # =========================================================================
+    if parent_type == 'Contains':
+        parent_required = set(_extract_list_values(getattr(parent_value, 'required', [])))
+        if child_type == 'Contains':
+            # Child must require at least everything parent requires
+            child_required = set(_extract_list_values(getattr(child_value, 'required', [])))
+            return parent_required.issubset(child_required)
+        else:
+            return False
+    
+    # =========================================================================
+    # Subset - Child must allow FEWER values (subset of allowed)
+    # =========================================================================
+    if parent_type == 'Subset':
+        parent_allowed = set(_extract_list_values(getattr(parent_value, 'allowed', [])))
+        if child_type == 'Subset':
+            # Child allowed set must be subset of parent allowed set
+            child_allowed = set(_extract_list_values(getattr(child_value, 'allowed', [])))
+            return child_allowed.issubset(parent_allowed)
+        else:
+            return False
+    
+    # =========================================================================
+    # All - Compound constraint (all sub-constraints must match)
+    # =========================================================================
+    if parent_type == 'All':
+        # All constraints are complex - for now, require same type
+        # Full validation would need to check each sub-constraint
+        if child_type == 'All':
+            # Conservative: same repr means same constraints
+            return str(parent_value) == str(child_value) or repr(parent_value) == repr(child_value)
+        else:
+            return False
+    
+    # =========================================================================
+    # CEL - Child expression must be syntactic extension of parent
+    # =========================================================================
+    if parent_type == 'Cel' or parent_type == 'CelConstraint':
+        parent_expr = getattr(parent_value, 'expression', None)
+        if parent_expr is None:
+            return False
         
-        min_ok = p_min is None or (c_min is not None and c_min >= p_min)
-        max_ok = p_max is None or (c_max is not None and c_max <= p_max)
-        return min_ok and max_ok
+        if child_type == 'Cel' or child_type == 'CelConstraint':
+            child_expr = getattr(child_value, 'expression', None)
+            if child_expr is None:
+                return False
+            # CEL monotonicity: child must be (parent) && additional_predicate
+            # or exactly the same expression
+            if parent_expr == child_expr:
+                return True
+            # Check if child is conjunction with parent
+            expected_prefix = f"({parent_expr}) &&"
+            return child_expr.startswith(expected_prefix)
+        else:
+            return False
     
     # Fallback: string equality
     return child_str == parent_str
+
+
+def _extract_list_values(values: Any) -> list:
+    """Extract string values from a list of constraint values."""
+    result = []
+    for v in values:
+        if isinstance(v, str):
+            result.append(v)
+        elif hasattr(v, 'value'):
+            result.append(str(getattr(v, 'value')))
+        else:
+            result.append(str(v))
+    return result
 
 
 @dataclass
