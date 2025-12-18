@@ -200,9 +200,18 @@ def _check_authorization(
     schemas: Dict[str, ToolSchema],
     kwargs: dict,
 ) -> None:
-    """Check authorization - shared by sync and async paths."""
+    """Check authorization with cryptographic Proof-of-Possession.
+    
+    This function:
+    1. Gets warrant and signing key from context
+    2. Creates a PoP signature binding the holder to this specific action
+    3. Calls warrant.authorize() which verifies PoP and checks constraints
+    
+    The PoP signature prevents stolen warrant tokens from being used by attackers
+    who don't possess the holder's private key.
+    """
     warrant = get_warrant_context()
-    _ = get_signing_key_context()  # Reserved for PoP signature creation
+    signing_key = get_signing_key_context()
     schema = schemas.get(tool_name)
     
     # No warrant in context
@@ -212,7 +221,7 @@ def _check_authorization(
             return  # Allow passthrough
         raise ToolNotAuthorized(tool=tool_name)
     
-    # Check tool is in warrant's allowlist
+    # Check tool is in warrant's allowlist (fast fail before PoP)
     if warrant.tools and tool_name not in warrant.tools:
         raise ToolNotAuthorized(
             tool=tool_name,
@@ -249,27 +258,44 @@ def _check_authorization(
                 f"Recommended: {schema.recommended_constraints}"
             )
     
-    # Authorize (checks constraints)
+    # Build args dict for authorization
     constraint_args = {k: v for k, v in kwargs.items()}
+    
     try:
-        # Check constraints match if we have any
-        warrant_constraints = _get_constraints_dict(warrant)
-        for key, constraint in warrant_constraints.items():
-            if key in constraint_args:
-                value = constraint_args[key]
-                try:
-                    _check_constraint(constraint, value)
-                except Exception as e:
-                    raise ConstraintViolation(
-                        field=key,
-                        reason=str(e),
-                        value=value,
-                    ) from e
+        # Create PoP signature if we have a signing key
+        # This cryptographically binds the holder to this specific action
+        pop_signature: Optional[bytes] = None
+        if signing_key is not None:
+            pop_signature = bytes(warrant.create_pop_signature(
+                signing_key, tool_name, constraint_args
+            ))
+        
+        # Authorize using Rust core (verifies PoP + checks constraints)
+        # This is the authoritative check - replaces manual _check_constraint calls
+        authorized = warrant.authorize(
+            tool=tool_name,
+            args=constraint_args,
+            signature=pop_signature,
+        )
+        
+        if not authorized:
+            # warrant.authorize returns False for constraint violations
+            raise ConstraintViolation(
+                field="unknown",
+                reason="Authorization failed - constraint violation",
+                value=None,
+            )
         
         # Audit success
         log_authorization_success(warrant, tool_name, constraint_args)
         
     except TenuoError:
+        log_authorization_failure(
+            warrant_id=warrant.id if warrant else None,
+            tool=tool_name,
+            constraints=constraint_args,
+            reason=str(type(constraint_args)),
+        )
         raise
     except Exception as e:
         log_authorization_failure(
@@ -329,64 +355,6 @@ async def _execute_protected_async(
     if asyncio.iscoroutine(result):
         return await result
     return result
-
-
-def _check_constraint(constraint: Any, value: Any) -> None:
-    """Check if value satisfies constraint.
-    
-    Uses duck typing with hasattr() for robustness against type renames or subclasses.
-    """
-    # Use check method if available (preferred path)
-    if hasattr(constraint, 'check'):
-        constraint.check(value)
-        return
-
-    # Duck typing: check for Pattern-like (has 'pattern' attribute)
-    if hasattr(constraint, 'pattern'):
-        pattern = constraint.pattern
-        import fnmatch
-        if not fnmatch.fnmatch(str(value), pattern):
-            raise ValueError(f"Value '{value}' does not match pattern '{pattern}'")
-        return
-
-    # Duck typing: check for Exact-like (has 'value' attribute, not 'values')
-    if hasattr(constraint, 'value') and not hasattr(constraint, 'values'):
-        expected = constraint.value
-        if str(value) != str(expected):
-            raise ValueError(f"Value '{value}' does not match expected '{expected}'")
-        return
-        
-    # Duck typing: check for OneOf-like (has 'values' attribute as collection)
-    if hasattr(constraint, 'values'):
-        allowed = constraint.values
-        if str(value) not in allowed:
-            raise ValueError(f"Value '{value}' not in allowed values: {allowed}")
-        return
-        
-    # Duck typing: check for Range-like (has 'min' or 'max' attribute)
-    if hasattr(constraint, 'min') or hasattr(constraint, 'max'):
-        min_val = getattr(constraint, 'min', None)
-        max_val = getattr(constraint, 'max', None)
-        
-        try:
-            val_num = float(value)
-        except (ValueError, TypeError):
-            raise ValueError(f"Value '{value}' is not a number")
-            
-        if min_val is not None and val_num < min_val:
-            raise ValueError(f"Value {val_num} is less than minimum {min_val}")
-        if max_val is not None and val_num > max_val:
-            raise ValueError(f"Value {val_num} is greater than maximum {max_val}")
-        return
-    
-    # Fallback: if it's a raw value (str/int), check equality
-    if isinstance(constraint, (str, int, float, bool)):
-        if constraint != value:
-            raise ValueError(f"Value '{value}' does not match expected '{constraint}'")
-        return
-        
-    # Unknown constraint type - fail safe
-    raise ValueError(f"Cannot verify constraint of type {type(constraint).__name__}")
 
 
 def _audit_passthrough(tool_name: str, kwargs: dict) -> None:

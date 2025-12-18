@@ -35,6 +35,17 @@ with set_warrant_context(warrant), set_signing_key_context(worker_keypair):
 
 If an attacker steals the warrant token alone, they can't use it without the private key.
 
+### Replay Protection & Statelessness
+
+Tenuo uses time-windowed PoP signatures (~2 minutes) to allow for **stateless verification** and distributed clock skew. 
+
+> [!IMPORTANT]
+> **Residual Replay Risk**: Because the scheme is stateless (no nonce tracking in core), a valid PoP signature can be replayed **within the ~2 minute window**.
+
+This is an intentional design trade-off for scalability. The protection prevents an attacker from using a stolen warrant *after* the window closes, but does not prevent immediate replay of the exact same request.
+
+**Mitigation**: For high-security operations (e.g., money transfer), applications should implement simple request deduplication using `(warrant_id, tool, args)` as a cache key with a 120-second TTL.
+
 ## Monotonic Attenuation
 
 Authority can only **shrink**, never expand:
