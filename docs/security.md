@@ -319,7 +319,8 @@ with root_task(tools=["read_file", "write_file", "delete_file"], path="/*"):
 
 ## See Also
 
-- [Integration Safety](./integration-safety) — **Fail-safe mechanisms for integration bugs** 
+- [Enforcement Models](./enforcement) — In-process, sidecar, gateway deployment patterns
+- [Integration Safety](./integration-safety) — Fail-safe mechanisms for integration bugs 
 - [Argument Extraction](./argument-extraction) — How tool arguments are extracted and validated
 - [Protocol](./protocol) — Full protocol details
 - [Proxy Configs](./proxy-configs) — Envoy, Istio, nginx integration

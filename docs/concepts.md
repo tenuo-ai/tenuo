@@ -386,6 +386,7 @@ Authority is bound to the task (warrant minted per-request). Verification is sta
 ## Next Steps
 
 - [Quick Start](./quickstart) — Get running in 5 minutes
+- [Enforcement Models](./enforcement) — In-process, sidecar, gateway, MCP
 - [Protocol](./protocol) — Wire format and verification rules
 - [Security](./security) — Detailed threat model
 - [Related Work](./related-work) — CaMeL, FIDES, and other approaches

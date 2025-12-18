@@ -270,6 +270,7 @@ Tenuo provides a full Model Context Protocol (MCP) client with automatic tool pr
 ## Next Steps
 
 - **[Concepts](./concepts)** — Why Tenuo? Threat model, core invariants
+- **[Enforcement Models](./enforcement)** — In-process, sidecar, gateway, MCP
 - **[Kubernetes Guide](./kubernetes)** — Production deployment patterns
 - **[API Reference](./api-reference)** — Complete Python SDK docs
 - **[LangChain](./langchain)** — Protect LangChain tools
