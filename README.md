@@ -7,6 +7,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/tenuo-ai/tenuo/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/tenuo-ai/tenuo/ci.yml?label=CI" alt="CI"></a>
   <a href="https://crates.io/crates/tenuo"><img src="https://img.shields.io/crates/v/tenuo.svg" alt="Crates.io"></a>
   <a href="https://pypi.org/project/tenuo/"><img src="https://img.shields.io/pypi/v/tenuo.svg" alt="PyPI"></a>
   <a href="https://hub.docker.com/r/tenuo/authorizer"><img src="https://img.shields.io/docker/v/tenuo/authorizer?label=docker" alt="Docker"></a>
