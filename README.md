@@ -14,6 +14,7 @@ If an agent is prompt-injected, the authority still can't escape its bounds.
 [![Crates.io](https://img.shields.io/crates/v/tenuo.svg)](https://crates.io/crates/tenuo)
 [![PyPI](https://img.shields.io/pypi/v/tenuo.svg)](https://pypi.org/project/tenuo/)
 [![Docs](https://img.shields.io/badge/docs-tenuo.ai-blue)](https://tenuo.ai)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 
 > **v0.1** - Early release. Cryptographic core is stable; integration APIs are evolving.
 

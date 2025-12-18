@@ -654,7 +654,7 @@ See [Gateway Configuration](./gateway-config) for full configuration reference.
 
 Verify and authorize a single warrant (for scripting/testing).
 ```
-tenuo-authorizer verify --tool <TOOL> [OPTIONS]
+tenuo-authorizer verify --tool <TOOL> --pop <SIGNATURE> [OPTIONS]
 ```
 
 **Required:**
@@ -662,6 +662,7 @@ tenuo-authorizer verify --tool <TOOL> [OPTIONS]
 | Flag | Description |
 |------|-------------|
 | `--tool`, `-t` | Tool name to authorize |
+| `--pop` | Proof-of-possession signature (hex-encoded, 64 bytes) |
 
 **Options:**
 
@@ -673,9 +674,14 @@ tenuo-authorizer verify --tool <TOOL> [OPTIONS]
 
 **Example:**
 ```bash
+# First create a PoP signature
+$ POP=$(tenuo sign --key worker.key --warrant "$WARRANT" --tool read_file --quiet -- '{"path":"/data/readme.md"}')
+
+# Then verify with PoP
 $ tenuo-authorizer verify \
     --warrant "$WARRANT" \
     --tool read_file \
+    --pop "$POP" \
     --arg "path=/data/readme.md"
 ```
 

@@ -229,6 +229,54 @@ Issuer warrants cannot grant execution capabilities to themselves.
 | `MAX_CONSTRAINT_DEPTH` | 16 | Prevents stack overflow in nested constraints |
 | PoP Timestamp Window | ~2 min | Replay attack protection |
 
+## Production Deployment Security
+
+### Control Plane (`tenuo-control`)
+
+The reference control plane binary requires explicit configuration in production:
+
+| Requirement | Environment Variable | Notes |
+|-------------|---------------------|-------|
+| **Secret Key** | `TENUO_SECRET_KEY` | **Required in release builds**. Hex-encoded Ed25519 seed. If missing, the server fails to start. |
+| **Enrollment Token** | `TENUO_ENROLLMENT_TOKEN` | Shared secret for agent enrollment. Use a cryptographically random value. |
+
+> **Why fail-fast?** In debug builds, an ephemeral key is generated for convenience. In release builds, this would cause all warrants to become invalid on restart, so the server refuses to start without an explicit key.
+
+Generate a secret key:
+```bash
+openssl rand -hex 32
+```
+
+### Authorizer (`tenuo-authorizer`)
+
+The authorizer exposes unauthenticated health endpoints for Kubernetes probes:
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /health` | Liveness probe |
+| `GET /healthz` | Liveness probe (alias) |
+| `GET /ready` | Readiness probe |
+
+Configure Kubernetes probes:
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 9090
+  initialDelaySeconds: 5
+  periodSeconds: 10
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 9090
+  initialDelaySeconds: 5
+  periodSeconds: 10
+```
+
+**Error Sanitization**: The authorizer sanitizes error responses to prevent information leakage. Internal error details are logged but not returned to clients.
+
+---
+
 ## Best Practices
 
 ### 1. Wrap All Tools

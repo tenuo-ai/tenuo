@@ -17,7 +17,7 @@ Tenuo implements **capability tokens** (Warrants) for AI agent authorization:
 ## Quick Start
 
 ```rust
-use tenuo_core::{SigningKey, Warrant, Constraint, Authorizer};
+use tenuo::{SigningKey, Warrant, Constraint, Authorizer};
 
 // Generate keys
 let issuer_key = SigningKey::generate();

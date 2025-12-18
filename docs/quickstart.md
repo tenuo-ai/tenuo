@@ -148,7 +148,7 @@ graph.add_node("tools", tool_node)
 ### 1. Create a Warrant
 
 ```rust
-use tenuo_core::{SigningKey, Warrant, Pattern, Range};
+use tenuo::{SigningKey, Warrant, Pattern, Range};
 use std::time::Duration;
 
 let keypair = SigningKey::generate();
@@ -163,7 +163,7 @@ let warrant = Warrant::builder()
 ### 2. Attenuate
 
 ```rust
-use tenuo_core::Exact;
+use tenuo::Exact;
 
 let worker_keypair = SigningKey::generate();
 let worker_warrant = warrant.attenuate()
@@ -176,7 +176,7 @@ let worker_warrant = warrant.attenuate()
 ### 3. Authorize
 
 ```rust
-use tenuo_core::Authorizer;
+use tenuo::Authorizer;
 
 let authorizer = Authorizer::new(keypair.public_key());
 let chain = vec![warrant, worker_warrant];

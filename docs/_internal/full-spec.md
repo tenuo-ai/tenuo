@@ -2235,7 +2235,7 @@ SecureGraph(graph, config)  # Declarative attenuation
 TENUO_WARRANT, TENUO_STACK  # State keys
 ```
 
-### MCP (`tenuo_core.mcp`)
+### MCP (`tenuo.mcp`)
 
 ```python
 # v0.1 (Implemented)
