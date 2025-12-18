@@ -9,7 +9,7 @@ Unlike network firewalls (which block IPs) or IAM (which blocks identities), Ten
 IAM Policies answer “may this identity do X?”
 Warrants answer “was this specific action authorized by a specific delegator?”
 
-You can deploy Tenuo in three enforcement models, ranging from "Drop-in Safety" to "Zero Trust Infrastructure."
+You can deploy Tenuo in four enforcement models, ranging from "Drop-in Safety" to "Zero Trust Infrastructure."
 
 | Model | Enforcement Point | Protects Against |
 |-------|-------------------|------------------|
@@ -33,11 +33,23 @@ In this model, Tenuo runs **inside** your agent's process as a Python library / 
       └─ @lockdown decorator (Tenuo SDK)
            └─ Tool Implementation (Function)
     ```
-* **The Flow:**
+
+**How it works:**
+
+```python
+@lockdown(tool="delete_file")
+def delete_file(path: str):
+    os.remove(path)  # Never reached if unauthorized
+
+with set_warrant_context(warrant), set_keypair_context(keypair):
+    delete_file("/etc/passwd")  # Raises AuthorizationError
+```
+
     1.  LLM generates a tool call: `delete_file("/etc/passwd")`
     2.  The `@lockdown` decorator intercepts the call.
     3.  It checks the current `Warrant` in the context.
     4.  **Action:** If the warrant says `path: /data/*`, Tenuo raises an exception. The tool code never runs.
+
 * **Security Guarantee:** 
 
 Constrains Confused Deputy attacks. If prompt injection tricks the  LLM into calling unauthorized tools, Tenuo blocks it.
@@ -45,6 +57,128 @@ Constrains Confused Deputy attacks. If prompt injection tricks the  LLM into cal
 However, if attacker gets remote code execution (RCE) on the agent server process, they can remove the decorator or call tools directly to bypass Tenuo. The agent process is the trust boundary.
 
 >> ***This model Prevents confused deputy attacks caused by prompt injection inside a trusted process.***
+
+**Variant: Web Framework Middleware**
+
+*Best for: Agents exposed as APIs (e.g., LangServe, Flask apps)*
+
+If your agent exposes tools as HTTP endpoints, you can enforce warrants globally using middleware. This is cleaner than decorating every single route.
+
+**FastAPI / Starlette:**
+
+```python
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from tenuo import Authorizer, Warrant, AuthorizationError
+
+app = FastAPI()
+
+# Initialize with your control plane's public key
+authorizer = Authorizer(trusted_roots=[control_plane_public_key])
+
+@app.middleware("http")
+async def tenuo_guard(request: Request, call_next):
+    # Skip health checks
+    if request.url.path in ["/health", "/ready"]:
+        return await call_next(request)
+    
+    # 1. Extract Warrant from header
+    warrant_b64 = request.headers.get("X-Tenuo-Warrant")
+    if not warrant_b64:
+        return JSONResponse(status_code=401, content={"error": "Missing warrant"})
+    
+    try:
+        warrant = Warrant.from_base64(warrant_b64)
+    except Exception:
+        return JSONResponse(status_code=400, content={"error": "Invalid warrant"})
+    
+    # 2. Identify the Tool (Endpoint) & Arguments
+    tool_name = request.url.path  # e.g., "/tools/read_file"
+    
+    # Parse body as JSON dict (check() requires a dict)
+    try:
+        args = await request.json() if request.method in ["POST", "PUT"] else {}
+    except:
+        args = {}
+
+    # 3. Enforce
+    try:
+        authorizer.check(warrant, tool_name, args)
+    except AuthorizationError:
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+    
+    return await call_next(request)
+```
+
+**Flask:**
+
+```python
+from flask import Flask, request, abort, jsonify
+from tenuo import Authorizer, Warrant, AuthorizationError
+
+app = Flask(__name__)
+authorizer = Authorizer(trusted_roots=[control_plane_public_key])
+
+@app.before_request
+def check_warrant():
+    # Skip health checks
+    if request.path in ["/health", "/ready"]:
+        return
+
+    # Extract and validate warrant
+    warrant_b64 = request.headers.get("X-Tenuo-Warrant")
+    if not warrant_b64:
+        abort(401, description="Missing warrant")
+    
+    try:
+        warrant = Warrant.from_base64(warrant_b64)
+        args = request.get_json() or {}
+        authorizer.check(warrant, request.path, args)
+    except AuthorizationError:
+        abort(403, description="Access denied")
+```
+
+**FastAPI Dependency Injection (Recommended)**
+
+For more control over which routes require warrants, use FastAPI's dependency injection:
+
+```python
+from fastapi import FastAPI, Depends, Request, HTTPException
+from tenuo import (
+    Warrant, lockdown,
+    set_warrant_context, set_signing_key_context,
+    AuthorizationError
+)
+
+app = FastAPI()
+
+async def require_warrant(request: Request) -> Warrant:
+    """Dependency that extracts and validates warrant."""
+    warrant_b64 = request.headers.get("X-Tenuo-Warrant")
+    if not warrant_b64:
+        raise HTTPException(status_code=401, detail="Missing warrant")
+    return Warrant.from_base64(warrant_b64)
+
+@lockdown(tool="read_file")
+def read_file(path: str) -> str:
+    return open(path).read()
+
+@app.get("/files/{path:path}")
+async def get_file(path: str, warrant: Warrant = Depends(require_warrant)):
+    # Context ensures @lockdown can access warrant in async handlers
+    with set_warrant_context(warrant), set_signing_key_context(AGENT_KEYPAIR):
+        try:
+            return {"content": read_file(path)}
+        except AuthorizationError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+```
+
+This pattern is preferred when:
+- Only some routes need authorization
+- You want per-route warrant requirements  
+- You need proper async context propagation
+
+See [examples/fastapi_integration.py](https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/fastapi_integration.py) for a complete example.
 
 ---
 
