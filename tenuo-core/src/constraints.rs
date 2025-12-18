@@ -1611,12 +1611,87 @@ impl FromIterator<(String, Constraint)> for ConstraintSet {
 mod tests {
     use super::*;
 
+    // -------------------------------------------------------------------------
+    // Pattern (Glob) Tests - Comprehensive
+    // -------------------------------------------------------------------------
+
     #[test]
-    fn test_pattern_matches() {
+    fn test_pattern_suffix_wildcard() {
+        // Suffix wildcard: staging-*
         let pattern = Pattern::new("staging-*").unwrap();
         assert!(pattern.matches(&"staging-web".into()).unwrap());
         assert!(pattern.matches(&"staging-api".into()).unwrap());
+        assert!(pattern.matches(&"staging-".into()).unwrap()); // Empty suffix ok
         assert!(!pattern.matches(&"prod-web".into()).unwrap());
+        assert!(!pattern.matches(&"Staging-web".into()).unwrap()); // Case sensitive
+    }
+
+    #[test]
+    fn test_pattern_prefix_wildcard() {
+        // Prefix wildcard: *@company.com
+        let pattern = Pattern::new("*@company.com").unwrap();
+        assert!(pattern.matches(&"cfo@company.com".into()).unwrap());
+        assert!(pattern.matches(&"alice@company.com".into()).unwrap());
+        assert!(pattern.matches(&"@company.com".into()).unwrap()); // Empty prefix ok
+        assert!(!pattern.matches(&"hacker@evil.com".into()).unwrap());
+        assert!(!pattern.matches(&"cfo@company.com.evil.com".into()).unwrap());
+    }
+
+    #[test]
+    fn test_pattern_middle_wildcard() {
+        // Middle wildcard: /data/*/file.txt
+        let pattern = Pattern::new("/data/*/file.txt").unwrap();
+        assert!(pattern.matches(&"/data/reports/file.txt".into()).unwrap());
+        assert!(pattern.matches(&"/data/x/file.txt".into()).unwrap());
+        assert!(!pattern.matches(&"/data/reports/other.txt".into()).unwrap());
+        assert!(!pattern.matches(&"/data/file.txt".into()).unwrap()); // Missing middle segment
+    }
+
+    #[test]
+    fn test_pattern_multiple_wildcards() {
+        // Multiple wildcards: /*/reports/*.pdf
+        let pattern = Pattern::new("/*/reports/*.pdf").unwrap();
+        assert!(pattern.matches(&"/data/reports/q3.pdf".into()).unwrap());
+        assert!(pattern.matches(&"/home/reports/annual.pdf".into()).unwrap());
+        assert!(!pattern.matches(&"/data/reports/q3.txt".into()).unwrap());
+        assert!(!pattern.matches(&"/data/other/q3.pdf".into()).unwrap());
+    }
+
+    #[test]
+    fn test_pattern_single_wildcard() {
+        // Single wildcard matches anything
+        let pattern = Pattern::new("*").unwrap();
+        assert!(pattern.matches(&"anything".into()).unwrap());
+        assert!(pattern.matches(&"".into()).unwrap());
+        assert!(pattern.matches(&"foo/bar/baz".into()).unwrap());
+    }
+
+    #[test]
+    fn test_pattern_question_mark() {
+        // ? matches single character
+        let pattern = Pattern::new("file?.txt").unwrap();
+        assert!(pattern.matches(&"file1.txt".into()).unwrap());
+        assert!(pattern.matches(&"fileA.txt".into()).unwrap());
+        assert!(!pattern.matches(&"file12.txt".into()).unwrap());
+        assert!(!pattern.matches(&"file.txt".into()).unwrap());
+    }
+
+    #[test]
+    fn test_pattern_character_class() {
+        // Character class [abc]
+        let pattern = Pattern::new("env-[psd]*").unwrap(); // prod, staging, dev
+        assert!(pattern.matches(&"env-prod".into()).unwrap());
+        assert!(pattern.matches(&"env-staging".into()).unwrap());
+        assert!(pattern.matches(&"env-dev".into()).unwrap());
+        assert!(!pattern.matches(&"env-test".into()).unwrap()); // t not in [psd]
+    }
+
+    #[test]
+    fn test_pattern_no_wildcard() {
+        // No wildcard = exact match
+        let pattern = Pattern::new("/data/file.txt").unwrap();
+        assert!(pattern.matches(&"/data/file.txt".into()).unwrap());
+        assert!(!pattern.matches(&"/data/other.txt".into()).unwrap());
     }
 
     #[test]
