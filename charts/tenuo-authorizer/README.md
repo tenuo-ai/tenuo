@@ -89,6 +89,16 @@ helm uninstall tenuo-authorizer
 | `podDisruptionBudget.enabled` | Enable PDB | `true` |
 | `podDisruptionBudget.minAvailable` | Minimum available pods | `1` |
 
+### Observability
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `metrics.path` | Metrics endpoint path | `/metrics` |
+| `metrics.serviceMonitor.enabled` | Enable Prometheus ServiceMonitor | `false` |
+| `metrics.serviceMonitor.labels` | Additional labels for ServiceMonitor | `{}` |
+| `metrics.serviceMonitor.interval` | Scrape interval | `30s` |
+| `metrics.serviceMonitor.scrapeTimeout` | Scrape timeout | `10s` |
+
 ## Examples
 
 ### Basic Deployment with Trusted Keys
@@ -174,6 +184,13 @@ autoscaling:
 podDisruptionBudget:
   enabled: true
   minAvailable: 2
+
+# Enable Prometheus metrics (requires prometheus-operator)
+metrics:
+  serviceMonitor:
+    enabled: true
+    labels:
+      release: prometheus  # Match your Prometheus selector
 
 affinity:
   podAntiAffinity:

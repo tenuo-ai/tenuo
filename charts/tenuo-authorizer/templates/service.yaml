@@ -12,8 +12,8 @@ spec:
   type: {{ .Values.service.type }}
   ports:
     - port: {{ .Values.service.port }}
-      targetPort: grpc
+      targetPort: http
       protocol: TCP
-      name: grpc
+      name: http
   selector:
     {{- include "tenuo-authorizer.selectorLabels" . | nindent 4 }}
