@@ -13,7 +13,13 @@ tenuo-core/tests/*.rs linguist-documentation
 tenuo-core/benches/*.rs linguist-documentation
 
 # Docs folder contains generated/documentation files
-docs/** linguist-documentation
+# Switched to vendored to ensure total exclusion from language bar
+docs/** linguist-vendored
+
+# Exclude virtual environments explicitly (even if ignored by git, good practice)
+**/venv/** linguist-vendored
+**/.venv/** linguist-vendored
+**/.venv-*/** linguist-vendored
 
 # Ensure source files are detectable
 *.rs linguist-detectable=true
