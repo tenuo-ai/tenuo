@@ -1239,6 +1239,8 @@ fn format_constraint(c: &Constraint) -> String {
             let vals: Vec<String> = s.allowed.iter().map(|v| format!("{}", v)).collect();
             format!("Subset([{}])", vals.join(", "))
         }
+        Constraint::Cidr(c) => format!("Cidr(\"{}\")", c.cidr_string),
+        Constraint::UrlPattern(u) => format!("UrlPattern(\"{}\")", u.pattern),
         Constraint::All(a) => format!("All({} constraints)", a.constraints.len()),
         Constraint::Any(a) => format!("Any({} constraints)", a.constraints.len()),
         Constraint::Not(n) => format!("Not({})", format_constraint(&n.constraint)),

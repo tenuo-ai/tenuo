@@ -29,6 +29,8 @@
 //! attacks from maliciously crafted warrants.
 
 use crate::error::{Error, Result};
+use ipnetwork::IpNetwork;
+use std::net::IpAddr;
 
 /// Maximum allowed nesting depth for recursive constraints (All, Any, Not).
 ///
@@ -109,6 +111,12 @@ pub enum Constraint {
     /// Numeric range constraint.
     Range(Range),
 
+    /// CIDR network constraint (IP address must be in network).
+    Cidr(Cidr),
+
+    /// URL pattern constraint (validates URL scheme, host, port, path).
+    UrlPattern(UrlPattern),
+
     /// List must contain specified values.
     Contains(Contains),
 
@@ -147,6 +155,8 @@ impl<'de> serde::Deserialize<'de> for Constraint {
             OneOf(OneOf),
             NotOneOf(NotOneOf),
             Range(Range),
+            Cidr(Cidr),
+            UrlPattern(UrlPattern),
             Contains(Contains),
             Subset(Subset),
             All(AllRaw),
@@ -179,6 +189,8 @@ impl<'de> serde::Deserialize<'de> for Constraint {
             ConstraintRaw::OneOf(v) => Constraint::OneOf(v),
             ConstraintRaw::NotOneOf(v) => Constraint::NotOneOf(v),
             ConstraintRaw::Range(v) => Constraint::Range(v),
+            ConstraintRaw::Cidr(v) => Constraint::Cidr(v),
+            ConstraintRaw::UrlPattern(v) => Constraint::UrlPattern(v),
             ConstraintRaw::Contains(v) => Constraint::Contains(v),
             ConstraintRaw::Subset(v) => Constraint::Subset(v),
             ConstraintRaw::All(v) => Constraint::All(All {
@@ -220,6 +232,8 @@ impl Constraint {
             | Constraint::OneOf(_)
             | Constraint::NotOneOf(_)
             | Constraint::Range(_)
+            | Constraint::Cidr(_)
+            | Constraint::UrlPattern(_)
             | Constraint::Contains(_)
             | Constraint::Subset(_)
             | Constraint::Cel(_) => 0,
@@ -266,6 +280,8 @@ impl Constraint {
             Constraint::OneOf(o) => o.matches(value),
             Constraint::NotOneOf(n) => n.matches(value),
             Constraint::Range(r) => r.matches(value),
+            Constraint::Cidr(c) => c.matches(value),
+            Constraint::UrlPattern(u) => u.matches(value),
             Constraint::Contains(c) => c.matches(value),
             Constraint::Subset(s) => s.matches(value),
             Constraint::All(a) => a.matches(value),
@@ -385,6 +401,55 @@ impl Constraint {
                 }
             }
 
+            // Cidr can narrow to smaller Cidr (subnet)
+            (Constraint::Cidr(parent), Constraint::Cidr(child)) => {
+                parent.validate_attenuation(child)
+            }
+            // Cidr can narrow to Exact IP address
+            (Constraint::Cidr(parent), Constraint::Exact(child_exact)) => {
+                match child_exact.value.as_str() {
+                    Some(ip_str) => {
+                        if parent.contains_ip(ip_str)? {
+                            Ok(())
+                        } else {
+                            Err(Error::IpNotInCidr {
+                                ip: ip_str.to_string(),
+                                cidr: parent.network.to_string(),
+                            })
+                        }
+                    }
+                    None => Err(Error::IncompatibleConstraintTypes {
+                        parent_type: "Cidr".to_string(),
+                        child_type: "Exact (non-string)".to_string(),
+                    }),
+                }
+            }
+
+            // UrlPattern can narrow to UrlPattern or Exact
+            (Constraint::UrlPattern(parent), Constraint::UrlPattern(child)) => {
+                parent.validate_attenuation(child)
+            }
+            (Constraint::UrlPattern(parent), Constraint::Exact(child_exact)) => {
+                match child_exact.value.as_str() {
+                    Some(url_str) => {
+                        if parent.matches_url(url_str)? {
+                            Ok(())
+                        } else {
+                            Err(Error::UrlMismatch {
+                                reason: format!(
+                                    "URL '{}' does not match pattern '{}'",
+                                    url_str, parent
+                                ),
+                            })
+                        }
+                    }
+                    None => Err(Error::IncompatibleConstraintTypes {
+                        parent_type: "UrlPattern".to_string(),
+                        child_type: "Exact (non-string)".to_string(),
+                    }),
+                }
+            }
+
             // Contains can add more required values
             (Constraint::Contains(parent), Constraint::Contains(child)) => {
                 parent.validate_attenuation(child)
@@ -417,6 +482,8 @@ impl Constraint {
             Constraint::Regex(_) => "Regex",
             Constraint::Exact(_) => "Exact",
             Constraint::OneOf(_) => "OneOf",
+            Constraint::Cidr(_) => "Cidr",
+            Constraint::UrlPattern(_) => "UrlPattern",
             Constraint::NotOneOf(_) => "NotOneOf",
             Constraint::Range(_) => "Range",
             Constraint::Contains(_) => "Contains",
@@ -1224,6 +1291,502 @@ impl Range {
 impl From<Range> for Constraint {
     fn from(r: Range) -> Self {
         Constraint::Range(r)
+    }
+}
+
+// ============================================================================
+// Cidr Constraint (IP address must be in network)
+// ============================================================================
+
+/// CIDR network constraint - validates that an IP address is within a network range.
+///
+/// Supports both IPv4 and IPv6 addresses.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use tenuo::Cidr;
+///
+/// let cidr = Cidr::new("10.0.0.0/8")?;
+/// assert!(cidr.contains_ip("10.1.2.3")?);
+/// assert!(!cidr.contains_ip("192.168.1.1")?);
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cidr {
+    /// The network in CIDR notation (stored as parsed IpNetwork).
+    pub network: IpNetwork,
+    /// Original string representation for serialization.
+    pub cidr_string: String,
+}
+
+impl Serialize for Cidr {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.cidr_string.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Cidr {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Cidr::new(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+impl Cidr {
+    /// Create a new CIDR constraint from a string like "10.0.0.0/8" or "2001:db8::/32".
+    ///
+    /// # Errors
+    /// Returns error if the CIDR notation is invalid.
+    pub fn new(cidr: &str) -> Result<Self> {
+        let network = cidr.parse::<IpNetwork>().map_err(|e| Error::InvalidCidr {
+            cidr: cidr.to_string(),
+            reason: e.to_string(),
+        })?;
+        Ok(Self {
+            network,
+            cidr_string: cidr.to_string(),
+        })
+    }
+
+    /// Check if an IP address string is within this CIDR network.
+    pub fn contains_ip(&self, ip_str: &str) -> Result<bool> {
+        let ip = ip_str
+            .parse::<IpAddr>()
+            .map_err(|e| Error::InvalidIpAddress {
+                ip: ip_str.to_string(),
+                reason: e.to_string(),
+            })?;
+        Ok(self.network.contains(ip))
+    }
+
+    /// Check if a value satisfies the CIDR constraint.
+    ///
+    /// The value must be a string containing an IP address.
+    pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
+        match value.as_str() {
+            Some(ip_str) => self.contains_ip(ip_str),
+            None => Ok(false),
+        }
+    }
+
+    /// Validate that `child` is a valid attenuation (child network is subnet of parent).
+    ///
+    /// A child CIDR is valid if it's completely contained within the parent CIDR.
+    pub fn validate_attenuation(&self, child: &Cidr) -> Result<()> {
+        // Child network must be a subnet of parent
+        // This means: child's first IP >= parent's first IP
+        //         and child's last IP <= parent's last IP
+        let parent_net = self.network;
+        let child_net = child.network;
+
+        // Check if child network address is within parent
+        if !parent_net.contains(child_net.network()) {
+            return Err(Error::CidrNotSubnet {
+                parent: self.cidr_string.clone(),
+                child: child.cidr_string.clone(),
+            });
+        }
+
+        // Check if child broadcast address is within parent
+        if !parent_net.contains(child_net.broadcast()) {
+            return Err(Error::CidrNotSubnet {
+                parent: self.cidr_string.clone(),
+                child: child.cidr_string.clone(),
+            });
+        }
+
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for Cidr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Cidr({})", self.cidr_string)
+    }
+}
+
+impl From<Cidr> for Constraint {
+    fn from(c: Cidr) -> Self {
+        Constraint::Cidr(c)
+    }
+}
+
+// ============================================================================
+// URL Pattern Constraint (validates URL scheme, host, port, path)
+// ============================================================================
+
+/// URL pattern constraint - validates URLs against scheme, host, port, and path patterns.
+///
+/// This provides structured URL validation with proper parsing and normalization,
+/// safer than using Pattern or Regex for URL matching.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use tenuo::UrlPattern;
+///
+/// // Match any HTTPS URL to api.example.com
+/// let pattern = UrlPattern::new("https://api.example.com/*")?;
+/// assert!(pattern.matches_url("https://api.example.com/v1/users")?);
+/// assert!(!pattern.matches_url("http://api.example.com/v1/users")?);  // Wrong scheme
+///
+/// // Match any subdomain of example.com
+/// let pattern = UrlPattern::new("https://*.example.com/*")?;
+/// assert!(pattern.matches_url("https://api.example.com/v1")?);
+/// assert!(pattern.matches_url("https://www.example.com/")?);
+/// ```
+#[derive(Debug, Clone, PartialEq)]
+pub struct UrlPattern {
+    /// Original pattern string for display/serialization.
+    pub pattern: String,
+    /// Allowed schemes (e.g., ["https"]). Empty means any scheme.
+    pub schemes: Vec<String>,
+    /// Host pattern (supports wildcards like "*.example.com").
+    pub host_pattern: Option<String>,
+    /// Required port. None means any port (or default for scheme).
+    pub port: Option<u16>,
+    /// Path pattern (glob-style, e.g., "/api/v1/*").
+    pub path_pattern: Option<String>,
+}
+
+impl Serialize for UrlPattern {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.pattern.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for UrlPattern {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        UrlPattern::new(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+impl UrlPattern {
+    /// Create a new URL pattern from a pattern string.
+    ///
+    /// Pattern format: `scheme://host[:port][/path]`
+    ///
+    /// - Scheme: Required. Use `*` for any scheme.
+    /// - Host: Required. Supports wildcards (`*.example.com`).
+    /// - Port: Optional. Omit for default port.
+    /// - Path: Optional. Supports glob patterns (`/api/*`).
+    ///
+    /// # Examples
+    ///
+    /// - `https://api.example.com/*` - HTTPS only, specific host, any path
+    /// - `*://example.com/api/v1/*` - Any scheme, specific host/path
+    /// - `https://*.example.com:8443/api/*` - HTTPS, any subdomain, specific port
+    ///
+    /// # Errors
+    /// Returns error if the pattern is not a valid URL pattern.
+    pub fn new(pattern: &str) -> Result<Self> {
+        // Internal placeholders for URL parsing
+        const HOST_PLACEHOLDER: &str = "__tenuo_host_wildcard__";
+        const PATH_PLACEHOLDER: &str = "__tenuo_path_wildcard__";
+
+        // Reject patterns containing our internal placeholders (security: prevent collision attacks)
+        if pattern.contains(HOST_PLACEHOLDER) || pattern.contains(PATH_PLACEHOLDER) {
+            return Err(Error::InvalidUrl {
+                url: pattern.to_string(),
+                reason: "pattern contains reserved internal sequence".to_string(),
+            });
+        }
+
+        // Handle wildcard scheme
+        let (schemes, url_str) = if pattern.starts_with("*://") {
+            (vec![], pattern.replacen("*://", "https://", 1))
+        } else {
+            // Extract scheme(s)
+            let scheme_end = pattern.find("://").ok_or_else(|| Error::InvalidUrl {
+                url: pattern.to_string(),
+                reason: "missing scheme (expected 'scheme://')".to_string(),
+            })?;
+            let scheme = &pattern[..scheme_end];
+            (vec![scheme.to_lowercase()], pattern.to_string())
+        };
+
+        // Parse with url crate (replace wildcards temporarily for parsing)
+        let parse_str = url_str
+            .replace("*.", &format!("{}.", HOST_PLACEHOLDER))
+            .replace("/*", &format!("/{}", PATH_PLACEHOLDER));
+
+        let parsed = url::Url::parse(&parse_str).map_err(|e| Error::InvalidUrl {
+            url: pattern.to_string(),
+            reason: e.to_string(),
+        })?;
+
+        // Extract host pattern (restore wildcards)
+        let host_pattern = parsed
+            .host_str()
+            .map(|h| h.replace(&format!("{}.", HOST_PLACEHOLDER), "*."));
+
+        // Extract port (None means default for scheme)
+        let port = parsed.port();
+
+        // Extract path pattern (restore wildcards)
+        let path = parsed.path();
+        let path_pattern = if path.is_empty() || path == "/" {
+            None
+        } else {
+            Some(path.replace(PATH_PLACEHOLDER, "*"))
+        };
+
+        Ok(Self {
+            pattern: pattern.to_string(),
+            schemes,
+            host_pattern,
+            port,
+            path_pattern,
+        })
+    }
+
+    /// Check if a URL string matches this pattern.
+    pub fn matches_url(&self, url_str: &str) -> Result<bool> {
+        let parsed = url::Url::parse(url_str).map_err(|e| Error::InvalidUrl {
+            url: url_str.to_string(),
+            reason: e.to_string(),
+        })?;
+
+        // Check scheme
+        if !self.schemes.is_empty() && !self.schemes.contains(&parsed.scheme().to_lowercase()) {
+            return Ok(false);
+        }
+
+        // Check host
+        if let Some(host_pattern) = &self.host_pattern {
+            let host = parsed.host_str().unwrap_or("");
+            if !Self::matches_host_pattern(host_pattern, host) {
+                return Ok(false);
+            }
+        }
+
+        // Check port
+        if let Some(required_port) = self.port {
+            let actual_port = parsed.port().unwrap_or_else(|| match parsed.scheme() {
+                "https" => 443,
+                "http" => 80,
+                _ => 0,
+            });
+            if actual_port != required_port {
+                return Ok(false);
+            }
+        }
+
+        // Check path
+        if let Some(path_pattern) = &self.path_pattern {
+            let path = parsed.path();
+            if !Self::matches_path_pattern(path_pattern, path) {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Match host against pattern (supports wildcards).
+    fn matches_host_pattern(pattern: &str, host: &str) -> bool {
+        if pattern == "*" {
+            return true;
+        }
+
+        if let Some(suffix) = pattern.strip_prefix("*.") {
+            // Wildcard subdomain: *.example.com matches api.example.com, www.example.com
+            host == suffix || host.ends_with(&format!(".{}", suffix))
+        } else {
+            // Exact match (case-insensitive for domains)
+            pattern.eq_ignore_ascii_case(host)
+        }
+    }
+
+    /// Match path against pattern (glob-style).
+    fn matches_path_pattern(pattern: &str, path: &str) -> bool {
+        if pattern == "*" || pattern == "/*" {
+            return true;
+        }
+
+        // Use glob matching
+        if let Ok(glob) = GlobPattern::new(pattern) {
+            glob.matches(path)
+        } else {
+            pattern == path
+        }
+    }
+
+    /// Check if a ConstraintValue matches this URL pattern.
+    pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
+        match value.as_str() {
+            Some(url_str) => self.matches_url(url_str),
+            None => Ok(false),
+        }
+    }
+
+    /// Validate that `child` is a valid attenuation (narrower or equal).
+    ///
+    /// Rules:
+    /// - Scheme: Can narrow (any → https) but not widen (https → http)
+    /// - Host: Can narrow (*.example.com → api.example.com) but not widen
+    /// - Port: Can add restriction but not remove
+    /// - Path: Can narrow (/api/* → /api/v1/*) but not widen
+    pub fn validate_attenuation(&self, child: &UrlPattern) -> Result<()> {
+        // Check scheme narrowing
+        if !self.schemes.is_empty() {
+            // Parent has scheme restrictions
+            for child_scheme in &child.schemes {
+                if !self.schemes.contains(child_scheme) {
+                    return Err(Error::UrlSchemeExpanded {
+                        parent: self.schemes.join(","),
+                        child: child_scheme.clone(),
+                    });
+                }
+            }
+        }
+        // If parent allows any scheme (empty), child can restrict to any
+
+        // Check host narrowing
+        if let Some(parent_host) = &self.host_pattern {
+            if let Some(child_host) = &child.host_pattern {
+                if !Self::is_host_subset(parent_host, child_host) {
+                    return Err(Error::UrlHostExpanded {
+                        parent: parent_host.clone(),
+                        child: child_host.clone(),
+                    });
+                }
+            }
+            // Child has no host pattern = allows any, which would expand
+            else {
+                return Err(Error::UrlHostExpanded {
+                    parent: parent_host.clone(),
+                    child: "*".to_string(),
+                });
+            }
+        }
+
+        // Check port
+        if let Some(parent_port) = self.port {
+            match child.port {
+                Some(child_port) if child_port != parent_port => {
+                    return Err(Error::UrlPortExpanded {
+                        parent: Some(parent_port),
+                        child: Some(child_port),
+                    });
+                }
+                None => {
+                    return Err(Error::UrlPortExpanded {
+                        parent: Some(parent_port),
+                        child: None,
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        // Check path narrowing
+        if let Some(parent_path) = &self.path_pattern {
+            if let Some(child_path) = &child.path_pattern {
+                if !Self::is_path_subset(parent_path, child_path) {
+                    return Err(Error::UrlPathExpanded {
+                        parent: parent_path.clone(),
+                        child: child_path.clone(),
+                    });
+                }
+            }
+            // Child has no path pattern = allows any path, which would expand
+            else {
+                return Err(Error::UrlPathExpanded {
+                    parent: parent_path.clone(),
+                    child: "*".to_string(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check if child_host is a subset of parent_host.
+    fn is_host_subset(parent: &str, child: &str) -> bool {
+        if parent == "*" {
+            return true; // Parent allows any host
+        }
+
+        if let Some(parent_suffix) = parent.strip_prefix("*.") {
+            // Child must be either:
+            // 1. Exact match to the suffix (e.g., "example.com" matches "*.example.com")
+            // 2. A subdomain of the suffix (e.g., "api.example.com")
+            // 3. A more specific wildcard (e.g., "*.api.example.com")
+            if child == parent_suffix {
+                return true;
+            }
+            if child.ends_with(&format!(".{}", parent_suffix)) {
+                return true;
+            }
+            if let Some(child_suffix) = child.strip_prefix("*.") {
+                // *.api.example.com is subset of *.example.com
+                return child_suffix.ends_with(&format!(".{}", parent_suffix))
+                    || child_suffix == parent_suffix;
+            }
+            false
+        } else {
+            // Parent is exact: child must match exactly
+            parent.eq_ignore_ascii_case(child)
+        }
+    }
+
+    /// Check if child_path is a subset of parent_path.
+    fn is_path_subset(parent: &str, child: &str) -> bool {
+        if parent == "*" || parent == "/*" {
+            return true; // Parent allows any path
+        }
+
+        // If parent ends with /*, child must start with parent's prefix
+        if parent.ends_with("/*") {
+            let parent_prefix = &parent[..parent.len() - 1]; // Remove trailing *
+            if child.starts_with(parent_prefix) {
+                return true;
+            }
+            // Also check if child is more specific wildcard
+            if child.ends_with("/*") {
+                let child_prefix = &child[..child.len() - 1];
+                return child_prefix.starts_with(parent_prefix);
+            }
+            return false;
+        }
+
+        // Exact path match or child is more specific
+        if parent == child {
+            return true;
+        }
+
+        // Child has wildcard under parent's exact path
+        if child.starts_with(parent) && child[parent.len()..].starts_with('/') {
+            return true;
+        }
+
+        false
+    }
+}
+
+impl std::fmt::Display for UrlPattern {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "UrlPattern({})", self.pattern)
+    }
+}
+
+impl From<UrlPattern> for Constraint {
+    fn from(u: UrlPattern) -> Self {
+        Constraint::UrlPattern(u)
     }
 }
 
@@ -2301,5 +2864,488 @@ mod tests {
         let child = Constraint::NotOneOf(NotOneOf::new(vec!["prod", "secure"]));
 
         assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    // =========================================================================
+    // CIDR Constraint Tests
+    // =========================================================================
+
+    #[test]
+    fn test_cidr_creation_ipv4() {
+        let cidr = Cidr::new("10.0.0.0/8").unwrap();
+        assert_eq!(cidr.cidr_string, "10.0.0.0/8");
+    }
+
+    #[test]
+    fn test_cidr_creation_ipv6() {
+        let cidr = Cidr::new("2001:db8::/32").unwrap();
+        assert_eq!(cidr.cidr_string, "2001:db8::/32");
+    }
+
+    #[test]
+    fn test_cidr_invalid() {
+        assert!(Cidr::new("not-a-cidr").is_err());
+        assert!(Cidr::new("10.0.0.0/33").is_err()); // Invalid prefix for IPv4
+        assert!(Cidr::new("256.0.0.0/8").is_err()); // Invalid IP
+    }
+
+    #[test]
+    fn test_cidr_contains_ip() {
+        let cidr = Cidr::new("10.0.0.0/8").unwrap();
+
+        // IPs within the network
+        assert!(cidr.contains_ip("10.0.0.1").unwrap());
+        assert!(cidr.contains_ip("10.255.255.255").unwrap());
+        assert!(cidr.contains_ip("10.1.2.3").unwrap());
+
+        // IPs outside the network
+        assert!(!cidr.contains_ip("192.168.1.1").unwrap());
+        assert!(!cidr.contains_ip("11.0.0.1").unwrap());
+    }
+
+    #[test]
+    fn test_cidr_contains_ip_ipv6() {
+        let cidr = Cidr::new("2001:db8::/32").unwrap();
+
+        assert!(cidr.contains_ip("2001:db8::1").unwrap());
+        assert!(cidr
+            .contains_ip("2001:db8:ffff:ffff:ffff:ffff:ffff:ffff")
+            .unwrap());
+        assert!(!cidr.contains_ip("2001:db9::1").unwrap());
+    }
+
+    #[test]
+    fn test_cidr_matches_constraint_value() {
+        let cidr = Cidr::new("192.168.0.0/16").unwrap();
+
+        // String IP that matches
+        let value = ConstraintValue::String("192.168.1.100".to_string());
+        assert!(cidr.matches(&value).unwrap());
+
+        // String IP that doesn't match
+        let value = ConstraintValue::String("10.0.0.1".to_string());
+        assert!(!cidr.matches(&value).unwrap());
+
+        // Non-string value
+        let value = ConstraintValue::Integer(123);
+        assert!(!cidr.matches(&value).unwrap());
+    }
+
+    #[test]
+    fn test_cidr_attenuation_valid_subnet() {
+        // Parent: 10.0.0.0/8 (10.0.0.0 - 10.255.255.255)
+        // Child: 10.1.0.0/16 (10.1.0.0 - 10.1.255.255) - valid subnet
+        let parent = Cidr::new("10.0.0.0/8").unwrap();
+        let child = Cidr::new("10.1.0.0/16").unwrap();
+
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_cidr_attenuation_same_network() {
+        let parent = Cidr::new("10.0.0.0/8").unwrap();
+        let child = Cidr::new("10.0.0.0/8").unwrap();
+
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_cidr_attenuation_narrower_prefix() {
+        // /24 is narrower than /16
+        let parent = Cidr::new("192.168.0.0/16").unwrap();
+        let child = Cidr::new("192.168.1.0/24").unwrap();
+
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_cidr_attenuation_invalid_not_subset() {
+        // Child network is outside parent
+        let parent = Cidr::new("10.0.0.0/8").unwrap();
+        let child = Cidr::new("192.168.0.0/16").unwrap();
+
+        let result = parent.validate_attenuation(&child);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cidr_attenuation_invalid_wider() {
+        // Child is wider than parent (would expand permissions)
+        let parent = Cidr::new("10.1.0.0/16").unwrap();
+        let child = Cidr::new("10.0.0.0/8").unwrap();
+
+        let result = parent.validate_attenuation(&child);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cidr_constraint_attenuation() {
+        let parent = Constraint::Cidr(Cidr::new("10.0.0.0/8").unwrap());
+        let child = Constraint::Cidr(Cidr::new("10.1.0.0/16").unwrap());
+
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_cidr_to_exact_attenuation() {
+        // CIDR can attenuate to Exact IP if IP is in network
+        let parent = Constraint::Cidr(Cidr::new("10.0.0.0/8").unwrap());
+        let child = Constraint::Exact(Exact::new("10.1.2.3"));
+
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_cidr_to_exact_attenuation_invalid() {
+        // CIDR to Exact fails if IP not in network
+        let parent = Constraint::Cidr(Cidr::new("10.0.0.0/8").unwrap());
+        let child = Constraint::Exact(Exact::new("192.168.1.1"));
+
+        let result = parent.validate_attenuation(&child);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_wildcard_to_cidr_attenuation() {
+        // Wildcard can attenuate to CIDR
+        let parent = Constraint::Wildcard(Wildcard::new());
+        let child = Constraint::Cidr(Cidr::new("10.0.0.0/8").unwrap());
+
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_cidr_single_ip_prefix32() {
+        // /32 represents a single IP address
+        let cidr = Cidr::new("192.168.1.100/32").unwrap();
+
+        assert!(cidr.contains_ip("192.168.1.100").unwrap());
+        assert!(!cidr.contains_ip("192.168.1.101").unwrap());
+        assert!(!cidr.contains_ip("192.168.1.99").unwrap());
+    }
+
+    #[test]
+    fn test_cidr_all_ips_prefix0() {
+        // /0 represents all IP addresses
+        let cidr = Cidr::new("0.0.0.0/0").unwrap();
+
+        assert!(cidr.contains_ip("192.168.1.1").unwrap());
+        assert!(cidr.contains_ip("10.0.0.1").unwrap());
+        assert!(cidr.contains_ip("255.255.255.255").unwrap());
+    }
+
+    #[test]
+    fn test_cidr_ipv4_ipv6_mismatch() {
+        // IPv4 CIDR should not match IPv6 addresses
+        let ipv4_cidr = Cidr::new("10.0.0.0/8").unwrap();
+        assert!(!ipv4_cidr.contains_ip("2001:db8::1").unwrap());
+
+        // IPv6 CIDR should not match IPv4 addresses
+        let ipv6_cidr = Cidr::new("2001:db8::/32").unwrap();
+        assert!(!ipv6_cidr.contains_ip("10.0.0.1").unwrap());
+    }
+
+    #[test]
+    fn test_cidr_invalid_ip_string() {
+        let cidr = Cidr::new("10.0.0.0/8").unwrap();
+
+        // Invalid IP strings should return error
+        assert!(cidr.contains_ip("not-an-ip").is_err());
+        assert!(cidr.contains_ip("").is_err());
+        assert!(cidr.contains_ip("256.0.0.1").is_err());
+        assert!(cidr.contains_ip("10.0.0").is_err());
+    }
+
+    #[test]
+    fn test_cidr_serialization_roundtrip() {
+        let original = Cidr::new("192.168.0.0/16").unwrap();
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&original).unwrap();
+        assert_eq!(json, "\"192.168.0.0/16\"");
+
+        // Deserialize back
+        let deserialized: Cidr = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.cidr_string, original.cidr_string);
+
+        // Verify functionality preserved
+        assert!(deserialized.contains_ip("192.168.1.1").unwrap());
+        assert!(!deserialized.contains_ip("10.0.0.1").unwrap());
+    }
+
+    #[test]
+    fn test_cidr_constraint_serialization() {
+        let constraint = Constraint::Cidr(Cidr::new("10.0.0.0/8").unwrap());
+
+        // Serialize as part of Constraint enum
+        let json = serde_json::to_string(&constraint).unwrap();
+        assert!(json.contains("Cidr"));
+        assert!(json.contains("10.0.0.0/8"));
+
+        // Deserialize back
+        let deserialized: Constraint = serde_json::from_str(&json).unwrap();
+        if let Constraint::Cidr(c) = deserialized {
+            assert_eq!(c.cidr_string, "10.0.0.0/8");
+        } else {
+            panic!("Expected Cidr constraint");
+        }
+    }
+
+    #[test]
+    fn test_cidr_attenuation_prefix32_to_prefix32() {
+        // /32 can attenuate to same /32
+        let parent = Cidr::new("10.1.2.3/32").unwrap();
+        let child = Cidr::new("10.1.2.3/32").unwrap();
+
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_cidr_attenuation_to_single_ip() {
+        // /8 can attenuate to /32 (single IP)
+        let parent = Cidr::new("10.0.0.0/8").unwrap();
+        let child = Cidr::new("10.1.2.3/32").unwrap();
+
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_cidr_ipv6_attenuation() {
+        // IPv6 attenuation works the same way
+        let parent = Cidr::new("2001:db8::/32").unwrap();
+        let child = Cidr::new("2001:db8:1::/48").unwrap();
+
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_cidr_boundary_ips() {
+        let cidr = Cidr::new("192.168.1.0/24").unwrap();
+
+        // First IP in range (network address)
+        assert!(cidr.contains_ip("192.168.1.0").unwrap());
+        // Last IP in range (broadcast address)
+        assert!(cidr.contains_ip("192.168.1.255").unwrap());
+        // Just outside range
+        assert!(!cidr.contains_ip("192.168.0.255").unwrap());
+        assert!(!cidr.contains_ip("192.168.2.0").unwrap());
+    }
+
+    // =========================================================================
+    // URL Pattern Constraint Tests
+    // =========================================================================
+
+    #[test]
+    fn test_url_pattern_creation() {
+        let pattern = UrlPattern::new("https://api.example.com/*").unwrap();
+        assert_eq!(pattern.schemes, vec!["https"]);
+        assert_eq!(pattern.host_pattern, Some("api.example.com".to_string()));
+        assert_eq!(pattern.path_pattern, Some("/*".to_string()));
+    }
+
+    #[test]
+    fn test_url_pattern_wildcard_scheme() {
+        let pattern = UrlPattern::new("*://example.com/api/*").unwrap();
+        assert!(pattern.schemes.is_empty()); // Empty means any scheme
+        assert_eq!(pattern.host_pattern, Some("example.com".to_string()));
+    }
+
+    #[test]
+    fn test_url_pattern_with_port() {
+        let pattern = UrlPattern::new("https://api.example.com:8443/api/*").unwrap();
+        assert_eq!(pattern.port, Some(8443));
+    }
+
+    #[test]
+    fn test_url_pattern_wildcard_host() {
+        let pattern = UrlPattern::new("https://*.example.com/*").unwrap();
+        assert_eq!(pattern.host_pattern, Some("*.example.com".to_string()));
+    }
+
+    #[test]
+    fn test_url_pattern_invalid() {
+        assert!(UrlPattern::new("not-a-url").is_err());
+        assert!(UrlPattern::new("missing-scheme.com").is_err());
+    }
+
+    #[test]
+    fn test_url_pattern_matches_basic() {
+        let pattern = UrlPattern::new("https://api.example.com/*").unwrap();
+
+        assert!(pattern
+            .matches_url("https://api.example.com/v1/users")
+            .unwrap());
+        assert!(pattern.matches_url("https://api.example.com/").unwrap());
+
+        // Wrong scheme
+        assert!(!pattern.matches_url("http://api.example.com/v1").unwrap());
+        // Wrong host
+        assert!(!pattern.matches_url("https://other.example.com/v1").unwrap());
+    }
+
+    #[test]
+    fn test_url_pattern_matches_wildcard_scheme() {
+        let pattern = UrlPattern::new("*://api.example.com/*").unwrap();
+
+        assert!(pattern.matches_url("https://api.example.com/v1").unwrap());
+        assert!(pattern.matches_url("http://api.example.com/v1").unwrap());
+    }
+
+    #[test]
+    fn test_url_pattern_matches_wildcard_host() {
+        let pattern = UrlPattern::new("https://*.example.com/*").unwrap();
+
+        assert!(pattern.matches_url("https://api.example.com/v1").unwrap());
+        assert!(pattern.matches_url("https://www.example.com/v1").unwrap());
+        assert!(pattern.matches_url("https://example.com/v1").unwrap());
+
+        // Different domain
+        assert!(!pattern.matches_url("https://api.other.com/v1").unwrap());
+    }
+
+    #[test]
+    fn test_url_pattern_matches_port() {
+        let pattern = UrlPattern::new("https://api.example.com:8443/*").unwrap();
+
+        assert!(pattern
+            .matches_url("https://api.example.com:8443/v1")
+            .unwrap());
+        // Wrong port
+        assert!(!pattern
+            .matches_url("https://api.example.com:443/v1")
+            .unwrap());
+        assert!(!pattern.matches_url("https://api.example.com/v1").unwrap());
+    }
+
+    #[test]
+    fn test_url_pattern_matches_path() {
+        let pattern = UrlPattern::new("https://api.example.com/api/v1/*").unwrap();
+
+        assert!(pattern
+            .matches_url("https://api.example.com/api/v1/users")
+            .unwrap());
+        assert!(pattern
+            .matches_url("https://api.example.com/api/v1/")
+            .unwrap());
+
+        // Wrong path prefix
+        assert!(!pattern
+            .matches_url("https://api.example.com/api/v2/users")
+            .unwrap());
+        assert!(!pattern
+            .matches_url("https://api.example.com/other")
+            .unwrap());
+    }
+
+    #[test]
+    fn test_url_pattern_attenuation_same() {
+        let parent = UrlPattern::new("https://api.example.com/*").unwrap();
+        let child = UrlPattern::new("https://api.example.com/*").unwrap();
+
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_url_pattern_attenuation_narrower_path() {
+        let parent = UrlPattern::new("https://api.example.com/*").unwrap();
+        let child = UrlPattern::new("https://api.example.com/api/v1/*").unwrap();
+
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_url_pattern_attenuation_narrower_host() {
+        let parent = UrlPattern::new("https://*.example.com/*").unwrap();
+        let child = UrlPattern::new("https://api.example.com/*").unwrap();
+
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_url_pattern_attenuation_add_scheme() {
+        // Parent allows any scheme, child restricts to https
+        let parent = UrlPattern::new("*://api.example.com/*").unwrap();
+        let child = UrlPattern::new("https://api.example.com/*").unwrap();
+
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_url_pattern_attenuation_invalid_scheme_expansion() {
+        let parent = UrlPattern::new("https://api.example.com/*").unwrap();
+        let child = UrlPattern::new("http://api.example.com/*").unwrap();
+
+        assert!(parent.validate_attenuation(&child).is_err());
+    }
+
+    #[test]
+    fn test_url_pattern_attenuation_invalid_host_expansion() {
+        let parent = UrlPattern::new("https://api.example.com/*").unwrap();
+        let child = UrlPattern::new("https://*.example.com/*").unwrap();
+
+        assert!(parent.validate_attenuation(&child).is_err());
+    }
+
+    #[test]
+    fn test_url_pattern_attenuation_invalid_path_expansion() {
+        let parent = UrlPattern::new("https://api.example.com/api/v1/*").unwrap();
+        let child = UrlPattern::new("https://api.example.com/*").unwrap();
+
+        assert!(parent.validate_attenuation(&child).is_err());
+    }
+
+    #[test]
+    fn test_url_constraint_attenuation() {
+        let parent = Constraint::UrlPattern(UrlPattern::new("https://*.example.com/*").unwrap());
+        let child =
+            Constraint::UrlPattern(UrlPattern::new("https://api.example.com/v1/*").unwrap());
+
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_url_to_exact_attenuation() {
+        let parent = Constraint::UrlPattern(UrlPattern::new("https://api.example.com/*").unwrap());
+        let child = Constraint::Exact(Exact::new("https://api.example.com/v1/users"));
+
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_url_to_exact_attenuation_invalid() {
+        let parent = Constraint::UrlPattern(UrlPattern::new("https://api.example.com/*").unwrap());
+        let child = Constraint::Exact(Exact::new("https://other.example.com/v1"));
+
+        assert!(parent.validate_attenuation(&child).is_err());
+    }
+
+    #[test]
+    fn test_wildcard_to_url_attenuation() {
+        let parent = Constraint::Wildcard(Wildcard::new());
+        let child = Constraint::UrlPattern(UrlPattern::new("https://api.example.com/*").unwrap());
+
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_url_pattern_serialization_roundtrip() {
+        let original = UrlPattern::new("https://api.example.com/v1/*").unwrap();
+
+        let json = serde_json::to_string(&original).unwrap();
+        assert!(json.contains("https://api.example.com/v1/*"));
+
+        let deserialized: UrlPattern = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.pattern, original.pattern);
+    }
+
+    #[test]
+    fn test_url_pattern_placeholder_collision_rejected() {
+        // Patterns containing our internal placeholder strings should be rejected
+        // to prevent collision attacks
+        assert!(UrlPattern::new("https://__tenuo_host_wildcard__.evil.com/*").is_err());
+        assert!(UrlPattern::new("https://evil.com/__tenuo_path_wildcard__").is_err());
+
+        // Normal patterns should still work
+        assert!(UrlPattern::new("https://api.example.com/*").is_ok());
     }
 }

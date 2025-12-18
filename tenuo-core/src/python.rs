@@ -6,8 +6,8 @@
 #![allow(clippy::useless_conversion)]
 
 use crate::constraints::{
-    All, Any, CelConstraint, Constraint, ConstraintValue, Contains, Exact, Not, NotOneOf, OneOf,
-    Pattern, Range, RegexConstraint, Subset, Wildcard,
+    All, Any, CelConstraint, Cidr, Constraint, ConstraintValue, Contains, Exact, Not, NotOneOf,
+    OneOf, Pattern, Range, RegexConstraint, Subset, UrlPattern, Wildcard,
 };
 use crate::crypto::{
     PublicKey as RustPublicKey, Signature as RustSignature, SigningKey as RustSigningKey,
@@ -260,6 +260,80 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                     py,
                     ["value", &format!("{:?}-{:?}", min, max), &value.to_string()],
                 ),
+            ),
+
+            // CIDR errors
+            crate::error::Error::InvalidCidr { cidr, reason } => (
+                "ValidationError",
+                PyTuple::new(py, [&format!("Invalid CIDR '{}': {}", cidr, reason)]),
+            ),
+            crate::error::Error::InvalidIpAddress { ip, reason } => (
+                "ValidationError",
+                PyTuple::new(py, [&format!("Invalid IP address '{}': {}", ip, reason)]),
+            ),
+            crate::error::Error::IpNotInCidr { ip, cidr } => (
+                "ConstraintViolation",
+                PyTuple::new(
+                    py,
+                    ["source_ip", &format!("IP '{}' not in CIDR '{}'", ip, cidr)],
+                ),
+            ),
+            crate::error::Error::CidrNotSubnet { parent, child } => (
+                "MonotonicityError",
+                PyTuple::new(
+                    py,
+                    [&format!("CIDR '{}' is not a subnet of '{}'", child, parent)],
+                ),
+            ),
+
+            // URL errors
+            crate::error::Error::InvalidUrl { url, reason } => (
+                "ValidationError",
+                PyTuple::new(py, [&format!("Invalid URL '{}': {}", url, reason)]),
+            ),
+            crate::error::Error::UrlSchemeExpanded { parent, child } => (
+                "MonotonicityError",
+                PyTuple::new(
+                    py,
+                    [&format!(
+                        "URL scheme '{}' not allowed by parent scheme '{}'",
+                        child, parent
+                    )],
+                ),
+            ),
+            crate::error::Error::UrlHostExpanded { parent, child } => (
+                "MonotonicityError",
+                PyTuple::new(
+                    py,
+                    [&format!(
+                        "URL host '{}' not allowed by parent host '{}'",
+                        child, parent
+                    )],
+                ),
+            ),
+            crate::error::Error::UrlPortExpanded { parent, child } => (
+                "MonotonicityError",
+                PyTuple::new(
+                    py,
+                    [&format!(
+                        "URL port '{:?}' not allowed by parent port '{:?}'",
+                        child, parent
+                    )],
+                ),
+            ),
+            crate::error::Error::UrlPathExpanded { parent, child } => (
+                "MonotonicityError",
+                PyTuple::new(
+                    py,
+                    [&format!(
+                        "URL path '{}' not allowed by parent path '{}'",
+                        child, parent
+                    )],
+                ),
+            ),
+            crate::error::Error::UrlMismatch { reason } => (
+                "ConstraintViolation",
+                PyTuple::new(py, ["url", reason.as_str()]),
             ),
         };
 
@@ -631,6 +705,154 @@ impl PyRange {
     }
 }
 
+/// Python wrapper for CIDR constraint.
+///
+/// Validates that an IP address is within a network range.
+///
+/// Example:
+///     cidr = Cidr("10.0.0.0/8")
+///     cidr = Cidr("192.168.1.0/24")
+///     cidr = Cidr("2001:db8::/32")  # IPv6
+#[pyclass(name = "Cidr")]
+#[derive(Clone)]
+pub struct PyCidr {
+    inner: Cidr,
+}
+
+#[pymethods]
+impl PyCidr {
+    /// Create a new CIDR constraint.
+    ///
+    /// Args:
+    ///     cidr: CIDR notation string (e.g., "10.0.0.0/8", "192.168.1.0/24")
+    ///
+    /// Raises:
+    ///     ValueError: If the CIDR notation is invalid.
+    #[new]
+    fn new(cidr: &str) -> PyResult<Self> {
+        Ok(Self {
+            inner: Cidr::new(cidr).map_err(to_py_err)?,
+        })
+    }
+
+    /// Check if an IP address is within this CIDR network.
+    ///
+    /// Args:
+    ///     ip: IP address string (e.g., "10.1.2.3", "192.168.1.100")
+    ///
+    /// Returns:
+    ///     True if the IP is within the network, False otherwise.
+    fn contains(&self, ip: &str) -> PyResult<bool> {
+        self.inner.contains_ip(ip).map_err(to_py_err)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Cidr('{}')", self.inner.cidr_string)
+    }
+
+    fn __str__(&self) -> String {
+        self.inner.cidr_string.clone()
+    }
+
+    /// The CIDR string representation.
+    #[getter]
+    fn network(&self) -> String {
+        self.inner.cidr_string.clone()
+    }
+}
+
+/// Python wrapper for URL pattern constraint.
+///
+/// Validates URLs against scheme, host, port, and path patterns.
+/// Safer than using Pattern or Regex for URL matching.
+///
+/// Example:
+///     url_pattern = UrlPattern("https://api.example.com/*")
+///     url_pattern = UrlPattern("*://*.example.com/api/v1/*")
+#[pyclass(name = "UrlPattern")]
+#[derive(Clone)]
+pub struct PyUrlPattern {
+    inner: UrlPattern,
+}
+
+#[pymethods]
+impl PyUrlPattern {
+    /// Create a new URL pattern constraint.
+    ///
+    /// Pattern format: `scheme://host[:port][/path]`
+    ///
+    /// - Scheme: Required. Use `*` for any scheme.
+    /// - Host: Required. Supports wildcards (`*.example.com`).
+    /// - Port: Optional. Omit for default port.
+    /// - Path: Optional. Supports glob patterns (`/api/*`).
+    ///
+    /// Examples:
+    ///     UrlPattern("https://api.example.com/*")  # HTTPS, specific host, any path
+    ///     UrlPattern("*://example.com/api/v1/*")   # Any scheme, specific host/path
+    ///     UrlPattern("https://*.example.com:8443/api/*")  # Subdomain wildcard
+    ///
+    /// Args:
+    ///     pattern: URL pattern string.
+    ///
+    /// Raises:
+    ///     ValueError: If the pattern is not a valid URL pattern.
+    #[new]
+    fn new(pattern: &str) -> PyResult<Self> {
+        Ok(Self {
+            inner: UrlPattern::new(pattern).map_err(to_py_err)?,
+        })
+    }
+
+    /// Check if a URL matches this pattern.
+    ///
+    /// Args:
+    ///     url: URL string to check.
+    ///
+    /// Returns:
+    ///     True if the URL matches the pattern, False otherwise.
+    fn matches(&self, url: &str) -> PyResult<bool> {
+        self.inner.matches_url(url).map_err(to_py_err)
+    }
+
+    fn __repr__(&self) -> String {
+        format!("UrlPattern('{}')", self.inner.pattern)
+    }
+
+    fn __str__(&self) -> String {
+        self.inner.pattern.clone()
+    }
+
+    /// The pattern string.
+    #[getter]
+    fn pattern(&self) -> String {
+        self.inner.pattern.clone()
+    }
+
+    /// Allowed schemes (empty means any).
+    #[getter]
+    fn schemes(&self) -> Vec<String> {
+        self.inner.schemes.clone()
+    }
+
+    /// Host pattern (may include wildcards).
+    #[getter]
+    fn host_pattern(&self) -> Option<String> {
+        self.inner.host_pattern.clone()
+    }
+
+    /// Required port (None means any/default).
+    #[getter]
+    fn port(&self) -> Option<u16> {
+        self.inner.port
+    }
+
+    /// Path pattern (may include globs).
+    #[getter]
+    fn path_pattern(&self) -> Option<String> {
+        self.inner.path_pattern.clone()
+    }
+}
+
 /// Python wrapper for CEL constraint.
 #[pyclass(name = "CEL")]
 #[derive(Clone)]
@@ -801,6 +1023,16 @@ fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<PyObjec
             #[allow(deprecated)]
             Ok(PyRange { inner: r.clone() }.into_py(py))
         }
+        Constraint::Cidr(c) =>
+        {
+            #[allow(deprecated)]
+            Ok(PyCidr { inner: c.clone() }.into_py(py))
+        }
+        Constraint::UrlPattern(u) =>
+        {
+            #[allow(deprecated)]
+            Ok(PyUrlPattern { inner: u.clone() }.into_py(py))
+        }
         Constraint::Contains(c) =>
         {
             #[allow(deprecated)]
@@ -870,6 +1102,10 @@ fn py_to_constraint(obj: &Bound<'_, PyAny>) -> PyResult<Constraint> {
         Ok(Constraint::NotOneOf(n.inner))
     } else if let Ok(r) = obj.extract::<PyRange>() {
         Ok(Constraint::Range(r.inner))
+    } else if let Ok(c) = obj.extract::<PyCidr>() {
+        Ok(Constraint::Cidr(c.inner))
+    } else if let Ok(u) = obj.extract::<PyUrlPattern>() {
+        Ok(Constraint::UrlPattern(u.inner))
     } else if let Ok(c) = obj.extract::<PyContains>() {
         Ok(Constraint::Contains(c.inner))
     } else if let Ok(s) = obj.extract::<PySubset>() {
@@ -888,7 +1124,7 @@ fn py_to_constraint(obj: &Bound<'_, PyAny>) -> PyResult<Constraint> {
         Ok(Constraint::Wildcard(w.inner))
     } else {
         Err(PyValueError::new_err(
-            "constraint must be Pattern, Exact, OneOf, NotOneOf, Range, Contains, Subset, All, AnyOf, Not, CEL, Regex, or Wildcard",
+            "constraint must be Pattern, Exact, OneOf, NotOneOf, Range, Cidr, UrlPattern, Contains, Subset, All, AnyOf, Not, CEL, Regex, or Wildcard",
         ))
     }
 }
@@ -2958,6 +3194,8 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyExact>()?;
     m.add_class::<PyOneOf>()?;
     m.add_class::<PyRange>()?;
+    m.add_class::<PyCidr>()?;
+    m.add_class::<PyUrlPattern>()?;
     m.add_class::<PyRegex>()?;
     m.add_class::<PyWildcard>()?;
     m.add_class::<PyCel>()?;

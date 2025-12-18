@@ -132,6 +132,49 @@ pub enum Error {
     #[error("pattern expanded: child pattern '{child}' is broader than parent '{parent}'")]
     PatternExpanded { parent: String, child: String },
 
+    /// Invalid CIDR notation.
+    #[error("invalid CIDR: '{cidr}' - {reason}")]
+    InvalidCidr { cidr: String, reason: String },
+
+    /// Invalid IP address.
+    #[error("invalid IP address: '{ip}' - {reason}")]
+    InvalidIpAddress { ip: String, reason: String },
+
+    /// IP address not in CIDR range.
+    #[error("IP address '{ip}' not in CIDR range '{cidr}'")]
+    IpNotInCidr { ip: String, cidr: String },
+
+    /// Child CIDR is not a subnet of parent.
+    #[error("CIDR not subnet: '{child}' is not a subnet of '{parent}'")]
+    CidrNotSubnet { parent: String, child: String },
+
+    /// Invalid URL.
+    #[error("invalid URL: '{url}' - {reason}")]
+    InvalidUrl { url: String, reason: String },
+
+    /// URL scheme mismatch or expansion.
+    #[error("URL scheme expanded: child scheme '{child}' not allowed by parent scheme '{parent}'")]
+    UrlSchemeExpanded { parent: String, child: String },
+
+    /// URL host mismatch or expansion.
+    #[error("URL host expanded: child host '{child}' not allowed by parent host '{parent}'")]
+    UrlHostExpanded { parent: String, child: String },
+
+    /// URL port expansion.
+    #[error("URL port expanded: child port '{child:?}' not allowed by parent port '{parent:?}'")]
+    UrlPortExpanded {
+        parent: Option<u16>,
+        child: Option<u16>,
+    },
+
+    /// URL path expansion.
+    #[error("URL path expanded: child path '{child}' not allowed by parent path '{parent}'")]
+    UrlPathExpanded { parent: String, child: String },
+
+    /// URL does not match constraint.
+    #[error("URL does not match: {reason}")]
+    UrlMismatch { reason: String },
+
     /// Contains child doesn't require all values that parent requires.
     #[error("required value removed: child must still require '{value}'")]
     RequiredValueRemoved { value: String },

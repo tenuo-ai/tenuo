@@ -57,7 +57,7 @@ with scoped_task(query=Pattern("*public*")):
     ...
 ```
 
-⚠️ **Security**: Wildcard can only appear in root warrants. Attenuating to Wildcard is blocked (would re-widen authority).
+**Security**: Wildcard can only appear in root warrants. Attenuating to Wildcard is blocked (would re-widen authority).
 
 > **Note**: `Wildcard()` is different from `Pattern("*")`. See the [Pattern section below](#pattern-glob) for details.
 
@@ -100,16 +100,16 @@ Pattern("specific-value")
 **Examples by Wildcard Position:**
 | Pattern | Value | Match? | Description |
 |---------|-------|--------|-------------|
-| `/data/*` | `/data/file.txt` | ✅ | Suffix wildcard |
-| `/data/*` | `/etc/passwd` | ❌ | Wrong prefix |
-| `*@company.com` | `cfo@company.com` | ✅ | Prefix wildcard |
-| `*@company.com` | `hacker@evil.com` | ❌ | Wrong suffix |
-| `/data/*/file.txt` | `/data/reports/file.txt` | ✅ | Middle wildcard |
-| `/data/*/file.txt` | `/data/reports/other.txt` | ❌ | Filename mismatch |
-| `file?.txt` | `file1.txt` | ✅ | Single char wildcard |
-| `file?.txt` | `file12.txt` | ❌ | Too many chars |
+| `/data/*` | `/data/file.txt` | Yes | Suffix wildcard |
+| `/data/*` | `/etc/passwd` | No | Wrong prefix |
+| `*@company.com` | `cfo@company.com` | Yes | Prefix wildcard |
+| `*@company.com` | `hacker@evil.com` | No | Wrong suffix |
+| `/data/*/file.txt` | `/data/reports/file.txt` | Yes | Middle wildcard |
+| `/data/*/file.txt` | `/data/reports/other.txt` | No | Filename mismatch |
+| `file?.txt` | `file1.txt` | Yes | Single char wildcard |
+| `file?.txt` | `file12.txt` | No | Too many chars |
 
-> **⚠️ Important Distinction: `Wildcard()` vs `Pattern("*")` vs `"*"`**
+> **Important Distinction: `Wildcard()` vs `Pattern("*")` vs `"*"`**
 >
 > These three are **NOT** the same:
 >
@@ -118,20 +118,20 @@ Pattern("specific-value")
 > 3. **`"*"` (string literal)** - Just a regular string value that happens to contain an asterisk
 >
 > ```python
-> # ✅ Flexible: Wildcard can become anything
+> # Flexible: Wildcard can become anything
 > with root_task(tools=["search"], query=Wildcard()):
->     with scoped_task(query=Pattern("/data/*")):  # ✅ OK
+>     with scoped_task(query=Pattern("/data/*")):  # OK
 >         ...
->     with scoped_task(query=Range.max_value(100)):  # ✅ OK
+>     with scoped_task(query=Range.max_value(100)):  # OK
 >         ...
 >
-> # ⚠️ Limited: Pattern can only narrow to other patterns or exact values
+> # Limited: Pattern can only narrow to other patterns or exact values
 > with root_task(tools=["search"], query=Pattern("*")):
->     with scoped_task(query=Pattern("/data/*")):  # ✅ OK (simple prefix)
+>     with scoped_task(query=Pattern("/data/*")):  # OK (simple prefix)
 >         ...
->     with scoped_task(query=Exact("specific")):  # ✅ OK
+>     with scoped_task(query=Exact("specific")):  # OK
 >         ...
->     with scoped_task(query=Range.max_value(100)):  # ❌ Type mismatch
+>     with scoped_task(query=Range.max_value(100)):  # FAILS - Type mismatch
 >         ...
 > ```
 >
@@ -197,10 +197,135 @@ Range.min_value(10)
 **Examples:**
 | Range | Value | Match? |
 |-------|-------|--------|
-| `Range.max_value(100)` | `50` | ✅ |
-| `Range.max_value(100)` | `150` | ❌ |
-| `Range(min=10, max=50)` | `25` | ✅ |
-| `Range(min=10, max=50)` | `5` | ❌ |
+| `Range.max_value(100)` | `50` | Yes |
+| `Range.max_value(100)` | `150` | No |
+| `Range(min=10, max=50)` | `25` | Yes |
+| `Range(min=10, max=50)` | `5` | No |
+
+---
+
+### Cidr
+
+Constrains IP addresses to a network range using CIDR notation. Supports both IPv4 and IPv6.
+
+```python
+from tenuo import Cidr
+
+# IPv4 networks
+Cidr("10.0.0.0/8")        # 10.x.x.x
+Cidr("192.168.0.0/16")    # 192.168.x.x
+Cidr("192.168.1.0/24")    # 192.168.1.x
+
+# IPv6 networks
+Cidr("2001:db8::/32")
+```
+
+**Examples:**
+| Cidr | IP | Match? |
+|------|-----|--------|
+| `Cidr("10.0.0.0/8")` | `"10.1.2.3"` | Yes |
+| `Cidr("10.0.0.0/8")` | `"192.168.1.1"` | No |
+| `Cidr("192.168.1.0/24")` | `"192.168.1.100"` | Yes |
+| `Cidr("192.168.1.0/24")` | `"192.168.2.1"` | No |
+
+**Use case:** Restrict API calls to internal networks, validate source IPs.
+
+```python
+# Only allow requests from internal network
+warrant = (Warrant.builder()
+    .tool("api_call")
+    .constraint("source_ip", Cidr("10.0.0.0/8"))
+    .holder(kp.public_key)
+    .issue(kp))
+```
+
+**Attenuation:** Child CIDR must be a subnet of parent.
+
+```python
+# Parent: 10.0.0.0/8 (all 10.x.x.x)
+parent = Cidr("10.0.0.0/8")
+
+# Valid child: 10.1.0.0/16 (narrower)
+child = Cidr("10.1.0.0/16")  # OK - Subnet of parent
+
+# Invalid child: 192.168.0.0/16 (different network)
+child = Cidr("192.168.0.0/16")  # FAILS - Not a subnet
+```
+
+---
+
+### UrlPattern
+
+Validates URLs against scheme, host, port, and path patterns. Provides structured URL validation with proper parsing and normalization - safer than using `Pattern` or `Regex` for URL matching.
+
+```python
+from tenuo import UrlPattern
+
+# Match HTTPS URLs to specific host
+UrlPattern("https://api.example.com/*")
+
+# Any scheme (HTTP or HTTPS)
+UrlPattern("*://api.example.com/*")
+
+# Wildcard subdomain
+UrlPattern("https://*.example.com/*")
+
+# Specific port
+UrlPattern("https://api.example.com:8443/*")
+
+# Specific path prefix
+UrlPattern("https://api.example.com/api/v1/*")
+```
+
+**Pattern Components:**
+
+| Component | Syntax | Description |
+|-----------|--------|-------------|
+| Scheme | `https://`, `*://` | Required. Use `*` for any scheme. |
+| Host | `api.example.com`, `*.example.com` | Required. Supports `*` prefix for subdomains. |
+| Port | `:8443` | Optional. Omit for default port. |
+| Path | `/api/*`, `/v1/users` | Optional. Supports glob patterns. |
+
+**Examples:**
+
+| Pattern | URL | Match? |
+|---------|-----|--------|
+| `UrlPattern("https://api.example.com/*")` | `"https://api.example.com/v1/users"` | Yes |
+| `UrlPattern("https://api.example.com/*")` | `"http://api.example.com/v1"` | No (wrong scheme) |
+| `UrlPattern("https://*.example.com/*")` | `"https://www.example.com/home"` | Yes |
+| `UrlPattern("https://*.example.com/*")` | `"https://evil.com/home"` | No (wrong domain) |
+| `UrlPattern("https://api.example.com:8443/*")` | `"https://api.example.com:443/v1"` | No (wrong port) |
+
+**Use case:** Restrict API calls to specific endpoints, enforce HTTPS, limit to trusted domains.
+
+```python
+# Only allow HTTPS calls to internal API
+warrant = (Warrant.builder()
+    .tool("api_call")
+    .constraint("endpoint", UrlPattern("https://api.internal.com/v1/*"))
+    .holder(kp.public_key)
+    .issue(kp))
+```
+
+**Attenuation Rules:**
+
+- **Scheme**: Can narrow (any -> https) but not widen (https -> http)
+- **Host**: Can narrow (*.example.com -> api.example.com) but not widen
+- **Port**: Can add restriction but not remove
+- **Path**: Can narrow (/api/* -> /api/v1/*) but not widen
+
+```python
+# Parent: any subdomain, any path
+parent = UrlPattern("https://*.example.com/*")
+
+# Valid children
+child = UrlPattern("https://api.example.com/*")       # OK - Specific host
+child = UrlPattern("https://api.example.com/v1/*")    # OK - Specific host + path
+
+# Invalid children
+child = UrlPattern("http://api.example.com/*")        # FAILS - Different scheme
+child = UrlPattern("https://*.other.com/*")           # FAILS - Different domain
+```
 
 ---
 
@@ -218,7 +343,7 @@ Regex(r"^production-[a-z]+$")
 Regex(r"^[a-z]+@company\.com$")
 ```
 
-> **⚠️ Attenuation Limitation**: Regex constraints **cannot be narrowed** during attenuation.
+> **Attenuation Limitation**: Regex constraints **cannot be narrowed** during attenuation.
 >
 > Child regex must have **identical pattern** to parent. This is because determining if one regex is a subset of another is mathematically undecidable in the general case.
 >
@@ -230,19 +355,19 @@ Regex(r"^[a-z]+@company\.com$")
 >     ...
 > )
 >
-> # ❌ Cannot narrow to different regex (even if provably narrower)
+> # Cannot narrow to different regex (even if provably narrower)
 > child = parent.attenuate(
 >     constraints={"env": Regex(r"^staging-.*$")},  # FAILS
 >     ...
 > )
 >
-> # ✅ Can narrow to Exact value (if it matches parent regex)
+> # Can narrow to Exact value (if it matches parent regex)
 > child = parent.attenuate(
 >     constraints={"env": Exact("staging-web")},  # OK
 >     ...
 > )
 >
-> # ✅ Can keep same regex pattern
+> # Can keep same regex pattern
 > child = parent.attenuate(
 >     constraints={"env": Regex(r"^(staging|dev)-.*$")},  # OK
 >     ...
@@ -267,7 +392,7 @@ from tenuo import NotOneOf
 NotOneOf(["admin", "root"])
 ```
 
-⚠️ **Security**: Always prefer `OneOf` (allowlist) over `NotOneOf` (denylist). `NotOneOf` should only be used to "carve holes" in a parent's positive constraint.
+**Security**: Always prefer `OneOf` (allowlist) over `NotOneOf` (denylist). `NotOneOf` should only be used to "carve holes" in a parent's positive constraint.
 
 ---
 
@@ -291,8 +416,8 @@ warrant = Warrant.issue(
     ...
 )
 
-# ✅ Matches: ["read", "write", "admin"]
-# ❌ Doesn't match: ["read"] (missing "write")
+# Matches: ["read", "write", "admin"]
+# Doesn't match: ["read"] (missing "write")
 ```
 
 ---
@@ -317,9 +442,9 @@ warrant = Warrant.issue(
     ...
 )
 
-# ✅ Matches: ["staging"]
-# ✅ Matches: ["staging", "dev"]
-# ❌ Doesn't match: ["staging", "production"] (includes disallowed "production")
+# Matches: ["staging"]
+# Matches: ["staging", "dev"]
+# Doesn't match: ["staging", "production"] (includes disallowed "production")
 ```
 
 ---
@@ -369,7 +494,7 @@ from tenuo import Not, Exact
 Not(Exact("production"))
 ```
 
-⚠️ **Security**: Use sparingly. Prefer positive allowlists.
+**Security**: Use sparingly. Prefer positive allowlists.
 
 ---
 
@@ -407,7 +532,7 @@ warrant = Warrant.issue(
 
 # When tool is called with:
 # create_campaign(budget=5000, revenue=100000, ...)
-# CEL evaluates: 5000 < 100000 * 0.1 && 5000 > 0 → true ✅
+# CEL evaluates: 5000 < 100000 * 0.1 && 5000 > 0 -> true (OK)
 ```
 
 #### Standard Library Functions
@@ -498,7 +623,7 @@ child = parent.attenuate(
 
 **Syntactic Monotonicity (Conservative Approach)**
 
-⚠️ Tenuo enforces **Syntactic Monotonicity** for CEL, not Semantic Monotonicity.
+Tenuo enforces **Syntactic Monotonicity** for CEL, not Semantic Monotonicity.
 
 Child expression must **literally** be `(parent) && new_predicate`. It cannot be a semantically equivalent but differently structured expression.
 
@@ -511,14 +636,14 @@ parent = Warrant.issue(
     ttl_seconds=3600
 )
 
-# ❌ REJECTED: Semantically narrower but not syntactically derived
+# REJECTED: Semantically narrower but not syntactically derived
 child = parent.attenuate(
     constraints={"network": CEL("net_in_cidr(ip, '10.1.0.0/16')")},  # FAILS
     holder=worker_kp.public_key
 )
-# Even though 10.1.0.0/16 ⊂ 10.0.0.0/8, this is REJECTED
+# Even though 10.1.0.0/16 is subset of 10.0.0.0/8, this is REJECTED
 
-# ✅ ALLOWED: Syntactically derived (AND'd)
+# ALLOWED: Syntactically derived (AND'd)
 child = parent.attenuate(
     constraints={"network": CEL("(net_in_cidr(ip, '10.0.0.0/8')) && net_in_cidr(ip, '10.1.0.0/16')")},
     holder=worker_kp.public_key
@@ -539,12 +664,12 @@ Syntactic monotonicity is **conservative but secure**: If the child is `(parent)
 
 #### Security Properties
 
-✅ **Sandboxed Execution**: CEL cannot execute arbitrary code, only evaluate expressions  
-✅ **Deterministic**: Same inputs always produce same results  
-✅ **Cached Programs**: Compiled expressions cached (max 1000) for performance  
-✅ **Type Safe**: Must return boolean or evaluation fails  
-✅ **No Side Effects**: Expressions are pure - no I/O, no state mutation  
-✅ **Safe Standard Library**: Only time/network parsing functions, no file/network I/O
+**Sandboxed Execution**: CEL cannot execute arbitrary code, only evaluate expressions  
+**Deterministic**: Same inputs always produce same results  
+**Cached Programs**: Compiled expressions cached (max 1000) for performance  
+**Type Safe**: Must return boolean or evaluation fails  
+**No Side Effects**: Expressions are pure - no I/O, no state mutation  
+**Safe Standard Library**: Only time/network parsing functions, no file/network I/O
 
 #### Security Considerations
 
@@ -553,7 +678,7 @@ Syntactic monotonicity is **conservative but secure**: If the child is `(parent)
 While CEL expressions are sandboxed, extremely complex expressions could still consume CPU:
 
 ```python
-# ⚠️ Potentially expensive (though bounded by compilation)
+# Potentially expensive (though bounded by compilation)
 CEL("(((((a && b) || (c && d)) && ((e || f) && (g || h))) || ...) ...")
 ```
 
@@ -567,7 +692,7 @@ CEL("(((((a && b) || (c && d)) && ((e || f) && (g || h))) || ...) ...")
 - **Test expressions** before deployment with representative inputs
 - **Use syntactic attenuation** - child must be `(parent) && X` for safety
 
-⚠️ **Important Notes**:
+**Important Notes**:
 - CEL expressions **must return boolean**. Non-boolean results cause `CelError`.
 - The constraint key (e.g., `"budget_check"`) is informational; the expression defines the logic.
 - **Syntactic monotonicity** is enforced for attenuation (see above).
@@ -589,13 +714,14 @@ When attenuating a warrant, child constraints must be **contained** within paren
 | `Exact()` | Same Exact only |
 | `OneOf()` | OneOf (subset), NotOneOf, Exact (if in set) |
 | `NotOneOf()` | NotOneOf (more exclusions) |
-| `Range()` | Range (narrower bounds) |
+| `Range()` | Range (narrower bounds), Exact (if in range) |
+| `Cidr()` | Cidr (subnet), Exact (if IP in network) |
 | `Contains()` | Contains (more required values) |
 | `Subset()` | Subset (fewer allowed values) |
 | `All()` | All (more constraints) |
 | `CEL()` | CEL (conjunction with parent) |
 
-⚠️ **Key Limitations**:
+**Key Limitations**:
 - **Regex**: Cannot narrow to different regex patterns (undecidable subset problem)
 - **Exact**: Cannot change value at all
 - **No attenuation TO Wildcard**: Would re-widen authority
@@ -610,6 +736,10 @@ Some constraint types can contain different types during attenuation:
 | `Pattern("*@co.com")` | `Exact("cfo@co.com")` | Child matches parent glob |
 | `Regex(r"^dev-.*")` | `Exact("dev-web")` | Child matches parent regex |
 | `Range(0, 100)` | `Exact("50")` | Child numeric value within range |
+| `Cidr("10.0.0.0/8")` | `Exact("10.1.2.3")` | Child IP within parent network |
+| `Cidr("10.0.0.0/8")` | `Cidr("10.1.0.0/16")` | Child is subnet of parent |
+| `UrlPattern("https://*.example.com/*")` | `Exact("https://api.example.com/v1")` | Child URL matches parent pattern |
+| `UrlPattern("https://*.example.com/*")` | `UrlPattern("https://api.example.com/v1/*")` | Child pattern is narrower |
 | `OneOf(["a","b","c"])` | `Exact("b")` | Child value is in parent set |
 | `OneOf(["a","b","c"])` | `NotOneOf(["c"])` | Carves holes (allows `a`, `b`) |
 
@@ -686,10 +816,10 @@ child = Subset(["a", "b"])  # OK - allows fewer
 # Parent: /data/*
 parent = Warrant.issue(constraints={"path": Pattern("/data/*")}, ...)
 
-# ✅ Child: /data/reports/* (narrower)
+# Child: /data/reports/* (narrower) - OK
 child = parent.attenuate(constraints={"path": Pattern("/data/reports/*")}, ...)
 
-# ❌ Child: /* (wider - FAILS)
+# Child: /* (wider) - FAILS
 child = parent.attenuate(constraints={"path": Pattern("/*")}, ...)
 ```
 
@@ -699,10 +829,10 @@ child = parent.attenuate(constraints={"path": Pattern("/*")}, ...)
 # Parent: max 15 replicas
 parent = Warrant.issue(constraints={"replicas": Range.max_value(15)}, ...)
 
-# ✅ Child: max 10 (narrower)
+# Child: max 10 (narrower) - OK
 child = parent.attenuate(constraints={"replicas": Range.max_value(10)}, ...)
 
-# ❌ Child: max 20 (wider - FAILS)
+# Child: max 20 (wider) - FAILS
 child = parent.attenuate(constraints={"replicas": Range.max_value(20)}, ...)
 ```
 
@@ -712,29 +842,29 @@ child = parent.attenuate(constraints={"replicas": Range.max_value(20)}, ...)
 # Parent: ["a", "b", "c"]
 parent = Warrant.issue(constraints={"action": OneOf(["a", "b", "c"])}, ...)
 
-# ✅ Child: ["a", "b"] (subset)
+# Child: ["a", "b"] (subset) - OK
 child = parent.attenuate(constraints={"action": OneOf(["a", "b"])}, ...)
 
-# ❌ Child: ["a", "b", "d"] (adds "d" - FAILS)
+# Child: ["a", "b", "d"] (adds "d") - FAILS
 child = parent.attenuate(constraints={"action": OneOf(["a", "b", "d"])}, ...)
 ```
 
 ### Regex Narrowing
 
-⚠️ **Regex constraints are conservative**: Child regex must have **identical pattern** to parent.
+**Regex constraints are conservative**: Child regex must have **identical pattern** to parent.
 
 ```python
 # Parent: regex pattern
 parent = Warrant.issue(constraints={"env": Regex(r"^(staging|dev)-.*$")}, ...)
 
-# ❌ Cannot narrow to different regex (even if provably narrower)
-child = parent.attenuate(constraints={"env": Regex(r"^staging-.*$")}, ...)  # FAILS
+# Cannot narrow to different regex (even if provably narrower) - FAILS
+child = parent.attenuate(constraints={"env": Regex(r"^staging-.*$")}, ...)
 
-# ✅ Can keep same pattern
-child = parent.attenuate(constraints={"env": Regex(r"^(staging|dev)-.*$")}, ...)  # OK
+# Can keep same pattern - OK
+child = parent.attenuate(constraints={"env": Regex(r"^(staging|dev)-.*$")}, ...)
 
-# ✅ Can narrow to Exact (if it matches parent regex)
-child = parent.attenuate(constraints={"env": Exact("staging-web")}, ...)  # OK
+# Can narrow to Exact (if it matches parent regex) - OK
+child = parent.attenuate(constraints={"env": Exact("staging-web")}, ...)
 ```
 
 **Why**: Determining if one regex is a subset of another is undecidable in general. Tenuo takes a conservative approach for security.
@@ -778,7 +908,7 @@ protected = protect_tools([read_file, write_file, delete_file])
 with root_task(tools=["search"], query=Wildcard()):
     # Child: narrow to pattern
     with scoped_task(query=Pattern("*public*")):
-        await search(query="public data")  # ✅
+        await search(query="public data")  # OK
 ```
 
 ### File Path Constraints
@@ -786,8 +916,8 @@ with root_task(tools=["search"], query=Wildcard()):
 ```python
 # Read-only access to reports directory
 with root_task(tools=["read_file"], path=Pattern("/data/reports/*")):
-    await read_file(path="/data/reports/q3.csv")  # ✅
-    await read_file(path="/etc/passwd")           # ❌
+    await read_file(path="/data/reports/q3.csv")  # OK
+    await read_file(path="/etc/passwd")           # FAILS
 ```
 
 ### Replica/Capacity Limits
@@ -795,8 +925,8 @@ with root_task(tools=["read_file"], path=Pattern("/data/reports/*")):
 ```python
 # Limit replica counts
 with root_task(tools=["scale"], replicas=Range.max_value(15)):
-    await scale(replicas=5)   # ✅
-    await scale(replicas=20)  # ❌
+    await scale(replicas=5)   # OK
+    await scale(replicas=20)  # FAILS
 ```
 
 ### Environment Restrictions
@@ -804,8 +934,8 @@ with root_task(tools=["scale"], replicas=Range.max_value(15)):
 ```python
 # Only staging and dev
 with root_task(tools=["deploy"], env=OneOf(["staging", "dev"])):
-    await deploy(env="staging")    # ✅
-    await deploy(env="production") # ❌
+    await deploy(env="staging")    # OK
+    await deploy(env="production") # FAILS
 ```
 
 ### Scoped Database Access
@@ -813,8 +943,8 @@ with root_task(tools=["deploy"], env=OneOf(["staging", "dev"])):
 ```python
 # Only specific tables
 with root_task(tools=["query"], table=OneOf(["users", "orders"])):
-    await query(table="users")   # ✅
-    await query(table="secrets") # ❌
+    await query(table="users")   # OK
+    await query(table="secrets") # FAILS
 ```
 
 ---

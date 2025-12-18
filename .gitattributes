@@ -1,0 +1,16 @@
+# Linguist overrides
+# Exclude examples and tests from language statistics
+
+tenuo-python/examples/** linguist-documentation
+tenuo-python/tests/** linguist-documentation
+tenuo-core/tests/** linguist-documentation
+tenuo-core/benches/** linguist-documentation
+
+# Ensure Rust is detected as the primary language
+*.rs linguist-detectable=true
+*.py linguist-detectable=true
+
+# Treat generated files appropriately
+docs/**/*.html linguist-documentation
+docs/**/*.js linguist-documentation
+docs/**/*.css linguist-documentation
