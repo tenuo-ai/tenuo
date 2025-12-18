@@ -44,7 +44,12 @@ Tenuo uses time-windowed PoP signatures (~2 minutes) to allow for **stateless ve
 
 This is an intentional design trade-off for scalability. The protection prevents an attacker from using a stolen warrant *after* the window closes, but does not prevent immediate replay of the exact same request.
 
-**Mitigation**: For high-security operations (e.g., money transfer), applications should implement simple request deduplication using `(warrant_id, tool, args)` as a cache key with a 120-second TTL.
+**Mitigation**: To prevent replay for sensitive tools (e.g., `transfer_funds`), implement **application-level deduplication**:
+
+1.  Compute a cache key from the request identity: `key = hash(warrant_id + tool_name + args)`.
+2.  Check if this key exists in a shared cache (e.g., Redis).
+3.  **If exists**: Reject the request immediately as a replay.
+4.  **If missing**: Store the key with a **120-second TTL** (covering the max replay window) and proceed.
 
 ## Monotonic Attenuation
 
@@ -103,7 +108,7 @@ child = parent.attenuate(
 
 #### Defense in Depth: Network Policies
 
-Tenuo handles **authorization**—what an agent is *allowed* to do. For **exfiltration prevention**, use Kubernetes Network Policies:
+Tenuo handles **authorization** - what an agent is *allowed* to do. For **exfiltration prevention**, use Kubernetes Network Policies:
 
 ```yaml
 # Restrict agent egress to only approved services

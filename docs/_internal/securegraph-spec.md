@@ -80,9 +80,9 @@ SecureGraph performs the `attenuate()` call on your behalf at each transition.
 
 ### What SecureGraph Is NOT
 
-- **Not an authorization server** — it doesn't grant authority
-- **Not RBAC** — nodes don't have "roles" that confer permissions  
-- **Not a policy engine** — it doesn't evaluate rules against identity
+- **Not an authorization server** - it doesn't grant authority
+- **Not RBAC** - nodes don't have "roles" that confer permissions  
+- **Not a policy engine** - it doesn't evaluate rules against identity
 
 SecureGraph is a **proxy that automates warrant attenuation**.
 
@@ -119,10 +119,10 @@ def attenuate_for_node(incoming: Warrant, policy: NodePolicy) -> Warrant:
 
 | Policy says | Warrant has | Node receives | Correct? |
 |-------------|-------------|---------------|----------|
-| `["search"]` | `["search", "read"]` | `["search"]` | ✓ Attenuated |
-| `["search", "read"]` | `["search"]` | `["search"]` | ✓ Intersection |
-| `["read"]` | `["search"]` | ERROR | ✓ No overlap |
-| `["read"]` | `["search", "read"]` | `["read"]` | ✓ Attenuated |
+| `["search"]` | `["search", "read"]` | `["search"]` | [OK] Attenuated |
+| `["search", "read"]` | `["search"]` | `["search"]` | [OK] Intersection |
+| `["read"]` | `["search"]` | ERROR | [OK] No overlap |
+| `["read"]` | `["search", "read"]` | `["read"]` | [OK] Attenuated |
 
 If your implementation ever grants `["read"]` when the warrant only has `["search"]`, you've built RBAC, not capabilities.
 
@@ -177,7 +177,7 @@ def deserialize(data: str, trusted_roots: List[PublicKey]) -> Warrant:
     return warrant
 ```
 
-A malicious node's forged warrant fails at step 5 — it's signed by an unknown key that doesn't chain to any trusted root.
+A malicious node's forged warrant fails at step 5 - it's signed by an unknown key that doesn't chain to any trusted root.
 
 ### SecureGraph SigningKey Trust
 
@@ -639,7 +639,7 @@ SecureGraph recognizes three node patterns based on policy configuration:
 
 | Node Type | Configuration | Behavior |
 |-----------|---------------|----------|
-| **Passthrough Node** | `secure.node("name")` (no args) | Inherits parent warrant unchanged. NOT "full authority" — bounded by incoming warrant. |
+| **Passthrough Node** | `secure.node("name")` (no args) | Inherits parent warrant unchanged. NOT "full authority" - bounded by incoming warrant. |
 | **Attenuating Node** | `secure.node("name", tools=[...], ...)` | Narrows authority to intersection of policy and incoming warrant. |
 | **Supervisor Node** | `secure.node("name", holds_issuer=True)` | Retains `tenuo_issuer` to mint fresh execution warrants. |
 
@@ -671,7 +671,7 @@ Authority is narrowed to the **intersection** of:
 secure.node("supervisor", holds_issuer=True)
 ```
 
-Supervisor nodes hold an issuer warrant (`tenuo_issuer`) that enables them to mint fresh execution warrants for different workers. The issuer warrant is **held**, not **passed** — workers never see it.
+Supervisor nodes hold an issuer warrant (`tenuo_issuer`) that enables them to mint fresh execution warrants for different workers. The issuer warrant is **held**, not **passed** - workers never see it.
 
 ---
 
@@ -691,7 +691,7 @@ Fail if policy requests tools not in warrant.
 ```python
 # Policy: tools=["read_file"]
 # Warrant: tools=["search"]
-# Result: AttenuationError — no overlap
+# Result: AttenuationError - no overlap
 ```
 
 Use STRICT in development and production after policies are tuned.
@@ -703,7 +703,7 @@ Silently use intersection.
 ```python
 # Policy: tools=["read_file", "search"]
 # Warrant: tools=["search"]
-# Result: tools=["search"] — silent narrowing
+# Result: tools=["search"] - silent narrowing
 ```
 
 Use INTERSECT when you intentionally define broad policies and let warrants constrain.

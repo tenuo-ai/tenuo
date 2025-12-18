@@ -1,4 +1,4 @@
-# Task 5: Tiered API & Integration — Mini Spec (v2)
+# Task 5: Tiered API & Integration - Mini Spec (v2)
 
 ## Goal
 
@@ -50,7 +50,7 @@ async with root_task(tools=["read_file"], path="/data/*"):
 1. `protect_tools()` wraps each tool to check authorization before execution
 2. `root_task()` creates a root warrant (explicit authority minting)
 3. `scoped_task()` attenuates the parent warrant (must have parent, else error)
-4. Tool execution checks warrant allowlist → allows or denies
+4. Tool execution checks warrant allowlist -> allows or denies
 
 ---
 
@@ -314,7 +314,7 @@ def _attenuate_with_containment(
         parent_constraint = parent.get_constraint(key)
         
         if parent_constraint is None:
-            # New constraint — always valid (narrows from "anything")
+            # New constraint - always valid (narrows from "anything")
             builder = builder.constraint(key, child_value)
         elif not _is_contained(child_value, parent_constraint):
             raise TenuoConstraintError(
@@ -337,10 +337,10 @@ def _is_contained(child: str, parent: str) -> bool:
     Check if child constraint is contained within parent.
     
     Tier 1 rules (simple, predictable):
-    - Exact match: "foo" contained in "foo" ✓
-    - Glob prefix: "/data/users/*" contained in "/data/*" ✓
-    - Glob prefix: "/data/*" contained in "/data/users/*" ✗ (child is broader)
-    - Glob prefix: "/etc/*" contained in "/data/*" ✗ (different prefix)
+    - Exact match: "foo" contained in "foo" Yes
+    - Glob prefix: "/data/users/*" contained in "/data/*" Yes
+    - Glob prefix: "/data/*" contained in "/data/users/*" No (child is broader)
+- Glob prefix: "/etc/*" contained in "/data/*" No (different prefix)
     
     For regex or complex patterns, use Tier 2.
     """
@@ -360,7 +360,7 @@ def _is_contained(child: str, parent: str) -> bool:
             # Exact child must match parent prefix
             return child.startswith(parent_prefix)
     
-    # No glob — must be exact match (already checked above)
+    # No glob - must be exact match (already checked above)
     return False
 ```
 
@@ -369,7 +369,7 @@ def _is_contained(child: str, parent: str) -> bool:
 - [ ] `scoped_task()` errors if no parent (no silent root minting)
 - [ ] `tools` is an allowlist (plural), not a single tool
 - [ ] Containment semantics for constraint narrowing (not intersection)
-- [ ] Simple glob patterns supported: `/data/*` → `/data/reports/*`
+- [ ] Simple glob patterns supported: `/data/*` -> `/data/reports/*`
 - [ ] Non-contained constraint = error with clear message
 - [ ] Restores parent warrant on exit (even on exception)
 - [ ] Works with both sync and async code
@@ -390,11 +390,11 @@ from typing import Union, List, Tuple
 from dataclasses import dataclass
 
 class Tier1ConstraintType(Enum):
-    PREFIX_GLOB = "prefix_glob"   # Path patterns: /data/* → /data/reports/*
-    SUFFIX_MATCH = "suffix_match" # Domain patterns: *.example.com → api.example.com
+    PREFIX_GLOB = "prefix_glob"   # Path patterns: /data/* -> /data/reports/*
+    SUFFIX_MATCH = "suffix_match" # Domain patterns: *.example.com -> api.example.com
     EXACT = "exact"               # Exact string match
-    ONEOF = "oneof"               # Set membership: ["a","b","c"] → ["a","b"]
-    RANGE = "range"               # Numeric range: (0,100) → (10,50)
+    ONEOF = "oneof"               # Set membership: ["a","b","c"] -> ["a","b"]
+    RANGE = "range"               # Numeric range: (0,100) -> (10,50)
 
 
 @dataclass
@@ -432,18 +432,18 @@ class Range:
 
 | Type | Parent | Child | Contained? | Rule |
 |------|--------|-------|------------|------|
-| PrefixGlob | `/data/*` | `/data/reports/*` | ✅ | Child prefix starts with parent prefix |
-| PrefixGlob | `/data/*` | `/data/q3.csv` | ✅ | Exact path starts with parent prefix |
-| PrefixGlob | `/data/reports/*` | `/data/*` | ❌ | Child is broader |
-| SuffixMatch | `*.example.com` | `api.example.com` | ✅ | Child ends with parent suffix |
-| SuffixMatch | `*.example.com` | `*.api.example.com` | ✅ | Child suffix is longer |
-| SuffixMatch | `example.com` | `other.com` | ❌ | Different domain |
-| Exact | `"GET"` | `"GET"` | ✅ | Equal |
-| Exact | `"GET"` | `"POST"` | ❌ | Not equal |
-| OneOf | `["a","b","c"]` | `["a","b"]` | ✅ | Child is subset |
-| OneOf | `["a","b"]` | `["a","b","c"]` | ❌ | Child is superset |
-| Range | `(0, 100)` | `(10, 50)` | ✅ | Child within parent |
-| Range | `(10, 50)` | `(0, 100)` | ❌ | Child exceeds parent |
+| PrefixGlob | `/data/*` | `/data/reports/*` | [OK] | Child prefix starts with parent prefix |
+| PrefixGlob | `/data/*` | `/data/q3.csv` | [OK] | Exact path starts with parent prefix |
+| PrefixGlob | `/data/reports/*` | `/data/*` | [NO] | Child is broader |
+| SuffixMatch | `*.example.com` | `api.example.com` | [OK] | Child ends with parent suffix |
+| SuffixMatch | `*.example.com` | `*.api.example.com` | [OK] | Child suffix is longer |
+| SuffixMatch | `example.com` | `other.com` | [NO] | Different domain |
+| Exact | `"GET"` | `"GET"` | [OK] | Equal |
+| Exact | `"GET"` | `"POST"` | [NO] | Not equal |
+| OneOf | `["a","b","c"]` | `["a","b"]` | [OK] | Child is subset |
+| OneOf | `["a","b"]` | `["a","b","c"]` | [NO] | Child is superset |
+| Range | `(0, 100)` | `(10, 50)` | [OK] | Child within parent |
+| Range | `(10, 50)` | `(0, 100)` | [NO] | Child exceeds parent |
 
 #### Containment Implementation
 
@@ -638,7 +638,7 @@ class ScopePreview:
     def print(self):
         """Pretty-print the preview."""
         if self.error:
-            print(f"❌ Cannot create scope: {self.error}")
+            print(f"[X] Cannot create scope: {self.error}")
             return
         
         print("Derived scope:")
@@ -753,7 +753,7 @@ def _wrap_tool(tool: Tool, strict: bool, schemas: Optional[Dict]) -> Tool:
             )
         
         # Critical tools ALWAYS require at least one constraint
-        # This is not controlled by strict flag — it's mandatory
+        # This is not controlled by strict flag - it's mandatory
         if schema and schema.risk_level == "critical":
             if not warrant.has_constraints_for(tool_name):
                 raise TenuoConfigError(
@@ -766,7 +766,7 @@ def _wrap_tool(tool: Tool, strict: bool, schemas: Optional[Dict]) -> Tool:
         if schema and schema.risk_level == "high":
             if not warrant.has_constraints_for(tool_name):
                 logger.warning(
-                    f"⚠️  High-risk tool '{tool_name}' invoked without constraints. "
+                    f"[WARNING] High-risk tool '{tool_name}' invoked without constraints. "
                     f"Recommended: {schema.recommended_constraints}"
                 )
         
@@ -803,7 +803,7 @@ def recommended_constraints(tools: List[Tool]) -> None:
         recommended_constraints(tools)
         
         # Output:
-        # http_request: ⚠️ REQUIRED (critical) - domain, url, method
+        # http_request: [REQUIRED] (critical) - domain, url, method
         # send_email: recommended (high) - to, domain
         # read_file: recommended (medium) - path
     """
@@ -823,9 +823,9 @@ def recommended_constraints(tools: List[Tool]) -> None:
     
     for name, schema in items:
         if schema.risk_level == "critical":
-            level_str = "⚠️  REQUIRED (critical)"
+            level_str = "[REQUIRED] (critical)"
         elif schema.risk_level == "high":
-            level_str = "⚠️  recommended (high)"
+            level_str = "[WARNING] recommended (high)"
         else:
             level_str = f"recommended ({schema.risk_level})"
         
@@ -878,8 +878,8 @@ def check_constraints(tools: List[Tool], warrant: Warrant) -> List[str]:
 - [ ] Type check rejects non-list inputs when inplace=True
 
 **Helper functions**:
-- [ ] `recommended_constraints(tools)` — prints what constraints to add
-- [ ] `check_constraints(tools, warrant)` — returns list of warnings
+- [ ] `recommended_constraints(tools)` - prints what constraints to add
+- [ ] `check_constraints(tools, warrant)` - returns list of warnings
 
 #### Alternative: Decorator API
 
@@ -1109,13 +1109,13 @@ def configure(
     
     if dev_mode:
         logger.warning(
-            "⚠️  TENUO DEV MODE ENABLED - Not for production use. "
-            "Security checks are relaxed."
-        )
+        "[WARNING] TENUO DEV MODE ENABLED - Not for production use. "
+        "Strict PoP verification disabled for debug tools."
+    )
     
     if allow_self_signed_for_testing:
         logger.warning(
-            "⚠️  allow_self_signed_for_testing=True - Chain verification disabled. "
+        "[WARNING] allow_self_signed_for_testing=True - Chain verification disabled. "
             "This is a testing-only configuration."
         )
     
@@ -1526,7 +1526,7 @@ def explain(error: TenuoError) -> None:
             explain(e)
     
     Output:
-        ❌ Authorization failed
+        [X] Authorization failed
         
         Tool: read_file
         
@@ -1538,7 +1538,7 @@ def explain(error: TenuoError) -> None:
           • Use a path matching: /data/*
           • Or request broader scope from root_task()
     """
-    print("❌ Authorization failed\n")
+    print("[X] Authorization failed\n")
     
     if isinstance(error, TenuoToolError):
         print(f"Tool: {error.tool}")

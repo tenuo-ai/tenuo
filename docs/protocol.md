@@ -322,9 +322,9 @@ def verify_limits(warrant: Warrant) -> None:
 During verification, each warrant ID is tracked. If same ID appears twice → fail.
 
 ```
-chain[0].id → seen
-chain[1].id → seen  
-chain[2].id → ERROR if already seen
+chain[0].id -> seen
+chain[1].id -> seen  
+chain[2].id -> ERROR if already seen
 ```
 
 ### Layer 2: Chain Length Limits
@@ -343,10 +343,10 @@ A warrant with `max_depth = 0` cannot delegate further. Cryptographically enforc
 
 | Pattern | Status | Reason |
 |---------|--------|--------|
-| Same warrant ID twice | ❌ Blocked | Cycle detection |
-| Holder A→B→A (different warrants) | ✅ Allowed | Monotonicity makes it safe |
-| Self-issuance (issuer warrant) | ❌ Blocked | Privilege escalation |
-| Chain > 8 links | ❌ Blocked | DoS protection |
+| Same warrant ID twice | [BLOCKED] | Cycle detection |
+| Holder A->B->A (different warrants) | [ALLOWED] | Monotonicity makes it safe |
+| Self-issuance (issuer warrant) | [BLOCKED] | Privilege escalation |
+| Chain > 8 links | [BLOCKED] | DoS protection |
 
 ---
 
@@ -478,14 +478,14 @@ authorizer = Authorizer(
 
 All Tenuo implementations MUST:
 
-1. **Verify chain ends at trusted root** — Hard fail if not anchored
-2. **Enforce PoP on every authorization** — No exceptions
-3. **Enforce protocol limits** — Chain length, warrant size
-4. **Use Deterministic CBOR (RFC 8949)** — Sorted keys, minimal integers
-5. **Reconstruct challenge identically** — Same serialization on both sides
-6. **Log all authorization decisions** — Allow and deny
-7. **Prevent self-issuance** — Issuer cannot grant to self
-8. **Enforce monotonicity** — Every dimension checked
+1. **Verify chain ends at trusted root** - Hard fail if not anchored
+2. **Enforce PoP on every authorization** - No exceptions
+3. **Enforce protocol limits** - Chain length, warrant size
+4. **Use Deterministic CBOR (RFC 8949)** - Sorted keys, minimal integers
+5. **Reconstruct challenge identically** - Same serialization on both sides
+6. **Log all authorization decisions** - Allow and deny
+7. **Prevent self-issuance** - Issuer cannot grant to self
+8. **Enforce monotonicity** - Every dimension checked
 
 ### Cross-Language Compatibility
 
@@ -501,7 +501,7 @@ For non-Rust implementations:
 
 ## See Also
 
-- [Concepts](./concepts) — Why Tenuo? Problem/solution overview
-- [API Reference](./api-reference) — Function signatures
-- [Constraints](./constraints) — Constraint types and usage
-- [Security](./security) — Detailed threat model
+- [Concepts](./concepts) - Why Tenuo? Problem/solution overview
+- [API Reference](./api-reference) - Function signatures
+- [Constraints](./constraints) - Constraint types and usage
+- [Security](./security) - Detailed threat model

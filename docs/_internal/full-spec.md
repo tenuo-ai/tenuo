@@ -39,7 +39,7 @@
 ### IAM Binds Authority to Compute
 
 ```
-Pod starts → Gets role → Role for pod lifetime → Static scope
+Pod starts -> Gets role -> Role for pod lifetime -> Static scope
 ```
 
 An agent processing Task A and Task B has the same permissions for both, even if Task A requires read-only and Task B requires write. The permission enabling one task becomes liability in another.
@@ -48,7 +48,7 @@ An agent processing Task A and Task B has the same permissions for both, even if
 
 AI agents hold capabilities (read files, send emails, query databases). They process untrusted input (user queries, emails, web pages). Prompt injection manipulates intent, causing agents to abuse legitimate capabilities.
 
-Traditional security fails. The agent IS authenticated. The agent IS authorized. The attack isn't unauthorized access—it's an authorized party doing unauthorized things.
+Traditional security fails. The agent IS authenticated. The agent IS authorized. The attack isn't unauthorized access - it's an authorized party doing unauthorized things.
 
 ---
 
@@ -57,7 +57,7 @@ Traditional security fails. The agent IS authenticated. The agent IS authorized.
 ### Authority Bound to Tasks
 
 ```
-Task submitted → Warrant minted (scoped to task) → Agent executes → Warrant expires
+Task submitted -> Warrant minted (scoped to task) -> Agent executes -> Warrant expires
 ```
 
 Each task carries exactly the authority it needs. No more, no less.
@@ -79,13 +79,13 @@ When a worker has a warrant for `read_file("/data/q3.pdf")` with 60s TTL, prompt
 
 ## 3. Invariants
 
-| Invariant | Description |
-|-----------|-------------|
-| **Mandatory PoP** | Every warrant bound to a public key. Usage requires proof-of-possession. |
-| **Warrant per task** | Authority scoped to task, not compute. |
+| Invariant                  | Description                                                      |
+|----------------------------|------------------------------------------------------------------|
+| **Mandatory PoP**          | Every warrant bound to a public key. Usage requires proof-of-possession. |
+| **Warrant per task**       | Authority scoped to task, not compute.                           |
 | **Stateless verification** | Authorization is local. No control plane calls during execution. |
-| **Monotonic attenuation** | Child scope ⊆ parent scope. Always. |
-| **Self-contained** | Warrant carries everything needed for verification. |
+| **Monotonic attenuation**  | Child scope ⊆ parent scope. Always.                              |
+| **Self-contained**         | Warrant carries everything needed for verification.              |
 
 ---
 
@@ -93,21 +93,21 @@ When a worker has a warrant for `read_file("/data/q3.pdf")` with 60s TTL, prompt
 
 ### Protected
 
-| Threat | Protection |
-|--------|------------|
-| **Prompt injection** | Attenuated scope limits damage |
-| **Confused deputy** | Node can only use tools in its warrant |
-| **Credential theft** | Warrant useless without private key (PoP) |
-| **Stale permissions** | TTL forces expiration |
-| **Privilege escalation** | Monotonic attenuation; child cannot exceed parent |
+| Threat                   | Protection                                       |
+|--------------------------|--------------------------------------------------|
+| **Prompt injection**     | Attenuated scope limits damage                   |
+| **Confused deputy**      | Node can only use tools in its warrant           |
+| **Credential theft**     | Warrant useless without private key (PoP)        |
+| **Stale permissions**    | TTL forces expiration                            |
+| **Privilege escalation** | Monotonic attenuation; child cannot exceed parent|
 
 ### Not Protected
 
-| Threat | Why |
-|--------|-----|
-| **Container compromise** | Attacker has keypair + warrant; can bypass wrappers |
-| **Malicious node code** | Same trust boundary as authorization logic |
-| **Control plane compromise** | Can mint arbitrary warrants |
+| Threat                     | Why                                                 |
+|----------------------------|-----------------------------------------------------|
+| **Container compromise**   | Attacker has keypair + warrant; can bypass wrappers |
+| **Malicious node code**    | Same trust boundary as authorization logic          |
+| **Control plane compromise**| Can mint arbitrary warrants                        |
 
 For container compromise, Tenuo limits damage to current warrant's scope and TTL. For stronger isolation, deploy nodes as separate containers with separate keypairs.
 
@@ -191,12 +191,12 @@ Full builder API when you need visibility and control.
 
 ### What to Use When
 
-| Scenario | API | Example |
-|----------|-----|---------|
-| Simple tool call | `scoped_task()` | Reading a file, making a search |
-| Worker delegation | `.delegate()` | Orchestrator → worker |
-| Multi-level orchestration | `.attenuate()` builder | Complex agent graphs |
-| Auditing/debugging | `.diff()` | Understanding delegation chains |
+| Scenario                  | API                    | Example                         |
+|---------------------------|------------------------|---------------------------------|
+| Simple tool call          | `scoped_task()`        | Reading a file, making a search |
+| Worker delegation         | `.delegate()`          | Orchestrator -> worker          |
+| Multi-level orchestration | `.attenuate()` builder | Complex agent graphs            |
+| Auditing/debugging        | `.diff()`              | Understanding delegation chains |
 
 ---
 
@@ -204,10 +204,10 @@ Full builder API when you need visibility and control.
 
 ### Warrant Types
 
-| Type | Authority | Use Case |
-|------|-----------|----------|
-| **Execution** | Invoke tools | Workers, executors, Q-LLM |
-| **Issuer** | Grant execution warrants | Planners, orchestrators, P-LLM |
+| Type          | Authority                | Use Case                       |
+|---------------|--------------------------|--------------------------------|
+| **Execution** | Invoke tools             | Workers, executors, Q-LLM      |
+| **Issuer**    | Grant execution warrants | Planners, orchestrators, P-LLM |
 
 ### Execution Warrant
 
@@ -307,7 +307,7 @@ When delegation occurs:
 3. Issuer signs the child warrant (which includes the ChainLink)
 4. Child receives the warrant with embedded scope
 
-The child **cannot influence** what scope is embedded—they only receive the signed result.
+The child **cannot influence** what scope is embedded - they only receive the signed result.
 
 ```python
 def delegate_to(self, holder: PublicKey) -> Warrant:
@@ -346,12 +346,12 @@ Embedding issuer scope in each link enables offline verification but can bloat w
 
 **Mandatory Limits (fail closed):**
 
-| Limit | Default | Max | Rationale |
-|-------|---------|-----|-----------|
-| `max_chain_length` | 8 | 16 | Deeper chains indicate design smell |
-| `max_warrant_bytes` | 16 KB | 64 KB | Prevents unbounded growth |
-| `max_tools_per_warrant` | 32 | 128 | Encourages least-privilege |
-| `max_constraints_per_warrant` | 32 | 128 | Keeps verification fast |
+| Limit                         | Default | Max   | Rationale                           |
+|-------------------------------|---------|-------|-------------------------------------|
+| `max_chain_length`            | 8       | 16    | Deeper chains indicate design smell |
+| `max_warrant_bytes`           | 16 KB   | 64 KB | Prevents unbounded growth           |
+| `max_tools_per_warrant`       | 32      | 128   | Encourages least-privilege          |
+| `max_constraints_per_warrant` | 32      | 128   | Keeps verification fast             |
 
 ```python
 # Verification rejects warrants exceeding limits
@@ -385,7 +385,7 @@ child = parent.attenuate().tool("read_file").max_depth(1).delegate_to(worker)
 The required narrowing rule + terminal default means most real-world chains are 2-4 links:
 
 ```
-Root (SYSTEM) → Gateway (depth=3) → Orchestrator (depth=2) → Worker (depth=0, terminal)
+Root (SYSTEM) -> Gateway (depth=3) -> Orchestrator (depth=2) -> Worker (depth=0, terminal)
 ```
 
 ### Self-Contained Verification
@@ -535,13 +535,13 @@ def verify_common_monotonicity(issuer_link: ChainLink, child: Warrant):
 
 ### Monotonicity Summary
 
-| Dimension | Rule | Violation |
-|-----------|------|-----------|
-| Tools | `child_tools ⊆ parent_tools` | Cannot add tools |
-| Constraints | `child_constraint ⊆ parent_constraint` | Cannot widen |
-| Trust | `child_trust ≤ parent_trust` | Cannot escalate |
-| TTL | `child_expires ≤ parent_expires` | Cannot extend |
-| Depth | `child_depth < parent_depth` | Cannot increase |
+| Dimension   | Rule                                   | Violation        |
+|-------------|----------------------------------------|------------------|
+| Tools       | `child_tools ⊆ parent_tools`           | Cannot add tools |
+| Constraints | `child_constraint ⊆ parent_constraint` | Cannot widen     |
+| Trust       | `child_trust ≤ parent_trust`           | Cannot escalate  |
+| TTL         | `child_expires ≤ parent_expires`       | Cannot extend    |
+| Depth       | `child_depth < parent_depth`           | Cannot increase  |
 
 **All checks are performed on every verification.** There is no "skip if not set" - missing values have explicit defaults that maintain security.
 
@@ -551,11 +551,11 @@ def verify_common_monotonicity(issuer_link: ChainLink, child: Warrant):
 
 Tenuo uses two serialization strategies depending on context:
 
-| Context | Strategy | Rationale |
-|---------|----------|-----------|
-| **Warrant signing** | Canonical JSON | Warrant is constructed once, signed, then immutable |
-| **PoP verification** | Raw bytes passthrough | Avoids cross-language JSON disagreements |
-| **Wire transport** | Base64 | Header-safe encoding |
+| Context               | Strategy              | Rationale                                           |
+|-----------------------|-----------------------|-----------------------------------------------------|
+| **Warrant signing**   | Canonical JSON        | Warrant is constructed once, signed, then immutable |
+| **PoP verification**  | Raw bytes passthrough | Avoids cross-language JSON disagreements            |
+| **Wire transport**    | Base64                | Header-safe encoding                                |
 
 #### Canonical JSON (Warrant Signing Only)
 
@@ -588,8 +588,8 @@ def serialize_for_signing(warrant: Warrant) -> bytes:
 For **PoP signatures** and **chain link signatures**, the signer sends the **exact bytes** they signed. The verifier hashes those bytes directly, never reconstructing JSON.
 
 ```
-Signer: object → serialize → bytes → sign(bytes) → send(bytes, signature)
-Verifier: receive(bytes, signature) → verify(signature, bytes) → deserialize(bytes)
+Signer: object -> serialize -> bytes -> sign(bytes) -> send(bytes, signature)
+Verifier: receive(bytes, signature) -> verify(signature, bytes) -> deserialize(bytes)
 ```
 
 This ensures Python/Rust/Go implementations agree on verification regardless of JSON library differences.
@@ -676,17 +676,17 @@ authorized = authorizer.check(warrant, tool, args, signature=pop_sig)
 
 ## 7. Constraints
 
-### Types (most → least restrictive)
+### Types (most -> least restrictive)
 
-| Type | Description | Example |
-|------|-------------|---------|
-| `Exact` | Single value | `Exact("/data/q3.pdf")` |
-| `OneOf` | Enumerated set | `OneOf(["dev", "staging"])` |
-| `NotOneOf` | Exclusion | `NotOneOf(["prod"])` |
-| `Pattern` | Glob | `Pattern("/data/*.pdf")` |
-| `Range` | Numeric bounds | `Range(max=1000)` |
-| `Regex` | Regular expression | `Regex(r"^[a-z]+\.pdf$")` |
-| `Wildcard` | Any value | `Wildcard()` (implicit when no constraint) |
+| Type       | Description        | Example                                    |
+|------------|--------------------|--------------------------------------------|
+| `Exact`    | Single value       | `Exact("/data/q3.pdf")`                    |
+| `OneOf`    | Enumerated set     | `OneOf(["dev", "staging"])`                |
+| `NotOneOf` | Exclusion          | `NotOneOf(["prod"])`                       |
+| `Pattern`  | Glob               | `Pattern("/data/*.pdf")`                   |
+| `Range`    | Numeric bounds     | `Range(max=1000)`                          |
+| `Regex`    | Regular expression | `Regex(r"^[a-z]+\.pdf$")`                  |
+| `Wildcard` | Any value          | `Wildcard()` (implicit when no constraint) |
 
 ### Constraint Lattice
 
@@ -708,20 +708,20 @@ Constraints form a partial order. Attenuation can only move toward more restrict
 
 ### Attenuation Rules
 
-| Parent Type | Valid Child Types | Subset Check |
-|-------------|-------------------|--------------|
-| `Wildcard` | Any | Always valid |
-| `Pattern` | Pattern, Regex, Exact | Child matches subset of parent |
-| `Regex` | Regex, Exact | Child language ⊆ parent language |
-| `Range` | Range, Exact | `child.min >= parent.min && child.max <= parent.max` |
-| `NotOneOf` | NotOneOf (larger), OneOf, Exact | Child excludes superset or is disjoint |
-| `OneOf` | OneOf (smaller), Exact | `child.values ⊆ parent.values` |
-| `Exact` | Exact (same value only) | `child.value == parent.value` |
+| Parent Type | Valid Child Types               | Subset Check                                         |
+|-------------|---------------------------------|------------------------------------------------------|
+| `Wildcard`  | Any                             | Always valid                                         |
+| `Pattern`   | Pattern, Regex, Exact           | Child matches subset of parent                       |
+| `Regex`     | Regex, Exact                    | Child language ⊆ parent language                     |
+| `Range`     | Range, Exact                    | `child.min >= parent.min && child.max <= parent.max` |
+| `NotOneOf`  | NotOneOf (larger), OneOf, Exact | Child excludes superset or is disjoint               |
+| `OneOf`     | OneOf (smaller), Exact          | `child.values subseteq parent.values`                |
+| `Exact`     | Exact (same value only)         | `child.value == parent.value`                        |
 
 **Invalid attenuations** (moving up the lattice):
-- `Exact` → `Pattern` (expands scope)
-- `OneOf` → `NotOneOf` (changes semantics)  
-- `Range` → `Pattern` (incompatible types)
+- `Exact` -> `Pattern` (expands scope)
+- `OneOf` -> `NotOneOf` (changes semantics)  
+- `Range` -> `Pattern` (incompatible types)
 
 ### Verification Algorithm
 
@@ -827,11 +827,11 @@ class TrustLevel(IntEnum):
 ```python
 # Default: trust is just data, never evaluated
 tenuo.config.enforce_trust = False
-# → Scope checks only. Trust fields ignored.
+# -> Scope checks only. Trust fields ignored.
 
-# Opt-in: full trust semantics
+# Opt-In: full trust semantics
 tenuo.config.enforce_trust = True
-# → Scope + trust checks. Missing context = UNTRUSTED = denied.
+# -> Scope + trust checks. Missing context = UNTRUSTED = denied.
 ```
 
 ### Trust Calculation (When Enabled)
@@ -847,11 +847,11 @@ def effective_trust(warrant: Warrant, context: AuthorizationContext) -> TrustLev
 
 ### Defaults (When Enforcement Enabled)
 
-| Missing Value | Default | Rationale |
-|---------------|---------|-----------|
-| `warrant.trust_level = None` | SYSTEM | Backward compatible |
-| `context.trust_level = None` | **UNTRUSTED** | Forces ingress to set trust explicitly |
-| Tool not in requirements | `config.default_tool_trust` (INTERNAL) | Unknown tools need internal |
+| Missing Value | Default | Rationale                                                                   |
+|---------------|---------|-----------------------------------------------------------------------------|
+| `warrant.trust_level = None` | SYSTEM | Backward compatible                                                         |
+| `context.trust_level = None` | **UNTRUSTED** | Forces ingress to set trust explicitly                                      |
+| Tool not in requirements | `config.default_tool_trust` (INTERNAL) | Unknown tools need internal                                                 |
 
 **Why UNTRUSTED for missing context?**
 
@@ -859,8 +859,8 @@ Security-first. If you enable trust enforcement but forget to wire ingress, requ
 
 ```python
 # When enforce_trust=True, without middleware:
-# context.trust_level = None → effective = UNTRUSTED
-# Most tools require INTERNAL+ → DENIED
+# context.trust_level = None -> effective = UNTRUSTED
+# Most tools require INTERNAL+ -> DENIED
 
 # Forces you to add this once at ingress:
 @app.middleware("http")
@@ -908,15 +908,15 @@ def check_trust(warrant, tool, context) -> TrustResult:
 
 ### Decision Table (When Enforcement Enabled)
 
-| Warrant | Context | Effective | Required | Result |
-|---------|---------|-----------|----------|--------|
-| SYSTEM | SYSTEM | SYSTEM | PRIVILEGED | ✓ |
-| SYSTEM | EXTERNAL | EXTERNAL | PRIVILEGED | ✗ |
-| SYSTEM | EXTERNAL | EXTERNAL | EXTERNAL | ✓ |
-| INTERNAL | EXTERNAL | EXTERNAL | INTERNAL | ✗ |
-| None | EXTERNAL | EXTERNAL | INTERNAL | ✗ |
-| SYSTEM | None | **UNTRUSTED** | PRIVILEGED | **✗** |
-| SYSTEM | None | **UNTRUSTED** | EXTERNAL | **✗** |
+| Warrant  | Context  | Effective     | Required   | Result      |
+|----------|----------|---------------|------------|-------------|
+| SYSTEM   | SYSTEM   | SYSTEM        | PRIVILEGED | [ALLOWED]   |
+| SYSTEM   | EXTERNAL | EXTERNAL      | PRIVILEGED | [DENIED]    |
+| SYSTEM   | EXTERNAL | EXTERNAL      | EXTERNAL   | [ALLOWED]   |
+| INTERNAL | EXTERNAL | EXTERNAL      | INTERNAL   | [DENIED]    |
+| None     | EXTERNAL | EXTERNAL      | INTERNAL   | [DENIED]    |
+| SYSTEM   | None     | **UNTRUSTED** | PRIVILEGED | **[DENIED]**|
+| SYSTEM   | None     | **UNTRUSTED** | EXTERNAL   | **[DENIED]**|
 
 **Note**: `Context = None` now results in UNTRUSTED, failing most authorization checks. This is intentional.
 
@@ -1028,7 +1028,7 @@ parent.attenuate().pass_through(reason="Sub-orchestrator needs full scope").dele
 
 ### Pass-Through Controls
 
-`pass_through()` bypasses required narrowing—it's dangerous. Controls:
+`pass_through()` bypasses required narrowing - it's dangerous. Controls:
 
 **1. Runtime flag (default: disabled)**
 
@@ -1127,17 +1127,17 @@ Constraint bounds limit what constraints the issuer can set on issued warrants. 
 
 # Valid: issued constraint is narrower
 issuer_warrant.issue_execution(
-    constraints={"path": Exact("/data/q3.pdf")}  # ✓ Narrower than Pattern("/data/*")
+    constraints={"path": Exact("/data/q3.pdf")}  # [VALID] Narrower than Pattern("/data/*")
 )
 
 # Valid: issued constraint is same restrictiveness  
 issuer_warrant.issue_execution(
-    constraints={"path": Pattern("/data/reports/*")}  # ✓ Subset of Pattern("/data/*")
+    constraints={"path": Pattern("/data/reports/*")}  # [VALID] Subset of Pattern("/data/*")
 )
 
 # Invalid: issued constraint is broader
 issuer_warrant.issue_execution(
-    constraints={"path": Pattern("/secrets/*")}  # ✗ Not subset of Pattern("/data/*")
+    constraints={"path": Pattern("/secrets/*")}  # [INVALID] Not subset of Pattern("/data/*")
 )
 # Error: ConstraintBoundExceeded
 ```
@@ -1150,7 +1150,7 @@ If the issuer has **no bound** for a parameter, the issuer can set any constrain
 # Issuer has no bound for "max_results"
 issuer_warrant.issue_execution(
     tool="search",
-    constraints={"max_results": Range(max=1000)}  # ✓ Any constraint allowed
+    constraints={"max_results": Range(max=1000)}  # [VALID] Any constraint allowed
 )
 ```
 
@@ -1353,7 +1353,7 @@ def canonical_json(obj: dict) -> str:
     return json.dumps(obj, sort_keys=True, separators=(',', ':'))
 ```
 
-**Why mandatory:** Without this, Python might produce `{"args": ..., "tool": ...}` while Go produces `{"tool": ..., "args": ...}`. Different bytes → signature fails → developers blame Tenuo.
+**Why mandatory:** Without this, Python might produce `{"args": ..., "tool": ...}` while Go produces `{"tool": ..., "args": ...}`. Different bytes -> signature fails -> developers blame Tenuo.
 
 The raw bytes passthrough for **verification** remains (hash what you receive). But **creation** must use canonical JSON.
 
@@ -1453,7 +1453,7 @@ authorizer = Authorizer(
 )
 ```
 
-Nonce tracking requires server-side state. Most deployments don't need it—short max_age is sufficient.
+Nonce tracking requires server-side state. Most deployments don't need it - short max_age is sufficient.
 
 ### Cross-Language Compatibility
 
@@ -1461,10 +1461,10 @@ Because the verifier hashes `signed_bytes` directly (never reconstructing from p
 
 ```
 Client (Python):
-  payload_dict → json.dumps(sort_keys=True) → bytes → sign(bytes) → send(bytes, sig)
+  payload_dict -> json.dumps(sort_keys=True) -> bytes -> sign(bytes) -> send(bytes, sig)
 
 Verifier (Rust):
-  receive(bytes, sig) → verify(bytes, sig) → serde_json::from_slice(bytes) → check fields
+  receive(bytes, sig) -> verify(bytes, sig) -> serde_json::from_slice(bytes) -> check fields
 ```
 
 The signature is over identical bytes. Deserialization happens AFTER verification.
@@ -1500,7 +1500,7 @@ The signature is over identical bytes. Deserialization happens AFTER verificatio
 │   Volume: /var/run/secrets/tenuo/keypair  (identity only, no authority)      │
 │                                                                              │
 │   ┌─────────────────────────────────────────────────────────────────────┐   │
-│   │  Middleware: Extract warrant → Set ContextVar → Call handler        │   │
+│   │  Middleware: Extract warrant -> Set ContextVar -> Call handler        │   │
 │   └──────────────────────────────────┬──────────────────────────────────┘   │
 │                                      │                                       │
 │   ┌──────────────────────────────────▼──────────────────────────────────┐   │
@@ -1513,7 +1513,7 @@ The signature is over identical bytes. Deserialization happens AFTER verificatio
 │   └──────────────────────────────────┬──────────────────────────────────┘   │
 │                                      │                                       │
 │   ┌──────────────────────────────────▼──────────────────────────────────┐   │
-│   │  Protected Tools: PoP signature → Authorize → Execute               │   │
+│   │  Protected Tools: PoP signature -> Authorize -> Execute               │   │
 │   └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -1613,14 +1613,14 @@ High-risk tools need constraint guidance. Without it, developers mint overly bro
 
 **Recommended constraints per tool:**
 
-| Tool | Recommended Constraints | Risk if Unconstrained |
-|------|------------------------|----------------------|
-| `search` | `allowed_domains`, `max_results` | Open-ended query exfiltration |
-| `http_fetch` | `url` (Pattern), `method` (OneOf) | Arbitrary HTTP requests |
-| `read_file` | `path` (Pattern or Exact) | Filesystem traversal |
-| `write_file` | `path` (Pattern or Exact) | Arbitrary file write |
-| `send_email` | `recipient` (Pattern), `max_attachments` | Data exfiltration |
-| `execute_sql` | `tables` (OneOf), `operations` (OneOf) | SQL injection amplification |
+| Tool          | Recommended Constraints                 | Risk if Unconstrained                   |
+|---------------|-----------------------------------------|-----------------------------------------|
+| `search`      | `allowed_domains`, `max_results`        | Open-ended query exfiltration           |
+| `http_fetch`  | `url` (Pattern), `method` (OneOf)       | Arbitrary HTTP requests                 |
+| `read_file`   | `path` (Pattern or Exact)               | Filesystem traversal                    |
+| `write_file`  | `path` (Pattern or Exact)               | Arbitrary file write                    |
+| `send_email`  | `recipient` (Pattern), `max_attachments`| Data exfiltration                       |
+| `execute_sql` | `tables` (OneOf), `operations` (OneOf)  | SQL injection amplification             |
 
 **Enforcement in wrappers:**
 
@@ -1784,13 +1784,13 @@ print(builder.diff())
 ```
 ╔══════════════════════════════════════════════════════════════════╗
 ║  DELEGATION DIFF                                                 ║
-║  Parent: wrt_abc123 → Child: (pending)                           ║
+║  Parent: wrt_abc123 -> Child: (pending)                          ║
 ╠══════════════════════════════════════════════════════════════════╣
 ║                                                                  ║
 ║  TOOLS                                                           ║
-║    ✓ read_file                                                   ║
-║    ✗ send_email      DROPPED                                     ║
-║    ✗ search          DROPPED                                     ║
+║    [+] read_file                                                 ║
+║    [-] send_email      DROPPED                                   ║
+║    [-] search          DROPPED                                   ║
 ║                                                                  ║
 ║  CONSTRAINTS                                                     ║
 ║    path                                                          ║
@@ -2017,11 +2017,11 @@ spec:
 
 ### What's NOT Needed
 
-| Component | Why |
-|-----------|-----|
-| Init container | Warrant comes with task |
-| Refresh sidecar | No renewal; warrant expires with task |
-| Control plane (runtime) | All authorization local |
+| Component               | Why                                   |
+|-------------------------|---------------------------------------|
+| Init container          | Warrant comes with task               |
+| Refresh sidecar         | No renewal; warrant expires with task |
+| Control plane (runtime) | All authorization local               |
 
 ---
 
@@ -2044,11 +2044,11 @@ if warrant.is_expired():
 
 ### Recommendations
 
-| Task Duration | TTL | Strategy |
-|---------------|-----|----------|
-| < 5 min | 5-10 min | No checkpointing needed |
-| 5-30 min | 30-60 min | Works if resumed quickly |
-| > 1 hour | N/A | Break into subtasks |
+| Task Duration | TTL       | Strategy                 |
+|---------------|-----------|--------------------------|
+| < 5 min       | 5-10 min  | No checkpointing needed  |
+| 5-30 min      | 30-60 min | Works if resumed quickly |
+| > 1 hour      | N/A       | Break into subtasks      |
 
 ---
 
@@ -2087,8 +2087,8 @@ These errors mean the **request source isn't trusted enough**, even if the warra
 Trust Violation: Effective trust EXTERNAL < required PRIVILEGED for tool 'modify_db'.
 
   Warrant trust:   SYSTEM
-  Context trust:   EXTERNAL  ← Request from internet
-  Effective trust: EXTERNAL  ← min(SYSTEM, EXTERNAL)
+  Context trust:   EXTERNAL  <- Request from internet
+  Effective trust: EXTERNAL  <- min(SYSTEM, EXTERNAL)
   Required trust:  PRIVILEGED
 
 Action: This operation requires a request from PRIVILEGED or higher source.
@@ -2097,27 +2097,27 @@ Action: This operation requires a request from PRIVILEGED or higher source.
 
 ### Cryptographic Errors
 
-| Error | Message Template | Cause |
-|-------|------------------|-------|
-| `PopVerificationFailed` | `PoP Failed: {reason}` | Signature invalid, expired, or args mismatch |
-| `ChainVerificationFailed` | `Chain Failed: {reason}` | Signature chain broken or not anchored |
-| `SigningKeyMismatch` | `SigningKey does not match warrant holder` | Wrong keypair for this warrant |
+| Error                     | Message Template                           | Cause                                        |
+|---------------------------|--------------------------------------------|----------------------------------------------|
+| `PopVerificationFailed`   | `PoP Failed: {reason}`                     | Signature invalid, expired, or args mismatch |
+| `ChainVerificationFailed` | `Chain Failed: {reason}`                   | Signature chain broken or not anchored       |
+| `SigningKeyMismatch`      | `SigningKey does not match warrant holder` | Wrong keypair for this warrant               |
 
 ### Delegation Errors
 
-| Error | Message Template | Cause |
-|-------|------------------|-------|
-| `MonotonicityViolation` | `Cannot {action}: {reason}` | Attempted to expand scope |
-| `NarrowingRequired` | `Delegation must narrow at least one dimension` | No attenuation applied |
-| `IssuerAuthorityExceeded` | `Issuer cannot grant {what}. Allowed: {allowed}` | Issuer warrant limits exceeded |
-| `TrustCeilingExceeded` | `Issuer ceiling is {ceiling}, cannot issue {requested}` | Trust above issuer ceiling |
+| Error                     | Message Template                                        | Cause                               |
+|---------------------------|---------------------------------------------------------|-------------------------------------|
+| `MonotonicityViolation`   | `Cannot {action}: {reason}`                             | Attempted to expand scope           |
+| `NarrowingRequired`       | `Delegation must narrow at least one dimension`         | No attenuation applied              |
+| `IssuerAuthorityExceeded` | `Issuer cannot grant {what}. Allowed: {allowed}`        | Issuer warrant limits exceeded      |
+| `TrustCeilingExceeded`    | `Issuer ceiling is {ceiling}, cannot issue {requested}` | Trust above issuer ceiling          |
 
 ### Context Errors
 
-| Error | Message Template | Cause |
-|-------|------------------|-------|
-| `NoWarrantInContext` | `No warrant in context. Ensure middleware sets warrant.` | Missing warrant |
-| `NoSigningKeyInContext` | `No keypair in context. Ensure keypair is configured.` | Missing keypair |
+| Error                   | Message Template                                       | Cause                          |
+|-------------------------|--------------------------------------------------------|--------------------------------|
+| `NoWarrantInContext`    | `No warrant in context. Ensure middleware sets warrant.`| Missing warrant                |
+| `NoSigningKeyInContext` | `No keypair in context. Ensure keypair is configured.` | Missing keypair                |
 
 ---
 
@@ -2251,78 +2251,78 @@ compiled.validate()  # Check for incompatible extraction sources
 
 ### v0.1: Core (Current Release)
 
-| Component | Status |
-|-----------|--------|
-| **Tiered API** | |
-| `configure()` global config | ✅ |
-| `root_task()` / `root_task_sync()` | ✅ |
-| `scoped_task()` | ✅ |
-| `.attenuate()` builder | ✅ |
-| **Warrant Model** | |
-| Warrant (execution + issuer types) | ✅ |
-| Constraints (Exact, Pattern, Range, OneOf, NotOneOf, Regex, Wildcard) | ✅ |
-| Cryptographic chain verification | ✅ |
-| Self-contained verification (embedded issuer scope) | ✅ |
-| Canonical JSON serialization | ✅ |
-| **Security** | |
-| Mandatory PoP (with max_age enforcement) | ✅ |
-| Required narrowing | ✅ |
-| Monotonicity verification | ✅ |
-| Chain limits (depth 64, chain length 8) | ✅ |
-| Issuer-holder separation | ✅ |
-| Self-issuance prevention | ✅ |
-| Pass-through controls (TENUO_ALLOW_PASSTHROUGH) | ✅ |
-| **Runtime** | |
-| Authorizer | ✅ |
-| TrustLevel (data model, enforcement opt-in) | ✅ |
-| DelegationDiff / DelegationReceipt | ✅ |
-| Middleware patterns | ✅ |
-| **Python SDK** | |
-| `@lockdown` decorator | ✅ |
-| `protect_tools()` (LangChain) | ✅ |
-| `@tenuo_node` (LangGraph) | ✅ |
-| Tool constraint schemas | ✅ |
-| Audit logging | ✅ |
-| **MCP Integration** | |
-| `McpConfig` / `CompiledMcpConfig` | ✅ |
-| Constraint extraction from MCP calls | ✅ |
-| Python bindings | ✅ |
-| **CLI** | |
-| `keygen`, `issue`, `attenuate`, `verify`, `inspect` | ✅ |
-| `--diff` and `--preview` flags | ✅ |
+| Component                                                               | Status    |
+|-------------------------------------------------------------------------|-----------|
+| **Tiered API**                                                          |           |
+| `configure()` global config                                             | [SHIPPED] |
+| `root_task()` / `root_task_sync()`                                      | [SHIPPED] |
+| `scoped_task()`                                                         | [SHIPPED] |
+| `.attenuate()` builder                                                  | [SHIPPED] |
+| **Warrant Model**                                                       |           |
+| Warrant (execution + issuer types)                                      | [SHIPPED] |
+| Constraints (Exact, Pattern, Range, OneOf, NotOneOf, Regex, Wildcard)   | [SHIPPED] |
+| Cryptographic chain verification                                        | [SHIPPED] |
+| Self-contained verification (embedded issuer scope)                     | [SHIPPED] |
+| Canonical JSON serialization                                            | [SHIPPED] |
+| **Security**                                                            |           |
+| Mandatory PoP (with max_age enforcement)                                | [SHIPPED] |
+| Required narrowing                                                      | [SHIPPED] |
+| Monotonicity verification                                               | [SHIPPED] |
+| Chain limits (depth 64, chain length 8)                                 | [SHIPPED] |
+| Issuer-holder separation                                                | [SHIPPED] |
+| Self-issuance prevention                                                | [SHIPPED] |
+| Pass-through controls (TENUO_ALLOW_PASSTHROUGH)                         | [SHIPPED] |
+| **Runtime**                                                             |           |
+| Authorizer                                                              | [SHIPPED] |
+| TrustLevel (data model, enforcement opt-in)                             | [SHIPPED] |
+| DelegationDiff / DelegationReceipt                                      | [SHIPPED] |
+| Middleware patterns                                                     | [SHIPPED] |
+| **Python SDK**                                                          |           |
+| `@lockdown` decorator                                                   | [SHIPPED] |
+| `protect_tools()` (LangChain)                                           | [SHIPPED] |
+| `@tenuo_node` (LangGraph)                                               | [SHIPPED] |
+| Tool constraint schemas                                                 | [SHIPPED] |
+| Audit logging                                                           | [SHIPPED] |
+| **MCP Integration**                                                     |           |
+| `McpConfig` / `CompiledMcpConfig`                                       | [SHIPPED] |
+| Constraint extraction from MCP calls                                    | [SHIPPED] |
+| Python bindings                                                         | [SHIPPED] |
+| **CLI**                                                                 |           |
+| `keygen`, `issue`, `attenuate`, `verify`, `inspect`                     | [SHIPPED] |
+| `--diff` and `--preview` flags                                          | [SHIPPED] |
 
 ### v0.2: SecureGraph + Trust
 
-| Component | Status |
-|-----------|--------|
-| SecureGraph (declarative LangGraph attenuation) | 📋 Design |
-| Trust enforcement (opt-in) | 📋 Design |
-| `tenuo-mcp` standalone package | 📋 Planned |
-| Multi-sig approvals | 📋 Planned |
-| Cascading revocation | 📋 Planned |
-| Google A2A integration | 📋 Planned |
+| Component                                       | Status            |
+|-------------------------------------------------|-------------------|
+| SecureGraph (declarative LangGraph attenuation) | [PLANNED] Design  |
+| Trust enforcement (opt-in)                      | [PLANNED] Design  |
+| `tenuo-mcp` standalone package                  | [PLANNED] Planned |
+| Multi-sig approvals                             | [PLANNED] Planned |
+| Cascading revocation                            | [PLANNED] Planned |
+| Google A2A integration                          | [PLANNED] Planned |
 
 ### v0.3: Ecosystem
 
-| Component | Status |
-|-----------|--------|
-| Dynamic constraints `${state.*}` | 📋 Planned |
-| Human-in-the-loop patterns | 📋 Planned |
-| Additional framework integrations | 📋 Planned |
-| A2A authorization policies | 📋 Planned |
+| Component                                       | Status            |
+|-------------------------------------------------|-------------------|
+| Dynamic constraints `${state.*}`                | [PLANNED] Planned |
+| Human-in-the-loop patterns                      | [PLANNED] Planned |
+| Additional framework integrations               | [PLANNED] Planned |
+| A2A authorization policies                      | [PLANNED] Planned |
 
 ---
 
 ## Appendix A: CaMeL Relationship
 
-Tenuo implements the capability enforcement layer from "Defeating Prompt Injections by Design" (CaMeL, 2024).
+Tenuo implements the capability enforcement layer from "Defeating Prompt Injections by Design" (CaMeL, 2025).
 
-| CaMeL Concept | Tenuo Implementation |
-|---------------|----------------------|
-| Capability tokens | Warrants |
-| Interpreter checks | Authorizer |
-| P-LLM issues tokens | Issuer warrants |
-| Q-LLM holds tokens | Execution warrants |
+| CaMeL Concept       | Tenuo Implementation |
+|---------------------|----------------------|
+| Capability tokens   | Warrants             |
+| Interpreter checks  | Authorizer           |
+| P-LLM issues tokens | Issuer warrants      |
+| Q-LLM holds tokens  | Execution warrants   |
 
 CaMeL is the architecture. Tenuo is the authorization primitive.
 
