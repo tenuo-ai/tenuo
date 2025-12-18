@@ -29,7 +29,8 @@
 //! 4. Child.constraints ⊆ Parent.constraints
 //! 5. Signature is valid
 
-use crate::approval::WarrantTracker;
+use crate::approval::{AuditEvent, AuditEventType, WarrantTracker};
+use crate::audit::log_event;
 use crate::constraints::{Constraint, ConstraintValue};
 use crate::crypto::{PublicKey, SigningKey};
 use crate::error::{Error, Result};
@@ -608,6 +609,32 @@ impl DataPlane {
     }
 
     fn verify_chain_with_options(
+        &self,
+        chain: &[Warrant],
+        enforce_session: bool,
+    ) -> Result<ChainVerificationResult> {
+        let result = self.verify_chain_with_options_inner(chain, enforce_session);
+
+        // Audit: Log verification failures
+        if let Err(ref e) = result {
+            let chain_ids: Vec<String> = chain.iter().map(|w| w.id().to_string()).collect();
+            log_event(AuditEvent {
+                id: uuid::Uuid::new_v4().to_string(),
+                event_type: AuditEventType::VerificationFailed,
+                timestamp: chrono::Utc::now(),
+                provider: "tenuo".to_string(),
+                external_id: None,
+                public_key_hex: chain.first().map(|w| hex::encode(w.issuer().to_bytes())),
+                actor: "data_plane".to_string(),
+                details: Some(format!("chain verification failed: {}", e)),
+                related_ids: Some(chain_ids),
+            });
+        }
+
+        result
+    }
+
+    fn verify_chain_with_options_inner(
         &self,
         chain: &[Warrant],
         enforce_session: bool,
@@ -1761,6 +1788,32 @@ impl Authorizer {
     }
 
     fn verify_chain_with_options(
+        &self,
+        chain: &[Warrant],
+        enforce_session: bool,
+    ) -> Result<ChainVerificationResult> {
+        let result = self.verify_chain_with_options_inner(chain, enforce_session);
+
+        // Audit: Log verification failures
+        if let Err(ref e) = result {
+            let chain_ids: Vec<String> = chain.iter().map(|w| w.id().to_string()).collect();
+            log_event(AuditEvent {
+                id: uuid::Uuid::new_v4().to_string(),
+                event_type: AuditEventType::VerificationFailed,
+                timestamp: chrono::Utc::now(),
+                provider: "tenuo".to_string(),
+                external_id: None,
+                public_key_hex: chain.first().map(|w| hex::encode(w.issuer().to_bytes())),
+                actor: "authorizer".to_string(),
+                details: Some(format!("chain verification failed: {}", e)),
+                related_ids: Some(chain_ids),
+            });
+        }
+
+        result
+    }
+
+    fn verify_chain_with_options_inner(
         &self,
         chain: &[Warrant],
         enforce_session: bool,

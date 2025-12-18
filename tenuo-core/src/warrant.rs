@@ -36,6 +36,8 @@
 //! - **Self-Contained**: Chain links enable offline verification without external lookups
 //! - **Type-Safe**: Rust's type system prevents misuse
 
+use crate::approval::{AuditEvent, AuditEventType};
+use crate::audit::log_event;
 use crate::constraints::{Constraint, ConstraintSet, ConstraintValue};
 use crate::crypto::{PublicKey, Signature, SigningKey};
 use crate::error::{Error, Result};
@@ -1472,11 +1474,33 @@ impl WarrantBuilder {
         ciborium::ser::into_writer(&payload, &mut payload_bytes)?;
         let signature = keypair.sign(&payload_bytes);
 
-        Ok(Warrant {
+        let warrant = Warrant {
             payload,
             signature,
             payload_bytes,
-        })
+        };
+
+        // Audit: Log warrant creation
+        log_event(AuditEvent {
+            id: Uuid::new_v4().to_string(),
+            event_type: AuditEventType::WarrantIssued,
+            timestamp: Utc::now(),
+            provider: "tenuo".to_string(),
+            external_id: None,
+            public_key_hex: Some(hex::encode(keypair.public_key().to_bytes())),
+            actor: format!(
+                "issuer:{}",
+                hex::encode(&keypair.public_key().to_bytes()[..8])
+            ),
+            details: Some(format!(
+                "root warrant created: type={:?}, tools={:?}, depth=0",
+                warrant.payload.r#type,
+                warrant.tools()
+            )),
+            related_ids: Some(vec![warrant.id().to_string()]),
+        });
+
+        Ok(warrant)
     }
 }
 
@@ -1970,11 +1994,34 @@ impl<'a> AttenuationBuilder<'a> {
         let mut final_payload_bytes = Vec::new();
         ciborium::ser::into_writer(&final_payload, &mut final_payload_bytes)?;
 
-        Ok(Warrant {
+        let warrant = Warrant {
             payload: final_payload,
             signature,
             payload_bytes, // Child's signature is over payload WITHOUT chain
-        })
+        };
+
+        // Audit: Log warrant attenuation
+        log_event(AuditEvent {
+            id: Uuid::new_v4().to_string(),
+            event_type: AuditEventType::WarrantIssued,
+            timestamp: Utc::now(),
+            provider: "tenuo".to_string(),
+            external_id: None,
+            public_key_hex: Some(hex::encode(keypair.public_key().to_bytes())),
+            actor: format!(
+                "delegator:{}",
+                hex::encode(&keypair.public_key().to_bytes()[..8])
+            ),
+            details: Some(format!(
+                "warrant attenuated: type={:?}, depth={}, parent={}",
+                warrant.payload.r#type,
+                warrant.depth(),
+                self.parent.id()
+            )),
+            related_ids: Some(vec![warrant.id().to_string(), self.parent.id().to_string()]),
+        });
+
+        Ok(warrant)
     }
 }
 
@@ -2985,11 +3032,31 @@ impl<'a> IssuanceBuilder<'a> {
         let mut final_payload_bytes = Vec::new();
         ciborium::ser::into_writer(&final_payload, &mut final_payload_bytes)?;
 
-        Ok(Warrant {
+        let warrant = Warrant {
             payload: final_payload,
             signature,
             payload_bytes, // Child's signature is over payload WITHOUT chain
-        })
+        };
+
+        // Audit: Log warrant issuance from issuer warrant
+        log_event(AuditEvent {
+            id: Uuid::new_v4().to_string(),
+            event_type: AuditEventType::WarrantIssued,
+            timestamp: Utc::now(),
+            provider: "tenuo".to_string(),
+            external_id: None,
+            public_key_hex: Some(hex::encode(keypair.public_key().to_bytes())),
+            actor: format!("issuer_warrant:{}", &self.issuer.id().to_string()[..8]),
+            details: Some(format!(
+                "execution warrant issued from issuer: tools={:?}, depth={}, issuer_id={}",
+                warrant.tools(),
+                warrant.depth(),
+                self.issuer.id()
+            )),
+            related_ids: Some(vec![warrant.id().to_string(), self.issuer.id().to_string()]),
+        });
+
+        Ok(warrant)
     }
 }
 

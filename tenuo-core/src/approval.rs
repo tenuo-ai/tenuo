@@ -566,6 +566,10 @@ pub enum AuditEventType {
     AuthorizationSuccess,
     /// An action was denied
     AuthorizationFailure,
+
+    // -- Verification Events --
+    /// Chain verification failed (invalid signature, expiration, untrusted root, etc.)
+    VerificationFailed,
 }
 
 /// An audit event for key lifecycle operations.
