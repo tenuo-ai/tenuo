@@ -1,16 +1,19 @@
-# Linguist overrides
-# Exclude examples and tests from language statistics
+# Linguist overrides for GitHub language statistics
+# The core logic is in Rust; Python files are bindings/wrappers
 
-tenuo-python/examples/** linguist-documentation
-tenuo-python/tests/** linguist-documentation
-tenuo-core/tests/** linguist-documentation
-tenuo-core/benches/** linguist-documentation
+# Mark Python SDK as vendored (thin wrappers around Rust core)
+tenuo-python/tenuo/*.py linguist-vendored
+tenuo-python/tenuo/**/*.py linguist-vendored
 
-# Ensure Rust is detected as the primary language
+# Exclude examples and tests from statistics
+tenuo-python/examples/*.py linguist-documentation
+tenuo-python/tests/*.py linguist-documentation
+tenuo-python/tests/**/*.py linguist-documentation
+tenuo-core/tests/*.rs linguist-documentation
+tenuo-core/benches/*.rs linguist-documentation
+
+# Docs folder contains generated/documentation files
+docs/** linguist-documentation
+
+# Ensure source files are detectable
 *.rs linguist-detectable=true
-*.py linguist-detectable=true
-
-# Treat generated files appropriately
-docs/**/*.html linguist-documentation
-docs/**/*.js linguist-documentation
-docs/**/*.css linguist-documentation
