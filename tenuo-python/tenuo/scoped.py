@@ -94,7 +94,15 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     """
     Check if child constraint is contained within parent.
     
-    Tier 1 API Containment Rules (Python-side validation for scoped_task):
+    IMPORTANT: This is a "fast-fail" optimization for the Tier 1 API (scoped_task).
+    The authoritative validation is performed by Rust core during warrant creation.
+    This Python-side check provides immediate feedback to developers but may be
+    slightly more conservative than Rust in edge cases.
+    
+    If this check passes, Rust will also pass. If this check fails, Rust would
+    also fail (or the constraint combination is not supported in Tier 1).
+    
+    Tier 1 API Containment Rules:
     
     Universal Containment:
     - Wildcard -> Any: Wildcard parent contains everything (universal superset)
@@ -109,7 +117,7 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     - Range -> Range: child bounds must be within parent bounds
     - Contains -> Contains: child must require MORE values (superset of required)
     - Subset -> Subset: child must allow FEWER values (subset of allowed)
-    - All -> All: each child constraint must be contained in parent
+    - All -> All: conservative check (requires identical repr)
     - CEL -> CEL: child expression must be syntactic extension of parent
     - string -> string: values must be equal (fallback)
     

@@ -1,17 +1,18 @@
 """
-Attenuation builder with diff support.
+Warrant builders with fluent API support.
 
-Wraps the Rust AttenuationBuilder. The Rust builder handles:
-- Core state management
-- Warrant building  
-- Diff computation
+Provides two builders:
+- WarrantBuilder: Create new root warrants (execution or issuer)
+- AttenuationBuilder: Attenuate existing warrants with diff support
 
-This Python wrapper adds:
+The Rust core handles all validation and cryptographic operations.
+These Python wrappers add:
+- Fluent API for better DX
 - Receipt storage (keyed by warrant ID)
-- Backward compatibility with existing Python API
+- Type hints and documentation
 """
 
-from typing import Dict, Optional, Any, List
+from typing import Dict, Optional, Any, List, Union
 
 from tenuo_core import (  # type: ignore[import-untyped]
     Warrant,
@@ -21,6 +22,304 @@ from tenuo_core import (  # type: ignore[import-untyped]
     AttenuationBuilder as RustAttenuationBuilder,
     DelegationDiff as RustDelegationDiff,
 )
+
+
+class WarrantBuilder:
+    """Fluent builder for creating new root warrants.
+    
+    Provides a Pythonic alternative to Warrant.issue() with method chaining.
+    
+    Example - Execution Warrant:
+        warrant = (Warrant.builder()
+            .tools(["read_file", "write_file"])
+            .constraint("path", Pattern("/data/*"))
+            .constraint("max_size", Range(0, 1000000))
+            .trust_level(TrustLevel.Trusted)
+            .ttl(3600)
+            .issue(keypair))
+    
+    Example - Issuer Warrant:
+        issuer = (Warrant.builder()
+            .issuer()  # Switch to issuer mode
+            .issuable_tools(["read_file", "write_file"])
+            .trust_ceiling(TrustLevel.Privileged)
+            .constraint_bound("path", Pattern("/data/*"))
+            .max_issue_depth(3)
+            .issue(keypair))
+    
+    Note:
+        This builder is for creating NEW root warrants.
+        To attenuate an existing warrant, use warrant.attenuate_builder().
+    """
+    
+    def __init__(self):
+        """Initialize a new warrant builder."""
+        self._tools: Optional[Union[str, List[str]]] = None
+        self._constraints: Dict[str, Any] = {}
+        self._ttl_seconds: int = 3600  # Default 1 hour
+        self._holder: Optional[PublicKey] = None
+        self._session_id: Optional[str] = None
+        self._trust_level: Optional[TrustLevel] = None
+        
+        # Issuer-specific fields
+        self._is_issuer: bool = False
+        self._issuable_tools: Optional[List[str]] = None
+        self._trust_ceiling: Optional[TrustLevel] = None
+        self._constraint_bounds: Dict[str, Any] = {}
+        self._max_issue_depth: Optional[int] = None
+    
+    def issuer(self) -> 'WarrantBuilder':
+        """Switch to issuer warrant mode.
+        
+        Issuer warrants can delegate to other warrants but cannot
+        execute tools directly.
+        """
+        self._is_issuer = True
+        return self
+    
+    def tools(self, tools: Union[str, List[str]]) -> 'WarrantBuilder':
+        """Set the tools this warrant authorizes (execution warrants).
+        
+        Args:
+            tools: Single tool name or list of tool names
+        """
+        self._tools = tools
+        return self
+    
+    def tool(self, tool: str) -> 'WarrantBuilder':
+        """Set a single tool (convenience method).
+        
+        Args:
+            tool: Tool name
+        """
+        self._tools = tool
+        return self
+    
+    def constraint(self, field: str, value: Any) -> 'WarrantBuilder':
+        """Add a constraint (execution warrants).
+        
+        Args:
+            field: Constraint field name (e.g., "path", "amount")
+            value: Constraint value (Pattern, Range, Exact, etc.)
+        """
+        self._constraints[field] = value
+        return self
+    
+    def constraints(self, constraints: Dict[str, Any]) -> 'WarrantBuilder':
+        """Set all constraints at once (execution warrants).
+        
+        Args:
+            constraints: Dict mapping field names to constraint values
+        """
+        self._constraints = constraints
+        return self
+    
+    def ttl(self, seconds: int) -> 'WarrantBuilder':
+        """Set time-to-live in seconds.
+        
+        Args:
+            seconds: TTL in seconds (default: 3600)
+        """
+        self._ttl_seconds = seconds
+        return self
+    
+    def holder(self, public_key: PublicKey) -> 'WarrantBuilder':
+        """Set the authorized holder's public key.
+        
+        If not set, defaults to the issuer (self-signed).
+        
+        Args:
+            public_key: The holder's public key
+        """
+        self._holder = public_key
+        return self
+    
+    def session_id(self, session_id: str) -> 'WarrantBuilder':
+        """Set an optional session identifier.
+        
+        Args:
+            session_id: Session ID for tracking
+        """
+        self._session_id = session_id
+        return self
+    
+    def trust_level(self, level: TrustLevel) -> 'WarrantBuilder':
+        """Set the trust level.
+        
+        Args:
+            level: TrustLevel enum value
+        """
+        self._trust_level = level
+        return self
+    
+    # =========================================================================
+    # Issuer-specific methods
+    # =========================================================================
+    
+    def issuable_tools(self, tools: List[str]) -> 'WarrantBuilder':
+        """Set tools this issuer can delegate (issuer warrants only).
+        
+        Args:
+            tools: List of tool names that can be issued
+        """
+        self._is_issuer = True
+        self._issuable_tools = tools
+        return self
+    
+    def trust_ceiling(self, level: TrustLevel) -> 'WarrantBuilder':
+        """Set max trust level for issued warrants (issuer warrants only).
+        
+        Args:
+            level: Maximum TrustLevel for child warrants
+        """
+        self._is_issuer = True
+        self._trust_ceiling = level
+        return self
+    
+    def constraint_bound(self, field: str, value: Any) -> 'WarrantBuilder':
+        """Add a constraint bound (issuer warrants only).
+        
+        Constraint bounds limit what constraints child warrants can have.
+        
+        Args:
+            field: Constraint field name
+            value: Maximum bound for this constraint
+        """
+        self._constraint_bounds[field] = value
+        return self
+    
+    def constraint_bounds(self, bounds: Dict[str, Any]) -> 'WarrantBuilder':
+        """Set all constraint bounds at once (issuer warrants only).
+        
+        Args:
+            bounds: Dict mapping field names to constraint bounds
+        """
+        self._constraint_bounds = bounds
+        return self
+    
+    def max_issue_depth(self, depth: int) -> 'WarrantBuilder':
+        """Set maximum delegation depth (issuer warrants only).
+        
+        Args:
+            depth: Maximum depth of delegation chain
+        """
+        self._max_issue_depth = depth
+        return self
+    
+    # =========================================================================
+    # Build methods
+    # =========================================================================
+    
+    def issue(self, keypair: SigningKey) -> Warrant:
+        """Build and sign the warrant.
+        
+        Args:
+            keypair: The signing key to sign the warrant
+            
+        Returns:
+            The newly created Warrant
+            
+        Raises:
+            ValidationError: If required fields are missing
+            TenuoError: If warrant creation fails
+        """
+        if self._is_issuer:
+            return self._issue_issuer(keypair)
+        else:
+            return self._issue_execution(keypair)
+    
+    def _issue_execution(self, keypair: SigningKey) -> Warrant:
+        """Issue an execution warrant."""
+        if self._tools is None:
+            from .exceptions import ValidationError
+            raise ValidationError("tools are required for execution warrants")
+        
+        return Warrant.issue(
+            tools=self._tools,
+            keypair=keypair,
+            constraints=self._constraints if self._constraints else None,
+            ttl_seconds=self._ttl_seconds,
+            holder=self._holder,
+            session_id=self._session_id,
+            trust_level=self._trust_level,
+        )
+    
+    def _issue_issuer(self, keypair: SigningKey) -> Warrant:
+        """Issue an issuer warrant."""
+        if self._issuable_tools is None:
+            from .exceptions import ValidationError
+            raise ValidationError("issuable_tools are required for issuer warrants")
+        if self._trust_ceiling is None:
+            from .exceptions import ValidationError
+            raise ValidationError("trust_ceiling is required for issuer warrants")
+        
+        return Warrant.issue_issuer(
+            issuable_tools=self._issuable_tools,
+            trust_ceiling=self._trust_ceiling,
+            keypair=keypair,
+            constraint_bounds=self._constraint_bounds if self._constraint_bounds else None,
+            max_issue_depth=self._max_issue_depth,
+            ttl_seconds=self._ttl_seconds,
+            holder=self._holder,
+            session_id=self._session_id,
+            trust_level=self._trust_level,
+        )
+    
+    def preview(self) -> Dict[str, Any]:
+        """Preview the warrant configuration before building.
+        
+        Returns:
+            Dict with all configured values
+        """
+        if self._is_issuer:
+            return {
+                "type": "issuer",
+                "issuable_tools": self._issuable_tools,
+                "trust_ceiling": self._trust_ceiling,
+                "constraint_bounds": self._constraint_bounds,
+                "max_issue_depth": self._max_issue_depth,
+                "ttl_seconds": self._ttl_seconds,
+                "holder": self._holder,
+                "session_id": self._session_id,
+                "trust_level": self._trust_level,
+            }
+        else:
+            return {
+                "type": "execution",
+                "tools": self._tools,
+                "constraints": self._constraints,
+                "ttl_seconds": self._ttl_seconds,
+                "holder": self._holder,
+                "session_id": self._session_id,
+                "trust_level": self._trust_level,
+            }
+
+
+# Add builder() class method to Warrant
+def _add_builder_to_warrant():
+    """Add the builder() class method to Warrant."""
+    @classmethod
+    def builder(cls) -> WarrantBuilder:
+        """Create a fluent builder for new warrants.
+        
+        Example:
+            warrant = (Warrant.builder()
+                .tools(["read_file"])
+                .constraint("path", Pattern("/data/*"))
+                .ttl(3600)
+                .issue(keypair))
+        
+        Returns:
+            WarrantBuilder instance
+        """
+        return WarrantBuilder()
+    
+    # Only add if not already present
+    if not hasattr(Warrant, 'builder'):
+        Warrant.builder = builder
+
+# Initialize on module load
+_add_builder_to_warrant()
 
 
 class AttenuationBuilder:

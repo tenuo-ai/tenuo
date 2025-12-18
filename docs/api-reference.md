@@ -279,6 +279,49 @@ Warrant.issue_issuer(
 | `ttl_seconds` | `int` | Time-to-live in seconds |
 | `holder` | `PublicKey` | Optional holder (defaults to issuer) |
 
+#### `Warrant.builder()` - Fluent API
+
+For improved DX, use the fluent builder pattern:
+
+```python
+from tenuo import Warrant, Pattern, Range, TrustLevel
+
+# Execution warrant with builder
+warrant = (Warrant.builder()
+    .tools(["read_file", "write_file"])
+    .constraint("path", Pattern("/data/*"))
+    .constraint("max_size", Range(0, 1000000))
+    .ttl(3600)
+    .issue(keypair))
+
+# Issuer warrant with builder
+issuer = (Warrant.builder()
+    .issuer()  # Switch to issuer mode
+    .issuable_tools(["read_file", "write_file"])
+    .trust_ceiling(TrustLevel.Internal)
+    .constraint_bound("path", Pattern("/data/*"))
+    .max_issue_depth(3)
+    .issue(keypair))
+```
+
+| Method | Description |
+|--------|-------------|
+| `.tools(list)` | Set authorized tools (execution) |
+| `.tool(str)` | Set single tool (execution) |
+| `.constraint(field, value)` | Add a constraint |
+| `.constraints(dict)` | Set all constraints |
+| `.ttl(seconds)` | Set time-to-live |
+| `.holder(pubkey)` | Set authorized holder |
+| `.session_id(str)` | Set session identifier |
+| `.trust_level(level)` | Set trust level |
+| `.issuer()` | Switch to issuer warrant mode |
+| `.issuable_tools(list)` | Tools this issuer can delegate |
+| `.trust_ceiling(level)` | Max trust for issued warrants |
+| `.constraint_bound(field, value)` | Add constraint bound |
+| `.max_issue_depth(n)` | Max delegation depth |
+| `.preview()` | Preview configuration before issuing |
+| `.issue(keypair)` | Build and sign the warrant |
+
 #### Instance Properties
 
 | Property | Type | Description |

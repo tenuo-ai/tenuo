@@ -150,7 +150,7 @@ from .audit import (
     log_authorization_success,
     log_authorization_failure,
 )
-from .builder import AttenuationBuilder
+from .builder import AttenuationBuilder, WarrantBuilder
 
 # Tier 1 API - Simple scoped authority
 from .config import (
@@ -421,6 +421,7 @@ __all__ = [
     "log_authorization_failure",
     
     # Delegation diffs and receipts
+    "WarrantBuilder",
     "AttenuationBuilder",
     "DelegationDiff",
     "DelegationReceipt",
