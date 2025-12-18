@@ -286,7 +286,7 @@ def verify_pop(warrant, signature, tool, args, max_windows=4) -> bool:
 
 **Trade-off**: Larger windows allow more clock skew but increase replay risk. Within the ~2 minute window, a captured PoP can be replayed for the **same** (warrant, tool, args) tuple.
 
-**Mitigation**: Use `warrant.dedup_key(tool, args)` as a cache key with 120s TTL for deduplication.
+**Replay Mitigation**: The `Authorizer` is stateless by design. For sensitive operations, use `warrant.dedup_key(tool, args)` to implement application-level deduplication. See [Security: Replay Protection](./security#replay-protection--statelessness) for implementation guidance.
 
 ---
 

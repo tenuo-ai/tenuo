@@ -349,7 +349,7 @@ issuer = (Warrant.builder()
 | `is_expired()` | `bool` | Check if warrant has expired |
 | `is_terminal()` | `bool` | Check if warrant cannot delegate further |
 
-⚠️ **Replay Window:** PoP signatures are valid for ~2 minutes to handle clock skew.
+⚠️ **Replay Window:** PoP signatures are valid for ~2 minutes to handle clock skew. For sensitive operations, implement deduplication using `warrant.dedup_key(tool, args)`. See [Protocol: Replay Protection](./protocol#replay-protection).
 
 #### Tool Narrowing
 

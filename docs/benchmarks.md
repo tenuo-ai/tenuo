@@ -5,7 +5,7 @@ description: Performance characteristics and methodology
 
 # Performance Benchmarks
 
-> **TL;DR:** Full authorization (verify + constraints + PoP) takes **~70μs**. Denials fail in **~200ns**. Tenuo will never be your bottleneck.
+> **TL;DR:** Full authorization (verify + constraints + PoP) takes **~55μs**. Denials fail in **~200ns**. Tenuo will never be your bottleneck.
 
 Tenuo is designed to sit on the critical path of every agent tool call. To ensure it never becomes a bottleneck, we track performance using [Criterion.rs](https://github.com/bheisler/criterion.rs).
 
@@ -32,10 +32,10 @@ This is the most critical metric. It runs on every single tool call.
 | Operation | Time (mean) | Description |
 |-----------|-------------|-------------|
 | `warrant_verify` | **26.6 µs** | Full crypto signature check + TTL validation |
-| `warrant_authorize` | **43.5 µs** | Constraint logic + Proof-of-Possession (PoP) verification |
-| **Total Overhead** | **~70.1 µs** | End-to-end authorization latency (verify + authorize) |
+| `warrant_authorize` | **28.0 µs** | Constraint logic + Proof-of-Possession (PoP) verification |
+| **Total Overhead** | **~54.6 µs** | End-to-end authorization latency (verify + authorize) |
 
-> **Note:** The `warrant_authorize` time (~43.5µs) includes regex compilation and full argument validation. Simple checks are significantly faster.
+> **Note:** The `warrant_authorize` time (~28.0µs) includes regex compilation and full argument validation. Simple checks are significantly faster.
 
 ### Denial Performance (Security-Critical)
 
@@ -94,9 +94,9 @@ Tenuo validates the entire delegation chain. Performance cost scales linearly wi
 
 The `warrant_authorize` benchmark tests complex constraint sets (Patterns, Ranges).
 * **Cryptographic Overhead:** ~27µs (PoP verification, unavoidable)
-* **Logic Overhead:** ~16µs (Argument parsing + Constraint evaluation)
+* **Logic Overhead:** ~1µs (Argument parsing + Constraint evaluation)
 
-Even with complex regex constraints, the total authorization time (~43.5µs) remains negligible compared to the network latency of the tool call itself (10-100ms).
+Even with complex regex constraints, the total authorization time (~28.0µs) remains negligible compared to the network latency of the tool call itself (10-100ms).
 
 ---
 
@@ -128,7 +128,7 @@ Full benchmark source code is available in [`warrant_benchmarks.rs`](https://git
 ### What's Fast
 
 - **Verification:** ~27µs for signature + TTL check
-- **Authorization:** ~44µs for constraints + PoP verification
+- **Authorization:** ~28µs for constraints + PoP verification
 - **Denials:** **~190ns** for most rejection paths (wrong tool, missing PoP, constraint violations)
 - **Wire encoding:** ~1µs (CBOR is efficient)
 
@@ -159,7 +159,7 @@ Tenuo prioritizes **security over raw speed**:
 2. **Full chain validation:** We verify the entire delegation chain, not just the leaf warrant. This ensures cryptographic integrity at every level.
 3. **Canonical CBOR:** We enforce deterministic serialization to prevent TOCTOU attacks, adding validation overhead during deserialization.
 
-Even with these security measures, **~70µs total latency** is negligible compared to:
+Even with these security measures, **~55µs total latency** is negligible compared to:
 - LLM inference: **100-1000ms** (1,400x - 14,000x slower)
 - Network I/O: **10-100ms** (140x - 1,400x slower)
 - Database queries: **1-10ms** (14x - 140x slower)

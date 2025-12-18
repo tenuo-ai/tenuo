@@ -44,12 +44,28 @@ Tenuo uses time-windowed PoP signatures (~2 minutes) to allow for **stateless ve
 
 This is an intentional design trade-off for scalability. The protection prevents an attacker from using a stolen warrant *after* the window closes, but does not prevent immediate replay of the exact same request.
 
-**Mitigation**: To prevent replay for sensitive tools (e.g., `transfer_funds`), implement **application-level deduplication**:
+**Mitigation**: For sensitive tools, implement **application-level deduplication**:
 
-1.  Compute a cache key from the request identity: `key = hash(warrant_id + tool_name + args)`.
-2.  Check if this key exists in a shared cache (e.g., Redis).
-3.  **If exists**: Reject the request immediately as a replay.
-4.  **If missing**: Store the key with a **120-second TTL** (covering the max replay window) and proceed.
+```python
+# Use the built-in helper to generate a deterministic cache key
+dedup_key = warrant.dedup_key(tool, args)
+
+if cache.exists(dedup_key):  # Redis, memcached, or in-memory
+    raise ReplayError("Duplicate request")
+    
+authorizer.check(warrant, tool, args)
+cache.set(dedup_key, "1", ttl=120)  # 120s covers the ~2min window
+```
+
+**When to implement deduplication:**
+- High-value operations (payments, deletions, privilege escalation)
+- Environments where network interception is possible
+- Multi-step workflows where replay could cause inconsistency
+
+**When you can skip:**
+- Read-only operations (replaying a "read" is usually harmless)
+- Idempotent operations (replaying has no additional effect)
+- Very short-lived warrants (TTL < 2 min makes PoP window irrelevant)
 
 ## Monotonic Attenuation
 
@@ -250,6 +266,9 @@ openssl rand -hex 32
 ### Authorizer (`tenuo-authorizer`)
 
 The authorizer exposes unauthenticated health endpoints for Kubernetes probes:
+
+> [!WARNING]
+> **Statelessness & Replay Risk**: The provided `tenuo-authorizer` binary is stateless for infinite horizontal scaling. It does **not** implement the [optional PoP deduplication cache](#replay-protection--statelessness) by default. If your threat model requires strict replay protection within the ~2 minute window, you must modify the binary to use a shared cache (Redis/Memcached) or implement deduplication at your API gateway.
 
 | Endpoint | Purpose |
 |----------|---------|
