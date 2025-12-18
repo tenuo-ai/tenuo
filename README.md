@@ -209,7 +209,7 @@ Building a sidecar or gateway? Use the core directly:
 tenuo-core = "0.1"
 ```
 
-See [docs.rs/tenuo-core](https://docs.rs/tenuo-core) for Rust API and the [Kubernetes Integration Guide](https://tenuo.ai/docs/kubernetes) for sidecar/gateway deployment patterns.
+See [docs.rs/tenuo-core](https://docs.rs/tenuo-core) for Rust API and the [Kubernetes Integration Guide](https://tenuo.ai/kubernetes) for sidecar/gateway deployment patterns.
 
 ---
 
