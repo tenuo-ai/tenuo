@@ -171,6 +171,24 @@ async with SecureMCPClient("python", ["mcp_server.py"]) as client:
 
 ---
 
+## Docker Images
+
+Official images on [Docker Hub](https://hub.docker.com/u/tenuo):
+
+```bash
+docker pull tenuo/authorizer:latest  # Sidecar for warrant verification
+docker pull tenuo/control:latest     # Control plane (demo/reference)
+```
+
+| Image | Description | Base |
+|-------|-------------|------|
+| `tenuo/authorizer` | Verifies warrants, checks PoP| Distroless |
+| `tenuo/control` | Issues root warrants (reference implementation) | Debian slim |
+
+See [Kubernetes guide](https://tenuo.ai/kubernetes) for deployment patterns.
+
+---
+
 ## Try It
 
 ```bash
