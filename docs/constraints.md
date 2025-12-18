@@ -606,18 +606,46 @@ Some constraint types can contain different types during attenuation:
 
 | Parent | Child | Containment Rule |
 |--------|-------|------------------|
+| `Wildcard()` | Any type | Universal parent - contains everything |
 | `Pattern("*@co.com")` | `Exact("cfo@co.com")` | Child matches parent glob |
+| `Regex(r"^dev-.*")` | `Exact("dev-web")` | Child matches parent regex |
 | `OneOf(["a","b","c"])` | `Exact("b")` | Child value is in parent set |
 | `OneOf(["a","b","c"])` | `NotOneOf(["c"])` | Carves holes (allows `a`, `b`) |
-| `Regex(r"^dev-.*")` | `Exact("dev-web")` | Child matches parent regex |
-| `Wildcard()` | Any type | Universal parent |
+
+**Special Rules:**
+
+| Rule | Description |
+|------|-------------|
+| `Wildcard` parent | Contains ANY child constraint type |
+| `Wildcard` child | NEVER allowed (would widen permissions) |
+| `Regex` -> `Regex` | Must be IDENTICAL pattern (subset undecidable) |
 
 **Examples:**
 
 ```python
+# Wildcard -> Anything: Wildcard is the universal parent
+parent = Wildcard()
+child = Pattern("staging-*")  # OK - Wildcard contains everything
+child = Range(0, 100)         # OK - even different types
+child = Wildcard()            # OK - Wildcard contains Wildcard
+
+# Nothing -> Wildcard: would expand permissions
+parent = Pattern("*")
+child = Wildcard()  # FAILS - cannot widen to Wildcard
+
 # Pattern -> Exact: exact value must match the pattern
 parent = Pattern("*@company.com")
 child = Exact("cfo@company.com")  # OK - matches pattern
+
+# Regex -> Exact: exact value must match the regex
+parent = Regex(r"^staging-.*$")
+child = Exact("staging-web")  # OK - matches regex
+child = Exact("production")   # FAILS - doesn't match
+
+# Regex -> Regex: must be identical (subset is undecidable)
+parent = Regex(r"^staging-.*$")
+child = Regex(r"^staging-.*$")      # OK - identical
+child = Regex(r"^staging-web$")     # FAILS - even if semantically narrower
 
 # OneOf -> Exact: exact value must be in the set
 parent = OneOf(["read", "write", "delete"])
@@ -632,6 +660,7 @@ child = NotOneOf(["production"])  # OK - allows staging, dev only
 - `Range` -> `Exact`: Different semantic domains
 - `Pattern` -> `Range`: String matching vs numeric bounds  
 - `OneOf` -> `Pattern`: Set membership vs glob matching
+- Any type -> `Wildcard`: Would expand permissions
 
 ### Pattern Narrowing
 

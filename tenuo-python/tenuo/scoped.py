@@ -96,8 +96,13 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     
     Tier 1 API Containment Rules (Python-side validation for scoped_task):
     
+    Universal Containment:
+    - Wildcard -> Any: Wildcard parent contains everything (universal superset)
+    - Any -> Wildcard: NEVER allowed (would widen permissions)
+    
     Same-Type Containment:
     - Pattern -> Pattern: child pattern must be more restrictive (more literal chars)
+    - Regex -> Regex: patterns must be IDENTICAL (subset is undecidable)
     - Exact -> Exact: values must be equal
     - OneOf -> OneOf: child must be a subset of parent
     - Range -> Range: child bounds must be within parent bounds
@@ -106,27 +111,61 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     Cross-Type Containment:
     - Pattern -> Exact: exact value must match parent pattern (glob)
     - Pattern -> string: string value must match parent pattern (glob)
+    - Regex -> Exact: exact value must match parent regex
+    - Regex -> string: string value must match parent regex
     - OneOf -> Exact: exact value must be in parent's set
     - OneOf -> string: string value must be in parent's set
     
     Not Supported in Tier 1 (use Tier 2 API for full validation):
-    - Regex, NotOneOf, Contains, Subset, All, CEL
-    - Wildcard (only valid in root warrants)
+    - NotOneOf, Contains, Subset, All, CEL
     
     Returns:
         True if child is contained within parent, False otherwise.
     """
     import fnmatch
+    import re
     
     # Get constraint type names
     child_type = type(child_value).__name__
     parent_type = type(parent_value).__name__
     
+    # =========================================================================
+    # Wildcard - Universal superset (must check FIRST)
+    # =========================================================================
+    # Wildcard parent contains ANYTHING
+    if parent_type == 'Wildcard':
+        return True
+    
+    # NOTHING can attenuate TO Wildcard (would expand permissions)
+    if child_type == 'Wildcard':
+        return False
+    
     # Extract actual values from wrappers
     child_str = _extract_pattern_value(child_value)
     parent_str = _extract_pattern_value(parent_value)
     
+    # =========================================================================
+    # Regex - Must be identical pattern or Exact that matches
+    # =========================================================================
+    if parent_type == 'Regex':
+        parent_pattern = getattr(parent_value, 'pattern', None)
+        if parent_pattern is None:
+            return False
+        
+        if child_type == 'Regex':
+            # Regex -> Regex: must be IDENTICAL (subset is undecidable)
+            child_pattern = getattr(child_value, 'pattern', None)
+            return parent_pattern == child_pattern
+        else:
+            # Regex -> Exact/string: value must match regex
+            try:
+                return bool(re.match(parent_pattern, child_str))
+            except re.error:
+                return False
+    
+    # =========================================================================
     # Pattern/glob containment - use fnmatch for proper glob matching
+    # =========================================================================
     if parent_type == 'Pattern' or '*' in parent_str:
         if child_type == 'Pattern' or '*' in child_str:
             # Both are patterns - child must be more restrictive

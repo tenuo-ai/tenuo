@@ -88,6 +88,113 @@ class TestConstraintContainment:
         assert not _is_constraint_contained("foo", "bar")
     
     # -------------------------------------------------------------------------
+    # Wildcard Constraints (Universal Superset)
+    # -------------------------------------------------------------------------
+    def test_wildcard_contains_anything(self):
+        """Wildcard parent contains any child constraint."""
+        from tenuo_core import Wildcard, Exact, Pattern, OneOf, Range
+        
+        wildcard = Wildcard()
+        
+        # Wildcard contains Exact
+        assert _is_constraint_contained(Exact("anything"), wildcard)
+        
+        # Wildcard contains Pattern
+        assert _is_constraint_contained(Pattern("staging-*"), wildcard)
+        
+        # Wildcard contains OneOf
+        assert _is_constraint_contained(OneOf(["a", "b", "c"]), wildcard)
+        
+        # Wildcard contains Range
+        assert _is_constraint_contained(Range(0, 100), wildcard)
+        
+        # Wildcard contains plain string
+        assert _is_constraint_contained("any string", wildcard)
+        
+        # Wildcard contains another Wildcard
+        assert _is_constraint_contained(Wildcard(), wildcard)
+    
+    def test_wildcard_child_never_contained(self):
+        """No parent can contain Wildcard child (would widen permissions)."""
+        from tenuo_core import Wildcard, Exact, Pattern, OneOf, Range
+        
+        wildcard = Wildcard()
+        
+        # Exact cannot contain Wildcard
+        assert not _is_constraint_contained(wildcard, Exact("foo"))
+        
+        # Pattern cannot contain Wildcard
+        assert not _is_constraint_contained(wildcard, Pattern("*"))
+        
+        # OneOf cannot contain Wildcard
+        assert not _is_constraint_contained(wildcard, OneOf(["a", "b"]))
+        
+        # Range cannot contain Wildcard
+        assert not _is_constraint_contained(wildcard, Range(0, 100))
+    
+    # -------------------------------------------------------------------------
+    # Regex Constraints
+    # -------------------------------------------------------------------------
+    def test_regex_identical_pattern(self):
+        """Regex -> Regex: patterns must be identical."""
+        from tenuo_core import Regex
+        
+        parent = Regex(r"^staging-.*$")
+        
+        # Same pattern is contained
+        assert _is_constraint_contained(Regex(r"^staging-.*$"), parent)
+        
+        # Different pattern is NOT contained (even if semantically narrower)
+        assert not _is_constraint_contained(Regex(r"^staging-web$"), parent)
+        assert not _is_constraint_contained(Regex(r"^staging-.*-prod$"), parent)
+    
+    def test_regex_exact_inside(self):
+        """Regex -> Exact: exact value must match the regex."""
+        from tenuo_core import Regex, Exact
+        
+        parent = Regex(r"^staging-.*$")
+        
+        # Matching exact values
+        assert _is_constraint_contained(Exact("staging-web"), parent)
+        assert _is_constraint_contained(Exact("staging-api-v2"), parent)
+        assert _is_constraint_contained(Exact("staging-"), parent)
+        
+        # Non-matching exact values
+        assert not _is_constraint_contained(Exact("production-web"), parent)
+        assert not _is_constraint_contained(Exact("dev-staging-web"), parent)
+        assert not _is_constraint_contained(Exact("staging"), parent)  # missing dash
+    
+    def test_regex_string_inside(self):
+        """Regex -> string: string must match the regex."""
+        from tenuo_core import Regex
+        
+        parent = Regex(r"^[a-z]+@company\.com$")
+        
+        # Matching strings
+        assert _is_constraint_contained("alice@company.com", parent)
+        assert _is_constraint_contained("bob@company.com", parent)
+        
+        # Non-matching strings
+        assert not _is_constraint_contained("Alice@company.com", parent)  # uppercase
+        assert not _is_constraint_contained("alice@evil.com", parent)
+        assert not _is_constraint_contained("alice123@company.com", parent)  # has numbers
+    
+    def test_regex_complex_patterns(self):
+        """Test regex with complex patterns."""
+        from tenuo_core import Regex, Exact
+        
+        # IP address pattern
+        ip_pattern = Regex(r"^192\.168\.\d+\.\d+$")
+        assert _is_constraint_contained(Exact("192.168.1.1"), ip_pattern)
+        assert _is_constraint_contained(Exact("192.168.255.255"), ip_pattern)
+        assert not _is_constraint_contained(Exact("10.0.0.1"), ip_pattern)
+        
+        # UUID pattern
+        uuid_pattern = Regex(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+        assert _is_constraint_contained(Exact("12345678-1234-1234-1234-123456789abc"), uuid_pattern)
+        assert not _is_constraint_contained(Exact("not-a-uuid"), uuid_pattern)
+    
+    # -------------------------------------------------------------------------
     # Pattern (Glob) Constraints - Suffix Wildcards
     # -------------------------------------------------------------------------
     def test_pattern_suffix_exact_inside(self):
