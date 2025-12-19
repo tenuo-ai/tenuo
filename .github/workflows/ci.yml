@@ -177,14 +177,16 @@ jobs:
         run: |
           pip install maturin
           maturin build --release
-          pip install --find-links target/wheels tenuo
+          pip install target/wheels/*.whl
 
       - name: Verify import
-        run: python -c "import tenuo; print(f'tenuo {tenuo.__version__}')"
+        run: |
+          python -c "import tenuo; print(f'tenuo {tenuo.__version__}')"
+          python -c "from tenuo import Capability; print('Capability import OK')"
 
       - name: Install LangChain ${{ matrix.langchain-version }}
         run: |
-          pip install pytest pydantic PyYAML
+          pip install pytest pytest-asyncio pydantic PyYAML
           if [ "${{ matrix.langchain-version }}" = "latest" ]; then
             pip install langchain langchain-core langchain-openai langgraph
           else
