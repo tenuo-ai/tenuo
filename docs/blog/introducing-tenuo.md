@@ -1,5 +1,5 @@
 ---
-title: "Introducing Tenuo: Authority That Follows the Flow"
+title: "Flowing Authority: Introducing Tenuo"
 description: "Attenuating capability tokens for AI agents"
 date: 2025-12-18
 layout: post
@@ -13,7 +13,11 @@ It grew out of a simple question: what if authority followed the task, instead o
 
 I’ve been [scratching my head](https://niyikiza.com/posts/authority-isolation/) over that question for a while. Every attempt to solve agent delegation with identity-based IAM felt like papering over the same crack: tasks split, but authority doesn’t.
 
-Tenuo makes authority task-scoped.
+Agents decompose tasks.  
+IAM consolidates authority.  
+The friction is structural.
+
+Tenuo makes authority task-scoped: broad at the source, narrower at each delegation, gone when the task ends.
 
 Rust core. Python bindings. ~27μs verification.
 
@@ -23,13 +27,13 @@ Rust core. Python bindings. ~27μs verification.
 pip install tenuo
 ```
 ```python
-from tenuo import root_task, lockdown
+from tenuo import root_task, lockdown, Pattern
 
 @lockdown(tool="read_file")
 def read_file(path: str):
     return open(path).read()
 
-async with root_task(tools=["read_file"], path="/data/*"):
+async with root_task(tools=["read_file"], path=Pattern("/data/*")):
     read_file("/data/report.txt")  # ✓ Allowed
     read_file("/etc/passwd")       # ✗ Blocked
 ```
@@ -207,9 +211,9 @@ The control plane issuance logic is yours: Tenuo doesn't prescribe it. What matt
 | **Task complete** | Authority persists | Warrant expires |
 | **Revocation needed** | Yes (manual) | No (automatic expiry) |
 
-With Tenuo, authority appears when the task starts, narrows as phases progress, and vanishes when the task ends.
+Authority appears when the task starts, narrows as phases progress, and vanishes when the task ends.
 No cleanup. No revocation. The warrant simply expires.
-This is what I meant by "authority that follows the flow."
+This is what I mean by flowing authority.
 
 ## Part 4: Confused Deputy, Sobered
 
@@ -224,7 +228,7 @@ def read_file(path: str):
     return open(path).read()
 
 # Warrant: read_file, but ONLY /data/public/*
-async with root_task(tools=["read_file"], path="/data/public/*"):
+async with root_task(tools=["read_file"], path=Pattern("/data/public/*")):
     
     read_file("/data/public/report.txt")  # ✓ Allowed
     
