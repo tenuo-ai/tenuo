@@ -443,4 +443,4 @@ __all__ = [
     "compute_diff",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.1.0a3"
