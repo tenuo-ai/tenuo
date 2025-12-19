@@ -286,7 +286,12 @@ class SecureMCPClient:
                 try:
                     # Apply defaults and extraction rules from config
                     result = self.compiled_config.extract_constraints(tool_name, kwargs)
-                    return result.constraints
+                    # Merge extracted constraints (which have defaults/types) over raw kwargs
+                    # We start with kwargs to keep unconfigured args (e.g. path),
+                    # then update with extracted values (e.g. max_size with default).
+                    combined = kwargs.copy()
+                    combined.update(result.constraints)
+                    return combined
                 except Exception:
                     # If extraction fails (e.g. validation error), fallback to raw args
                     # and let authorization fail naturally or succeed if constraints match

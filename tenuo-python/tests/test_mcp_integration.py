@@ -264,7 +264,7 @@ async def test_discover_and_protect_usage(mcp_server_script):
             assert "read_file" in tools
             read_file = tools["read_file"]
             
-            async with root_task(Capability("read_file", path=Pattern("/tmp/*"))):
+            async with root_task(Capability("read_file", path=Pattern("*"))):
                 result = await read_file(path=test_file)
                 assert "context_manager_test" in result[0].text
     finally:
