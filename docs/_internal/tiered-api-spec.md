@@ -136,11 +136,9 @@ def set_keypair(keypair: Optional[SigningKey]) -> None:
 
 @asynccontextmanager
 async def root_task(
-    *,
-    tools: List[str],
+    *capabilities: Capability,
     ttl: Optional[int] = None,  # seconds, defaults to config.default_ttl
     holder_key: Optional[SigningKey] = None,  # Explicit holder (advanced)
-    **constraints
 ) -> AsyncIterator[Warrant]:
     """
     Create a root warrant (explicit authority minting).
@@ -159,10 +157,9 @@ async def root_task(
     delegation, provide holder_key explicitly or use Tier 2 APIs.
     
     Args:
-        tools: Allowlist of tools this warrant authorizes
+        *capabilities: One or more Capability objects to enforce
         ttl: Time-to-live in seconds (default from configure())
         holder_key: Explicit holder keypair (default: issuer key)
-        **constraints: Constraint kwargs applied to all tools
     
     Raises:
         TenuoConfigError: If no issuer key configured
@@ -243,10 +240,8 @@ def _create_root_warrant(
 
 @asynccontextmanager
 async def scoped_task(
-    *,
-    tools: Optional[List[str]] = None,  # None = inherit parent's tools
+    *capabilities: Capability,
     ttl: Optional[int] = None,
-    **constraints
 ) -> AsyncIterator[Warrant]:
     """
     Attenuate the current warrant for a subtask.
@@ -265,9 +260,8 @@ async def scoped_task(
                 await agent.run(...)
     
     Args:
-        *capabilities: One or more Capability objects to enforce
+        *capabilities: Subset of parent's capabilities (empty = inherit all)
         ttl: Shorter TTL in seconds (None = inherit parent's remaining TTL)
-        **constraints: Additional constraints (must be contained within parent's)
     
     Raises:
         TenuoAuthError: If no parent warrant in context

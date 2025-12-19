@@ -73,7 +73,7 @@ async def researcher(state):
 You declare it once:
 
 ```python
-secure.node("researcher", tools=["search"], path="/data/*")
+secure.node("researcher", capabilities=[Capability("search", path=Pattern("/data/*"))])
 ```
 
 SecureGraph performs the `attenuate()` call on your behalf at each transition.
@@ -542,8 +542,11 @@ secure = SecureGraph(
 )
 
 secure.node("supervisor", holds_issuer=True)
-secure.node("researcher", tools=["search", "read_file"], path="/data/*")
-secure.node("writer", tools=["write_file"], path="/output/*", terminal=True)
+secure.node("researcher", capabilities=[
+    Capability("search", path=Pattern("/data/*")), 
+    Capability("read_file", path=Pattern("/data/*"))
+])
+secure.node("writer", capabilities=[Capability("write_file", path=Pattern("/output/*"))], terminal=True)
 secure.deny_unlisted()
 
 # 4. Compile
@@ -551,8 +554,11 @@ app = secure.compile()
 
 # 5. Invoke with explicit warrants
 root_exec = create_execution_warrant(
-    tools=["search", "read_file", "write_file"],
-    path="/*",
+    capabilities=[
+        Capability("search", path=Pattern("/*")),
+        Capability("read_file", path=Pattern("/*")),
+        Capability("write_file", path=Pattern("/*")),
+    ],
     max_depth=10,
     expires_at=datetime.now() + timedelta(hours=1),
     authorized_attenuators=[securegraph_pubkey],
@@ -613,8 +619,7 @@ async def supervisor(state: AgentState) -> AgentState:
     if should_research():
         # Mint execution warrant for researcher
         worker_warrant = issuer.mint_execution(
-            tools=["search"],
-            path="/data/*",
+            Capability("search", path=Pattern("/data/*"))
         ).build(keypair)
     else:
         # Mint different execution warrant for strategist
@@ -657,7 +662,10 @@ Use passthrough for:
 ### Attenuating Node
 
 ```python
-secure.node("researcher", tools=["search", "read_file"], path="/data/*")
+secure.node("researcher", capabilities=[
+    Capability("search", path=Pattern("/data/*")),
+    Capability("read_file", path=Pattern("/data/*"))
+])
 ```
 
 Authority is narrowed to the **intersection** of:

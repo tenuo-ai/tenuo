@@ -28,7 +28,7 @@
 - Chain limits (depth 64, chain length 8)
 
 ### Python SDK ✅
-- Tiered API (`root_task`, `scoped_task`, `configure`)
+- Tiered API (`Capability` objects, `root_task`, `scoped_task`, `configure`)
 - `@lockdown` decorator
 - `protect_tools()` for LangChain
 - `@tenuo_node` for LangGraph

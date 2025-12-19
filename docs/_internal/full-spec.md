@@ -124,7 +124,7 @@ For container compromise, Tenuo limits damage to current warrant's scope and TTL
 result = worker.invoke(task)
 
 # After: worker can only read this file
-with scoped_task(tool="read_file", path=task.file):
+with scoped_task(Capability("read_file", path=task.file)):
     result = worker.invoke(task)
 ```
 
@@ -141,11 +141,10 @@ from tenuo import scoped_task, Capability, Pattern
 with scoped_task(Capability("read_file", path=file_path)):
     content = read_file(file_path)
 
-# Multiple capabilities
+# Multiple tools
 with scoped_task(
     Capability("read_file", path=Pattern("/data/*")),
-    Capability("search"),
-    max_results=10,
+    Capability("search", max_results=10),
 ):
     results = search(query)
     content = read_file(results[0])
