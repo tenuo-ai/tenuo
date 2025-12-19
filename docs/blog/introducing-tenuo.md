@@ -85,11 +85,11 @@ The warrant carries:
 
 Everything travels with the request. Verification is local.
 
-This solves access. It does not yet solve delegation.
+This solves possession. It doesn't yet solve propagation: authority that narrows and expires.
 
 ## Part 2: The Expense Card Model
 
-Access control is binary: you have the key or you don't. Delegation needs gradients.
+Possession is binary. You have the key or you don't. Propagation is a gradient.
 
 Agentic systems need graduated authority: limits that narrow as work flows across agents, and die when the work ends.
 

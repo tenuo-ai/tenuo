@@ -31,7 +31,7 @@ client.StdioServerParameters = MagicMock()
 
 # Determine ToolMock behavior based on mcp version if available, otherwise mock
 try:
-    from mcp.types import Tool as MCPTool
+    from mcp.types import Tool as MCPTool  # type: ignore[import-not-found]
 except ImportError:
     MCPTool = MagicMock()
     client.MCPTool = MCPTool
