@@ -126,6 +126,7 @@ async def test_mcp_client_with_config_registration(mcp_server_script):
 version: "1"
 tools:
   read_file:
+    description: "Read file contents"
     constraints:
       max_size:
         from: body
@@ -206,6 +207,7 @@ async def test_mcp_nested_field_extraction():
 version: "1"
 tools:
   db_query:
+    description: "Execute a database query"
     constraints:
       table:
         from: body
@@ -214,21 +216,29 @@ tools:
         from: body
         path: "query.operation"
 """
-    config = McpConfig.from_yaml(config_yaml)
-    compiled = CompiledMcpConfig.compile(config)
+    # Write to temp file since McpConfig only has from_file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        f.write(config_yaml)
+        config_path = f.name
     
-    args = {
-        "query": {
-            "table": "users",
-            "operation": "SELECT"
+    try:
+        config = McpConfig.from_file(config_path)
+        compiled = CompiledMcpConfig.compile(config)
+        
+        args = {
+            "query": {
+                "table": "users",
+                "operation": "SELECT"
+            }
         }
-    }
-    
-    result = compiled.extract_constraints("db_query", args)
-    constraints = dict(result.constraints)
-    
-    assert constraints["table"] == "users"
-    assert constraints["op"] == "SELECT"
+        
+        result = compiled.extract_constraints("db_query", args)
+        constraints = dict(result.constraints)
+        
+        assert constraints["table"] == "users"
+        assert constraints["op"] == "SELECT"
+    finally:
+        os.unlink(config_path)
 
 
 @pytest.mark.asyncio
@@ -285,6 +295,7 @@ async def test_config_auto_registration(mcp_server_script):
 version: "1"
 tools:
   read_file:
+    description: "Read file contents"
     constraints:
       max_size:
         from: body

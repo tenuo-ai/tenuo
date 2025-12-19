@@ -227,10 +227,9 @@ class SecureMCPClient:
                 keypair = get_signing_key_context()
                 
                 if warrant is not None and keypair is not None:
-                    from tenuo_core import wire  # type: ignore[import-not-found,import-untyped]
                     import base64
                     
-                    warrant_base64 = wire.encode_base64(warrant)
+                    warrant_base64 = warrant.to_base64()
                     # Create PoP signature for this specific call
                     pop_sig = warrant.create_pop_signature(keypair, tool_name, args)
                     signature_base64 = base64.b64encode(bytes(pop_sig)).decode('utf-8')
