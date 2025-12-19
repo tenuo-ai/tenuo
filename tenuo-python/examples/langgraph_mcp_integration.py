@@ -123,7 +123,7 @@ async def main():
 
         # 8. Test Security (Unauthorized path)
         print("\n8. Testing security boundary...")
-        async with root_task(tools=["read_file"], path=Pattern("/tmp/*")):
+        async with root_task(Capability("read_file", path=Pattern("/tmp/*"))):
             try:
                 # Malicious node tries to escape /tmp/
                 print("   Researcher attempting to read /etc/passwd...")

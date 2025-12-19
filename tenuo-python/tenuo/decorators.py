@@ -107,7 +107,7 @@ def _make_actionable_error(
     # Add specific fix suggestions based on error code
     if error_code == AuthErrorCode.MISSING_CONTEXT:
         base += "\n\nTo fix:"
-        base += "\n  1. Wrap the call with: async with root_task(tools=[...]):"
+        base += "\n  1. Wrap the call with: async with root_task(Capability(\"<tool>\", ...)):"
         base += "\n  2. Or use: with set_warrant_context(warrant), set_signing_key_context(keypair):"
         base += f"\n  3. Or pass warrant explicitly: @lockdown(warrant, tool='{tool_name}')"
     elif error_code == AuthErrorCode.POP_MISSING:
@@ -120,7 +120,7 @@ def _make_actionable_error(
         base += "\n  2. Or check TTL configuration"
     elif error_code == AuthErrorCode.SCOPE_VIOLATION:
         base += "\n\nTo fix:"
-        base += f"\n  1. Add '{tool_name}' to warrant tools: root_task(tools=['{tool_name}', ...])"
+        base += f'\n  1. Add a capability for this tool: root_task(Capability("{tool_name}", ...))'
         base += "\n  2. Or use scoped_task to narrow from parent warrant"
     elif error_code == AuthErrorCode.CONSTRAINT_VIOLATION:
         base += "\n\nTo fix:"

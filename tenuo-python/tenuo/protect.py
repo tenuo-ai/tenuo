@@ -5,7 +5,7 @@ Provides protect_tools() to wrap tools with authorization checks,
 and protected_tool decorator for custom tools.
 
 Usage:
-    from tenuo import configure, root_task, protect_tools
+    from tenuo import configure, root_task, protect_tools, Capability, Pattern
     
     # Configure
     configure(issuer_key=my_key, dev_mode=True)
@@ -15,7 +15,7 @@ Usage:
     protect_tools(tools)  # Mutates in place by default
     
     # Use with scoped authority
-    async with root_task(tools=["read_file"], path="/data/*"):
+    async with root_task(Capability("read_file", path=Pattern("/data/*"))):
         result = await tools[0](path="/data/report.csv")
 """
 

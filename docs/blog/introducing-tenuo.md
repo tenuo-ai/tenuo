@@ -85,11 +85,11 @@ The warrant carries:
 
 Everything travels with the request. Verification is local.
 
-This solves possession. It doesn't yet solve propagation: authority that narrows and expires.
+This defines the shape of authority. It doesn't yet define its motion: how it shrinks as it travels downstream.
 
 ## Part 2: The Expense Card Model
 
-Possession is binary. You have the key or you don't. Propagation is a gradient.
+A key is an object. It sits in your pocket. A flow is an event. It happens over time.
 
 Agentic systems need graduated authority: limits that narrow as work flows across agents, and die when the work ends.
 

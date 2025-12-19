@@ -64,14 +64,12 @@ async with root_task(Capability("read_file", path=Pattern("/data/*"))):
 **Target user**: Developer who needs control over delegation chains.
 
 ```python
-from tenuo import Warrant, SigningKey, Constraints, Pattern
+from tenuo import Warrant, SigningKey, Constraints, Capability, Pattern
 
 # Create root warrant with per-tool capabilities
 root = Warrant.issue(
-    capabilities={
-        "read_file": {"path": Pattern("/data/*")},
-        "write_file": {"path": Pattern("/data/*")},
-    },
+    capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")})
+               .merge(Constraints.for_tool("write_file", {"path": Pattern("/data/*")})),
     keypair=issuer_keypair,
     holder=agent_keypair.public_key,
     ttl_seconds=300,

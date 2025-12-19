@@ -949,9 +949,9 @@ protected = protect_tools([read_file, write_file, delete_file])
 
 ```python
 # Parent: any query
-with root_task(tools=["search"], query=Wildcard()):
+async with root_task(Capability("search", query=Wildcard())):
     # Child: narrow to pattern
-    with scoped_task(query=Pattern("*public*")):
+    async with scoped_task(Capability("search", query=Pattern("*public*"))):
         await search(query="public data")  # OK
 ```
 
@@ -959,7 +959,7 @@ with root_task(tools=["search"], query=Wildcard()):
 
 ```python
 # Read-only access to reports directory
-with root_task(tools=["read_file"], path=Pattern("/data/reports/*")):
+async with root_task(Capability("read_file", path=Pattern("/data/reports/*"))):
     await read_file(path="/data/reports/q3.csv")  # OK
     await read_file(path="/etc/passwd")           # FAILS
 ```
@@ -968,7 +968,7 @@ with root_task(tools=["read_file"], path=Pattern("/data/reports/*")):
 
 ```python
 # Limit replica counts
-with root_task(tools=["scale"], replicas=Range.max_value(15)):
+async with root_task(Capability("scale", replicas=Range.max_value(15))):
     await scale(replicas=5)   # OK
     await scale(replicas=20)  # FAILS
 ```
@@ -977,7 +977,7 @@ with root_task(tools=["scale"], replicas=Range.max_value(15)):
 
 ```python
 # Only staging and dev
-with root_task(tools=["deploy"], env=OneOf(["staging", "dev"])):
+async with root_task(Capability("deploy", env=OneOf(["staging", "dev"]))):
     await deploy(env="staging")    # OK
     await deploy(env="production") # FAILS
 ```
@@ -986,7 +986,7 @@ with root_task(tools=["deploy"], env=OneOf(["staging", "dev"])):
 
 ```python
 # Only specific tables
-with root_task(tools=["query"], table=OneOf(["users", "orders"])):
+async with root_task(Capability("query", table=OneOf(["users", "orders"]))):
     await query(table="users")   # OK
     await query(table="secrets") # FAILS
 ```

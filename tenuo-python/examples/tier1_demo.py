@@ -15,6 +15,7 @@ from tenuo import (
     ToolSchema,
     register_schema,
     Pattern,
+    Capability,
 )
 
 # 1. Define your tools (async or sync)
@@ -49,7 +50,7 @@ async def main():
     
     # 4. Use root_task to define initial scope
     print("\n1. Root Task: Allow reading /data/*")
-    async with root_task(tools=["read_file"], path=Pattern("/data/*")):
+    async with root_task(Capability("read_file", path=Pattern("/data/*"))):
         # Authorized call
         await protected_read(path="/data/report.txt")
         
@@ -62,9 +63,9 @@ async def main():
 
     # 5. Scoped Task: Narrowing authority
     print("\n2. Scoped Task: Narrowing to /data/reports/*")
-    async with root_task(tools=["read_file"], path=Pattern("/data/*")):
+    async with root_task(Capability("read_file", path=Pattern("/data/*"))):
         # Create a narrower scope
-        async with scoped_task(path=Pattern("/data/reports/*")):
+        async with scoped_task(Capability("read_file", path=Pattern("/data/reports/*"))):
             # Authorized in narrow scope
             await protected_read(path="/data/reports/q3.pdf")
             
@@ -79,7 +80,7 @@ async def main():
     print("\n3. Critical Tool: delete_file")
     try:
         # Try to use critical tool without constraints
-        async with root_task(tools=["delete_file"]):
+        async with root_task(Capability("delete_file")):
             print("  [Attempt] Deleting /data/file.txt...")
             await protected_delete(path="/data/file.txt")
     except Exception as e:

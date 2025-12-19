@@ -963,7 +963,7 @@ kp = SigningKey.generate()
 tools = secure_agent([search, calculator], issuer_keypair=kp)
 
 # Use with scoped authority
-with root_task_sync(tools=["search", "calculator"]):
+with root_task_sync(Capability("search"), Capability("calculator")):
     result = executor.invoke({"input": "What is 2+2?"})
 ```
 
