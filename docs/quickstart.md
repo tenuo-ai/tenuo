@@ -273,7 +273,7 @@ Deploy Tenuo as a gateway authorizer:
 
 ## MCP Integration
 
-Tenuo provides a full Model Context Protocol (MCP) client with automatic tool protection.
+Tenuo provides a full Model Context Protocol (MCP) client with automatic tool protection (requires Python 3.10+).
 
 - **[MCP Integration Guide](./mcp)** — Full documentation and examples
 

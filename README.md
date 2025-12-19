@@ -161,7 +161,7 @@ from tenuo.langgraph import TenuoToolNode
 tool_node = TenuoToolNode(tools)
 ```
 
-**MCP (Model Context Protocol)**
+**MCP (Model Context Protocol)** _(Requires Python 3.10+)_
 ```python
 from tenuo import configure, root_task, Pattern, SigningKey, Capability
 
