@@ -129,7 +129,7 @@ def _explain_tool_not_authorized(error: ToolNotAuthorized, out: TextIO) -> None:
             print(f"  • {t}", file=out)
     
     print("\nHow to fix:", file=out)
-    print(f"  • Add '{tool}' to root_task(tools=[...])", file=out)
+    print(f"  • Add capability for '{tool}': root_task(Capability(\"{tool}\", ...))", file=out)
     if authorized:
         print("  • Or use one of the authorized tools", file=out)
 

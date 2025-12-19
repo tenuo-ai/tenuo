@@ -66,9 +66,11 @@ async def test_mcp_tool_call_authorized(mcp_server_script):
     keypair = SigningKey.generate()
     configure(issuer_key=keypair, dev_mode=True)
     
-    # Create test file
-    test_file = Path("/tmp/tenuo_mcp_test.txt")
-    test_file.write_text("test content")
+    # Create test file using tempfile for cross-platform support
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
+        tf.write("test content")
+        test_file_path = tf.name
+    test_file = Path(test_file_path)
     
     try:
         async with SecureMCPClient(
@@ -80,7 +82,7 @@ async def test_mcp_tool_call_authorized(mcp_server_script):
             read_file = protected_tools["read_file"]
             
             # Call with authorization
-            async with root_task(Capability("read_file", path=Pattern("/tmp/*"))):
+            async with root_task(Capability("read_file", path=Pattern("*"))):
                 result = await read_file(path=str(test_file))
                 assert result is not None
                 assert len(result) > 0
@@ -109,10 +111,12 @@ async def test_mcp_tool_call_blocked(mcp_server_script):
         protected_tools = await client.get_protected_tools()
         read_file = protected_tools["read_file"]
         
-        # Try to read outside allowed path
-        async with root_task(Capability("read_file", path=Pattern("/tmp/*"))):
+        # Try to read outside allowed path (Pattern matches nothing effectively or specific file)
+        # We allow * but check a specific exclusion or just use a restricted pattern
+        async with root_task(Capability("read_file", path=Pattern("*.allowed"))):
             with pytest.raises(ConstraintViolation):
-                await read_file(path="/etc/passwd")
+                # This file doesn't match *.allowed
+                await read_file(path=str(Path(tempfile.gettempdir()) / "forbidden.txt"))
 
 
 @pytest.mark.asyncio
@@ -183,11 +187,13 @@ async def test_mcp_warrant_injection(mcp_server_script):
         args=[str(mcp_server_script)]
     ) as client:
         # Create test file
-        test_file = Path("/tmp/tenuo_injection_test.txt")
-        test_file.write_text("injection test")
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
+            tf.write("injection test")
+            test_file_path = tf.name
+        test_file = Path(test_file_path)
         
         try:
-            async with root_task(Capability("read_file", path=Pattern("/tmp/*"))):
+            async with root_task(Capability("read_file", path=Pattern("*"))):
                 # Call tool with injection
                 result = await client.call_tool(
                     "read_file",
