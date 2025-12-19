@@ -153,7 +153,7 @@ tools:
             read_file = protected_tools["read_file"]
             
             # This should work and use the default max_size from config
-            async with root_task(Capability("read_file", path=Pattern("/tmp/*"), max_size=Range.max_value(2000))):
+            async with root_task(Capability("read_file", path=Pattern("*"), max_size=Range.max_value(2000))):
                 # Test file
                 with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
                     tf.write("small")
