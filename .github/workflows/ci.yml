@@ -116,10 +116,12 @@ jobs:
           echo "=== Site packages ==="
           ls -la $(python -c "import site; print(site.getsitepackages()[0])") | head -20
           echo "=== Installing other deps ==="
-          pip install pytest ruff mypy
+          pip install pytest pytest-asyncio ruff mypy
           pip install langchain langchain-core langchain-openai langgraph
           pip install fastapi uvicorn pydantic PyYAML
           pip install types-PyYAML types-requests
+          # MCP SDK requires Python 3.10+
+          python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && pip install mcp || echo "Skipping MCP (requires Python 3.10+)"
 
       - name: Verify import
         run: |
