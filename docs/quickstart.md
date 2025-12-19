@@ -124,7 +124,7 @@ with set_warrant_context(warrant), set_signing_key_context(keypair):
 ### 5. LangChain One-Liner (Recommended)
 
 ```python
-from tenuo import SigningKey, root_task_sync
+from tenuo import SigningKey, root_task_sync, Capability
 from tenuo.langchain import secure_agent
 
 # One line to secure your LangChain tools
@@ -132,7 +132,7 @@ kp = SigningKey.generate()
 tools = secure_agent([search, calculator], issuer_keypair=kp)
 
 # Run with scoped authority
-with root_task_sync(tools=["search", "calculator"]):
+with root_task_sync(Capability("search"), Capability("calculator")):
     result = executor.invoke({"input": "What is 2+2?"})
 ```
 

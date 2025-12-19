@@ -5,8 +5,9 @@ Provides the tenuo_node decorator for scoping authority in LangGraph nodes.
 
 Usage:
     from tenuo.langgraph import tenuo_node
+    from tenuo import Capability, Pattern
     
-    @tenuo_node(tools=["search"], query="*")
+    @tenuo_node(Capability("search", query=Pattern("*")))
     async def researcher(state):
         # Automatically scoped to search tool with query constraint
         return await search_tool.invoke(state["query"])
@@ -19,11 +20,11 @@ in docs/langgraph-spec.md.
 
 import asyncio
 from functools import wraps
-from typing import Any, Callable, List, Optional, TypeVar
+from typing import Any, Callable, Optional, TypeVar
 
 from .scoped import scoped_task
 from .decorators import get_warrant_context
-from .constraints import Capability, ensure_constraint
+from .constraints import Capability
 
 # Type variable for node functions
 F = TypeVar('F', bound=Callable)
@@ -31,9 +32,7 @@ F = TypeVar('F', bound=Callable)
 
 def tenuo_node(
     *capabilities: Capability,
-    tools: Optional[List[str]] = None,
     ttl: Optional[int] = None,
-    **constraints: Any,
 ) -> Callable[[F], F]:
     """
     Decorator to scope authority for a LangGraph node.
@@ -42,21 +41,18 @@ def tenuo_node(
     narrowing the warrant scope for the duration of the node execution.
     
     Args:
-        *capabilities: Capability objects (preferred)
-        tools: List of tools (legacy convenience)
+        *capabilities: Capability objects defining tool access
         ttl: Optional TTL override
-        **constraints: Constraints applied to all 'tools' (if using legacy arg)
     
     Returns:
         Decorated function with automatic scope narrowing
+    
+    Example:
+        @tenuo_node(Capability("search", query=Pattern("*")))
+        async def researcher(state):
+            return await search_tool.invoke(state["query"])
     """
-    # Normalize arguments to list of Capability objects
     caps_list = list(capabilities)
-    if tools:
-        # broadcast constraints to all tools, ensuring they are wrapped
-        wrapped_constraints = {k: ensure_constraint(v) for k, v in constraints.items()}
-        for tool in tools:
-            caps_list.append(Capability(tool, **wrapped_constraints))
             
     def decorator(fn: F) -> F:
         if asyncio.iscoroutinefunction(fn):
@@ -154,7 +150,7 @@ class TenuoToolNode:
         graph.add_node("tools", tool_node)
         
         # Run with authorization
-        with root_task_sync(tools=["search", "calculator"]):
+        with root_task_sync(Capability("search"), Capability("calculator")):
             result = graph.invoke(...)
     
     Args:

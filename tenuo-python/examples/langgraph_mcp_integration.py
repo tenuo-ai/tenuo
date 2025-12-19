@@ -20,7 +20,7 @@ try:
     from langgraph.graph import StateGraph, START, END
     from tenuo.langgraph import tenuo_node
     from tenuo.mcp import SecureMCPClient, MCP_AVAILABLE
-    from tenuo import SigningKey, configure, root_task, Pattern
+    from tenuo import SigningKey, configure, root_task, Pattern, Capability
 except ImportError:
     print("❌ Prerequisites not met. Install with: pip install tenuo[langgraph,mcp]")
     import sys
@@ -66,7 +66,7 @@ async def main():
 
         # 5. Define Graph Nodes
         
-        @tenuo_node(tools=["read_file"], path="/tmp/*")
+        @tenuo_node(Capability("read_file", path=Pattern("/tmp/*")))
         async def researcher_node(state: AgentState):
             """Researcher node with limited authority."""
             print("\n   [Node: Researcher] Executing with restricted warrant...")

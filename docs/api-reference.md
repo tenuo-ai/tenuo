@@ -904,7 +904,7 @@ def read_file(path: str) -> str:
     return open(path).read()
 
 # Use with task scoping
-async with root_task(tools=["read_file"], path="/data/*"):
+async with root_task(Capability("read_file", path=Pattern("/data/*"))):
     read_file("/data/test.txt")
 ```
 
@@ -992,7 +992,7 @@ tools = [DuckDuckGoSearchRun()]
 protect_tools(tools)
 
 # Use with scoped authority
-async with root_task(tools=["duckduckgo_search"], query="*"):
+async with root_task(Capability("duckduckgo_search", query=Wildcard())):
     result = await tools[0].ainvoke({"query": "AI news"})
 ```
 
@@ -1017,8 +1017,9 @@ Scope authority for a LangGraph node.
 
 ```python
 from tenuo.langgraph import tenuo_node
+from tenuo import Capability, Pattern
 
-@tenuo_node(tools=["search"], query="*public*")
+@tenuo_node(Capability("search", query=Pattern("*public*")))
 async def researcher(state):
     results = await search_tool(query=state["query"])
     return {"results": results}
@@ -1028,9 +1029,8 @@ async def researcher(state):
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `tools` | `List[str]` | Tools this node is allowed to use |
+| `*capabilities` | `Capability` | Capability objects defining tool access |
 | `ttl` | `int` | Optional TTL override (seconds) |
-| `**constraints` | `Any` | Constraint key-value pairs |
 
 ### `@require_warrant`
 
@@ -1063,7 +1063,7 @@ tool_node = TenuoToolNode([search, calculator])
 graph.add_node("tools", tool_node)
 
 # Run with authorization
-with root_task_sync(tools=["search", "calculator"]):
+with root_task_sync(Capability("search"), Capability("calculator")):
     result = graph.invoke(...)
 ```
 

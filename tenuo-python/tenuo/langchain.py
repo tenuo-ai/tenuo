@@ -15,7 +15,7 @@ This module provides two patterns for protecting LangChain tools with Tenuo:
     tools = protect_langchain_tools([search_tool, file_tool])
     
     # Tools automatically use warrant from context
-    with root_task_sync(tools=["search", "read_file"], path="/data/*"):
+    with root_task_sync(Capability("search"), Capability("read_file", path=Pattern("/data/*"))):
         agent = create_openai_tools_agent(llm, tools)
         result = executor.invoke({"input": "search for reports"})
     ```
@@ -102,7 +102,7 @@ def protect_langchain_tools(
         
         tools = protect_langchain_tools([search_tool, file_tool])
         
-        with root_task_sync(tools=["search", "read_file"], path="/data/*"):
+        with root_task_sync(Capability("search"), Capability("read_file", path=Pattern("/data/*"))):
             result = tools[0].invoke({"query": "Q3 reports"})
     
     Raises:
@@ -594,7 +594,7 @@ def secure_agent(
         executor = AgentExecutor(agent=agent, tools=tools)
         
         # Run with authorization
-        with root_task_sync(tools=["search", "calculator"]):
+        with root_task_sync(Capability("search"), Capability("calculator")):
             result = executor.invoke({"input": "What is 2+2?"})
     
     Note:

@@ -4,10 +4,12 @@ Tenuo MCP Integration.
 Full Model Context Protocol integration with cryptographic authorization.
 
 Example:
+    from tenuo import root_task, Capability, Pattern
+    
     async with SecureMCPClient("python", ["mcp_server.py"]) as client:
         tools = await client.get_protected_tools()
         
-        with root_task_sync(tools=["read_file"], path="/data/*"):
+        async with root_task(Capability("read_file", path=Pattern("/data/*"))):
             result = await tools["read_file"](path="/data/file.txt")
 """
 

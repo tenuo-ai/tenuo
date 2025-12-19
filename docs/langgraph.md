@@ -27,7 +27,7 @@ async def search(query: str) -> list:
     return [f"Result for {query}"]
 
 # 2. Scope your nodes (SCOPING layer)
-@tenuo_node(tools=["search"])
+@tenuo_node(Capability("search"))
 async def researcher(state):
     return {"results": await search(state["query"])}
 
@@ -108,14 +108,14 @@ async def write_file(path: str, content: str) -> None:
 
 # LAYER 1: Node decorator (SCOPING)
 # Narrows the warrant for this node's execution
-@tenuo_node(tools=["search"], query="*public*")
+@tenuo_node(Capability("search", query=Pattern("*public*")))
 async def researcher(state):
     # Warrant is scoped to: tools=["search"], query must match "*public*"
     # But enforcement happens when search_tool() is called
     results = await search_tool(query=state["query"])
     return {"results": results}
 
-@tenuo_node(tools=["write_file"], path="/output/*")
+@tenuo_node(Capability("write_file", path=Pattern("/output/*")))
 async def writer(state):
     # Warrant is scoped to: tools=["write_file"], path must match "/output/*"
     await write_file(path="/output/report.txt", content=state["content"])
@@ -167,7 +167,7 @@ For v0.1, `@tenuo_node` uses context internally. For advanced use cases requirin
 
 ```python
 # Missing parent warrant context
-@tenuo_node(tools=["search"])
+@tenuo_node(Capability("search"))
 async def researcher(state):
     ...
     
@@ -196,7 +196,7 @@ async with root_task(Capability("search"), Capability("write_file")):
 from tenuo import get_warrant_context
 from tenuo.langgraph import tenuo_node
 
-@tenuo_node(tools=["read_file"], path="/data/*")
+@tenuo_node(Capability("read_file", path=Pattern("/data/*")))
 async def my_node(state):
     warrant = get_warrant_context()
     
@@ -223,14 +223,14 @@ async def my_node(state):
 
 4. **Async/Sync**: Use `root_task` (async) with `ainvoke()`, use `root_task_sync` (sync) with `invoke()`. The `@lockdown` decorator works with both sync and async functions.
 
-5. **String constraints are auto-converted to Pattern**:
+5. **Use Capability objects for constraints**:
    ```python
-   @tenuo_node(tools=["search"], query="*public*")  # query becomes Pattern("*public*")
+   @tenuo_node(Capability("search", query=Pattern("*public*")))
    ```
    For other constraint types, use explicit constructors:
    ```python
-   from tenuo import Range, Exact
-   @tenuo_node(tools=["search"], max_results=Range(max=100), env=Exact("prod"))
+   from tenuo import Range, Exact, Capability
+   @tenuo_node(Capability("search", max_results=Range(max=100), env=Exact("prod")))
    ```
 
 ---

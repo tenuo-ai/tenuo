@@ -34,7 +34,7 @@ class TestTenuoNode:
         
         tools_seen = []
         
-        @tenuo_node(tools=["search"])
+        @tenuo_node(Capability("search"))
         def research_node(state):
             # Capture what tools are allowed
             warrant = get_warrant_context()
@@ -51,7 +51,7 @@ class TestTenuoNode:
         kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        @tenuo_node(tools=["read_file"], path="/data/*")
+        @tenuo_node(Capability("read_file", path=Pattern("/data/*")))
         def file_reader_node(state):
             return {"content": "file contents"}
         
@@ -64,7 +64,7 @@ class TestTenuoNode:
         kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        @tenuo_node(tools=["search"])
+        @tenuo_node(Capability("search"))
         def search_node(state):
             return {"result": "done"}
         
@@ -77,7 +77,7 @@ class TestTenuoNode:
         kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        @tenuo_node(tools=["search"])
+        @tenuo_node(Capability("search"))
         def narrow_node(state):
             # Inside here, only search should be allowed
             from tenuo.decorators import get_allowed_tools_context
@@ -90,7 +90,7 @@ class TestTenuoNode:
     
     def test_decorator_preserves_function_metadata(self):
         """@tenuo_node preserves function name and docstring."""
-        @tenuo_node(tools=["test"])
+        @tenuo_node(Capability("test"))
         def my_documented_node(state):
             """This is the docstring."""
             return state
@@ -147,7 +147,7 @@ class TestTenuoNodeAsync:
         kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        @tenuo_node(tools=["search"])
+        @tenuo_node(Capability("search"))
         async def async_search_node(state):
             return {"async": True}
         
@@ -165,9 +165,9 @@ class TestNestedNodes:
         kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        @tenuo_node(tools=["search"])
+        @tenuo_node(Capability("search"))
         def outer_node(state):
-            @tenuo_node(tools=["search"])
+            @tenuo_node(Capability("search"))
             def inner_node(state):
                 return {"inner": True}
             
@@ -183,9 +183,9 @@ class TestNestedNodes:
         kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        @tenuo_node(tools=["search"])
+        @tenuo_node(Capability("search"))
         def outer_node(state):
-            @tenuo_node(tools=["read_file"])  # Not in outer's scope!
+            @tenuo_node(Capability("read_file"))  # Not in outer's scope!
             def inner_node(state):
                 return {"inner": True}
             

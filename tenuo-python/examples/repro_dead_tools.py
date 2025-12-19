@@ -41,10 +41,10 @@ async def main():
                 # Getting past that to a Tenuo error means the session is alive.
                 
                 # To make it fully succeed, let's configure Tenuo locally
-                from tenuo import configure, SigningKey, root_task_sync, Pattern
+                from tenuo import configure, SigningKey, root_task_sync, Pattern, Capability
                 configure(issuer_key=SigningKey.generate(), dev_mode=True)
                 
-                with root_task_sync(tools=["read_file"], path=Pattern("/tmp/*")):
+                with root_task_sync(Capability("read_file", path=Pattern("/tmp/*"))):
                      result = await read_file(path=str(target_file))
                      print(f"SUCCESS: Tool call returned: {result}")
                      
