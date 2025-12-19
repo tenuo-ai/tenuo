@@ -135,14 +135,18 @@ Tenuo provides three levels of API, from simple to full control:
 **Tier 1: Scope a Task (80% of use cases)**
 
 ```python
-from tenuo import scoped_task
+from tenuo import scoped_task, Capability, Pattern
 
 # Scope authority for a block of code
-with scoped_task(tool="read_file", path=file_path):
+with scoped_task(Capability("read_file", path=file_path)):
     content = read_file(file_path)
 
-# Multiple tools
-with scoped_task(tools=["read_file", "search"], path="/data/*", max_results=10):
+# Multiple capabilities
+with scoped_task(
+    Capability("read_file", path=Pattern("/data/*")),
+    Capability("search"),
+    max_results=10,
+):
     results = search(query)
     content = read_file(results[0])
 ```
@@ -2233,7 +2237,7 @@ TOOL_SCHEMAS  # Recommended constraints per tool
 
 ```python
 # v0.1 (Implemented)
-@tenuo_node(tools=["read_file"], path="/data/*")  # Node-level scoping
+@tenuo_node(Capability("read_file", path=Pattern("/data/*")))  # Node-level scoping
 @require_warrant  # Explicit warrant requirement
 
 # v0.2 (Planned - see securegraph-spec.md)

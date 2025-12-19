@@ -21,28 +21,33 @@ Make Tenuo usable in **3 lines of code** for common cases, while exposing full c
 **Target user**: Developer who wants delegation without reading the spec.
 
 ```python
-from tenuo import root_task, scoped_task, protect_tools
+from tenuo import root_task, scoped_task, protect_tools, Capability, Pattern
 
 tools = [read_file, send_email, query_db]
 protect_tools(tools)  # Mutates in place by default
 
 # Explicitly create root authority, then scope it
-async with root_task(tools=["read_file", "query_db"], path="/data/*"):
+async with root_task(
+    Capability("read_file", path=Pattern("/data/*")),
+    Capability("query_db", path=Pattern("/data/*")),
+):
     # Narrow scope for specific subtask
-    async with scoped_task(tools=["read_file"], path="/data/reports/*"):
+    async with scoped_task(
+        Capability("read_file", path=Pattern("/data/reports/*"))
+    ):
         result = await agent.run(tools, "Summarize Q3 reports")
 ```
 
 Or get a new list (immutable pattern):
 
 ```python
-from tenuo import root_task, scoped_task, protect_tools
+from tenuo import root_task, scoped_task, protect_tools, Capability, Pattern
 
 original_tools = [read_file, send_email, query_db]
 tools = protect_tools(original_tools, inplace=False)  # Returns new list
 
-async with root_task(tools=["read_file"], path="/data/*"):
-    async with scoped_task(tools=["read_file"], path="/data/reports/*"):
+async with root_task(Capability("read_file", path=Pattern("/data/*"))):
+    async with scoped_task(Capability("read_file", path=Pattern("/data/reports/*"))):
         result = await agent.run(tools, "Summarize Q3 reports")
 ```
 
@@ -166,11 +171,11 @@ async def root_task(
     
     Example:
         # Single-process (Tier 1 default): issuer == holder
-        async with root_task(tools=["read_file"], path="/data/*"):
+        async with root_task(Capability("read_file", path=Pattern("/data/*"))):
             ...
         
         # Multi-process: explicit holder
-        async with root_task(tools=["read_file"], holder_key=worker_key):
+        async with root_task(Capability("read_file"), holder_key=worker_key):
             ...
     """
     config = _get_config()
@@ -252,12 +257,17 @@ async def scoped_task(
     Cannot mint new authority - only narrow existing authority.
     
     Usage:
-        async with root_task(tools=["read_file", "write_file"], path="/data/*"):
-            async with scoped_task(tools=["read_file"], path="/data/reports/*"):
+        async with root_task(
+            Capability("read_file", path=Pattern("/data/*")),
+            Capability("write_file", path=Pattern("/data/*")),
+        ):
+            async with scoped_task(
+                Capability("read_file", path=Pattern("/data/reports/*"))
+            ):
                 await agent.run(...)
     
     Args:
-        tools: Subset of parent's tools (None = inherit all)
+        *capabilities: One or more Capability objects to enforce
         ttl: Shorter TTL in seconds (None = inherit parent's remaining TTL)
         **constraints: Additional constraints (must be contained within parent's)
     
@@ -597,8 +607,8 @@ child = (parent.attenuate()
 class ScopedTaskBuilder:
     """Builder that supports preview before entering context."""
     
-    def __init__(self, tools: Optional[List[str]], constraints: Dict, ttl: Optional[int]):
-        self.tools = tools
+    def __init__(self, capabilities: Optional[List[Capability]], constraints: Dict, ttl: Optional[int]):
+        self.capabilities = capabilities
         self.constraints = constraints
         self.ttl = ttl
     
@@ -607,7 +617,7 @@ class ScopedTaskBuilder:
         Preview the derived scope without executing.
         
         Usage:
-            scope = scoped_task(tools=["read_file"], path="/data/reports/*")
+            scope = scoped_task(Capability("read_file", path=Pattern("/data/reports/*")))
             scope.preview()
             # Output:
             # Derived scope:
@@ -1576,7 +1586,7 @@ def explain(error: TenuoError) -> None:
         print(f"\nTool not in allowlist.")
         print(f"  Authorized tools: {error.authorized}")
         print(f"\nHow to fix:")
-        print(f"  • Add '{error.tool}' to root_task(tools=[...])")
+        print(f"  • Add Capability('{error.tool}', ...) to root_task(...)")
         print(f"  • Or use one of: {', '.join(error.authorized)}")
     
     elif isinstance(error, TenuoConstraintError):
@@ -1693,21 +1703,21 @@ class TenuoTool(BaseTool):
 # integrations/langgraph.py
 
 def tenuo_node(
-    tools: List[str],
+    *capabilities: Capability,
     **constraints
 ) -> Callable:
     """
     Decorator for LangGraph nodes that scopes authority.
     
     Usage:
-        @tenuo_node(tools=["read_file"], path="/data/*")
+        @tenuo_node(Capability("read_file", path=Pattern("/data/*")))
         async def researcher(state):
             ...
     """
     def decorator(fn):
         @wraps(fn)
         async def wrapped(state):
-            async with scoped_task(tools=tools, **constraints):
+            async with scoped_task(*capabilities, **constraints):
                 return await fn(state)
         return wrapped
     return decorator
@@ -1825,26 +1835,26 @@ __all__ = [
 
 async def test_root_task_creates_warrant():
     configure(issuer_key=TEST_KEY, trusted_roots=[TEST_ROOT], dev_mode=False)
-    async with root_task(tools=["read_file"], path="/data/*") as warrant:
+    async with root_task(Capability("read_file", path=Pattern("/data/*"))) as warrant:
         assert "read_file" in warrant.tools
         assert get_warrant() == warrant
 
 async def test_root_task_requires_issuer_key():
     configure(trusted_roots=[TEST_ROOT], dev_mode=False)  # No issuer key
     with pytest.raises(TenuoConfigError, match="no issuer key"):
-        async with root_task(tools=["read_file"]):
+        async with root_task(Capability("read_file")):
             pass
 
 async def test_root_task_issuer_equals_holder_by_default():
     configure(issuer_key=TEST_KEY, trusted_roots=[TEST_ROOT], dev_mode=False)
-    async with root_task(tools=["read_file"], path="/data/*") as warrant:
+    async with root_task(Capability("read_file", path=Pattern("/data/*"))) as warrant:
         # In Tier 1, issuer == holder
         keypair = get_keypair()
         assert warrant.holder == keypair.public_key
 
 async def test_root_task_explicit_holder():
     configure(issuer_key=ISSUER_KEY, trusted_roots=[TEST_ROOT], dev_mode=False)
-    async with root_task(tools=["read_file"], holder_key=WORKER_KEY) as warrant:
+    async with root_task(Capability("read_file"), holder_key=WORKER_KEY) as warrant:
         # Holder is different from issuer
         assert warrant.holder == WORKER_KEY.public_key
         assert get_keypair() == WORKER_KEY  # Context has holder key
@@ -1875,51 +1885,58 @@ def test_configure_self_signed_requires_dev_mode():
 async def test_scoped_task_requires_parent():
     configure(issuer_key=TEST_KEY, trusted_roots=[TEST_ROOT])
     with pytest.raises(TenuoAuthError, match="requires a parent"):
-        async with scoped_task(tools=["read_file"]):
+        async with scoped_task(Capability("read_file")):
             pass
 
 async def test_scoped_task_attenuates_parent():
     configure(issuer_key=TEST_KEY, trusted_roots=[TEST_ROOT])
-    async with root_task(tools=["read_file", "write_file"], path="/data/*") as parent:
-        async with scoped_task(tools=["read_file"], path="/data/reports/*") as child:
+    async with root_task(
+        Capability("read_file", path=Pattern("/data/*")),
+        Capability("write_file", path=Pattern("/data/*")),
+    ) as parent:
+        async with scoped_task(
+            Capability("read_file", path=Pattern("/data/reports/*"))
+        ) as child:
             assert child.depth == parent.depth + 1
             assert child.tools == ["read_file"]
             assert "write_file" not in child.tools
 
 async def test_scoped_task_rejects_tool_not_in_parent():
     configure(issuer_key=TEST_KEY, trusted_roots=[TEST_ROOT])
-    async with root_task(tools=["read_file"], path="/data/*"):
+    async with root_task(Capability("read_file", path=Pattern("/data/*"))):
         with pytest.raises(TenuoConstraintError, match="not in parent's allowlist"):
-            async with scoped_task(tools=["send_email"]):
+            async with scoped_task(Capability("send_email")):
                 pass
 
 async def test_scoped_task_allows_contained_glob():
     configure(issuer_key=TEST_KEY, trusted_roots=[TEST_ROOT])
-    async with root_task(tools=["read_file"], path="/data/*") as parent:
-        async with scoped_task(tools=["read_file"], path="/data/reports/*") as child:
+    async with root_task(Capability("read_file", path=Pattern("/data/*"))) as parent:
+        async with scoped_task(
+            Capability("read_file", path=Pattern("/data/reports/*"))
+        ) as child:
             # /data/reports/* is contained in /data/*
             assert child.get_constraint("path") == "/data/reports/*"
 
 async def test_scoped_task_rejects_broader_glob():
     configure(issuer_key=TEST_KEY, trusted_roots=[TEST_ROOT])
-    async with root_task(tools=["read_file"], path="/data/reports/*"):
+    async with root_task(Capability("read_file", path=Pattern("/data/reports/*"))):
         with pytest.raises(TenuoConstraintError, match="not contained"):
             # /data/* is broader than /data/reports/*
-            async with scoped_task(tools=["read_file"], path="/data/*"):
+            async with scoped_task(Capability("read_file", path=Pattern("/data/*"))):
                 pass
 
 async def test_scoped_task_rejects_different_prefix():
     configure(issuer_key=TEST_KEY, trusted_roots=[TEST_ROOT])
-    async with root_task(tools=["read_file"], path="/data/*"):
+    async with root_task(Capability("read_file", path=Pattern("/data/*"))):
         with pytest.raises(TenuoConstraintError, match="not contained"):
             # /etc/* has different prefix than /data/*
-            async with scoped_task(tools=["read_file"], path="/etc/*"):
+            async with scoped_task(Capability("read_file", path=Pattern("/etc/*"))):
                 pass
 
 async def test_scoped_task_restores_context():
     configure(issuer_key=TEST_KEY, trusted_roots=[TEST_ROOT])
-    async with root_task(tools=["read_file"], path="/data/*") as parent:
-        async with scoped_task(tools=["read_file"], path="/data/reports/*"):
+    async with root_task(Capability("read_file", path=Pattern("/data/*"))) as parent:
+        async with scoped_task(Capability("read_file", path=Pattern("/data/reports/*"))):
             pass
         assert get_warrant() == parent
     assert get_warrant() is None
@@ -1980,7 +1997,7 @@ async def test_protect_tools_allows_authorized():
     configure(issuer_key=TEST_KEY, trusted_roots=[TEST_ROOT])
     tools = [read_file]
     protect_tools(tools)
-    async with root_task(tools=["read_file"], path="/data/*"):
+    async with root_task(Capability("read_file", path=Pattern("/data/*"))):
         result = await tools[0](path="/data/test.txt")
         assert result is not None
 
@@ -1988,7 +2005,7 @@ async def test_critical_tool_requires_constraint():
     configure(issuer_key=TEST_KEY, trusted_roots=[TEST_ROOT])
     tools = [http_request]  # critical risk level
     protect_tools(tools)
-    async with root_task(tools=["http_request"]):  # No constraints!
+    async with root_task(Capability("http_request")):  # No constraints!
         with pytest.raises(TenuoConfigError, match="requires at least one constraint"):
             await tools[0](url="http://evil.com")
 
@@ -1996,7 +2013,7 @@ async def test_critical_tool_passes_with_constraint():
     configure(issuer_key=TEST_KEY, trusted_roots=[TEST_ROOT])
     tools = [http_request]
     protect_tools(tools)
-    async with root_task(tools=["http_request"], domain="*.example.com"):
+    async with root_task(Capability("http_request", domain="*.example.com")):
         result = await tools[0](url="http://api.example.com/data")
         assert result is not None
 
@@ -2063,21 +2080,35 @@ def test_explain_constraint_error(capsys):
 **"I can use root_task() and scoped_task() in 5 lines"**
 
 ```python
-from tenuo import configure, root_task, scoped_task, protect_tools
+from tenuo import (
+    configure,
+    root_task,
+    scoped_task,
+    protect_tools,
+    Capability,
+    Pattern,
+)
 
 configure(issuer_key_env="TENUO_KEY", trusted_roots=["path/to/root.pem"])
 tools = [read_file, send_email]
 protect_tools(tools)  # Mutates in place by default
 
-async with root_task(tools=["read_file"], path="/data/*"):
-    async with scoped_task(tools=["read_file"], path="/data/reports/*"):
+async with root_task(Capability("read_file", path=Pattern("/data/*"))):
+    async with scoped_task(Capability("read_file", path=Pattern("/data/reports/*"))):
         result = await agent.run(tools, "Summarize the Q3 report")
 ```
 
 Or with decorator (for custom tools):
 
 ```python
-from tenuo import configure, root_task, scoped_task, protected_tool
+from tenuo import (
+    configure,
+    root_task,
+    scoped_task,
+    protected_tool,
+    Capability,
+    Pattern,
+)
 
 configure(issuer_key_env="TENUO_KEY", trusted_roots=["path/to/root.pem"])
 
@@ -2085,15 +2116,18 @@ configure(issuer_key_env="TENUO_KEY", trusted_roots=["path/to/root.pem"])
 def read_file(path: str) -> str:
     return open(path).read()
 
-async with root_task(tools=["read_file"], path="/data/*"):
-    async with scoped_task(tools=["read_file"], path="/data/reports/*"):
+async with root_task(Capability("read_file", path=Pattern("/data/*"))):
+    async with scoped_task(Capability("read_file", path=Pattern("/data/reports/*"))):
         content = await read_file(path="/data/reports/q3.csv")
 ```
 
 With preview:
 ```python
-async with root_task(tools=["read_file", "write_file"], path="/data/*"):
-    scope = scoped_task(tools=["read_file"], path="/data/reports/*")
+async with root_task(
+    Capability("read_file", path=Pattern("/data/*")),
+    Capability("write_file", path=Pattern("/data/*")),
+):
+    scope = scoped_task(Capability("read_file", path=Pattern("/data/reports/*")))
     scope.preview().print()
     # Output:
     # Derived scope:
