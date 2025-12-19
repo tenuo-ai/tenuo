@@ -281,7 +281,19 @@ class SecureMCPClient:
         properties = input_schema.get('properties', {})
         allowed_keys = set(properties.keys())
         
-        @lockdown(tool=tool_name, extract_args=lambda **kwargs: kwargs)
+        def _extract_auth_args(**kwargs):
+            if self.compiled_config:
+                try:
+                    # Apply defaults and extraction rules from config
+                    result = self.compiled_config.extract_constraints(tool_name, kwargs)
+                    return result.constraints
+                except Exception:
+                    # If extraction fails (e.g. validation error), fallback to raw args
+                    # and let authorization fail naturally or succeed if constraints match
+                    return kwargs
+            return kwargs
+        
+        @lockdown(tool=tool_name, extract_args=_extract_auth_args)
         async def protected_tool(**kwargs):
             """Protected MCP tool wrapper."""
             # Filter arguments against schema (Schema-Based Argument Stripping)
