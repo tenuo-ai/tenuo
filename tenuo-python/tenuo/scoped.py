@@ -409,20 +409,29 @@ class ScopedTaskBuilder:
                 )
             
             # Get parent constraints
-            parent_constraints = {}
-            constraints_dict = parent.constraints_dict() if hasattr(parent, 'constraints_dict') else {}
-            for k, v in constraints_dict.items():
-                parent_constraints[k] = v
+            parent_caps = parent.capabilities if hasattr(parent, 'capabilities') else {}
             
-            # Compute derived constraints
+            # Use constraints from first child tool for preview purposes
+            first_tool = child_tools[0] if child_tools else None
+            if not first_tool and parent_caps:
+                first_tool = list(parent_caps.keys())[0]
+                
+            parent_constraints = parent_caps.get(first_tool, {}) if first_tool else {}
+            
+            # Check containment for ALL tools to be safe
+            for tool in child_tools:
+                tool_constraints = parent_caps.get(tool, {})
+                for key, child_value in self.constraints.items():
+                     parent_value = tool_constraints.get(key)
+                     if parent_value is not None:
+                         if not _is_constraint_contained(child_value, parent_value):
+                             return ScopePreview(
+                                 error=f"Constraint '{key}': {child_value} not contained in {parent_value} for tool {tool}"
+                             )
+
+            # Compute derived constraints (using first tool's base)
             derived_constraints = dict(parent_constraints)
             for key, child_value in self.constraints.items():
-                parent_value = parent_constraints.get(key)
-                if parent_value is not None:
-                    if not _is_constraint_contained(child_value, parent_value):
-                        return ScopePreview(
-                            error=f"Constraint '{key}': {child_value} not contained in {parent_value}"
-                        )
                 derived_constraints[key] = child_value
             
             # Compute TTL
@@ -517,9 +526,9 @@ def _enter_scoped_task_sync(
     builder = parent.attenuate_builder()
     
     # Apply tool restriction
+    current_allowed = _allowed_tools_context.get()
     if tools:
         # Get allowed tools from context (set by outer scoped_task) or warrant
-        current_allowed = _allowed_tools_context.get()
         if current_allowed is not None:
             # Check against the context's allowed tools (nested scoped_task)
             parent_tools = current_allowed
@@ -539,25 +548,42 @@ def _enter_scoped_task_sync(
                         value=str(tools),
                     )
     
-    # Apply constraints with containment validation
-    parent_constraints = {}
-    if hasattr(parent, 'constraints_dict'):
-        pc = parent.constraints_dict()
-        if pc is not None:
-            parent_constraints = dict(pc)
     
-    for key, child_value in constraints.items():
-        inferred = _ensure_constraint(key, child_value)
-        parent_value = parent_constraints.get(key)
+    # Identify target tools to apply constraints to
+    if tools:
+         builder.with_tools(tools)
+         target_tools = tools
+    elif current_allowed:
+         target_tools = current_allowed
+    elif parent.tools:
+         target_tools = parent.tools
+    else:
+         target_tools = []
+         
+    # Apply constraints with containment validation per tool
+    parent_caps = parent.capabilities if hasattr(parent, 'capabilities') else {}
+    
+    # If we have no target tools (e.g. implicitly all?), we should probably get them from caps keys
+    if not target_tools and parent_caps:
+        target_tools = list(parent_caps.keys())
+
+    # Prepare constraints to apply
+    inferred_constraints = {k: _ensure_constraint(k, v) for k, v in constraints.items()}
+    
+    for tool in target_tools:
+        tool_constraints = parent_caps.get(tool, {}).copy()
         
-        if parent_value is not None:
-            if not _is_constraint_contained(inferred, parent_value):
-                raise MonotonicityError(
-                    f"Constraint '{key}': '{child_value}' is not contained within "
-                    f"parent's '{parent_value}'"
-                )
-        
-        builder.with_constraint(key, inferred)
+        for key, child_value in inferred_constraints.items():
+            parent_value = tool_constraints.get(key)
+            if parent_value is not None:
+                if not _is_constraint_contained(child_value, parent_value):
+                    raise MonotonicityError(
+                        f"Constraint '{key}': '{child_value}' is not contained within "
+                        f"parent's '{parent_value}' for tool '{tool}'"
+                    )
+            tool_constraints[key] = child_value
+            
+        builder.with_capability(tool, tool_constraints)
     
     # Apply TTL
     if ttl:
@@ -685,10 +711,14 @@ async def root_task(
     
     # Issue the warrant
     # Issue the warrant
+    capabilities = {}
+    for tool in tools:
+        capabilities[tool] = constraint_dict if constraint_dict else {}
+
+    # Issue the warrant
     warrant = Warrant.issue(
-        tools=tools,
         keypair=issuer,
-        constraints=constraint_dict if constraint_dict else None,
+        capabilities=capabilities,
         ttl_seconds=effective_ttl,
         holder=holder.public_key if holder != issuer else None,
     )
@@ -740,10 +770,13 @@ def root_task_sync(
     for key, value in constraints.items():
         constraint_dict[key] = _ensure_constraint(key, value)
     
+    capabilities = {}
+    for tool in tools:
+        capabilities[tool] = constraint_dict if constraint_dict else {}
+    
     warrant = Warrant.issue(
-        tools=tools,
         keypair=issuer,
-        constraints=constraint_dict if constraint_dict else None,
+        capabilities=capabilities,
         ttl_seconds=effective_ttl,
         holder=holder.public_key if holder != issuer else None,
     )

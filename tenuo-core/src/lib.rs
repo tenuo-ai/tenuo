@@ -134,15 +134,18 @@ mod tests {
     fn test_basic_warrant_creation() {
         let keypair = SigningKey::generate();
 
+        let mut constraints = ConstraintSet::new();
+        constraints.insert("cluster".to_string(), Pattern::new("staging-*").unwrap());
+
         let warrant = Warrant::builder()
-            .tool("upgrade_cluster")
-            .constraint("cluster", Pattern::new("staging-*").unwrap())
+            .capability("upgrade_cluster", constraints)
             .ttl(Duration::from_secs(600))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
-        assert_eq!(warrant.tools(), Some(&["upgrade_cluster".to_string()][..]));
+        let caps = warrant.capabilities().unwrap();
+        assert!(caps.contains_key("upgrade_cluster"));
         assert!(warrant.verify(&keypair.public_key()).is_ok());
     }
 
@@ -151,17 +154,22 @@ mod tests {
         let keypair = SigningKey::generate();
         let child_keypair = SigningKey::generate();
 
+        let mut p_constraints = ConstraintSet::new();
+        p_constraints.insert("cluster".to_string(), Pattern::new("staging-*").unwrap());
+
         let parent = Warrant::builder()
-            .tool("upgrade_cluster")
-            .constraint("cluster", Pattern::new("staging-*").unwrap())
+            .capability("upgrade_cluster", p_constraints)
             .ttl(Duration::from_secs(600))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
+        let mut c_constraints = ConstraintSet::new();
+        c_constraints.insert("cluster".to_string(), Exact::new("staging-web"));
+
         let child = parent
             .attenuate()
-            .constraint("cluster", Exact::new("staging-web"))
+            .capability("upgrade_cluster", c_constraints)
             .build(&child_keypair, &keypair) // keypair is the parent issuer
             .unwrap();
 

@@ -1,5 +1,5 @@
 import pytest
-from tenuo import lockdown, Warrant, SigningKey, Exact
+from tenuo import lockdown, Warrant, SigningKey, Exact, Constraints
 
 @pytest.fixture
 def keypair():
@@ -8,10 +8,9 @@ def keypair():
 @pytest.fixture
 def warrant(keypair):
     return Warrant.issue(
-        tools=["test_tool"],
-        constraints={"a": Exact("1"), "b": Exact("2")},
-        ttl_seconds=300,
-        keypair=keypair
+        keypair=keypair,
+        capabilities=Constraints.for_tool("test_tool", {"a": Exact("1"), "b": Exact("2")}),
+        ttl_seconds=300
     )
 
 def test_lockdown_arg_extraction_standard(warrant, keypair):
@@ -43,10 +42,9 @@ def test_lockdown_arg_extraction_var_args(keypair):
     
     # Let's use "a" which is supported.
     w_list = Warrant.issue(
-        tools=["list_tool"],
-        constraints={"a": Exact("1")},
-        ttl_seconds=300,
-        keypair=keypair
+        keypair=keypair,
+        capabilities=Constraints.for_tool("list_tool", {"a": Exact("1")}),
+        ttl_seconds=300
     )
     
     @lockdown(w_list, tool="list_tool", keypair=keypair)

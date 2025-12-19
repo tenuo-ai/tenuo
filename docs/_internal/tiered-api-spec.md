@@ -59,23 +59,33 @@ async with root_task(tools=["read_file"], path="/data/*"):
 **Target user**: Developer who needs control over delegation chains.
 
 ```python
-from tenuo import Warrant, SigningKey
+from tenuo import Warrant, SigningKey, Constraints, Pattern
 
-# Create root warrant
-root = Warrant.builder() \
-    .tools(["read_file", "write_file"]) \
-    .constraint("path", "/data/*") \
-    .ttl(seconds=300) \
-    .holder(agent_keypair.public_key) \
-    .build(issuer_keypair)
+# Create root warrant with per-tool capabilities
+root = Warrant.issue(
+    capabilities={
+        "read_file": {"path": Pattern("/data/*")},
+        "write_file": {"path": Pattern("/data/*")},
+    },
+    keypair=issuer_keypair,
+    holder=agent_keypair.public_key,
+    ttl_seconds=300,
+)
+
+# Or using fluent builder:
+root = (Warrant.builder()
+    .capability("read_file", {"path": Pattern("/data/*")})
+    .capability("write_file", {"path": Pattern("/data/*")})
+    .ttl(300)
+    .holder(agent_keypair.public_key)
+    .build(issuer_keypair))
 
 # Delegate to worker with narrower scope
-child = root.attenuate_builder() \
-    .tools(["read_file"]) \
-    .constraint("path", "/data/reports/*") \
-    .ttl(seconds=60) \
-    .holder(worker_keypair.public_key) \
-    .build(worker_keypair, issuer_keypair)
+child = (root.attenuate()
+    .with_capability("read_file", {"path": Pattern("/data/reports/*")})
+    .ttl(60)
+    .holder(worker_keypair.public_key)
+    .build(worker_keypair, issuer_keypair))
 
 # Authorize action
 child.authorize("read_file", {"path": "/data/reports/q3.csv"}, pop_signature)
@@ -200,18 +210,25 @@ def _create_root_warrant(
     issuer: SigningKey,
     holder: SigningKey,
 ) -> Warrant:
-    """Create a root warrant with the given parameters."""
-    builder = Warrant.builder() \
-        .tools(tools) \
-        .ttl(seconds=ttl) \
-        .holder(holder.public_key)
+    """Create a root warrant with the given parameters.
     
-    # Apply constraints with auto-inferred types
+    Tier 1 applies the SAME constraints to ALL tools (shared constraint model).
+    For per-tool constraints, use Tier 2 (Warrant.issue with capabilities dict).
+    """
+    # Build constraint dict from kwargs
+    constraint_dict = {}
     for key, value in constraints.items():
-        constraint = infer_constraint_type(key, value)
-        builder = builder.constraint(key, constraint)
+        constraint_dict[key] = infer_constraint_type(key, value)
     
-    return builder.build(issuer)
+    # Build capabilities: same constraints for each tool
+    capabilities = {tool: constraint_dict for tool in tools}
+    
+    return Warrant.issue(
+        capabilities=capabilities,
+        keypair=issuer,
+        holder=holder.public_key,
+        ttl_seconds=ttl,
+    )
 ```
 
 ---
@@ -292,10 +309,10 @@ def _attenuate_with_containment(
     For complex narrowing logic (regex, ranges), use Tier 2.
     
     - Tools: child tools must be subset of parent tools
-    - Constraints: child must be contained within parent
+    - Constraints: child must be contained within parent (checked per-tool)
     - TTL: min(requested, parent_remaining)
     """
-    # Validate tools are subset
+    # Validate tools are subset (warrant.tools extracts keys from capabilities)
     parent_tools = set(parent.tools or [])
     child_tools = set(tools) if tools else parent_tools
     
@@ -306,16 +323,23 @@ def _attenuate_with_containment(
             reason=f"Tools {invalid} not in parent's allowlist {parent_tools}"
         )
     
-    # Build attenuation
-    builder = parent.attenuate().tools(list(child_tools))
+    # Build child constraint dict from kwargs
+    child_constraint_dict = {}
+    for key, value in constraints.items():
+        child_constraint_dict[key] = infer_constraint_type(key, value)
     
-    # Apply constraints with containment check
-    for key, child_value in constraints.items():
-        parent_constraint = parent.get_constraint(key)
+    # Validate containment against parent's constraints (per-tool)
+    # In Tier 1, parent has same constraints for all tools, so check against first tool
+    parent_caps = parent.capabilities or {}
+    first_tool = next(iter(child_tools), None)
+    parent_constraints = parent_caps.get(first_tool, {}) if first_tool else {}
+    
+    for key, child_value in child_constraint_dict.items():
+        parent_constraint = parent_constraints.get(key)
         
         if parent_constraint is None:
             # New constraint - always valid (narrows from "anything")
-            builder = builder.constraint(key, child_value)
+            pass
         elif not _is_contained(child_value, parent_constraint):
             raise TenuoConstraintError(
                 field=key,
@@ -323,8 +347,11 @@ def _attenuate_with_containment(
                 requested=child_value,
                 allowed=parent_constraint,
             )
-        else:
-            builder = builder.constraint(key, child_value)
+    
+    # Build attenuation with capabilities (same constraints for all tools in Tier 1)
+    builder = parent.attenuate()
+    for tool in child_tools:
+        builder = builder.with_capability(tool, child_constraint_dict)
     
     if ttl:
         builder = builder.ttl(ttl)
@@ -549,11 +576,15 @@ def infer_constraint_type(key: str, value: Any) -> Tier1Constraint:
 **For complex patterns not covered by Tier 1, use Tier 2:**
 
 ```python
-# Tier 2: Full control over constraint types
-child = parent.attenuate() \
-    .constraint("path", Regex(r"/data/\d{4}/.*")) \
-    .constraint("query", SqlPattern("SELECT * FROM users WHERE id = ?")) \
-    .build(keypair, parent_keypair)
+# Tier 2: Full control over constraint types with per-tool capabilities
+from tenuo import Warrant, Regex, CEL
+
+child = (parent.attenuate()
+    .with_capability("query_db", {
+        "path": Regex(r"/data/\d{4}/.*"),
+        "budget_check": CEL("amount < 10000 && currency == 'USD'"),
+    })
+    .build(keypair, parent_keypair))
 ```
 
 ---
@@ -1721,7 +1752,12 @@ from .warrant import Warrant
 from .crypto import SigningKey
 from .context import get_warrant, set_warrant, get_keypair, set_keypair
 from .pop import create_pop, verify_pop, generate_nonce
-from .constraints import PrefixGlob, SuffixMatch, Exact, OneOf, Range
+
+# Constraint types (from Rust core)
+from tenuo_core import Pattern, Exact, OneOf, Range, Regex, Cidr, UrlPattern
+
+# Helper for building capabilities dict
+from .constraints import Constraints
 
 # Integrations
 from .integrations.langchain import protect_langchain_tools
@@ -1750,6 +1786,7 @@ __all__ = [
     # Tier 2
     "Warrant",
     "SigningKey",
+    "Constraints",  # Helper: Constraints.for_tool(), Constraints.for_tools()
     "get_warrant",
     "set_warrant",
     "get_keypair",
@@ -1757,12 +1794,14 @@ __all__ = [
     "create_pop",
     "verify_pop",
     "generate_nonce",
-    # Tier 1 constraint types
-    "PrefixGlob",
-    "SuffixMatch",
+    # Constraint types (from Rust core)
+    "Pattern",
     "Exact",
     "OneOf",
     "Range",
+    "Regex",
+    "Cidr",
+    "UrlPattern",
     # Integrations
     "protect_langchain_tools",
     "tenuo_node",
@@ -2111,6 +2150,7 @@ recommended_constraints(tools)
 | Change | Rationale |
 |--------|-----------|
 | `tool: str` → `tools: List[str]` | Allowlist semantics, not single-tool label |
+| **`tools` + `constraints` → `capabilities`** | Per-tool constraints; `capabilities={tool: {field: constraint}}` |
 | Split `root_task()` / `scoped_task()` | No silent root minting |
 | `scoped_task()` errors without parent | Explicit authority flow |
 | Containment-based narrowing (Tier 1) | Simpler mental model than intersection |
@@ -2131,3 +2171,5 @@ recommended_constraints(tools)
 | PoP payload contract documented | Clear security properties |
 | Exceptions carry structured context | Better debugging |
 | `inplace=True` type check | Prevents runtime errors with tuples/immutable containers |
+| **`Constraints.for_tool()` / `for_tools()` helpers** | Convenience for building capabilities dict |
+| **`warrant.tools` preserved** | Backward compat: returns `list(capabilities.keys())` |

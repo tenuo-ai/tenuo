@@ -507,7 +507,7 @@ def test_root_task_creates_warrant(setup_config):
             assert warrant.tools == ["read_file"]
             
             # Check constraints
-            constraints = warrant.constraints_dict()
+            constraints = warrant.capabilities["read_file"]
             assert constraints["path"].pattern == "/data/*"
     
     asyncio.run(_test())

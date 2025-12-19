@@ -10,7 +10,8 @@ keywords = ["authorization", "capabilities", "agents", "security", "warrants", "
 categories = ["authentication", "cryptography", "ai", "security"]
 
 [lib]
-name = "tenuo_python"
+# Build the Python extension module as `tenuo_core` (matches pyproject module-name)
+name = "tenuo_core"
 crate-type = ["cdylib"]
 
 [dependencies]

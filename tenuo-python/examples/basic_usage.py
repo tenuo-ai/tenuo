@@ -9,7 +9,7 @@ Demonstrates:
 - Authorization checks with Proof-of-Possession
 """
 
-from tenuo import SigningKey, Warrant, Pattern, Exact, Range
+from tenuo import SigningKey, Warrant, Pattern, Exact, Range, Constraints
 
 def main():
     print("=== Tenuo Python SDK - Basic Usage ===\n")
@@ -25,12 +25,11 @@ def main():
     # 2. Create a root warrant with constraints
     print("2. Creating root warrant...")
     root_warrant = Warrant.issue(
-        tools=["manage_infrastructure"],
         keypair=control_key,
-        constraints={
+        capabilities=Constraints.for_tool("manage_infrastructure", {
             "cluster": Pattern("staging-*"),
             "replicas": Range.max_value(15)
-        },
+        }),
         ttl_seconds=3600,
         holder=control_key.public_key  # Bind to control plane initially
     )
@@ -42,8 +41,10 @@ def main():
     print("3. Attenuating warrant for worker...")
     worker_warrant = (
         root_warrant.attenuate()
-        .with_constraint("cluster", Exact("staging-web"))
-        .with_constraint("replicas", Range.max_value(10))
+        .with_capability("manage_infrastructure", {
+            "cluster": Exact("staging-web"),
+            "replicas": Range.max_value(10)
+        })
         .with_holder(worker_key.public_key)
         .delegate_to(worker_key, control_key)
     )

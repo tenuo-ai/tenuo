@@ -44,7 +44,7 @@ use crate::error::{Error, Result};
 use crate::MAX_DELEGATION_DEPTH;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -232,12 +232,15 @@ pub struct ChainLink {
     pub issuer_pubkey: PublicKey,
     /// Type of the issuer warrant (execution or issuer).
     pub issuer_type: WarrantType,
-    /// Tools the issuer had (for execution warrants) or could issue (for issuer warrants).
+    /// Capabilities of the issuer (for execution warrants).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub issuer_tools: Option<Vec<String>>,
-    /// Constraint bounds from the issuer.
+    pub issuer_capabilities: Option<BTreeMap<String, ConstraintSet>>,
+    /// Issuable tools (for issuer warrants).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub issuer_constraints: Option<ConstraintSet>,
+    pub issuer_issuable_tools: Option<Vec<String>>,
+    /// Constraint bounds (for issuer warrants).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issuer_constraint_bounds: Option<ConstraintSet>,
     /// Trust level of the issuer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub issuer_trust: Option<TrustLevel>,
@@ -262,10 +265,12 @@ pub struct ChainLinkSignedData {
     pub issuer_id: WarrantId,
     /// Issuer's warrant type
     pub issuer_type: WarrantType,
-    /// Issuer's tools (execution) or issuable_tools (issuer)
-    pub issuer_tools: Option<Vec<String>>,
-    /// Issuer's constraints or constraint_bounds
-    pub issuer_constraints: Option<ConstraintSet>,
+    /// Issuer's capabilities (execution)
+    pub issuer_capabilities: Option<BTreeMap<String, ConstraintSet>>,
+    /// Issuer's issuable_tools (issuer)
+    pub issuer_issuable_tools: Option<Vec<String>>,
+    /// Issuer's constraint_bounds
+    pub issuer_constraint_bounds: Option<ConstraintSet>,
     /// Issuer's trust level or trust_ceiling
     pub issuer_trust: Option<TrustLevel>,
     /// Issuer's expiration time
@@ -281,8 +286,9 @@ impl ChainLink {
             child_payload_bytes,
             issuer_id: self.issuer_id.clone(),
             issuer_type: self.issuer_type,
-            issuer_tools: self.issuer_tools.clone(),
-            issuer_constraints: self.issuer_constraints.clone(),
+            issuer_capabilities: self.issuer_capabilities.clone(),
+            issuer_issuable_tools: self.issuer_issuable_tools.clone(),
+            issuer_constraint_bounds: self.issuer_constraint_bounds.clone(),
             issuer_trust: self.issuer_trust,
             issuer_expires_at: self.issuer_expires_at,
             issuer_max_depth: self.issuer_max_depth,
@@ -318,12 +324,12 @@ pub struct WarrantPayload {
     // =========================================================================
     // Execution Warrant Fields
     // =========================================================================
-    /// The tool(s) this warrant authorizes (None for issuer warrants).
+    /// Capabilities: Map of tool_name -> constraint_set.
+    ///
+    /// This replaces the separate `tools` and `constraints` fields, allowing
+    /// for granular, per-tool constraints.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<String>>,
-    /// Constraints on tool arguments (None for issuer warrants).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub constraints: Option<ConstraintSet>,
+    pub capabilities: Option<BTreeMap<String, ConstraintSet>>,
 
     // =========================================================================
     // Issuer Warrant Fields
@@ -432,11 +438,13 @@ impl<'de> Deserialize<'de> for Warrant {
 
         let raw = WarrantRaw::deserialize(deserializer)?;
 
-        // Validate constraint depth before returning
-        if let Some(ref constraints) = raw.payload.constraints {
-            constraints
-                .validate_depth()
-                .map_err(serde::de::Error::custom)?;
+        // Validate constraint depth in all capability sets
+        if let Some(ref caps) = raw.payload.capabilities {
+            for constraints in caps.values() {
+                constraints
+                    .validate_depth()
+                    .map_err(serde::de::Error::custom)?;
+            }
         }
         if let Some(ref constraint_bounds) = raw.payload.constraint_bounds {
             constraint_bounds
@@ -494,14 +502,20 @@ impl Warrant {
         self.payload.version
     }
 
-    /// Get the tool name (None for issuer warrants).
-    pub fn tools(&self) -> Option<&[String]> {
-        self.payload.tools.as_deref()
+    /// Get the capabilities map (None for issuer warrants).
+    pub fn capabilities(&self) -> Option<&BTreeMap<String, ConstraintSet>> {
+        self.payload.capabilities.as_ref()
     }
 
-    /// Get the constraints (None for issuer warrants).
-    pub fn constraints(&self) -> Option<&ConstraintSet> {
-        self.payload.constraints.as_ref()
+    /// Get the tools authorized by this warrant.
+    ///
+    /// For execution warrants, this returns the list of tools from capabilities.
+    pub fn tools(&self) -> Option<Vec<String>> {
+        self.payload.capabilities.as_ref().map(|caps| {
+            let mut tools: Vec<String> = caps.keys().cloned().collect();
+            tools.sort(); // Deterministic order
+            tools
+        })
     }
 
     /// Get issuable tools (None for execution warrants).
@@ -544,8 +558,10 @@ impl Warrant {
     /// Call this after deserializing warrants from untrusted sources
     /// to prevent stack overflow attacks from deeply nested constraints.
     pub fn validate_constraint_depth(&self) -> Result<()> {
-        if let Some(constraints) = &self.payload.constraints {
-            constraints.validate_depth()?;
+        if let Some(caps) = &self.payload.capabilities {
+            for constraints in caps.values() {
+                constraints.validate_depth()?;
+            }
         }
         if let Some(constraint_bounds) = &self.payload.constraint_bounds {
             constraint_bounds.validate_depth()?;
@@ -575,9 +591,9 @@ impl Warrant {
         // Validate warrant type consistency
         match self.payload.r#type {
             WarrantType::Execution => {
-                if self.payload.tools.is_none() {
+                if self.payload.capabilities.is_none() {
                     return Err(Error::InvalidWarrantType {
-                        message: "execution warrant must have a tool".to_string(),
+                        message: "execution warrant must have capabilities".to_string(),
                     });
                 }
                 if self.payload.issuable_tools.is_some() {
@@ -597,17 +613,12 @@ impl Warrant {
                 }
             }
             WarrantType::Issuer => {
-                if self.payload.tools.is_some() {
+                if self.payload.capabilities.is_some() {
                     return Err(Error::InvalidWarrantType {
-                        message: "issuer warrant cannot have a tool".to_string(),
+                        message: "issuer warrant cannot have capabilities".to_string(),
                     });
                 }
-                if self.payload.constraints.is_some() {
-                    return Err(Error::InvalidWarrantType {
-                        message: "issuer warrant cannot have constraints (use constraint_bounds)"
-                            .to_string(),
-                    });
-                }
+
                 if self.payload.issuable_tools.is_none()
                     || self.payload.issuable_tools.as_ref().unwrap().is_empty()
                 {
@@ -906,23 +917,26 @@ impl Warrant {
         }
 
         // Check tool name
-        let warrant_tools =
-            self.payload.tools.as_ref().ok_or_else(|| {
-                Error::Validation("execution warrant must have tools".to_string())
-            })?;
+        // Check tool name and constraints
+        let capabilities = self.payload.capabilities.as_ref().ok_or_else(|| {
+            Error::Validation("execution warrant must have capabilities".to_string())
+        })?;
 
-        // Check if wildcard or if requested tool is in the list
-        if !warrant_tools.contains(&"*".to_string()) && !warrant_tools.iter().any(|t| t == tool) {
+        // Check if tool is allowed (explicitly or via wildcard)
+        // Note: Wildcard support in capabilities map keys ("*") is supported
+        let constraints = if let Some(c) = capabilities.get(tool) {
+            c
+        } else if let Some(c) = capabilities.get("*") {
+            c
+        } else {
             return Err(Error::ConstraintNotSatisfied {
                 field: "tool".to_string(),
-                reason: format!("warrant is for tools {:?}, not '{}'", warrant_tools, tool),
+                reason: format!("warrant does not authorize tool '{}'", tool),
             });
-        }
+        };
 
         // Check constraints
-        if let Some(constraints) = &self.payload.constraints {
-            constraints.matches(args)?;
-        }
+        constraints.matches(args)?;
 
         // Check Proof-of-Possession (mandatory) with default window config
         self.verify_pop(tool, args, signature, POP_TIMESTAMP_WINDOW_SECS, 4)
@@ -960,26 +974,22 @@ impl Warrant {
             });
         }
 
-        let warrant_tools =
-            self.payload
-                .tools
-                .as_ref()
-                .ok_or_else(|| Error::InvalidWarrantType {
-                    message: "execution warrant must have tools".to_string(),
-                })?;
+        let capabilities = self.payload.capabilities.as_ref().ok_or_else(|| {
+            Error::Validation("execution warrant must have capabilities".to_string())
+        })?;
 
-        // Check if the requested tool is allowed
-        // "*" is a wildcard that allows any tool
-        if !warrant_tools.contains(&"*".to_string()) && !warrant_tools.iter().any(|t| t == tool) {
+        let constraints = if let Some(c) = capabilities.get(tool) {
+            c
+        } else if let Some(c) = capabilities.get("*") {
+            c
+        } else {
             return Err(Error::ConstraintNotSatisfied {
                 field: "tool".to_string(),
-                reason: format!("warrant is for tools '{:?}', not '{}'", warrant_tools, tool),
+                reason: format!("warrant does not authorize tool '{}'", tool),
             });
-        }
+        };
 
-        if let Some(constraints) = &self.payload.constraints {
-            constraints.matches(args)?;
-        }
+        constraints.matches(args)?;
 
         // Check PoP with custom window config
         self.verify_pop(tool, args, signature, pop_window_secs, pop_max_windows)
@@ -1150,12 +1160,12 @@ impl Warrant {
 }
 
 /// Builder for creating root warrants.
-#[derive(Debug)]
+
+#[derive(Debug, Clone)]
 pub struct WarrantBuilder {
     warrant_type: Option<WarrantType>,
     // Execution warrant fields
-    tools: Option<Vec<String>>,
-    constraints: ConstraintSet,
+    capabilities: BTreeMap<String, ConstraintSet>,
     // Issuer warrant fields
     issuable_tools: Option<Vec<String>>,
     trust_ceiling: Option<TrustLevel>,
@@ -1180,8 +1190,7 @@ impl WarrantBuilder {
     pub fn new() -> Self {
         Self {
             warrant_type: None,
-            tools: None,
-            constraints: ConstraintSet::new(),
+            capabilities: BTreeMap::new(),
             issuable_tools: None,
             trust_ceiling: None,
             max_issue_depth: None,
@@ -1261,24 +1270,16 @@ impl WarrantBuilder {
     }
 
     /// Set the tool name (single tool).
-    pub fn tool(mut self, tool: impl Into<String>) -> Self {
-        self.tools = Some(vec![tool.into()]);
-        self
-    }
-
-    /// Set multiple tools.
-    pub fn tools(mut self, tools: Vec<String>) -> Self {
-        self.tools = Some(tools);
-        self
-    }
-
-    /// Add a constraint.
-    pub fn constraint(
+    /// Add a capability description (tool + constraints) to the warrant.
+    ///
+    /// This method can be called multiple times to add multiple capabilities.
+    /// If the same tool is added twice, the new constraints overwrite the old ones.
+    pub fn capability(
         mut self,
-        field: impl Into<String>,
-        constraint: impl Into<Constraint>,
+        tool: impl Into<String>,
+        constraints: impl Into<ConstraintSet>,
     ) -> Self {
-        self.constraints.insert(field, constraint);
+        self.capabilities.insert(tool.into(), constraints.into());
         self
     }
 
@@ -1342,9 +1343,9 @@ impl WarrantBuilder {
         // Validate required fields based on warrant type
         match warrant_type {
             WarrantType::Execution => {
-                if self.tools.is_none() {
+                if self.capabilities.is_empty() {
                     return Err(Error::InvalidWarrantType {
-                        message: "execution warrant requires a tool".to_string(),
+                        message: "execution warrant must have capabilities".to_string(),
                     });
                 }
                 if self.issuable_tools.is_some() {
@@ -1359,9 +1360,9 @@ impl WarrantBuilder {
                 }
             }
             WarrantType::Issuer => {
-                if self.tools.is_some() {
+                if !self.capabilities.is_empty() {
                     return Err(Error::InvalidWarrantType {
-                        message: "issuer warrant cannot have a tool".to_string(),
+                        message: "issuer warrant cannot have capabilities".to_string(),
                     });
                 }
                 if self.issuable_tools.is_none() || self.issuable_tools.as_ref().unwrap().is_empty()
@@ -1429,9 +1430,9 @@ impl WarrantBuilder {
             }
         }
 
-        // Validate constraint depth
-        if !self.constraints.is_empty() {
-            self.constraints.validate_depth()?;
+        // Validate constraint depth in capabilities
+        for constraints in self.capabilities.values() {
+            constraints.validate_depth()?;
         }
         if !self.constraint_bounds.is_empty() {
             self.constraint_bounds.validate_depth()?;
@@ -1442,11 +1443,10 @@ impl WarrantBuilder {
             r#type: warrant_type,
             id: self.id.unwrap_or_default(),
             authorized_holder,
-            tools: self.tools,
-            constraints: if self.constraints.is_empty() {
+            capabilities: if self.capabilities.is_empty() {
                 None
             } else {
-                Some(self.constraints)
+                Some(self.capabilities)
             },
             issuable_tools: self.issuable_tools,
             trust_ceiling: self.trust_ceiling,
@@ -1515,8 +1515,7 @@ impl Default for WarrantBuilder {
 pub struct AttenuationBuilder<'a> {
     parent: &'a Warrant,
     // Execution warrant fields
-    exec_tools: Option<Vec<String>>, // For narrowing execution warrant tools
-    constraints: ConstraintSet,
+    capabilities: BTreeMap<String, ConstraintSet>,
     // Issuer warrant fields
     issuable_tools: Option<Vec<String>>,
     trust_ceiling: Option<TrustLevel>,
@@ -1537,17 +1536,18 @@ impl<'a> AttenuationBuilder<'a> {
     /// Create a new attenuation builder.
     fn new(parent: &'a Warrant) -> Self {
         // Inherit from parent based on warrant type
-        let (constraints, issuable_tools, trust_ceiling, max_issue_depth, constraint_bounds) =
+        let (capabilities, issuable_tools, trust_ceiling, max_issue_depth, constraint_bounds) =
             match parent.payload.r#type {
                 WarrantType::Execution => (
-                    parent.payload.constraints.clone().unwrap_or_default(),
+                    // Start with parent's capabilities
+                    parent.payload.capabilities.clone().unwrap_or_default(),
                     None,
                     None,
                     None,
                     ConstraintSet::new(),
                 ),
                 WarrantType::Issuer => (
-                    ConstraintSet::new(),
+                    BTreeMap::new(),
                     parent.payload.issuable_tools.clone(),
                     parent.payload.trust_ceiling,
                     parent.payload.max_issue_depth,
@@ -1557,8 +1557,7 @@ impl<'a> AttenuationBuilder<'a> {
 
         Self {
             parent,
-            exec_tools: None, // Will inherit from parent if not set
-            constraints,
+            capabilities,
             issuable_tools,
             trust_ceiling,
             max_issue_depth,
@@ -1575,38 +1574,16 @@ impl<'a> AttenuationBuilder<'a> {
         }
     }
 
-    /// Override a constraint with a narrower one.
-    pub fn constraint(
+    /// Add a capability (tool + constraint) to the attenuated warrant.
+    ///
+    /// This effectively narrows the parent's capability for this tool.
+    /// If the tool wasn't in the parent or previous set, it's added (subject to validation).
+    pub fn capability(
         mut self,
-        field: impl Into<String>,
-        constraint: impl Into<Constraint>,
+        tool: impl Into<String>,
+        constraints: impl Into<ConstraintSet>,
     ) -> Self {
-        self.constraints.insert(field, constraint);
-        self
-    }
-
-    /// Narrow execution warrant tools to a subset.
-    ///
-    /// The specified tools must be a subset of the parent's tools.
-    /// This enables the "always shrinking authority" principle for non-terminal warrants.
-    /// For ISSUER warrants, use `issuable_tool()` instead.
-    ///
-    /// # Example
-    /// ```ignore
-    /// // Parent has tools: ["read_file", "send_email", "query_db"]
-    /// let child = parent.attenuate()
-    ///     .with_tools(vec!["read_file".to_string()])  // Narrow to just read_file
-    ///     .authorized_holder(worker.public_key())
-    ///     .build(&keypair, &keypair)?;
-    /// ```
-    pub fn with_tools(mut self, tools: Vec<String>) -> Self {
-        self.exec_tools = Some(tools);
-        self
-    }
-
-    /// Narrow to a single tool (for execution warrants).
-    pub fn with_tool(mut self, tool: impl Into<String>) -> Self {
-        self.exec_tools = Some(vec![tool.into()]);
+        self.capabilities.insert(tool.into(), constraints.into());
         self
     }
 
@@ -1778,29 +1755,31 @@ impl<'a> AttenuationBuilder<'a> {
         // Validate attenuation monotonicity based on warrant type
         match self.parent.payload.r#type {
             WarrantType::Execution => {
-                // For execution warrants, validate tool narrowing (if specified)
-                if let Some(ref child_tools) = self.exec_tools {
-                    if let Some(parent_tools) = &self.parent.payload.tools {
-                        // Child tools must be a subset of parent tools
-                        for tool in child_tools {
-                            if !parent_tools.contains(tool) {
-                                return Err(Error::MonotonicityViolation(format!(
-                                    "tool '{}' not in parent's tools {:?}",
-                                    tool, parent_tools
-                                )));
-                            }
-                        }
-                        // Must have at least one tool
-                        if child_tools.is_empty() {
-                            return Err(Error::Validation(
-                                "execution warrant must have at least one tool".to_string(),
-                            ));
+                // For execution warrants, validate capability attenuation
+                if let Some(parent_caps) = &self.parent.payload.capabilities {
+                    for (tool, constraints) in &self.capabilities {
+                        // Tool must exist in parent
+                        if let Some(parent_constraints) = parent_caps.get(tool) {
+                            // Constraints must be a subset (monotonicity)
+                            parent_constraints.validate_attenuation(constraints)?;
+                        } else {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "tool '{}' not in parent's capabilities",
+                                tool
+                            )));
                         }
                     }
+                } else {
+                    // Parent has no capabilities (should differ happen for Execution warrant due to validation)
+                    return Err(Error::Validation(
+                        "parent execution warrant has no capabilities".to_string(),
+                    ));
                 }
-                // For execution warrants, validate constraint attenuation
-                if let Some(parent_constraints) = &self.parent.payload.constraints {
-                    parent_constraints.validate_attenuation(&self.constraints)?;
+
+                if self.capabilities.is_empty() {
+                    return Err(Error::Validation(
+                        "execution warrant must have at least one capability".to_string(),
+                    ));
                 }
             }
             WarrantType::Issuer => {
@@ -1893,25 +1872,12 @@ impl<'a> AttenuationBuilder<'a> {
             r#type: self.parent.payload.r#type, // Inherit type from parent
             id: WarrantId::new(),
             authorized_holder,
-            tools: match self.parent.payload.r#type {
-                WarrantType::Execution => Some(
-                    // Use narrowed tools if specified, otherwise inherit from parent
-                    self.exec_tools.clone().unwrap_or_else(|| {
-                        self.parent
-                            .payload
-                            .tools
-                            .clone()
-                            .expect("execution warrant must have tools")
-                    }),
-                ),
-                WarrantType::Issuer => None,
-            },
-            constraints: match self.parent.payload.r#type {
+            capabilities: match self.parent.payload.r#type {
                 WarrantType::Execution => {
-                    if self.constraints.is_empty() {
+                    if self.capabilities.is_empty() {
                         None
                     } else {
-                        Some(self.constraints)
+                        Some(self.capabilities)
                     }
                 }
                 WarrantType::Issuer => None,
@@ -1963,8 +1929,9 @@ impl<'a> AttenuationBuilder<'a> {
             child_payload_bytes: payload_bytes.clone(),
             issuer_id: self.parent.payload.id.clone(),
             issuer_type: self.parent.payload.r#type,
-            issuer_tools: self.parent.payload.tools.clone(),
-            issuer_constraints: self.parent.payload.constraints.clone(),
+            issuer_capabilities: self.parent.payload.capabilities.clone(),
+            issuer_issuable_tools: self.parent.payload.issuable_tools.clone(),
+            issuer_constraint_bounds: self.parent.payload.constraint_bounds.clone(),
             issuer_trust: self.parent.payload.trust_level,
             issuer_expires_at: self.parent.payload.expires_at,
             issuer_max_depth: self.parent.effective_max_depth(),
@@ -1976,8 +1943,9 @@ impl<'a> AttenuationBuilder<'a> {
             issuer_id: self.parent.payload.id.clone(),
             issuer_pubkey: self.parent.payload.issuer.clone(),
             issuer_type: self.parent.payload.r#type,
-            issuer_tools: self.parent.payload.tools.clone(),
-            issuer_constraints: self.parent.payload.constraints.clone(),
+            issuer_capabilities: self.parent.payload.capabilities.clone(),
+            issuer_issuable_tools: self.parent.payload.issuable_tools.clone(),
+            issuer_constraint_bounds: self.parent.payload.constraint_bounds.clone(),
             issuer_trust: self.parent.payload.trust_level,
             issuer_expires_at: self.parent.payload.expires_at,
             issuer_max_depth: self.parent.effective_max_depth(),
@@ -2040,12 +2008,12 @@ impl<'a> AttenuationBuilder<'a> {
 ///     .ttl(Duration::from_secs(60))
 ///     .build(&delegator_keypair, &parent_keypair)?;
 /// ```
+
 #[derive(Debug, Clone)]
 pub struct OwnedAttenuationBuilder {
     parent: Warrant,
     // Execution warrant fields
-    exec_tools: Option<Vec<String>>, // For narrowing execution warrant tools
-    constraints: ConstraintSet,
+    capabilities: BTreeMap<String, ConstraintSet>,
     // Issuer warrant fields
     issuable_tools: Option<Vec<String>>,
     trust_ceiling: Option<TrustLevel>,
@@ -2068,17 +2036,19 @@ impl OwnedAttenuationBuilder {
     /// Create a new owned attenuation builder.
     pub fn new(parent: Warrant) -> Self {
         // Inherit from parent based on warrant type
-        let (constraints, issuable_tools, trust_ceiling, max_issue_depth, constraint_bounds) =
+        // Inherit from parent based on warrant type
+        let (capabilities, issuable_tools, trust_ceiling, max_issue_depth, constraint_bounds) =
             match parent.payload.r#type {
                 WarrantType::Execution => (
-                    parent.payload.constraints.clone().unwrap_or_default(),
+                    // Start with parent's capabilities
+                    parent.payload.capabilities.clone().unwrap_or_default(),
                     None,
                     None,
                     None,
                     ConstraintSet::new(),
                 ),
                 WarrantType::Issuer => (
-                    ConstraintSet::new(),
+                    BTreeMap::new(),
                     parent.payload.issuable_tools.clone(),
                     parent.payload.trust_ceiling,
                     parent.payload.max_issue_depth,
@@ -2094,8 +2064,8 @@ impl OwnedAttenuationBuilder {
             required_approvers: parent.payload.required_approvers.clone(),
             min_approvals: parent.payload.min_approvals,
             parent,
-            exec_tools: None, // Will inherit from parent if not narrowed
-            constraints,
+
+            capabilities,
             issuable_tools,
             trust_ceiling,
             max_issue_depth,
@@ -2106,14 +2076,24 @@ impl OwnedAttenuationBuilder {
         }
     }
 
+    /// Get the configured capabilities.
+    pub fn capabilities(&self) -> &BTreeMap<String, ConstraintSet> {
+        &self.capabilities
+    }
+
     /// Get a reference to the parent warrant.
     pub fn parent(&self) -> &Warrant {
         &self.parent
     }
 
-    /// Get the current constraints being configured.
-    pub fn constraints(&self) -> &ConstraintSet {
-        &self.constraints
+    /// Keep only the specified tool (remove others).
+    pub fn retain_capability(&mut self, tool: &str) {
+        self.capabilities.retain(|k, _| k == tool);
+    }
+
+    /// Keep only the specified tools (remove others).
+    pub fn retain_capabilities(&mut self, tools: &[String]) {
+        self.capabilities.retain(|k, _| tools.contains(k));
     }
 
     /// Get the configured TTL (if any).
@@ -2136,46 +2116,26 @@ impl OwnedAttenuationBuilder {
         self.intent.as_deref()
     }
 
-    /// Override a constraint with a narrower one.
-    pub fn constraint(
+    /// Add a capability description (tool + constraints) to the warrant.
+    ///
+    /// This method can be called multiple times to add multiple capabilities.
+    /// If the same tool is added twice, the new constraints overwrite the old ones.
+    pub fn capability(
         mut self,
-        field: impl Into<String>,
-        constraint: impl Into<Constraint>,
+        tool: impl Into<String>,
+        constraints: impl Into<ConstraintSet>,
     ) -> Self {
-        self.constraints.insert(field, constraint);
+        self.capabilities.insert(tool.into(), constraints.into());
         self
     }
 
-    /// Set a constraint (mutable version for FFI).
-    pub fn set_constraint(&mut self, field: impl Into<String>, constraint: impl Into<Constraint>) {
-        self.constraints.insert(field, constraint);
-    }
-
-    /// Narrow execution warrant tools to a subset.
-    ///
-    /// The specified tools must be a subset of the parent's tools.
-    /// This is for EXECUTION warrants. For ISSUER warrants, use `issuable_tool()`.
-    pub fn with_tool(mut self, tool: impl Into<String>) -> Self {
-        self.exec_tools = Some(vec![tool.into()]);
-        self
-    }
-
-    /// Narrow execution warrant tools to a subset (multiple tools).
-    ///
-    /// The specified tools must be a subset of the parent's tools.
-    pub fn with_tools(mut self, tools: Vec<String>) -> Self {
-        self.exec_tools = Some(tools);
-        self
-    }
-
-    /// Set execution tools (mutable version for FFI).
-    pub fn set_exec_tools(&mut self, tools: Vec<String>) {
-        self.exec_tools = Some(tools);
-    }
-
-    /// Set single execution tool (mutable version for FFI).
-    pub fn set_exec_tool(&mut self, tool: impl Into<String>) {
-        self.exec_tools = Some(vec![tool.into()]);
+    /// Add a capability (mutable version for FFI).
+    pub fn set_capability(
+        &mut self,
+        tool: impl Into<String>,
+        constraints: impl Into<ConstraintSet>,
+    ) {
+        self.capabilities.insert(tool.into(), constraints.into());
     }
 
     /// Set a shorter TTL.
@@ -2301,31 +2261,66 @@ impl OwnedAttenuationBuilder {
         use chrono::Utc;
         use std::collections::HashMap;
 
-        // Tools - for attenuation, tools stay the same
-        let parent_tools = self.parent.tools().map(|t| t.to_vec()).unwrap_or_default();
-        let child_tools = parent_tools.clone(); // Attenuation doesn't change tools
-        let tools = ToolsDiff::new(parent_tools, child_tools);
+        // Tools - for attenuation, tools stay the same or subset (managed via capabilities now)
+        // But for diff purposes, we can show which tools are effectively kept/added/dropped
+        // Parent tools: keys of parent capabilities
+        let parent_tools = self.parent.tools().unwrap_or_default();
+        // Child tools: keys of self.capabilities
+        let mut child_tools: Vec<String> = self.capabilities.keys().cloned().collect();
+        child_tools.sort();
 
-        // Constraints
-        let mut constraints: HashMap<String, ConstraintDiff> = HashMap::new();
-        let parent_constraints = self.parent.constraints().cloned().unwrap_or_default();
+        let tools = ToolsDiff::new(parent_tools, child_tools.clone());
 
-        // Get all constraint fields (parent + builder's overrides)
-        let mut all_fields: Vec<String> = Vec::new();
-        for (field, _) in parent_constraints.iter() {
-            all_fields.push(field.clone());
-        }
-        for (field, _) in self.constraints.iter() {
-            if !all_fields.contains(field) {
-                all_fields.push(field.clone());
+        // Capabilities diff logic
+        let mut capabilities: HashMap<String, HashMap<String, ConstraintDiff>> = HashMap::new();
+
+        // iterate distinct tools from both
+        let mut all_tools = child_tools.clone();
+        if let Some(p_caps) = self.parent.capabilities() {
+            for tool in p_caps.keys() {
+                if !all_tools.contains(tool) {
+                    all_tools.push(tool.clone());
+                }
             }
         }
+        all_tools.sort();
 
-        for field in all_fields {
-            let pc = parent_constraints.get(&field).cloned();
-            // Child constraint: use override if set, otherwise inherit from parent
-            let cc = self.constraints.get(&field).cloned().or_else(|| pc.clone());
-            constraints.insert(field.clone(), ConstraintDiff::new(field, pc, cc));
+        for tool in all_tools {
+            let parent_constraints = self
+                .parent
+                .capabilities()
+                .and_then(|c| c.get(&tool))
+                .cloned()
+                .unwrap_or_default();
+
+            // For child, get from builder capabilities.
+            // If checking against parent, we assume if tool is missing in builder it's dropped?
+            // Yes, OwnedAttenuationBuilder starts with parent's caps?
+            // The `new` method logic was not shown but typically initializes with parent caps.
+            // So explicitly missing means dropped.
+            let child_constraints = self.capabilities.get(&tool).cloned().unwrap_or_default();
+
+            let mut tool_diffs = HashMap::new();
+
+            let mut all_fields: Vec<String> = Vec::new();
+            for (field, _) in parent_constraints.iter() {
+                all_fields.push(field.clone());
+            }
+            for (field, _) in child_constraints.iter() {
+                if !all_fields.contains(field) {
+                    all_fields.push(field.clone());
+                }
+            }
+
+            for field in all_fields {
+                let pc = parent_constraints.get(&field).cloned();
+                let cc = child_constraints.get(&field).cloned();
+                tool_diffs.insert(field.clone(), ConstraintDiff::new(field, pc, cc));
+            }
+
+            if !tool_diffs.is_empty() {
+                capabilities.insert(tool, tool_diffs);
+            }
         }
 
         // TTL
@@ -2349,7 +2344,7 @@ impl OwnedAttenuationBuilder {
             child_warrant_id: None, // Not yet built
             timestamp: Utc::now(),
             tools,
-            constraints,
+            capabilities,
             ttl,
             trust,
             depth,
@@ -2445,29 +2440,31 @@ impl OwnedAttenuationBuilder {
         // Validate attenuation monotonicity
         match self.parent.payload.r#type {
             WarrantType::Execution => {
-                // For execution warrants, validate tool narrowing (if specified)
-                if let Some(ref child_tools) = self.exec_tools {
-                    if let Some(parent_tools) = &self.parent.payload.tools {
-                        // Child tools must be a subset of parent tools
-                        for tool in child_tools {
-                            if !parent_tools.contains(tool) {
-                                return Err(Error::MonotonicityViolation(format!(
-                                    "tool '{}' not in parent's tools {:?}",
-                                    tool, parent_tools
-                                )));
-                            }
-                        }
-                        // Must have at least one tool
-                        if child_tools.is_empty() {
-                            return Err(Error::Validation(
-                                "execution warrant must have at least one tool".to_string(),
-                            ));
+                // For execution warrants, validate capability attenuation
+                if let Some(parent_caps) = &self.parent.payload.capabilities {
+                    for (tool, constraints) in &self.capabilities {
+                        // Tool must exist in parent
+                        if let Some(parent_constraints) = parent_caps.get(tool) {
+                            // Constraints must be a subset (monotonicity)
+                            parent_constraints.validate_attenuation(constraints)?;
+                        } else {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "tool '{}' not in parent's capabilities",
+                                tool
+                            )));
                         }
                     }
+                } else {
+                    // Parent has no capabilities (should differ happen for Execution warrant due to validation)
+                    return Err(Error::Validation(
+                        "parent execution warrant has no capabilities".to_string(),
+                    ));
                 }
-                // For execution warrants, validate constraint attenuation
-                if let Some(parent_constraints) = &self.parent.payload.constraints {
-                    parent_constraints.validate_attenuation(&self.constraints)?;
+
+                if self.capabilities.is_empty() {
+                    return Err(Error::Validation(
+                        "execution warrant must have at least one capability".to_string(),
+                    ));
                 }
             }
             WarrantType::Issuer => {
@@ -2505,10 +2502,7 @@ impl OwnedAttenuationBuilder {
             .authorized_holder
             .ok_or_else(|| Error::Validation("authorized_holder is required".to_string()))?;
 
-        // NOTE: Holder cycling (A → B → A) is NOT blocked for execution warrants because:
-        // - Monotonic attenuation guarantees privileges can only shrink, never expand
-        // - Even if B delegates back to A, A gets a strictly weaker warrant
-        // - The cycle detection in planes.rs prevents infinite loops via warrant ID tracking
+        // NOTE: Holder cycling (A → B → A) is NOT blocked
 
         let expires_at = if let Some(ttl) = self.ttl {
             let chrono_ttl = ChronoDuration::from_std(ttl)
@@ -2540,27 +2534,8 @@ impl OwnedAttenuationBuilder {
             r#type: self.parent.payload.r#type,
             id: WarrantId::new(),
             authorized_holder,
-            tools: match self.parent.payload.r#type {
-                WarrantType::Execution => Some(
-                    // Use narrowed tools if specified, otherwise inherit from parent
-                    self.exec_tools.clone().unwrap_or_else(|| {
-                        self.parent
-                            .payload
-                            .tools
-                            .clone()
-                            .expect("execution warrant must have tools")
-                    }),
-                ),
-                WarrantType::Issuer => None,
-            },
-            constraints: match self.parent.payload.r#type {
-                WarrantType::Execution => {
-                    if self.constraints.is_empty() {
-                        None
-                    } else {
-                        Some(self.constraints)
-                    }
-                }
+            capabilities: match self.parent.payload.r#type {
+                WarrantType::Execution => Some(self.capabilities),
                 WarrantType::Issuer => None,
             },
             issuable_tools: match self.parent.payload.r#type {
@@ -2608,8 +2583,9 @@ impl OwnedAttenuationBuilder {
             child_payload_bytes: payload_bytes.clone(),
             issuer_id: self.parent.payload.id.clone(),
             issuer_type: self.parent.payload.r#type,
-            issuer_tools: self.parent.payload.tools.clone(),
-            issuer_constraints: self.parent.payload.constraints.clone(),
+            issuer_capabilities: self.parent.payload.capabilities.clone(),
+            issuer_issuable_tools: self.parent.payload.issuable_tools.clone(),
+            issuer_constraint_bounds: self.parent.payload.constraint_bounds.clone(),
             issuer_trust: self.parent.payload.trust_level,
             issuer_expires_at: self.parent.payload.expires_at,
             issuer_max_depth: self.parent.effective_max_depth(),
@@ -2621,8 +2597,9 @@ impl OwnedAttenuationBuilder {
             issuer_id: self.parent.payload.id.clone(),
             issuer_pubkey: self.parent.payload.issuer.clone(),
             issuer_type: self.parent.payload.r#type,
-            issuer_tools: self.parent.payload.tools.clone(),
-            issuer_constraints: self.parent.payload.constraints.clone(),
+            issuer_capabilities: self.parent.payload.capabilities.clone(),
+            issuer_issuable_tools: self.parent.payload.issuable_tools.clone(),
+            issuer_constraint_bounds: self.parent.payload.constraint_bounds.clone(),
             issuer_trust: self.parent.payload.trust_level,
             issuer_expires_at: self.parent.payload.expires_at,
             issuer_max_depth: self.parent.effective_max_depth(),
@@ -2701,8 +2678,7 @@ impl OwnedAttenuationBuilder {
 #[derive(Debug)]
 pub struct IssuanceBuilder<'a> {
     issuer: &'a Warrant,
-    tools: Option<Vec<String>>,
-    constraints: ConstraintSet,
+    capabilities: BTreeMap<String, ConstraintSet>,
     trust_level: Option<TrustLevel>,
     ttl: Option<Duration>,
     max_depth: Option<u32>,
@@ -2718,8 +2694,7 @@ impl<'a> IssuanceBuilder<'a> {
     fn new(issuer: &'a Warrant) -> Self {
         Self {
             issuer,
-            tools: None,
-            constraints: ConstraintSet::new(),
+            capabilities: BTreeMap::new(),
             trust_level: None,
             ttl: None,
             max_depth: None,
@@ -2731,31 +2706,16 @@ impl<'a> IssuanceBuilder<'a> {
         }
     }
 
-    /// Set the tool name for the execution warrant.
+    /// Add a capability to the execution warrant.
     ///
     /// The tool must be in the issuer's `issuable_tools` list.
-    pub fn tool(mut self, tool: impl Into<String>) -> Self {
-        self.tools = Some(vec![tool.into()]);
-        self
-    }
-
-    /// Set multiple tools for the execution warrant.
-    ///
-    /// All tools must be in the issuer's `issuable_tools` list.
-    pub fn tools(mut self, tools: Vec<String>) -> Self {
-        self.tools = Some(tools);
-        self
-    }
-
-    /// Add a constraint to the execution warrant.
-    ///
     /// The constraint must be within the issuer's `constraint_bounds`.
-    pub fn constraint(
+    pub fn capability(
         mut self,
-        field: impl Into<String>,
-        constraint: impl Into<Constraint>,
+        tool: impl Into<String>,
+        constraints: impl Into<ConstraintSet>,
     ) -> Self {
-        self.constraints.insert(field, constraint);
+        self.capabilities.insert(tool.into(), constraints.into());
         self
     }
 
@@ -2832,9 +2792,33 @@ impl<'a> IssuanceBuilder<'a> {
         }
 
         // Validate required fields
-        let tools = self.tools.ok_or(Error::Validation(
-            "execution warrant requires tools".to_string(),
-        ))?;
+        if self.capabilities.is_empty() {
+            return Err(Error::Validation(
+                "execution warrant requires at least one capability".to_string(),
+            ));
+        }
+
+        // Validate each capability against issuer constraints
+        if let Some(issuable_tools) = &self.issuer.payload.issuable_tools {
+            for (tool, constraints) in &self.capabilities {
+                // 1. Tool must be issuable
+                if !issuable_tools.contains(tool) {
+                    return Err(Error::Validation(format!(
+                        "tool '{}' is not in issuer's issuable_tools",
+                        tool
+                    )));
+                }
+
+                // 2. Constraints must be within bounds
+                if let Some(bounds) = &self.issuer.payload.constraint_bounds {
+                    bounds.validate_attenuation(constraints)?;
+                }
+            }
+        } else {
+            return Err(Error::Validation(
+                "issuer warrant has no issuable_tools".to_string(),
+            ));
+        }
         let authorized_holder = self.authorized_holder.ok_or(Error::Validation(
             "execution warrant requires authorized_holder".to_string(),
         ))?;
@@ -2859,9 +2843,9 @@ impl<'a> IssuanceBuilder<'a> {
             });
         }
 
-        // Validate all tools are in issuable_tools
+        // Validate all capability tools are in issuable_tools
         if let Some(issuable_tools) = &self.issuer.payload.issuable_tools {
-            for tool in &tools {
+            for tool in self.capabilities.keys() {
                 if !issuable_tools.contains(tool) {
                     return Err(Error::UnauthorizedToolIssuance {
                         tool: tool.clone(),
@@ -2887,18 +2871,20 @@ impl<'a> IssuanceBuilder<'a> {
             }
         }
 
-        // Validate constraints are within constraint_bounds
+        // Validate capability constraints are within constraint_bounds
         if let Some(constraint_bounds) = &self.issuer.payload.constraint_bounds {
             if !constraint_bounds.is_empty() {
-                for (field, constraint) in self.constraints.iter() {
-                    if let Some(bound) = constraint_bounds.get(field) {
-                        // Validate that the constraint is within the bound using attenuation validation
-                        bound.validate_attenuation(constraint).map_err(|e| {
-                            Error::Validation(format!(
-                                "constraint for field '{}' exceeds issuer's constraint_bounds: {}",
-                                field, e
-                            ))
-                        })?;
+                for (tool, constraints) in self.capabilities.iter() {
+                    for (field, constraint) in constraints.iter() {
+                        if let Some(bound) = constraint_bounds.get(field) {
+                            // Validate that the constraint is within the bound using attenuation validation
+                            bound.validate_attenuation(constraint).map_err(|e| {
+                                Error::Validation(format!(
+                                    "constraint for tool '{}' field '{}' exceeds issuer's constraint_bounds: {}",
+                                    tool, field, e
+                                ))
+                            })?;
+                        }
                     }
                 }
             }
@@ -2938,9 +2924,9 @@ impl<'a> IssuanceBuilder<'a> {
             }
         }
 
-        // Validate constraint depth
-        if !self.constraints.is_empty() {
-            self.constraints.validate_depth()?;
+        // Validate capability validation depth
+        for constraints in self.capabilities.values() {
+            constraints.validate_depth()?;
         }
 
         // SECURITY: Check issuer chain length before adding another link
@@ -2967,12 +2953,7 @@ impl<'a> IssuanceBuilder<'a> {
             r#type: WarrantType::Execution,
             id: WarrantId::new(),
             authorized_holder,
-            tools: Some(tools),
-            constraints: if self.constraints.is_empty() {
-                None
-            } else {
-                Some(self.constraints)
-            },
+            capabilities: Some(self.capabilities),
             issuable_tools: None,
             trust_ceiling: None,
             max_issue_depth: None,
@@ -3001,8 +2982,9 @@ impl<'a> IssuanceBuilder<'a> {
             child_payload_bytes: payload_bytes.clone(),
             issuer_id: self.issuer.payload.id.clone(),
             issuer_type: self.issuer.payload.r#type,
-            issuer_tools: self.issuer.payload.issuable_tools.clone(),
-            issuer_constraints: self.issuer.payload.constraint_bounds.clone(),
+            issuer_capabilities: self.issuer.payload.capabilities.clone(),
+            issuer_issuable_tools: self.issuer.payload.issuable_tools.clone(),
+            issuer_constraint_bounds: self.issuer.payload.constraint_bounds.clone(),
             issuer_trust: self.issuer.payload.trust_ceiling,
             issuer_expires_at: self.issuer.payload.expires_at,
             issuer_max_depth: self.issuer.effective_max_depth(),
@@ -3014,8 +2996,9 @@ impl<'a> IssuanceBuilder<'a> {
             issuer_id: self.issuer.payload.id.clone(),
             issuer_pubkey: self.issuer.payload.issuer.clone(),
             issuer_type: self.issuer.payload.r#type,
-            issuer_tools: self.issuer.payload.issuable_tools.clone(),
-            issuer_constraints: self.issuer.payload.constraint_bounds.clone(),
+            issuer_capabilities: self.issuer.payload.capabilities.clone(),
+            issuer_issuable_tools: self.issuer.payload.issuable_tools.clone(),
+            issuer_constraint_bounds: self.issuer.payload.constraint_bounds.clone(),
             issuer_trust: self.issuer.payload.trust_ceiling,
             issuer_expires_at: self.issuer.payload.expires_at,
             issuer_max_depth: self.issuer.effective_max_depth(),
@@ -3066,8 +3049,7 @@ impl<'a> IssuanceBuilder<'a> {
 #[derive(Debug, Clone)]
 pub struct OwnedIssuanceBuilder {
     issuer: Warrant,
-    tools: Option<Vec<String>>,
-    constraints: ConstraintSet,
+    capabilities: BTreeMap<String, ConstraintSet>,
     trust_level: Option<TrustLevel>,
     ttl: Option<Duration>,
     max_depth: Option<u32>,
@@ -3086,8 +3068,7 @@ impl OwnedIssuanceBuilder {
             session_id: issuer.payload.session_id.clone(),
             agent_id: issuer.payload.agent_id.clone(),
             issuer,
-            tools: None,
-            constraints: ConstraintSet::new(),
+            capabilities: BTreeMap::new(),
             trust_level: None,
             ttl: None,
             max_depth: None,
@@ -3103,29 +3084,12 @@ impl OwnedIssuanceBuilder {
         &self.issuer
     }
 
-    /// Get the configured tools (if any).
-    pub fn tools(&self) -> Option<&[String]> {
-        self.tools.as_deref()
+    /// Get the configured capabilities.
+    pub fn capabilities(&self) -> &BTreeMap<String, ConstraintSet> {
+        &self.capabilities
     }
 
-    /// Get the configured tool (if single tool is set).
-    pub fn tool(&self) -> Option<&str> {
-        self.tools
-            .as_ref()
-            .and_then(|t| t.first().map(|s| s.as_str()))
-    }
-
-    /// Get the current constraints being configured.
-    pub fn constraints(&self) -> &ConstraintSet {
-        &self.constraints
-    }
-
-    /// Get the configured TTL (if any).
-    pub fn ttl_seconds(&self) -> Option<u64> {
-        self.ttl.map(|d| d.as_secs())
-    }
-
-    /// Get the configured holder (if any).
+    /// Get the configured authorized holder.
     pub fn holder(&self) -> Option<&PublicKey> {
         self.authorized_holder.as_ref()
     }
@@ -3135,24 +3099,58 @@ impl OwnedIssuanceBuilder {
         self.trust_level
     }
 
+    /// Get the configured TTL.
+    pub fn ttl_seconds(&self) -> Option<u64> {
+        self.ttl.map(|d| d.as_secs())
+    }
+
+    /// Get the configured max depth.
+    pub fn max_depth(&self) -> Option<u32> {
+        self.max_depth
+    }
+
+    /// Get the configured session ID.
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
+    }
+
+    /// Get the configured agent ID.
+    pub fn agent_id(&self) -> Option<&str> {
+        self.agent_id.as_deref()
+    }
+
+    /// Get the configured minimum approvals.
+    pub fn min_approvals(&self) -> Option<u32> {
+        self.min_approvals
+    }
+
+    /// Get the configured required approvers.
+    pub fn required_approvers(&self) -> Option<&[PublicKey]> {
+        self.required_approvers.as_deref()
+    }
+
     /// Get the configured intent.
     pub fn intent(&self) -> Option<&str> {
         self.intent.as_deref()
     }
 
-    /// Set the tool name for the execution warrant (mutable version for FFI).
-    pub fn set_tool(&mut self, tool: impl Into<String>) {
-        self.tools = Some(vec![tool.into()]);
+    /// Add a capability description (tool + constraints) to the warrant (mutable version for FFI).
+    pub fn set_capability(
+        &mut self,
+        tool: impl Into<String>,
+        constraints: impl Into<ConstraintSet>,
+    ) {
+        self.capabilities.insert(tool.into(), constraints.into());
     }
 
-    /// Set multiple tools for the execution warrant (mutable version for FFI).
-    pub fn set_tools(&mut self, tools: Vec<String>) {
-        self.tools = Some(tools);
-    }
-
-    /// Set a constraint (mutable version for FFI).
-    pub fn set_constraint(&mut self, field: impl Into<String>, constraint: impl Into<Constraint>) {
-        self.constraints.insert(field, constraint);
+    /// Add a capability (builder pattern).
+    pub fn capability(
+        mut self,
+        tool: impl Into<String>,
+        constraints: impl Into<ConstraintSet>,
+    ) -> Self {
+        self.capabilities.insert(tool.into(), constraints.into());
+        self
     }
 
     /// Set the trust level (mutable version for FFI).
@@ -3216,8 +3214,7 @@ impl OwnedIssuanceBuilder {
         // Delegate to IssuanceBuilder
         IssuanceBuilder {
             issuer: &self.issuer,
-            tools: self.tools,
-            constraints: self.constraints,
+            capabilities: self.capabilities,
             trust_level: self.trust_level,
             ttl: self.ttl,
             max_depth: self.max_depth,
@@ -3244,15 +3241,17 @@ mod tests {
     fn test_warrant_creation() {
         let keypair = create_test_keypair();
 
+        let mut constraints = ConstraintSet::new();
+        constraints.insert("cluster", Pattern::new("staging-*").unwrap());
         let warrant = Warrant::builder()
-            .tool("upgrade_cluster")
-            .constraint("cluster", Pattern::new("staging-*").unwrap())
+            .capability("upgrade_cluster", constraints)
             .ttl(Duration::from_secs(600))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
-        assert_eq!(warrant.tools(), Some(&["upgrade_cluster".to_string()][..]));
+        let caps = warrant.capabilities().unwrap();
+        assert!(caps.contains_key("upgrade_cluster"));
         assert_eq!(warrant.depth(), 0);
         assert!(warrant.parent_id().is_none());
         assert!(!warrant.is_expired());
@@ -3263,7 +3262,7 @@ mod tests {
         let keypair = create_test_keypair();
 
         let warrant = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
@@ -3279,10 +3278,11 @@ mod tests {
     fn test_warrant_authorization() {
         let keypair = create_test_keypair();
 
+        let mut constraints = ConstraintSet::new();
+        constraints.insert("cluster", Pattern::new("staging-*").unwrap());
+        constraints.insert("version", Pattern::new("1.28.*").unwrap());
         let warrant = Warrant::builder()
-            .tool("upgrade_cluster")
-            .constraint("cluster", Pattern::new("staging-*").unwrap())
-            .constraint("version", Pattern::new("1.28.*").unwrap())
+            .capability("upgrade_cluster", constraints)
             .ttl(Duration::from_secs(600))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
@@ -3328,17 +3328,20 @@ mod tests {
         let parent_keypair = create_test_keypair();
         let child_keypair = create_test_keypair();
 
+        let mut parent_constraints = ConstraintSet::new();
+        parent_constraints.insert("cluster", Pattern::new("staging-*").unwrap());
         let parent = Warrant::builder()
-            .tool("upgrade_cluster")
-            .constraint("cluster", Pattern::new("staging-*").unwrap())
+            .capability("upgrade_cluster", parent_constraints)
             .ttl(Duration::from_secs(600))
             .authorized_holder(parent_keypair.public_key())
             .build(&parent_keypair)
             .unwrap();
 
+        let mut child_constraints = ConstraintSet::new();
+        child_constraints.insert("cluster", Exact::new("staging-web"));
         let child = parent
             .attenuate()
-            .constraint("cluster", Exact::new("staging-web"))
+            .capability("upgrade_cluster", child_constraints)
             .build(&child_keypair, &parent_keypair)
             .unwrap();
 
@@ -3352,18 +3355,21 @@ mod tests {
         let parent_keypair = create_test_keypair();
         let child_keypair = create_test_keypair();
 
+        let mut parent_constraints = ConstraintSet::new();
+        parent_constraints.insert("cluster", Pattern::new("staging-*").unwrap());
         let parent = Warrant::builder()
-            .tool("upgrade_cluster")
-            .constraint("cluster", Pattern::new("staging-*").unwrap())
+            .capability("upgrade_cluster", parent_constraints)
             .ttl(Duration::from_secs(600))
             .authorized_holder(parent_keypair.public_key())
             .build(&parent_keypair)
             .unwrap();
 
         // Attempt to widen scope - should fail
+        let mut child_constraints = ConstraintSet::new();
+        child_constraints.insert("cluster", Pattern::new("*").unwrap());
         let result = parent
             .attenuate()
-            .constraint("cluster", Pattern::new("*").unwrap())
+            .capability("upgrade_cluster", child_constraints)
             .build(&child_keypair, &parent_keypair);
 
         assert!(result.is_err());
@@ -3382,7 +3388,7 @@ mod tests {
         let child_keypair = create_test_keypair();
 
         let parent = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
             .authorized_holder(parent_keypair.public_key())
             .build(&parent_keypair)
@@ -3403,7 +3409,7 @@ mod tests {
         let keypair = create_test_keypair();
 
         let mut warrant = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
@@ -3433,7 +3439,7 @@ mod tests {
 
         // Create warrant with explicit max_depth of 3 (smaller than chain length limit)
         let mut warrant = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
             .max_depth(3)
             .authorized_holder(keypair.public_key())
@@ -3459,25 +3465,30 @@ mod tests {
         let parent_keypair = create_test_keypair();
         let child_keypair = create_test_keypair();
 
+        let mut parent_constraints = ConstraintSet::new();
+        parent_constraints.insert("amount", Range::max(10000.0).unwrap());
         let parent = Warrant::builder()
-            .tool("transfer_funds")
-            .constraint("amount", Range::max(10000.0).unwrap())
+            .capability("transfer_funds", parent_constraints)
             .ttl(Duration::from_secs(600))
             .authorized_holder(parent_keypair.public_key())
             .build(&parent_keypair)
             .unwrap();
 
         // Valid: narrower range
+        let mut child_constraints = ConstraintSet::new();
+        child_constraints.insert("amount", Range::max(5000.0).unwrap());
         let child = parent
             .attenuate()
-            .constraint("amount", Range::max(5000.0).unwrap())
+            .capability("transfer_funds", child_constraints)
             .build(&child_keypair, &parent_keypair);
         assert!(child.is_ok());
 
         // Invalid: wider range
+        let mut invalid_constraints = ConstraintSet::new();
+        invalid_constraints.insert("amount", Range::max(20000.0).unwrap());
         let invalid = parent
             .attenuate()
-            .constraint("amount", Range::max(20000.0).unwrap())
+            .capability("transfer_funds", invalid_constraints)
             .build(&child_keypair, &parent_keypair);
         assert!(invalid.is_err());
     }
@@ -3487,7 +3498,7 @@ mod tests {
         let keypair = create_test_keypair();
 
         let warrant = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
             .session_id("session_123")
             .authorized_holder(keypair.public_key())
@@ -3511,7 +3522,7 @@ mod tests {
         let wrong_keypair = create_test_keypair();
 
         let warrant = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(600))
             .authorized_holder(correct_keypair.public_key())
             .build(&correct_keypair)
@@ -3539,7 +3550,7 @@ mod tests {
         let keypair = create_test_keypair();
 
         let warrant = Warrant::builder()
-            .tool("test_tool")
+            .capability("test_tool", ConstraintSet::new())
             .ttl(Duration::from_secs(600))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
@@ -3566,9 +3577,10 @@ mod tests {
     fn test_pop_signature_wrong_args() {
         let keypair = create_test_keypair();
 
+        let mut constraints = ConstraintSet::new();
+        constraints.insert("cluster", Pattern::new("staging-*").unwrap());
         let warrant = Warrant::builder()
-            .tool("test")
-            .constraint("cluster", Pattern::new("staging-*").unwrap())
+            .capability("test", constraints)
             .ttl(Duration::from_secs(600))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
@@ -3604,7 +3616,7 @@ mod tests {
 
         // Create warrant with very short TTL
         let warrant = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(1)) // 1 second TTL
             .authorized_holder(keypair.public_key())
             .build(&keypair)
@@ -3627,7 +3639,7 @@ mod tests {
         let keypair = create_test_keypair();
 
         let warrant = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(600))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
@@ -3657,7 +3669,7 @@ mod tests {
 
         // Create warrant with policy limit of 3
         let root = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
             .max_depth(3)
             .authorized_holder(keypair.public_key())
@@ -3692,7 +3704,7 @@ mod tests {
         let keypair = create_test_keypair();
 
         let root = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
             .max_depth(5)
             .authorized_holder(keypair.public_key())
@@ -3722,7 +3734,7 @@ mod tests {
 
         // Cannot set max_depth above protocol cap
         let result = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
             .max_depth(100) // Above MAX_DELEGATION_DEPTH (64)
             .authorized_holder(keypair.public_key())
@@ -3740,7 +3752,7 @@ mod tests {
         let keypair = create_test_keypair();
 
         let root = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
@@ -3762,7 +3774,7 @@ mod tests {
         let approver2 = create_test_keypair();
 
         let warrant = Warrant::builder()
-            .tool("sensitive_action")
+            .capability("sensitive_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .min_approvals(2)
@@ -3783,7 +3795,7 @@ mod tests {
 
         // Set approvers but NOT min_approvals - should require all
         let warrant = Warrant::builder()
-            .tool("sensitive_action")
+            .capability("sensitive_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .authorized_holder(issuer.public_key())
@@ -3802,7 +3814,7 @@ mod tests {
 
         // Try to require 3 approvals with only 1 approver
         let result = Warrant::builder()
-            .tool("sensitive_action")
+            .capability("sensitive_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key()])
             .min_approvals(3)
@@ -3821,7 +3833,7 @@ mod tests {
 
         // Root with 1 approver
         let root = Warrant::builder()
-            .tool("sensitive_action")
+            .capability("sensitive_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key()])
             .min_approvals(1)
@@ -3850,7 +3862,7 @@ mod tests {
 
         // Root with 2 approvers
         let root = Warrant::builder()
-            .tool("sensitive_action")
+            .capability("sensitive_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .min_approvals(1)
@@ -3877,7 +3889,7 @@ mod tests {
 
         // Root with threshold of 2
         let root = Warrant::builder()
-            .tool("sensitive_action")
+            .capability("sensitive_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .min_approvals(2)
@@ -3902,7 +3914,7 @@ mod tests {
         let keypair = create_test_keypair();
 
         let warrant = Warrant::builder()
-            .tool("regular_action")
+            .capability("regular_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
@@ -3932,11 +3944,12 @@ mod tests {
 
         // Issue an execution warrant
         // Note: issuer_kp is both the issuer warrant holder and the issuer warrant issuer
+        let mut constraints = ConstraintSet::new();
+        constraints.insert("path", Pattern::new("/data/q3.pdf").unwrap());
         let execution_warrant = issuer_warrant
             .issue_execution_warrant()
             .unwrap()
-            .tool("read_file")
-            .constraint("path", Pattern::new("/data/q3.pdf").unwrap())
+            .capability("read_file", constraints)
             .trust_level(TrustLevel::External)
             .ttl(Duration::from_secs(60))
             .authorized_holder(holder_kp.public_key())
@@ -3944,10 +3957,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(execution_warrant.r#type(), WarrantType::Execution);
-        assert_eq!(
-            execution_warrant.tools(),
-            Some(&["read_file".to_string()][..])
-        );
+        let caps = execution_warrant.capabilities().unwrap();
+        assert!(caps.contains_key("read_file"));
         assert_eq!(
             execution_warrant.authorized_holder(),
             &holder_kp.public_key()
@@ -3975,7 +3986,7 @@ mod tests {
         let result = issuer_warrant
             .issue_execution_warrant()
             .unwrap()
-            .tool("read_file")
+            .capability("read_file", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
             .authorized_holder(issuer_kp.public_key()) // Same as issuer warrant holder!
             .build(&issuer_kp, &issuer_kp);
@@ -4011,7 +4022,7 @@ mod tests {
         let result = issuer_warrant
             .issue_execution_warrant()
             .unwrap()
-            .tool("read_file")
+            .capability("read_file", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
             .authorized_holder(issuer_kp.public_key()) // Same as issuer warrant's issuer!
             .build(&holder_kp, &issuer_kp);
@@ -4035,18 +4046,21 @@ mod tests {
         let keypair_b = create_test_keypair();
 
         // A creates a root warrant for themselves
+        let mut root_constraints = ConstraintSet::new();
+        root_constraints.insert("env", Pattern::new("*").unwrap());
         let root = Warrant::builder()
-            .tool("test")
-            .constraint("env", Pattern::new("*").unwrap())
+            .capability("test", root_constraints)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(keypair_a.public_key())
             .build(&keypair_a)
             .unwrap();
 
         // A delegates to B with narrower constraints
+        let mut child_b_constraints = ConstraintSet::new();
+        child_b_constraints.insert("env", Pattern::new("staging-*").unwrap());
         let child_b = root
             .attenuate()
-            .constraint("env", Pattern::new("staging-*").unwrap())
+            .capability("test", child_b_constraints)
             .authorized_holder(keypair_b.public_key())
             .build(&keypair_b, &keypair_a)
             .unwrap();
@@ -4084,16 +4098,18 @@ mod tests {
         let result = issuer_warrant
             .issue_execution_warrant()
             .unwrap()
-            .tool("send_email") // Not in issuable_tools
+            .capability("send_email", ConstraintSet::new()) // Not in issuable_tools
             .ttl(Duration::from_secs(60))
             .authorized_holder(holder_kp.public_key())
             .build(&issuer_kp, &issuer_kp);
 
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("unauthorized tool issuance"));
+        let err = result.expect_err("expected unauthorized tool issuance error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unauthorized tool issuance")
+                || msg.contains("not in issuer's issuable_tools"),
+            "unexpected error: {msg}"
+        );
     }
 
     #[test]
@@ -4114,7 +4130,7 @@ mod tests {
         let result = issuer_warrant
             .issue_execution_warrant()
             .unwrap()
-            .tool("read_file")
+            .capability("read_file", ConstraintSet::new())
             .trust_level(TrustLevel::Internal) // Exceeds External ceiling
             .ttl(Duration::from_secs(60))
             .authorized_holder(holder_kp.public_key())
@@ -4143,20 +4159,24 @@ mod tests {
             .unwrap();
 
         // Try to issue with constraint outside bounds
+        let mut constraints = ConstraintSet::new();
+        constraints.insert("path", Pattern::new("/etc/*").unwrap()); // Outside /data/*
         let result = issuer_warrant
             .issue_execution_warrant()
             .unwrap()
-            .tool("read_file")
-            .constraint("path", Pattern::new("/etc/*").unwrap()) // Outside /data/*
+            .capability("read_file", constraints)
             .ttl(Duration::from_secs(60))
             .authorized_holder(holder_kp.public_key())
             .build(&issuer_kp, &issuer_kp);
 
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("exceeds issuer's constraint_bounds"));
+        match result {
+            Err(Error::PatternExpanded { parent, child }) => {
+                assert_eq!(parent, "/data/*");
+                assert_eq!(child, "/etc/*");
+            }
+            Err(other) => panic!("unexpected error: {:?}", other),
+            Ok(_) => panic!("expected constraint bounds violation"),
+        }
     }
 
     #[test]
@@ -4178,7 +4198,7 @@ mod tests {
         let exec1 = issuer_warrant
             .issue_execution_warrant()
             .unwrap()
-            .tool("read_file")
+            .capability("read_file", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
             .authorized_holder(holder_kp.public_key())
             .build(&issuer_kp, &issuer_kp)
@@ -4197,7 +4217,7 @@ mod tests {
 
         let execution_warrant = Warrant::builder()
             .r#type(WarrantType::Execution)
-            .tool("read_file")
+            .capability("read_file", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
             .authorized_holder(issuer_kp.public_key())
             .build(&issuer_kp)
@@ -4235,7 +4255,7 @@ mod tests {
         // 1. Root warrant (None/Unlimited)
         let root_kp = create_test_keypair();
         let root = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
             // max_depth: None (defaults to MAX_DELEGATION_DEPTH=64)
             .authorized_holder(root_kp.public_key())

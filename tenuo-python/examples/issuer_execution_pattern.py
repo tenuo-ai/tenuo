@@ -11,7 +11,7 @@ This demonstrates the recommended production pattern using Tenuo's current API.
 """
 
 from tenuo import (
-    SigningKey, Warrant, Pattern,
+    SigningKey, Warrant, Pattern, Constraints,
     lockdown, set_warrant_context, set_signing_key_context,
     AuthorizationError
 )
@@ -47,12 +47,11 @@ print("="*70)
 
 # Control plane issues broad warrant to orchestrator
 root_warrant = Warrant.issue(
-    tools="file_operations",  # Broad capability
     keypair=control_kp,
-    holder=orchestrator_kp.public_key,
-    constraints={
+    capabilities=Constraints.for_tool("file_operations", {
         "path": Pattern("/data/*"),  # Broad path access
-    },
+    }),
+    holder=orchestrator_kp.public_key,
     ttl_seconds=3600
 )
 
@@ -73,9 +72,9 @@ print("="*70)
 
 # Orchestrator creates narrow warrant for specific task
 worker_warrant = root_warrant.attenuate(
-    constraints={
+    capabilities=Constraints.for_tool("file_operations", {
         "path": Pattern("/data/reports/*"),  # Narrower path
-    },
+    }),
     keypair=orchestrator_kp,
     parent_keypair=control_kp,  # Parent signs the chain link
     holder=worker_kp.public_key,

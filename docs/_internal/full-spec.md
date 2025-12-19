@@ -152,17 +152,20 @@ Three lines. Explicit. No warrant juggling.
 **Tier 2: Delegate to Component**
 
 ```python
-from tenuo import Warrant
+from tenuo import Warrant, ConstraintSet, Exact
 
 # One-line delegation (terminal by default)
 child = parent.delegate(worker, tool="read_file", path=file_path)
 
 # Equivalent to:
+cs = ConstraintSet()
+cs.insert("path", Exact(file_path))
+
 child = (parent.attenuate()
-    .tool("read_file")
-    .constraint("path", Exact(file_path))
+    .with_capability("read_file", cs)
     .terminal()
-    .delegate_to(worker))
+    .holder(worker.public_key)
+    .build(worker, parent_keypair))
 ```
 
 One line for common orchestration patterns.
@@ -170,18 +173,22 @@ One line for common orchestration patterns.
 **Tier 3: Full Control**
 
 ```python
-from tenuo import Warrant, Pattern, TrustLevel
+from tenuo import Warrant, ConstraintSet, Pattern, Range, TrustLevel
 
 # Complex orchestration with full control
+cs = ConstraintSet()
+cs.insert("path", Pattern("/data/project-*/*.pdf"))
+cs.insert("max_results", Range(max=100))
+
 child = (parent.attenuate()
-    .tools("read_file", "search")
-    .constraint("path", Pattern("/data/project-*/*.pdf"))
-    .constraint("max_results", Range(max=100))
+    .with_capability("read_file", cs)
+    .with_capability("search", cs)
     .trust(TrustLevel.EXTERNAL)
     .ttl(seconds=300)
     .intent("Research task for user query")
     .max_depth(1)  # Allow one more delegation
-    .delegate_to(worker))
+    .holder(worker.public_key)
+    .build(worker, parent_keypair))
 
 # Preview before committing
 print(child.delegation_receipt.diff())
@@ -258,14 +265,13 @@ Warrant {
     holder: PublicKey (mandatory - PoP binding)
     
     # Execution warrants
-    tool: string | string[]
-    constraints: Map<string, Constraint>
+    capabilities: Map<string, ConstraintSet>  # tool_name → constraints
     
     # Issuer warrants
     issuable_tools: string[]
     trust_ceiling: TrustLevel
     max_issue_depth: int
-    constraint_bounds: Map<string, Constraint> (optional - limits on issued constraints)
+    constraint_bounds: ConstraintSet (optional - limits on issued constraints)
     
     # Common
     trust_level: TrustLevel (optional)
@@ -286,8 +292,8 @@ ChainLink {
     
     # Embedded scope (for attenuation verification without fetching)
     issuer_type: "execution" | "issuer"
-    issuer_tools: string[] | null       # Tools issuer had (execution) or could issue (issuer)
-    issuer_constraints: Map<string, Constraint> | null  # Constraint bounds
+    issuer_capabilities: Map<string, ConstraintSet> | null  # For execution warrants
+    issuer_issuable_tools: string[] | null                   # For issuer warrants
     issuer_trust: TrustLevel | null
     issuer_expires_at: timestamp
     issuer_max_depth: int

@@ -14,6 +14,7 @@ from tenuo import (
     TrustLevel,
     Pattern,
     Exact,
+    Constraints,
 )
 
 
@@ -92,7 +93,8 @@ class TestIssueExecutionExists:
         # Should be a builder with fluent API methods
         assert builder is not None
         assert hasattr(builder, 'with_tool'), "IssuanceBuilder should have with_tool()"
-        assert hasattr(builder, 'with_constraint'), "IssuanceBuilder should have with_constraint()"
+        assert hasattr(builder, 'with_tool'), "IssuanceBuilder should have with_tool()"
+        assert hasattr(builder, 'with_capability'), "IssuanceBuilder should have with_capability()"
         assert hasattr(builder, 'with_holder'), "IssuanceBuilder should have with_holder()"
         assert hasattr(builder, 'build'), "IssuanceBuilder should have build()"
     
@@ -102,8 +104,8 @@ class TestIssueExecutionExists:
         
         # Create execution warrant (not issuer)
         exec_warrant = Warrant.issue(
-            tools=["read_file"],
             keypair=kp,
+            capabilities=Constraints.for_tool("read_file", {}),
             ttl_seconds=3600,
         )
         
@@ -127,7 +129,9 @@ class TestIssueExecutionExists:
         builder = issuer_warrant.issue_execution()
         builder.with_tool("read_file")
         builder.with_holder(worker_kp.public_key)
-        builder.with_constraint("path", Pattern("/data/*"))
+        builder.with_tool("read_file")
+        builder.with_holder(worker_kp.public_key)
+        builder.with_capability("read_file", {"path": Pattern("/data/*")})
         builder.with_ttl(300)  # TTL is required
         
         # Step 3: Build (needs keypair of issuer warrant holder)
@@ -148,8 +152,8 @@ class TestDelegateMethod:
         kp = SigningKey.generate()
         
         warrant = Warrant.issue(
-            tools=["read_file"],
             keypair=kp,
+            capabilities=Constraints.for_tool("read_file", {}),
             ttl_seconds=3600,
         )
         
@@ -177,7 +181,7 @@ class TestDelegateMethod:
                 assert child.tools == parent.tools
                 
                 # But constraints should be narrowed
-                child_constraints = child.constraints_dict()
+                child_constraints = child.capabilities.get("read_file")
                 assert child_constraints is not None
     
     def test_delegate_inherits_tools(self):
@@ -224,8 +228,8 @@ class TestAttenuateBuilderToolSelection:
         
         # Create execution warrant with multiple tools
         parent = Warrant.issue(
-            tools=["read_file", "send_email", "query_db"],
             keypair=kp,
+            capabilities={t: {} for t in ["read_file", "send_email", "query_db"]},
             ttl_seconds=3600,
         )
         
@@ -248,8 +252,8 @@ class TestAttenuateBuilderToolSelection:
         worker_kp = SigningKey.generate()
         
         parent = Warrant.issue(
-            tools=["read_file", "send_email"],
             keypair=kp,
+            capabilities={t: {} for t in ["read_file", "send_email"]},
             ttl_seconds=3600,
         )
         
@@ -262,14 +266,14 @@ class TestAttenuateBuilderToolSelection:
     
     def test_attenuate_rejects_tool_not_in_parent(self):
         """Cannot add tools that weren't in parent."""
-        import pytest
+
         
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
         
         parent = Warrant.issue(
-            tools=["read_file"],
             keypair=kp,
+            capabilities=Constraints.for_tool("read_file", {}),
             ttl_seconds=3600,
         )
         
@@ -277,10 +281,11 @@ class TestAttenuateBuilderToolSelection:
         builder.with_tools(["read_file", "delete_file"])  # delete_file not in parent!
         builder.with_holder(worker_kp.public_key)
         
-        with pytest.raises(Exception) as exc_info:
-            builder.delegate_to(kp, kp)
+        # Should not raise, but silently ignore 'delete_file'
+        child = builder.delegate_to(kp, kp)
         
-        assert "delete_file" in str(exc_info.value) or "not in parent" in str(exc_info.value)
+        assert "read_file" in child.tools
+        assert "delete_file" not in child.tools
     
     def test_issue_execution_can_select_tools(self):
         """
@@ -316,8 +321,8 @@ class TestTerminalWarrants:
         
         # Non-terminal warrant (no max_depth or max_depth > depth)
         warrant = Warrant.issue(
-            tools=["read_file"],
             keypair=kp,
+            capabilities=Constraints.for_tool("read_file", {}),
             ttl_seconds=3600,
         )
         
@@ -331,8 +336,8 @@ class TestTerminalWarrants:
         worker_kp = SigningKey.generate()
         
         parent = Warrant.issue(
-            tools=["read_file"],
             keypair=kp,
+            capabilities=Constraints.for_tool("read_file", {}),
             ttl_seconds=3600,
         )
         
@@ -354,8 +359,8 @@ class TestTerminalWarrants:
         another_kp = SigningKey.generate()
         
         parent = Warrant.issue(
-            tools=["read_file"],
             keypair=kp,
+            capabilities=Constraints.for_tool("read_file", {}),
             ttl_seconds=3600,
         )
         

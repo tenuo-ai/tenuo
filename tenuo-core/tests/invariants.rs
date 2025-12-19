@@ -10,7 +10,7 @@ use proptest::prelude::*;
 use std::collections::HashMap;
 use std::time::Duration;
 use tenuo::{
-    constraints::{ConstraintValue, Pattern, Range},
+    constraints::{ConstraintSet, ConstraintValue, Pattern, Range},
     crypto::SigningKey,
     warrant::Warrant,
     wire, MAX_ISSUER_CHAIN_LENGTH,
@@ -43,7 +43,7 @@ proptest! {
         let child_kp = SigningKey::generate();
 
         let parent = Warrant::builder()
-            .tool("test_tool")
+            .capability("test_tool", ConstraintSet::new())
             .ttl(Duration::from_secs(ttl_parent))
             .authorized_holder(child_kp.public_key())
             .build(&parent_kp)
@@ -67,7 +67,7 @@ proptest! {
         let kp = SigningKey::generate();
 
         let mut warrant = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
             .authorized_holder(kp.public_key())
             .build(&kp)
@@ -90,18 +90,21 @@ proptest! {
         let child_kp = SigningKey::generate();
 
         // Parent has narrow pattern
+        let mut parent_constraints = ConstraintSet::new();
+        parent_constraints.insert("field", Pattern::new(&format!("{}-*", prefix)).unwrap());
         let parent = Warrant::builder()
-            .tool("test")
-            .constraint("field", Pattern::new(&format!("{}-*", prefix)).unwrap())
+            .capability("test", parent_constraints)
             .ttl(Duration::from_secs(600))
             .authorized_holder(child_kp.public_key())
             .build(&parent_kp)
             .unwrap();
 
         // Attempt to widen to "*" should fail
+        let mut child_constraints = ConstraintSet::new();
+        child_constraints.insert("field", Pattern::new("*").unwrap());
         let result = parent
             .attenuate()
-            .constraint("field", Pattern::new("*").unwrap())
+            .capability("test", child_constraints)
             .authorized_holder(child_kp.public_key())
             .build(&child_kp, &child_kp);
 
@@ -117,27 +120,32 @@ proptest! {
         let parent_kp = SigningKey::generate();
         let child_kp = SigningKey::generate();
 
+        let mut parent_constraints = ConstraintSet::new();
+        parent_constraints.insert("amount", Range::max(parent_max).unwrap());
         let parent = Warrant::builder()
-            .tool("test")
-            .constraint("amount", Range::max(parent_max).unwrap())
+            .capability("test", parent_constraints)
             .ttl(Duration::from_secs(600))
             .authorized_holder(child_kp.public_key())
             .build(&parent_kp)
             .unwrap();
 
         // Attempting to increase max should fail
+        let mut bad_constraints = ConstraintSet::new();
+        bad_constraints.insert("amount", Range::max(parent_max + child_delta).unwrap());
         let result = parent
             .attenuate()
-            .constraint("amount", Range::max(parent_max + child_delta).unwrap())
+            .capability("test", bad_constraints)
             .authorized_holder(child_kp.public_key())
             .build(&child_kp, &child_kp);
 
         prop_assert!(result.is_err());
 
         // Decreasing max should succeed
+        let mut narrow_constraints = ConstraintSet::new();
+        narrow_constraints.insert("amount", Range::max(parent_max - child_delta.min(parent_max - 1.0)).unwrap());
         let narrower = parent
             .attenuate()
-            .constraint("amount", Range::max(parent_max - child_delta.min(parent_max - 1.0)).unwrap())
+            .capability("test", narrow_constraints)
             .authorized_holder(child_kp.public_key())
             .build(&child_kp, &child_kp);
 
@@ -160,7 +168,7 @@ proptest! {
 
         let kp = SigningKey::generate();
         let warrant = Warrant::builder()
-            .tool(&tool1)
+            .capability(&tool1, ConstraintSet::new())
             .ttl(Duration::from_secs(600))
             .authorized_holder(kp.public_key())
             .build(&kp)
@@ -189,9 +197,10 @@ proptest! {
     ) {
         let kp = SigningKey::generate();
 
+        let mut constraints = ConstraintSet::new();
+        constraints.insert("cluster", Pattern::new(&format!("{}-*", prefix)).unwrap());
         let warrant = Warrant::builder()
-            .tool("test")
-            .constraint("cluster", Pattern::new(&format!("{}-*", prefix)).unwrap())
+            .capability("test", constraints)
             .ttl(Duration::from_secs(600))
             .authorized_holder(kp.public_key())
             .build(&kp)
@@ -224,9 +233,10 @@ proptest! {
     ) {
         let kp = SigningKey::generate();
 
+        let mut constraints = ConstraintSet::new();
+        constraints.insert("amount", Range::max(max_val).unwrap());
         let warrant = Warrant::builder()
-            .tool("transfer")
-            .constraint("amount", Range::max(max_val).unwrap())
+            .capability("transfer", constraints)
             .ttl(Duration::from_secs(600))
             .authorized_holder(kp.public_key())
             .build(&kp)
@@ -267,7 +277,7 @@ proptest! {
         let attacker_kp = SigningKey::generate();
 
         let warrant = Warrant::builder()
-            .tool(&tool)
+            .capability(&tool, ConstraintSet::new())
             .ttl(Duration::from_secs(ttl))
             .authorized_holder(issuer_kp.public_key())
             .build(&issuer_kp)
@@ -289,7 +299,7 @@ proptest! {
         let kp = SigningKey::generate();
 
         let original = Warrant::builder()
-            .tool(&tool)
+            .capability(&tool, ConstraintSet::new())
             .ttl(Duration::from_secs(ttl))
             .authorized_holder(kp.public_key())
             .build(&kp)
@@ -325,7 +335,7 @@ proptest! {
         let kp = SigningKey::generate();
 
         let mut warrant = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(36000)) // Long TTL to not expire during test
             .authorized_holder(kp.public_key())
             .build(&kp)
@@ -366,7 +376,7 @@ proptest! {
 
         for _ in 0..count {
             let warrant = Warrant::builder()
-                .tool("test")
+                .capability("test", ConstraintSet::new())
                 .ttl(Duration::from_secs(60))
                 .authorized_holder(kp.public_key())
                 .build(&kp)
@@ -391,7 +401,7 @@ proptest! {
         let kp = SigningKey::generate();
 
         let root = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
             .authorized_holder(kp.public_key())
             .build(&kp)

@@ -11,7 +11,7 @@ Tests verifying:
 import pytest
 
 from tenuo import (
-    Warrant, TrustLevel,
+    Warrant, TrustLevel, Constraints,
     DepthExceeded, MAX_DELEGATION_DEPTH, MAX_ISSUER_CHAIN_LENGTH
 )
 from tenuo.exceptions import ValidationError
@@ -32,7 +32,11 @@ class TestDelegationLimits:
         print(f"  [Info] MAX_DELEGATION_DEPTH = {MAX_DELEGATION_DEPTH}")
         print(f"  [Info] MAX_ISSUER_CHAIN_LENGTH = {MAX_ISSUER_CHAIN_LENGTH}")
         
-        current = Warrant.issue(tools="search", ttl_seconds=3600, keypair=keypair)
+        current = Warrant.issue(
+            keypair=keypair,
+            capabilities=Constraints.for_tool("search", {}),
+            ttl_seconds=3600
+        )
         
         try:
             for i in range(MAX_DELEGATION_DEPTH + 10):
@@ -57,7 +61,11 @@ class TestDelegationLimits:
         """
         print("\n--- Attack 18: Chain Length DoS ---")
         
-        current = Warrant.issue(tools="search", ttl_seconds=3600, keypair=keypair)
+        current = Warrant.issue(
+            keypair=keypair,
+            capabilities=Constraints.for_tool("search", {}),
+            ttl_seconds=3600
+        )
         depth = 0
         max_attempts = 50
         
@@ -116,9 +124,9 @@ class TestDelegationLimits:
         print("\n--- Attack 29: Execution Warrant Issuing ---")
         
         exec_warrant = Warrant.issue(
-            tools="search",
-            ttl_seconds=3600,
-            keypair=keypair
+            keypair=keypair,
+            capabilities=Constraints.for_tool("search", {}),
+            ttl_seconds=3600
         )
         
         print("  [Attack 29] Attempting to call issue_execution() on execution warrant...")
@@ -164,9 +172,9 @@ class TestDelegationLimits:
         print("\n--- Attack 31: Terminal Warrant Delegation ---")
         
         parent = Warrant.issue(
-            tools="search",
-            ttl_seconds=3600,
-            keypair=keypair
+            keypair=keypair,
+            capabilities=Constraints.for_tool("search", {}),
+            ttl_seconds=3600
         )
         
         # Create terminal warrant

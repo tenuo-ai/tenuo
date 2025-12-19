@@ -15,7 +15,7 @@ import base64
 import json
 
 from tenuo import (
-    Warrant, Pattern, Range, Exact, lockdown, set_warrant_context, set_signing_key_context,
+    Warrant, Pattern, Range, Exact, Constraints, lockdown, set_warrant_context, set_signing_key_context,
     Unauthorized
 )
 
@@ -49,10 +49,9 @@ class TestImplementation:
             return f"Searching for {arg}"
         
         warrant = Warrant.issue(
-            tools="search",
-            constraints={"query": Pattern("allowed*")},
-            ttl_seconds=60,
-            keypair=keypair
+            keypair=keypair,
+            capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}),
+            ttl_seconds=60
         )
         
         print("  [Attack 10] Using constrained warrant on buggy wrapper...")
@@ -75,10 +74,9 @@ class TestImplementation:
         print("\n--- Attack 15: Constraint Type Coercion ---")
         
         warrant = Warrant.issue(
-            tools="query",
-            constraints={"limit": Range(max=100)},
-            ttl_seconds=60,
-            keypair=keypair
+            keypair=keypair,
+            capabilities=Constraints.for_tool("query", {"limit": Range(max=100)}),
+            ttl_seconds=60
         )
         
         print("  [Attack 15A] Testing string '999' against Range(max=100)...")
@@ -101,7 +99,11 @@ class TestImplementation:
         """
         print("\n--- Attack 16: Serialization Injection ---")
         
-        warrant = Warrant.issue(tools="search", ttl_seconds=60, keypair=keypair)
+        warrant = Warrant.issue(
+            keypair=keypair,
+            capabilities=Constraints.for_tool("search", {}),
+            ttl_seconds=60
+        )
         b64 = warrant.to_base64()
         
         try:
@@ -137,9 +139,9 @@ class TestImplementation:
         print("\n--- Attack 22: TOCTOU payload_bytes vs payload ---")
         
         warrant = Warrant.issue(
-            tools="read",
-            ttl_seconds=3600,
-            keypair=keypair
+            keypair=keypair,
+            capabilities=Constraints.for_tool("read", {}),
+            ttl_seconds=3600
         )
         
         b64 = warrant.to_base64()
@@ -161,10 +163,9 @@ class TestImplementation:
         print("\n--- Attack 24: Path Traversal in Constraints ---")
         
         warrant = Warrant.issue(
-            tools="read_file",
-            constraints={"path": Pattern("/data/*")},
-            ttl_seconds=3600,
-            keypair=keypair
+            keypair=keypair,
+            capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
+            ttl_seconds=3600
         )
         
         print("  [Attack 24] Attempting path=/data/../etc/passwd...")
@@ -185,10 +186,9 @@ class TestImplementation:
         print("\n--- Attack 32: Default Value Bypass ---")
         
         warrant = Warrant.issue(
-            tools="query",
-            constraints={"limit": Range(max=100)},
-            ttl_seconds=3600,
-            keypair=keypair
+            keypair=keypair,
+            capabilities=Constraints.for_tool("query", {"limit": Range(max=100)}),
+            ttl_seconds=3600
         )
         
         @lockdown(tool="query")
@@ -217,10 +217,9 @@ class TestImplementation:
         
         try:
             warrant = Warrant.issue(
-                tools="read_file",
-                constraints={injected_key: Pattern("secret")},
-                ttl_seconds=60,
-                keypair=keypair
+                keypair=keypair,
+                capabilities=Constraints.for_tool("read_file", {injected_key: Pattern("secret")}),
+                ttl_seconds=60
             )
             print("  [Info] Warrant issued with injected key.")
             
@@ -246,10 +245,9 @@ class TestImplementation:
         print("\n--- Attack: Null Byte Injection ---")
         
         warrant = Warrant.issue(
-            tools="read",
-            constraints={"path": Exact("/safe/path")},
-            ttl_seconds=60,
-            keypair=keypair
+            keypair=keypair,
+            capabilities=Constraints.for_tool("read", {"path": Exact("/safe/path")}),
+            ttl_seconds=60
         )
         
         # Attack: /safe/path\0/../../etc/passwd
@@ -275,9 +273,9 @@ class TestImplementation:
         print("\n--- Attack: Null Byte in Tool Name ---")
         
         warrant = Warrant.issue(
-            tools="safe_tool",
-            ttl_seconds=60,
-            keypair=keypair
+            keypair=keypair,
+            capabilities=Constraints.for_tool("safe_tool", {}),
+            ttl_seconds=60
         )
         
         # Try to match "safe_tool" by passing "safe_tool\0_evil"

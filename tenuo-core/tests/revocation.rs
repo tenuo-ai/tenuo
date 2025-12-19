@@ -8,6 +8,7 @@
 use chrono::Utc;
 use std::time::Duration;
 use tenuo::{
+    constraints::ConstraintSet,
     crypto::SigningKey,
     planes::{ControlPlane, DataPlane},
     revocation::{RevocationRequest, SignedRevocationList},
@@ -24,7 +25,7 @@ use tenuo::{
 fn test_single_warrant_revocation() {
     let kp = SigningKey::generate();
     let warrant = Warrant::builder()
-        .tool("test")
+        .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(600))
         .authorized_holder(kp.public_key())
         .build(&kp)
@@ -63,7 +64,7 @@ fn test_chain_revocation_child() {
     let child_kp = SigningKey::generate();
 
     let root = Warrant::builder()
-        .tool("test")
+        .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(600))
         .authorized_holder(child_kp.public_key())
         .build(&root_kp)
@@ -106,7 +107,7 @@ fn test_chain_revocation_parent_cascades() {
     let child_kp = SigningKey::generate();
 
     let root = Warrant::builder()
-        .tool("test")
+        .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(600))
         .authorized_holder(child_kp.public_key())
         .build(&root_kp)
@@ -149,14 +150,14 @@ fn test_cascading_revocation_multiple_warrants() {
 
     // Issue multiple warrants
     let warrant1 = Warrant::builder()
-        .tool("test_tool_1")
+        .capability("test_tool_1", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(issuer_keypair.public_key())
         .build(&issuer_keypair)
         .unwrap();
 
     let warrant2 = Warrant::builder()
-        .tool("test_tool_2")
+        .capability("test_tool_2", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(issuer_keypair.public_key())
         .build(&issuer_keypair)

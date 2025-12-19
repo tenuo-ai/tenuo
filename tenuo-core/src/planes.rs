@@ -31,7 +31,7 @@
 
 use crate::approval::{AuditEvent, AuditEventType, WarrantTracker};
 use crate::audit::log_event;
-use crate::constraints::{Constraint, ConstraintValue};
+use crate::constraints::{Constraint, ConstraintSet, ConstraintValue};
 use crate::crypto::{PublicKey, SigningKey};
 use crate::error::{Error, Result};
 use crate::revocation::RevocationRequest;
@@ -226,16 +226,16 @@ impl ControlPlane {
         constraints: &[(&str, Constraint)],
         ttl: Duration,
     ) -> Result<Warrant> {
-        let mut builder = Warrant::builder()
-            .tool(tool)
-            .ttl(ttl)
-            .authorized_holder(self.keypair.public_key());
-
+        let mut constraint_set = ConstraintSet::new();
         for (field, constraint) in constraints {
-            builder = builder.constraint(*field, constraint.clone());
+            constraint_set.insert(field.to_string(), constraint.clone());
         }
 
-        builder.build(&self.keypair)
+        Warrant::builder()
+            .capability(tool, constraint_set)
+            .ttl(ttl)
+            .authorized_holder(self.keypair.public_key())
+            .build(&self.keypair)
     }
 
     /// Issue a warrant bound to a specific holder.
@@ -246,16 +246,16 @@ impl ControlPlane {
         ttl: Duration,
         holder: &PublicKey,
     ) -> Result<Warrant> {
-        let mut builder = Warrant::builder()
-            .tool(tool)
-            .ttl(ttl)
-            .authorized_holder(holder.clone());
-
+        let mut constraint_set = ConstraintSet::new();
         for (field, constraint) in constraints {
-            builder = builder.constraint(*field, constraint.clone());
+            constraint_set.insert(field.to_string(), constraint.clone());
         }
 
-        builder.build(&self.keypair)
+        Warrant::builder()
+            .capability(tool, constraint_set)
+            .ttl(ttl)
+            .authorized_holder(holder.clone())
+            .build(&self.keypair)
     }
 
     /// Issue a warrant with full configuration options.
@@ -274,17 +274,17 @@ impl ControlPlane {
         holder: &PublicKey,
         max_depth: u32,
     ) -> Result<Warrant> {
-        let mut builder = Warrant::builder()
-            .tool(tool)
-            .ttl(ttl)
-            .authorized_holder(holder.clone())
-            .max_depth(max_depth);
-
+        let mut constraint_set = ConstraintSet::new();
         for (field, constraint) in constraints {
-            builder = builder.constraint(*field, constraint.clone());
+            constraint_set.insert(field.to_string(), constraint.clone());
         }
 
-        builder.build(&self.keypair)
+        Warrant::builder()
+            .capability(tool, constraint_set)
+            .ttl(ttl)
+            .authorized_holder(holder.clone())
+            .max_depth(max_depth)
+            .build(&self.keypair)
     }
 
     /// Issue a warrant and automatically track it in the registry.
@@ -832,22 +832,22 @@ impl DataPlane {
         // 7. Validate monotonicity using embedded scope
         match (link.issuer_type, child.r#type()) {
             (WarrantType::Execution, WarrantType::Execution) => {
-                // For execution warrants, validate constraint attenuation
-                if let (Some(parent_constraints), Some(child_constraints)) =
-                    (link.issuer_constraints.as_ref(), child.constraints())
+                // For execution warrants, validate capability attenuation
+                if let (Some(parent_caps), Some(child_caps)) =
+                    (link.issuer_capabilities.as_ref(), child.capabilities())
                 {
-                    parent_constraints.validate_attenuation(child_constraints)?;
-                }
-                // Validate tool is within issuer's tools
-                if let Some(issuer_tools) = &link.issuer_tools {
-                    if let Some(child_tools) = child.tools() {
-                        for child_tool in child_tools {
-                            if !issuer_tools.iter().any(|t| t == child_tool || t == "*") {
-                                return Err(Error::MonotonicityViolation(format!(
-                                    "child tool '{}' not in issuer's tools: {:?}",
-                                    child_tool, issuer_tools
-                                )));
-                            }
+                    for (tool, child_constraints) in child_caps {
+                        // Parent must have the tool (or wildcard)
+                        let parent_constraints =
+                            parent_caps.get(tool).or_else(|| parent_caps.get("*"));
+
+                        if let Some(parent_constraints) = parent_constraints {
+                            parent_constraints.validate_attenuation(child_constraints)?;
+                        } else {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "tool '{}' not in issuer's capabilities",
+                                tool
+                            )));
                         }
                     }
                 }
@@ -855,11 +855,11 @@ impl DataPlane {
             (WarrantType::Issuer, WarrantType::Issuer) => {
                 // For issuer warrants, validate issuable_tools and trust_ceiling
                 if let (Some(parent_tools), Some(child_tools)) =
-                    (link.issuer_tools.as_ref(), child.issuable_tools())
+                    (link.issuer_issuable_tools.as_ref(), child.issuable_tools())
                 {
                     // Child issuable_tools must be a subset of parent
                     for tool in child_tools {
-                        if !parent_tools.contains(tool) {
+                        if !parent_tools.iter().any(|t| t == tool || t == "*") {
                             return Err(Error::MonotonicityViolation(format!(
                                 "issuable_tool '{}' not in issuer's issuable_tools",
                                 tool
@@ -879,9 +879,10 @@ impl DataPlane {
                     }
                 }
                 // Constraint bounds must be monotonic
-                if let (Some(parent_bounds), Some(child_bounds)) =
-                    (link.issuer_constraints.as_ref(), child.constraint_bounds())
-                {
+                if let (Some(parent_bounds), Some(child_bounds)) = (
+                    link.issuer_constraint_bounds.as_ref(),
+                    child.constraint_bounds(),
+                ) {
                     parent_bounds.validate_attenuation(child_bounds)?;
                 }
             }
@@ -955,11 +956,102 @@ impl DataPlane {
         }
 
         // 5. Validate constraint attenuation (monotonicity)
-        // Only validate for execution warrants
-        if let (Some(parent_constraints), Some(child_constraints)) =
-            (parent.constraints(), child.constraints())
-        {
-            parent_constraints.validate_attenuation(child_constraints)?;
+        match (parent.r#type(), child.r#type()) {
+            (WarrantType::Execution, WarrantType::Execution) => {
+                // For execution warrants, validate capability attenuation
+                if let (Some(parent_caps), Some(child_caps)) =
+                    (parent.capabilities(), child.capabilities())
+                {
+                    for (tool, child_constraints) in child_caps {
+                        let parent_constraints =
+                            parent_caps.get(tool).or_else(|| parent_caps.get("*"));
+
+                        if let Some(parent_constraints) = parent_constraints {
+                            parent_constraints.validate_attenuation(child_constraints)?;
+                        } else {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "tool '{}' not in parent's capabilities",
+                                tool
+                            )));
+                        }
+                    }
+                }
+            }
+            (WarrantType::Issuer, WarrantType::Issuer) => {
+                // For issuer warrants, validate issuable_tools and trust_ceiling
+                if let (Some(parent_tools), Some(child_tools)) =
+                    (parent.issuable_tools(), child.issuable_tools())
+                {
+                    // Child issuable_tools must be a subset of parent
+                    for tool in child_tools {
+                        if !parent_tools.iter().any(|t| t == tool || t == "*") {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "issuable_tool '{}' not in parent's issuable_tools",
+                                tool
+                            )));
+                        }
+                    }
+                }
+                // Trust ceiling can only decrease
+                if let (Some(parent_ceiling), Some(child_ceiling)) =
+                    (parent.trust_ceiling(), child.trust_ceiling())
+                {
+                    if child_ceiling > parent_ceiling {
+                        return Err(Error::MonotonicityViolation(format!(
+                            "trust_ceiling cannot increase: parent {:?}, child {:?}",
+                            parent_ceiling, child_ceiling
+                        )));
+                    }
+                }
+                // Constraint bounds must be monotonic
+                if let (Some(parent_bounds), Some(child_bounds)) =
+                    (parent.constraint_bounds(), child.constraint_bounds())
+                {
+                    parent_bounds.validate_attenuation(child_bounds)?;
+                }
+            }
+            (WarrantType::Issuer, WarrantType::Execution) => {
+                // ISSUER -> EXECUTION: Validate issuance constraints
+                // 1. Child tool must be in issuer's issuable_tools
+                if let Some(issuable_tools) = parent.issuable_tools() {
+                    if let Some(child_caps) = child.capabilities() {
+                        for tool in child_caps.keys() {
+                            if !issuable_tools.iter().any(|t| t == tool || t == "*") {
+                                return Err(Error::MonotonicityViolation(format!(
+                                    "tool '{}' not in issuer's issuable_tools: {:?}",
+                                    tool, issuable_tools
+                                )));
+                            }
+                        }
+                    }
+                }
+                // 2. Child trust_level must not exceed issuer's trust_ceiling
+                if let Some(trust_ceiling) = parent.trust_ceiling() {
+                    if let Some(child_trust) = child.trust_level() {
+                        if child_trust > trust_ceiling {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "trust_level {:?} exceeds issuer's trust_ceiling {:?}",
+                                child_trust, trust_ceiling
+                            )));
+                        }
+                    }
+                }
+                // 3. Child constraints must respect issuer's constraint_bounds
+                if let (Some(bounds), Some(child_caps)) =
+                    (parent.constraint_bounds(), child.capabilities())
+                {
+                    for constraints in child_caps.values() {
+                        bounds.validate_attenuation(constraints)?;
+                    }
+                }
+            }
+            _ => {
+                return Err(Error::MonotonicityViolation(format!(
+                    "invalid warrant type transition: {:?} -> {:?}",
+                    parent.r#type(),
+                    child.r#type()
+                )));
+            }
         }
 
         // 6. Verify child's signature
@@ -1076,9 +1168,37 @@ impl DataPlane {
             Error::CryptoError("data plane has no keypair for attenuation".to_string())
         })?;
 
+        // Group constraints by tool (from prefix) or default to "*" ?
+        // OLD logic: parent.attenuate() -> OwnedAttenuationBuilder. Not specific tool?
+        // Wait, OwnedAttenuationBuilder adds capabilities?
+        // How does attenuate work now?
+        // OwnedAttenuationBuilder has `capability(tool, constraints)`.
+
         let mut builder = parent.attenuate();
+
+        // We need to map constraint list to capability map.
+        // Assuming constraints are global? No, accessors were removed.
+        // If constraints have tool prefixes?
+        // For now, assume single tool if parent has single tool?
+        // Or if simple constraints, map to "*"?
+
+        // Let's assume the callers pass tool-specific constraints?
+        // Wait, the API `constraints: &[(&str, Constraint)]` is generic.
+        // The `example` usage earlier had `tool`.
+        // `attenuate` does NOT take `tool` arg.
+        // So it must inherit tools?
+        // `OwnedAttenuationBuilder` needs specific capability updates.
+
+        let mut constraint_set = ConstraintSet::new();
         for (field, constraint) in constraints {
-            builder = builder.constraint(*field, constraint.clone());
+            constraint_set.insert(field.to_string(), constraint.clone());
+        }
+
+        // Apply to ALL tools in parent?
+        if let Some(caps) = parent.capabilities() {
+            for tool in caps.keys() {
+                builder = builder.capability(tool, constraint_set.clone());
+            }
         }
 
         builder.build(keypair, parent_keypair)
@@ -1657,30 +1777,32 @@ impl Authorizer {
         // Validate monotonicity using embedded scope
         match (link.issuer_type, child.r#type()) {
             (WarrantType::Execution, WarrantType::Execution) => {
-                if let (Some(parent_constraints), Some(child_constraints)) =
-                    (link.issuer_constraints.as_ref(), child.constraints())
+                // For execution warrants, validate capability attenuation
+                if let (Some(parent_caps), Some(child_caps)) =
+                    (link.issuer_capabilities.as_ref(), child.capabilities())
                 {
-                    parent_constraints.validate_attenuation(child_constraints)?;
-                }
-                if let Some(issuer_tools) = &link.issuer_tools {
-                    if let Some(child_tools) = child.tools() {
-                        for child_tool in child_tools {
-                            if !issuer_tools.iter().any(|t| t == child_tool || t == "*") {
-                                return Err(Error::MonotonicityViolation(format!(
-                                    "child tool '{}' not in issuer's tools: {:?}",
-                                    child_tool, issuer_tools
-                                )));
-                            }
+                    for (tool, child_constraints) in child_caps {
+                        // Parent must have the tool (or wildcard)
+                        let parent_constraints =
+                            parent_caps.get(tool).or_else(|| parent_caps.get("*"));
+
+                        if let Some(parent_constraints) = parent_constraints {
+                            parent_constraints.validate_attenuation(child_constraints)?;
+                        } else {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "tool '{}' not in issuer's capabilities",
+                                tool
+                            )));
                         }
                     }
                 }
             }
             (WarrantType::Issuer, WarrantType::Issuer) => {
                 if let (Some(parent_tools), Some(child_tools)) =
-                    (link.issuer_tools.as_ref(), child.issuable_tools())
+                    (link.issuer_issuable_tools.as_ref(), child.issuable_tools())
                 {
                     for tool in child_tools {
-                        if !parent_tools.contains(tool) {
+                        if !parent_tools.iter().any(|t| t == tool || t == "*") {
                             return Err(Error::MonotonicityViolation(format!(
                                 "issuable_tool '{}' not in issuer's issuable_tools",
                                 tool
@@ -1698,20 +1820,20 @@ impl Authorizer {
                         )));
                     }
                 }
-                if let (Some(parent_bounds), Some(child_bounds)) =
-                    (link.issuer_constraints.as_ref(), child.constraint_bounds())
-                {
+                if let (Some(parent_bounds), Some(child_bounds)) = (
+                    link.issuer_constraint_bounds.as_ref(),
+                    child.constraint_bounds(),
+                ) {
                     parent_bounds.validate_attenuation(child_bounds)?;
                 }
             }
             (WarrantType::Issuer, WarrantType::Execution) => {
                 // ISSUER -> EXECUTION: Validate issuance constraints from embedded link
-                // This is the primary use case for embedded verification
 
                 // 1. Child tool must be in issuer's issuable_tools (stored in link)
-                if let Some(issuable_tools) = &link.issuer_tools {
-                    if let Some(child_tools) = child.tools() {
-                        for tool in child_tools {
+                if let Some(issuable_tools) = &link.issuer_issuable_tools {
+                    if let Some(child_caps) = child.capabilities() {
+                        for tool in child_caps.keys() {
                             if !issuable_tools.iter().any(|t| t == tool || t == "*") {
                                 return Err(Error::MonotonicityViolation(format!(
                                     "tool '{}' not in issuer's issuable_tools: {:?}",
@@ -1735,10 +1857,12 @@ impl Authorizer {
                 }
 
                 // 3. Child constraints must respect issuer's constraint_bounds
-                if let (Some(bounds), Some(child_constraints)) =
-                    (&link.issuer_constraints, child.constraints())
+                if let (Some(bounds), Some(child_caps)) =
+                    (&link.issuer_constraint_bounds, child.capabilities())
                 {
-                    bounds.validate_attenuation(child_constraints)?;
+                    for constraints in child_caps.values() {
+                        bounds.validate_attenuation(constraints)?;
+                    }
                 }
             }
             _ => {
@@ -1967,19 +2091,20 @@ impl Authorizer {
         // Validate monotonicity based on warrant type
         match (parent.r#type(), child.r#type()) {
             (WarrantType::Execution, WarrantType::Execution) => {
-                // For execution warrants, validate constraint attenuation
-                if let (Some(parent_constraints), Some(child_constraints)) =
-                    (parent.constraints(), child.constraints())
+                // For execution warrants, validate capability attenuation
+                if let (Some(parent_caps), Some(child_caps)) =
+                    (parent.capabilities(), child.capabilities())
                 {
-                    parent_constraints.validate_attenuation(child_constraints)?;
-                }
-                // Validate tools subset
-                if let (Some(parent_tools), Some(child_tools)) = (parent.tools(), child.tools()) {
-                    for tool in child_tools {
-                        if !parent_tools.iter().any(|t| t == tool || t == "*") {
+                    for (tool, child_constraints) in child_caps {
+                        let parent_constraints =
+                            parent_caps.get(tool).or_else(|| parent_caps.get("*"));
+
+                        if let Some(parent_constraints) = parent_constraints {
+                            parent_constraints.validate_attenuation(child_constraints)?;
+                        } else {
                             return Err(Error::MonotonicityViolation(format!(
-                                "tool '{}' not in parent's tools: {:?}",
-                                tool, parent_tools
+                                "tool '{}' not in parent's capabilities",
+                                tool
                             )));
                         }
                     }
@@ -1992,7 +2117,7 @@ impl Authorizer {
                 {
                     // Child issuable_tools must be a subset of parent
                     for tool in child_tools {
-                        if !parent_tools.contains(tool) {
+                        if !parent_tools.iter().any(|t| t == tool || t == "*") {
                             return Err(Error::MonotonicityViolation(format!(
                                 "issuable_tool '{}' not in parent's issuable_tools",
                                 tool
@@ -2024,8 +2149,8 @@ impl Authorizer {
 
                 // 1. Child tool must be in issuer's issuable_tools
                 if let Some(issuable_tools) = parent.issuable_tools() {
-                    if let Some(child_tools) = child.tools() {
-                        for tool in child_tools {
+                    if let Some(child_caps) = child.capabilities() {
+                        for tool in child_caps.keys() {
                             if !issuable_tools.iter().any(|t| t == tool || t == "*") {
                                 return Err(Error::MonotonicityViolation(format!(
                                     "tool '{}' not in issuer's issuable_tools: {:?}",
@@ -2049,10 +2174,12 @@ impl Authorizer {
                 }
 
                 // 3. Child constraints must respect issuer's constraint_bounds
-                if let (Some(bounds), Some(child_constraints)) =
-                    (parent.constraint_bounds(), child.constraints())
+                if let (Some(bounds), Some(child_caps)) =
+                    (parent.constraint_bounds(), child.capabilities())
                 {
-                    bounds.validate_attenuation(child_constraints)?;
+                    for constraints in child_caps.values() {
+                        bounds.validate_attenuation(constraints)?;
+                    }
                 }
             }
             _ => {
@@ -2250,9 +2377,11 @@ mod tests {
             .unwrap();
 
         // Orchestrator delegates
+        let mut child_constraints = ConstraintSet::new();
+        child_constraints.insert("cluster", Exact::new("staging-web"));
         let child = root
             .attenuate()
-            .constraint("cluster", Exact::new("staging-web"))
+            .capability("upgrade_cluster", child_constraints)
             .build(&orchestrator_keypair, &control_plane.keypair)
             .unwrap();
 
@@ -2281,15 +2410,19 @@ mod tests {
             )
             .unwrap();
 
+        let mut orch_constraints = ConstraintSet::new();
+        orch_constraints.insert("table", Pattern::new("public_*").unwrap());
         let orchestrator_warrant = root
             .attenuate()
-            .constraint("table", Pattern::new("public_*").unwrap())
+            .capability("query", orch_constraints)
             .build(&orchestrator_keypair, &control_plane.keypair)
             .unwrap();
 
+        let mut worker_constraints = ConstraintSet::new();
+        worker_constraints.insert("table", Exact::new("public_users"));
         let worker_warrant = orchestrator_warrant
             .attenuate()
-            .constraint("table", Exact::new("public_users"))
+            .capability("query", worker_constraints)
             .build(&worker_keypair, &orchestrator_keypair)
             .unwrap();
 
@@ -2320,9 +2453,11 @@ mod tests {
             )
             .unwrap();
 
+        let mut agent_constraints = ConstraintSet::new();
+        agent_constraints.insert("cluster", Exact::new("staging-web"));
         let agent_warrant = root
             .attenuate()
-            .constraint("cluster", Exact::new("staging-web"))
+            .capability("upgrade_cluster", agent_constraints)
             .authorized_holder(agent_keypair.public_key())
             .build(&agent_keypair, &control_plane.keypair)
             .unwrap();
@@ -2572,7 +2707,7 @@ mod tests {
 
         // Create warrant WITH multi-sig requirement
         let warrant = Warrant::builder()
-            .tool("sensitive_action")
+            .capability("sensitive_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![admin_keypair.public_key()])
             .min_approvals(1)
@@ -2604,7 +2739,7 @@ mod tests {
 
         // Create warrant WITH multi-sig requirement
         let warrant = Warrant::builder()
-            .tool("sensitive_action")
+            .capability("sensitive_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![admin_keypair.public_key()])
             .min_approvals(1)
@@ -2671,7 +2806,7 @@ mod tests {
 
         // Create warrant requiring admin's approval
         let warrant = Warrant::builder()
-            .tool("sensitive_action")
+            .capability("sensitive_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![admin_keypair.public_key()])
             .min_approvals(1)
@@ -2739,7 +2874,7 @@ mod tests {
 
         // Create warrant requiring 2-of-3 approvals
         let warrant = Warrant::builder()
-            .tool("sensitive_action")
+            .capability("sensitive_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![
                 admin1.public_key(),
@@ -2824,7 +2959,7 @@ mod tests {
 
         // Create chain with matching session IDs
         let root = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .session_id("session_123")
             .ttl(Duration::from_secs(600))
             .authorized_holder(orchestrator_keypair.public_key())
@@ -2856,7 +2991,7 @@ mod tests {
 
         // Create root with session_123
         let root = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .session_id("session_123")
             .ttl(Duration::from_secs(600))
             .authorized_holder(orchestrator_keypair.public_key())
@@ -2868,7 +3003,7 @@ mod tests {
         // Manually build a child that points to root but has different session ID
         // We can't use attenuate() because it enforces session inheritance
         let child = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .session_id("session_456") // Different session
             .ttl(Duration::from_secs(500)) // Required field, must be < root TTL
             .parent_id(root.id().clone()) // Correct parent linkage
@@ -2900,7 +3035,7 @@ mod tests {
 
         // Root has session ID
         let root = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .session_id("session_123")
             .ttl(Duration::from_secs(600))
             .authorized_holder(orchestrator_keypair.public_key())
@@ -2909,7 +3044,7 @@ mod tests {
 
         // Root without session ID
         let root_no_session = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             // No session_id
             .ttl(Duration::from_secs(600))
             .authorized_holder(orchestrator_keypair.public_key())
@@ -2938,7 +3073,7 @@ mod tests {
         let orchestrator_keypair = SigningKey::generate();
 
         let root = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .session_id("session_123")
             .ttl(Duration::from_secs(600))
             .authorized_holder(orchestrator_keypair.public_key())
@@ -2960,7 +3095,7 @@ mod tests {
 
         // Create a different root with different session, then attenuate
         let root2 = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .session_id("session_456") // Different session
             .ttl(Duration::from_secs(600))
             .authorized_holder(orchestrator_keypair.public_key())
@@ -3035,11 +3170,12 @@ mod tests {
         assert_eq!(root.r#type(), WarrantType::Issuer);
 
         // 2. Issue Child Execution Warrant
+        let mut child_constraints = ConstraintSet::new();
+        child_constraints.insert("path", Pattern::new("/data/reports/*").unwrap());
         let child = root
             .issue_execution_warrant()
             .expect("Failed to start issuance")
-            .tool("read_file")
-            .constraint("path", Pattern::new("/data/reports/*").unwrap())
+            .capability("read_file", child_constraints)
             .trust_level(TrustLevel::External)
             .ttl(Duration::from_secs(600))
             .authorized_holder(worker_kp.public_key())
@@ -3094,7 +3230,7 @@ mod tests {
         let result = root
             .issue_execution_warrant()
             .expect("Failed to start issuance")
-            .tool("send_email") // NOT in issuable_tools
+            .capability("send_email", ConstraintSet::new()) // NOT in issuable_tools
             .ttl(Duration::from_secs(600))
             .authorized_holder(worker_kp.public_key())
             .build(&issuer_kp, &issuer_kp);
@@ -3109,7 +3245,7 @@ mod tests {
         let result = root
             .issue_execution_warrant()
             .expect("Failed to start issuance")
-            .tool("read_file")
+            .capability("read_file", ConstraintSet::new())
             .trust_level(TrustLevel::Internal) // Exceeds External ceiling
             .ttl(Duration::from_secs(600))
             .authorized_holder(worker_kp.public_key())
@@ -3125,11 +3261,12 @@ mod tests {
         );
 
         // Try to issue with constraint outside bounds (builder should reject)
+        let mut bad_constraints = ConstraintSet::new();
+        bad_constraints.insert("path", Pattern::new("/etc/*").unwrap()); // Outside /data/*
         let result = root
             .issue_execution_warrant()
             .expect("Failed to start issuance")
-            .tool("read_file")
-            .constraint("path", Pattern::new("/etc/*").unwrap()) // Outside /data/*
+            .capability("read_file", bad_constraints)
             .ttl(Duration::from_secs(600))
             .authorized_holder(worker_kp.public_key())
             .build(&issuer_kp, &issuer_kp);
@@ -3164,11 +3301,12 @@ mod tests {
             .expect("Failed to build issuer warrant");
 
         // Issue valid execution warrant
+        let mut exec_constraints = ConstraintSet::new();
+        exec_constraints.insert("path", Pattern::new("/data/reports/*").unwrap());
         let exec_warrant = issuer_warrant
             .issue_execution_warrant()
             .expect("Failed to start issuance")
-            .tool("read_file")
-            .constraint("path", Pattern::new("/data/reports/*").unwrap())
+            .capability("read_file", exec_constraints)
             .trust_level(TrustLevel::External)
             .ttl(Duration::from_secs(600))
             .authorized_holder(worker_kp.public_key())
@@ -3197,9 +3335,10 @@ mod tests {
         let kp = SigningKey::generate();
 
         // Create Execution warrant as root (unusual but possible)
+        let mut exec_constraints = ConstraintSet::new();
+        exec_constraints.insert("path", Pattern::new("/data/*").unwrap());
         let exec_root = Warrant::builder()
-            .tool("read_file")
-            .constraint("path", Pattern::new("/data/*").unwrap())
+            .capability("read_file", exec_constraints)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(kp.public_key())
             .build(&kp)
@@ -3227,7 +3366,7 @@ mod tests {
         // Build a chain of MAX_ISSUER_CHAIN_LENGTH warrants
         let mut chain = Vec::new();
         let root = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
             .authorized_holder(kp.public_key())
             .build(&kp)

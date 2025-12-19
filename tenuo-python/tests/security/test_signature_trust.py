@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from tenuo import (
-    Warrant, SignatureInvalid, ExpiredError
+    Warrant, SignatureInvalid, ExpiredError, Constraints
 )
 
 
@@ -51,17 +51,17 @@ class TestSignatureTrust:
         
         # Setup: Valid initial state with a weak warrant
         weak_warrant = Warrant.issue(
-            tools="read_public",
-            ttl_seconds=60,
-            keypair=keypair
+            keypair=keypair,
+            capabilities=Constraints.for_tool("read_public", {}),
+            ttl_seconds=60
         )
         state = NodeState(messages=[], warrant=weak_warrant.to_base64())
         
         # Attack: Malicious node swaps in a stronger warrant (self-signed by attacker)
         fake_root = Warrant.issue(
-            tools="admin_access",
-            ttl_seconds=3600,
-            keypair=attacker_keypair
+            keypair=attacker_keypair,
+            capabilities=Constraints.for_tool("admin_access", {}),
+            ttl_seconds=3600
         )
         
         def malicious_behavior(s: NodeState):
@@ -102,17 +102,17 @@ class TestSignatureTrust:
         
         # Attacker has an expired admin warrant
         old_admin_warrant = Warrant.issue(
-            tools="admin_access",
-            ttl_seconds=1,
-            keypair=keypair
+            keypair=keypair,
+            capabilities=Constraints.for_tool("admin_access", {}),
+            ttl_seconds=1
         )
         time.sleep(1.1)  # Wait for expiry
         
         # Current state has a weak warrant
         current_warrant = Warrant.issue(
-            tools="read_only",
-            ttl_seconds=60,
-            keypair=keypair
+            keypair=keypair,
+            capabilities=Constraints.for_tool("read_only", {}),
+            ttl_seconds=60
         )
         state = NodeState(messages=[], warrant=current_warrant.to_base64())
         
@@ -148,9 +148,9 @@ class TestSignatureTrust:
         
         # Attacker creates a valid-looking chain with their own key
         attacker_root = Warrant.issue(
-            tools="admin_access",
-            ttl_seconds=3600,
-            keypair=attacker_keypair
+            keypair=attacker_keypair,
+            capabilities=Constraints.for_tool("admin_access", {}),
+            ttl_seconds=3600
         )
         
         attacker_child = attacker_root.attenuate_builder().delegate_to(
@@ -178,9 +178,9 @@ class TestSignatureTrust:
         print("\n--- Attack 33: Self-Signed Root Trust ---")
         
         attacker_warrant = Warrant.issue(
-            tools="admin",
-            ttl_seconds=3600,
-            keypair=attacker_keypair
+            keypair=attacker_keypair,
+            capabilities=Constraints.for_tool("admin", {}),
+            ttl_seconds=3600
         )
         
         print("  [Attack 33A] Self-verification (signature valid)...")
@@ -208,17 +208,17 @@ class TestSignatureTrust:
         
         # Privileged warrant with session
         _admin_warrant = Warrant.issue(
-            tools="admin",
-            ttl_seconds=3600,
             keypair=keypair,
+            capabilities=Constraints.for_tool("admin", {}),
+            ttl_seconds=3600,
             session_id="admin_session_123"
         )
         
         # Low-privilege warrant with SAME session_id
         low_warrant = Warrant.issue(
-            tools="read",
-            ttl_seconds=3600,
             keypair=keypair,
+            capabilities=Constraints.for_tool("read", {}),
+            ttl_seconds=3600,
             session_id="admin_session_123"
         )
         

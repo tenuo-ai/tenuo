@@ -10,7 +10,7 @@ Tests verifying:
 import pytest
 
 from tenuo import (
-    Warrant, Range
+    Warrant, Range, Constraints
 )
 
 
@@ -29,10 +29,10 @@ class TestPopBinding:
         
         # Issue warrant bound to keypair
         warrant = Warrant.issue(
-            tools="admin_access",
-            ttl_seconds=3600,
             keypair=keypair,
-            holder=keypair.public_key
+            capabilities=Constraints.for_tool("admin_access", {}),
+            holder=keypair.public_key,
+            ttl_seconds=3600
         )
         
         # Attacker steals warrant and tries with their keypair
@@ -59,10 +59,13 @@ class TestPopBinding:
         print("\n--- Attack 13: PoP Tool Swap ---")
         
         warrant = Warrant.issue(
-            tools=["search", "delete"],
-            ttl_seconds=3600,
             keypair=keypair,
-            holder=keypair.public_key
+            capabilities={
+                "search": {},
+                "delete": {}
+            },
+            holder=keypair.public_key,
+            ttl_seconds=3600
         )
         
         # Create valid PoP for "search"
@@ -90,11 +93,10 @@ class TestPopBinding:
         print("\n--- Attack 14: PoP Args Swap ---")
         
         warrant = Warrant.issue(
-            tools="transfer",
-            constraints={"amount": Range(max=1000)},
-            ttl_seconds=3600,
             keypair=keypair,
-            holder=keypair.public_key
+            capabilities=Constraints.for_tool("transfer", {"amount": Range(max=1000)}),
+            holder=keypair.public_key,
+            ttl_seconds=3600
         )
         
         # Create valid PoP for small amount
@@ -122,10 +124,10 @@ class TestPopBinding:
         print("\n--- Attack 6: Replay & Confused Deputy ---")
         
         _warrant = Warrant.issue(
-            tools="payment",
-            ttl_seconds=3600,
             keypair=keypair,
-            holder=keypair.public_key
+            capabilities=Constraints.for_tool("payment", {}),
+            holder=keypair.public_key,
+            ttl_seconds=3600
         )
         
         print("  [Info] Attack 6A: Replay within TTL requires app-level nonces.")
@@ -143,10 +145,10 @@ class TestPopBinding:
         print("\n--- Attack 35: PoP Timestamp Window ---")
         
         warrant = Warrant.issue(
-            tools="transfer",
-            ttl_seconds=3600,
             keypair=keypair,
-            holder=keypair.public_key
+            capabilities=Constraints.for_tool("transfer", {}),
+            holder=keypair.public_key,
+            ttl_seconds=3600
         )
         
         args = {"amount": 100}
@@ -173,7 +175,11 @@ class TestPopBinding:
         """
         print("\n--- Attack: Argument Ordering Non-Determinism ---")
         
-        warrant = Warrant.issue(tools="test", ttl_seconds=60, keypair=keypair)
+        warrant = Warrant.issue(
+            keypair=keypair,
+            capabilities=Constraints.for_tool("test", {}),
+            ttl_seconds=60
+        )
         
         # Dicts preserve insertion order in modern Python
         args1 = {"a": 1, "b": 2, "c": 3}

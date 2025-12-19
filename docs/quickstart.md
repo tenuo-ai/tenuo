@@ -62,12 +62,13 @@ keypair = SigningKey.generate()
 
 # Fluent builder pattern (recommended)
 warrant = (Warrant.builder()
-    .tool("manage_infrastructure")
-    .constraint("cluster", Pattern("staging-*"))    # Glob pattern
-    .constraint("replicas", Range.max_value(15))    # Max 15 replicas
+    .capability("manage_infrastructure", {
+        "cluster": Pattern("staging-*"),    # Glob pattern
+        "replicas": Range.max_value(15),    # Max 15 replicas
+    })
     .holder(keypair.public_key)
     .ttl(3600)
-    .issue(keypair))
+    .build(keypair))
 ```
 
 ### 2. Attenuate (Delegate with Narrower Scope)
@@ -78,12 +79,14 @@ from tenuo import Exact
 # Worker gets a narrower warrant
 worker_keypair = SigningKey.generate()
 
-# Use attenuate_builder() for fluent delegation
-worker_warrant = (warrant.attenuate_builder()
-    .with_constraint("cluster", Exact("staging-web"))   # Narrowed from staging-*
-    .with_constraint("replicas", Range.max_value(10))   # Reduced to 10 replicas
-    .with_holder(worker_keypair.public_key)
-    .delegate_to(worker_keypair, keypair))  # Child signs, parent authorizes
+# Use attenuate() for fluent delegation
+worker_warrant = (warrant.attenuate()
+    .with_capability("manage_infrastructure", {
+        "cluster": Exact("staging-web"),     # Narrowed from staging-*
+        "replicas": Range.max_value(10),     # Reduced to 10 replicas
+    })
+    .holder(worker_keypair.public_key)
+    .build(worker_keypair, keypair))  # Child signs, parent authorizes
 ```
 
 ### 3. Authorize an Action
@@ -148,15 +151,20 @@ graph.add_node("tools", tool_node)
 ### 1. Create a Warrant
 
 ```rust
-use tenuo::{SigningKey, Warrant, Pattern, Range};
+use tenuo::{SigningKey, Warrant, Pattern, Range, ConstraintSet};
 use std::time::Duration;
 
 let keypair = SigningKey::generate();
+
+// Build constraint set
+let mut constraints = ConstraintSet::new();
+constraints.insert("cluster", Pattern::new("staging-*")?);
+constraints.insert("replicas", Range::max(15.0)?);
+
 let warrant = Warrant::builder()
-    .tools(vec!["manage_infrastructure".to_string()])
-    .constraint("cluster", Pattern::new("staging-*")?)
-    .constraint("replicas", Range::max(15.0))
+    .capability("manage_infrastructure", constraints)
     .ttl(Duration::from_secs(3600))
+    .authorized_holder(keypair.public_key())
     .build(&keypair)?;
 ```
 
@@ -166,11 +174,15 @@ let warrant = Warrant::builder()
 use tenuo::Exact;
 
 let worker_keypair = SigningKey::generate();
+
+let mut narrower = ConstraintSet::new();
+narrower.insert("cluster", Exact::new("staging-web"));
+narrower.insert("replicas", Range::max(10.0)?);
+
 let worker_warrant = warrant.attenuate()
-    .constraint("cluster", Exact::new("staging-web"))
-    .constraint("replicas", Range::max(10.0))
+    .capability("manage_infrastructure", narrower)
     .authorized_holder(worker_keypair.public_key())
-    .build(&keypair)?;
+    .build(&keypair, &keypair)?;
 ```
 
 ### 3. Authorize

@@ -27,13 +27,25 @@ Rust core. Python bindings. ~27μs verification.
 pip install tenuo
 ```
 ```python
-from tenuo import root_task, lockdown, Pattern
+from tenuo import SigningKey, Warrant, Constraints, Pattern, lockdown, set_warrant_context, set_signing_key_context
 
+# === Issue warrant ===
+issuer_keypair = SigningKey.generate()
+agent_keypair = SigningKey.generate()
+
+warrant = Warrant.issue(
+    capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
+    keypair=issuer_keypair,
+    holder=agent_keypair.public_key,
+    ttl_seconds=300
+)
+
+# === Use warrant ===
 @lockdown(tool="read_file")
 def read_file(path: str):
     return open(path).read()
 
-async with root_task(tools=["read_file"], path=Pattern("/data/*")):
+with set_warrant_context(warrant), set_signing_key_context(agent_keypair):
     read_file("/data/report.txt")  # ✓ Allowed
     read_file("/etc/passwd")       # ✗ Blocked
 ```
@@ -50,11 +62,13 @@ In my [last post](https://niyikiza.com/posts/capability-delegation/), I used the
 A **Tenuo warrant** is that key:
 ```python
 warrant = Warrant.issue(
-    tools=["read_file", "search"],
-    constraints={
-        "path": Pattern("/data/project-x/*"),
-        "query": Pattern("*public*")
-    },
+    capabilities=Constraints.for_tools(
+        ["read_file", "search"],
+        {
+            "path": Pattern("/data/project-x/*"),
+            "query": Pattern("*public*")
+        }
+    ),
     ttl_seconds=300,
     keypair=issuer_keypair,
     holder=agent_keypair.public_key
@@ -107,13 +121,14 @@ cfo_warrant = Warrant.issue(
 )
 
 # Attenuate for intern
-intern_warrant = cfo_warrant.attenuate_builder() \
-    .with_tools(["spend"]) \
-    .with_constraint("amount", Range.max_value(500)) \
-    .with_constraint("category", OneOf(["travel", "meals"])) \
-    .with_ttl(3600) \
-    .with_holder(intern_keypair.public_key) \
-    .delegate_to(intern_keypair, cfo_keypair)
+intern_warrant = cfo_warrant.attenuate() \
+    .with_capability("spend", {
+        "amount": Range.max_value(500),
+        "category": OneOf(["travel", "meals"])
+    }) \
+    .ttl(3600) \
+    .holder(intern_keypair.public_key) \
+    .build(cfo_keypair)
 ```
 The intern can't:
 - Approve expenses (tool not delegated)
@@ -125,9 +140,10 @@ And yeah, the intern can't issue *themselves* a better card.
 
 ```python
 # This raises MonotonicityError
-bad_warrant = intern_warrant.attenuate_builder() \
-    .with_constraint("amount", Range.max_value(10000)) \
-    .delegate_to(intern_keypair, intern_keypair)  # Can't exceed parent's $500
+# This raises MonotonicityError
+bad_warrant = intern_warrant.attenuate() \
+    .with_capability("spend", {"amount": Range.max_value(10000)}) \
+    .build(intern_keypair, intern_keypair)  # Can't exceed parent's $500
 ```
 Attenuation isn't policy. It's physics.
 
@@ -147,8 +163,8 @@ A Kubernetes pod gets its IAM role at deploy time. That role lives until the pod
 
 **The Tenuo flow:**
 
-1. **Task arrives.** Orchestrator requests a warrant from the control plane.
-2. **Control plane issues warrant.** Scoped to this task, expires in 60 seconds.
+1. **Task arrives.** Orchestrator requests a warrant from the root issuer.
+2. **Root issuer issues warrant.** Scoped to this task, expires in 60 seconds.
 3. **Orchestrator attenuates.** Worker gets narrower scope: only `read_file`, only `/data/*`.
 4. **Worker executes.** Every tool call passes through the authorizer sidecar.
 5. **Sidecar verifies.** Signature, tools, constraints, TTL, proof-of-possession.
@@ -158,47 +174,43 @@ Here's how authority flows through each layer:
 ```python
 # Orchestrator: receives broad warrant, attenuates for workers
 async def handle_user_request(user_request: str):
-    # Broad warrant from control plane
-    warrant = await control_plane.request_warrant(
-        tools=["read_file", "write_file", "search"],
-        constraints={"path": Pattern("/data/*")},
+    # Broad warrant from root issuer
+    warrant = await issuer.request_warrant(
+        capabilities=Constraints.for_tools(
+            ["read_file", "write_file", "search"],
+            {"path": Pattern("/data/*")}
+        ),
         ttl_seconds=300
     )
     
-    # Phase 1: Research (read-only)
-    research_warrant = warrant.attenuate_builder() \
-        .with_tools(["read_file", "search"]) \
-        .with_constraint("path", Pattern("/data/reports/*")) \
-        .with_ttl(60) \
-        .with_holder(researcher_keypair.public_key) \
-        .delegate_to(researcher_keypair, orchestrator_keypair)
-    findings = await researcher.execute(research_warrant)
+    # Phase 1: Research (read-only, scoped to reports)
+    research_warrant = warrant.attenuate() \
+        .with_capability("read_file", {"path": Pattern("/data/reports/*")}) \
+        .ttl(60) \
+        .holder(researcher_keypair.public_key) \
+        .build(researcher_keypair, orchestrator_keypair)
+    findings = await researcher.execute(research_warrant, researcher_keypair)
     
     # Phase 2: Write summary (write-only, narrower path)
-    write_warrant = warrant.attenuate_builder() \
-        .with_tools(["write_file"]) \
-        .with_constraint("path", Pattern("/data/output/summary.md")) \
-        .with_ttl(30) \
-        .with_holder(writer_keypair.public_key) \
-        .delegate_to(writer_keypair, orchestrator_keypair)
-    await writer.execute(write_warrant, findings)
+    write_warrant = warrant.attenuate() \
+        .with_capability("write_file", {"path": Pattern("/data/output/summary.md")}) \
+        .ttl(30) \
+        .holder(writer_keypair.public_key) \
+        .build(writer_keypair, orchestrator_keypair)
+    await writer.execute(write_warrant, writer_keypair, findings)
 
-# Worker: executes with attenuated warrant, every call verified
+# Researcher: can only read_file within /data/reports/*
 @lockdown(tool="read_file")
 def read_file(path: str) -> str:
     return open(path).read()
 
-@lockdown(tool="write_file")
-def write_file(path: str, content: str):
-    open(path, 'w').write(content)
-
-async def execute(warrant: Warrant, data: str = None):
-    with set_warrant_context(warrant), set_signing_key_context(worker_keypair):
-        # These calls are checked against the warrant
-        content = read_file("/data/reports/q3.md")  # ✓ If in scope
-        write_file("/etc/passwd", "x")              # ✗ Path not in warrant
+async def research(warrant: Warrant, keypair: SigningKey):
+    with set_warrant_context(warrant), set_signing_key_context(keypair):
+        read_file("/data/reports/q3.md")      # ✓ Allowed (tool + path match)
+        read_file("/data/secrets/keys.txt")   # ✗ Path not in warrant
+        read_file("/etc/passwd")              # ✗ Path not in warrant
 ```
-The control plane issuance logic is yours: Tenuo doesn't prescribe it. What matters is that each layer attenuates before delegating, and the worker's warrant expires with the task.
+The issuance logic is yours: Tenuo doesn't prescribe it. What matters is that each layer attenuates before delegating, and the worker's warrant expires with the task.
 
 **The temporal match:**
 

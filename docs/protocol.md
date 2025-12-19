@@ -24,8 +24,13 @@ Warrant {
     holder: PublicKey (mandatory - PoP binding)
     
     # Execution warrants
-    tools: string[]
-    constraints: Map<string, Constraint>
+    capabilities: Map<string, ConstraintSet>  # tool_name → constraints
+    
+    # Issuer warrants
+    issuable_tools: string[]
+    trust_ceiling: TrustLevel
+    constraint_bounds: ConstraintSet (optional)
+    max_issue_depth: int (optional)
     
     # Common
     issued_at: timestamp
@@ -51,11 +56,14 @@ Warrant {
 Authority to invoke specific tools with specific constraints:
 
 ```python
+from tenuo import Warrant, Constraints, Exact
+
 execution_warrant = Warrant.issue(
-    tools=["read_file"],
+    capabilities=Constraints.for_tool("read_file", {
+        "path": Exact("/data/q3.pdf")
+    }),
     keypair=issuer_keypair,
     holder=worker_public_key,
-    constraints={"path": Exact("/data/q3.pdf")},
     ttl_seconds=60,
 )
 ```
@@ -132,8 +140,7 @@ For debugging, use `tenuo inspect` to view constraints as JSON.
 
 | Dimension | Rule | Violation |
 |-----------|------|-----------|
-| Tools | `child_tools ⊆ parent_tools` | Cannot add tools |
-| Constraints | `child_constraint ⊆ parent_constraint` | Cannot widen |
+| Capabilities | `child_caps ⊆ parent_caps` | Cannot add tools or widen constraints |
 | TTL | `child_expires ≤ parent_expires` | Cannot extend |
 | Depth | `child_depth < parent_depth` | Cannot increase |
 
@@ -176,8 +183,9 @@ ChainLink {
     
     # Embedded scope (for attenuation verification)
     issuer_type: "execution" | "issuer"
-    issuer_tools: string[]
-    issuer_constraints: Map<string, Constraint>
+    issuer_capabilities: Map<string, ConstraintSet>  # for execution warrants
+    issuer_issuable_tools: string[]                   # for issuer warrants
+    issuer_trust: TrustLevel (optional)
     issuer_expires_at: timestamp
     issuer_max_depth: int
     
@@ -347,6 +355,17 @@ A warrant with `max_depth = 0` cannot delegate further. Cryptographically enforc
 | Holder A->B->A (different warrants) | [ALLOWED] | Monotonicity makes it safe |
 | Self-issuance (issuer warrant) | [BLOCKED] | Privilege escalation |
 | Chain > 8 links | [BLOCKED] | DoS protection |
+
+### Scaling Delegation (Trust Anchors)
+
+The 8-link limit applies to the **untrusted** chain segment. You can build arbitrarily deep hierarchies by distributing intermediate CA keys (Trust Anchors) to the Authorizer.
+
+**Example**:
+`Global Key` -> `Region Key` -> `Cluster Key` -> `Namespace Key` -> `Node Key` -> `Pod Key` -> `Agent Key` -> `Worker Key`
+
+If your Authorizer trusts the `Cluster Key`, then verification stops there. The effective chain length for verification becomes just 5 links (Namespace -> ... -> Worker), well within the limit.
+
+> **Distributing Trust**: Adding a key to `trusted_issuers` acts as a firewall that "resets" the chain length counter for all downstream warrants.
 
 ---
 

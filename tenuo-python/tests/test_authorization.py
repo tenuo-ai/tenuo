@@ -14,7 +14,7 @@ from tenuo import (
     SigningKey, Warrant, Pattern, Exact,
     lockdown, set_warrant_context, set_signing_key_context,
     get_warrant_context, get_signing_key_context,
-    AuthorizationError, TrustLevel
+    AuthorizationError, TrustLevel, Constraints
 )
 
 
@@ -32,10 +32,9 @@ def test_lockdown_requires_keypair_context():
     # Create warrant
     kp = SigningKey.generate()
     warrant = Warrant.issue(
-        tools="test_tool",
         keypair=kp,
+        capabilities=Constraints.for_tool("test_tool", {"value": Pattern("*")}),
         holder=kp.public_key,
-        constraints={"value": Pattern("*")},
         ttl_seconds=60
     )
     
@@ -56,10 +55,9 @@ def test_lockdown_with_explicit_keypair():
     
     kp = SigningKey.generate()
     warrant = Warrant.issue(
-        tools="test_tool",
         keypair=kp,
+        capabilities=Constraints.for_tool("test_tool", {"value": Exact("allowed")}),
         holder=kp.public_key,
-        constraints={"value": Exact("allowed")},
         ttl_seconds=60
     )
     
@@ -83,10 +81,9 @@ def test_context_based_pop_retrieval():
     
     kp = SigningKey.generate()
     warrant = Warrant.issue(
-        tools="read_file",
         keypair=kp,
+        capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         holder=kp.public_key,
-        constraints={"path": Pattern("/data/*")},
         ttl_seconds=60
     )
     
@@ -110,10 +107,9 @@ def test_pop_prevents_replay_attacks():
     
     kp = SigningKey.generate()
     warrant = Warrant.issue(
-        tools="delete_file",
         keypair=kp,
+        capabilities=Constraints.for_tool("delete_file", {"path": Exact("/tmp/test.txt")}),
         holder=kp.public_key,
-        constraints={"path": Exact("/tmp/test.txt")},
         ttl_seconds=60
     )
     
@@ -143,10 +139,9 @@ def test_pop_prevents_cross_tenant_misuse():
     # Tenant A mints a warrant FOR Tenant B's agent
     # The authorized_holder is set to Tenant B's public key
     warrant = Warrant.issue(
-        tools="sensitive_operation",
         keypair=tenant_a_kp,  # Signed by Tenant A
+        capabilities=Constraints.for_tool("sensitive_operation", {"resource": Exact("secret-data")}),
         holder=tenant_b_agent_kp.public_key,  # For Tenant B's agent
-        constraints={"resource": Exact("secret-data")},
         ttl_seconds=3600
     )
     
@@ -186,10 +181,9 @@ def test_pop_signature_must_match_authorized_holder():
     wrong_kp = SigningKey.generate()
     
     warrant = Warrant.issue(
-        tools="test_tool",
         keypair=correct_kp,
+        capabilities=Constraints.for_tool("test_tool", {"action": Exact("test")}),
         holder=correct_kp.public_key,
-        constraints={"action": Exact("test")},
         ttl_seconds=60
     )
     
@@ -221,17 +215,16 @@ def test_warrant_has_depth_property():
     
     # Root warrant has depth 0
     root = Warrant.issue(
-        tools="test_tool",
         keypair=kp,
+        capabilities=Constraints.for_tool("test_tool", {}),
         holder=kp.public_key,
-        constraints={},
         ttl_seconds=60
     )
     assert root.depth == 0
     
     # Child warrant has depth 1
     child = root.attenuate(
-        constraints={},
+        capabilities=Constraints.for_tool("test_tool", {}),
         keypair=kp,
         parent_keypair=kp,
         holder=kp.public_key,
@@ -248,16 +241,15 @@ def test_warrant_chain_verification():
     
     # Root warrant
     root = Warrant.issue(
-        tools="file_ops",
         keypair=control_kp,
+        capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
     
     # Attenuated warrant
     child = root.attenuate(
-        constraints={"path": Pattern("/data/reports/*")},
+        capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/reports/*")}),
         keypair=control_kp,
         parent_keypair=control_kp,
         holder=worker_kp.public_key,
@@ -294,10 +286,9 @@ def test_trust_level_monotonicity():
     
     # Create warrant with Internal trust level (value 30)
     root = Warrant.issue(
-        tools="test_tool",
         keypair=kp,
+        capabilities=Constraints.for_tool("test_tool", {}),
         holder=kp.public_key,
-        constraints={},
         ttl_seconds=3600,
         trust_level=TrustLevel("internal")
     )
@@ -324,10 +315,9 @@ def test_trust_level_enforcement():
     
     # Create warrant with External trust level (value 10)
     warrant = Warrant.issue(
-        tools="read_data",
         keypair=kp,
+        capabilities=Constraints.for_tool("read_data", {"sensitivity": Exact("public")}),
         holder=kp.public_key,
-        constraints={"sensitivity": Exact("public")},
         ttl_seconds=60,
         trust_level=TrustLevel("external")
     )
@@ -371,18 +361,16 @@ def test_context_isolation():
     kp2 = SigningKey.generate()
     
     warrant1 = Warrant.issue(
-        tools="tool1",
         keypair=kp1,
+        capabilities=Constraints.for_tool("tool1", {}),
         holder=kp1.public_key,
-        constraints={},
         ttl_seconds=60
     )
     
     warrant2 = Warrant.issue(
-        tools="tool2",
         keypair=kp2,
+        capabilities=Constraints.for_tool("tool2", {}),
         holder=kp2.public_key,
-        constraints={},
         ttl_seconds=60
     )
     
@@ -408,18 +396,16 @@ def test_nested_contexts():
     kp = SigningKey.generate()
     
     warrant1 = Warrant.issue(
-        tools="tool1",
         keypair=kp,
+        capabilities=Constraints.for_tool("tool1", {}),
         holder=kp.public_key,
-        constraints={},
         ttl_seconds=60
     )
     
     warrant2 = Warrant.issue(
-        tools="tool2",
         keypair=kp,
+        capabilities=Constraints.for_tool("tool2", {}),
         holder=kp.public_key,
-        constraints={},
         ttl_seconds=60
     )
     
@@ -469,10 +455,9 @@ def test_authorization_fails_with_wrong_tool():
     
     # Create warrant for wrong tool
     warrant = Warrant.issue(
-        tools="wrong_tool",
         keypair=kp,
+        capabilities=Constraints.for_tool("wrong_tool", {"value": Pattern("*")}),
         holder=kp.public_key,
-        constraints={"value": Pattern("*")},
         ttl_seconds=60
     )
     
@@ -492,10 +477,9 @@ def test_authorization_fails_with_constraint_violation():
     
     # Create warrant with specific path constraint
     warrant = Warrant.issue(
-        tools="read_file",
         keypair=kp,
+        capabilities=Constraints.for_tool("read_file", {"path": Pattern("/allowed/*")}),
         holder=kp.public_key,
-        constraints={"path": Pattern("/allowed/*")},
         ttl_seconds=60
     )
     
@@ -520,10 +504,9 @@ def test_authorization_fails_with_expired_warrant():
     
     # Create warrant with very short TTL
     warrant = Warrant.issue(
-        tools="test_tool",
         keypair=kp,
+        capabilities=Constraints.for_tool("test_tool", {"value": Pattern("*")}),
         holder=kp.public_key,
-        constraints={"value": Pattern("*")},
         ttl_seconds=0  # Expires immediately
     )
     

@@ -15,7 +15,7 @@ use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 use tenuo::approval::{compute_request_hash, Approval};
-use tenuo::{Authorizer, ConstraintValue, PublicKey, Range, SigningKey, Warrant};
+use tenuo::{Authorizer, ConstraintSet, ConstraintValue, PublicKey, Range, SigningKey, Warrant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n╔══════════════════════════════════════════════════════════════════╗");
@@ -366,9 +366,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         SigningKey::generate() // Placeholder - won't match leaf_warrant.issuer()
     };
 
+    let mut sub_constraints = ConstraintSet::new();
+    sub_constraints.insert("replicas".to_string(), Range::max(5.0)?);
+
     match leaf_warrant
         .attenuate()
-        .constraint("replicas", Range::max(5.0)?) // Further restrict
+        .capability("cluster_manager", sub_constraints) // Further restrict
         .ttl(Duration::from_secs(300)) // 5 minutes
         .authorized_holder(sub_agent_keypair.public_key())
         .agent_id("sub-agent-tool-handler")
@@ -388,9 +391,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 sub_warrant.depth() + 1
             );
 
+            let mut sub_constraints = ConstraintSet::new();
+            sub_constraints.insert("replicas".to_string(), Range::max(3.0)?);
+
             match sub_warrant
                 .attenuate()
-                .constraint("replicas", Range::max(3.0)?)
+                .capability("cluster_manager", sub_constraints)
                 .ttl(Duration::from_secs(60))
                 .build(&sub_agent_keypair, &worker_keypair) // Worker signed the parent
             {
@@ -404,9 +410,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
 
                     let another_keypair = SigningKey::generate();
+                    let mut deep_constraints = ConstraintSet::new();
+                    deep_constraints.insert("replicas".to_string(), Range::max(2.0)?);
+
                     match deep_warrant
                         .attenuate()
-                        .constraint("replicas", Range::max(2.0)?)
+                        .capability("cluster_manager", deep_constraints)
                         .build(&another_keypair, &sub_agent_keypair) // Sub-agent signed the parent
                     {
                         Ok(w) => {

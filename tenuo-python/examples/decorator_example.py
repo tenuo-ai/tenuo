@@ -5,7 +5,7 @@ Example demonstrating the @lockdown decorator with explicit warrant.
 For LangChain/FastAPI integration using ContextVar, see examples/context_pattern.py
 """
 
-from tenuo import SigningKey, Warrant, Pattern, Range, lockdown, AuthorizationError
+from tenuo import SigningKey, Warrant, Pattern, Range, Constraints, lockdown, AuthorizationError
 
 def main():
     print("=== Tenuo @lockdown Decorator Example ===\n")
@@ -13,14 +13,13 @@ def main():
     # Create a warrant
     keypair = SigningKey.generate()
     warrant = Warrant.issue(
-        tools="scale_cluster",
-        constraints={
+        keypair=keypair,
+        capabilities=Constraints.for_tool("scale_cluster", {
             "cluster": Pattern("staging-*"),
             "replicas": Range.max_value(15)
-        },
+        }),
         ttl_seconds=3600,
-        keypair=keypair,
-        holder=keypair.public_key # Bind to self
+        holder=keypair.public_key  # Bind to self
     )
     
     # Define a function protected by the warrant

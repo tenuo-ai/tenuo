@@ -5,7 +5,8 @@ from tenuo import (
     SigningKey, 
     Warrant, 
     ExpiredError,
-    ValidationError
+    ValidationError,
+    Constraints
 )
 
 def test_set_clock_tolerance_preserves_roots():
@@ -27,8 +28,8 @@ def test_set_clock_tolerance_preserves_roots():
     
     # 4. Verify it actually works (functional test)
     warrant = Warrant.issue(
-        tools="test",
         keypair=kp,
+        capabilities=Constraints.for_tool("test", {}),
         ttl_seconds=300
     )
     
@@ -48,8 +49,8 @@ def test_error_mapping_signature_invalid():
     
     # Issue warrant signed by WRONG key
     warrant = Warrant.issue(
-        tools="test",
         keypair=wrong_kp,  # Not trusted
+        capabilities=Constraints.for_tool("test", {}),
         ttl_seconds=300
     )
     
@@ -68,8 +69,8 @@ def test_error_mapping_expired():
     
     # Issue expired warrant
     warrant = Warrant.issue(
-        tools="test",
         keypair=kp,
+        capabilities=Constraints.for_tool("test", {}),
         ttl_seconds=0 # Expires immediately
     )
     

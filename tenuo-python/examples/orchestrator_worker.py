@@ -15,7 +15,7 @@ different authority per task phase.
 """
 
 from tenuo import (
-    SigningKey, Warrant, Pattern, Range, Wildcard,
+    SigningKey, Warrant, Pattern, Range, Wildcard, Constraints,
     Authorizer,
     ChainVerificationResult,
     lockdown, set_warrant_context, set_signing_key_context
@@ -69,9 +69,13 @@ def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: Sig
     
     # Use builder pattern with diff preview
     research_builder = warrant.attenuate_builder()
-    research_builder.with_constraint("query", Pattern("*competitor*"))  # Only competitor queries
-    research_builder.with_constraint("max_results", Range.max_value(5))  # Limit results
-    research_builder.with_constraint("url", Pattern("https://public.*"))  # Only public URLs
+    research_builder.with_capability("search", {
+        "query": Pattern("*competitor*"),
+        "max_results": Range.max_value(5)
+    })
+    research_builder.with_capability("fetch", {
+        "url": Pattern("https://public.*")
+    })
     research_builder.with_ttl(60)  # Short-lived
     research_builder.with_holder(worker_keypair.public_key)
     research_builder.with_intent("Research Q3 competitors")
@@ -97,12 +101,11 @@ def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: Sig
     # This is the cleanest pattern when you want to completely change the tool set
     print("\n[Orchestrator] Phase 2: Delegating write to Worker")
     write_warrant = Warrant.issue(
-        tools="write",  # Only write tool (new warrant, not attenuated)
         keypair=keypair,
-        holder=worker_keypair.public_key,
-        constraints={
+        capabilities=Constraints.for_tool("write", {
             "path": Pattern("/output/reports/*"),  # Restricted path
-        },
+        }),
+        holder=worker_keypair.public_key,
         ttl_seconds=30
     )
     print("  New warrant: tools=write, path=/output/reports/*, ttl=30s")
@@ -254,14 +257,19 @@ def main():
     # Control Plane issues root warrant to Orchestrator
     print("\n[Control Plane] Issuing root warrant to Orchestrator")
     root_warrant = Warrant.issue(
-        tools=["search", "fetch", "write"],  # All tools allowed (as list)
         keypair=control_plane_keypair,
-        holder=orchestrator_keypair.public_key,
-        constraints={
-            "query": Wildcard(),  # Any query allowed
-            "url": Pattern("https://*"),  # Any HTTPS URL
-            "path": Pattern("/output/*"),  # Any path under /output
+        capabilities={
+            "search": {
+                "query": Wildcard(),  # Any query allowed
+            },
+            "fetch": {
+                "url": Pattern("https://*"),  # Any HTTPS URL
+            },
+            "write": {
+                "path": Pattern("/output/*"),  # Any path under /output
+            },
         },
+        holder=orchestrator_keypair.public_key,
         ttl_seconds=3600
     )
     print("  Root warrant: tools=[search, fetch, write], ttl=1h")

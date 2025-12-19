@@ -1621,13 +1621,17 @@ impl PyDelegationDiff {
     }
 
     #[getter]
-    fn constraints<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+    fn capabilities<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
-        for (field, diff) in &self.inner.constraints {
-            let py_diff = PyConstraintDiff {
-                inner: diff.clone(),
-            };
-            dict.set_item(field, py_diff.into_pyobject(py)?)?;
+        for (tool, tool_diffs) in &self.inner.capabilities {
+            let tool_dict = PyDict::new(py);
+            for (field, diff) in tool_diffs {
+                let py_diff = PyConstraintDiff {
+                    inner: diff.clone(),
+                };
+                tool_dict.set_item(field, py_diff.into_pyobject(py)?)?;
+            }
+            dict.set_item(tool, tool_dict)?;
         }
         Ok(dict)
     }
@@ -1735,13 +1739,17 @@ impl PyDelegationReceipt {
     }
 
     #[getter]
-    fn constraints<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+    fn capabilities<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
-        for (field, diff) in &self.inner.constraints {
-            let py_diff = PyConstraintDiff {
-                inner: diff.clone(),
-            };
-            dict.set_item(field, py_diff.into_pyobject(py)?)?;
+        for (tool, tool_diffs) in &self.inner.capabilities {
+            let tool_dict = PyDict::new(py);
+            for (field, diff) in tool_diffs {
+                let py_diff = PyConstraintDiff {
+                    inner: diff.clone(),
+                };
+                tool_dict.set_item(field, py_diff.into_pyobject(py)?)?;
+            }
+            dict.set_item(tool, tool_dict)?;
         }
         Ok(dict)
     }
@@ -1825,10 +1833,15 @@ pub struct PyAttenuationBuilder {
 
 #[pymethods]
 impl PyAttenuationBuilder {
-    /// Add or override a constraint.
-    fn with_constraint(&mut self, field: &str, constraint: &Bound<'_, PyAny>) -> PyResult<()> {
-        let constraint = py_to_constraint(constraint)?;
-        self.inner.set_constraint(field, constraint);
+    /// Add a capability (tool + constraints) to the warrant.
+    fn with_capability(&mut self, tool: &str, constraints: &Bound<'_, PyDict>) -> PyResult<()> {
+        let mut constraint_set = crate::constraints::ConstraintSet::new();
+        for (field_key, constraint_val) in constraints.iter() {
+            let field: String = field_key.extract()?;
+            let constraint = py_to_constraint(&constraint_val)?;
+            constraint_set.insert(field, constraint);
+        }
+        self.inner.set_capability(tool, constraint_set);
         Ok(())
     }
 
@@ -1857,14 +1870,14 @@ impl PyAttenuationBuilder {
     /// The tool must be in the parent warrant's tools.
     /// This is for EXECUTION warrants. For ISSUER warrants, use `with_issuable_tool()`.
     fn with_tool(&mut self, tool: &str) {
-        self.inner.set_exec_tool(tool);
+        self.inner.retain_capability(tool);
     }
 
     /// Narrow execution warrant tools to a subset.
     ///
     /// All tools must be in the parent warrant's tools.
     fn with_tools(&mut self, tools: Vec<String>) {
-        self.inner.set_exec_tools(tools);
+        self.inner.retain_capabilities(&tools);
     }
 
     /// Set a single tool for issuable_tools (for issuer warrants).
@@ -1900,6 +1913,21 @@ impl PyAttenuationBuilder {
         }
     }
 
+    /// Get the configured capabilities.
+    #[getter]
+    fn capabilities<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+        for (tool, constraints) in self.inner.capabilities().iter() {
+            let constraint_dict = PyDict::new(py);
+            for (field, constraint) in constraints.iter() {
+                let py_constraint = constraint_to_py(py, constraint)?;
+                constraint_dict.set_item(field, py_constraint)?;
+            }
+            dict.set_item(tool, constraint_dict)?;
+        }
+        Ok(dict)
+    }
+
     /// Get the configured TTL in seconds (if set).
     #[getter]
     fn ttl_seconds(&self) -> Option<u64> {
@@ -1926,16 +1954,6 @@ impl PyAttenuationBuilder {
     #[getter]
     fn intent(&self) -> Option<String> {
         self.inner.intent().map(|s| s.to_string())
-    }
-
-    /// Get the constraints being configured as a Python dict.
-    fn constraints_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let dict = PyDict::new(py);
-        for (field, constraint) in self.inner.constraints().iter() {
-            let py_constraint = constraint_to_py(py, constraint)?;
-            dict.set_item(field, py_constraint)?;
-        }
-        Ok(dict)
     }
 
     /// Get human-readable diff preview.
@@ -2008,20 +2026,15 @@ pub struct PyIssuanceBuilder {
 
 #[pymethods]
 impl PyIssuanceBuilder {
-    /// Set the tool name for the execution warrant.
-    fn with_tool(&mut self, tool: &str) {
-        self.inner.set_tool(tool);
-    }
-
-    /// Set multiple tools for the execution warrant.
-    fn with_tools(&mut self, tools: Vec<String>) {
-        self.inner.set_tools(tools);
-    }
-
-    /// Add or override a constraint.
-    fn with_constraint(&mut self, field: &str, constraint: &Bound<'_, PyAny>) -> PyResult<()> {
-        let constraint = py_to_constraint(constraint)?;
-        self.inner.set_constraint(field, constraint);
+    /// Add a capability (tool + constraints) to the execution warrant.
+    fn with_capability(&mut self, tool: &str, constraints: &Bound<'_, PyDict>) -> PyResult<()> {
+        let mut constraint_set = crate::constraints::ConstraintSet::new();
+        for (field_key, constraint_val) in constraints.iter() {
+            let field: String = field_key.extract()?;
+            let constraint = py_to_constraint(&constraint_val)?;
+            constraint_set.insert(field, constraint);
+        }
+        self.inner.set_capability(tool, constraint_set);
         Ok(())
     }
 
@@ -2082,6 +2095,12 @@ impl PyIssuanceBuilder {
         self.inner.set_terminal();
     }
 
+    /// Add a tool (with empty constraints) or merge.
+    fn with_tool(&mut self, tool: &str) {
+        let empty = crate::constraints::ConstraintSet::new();
+        self.inner.set_capability(tool, empty);
+    }
+
     /// Get the issuer warrant.
     #[getter]
     fn issuer(&self) -> PyWarrant {
@@ -2093,7 +2112,14 @@ impl PyIssuanceBuilder {
     /// Get the configured tools (if set).
     #[getter]
     fn tools(&self) -> Option<Vec<String>> {
-        self.inner.tools().map(|t| t.to_vec())
+        let caps = self.inner.capabilities();
+        if caps.is_empty() {
+            None
+        } else {
+            let mut keys: Vec<String> = caps.keys().cloned().collect();
+            keys.sort();
+            Some(keys)
+        }
     }
 
     /// Get the configured TTL in seconds (if set).
@@ -2124,16 +2150,6 @@ impl PyIssuanceBuilder {
         self.inner.intent().map(|s| s.to_string())
     }
 
-    /// Get the constraints being configured as a Python dict.
-    fn constraints_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
-        let dict = PyDict::new(py);
-        for (field, constraint) in self.inner.constraints().iter() {
-            let py_constraint = constraint_to_py(py, constraint)?;
-            dict.set_item(field, py_constraint)?;
-        }
-        Ok(dict)
-    }
-
     /// Build and sign the execution warrant.
     ///
     /// # Arguments
@@ -2153,7 +2169,7 @@ impl PyIssuanceBuilder {
         format!(
             "IssuanceBuilder(issuer={}, tools={:?}, holder={:?})",
             self.inner.issuer().id(),
-            self.inner.tools(),
+            self.inner.capabilities().keys().collect::<Vec<_>>(),
             self.inner.holder().is_some()
         )
     }
@@ -2169,11 +2185,10 @@ pub struct PyWarrant {
 impl PyWarrant {
     /// Issue a new warrant.
     #[staticmethod]
-    #[pyo3(signature = (tools, keypair, constraints=None, ttl_seconds=3600, holder=None, session_id=None, trust_level=None))]
+    #[pyo3(signature = (keypair, capabilities=None, ttl_seconds=3600, holder=None, session_id=None, trust_level=None))]
     fn issue(
-        tools: &Bound<'_, PyAny>,
         keypair: &PySigningKey,
-        constraints: Option<&Bound<'_, PyDict>>,
+        capabilities: Option<&Bound<'_, PyDict>>,
         ttl_seconds: u64,
         holder: Option<&PyPublicKey>,
         session_id: Option<&str>,
@@ -2181,14 +2196,23 @@ impl PyWarrant {
     ) -> PyResult<Self> {
         let mut builder = RustWarrant::builder().ttl(Duration::from_secs(ttl_seconds));
 
-        if let Ok(tool_str) = tools.extract::<String>() {
-            builder = builder.tool(tool_str);
-        } else if let Ok(tools_list) = tools.extract::<Vec<String>>() {
-            builder = builder.tools(tools_list);
-        } else {
-            return Err(PyValueError::new_err(
-                "tools must be a string or list of strings",
-            ));
+        // Capabilities: dict[tool_name, dict[field, constraint]]
+        if let Some(caps_dict) = capabilities {
+            for (tool_key, constraints_val) in caps_dict.iter() {
+                let tool_name: String = tool_key.extract()?;
+                let mut constraint_set = crate::constraints::ConstraintSet::new();
+
+                let constraints_dict: &Bound<'_, PyDict> = constraints_val
+                    .downcast()
+                    .map_err(|_| PyValueError::new_err("capabilities values must be dicts"))?;
+
+                for (field_key, constraint_val) in constraints_dict.iter() {
+                    let field: String = field_key.extract()?;
+                    let constraint = py_to_constraint(&constraint_val)?;
+                    constraint_set.insert(field, constraint);
+                }
+                builder = builder.capability(tool_name, constraint_set);
+            }
         }
 
         // Set trust level if provided
@@ -2205,14 +2229,6 @@ impl PyWarrant {
 
         if let Some(sid) = session_id {
             builder = builder.session_id(sid);
-        }
-
-        if let Some(constraints_dict) = constraints {
-            for (key, value) in constraints_dict.iter() {
-                let field: String = key.extract()?;
-                let constraint = py_to_constraint(&value)?;
-                builder = builder.constraint(field, constraint);
-            }
         }
 
         let warrant = builder.build(&keypair.inner).map_err(to_py_err)?;
@@ -2306,7 +2322,11 @@ impl PyWarrant {
     /// Get the tool names.
     #[getter]
     fn tools(&self) -> Option<Vec<String>> {
-        self.inner.tools().map(|t| t.to_vec())
+        self.inner.capabilities().map(|caps| {
+            let mut keys: Vec<String> = caps.keys().cloned().collect();
+            keys.sort();
+            keys
+        })
     }
 
     /// Get issuable tools (Issuer warrants only).
@@ -2399,15 +2419,20 @@ impl PyWarrant {
         self.inner.expires_at().to_rfc3339()
     }
 
-    /// Get constraints as a Python dict.
+    /// Get capabilities as a Python dict (tool -> dict[field, constraint]).
     ///
-    /// Returns None if this is an issuer warrant (which uses constraint_bounds instead).
-    fn constraints_dict<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
-        if let Some(constraints) = self.inner.constraints() {
+    /// Returns None if this is an issuer warrant.
+    #[getter]
+    fn capabilities<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        if let Some(caps) = self.inner.capabilities() {
             let dict = PyDict::new(py);
-            for (field, constraint) in constraints.iter() {
-                let py_constraint = constraint_to_py(py, constraint)?;
-                dict.set_item(field, py_constraint)?;
+            for (tool, constraints) in caps.iter() {
+                let constraint_dict = PyDict::new(py);
+                for (field, constraint) in constraints.iter() {
+                    let py_constraint = constraint_to_py(py, constraint)?;
+                    constraint_dict.set_item(field, py_constraint)?;
+                }
+                dict.set_item(tool, constraint_dict)?;
             }
             Ok(Some(dict))
         } else {
@@ -2450,10 +2475,11 @@ impl PyWarrant {
     }
 
     /// Attenuate the warrant (create a child with narrower scope).
-    #[pyo3(signature = (constraints, keypair, parent_keypair, ttl_seconds=None, holder=None, trust_level=None))]
+    /// Attenuate the warrant (create a child with narrower scope).
+    #[pyo3(signature = (capabilities, keypair, parent_keypair, ttl_seconds=None, holder=None, trust_level=None))]
     fn attenuate(
         &self,
-        constraints: &Bound<'_, PyDict>,
+        capabilities: &Bound<'_, PyDict>,
         keypair: &PySigningKey,
         parent_keypair: &PySigningKey,
         ttl_seconds: Option<u64>,
@@ -2470,18 +2496,27 @@ impl PyWarrant {
             builder = builder.authorized_holder(h.inner.clone());
         }
 
+        // Capabilities: dict[tool_name, dict[field, constraint]]
+        for (tool_key, constraints_val) in capabilities.iter() {
+            let tool_name: String = tool_key.extract()?;
+            let mut constraint_set = crate::constraints::ConstraintSet::new();
+
+            let constraints_dict: &Bound<'_, PyDict> = constraints_val
+                .downcast()
+                .map_err(|_| PyValueError::new_err("capabilities values must be dicts"))?;
+
+            for (field_key, constraint_val) in constraints_dict.iter() {
+                let field: String = field_key.extract()?;
+                let constraint = py_to_constraint(&constraint_val)?;
+                constraint_set.insert(field, constraint);
+            }
+            builder = builder.capability(tool_name, constraint_set);
+        }
+
         // Note: TrustLevel on AttenuationBuilder requires mutable access
         // For the Owned version, we need to use the set_ method
         if trust_level.is_some() {
-            // Trust level setting is done via OwnedAttenuationBuilder
-            // The reference-based builder doesn't support it directly
-            // Users should use attenuate_builder() for trust level changes
-        }
-
-        for (field, constraint) in constraints.iter() {
-            let field: String = field.extract()?;
-            let constraint = py_to_constraint(&constraint)?;
-            builder = builder.constraint(field, constraint);
+            // Trust diff logic handled internally or via wrapper
         }
 
         let warrant = builder

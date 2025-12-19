@@ -160,9 +160,31 @@ def _warrant_delegate(
         builder.with_tools(tools)
 
     # Apply constraints
+    # Apply constraints (merge logic)
+    # We must fetch current capabilities, apply new constraints to target tools, and set them back.
     from tenuo.scoped import _ensure_constraint
-    for k, v in constraints.items():
-        builder.with_constraint(k, _ensure_constraint(k, v))
+    
+    # Target tools: if specified, use them. Otherwise, apply to ALL tools in current builder capabilities.
+    current_caps = builder.capabilities # dict[tool, dict[field, constraint]]
+    target_tools_set = set(tools) if tools else set(current_caps.keys())
+    
+    for tool in target_tools_set:
+        tool_constraints = current_caps.get(tool, {}).copy()
+        
+        # Merge new constraints
+        for k, v in constraints.items():
+            tool_constraints[k] = _ensure_constraint(k, v)
+        
+        # Note: If tool wasn't in current_caps (and not explicit tools list), we skipped it.
+        # If explicit tool list has new tool, current_caps.get returns empty dict, so we add it. 
+        # But wait, attenuation cannot ADD tools. The Rust builder will fail validation if we try to add a tool not in parent?
+        # Actually OwnedAttenuationBuilder allows adding capabilities, but `build()` checks against parent?
+        # OwnedAttenuationBuilder initializes with parent caps.
+        # If we use `builder.with_capability`, we update self.capabilities.
+        # If we add a tool that wasn't there, it's effectively "keeping" it? 
+        # But if it wasn't in parent, we can't have it.
+        # If it WAS in parent but removed by earlier `with_tools`?
+        builder.with_capability(tool, tool_constraints)
         
     builder.with_holder(holder)
     

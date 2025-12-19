@@ -119,16 +119,17 @@ pub const WARRANT_ID_HEADER: &str = "X-Tenuo-Warrant-Id";
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constraints::Pattern;
+    use crate::constraints::{ConstraintSet, Pattern};
     use crate::crypto::SigningKey;
     use std::time::Duration;
 
     #[test]
     fn test_encode_decode_roundtrip() {
         let keypair = SigningKey::generate();
+        let mut constraints = ConstraintSet::new();
+        constraints.insert("arg", Pattern::new("value-*").unwrap());
         let warrant = Warrant::builder()
-            .tool("test_tool")
-            .constraint("arg", Pattern::new("value-*").unwrap())
+            .capability("test_tool", constraints)
             .ttl(Duration::from_secs(300))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
@@ -138,14 +139,14 @@ mod tests {
         let decoded = decode(&encoded).unwrap();
 
         assert_eq!(decoded.id(), warrant.id());
-        assert_eq!(decoded.tools(), warrant.tools()); // Both return Option<&[String]>
+        assert_eq!(decoded.tools(), warrant.tools()); // Both return Option<Vec<String>>
     }
 
     #[test]
     fn test_base64_roundtrip() {
         let keypair = SigningKey::generate();
         let warrant = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
@@ -168,7 +169,7 @@ mod tests {
     fn test_version_check() {
         let keypair = SigningKey::generate();
         let warrant = Warrant::builder()
-            .tool("test")
+            .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
@@ -190,7 +191,7 @@ mod tests {
 
         // Minimal warrant
         let minimal = Warrant::builder()
-            .tool("t")
+            .capability("t", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
@@ -200,10 +201,11 @@ mod tests {
         println!("Minimal warrant size: {} bytes", minimal_size);
 
         // Warrant with constraints
+        let mut constraints = ConstraintSet::new();
+        constraints.insert("cluster", Pattern::new("staging-*").unwrap());
+        constraints.insert("version", Pattern::new("1.28.*").unwrap());
         let with_constraints = Warrant::builder()
-            .tool("upgrade_cluster")
-            .constraint("cluster", Pattern::new("staging-*").unwrap())
-            .constraint("version", Pattern::new("1.28.*").unwrap())
+            .capability("upgrade_cluster", constraints)
             .ttl(Duration::from_secs(600))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
@@ -224,11 +226,12 @@ mod tests {
 
         // Create a warrant with multiple constraints in different "insertion" order
         // to verify BTreeMap provides consistent ordering
+        let mut constraints = ConstraintSet::new();
+        constraints.insert("zebra", Pattern::new("z-*").unwrap()); // Insert Z first
+        constraints.insert("alpha", Pattern::new("a-*").unwrap()); // Then A
+        constraints.insert("middle", Pattern::new("m-*").unwrap()); // Then M
         let warrant1 = Warrant::builder()
-            .tool("test")
-            .constraint("zebra", Pattern::new("z-*").unwrap()) // Insert Z first
-            .constraint("alpha", Pattern::new("a-*").unwrap()) // Then A
-            .constraint("middle", Pattern::new("m-*").unwrap()) // Then M
+            .capability("test", constraints)
             .ttl(Duration::from_secs(300))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
@@ -279,17 +282,19 @@ mod tests {
         ]);
 
         // Create warrants with same constraints but different insertion order
+        let mut cs1 = ConstraintSet::new();
+        cs1.insert("cluster", all_constraint1.clone());
         let warrant1 = Warrant::builder()
-            .tool("test")
-            .constraint("cluster", all_constraint1.clone())
+            .capability("test", cs1)
             .ttl(Duration::from_secs(300))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
+        let mut cs2 = ConstraintSet::new();
+        cs2.insert("cluster", all_constraint2.clone());
         let warrant2 = Warrant::builder()
-            .tool("test")
-            .constraint("cluster", all_constraint2.clone())
+            .capability("test", cs2)
             .ttl(Duration::from_secs(300))
             .authorized_holder(keypair.public_key())
             .build(&keypair)

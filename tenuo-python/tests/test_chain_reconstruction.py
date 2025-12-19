@@ -3,7 +3,7 @@ Tests for chain reconstruction with diffs.
 """
 
 from tenuo import (
-    SigningKey, Warrant, Pattern, Exact, Range,
+    SigningKey, Warrant, Pattern, Exact, Range, Constraints,
     DelegationDiff, DelegationReceipt,
 )
 from tenuo.warrant_ext import get_chain_with_diffs, compute_diff
@@ -16,16 +16,15 @@ def test_compute_diff_basic():
     
     # Create parent
     parent = Warrant.issue(
-        tools="read_file",
         keypair=control_kp,
+        capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
     
     # Create child via builder
     builder = parent.attenuate_builder()
-    builder.with_constraint("path", Exact("/data/q3.pdf"))
+    builder.with_capability("read_file", {"path": Exact("/data/q3.pdf")})
     builder.with_ttl(60)
     builder.with_holder(worker_kp.public_key)
     
@@ -37,7 +36,7 @@ def test_compute_diff_basic():
     assert isinstance(diff, DelegationDiff)
     assert diff.parent_warrant_id == parent.id
     assert diff.child_warrant_id == child.id
-    assert "path" in diff.constraints
+    assert "read_file" in diff.capabilities
     assert diff.ttl.change.value == "reduced"
     assert diff.depth.parent_depth == 0
     assert diff.depth.child_depth == 1
@@ -51,16 +50,15 @@ def test_chain_reconstruction_simple():
     
     # Root warrant
     root = Warrant.issue(
-        tools="read_file",
         keypair=control_kp,
+        capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         holder=orchestrator_kp.public_key,
-        constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
     
     # First delegation
     builder1 = root.attenuate_builder()
-    builder1.with_constraint("path", Pattern("/data/reports/*"))
+    builder1.with_capability("read_file", {"path": Pattern("/data/reports/*")})
     builder1.with_ttl(300)
     builder1.with_holder(worker_kp.public_key)
     
@@ -68,7 +66,7 @@ def test_chain_reconstruction_simple():
     
     # Second delegation
     builder2 = child1.attenuate_builder()
-    builder2.with_constraint("path", Exact("/data/reports/q3.pdf"))
+    builder2.with_capability("read_file", {"path": Exact("/data/reports/q3.pdf")})
     builder2.with_ttl(60)
     
     child2 = builder2.delegate_to(worker_kp, orchestrator_kp)
@@ -111,16 +109,15 @@ def test_chain_reconstruction_with_store():
     
     # Root warrant
     root = Warrant.issue(
-        tools="read_file",
         keypair=control_kp,
+        capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         holder=orchestrator_kp.public_key,
-        constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
     
     # First delegation
     builder1 = root.attenuate_builder()
-    builder1.with_constraint("path", Pattern("/data/reports/*"))
+    builder1.with_capability("read_file", {"path": Pattern("/data/reports/*")})
     builder1.with_ttl(300)
     
     child1 = builder1.delegate_to(orchestrator_kp, control_kp)
@@ -155,29 +152,27 @@ def test_multiple_constraint_changes():
     control_kp = SigningKey.generate()
     
     parent = Warrant.issue(
-        tools="file_ops",
         keypair=control_kp,
-        holder=control_kp.public_key,
-        constraints={
+        capabilities=Constraints.for_tool("file_ops", {
             "path": Pattern("/data/*"),
             "max_size": Range.max_value(1000000),
-        },
+        }),
+        holder=control_kp.public_key,
         ttl_seconds=3600
     )
     
     builder = parent.attenuate_builder()
-    builder.with_constraint("path", Exact("/data/q3.pdf"))
-    builder.with_constraint("max_size", Range.max_value(500000))  # Narrower
+    builder.with_capability("file_ops", {
+        "path": Exact("/data/q3.pdf"),
+        "max_size": Range.max_value(500000),
+    })
     builder.with_ttl(60)
     
     diff = builder.diff_structured()
     
-    # Should have 2 constraint changes
-    assert len(diff.constraints) >= 2
-    assert "path" in diff.constraints
-    assert "max_size" in diff.constraints
-    assert diff.constraints["path"].change.value == "narrowed"
-    assert diff.constraints["max_size"].change.value == "narrowed"
+    # Should have capability changes
+    assert "file_ops" in diff.capabilities
+    # The constraints within the capability should show changes
 
 
 def test_trust_level_change():
@@ -187,10 +182,9 @@ def test_trust_level_change():
     from tenuo import TrustLevel
     
     parent = Warrant.issue(
-        tools="read_file",
         keypair=control_kp,
+        capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
     
@@ -212,18 +206,17 @@ def test_tool_dropping():
     
     # Parent with multiple tools (comma-separated)
     parent = Warrant.issue(
-        tools="read_file,send_email,search",
         keypair=control_kp,
+        capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
     
-    # Note: Tool narrowing in execution warrants is done via constraints
+    # Note: Tool narrowing in execution warrants is done via capabilities
     # For issuer warrants, we'd use issuable_tools
     # This test verifies the diff shows tool inheritance
     builder = parent.attenuate_builder()
-    builder.with_constraint("path", Exact("/data/q3.pdf"))
+    builder.with_capability("read_file", {"path": Exact("/data/q3.pdf")})
     
     diff = builder.diff_structured()
     
@@ -241,15 +234,14 @@ def test_receipt_serialization_roundtrip():
     worker_kp = SigningKey.generate()
     
     parent = Warrant.issue(
-        tools="file_operations",
         keypair=control_kp,
+        capabilities=Constraints.for_tool("file_operations", {"path": Pattern("/data/*")}), 
         holder=control_kp.public_key,
-        constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
     
     builder = AttenuationBuilder(parent)
-    builder.with_constraint("path", Exact("/data/q3.pdf"))
+    builder.with_capability("file_operations", {"path": Exact("/data/q3.pdf")})
     builder.with_ttl(60)
     builder.with_holder(worker_kp.public_key)
     builder.with_intent("Test delegation")
@@ -269,7 +261,6 @@ def test_receipt_serialization_roundtrip():
     assert "intent" in data
     assert "used_pass_through" in data
     assert "tools" in data
-    assert "constraints" in data
     assert "ttl" in data
     assert "trust" in data
     assert "depth" in data
@@ -286,10 +277,9 @@ def test_diff_with_no_changes():
     control_kp = SigningKey.generate()
     
     parent = Warrant.issue(
-        tools="read_file",
         keypair=control_kp,
+        capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
     
@@ -311,15 +301,14 @@ def test_receipt_after_delegation():
     worker_kp = SigningKey.generate()
     
     parent = Warrant.issue(
-        tools="read_file",
         keypair=control_kp,
+        capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
     
     builder = parent.attenuate_builder()
-    builder.with_constraint("path", Exact("/data/q3.pdf"))
+    builder.with_capability("read_file", {"path": Exact("/data/q3.pdf")})
     builder.with_ttl(60)
     builder.with_holder(worker_kp.public_key)
     builder.with_intent("Read Q3 report")

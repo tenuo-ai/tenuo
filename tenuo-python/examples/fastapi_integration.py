@@ -22,7 +22,7 @@ Run with: uvicorn fastapi_integration:app --reload
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from tenuo import (
-    SigningKey, Warrant, Pattern, Range,
+    SigningKey, Warrant, Pattern, Range, Constraints,
     lockdown, set_warrant_context, set_signing_key_context,
     AuthorizationError, WarrantError
 )
@@ -326,29 +326,30 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
     for fine-grained authorization control.
     """
     read_warrant = Warrant.issue(
-        tools="read_file",
-        signing_key=AGENT_KEYPAIR,
+        keypair=AGENT_KEYPAIR,
+        capabilities=Constraints.for_tool("read_file", {
+            "file_path": Pattern("/tmp/*")
+        }),
         holder=AGENT_KEYPAIR.public_key,
-        constraints={"file_path": Pattern("/tmp/*")},
         ttl_seconds=3600
     )
     
     write_warrant = Warrant.issue(
-        tools="write_file",
-        signing_key=AGENT_KEYPAIR,
+        keypair=AGENT_KEYPAIR,
+        capabilities=Constraints.for_tool("write_file", {
+            "file_path": Pattern("/tmp/*")
+        }),
         holder=AGENT_KEYPAIR.public_key,
-        constraints={"file_path": Pattern("/tmp/*")},
         ttl_seconds=3600
     )
     
     cluster_warrant = Warrant.issue(
-        tools="manage_cluster",
-        signing_key=AGENT_KEYPAIR,
-        holder=AGENT_KEYPAIR.public_key,
-        constraints={
+        keypair=AGENT_KEYPAIR,
+        capabilities=Constraints.for_tool("manage_cluster", {
             "cluster": Pattern("staging-*"),
             "replicas": Range.max_value(15)
-        },
+        }),
+        holder=AGENT_KEYPAIR.public_key,
         ttl_seconds=3600
     )
     

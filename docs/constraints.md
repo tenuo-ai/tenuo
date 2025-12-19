@@ -14,14 +14,17 @@ description: How to use constraints to scope authority precisely
 Constraints are key-value pairs that restrict what a warrant authorizes. When a tool is invoked, Tenuo checks that the arguments satisfy the warrant's constraints.
 
 ```python
-# Create warrant with constraints
+from tenuo import Warrant, Constraints, Pattern, Range
+
+# Create warrant with per-tool constraints
 warrant = Warrant.issue(
-    tools=["read_file"],
-    constraints={
+    capabilities=Constraints.for_tool("read_file", {
         "path": Pattern("/data/*"),      # Path must match /data/*
         "max_size": Range.max_value(1000) # Size must be ≤ 1000
-    },
-    ...
+    }),
+    keypair=keypair,
+    holder=worker_pubkey,
+    ttl_seconds=3600,
 )
 
 # Tool invocation checks constraints
@@ -231,12 +234,17 @@ Cidr("2001:db8::/32")
 **Use case:** Restrict API calls to internal networks, validate source IPs.
 
 ```python
+from tenuo import Warrant, ConstraintSet, Cidr
+
 # Only allow requests from internal network
+cs = ConstraintSet()
+cs.insert("source_ip", Cidr("10.0.0.0/8"))
+
 warrant = (Warrant.builder()
-    .tool("api_call")
-    .constraint("source_ip", Cidr("10.0.0.0/8"))
+    .capability("api_call", cs)
     .holder(kp.public_key)
-    .issue(kp))
+    .ttl(3600)
+    .build(kp))
 ```
 
 **Attenuation:** Child CIDR must be a subnet of parent.
@@ -299,12 +307,17 @@ UrlPattern("https://api.example.com/api/v1/*")
 **Use case:** Restrict API calls to specific endpoints, enforce HTTPS, limit to trusted domains.
 
 ```python
+from tenuo import Warrant, ConstraintSet, UrlPattern
+
 # Only allow HTTPS calls to internal API
+cs = ConstraintSet()
+cs.insert("endpoint", UrlPattern("https://api.internal.com/v1/*"))
+
 warrant = (Warrant.builder()
-    .tool("api_call")
-    .constraint("endpoint", UrlPattern("https://api.internal.com/v1/*"))
+    .capability("api_call", cs)
     .holder(kp.public_key)
-    .issue(kp))
+    .ttl(3600)
+    .build(kp))
 ```
 
 **Attenuation Rules:**
@@ -348,30 +361,28 @@ Regex(r"^[a-z]+@company\.com$")
 > Child regex must have **identical pattern** to parent. This is because determining if one regex is a subset of another is mathematically undecidable in the general case.
 >
 > ```python
+> from tenuo import Warrant, Constraints, Regex, Exact
+>
 > # Parent with regex
 > parent = Warrant.issue(
->     tools=["query"],
->     constraints={"env": Regex(r"^(staging|dev)-.*$")},
->     ...
+>     capabilities=Constraints.for_tool("query", {"env": Regex(r"^(staging|dev)-.*$")}),
+>     keypair=kp, holder=kp.public_key, ttl_seconds=3600
 > )
 >
 > # Cannot narrow to different regex (even if provably narrower)
-> child = parent.attenuate(
->     constraints={"env": Regex(r"^staging-.*$")},  # FAILS
->     ...
-> )
+> child = parent.attenuate().with_capability("query", {
+>     "env": Regex(r"^staging-.*$")  # FAILS
+> }).build(kp, kp)
 >
 > # Can narrow to Exact value (if it matches parent regex)
-> child = parent.attenuate(
->     constraints={"env": Exact("staging-web")},  # OK
->     ...
-> )
+> child = parent.attenuate().with_capability("query", {
+>     "env": Exact("staging-web")  # OK
+> }).build(kp, kp)
 >
 > # Can keep same regex pattern
-> child = parent.attenuate(
->     constraints={"env": Regex(r"^(staging|dev)-.*$")},  # OK
->     ...
-> )
+> child = parent.attenuate().with_capability("query", {
+>     "env": Regex(r"^(staging|dev)-.*$")  # OK
+> }).build(kp, kp)
 > ```
 >
 > **Workaround**: If you need to narrow regex constraints during delegation:
@@ -409,11 +420,14 @@ Contains(["read", "write"])
 
 **Example:**
 ```python
+from tenuo import Warrant, Constraints, Contains
+
 # Warrant requires ["read", "write"] permissions
 warrant = Warrant.issue(
-    tools=["access_resource"],
-    constraints={"permissions": Contains(["read", "write"])},
-    ...
+    capabilities=Constraints.for_tool("access_resource", {
+        "permissions": Contains(["read", "write"])
+    }),
+    keypair=kp, holder=kp.public_key, ttl_seconds=3600
 )
 
 # Matches: ["read", "write", "admin"]
@@ -435,11 +449,14 @@ Subset(["staging", "dev", "test"])
 
 **Example:**
 ```python
+from tenuo import Warrant, Constraints, Subset
+
 # Warrant allows only specific environments
 warrant = Warrant.issue(
-    tools=["deploy"],
-    constraints={"environments": Subset(["staging", "dev"])},
-    ...
+    capabilities=Constraints.for_tool("deploy", {
+        "environments": Subset(["staging", "dev"])
+    }),
+    keypair=kp, holder=kp.public_key, ttl_seconds=3600
 )
 
 # Matches: ["staging"]
@@ -520,13 +537,15 @@ CEL("budget < revenue * 0.1 && currency == 'USD'")
 
 **Example:**
 ```python
+from tenuo import Warrant, Constraints, CEL
+
 # Budget must be less than 10% of revenue
 warrant = Warrant.issue(
-    tools=["create_campaign"],
-    constraints={
+    capabilities=Constraints.for_tool("create_campaign", {
         "budget_check": CEL("budget < revenue * 0.1 && budget > 0")
-    },
+    }),
     keypair=keypair,
+    holder=holder_pubkey,
     ttl_seconds=3600
 )
 
@@ -575,26 +594,30 @@ CEL("net_is_private(source_ip)")
 
 **Time-bounded Example:**
 ```python
+from tenuo import Warrant, Constraints, CEL
+
 # Only allow if order created within last 24 hours
 warrant = Warrant.issue(
-    tools=["process_order"],
-    constraints={
+    capabilities=Constraints.for_tool("process_order", {
         "freshness": CEL("time_since(created_at) < 86400")
-    },
+    }),
     keypair=keypair,
+    holder=holder_pubkey,
     ttl_seconds=3600
 )
 ```
 
 **Network Example:**
 ```python
+from tenuo import Warrant, Constraints, CEL
+
 # Only allow API calls from private network
 warrant = Warrant.issue(
-    tools=["api_call"],
-    constraints={
+    capabilities=Constraints.for_tool("api_call", {
         "network": CEL("net_in_cidr(source_ip, '10.0.0.0/8')")
-    },
+    }),
     keypair=keypair,
+    holder=holder_pubkey,
     ttl_seconds=3600
 )
 ```
@@ -604,19 +627,20 @@ warrant = Warrant.issue(
 Child CEL constraints are automatically combined with parent using AND logic:
 
 ```python
+from tenuo import Warrant, Constraints, CEL
+
 # Parent: budget < 10000
 parent = Warrant.issue(
-    tools=["spend"],
-    constraints={"budget_rule": CEL("budget < 10000")},
+    capabilities=Constraints.for_tool("spend", {"budget_rule": CEL("budget < 10000")}),
     keypair=kp,
+    holder=kp.public_key,
     ttl_seconds=3600
 )
 
 # Child: Add additional constraint (auto-AND'd)
-child = parent.attenuate(
-    constraints={"budget_rule": CEL("currency == 'USD'")},
-    holder=worker_kp.public_key
-)
+child = parent.attenuate().with_capability("spend", {
+    "budget_rule": CEL("currency == 'USD'")
+}).build(kp, kp)
 
 # Effective child expression: (budget < 10000) && (currency == 'USD')
 ```
@@ -628,26 +652,26 @@ Tenuo enforces **Syntactic Monotonicity** for CEL, not Semantic Monotonicity.
 Child expression must **literally** be `(parent) && new_predicate`. It cannot be a semantically equivalent but differently structured expression.
 
 ```python
+from tenuo import Warrant, Constraints, CEL
+
 # Parent CEL
 parent = Warrant.issue(
-    tools=["api_call"],
-    constraints={"network": CEL("net_in_cidr(ip, '10.0.0.0/8')")},
+    capabilities=Constraints.for_tool("api_call", {"network": CEL("net_in_cidr(ip, '10.0.0.0/8')")}),
     keypair=kp,
+    holder=kp.public_key,
     ttl_seconds=3600
 )
 
 # REJECTED: Semantically narrower but not syntactically derived
-child = parent.attenuate(
-    constraints={"network": CEL("net_in_cidr(ip, '10.1.0.0/16')")},  # FAILS
-    holder=worker_kp.public_key
-)
+child = parent.attenuate().with_capability("api_call", {
+    "network": CEL("net_in_cidr(ip, '10.1.0.0/16')")  # FAILS
+}).build(kp, kp)
 # Even though 10.1.0.0/16 is subset of 10.0.0.0/8, this is REJECTED
 
 # ALLOWED: Syntactically derived (AND'd)
-child = parent.attenuate(
-    constraints={"network": CEL("(net_in_cidr(ip, '10.0.0.0/8')) && net_in_cidr(ip, '10.1.0.0/16')")},
-    holder=worker_kp.public_key
-)
+child = parent.attenuate().with_capability("api_call", {
+    "network": CEL("(net_in_cidr(ip, '10.0.0.0/8')) && net_in_cidr(ip, '10.1.0.0/16')")
+}).build(kp, kp)
 # Now it's ALLOWED because it's (parent) && additional_check
 ```
 
@@ -813,40 +837,55 @@ child = Subset(["a", "b"])  # OK - allows fewer
 ### Pattern Narrowing
 
 ```python
+from tenuo import Warrant, Constraints, Pattern
+
 # Parent: /data/*
-parent = Warrant.issue(constraints={"path": Pattern("/data/*")}, ...)
+parent = Warrant.issue(
+    capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
+    keypair=kp, holder=kp.public_key, ttl_seconds=3600
+)
 
 # Child: /data/reports/* (narrower) - OK
-child = parent.attenuate(constraints={"path": Pattern("/data/reports/*")}, ...)
+child = parent.attenuate().with_capability("read_file", {"path": Pattern("/data/reports/*")}).build(kp, kp)
 
 # Child: /* (wider) - FAILS
-child = parent.attenuate(constraints={"path": Pattern("/*")}, ...)
+child = parent.attenuate().with_capability("read_file", {"path": Pattern("/*")}).build(kp, kp)  # MonotonicityViolation
 ```
 
 ### Range Narrowing
 
 ```python
+from tenuo import Warrant, Constraints, Range
+
 # Parent: max 15 replicas
-parent = Warrant.issue(constraints={"replicas": Range.max_value(15)}, ...)
+parent = Warrant.issue(
+    capabilities=Constraints.for_tool("scale", {"replicas": Range.max_value(15)}),
+    keypair=kp, holder=kp.public_key, ttl_seconds=3600
+)
 
 # Child: max 10 (narrower) - OK
-child = parent.attenuate(constraints={"replicas": Range.max_value(10)}, ...)
+child = parent.attenuate().with_capability("scale", {"replicas": Range.max_value(10)}).build(kp, kp)
 
 # Child: max 20 (wider) - FAILS
-child = parent.attenuate(constraints={"replicas": Range.max_value(20)}, ...)
+child = parent.attenuate().with_capability("scale", {"replicas": Range.max_value(20)}).build(kp, kp)  # MonotonicityViolation
 ```
 
 ### OneOf Narrowing
 
 ```python
+from tenuo import Warrant, Constraints, OneOf
+
 # Parent: ["a", "b", "c"]
-parent = Warrant.issue(constraints={"action": OneOf(["a", "b", "c"])}, ...)
+parent = Warrant.issue(
+    capabilities=Constraints.for_tool("action", {"type": OneOf(["a", "b", "c"])}),
+    keypair=kp, holder=kp.public_key, ttl_seconds=3600
+)
 
 # Child: ["a", "b"] (subset) - OK
-child = parent.attenuate(constraints={"action": OneOf(["a", "b"])}, ...)
+child = parent.attenuate().with_capability("action", {"type": OneOf(["a", "b"])}).build(kp, kp)
 
 # Child: ["a", "b", "d"] (adds "d") - FAILS
-child = parent.attenuate(constraints={"action": OneOf(["a", "b", "d"])}, ...)
+child = parent.attenuate().with_capability("action", {"type": OneOf(["a", "b", "d"])}).build(kp, kp)  # MonotonicityViolation
 ```
 
 ### Regex Narrowing
@@ -854,17 +893,22 @@ child = parent.attenuate(constraints={"action": OneOf(["a", "b", "d"])}, ...)
 **Regex constraints are conservative**: Child regex must have **identical pattern** to parent.
 
 ```python
+from tenuo import Warrant, Constraints, Regex, Exact
+
 # Parent: regex pattern
-parent = Warrant.issue(constraints={"env": Regex(r"^(staging|dev)-.*$")}, ...)
+parent = Warrant.issue(
+    capabilities=Constraints.for_tool("query", {"env": Regex(r"^(staging|dev)-.*$")}),
+    keypair=kp, holder=kp.public_key, ttl_seconds=3600
+)
 
 # Cannot narrow to different regex (even if provably narrower) - FAILS
-child = parent.attenuate(constraints={"env": Regex(r"^staging-.*$")}, ...)
+child = parent.attenuate().with_capability("query", {"env": Regex(r"^staging-.*$")}).build(kp, kp)  # MonotonicityViolation
 
 # Can keep same pattern - OK
-child = parent.attenuate(constraints={"env": Regex(r"^(staging|dev)-.*$")}, ...)
+child = parent.attenuate().with_capability("query", {"env": Regex(r"^(staging|dev)-.*$")}).build(kp, kp)
 
 # Can narrow to Exact (if it matches parent regex) - OK
-child = parent.attenuate(constraints={"env": Exact("staging-web")}, ...)
+child = parent.attenuate().with_capability("query", {"env": Exact("staging-web")}).build(kp, kp)
 ```
 
 **Why**: Determining if one regex is a subset of another is undecidable in general. Tenuo takes a conservative approach for security.

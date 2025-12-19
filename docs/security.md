@@ -79,8 +79,11 @@ Authority can only **shrink**, never expand:
 | **Depth** | `max_depth` can only decrease |
 
 ```python
-# Parent allows: tools=["read", "write", "delete"], path="/*"
-parent = Warrant.issue(tools=["read", "write", "delete"], path=Pattern("/*"), ...)
+# Parent allows: capabilities={"read": path="/*", "write": path="/*", "delete": path="/*"}
+parent = Warrant.issue(
+    capabilities=Constraints.for_tools(["read", "write", "delete"], {"path": Pattern("/*")}),
+    ...
+)
 
 # Child can only narrow:
 child = parent.attenuate(

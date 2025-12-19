@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 use tenuo::{
-    constraints::{ConstraintValue, Exact, OneOf, Pattern, Range},
+    constraints::{ConstraintSet, ConstraintValue, Exact, OneOf, Pattern, Range},
     crypto::SigningKey,
     warrant::Warrant,
     wire,
@@ -27,10 +27,11 @@ fn demo_kubernetes_upgrade_delegation_chain() {
     let worker_kp = SigningKey::generate();
 
     // Step 1: Control plane issues broad warrant
+    let mut root_constraints = ConstraintSet::new();
+    root_constraints.insert("cluster", Pattern::new("*").unwrap()); // Any cluster
+    root_constraints.insert("version", Pattern::new("1.28.*").unwrap());
     let root_warrant = Warrant::builder()
-        .tool("upgrade_cluster")
-        .constraint("cluster", Pattern::new("*").unwrap()) // Any cluster
-        .constraint("version", Pattern::new("1.28.*").unwrap())
+        .capability("upgrade_cluster", root_constraints)
         .ttl(Duration::from_secs(3600))
         .authorized_holder(orchestrator_kp.public_key())
         .build(&control_plane_kp)
@@ -40,9 +41,12 @@ fn demo_kubernetes_upgrade_delegation_chain() {
     assert!(root_warrant.verify(&control_plane_kp.public_key()).is_ok());
 
     // Step 2: Orchestrator attenuates to staging only
+    let mut orch_constraints = ConstraintSet::new();
+    orch_constraints.insert("cluster", Pattern::new("staging-*").unwrap());
+    orch_constraints.insert("version", Pattern::new("1.28.*").unwrap());
     let orchestrator_warrant = root_warrant
         .attenuate()
-        .constraint("cluster", Pattern::new("staging-*").unwrap())
+        .capability("upgrade_cluster", orch_constraints)
         .ttl(Duration::from_secs(600))
         .authorized_holder(worker_kp.public_key())
         .build(&orchestrator_kp, &orchestrator_kp)
@@ -54,9 +58,12 @@ fn demo_kubernetes_upgrade_delegation_chain() {
     // Step 3: Worker attenuates to specific cluster
     // Note: In this demo, worker binds to itself or a sub-worker.
     // Let's assume worker binds to itself for the final execution warrant.
+    let mut worker_constraints = ConstraintSet::new();
+    worker_constraints.insert("cluster", Exact::new("staging-web"));
+    worker_constraints.insert("version", Pattern::new("1.28.*").unwrap());
     let worker_warrant = orchestrator_warrant
         .attenuate()
-        .constraint("cluster", Exact::new("staging-web"))
+        .capability("upgrade_cluster", worker_constraints)
         .authorized_holder(worker_kp.public_key())
         .build(&worker_kp, &worker_kp)
         .unwrap();
@@ -118,27 +125,34 @@ fn demo_finance_delegation_with_budget() {
     let payment_worker_kp = SigningKey::generate();
 
     // CFO authorizes finance agent for transfers up to $100k
+    let mut cfo_constraints = ConstraintSet::new();
+    cfo_constraints.insert("amount", Range::max(100_000.0).unwrap());
+    cfo_constraints.insert("currency", Exact::new("USD"));
     let cfo_warrant = Warrant::builder()
-        .tool("transfer_funds")
-        .constraint("amount", Range::max(100_000.0).unwrap())
-        .constraint("currency", Exact::new("USD"))
+        .capability("transfer_funds", cfo_constraints)
         .ttl(Duration::from_secs(86400)) // 24 hours
         .authorized_holder(finance_agent_kp.public_key())
         .build(&cfo_kp)
         .unwrap();
 
     // Finance agent self-restricts to $10k for autonomous operations
+    let mut finance_constraints = ConstraintSet::new();
+    finance_constraints.insert("amount", Range::max(10_000.0).unwrap());
+    finance_constraints.insert("currency", Exact::new("USD"));
     let finance_warrant = cfo_warrant
         .attenuate()
-        .constraint("amount", Range::max(10_000.0).unwrap())
+        .capability("transfer_funds", finance_constraints)
         .authorized_holder(payment_worker_kp.public_key())
         .build(&finance_agent_kp, &finance_agent_kp)
         .unwrap();
 
     // Payment worker gets even narrower: $1k max
+    let mut worker_constraints = ConstraintSet::new();
+    worker_constraints.insert("amount", Range::max(1_000.0).unwrap());
+    worker_constraints.insert("currency", Exact::new("USD"));
     let worker_warrant = finance_warrant
         .attenuate()
-        .constraint("amount", Range::max(1_000.0).unwrap())
+        .capability("transfer_funds", worker_constraints)
         .authorized_holder(payment_worker_kp.public_key())
         .build(&payment_worker_kp, &payment_worker_kp)
         .unwrap();
@@ -203,10 +217,11 @@ fn demo_http_transport() {
     let issuer_kp = SigningKey::generate();
 
     // Create a warrant
+    let mut db_constraints = ConstraintSet::new();
+    db_constraints.insert("database", OneOf::new(["analytics", "logs"]));
+    db_constraints.insert("table", Pattern::new("public_*").unwrap());
     let warrant = Warrant::builder()
-        .tool("query_database")
-        .constraint("database", OneOf::new(["analytics", "logs"]))
-        .constraint("table", Pattern::new("public_*").unwrap())
+        .capability("query_database", db_constraints)
         .ttl(Duration::from_secs(300))
         .session_id("session_abc123")
         .authorized_holder(issuer_kp.public_key()) // Bind to self for demo
@@ -233,7 +248,7 @@ fn demo_http_transport() {
         "Verification failed: {:?}",
         verify_result.err()
     );
-    assert_eq!(received.tools(), Some(&["query_database".to_string()][..]));
+    assert_eq!(received.tools(), Some(vec!["query_database".to_string()]));
     assert_eq!(received.session_id(), Some("session_abc123"));
 
     // Authorize a query
@@ -276,7 +291,7 @@ fn demo_session_binding() {
     let kp = SigningKey::generate();
 
     let session_1_warrant = Warrant::builder()
-        .tool("execute_task")
+        .capability("execute_task", ConstraintSet::new())
         .ttl(Duration::from_secs(600))
         .session_id("session_001")
         .authorized_holder(kp.public_key())
@@ -284,7 +299,7 @@ fn demo_session_binding() {
         .unwrap();
 
     let session_2_warrant = Warrant::builder()
-        .tool("execute_task")
+        .capability("execute_task", ConstraintSet::new())
         .ttl(Duration::from_secs(600))
         .session_id("session_002")
         .authorized_holder(kp.public_key())
@@ -320,31 +335,38 @@ fn demo_audit_chain_reconstruction() {
     let level3_kp = SigningKey::generate();
 
     // Build a 4-level delegation chain
+    let mut root_constraints = ConstraintSet::new();
+    root_constraints.insert("scope", Pattern::new("*").unwrap());
     let root = Warrant::builder()
-        .tool("sensitive_operation")
-        .constraint("scope", Pattern::new("*").unwrap())
+        .capability("sensitive_operation", root_constraints)
         .ttl(Duration::from_secs(3600))
         .authorized_holder(level1_kp.public_key())
         .build(&root_kp)
         .unwrap();
 
+    let mut l1_constraints = ConstraintSet::new();
+    l1_constraints.insert("scope", Pattern::new("dept-*").unwrap());
     let level1 = root
         .attenuate()
-        .constraint("scope", Pattern::new("dept-*").unwrap())
+        .capability("sensitive_operation", l1_constraints)
         .authorized_holder(level2_kp.public_key())
         .build(&level1_kp, &level1_kp)
         .unwrap();
 
+    let mut l2_constraints = ConstraintSet::new();
+    l2_constraints.insert("scope", Pattern::new("dept-engineering-*").unwrap());
     let level2 = level1
         .attenuate()
-        .constraint("scope", Pattern::new("dept-engineering-*").unwrap())
+        .capability("sensitive_operation", l2_constraints)
         .authorized_holder(level3_kp.public_key())
         .build(&level2_kp, &level2_kp)
         .unwrap();
 
+    let mut l3_constraints = ConstraintSet::new();
+    l3_constraints.insert("scope", Exact::new("dept-engineering-frontend"));
     let level3 = level2
         .attenuate()
-        .constraint("scope", Exact::new("dept-engineering-frontend"))
+        .capability("sensitive_operation", l3_constraints)
         .authorized_holder(level3_kp.public_key())
         .build(&level3_kp, &level3_kp)
         .unwrap();
@@ -388,22 +410,25 @@ fn demo_mixed_constraint_narrowing() {
     let child_kp = SigningKey::generate();
 
     // Parent has multiple constraint types
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert("region", OneOf::new(["us-east", "us-west", "eu-west"]));
+    parent_constraints.insert("format", Pattern::new("*").unwrap());
+    parent_constraints.insert("max_rows", Range::max(1_000_000.0).unwrap());
     let parent = Warrant::builder()
-        .tool("data_export")
-        .constraint("region", OneOf::new(["us-east", "us-west", "eu-west"]))
-        .constraint("format", Pattern::new("*").unwrap())
-        .constraint("max_rows", Range::max(1_000_000.0).unwrap())
+        .capability("data_export", parent_constraints)
         .ttl(Duration::from_secs(600))
         .authorized_holder(child_kp.public_key())
         .build(&parent_kp)
         .unwrap();
 
     // Child narrows each constraint
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert("region", OneOf::new(["us-east", "us-west"])); // Removed eu-west
+    child_constraints.insert("format", Pattern::new("csv*").unwrap()); // Only CSV formats
+    child_constraints.insert("max_rows", Range::max(10_000.0).unwrap()); // Much smaller limit
     let child = parent
         .attenuate()
-        .constraint("region", OneOf::new(["us-east", "us-west"])) // Removed eu-west
-        .constraint("format", Pattern::new("csv*").unwrap()) // Only CSV formats
-        .constraint("max_rows", Range::max(10_000.0).unwrap()) // Much smaller limit
+        .capability("data_export", child_constraints)
         .authorized_holder(child_kp.public_key())
         .build(&child_kp, &child_kp)
         .unwrap();
@@ -449,18 +474,21 @@ fn test_monotonicity_violation_rejected() {
     let parent_kp = SigningKey::generate();
     let child_kp = SigningKey::generate();
 
+    let mut parent_constraints = ConstraintSet::new();
+    parent_constraints.insert("amount", Range::max(1000.0).unwrap());
     let parent = Warrant::builder()
-        .tool("test")
-        .constraint("amount", Range::max(1000.0).unwrap())
+        .capability("test", parent_constraints)
         .ttl(Duration::from_secs(600))
         .authorized_holder(child_kp.public_key())
         .build(&parent_kp)
         .unwrap();
 
     // Attempt to increase range max (violation)
+    let mut child_constraints = ConstraintSet::new();
+    child_constraints.insert("amount", Range::max(5000.0).unwrap());
     let result = parent
         .attenuate()
-        .constraint("amount", Range::max(5000.0).unwrap())
+        .capability("test", child_constraints)
         .authorized_holder(child_kp.public_key())
         .build(&child_kp, &child_kp);
 

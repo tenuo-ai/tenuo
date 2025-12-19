@@ -111,7 +111,7 @@ tools:
 If you are not using `SecureMCPClient`, you must manually authorize extracted arguments.
 
 ```python
-from tenuo import McpConfig, CompiledMcpConfig, Authorizer, SigningKey, Warrant, Pattern, Range
+from tenuo import McpConfig, CompiledMcpConfig, Authorizer, SigningKey, Warrant, Constraints, Pattern, Range
 
 # 1. Load MCP configuration
 config = McpConfig.from_file("mcp-config.yaml")
@@ -120,11 +120,10 @@ compiled = CompiledMcpConfig.compile(config)
 # 2. Create warrant (usually done by control plane)
 control_keypair = SigningKey.generate()
 warrant = Warrant.issue(
-    tools="filesystem_read",
-    constraints={
+    capabilities=Constraints.for_tool("filesystem_read", {
         "path": Pattern("/var/log/*"),
         "max_size": Range.max_value(1024 * 1024)
-    },
+    }),
     ttl_seconds=3600,
     keypair=control_keypair,
     holder=control_keypair.public_key
@@ -381,8 +380,7 @@ from tenuo import Authorizer, Warrant
 
 # Create warrant
 warrant = Warrant.issue(
-    tools="filesystem_read",
-    constraints={"path": Pattern("/var/log/*")},
+    capabilities=Constraints.for_tool("filesystem_read", {"path": Pattern("/var/log/*")}),
     ttl_seconds=3600,
     keypair=keypair,
     holder=keypair.public_key
@@ -401,19 +399,20 @@ authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop
 ```python
 # Control plane issues root warrant
 root_warrant = Warrant.issue(
-    tools=["filesystem_read", "database_query"],
-    constraints={"path": Pattern("/data/*")},
+    capabilities=Constraints.for_tools(
+        ["filesystem_read", "database_query"],
+        {"path": Pattern("/data/*")}
+    ),
     ttl_seconds=3600,
     keypair=control_keypair,
     holder=orchestrator_keypair.public_key
 )
 
 # Orchestrator attenuates for worker
-worker_warrant = root_warrant.attenuate_builder() \
-    .with_tool("filesystem_read") \
-    .with_constraint("path", Pattern("/data/reports/*")) \
-    .with_holder(worker_keypair.public_key) \
-    .delegate_to(orchestrator_keypair, control_keypair)
+worker_warrant = root_warrant.attenuate() \
+    .with_capability("filesystem_read", {"path": Pattern("/data/reports/*")}) \
+    .holder(worker_keypair.public_key) \
+    .build(orchestrator_keypair, control_keypair)
 
 # Worker uses attenuated warrant
 # (narrower permissions, cryptographic proof of delegation)

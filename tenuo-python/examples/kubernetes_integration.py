@@ -28,7 +28,7 @@ Architecture:
 """
 
 from tenuo import (
-    SigningKey, Warrant, Pattern, Exact,
+    SigningKey, Warrant, Pattern, Exact, Constraints,
     lockdown, set_warrant_context, set_signing_key_context, AuthorizationError
 )
 from typing import Optional, Dict, Any
@@ -189,11 +189,10 @@ class ControlPlane:
             Warrant object
         """
         return Warrant.issue(
-            tools="agent_tools",  # HARDCODED: General tool name. In production, use config.
-            constraints=constraints,
-            ttl_seconds=ttl_seconds,  # HARDCODED default: 3600. In production, use env var or config.
             keypair=self.keypair,
-            holder=self.keypair.public_key # Bind to self for demo
+            capabilities=Constraints.for_tool("agent_tools", constraints),  # HARDCODED: General tool name.
+            ttl_seconds=ttl_seconds,  # HARDCODED default: 3600. In production, use env var or config.
+            holder=self.keypair.public_key  # Bind to self for demo
         )
     
     def issue_warrant_for_request(
@@ -216,11 +215,10 @@ class ControlPlane:
         }
         
         return Warrant.issue(
-            tools="agent_tools",
-            constraints=constraints,
-            ttl_seconds=ttl_seconds,
             keypair=self.keypair,
-            holder=self.keypair.public_key # Bind to self for demo
+            capabilities=Constraints.for_tool("agent_tools", constraints),
+            ttl_seconds=ttl_seconds,
+            holder=self.keypair.public_key  # Bind to self for demo
         )
 
 
@@ -488,13 +486,12 @@ def main():
         # HARDCODED: tool="read_file", Pattern("/tmp/*"), ttl_seconds=3600
         # In production: Use env vars or config for these values
         agent_warrant = Warrant.issue(
-            tools="read_file",  # Match the tool name used in @lockdown decorator
-            constraints={
-                "file_path": Pattern("/tmp/*"),  # HARDCODED: Only /tmp/ files for demo safety
-            },
-            ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
             keypair=control_keypair,
-            holder=control_keypair.public_key # Bind to self for demo
+            capabilities=Constraints.for_tool("read_file", {
+                "file_path": Pattern("/tmp/*"),  # HARDCODED: Only /tmp/ files for demo safety
+            }),
+            ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
+            holder=control_keypair.public_key  # Bind to self for demo
         )
         print(f"   ✓ Warrant issued (ID: {agent_warrant.id[:8]}...)")
         print("   ✓ Constraints: file_path=/tmp/*\n")

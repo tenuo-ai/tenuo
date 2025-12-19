@@ -13,7 +13,7 @@ Note: This example uses OpenAI, but the pattern works with any LLM provider.
 """
 
 from tenuo import (
-    SigningKey, Warrant, Pattern,
+    SigningKey, Warrant, Pattern, Constraints,
     lockdown, set_warrant_context, set_signing_key_context, AuthorizationError
 )
 from typing import Dict, Any, Optional
@@ -225,13 +225,12 @@ def main():
         # In production: Constraints come from policy engine, user request, or configuration
         # HARDCODED PATH: /tmp/* is used for demo safety. In production, use env vars or config.
         agent_warrant = Warrant.issue(
-            tools="read_file",  # Base tool - can be used for multiple tools
-            constraints={
-                "file_path": Pattern("/tmp/*"),  # HARDCODED: Only files in /tmp/ for demo safety
-            },
-            ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
             keypair=control_keypair,
-            holder=control_keypair.public_key # Bind to self for demo
+            capabilities=Constraints.for_tool("read_file", {
+                "file_path": Pattern("/tmp/*"),  # HARDCODED: Only files in /tmp/ for demo safety
+            }),
+            ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
+            holder=control_keypair.public_key  # Bind to self for demo
         )
         
         print("   ✓ Warrant created with constraints:")

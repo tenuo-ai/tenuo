@@ -7,7 +7,7 @@ automatically used by all @lockdown-decorated functions in the call stack.
 """
 
 from tenuo import (
-    SigningKey, Warrant, Pattern, Range,
+    SigningKey, Warrant, Pattern, Range, Constraints,
     lockdown, set_warrant_context, set_signing_key_context, AuthorizationError
 )
 
@@ -56,14 +56,13 @@ def main():
         # HARDCODED: Pattern("staging-*"), Range.max_value(10000.0), ttl_seconds=3600
         # In production: Constraints come from policy engine or configuration
         warrant = Warrant.issue(
-            tools="upgrade_cluster",  # Note: functions can use different tools
-            constraints={
+            keypair=keypair,
+            capabilities=Constraints.for_tool("upgrade_cluster", {
                 "cluster": Pattern("staging-*"),  # HARDCODED: Only staging clusters for demo
                 "replicas": Range.max_value(15)   # HARDCODED: Max 15 replicas for demo
-            },
+            }),
             ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            keypair=keypair,
-            holder=keypair.public_key # Bind to self
+            holder=keypair.public_key  # Bind to self
         )
     except Exception as e:
         print(f"[ERR] Error creating warrant: {e}")
@@ -137,17 +136,15 @@ def main():
     # Pattern 4: Nested contexts (context inheritance)
     print("4. Testing nested contexts...")
     warrant1 = Warrant.issue(
-        tools="scale_cluster",
-        constraints={"cluster": Pattern("staging-*")},
-        ttl_seconds=3600,
         keypair=keypair,
+        capabilities=Constraints.for_tool("scale_cluster", {"cluster": Pattern("staging-*")}),
+        ttl_seconds=3600,
         holder=keypair.public_key
     )
     warrant2 = Warrant.issue(
-        tools="scale_cluster",
-        constraints={"cluster": Pattern("production-*")},
-        ttl_seconds=3600,
         keypair=keypair,
+        capabilities=Constraints.for_tool("scale_cluster", {"cluster": Pattern("production-*")}),
+        ttl_seconds=3600,
         holder=keypair.public_key
     )
     

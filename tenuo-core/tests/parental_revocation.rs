@@ -1,4 +1,5 @@
 use std::time::Duration;
+use tenuo::constraints::ConstraintSet;
 use tenuo::crypto::SigningKey;
 use tenuo::planes::DataPlane;
 use tenuo::revocation::RevocationRequest;
@@ -13,7 +14,7 @@ fn test_parental_revocation() {
 
     // 2. Issue Warrant
     let warrant = Warrant::builder()
-        .tool("test_tool")
+        .capability("test_tool", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(holder.public_key())
         .build(&issuer)
@@ -47,7 +48,7 @@ fn test_self_revocation() {
     let data_plane = DataPlane::new_with_issuers(vec![issuer.public_key()]);
 
     let warrant = Warrant::builder()
-        .tool("test_tool")
+        .capability("test_tool", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(holder.public_key())
         .build(&issuer)
@@ -68,7 +69,7 @@ fn test_unauthorized_revocation() {
     let data_plane = DataPlane::new_with_issuers(vec![issuer.public_key()]);
 
     let warrant = Warrant::builder()
-        .tool("test_tool")
+        .capability("test_tool", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(issuer.public_key())
         .build(&issuer)

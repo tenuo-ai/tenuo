@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tenuo::{
     approval::{compute_request_hash, Approval},
-    constraints::Pattern,
+    constraints::{ConstraintSet, Pattern},
     crypto::SigningKey,
     planes::Authorizer,
     warrant::Warrant,
@@ -31,7 +31,7 @@ fn test_duplicate_approvals_rejected() {
 
     // Require 2-of-2 approvals
     let warrant = Warrant::builder()
-        .tool("critical_op")
+        .capability("critical_op", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .required_approvers(vec![approver_1.public_key(), approver_2.public_key()])
         .min_approvals(2)

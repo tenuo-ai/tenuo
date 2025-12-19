@@ -221,8 +221,8 @@ pub struct DelegationDiff {
     pub timestamp: DateTime<Utc>,
     /// Tools diff.
     pub tools: ToolsDiff,
-    /// Constraint diffs by field.
-    pub constraints: HashMap<String, ConstraintDiff>,
+    /// Capability diffs by tool.
+    pub capabilities: HashMap<String, HashMap<String, ConstraintDiff>>,
     /// TTL diff.
     pub ttl: TtlDiff,
     /// Trust diff.
@@ -277,27 +277,33 @@ impl DelegationDiff {
         }
         lines.push(format!("║{:width$}║", "", width = width));
 
-        // Constraints section
-        if !self.constraints.is_empty() {
-            lines.push(format!("║  CONSTRAINTS{:width$}║", "", width = width - 13));
-            for (field, diff) in &self.constraints {
-                let line = format!("    {}", field);
+        // Capabilities section
+        if !self.capabilities.is_empty() {
+            lines.push(format!("║  CAPABILITIES{:width$}║", "", width = width - 14));
+            for (tool, tool_constraints) in &self.capabilities {
+                let line = format!("    TOOL: {}", tool);
                 let padding = width.saturating_sub(line.len());
                 lines.push(format!("║{}{:padding$}║", line, "", padding = padding));
 
-                if let Some(ref pc) = diff.parent_constraint {
-                    let line = format!("      parent: {:?}", pc);
+                for (field, diff) in tool_constraints {
+                    let line = format!("      {}", field);
+                    let padding = width.saturating_sub(line.len());
+                    lines.push(format!("║{}{:padding$}║", line, "", padding = padding));
+
+                    if let Some(ref pc) = diff.parent_constraint {
+                        let line = format!("        parent: {:?}", pc);
+                        let padding = width.saturating_sub(line.len());
+                        lines.push(format!("║{}{:padding$}║", line, "", padding = padding));
+                    }
+                    if let Some(ref cc) = diff.child_constraint {
+                        let line = format!("        child:  {:?}", cc);
+                        let padding = width.saturating_sub(line.len());
+                        lines.push(format!("║{}{:padding$}║", line, "", padding = padding));
+                    }
+                    let line = format!("        change: {}", diff.change.as_str().to_uppercase());
                     let padding = width.saturating_sub(line.len());
                     lines.push(format!("║{}{:padding$}║", line, "", padding = padding));
                 }
-                if let Some(ref cc) = diff.child_constraint {
-                    let line = format!("      child:  {:?}", cc);
-                    let padding = width.saturating_sub(line.len());
-                    lines.push(format!("║{}{:padding$}║", line, "", padding = padding));
-                }
-                let line = format!("      change: {}", diff.change.as_str().to_uppercase());
-                let padding = width.saturating_sub(line.len());
-                lines.push(format!("║{}{:padding$}║", line, "", padding = padding));
             }
             lines.push(format!("║{:width$}║", "", width = width));
         }
@@ -374,20 +380,22 @@ impl DelegationDiff {
             }));
         }
 
-        // Constraint changes
-        for (field, diff) in &self.constraints {
-            if diff.change != ChangeType::Unchanged {
-                let mut delta = serde_json::json!({
-                    "field": format!("constraints.{}", field),
-                    "change": diff.change.as_str()
-                });
-                if let Some(ref pc) = diff.parent_constraint {
-                    delta["from"] = serde_json::json!(format!("{:?}", pc));
+        // Capability changes
+        for (tool, tool_constraints) in &self.capabilities {
+            for (field, diff) in tool_constraints {
+                if diff.change != ChangeType::Unchanged {
+                    let mut delta = serde_json::json!({
+                        "field": format!("capabilities.{}.{}", tool, field),
+                        "change": diff.change.as_str()
+                    });
+                    if let Some(ref pc) = diff.parent_constraint {
+                        delta["from"] = serde_json::json!(format!("{:?}", pc));
+                    }
+                    if let Some(ref cc) = diff.child_constraint {
+                        delta["to"] = serde_json::json!(format!("{:?}", cc));
+                    }
+                    deltas.push(delta);
                 }
-                if let Some(ref cc) = diff.child_constraint {
-                    delta["to"] = serde_json::json!(format!("{:?}", cc));
-                }
-                deltas.push(delta);
             }
         }
 
@@ -431,9 +439,7 @@ impl DelegationDiff {
             "summary": {
                 "tools_dropped": self.tools.dropped,
                 "tools_kept": self.tools.kept,
-                "constraints_changed": self.constraints.keys().filter(|k| {
-                    self.constraints.get(*k).map(|d| d.change != ChangeType::Unchanged).unwrap_or(false)
-                }).collect::<Vec<_>>(),
+                "capabilities_changed": self.capabilities.keys().count(),
                 "ttl_reduced": self.ttl.change == ChangeType::Reduced,
                 "trust_demoted": self.trust.change == ChangeType::Demoted,
                 "is_terminal": self.depth.is_terminal
@@ -455,8 +461,8 @@ pub struct DelegationReceipt {
     pub timestamp: DateTime<Utc>,
     /// Tools diff.
     pub tools: ToolsDiff,
-    /// Constraint diffs.
-    pub constraints: HashMap<String, ConstraintDiff>,
+    /// Capability diffs.
+    pub capabilities: HashMap<String, HashMap<String, ConstraintDiff>>,
     /// TTL diff.
     pub ttl: TtlDiff,
     /// Trust diff.
@@ -488,7 +494,7 @@ impl DelegationReceipt {
             child_warrant_id,
             timestamp: diff.timestamp,
             tools: diff.tools,
-            constraints: diff.constraints,
+            capabilities: diff.capabilities,
             ttl: diff.ttl,
             trust: diff.trust,
             depth: diff.depth,
@@ -518,19 +524,21 @@ impl DelegationReceipt {
             }));
         }
 
-        for (field, diff) in &self.constraints {
-            if diff.change != ChangeType::Unchanged {
-                let mut delta = serde_json::json!({
-                    "field": format!("constraints.{}", field),
-                    "change": diff.change.as_str()
-                });
-                if let Some(ref pc) = diff.parent_constraint {
-                    delta["from"] = serde_json::json!(format!("{:?}", pc));
+        for (tool, tool_constraints) in &self.capabilities {
+            for (field, diff) in tool_constraints {
+                if diff.change != ChangeType::Unchanged {
+                    let mut delta = serde_json::json!({
+                        "field": format!("capabilities.{}.{}", tool, field),
+                        "change": diff.change.as_str()
+                    });
+                    if let Some(ref pc) = diff.parent_constraint {
+                        delta["from"] = serde_json::json!(format!("{:?}", pc));
+                    }
+                    if let Some(ref cc) = diff.child_constraint {
+                        delta["to"] = serde_json::json!(format!("{:?}", cc));
+                    }
+                    deltas.push(delta);
                 }
-                if let Some(ref cc) = diff.child_constraint {
-                    delta["to"] = serde_json::json!(format!("{:?}", cc));
-                }
-                deltas.push(delta);
             }
         }
 
@@ -574,9 +582,7 @@ impl DelegationReceipt {
             "summary": {
                 "tools_dropped": self.tools.dropped,
                 "tools_kept": self.tools.kept,
-                "constraints_changed": self.constraints.keys().filter(|k| {
-                    self.constraints.get(*k).map(|d| d.change != ChangeType::Unchanged).unwrap_or(false)
-                }).collect::<Vec<_>>(),
+                "capabilities_changed": self.capabilities.keys().count(),
                 "ttl_reduced": self.ttl.change == ChangeType::Reduced,
                 "trust_demoted": self.trust.change == ChangeType::Demoted,
                 "is_terminal": self.depth.is_terminal,
@@ -595,26 +601,57 @@ pub fn compute_diff(parent: &Warrant, child: &Warrant) -> DelegationDiff {
     let child_tools = child.tools().map(|t| t.to_vec()).unwrap_or_default();
     let tools = ToolsDiff::new(parent_tools, child_tools);
 
-    // Constraints
-    let mut constraints: HashMap<String, ConstraintDiff> = HashMap::new();
-    let parent_constraints = parent.constraints().cloned().unwrap_or_default();
-    let child_constraints = child.constraints().cloned().unwrap_or_default();
+    // Capabilities
+    let mut capabilities: HashMap<String, HashMap<String, ConstraintDiff>> = HashMap::new();
 
-    // Collect all field names from both parent and child
-    let mut all_fields: Vec<String> = Vec::new();
-    for (field, _) in parent_constraints.iter() {
-        all_fields.push(field.clone());
+    // Get all tools from both
+    let mut all_tools: Vec<String> = Vec::new();
+    if let Some(p_caps) = parent.capabilities() {
+        for tool in p_caps.keys() {
+            all_tools.push(tool.clone());
+        }
     }
-    for (field, _) in child_constraints.iter() {
-        if !all_fields.contains(field) {
-            all_fields.push(field.clone());
+    if let Some(c_caps) = child.capabilities() {
+        for tool in c_caps.keys() {
+            if !all_tools.contains(tool) {
+                all_tools.push(tool.clone());
+            }
         }
     }
 
-    for field in all_fields {
-        let pc = parent_constraints.get(&field).cloned();
-        let cc = child_constraints.get(&field).cloned();
-        constraints.insert(field.clone(), ConstraintDiff::new(field, pc, cc));
+    for tool in all_tools {
+        let parent_constraints = parent
+            .capabilities()
+            .and_then(|c| c.get(&tool))
+            .cloned()
+            .unwrap_or_default();
+        let child_constraints = child
+            .capabilities()
+            .and_then(|c| c.get(&tool))
+            .cloned()
+            .unwrap_or_default();
+
+        let mut tool_diffs = HashMap::new();
+
+        let mut all_fields: Vec<String> = Vec::new();
+        for (field, _) in parent_constraints.iter() {
+            all_fields.push(field.clone());
+        }
+        for (field, _) in child_constraints.iter() {
+            if !all_fields.contains(field) {
+                all_fields.push(field.clone());
+            }
+        }
+
+        for field in all_fields {
+            let pc = parent_constraints.get(&field).cloned();
+            let cc = child_constraints.get(&field).cloned();
+            tool_diffs.insert(field.clone(), ConstraintDiff::new(field, pc, cc));
+        }
+
+        if !tool_diffs.is_empty() {
+            capabilities.insert(tool, tool_diffs);
+        }
     }
 
     // TTL - compute remaining seconds
@@ -634,7 +671,7 @@ pub fn compute_diff(parent: &Warrant, child: &Warrant) -> DelegationDiff {
         child_warrant_id: Some(child.id().to_string()),
         timestamp: Utc::now(),
         tools,
-        constraints,
+        capabilities,
         ttl,
         trust,
         depth,

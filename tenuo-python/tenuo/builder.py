@@ -54,8 +54,12 @@ class WarrantBuilder:
     
     def __init__(self):
         """Initialize a new warrant builder."""
+        """Initialize a new warrant builder."""
+        self._capabilities: Dict[str, Dict[str, Any]] = {}
+        # Legacy support/Implicit mode fields
         self._tools: Optional[Union[str, List[str]]] = None
         self._constraints: Dict[str, Any] = {}
+        
         self._ttl_seconds: int = 3600  # Default 1 hour
         self._holder: Optional[PublicKey] = None
         self._session_id: Optional[str] = None
@@ -112,6 +116,16 @@ class WarrantBuilder:
             constraints: Dict mapping field names to constraint values
         """
         self._constraints = constraints
+        return self
+
+    def capability(self, tool: str, constraints: Dict[str, Any]) -> 'WarrantBuilder':
+        """Add a capability (tool + constraints).
+        
+        Args:
+            tool: Tool name
+            constraints: Dict of constraints
+        """
+        self._capabilities[tool] = constraints
         return self
     
     def ttl(self, seconds: int) -> 'WarrantBuilder':
@@ -230,14 +244,23 @@ class WarrantBuilder:
     
     def _issue_execution(self, keypair: SigningKey) -> Warrant:
         """Issue an execution warrant."""
-        if self._tools is None:
+        # Convert legacy tools/constraints to capabilities
+        capabilities = self._capabilities.copy()
+        
+        if self._tools:
+            tools_list = [self._tools] if isinstance(self._tools, str) else self._tools
+            for t in tools_list:
+                # If tool not already in capabilities (or merge?), overwrite/set default constraints
+                if t not in capabilities:
+                    capabilities[t] = self._constraints.copy()
+        
+        if not capabilities:
             from .exceptions import ValidationError
-            raise ValidationError("tools are required for execution warrants")
+            raise ValidationError("capabilities (or tools) are required for execution warrants")
         
         return Warrant.issue(
-            tools=self._tools,
             keypair=keypair,
-            constraints=self._constraints if self._constraints else None,
+            capabilities=capabilities,
             ttl_seconds=self._ttl_seconds,
             holder=self._holder,
             session_id=self._session_id,
@@ -377,13 +400,13 @@ class AttenuationBuilder:
         return self._rust_builder.intent
     
     @property
-    def constraints(self) -> Dict[str, Any]:
-        """Get the configured constraints as a dict."""
-        return dict(self._rust_builder.constraints_dict())
+    def capabilities(self) -> Dict[str, Dict[str, Any]]:
+        """Get the configured capabilities as a dict."""
+        return self._rust_builder.capabilities
     
-    def with_constraint(self, field: str, constraint: Any) -> 'AttenuationBuilder':
-        """Add or override a constraint."""
-        self._rust_builder.with_constraint(field, constraint)
+    def with_capability(self, tool: str, constraints: Dict[str, Any]) -> 'AttenuationBuilder':
+        """Add or override a capability."""
+        self._rust_builder.with_capability(tool, constraints)
         return self
     
     def with_ttl(self, seconds: int) -> 'AttenuationBuilder':

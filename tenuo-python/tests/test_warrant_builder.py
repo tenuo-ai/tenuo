@@ -18,6 +18,7 @@ from tenuo import (
     Range,
     TrustLevel,
     ValidationError,
+    Constraints,
 )
 
 
@@ -59,7 +60,7 @@ class TestWarrantBuilderExecution:
             .constraint("currency", Exact("USD"))
             .issue(kp))
         
-        constraints = warrant.constraints_dict()
+        constraints = warrant.capabilities["transfer"]
         assert "amount" in constraints
         assert "recipient" in constraints
         assert "currency" in constraints
@@ -76,7 +77,7 @@ class TestWarrantBuilderExecution:
             })
             .issue(kp))
         
-        constraints = warrant.constraints_dict()
+        constraints = warrant.capabilities["read"]
         assert len(constraints) == 2
     
     def test_with_holder(self):
@@ -263,13 +264,13 @@ class TestBackwardCompatibility:
     """Tests that Warrant.issue() still works."""
     
     def test_issue_still_works(self):
-        """Warrant.issue() should still work."""
+        """Warrant.issue() with capabilities."""
         kp = SigningKey.generate()
         
+        # New API: capabilities dict
         warrant = Warrant.issue(
-            tools=["read_file"],
             keypair=kp,
-            constraints={"path": Pattern("/data/*")},
+            capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
             ttl_seconds=3600,
         )
         
@@ -280,9 +281,8 @@ class TestBackwardCompatibility:
         kp = SigningKey.generate()
         
         w1 = Warrant.issue(
-            tools="read_file",
             keypair=kp,
-            constraints={"path": Pattern("/data/*")},
+            capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
             ttl_seconds=3600,
         )
         

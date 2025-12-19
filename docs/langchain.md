@@ -32,7 +32,7 @@ pip install tenuo
 
 ## Quick Start
 ```python
-from tenuo import SigningKey, Warrant, Pattern, lockdown, set_warrant_context, set_signing_key_context
+from tenuo import SigningKey, Warrant, Constraints, Pattern, lockdown, set_warrant_context, set_signing_key_context
 
 # 1. Define a protected tool
 @lockdown(tool="read_file")
@@ -44,10 +44,9 @@ def read_file(file_path: str) -> str:
 # 2. Create keypair and warrant
 keypair = SigningKey.generate()
 warrant = Warrant.issue(
-    tools="read_file",              # str or List[str]: "tool" or ["tool1", "tool2"]
+    capabilities=Constraints.for_tool("read_file", {"file_path": Pattern("/tmp/*")}),
     keypair=keypair,
     holder=keypair.public_key,
-    constraints={"file_path": Pattern("/tmp/*")},
     ttl_seconds=3600
 )
 
@@ -237,10 +236,12 @@ def read_file(path: str) -> str:
 # Warrant setup
 keypair = SigningKey.generate()
 warrant = Warrant.issue(
-    tools=["search", "read_file"],  # List of allowed tools
+    capabilities=Constraints.for_tools(
+        ["search", "read_file"],
+        {"file_path": Pattern("/tmp/*")}
+    ),
     keypair=keypair,
     holder=keypair.public_key,
-    constraints={"file_path": Pattern("/tmp/*")},
     ttl_seconds=3600
 )
 

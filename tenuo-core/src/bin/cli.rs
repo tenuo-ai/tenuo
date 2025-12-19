@@ -942,20 +942,22 @@ fn handle_issue(
     match warrant_type_enum {
         WarrantType::Execution => {
             let tool_str = tool.as_deref().ok_or("Execution warrant requires --tool")?;
-            builder = builder.tool(tool_str);
 
             // Parse constraints for execution warrants
+            let mut constraint_set = tenuo::constraints::ConstraintSet::new();
             for c in constraint {
                 let (key, constraint) = parse_constraint(&c)?;
-                builder = builder.constraint(key, constraint);
+                constraint_set.insert(key, constraint);
             }
 
             for json_str in constraint_json {
                 let constraints = parse_constraint_json(&json_str)?;
                 for (key, constraint) in constraints {
-                    builder = builder.constraint(key, constraint);
+                    constraint_set.insert(key, constraint);
                 }
             }
+
+            builder = builder.capability(tool_str, constraint_set);
         }
         WarrantType::Issuer => {
             let issuable_tools_vec: Vec<String> = issuable_tools
@@ -1101,14 +1103,38 @@ fn handle_attenuate(
     for c in &constraint {
         let (key, constraint_val) = parse_constraint(c)?;
         child_constraints.insert(key.clone(), constraint_val.clone());
-        builder = builder.constraint(key, constraint_val);
     }
 
     for json_str in &constraint_json {
         let constraints = parse_constraint_json(json_str)?;
         for (key, constraint_val) in constraints {
             child_constraints.insert(key.clone(), constraint_val.clone());
-            builder = builder.constraint(key, constraint_val);
+        }
+    }
+
+    // Apply capabilities
+    if let Some(ref tool_str) = tool {
+        let mut cs = tenuo::constraints::ConstraintSet::new();
+        for (k, v) in &child_constraints {
+            cs.insert(k.clone(), v.clone());
+        }
+        builder = builder.capability(tool_str, cs);
+    } else {
+        // Auto-detect if single tool
+        if let Some(parent_caps) = parent_warrant.capabilities() {
+            if parent_caps.len() == 1 {
+                let tool = parent_caps.keys().next().unwrap();
+                let mut cs = tenuo::constraints::ConstraintSet::new();
+                for (k, v) in &child_constraints {
+                    cs.insert(k.clone(), v.clone());
+                }
+                builder = builder.capability(tool.clone(), cs);
+            } else if !child_constraints.is_empty() {
+                return Err("Cannot apply constraints without specifying --tool (parent has multiple tools)".into());
+            }
+        } else if parent_warrant.issuable_tools().is_some() {
+            // Issuer warrant attenuation (no capabilities)
+            // But warnings already issued above.
         }
     }
 
@@ -1287,7 +1313,7 @@ fn print_attenuation_diff(
     }
 
     // Constraints diff
-    let parent_constraints = parent.constraints();
+    let parent_constraints = parent.constraint_bounds();
     for (key, child_val) in child_constraints {
         let parent_val = parent_constraints.as_ref().and_then(|c| c.get(key));
         if let Some(pv) = parent_val {
@@ -1373,7 +1399,7 @@ fn print_attenuation_diff(
                     }
                     // Show dropped tools
                     for pt in parent_tools {
-                        if !ct.contains(pt) {
+                        if !ct.contains(&pt) {
                             eprintln!("║    ✗ {:<51} ║", format!("{} (DROPPED)", pt));
                         }
                     }
@@ -1718,20 +1744,25 @@ fn handle_verify(
             "warrant_id": leaf_warrant.id().as_str(),
             "holder": hex::encode(holder.to_bytes()),
             "expires_at": leaf_warrant.expires_at().to_rfc3339(),
-            "tools": leaf_warrant.tools().unwrap_or(&[]),
+            "tools": leaf_warrant.tools().unwrap_or_default(),
             "chain_verified": chain_valid,
             "chain_length": warrants.len(),
             "trusted_root": trusted_any,
         });
 
         // Add constraints
-        let mut constraints = serde_json::Map::new();
-        if let Some(constraints_set) = leaf_warrant.constraints() {
-            for (key, constraint) in constraints_set.iter() {
-                constraints.insert(key.clone(), serde_json::json!(format!("{:?}", constraint)));
+        let mut constraints_obj = serde_json::Map::new();
+        if let Some(caps) = leaf_warrant.capabilities() {
+            for (tool, constraints) in caps {
+                let mut tool_constraints = serde_json::Map::new();
+                for (key, constraint) in constraints.iter() {
+                    tool_constraints
+                        .insert(key.clone(), serde_json::json!(format!("{:?}", constraint)));
+                }
+                constraints_obj.insert(tool.clone(), serde_json::Value::Object(tool_constraints));
             }
         }
-        result["constraints"] = serde_json::Value::Object(constraints);
+        result["capabilities"] = serde_json::Value::Object(constraints_obj);
 
         println!("{}", serde_json::to_string_pretty(&result)?);
     } else {
@@ -1761,10 +1792,13 @@ fn handle_verify(
         if let Some(issuable_tools) = leaf_warrant.issuable_tools() {
             eprintln!("Issuable Tools: [{}]", issuable_tools.join(", "));
         }
-        eprintln!("Constraints:");
-        if let Some(constraints_set) = leaf_warrant.constraints() {
-            for (key, constraint) in constraints_set.iter() {
-                eprintln!("  {}: {:?}", key, constraint);
+        eprintln!("Capabilities:");
+        if let Some(caps) = leaf_warrant.capabilities() {
+            for (tool, constraints) in caps {
+                eprintln!("  Tool: {}", tool);
+                for (key, constraint) in constraints.iter() {
+                    eprintln!("    {}: {:?}", key, constraint);
+                }
             }
         } else {
             eprintln!("  (none)");
@@ -1857,7 +1891,7 @@ fn handle_inspect(
                 println!("TTL:         expired");
             }
 
-            if let Some(constraints_set) = w.constraints() {
+            if let Some(constraints_set) = w.constraint_bounds() {
                 if !constraints_set.is_empty() {
                     println!("Constraints:");
                     for (key, constraint) in constraints_set.iter() {
@@ -1874,7 +1908,7 @@ fn handle_inspect(
 
 fn warrant_to_json(w: &Warrant) -> serde_json::Value {
     let mut constraints = serde_json::Map::new();
-    if let Some(constraints_set) = w.constraints() {
+    if let Some(constraints_set) = w.constraint_bounds() {
         for (key, constraint) in constraints_set.iter() {
             constraints.insert(key.clone(), serde_json::json!(format!("{:?}", constraint)));
         }

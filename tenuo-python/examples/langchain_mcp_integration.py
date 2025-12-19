@@ -24,6 +24,7 @@ from tenuo import (
     Warrant,
     Pattern,
     Range,
+    Constraints,
     lockdown,
     set_warrant_context,
     set_signing_key_context,
@@ -138,13 +139,12 @@ def main():
     
     # Issue warrant for filesystem_read only (simpler demo)
     root_warrant = Warrant.issue(
-        tools="filesystem_read",
-        constraints={
+        keypair=control_keypair,
+        capabilities=Constraints.for_tool("filesystem_read", {
             "path": Pattern("/var/log/*"),
             "max_size": Range.max_value(1024 * 1024),  # Match MCP extraction name
-        },
+        }),
         ttl_seconds=3600,
-        keypair=control_keypair,
         holder=worker_keypair.public_key,  # Bind to worker
     )
     
@@ -265,13 +265,12 @@ def demo_without_config():
     
     # Issue warrant
     warrant = Warrant.issue(
-        tools="filesystem_read",
-        constraints={
+        keypair=control_keypair,
+        capabilities=Constraints.for_tool("filesystem_read", {
             "path": Pattern("/var/log/*"),
             "max_size": Range.max_value(1024 * 1024),  # Match extraction name
-        },
+        }),
         ttl_seconds=3600,
-        keypair=control_keypair,
         holder=worker_keypair.public_key,
     )
     

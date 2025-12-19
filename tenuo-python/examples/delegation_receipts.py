@@ -41,13 +41,17 @@ def main():
     print("=" * 70)
     
     root_warrant = Warrant.issue(
-        tools=["read_file", "send_email", "search"],  # Multiple tools as list
         keypair=control_kp,
-        holder=orchestrator_kp.public_key,
-        constraints={
-            "path": Pattern("/data/*"),  # Any path under /data
-            "recipient": Pattern("*@company.com"),  # Company emails only
+        capabilities={
+            "read_file": {
+                "path": Pattern("/data/*"),
+            },
+            "send_email": {
+                "recipient": Pattern("*@company.com"),
+            },
+            "search": {},
         },
+        holder=orchestrator_kp.public_key,
         ttl_seconds=3600,  # 1 hour
     )
     
@@ -66,8 +70,8 @@ def main():
     # Create builder
     builder = root_warrant.attenuate_builder()
     
-    # Configure child warrant
-    builder.with_constraint("path", Exact("/data/q3.pdf"))  # Narrow to specific file
+    # Configure child warrant - narrow to specific file
+    builder.with_capability("read_file", {"path": Exact("/data/q3.pdf")})
     builder.with_ttl(60)  # Reduce TTL to 60 seconds
     builder.with_holder(worker_kp.public_key)  # Bind to worker
     builder.with_intent("Read Q3 report for analysis")  # Human-readable intent

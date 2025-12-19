@@ -11,7 +11,8 @@
 use chrono::Utc;
 use std::env;
 use std::time::Duration;
-use tenuo::{wire, Exact, OneOf, Range, SigningKey, Warrant};
+use tenuo::constraints::{ConstraintSet, Range};
+use tenuo::{wire, Exact, OneOf, SigningKey, Warrant};
 use uuid::Uuid;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -176,11 +177,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    • replicas: ≤15       → ≤10 (reduced)");
     println!("    • TTL:     1 hour     → 10 minutes (shortened)");
 
+    let mut worker_constraints = ConstraintSet::new();
+    worker_constraints.insert("cluster".to_string(), Exact::new("staging-web"));
+    worker_constraints.insert("action".to_string(), OneOf::new(vec!["upgrade", "restart"]));
+    worker_constraints.insert("replicas".to_string(), Range::max(10.0)?);
+
     let worker_warrant = root_warrant
         .attenuate()
-        .constraint("cluster", Exact::new("staging-web"))
-        .constraint("action", OneOf::new(vec!["upgrade", "restart"]))
-        .constraint("replicas", Range::max(10.0)?)
+        .capability("manage_infrastructure", worker_constraints)
         .ttl(Duration::from_secs(600)) // 10 minutes
         .authorized_holder(worker_keypair.public_key()) // PoP
         .agent_id("worker-agent-01") // Traceability
@@ -236,11 +240,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("    ⚠️  [DEMO ONLY] Saved admin key to: {}", admin_key_path);
 
     // Create a warrant for sensitive operations that REQUIRES multi-sig approval
+    let mut sensitive_constraints = ConstraintSet::new();
+    sensitive_constraints.insert("cluster".to_string(), Exact::new("staging-web"));
+    sensitive_constraints.insert(
+        "action".to_string(),
+        OneOf::new(vec!["delete", "scale-down"]),
+    ); // Dangerous actions
+    sensitive_constraints.insert("replicas".to_string(), Range::max(5.0)?);
+
     let sensitive_warrant = root_warrant
         .attenuate()
-        .constraint("cluster", Exact::new("staging-web"))
-        .constraint("action", OneOf::new(vec!["delete", "scale-down"])) // Dangerous actions
-        .constraint("replicas", Range::max(5.0)?)
+        .capability("manage_infrastructure", sensitive_constraints)
         .ttl(Duration::from_secs(300)) // 5 minutes (short for sensitive ops)
         .authorized_holder(worker_keypair.public_key())
         .agent_id("worker-agent-01-sensitive")

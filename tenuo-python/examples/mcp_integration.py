@@ -8,7 +8,7 @@ Demonstrates:
 - Authorizing MCP operations
 """
 
-from tenuo import McpConfig, CompiledMcpConfig, Authorizer, SigningKey, Warrant, Pattern, Range
+from tenuo import McpConfig, CompiledMcpConfig, Authorizer, SigningKey, Warrant, Pattern, Range, Constraints
 
 def main():
     print("=== Tenuo Python SDK - MCP Integration ===\n")
@@ -84,14 +84,13 @@ def main():
         # MCP config extracts "max_size" (snake_case), but we'll use "maxSize" (camelCase)
         # In production, ensure warrant constraint names match MCP extraction names
         warrant = Warrant.issue(
-            tools="filesystem_read",
-            constraints={
+            keypair=control_keypair,
+            capabilities=Constraints.for_tool("filesystem_read", {
                 "path": Pattern("/var/log/*"),  # HARDCODED: Only /var/log/ files for demo
                 "max_size": Range.max_value(1024 * 1024)  # HARDCODED: Match MCP extraction name "max_size"
-            },
+            }),
             ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            keypair=control_keypair,
-            holder=control_keypair.public_key # Bind to self for demo
+            holder=control_keypair.public_key  # Bind to self for demo
         )
         # Note: warrant.tools is a property (getter) returning a list
         print("   [OK] Warrant created")
@@ -178,13 +177,12 @@ def demo_without_config(control_keypair):
     # Create warrant
     try:
         warrant = Warrant.issue(
-            tools="filesystem_read",
-            constraints={
+            keypair=control_keypair,
+            capabilities=Constraints.for_tool("filesystem_read", {
                 "path": Pattern("/var/log/*"),
                 "maxSize": Range.max_value(1024 * 1024)
-            },
+            }),
             ttl_seconds=3600,
-            keypair=control_keypair,
             holder=control_keypair.public_key
         )
         print(f"✓ Warrant created: {warrant.tools}")

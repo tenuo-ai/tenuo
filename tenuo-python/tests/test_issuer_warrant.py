@@ -5,6 +5,7 @@ from tenuo import (
     TrustLevel,
     Pattern,
     set_signing_key_context,
+    Constraints,
 )
 
 def test_issuer_warrant_creation():
@@ -22,25 +23,25 @@ def test_issuer_warrant_creation():
     assert issuer_warrant.issuable_tools == ["read_file", "write_file"]
     assert issuer_warrant.trust_ceiling == TrustLevel.Internal
     assert issuer_warrant.tools is None
-    assert issuer_warrant.constraints_dict() is None
+    assert issuer_warrant.capabilities is None
 
 def test_attenuate_builder_pattern():
     """Test that attenuate() returns a builder when no args are passed."""
     kp = SigningKey.generate()
     warrant = Warrant.issue(
-        tools="read_file",
         keypair=kp,
+        capabilities=Constraints.for_tool("read_file", {}),
         ttl_seconds=3600,
     )
     
     # Should return builder
     builder = warrant.attenuate()
-    assert hasattr(builder, 'with_constraint')
+    assert hasattr(builder, 'with_capability')
     assert hasattr(builder, 'delegate_to')
     
     # Should perform immediate attenuation if args passed
     child = warrant.attenuate(
-        constraints={"path": Pattern("/data/*")},
+        capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         keypair=kp,
         parent_keypair=kp,
     )
@@ -56,9 +57,8 @@ def test_delegate_shortcut():
     set_signing_key_context(kp)
     
     parent = Warrant.issue(
-        tools="read_file",
         keypair=kp,
-        constraints={"path": Pattern("/data/*")},
+        capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         ttl_seconds=3600,
     )
     
@@ -71,5 +71,5 @@ def test_delegate_shortcut():
     
     assert child.depth == 1
     assert child.authorized_holder.to_bytes() == worker_kp.public_key.to_bytes()
-    constraints = child.constraints_dict()
+    constraints = child.capabilities.get("read_file")
     assert constraints["path"].pattern == "/data/reports/*"

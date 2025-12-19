@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from tenuo import (
-    Warrant, Exact, Range,
+    Warrant, Exact, Range, Constraints,
     ExpiredError, Unauthorized
 )
 from tenuo.decorators import set_warrant_context, _warrant_context
@@ -43,7 +43,11 @@ class TestEdgeCases:
                 raise Unauthorized("No active warrant")
             return "Tool executed"
         
-        warrant = Warrant.issue(tools="sensitive_tool", ttl_seconds=60, keypair=keypair)
+        warrant = Warrant.issue(
+            keypair=keypair,
+            capabilities=Constraints.for_tool("sensitive_tool", {}),
+            ttl_seconds=60
+        )
         
         # Attack A: Call outside context
         with pytest.raises(Unauthorized):
@@ -85,7 +89,11 @@ class TestEdgeCases:
             print("  [Dynamic Node] Executing dangerous tool...")
             return "Dangerous Action Executed"
         
-        warrant = Warrant.issue(tools="search", ttl_seconds=60, keypair=keypair)
+        warrant = Warrant.issue(
+            keypair=keypair,
+            capabilities=Constraints.for_tool("search", {}),
+            ttl_seconds=60
+        )
         state = NodeState(messages=[], warrant=warrant.to_base64())
         
         print("  [Attack 8] Routing to unlisted dynamic node...")
@@ -105,7 +113,11 @@ class TestEdgeCases:
         """
         print("\n--- Attack 17: Clock Skew Exploitation ---")
         
-        warrant = Warrant.issue(tools="search", ttl_seconds=1, keypair=keypair)
+        warrant = Warrant.issue(
+            keypair=keypair,
+            capabilities=Constraints.for_tool("search", {}),
+            ttl_seconds=1
+        )
         time.sleep(1.1)  # Expired by 0.1s
         
         print("  [Attack 17A] Using warrant expired by 0.1s...")
@@ -131,10 +143,9 @@ class TestEdgeCases:
         cafe_nfd = unicodedata.normalize('NFD', 'café')
         
         warrant = Warrant.issue(
-            tools="search",
-            constraints={"query": Exact(cafe_nfc)},
-            ttl_seconds=60,
-            keypair=keypair
+            keypair=keypair,
+            capabilities=Constraints.for_tool("search", {"query": Exact(cafe_nfc)}),
+            ttl_seconds=60
         )
         
         print("  [Attack 20] Testing NFD 'café' against NFC constraint...")
@@ -164,10 +175,9 @@ class TestEdgeCases:
         print(f"  [Attack] Issuing warrant with Range(max={huge_int})...")
         try:
             _warrant = Warrant.issue(
-                tools="test",
-                constraints={"limit": Range(max=huge_int)},
-                ttl_seconds=60,
-                keypair=keypair
+                keypair=keypair,
+                capabilities=Constraints.for_tool("test", {"limit": Range(max=huge_int)}),
+                ttl_seconds=60
             )
             print("  [Warning] Huge int constraint accepted (may wrap)")
         except (OverflowError, ValueError, Exception) as e:
@@ -176,7 +186,11 @@ class TestEdgeCases:
 
         # Test 2: Authorize with huge int arg
         print(f"  [Attack] Authorizing with arg val={huge_int}...")
-        warrant = Warrant.issue(tools="test", ttl_seconds=60, keypair=keypair)
+        warrant = Warrant.issue(
+            keypair=keypair,
+            capabilities=Constraints.for_tool("test", {}),
+            ttl_seconds=60
+        )
         try:
             warrant.authorize("test", {"val": huge_int})
             print("  [Result] Huge int argument handled gracefully")

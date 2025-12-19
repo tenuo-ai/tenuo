@@ -13,7 +13,7 @@ Tests cover:
 
 import pytest
 from tenuo import (
-    SigningKey, Warrant, Pattern, Exact, Cidr, UrlPattern,
+    SigningKey, Warrant, Pattern, Exact, Cidr, UrlPattern, Constraints,
     lockdown, set_warrant_context, set_signing_key_context,
     AuthorizationError
 )
@@ -28,10 +28,9 @@ def test_pattern_constraint_matching():
     
     kp = SigningKey.generate()
     warrant = Warrant.issue(
-        tools="file_ops",
         keypair=kp,
+        capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/*")}),
         holder=kp.public_key,
-        constraints={"path": Pattern("/data/*")},
         ttl_seconds=60
     )
     
@@ -54,10 +53,9 @@ def test_exact_constraint_matching():
     
     kp = SigningKey.generate()
     warrant = Warrant.issue(
-        tools="delete_db",
         keypair=kp,
+        capabilities=Constraints.for_tool("delete_db", {"db_name": Exact("test-db")}),
         holder=kp.public_key,
-        constraints={"db_name": Exact("test-db")},
         ttl_seconds=60
     )
     
@@ -82,13 +80,12 @@ def test_multiple_constraints():
     
     kp = SigningKey.generate()
     warrant = Warrant.issue(
-        tools="transfer_money",
         keypair=kp,
-        holder=kp.public_key,
-        constraints={
+        capabilities=Constraints.for_tool("transfer_money", {
             "account": Pattern("checking-*"),
             "amount": Exact("100")
-        },
+        }),
+        holder=kp.public_key,
         ttl_seconds=60
     )
     
@@ -118,16 +115,15 @@ def test_constraint_attenuation():
     
     # Parent with broad constraint
     parent = Warrant.issue(
-        tools="file_ops",
         keypair=kp,
+        capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/*")}),
         holder=kp.public_key,
-        constraints={"path": Pattern("/data/*")},
         ttl_seconds=3600
     )
     
     # Child with narrower constraint
     child = parent.attenuate(
-        constraints={"path": Pattern("/data/reports/*")},
+        capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/reports/*")}),
         keypair=kp,
         parent_keypair=kp,
         holder=kp.public_key,
@@ -158,19 +154,18 @@ def test_constraint_field_addition():
     
     # Parent with one constraint
     parent = Warrant.issue(
-        tools="api_call",
         keypair=kp,
+        capabilities=Constraints.for_tool("api_call", {"endpoint": Pattern("/api/*")}),
         holder=kp.public_key,
-        constraints={"endpoint": Pattern("/api/*")},
         ttl_seconds=3600
     )
     
     # Child adds another constraint
     child = parent.attenuate(
-        constraints={
+        capabilities=Constraints.for_tool("api_call", {
             "endpoint": Pattern("/api/users/*"),
             "method": Exact("GET")
-        },
+        }),
         keypair=kp,
         parent_keypair=kp,
         holder=kp.public_key,
@@ -208,10 +203,9 @@ def test_missing_constraint_parameter():
     
     kp = SigningKey.generate()
     warrant = Warrant.issue(
-        tools="test_tool",
         keypair=kp,
+        capabilities=Constraints.for_tool("test_tool", {"required": Exact("value")}),
         holder=kp.public_key,
-        constraints={"required": Exact("value")},
         ttl_seconds=60
     )
     
@@ -273,10 +267,9 @@ def test_cidr_constraint_matching():
     
     kp = SigningKey.generate()
     warrant = Warrant.issue(
-        tools="network_ops",
         keypair=kp,
+        capabilities=Constraints.for_tool("network_ops", {"source_ip": Cidr("10.0.0.0/8")}),
         holder=kp.public_key,
-        constraints={"source_ip": Cidr("10.0.0.0/8")},
         ttl_seconds=60
     )
     
@@ -296,16 +289,15 @@ def test_cidr_attenuation():
     
     # Parent with broad network
     parent = Warrant.issue(
-        tools="network_ops",
         keypair=kp,
+        capabilities=Constraints.for_tool("network_ops", {"source_ip": Cidr("10.0.0.0/8")}),
         holder=kp.public_key,
-        constraints={"source_ip": Cidr("10.0.0.0/8")},
         ttl_seconds=3600
     )
     
     # Child with narrower subnet - should work
     child = parent.attenuate(
-        constraints={"source_ip": Cidr("10.1.0.0/16")},
+        capabilities=Constraints.for_tool("network_ops", {"source_ip": Cidr("10.1.0.0/16")}),
         keypair=kp,
         parent_keypair=kp,
         holder=kp.public_key,
@@ -395,10 +387,9 @@ def test_url_pattern_constraint_matching():
 
     kp = SigningKey.generate()
     warrant = Warrant.issue(
-        tools="api_call",
         keypair=kp,
+        capabilities=Constraints.for_tool("api_call", {"endpoint": UrlPattern("https://api.example.com/*")}),
         holder=kp.public_key,
-        constraints={"endpoint": UrlPattern("https://api.example.com/*")},
         ttl_seconds=60
     )
 
@@ -417,16 +408,15 @@ def test_url_pattern_attenuation():
 
     # Parent with broad pattern
     parent = Warrant.issue(
-        tools="api_call",
         keypair=kp,
+        capabilities=Constraints.for_tool("api_call", {"endpoint": UrlPattern("https://*.example.com/*")}),
         holder=kp.public_key,
-        constraints={"endpoint": UrlPattern("https://*.example.com/*")},
         ttl_seconds=3600
     )
 
     # Child with narrower pattern - should work
     child = parent.attenuate(
-        constraints={"endpoint": UrlPattern("https://api.example.com/v1/*")},
+        capabilities=Constraints.for_tool("api_call", {"endpoint": UrlPattern("https://api.example.com/v1/*")}),
         keypair=kp,
         parent_keypair=kp,
         holder=kp.public_key,

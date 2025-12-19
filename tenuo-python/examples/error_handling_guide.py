@@ -18,7 +18,7 @@ Key Patterns:
 """
 
 from tenuo import (
-    SigningKey, Warrant, Pattern, Range,
+    SigningKey, Warrant, Pattern, Range, Constraints,
     lockdown, set_warrant_context, set_signing_key_context,
     AuthorizationError, WarrantError, TenuoError
 )
@@ -281,10 +281,11 @@ def main():
     print("-" * 60)
     
     expired_warrant = Warrant.issue(
-        tools="read_file",
-        signing_key=signing_key,
+        keypair=signing_key,
+        capabilities=Constraints.for_tool("read_file", {
+            "file_path": Pattern("/tmp/*")
+        }),
         holder=signing_key.public_key,
-        constraints={"file_path": Pattern("/tmp/*")},
         ttl_seconds=1  # Very short TTL
     )
     
@@ -307,13 +308,12 @@ def main():
     print("-" * 60)
     
     restricted_warrant = Warrant.issue(
-        tools="process_payment",
-        signing_key=signing_key,
-        holder=signing_key.public_key,
-        constraints={
+        keypair=signing_key,
+        capabilities=Constraints.for_tool("process_payment", {
             "amount": Range.max_value(1000.0),
             "currency": Pattern("USD|EUR")
-        },
+        }),
+        holder=signing_key.public_key,
         ttl_seconds=3600
     )
     
@@ -350,10 +350,11 @@ def main():
     
     wrong_signing_key = SigningKey.generate()  # Different signing_key
     warrant = Warrant.issue(
-        tools="read_file",
-        signing_key=signing_key,
+        keypair=signing_key,
+        capabilities=Constraints.for_tool("read_file", {
+            "file_path": Pattern("/tmp/*")
+        }),
         holder=signing_key.public_key,  # Bound to original signing_key
-        constraints={"file_path": Pattern("/tmp/*")},
         ttl_seconds=3600
     )
     

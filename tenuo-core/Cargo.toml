@@ -147,10 +147,6 @@ tempfile = "3.8"
 name = "warrant_benchmarks"
 harness = false
 
-[[bench]]
-name = "new_types_benchmarks"
-harness = false
-
 [profile.release]
 lto = "thin"        # Faster than "true" (fat LTO), still good optimization
 codegen-units = 16  # Allow parallel code generation (faster builds)

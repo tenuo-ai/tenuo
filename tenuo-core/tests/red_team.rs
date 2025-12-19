@@ -42,7 +42,7 @@ fn test_chainlink_scope_binding() {
 
     // Create parent with limited tools
     let parent = Warrant::builder()
-        .tool("read")
+        .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(parent_kp.public_key())
         .build(&parent_kp)
@@ -61,7 +61,7 @@ fn test_chainlink_scope_binding() {
 
     let link = &chain[0];
     assert_eq!(link.issuer_id, *parent.id());
-    assert_eq!(link.issuer_tools, parent.tools().map(|t| t.to_vec()));
+    assert_eq!(link.issuer_capabilities, parent.capabilities().cloned());
 
     println!("✅ ChainLink correctly embeds issuer scope");
 
@@ -97,9 +97,10 @@ fn test_chainlink_scope_binding() {
 fn test_cbor_payload_canonical_binding() {
     let keypair = SigningKey::generate();
 
+    let mut constraints = ConstraintSet::new();
+    constraints.insert("path", Pattern::new("/data/*").unwrap());
     let warrant = Warrant::builder()
-        .tool("read")
-        .constraint("path", Pattern::new("/data/*").unwrap())
+        .capability("read", constraints)
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair)
@@ -142,9 +143,10 @@ fn test_payload_bytes_mismatch_detection() {
     // 1. Valid warrants pass (canonical bytes match)
     // 2. Round-trip preserves canonical bytes
 
+    let mut constraints = ConstraintSet::new();
+    constraints.insert("path", Pattern::new("/data/*").unwrap());
     let warrant = Warrant::builder()
-        .tool("read")
-        .constraint("path", Pattern::new("/data/*").unwrap())
+        .capability("read", constraints)
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair)
@@ -183,14 +185,14 @@ fn test_signature_reuse_across_warrants() {
 
     // Create two warrants with different tools
     let warrant_a = Warrant::builder()
-        .tool("read")
+        .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
     let warrant_b = Warrant::builder()
-        .tool("write")
+        .capability("write", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair)
@@ -239,7 +241,7 @@ fn test_parent_child_relationship_integrity() {
     let keypair = SigningKey::generate();
 
     let parent = Warrant::builder()
-        .tool("read")
+        .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair)
@@ -285,7 +287,7 @@ fn test_trust_ceiling_violation() {
     // ATTACK: Try to issue execution warrant with System trust level (exceeds Internal ceiling)
     let result = issuer.issue_execution_warrant().and_then(|builder| {
         builder
-            .tool("read")
+            .capability("read", ConstraintSet::new())
             .ttl(Duration::from_secs(3600)) // Add required ttl
             .trust_level(TrustLevel::System) // Exceeds ceiling
             .authorized_holder(worker_kp.public_key())
@@ -314,7 +316,7 @@ fn test_pop_future_timestamp() {
     let keypair = SigningKey::generate();
 
     let warrant = Warrant::builder()
-        .tool("transfer")
+        .capability("transfer", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair)
@@ -365,7 +367,7 @@ fn test_pop_old_timestamp_replay() {
     let keypair = SigningKey::generate();
 
     let warrant = Warrant::builder()
-        .tool("transfer")
+        .capability("transfer", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair)
@@ -428,7 +430,7 @@ fn test_pop_concurrent_window_boundary() {
 
     let warrant = Arc::new(
         Warrant::builder()
-            .tool("transfer")
+            .capability("transfer", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
             .authorized_holder(keypair.public_key())
             .build(&keypair)
@@ -495,7 +497,7 @@ fn test_delegation_depth_limit() {
     let keypair = SigningKey::generate();
 
     let mut current = Warrant::builder()
-        .tool("read")
+        .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(36000)) // Long TTL for many delegations
         .authorized_holder(keypair.public_key())
         .build(&keypair)
@@ -589,12 +591,16 @@ fn test_issuer_chain_length_limit() {
 /// Attack: Execution warrant tries to add tools during attenuation.
 ///
 /// Expected: Validation error (tools can only shrink).
+///
+/// SECURITY NOTE: This test directly validates the capabilities HashMap,
+/// not the tools() helper method, to ensure we're testing the actual
+/// security property (map keys in capabilities) rather than a derived list.
 #[test]
 fn test_execution_warrant_tool_addition() {
     let keypair = SigningKey::generate();
 
     let parent = Warrant::builder()
-        .tool("read")
+        .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair)
@@ -605,14 +611,48 @@ fn test_execution_warrant_tool_addition() {
     // But we can test via the internal validation by checking that
     // a child warrant with extra tools would fail authorization
 
-    // The parent only has "read"
-    assert_eq!(parent.tools(), Some(&["read".to_string()][..]));
+    // The parent only has "read" - verify via capabilities map directly
+    let parent_caps = parent.capabilities().expect("Should have capabilities");
+    assert!(
+        parent_caps.contains_key("read"),
+        "Parent should have 'read' capability"
+    );
+    assert!(
+        !parent_caps.contains_key("write"),
+        "Parent should NOT have 'write' capability"
+    );
+    assert_eq!(
+        parent_caps.len(),
+        1,
+        "Parent should have exactly 1 capability"
+    );
+
+    // Also verify tools() helper returns consistent result
+    assert_eq!(parent.tools(), Some(vec!["read".to_string()]));
 
     // Create a child (should only inherit or narrow tools, not add)
     let child = parent.attenuate().build(&keypair, &keypair).unwrap();
 
-    // Child should have same or fewer tools
-    assert_eq!(child.tools(), Some(&["read".to_string()][..]));
+    // CRITICAL: Verify child capabilities map directly (the security property)
+    let child_caps = child
+        .capabilities()
+        .expect("Child should have capabilities");
+    assert!(
+        child_caps.contains_key("read"),
+        "Child should have 'read' capability"
+    );
+    assert!(
+        !child_caps.contains_key("write"),
+        "Child should NOT have 'write' capability"
+    );
+    assert_eq!(
+        child_caps.len(),
+        1,
+        "Child should have exactly 1 capability"
+    );
+
+    // Also verify tools() helper returns consistent result
+    assert_eq!(child.tools(), Some(vec!["read".to_string()]));
 
     // If child tries to authorize "write", it should fail
     let args: HashMap<String, ConstraintValue> = HashMap::new();
@@ -628,12 +668,16 @@ fn test_execution_warrant_tool_addition() {
         "Child should not have tools parent didn't have"
     );
 
-    println!("✅ Tool addition prevented (child inherits parent tools only)");
+    println!("✅ Tool addition prevented (capabilities map enforces monotonicity)");
 }
 
 /// Attack: Issuer warrant tries to add issuable_tools during attenuation.
 ///
 /// Expected: Validation error.
+///
+/// NOTE: For ISSUER warrants, issuable_tools is a Vec<String> (not a HashMap).
+/// This is different from EXECUTION warrants which use capabilities: HashMap<String, ConstraintSet>.
+/// The "Ghost Field" concern doesn't apply here because issuable_tools is the actual data structure.
 #[test]
 fn test_issuer_warrant_tool_addition() {
     let keypair = SigningKey::generate();
@@ -650,16 +694,131 @@ fn test_issuer_warrant_tool_addition() {
     // ATTACK: Issuer warrants attenuate via same builder
     // The issuable_tools should not expand
 
-    // Parent has only "read" as issuable
-    assert_eq!(parent.issuable_tools(), Some(&["read".to_string()][..]));
+    // Verify parent has only "read" as issuable (direct access to the field)
+    let parent_issuable = parent.issuable_tools().expect("Should have issuable_tools");
+    assert_eq!(
+        parent_issuable.len(),
+        1,
+        "Parent should have exactly 1 issuable tool"
+    );
+    assert!(
+        parent_issuable.contains(&"read".to_string()),
+        "Parent should have 'read' as issuable"
+    );
 
     // Attenuate (should inherit or narrow)
     let child = parent.attenuate().build(&keypair, &keypair).unwrap();
 
-    // Child should have same or fewer issuable_tools
-    assert_eq!(child.issuable_tools(), Some(&["read".to_string()][..]));
+    // Child should have same or fewer issuable_tools (direct verification)
+    let child_issuable = child
+        .issuable_tools()
+        .expect("Child should have issuable_tools");
+    assert_eq!(
+        child_issuable.len(),
+        1,
+        "Child should have exactly 1 issuable tool"
+    );
+    assert!(
+        child_issuable.contains(&"read".to_string()),
+        "Child should have 'read' as issuable"
+    );
+    assert!(
+        !child_issuable.contains(&"write".to_string()),
+        "Child should NOT have 'write' as issuable"
+    );
 
     println!("✅ Issuable tool addition prevented (monotonic attenuation)");
+}
+
+/// Attack: Exploit ambiguity between "empty constraints" and "no access".
+///
+/// In the capabilities API, `ping: {}` means "tool allowed with no constraints"
+/// (i.e., allowed with ANY arguments). This test verifies:
+///
+/// 1. Empty constraints ({}) = ALLOWED for any arguments
+/// 2. Missing tool = DENIED
+/// 3. Deserialization doesn't crash on empty constraint maps
+///
+/// This is critical because an incorrect interpretation could either:
+/// - Allow unauthorized access (if {} wrongly means "allowed")
+/// - Block authorized access (if {} wrongly means "denied")
+#[test]
+fn test_empty_capabilities_semantics() {
+    let keypair = SigningKey::generate();
+
+    // Create warrant with "ping" tool having empty constraints
+    let warrant = Warrant::builder()
+        .capability("ping", ConstraintSet::new()) // Empty constraints = "allowed with any args"
+        .ttl(Duration::from_secs(3600))
+        .authorized_holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    let authorizer = Authorizer::new().with_trusted_root(keypair.public_key());
+
+    // Test 1: Empty constraints should ALLOW any arguments
+    let random_args: HashMap<String, ConstraintValue> = [
+        (
+            "any".to_string(),
+            ConstraintValue::String("thing".to_string()),
+        ),
+        ("foo".to_string(), ConstraintValue::Integer(42)),
+    ]
+    .into_iter()
+    .collect();
+
+    let sig = warrant
+        .create_pop_signature(&keypair, "ping", &random_args)
+        .unwrap();
+
+    let result = authorizer.authorize(&warrant, "ping", &random_args, Some(&sig), &[]);
+    assert!(
+        result.is_ok(),
+        "Empty constraints should ALLOW any arguments: {:?}",
+        result
+    );
+    println!("✅ Empty constraints ({{}}) = ALLOWED for any args");
+
+    // Test 2: Should also work with truly empty args
+    let empty_args: HashMap<String, ConstraintValue> = HashMap::new();
+    let sig2 = warrant
+        .create_pop_signature(&keypair, "ping", &empty_args)
+        .unwrap();
+
+    let result2 = authorizer.authorize(&warrant, "ping", &empty_args, Some(&sig2), &[]);
+    assert!(
+        result2.is_ok(),
+        "Empty constraints should ALLOW empty args too: {:?}",
+        result2
+    );
+    println!("✅ Empty constraints ({{}}) = ALLOWED for empty args");
+
+    // Test 3: Other tools should be DENIED (not present in capabilities)
+    let pong_sig = warrant
+        .create_pop_signature(&keypair, "pong", &empty_args)
+        .unwrap();
+
+    let result3 = authorizer.authorize(&warrant, "pong", &empty_args, Some(&pong_sig), &[]);
+    assert!(result3.is_err(), "Missing tool should be DENIED");
+    println!("✅ Missing tool = DENIED");
+
+    // Test 4: Round-trip serialization preserves empty constraint semantics
+    let bytes = wire::encode(&warrant).unwrap();
+    let decoded: Warrant = wire::decode(&bytes).unwrap();
+
+    // Verify empty constraints are preserved, not dropped
+    let caps = decoded.capabilities().expect("Should have capabilities");
+    assert!(
+        caps.contains_key("ping"),
+        "ping should exist after deserialization"
+    );
+    let ping_constraints = caps.get("ping").unwrap();
+    assert!(
+        ping_constraints.is_empty(),
+        "ping constraints should remain empty after deserialization"
+    );
+
+    println!("✅ Empty constraints preserved through serialization round-trip");
 }
 
 // ============================================================================
@@ -677,7 +836,7 @@ fn test_holder_mismatch_pop_fails() {
 
     // Create warrant bound to holder_kp
     let warrant = Warrant::builder()
-        .tool("transfer")
+        .capability("transfer", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(holder_kp.public_key())
         .build(&issuer_kp)
@@ -715,10 +874,26 @@ fn test_holder_mismatch_pop_fails() {
 // ============================================================================
 // Constraint Depth DoS Attacks
 // ============================================================================
+//
+// NOTE: This section tests the depth limit for recursive constraint types
+// (All, Any, Not). These types STILL EXIST in the current architecture for
+// expressing complex boolean logic (e.g., "path matches A AND (B OR C)").
+//
+// The capabilities map provides per-tool constraints, but within each tool's
+// ConstraintSet, we still allow recursive Constraint types. The depth limit
+// (MAX_CONSTRAINT_DEPTH = 16) prevents stack overflow attacks from deeply
+// nested structures like All(All(All(...))).
+//
+// If we ever switch to a purely flat HashMap<String, Pattern>, these tests
+// can be removed as the attack surface would no longer exist.
 
 /// Attack: Create deeply nested All(All(All(...))) constraint to cause stack overflow.
 ///
 /// Expected: ConstraintDepthExceeded during deserialization.
+///
+/// SECURITY NOTE: This test is still relevant because the Constraint enum
+/// includes recursive types (All, Any, Not) for complex boolean logic.
+/// The MAX_CONSTRAINT_DEPTH limit (16) prevents stack overflow attacks.
 #[test]
 fn test_constraint_depth_dos() {
     use tenuo::constraints::All;
@@ -732,9 +907,10 @@ fn test_constraint_depth_dos() {
     // Try to create warrant with this constraint
     let keypair = SigningKey::generate();
 
+    let mut constraints = ConstraintSet::new();
+    constraints.insert("key", nested);
     let result = Warrant::builder()
-        .tool("test")
-        .constraint("key", nested)
+        .capability("test", constraints)
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair);
@@ -772,9 +948,10 @@ fn test_constraint_depth_deserialization_limit() {
     let keypair = SigningKey::generate();
 
     // Try to serialize and deserialize
+    let mut constraints = ConstraintSet::new();
+    constraints.insert("deep", nested.clone());
     let result = Warrant::builder()
-        .tool("test")
-        .constraint("deep", nested.clone())
+        .capability("test", constraints)
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair);
@@ -826,9 +1003,11 @@ fn test_warrant_size_limit() {
         tools.push(format!("tool_{}", i));
     }
 
-    let result = Warrant::builder()
-        .tools(tools)
-        .ttl(Duration::from_secs(3600))
+    let mut builder = Warrant::builder().ttl(Duration::from_secs(3600));
+    for t in tools {
+        builder = builder.capability(t, ConstraintSet::new());
+    }
+    let result = builder
         .authorized_holder(keypair.public_key())
         .build(&keypair);
 
@@ -881,7 +1060,7 @@ fn test_orphaned_child_warrant() {
     let child_kp = SigningKey::generate();
 
     let parent = Warrant::builder()
-        .tool("read")
+        .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(parent_kp.public_key())
         .build(&parent_kp)
@@ -931,7 +1110,7 @@ fn test_chain_wrong_order() {
     let child_kp = SigningKey::generate();
 
     let parent = Warrant::builder()
-        .tool("read")
+        .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(parent_kp.public_key())
         .build(&parent_kp)
@@ -968,7 +1147,7 @@ fn test_pop_args_binding() {
     let keypair = SigningKey::generate();
 
     let warrant = Warrant::builder()
-        .tool("read_file")
+        .capability("read_file", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair)
@@ -1015,7 +1194,8 @@ fn test_pop_tool_binding() {
     let keypair = SigningKey::generate();
 
     let warrant = Warrant::builder()
-        .tools(vec!["read".to_string(), "write".to_string()])
+        .capability("read", ConstraintSet::new())
+        .capability("write", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair)
@@ -1059,7 +1239,7 @@ fn test_trust_level_amplification() {
     let keypair = SigningKey::generate();
 
     let parent = Warrant::builder()
-        .tool("query")
+        .capability("query", ConstraintSet::new())
         .trust_level(TrustLevel::Internal)
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
@@ -1094,7 +1274,7 @@ fn test_terminal_warrant_delegation() {
 
     // Create warrant with max_depth=1
     let parent = Warrant::builder()
-        .tool("read")
+        .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .max_depth(1)
         .authorized_holder(keypair.public_key())
@@ -1135,9 +1315,10 @@ fn test_non_deterministic_cbor() {
     // We can at least verify round-trip is deterministic
     let keypair = SigningKey::generate();
 
+    let mut constraints = ConstraintSet::new();
+    constraints.insert("key", OneOf::new(vec!["a", "b", "c"]));
     let warrant = Warrant::builder()
-        .tool("read")
-        .constraint("key", OneOf::new(vec!["a", "b", "c"]))
+        .capability("read", constraints)
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair)
@@ -1170,14 +1351,14 @@ fn test_mixed_chain_attack() {
 
     // Create two separate chains
     let chain1_parent = Warrant::builder()
-        .tool("read")
+        .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(root1_kp.public_key())
         .build(&root1_kp)
         .unwrap();
 
     let chain2_parent = Warrant::builder()
-        .tool("write")
+        .capability("write", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(root2_kp.public_key())
         .build(&root2_kp)
@@ -1219,7 +1400,7 @@ fn test_cbor_canonical_map_key_ordering() {
     constraints.insert("m_middle", Exact::new("value"));
 
     let warrant = Warrant::builder()
-        .tool("test")
+        .capability("test", constraints)
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair)
@@ -1244,6 +1425,90 @@ fn test_cbor_canonical_map_key_ordering() {
     println!("✅ Signature verifies after round-trip (canonical bytes preserved)");
 }
 
+/// Attack: Send capabilities with unsorted nested maps to exploit canonicalization.
+///
+/// With capabilities being a Map (Tools) of Maps (Args), an attacker could send:
+/// {"b_tool": {"z_arg": ..., "a_arg": ...}, "a_tool": {}}
+///
+/// If the parser accepts non-sorted order, signature verification might pass
+/// but the canonical hash differs, leading to cache poisoning or signature bypass.
+///
+/// Expected: CBOR canonicalization sorts at ALL nesting levels.
+///
+/// Both `capabilities` (BTreeMap) and `ConstraintSet.constraints` (BTreeMap)
+/// use deterministic ordering to ensure canonical serialization.
+#[test]
+fn test_cbor_canonical_nested_map_ordering() {
+    let keypair = SigningKey::generate();
+
+    // Create warrant with multiple tools, each having multiple constraints
+    // inserted in reverse alphabetical order to stress-test sorting
+
+    // Tool "z_tool" has constraints in reverse order
+    let mut z_constraints = ConstraintSet::new();
+    z_constraints.insert("z_arg", Pattern::new("*").unwrap());
+    z_constraints.insert("m_arg", Pattern::new("*").unwrap());
+    z_constraints.insert("a_arg", Pattern::new("*").unwrap());
+
+    // Tool "a_tool" is empty (should come first in sorted output)
+    let a_constraints = ConstraintSet::new();
+
+    // Tool "m_tool" has single constraint
+    let mut m_constraints = ConstraintSet::new();
+    m_constraints.insert("single", Exact::new("value"));
+
+    let warrant = Warrant::builder()
+        .capability("z_tool", z_constraints) // Added first but should serialize last
+        .capability("a_tool", a_constraints) // Added second but should serialize first
+        .capability("m_tool", m_constraints) // Added third, should serialize middle
+        .ttl(Duration::from_secs(3600))
+        .authorized_holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    // Verify initial state
+    let caps = warrant.capabilities().expect("Should have capabilities");
+    assert_eq!(caps.len(), 3, "Should have 3 tools");
+    assert!(caps.contains_key("a_tool"), "Should have a_tool");
+    assert!(caps.contains_key("m_tool"), "Should have m_tool");
+    assert!(caps.contains_key("z_tool"), "Should have z_tool");
+
+    // Serialize
+    let bytes1 = wire::encode(&warrant).unwrap();
+
+    // Deserialize and re-serialize
+    let decoded = wire::decode(&bytes1).expect("Deserialization should succeed with BTreeMap");
+    let bytes2 = wire::encode(&decoded).unwrap();
+
+    // CRITICAL: Must be byte-identical (proves nested sorting is deterministic)
+    assert_eq!(
+        bytes1, bytes2,
+        "Canonicalization MUST enforce sorting at ALL nesting levels"
+    );
+
+    // Verify the capabilities are correctly structured
+    let caps = decoded.capabilities().expect("Should have capabilities");
+    assert!(caps.contains_key("a_tool"), "Should have a_tool");
+    assert!(caps.contains_key("m_tool"), "Should have m_tool");
+    assert!(caps.contains_key("z_tool"), "Should have z_tool");
+    assert_eq!(caps.len(), 3, "Should have exactly 3 tools");
+
+    // Verify z_tool has all its constraints
+    let z_tool_constraints = caps.get("z_tool").unwrap();
+    assert_eq!(
+        z_tool_constraints.len(),
+        3,
+        "z_tool should have 3 constraints"
+    );
+
+    // Verify signature still valid (proves signing used canonical bytes)
+    assert!(decoded.verify_signature().is_ok());
+
+    println!("✅ Nested map ordering is deterministic (capabilities sorted at all levels)");
+    println!("   Tools: a_tool < m_tool < z_tool");
+    println!("   Args in z_tool: a_arg < m_arg < z_arg");
+}
+
 // ============================================================================
 // Root Trust Enforcement
 // ============================================================================
@@ -1258,7 +1523,7 @@ fn test_untrusted_root_rejection() {
 
     // Attacker creates valid warrant with their key
     let attacker_warrant = Warrant::builder()
-        .tool("admin")
+        .capability("admin", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(attacker_kp.public_key())
         .build(&attacker_kp)
@@ -1307,7 +1572,7 @@ fn test_dynamic_trusted_root_addition() {
 
     // Create warrant from new root (not yet trusted)
     let warrant = Warrant::builder()
-        .tool("test")
+        .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(new_root_kp.public_key())
         .build(&new_root_kp)
@@ -1360,9 +1625,10 @@ fn test_dynamic_trusted_root_addition() {
 fn test_unicode_lookalike_bypass() {
     let keypair = SigningKey::generate();
 
+    let mut constraints = ConstraintSet::new();
+    constraints.insert("path", Pattern::new("/data/*").unwrap());
     let warrant = Warrant::builder()
-        .tool("read")
-        .constraint("path", Pattern::new("/data/*").unwrap())
+        .capability("read", constraints)
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair)
@@ -1399,9 +1665,10 @@ fn test_unicode_lookalike_bypass() {
 fn test_case_sensitivity_bypass() {
     let keypair = SigningKey::generate();
 
+    let mut constraints = ConstraintSet::new();
+    constraints.insert("cluster", Pattern::new("staging-*").unwrap());
     let warrant = Warrant::builder()
-        .tool("deploy")
-        .constraint("cluster", Pattern::new("staging-*").unwrap())
+        .capability("deploy", constraints)
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair)

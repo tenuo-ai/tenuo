@@ -2,7 +2,7 @@
 import pytest
 import sys
 from tenuo import (
-    Warrant, SigningKey, Pattern, Range, Exact, PatternExpanded, RangeExpanded
+    Warrant, SigningKey, Pattern, Range, Exact, PatternExpanded, RangeExpanded, Constraints
 )
 
 class TestErrorMapping:
@@ -17,15 +17,14 @@ class TestErrorMapping:
     def test_pattern_expanded(self, keypair):
         """Verify PatternExpanded mapping."""
         parent = Warrant.issue(
-            tools="search",
-            constraints={"query": Pattern("allowed*")},
-            ttl_seconds=60,
-            keypair=keypair
+            keypair=keypair,
+            capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}),
+            ttl_seconds=60
         )
         
         with pytest.raises(PatternExpanded) as excinfo:
             builder = parent.attenuate_builder()
-            builder.with_constraint("query", Pattern("*"))
+            builder.with_capability("search", {"query": Pattern("*")})
             builder.delegate_to(keypair, keypair)
         
         assert excinfo.value.details["parent_pattern"] == "allowed*"
@@ -34,15 +33,14 @@ class TestErrorMapping:
     def test_range_expanded(self, keypair):
         """Verify RangeExpanded mapping."""
         parent = Warrant.issue(
-            tools="calc",
-            constraints={"val": Range(min=0, max=100)},
-            ttl_seconds=60,
-            keypair=keypair
+            keypair=keypair,
+            capabilities=Constraints.for_tool("calc", {"val": Range(min=0, max=100)}),
+            ttl_seconds=60
         )
         
         with pytest.raises(RangeExpanded) as excinfo:
             builder = parent.attenuate_builder()
-            builder.with_constraint("val", Range(min=-10, max=100))
+            builder.with_capability("calc", {"val": Range(min=-10, max=100)})
             builder.delegate_to(keypair, keypair)
             
         # Details might vary slightly depending on float representation
@@ -51,10 +49,9 @@ class TestErrorMapping:
     def test_constraint_violation(self, keypair):
         """Verify ConstraintViolation mapping."""
         warrant = Warrant.issue(
-            tools="search",
-            constraints={"query": Exact("foo")},
-            ttl_seconds=60,
-            keypair=keypair
+            keypair=keypair,
+            capabilities=Constraints.for_tool("search", {"query": Exact("foo")}),
+            ttl_seconds=60
         )
         
         # authorize returns False on constraint violation, doesn't raise
@@ -83,9 +80,9 @@ class TestErrorMapping:
         """Verify ExpiredError mapping."""
         # Issue warrant with 0 TTL
         _warrant = Warrant.issue(
-            tools="test",
-            ttl_seconds=0,
-            keypair=keypair
+            keypair=keypair,
+            capabilities=Constraints.for_tool("test", {}),
+            ttl_seconds=0
         )
         # Wait a bit to be sure
         import time
