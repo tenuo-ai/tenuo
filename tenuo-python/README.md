@@ -25,9 +25,10 @@ keypair = SigningKey.generate()
 
 # Issue a warrant with fluent builder (recommended)
 warrant = (Warrant.builder()
-    .tool("manage_infrastructure")      # Can also use .tools(["tool1", "tool2"])
-    .constraint("cluster", Pattern("staging-*"))
-    .constraint("replicas", Range.max_value(15))
+    .capability("manage_infrastructure", {
+        "cluster": Pattern("staging-*"),
+        "replicas": Range.max_value(15)
+    })
     .holder(keypair.public_key)         # Bind to self initially
     .ttl(3600)
     .issue(keypair))
@@ -35,8 +36,10 @@ warrant = (Warrant.builder()
 # Attenuate for a worker (capabilities shrink)
 worker_keypair = SigningKey.generate()
 worker_warrant = (warrant.attenuate_builder()
-    .with_constraint("cluster", Exact("staging-web"))
-    .with_constraint("replicas", Range.max_value(10))
+    .with_capability("manage_infrastructure", {
+        "cluster": Exact("staging-web"),
+        "replicas": Range.max_value(10)
+    })
     .with_holder(worker_keypair.public_key)
     .delegate_to(worker_keypair, keypair))
 
@@ -118,8 +121,7 @@ Use the `@lockdown` decorator to enforce authorization. It supports two patterns
 from tenuo import lockdown, Warrant, Pattern, Range
 
 warrant = (Warrant.builder()
-    .tool("scale_cluster")
-    .constraint("cluster", Pattern("staging-*"))
+    .capability("scale_cluster", {"cluster": Pattern("staging-*")})
     .holder(keypair.public_key)
     .ttl(3600)
     .issue(keypair))
@@ -171,7 +173,7 @@ except AuthorizationError as e:
 The simplest way to protect LangChain tools:
 
 ```python
-from tenuo import SigningKey, root_task_sync
+from tenuo import SigningKey, root_task_sync, Capability
 from tenuo.langchain import secure_agent
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain.agents import AgentExecutor, create_openai_tools_agent
@@ -191,7 +193,7 @@ agent = create_openai_tools_agent(llm, tools, prompt)
 executor = AgentExecutor(agent=agent, tools=tools)
 
 # Run with scoped authority
-with root_task_sync(tools=["duckduckgo_search"], query="*"):
+with root_task_sync(Capability("duckduckgo_search", query="*")):
     result = executor.invoke({"input": "What's the latest AI news?"})
 ```
 
@@ -235,7 +237,7 @@ tool_node = TenuoToolNode([search, calculator])
 graph.add_node("tools", tool_node)
 
 # Run with authorization
-with root_task_sync(tools=["search", "calculator"]):
+with root_task_sync(Capability("search"), Capability("calculator")):
     result = graph.invoke({"messages": [...]})
 ```
 
@@ -246,7 +248,7 @@ Use `@tenuo_node` to scope authority for specific nodes:
 ```python
 from tenuo.langgraph import tenuo_node
 
-@tenuo_node(tools=["search"], query="*public*")
+@tenuo_node(Capability("search", query="*public*"))
 async def researcher(state):
     # Only search tool allowed, query must contain "public"
     return await search_tool(state["query"])
@@ -289,7 +291,7 @@ async with SecureMCPClient("python", ["mcp_server.py"]) as client:
     protected_tools = await client.get_protected_tools()
     
     # Use with warrant authorization
-    async with root_task(tools=["read_file"], path=Pattern("/data/*")):
+    async with root_task(Capability("read_file", path=Pattern("/data/*"))):
         result = await protected_tools["read_file"](path="/data/file.txt")
 ```
 

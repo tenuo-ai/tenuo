@@ -13,6 +13,7 @@ from tenuo import (
     ToolNotAuthorized,
     ConfigurationError,
     LANGCHAIN_AVAILABLE,
+    Capability,
 )
 
 # Skip all tests if LangChain is not installed
@@ -98,7 +99,7 @@ class TestProtectLangchainTools:
         
         tools = protect_langchain_tools([search])
         
-        with root_task_sync(tools=["search"]):
+        with root_task_sync(Capability("search")):
             result = tools[0].invoke({"query": "test"})
             assert "Results for: test" in result
     
@@ -121,7 +122,7 @@ class TestProtectLangchainTools:
         tools = protect_langchain_tools([search, read_file])
         
         # Warrant only allows "search", not "read_file"
-        with root_task_sync(tools=["search"]):
+        with root_task_sync(Capability("search")):
             # search is authorized
             result = tools[0].invoke({"query": "test"})
             assert result is not None
@@ -137,7 +138,7 @@ class TestProtectLangchainTools:
         
         tools = protect_langchain_tools([search, read_file])
         
-        with root_task_sync(tools=["search", "read_file"]):
+        with root_task_sync(Capability("search"), Capability("read_file")):
             result1 = tools[0].invoke({"query": "test"})
             result2 = tools[1].invoke({"path": "/data/test.txt"})
             
@@ -165,7 +166,7 @@ class TestTenuoTool:
         
         wrapped = TenuoTool(search)
         
-        with root_task_sync(tools=["search"]):
+        with root_task_sync(Capability("search")):
             result = wrapped._run(query="test query")
             assert "Results for: test query" in result
     
@@ -176,7 +177,7 @@ class TestTenuoTool:
         
         wrapped = TenuoTool(search)
         
-        with root_task_sync(tools=["search"]):
+        with root_task_sync(Capability("search")):
             result = wrapped.invoke({"query": "test query"})
             assert "Results for: test query" in result
 
@@ -230,7 +231,7 @@ class TestStrictMode:
         tools = protect_langchain_tools([search], strict=True)
         
         # Without constraints - should fail in strict mode
-        with root_task_sync(tools=["search"]):
+        with root_task_sync(Capability("search")):
             with pytest.raises(ConfigurationError, match="requires at least one constraint"):
                 tools[0].invoke({"query": "test"})
     
@@ -241,7 +242,7 @@ class TestStrictMode:
         
         tools = protect_langchain_tools([search], strict=False)
         
-        with root_task_sync(tools=["search"]):
+        with root_task_sync(Capability("search")):
             result = tools[0].invoke({"query": "test"})
             assert "Results for" in result
 
@@ -258,13 +259,13 @@ class TestWithScopedTask:
         
         tools = protect_langchain_tools([search, read_file])
         
-        with root_task_sync(tools=["search", "read_file"]):
+        with root_task_sync(Capability("search"), Capability("read_file")):
             # Both tools work at root level
             assert tools[0].invoke({"query": "test"}) is not None
             assert tools[1].invoke({"path": "/data/test.txt"}) is not None
             
             # Narrow to just search
-            with scoped_task(tools=["search"]):
+            with scoped_task(Capability("search")):
                 # search still works
                 assert tools[0].invoke({"query": "test"}) is not None
                 

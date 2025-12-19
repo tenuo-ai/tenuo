@@ -17,7 +17,7 @@ Tenuo implements **capability tokens** (Warrants) for AI agent authorization:
 ## Quick Start
 
 ```rust
-use tenuo::{SigningKey, Warrant, Constraint, Authorizer};
+use tenuo::{SigningKey, Warrant, Constraint, ConstraintSet, Authorizer};
 
 // Generate keys
 let issuer_key = SigningKey::generate();
@@ -25,8 +25,7 @@ let holder_key = SigningKey::generate();
 
 // Issue a warrant
 let warrant = Warrant::builder()
-    .tool("read_file")
-    .constraint("path", Constraint::pattern("/data/*"))
+    .capability("read_file", ConstraintSet::new().insert("path", Constraint::pattern("/data/*")))
     .holder(holder_key.public_key())
     .ttl_secs(300)
     .build(&issuer_key)?;

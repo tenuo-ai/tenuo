@@ -38,7 +38,7 @@ warrant = (Warrant.builder()
     .capability("read_file", {"path": Pattern("/data/*")})
     .holder(keypair.public_key)
     .ttl(300)
-    .build(keypair))
+    .issue(keypair))
 
 # Protect a tool
 @lockdown(tool="read_file")
@@ -163,8 +163,13 @@ tool_node = TenuoToolNode(tools)
 
 **MCP (Model Context Protocol)**
 ```python
-from tenuo.mcp import SecureMCPClient
+from tenuo import configure, root_task, Pattern, SigningKey, Capability
 
+# Configure Tenuo
+keypair = SigningKey.generate()
+configure(issuer_key=keypair)
+
+# Connect to MCP server
 async with SecureMCPClient("python", ["mcp_server.py"]) as client:
     tools = await client.get_protected_tools()
 ```

@@ -162,7 +162,7 @@ def _warrant_delegate(
     # Apply constraints
     # Apply constraints (merge logic)
     # We must fetch current capabilities, apply new constraints to target tools, and set them back.
-    from tenuo.scoped import _ensure_constraint
+    from tenuo.constraints import ensure_constraint
     
     # Target tools: if specified, use them. Otherwise, apply to ALL tools in current builder capabilities.
     current_caps = builder.capabilities # dict[tool, dict[field, constraint]]
@@ -173,7 +173,7 @@ def _warrant_delegate(
         
         # Merge new constraints
         for k, v in constraints.items():
-            tool_constraints[k] = _ensure_constraint(k, v)
+            tool_constraints[k] = ensure_constraint(v)
         
         # Note: If tool wasn't in current_caps (and not explicit tools list), we skipped it.
         # If explicit tool list has new tool, current_caps.get returns empty dict, so we add it. 

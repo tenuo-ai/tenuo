@@ -14,7 +14,7 @@ description: Node scoping for LangGraph workflows
 
 ```python
 from langgraph.graph import StateGraph
-from tenuo import configure, SigningKey, lockdown, root_task
+from tenuo import configure, SigningKey, lockdown, root_task, Capability
 from tenuo.langgraph import tenuo_node
 
 # Setup
@@ -37,7 +37,7 @@ graph.add_node("researcher", researcher)
 graph.set_entry_point("researcher")
 graph.set_finish_point("researcher")
 
-async with root_task(tools=["search"]):
+async with root_task(Capability("search")):
     result = await graph.compile().ainvoke({"query": "test"})
 ```
 
@@ -89,7 +89,7 @@ Tenuo uses a **two-layer model** for LangGraph security:
 
 ```python
 from langgraph.graph import StateGraph
-from tenuo import configure, SigningKey, lockdown, root_task
+from tenuo import configure, SigningKey, lockdown, root_task, Capability
 from tenuo.langgraph import tenuo_node
 
 # Setup (once at startup)
@@ -127,11 +127,14 @@ graph.add_node("researcher", researcher)
 graph.add_node("writer", writer)
 
 # Run with root authority (async)
-async with root_task(tools=["search", "write_file"], query="*", path="/*"):
+async with root_task(
+    Capability("search", query="*"), 
+    Capability("write_file", path="/*")
+):
     result = await graph.compile().ainvoke({"query": "public data"})
 
 # For sync code, use root_task_sync:
-# with root_task_sync(tools=["search", "write_file"], query="*", path="/*"):
+# with root_task_sync(Capability("search", query="*"), Capability("write_file", path="/*")):
 #     result = graph.compile().invoke({"query": "public data"})
 ```
 
@@ -174,7 +177,7 @@ async def researcher(state):
 **Fix**: Wrap graph invocation in `root_task()`:
 
 ```python
-async with root_task(tools=["search", "write_file"]):
+async with root_task(Capability("search"), Capability("write_file")):
     await app.ainvoke(initial_state)
 ```
 

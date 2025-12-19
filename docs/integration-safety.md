@@ -81,7 +81,7 @@ RuntimeError: [MISSING_CONTEXT] No warrant context available for tool 'read_file
   Location: /app/handlers.py:42
 
 To fix:
-  1. Wrap the call with: async with root_task(tools=[...]):
+  1. Wrap the call with: async with root_task(Capability("read_file", ...)):
   2. Or use: with set_warrant_context(warrant), set_signing_key_context(keypair):
   3. Or pass warrant explicitly: @lockdown(warrant, tool='read_file')
 ```
@@ -358,11 +358,11 @@ Python `contextvars` work correctly in most async scenarios, but there are known
 
 ```python
 # async/await - context propagates
-async with root_task(tools=["search"]):
+async with root_task(Capability("search")):
     result = await search("query")  # ✅ Has warrant context
 
 # asyncio.gather - context propagates
-async with root_task(tools=["search", "read"]):
+async with root_task(Capability("search"), Capability("read")):
     results = await asyncio.gather(
         search("query"),   # ✅ Has warrant context
         read_file("path")  # ✅ Has warrant context
@@ -374,16 +374,16 @@ async with root_task(tools=["search", "read"]):
 ```python
 # 1. create_task BEFORE context is set
 task = asyncio.create_task(search("query"))  # ❌ No context yet!
-async with root_task(tools=["search"]):      # Context set after task created
+async with root_task(Capability("search")):      # Context set after task created
     await task  # Task runs without context
 
 # 2. Thread pool executors
-async with root_task(tools=["search"]):
+async with root_task(Capability("search")):
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, sync_search, "query")  # ❌ Different thread
 
 # 3. Manual threads
-async with root_task(tools=["search"]):
+async with root_task(Capability("search")):
     thread = Thread(target=sync_search, args=("query",))
     thread.start()  # ❌ Threads don't inherit contextvars
 ```
@@ -392,20 +392,20 @@ async with root_task(tools=["search"]):
 
 ```python
 # For create_task: create INSIDE the context
-async with root_task(tools=["search"]):
+async with root_task(Capability("search")):
     task = asyncio.create_task(search("query"))  # ✅ Context copied at creation
     await task
 
 # For thread pools: use copy_context
 import contextvars
 
-async with root_task(tools=["search"]):
+async with root_task(Capability("search")):
     ctx = contextvars.copy_context()
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, ctx.run, sync_search, "query")  # ✅
 
 # For manual threads: use copy_context
-async with root_task(tools=["search"]):
+async with root_task(Capability("search")):
     ctx = contextvars.copy_context()
     thread = Thread(target=ctx.run, args=(sync_search, "query"))
     thread.start()  # ✅

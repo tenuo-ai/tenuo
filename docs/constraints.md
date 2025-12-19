@@ -52,11 +52,11 @@ Wildcard()
 
 ```python
 # Parent: any query
-with root_task(tools=["search"], query=Wildcard()):
+with root_task(Capability("search", query=Wildcard())):
     ...
 
 # Child: narrowed to specific pattern
-with scoped_task(query=Pattern("*public*")):
+with scoped_task(Capability("search", query=Pattern("*public*"))):
     ...
 ```
 
@@ -122,19 +122,19 @@ Pattern("specific-value")
 >
 > ```python
 > # Flexible: Wildcard can become anything
-> with root_task(tools=["search"], query=Wildcard()):
->     with scoped_task(query=Pattern("/data/*")):  # OK
+> with root_task(Capability("search", query=Wildcard())):
+>     with scoped_task(Capability("search", query=Pattern("/data/*"))):  # OK
 >         ...
->     with scoped_task(query=Range.max_value(100)):  # OK
+>     with scoped_task(Capability("search", query=Range.max_value(100))):  # OK
 >         ...
 >
 > # Limited: Pattern can only narrow to other patterns or exact values
-> with root_task(tools=["search"], query=Pattern("*")):
->     with scoped_task(query=Pattern("/data/*")):  # OK (simple prefix)
+> with root_task(Capability("search", query=Pattern("*"))):
+>     with scoped_task(Capability("search", query=Pattern("/data/*"))):  # OK (simple prefix)
 >         ...
->     with scoped_task(query=Exact("specific")):  # OK
+>     with scoped_task(Capability("search", query=Exact("specific"))):  # OK
 >         ...
->     with scoped_task(query=Range.max_value(100)):  # FAILS - Type mismatch
+>     with scoped_task(Capability("search", query=Range.max_value(100))):  # FAILS - Type mismatch
 >         ...
 > ```
 >

@@ -657,9 +657,9 @@ Context managers for scoping authority to tasks.
 Create root authority for a task. **Async version.**
 
 ```python
-from tenuo import root_task
+from tenuo import root_task, Capability, Pattern
 
-async with root_task(tools=["read_file"], path="/data/*") as warrant:
+async with root_task(Capability("read_file", path=Pattern("/data/*"))) as warrant:
     result = await agent.invoke(prompt)
 ```
 
@@ -667,10 +667,11 @@ async with root_task(tools=["read_file"], path="/data/*") as warrant:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `tools` | `List[str]` | Yes | Allowed tools |
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `*capabilities` | `Capability...` | Yes | Capabilities to authorize (tool + constraints) |
 | `ttl` | `int` | No | TTL in seconds (default from `configure()`) |
 | `holder_key` | `SigningKey` | No | Explicit holder (default: issuer) |
-| `**constraints` | `Any` | No | Constraint key-value pairs |
 
 #### Requirements
 
@@ -684,7 +685,7 @@ Synchronous version of `root_task`.
 ```python
 from tenuo import root_task_sync
 
-with root_task_sync(tools=["read_file"], path="/data/*") as warrant:
+with root_task_sync(Capability("read_file", path="/data/*")) as warrant:
     result = protected_read_file(path="/data/report.csv")
 ```
 
@@ -697,8 +698,11 @@ Attenuate within an existing task scope.
 ```python
 from tenuo import scoped_task
 
-async with root_task(tools=["read_file", "write_file"], path="/data/*"):
-    async with scoped_task(tools=["read_file"], path="/data/reports/*"):
+async with root_task(
+    Capability("read_file", path="/data/*"), 
+    Capability("write_file", path="/data/*")
+):
+    async with scoped_task(Capability("read_file", path="/data/reports/*")):
         # Narrower scope here
         result = await agent.invoke(prompt)
 ```
@@ -707,9 +711,10 @@ async with root_task(tools=["read_file", "write_file"], path="/data/*"):
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `tools` | `List[str]` | No | Subset of parent's tools (None = inherit all) |
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `*capabilities` | `Capability...` | No | Capabilities to allow (must be subset of parent). If omitted, implies all parent capabilities. |
 | `ttl` | `int` | No | Shorter TTL (None = inherit remaining) |
-| `**constraints` | `Any` | No | Tighter constraints (must be contained in parent's) |
 
 #### Requirements
 
@@ -719,7 +724,7 @@ async with root_task(tools=["read_file", "write_file"], path="/data/*"):
 #### Preview Changes
 
 ```python
-scope = scoped_task(path="/data/reports/*")
+scope = scoped_task(Capability("read_file", path="/data/reports/*"))
 scope.preview().print()  # See diff before entering
 async with scope:
     ...
@@ -770,7 +775,7 @@ tools = [read_file, send_email, query_db]
 protect_tools(tools)
 
 # Use with scoped authority
-async with root_task(tools=["read_file"], path="/data/*"):
+async with root_task(Capability("read_file", path="/data/*")):
     result = await tools[0](path="/data/report.csv")
 ```
 

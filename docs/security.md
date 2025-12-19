@@ -86,17 +86,14 @@ parent = Warrant.issue(
 )
 
 # Child can only narrow:
-child = parent.attenuate(
-    tools=["read"],
-    path=Pattern("/data/*"),
-    ...
-)
+child = parent.attenuate() \
+    .with_capability("read", {"path": Pattern("/data/*")}) \
+    .build(...)
 
 # This would FAIL:
-child = parent.attenuate(
-    tools=["read", "execute"],  # FAILS
-    ...
-)
+child = parent.attenuate() \
+    .with_capability("execute", {}) \
+    .build(...)  # FAILS (parent doesn't have "execute")
 ```
 
 ## Threat Model
@@ -326,11 +323,15 @@ warrant = Warrant.issue(..., ttl_seconds=86400)
 
 ```python
 # Good: only what's needed
-with root_task(tools=["read_file"], path="/data/reports/*"):
+with root_task(Capability("read_file", path="/data/reports/*")):
     ...
 
 # Risky: overly broad
-with root_task(tools=["read_file", "write_file", "delete_file"], path="/*"):
+with root_task(
+    Capability("read_file", path="/*"),
+    Capability("write_file", path="/*"),
+    Capability("delete_file", path="/*")
+):
     ...
 ```
 

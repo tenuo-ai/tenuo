@@ -9,6 +9,8 @@ from tenuo import (
     root_task_sync,
     SigningKey,
     ScopeViolation,
+    Capability,
+    Pattern,
 )
 from tenuo.langgraph import tenuo_node, require_warrant
 from tenuo.decorators import get_warrant_context
@@ -40,7 +42,7 @@ class TestTenuoNode:
                 tools_seen.append(warrant.tools)
             return {"result": "done"}
         
-        with root_task_sync(tools=["search", "read_file"]):
+        with root_task_sync(Capability("search"), Capability("read_file")):
             result = research_node({})
             assert result == {"result": "done"}
     
@@ -53,7 +55,7 @@ class TestTenuoNode:
         def file_reader_node(state):
             return {"content": "file contents"}
         
-        with root_task_sync(tools=["read_file"], path="/data/*"):
+        with root_task_sync(Capability("read_file", path=Pattern("/data/*"))):
             result = file_reader_node({})
             assert result == {"content": "file contents"}
     
@@ -82,7 +84,7 @@ class TestTenuoNode:
             allowed = get_allowed_tools_context()
             return {"allowed": allowed}
         
-        with root_task_sync(tools=["search", "read_file", "write_file"]):
+        with root_task_sync(Capability("search"), Capability("read_file"), Capability("write_file")):
             result = narrow_node({})
             assert result["allowed"] == ["search"]
     
@@ -109,7 +111,7 @@ class TestRequireWarrant:
         def protected_node(state):
             return {"status": "ok"}
         
-        with root_task_sync(tools=["any"]):
+        with root_task_sync(Capability("any")):
             result = protected_node({})
             assert result == {"status": "ok"}
     
@@ -172,7 +174,7 @@ class TestNestedNodes:
             inner_result = inner_node(state)
             return {"outer": True, **inner_result}
         
-        with root_task_sync(tools=["search", "read_file"]):
+        with root_task_sync(Capability("search"), Capability("read_file")):
             result = outer_node({})
             assert result == {"outer": True, "inner": True}
     
@@ -189,7 +191,8 @@ class TestNestedNodes:
             
             return inner_node(state)
         
-        with root_task_sync(tools=["search", "read_file"]):
-            from tenuo.exceptions import ConstraintViolation
-            with pytest.raises(ConstraintViolation, match="not in parent"):
+        with root_task_sync(Capability("search"), Capability("read_file")):
+
+            from tenuo.exceptions import ScopeViolation
+            with pytest.raises(ScopeViolation, match="not in parent"):
                 outer_node({})

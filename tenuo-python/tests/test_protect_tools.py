@@ -19,6 +19,7 @@ from tenuo import (
     ToolNotAuthorized,
     Pattern,
     ConfigurationError,
+    Capability,
 )
 
 
@@ -101,7 +102,7 @@ class TestProtectToolsAuthorization:
         tools = [read_file]
         protect_tools(tools)
         
-        with root_task_sync(tools=["read_file"], path=Pattern("/data/*")):
+        with root_task_sync(Capability("read_file", path=Pattern("/data/*"))):
             result = tools[0](path="/data/test.txt")
             assert "Contents of" in result
     
@@ -113,7 +114,7 @@ class TestProtectToolsAuthorization:
         tools = [read_file, send_email]
         protect_tools(tools)
         
-        with root_task_sync(tools=["read_file"], path=Pattern("/data/*")):
+        with root_task_sync(Capability("read_file", path=Pattern("/data/*"))):
             # read_file is authorized
             result = tools[0](path="/data/test.txt")
             assert result is not None
@@ -272,7 +273,7 @@ class TestProtectedToolDecorator:
         def my_tool(x: int) -> int:
             return x * 2
         
-        with root_task_sync(tools=["my_tool"]):
+        with root_task_sync(Capability("my_tool")):
             result = my_tool(5)
             assert result == 10
     
@@ -314,7 +315,7 @@ class TestStrictMode:
         ))
         
         # Without constraints - should fail in strict mode
-        with root_task_sync(tools=["my_strict_tool"]):
+        with root_task_sync(Capability("my_strict_tool")):
             with pytest.raises(ConfigurationError, match="requires at least one constraint"):
                 my_strict_tool(data="test")
     
@@ -328,6 +329,6 @@ class TestStrictMode:
         protect_tools(tools, strict=False)
         
         # Without constraints - should work for medium risk
-        with root_task_sync(tools=["read_file"]):
+        with root_task_sync(Capability("read_file")):
             result = tools[0](path="/data/test.txt")
             assert result is not None

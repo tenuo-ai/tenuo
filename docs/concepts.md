@@ -140,8 +140,9 @@ Warrants are **bound to keypairs**. To use a warrant, you must prove you hold th
 **Root Execution Warrant**: The first execution warrant in a task chain, typically minted by the control plane. Starts at `depth=0` and can be attenuated.
 
 ```python
+# Root Execution Warrant: The first execution warrant in a task chain...
 root = Warrant.issue(
-    tools=["read_file", "query_db"],
+    capabilities=Constraints.for_tool("read_file", {}),  # or specific constraints
     keypair=control_plane_kp,
     holder=agent_kp.public_key,
     ttl_seconds=3600

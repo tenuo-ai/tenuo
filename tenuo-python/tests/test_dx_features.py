@@ -279,12 +279,13 @@ class TestDXIntegration:
     def test_secure_agent_with_root_task(self, keypair):
         """Test secure_agent tools work with root_task context."""
         from tenuo.langchain import secure_agent
+        from tenuo import Capability
         
         tools = [MockTool("search")]
         protected = secure_agent(tools, issuer_keypair=keypair)
         
         # Should work within root_task context
-        with root_task_sync(tools=["search"]):
+        with root_task_sync(Capability("search")):
             # Tool is accessible
             result = protected[0]._run(query="test")
             assert "search" in result
@@ -293,12 +294,13 @@ class TestDXIntegration:
         """Test secure_agent blocks unauthorized tool access."""
         from tenuo.langchain import secure_agent
         from tenuo.exceptions import ToolNotAuthorized
+        from tenuo import Capability
         
         tools = [MockTool("search"), MockTool("delete")]
         protected = secure_agent(tools, issuer_keypair=keypair)
         
         # Only authorize "search", not "delete"
-        with root_task_sync(tools=["search"]):
+        with root_task_sync(Capability("search")):
             # search should work
             protected[0]._run(query="test")
             

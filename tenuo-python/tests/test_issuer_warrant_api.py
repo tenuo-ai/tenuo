@@ -15,6 +15,7 @@ from tenuo import (
     Pattern,
     Exact,
     Constraints,
+    Capability,
 )
 
 
@@ -170,7 +171,7 @@ class TestDelegateMethod:
         worker_kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        with root_task_sync(tools=["read_file"], path=Pattern("/data/*")) as parent:
+        with root_task_sync(Capability("read_file", path=Pattern("/data/*"))) as parent:
             with set_signing_key_context(kp):
                 child = parent.delegate(
                     holder=worker_kp.public_key,
@@ -200,7 +201,7 @@ class TestDelegateMethod:
         worker_kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        with root_task_sync(tools=["read_file", "send_email"]) as parent:
+        with root_task_sync(Capability("read_file"), Capability("send_email")) as parent:
             with set_signing_key_context(kp):
                 child = parent.delegate(
                     holder=worker_kp.public_key,
@@ -209,7 +210,7 @@ class TestDelegateMethod:
                 
                 # Child MUST have same tools as parent
                 # This is the expected behavior for execution warrants
-                assert child.tools == parent.tools, (
+                assert sorted(child.tools) == sorted(parent.tools), (
                     "Execution warrants inherit all parent tools. "
                     "Use issue_execution() from issuer warrants to narrow tools."
                 )

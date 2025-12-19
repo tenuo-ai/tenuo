@@ -159,7 +159,7 @@ from tenuo import lockdown
 def search(query: str):
     ...
 
-@tenuo_node(tools=["search"], query="*public*")
+@tenuo_node(Capability("search"), query="*public*")
 async def researcher(state):
     # Node scope enforces: only "search" tool, query must match "*public*"
     results = await search(state["query"])  # ← Extraction happens HERE
@@ -539,7 +539,7 @@ from tenuo import lockdown, Warrant, SigningKey, Exact, set_warrant_context, set
 
 def test_extraction():
     kp = SigningKey.generate()
-    w = Warrant.issue(tools=["test"], constraints={"a": Exact(1)}, keypair=kp, ttl_seconds=300)
+    w = Warrant.issue(capabilities=Constraints.for_tool("test", {"a": Exact(1)}), keypair=kp, ttl_seconds=300)
     
     @lockdown(tool="test")
     def func(a: int, b: int = 2):

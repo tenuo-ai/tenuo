@@ -45,7 +45,7 @@ Tenuo supports two integration patterns for MCP:
 
 ```python
 from tenuo.mcp import SecureMCPClient
-from tenuo import configure, root_task, Pattern, SigningKey
+from tenuo import configure, root_task, Capability, Pattern, SigningKey
 
 # 1. Configure Tenuo
 keypair = SigningKey.generate()
@@ -57,7 +57,7 @@ async with SecureMCPClient("python", ["server.py"], register_config=True) as cli
     protected_tools = await client.get_protected_tools()
     
     # 3. Call tool with authorization
-    async with root_task(tools=["read_file"], path=Pattern("/data/*")):
+    async with root_task(Capability("read_file", path=Pattern("/data/*"))):
         result = await protected_tools["read_file"](path="/data/file.txt")
 ```
 
@@ -180,7 +180,7 @@ tools = await client.get_tools()
 ### Python Example
 
 ```python
-from tenuo import McpConfig, CompiledMcpConfig, Authorizer, SigningKey, Warrant, Pattern
+from tenuo import McpConfig, CompiledMcpConfig, Authorizer, SigningKey, Warrant, Pattern, Capability
 from tenuo import lockdown, configure, root_task_sync
 
 # 1. Configure Tenuo
@@ -201,7 +201,7 @@ def filesystem_read(path: str, maxSize: int = 1048576):
     return content
 
 # 4. Use with task scoping
-with root_task_sync(tools=["filesystem_read"], path="/var/log/*"):
+with root_task_sync(Capability("filesystem_read", path="/var/log/*")):
     # Agent calls MCP tool - Tenuo authorizes
     content = filesystem_read("/var/log/app.log", maxSize=512 * 1024)
     print(content)
@@ -316,6 +316,25 @@ async with SecureMCPClient(..., inject_warrant=True) as client:
     await tools["read_file"](path="/tmp/test.txt")
 ```
 
+### ⚠️ Interoperability Risk: Strict Schemas
+
+When `inject_warrant=True`, Tenuo injects a `_tenuo` field into the tool arguments:
+
+```python
+# Tenuo modifies the call payload:
+{
+  "path": "/data/file.txt",
+  "_tenuo": { "warrant": "...", "signature": "..." }
+}
+```
+
+If the destination MCP server uses a **strict JSON Schema** validator (e.g., explicit `additionalProperties: false`), the call will fail because `_tenuo` is not in the server's known input schema.
+
+**Mitigation**:
+1. **Configure Server**: Ensure your MCP servers are configured to allow unknown properties (this is the default in most Pydantic/Zod setups unless explicitly strict).
+2. **Update Schema**: If strict validation is required, add `_tenuo` (type: object, optional) to your tool schemas.
+```
+
 ### Manual Extraction
 
 If not using `SecureMCPClient`, you can extract constraints manually:
@@ -369,7 +388,7 @@ def filesystem_read(path: str, maxSize: int):
     # MCP server call
     return read_file_from_mcp_server(path, maxSize)
 
-with root_task_sync(tools=["filesystem_read"], path="/var/log/*"):
+with root_task_sync(Capability("filesystem_read", path="/var/log/*")):
     content = filesystem_read("/var/log/app.log", 1024)
 ```
 
@@ -477,7 +496,7 @@ MCP tools are often high-risk (filesystem, database). Use short TTLs:
 
 ```python
 warrant = Warrant.issue(
-    tools="filesystem_write",
+    capabilities=Constraints.for_tool("filesystem_write", {}),
     ttl_seconds=300,  # 5 minutes
     ...
 )

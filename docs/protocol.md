@@ -163,8 +163,8 @@ Every delegation **must narrow at least one dimension**:
 parent.attenuate().delegate_to(worker)  # NarrowingRequired error
 
 # Succeeds
-parent.attenuate().tool("read_file").delegate_to(worker)
-parent.attenuate().ttl(seconds=60).delegate_to(worker)
+parent.attenuate().with_tool("read_file").delegate_to(worker)
+parent.attenuate().ttl(60).delegate_to(worker)
 parent.attenuate().terminal().delegate_to(worker)
 ```
 

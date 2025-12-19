@@ -23,13 +23,14 @@ from typing import Any, Callable, List, Optional, TypeVar
 
 from .scoped import scoped_task
 from .decorators import get_warrant_context
+from .constraints import Capability, ensure_constraint
 
 # Type variable for node functions
 F = TypeVar('F', bound=Callable)
 
 
 def tenuo_node(
-    *,
+    *capabilities: Capability,
     tools: Optional[List[str]] = None,
     ttl: Optional[int] = None,
     **constraints: Any,
@@ -41,48 +42,33 @@ def tenuo_node(
     narrowing the warrant scope for the duration of the node execution.
     
     Args:
-        tools: List of tools this node is allowed to use
-        ttl: Optional TTL override for the scoped warrant
-        **constraints: Constraint key-value pairs
+        *capabilities: Capability objects (preferred)
+        tools: List of tools (legacy convenience)
+        ttl: Optional TTL override
+        **constraints: Constraints applied to all 'tools' (if using legacy arg)
     
     Returns:
         Decorated function with automatic scope narrowing
-    
-    Example:
-        @tenuo_node(tools=["search", "read_file"], path="/data/*")
-        async def researcher(state):
-            # Only search and read_file are allowed here
-            # path must match /data/*
-            results = await search_tool.invoke(state["query"])
-            return {"results": results}
-        
-        graph.add_node("researcher", researcher)
-    
-    Note:
-        The decorator requires a parent warrant in context. Use root_task()
-        before invoking the graph:
-        
-        with root_task_sync(tools=["search", "read_file", "write_file"]):
-            result = graph.invoke({"query": "Q3 reports"})
-    
-    Important:
-        - If the decorated function is async, use it in async context
-        - If the decorated function is sync, use it in sync context
-        - Do NOT mix async functions with sync invocation or vice versa
     """
+    # Normalize arguments to list of Capability objects
+    caps_list = list(capabilities)
+    if tools:
+        # broadcast constraints to all tools, ensuring they are wrapped
+        wrapped_constraints = {k: ensure_constraint(v) for k, v in constraints.items()}
+        for tool in tools:
+            caps_list.append(Capability(tool, **wrapped_constraints))
+            
     def decorator(fn: F) -> F:
         if asyncio.iscoroutinefunction(fn):
-            # Async function → async wrapper (strict)
             @wraps(fn)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                async with scoped_task(tools=tools, ttl=ttl, **constraints):
+                async with scoped_task(*caps_list, ttl=ttl):
                     return await fn(*args, **kwargs)
             return async_wrapper  # type: ignore
         else:
-            # Sync function → sync wrapper (strict)
             @wraps(fn)
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-                with scoped_task(tools=tools, ttl=ttl, **constraints):
+                with scoped_task(*caps_list, ttl=ttl):
                     return fn(*args, **kwargs)
             return sync_wrapper  # type: ignore
     

@@ -44,7 +44,7 @@ from tenuo_core import (  # type: ignore
     WARRANT_HEADER,
 )
 
-from .constraints import Constraints
+from .constraints import Constraints, Capability
 
 # Import Pythonic additions - exceptions map 1:1 to Rust Error variants
 from .exceptions import (
@@ -288,6 +288,7 @@ __all__ = [
     "Authorizer",
     # Constraints
     "Constraints",
+    "Capability",
     "Pattern",
     "Exact",
     "OneOf",

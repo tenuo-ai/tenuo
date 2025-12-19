@@ -93,7 +93,7 @@ Access control is binary: you have the key or you don't. Delegation needs gradie
 
 Agentic systems need graduated authority: limits that narrow as work flows across agents, and die when the work ends.
 
-A CFO doesn't hand an intern the company Amex. They issue a prepaid debig card for *this specific trip*:
+A CFO doesn't hand an intern the company Amex. They issue a prepaid debit card for *this specific trip*:
 - $500 limit
 - Travel and meals only
 - Expires Friday
@@ -109,12 +109,14 @@ That's exactly what Tenuo warrants encode:
 ```python
 # CFO-level warrant
 cfo_warrant = Warrant.issue(
-    tools=["spend", "approve", "audit"],
-    constraints={
-        "amount": Range.max_value(1_000_000),
-        "category": Pattern("*"),
-        "vendor": Pattern("*")
-    },
+    capabilities=Constraints.for_tools(
+        ["spend", "approve", "audit"],
+        {
+            "amount": Range.max_value(1_000_000),
+            "category": Pattern("*"),
+            "vendor": Pattern("*")
+        }
+    ),
     ttl_seconds=86400,
     keypair=cfo_keypair,
     holder=cfo_keypair.public_key
@@ -240,7 +242,7 @@ def read_file(path: str):
     return open(path).read()
 
 # Warrant: read_file, but ONLY /data/public/*
-async with root_task(tools=["read_file"], path=Pattern("/data/public/*")):
+async with root_task(Capability("read_file", path=Pattern("/data/public/*"))):
     
     read_file("/data/public/report.txt")  # ✓ Allowed
     

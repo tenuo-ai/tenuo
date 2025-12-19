@@ -4,39 +4,34 @@ Scoped task context managers for Tenuo Tier 1 API.
 Provides root_task() and scoped_task() for easy warrant management.
 
 Usage:
-    from tenuo import configure, root_task, scoped_task, protect_tools
+    from tenuo import configure, root_task, scoped_task, Capability, Pattern
     
     # Configure once at startup
-    configure(issuer_key=my_keypair, trusted_roots=[root_key])
+    configure(issuer_key=my_keypair, dev_mode=True)
     
-    # Protect your tools
-    tools = [read_file, send_email]
-    protect_tools(tools)
-    
-    # Use scoped authority
-    async with root_task(tools=["read_file"], path="/data/*"):
-        async with scoped_task(path="/data/reports/*"):
-            result = await agent.run(tools, "Summarize reports")
+    # Use explicit capabilities
+    async with root_task(
+        Capability("read_file", path=Pattern("/data/*")),
+        Capability("send_email", to=Pattern("*@company.com")),
+    ):
+        async with scoped_task(
+            Capability("read_file", path=Pattern("/data/reports/*"))
+        ):
+            result = await agent.run(...)
 """
 
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Any, AsyncIterator, Iterator, Union
+from typing import Optional, List, Dict, Any, AsyncIterator, Iterator
 from contextvars import Token
 
 from tenuo_core import (  # type: ignore[import-untyped]
     Warrant,
     SigningKey,
-    Pattern,
-    Exact,
-    OneOf,
-    Range,
-    Regex,
-    Wildcard,
-    NotOneOf,
 )
 
 from .config import get_config, ConfigurationError
+from .constraints import Capability
 from .decorators import (
     _warrant_context,
     _keypair_context,
@@ -46,36 +41,8 @@ from .decorators import (
 )
 from .exceptions import (
     ScopeViolation,
-    ConstraintViolation,
     MonotonicityError,
 )
-
-
-# Type alias for constraints
-Constraint = Union[Pattern, Exact, OneOf, Range, Regex, Wildcard, NotOneOf, str, int, float, List[str]]
-
-
-def _ensure_constraint(key: str, value: Any) -> Any:
-    """
-    Ensure value is a constraint object, wrapping in Exact if not.
-    
-    NO TYPE INFERENCE is performed.
-    - "foo*" is Exact("foo*"), NOT Pattern("foo*")
-    - [1, 2] is Exact([1, 2]), NOT OneOf([1, 2])
-    
-    To use broader constraints, you must explicitly construct them:
-    - Pattern("foo*")
-    - OneOf([1, 2])
-    """
-    # Already a constraint object
-    if hasattr(value, '__class__') and value.__class__.__name__ in (
-        'Pattern', 'Exact', 'OneOf', 'Range', 'NotOneOf', 'Contains', 'Subset', 'Regex', 'Wildcard', 'All', 'AnyOf', 'Not', 'CEL'
-    ):
-        return value
-    
-    # Default: Exact match
-    # We wrap everything else in Exact to be safe and explicit
-    return Exact(str(value)) if not isinstance(value, (int, float, bool)) else Exact(value)
 
 
 def _extract_pattern_value(value: Any) -> str:
@@ -378,61 +345,51 @@ class ScopedTaskBuilder:
     
     def __init__(
         self,
-        tools: Optional[List[str]],
-        constraints: Dict[str, Any],
+        capabilities_args: tuple,
         ttl: Optional[int],
     ):
-        self.tools = tools
-        self.constraints = constraints
+        self.capabilities_args = capabilities_args
         self.ttl = ttl
+        self._warrant_token: Optional[Token] = None
+        self._allowed_tools_token: Optional[Token] = None
+
     
     def preview(self) -> ScopePreview:
         """Preview the derived scope without executing."""
         parent = get_warrant_context()
         
         if parent is None:
-            return ScopePreview(
-                error="No parent warrant. Use root_task() first.",
-                tools=self.tools,
-                constraints=self.constraints,
-            )
+            return ScopePreview(error="No parent warrant. Use root_task() first.")
         
         try:
-            # Validate tools
             parent_tools = parent.tools if parent.tools else []
-            child_tools = self.tools if self.tools else parent_tools
-            
-            invalid_tools = set(child_tools) - set(parent_tools)
-            if invalid_tools and parent_tools:
-                return ScopePreview(
-                    error=f"Tools {invalid_tools} not in parent's allowlist {parent_tools}"
-                )
-            
-            # Get parent constraints
             parent_caps = parent.capabilities if hasattr(parent, 'capabilities') else {}
             
-            # Use constraints from first child tool for preview purposes
-            first_tool = child_tools[0] if child_tools else None
-            if not first_tool and parent_caps:
-                first_tool = list(parent_caps.keys())[0]
-                
-            parent_constraints = parent_caps.get(first_tool, {}) if first_tool else {}
+            child_capabilities = Capability.merge(*self.capabilities_args)
+            child_tools = list(child_capabilities.keys())
             
-            # Check containment for ALL tools to be safe
-            for tool in child_tools:
-                tool_constraints = parent_caps.get(tool, {})
-                for key, child_value in self.constraints.items():
-                     parent_value = tool_constraints.get(key)
-                     if parent_value is not None:
-                         if not _is_constraint_contained(child_value, parent_value):
-                             return ScopePreview(
-                                 error=f"Constraint '{key}': {child_value} not contained in {parent_value} for tool {tool}"
-                             )
-
-            # Compute derived constraints (using first tool's base)
-            derived_constraints = dict(parent_constraints)
-            for key, child_value in self.constraints.items():
-                derived_constraints[key] = child_value
+            # Validate all child tools exist in parent
+            invalid_tools = set(child_tools) - set(parent_tools)
+            if invalid_tools:
+                return ScopePreview(
+                    error=f"Capabilities for tools {invalid_tools} not in parent. Parent has: {parent_tools}"
+                )
+            
+            # Check containment for each tool's constraints
+            for tool, child_constraints in child_capabilities.items():
+                parent_constraints = parent_caps.get(tool, {})
+                for key, child_value in child_constraints.items():
+                    parent_value = parent_constraints.get(key)
+                    if parent_value is not None:
+                        if not _is_constraint_contained(child_value, parent_value):
+                            return ScopePreview(
+                                error=f"Constraint '{key}': {child_value} not contained in {parent_value} for tool '{tool}'"
+                            )
+            
+            # Use first tool's constraints for preview display
+            first_tool = child_tools[0] if child_tools else None
+            derived_constraints = child_capabilities.get(first_tool, {}) if first_tool else {}
+            parent_constraints_preview = parent_caps.get(first_tool, {}) if first_tool else {}
             
             # Compute TTL
             parent_ttl = None
@@ -449,7 +406,7 @@ class ScopedTaskBuilder:
                 tools=child_tools,
                 parent_tools=parent_tools,
                 constraints=derived_constraints,
-                parent_constraints=parent_constraints,
+                parent_constraints=parent_constraints_preview,
                 ttl=child_ttl,
                 parent_ttl=parent_ttl,
                 depth=parent.depth + 1,
@@ -459,11 +416,11 @@ class ScopedTaskBuilder:
     
     async def __aenter__(self) -> Warrant:
         """Enter the scoped context (async)."""
-        return await _enter_scoped_task(self.tools, self.constraints, self.ttl)
+        return self._enter()
     
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit the scoped context (async)."""
-        _exit_scoped_task()
+        self._exit()
     
     def __enter__(self) -> Warrant:
         """Enter the scoped context (sync)."""
@@ -476,152 +433,103 @@ class ScopedTaskBuilder:
             )
         except RuntimeError:
             pass
-        return _enter_scoped_task_sync(self.tools, self.constraints, self.ttl)
+        return self._enter()
     
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Exit the scoped context (sync)."""
-        _exit_scoped_task()
-
-
-class _ScopedTaskContext:
-    """Holds context tokens for proper restoration on exit."""
+        self._exit()
     
-    def __init__(self, warrant_token: Token, allowed_tools_token: Optional[Token] = None):
-        self.warrant_token = warrant_token
-        self.allowed_tools_token = allowed_tools_token
-
-
-# Stack of scoped task contexts for proper nesting
-_scoped_task_stack: List[_ScopedTaskContext] = []
-
-
-async def _enter_scoped_task(
-    tools: Optional[List[str]],
-    constraints: Dict[str, Any],
-    ttl: Optional[int],
-) -> Warrant:
-    """Enter scoped task context (async version)."""
-    return _enter_scoped_task_sync(tools, constraints, ttl)
-
-
-def _enter_scoped_task_sync(
-    tools: Optional[List[str]],
-    constraints: Dict[str, Any],
-    ttl: Optional[int],
-) -> Warrant:
-    """Enter scoped task context (sync version)."""
-    parent = get_warrant_context()
-    keypair = get_signing_key_context()
-    
-    if parent is None:
-        raise ScopeViolation(
-            "scoped_task() requires a parent warrant. "
-            "Use root_task() to create initial authority, then scoped_task() to narrow it."
-        )
-    
-    if keypair is None:
-        raise ConfigurationError("No keypair in context.")
-    
-    # Build attenuated warrant
-    builder = parent.attenuate_builder()
-    
-    # Apply tool restriction
-    current_allowed = _allowed_tools_context.get()
-    if tools:
-        # Get allowed tools from context (set by outer scoped_task) or warrant
-        if current_allowed is not None:
-            # Check against the context's allowed tools (nested scoped_task)
-            parent_tools = current_allowed
-        elif parent.tools:
-            # Fall back to warrant's tool field
-            parent_tools = parent.tools
-        else:
-            parent_tools = []
+    def _enter(self) -> Warrant:
+        """Enter scoped task context."""
+        parent = get_warrant_context()
+        keypair = get_signing_key_context()
         
-        # Check that all requested tools are in parent's allowlist
-        if parent_tools:
-            for tool in tools:
-                if tool not in parent_tools:
-                    raise ConstraintViolation(
-                        field="tools",
-                        reason=f"Tool '{tool}' not in parent's allowlist {parent_tools}",
-                        value=str(tools),
-                    )
-    
-    
-    # Identify target tools to apply constraints to
-    if tools:
-         builder.with_tools(tools)
-         target_tools = tools
-    elif current_allowed:
-         target_tools = current_allowed
-    elif parent.tools:
-         target_tools = parent.tools
-    else:
-         target_tools = []
-         
-    # Apply constraints with containment validation per tool
-    parent_caps = parent.capabilities if hasattr(parent, 'capabilities') else {}
-    
-    # If we have no target tools (e.g. implicitly all?), we should probably get them from caps keys
-    if not target_tools and parent_caps:
-        target_tools = list(parent_caps.keys())
-
-    # Prepare constraints to apply
-    inferred_constraints = {k: _ensure_constraint(k, v) for k, v in constraints.items()}
-    
-    for tool in target_tools:
-        tool_constraints = parent_caps.get(tool, {}).copy()
+        if parent is None:
+            raise ScopeViolation(
+                "scoped_task() requires a parent warrant. "
+                "Use root_task() to create initial authority, then scoped_task() to narrow it."
+            )
         
-        for key, child_value in inferred_constraints.items():
-            parent_value = tool_constraints.get(key)
-            if parent_value is not None:
-                if not _is_constraint_contained(child_value, parent_value):
-                    raise MonotonicityError(
-                        f"Constraint '{key}': '{child_value}' is not contained within "
-                        f"parent's '{parent_value}' for tool '{tool}'"
-                    )
-            tool_constraints[key] = child_value
-            
-        builder.with_capability(tool, tool_constraints)
-    
-    # Apply TTL
-    if ttl:
-        builder.with_ttl(ttl)
-    
-    # Build child warrant
-    try:
-        child = builder.delegate_to(keypair, keypair)
-    except Exception as e:
-        raise MonotonicityError(f"Failed to attenuate warrant: {e}") from e
-    
-    # Set in context and save token for restoration
-    warrant_token = _warrant_context.set(child)
-    
-    # Set allowed tools if specified (for narrowing beyond warrant.tools)
-    allowed_tools_token = None
-    if tools:
-        allowed_tools_token = _allowed_tools_context.set(tools)
-    
-    _scoped_task_stack.append(_ScopedTaskContext(warrant_token, allowed_tools_token))
-    
-    return child
+        if keypair is None:
+            raise ConfigurationError("No keypair in context.")
+        
+        if not self.capabilities_args:
+            raise ConfigurationError(
+                "scoped_task requires at least one Capability. "
+                "Example: scoped_task(Capability('read_file', path=Pattern('/data/reports/*')))"
+            )
+        
+        # Build attenuated warrant
+        builder = parent.attenuate_builder()
+        
+        parent_caps = parent.capabilities if hasattr(parent, 'capabilities') else {}
+        parent_tools = parent.tools if parent.tools else list(parent_caps.keys())
+        
+        child_capabilities = Capability.merge(*self.capabilities_args)
+        
+        # Validate all child tools exist in parent
+        invalid_tools = set(child_capabilities.keys()) - set(parent_tools)
+        if invalid_tools:
+            raise ScopeViolation(
+                f"Cannot scope to tools {invalid_tools} - not in parent warrant. "
+                f"Parent has: {parent_tools}"
+            )
+        
+        target_tools = list(child_capabilities.keys())
+        
+        # Restrict to only the specified tools
+        builder.with_tools(target_tools)
+        
+        # Validate containment and build capabilities
+        for tool, child_constraints in child_capabilities.items():
+            parent_tool_constraints = parent_caps.get(tool, {})
+            merged_constraints = dict(parent_tool_constraints)
+
+            for key, child_value in child_constraints.items():
+                parent_value = parent_tool_constraints.get(key)
+                if parent_value is not None:
+                    if not _is_constraint_contained(child_value, parent_value):
+                        raise MonotonicityError(
+                            f"Constraint '{key}': '{child_value}' is not contained within "
+                            f"parent's '{parent_value}' for tool '{tool}'"
+                        )
+                merged_constraints[key] = child_value
+
+            builder.with_capability(tool, merged_constraints)
+        
+        # Apply TTL
+        if self.ttl:
+            builder.with_ttl(self.ttl)
+        
+        # Build child warrant
+        try:
+            child = builder.delegate_to(keypair, keypair)
+        except Exception as e:
+            raise MonotonicityError(f"Failed to attenuate warrant: {e}") from e
+        
+        # Set in context and save token for restoration
+        self._warrant_token = _warrant_context.set(child)
+        self._allowed_tools_token = _allowed_tools_context.set(target_tools)
+        
+        return child
+
+    def _exit(self) -> None:
+        """Exit scoped task context."""
+        if self._warrant_token:
+            _warrant_context.reset(self._warrant_token)
+            self._warrant_token = None
+        
+        if self._allowed_tools_token:
+            _allowed_tools_context.reset(self._allowed_tools_token)
+            self._allowed_tools_token = None
 
 
-def _exit_scoped_task() -> None:
-    """Exit scoped task context."""
-    if _scoped_task_stack:
-        ctx = _scoped_task_stack.pop()
-        _warrant_context.reset(ctx.warrant_token)
-        if ctx.allowed_tools_token is not None:
-            _allowed_tools_context.reset(ctx.allowed_tools_token)
+
 
 
 def scoped_task(
-    *,
-    tools: Optional[List[str]] = None,
+    *capabilities: Capability,
     ttl: Optional[int] = None,
-    **constraints: Any,
 ) -> ScopedTaskBuilder:
     """
     Create a scoped task that attenuates the current warrant.
@@ -630,39 +538,29 @@ def scoped_task(
     Cannot mint new authority - only narrow existing authority.
     
     Args:
-        tools: Subset of parent's tools (None = inherit)
+        *capabilities: Capability objects (tools must exist in parent)
         ttl: Shorter TTL in seconds (None = inherit remaining)
-        **constraints: Additional constraints (must be contained within parent's)
     
     Returns:
         ScopedTaskBuilder that can be used as context manager or previewed
     
     Raises:
-        ScopeViolation: If no parent warrant in context
+        ScopeViolation: If no parent warrant in context or tool not in parent
         MonotonicityError: If constraints aren't contained within parent's
     
     Example:
-        async with root_task(tools=["read_file"], path="/data/*"):
-            async with scoped_task(path="/data/reports/*"):
-                # Narrower scope here
+        async with root_task(Capability("read_file", path=Pattern("/data/*"))):
+            async with scoped_task(Capability("read_file", path=Pattern("/data/reports/*"))):
                 result = await agent.run(...)
-            
-            # Preview before entering
-            scope = scoped_task(path="/data/reports/*")
-            scope.preview().print()
-            async with scope:
-                ...
     """
-    return ScopedTaskBuilder(tools, constraints, ttl)
+    return ScopedTaskBuilder(capabilities, ttl)
 
 
 @asynccontextmanager
 async def root_task(
-    *,
-    tools: List[str],
+    *capabilities: Capability,
     ttl: Optional[int] = None,
     holder_key: Optional[SigningKey] = None,
-    **constraints: Any,
 ) -> AsyncIterator[Warrant]:
     """
     Create a root warrant (explicit authority minting).
@@ -671,22 +569,22 @@ async def root_task(
     Use scoped_task() to attenuate within a root_task block.
     
     Args:
-        tools: Allowlist of tools this warrant authorizes (one tool per warrant)
+        *capabilities: Capability objects defining tool + constraints
         ttl: Time-to-live in seconds (default from configure())
         holder_key: Explicit holder keypair (default: issuer key)
-        **constraints: Constraint kwargs applied to the tool
     
     Raises:
-        ConfigurationError: If no issuer key configured
+        ConfigurationError: If no issuer key configured or no capabilities
     
     Example:
-        async with root_task(tools=["read_file"], path="/data/*") as warrant:
-            # warrant is now in context
-            result = await protected_read_file(path="/data/report.csv")
-    
-    Note:
-        In Tier 1, issuer == holder by default. For multi-process delegation,
-        provide holder_key explicitly or use Tier 2 APIs (Warrant.builder()).
+        async with root_task(
+            Capability("read_file", path=Pattern("/data/*")),
+            Capability("send_email", to=Pattern("*@company.com")),
+        ):
+            async with scoped_task(
+                Capability("read_file", path=Pattern("/data/reports/*"))
+            ):
+                result = await agent.run(...)
     """
     config = get_config()
     
@@ -696,29 +594,23 @@ async def root_task(
             "Call configure(issuer_key=...) first."
         )
     
+    if not capabilities:
+        raise ConfigurationError(
+            "root_task requires at least one Capability. "
+            "Example: root_task(Capability('read_file', path=Pattern('/data/*')))"
+        )
+    
     issuer = config.issuer_keypair
     holder = holder_key or issuer
     effective_ttl = ttl or config.default_ttl
     
-    if not tools:
-        raise ConfigurationError("root_task requires at least one tool")
-    
-    
-    # Build constraints dict
-    constraint_dict = {}
-    for key, value in constraints.items():
-        constraint_dict[key] = _ensure_constraint(key, value)
-    
-    # Issue the warrant
-    # Issue the warrant
-    capabilities = {}
-    for tool in tools:
-        capabilities[tool] = constraint_dict if constraint_dict else {}
+    # Build capabilities dict from Capability objects
+    capabilities_dict = Capability.merge(*capabilities)
 
     # Issue the warrant
     warrant = Warrant.issue(
         keypair=issuer,
-        capabilities=capabilities,
+        capabilities=capabilities_dict,
         ttl_seconds=effective_ttl,
         holder=holder.public_key if holder != issuer else None,
     )
@@ -736,11 +628,9 @@ async def root_task(
 
 @contextmanager
 def root_task_sync(
-    *,
-    tools: List[str],
+    *capabilities: Capability,
     ttl: Optional[int] = None,
     holder_key: Optional[SigningKey] = None,
-    **constraints: Any,
 ) -> Iterator[Warrant]:
     """
     Synchronous version of root_task().
@@ -748,7 +638,9 @@ def root_task_sync(
     Use this when not in an async context.
     
     Example:
-        with root_task_sync(tools=["read_file"], path="/data/*") as warrant:
+        with root_task_sync(
+            Capability("read_file", path=Pattern("/data/*")),
+        ):
             result = protected_read_file(path="/data/report.csv")
     """
     config = get_config()
@@ -759,24 +651,22 @@ def root_task_sync(
             "Call configure(issuer_key=...) first."
         )
     
+    if not capabilities:
+        raise ConfigurationError(
+            "root_task_sync requires at least one Capability. "
+            "Example: root_task_sync(Capability('read_file', path=Pattern('/data/*')))"
+        )
+    
     issuer = config.issuer_keypair
     holder = holder_key or issuer
     effective_ttl = ttl or config.default_ttl
     
-    if not tools:
-        raise ConfigurationError("root_task requires at least one tool")
-    
-    constraint_dict = {}
-    for key, value in constraints.items():
-        constraint_dict[key] = _ensure_constraint(key, value)
-    
-    capabilities = {}
-    for tool in tools:
-        capabilities[tool] = constraint_dict if constraint_dict else {}
+    # Build capabilities dict from Capability objects
+    capabilities_dict = Capability.merge(*capabilities)
     
     warrant = Warrant.issue(
         keypair=issuer,
-        capabilities=capabilities,
+        capabilities=capabilities_dict,
         ttl_seconds=effective_ttl,
         holder=holder.public_key if holder != issuer else None,
     )
@@ -797,4 +687,5 @@ __all__ = [
     "scoped_task",
     "ScopedTaskBuilder",
     "ScopePreview",
+    "Capability",
 ]

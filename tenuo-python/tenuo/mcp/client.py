@@ -41,7 +41,7 @@ class SecureMCPClient:
             tools = await client.get_tools()
             
             # Use with warrant context
-            with root_task_sync(tools=["read_file"], path="/data/*"):
+            async with root_task(Capability("read_file", path=Pattern("/data/*"))):
                 result = await client.call_tool("read_file", {"path": "/data/file.txt"})
     """
     
@@ -254,7 +254,7 @@ class SecureMCPClient:
                 )
             
             # Create protected wrapper for local authorization
-            @lockdown(tool=tool_name)
+            @lockdown(tool=tool_name, extract_args=lambda **kwargs: kwargs)
             async def _authorized_call(**kwargs):
                 return await _perform_call(kwargs)
             
@@ -344,7 +344,7 @@ async def discover_and_protect(
     
     Example:
         async with discover_and_protect("python", ["server.py"]) as tools:
-            with root_task_sync(tools=["read_file"], path="/data/*"):
+            async with root_task(Capability("read_file", path=Pattern("/data/*"))):
                 result = await tools["read_file"](path="/data/file.txt")
     """
     async with SecureMCPClient(command, args, env, config_path) as client:
