@@ -138,6 +138,7 @@ pub struct McpConfig {
     /// Configuration version
     pub version: String,
     /// Global settings
+    #[serde(default)]
     pub settings: McpSettings,
     /// Tool definitions
     /// Key: MCP Tool Name
@@ -574,5 +575,28 @@ tools:
         let warnings = compiled.validate();
         assert!(!warnings.is_empty()); // Should warn about incompatible source
         assert!(warnings[0].contains("path") || warnings[0].contains("Path"));
+    }
+
+    #[test]
+    fn test_mcp_config_minimal_without_settings() {
+        let yaml_content = r#"
+version: "1"
+tools:
+  read_file:
+    description: "Read file contents"
+    constraints:
+      path:
+        from: body
+        path: "path"
+"#;
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "{}", yaml_content).unwrap();
+        let path = file.path();
+
+        let config = McpConfig::from_file(path).unwrap();
+        assert_eq!(config.version, "1");
+        assert!(config.tools.contains_key("read_file"));
+        // settings should be default (empty trusted_issuers)
+        assert!(config.settings.trusted_issuers.is_empty());
     }
 }
