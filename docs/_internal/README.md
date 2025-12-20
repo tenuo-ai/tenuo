@@ -12,7 +12,7 @@
 | Document | Description | Status |
 |----------|-------------|--------|
 | [full-spec.md](./full-spec.md) | Complete internal specification (v2.0 - current implementation) | ✅ Reference |
-| [thi-spec.md](./thi-spec.md) | Tenuo Host Interface - stateful features (nonces, rate limits, revocation) | ✅ Specification (v0.2) |
+| [thi-spec.md](./thi-spec.md) | Tenuo Host Interface - stateful features (nonces, rate limits, revocation) | ⚠️ Conceptual (not planned) |
 | [securegraph-spec.md](./securegraph-spec.md) | SecureGraph declarative policy engine | 📋 Design (future) |
 
 ---

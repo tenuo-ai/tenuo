@@ -732,18 +732,10 @@ extensions.insert("tenuo.rate_limit", cbor_bytes);
 
 **Extension key namespaces:**
 
-- **`tenuo.*`** - Reserved for framework use. Current extensions: `tenuo.session_id`, `tenuo.agent_id` (metadata), `tenuo.nonce`, `tenuo.rate_limit`, `tenuo.revocable` (stateful, see THI spec).
+- **`tenuo.*`** - Reserved for framework use. Current extensions: `tenuo.session_id`, `tenuo.agent_id` (metadata only).
 - **User-defined** - Use reverse domain notation: `com.example.trace_id`, `org.acme.workflow_id`
 
-### Stateful Extensions
-
-Some framework extensions require host-side state enforcement (nonces, rate limits, revocation). These are defined in the **Tenuo Host Interface (THI) Specification** (`docs/_internal/thi-spec.md`).
-
-**Separation of concerns:**
-- **Wire format** (this document) - Defines extension storage mechanism and reserves `tenuo.` prefix
-- **THI spec** - Defines stateful extension semantics and enforcement
-
-Warrants with stateful extensions remain cryptographically valid but require a THI-compliant host for full enforcement. Verifiers without THI support SHOULD reject warrants with unknown `tenuo.*` extensions to fail closed.
+Verifiers SHOULD reject warrants with unknown `tenuo.*` extensions to fail closed.
 
 ---
 

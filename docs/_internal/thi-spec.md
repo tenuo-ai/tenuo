@@ -1,7 +1,11 @@
 # Tenuo Host Interface (THI) Specification
 
+> ⚠️ **Status: Conceptual Exploration — Not Planned**
+> 
+> This document explores stateful extensions that would require infrastructure dependencies (Redis, PostgreSQL). It contradicts Tenuo's core "100% offline verification" philosophy and is preserved for reference only. Most use cases are better served by short TTLs, gateway rate limiting, and PoP timestamp windows.
+
 Version: 0.2
-Status: Draft
+Status: Conceptual (not planned)
 Last Updated: 2025-12-20
 
 ---
