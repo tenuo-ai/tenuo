@@ -71,14 +71,14 @@ print("STEP 2: Orchestrator → Worker (Attenuated Warrant)")
 print("="*70)
 
 # Orchestrator creates narrow warrant for specific task
-worker_warrant = root_warrant.attenuate(
-    capabilities=Constraints.for_tool("file_operations", {
+worker_warrant = (
+    root_warrant.attenuate()
+    .with_capability("file_operations", {
         "path": Pattern("/data/reports/*"),  # Narrower path
-    }),
-    keypair=orchestrator_kp,
-    parent_keypair=control_kp,  # Parent signs the chain link
-    holder=worker_kp.public_key,
-    ttl_seconds=60  # Much shorter TTL
+    })
+    .with_holder(worker_kp.public_key)
+    .with_ttl(60)  # Much shorter TTL
+    .delegate_to(orchestrator_kp, control_kp)  # orchestrator signs, control_kp is parent
 )
 
 print("\n✓ Attenuated warrant for worker")

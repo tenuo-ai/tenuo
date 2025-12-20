@@ -53,3 +53,4 @@ coverage/
 test_failures.txt
 test_output.txt
 
+tenuo-core/check.log
