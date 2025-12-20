@@ -21,7 +21,7 @@ Tenuo is a cryptographic authorization primitive for AI agents. **Think prepaid 
 It constrains ambient identity-based permissions with task-scoped capabilities that attenuate as they delegate. Offline verification in ~27μs.
 If an agent is prompt-injected, the authority still can't escape its bounds.
 
-> **v0.1** - Early release. Cryptographic core is stable; integration APIs are evolving.
+> **v0.1.0-alpha.4** - Early release. Cryptographic core is stable; integration APIs are evolving. See [CHANGELOG](./CHANGELOG.md).
 
 ```bash
 pip install tenuo
@@ -140,7 +140,7 @@ Tenuo supports two types of warrants for separation of concerns:
 |---------|-------------|
 | **Offline verification** | No network calls, ~27μs |
 | **Holder binding (PoP)** | Stolen tokens are useless without the key |
-| **Constraint types** | `Exact`, `Pattern`, `Range`, `OneOf`, `Regex` |
+| **Constraint types** | `Exact`, `Pattern`, `Range`, `OneOf`, `Regex`, `Cidr`, `UrlPattern`, `CEL` |
 | **Monotonic attenuation** | Capabilities only shrink, never expand |
 | **Framework integrations** | LangChain, LangGraph, MCP (full client) |
 
@@ -188,13 +188,14 @@ async def reader(state):
 
 **MCP (Model Context Protocol)** _(Requires Python 3.10+)_
 ```python
-from tenuo import configure, root_task, Pattern, SigningKey, Capability
+from tenuo import configure, SigningKey
+from tenuo.mcp import SecureMCPClient
 
 # Configure Tenuo
 keypair = SigningKey.generate()
 configure(issuer_key=keypair)
 
-# Connect to MCP server
+# Connect to MCP server with automatic tool protection
 async with SecureMCPClient("python", ["mcp_server.py"]) as client:
     tools = await client.get_protected_tools()
 ```
