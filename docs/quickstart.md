@@ -68,7 +68,7 @@ warrant = (Warrant.builder()
     })
     .holder(keypair.public_key)
     .ttl(3600)
-    .build(keypair))
+    .issue(keypair))
 ```
 
 ### 2. Attenuate (Delegate with Narrower Scope)
@@ -86,7 +86,7 @@ worker_warrant = (warrant.attenuate()
         "replicas": Range.max_value(10),     # Reduced to 10 replicas
     })
     .holder(worker_keypair.public_key)
-    .build(worker_keypair, keypair))  # Child signs, parent authorizes
+    .delegate_to(worker_keypair, keypair))  # Child signs, parent authorizes
 ```
 
 ### 3. Authorize an Action
