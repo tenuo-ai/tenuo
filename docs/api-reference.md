@@ -117,7 +117,7 @@ configure(
 - Prevents "warn fatigue" in production
 - `0` = disabled (default)
 
-See [Integration Safety](./integration-safety) for detailed guide.
+See [Integration Safety](./security#integration-safety) for detailed guide.
 
 #### Errors
 

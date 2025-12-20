@@ -1,11 +1,11 @@
 ---
 title: Security
-description: Threat model, PoP requirements, best practices
+description: Threat model, PoP, integration safety, and best practices
 ---
 
 # Tenuo Security Model
 
-This page covers what Tenuo protects against, how Proof-of-Possession works, and deployment best practices.
+This page covers what Tenuo protects against, how Proof-of-Possession works, integration safety mechanisms, and deployment best practices.
 
 ## Core Security Properties
 
@@ -28,7 +28,7 @@ Warrants are **bound to keypairs**. To use a warrant, you must prove you hold th
 warrant = (root_warrant.attenuate()
     .with_capability("protected_tool", {"path": Pattern("/data/*")})
     .holder(worker_keypair.public_key)
-    .build(worker_keypair, root_keypair))
+    .delegate_to(worker_keypair, root_keypair))
 
 with set_warrant_context(warrant), set_signing_key_context(worker_keypair):
     await protected_tool(...)
@@ -68,6 +68,8 @@ cache.set(dedup_key, "1", ttl=120)  # 120s covers the ~2min window
 - Idempotent operations (replaying has no additional effect)
 - Very short-lived warrants (TTL < 2 min makes PoP window irrelevant)
 
+---
+
 ## Monotonic Attenuation
 
 Authority can only **shrink**, never expand:
@@ -80,22 +82,27 @@ Authority can only **shrink**, never expand:
 | **Depth** | `max_depth` can only decrease |
 
 ```python
-# Parent allows: capabilities={"read": path="/*", "write": path="/*", "delete": path="/*"}
-parent = Warrant.issue(
-    capabilities=Constraints.for_tools(["read", "write", "delete"], {"path": Pattern("/*")}),
-    ...
-)
+# Parent has broad capabilities
+parent = (Warrant.builder()
+    .capability("read", {"path": Pattern("/*")})
+    .capability("write", {"path": Pattern("/*")})
+    .capability("delete", {"path": Pattern("/*")})
+    .holder(keypair.public_key)
+    .ttl(3600)
+    .issue(keypair))
 
-# Child can only narrow:
-child = parent.attenuate() \
-    .with_capability("read", {"path": Pattern("/data/*")}) \
-    .build(...)
+# Child can only narrow
+child = (parent.attenuate()
+    .with_capability("read", {"path": Pattern("/data/*")})
+    .delegate_to(child_kp, keypair))
 
 # This would FAIL:
-child = parent.attenuate() \
-    .with_capability("execute", {}) \
-    .build(...)  # FAILS (parent doesn't have "execute")
+child = (parent.attenuate()
+    .with_capability("execute", {})  # FAILS (parent doesn't have "execute")
+    .delegate_to(child_kp, keypair))
 ```
+
+---
 
 ## Threat Model
 
@@ -150,88 +157,147 @@ spec:
 - Tenuo: Prevents unauthorized tool usage *through* your API
 - Network Policies: Prevents bypassing your API entirely
 
+---
+
+## Integration Safety
+
+> **The Primary Attack Surface: Integration Mistakes**
+
+Tenuo's core is cryptographically secure. But **integration bugs** are the primary attack surface:
+- Forgetting to add `@lockdown` to a tool
+- Missing `set_warrant_context()` or `root_task()`
+- Dynamic nodes without wrappers
+- Wrapper that checks tool names but skips `authorize()`
+
+### Strict Mode
+
+**Fail-closed enforcement**: Panic if a tool is called without warrant context.
+
+```python
+from tenuo import configure, SigningKey
+
+configure(
+    issuer_key=SigningKey.generate(),
+    strict_mode=True,  # Enforce warrant presence
+)
+```
+
+**Behavior:**
+
+```python
+@lockdown(tool="read_file")
+def read_file(path: str):
+    return open(path).read()
+
+# Called without warrant context
+read_file("/data/test.txt")
+# RuntimeError: [MISSING_CONTEXT] No warrant context available for tool 'read_file'.
+```
+
+**When to use:**
+- ✅ **Development/staging** - Catch integration bugs early
+- ✅ **CI/CD** - Fail tests if warrant context is missing  
+- ⚠️ **Production** - Only if you want hard failures
+
+### Warning Mode
+
+**Loud warnings**: Log and warn (but don't crash) when tools are called without warrants.
+
+```python
+configure(
+    issuer_key=SigningKey.generate(),
+    warn_on_missing_warrant=True,
+)
+```
+
+### Mode Comparison
+
+| Mode | Missing Warrant Behavior | Use Case |
+|------|-------------------------|----------|
+| **Default** | Raises `Unauthorized` | Production (minimal overhead) |
+| **`warn_on_missing_warrant=True`** | Warns + raises | Development/staging |
+| **`strict_mode=True`** | Panics with `RuntimeError` | CI/CD, strict production |
+
+### Common Integration Bugs
+
+| Bug | Detection |
+|-----|-----------|
+| Missing `@lockdown` decorator | Code review, linting |
+| Missing `set_warrant_context()` | Strict mode catches |
+| Dynamic node without wrapper | Strict mode (if tools decorated) |
+| Wrapper skips `authorize()` | Integration tests |
+
+### Async Context Sharp Edges
+
+```python
+# ✅ Works correctly
+async with root_task(Capability("search")):
+    result = await search("query")
+
+# ❌ Context not propagated (task created BEFORE context)
+task = asyncio.create_task(search("query"))
+async with root_task(Capability("search")):
+    await task  # Task runs without context
+
+# ✅ Fix: create task INSIDE context
+async with root_task(Capability("search")):
+    task = asyncio.create_task(search("query"))
+    await task
+```
+
+---
+
 ## Control Plane Deployment Models
 
-The control plane holds the **root signing key** and issues the initial warrant for each agent network. It is *not* in the data path. Ttool execution never touches it, so it can be secured with high-latency/high-security patterns without affecting agent performance.
-
-Choose a model based on your threat model.
+The control plane holds the **root signing key** and issues the initial warrant for each agent network.
 
 ### Level 1: Embedded (Development)
 
-The orchestrator holds the root key directly.
 ```python
-# Development only
 root_key = SigningKey.from_env("TENUO_ROOT_KEY")
-warrant = Warrant.issue(..., keypair=root_key)
+warrant = (Warrant.builder()...issue(root_key))
 ```
 
 | | |
 |---|---|
-| **Architecture** | Orchestrator process holds key |
 | **Pros** | Zero infrastructure overhead |
 | **Cons** | RCE on orchestrator exposes root key |
 | **Use case** | Local dev, CI/CD, non-critical agents |
 
----
-
 ### Level 2: Isolated Signing Service (Production)
 
-Root key held by a dedicated service. Orchestrator authenticates (mTLS, IAM) to request warrants.
 ```
 Orchestrator  →  gRPC/mTLS  →  Signing Service (holds key)
 ```
 
 | | |
 |---|---|
-| **Architecture** | Separate service holds key |
-| **Pros** | Key isolation; RCE can only request warrants (rate-limited, logged), not exfiltrate key |
+| **Pros** | Key isolation; RCE can only request warrants |
 | **Cons** | One additional service to run |
 | **Use case** | Production Kubernetes, standard SaaS |
 
----
-
 ### Level 3: Hardware Root of Trust (High Assurance)
 
-Root key never leaves HSM or Cloud KMS. Signing requests go to KMS API.
 ```
 Orchestrator  →  AWS KMS / GCP KMS / HSM  →  Signed warrant
 ```
 
 | | |
 |---|---|
-| **Architecture** | Cloud KMS or on-prem HSM |
 | **Pros** | Key is non-exportable; instant revocation via IAM |
-| **Cons** | ~50-100ms issuance latency (verification still ~27μs) |
-| **Use case** | FinTech, HealthTech, multi-tenant, regulated industries |
-
-> **Note:** Tenuo doesn't call KMS directly. You implement a signing service that uses KMS internally and exposes `Warrant.issue()` semantics.
+| **Cons** | ~50-100ms issuance latency |
+| **Use case** | FinTech, HealthTech, regulated industries |
 
 ---
 
-### Summary
-
-| Threat | Recommended | Why |
-|--------|-------------|-----|
-| Prompt injection | Level 2+ | Key isolated from agent memory |
-| Container breakout | Level 3 | Key in hardware/cloud provider |
-| Rogue insider | Level 3 | Audit logs in KMS, no key export |
-| Dev/test | Level 1 | Speed over security |
-
 ## Cycle Protection
 
-Tenuo prevents infinite delegation cycles through multiple layers.
+Tenuo prevents infinite delegation cycles through multiple layers:
 
-### 1. Warrant ID Tracking
-Each warrant has a unique ID. If the same ID appears twice during chain verification → fail.
-
-### 2. Depth Limits
-- `MAX_DELEGATION_DEPTH = 16` — Max delegation depth (typical chains are 3-5 levels)
-
-### 3. Monotonic Attenuation
-Even if A→B→A happens (holder cycling), each warrant is strictly weaker. The third warrant has less authority than the first.
-
-### 4. Self-Issuance Prevention
-Issuer warrants cannot grant execution capabilities to themselves.
+1. **Warrant ID Tracking**: Same ID twice → fail
+2. **Depth Limits**: `MAX_DELEGATION_DEPTH = 16`
+3. **Monotonic Attenuation**: Each warrant strictly weaker
+4. **Self-Issuance Prevention**: Issuer warrants cannot grant execution to themselves
 
 ---
 
@@ -246,55 +312,6 @@ Issuer warrants cannot grant execution capabilities to themselves.
 | PoP Timestamp Window | ~2 min | Replay attack protection |
 
 **TTL Note**: 90 days is the protocol maximum. Deployments should configure stricter limits (e.g., 24 hours for production). Default TTL is 5 minutes.
-
-## Production Deployment Security
-
-### Control Plane (`tenuo-control`)
-
-The reference control plane binary requires explicit configuration in production:
-
-| Requirement | Environment Variable | Notes |
-|-------------|---------------------|-------|
-| **Secret Key** | `TENUO_SECRET_KEY` | **Required in release builds**. Hex-encoded Ed25519 seed. If missing, the server fails to start. |
-| **Enrollment Token** | `TENUO_ENROLLMENT_TOKEN` | Shared secret for agent enrollment. Use a cryptographically random value. |
-
-> **Why fail-fast?** In debug builds, an ephemeral key is generated for convenience. In release builds, this would cause all warrants to become invalid on restart, so the server refuses to start without an explicit key.
-
-Generate a secret key:
-```bash
-openssl rand -hex 32
-```
-
-### Authorizer (`tenuo-authorizer`)
-
-The authorizer exposes unauthenticated health endpoints for Kubernetes probes:
-
-> [!WARNING]
-> **Statelessness & Replay Risk**: The provided `tenuo-authorizer` binary is stateless for infinite horizontal scaling. It does **not** implement the [optional PoP deduplication cache](#replay-protection--statelessness) by default. If your threat model requires strict replay protection within the ~2 minute window, you must modify the binary to use a shared cache (Redis/Memcached) or implement deduplication at your API gateway.
-
-| Endpoint | Purpose |
-|----------|---------|
-| `GET /health` | Liveness probe |
-| `GET /healthz` | Liveness probe (alias) |
-| `GET /ready` | Readiness probe |
-
-Configure Kubernetes probes:
-```yaml
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 9090
-  initialDelaySeconds: 5
-  periodSeconds: 10
-readinessProbe:
-  httpGet:
-    path: /ready
-    port: 9090
-  initialDelaySeconds: 5
-  periodSeconds: 10
-```
-
-**Error Sanitization**: The authorizer sanitizes error responses to prevent information leakage. Internal error details are logged but not returned to clients.
 
 ---
 
@@ -315,10 +332,10 @@ await http_client.delete(url)
 
 ```python
 # Good: 5 minute TTL
-warrant = Warrant.issue(..., ttl_seconds=300)
+warrant = (Warrant.builder()...ttl(300).issue(keypair))
 
 # Risky: 24 hour TTL
-warrant = Warrant.issue(..., ttl_seconds=86400)
+warrant = (Warrant.builder()...ttl(86400).issue(keypair))
 ```
 
 ### 3. Principle of Least Privilege
@@ -338,14 +355,29 @@ with root_task(
 ```
 
 ### 4. Separate SigningKeys per Trust Boundary
+
 - Control plane: One keypair
 - Each worker: Own keypair
 - Don't share keypairs across trust boundaries
 
+### 5. Use Strict Mode in Tests
+
+```python
+# conftest.py
+@pytest.fixture(scope="session", autouse=True)
+def tenuo_strict():
+    configure(
+        issuer_key=SigningKey.generate(),
+        dev_mode=True,
+        strict_mode=True,  # Fail tests if warrant missing
+    )
+```
+
+---
+
 ## See Also
 
 - [Enforcement Models](./enforcement) — In-process, sidecar, gateway deployment patterns
-- [Integration Safety](./integration-safety) — Fail-safe mechanisms for integration bugs 
 - [Argument Extraction](./argument-extraction) — How tool arguments are extracted and validated
 - [Protocol](./protocol) — Full protocol details
 - [Proxy Configs](./proxy-configs) — Envoy, Istio, nginx integration
