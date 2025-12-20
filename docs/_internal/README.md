@@ -13,7 +13,7 @@
 |----------|-------------|--------|
 | [full-spec.md](./full-spec.md) | Complete internal specification (v2.0 - current implementation) | ✅ Reference |
 | [thi-spec.md](./thi-spec.md) | Tenuo Host Interface - stateful features (nonces, rate limits, revocation) | ⚠️ Conceptual (not planned) |
-| [securegraph-spec.md](./securegraph-spec.md) | SecureGraph declarative policy engine | 📋 Design (future) |
+| [securegraph-spec.md](./securegraph-spec.md) | SecureGraph - declarative attenuation for LangGraph | ⚠️ Conceptual (not planned) |
 
 ---
 
@@ -48,7 +48,6 @@
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| SecureGraph | 📋 Design | Automatic attenuation for LangGraph |
 | Trust Levels | 📋 Design | Enforcement opt-in (data model exists) |
 | Multi-sig approvals | 📋 Planned | M-of-N for sensitive actions |
 | Cascading revocation | 📋 Planned | Surgical or nuclear revocation |
@@ -61,7 +60,7 @@
 
 - **Implementing features** — Reference these for implementation details
 - **Understanding design decisions** — These explain the "why"
-- **Planning future work** — SecureGraph spec is the roadmap for v0.2
+- **Historical context** — Conceptual docs show explored alternatives
 
 ## When NOT to Use These
 
