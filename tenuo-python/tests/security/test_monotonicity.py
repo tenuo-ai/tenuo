@@ -83,8 +83,9 @@ class TestMonotonicity:
             ttl_seconds=3600
         )
         
-        # Attenuate without specifying path constraint
+        # Attenuate inheriting all constraints (POLA)
         builder = parent.attenuate_builder()
+        builder.inherit_all()  # POLA: constraints inherited
         child = builder.delegate_to(keypair, keypair)
         
         print(f"  [Check] Parent capabilities: {parent.capabilities}")
@@ -190,6 +191,7 @@ class TestMonotonicity:
         print("  [Attack 28] Attempting to extend TTL from 600s to 3600s...")
         
         builder = parent.attenuate_builder()
+        builder.inherit_all()  # POLA: explicit inheritance
         builder.with_ttl(3600)  # Try to extend
         child = builder.delegate_to(keypair, keypair)
         
@@ -303,10 +305,11 @@ class TestMonotonicity:
             ttl_seconds=3600
         )
         
-        # Attenuation should narrow tools
+        # Attenuation should narrow tools (POLA: inherit_all first, then narrow)
         builder = warrant.attenuate_builder()
+        builder.inherit_all()
         builder.with_tools(["search"])
         child = builder.delegate_to(keypair, keypair)
-        
+
         assert child.tools == ["search"]
         print("  [Result] Attack 11 N/A (Tenuo doesn't support wildcard tools syntax)")

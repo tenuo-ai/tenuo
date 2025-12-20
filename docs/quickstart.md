@@ -53,7 +53,46 @@ cargo install tenuo-cli
 
 ## Python Quick Start
 
-### 1. Create a Warrant
+### Option A: Simple API (Recommended for Getting Started)
+
+The simplest way to add Tenuo to your agent:
+
+```python
+from tenuo import configure, root_task, scoped_task, protect_tools
+from tenuo import Capability, Pattern, SigningKey
+
+# 1. Configure once at startup
+configure(issuer_key=SigningKey.generate(), dev_mode=True)
+
+# 2. Wrap your existing tools
+protect_tools([read_file, send_email, query_db])
+
+# 3. Scope authority to tasks
+async with root_task(
+    Capability("read_file", path=Pattern("/data/*")),
+    Capability("send_email", to=Pattern("*@company.com")),
+):
+    # Inner scope narrows further
+    async with scoped_task(
+        Capability("read_file", path=Pattern("/data/reports/*"))
+    ):
+        result = await agent.run("Summarize Q3 reports")
+        # read_file("/data/reports/q3.pdf") → ✅ Allowed
+        # read_file("/etc/passwd") → ❌ Blocked
+        # send_email(...) → ❌ Blocked (not in inner scope)
+```
+
+**Why this works**: The `root_task` defines maximum authority. Each `scoped_task` can only narrow—never widen. Even if the agent is prompt-injected, it can't escape its bounds.
+
+For synchronous code, use `root_task_sync` and `scoped_task_sync`.
+
+---
+
+### Option B: Low-Level API (Full Control)
+
+For production deployments, explicit keypair management, or custom integrations.
+
+#### 1. Create a Warrant
 
 ```python
 from tenuo import SigningKey, Warrant, Pattern, Range
@@ -71,7 +110,9 @@ warrant = (Warrant.builder()
     .issue(keypair))
 ```
 
-### 2. Attenuate (Delegate with Narrower Scope)
+#### 2. Attenuate (Delegate with Narrower Scope)
+
+Tenuo follows the **Principle of Least Authority (POLA)**: when attenuating, the child warrant starts with NO capabilities. You must explicitly specify what you want.
 
 ```python
 from tenuo import Exact
@@ -79,7 +120,7 @@ from tenuo import Exact
 # Worker gets a narrower warrant
 worker_keypair = SigningKey.generate()
 
-# Use attenuate() for fluent delegation
+# POLA: Explicitly specify only the capabilities you want to grant
 worker_warrant = (warrant.attenuate()
     .with_capability("manage_infrastructure", {
         "cluster": Exact("staging-web"),     # Narrowed from staging-*
@@ -89,7 +130,18 @@ worker_warrant = (warrant.attenuate()
     .delegate_to(worker_keypair, keypair))  # Child signs, parent authorizes
 ```
 
-### 3. Authorize an Action
+**Alternative: Inherit all, then narrow:**
+
+```python
+# Use inherit_all() to start with all parent capabilities
+worker_warrant = (warrant.attenuate()
+    .inherit_all()                           # Start with all parent capabilities
+    .with_tools(["manage_infrastructure"])   # Keep only this tool
+    .holder(worker_keypair.public_key)
+    .build(worker_keypair, keypair))
+```
+
+#### 3. Authorize an Action
 
 ```python
 # Worker signs a Proof-of-Possession
@@ -107,7 +159,7 @@ authorized = worker_warrant.authorize(
 print(f"Authorized: {authorized}")  # True
 ```
 
-### 4. Protect Tools with Decorators
+#### 4. Protect Tools with Decorators
 
 ```python
 from tenuo import lockdown, set_warrant_context, set_signing_key_context
@@ -121,7 +173,7 @@ with set_warrant_context(warrant), set_signing_key_context(keypair):
     scale_cluster(cluster="staging-web", replicas=5)
 ```
 
-### 5. LangChain One-Liner (Recommended)
+#### 5. LangChain Integration
 
 ```python
 from tenuo import SigningKey, root_task_sync, Capability
@@ -136,7 +188,7 @@ with root_task_sync(Capability("search"), Capability("calculator")):
     result = executor.invoke({"input": "What is 2+2?"})
 ```
 
-### 6. LangGraph Drop-in
+#### 6. LangGraph Drop-in
 
 ```python
 from tenuo.langgraph import TenuoToolNode

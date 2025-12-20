@@ -46,6 +46,7 @@ pub mod error;
 pub mod extraction;
 pub mod gateway_config;
 pub mod mcp;
+pub mod payload;
 pub mod planes;
 pub mod revocation;
 pub mod revocation_manager;
@@ -101,19 +102,26 @@ pub use diff::{
 ///
 /// Individual warrants can set a lower limit via `max_depth` in the payload.
 /// This constant prevents DoS attacks from extremely deep chains.
-pub const MAX_DELEGATION_DEPTH: u32 = 64;
+///
+/// 16 levels is sufficient for any realistic delegation hierarchy:
+/// Control Plane → Orchestrator → Worker → Sub-agent (4 levels typical).
+pub const MAX_DELEGATION_DEPTH: u32 = 16;
 
-/// Maximum length of the embedded issuer chain.
+/// Protocol-level maximum TTL (90 days).
 ///
-/// This limits the number of ChainLink entries in a warrant's issuer_chain,
-/// preventing stack overflow attacks during verification and limiting memory
-/// consumption from maliciously large warrants.
+/// This is the absolute ceiling enforced by the protocol. Deployments can
+/// (and should) configure stricter limits via `Authorizer::with_max_ttl()`.
 ///
-/// This is separate from MAX_DELEGATION_DEPTH because:
-/// - issuer_chain length affects memory/CPU during verification
-/// - Chains longer than 8 rarely make sense in practice
-/// - Attackers could craft warrants with huge issuer_chains
-pub const MAX_ISSUER_CHAIN_LENGTH: usize = 8;
+/// 90 days aligns with industry precedent (e.g., Let's Encrypt certificates)
+/// while being generous enough for edge cases. Most warrants should use
+/// much shorter TTLs (minutes to hours).
+pub const MAX_WARRANT_TTL_SECS: u64 = 90 * 24 * 60 * 60; // 7,776,000 seconds
+
+/// Default TTL when not specified (5 minutes).
+///
+/// Short by design - task-scoped warrants should expire quickly.
+/// Expand only as needed for specific use cases.
+pub const DEFAULT_WARRANT_TTL_SECS: u64 = 5 * 60; // 300 seconds
 
 /// Context string for Ed25519 signatures (prevents cross-protocol attacks).
 ///

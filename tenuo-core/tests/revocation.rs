@@ -70,8 +70,10 @@ fn test_chain_revocation_child() {
         .build(&root_kp)
         .unwrap();
 
+    // POLA: inherit_all
     let child = root
         .attenuate()
+        .inherit_all()
         .authorized_holder(child_kp.public_key())
         .build(&child_kp, &root_kp)
         .unwrap();
@@ -113,8 +115,10 @@ fn test_chain_revocation_parent_cascades() {
         .build(&root_kp)
         .unwrap();
 
+    // POLA: inherit_all
     let child = root
         .attenuate()
+        .inherit_all()
         .authorized_holder(child_kp.public_key())
         .build(&child_kp, &root_kp)
         .unwrap();

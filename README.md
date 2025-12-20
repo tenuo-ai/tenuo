@@ -30,9 +30,32 @@ pip install tenuo
 ## Quick Start
 
 ```python
-from tenuo import SigningKey, Warrant, Constraints, Pattern, lockdown, set_warrant_context, set_signing_key_context
+from tenuo import configure, root_task, scoped_task, protect_tools
+from tenuo import Capability, Pattern, SigningKey
 
-# Issue a warrant with fluent builder
+# 1. Configure once at startup
+configure(issuer_key=SigningKey.generate(), dev_mode=True)
+
+# 2. Wrap your tools
+protect_tools([read_file, send_email, query_db])
+
+# 3. Scope authority to tasks
+async with root_task(Capability("read_file", path=Pattern("/data/*"))):
+    async with scoped_task(Capability("read_file", path=Pattern("/data/reports/*"))):
+        result = await agent.run("Summarize Q3 reports")
+        # read_file("/data/reports/q3.pdf") → ✅ Allowed
+        # read_file("/etc/passwd") → ❌ Blocked
+        # send_email(...) → ❌ Blocked (not in scope)
+```
+
+The agent can be prompt-injected. The authorization layer doesn't care. The warrant says `/data/reports/*`. The request says `/etc/passwd`. **Denied.**
+
+<details>
+<summary><strong>Low-level API (for production)</strong></summary>
+
+```python
+from tenuo import SigningKey, Warrant, Pattern, lockdown, set_warrant_context, set_signing_key_context
+
 keypair = SigningKey.generate()
 warrant = (Warrant.builder()
     .capability("read_file", {"path": Pattern("/data/*")})
@@ -40,18 +63,16 @@ warrant = (Warrant.builder()
     .ttl(300)
     .issue(keypair))
 
-# Protect a tool
 @lockdown(tool="read_file")
 def read_file(path: str):
     return open(path).read()
 
-# Execute with authorization
 with set_warrant_context(warrant), set_signing_key_context(keypair):
     read_file("/data/report.txt")  # Allowed
     read_file("/etc/passwd")       # Blocked
 ```
 
-The agent can be prompt-injected. The authorization layer doesn't care. The warrant says `/data/*`. The request says `/etc/passwd`. Denied.
+</details>
 
 **[Read the launch post →](https://tenuo.ai/blog/introducing-tenuo)**
 
@@ -157,8 +178,12 @@ secure_tools = protect_tools([search_tool, file_tool])
 
 **LangGraph**
 ```python
-from tenuo.langgraph import TenuoToolNode
-tool_node = TenuoToolNode(tools)
+from tenuo.langgraph import tenuo_node
+from tenuo import Capability, Pattern
+
+@tenuo_node(Capability("read_file", path=Pattern("/tmp/*")))
+async def reader(state):
+    return {"content": open("/tmp/demo.txt").read()}
 ```
 
 **MCP (Model Context Protocol)** _(Requires Python 3.10+)_

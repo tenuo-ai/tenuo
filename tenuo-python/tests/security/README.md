@@ -66,10 +66,9 @@ pytest tests/security/ -m integration_responsibility -v
 5. **No re-widening** - Cannot attenuate back to Wildcard
 
 ### ✅ Delegation Limits
-1. **Depth limit** - MAX_DELEGATION_DEPTH (64) enforced
-2. **Chain limit** - MAX_ISSUER_CHAIN_LENGTH (8) enforced
-3. **Terminal warrants** - Cannot delegate further
-4. **Issuer/Execution separation** - Each type has distinct capabilities
+1. **Depth limit** - MAX_DELEGATION_DEPTH (16) enforced
+2. **Terminal warrants** - Cannot delegate further (max_depth=0)
+3. **Issuer/Execution separation** - Each type has distinct capabilities
 
 ### ✅ Extraction Security
 1. **Default inclusion** - Default parameter values always checked

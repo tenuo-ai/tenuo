@@ -43,7 +43,7 @@ fn test_duplicate_approvals_rejected() {
 
     // Create ONE approval
     let args = HashMap::new();
-    let request_hash = compute_request_hash(warrant.id().as_str(), "critical_op", &args, None);
+    let request_hash = compute_request_hash(&warrant.id().to_string(), "critical_op", &args, None);
 
     let now = Utc::now();
     let expires = now + chrono::Duration::hours(1);

@@ -597,8 +597,8 @@ impl DelegationReceipt {
 /// Compute diff between two warrants.
 pub fn compute_diff(parent: &Warrant, child: &Warrant) -> DelegationDiff {
     // Tools
-    let parent_tools = parent.tools().map(|t| t.to_vec()).unwrap_or_default();
-    let child_tools = child.tools().map(|t| t.to_vec()).unwrap_or_default();
+    let parent_tools = parent.tools();
+    let child_tools = child.tools();
     let tools = ToolsDiff::new(parent_tools, child_tools);
 
     // Capabilities

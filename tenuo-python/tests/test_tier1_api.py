@@ -522,7 +522,9 @@ def test_scoped_task_narrowing(setup_config):
             
             # Valid narrowing
             async with scoped_task(Capability("read_file", path=Pattern("/data/reports/*"))) as child:
-                assert child.parent_id == parent.id
+                import hashlib
+                ph = hashlib.sha256(parent.payload_bytes).hexdigest()
+                assert child.parent_hash == ph
                 assert child.depth == parent.depth + 1
     
     asyncio.run(_test())

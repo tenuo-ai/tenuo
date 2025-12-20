@@ -76,10 +76,14 @@ def test_chain_reconstruction_simple():
     class SimpleStore:
         def __init__(self):
             self.warrants = {}
-        def get(self, warrant_id: str):
-            return self.warrants.get(warrant_id)
+        def get(self, key: str):
+            return self.warrants.get(key)
         def put(self, warrant: Warrant):
             self.warrants[warrant.id] = warrant
+            # Also index by payload hash for chain reconstruction
+            import hashlib
+            h = hashlib.sha256(warrant.payload_bytes).hexdigest()
+            self.warrants[h] = warrant
     
     store = SimpleStore()
     store.put(root)
@@ -127,11 +131,14 @@ def test_chain_reconstruction_with_store():
         def __init__(self):
             self.warrants = {}
         
-        def get(self, warrant_id: str):
-            return self.warrants.get(warrant_id)
+        def get(self, key: str):
+            return self.warrants.get(key)
         
         def put(self, warrant: Warrant):
             self.warrants[warrant.id] = warrant
+            import hashlib
+            h = hashlib.sha256(warrant.payload_bytes).hexdigest()
+            self.warrants[h] = warrant
     
     store = MockWarrantStore()
     store.put(root)

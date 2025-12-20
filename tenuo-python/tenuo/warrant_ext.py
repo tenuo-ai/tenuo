@@ -154,12 +154,14 @@ def _warrant_delegate(
         raise RuntimeError("No active keypair context. Use inside a task context or set_keypair_context().")
     
     builder = self.attenuate_builder()
+    
+    # POLA: Start by inheriting all parent capabilities, then narrow
+    builder.inherit_all()
 
     # Narrow tools if specified
     if tools is not None:
         builder.with_tools(tools)
 
-    # Apply constraints
     # Apply constraints (merge logic)
     # We must fetch current capabilities, apply new constraints to target tools, and set them back.
     from tenuo.constraints import ensure_constraint
@@ -222,14 +224,18 @@ def get_chain_with_diffs(
     if warrant_store is None:
         return [_create_minimal_diff(current)]
     
-    # Trace back using parent_id
-    while current.parent_id is not None:
-        parent_id = current.parent_id
+    # Trace back using parent_hash
+    while current.parent_hash is not None:
+        parent_hash = current.parent_hash
         
         # Try to fetch parent from store
         parent: Optional[Warrant] = None
         try:
-            parent = warrant_store.get(parent_id)
+            if hasattr(warrant_store, "get_by_hash"):
+                parent = warrant_store.get_by_hash(parent_hash)
+            else:
+                # Fallback: assume store might support hash lookup via get
+                parent = warrant_store.get(parent_hash)
         except (AttributeError, KeyError, TypeError):
             break
         
@@ -249,7 +255,7 @@ def _create_minimal_diff(child: Warrant) -> Dict[str, Any]:
     from datetime import datetime, timezone
     
     return {
-        "parent_warrant_id": child.parent_id or "unknown",
+        "parent_warrant_hash": child.parent_hash or "unknown",
         "child_warrant_id": child.id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "depth": {"parent": child.depth - 1, "child": child.depth},

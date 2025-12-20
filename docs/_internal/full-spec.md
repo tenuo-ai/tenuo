@@ -1,7 +1,8 @@
 # Tenuo: Capability-Based Authorization for AI Agents
 
-**Version:** 1.0  
-**Status:** Specification
+**Version:** 2.0 
+**Status:** Current Implementation Specification
+**Last updated**: 2025-12-19 
 
 ---
 
@@ -48,7 +49,7 @@ An agent processing Task A and Task B has the same permissions for both, even if
 
 AI agents hold capabilities (read files, send emails, query databases). They process untrusted input (user queries, emails, web pages). Prompt injection manipulates intent, causing agents to abuse legitimate capabilities.
 
-Traditional security fails. The agent IS authenticated. The agent IS authorized. The attack isn't unauthorized access - it's an authorized party doing unauthorized things.
+Traditional security fails. The agent IS authenticated. The agent IS authorized. The attack isn't unauthorized access: it's an authorized party doing unauthorized things.
 
 ---
 
@@ -257,15 +258,24 @@ Both types enforce monotonicity:
 - **Issuers**: Can only issue within `issuable_tools` and `trust_ceiling`
 - **Executors**: Can only attenuate (narrow), never expand
 
-### Wire Structure
+### Wire Structure (Current Implementation)
+
+**CBOR Envelope Format:**
+
+```
+Envelope: [envelope_version: int, payload_bytes: bytes, signature: bytes]
+```
+
+**Payload Structure (CBOR map with integer keys):**
 
 ```
 Warrant {
-    id: string (uuid)
+    id: bytes[16] (UUID)
     type: "execution" | "issuer"
     version: int
     
     holder: PublicKey (mandatory - PoP binding)
+    issuer: PublicKey
     
     # Execution warrants
     capabilities: Map<string, ConstraintSet>  # tool_name → constraints
@@ -278,103 +288,110 @@ Warrant {
     
     # Common
     trust_level: TrustLevel (optional)
-    issued_at: timestamp
-    expires_at: timestamp
+    issued_at: timestamp (seconds since epoch)
+    expires_at: timestamp (seconds since epoch)
     max_depth: int
-    session_id: string (audit only)
+    depth: int (current delegation depth, 0 = root)
     
-    # Chain (embedded for self-contained verification)
-    issuer_chain: ChainLink[]
-    signature: bytes
-}
-
-ChainLink {
-    # Identity
-    issuer_id: string (warrant ID of issuer)
-    issuer_pubkey: PublicKey
+    # Linkage (for WarrantStack verification)
+    parent_hash: bytes[32] | null  # SHA256 of parent's payload_bytes, null for root
     
-    # Embedded scope (for attenuation verification without fetching)
-    issuer_type: "execution" | "issuer"
-    issuer_capabilities: Map<string, ConstraintSet> | null  # For execution warrants
-    issuer_issuable_tools: string[] | null                   # For issuer warrants
-    issuer_trust: TrustLevel | null
-    issuer_expires_at: timestamp
-    issuer_max_depth: int
-    
-    # Signature over child warrant
-    signature: bytes
+    # Extensions (optional metadata)
+    extensions: Map<string, bytes>  # e.g., {"session_id": b"sess_123"}
 }
 ```
 
-### Issuer Scope Integrity
+**Key Changes from Earlier Designs:**
+- ❌ Removed `issuer_chain` (embedded chain links)
+- ✅ Added `parent_hash` for chain linkage
+- ✅ Added `depth` field for delegation tracking
+- ✅ Changed serialization from JSON to CBOR
+- ✅ Signature preimage: `b"tenuo-warrant-v1" || envelope_version || payload_bytes`
 
-**The embedded scope is computed by the issuer, not claimed by the child.**
+### WarrantStack Model
 
-When delegation occurs:
-1. Issuer reads their own warrant's scope
-2. Issuer embeds that scope into the ChainLink
-3. Issuer signs the child warrant (which includes the ChainLink)
-4. Child receives the warrant with embedded scope
+Delegation chains are verified using a **WarrantStack** - an ordered array of warrants from root to leaf:
 
-The child **cannot influence** what scope is embedded - they only receive the signed result.
+```
+WarrantStack {
+    ancestors: Warrant[]  # [root, ..., parent]
+    target: Warrant       # The leaf warrant being verified
+}
+```
+
+Each warrant links to its parent via `parent_hash` (SHA256 of parent's `payload_bytes`). Verification walks the stack, checking:
+1. Signature validity
+2. Parent hash linkage
+3. Monotonic attenuation
+4. Chain anchors at trusted root
+
+### Chain Verification (WarrantStack Model)
+
+**Current implementation uses WarrantStack** - an ordered array of warrants passed to the verifier:
 
 ```python
-def delegate_to(self, holder: PublicKey) -> Warrant:
-    # Issuer (self) computes their own scope
-    my_scope = ChainLink(
-        issuer_id=self._parent.id,
-        issuer_pubkey=self._keypair.public_key(),
-        issuer_type=self._parent.type,
-        issuer_tools=self._parent.tool,           # From MY warrant
-        issuer_constraints=self._parent.constraints,  # From MY warrant
-        issuer_trust=self._parent.trust_level,    # From MY warrant
-        issuer_expires_at=self._parent.expires_at,
-        issuer_max_depth=self._parent.max_depth,
-    )
+def verify_chain(stack: list[Warrant], trusted_roots: set[PublicKey]) -> bool:
+    """
+    Verify warrant chain using WarrantStack.
+    Stack must be ordered: [root, ..., parent, target]
+    """
+    if not stack:
+        raise ChainVerificationFailed("Empty stack")
     
-    # Build child warrant with embedded scope
-    child = Warrant(
-        holder=holder,
-        tool=self._tools,
-        constraints=self._constraints,
-        issuer_chain=[my_scope] + self._parent.issuer_chain,
-        # ...
-    )
+    root = stack[0]
     
-    # Sign the child warrant (scope included in signature)
-    my_scope.signature = self._keypair.sign(serialize_for_signing(child))
+    # 1. Root must be from trusted issuer
+    if root.issuer not in trusted_roots:
+        raise ChainNotAnchored("Root issuer not trusted")
     
-    return child
+    # 2. Walk the chain
+    for i in range(1, len(stack)):
+        parent = stack[i - 1]
+        child = stack[i]
+        
+        # 2a. Verify parent_hash linkage
+        expected_hash = sha256(parent.payload_bytes)
+        if child.parent_hash != expected_hash:
+            raise ChainVerificationFailed("parent_hash mismatch")
+        
+        # 2b. Verify child's signature
+        child.verify_signature()
+        
+        # 2c. Verify monotonic attenuation
+        verify_attenuation(parent, child)
+        
+        # 2d. Verify depth increments correctly
+        if child.depth != parent.depth + 1:
+            raise ChainVerificationFailed(f"Invalid depth: expected {parent.depth + 1}, got {child.depth}")
+    
+    return True
 ```
 
-**Verification enforces this:** The signature covers the child warrant bytes. If someone tries to tamper with the embedded scope, signature verification fails.
+**Key differences from embedded chain model:**
+- ✅ Stack is provided by caller (not embedded in warrant)
+- ✅ Parent linkage via `parent_hash` (SHA256 of payload bytes)
+- ✅ Depth field tracks delegation level
+- ✅ Smaller warrant size (no embedded chain)
+- ✅ Verification still 100% offline (stack is self-contained)
 
-### Chain Limits
+### Chain Limits (Current)
 
-Embedding issuer scope in each link enables offline verification but can bloat warrants. Hard limits prevent abuse.
-
-**Mandatory Limits (fail closed):**
-
-| Limit                         | Default | Max   | Rationale                           |
-|-------------------------------|---------|-------|-------------------------------------|
-| `max_chain_length`            | 8       | 16    | Deeper chains indicate design smell |
-| `max_warrant_bytes`           | 16 KB   | 64 KB | Prevents unbounded growth           |
-| `max_tools_per_warrant`       | 32      | 128   | Encourages least-privilege          |
-| `max_constraints_per_warrant` | 32      | 128   | Keeps verification fast             |
+| Limit | Value | Purpose |
+|-------|-------|---------|
+| `MAX_DELEGATION_DEPTH` | 16 | Max warrant depth (typical chains are 3-5 levels) |
+| `MAX_WARRANT_SIZE` | 64 KB | Prevents memory exhaustion |
+| `MAX_STACK_SIZE` | 64 KB | Max WarrantStack encoded size |
 
 ```python
 # Verification rejects warrants exceeding limits
-def verify_limits(warrant: Warrant) -> None:
-    if len(warrant.issuer_chain) > config.max_chain_length:
-        raise ChainTooLong(
-            f"Chain length {len(warrant.issuer_chain)} exceeds max {config.max_chain_length}"
-        )
+def verify_limits(stack: list[Warrant]) -> None:
+    if len(stack) > MAX_DELEGATION_DEPTH:
+        raise ChainTooLong(f"Stack depth {len(stack)} exceeds max {MAX_DELEGATION_DEPTH}")
     
-    warrant_bytes = len(serialize_for_signing(warrant))
-    if warrant_bytes > config.max_warrant_bytes:
-        raise WarrantTooLarge(
-            f"Warrant size {warrant_bytes} bytes exceeds max {config.max_warrant_bytes}"
-        )
+    for warrant in stack:
+        warrant_bytes = len(cbor_encode(warrant))
+        if warrant_bytes > MAX_WARRANT_SIZE:
+            raise WarrantTooLarge(f"Warrant size {warrant_bytes} bytes exceeds max {MAX_WARRANT_SIZE}")
 ```
 
 **Encouraging Terminal Warrants:**
@@ -395,42 +412,6 @@ The required narrowing rule + terminal default means most real-world chains are 
 
 ```
 Root (SYSTEM) -> Gateway (depth=3) -> Orchestrator (depth=2) -> Worker (depth=0, terminal)
-```
-
-### Self-Contained Verification
-
-Warrants embed their entire chain. Verification requires **no external fetches**.
-
-Each `ChainLink` contains enough information about the issuer to verify:
-1. The issuer had authority to delegate (tools, constraints, trust)
-2. The child is a valid attenuation of the issuer's scope
-3. The signature is valid
-
-```python
-def verify_chain(warrant: Warrant, trusted_roots: set[PublicKey]) -> bool:
-    """
-    Verify warrant chain using ONLY embedded data.
-    No external fetches required.
-    """
-    current_scope = warrant  # Start with this warrant's scope
-    
-    for link in warrant.issuer_chain:
-        # Verify signature FIRST
-        child_bytes = serialize_for_signing(current_scope)
-        if not link.issuer_pubkey.verify(child_bytes, link.signature):
-            raise ChainVerificationFailed(f"Invalid signature from {link.issuer_id}")
-        
-        # Check if we've reached a trusted root
-        if link.issuer_pubkey in trusted_roots:
-            return True
-        
-        # Verify attenuation using embedded issuer scope
-        verify_attenuation_from_link(link, current_scope)
-        
-        # Move up the chain
-        current_scope = link  # Link contains issuer's scope
-    
-    raise ChainNotAnchored("Chain does not reach trusted root")
 ```
 
 ### Attenuation Verification (Monotonicity)
@@ -802,6 +783,42 @@ path:
   pattern: "/data/${state.project_id}/*"
   validate: "^[a-zA-Z0-9_-]+$"  # Validate before interpolation
 ```
+
+### Reserved Namespaces
+
+#### Tool Name Prefix: `tenuo:`
+
+Tool names starting with `tenuo:` are **reserved for framework use** and will be rejected during warrant creation:
+
+```python
+# ❌ This will fail
+warrant = Warrant.builder().capability("tenuo:revoke", {})
+# Error: Reserved tool namespace
+
+# ✅ Use your own namespace
+warrant = Warrant.builder().capability("my_app:revoke", {})
+```
+
+**Rationale**: Prevents collision between user-defined tools and future framework features.
+
+**Potential future uses**:
+- `tenuo:revoke` — Inline revocation directive
+- `tenuo:require_mfa` — Enforcement flag
+- `tenuo:audit` — Force audit log entry
+
+#### Extension Key Prefix: `tenuo.`
+
+Extension keys starting with `tenuo.` are reserved for Tenuo metadata:
+
+```python
+# Reserved for framework
+warrant.extension("tenuo.session_id", b"sess_123")  # Framework use only
+
+# ✅ Use reverse domain notation for your extensions
+warrant.extension("com.example.trace_id", b"abc123")
+```
+
+**Recommended format**: Reverse domain notation (`com.example.key_name`)
 
 ---
 
@@ -1410,14 +1427,14 @@ def verify_pop(
 
 ### Wire Format
 
-```json
-{
-  "signed_bytes": "base64(...)",
-  "signature": "base64(64 bytes Ed25519 signature)"
-}
-```
+The wire format is defined in `docs/wire-format-spec.md` (authoritative). Summary:
 
-The `signed_bytes` field contains the **exact bytes** the client signed. The verifier does NOT parse this until after signature verification succeeds.
+- Encoding: CBOR envelope (`SignedWarrant` array) containing `envelope_version`, raw `payload` bytes, and `Signature`.
+- Payload: CBOR map with integer keys, `payload version = 1`, deterministic CBOR required (canonical ordering, shortest ints, no indefinite-length items).
+- Signature preimage: `b"tenuo-warrant-v1" || envelope_version || payload_bytes`; verify against raw payload bytes before deserializing.
+- Algorithm agility: `PublicKey` and `Signature` carry an algorithm ID; unknown or mismatched IDs/lengths are rejected.
+- Unknown fields: reject unknown payload keys unless under `extensions`; preserve but do not interpret extension keys/values.
+- Size limits: enforce the warrant and per-field limits defined in the wire-format spec.
 
 ### Why This Works
 

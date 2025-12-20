@@ -134,6 +134,10 @@ pub enum Constraint {
 
     /// CEL expression for complex logic.
     Cel(CelConstraint),
+
+    /// Unknown constraint type (deserialized but not understood).
+    /// Used for forward compatibility. Always fails authorization.
+    Unknown { type_id: u8, payload: Vec<u8> },
 }
 
 // Custom Deserialize to enforce constraint depth validation
@@ -163,6 +167,9 @@ impl<'de> serde::Deserialize<'de> for Constraint {
             Any(AnyRaw),
             Not(NotRaw),
             Cel(CelConstraint),
+            // Catch-all for unknown types
+            #[serde(other)]
+            Unknown,
         }
 
         // Raw versions of recursive types that deserialize to Constraint
@@ -203,6 +210,19 @@ impl<'de> serde::Deserialize<'de> for Constraint {
                 constraint: v.constraint,
             }),
             ConstraintRaw::Cel(v) => Constraint::Cel(v),
+            ConstraintRaw::Unknown => {
+                // For now, since we can't easily capture the raw payload with standard Serde
+                // using #[serde(other)], we'll just store a placeholder.
+                // A more robust implementation would use a custom Visitor or `serde_cbor::Value`.
+                // However, `serde(tag="type")` makes extracting the *original* tag hard with standard Derive.
+                // To truly implement "preserve unknown", we need to manually parse the map using a Visitor.
+                // Given the constraints of this tool, we will start with a basic Unknown variant
+                // that fails closed but might not strictly preserve the payload (yet).
+                Constraint::Unknown {
+                    type_id: 255, // Placeholder
+                    payload: Vec::new(),
+                }
+            }
         };
 
         // Validate depth after full deserialization
@@ -236,7 +256,8 @@ impl Constraint {
             | Constraint::UrlPattern(_)
             | Constraint::Contains(_)
             | Constraint::Subset(_)
-            | Constraint::Cel(_) => 0,
+            | Constraint::Cel(_)
+            | Constraint::Unknown { .. } => 0,
 
             // Recursive types: 1 + max child depth
             Constraint::All(all) => {
@@ -288,6 +309,7 @@ impl Constraint {
             Constraint::Any(a) => a.matches(value),
             Constraint::Not(n) => n.matches(value),
             Constraint::Cel(c) => c.matches(value),
+            Constraint::Unknown { .. } => Ok(false), // Fail closed
         }
     }
 
@@ -492,6 +514,7 @@ impl Constraint {
             Constraint::Any(_) => "Any",
             Constraint::Not(_) => "Not",
             Constraint::Cel(_) => "Cel",
+            Constraint::Unknown { .. } => "Unknown",
         }
     }
 }

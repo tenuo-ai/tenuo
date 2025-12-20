@@ -234,9 +234,10 @@ class TestAttenuateBuilderToolSelection:
             ttl_seconds=3600,
         )
         
-        # Narrow to just read_file
+        # POLA: inherit_all first, then narrow
         builder = parent.attenuate_builder()
-        builder.with_tools(["read_file"])
+        builder.inherit_all()  # Start with all parent capabilities
+        builder.with_tools(["read_file"])  # Then narrow
         builder.with_holder(worker_kp.public_key)
         child = builder.delegate_to(kp, kp)
         
@@ -258,7 +259,9 @@ class TestAttenuateBuilderToolSelection:
             ttl_seconds=3600,
         )
         
+        # POLA: inherit_all first, then narrow
         builder = parent.attenuate_builder()
+        builder.inherit_all()
         builder.with_tool("send_email")  # Narrow to just send_email
         builder.with_holder(worker_kp.public_key)
         child = builder.delegate_to(kp, kp)
@@ -278,7 +281,9 @@ class TestAttenuateBuilderToolSelection:
             ttl_seconds=3600,
         )
         
+        # POLA: inherit_all first, then narrow
         builder = parent.attenuate_builder()
+        builder.inherit_all()
         builder.with_tools(["read_file", "delete_file"])  # delete_file not in parent!
         builder.with_holder(worker_kp.public_key)
         
@@ -342,8 +347,9 @@ class TestTerminalWarrants:
             ttl_seconds=3600,
         )
         
-        # Create terminal child
+        # POLA: inherit_all, then make terminal
         builder = parent.attenuate_builder()
+        builder.inherit_all()
         builder.terminal()  # Make it terminal
         builder.with_holder(worker_kp.public_key)
         child = builder.delegate_to(kp, kp)
@@ -365,8 +371,9 @@ class TestTerminalWarrants:
             ttl_seconds=3600,
         )
         
-        # Create terminal child
+        # POLA: inherit_all, then make terminal
         builder = parent.attenuate_builder()
+        builder.inherit_all()
         builder.terminal()
         builder.with_holder(worker_kp.public_key)
         terminal = builder.delegate_to(kp, kp)
@@ -375,6 +382,7 @@ class TestTerminalWarrants:
         
         # Try to delegate from terminal warrant - should fail
         builder2 = terminal.attenuate_builder()
+        builder2.inherit_all()
         builder2.with_holder(another_kp.public_key)
         
         with pytest.raises(Exception) as exc_info:

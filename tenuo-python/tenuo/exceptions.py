@@ -460,10 +460,10 @@ class BrokenChain(ChainError):
     error_code = "broken_chain"
     rust_variant = "ChainVerificationFailed"
     
-    def __init__(self, child_parent_id: str, expected_parent_id: str):
+    def __init__(self, child_parent_hash: str, expected_hash: str):
         super().__init__(
-            f"Chain broken: child references '{child_parent_id}' but parent is '{expected_parent_id}'",
-            {"child_parent_id": child_parent_id, "expected_parent_id": expected_parent_id}
+            f"Chain broken: child references parent_hash '{child_parent_hash}' but parent payload hash is '{expected_hash}'",
+            {"child_parent_hash": child_parent_hash, "expected_hash": expected_hash}
         )
 
 

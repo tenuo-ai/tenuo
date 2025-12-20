@@ -24,10 +24,11 @@ This page covers what Tenuo protects against, how Proof-of-Possession works, and
 Warrants are **bound to keypairs**. To use a warrant, you must prove you hold the private key.
 
 ```python
-warrant = root_warrant.attenuate(
-    holder=worker_keypair.public_key,
-    ...
-)
+# Attenuate with explicit capability (POLA)
+warrant = (root_warrant.attenuate()
+    .with_capability("protected_tool", {"path": Pattern("/data/*")})
+    .holder(worker_keypair.public_key)
+    .build(worker_keypair, root_keypair))
 
 with set_warrant_context(warrant), set_signing_key_context(worker_keypair):
     await protected_tool(...)
@@ -223,9 +224,8 @@ Tenuo prevents infinite delegation cycles through multiple layers.
 ### 1. Warrant ID Tracking
 Each warrant has a unique ID. If the same ID appears twice during chain verification → fail.
 
-### 2. Chain Length Limits
-- `MAX_ISSUER_CHAIN_LENGTH = 8` — Max embedded chain links
-- `MAX_DELEGATION_DEPTH = 64` — Max payload depth counter
+### 2. Depth Limits
+- `MAX_DELEGATION_DEPTH = 16` — Max delegation depth (typical chains are 3-5 levels)
 
 ### 3. Monotonic Attenuation
 Even if A→B→A happens (holder cycling), each warrant is strictly weaker. The third warrant has less authority than the first.
@@ -239,11 +239,13 @@ Issuer warrants cannot grant execution capabilities to themselves.
 
 | Limit | Value | Purpose |
 |-------|-------|---------|
-| `MAX_DELEGATION_DEPTH` | 64 | Prevents unbounded delegation chains |
-| `MAX_ISSUER_CHAIN_LENGTH` | 8 | Prevents DoS during verification |
-| `MAX_WARRANT_SIZE` | 1 MB | Prevents memory exhaustion |
+| `MAX_DELEGATION_DEPTH` | 16 | Prevents unbounded delegation chains |
+| `MAX_WARRANT_TTL_SECS` | 90 days | Protocol ceiling for warrant lifetime |
+| `MAX_WARRANT_SIZE` | 64 KB | Prevents memory exhaustion |
 | `MAX_CONSTRAINT_DEPTH` | 16 | Prevents stack overflow in nested constraints |
 | PoP Timestamp Window | ~2 min | Replay attack protection |
+
+**TTL Note**: 90 days is the protocol maximum. Deployments should configure stricter limits (e.g., 24 hours for production). Default TTL is 5 minutes.
 
 ## Production Deployment Security
 

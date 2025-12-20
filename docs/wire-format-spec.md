@@ -1,8 +1,8 @@
 # Tenuo Wire Format Specification
 
-Version: 0.1  
+Version: 0.1
 Status: Final Draft  
-Last Updated: 2024-12-19
+Last Updated: 2025-12-19
 
 ---
 
@@ -47,8 +47,18 @@ pub struct WarrantPayload {
     pub issued_at: u64,
     pub expires_at: u64,
     pub max_depth: u8,
-    pub parent: Option<WarrantId>,
+    pub parent_hash: Option<[u8; 32]>,          // SHA256(parent payload bytes)
     pub extensions: BTreeMap<String, Vec<u8>>,
+    
+    // Auth-critical optional fields (validated like core fields)
+    pub issuable_tools: Option<Vec<String>>,
+    pub trust_ceiling: Option<TrustLevel>,
+    pub max_issue_depth: Option<u32>,
+    pub constraint_bounds: Option<ConstraintSet>,
+    pub required_approvers: Option<Vec<PublicKey>>,
+    pub min_approvals: Option<u32>,
+    pub trust_level: Option<TrustLevel>,
+    pub depth: u32,
 }
 ```
 
@@ -73,7 +83,7 @@ Signer                            Verifier
   |                     verify(new_bytes, sig)
 ```
 
-If the verifier's CBOR library serializes differently than the signer's (different integer widths, array encodings, map ordering), the bytes differ and verification fails. This is a canonicalization bug — subtle, hard to debug, breaks cross-language compatibility.
+If the verifier's CBOR library serializes differently than the signer's (different integer widths, array encodings, map ordering), the bytes differ and verification fails. This is a canonicalization bug. It is subtle, hard to debug, breaks cross-language compatibility.
 
 **The envelope solution:**
 
@@ -116,9 +126,11 @@ fn verify(
     //    (minimal parsing, just enough to get the key)
     let issuer = extract_issuer(&signed.payload)?;
     
-    // 3. Verify signature against raw bytes
+    // 3. Verify signature over the domain-separated preimage
+    //    preimage = b"tenuo-warrant-v1" || envelope_version || payload_bytes
     //    NO re-serialization — use payload bytes directly
-    issuer.verify(&signed.payload, &signed.signature)?;
+    let preimage = build_preimage(signed.envelope_version, &signed.payload);
+    issuer.verify(&preimage, &signed.signature)?;
     
     // 4. Now safe to deserialize (signature is valid)
     let payload: WarrantPayload = cbor::deserialize(&signed.payload)?;
@@ -134,6 +146,17 @@ fn verify(
     Ok(payload)
 }
 ```
+
+### Chain attenuation rules
+
+When a warrant is derived from a parent warrant (attenuation):
+
+- The child `issuer` MUST equal the parent `holder`.
+- The child `depth` MUST be `parent.depth + 1`.
+- The child `depth` MUST NOT exceed `max_depth` (or `parent.max_depth` if inherited).
+- `expires_at` MUST be ≤ the parent’s `expires_at`.
+- Each tool’s constraints MUST be equal to or stricter than the parent for that tool (per-constraint semantics define “stricter”; equality is allowed).
+- The child `parent_hash` field MUST equal `SHA256(parent payload bytes)`; missing or mismatched parents MUST be rejected.
 
 ---
 
@@ -172,7 +195,7 @@ pub struct WarrantPayload {
 | `1` | Current, process normally |
 | `2+` | Unknown, reject (until verifier upgraded) |
 
-**Rationale:** Envelope version lets you change the crypto wrapper (e.g., switch to COSE_Sign1) without touching payload parsing. Payload version lets you change warrant semantics without touching signature verification.
+**Rationale:** Envelope version lets us change the crypto wrapper (e.g., switch to COSE_Sign1) without touching payload parsing. Payload version lets us change warrant semantics without touching signature verification.
 
 ---
 
@@ -208,6 +231,13 @@ pub struct Signature {
     pub bytes: Vec<u8>,
 }
 ```
+
+### Signature domain separation
+
+- The signature preimage MUST be `b"tenuo-warrant-v1" || envelope_version || payload_bytes`.
+- Algorithms that support contexts (e.g., Ed25519ctx/Ed25519ph) MUST use the context string `tenuo-warrant-v1`.
+- Verifiers MUST reject signatures that omit the required domain separation or that use a different context.
+- Verification step: reconstruct the preimage from the received `envelope_version` and raw `payload` bytes; verify the signature against that exact preimage before deserializing.
 
 **Validation rules:**
 
@@ -274,7 +304,18 @@ pub enum ConstraintType {
     Range = 3,
     OneOf = 4,
     Regex = 5,
-    // Future standard types: 6-127
+    FloatRange = 6,
+    NotOneOf = 7,
+    Cidr = 8,
+    UrlPattern = 9,
+    Contains = 10,
+    Subset = 11,
+    All = 12,
+    Any = 13,
+    Not = 14,
+    Cel = 15,
+    Wildcard = 16,
+    // Future standard types: 17-127
     
     // Experimental / private use (128-255)
     // See "Constraint Type Ranges" below
@@ -292,12 +333,48 @@ pub enum Constraint {
         min: Option<i64>,
         max: Option<i64>,
     },
+
+    /// Floating-point range (inclusive), finite only
+    FloatRange {
+        min: Option<f64>,
+        max: Option<f64>,
+    },
     
     /// Value must be in list
     OneOf(Vec<String>),
     
     /// Regular expression match
     Regex(String),
+
+    /// Value must NOT be in excluded set
+    NotOneOf(Vec<String>),
+
+    /// IP/network must be within CIDR
+    Cidr(String),
+
+    /// URL must match pattern (scheme/host/path)
+    UrlPattern(String),
+
+    /// List must contain all listed values
+    Contains(Vec<String>),
+
+    /// List must be a subset of allowed values
+    Subset(Vec<String>),
+
+    /// All nested constraints must pass (AND)
+    All(Vec<Constraint>),
+
+    /// At least one nested constraint must pass (OR)
+    Any(Vec<Constraint>),
+
+    /// Negation (NOT) of a constraint
+    Not(Box<Constraint>),
+
+    /// CEL expression (must return bool)
+    Cel(String),
+
+    /// Wildcard (matches anything)
+    Wildcard,
     
     /// Unknown constraint type (deserialized but not understood)
     Unknown {
@@ -306,6 +383,36 @@ pub enum Constraint {
     },
 }
 ```
+
+**Wire type IDs and serialization (standard 1–127):**
+
+| ID | Type | Serialization shape | Notes |
+|----|------|---------------------|-------|
+| 1 | Exact | string | Exact value match |
+| 2 | Pattern | string | Glob (`*`, `?`, `**`) |
+| 3 | Range | map {min?: i64, max?: i64} | Inclusive integer bounds |
+| 4 | OneOf | array<string> | Allowed set |
+| 5 | Regex | string | Pattern as string |
+| 6 | FloatRange | map {min?: f64, max?: f64} | Inclusive, finite floats |
+| 7 | NotOneOf | array<string> | Excluded set |
+| 8 | Cidr | string | CIDR notation |
+| 9 | UrlPattern | string | URL pattern (scheme/host/path) |
+| 10 | Contains | array<string> | List must contain all |
+| 11 | Subset | array<string> | List must be subset of allowed |
+| 12 | All | array<Constraint> | AND of children |
+| 13 | Any | array<Constraint> | OR of children |
+| 14 | Not | Constraint | Negation of child |
+| 15 | Cel | string | CEL expression, must return bool |
+| 16 | Wildcard | null/empty | Matches anything |
+
+**Attenuation semantics:** For containment/attenuation rules (what “stricter” means), see `docs/constraints.md` (Attenuation Compatibility Matrix). Minimal reminders for some types:
+- `NotOneOf`: child must exclude >= parent’s exclusions (never remove exclusions).
+- `Contains`: child must require a superset of parent’s required elements.
+- `Subset`: child’s allowed set must be ⊆ parent’s allowed set.
+- `All`: child may add more clauses; existing clauses must not be weakened.
+- `Any`: child may remove clauses; remaining clauses must not be weakened.
+- `Not`: negation of a stricter constraint remains stricter only if the inner constraint is stricter.
+- `Cel`: child must conjoin with parent (logical AND); never replace/loosen parent expression.
 
 ### Constraint Type Ranges
 
@@ -338,6 +445,7 @@ impl Constraint {
             Self::Exact(expected) => value.as_str() == Some(expected),
             Self::Pattern(pattern) => glob_match(pattern, value),
             Self::Range { min, max } => check_range(value, *min, *max),
+            Self::FloatRange { min, max } => check_float_range(value, *min, *max),
             Self::OneOf(allowed) => allowed.contains(&value.to_string()),
             Self::Regex(pattern) => regex_match(pattern, value),
             
@@ -357,13 +465,19 @@ impl Constraint {
 | Strip unknown | Breaks signature — payload was signed with them |
 | **Fail closed** | ✓ Safe and forward-compatible |
 
-**Deployment scenario:**
+### Numeric constraint domains
 
-1. v0.2 adds `CIDR` constraint (type ID = 6)
-2. Issuer creates warrant with `CIDR("10.0.0.0/8")`
-3. Old verifier (v0.1) sees type ID 6, deserializes as `Unknown`
+- `Range` uses signed integers (`i64`), inclusive bounds.  
+- `FloatRange` uses finite `f64`, inclusive bounds. NaN and infinite values are invalid.  
+- Use `FloatRange` for non-integer domains; avoid mixing integers into `FloatRange` to prevent rounding ambiguity.
+
+**Deployment scenario (example):**
+
+1. v0.2 adds a new constraint type `GeoFence` (type ID = 17)
+2. Issuer creates warrant with `GeoFence("us-east-1")`
+3. Old verifier (v0.1) sees type ID 17, deserializes as `Unknown`
 4. Authorization check fails (safe default)
-5. Old verifier upgraded to v0.2, now understands CIDR
+5. Old verifier upgraded to v0.2, now understands `GeoFence`
 6. Authorization check passes
 
 ---
@@ -492,8 +606,6 @@ impl WarrantPayload {
 |--------|---------|
 | `tenuo:` | Future framework features |
 
-**Note:** The `_` prefix is *not* reserved. Applications may freely use tool names starting with underscore (e.g., `_internal_helper`, `_debug_tool`).
-
 **Potential future uses:**
 
 - `tenuo:revoke` — Inline revocation directive
@@ -527,6 +639,27 @@ CBOR Array [
 ]
 ```
 
+**PublicKey:**
+
+```
+CBOR Array [
+    0: algorithm (u8),
+    1: bytes (bytes),
+]
+```
+
+**WarrantId:**
+
+```
+CBOR Bytes (length = 16)  // UUID bytes, big-endian
+```
+
+**WarrantType:**
+
+```
+CBOR Unsigned integer (u8)  // enumerated as in code
+```
+
 **Payload (WarrantPayload):**
 
 ```
@@ -540,17 +673,33 @@ CBOR Map {
     6: issued_at (u64),
     7: expires_at (u64),
     8: max_depth (u8),
-    9: parent (bytes, 16, optional),
+    9: parent_hash (bytes, optional)  // SHA256(parent payload bytes)
     10: extensions (map<string, bytes>),
+
+    // Auth-critical additional fields (validated like core fields)
+    11: issuable_tools (array<string>, optional),
+    12: trust_ceiling (u8 enum, optional),
+    13: max_issue_depth (u32, optional),
+    14: constraint_bounds (constraint_set, optional),
+    15: required_approvers (array<public_key>, optional),
+    16: min_approvals (u32, optional),
+    17: trust_level (u8 enum, optional),
+    18: depth (u32, default=0),
 }
 ```
+
+**Metadata (not auth-critical):**
+
+- `session_id`, `agent_id` are carried in `extensions` under reserved keys: `tenuo.session_id`, `tenuo.agent_id`.
 
 **Rules:**
 
 1. Envelope uses array (fixed field order)
 2. Payload uses map with integer keys (allows sparse fields)
 3. `BTreeMap` for deterministic key ordering within maps
-4. Unknown fields at end of payload map are ignored but preserved in signature
+4. Unknown payload keys MUST be rejected unless they are under `extensions`
+5. Duplicate map keys are invalid and MUST be rejected
+6. Deterministic CBOR (RFC 8949) MUST be used: no indefinite-length items; canonical map key ordering; shortest-length integer encodings
 
 **Why CBOR:**
 
@@ -560,9 +709,77 @@ CBOR Map {
 - Wide language support
 - Used by COSE, WebAuthn, FIDO2
 
+### Extension Value Encoding
+
+Extension values MUST be CBOR-encoded. The outer `extensions` map uses string keys and byte values, where each value is a CBOR-encoded structure.
+
+**Example:**
+```rust
+// Extension definition
+struct RateLimitExtension {
+    limit: u64,
+    window_secs: u64,
+    scope: u8,
+}
+
+// Encoding
+let ext = RateLimitExtension { limit: 5, window_secs: 60, scope: 0 };
+let cbor_bytes = cbor::encode(&ext)?;
+
+// Storage in warrant
+extensions.insert("tenuo.rate_limit", cbor_bytes);
+```
+
+**Extension key namespaces:**
+
+- **`tenuo.*`** - Reserved for framework use. Current extensions: `tenuo.session_id`, `tenuo.agent_id` (metadata), `tenuo.nonce`, `tenuo.rate_limit`, `tenuo.revocable` (stateful, see THI spec).
+- **User-defined** - Use reverse domain notation: `com.example.trace_id`, `org.acme.workflow_id`
+
+### Stateful Extensions
+
+Some framework extensions require host-side state enforcement (nonces, rate limits, revocation). These are defined in the **Tenuo Host Interface (THI) Specification** (`docs/_internal/thi-spec.md`).
+
+**Separation of concerns:**
+- **Wire format** (this document) - Defines extension storage mechanism and reserves `tenuo.` prefix
+- **THI spec** - Defines stateful extension semantics and enforcement
+
+Warrants with stateful extensions remain cryptographically valid but require a THI-compliant host for full enforcement. Verifiers without THI support SHOULD reject warrants with unknown `tenuo.*` extensions to fail closed.
+
 ---
 
-## 11. Base64 Encoding
+## 11. Warrant Stack (Transport)
+
+For transport/storage of a warrant and its ancestry, use a `WarrantStack`:
+
+```
+CBOR Array [
+    0: target (SignedWarrant),
+    1: ancestors (array<SignedWarrant>), // ordered parent → root (immediate parent first)
+]
+```
+
+**Ancestor ordering:** `ancestors[0]` MUST be the immediate parent of `target`; `ancestors[N-1]` MUST be the root (or closest trusted root).
+
+### Verification (stack)
+
+1. **Check limits:** `ancestors.len()` MUST NOT exceed `MAX_CHAIN_DEPTH`; total encoded size of the stack MUST NOT exceed 64 KB.  
+2. **Verify leaf:** verify `target` signature; set `current = target`.  
+3. **Walk ancestors in order (parent → root):**  
+   - If `current.payload.parent_hash` is None → stop (root).  
+   - The next ancestor in the list MUST match `current`’s parent: `SHA256(ancestor.payload_bytes) == current.parent_hash`.  
+   - Verify ancestor signature.  
+   - Verify linkage: `current.payload.issuer == ancestor.payload.holder`.  
+   - Set `current = ancestor`.  
+4. **Root trust:** the final `current` MUST be signed by a trusted root key.  
+5. Unknown, duplicate, missing, or out-of-order ancestors MUST fail verification.
+
+**Hash binding:** The parent pointer is content-addressed. The hash is over the raw payload bytes (the same deterministic CBOR bytes that are signed), not the envelope bytes.
+
+**Trusted roots:** Verification ends when the final ancestor is signed by a configured trusted root public key (exact key bytes/fingerprint; implementation-defined list).
+
+---
+
+## 12. Base64 Encoding
 
 When warrants are transmitted in text contexts (HTTP headers, JSON, logs), use:
 
@@ -587,7 +804,7 @@ let signed_warrant: SignedWarrant = cbor::deserialize(&wire_bytes)?;
 
 ---
 
-## 12. Size Limits
+## 13. Size Limits
 
 | Limit | Value | Rationale |
 |-------|-------|-----------|
@@ -596,15 +813,18 @@ let signed_warrant: SignedWarrant = cbor::deserialize(&wire_bytes)?;
 | Max constraints per tool | 64 | Practical limit |
 | Max extension keys | 64 | Practical limit |
 | Max extension value size | 8 KB | Prevents abuse |
-| Max chain depth | 64 | Prevents DoS in verification |
+| Max chain depth | 16 | Prevents DoS; typical chains are 3-5 levels |
+| Max TTL | 90 days | Protocol ceiling; deployments can enforce stricter |
 | Max tool name length | 256 bytes | Practical limit |
 | Max constraint value length | 4 KB | Practical limit |
 
 Verifiers must reject warrants exceeding these limits before full parsing.
 
+**WarrantStack size:** The combined encoded size of a warrant plus its ancestors (see Section 11) MUST NOT exceed 64 KB.
+
 ---
 
-## 13. Version Negotiation (Network Protocols)
+## 14. Version Negotiation (Network Protocols)
 
 > **Scope:** This section applies only to network protocols (sidecar, gateway, MCP proxy). Standalone warrant verification uses the version fields embedded in the warrant itself — there is no negotiation.
 
@@ -641,18 +861,18 @@ Client                          Server
 | Algorithm agility | `PublicKey { algorithm, bytes }` | Ed25519 (1) |
 | Timestamps | `u64` | Unix seconds |
 | Tool-scoped constraints | `BTreeMap<String, ConstraintSet>` | ✓ |
-| Standard constraints | Type IDs 1–127 | ✓ |
+| Standard constraints | Type IDs 1–127 (incl. FloatRange) | ✓ |
 | Experimental constraints | Type IDs 128–255 | Fail closed |
 | Unknown constraints | `Constraint::Unknown` → fails | ✓ |
 | Extensions | `BTreeMap<String, Vec<u8>>` | `{}` |
 | Reserved namespace | `tenuo:*` only | Rejected |
 | Serialization | CBOR | ✓ |
 | Text encoding | Base64 URL-safe, no padding | ✓ |
+| Parent pointer | `parent_hash = SHA256(payload_bytes)` | ✓ |
+| Transport | `WarrantStack` (parent → root) | ✓ |
 
 ---
 
 ## Changelog
 
 - **0.1** — Initial specification
-- **0.1.1** — Added envelope pattern, timestamp precision, size limits
-- **0.1.2** — Removed `_` from reserved prefixes; added experimental constraint range (128–255); clarified version negotiation scope

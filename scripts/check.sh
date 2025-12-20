@@ -59,7 +59,7 @@ cargo test --test security
 cargo test --test cel_stdlib
 cargo test --test revocation
 cargo test --test parental_revocation
-cargo test --test repro_object_extraction
+cargo test --test test_object_extraction
 cargo test --test red_team
 # Note: enrollment_flow requires network access, skipped locally
 cd ..

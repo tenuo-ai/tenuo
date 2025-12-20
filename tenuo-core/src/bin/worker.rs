@@ -544,7 +544,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Compute the request hash that will be approved (includes holder for theft protection)
             let request_hash = compute_request_hash(
-                sensitive_warrant.id().as_str(),
+                &sensitive_warrant.id().to_string(),
                 "manage_infrastructure",
                 &args_no_approval,
                 Some(sensitive_warrant.authorized_holder()),

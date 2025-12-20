@@ -53,7 +53,13 @@ fn demo_kubernetes_upgrade_delegation_chain() {
         .unwrap();
 
     assert_eq!(orchestrator_warrant.depth(), 1);
-    assert_eq!(orchestrator_warrant.parent_id(), Some(root_warrant.id()));
+    {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(root_warrant.payload_bytes());
+        let root_hash: [u8; 32] = hasher.finalize().into();
+        assert_eq!(orchestrator_warrant.parent_hash(), Some(&root_hash));
+    }
 
     // Step 3: Worker attenuates to specific cluster
     // Note: In this demo, worker binds to itself or a sub-worker.
@@ -69,7 +75,13 @@ fn demo_kubernetes_upgrade_delegation_chain() {
         .unwrap();
 
     assert_eq!(worker_warrant.depth(), 2);
-    assert_eq!(worker_warrant.parent_id(), Some(orchestrator_warrant.id()));
+    {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(orchestrator_warrant.payload_bytes());
+        let orchestrator_hash: [u8; 32] = hasher.finalize().into();
+        assert_eq!(worker_warrant.parent_hash(), Some(&orchestrator_hash));
+    }
 
     // Verify worker can upgrade staging-web
     let mut args = HashMap::new();
@@ -248,7 +260,7 @@ fn demo_http_transport() {
         "Verification failed: {:?}",
         verify_result.err()
     );
-    assert_eq!(received.tools(), Some(vec!["query_database".to_string()]));
+    assert_eq!(received.tools(), vec!["query_database".to_string()]);
     assert_eq!(received.session_id(), Some("session_abc123"));
 
     // Authorize a query
@@ -308,15 +320,16 @@ fn demo_session_binding() {
 
     // Different warrants for different sessions
     assert_ne!(
-        session_1_warrant.id().as_str(),
-        session_2_warrant.id().as_str()
+        session_1_warrant.id().to_string(),
+        session_2_warrant.id().to_string()
     );
     assert_eq!(session_1_warrant.session_id(), Some("session_001"));
     assert_eq!(session_2_warrant.session_id(), Some("session_002"));
 
-    // Session is preserved through attenuation
+    // Session is preserved through attenuation (POLA: inherit_all)
     let attenuated = session_1_warrant
         .attenuate()
+        .inherit_all()
         .authorized_holder(kp.public_key())
         .build(&kp, &kp)
         .unwrap();
@@ -372,27 +385,20 @@ fn demo_audit_chain_reconstruction() {
         .unwrap();
 
     // Reconstruct the chain from the leaf
-    let mut chain = vec![level3.id().to_string()];
-    let mut current_parent = level3.parent_id();
-
-    // Walk back through the chain (in real system, would fetch warrants by ID)
-    let warrant_map: HashMap<String, &Warrant> = [
-        (root.id().to_string(), &root),
-        (level1.id().to_string(), &level1),
-        (level2.id().to_string(), &level2),
-    ]
-    .into_iter()
-    .collect();
-
-    while let Some(parent_id) = current_parent {
-        chain.push(parent_id.to_string());
-        current_parent = warrant_map
-            .get(parent_id.as_str())
-            .and_then(|w| w.parent_id());
+    // Verify chain linkage via hashes
+    let chain_warrants = [&level3, &level2, &level1, &root];
+    for (i, w) in chain_warrants.iter().enumerate() {
+        if i + 1 < chain_warrants.len() {
+            let parent = chain_warrants[i + 1];
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(parent.payload_bytes());
+            let parent_hash: [u8; 32] = hasher.finalize().into();
+            assert_eq!(w.parent_hash(), Some(&parent_hash));
+        } else {
+            assert!(w.is_root());
+        }
     }
-
-    // Chain should have 4 warrants
-    assert_eq!(chain.len(), 4);
 
     // Verify depth increases along the chain
     assert_eq!(root.depth(), 0);

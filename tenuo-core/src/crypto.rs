@@ -188,6 +188,8 @@ pub fn verify_batch(items: &[(&PublicKey, &[u8], &Signature)]) -> Result<()> {
         .map_err(|e| Error::SignatureInvalid(format!("batch verification failed: {}", e)))
 }
 
+const ED25519_ALG_ID: u8 = 1;
+
 impl Serialize for PublicKey {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
@@ -200,7 +202,12 @@ impl Serialize for PublicKey {
                 bytes,
             ))
         } else {
-            serializer.serialize_bytes(&bytes)
+            // Wire format: [algorithm, bytes]
+            use serde::ser::SerializeTuple;
+            let mut tup = serializer.serialize_tuple(2)?;
+            tup.serialize_element(&ED25519_ALG_ID)?;
+            tup.serialize_element(&serde_bytes::Bytes::new(&bytes))?;
+            tup.end()
         }
     }
 }
@@ -220,11 +227,43 @@ impl<'de> Deserialize<'de> for PublicKey {
                 .map_err(|_| serde::de::Error::custom("invalid public key length"))?;
             PublicKey::from_bytes(&arr).map_err(serde::de::Error::custom)
         } else {
-            let bytes: Vec<u8> = serde_bytes::deserialize(deserializer)?;
-            let arr: [u8; 32] = bytes
-                .try_into()
-                .map_err(|_| serde::de::Error::custom("invalid public key length"))?;
-            PublicKey::from_bytes(&arr).map_err(serde::de::Error::custom)
+            struct PublicKeyVisitor;
+
+            impl<'de> serde::de::Visitor<'de> for PublicKeyVisitor {
+                type Value = PublicKey;
+
+                fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    formatter.write_str("a public key array [algo, bytes]")
+                }
+
+                fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Self::Value, A::Error>
+                where
+                    A: serde::de::SeqAccess<'de>,
+                {
+                    let alg: u8 = seq
+                        .next_element()?
+                        .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+
+                    if alg != ED25519_ALG_ID {
+                        return Err(serde::de::Error::custom(format!(
+                            "unsupported algorithm id: {}",
+                            alg
+                        )));
+                    }
+
+                    let bytes: Vec<u8> = seq
+                        .next_element()?
+                        .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+
+                    let arr: [u8; 32] = bytes
+                        .try_into()
+                        .map_err(|_| serde::de::Error::custom("invalid public key length"))?;
+
+                    PublicKey::from_bytes(&arr).map_err(serde::de::Error::custom)
+                }
+            }
+
+            deserializer.deserialize_tuple(2, PublicKeyVisitor)
         }
     }
 }
@@ -260,7 +299,12 @@ impl Serialize for Signature {
                 bytes,
             ))
         } else {
-            serializer.serialize_bytes(&bytes)
+            // Wire format: [algorithm, bytes]
+            use serde::ser::SerializeTuple;
+            let mut tup = serializer.serialize_tuple(2)?;
+            tup.serialize_element(&ED25519_ALG_ID)?;
+            tup.serialize_element(&serde_bytes::Bytes::new(&bytes))?;
+            tup.end()
         }
     }
 }
@@ -280,11 +324,43 @@ impl<'de> Deserialize<'de> for Signature {
                 .map_err(|_| serde::de::Error::custom("invalid signature length"))?;
             Signature::from_bytes(&arr).map_err(serde::de::Error::custom)
         } else {
-            let bytes: Vec<u8> = serde_bytes::deserialize(deserializer)?;
-            let arr: [u8; 64] = bytes
-                .try_into()
-                .map_err(|_| serde::de::Error::custom("invalid signature length"))?;
-            Signature::from_bytes(&arr).map_err(serde::de::Error::custom)
+            struct SignatureVisitor;
+
+            impl<'de> serde::de::Visitor<'de> for SignatureVisitor {
+                type Value = Signature;
+
+                fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    formatter.write_str("a signature array [algo, bytes]")
+                }
+
+                fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Self::Value, A::Error>
+                where
+                    A: serde::de::SeqAccess<'de>,
+                {
+                    let alg: u8 = seq
+                        .next_element()?
+                        .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+
+                    if alg != ED25519_ALG_ID {
+                        return Err(serde::de::Error::custom(format!(
+                            "unsupported algorithm id: {}",
+                            alg
+                        )));
+                    }
+
+                    let bytes: Vec<u8> = seq
+                        .next_element()?
+                        .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+
+                    let arr: [u8; 64] = bytes
+                        .try_into()
+                        .map_err(|_| serde::de::Error::custom("invalid signature length"))?;
+
+                    Signature::from_bytes(&arr).map_err(serde::de::Error::custom)
+                }
+            }
+
+            deserializer.deserialize_tuple(2, SignatureVisitor)
         }
     }
 }

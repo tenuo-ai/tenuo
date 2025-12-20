@@ -615,13 +615,16 @@
                     <div class="code-dot"></div>
                     <div class="code-dot"></div>
                 </div>
-                <pre class="code-content"><span class="keyword">from</span> tenuo <span class="keyword">import</span> <span class="function">root_task</span>, <span class="function">scoped_task</span>, <span class="function">protect_tools</span>, <span class="function">Capability</span>, <span class="function">Pattern</span>
+                <pre class="code-content"><span class="keyword">from</span> tenuo <span class="keyword">import</span> <span class="function">configure</span>, <span class="function">root_task</span>, <span class="function">scoped_task</span>, <span class="function">protect_tools</span>
+<span class="keyword">from</span> tenuo <span class="keyword">import</span> <span class="function">Capability</span>, <span class="function">Pattern</span>, <span class="function">SigningKey</span>
 
-<span class="comment"># Wrap your tools once</span>
-tools = [read_file, send_email, query_db]
-<span class="function">protect_tools</span>(tools)
+<span class="comment"># 1. Configure once at startup</span>
+<span class="function">configure</span>(issuer_key=<span class="function">SigningKey</span>.generate(), dev_mode=<span class="keyword">True</span>)
 
-<span class="comment"># 3. Even if the agent is compromised, damage is contained</span>
+<span class="comment"># 2. Wrap your tools</span>
+<span class="function">protect_tools</span>([read_file, send_email, query_db])
+
+<span class="comment"># 3. Scope authority to tasks — damage is contained</span>
 <span class="keyword">async with</span> <span class="function">root_task</span>(<span class="function">Capability</span>(<span class="string">"read_file"</span>, path=<span class="function">Pattern</span>(<span class="string">"/data/*"</span>))):
     <span class="keyword">async with</span> <span class="function">scoped_task</span>(<span class="function">Capability</span>(<span class="string">"read_file"</span>, path=<span class="function">Pattern</span>(<span class="string">"/data/reports/*"</span>))):
         result = <span class="keyword">await</span> agent.run(<span class="string">"Summarize Q3 reports"</span>)</pre>

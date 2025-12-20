@@ -24,6 +24,7 @@ from tenuo import (
     root_task,
     Pattern,
     Range,
+    Capability,
 )
 from tenuo.mcp import SecureMCPClient, MCP_AVAILABLE
 
@@ -82,9 +83,7 @@ async def main():
             print(f"   ✓ Created test file: {test_file}")
             
             async with root_task(
-                tools=["read_file"],
-                path=Pattern("/tmp/*"),
-                max_size=Range.max_value(10000)
+                Capability("read_file", path=Pattern("/tmp/*"), max_size=Range.max_value(10000))
             ):
                 # Pattern A: Call through protected wrapper (local authorization)
                 print("\n   Pattern A: Local authorization (default)")

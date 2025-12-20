@@ -1018,6 +1018,9 @@ fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<PyObjec
             #[allow(deprecated)]
             Ok(PyNotOneOf { inner: n.clone() }.into_py(py))
         }
+        Constraint::Unknown { .. } => Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+            "Unknown constraint type encountered (not supported in Python bindings)",
+        )),
         Constraint::Range(r) =>
         {
             #[allow(deprecated)]
@@ -1834,6 +1837,9 @@ pub struct PyAttenuationBuilder {
 #[pymethods]
 impl PyAttenuationBuilder {
     /// Add a capability (tool + constraints) to the warrant.
+    ///
+    /// **POLA**: You must explicitly add each capability you want. Only tools
+    /// specified via this method will be in the child warrant.
     fn with_capability(&mut self, tool: &str, constraints: &Bound<'_, PyDict>) -> PyResult<()> {
         let mut constraint_set = crate::constraints::ConstraintSet::new();
         for (field_key, constraint_val) in constraints.iter() {
@@ -1843,6 +1849,17 @@ impl PyAttenuationBuilder {
         }
         self.inner.set_capability(tool, constraint_set);
         Ok(())
+    }
+
+    /// Inherit all capabilities from the parent warrant.
+    ///
+    /// This is an **explicit opt-in** to full inheritance. Use this when you
+    /// want to start with all parent capabilities and then narrow specific ones.
+    ///
+    /// Without this, the builder follows POLA (Principle of Least Authority)
+    /// and starts with NO capabilities.
+    fn inherit_all(&mut self) {
+        self.inner.inherit_all();
     }
 
     /// Set a shorter TTL in seconds.
@@ -1885,19 +1902,19 @@ impl PyAttenuationBuilder {
     /// This replaces the entire issuable_tools list with a single tool.
     /// For multiple tools, use `with_issuable_tools()` instead.
     fn with_issuable_tool(&mut self, tool: &str) {
-        self.inner.set_tool(tool);
+        self.inner.set_issuable_tool(tool);
     }
 
     /// Set multiple tools for issuable_tools (for issuer warrants).
     ///
     /// This replaces the entire issuable_tools list.
     fn with_issuable_tools(&mut self, tools: Vec<String>) {
-        self.inner.set_tools(tools);
+        self.inner.set_issuable_tools(tools);
     }
 
     /// Drop tools from issuable_tools (for issuer warrants).
     fn drop_tools(&mut self, tools: Vec<String>) {
-        self.inner.drop_tools(tools);
+        self.inner.drop_issuable_tools(tools);
     }
 
     /// Make this warrant terminal (cannot be delegated further).
@@ -1917,7 +1934,7 @@ impl PyAttenuationBuilder {
     #[getter]
     fn capabilities<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
         let dict = PyDict::new(py);
-        for (tool, constraints) in self.inner.capabilities().iter() {
+        for (tool, constraints) in self.inner.tools().iter() {
             let constraint_dict = PyDict::new(py);
             for (field, constraint) in constraints.iter() {
                 let py_constraint = constraint_to_py(py, constraint)?;
@@ -1938,7 +1955,7 @@ impl PyAttenuationBuilder {
     #[getter]
     fn holder(&self) -> Option<PyPublicKey> {
         self.inner
-            .holder()
+            .get_holder()
             .map(|pk| PyPublicKey { inner: pk.clone() })
     }
 
@@ -2011,7 +2028,7 @@ impl PyAttenuationBuilder {
             "AttenuationBuilder(parent={}, ttl={:?}, holder={:?})",
             self.inner.parent().id(),
             self.inner.ttl_seconds(),
-            self.inner.holder().is_some()
+            self.inner.get_holder().is_some()
         )
     }
 }
@@ -2112,7 +2129,7 @@ impl PyIssuanceBuilder {
     /// Get the configured tools (if set).
     #[getter]
     fn tools(&self) -> Option<Vec<String>> {
-        let caps = self.inner.capabilities();
+        let caps = self.inner.tools();
         if caps.is_empty() {
             None
         } else {
@@ -2169,8 +2186,8 @@ impl PyIssuanceBuilder {
         format!(
             "IssuanceBuilder(issuer={}, tools={:?}, holder={:?})",
             self.inner.issuer().id(),
-            self.inner.capabilities().keys().collect::<Vec<_>>(),
-            self.inner.holder().is_some()
+            self.inner.tools().keys().collect::<Vec<_>>(),
+            self.inner.get_holder().is_some()
         )
     }
 }
@@ -2355,10 +2372,10 @@ impl PyWarrant {
         self.inner.depth()
     }
 
-    /// Get the parent warrant ID.
+    /// Get the parent warrant hash.
     #[getter]
-    fn parent_id(&self) -> Option<String> {
-        self.inner.parent_id().map(|id| id.to_string())
+    fn parent_hash(&self) -> Option<String> {
+        self.inner.parent_hash().map(hex::encode)
     }
 
     /// Get the session ID.
@@ -2373,6 +2390,12 @@ impl PyWarrant {
         PyPublicKey {
             inner: self.inner.authorized_holder().clone(),
         }
+    }
+
+    /// Get the raw payload bytes.
+    #[getter]
+    fn payload_bytes(&self) -> Vec<u8> {
+        self.inner.payload_bytes().to_vec()
     }
 
     /// Get the issuer's public key (who signed this warrant).
@@ -2392,13 +2415,6 @@ impl PyWarrant {
         self.inner
             .trust_level()
             .map(|tl| PyTrustLevel { inner: tl })
-    }
-
-    /// Get the embedded issuer chain (for self-contained verification).
-    fn issuer_chain(&self) -> Vec<PyObject> {
-        // Return empty list for now - issuer_chain is complex to expose
-        // Chain reconstruction can use parent_id to trace back
-        Vec::new()
     }
 
     /// Check if the warrant has expired.
@@ -2660,10 +2676,11 @@ impl PyWarrant {
             "Warrant(id='{}', type={:?}, tool={}, depth={})",
             self.inner.id(),
             self.inner.r#type(),
-            self.inner
-                .tools()
-                .map(|t| format!("{:?}", t))
-                .unwrap_or_else(|| "None".to_string()),
+            if self.inner.payload.tools.is_empty() {
+                "None".to_string()
+            } else {
+                format!("{:?}", self.inner.payload.tools.keys())
+            },
             self.inner.depth()
         )
     }
@@ -3267,8 +3284,9 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Constants
     m.add("MAX_DELEGATION_DEPTH", crate::MAX_DELEGATION_DEPTH)?;
-    m.add("MAX_ISSUER_CHAIN_LENGTH", crate::MAX_ISSUER_CHAIN_LENGTH)?;
     m.add("MAX_WARRANT_SIZE", crate::MAX_WARRANT_SIZE)?;
+    m.add("MAX_WARRANT_TTL_SECS", crate::MAX_WARRANT_TTL_SECS)?;
+    m.add("DEFAULT_WARRANT_TTL_SECS", crate::DEFAULT_WARRANT_TTL_SECS)?;
     m.add("WIRE_VERSION", crate::WIRE_VERSION)?;
     m.add("WARRANT_HEADER", wire::WARRANT_HEADER)?;
 
