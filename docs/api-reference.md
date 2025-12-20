@@ -302,7 +302,7 @@ warrant = (Warrant.builder()
     })
     .ttl(3600)
     .holder(keypair.public_key)
-    .build(keypair))
+    .issue(keypair))
 
 # Issuer warrant with builder
 issuer = (Warrant.builder()
@@ -329,7 +329,7 @@ issuer = (Warrant.builder()
 | `.constraint_bound(field, value)` | Add constraint bound |
 | `.max_issue_depth(n)` | Max delegation depth |
 | `.preview()` | Preview configuration before building |
-| `.build(keypair)` | Build and sign the warrant |
+| `.issue(keypair)` | Issue and sign the warrant |
 
 #### Instance Properties
 
@@ -465,7 +465,7 @@ builder = warrant.attenuate()
 | `ttl(seconds)` | `AttenuationBuilder` | Set shorter TTL |
 | `terminal()` | `AttenuationBuilder` | Make warrant terminal (no further delegation) |
 | `diff()` | `str` | Preview changes (human-readable) |
-| `build(keypair, parent_keypair)` | `Warrant` | Build and sign the warrant |
+| `delegate_to(keypair, parent_keypair)` | `Warrant` | Issue child with receipt |
 
 #### Example
 
@@ -474,7 +474,7 @@ builder = warrant.attenuate()
 child = (parent.attenuate()
     .with_capability("read_file", {"path": Exact("/data/q3.pdf")})
     .holder(worker_kp.public_key)
-    .build(worker_kp, parent_kp))
+    .delegate_to(worker_kp, parent_kp))
 ```
 
 ---
