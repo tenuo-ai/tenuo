@@ -225,8 +225,7 @@ def test_warrant_has_depth_property():
     # Child warrant has depth 1
     child = root.attenuate(
         capabilities=Constraints.for_tool("test_tool", {}),
-        keypair=kp,
-        parent_keypair=kp,
+        signing_key=kp,  # kp signs (they hold root)
         holder=kp.public_key,
         ttl_seconds=30
     )
@@ -250,8 +249,7 @@ def test_warrant_chain_verification():
     # Attenuated warrant
     child = root.attenuate(
         capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/reports/*")}),
-        keypair=control_kp,
-        parent_keypair=control_kp,
+        signing_key=control_kp,  # control_kp signs (they hold root)
         holder=worker_kp.public_key,
         ttl_seconds=60
     )
@@ -301,7 +299,7 @@ def test_trust_level_monotonicity():
     builder.with_ttl(60)
     builder.with_holder(kp.public_key)
     builder.with_trust_level(TrustLevel("external"))
-    child = builder.delegate_to(kp, kp)
+    child = builder.delegate(kp)
     
     assert child.trust_level.value() == TrustLevel("external").value()
     

@@ -62,7 +62,9 @@ fn test_single_warrant_revocation() {
 fn test_chain_revocation_child() {
     let root_kp = SigningKey::generate();
     let child_kp = SigningKey::generate();
+    let grandchild_kp = SigningKey::generate();
 
+    // root_kp is issuer, child_kp is holder of root
     let root = Warrant::builder()
         .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(600))
@@ -71,11 +73,12 @@ fn test_chain_revocation_child() {
         .unwrap();
 
     // POLA: inherit_all
+    // child_kp signs (they are the holder of root)
     let child = root
         .attenuate()
         .inherit_all()
-        .authorized_holder(child_kp.public_key())
-        .build(&child_kp, &root_kp)
+        .authorized_holder(grandchild_kp.public_key())
+        .build(&child_kp) // child_kp is root's holder
         .unwrap();
 
     let mut data_plane = DataPlane::new();
@@ -107,7 +110,9 @@ fn test_chain_revocation_child() {
 fn test_chain_revocation_parent_cascades() {
     let root_kp = SigningKey::generate();
     let child_kp = SigningKey::generate();
+    let grandchild_kp = SigningKey::generate();
 
+    // root_kp is issuer, child_kp is holder of root
     let root = Warrant::builder()
         .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(600))
@@ -116,11 +121,12 @@ fn test_chain_revocation_parent_cascades() {
         .unwrap();
 
     // POLA: inherit_all
+    // child_kp signs (they are the holder of root)
     let child = root
         .attenuate()
         .inherit_all()
-        .authorized_holder(child_kp.public_key())
-        .build(&child_kp, &root_kp)
+        .authorized_holder(grandchild_kp.public_key())
+        .build(&child_kp) // child_kp is root's holder
         .unwrap();
 
     let mut data_plane = DataPlane::new();

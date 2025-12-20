@@ -46,7 +46,7 @@ def main():
             "replicas": Range.max_value(10)
         })
         .with_holder(worker_key.public_key)
-        .delegate_to(worker_key, control_key)
+        .delegate(control_key)
     )
     print(f"   Worker tools: {worker_warrant.tools}")
     print(f"   Worker depth: {worker_warrant.depth} (attenuated)")

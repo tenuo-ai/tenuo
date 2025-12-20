@@ -41,7 +41,7 @@ class TestDelegationLimits:
                 builder = current.attenuate_builder()
                 builder.inherit_all()  # POLA: explicit inheritance
                 builder.with_holder(keypair.public_key)
-                current = builder.delegate_to(keypair, keypair)
+                current = builder.delegate(keypair)
                 
             print(f"  [CRITICAL] Attack 9 SUCCEEDED: Created {MAX_DELEGATION_DEPTH + 10} depth chain!")
             assert False, "Should have hit depth or chain limit"
@@ -73,7 +73,7 @@ class TestDelegationLimits:
                 depth += 1
                 builder = current.attenuate_builder()
                 builder.inherit_all()  # POLA: explicit inheritance
-                current = builder.delegate_to(keypair, keypair)
+                current = builder.delegate(keypair)
                 
             print(f"  [WARNING] Attack 18 SUCCEEDED: Created chain of depth {depth}")
             
@@ -108,7 +108,7 @@ class TestDelegationLimits:
                 builder = current.attenuate_builder()
                 builder.inherit_all()  # POLA: explicit inheritance
                 builder.with_holder(keypair.public_key)
-                current = builder.delegate_to(keypair, keypair)
+                current = builder.delegate(keypair)
                 
             print(f"  [Info] Created chain of depth {test_limit + 5}")
             
@@ -184,7 +184,7 @@ class TestDelegationLimits:
         builder = parent.attenuate_builder()
         builder.inherit_all()
         builder.terminal()
-        terminal = builder.delegate_to(keypair, keypair)
+        terminal = builder.delegate(keypair)
         
         print(f"  [Info] Created terminal warrant: is_terminal={terminal.is_terminal()}")
         
@@ -192,6 +192,6 @@ class TestDelegationLimits:
         with pytest.raises(DepthExceeded):
             builder2 = terminal.attenuate_builder()
             builder2.inherit_all()
-            builder2.delegate_to(keypair, keypair)
+            builder2.delegate(keypair)
         
         print("  [Result] Attack 31 blocked (Terminal warrants cannot delegate)")

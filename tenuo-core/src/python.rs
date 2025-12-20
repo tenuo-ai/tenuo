@@ -335,6 +335,10 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                 "ConstraintViolation",
                 PyTuple::new(py, ["url", reason.as_str()]),
             ),
+            crate::error::Error::DelegationAuthorityError { expected, actual } => (
+                "DelegationAuthorityError",
+                PyTuple::new(py, [expected.as_str(), actual.as_str()]),
+            ),
         };
 
         // Unwrap the args Result (PyTuple::new can fail on conversion)
@@ -1987,19 +1991,23 @@ impl PyAttenuationBuilder {
 
     /// Build and sign the attenuated warrant.
     ///
+    /// The signing key must belong to the holder of the parent warrant (the delegator).
+    /// This enforces the delegation authority rule: you can only delegate what you hold.
+    ///
     /// # Arguments
     ///
-    /// * `keypair` - The keypair of the delegator
-    /// * `parent_keypair` - The keypair that signed the parent warrant
-    fn delegate_to(
-        &self,
-        keypair: &PySigningKey,
-        parent_keypair: &PySigningKey,
-    ) -> PyResult<PyWarrant> {
+    /// * `signing_key` - The keypair of the parent warrant's holder
+    ///
+    /// # Errors
+    ///
+    /// Returns `DelegationAuthorityError` if the signing key doesn't match
+    /// the parent warrant's holder.
+    #[pyo3(name = "delegate")]
+    fn delegate(&self, signing_key: &PySigningKey) -> PyResult<PyWarrant> {
         let warrant = self
             .inner
             .clone()
-            .build(&keypair.inner, &parent_keypair.inner)
+            .build(&signing_key.inner)
             .map_err(to_py_err)?;
         Ok(PyWarrant { inner: warrant })
     }
@@ -2007,15 +2015,16 @@ impl PyAttenuationBuilder {
     /// Build and return both warrant and receipt.
     ///
     /// This is a convenience method for workflows that need the receipt immediately.
-    fn delegate_to_with_receipt(
+    /// The signing key must belong to the holder of the parent warrant.
+    #[pyo3(name = "delegate_with_receipt")]
+    fn delegate_with_receipt(
         &self,
-        keypair: &PySigningKey,
-        parent_keypair: &PySigningKey,
+        signing_key: &PySigningKey,
     ) -> PyResult<(PyWarrant, PyDelegationReceipt)> {
         let (warrant, receipt) = self
             .inner
             .clone()
-            .build_with_receipt(&keypair.inner, &parent_keypair.inner)
+            .build_with_receipt(&signing_key.inner)
             .map_err(to_py_err)?;
         Ok((
             PyWarrant { inner: warrant },
@@ -2169,15 +2178,17 @@ impl PyIssuanceBuilder {
 
     /// Build and sign the execution warrant.
     ///
+    /// The signing key must belong to the holder of the issuer warrant.
+    /// This enforces the delegation authority rule: you can only delegate what you hold.
+    ///
     /// # Arguments
     ///
-    /// * `keypair` - The keypair of the issuer warrant holder
-    /// * `issuer_keypair` - The keypair that signed the issuer warrant
-    fn build(&self, keypair: &PySigningKey, issuer_keypair: &PySigningKey) -> PyResult<PyWarrant> {
+    /// * `signing_key` - The keypair of the issuer warrant's holder
+    fn build(&self, signing_key: &PySigningKey) -> PyResult<PyWarrant> {
         let warrant = self
             .inner
             .clone()
-            .build(&keypair.inner, &issuer_keypair.inner)
+            .build(&signing_key.inner)
             .map_err(to_py_err)?;
         Ok(PyWarrant { inner: warrant })
     }
@@ -2473,7 +2484,7 @@ impl PyWarrant {
     /// Create an attenuation builder for this warrant.
     ///
     /// Returns an `AttenuationBuilder` that can be configured with constraints,
-    /// TTL, holder, etc. before calling `delegate_to()` to create the child warrant.
+    /// TTL, holder, etc. before calling `delegate()` to create the child warrant.
     ///
     /// # Example
     ///
@@ -2482,7 +2493,7 @@ impl PyWarrant {
     /// builder.with_constraint("path", Exact("/data/q3.pdf"))
     /// builder.with_ttl(60)
     /// builder.with_holder(worker_key)
-    /// child = builder.delegate_to(keypair, parent_keypair)
+    /// child = builder.delegate(parent_keypair)  # Parent signs
     /// ```
     fn attenuate_builder(&self) -> PyAttenuationBuilder {
         PyAttenuationBuilder {
@@ -2491,13 +2502,14 @@ impl PyWarrant {
     }
 
     /// Attenuate the warrant (create a child with narrower scope).
-    /// Attenuate the warrant (create a child with narrower scope).
-    #[pyo3(signature = (capabilities, keypair, parent_keypair, ttl_seconds=None, holder=None, trust_level=None))]
+    ///
+    /// The signing_key must be the holder of THIS warrant. The new warrant's
+    /// holder defaults to the same key, but can be set with holder=.
+    #[pyo3(signature = (capabilities, signing_key, ttl_seconds=None, holder=None, trust_level=None))]
     fn attenuate(
         &self,
         capabilities: &Bound<'_, PyDict>,
-        keypair: &PySigningKey,
-        parent_keypair: &PySigningKey,
+        signing_key: &PySigningKey,
         ttl_seconds: Option<u64>,
         holder: Option<&PyPublicKey>,
         trust_level: Option<&PyTrustLevel>,
@@ -2535,9 +2547,7 @@ impl PyWarrant {
             // Trust diff logic handled internally or via wrapper
         }
 
-        let warrant = builder
-            .build(&keypair.inner, &parent_keypair.inner)
-            .map_err(to_py_err)?;
+        let warrant = builder.build(&signing_key.inner).map_err(to_py_err)?;
         Ok(PyWarrant { inner: warrant })
     }
 

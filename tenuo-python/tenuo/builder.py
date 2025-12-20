@@ -351,7 +351,7 @@ class AttenuationBuilder:
     This wraps the Rust AttenuationBuilder and provides:
     - diff() - Human-readable diff preview (from Rust)
     - diff_structured() - Structured diff for programmatic use (from Rust)
-    - delegate_to() - Creates child warrant with attached receipt
+    - delegate() - Creates child warrant with attached receipt
     """
     
     def __init__(
@@ -427,7 +427,7 @@ class AttenuationBuilder:
             child = (parent.attenuate()
                 .inherit_all()
                 .with_ttl(300)
-                .delegate_to(kp, kp))
+                .delegate(kp))
         """
         self._rust_builder.inherit_all()
         return self
@@ -471,7 +471,7 @@ class AttenuationBuilder:
             child = parent.attenuate_builder()
                 .with_tool("read_file")  # Narrow to just read_file
                 .with_holder(worker_key)
-                .delegate_to(kp, kp)
+                .delegate(kp)
         """
         self._rust_builder.with_tool(tool)
         return self
@@ -536,22 +536,23 @@ class AttenuationBuilder:
         """
         return self._rust_builder.diff_structured()
     
-    def delegate_to(
-        self,
-        keypair: SigningKey,
-        parent_keypair: SigningKey,
-    ) -> Warrant:
+    def delegate(self, signing_key: SigningKey) -> Warrant:
         """Create the attenuated child warrant.
         
+        The signing key must belong to the holder of the parent warrant (the delegator).
+        This enforces the delegation authority rule: you can only delegate what you hold.
+        
         Args:
-            keypair: The keypair of the delegator
-            parent_keypair: The keypair that signed the parent warrant
+            signing_key: The keypair of the parent warrant's holder
             
         Returns:
             The newly created child warrant with attached receipt
+            
+        Raises:
+            DelegationAuthorityError: If signing_key doesn't match parent's holder
         """
-        # Use Rust's build_with_receipt for atomic creation
-        child, receipt = self._rust_builder.delegate_to_with_receipt(keypair, parent_keypair)
+        # Use Rust's delegate_with_receipt for atomic creation
+        child, receipt = self._rust_builder.delegate_with_receipt(signing_key)
         
         # Store receipt in module-level dict (Rust objects don't allow Python attributes)
         from .warrant_ext import _delegation_receipts
@@ -559,21 +560,21 @@ class AttenuationBuilder:
         
         return child
     
-    def delegate_to_with_receipt(
-        self,
-        keypair: SigningKey,
-        parent_keypair: SigningKey,
-    ) -> tuple:
+    def delegate_with_receipt(self, signing_key: SigningKey) -> tuple:
         """Create the attenuated child warrant and return both warrant and receipt.
         
+        The signing key must belong to the holder of the parent warrant.
+        
         Args:
-            keypair: The keypair of the delegator
-            parent_keypair: The keypair that signed the parent warrant
+            signing_key: The keypair of the parent warrant's holder
             
         Returns:
             Tuple of (child_warrant, delegation_receipt)
+            
+        Raises:
+            DelegationAuthorityError: If signing_key doesn't match parent's holder
         """
-        child, receipt = self._rust_builder.delegate_to_with_receipt(keypair, parent_keypair)
+        child, receipt = self._rust_builder.delegate_with_receipt(signing_key)
         
         # Also store receipt for later access via child.delegation_receipt
         from .warrant_ext import _delegation_receipts

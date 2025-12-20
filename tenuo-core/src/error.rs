@@ -250,6 +250,10 @@ pub enum Error {
     #[error("self-issuance prohibited: {reason}")]
     SelfIssuanceProhibited { reason: String },
 
+    /// Delegation authority error: signer is not the holder of the parent warrant.
+    #[error("delegation authority error: expected signer {expected}, got {actual}")]
+    DelegationAuthorityError { expected: String, actual: String },
+
     /// Issued warrant depth exceeds issuer's max_issue_depth.
     #[error("issue depth exceeded: depth {depth} exceeds max_issue_depth {max}")]
     IssueDepthExceeded { depth: u32, max: u32 },

@@ -148,15 +148,154 @@ fn verify(
 ```
 
 ### Chain attenuation rules
+### Testable Invariants
 
-When a warrant is derived from a parent warrant (attenuation):
+**Every implementation MUST verify these properties.** Tests should reference these invariants by number.
 
-- The child `issuer` MUST equal the parent `holder`.
-- The child `depth` MUST be `parent.depth + 1`.
-- The child `depth` MUST NOT exceed `max_depth` (or `parent.max_depth` if inherited).
-- `expires_at` MUST be ≤ the parent’s `expires_at`.
-- Each tool’s constraints MUST be equal to or stricter than the parent for that tool (per-constraint semantics define “stricter”; equality is allowed).
-- The child `parent_hash` field MUST equal `SHA256(parent payload bytes)`; missing or mismatched parents MUST be rejected.
+#### I1: Delegation Authority
+```
+child.issuer == parent.holder
+```
+
+**Rationale:** The parent's holder is the entity authorized to delegate. This establishes clear audit trail: "parent.holder delegated to child.holder".
+
+**Why this matters:**
+- Audit clarity: "Who authorized this delegation?"
+- Trust model: Authority flows from issuer (who authorized) to holder (who can use)
+- Industry standard: Matches X.509, Macaroons, SPIFFE, UCAN
+
+**Enforcement points:**
+1. **Builder**: `AttenuationBuilder::build()` MUST use parent's holder keypair to sign
+2. **Verifier**: `verify_chain_link()` MUST check `child.issuer() == parent.holder()`
+
+**Test requirement:**
+```rust
+assert_eq!(child.issuer(), parent.holder(), "Invariant I1 violated");
+```
+
+#### I2: Depth Monotonicity
+```
+child.depth == parent.depth + 1
+child.depth <= MAX_DELEGATION_DEPTH (16)
+child.depth <= parent.max_depth
+```
+
+**Rationale:** Prevents unbounded chains (DoS) and enforces delegation limits.
+
+**Enforcement points:**
+1. **Builder**: Increment depth, check against limits
+2. **Verifier**: Validate depth increment and limits
+
+#### I3: TTL Monotonicity
+```
+child.expires_at <= parent.expires_at
+child.ttl <= MAX_WARRANT_TTL_SECS (90 days)
+```
+
+**Rationale:** Authority cannot outlive its source. Prevents time-based privilege escalation.
+
+**Enforcement points:**
+1. **Builder**: Cap child TTL at parent's remaining time
+2. **Verifier**: Check expiration doesn't exceed parent
+
+#### I4: Capability Monotonicity
+```
+child.tools ⊆ parent.tools
+∀ tool ∈ child.tools: child.constraints[tool] ⊑ parent.constraints[tool]
+```
+
+**Rationale:** Principle of Least Authority (POLA) - capabilities only shrink.
+
+**Enforcement points:**
+1. **Builder**: Validate tool subset and constraint narrowing
+2. **Verifier**: Check monotonicity for each tool
+
+#### I5: Cryptographic Linkage
+```
+child.parent_hash == SHA256(parent.payload_bytes)
+verify(parent.issuer, parent.signature_preimage, parent.signature)
+verify(child.issuer, child.signature_preimage, child.signature)
+```
+
+**Rationale:** Prevents chain tampering and warrant forgery.
+
+**Enforcement points:**
+1. **Builder**: Compute parent_hash from parent payload
+2. **Verifier**: Verify hash matches and signatures valid
+
+#### I6: Holder Binding (Proof-of-Possession)
+```
+pop_signature = sign(holder_private_key, challenge)
+verify(warrant.holder, challenge, pop_signature)
+```
+
+**Rationale:** Prevents warrant theft - holder must prove key possession.
+
+**Enforcement points:**
+1. **Execution**: Holder creates PoP signature for each action
+2. **Verifier**: Validate PoP against warrant.holder (not issuer!)
+
+### Verification Checklist
+
+Implementations MUST verify ALL invariants. Missing checks create security vulnerabilities.
+
+| Invariant | Builder | Verifier | Test |
+|-----------|---------|----------|------|
+| I1: Delegation Authority | ✅ Sign with parent.holder | ✅ Check issuer == parent.holder | ✅ Required |
+| I2: Depth Monotonicity | ✅ Increment & validate | ✅ Check depth rules | ✅ Required |
+| I3: TTL Monotonicity | ✅ Cap at parent TTL | ✅ Check expiration | ✅ Required |
+| I4: Capability Monotonicity | ✅ Validate narrowing | ✅ Check tool/constraint subset | ✅ Required |
+| I5: Cryptographic Linkage | ✅ Compute parent_hash | ✅ Verify hash & signatures | ✅ Required |
+| I6: Holder Binding | N/A | ✅ Verify PoP signature | ✅ Required |
+
+### Common Implementation Errors
+
+**❌ Error 1: Child signs own warrant**
+```rust
+// WRONG - violates I1
+let child = parent.attenuate()
+    .holder(child_kp.public_key())
+    .build(&child_kp);  // Child signs - WRONG!
+```
+
+**✅ Correct:**
+```rust
+let child = parent.attenuate()
+    .holder(child_kp.public_key())
+    .build(&parent_kp);  // Parent's holder signs - CORRECT
+```
+
+**❌ Error 2: Missing issuer check in verifier**
+```rust
+// WRONG - violates I1 verification
+fn verify_chain_link(parent, child) {
+    check_parent_hash(parent, child);  // ✅
+    check_depth(parent, child);        // ✅
+    // Missing: check child.issuer == parent.holder  ❌
+}
+```
+
+**✅ Correct:**
+```rust
+fn verify_chain_link(parent, child) {
+    check_parent_hash(parent, child);
+    check_depth(parent, child);
+    assert_eq!(child.issuer(), parent.holder());  // ✅ I1
+}
+```
+
+**❌ Error 3: Verifying PoP against issuer**
+```rust
+// WRONG - violates I6
+verify(child.issuer(), pop_challenge, pop_sig);  // ❌
+```
+
+**✅ Correct:**
+```rust
+verify(child.holder(), pop_challenge, pop_sig);  // ✅
+```
+
+> **Note:** For details on how delegation is cryptographically proven, see the "Cryptographic Proof of Delegation" section in [`protocol.md`](protocol.md#cryptographic-proof-of-delegation).
 
 ---
 

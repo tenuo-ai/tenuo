@@ -155,9 +155,7 @@ class TestSignatureTrust:
         
         builder = attacker_root.attenuate_builder()
         builder.inherit_all()  # POLA: explicit inheritance
-        attacker_child = builder.delegate_to(
-            attacker_keypair, attacker_keypair
-        )
+        attacker_child = builder.delegate(attacker_keypair)
         
         # Verify against TRUSTED root (should fail)
         print("  [Attack 4A] Verifying against TRUSTED root...")

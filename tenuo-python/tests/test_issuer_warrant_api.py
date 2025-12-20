@@ -136,7 +136,7 @@ class TestIssueExecutionExists:
         builder.with_ttl(300)  # TTL is required
         
         # Step 3: Build (needs keypair of issuer warrant holder)
-        exec_warrant = builder.build(issuer_kp, issuer_kp)
+        exec_warrant = builder.build(issuer_kp)
         
         assert exec_warrant is not None
         assert exec_warrant.tools is not None
@@ -239,7 +239,7 @@ class TestAttenuateBuilderToolSelection:
         builder.inherit_all()  # Start with all parent capabilities
         builder.with_tools(["read_file"])  # Then narrow
         builder.with_holder(worker_kp.public_key)
-        child = builder.delegate_to(kp, kp)
+        child = builder.delegate(kp)
         
         # Child has ONLY the narrowed tools
         assert child.tools == ["read_file"], (
@@ -264,7 +264,7 @@ class TestAttenuateBuilderToolSelection:
         builder.inherit_all()
         builder.with_tool("send_email")  # Narrow to just send_email
         builder.with_holder(worker_kp.public_key)
-        child = builder.delegate_to(kp, kp)
+        child = builder.delegate(kp)
         
         assert child.tools == ["send_email"]
     
@@ -288,7 +288,7 @@ class TestAttenuateBuilderToolSelection:
         builder.with_holder(worker_kp.public_key)
         
         # Should not raise, but silently ignore 'delete_file'
-        child = builder.delegate_to(kp, kp)
+        child = builder.delegate(kp)
         
         assert "read_file" in child.tools
         assert "delete_file" not in child.tools
@@ -313,7 +313,7 @@ class TestAttenuateBuilderToolSelection:
         builder.with_tool("read_file")
         builder.with_holder(worker_kp.public_key)
         builder.with_ttl(300)
-        exec_warrant = builder.build(issuer_kp, issuer_kp)
+        exec_warrant = builder.build(issuer_kp)
         
         assert exec_warrant.tools == ["read_file"]
 
@@ -352,7 +352,7 @@ class TestTerminalWarrants:
         builder.inherit_all()
         builder.terminal()  # Make it terminal
         builder.with_holder(worker_kp.public_key)
-        child = builder.delegate_to(kp, kp)
+        child = builder.delegate(kp)
         
         # Child should be terminal
         assert child.is_terminal(), "Warrant created with .terminal() should be terminal"
@@ -376,7 +376,7 @@ class TestTerminalWarrants:
         builder.inherit_all()
         builder.terminal()
         builder.with_holder(worker_kp.public_key)
-        terminal = builder.delegate_to(kp, kp)
+        terminal = builder.delegate(kp)
         
         assert terminal.is_terminal()
         
@@ -386,7 +386,7 @@ class TestTerminalWarrants:
         builder2.with_holder(another_kp.public_key)
         
         with pytest.raises(Exception) as exc_info:
-            builder2.delegate_to(worker_kp, worker_kp)
+            builder2.delegate(worker_kp)
         
         # Should fail due to depth exceeded
         assert "depth" in str(exc_info.value).lower() or "exceed" in str(exc_info.value).lower()

@@ -142,7 +142,7 @@ fn benchmark_warrant_authorization(c: &mut Criterion) {
 
 fn benchmark_warrant_attenuation(c: &mut Criterion) {
     let parent_keypair = SigningKey::generate();
-    let child_keypair = SigningKey::generate();
+    let _child_keypair = SigningKey::generate(); // Unused with new delegation API
 
     let parent_constraints = ConstraintSet::from_iter(vec![(
         "cluster".to_string(),
@@ -166,7 +166,7 @@ fn benchmark_warrant_attenuation(c: &mut Criterion) {
             parent
                 .attenuate()
                 .capability("upgrade_cluster", child_constraints_template.clone())
-                .build(black_box(&child_keypair), black_box(&parent_keypair))
+                .build(black_box(&parent_keypair)) // Parent signs (they hold the warrant)
                 .unwrap()
         })
     });
@@ -252,7 +252,7 @@ fn benchmark_deep_delegation_chain(c: &mut Criterion) {
 
             // Create chain of depth 8 (max allowed)
             for _ in 0..8 {
-                warrant = warrant.attenuate().build(&keypair, &keypair).unwrap();
+                warrant = warrant.attenuate().inherit_all().build(&keypair).unwrap();
             }
             warrant
         })

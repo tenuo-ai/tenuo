@@ -130,7 +130,7 @@ intern_warrant = cfo_warrant.attenuate() \
     }) \
     .ttl(3600) \
     .holder(intern_keypair.public_key) \
-    .build(cfo_keypair)
+    .delegate(cfo_keypair)
 ```
 The intern can't:
 - Approve expenses (tool not delegated)
@@ -145,7 +145,7 @@ And yeah, the intern can't issue *themselves* a better card.
 # This raises MonotonicityError
 bad_warrant = intern_warrant.attenuate() \
     .with_capability("spend", {"amount": Range.max_value(10000)}) \
-    .build(intern_keypair, intern_keypair)  # Can't exceed parent's $500
+    .delegate(intern_keypair)  # Can't exceed parent's $500
 ```
 Attenuation isn't policy. It's physics.
 
@@ -190,7 +190,7 @@ async def handle_user_request(user_request: str):
         .with_capability("read_file", {"path": Pattern("/data/reports/*")}) \
         .ttl(60) \
         .holder(researcher_keypair.public_key) \
-        .build(researcher_keypair, orchestrator_keypair)
+        .delegate(orchestrator_keypair)
     findings = await researcher.execute(research_warrant, researcher_keypair)
     
     # Phase 2: Write summary (write-only, narrower path)
@@ -198,7 +198,7 @@ async def handle_user_request(user_request: str):
         .with_capability("write_file", {"path": Pattern("/data/output/summary.md")}) \
         .ttl(30) \
         .holder(writer_keypair.public_key) \
-        .build(writer_keypair, orchestrator_keypair)
+        .delegate(orchestrator_keypair)
     await writer.execute(write_warrant, writer_keypair, findings)
 
 # Researcher: can only read_file within /data/reports/*

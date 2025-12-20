@@ -1003,14 +1003,14 @@ impl DataPlane {
     ///
     /// * `parent` - The parent warrant to attenuate from
     /// * `constraints` - Constraints to apply to the child warrant
-    /// * `parent_keypair` - The keypair of the parent warrant issuer (for chain link signature)
+    /// * `holder_keypair` - The keypair of the parent warrant holder (who is delegating)
     pub fn attenuate(
         &self,
         parent: &Warrant,
         constraints: &[(&str, Constraint)],
-        parent_keypair: &SigningKey,
+        holder_keypair: &SigningKey,
     ) -> Result<Warrant> {
-        let keypair = self.own_keypair.as_ref().ok_or_else(|| {
+        let _own_keypair = self.own_keypair.as_ref().ok_or_else(|| {
             Error::CryptoError("data plane has no keypair for attenuation".to_string())
         })?;
 
@@ -1047,7 +1047,7 @@ impl DataPlane {
             }
         }
 
-        builder.build(keypair, parent_keypair)
+        builder.build(holder_keypair)
     }
 
     /// Get this data plane's public key (if it has one).
@@ -1967,13 +1967,14 @@ mod tests {
             )
             .unwrap();
 
-        // Orchestrator delegates
+        // Control plane delegates to orchestrator
         let mut child_constraints = ConstraintSet::new();
         child_constraints.insert("cluster", Exact::new("staging-web"));
         let child = root
             .attenuate()
             .capability("upgrade_cluster", child_constraints)
-            .build(&orchestrator_keypair, &control_plane.keypair)
+            .authorized_holder(orchestrator_keypair.public_key())
+            .build(&control_plane.keypair) // Control plane signs (they hold root)
             .unwrap();
 
         // Data plane verifies the chain
@@ -2006,7 +2007,8 @@ mod tests {
         let orchestrator_warrant = root
             .attenuate()
             .capability("query", orch_constraints)
-            .build(&orchestrator_keypair, &control_plane.keypair)
+            .authorized_holder(orchestrator_keypair.public_key())
+            .build(&control_plane.keypair) // Control plane signs (they hold root)
             .unwrap();
 
         let mut worker_constraints = ConstraintSet::new();
@@ -2014,7 +2016,8 @@ mod tests {
         let worker_warrant = orchestrator_warrant
             .attenuate()
             .capability("query", worker_constraints)
-            .build(&worker_keypair, &orchestrator_keypair)
+            .authorized_holder(worker_keypair.public_key())
+            .build(&orchestrator_keypair) // Orchestrator signs (they hold orchestrator_warrant)
             .unwrap();
 
         let mut data_plane = DataPlane::new();
@@ -2050,7 +2053,7 @@ mod tests {
             .attenuate()
             .capability("upgrade_cluster", agent_constraints)
             .authorized_holder(agent_keypair.public_key())
-            .build(&agent_keypair, &control_plane.keypair)
+            .build(&control_plane.keypair) // Control plane signs (they hold root)
             .unwrap();
 
         let mut data_plane = DataPlane::new();
@@ -2115,7 +2118,8 @@ mod tests {
         let child = warrant2
             .attenuate()
             .inherit_all()
-            .build(&agent_keypair, &control_plane.keypair)
+            .authorized_holder(agent_keypair.public_key())
+            .build(&control_plane.keypair) // Control plane signs (they hold warrant2)
             .unwrap();
 
         let mut data_plane = DataPlane::new();
@@ -2161,7 +2165,7 @@ mod tests {
             .attenuate()
             .inherit_all()
             .authorized_holder(agent_keypair.public_key())
-            .build(&agent_keypair, &control_plane.keypair)
+            .build(&control_plane.keypair) // Control plane signs (they hold root)
             .unwrap();
 
         let authorizer = Authorizer::new().with_trusted_root(control_plane.public_key());
@@ -2216,7 +2220,8 @@ mod tests {
         let child = root
             .attenuate()
             .inherit_all()
-            .build(&orchestrator_keypair, &control_plane.keypair)
+            .authorized_holder(orchestrator_keypair.public_key())
+            .build(&control_plane.keypair) // Control plane signs (they hold root)
             .unwrap();
 
         let mut data_plane = DataPlane::new();
@@ -2568,7 +2573,7 @@ mod tests {
             .inherit_all()
             // Session ID inherited from root (session_123)
             .authorized_holder(worker_keypair.public_key())
-            .build(&orchestrator_keypair, &control_plane.keypair)
+            .build(&orchestrator_keypair)
             .unwrap();
 
         let mut data_plane = DataPlane::new();
@@ -2611,7 +2616,7 @@ mod tests {
             .inherit_all()
             // Session ID inherited (None)
             .authorized_holder(worker_keypair.public_key())
-            .build(&orchestrator_keypair, &control_plane.keypair)
+            .build(&orchestrator_keypair)
             .unwrap();
 
         let mut data_plane = DataPlane::new();
@@ -2642,7 +2647,7 @@ mod tests {
             .inherit_all()
             // Session ID inherited from root (session_123)
             .authorized_holder(orchestrator_keypair.public_key())
-            .build(&orchestrator_keypair, &control_plane.keypair)
+            .build(&orchestrator_keypair)
             .unwrap();
 
         let authorizer = Authorizer::new().with_trusted_root(control_plane.public_key());
@@ -2666,7 +2671,7 @@ mod tests {
             .inherit_all()
             // Session ID inherited from root2 (session_456)
             .authorized_holder(orchestrator_keypair.public_key())
-            .build(&orchestrator_keypair, &control_plane.keypair)
+            .build(&orchestrator_keypair)
             .unwrap();
 
         // Should fail - mixing warrants from different sessions
@@ -2739,7 +2744,7 @@ mod tests {
             .trust_level(TrustLevel::External)
             .ttl(Duration::from_secs(600))
             .authorized_holder(worker_kp.public_key())
-            .build(&issuer_kp, &issuer_kp)
+            .build(&issuer_kp)
             .expect("Failed to build execution warrant");
 
         assert_eq!(child.r#type(), WarrantType::Execution);
@@ -2793,7 +2798,7 @@ mod tests {
             .capability("send_email", ConstraintSet::new()) // NOT in issuable_tools
             .ttl(Duration::from_secs(600))
             .authorized_holder(worker_kp.public_key())
-            .build(&issuer_kp, &issuer_kp);
+            .build(&issuer_kp);
 
         assert!(result.is_err(), "Should reject tool not in issuable_tools");
         println!(
@@ -2809,7 +2814,7 @@ mod tests {
             .trust_level(TrustLevel::Internal) // Exceeds External ceiling
             .ttl(Duration::from_secs(600))
             .authorized_holder(worker_kp.public_key())
-            .build(&issuer_kp, &issuer_kp);
+            .build(&issuer_kp);
 
         assert!(
             result.is_err(),
@@ -2829,7 +2834,7 @@ mod tests {
             .capability("read_file", bad_constraints)
             .ttl(Duration::from_secs(600))
             .authorized_holder(worker_kp.public_key())
-            .build(&issuer_kp, &issuer_kp);
+            .build(&issuer_kp);
 
         assert!(result.is_err(), "Should reject constraint outside bounds");
         println!(

@@ -106,6 +106,7 @@ from .exceptions import (
     CycleDetected,
     UntrustedRoot,
     ParentRequired,
+    DelegationAuthorityError,
     # Limit errors
     LimitError,
     DepthExceeded,
@@ -382,6 +383,7 @@ __all__ = [
     "CycleDetected",
     "UntrustedRoot",
     "ParentRequired",
+    "DelegationAuthorityError",
     # Exceptions - Limit errors
     "LimitError",
     "DepthExceeded",

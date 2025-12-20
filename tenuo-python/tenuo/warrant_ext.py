@@ -191,7 +191,7 @@ def _warrant_delegate(
     builder.with_holder(holder)
     
     # We are the holder of the parent warrant, so we sign both
-    return builder.delegate_to(keypair, keypair)
+    return builder.delegate(keypair)
 
 
 # Add delegate method to Warrant

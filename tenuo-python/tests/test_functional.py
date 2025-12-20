@@ -33,14 +33,14 @@ def test_full_warrant_lifecycle():
     assert not root_warrant.is_expired()
     
     # 3. Attenuate (delegate) the warrant to a worker
+    # The signing_key must be the holder of the parent warrant
     worker_warrant = root_warrant.attenuate(
         capabilities=Constraints.for_tool("manage_infrastructure", {
             "cluster": Exact("staging-web"),
             "replicas": Range.max_value(10)
         }),
-        keypair=control_keypair, # Signed by parent (Control Plane)
-        parent_keypair=control_keypair, # Parent signs the chain link
-        holder=worker_keypair.public_key # Bound to worker
+        signing_key=control_keypair,  # Control plane signs (they hold root)
+        holder=worker_keypair.public_key  # Bound to worker
     )
     
     assert worker_warrant.tools == ["manage_infrastructure"]

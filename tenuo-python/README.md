@@ -43,7 +43,7 @@ worker_warrant = (warrant.attenuate_builder()
         "replicas": Range.max_value(10)   # Reduced from 15
     })
     .with_holder(worker_keypair.public_key)
-    .delegate_to(worker_keypair, keypair))
+    .delegate(keypair))  # keypair signs (they hold the parent warrant)
 
 # Note: As of v0.1.0-alpha.4, attenuated warrants start with NO capabilities
 # by default (Principle of Least Authority). Use inherit_all() to keep all

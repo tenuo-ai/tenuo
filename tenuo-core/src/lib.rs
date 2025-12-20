@@ -160,7 +160,7 @@ mod tests {
     #[test]
     fn test_attenuation_narrows_constraints() {
         let keypair = SigningKey::generate();
-        let child_keypair = SigningKey::generate();
+        let _child_keypair = SigningKey::generate(); // Unused with new delegation API
 
         let mut p_constraints = ConstraintSet::new();
         p_constraints.insert("cluster".to_string(), Pattern::new("staging-*").unwrap());
@@ -178,7 +178,7 @@ mod tests {
         let child = parent
             .attenuate()
             .capability("upgrade_cluster", c_constraints)
-            .build(&child_keypair, &keypair) // keypair is the parent issuer
+            .build(&keypair) // keypair is parent's holder
             .unwrap();
 
         assert!(child.expires_at() <= parent.expires_at());

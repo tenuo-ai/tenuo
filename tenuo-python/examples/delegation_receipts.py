@@ -98,10 +98,8 @@ def main():
     print("=" * 70)
     
     # Delegate (builds warrant and attaches receipt)
-    child_warrant = builder.delegate_to(
-        keypair=orchestrator_kp,
-        parent_keypair=control_kp,
-    )
+    # The signing key must be the parent warrant's holder (orchestrator_kp)
+    child_warrant = builder.delegate(orchestrator_kp)
     
     print(f"\nChild warrant created: {child_warrant.id}")
     print(f"Depth: {child_warrant.depth}")
@@ -182,10 +180,8 @@ def main():
     print("\nSecond delegation diff:")
     print(builder2.diff())
     
-    grandchild = builder2.delegate_to(
-        keypair=worker_kp,
-        parent_keypair=orchestrator_kp,
-    )
+    # The signing key must be the parent warrant's holder (worker_kp)
+    grandchild = builder2.delegate(worker_kp)
     
     receipt2 = grandchild.delegation_receipt
     if receipt2:

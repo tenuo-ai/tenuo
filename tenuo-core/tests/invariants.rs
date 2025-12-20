@@ -59,7 +59,7 @@ proptest! {
             .inherit_all()
             .ttl(Duration::from_secs(ttl_child))
             .authorized_holder(child_kp.public_key())
-            .build(&child_kp, &child_kp)
+            .build(&child_kp)
             .unwrap();
 
         // INVARIANT: child.expires_at <= parent.expires_at
@@ -83,7 +83,7 @@ proptest! {
 
         for expected_depth in 1..=depth_limit {
             // POLA: inherit_all
-            warrant = warrant.attenuate().inherit_all().authorized_holder(kp.public_key()).build(&kp, &kp).unwrap();
+            warrant = warrant.attenuate().inherit_all().authorized_holder(kp.public_key()).build(&kp).unwrap();
             prop_assert_eq!(warrant.depth(), expected_depth);
         }
     }
@@ -113,7 +113,7 @@ proptest! {
             .attenuate()
             .capability("test", child_constraints)
             .authorized_holder(child_kp.public_key())
-            .build(&child_kp, &child_kp);
+            .build(&child_kp);
 
         prop_assert!(result.is_err());
     }
@@ -143,7 +143,7 @@ proptest! {
             .attenuate()
             .capability("test", bad_constraints)
             .authorized_holder(child_kp.public_key())
-            .build(&child_kp, &child_kp);
+            .build(&child_kp);
 
         prop_assert!(result.is_err());
 
@@ -154,7 +154,7 @@ proptest! {
             .attenuate()
             .capability("test", narrow_constraints)
             .authorized_holder(child_kp.public_key())
-            .build(&child_kp, &child_kp);
+            .build(&child_kp);
 
         prop_assert!(narrower.is_ok());
     }
@@ -353,7 +353,7 @@ proptest! {
 
         // Delegate until depth reaches max_depth (POLA: inherit_all)
         for expected_depth in 1..=initial_max_depth {
-            let result = warrant.attenuate().inherit_all().authorized_holder(kp.public_key()).build(&kp, &kp);
+            let result = warrant.attenuate().inherit_all().authorized_holder(kp.public_key()).build(&kp);
             if result.is_err() {
                 // Expected to fail when terminal (depth >= max_depth)
                 break;
@@ -419,7 +419,7 @@ proptest! {
         let mut parent = root;
         for _ in 1..chain_length {
             // POLA: inherit_all
-            let child = parent.attenuate().inherit_all().authorized_holder(kp.public_key()).build(&kp, &kp).unwrap();
+            let child = parent.attenuate().inherit_all().authorized_holder(kp.public_key()).build(&kp).unwrap();
 
             let mut hasher = Sha256::new();
             hasher.update(parent.payload_bytes());

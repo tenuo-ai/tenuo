@@ -503,7 +503,7 @@ class ScopedTaskBuilder:
         
         # Build child warrant
         try:
-            child = builder.delegate_to(keypair, keypair)
+            child = builder.delegate(keypair)
         except Exception as e:
             raise MonotonicityError(f"Failed to attenuate warrant: {e}") from e
         

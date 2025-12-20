@@ -84,7 +84,7 @@ def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: Sig
     # print("\nDelegation Diff Preview:")
     # print(research_builder.diff())
     
-    research_warrant = research_builder.delegate_to(keypair, keypair)
+    research_warrant = research_builder.delegate(keypair)
     print(f"  Attenuated: tools={research_warrant.tools} (inherited)")
     print("  Constraints: query=*competitor*, max_results<=5, url=https://public.*, ttl=60s")
     
