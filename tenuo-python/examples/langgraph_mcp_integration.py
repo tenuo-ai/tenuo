@@ -111,8 +111,8 @@ async def main():
         
         # We grant broad authority at the root, which the researcher node narrows
         async with root_task(
-            tools=["read_file", "list_directory"],
-            path=Pattern("/tmp/*")
+            Capability("read_file", path=Pattern("/tmp/*")),
+            Capability("list_directory", path=Pattern("/tmp/*")),
         ):
             input_state = {"query": "Tenuo Security"}
             final_state = await app.ainvoke(input_state)

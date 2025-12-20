@@ -19,8 +19,6 @@ from tenuo_core import (  # type: ignore
     OneOf,
     NotOneOf,
     Range,
-    Cidr,
-    UrlPattern,
     Contains,
     Subset,
     All,
@@ -38,11 +36,23 @@ from tenuo_core import (  # type: ignore
     ExtractionResult,
     # Constants
     MAX_DELEGATION_DEPTH,
-    MAX_ISSUER_CHAIN_LENGTH,
     MAX_WARRANT_SIZE,
+    MAX_WARRANT_TTL_SECS,
+    DEFAULT_WARRANT_TTL_SECS,
     WIRE_VERSION,
     WARRANT_HEADER,
 )
+
+# Optional: Some constraints may be absent on lean builds of tenuo_core
+try:
+    from tenuo_core import Cidr  # type: ignore
+except Exception:  # pragma: no cover - defensive import
+    Cidr = None  # type: ignore
+
+try:
+    from tenuo_core import UrlPattern  # type: ignore
+except Exception:  # pragma: no cover - defensive import
+    UrlPattern = None  # type: ignore
 
 from .constraints import Constraints, Capability
 
@@ -313,8 +323,9 @@ __all__ = [
     "ExtractionResult",
     # Constants
     "MAX_DELEGATION_DEPTH",
-    "MAX_ISSUER_CHAIN_LENGTH",
     "MAX_WARRANT_SIZE",
+    "MAX_WARRANT_TTL_SECS",
+    "DEFAULT_WARRANT_TTL_SECS",
     "WIRE_VERSION",
     "WARRANT_HEADER",
     

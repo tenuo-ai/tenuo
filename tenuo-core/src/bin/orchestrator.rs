@@ -97,8 +97,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n  ✓ Root Warrant Received via Enrollment Protocol:");
     println!("    • ID:          {}", root_warrant.id());
-    if let Some(tools) = root_warrant.tools() {
-        println!("    • Tools:       {:?}", tools);
+    if !root_warrant.payload.tools.is_empty() {
+        println!("    • Tools:       {:?}", root_warrant.payload.tools.keys());
     }
     println!("    • Depth:       {} (root)", root_warrant.depth());
     println!(
@@ -193,7 +193,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n  ✓ Worker Warrant Created:");
     println!("    • ID:          {}", worker_warrant.id());
-    println!("    • Parent ID:   {}", worker_warrant.parent_id().unwrap());
+    println!(
+        "    • Parent Hash: {:?}",
+        worker_warrant
+            .parent_hash()
+            .map(hex::encode)
+            .unwrap_or_default()
+    );
     println!(
         "    • Depth:       {} / {} (delegated)",
         worker_warrant.depth(),

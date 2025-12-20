@@ -157,8 +157,12 @@ secure_tools = protect_tools([search_tool, file_tool])
 
 **LangGraph**
 ```python
-from tenuo.langgraph import TenuoToolNode
-tool_node = TenuoToolNode(tools)
+from tenuo.langgraph import tenuo_node
+from tenuo import Capability, Pattern
+
+@tenuo_node(Capability("read_file", path=Pattern("/tmp/*")))
+async def reader(state):
+    return {"content": open("/tmp/demo.txt").read()}
 ```
 
 **MCP (Model Context Protocol)** _(Requires Python 3.10+)_

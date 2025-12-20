@@ -13,15 +13,22 @@ description: How Tenuo works - warrant model, constraints, verification
 
 ### Warrant Structure
 
-A warrant is a self-contained capability token with the following fields:
+On the wire, warrants use the CBOR envelope defined in `docs/wire-format-spec.md`:
+
+- Envelope: CBOR array `[envelope_version, payload_bytes, signature]`
+- Payload: CBOR map (integer keys) with `version`, `id`, `warrant_type`, `tools`, `holder`, `issuer`, `issued_at`, `expires_at`, `max_depth`, `parent`, `extensions`
+- Signature preimage: `b"tenuo-warrant-v1" || envelope_version || payload_bytes` (verified against raw bytes before deserializing)
+- Unknown payload fields are rejected unless under `extensions`; deterministic CBOR is required
+
+Conceptually (in memory), a warrant has:
 
 ```
 Warrant {
-    id: string (uuid)
+    id: bytes[16] (UUID)
     type: "execution" | "issuer"
     version: int
     
-    holder: PublicKey (mandatory - PoP binding)
+    holder: PublicKey (PoP binding)
     
     # Execution warrants
     capabilities: Map<string, ConstraintSet>  # tool_name → constraints
@@ -36,11 +43,11 @@ Warrant {
     issued_at: timestamp
     expires_at: timestamp
     max_depth: int
-    session_id: string (audit only)
+    depth: int (current delegation depth, 0 = root)
+    session_id: string (in extensions, audit only)
     
-    # Chain (embedded for self-contained verification)
-    issuer_chain: ChainLink[]
-    signature: bytes
+    # Linkage (for chain verification via WarrantStack)
+    parent_hash: bytes[32] (SHA256 of parent's payload_bytes, null for root)
 }
 ```
 
@@ -172,56 +179,55 @@ parent.attenuate().terminal().delegate_to(worker)
 
 ## Chain Verification
 
-### ChainLink Structure
+### WarrantStack Model
 
-Each warrant embeds its issuer chain for self-contained verification:
+Delegation chains are verified using a **WarrantStack** - an ordered array of warrants from root to leaf. Each warrant links to its parent via `parent_hash` (SHA256 of parent's payload bytes).
 
 ```
-ChainLink {
-    issuer_id: string (warrant ID of issuer)
-    issuer_pubkey: PublicKey
-    
-    # Embedded scope (for attenuation verification)
-    issuer_type: "execution" | "issuer"
-    issuer_capabilities: Map<string, ConstraintSet>  # for execution warrants
-    issuer_issuable_tools: string[]                   # for issuer warrants
-    issuer_trust: TrustLevel (optional)
-    issuer_expires_at: timestamp
-    issuer_max_depth: int
-    
-    signature: bytes (over child warrant)
+WarrantStack {
+    ancestors: Warrant[]  # [root, ..., parent]
+    target: Warrant       # The leaf warrant being verified
 }
 ```
 
-### Self-Contained Verification
+### Chain Verification
 
-Verification requires **no external fetches**:
+Verification walks the stack, checking each link:
 
 ```python
-def verify_chain(warrant: Warrant, trusted_roots: set[PublicKey]) -> bool:
-    """Verify using ONLY embedded data."""
-    current = warrant
+def verify_chain(stack: list[Warrant], trusted_roots: set[PublicKey]) -> bool:
+    """Verify a complete delegation chain."""
+    if not stack:
+        raise ChainVerificationFailed("Empty stack")
     
-    for link in warrant.issuer_chain:
-        # 1. Verify signature FIRST
-        if not link.issuer_pubkey.verify(serialize(current), link.signature):
-            raise ChainVerificationFailed("Invalid signature")
-        
-        # 2. Check if trusted root
-        if link.issuer_pubkey in trusted_roots:
-            return True
-        
-        # 3. Verify attenuation (monotonicity)
-        verify_attenuation(link, current)
-        
-        current = link
+    root = stack[0]
     
-    raise ChainNotAnchored("Chain does not reach trusted root")
+    # 1. Root must be from trusted issuer
+    if root.issuer() not in trusted_roots:
+        raise ChainNotAnchored("Root issuer not trusted")
+    
+    # 2. Walk the chain
+    for i in range(1, len(stack)):
+        parent = stack[i - 1]
+        child = stack[i]
+        
+        # 2a. Verify parent_hash linkage
+        expected_hash = sha256(parent.payload_bytes)
+        if child.parent_hash != expected_hash:
+            raise ChainVerificationFailed("parent_hash mismatch")
+        
+        # 2b. Verify child's signature
+        child.verify_signature()
+        
+        # 2c. Verify monotonic attenuation
+        verify_attenuation(parent, child)
+    
+    return True
 ```
 
 ### Chain Must End at Trusted Root
 
-The verification loop **must fail** if it does not end at a key in the configured `trusted_roots` set.
+The verification **must fail** if the root warrant's issuer is not in the configured `trusted_roots` set.
 
 ---
 
@@ -304,22 +310,62 @@ Hard limits prevent abuse and ensure verification terminates:
 
 | Limit | Value | Purpose |
 |-------|-------|---------|
-| `MAX_DELEGATION_DEPTH` | 64 | Max warrant depth counter |
-| `MAX_ISSUER_CHAIN_LENGTH` | 8 | Max embedded chain links (DoS protection) |
-| `MAX_WARRANT_SIZE` | 1 MB | Prevents memory exhaustion |
+| `MAX_DELEGATION_DEPTH` | 16 | Max warrant depth (typical chains are 3-5 levels) |
+| `MAX_WARRANT_TTL_SECS` | 90 days | Protocol ceiling for warrant lifetime |
+| `MAX_WARRANT_SIZE` | 64 KB | Prevents memory exhaustion |
+| `MAX_STACK_SIZE` | 64 KB | Max WarrantStack encoded size |
 | `MAX_CONSTRAINT_DEPTH` | 16 | Prevents stack overflow in nested constraints |
 | PoP Timestamp Window | 30s | Replay protection (~2 min with 4 windows) |
 
 ### Enforcement
 
 ```python
-def verify_limits(warrant: Warrant) -> None:
-    if len(warrant.issuer_chain) > MAX_ISSUER_CHAIN_LENGTH:
+def verify_limits(stack: list[Warrant]) -> None:
+    if len(stack) > MAX_DELEGATION_DEPTH:
         raise ChainTooLong()
     
-    if len(serialize(warrant)) > MAX_WARRANT_SIZE:
-        raise WarrantTooLarge()
+    for warrant in stack:
+        if len(serialize(warrant)) > MAX_WARRANT_SIZE:
+            raise WarrantTooLarge()
 ```
+
+---
+
+## Reserved Namespaces
+
+### Tool Name Prefix: `tenuo:`
+
+Tool names starting with `tenuo:` are **reserved for framework use** and will be rejected during warrant creation:
+
+```python
+# ❌ This will fail
+warrant = Warrant.builder().capability("tenuo:revoke", {})
+# Error: Reserved tool namespace
+
+# ✅ Use your own namespace
+warrant = Warrant.builder().capability("my_app:revoke", {})
+```
+
+**Rationale**: Prevents collision between user-defined tools and future framework features.
+
+**Potential future uses**:
+- `tenuo:revoke` — Inline revocation directive
+- `tenuo:require_mfa` — Enforcement flag
+- `tenuo:audit` — Force audit log entry
+
+### Extension Key Prefix: `tenuo.`
+
+Extension keys starting with `tenuo.` are reserved for Tenuo metadata:
+
+```python
+# Reserved for framework
+warrant.extension("tenuo.session_id", b"sess_123")  # Framework use only
+
+# ✅ Use reverse domain notation for your extensions
+warrant.extension("com.example.trace_id", b"abc123")
+```
+
+**Recommended format**: Reverse domain notation (`com.example.key_name`)
 
 ---
 
@@ -330,14 +376,14 @@ def verify_limits(warrant: Warrant) -> None:
 During verification, each warrant ID is tracked. If same ID appears twice → fail.
 
 ```
-chain[0].id -> seen
-chain[1].id -> seen  
-chain[2].id -> ERROR if already seen
+stack[0].id -> seen
+stack[1].id -> seen  
+stack[2].id -> ERROR if already seen
 ```
 
-### Layer 2: Chain Length Limits
+### Layer 2: Depth Limits
 
-Even if cycles somehow formed, verification stops at 8 links.
+Even if cycles somehow formed, verification stops at depth 16.
 
 ### Layer 3: Monotonic Attenuation
 
@@ -345,7 +391,7 @@ Holder cycling (A→B→A) creates 3 **different** warrants, each strictly weake
 
 ### Layer 4: Terminal Warrants
 
-A warrant with `max_depth = 0` cannot delegate further. Cryptographically enforced.
+A warrant with `depth >= max_depth` cannot delegate further. Cryptographically enforced.
 
 ### What's Blocked vs Allowed
 
@@ -354,18 +400,18 @@ A warrant with `max_depth = 0` cannot delegate further. Cryptographically enforc
 | Same warrant ID twice | [BLOCKED] | Cycle detection |
 | Holder A->B->A (different warrants) | [ALLOWED] | Monotonicity makes it safe |
 | Self-issuance (issuer warrant) | [BLOCKED] | Privilege escalation |
-| Chain > 8 links | [BLOCKED] | DoS protection |
+| Chain > 16 depth | [BLOCKED] | DoS protection |
 
 ### Scaling Delegation (Trust Anchors)
 
-The 8-link limit applies to the **untrusted** chain segment. You can build arbitrarily deep hierarchies by distributing intermediate CA keys (Trust Anchors) to the Authorizer.
+The 16-depth limit is generous for typical hierarchies. You can also distribute intermediate CA keys (Trust Anchors) to the Authorizer for verification shortcuts.
 
 **Example**:
-`Global Key` -> `Region Key` -> `Cluster Key` -> `Namespace Key` -> `Node Key` -> `Pod Key` -> `Agent Key` -> `Worker Key`
+`Global Key` → `Region Key` → `Cluster Key` → `Namespace Key` → `Pod Key` → `Agent Key`
 
-If your Authorizer trusts the `Cluster Key`, then verification stops there. The effective chain length for verification becomes just 5 links (Namespace -> ... -> Worker), well within the limit.
+If your Authorizer trusts the `Cluster Key`, verification can start there. This is useful for multi-tenant deployments where different teams manage their own key hierarchies.
 
-> **Distributing Trust**: Adding a key to `trusted_issuers` acts as a firewall that "resets" the chain length counter for all downstream warrants.
+> **Distributing Trust**: Adding a key to `trusted_issuers` allows verification to anchor at that point.
 
 ---
 
@@ -378,7 +424,6 @@ Tenuo uses **Deterministic CBOR (RFC 8949)** for all cryptographic operations:
 | Context | Format | Rationale |
 |---------|--------|-----------|
 | Warrant payload signing | Deterministic CBOR | Compact, consistent across implementations |
-| ChainLink signing | Deterministic CBOR | Binds issuer scope to child |
 | PoP challenge signing | Deterministic CBOR | Timestamp-bound challenge |
 | Wire transport | CBOR + Base64 (URL-safe) | Header-safe encoding |
 | Audit logs | JSON | Human-readable, standard tooling |

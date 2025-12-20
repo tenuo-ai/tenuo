@@ -25,7 +25,7 @@
 - Cryptographic chain verification
 - Mandatory PoP with timestamp validation
 - Monotonic attenuation
-- Chain limits (depth 64, chain length 8)
+- Chain limits (MAX_DELEGATION_DEPTH = 16)
 
 ### Python SDK ✅
 - Tiered API (`Capability` objects, `root_task`, `scoped_task`, `configure`)

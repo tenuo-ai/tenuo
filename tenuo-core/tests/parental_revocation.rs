@@ -25,7 +25,8 @@ fn test_parental_revocation() {
     assert!(!data_plane.is_revoked(&warrant));
 
     // 4. Submit Revocation (Parent)
-    let request = RevocationRequest::new(warrant.id().as_str(), "Emergency Stop", &issuer).unwrap();
+    let request =
+        RevocationRequest::new(warrant.id().to_string(), "Emergency Stop", &issuer).unwrap();
 
     data_plane
         .submit_revocation(&request, &warrant)
@@ -54,7 +55,7 @@ fn test_self_revocation() {
         .build(&issuer)
         .unwrap();
 
-    let request = RevocationRequest::new(warrant.id().as_str(), "I quit", &holder).unwrap();
+    let request = RevocationRequest::new(warrant.id().to_string(), "I quit", &holder).unwrap();
 
     data_plane
         .submit_revocation(&request, &warrant)
@@ -76,7 +77,8 @@ fn test_unauthorized_revocation() {
         .unwrap();
 
     let request =
-        RevocationRequest::new(warrant.id().as_str(), "Malicious revocation", &attacker).unwrap();
+        RevocationRequest::new(warrant.id().to_string(), "Malicious revocation", &attacker)
+            .unwrap();
 
     let result = data_plane.submit_revocation(&request, &warrant);
     assert!(result.is_err());

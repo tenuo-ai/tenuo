@@ -34,16 +34,20 @@ Complete API documentation for the Tenuo Python SDK. For wire format details, se
 Protocol-level constants exported from the SDK:
 
 ```python
-from tenuo import MAX_DELEGATION_DEPTH, MAX_ISSUER_CHAIN_LENGTH, MAX_WARRANT_SIZE
+from tenuo import MAX_DELEGATION_DEPTH, MAX_WARRANT_SIZE, MAX_WARRANT_TTL_SECS, DEFAULT_WARRANT_TTL_SECS
 ```
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| `MAX_DELEGATION_DEPTH` | 64 | Maximum warrant delegation depth |
-| `MAX_ISSUER_CHAIN_LENGTH` | 8 | Maximum chain links in a warrant (DoS protection) |
-| `MAX_WARRANT_SIZE` | 1,048,576 | Maximum serialized warrant size in bytes (1 MB) |
+| `MAX_DELEGATION_DEPTH` | 16 | Maximum warrant delegation depth |
+| `MAX_WARRANT_TTL_SECS` | 7,776,000 | Maximum TTL in seconds (90 days) |
+| `DEFAULT_WARRANT_TTL_SECS` | 300 | Default TTL if not specified (5 minutes) |
+| `MAX_WARRANT_SIZE` | 65,536 | Maximum serialized warrant size in bytes (64 KB) |
 
-**Security Note**: `MAX_ISSUER_CHAIN_LENGTH` limits the embedded issuer chain to prevent stack overflow attacks during verification. Chains longer than 8 levels indicate a design smell and should be reconsidered.
+**Notes**:
+- 16 levels of delegation is sufficient for even complex hierarchies (typical chains are 3-5 levels)
+- 90 days is the protocol ceiling; deployments can (and should) configure stricter TTL limits
+- Default TTL is intentionally short (5 minutes) - expand only as needed
 
 ---
 

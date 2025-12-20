@@ -195,7 +195,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let json = serde_json::json!({
                         "authorized": result.is_ok(),
                         "error": result.err().map(|e| e.to_string()),
-                        "warrant_id": w.id().as_str(),
+                        "warrant_id": w.id().to_string(),
                         "tool": tool,
                     });
                     println!("{}", serde_json::to_string_pretty(&json)?);
@@ -218,7 +218,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(()) => {
                     println!("✓ Warrant signature is valid");
                     println!("  ID: {}", w.id());
-                    if let Some(tools) = w.tools() {
+                    let tools = w.tools();
+                    if !tools.is_empty() {
                         println!("  Tools: {}", tools.join(", "));
                     }
                     println!("  Expires: {}", w.expires_at());
@@ -560,7 +561,7 @@ async fn handle_request(
         }
     };
 
-    let warrant_id = warrant.id().as_str().to_string();
+    let warrant_id = warrant.id().to_string().to_string();
 
     // 4. Parse body as JSON (if present)
     let json_body: Value = if body.is_empty() {

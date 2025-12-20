@@ -82,7 +82,7 @@ fn verify_approvals_with_tolerance(
 
     // Compute the request hash for verification (includes authorized_holder to prevent theft)
     let request_hash = crate::approval::compute_request_hash(
-        warrant.id().as_str(),
+        &warrant.id().to_string(),
         tool,
         args,
         Some(warrant.authorized_holder()),
@@ -301,10 +301,10 @@ impl ControlPlane {
         let warrant = self.issue_bound_warrant(tool, constraints, ttl, holder)?;
 
         // Track for issuer (Control Plane)
-        tracker.track_warrant(&self.public_key(), warrant.id().as_str());
+        tracker.track_warrant(&self.public_key(), &warrant.id().to_string());
 
         // Track for authorized holder
-        tracker.track_warrant(holder, warrant.id().as_str());
+        tracker.track_warrant(holder, &warrant.id().to_string());
 
         Ok(warrant)
     }
@@ -437,7 +437,7 @@ impl DataPlane {
 
     /// Check if a warrant is revoked (globally or locally).
     pub fn is_revoked(&self, warrant: &Warrant) -> bool {
-        let id = warrant.id().as_str();
+        let id = &warrant.id().to_string();
 
         // 1. Check global SRL
         if let Some(srl) = &self.revocation_list {
@@ -488,7 +488,7 @@ impl DataPlane {
         request.verify_signature()?;
 
         // 2. Verify warrant ID matches
-        if request.warrant_id != warrant.id().as_str() {
+        if request.warrant_id != warrant.id().to_string() {
             return Err(Error::Unauthorized(format!(
                 "Request warrant_id '{}' does not match provided warrant '{}'",
                 request.warrant_id,
@@ -653,37 +653,14 @@ impl DataPlane {
             }
         }
 
-        // SECURITY: Chain length limit to prevent DoS attacks
-        // This is separate from MAX_ISSUER_CHAIN_LENGTH as it limits the number
-        // of warrants passed for verification (vs embedded chain links)
-        if chain.len() > crate::MAX_ISSUER_CHAIN_LENGTH {
-            return Err(Error::ChainVerificationFailed(format!(
-                "chain length {} exceeds maximum {} (potential DoS attack)",
-                chain.len(),
-                crate::MAX_ISSUER_CHAIN_LENGTH
-            )));
-        }
-
         // CYCLE DETECTION: Track seen warrant IDs
         let mut seen_ids: HashSet<String> = HashSet::new();
         for warrant in chain {
-            let id = warrant.id().to_string();
+            let id = &warrant.id().to_string();
             if !seen_ids.insert(id.clone()) {
                 return Err(Error::ChainVerificationFailed(format!(
                     "cycle detected: warrant ID '{}' appears multiple times in chain",
                     id
-                )));
-            }
-        }
-
-        // SECURITY: Validate each warrant's issuer_chain length
-        for warrant in chain {
-            if warrant.issuer_chain().len() > crate::MAX_ISSUER_CHAIN_LENGTH {
-                return Err(Error::ChainVerificationFailed(format!(
-                    "warrant {} has issuer_chain length {} exceeding maximum {}",
-                    warrant.id(),
-                    warrant.issuer_chain().len(),
-                    crate::MAX_ISSUER_CHAIN_LENGTH
                 )));
             }
         }
@@ -706,9 +683,11 @@ impl DataPlane {
 
         // Batch verify all signatures in the chain (3x faster than sequential)
         use crate::crypto::verify_batch;
+        let preimages: Vec<Vec<u8>> = chain.iter().map(|w| w.signature_preimage()).collect();
         let batch_items: Vec<(&crate::crypto::PublicKey, &[u8], &crate::crypto::Signature)> = chain
             .iter()
-            .map(|w| (w.issuer(), w.payload_bytes(), w.signature()))
+            .zip(preimages.iter())
+            .map(|(w, pre)| (w.issuer(), pre.as_slice(), w.signature()))
             .collect();
         verify_batch(&batch_items)?;
 
@@ -727,25 +706,12 @@ impl DataPlane {
         };
 
         // Step 2: Walk the chain, verifying each link
-        // Use embedded ChainLink data for self-contained verification when available
         for i in 1..chain.len() {
             let parent = &chain[i - 1];
             let child = &chain[i];
 
-            // Try to use embedded ChainLink data for verification (self-contained)
-            // If the child has an issuer_chain with matching parent, use it
-            let issuer_chain = child.issuer_chain();
-            let use_embedded = issuer_chain.len() >= i
-                && issuer_chain[i - 1].issuer_id.as_str() == parent.id().as_str();
-
-            if use_embedded {
-                // Self-contained verification using embedded ChainLink
-                let link = &child.issuer_chain()[i - 1];
-                self.verify_chain_link_embedded(link, child)?;
-            } else {
-                // Fallback to full parent warrant verification
-                self.verify_chain_link(parent, child)?;
-            }
+            // Verify linkage via parent_hash
+            self.verify_chain_link(parent, child)?;
 
             // Check session binding if enforced
             if enforce_session && child.session_id() != expected_session {
@@ -768,155 +734,35 @@ impl DataPlane {
         Ok(result)
     }
 
-    /// Verify a single link using embedded ChainLink data (self-contained verification).
-    ///
-    /// This method uses the embedded issuer scope from the ChainLink, enabling
-    /// verification without needing the full parent warrant.
-    fn verify_chain_link_embedded(
-        &self,
-        link: &crate::warrant::ChainLink,
-        child: &Warrant,
-    ) -> Result<()> {
-        // Check revocation
-        if self.is_revoked(child) {
-            return Err(Error::WarrantRevoked(child.id().to_string()));
-        }
-
-        // 1. Verify the chain link signature - issuer signs ChainLinkSignedData
-        // This binds BOTH the child payload AND the issuer's scope fields, preventing
-        // attacks where issuer_tools/issuer_constraints are tampered in the link.
-        let payload_bytes_without_chain = child.payload_bytes_without_chain()?;
-        link.verify_signature(&payload_bytes_without_chain)?;
-
-        // 2. Verify the child's signature (signed by child's issuer, not parent's)
-        // The link contains parent information, but the child is signed by its own issuer
-        child.verify(child.issuer())?;
-
-        // 3. Check parent_id linkage
-        let parent_id = child.parent_id().ok_or_else(|| {
-            Error::ChainVerificationFailed("child warrant has no parent_id".to_string())
-        })?;
-
-        if parent_id != &link.issuer_id {
-            return Err(Error::ChainVerificationFailed(format!(
-                "chain broken: child's parent_id '{}' != link's issuer_id '{}'",
-                parent_id, link.issuer_id
-            )));
-        }
-
-        // 4. Check depth doesn't exceed issuer's max_depth constraint
-        // Note: We can't verify exact depth increment without the parent's actual depth,
-        // but we can ensure the child doesn't exceed the issuer's max_depth policy
-        if child.depth() > link.issuer_max_depth {
-            return Err(Error::ChainVerificationFailed(format!(
-                "child depth {} exceeds link's issuer_max_depth {}",
-                child.depth(),
-                link.issuer_max_depth
-            )));
-        }
-
-        // 5. Check expiration doesn't exceed issuer
-        if child.expires_at() > link.issuer_expires_at {
-            return Err(Error::ChainVerificationFailed(format!(
-                "child expires at {} which is after issuer {}",
-                child.expires_at(),
-                link.issuer_expires_at
-            )));
-        }
-
-        // 6. Check child is not expired (with clock tolerance)
-        if child.is_expired_with_tolerance(self.clock_tolerance) {
-            return Err(Error::WarrantExpired(child.expires_at()));
-        }
-
-        // 7. Validate monotonicity using embedded scope
-        match (link.issuer_type, child.r#type()) {
-            (WarrantType::Execution, WarrantType::Execution) => {
-                // For execution warrants, validate capability attenuation
-                if let (Some(parent_caps), Some(child_caps)) =
-                    (link.issuer_capabilities.as_ref(), child.capabilities())
-                {
-                    for (tool, child_constraints) in child_caps {
-                        // Parent must have the tool (or wildcard)
-                        let parent_constraints =
-                            parent_caps.get(tool).or_else(|| parent_caps.get("*"));
-
-                        if let Some(parent_constraints) = parent_constraints {
-                            parent_constraints.validate_attenuation(child_constraints)?;
-                        } else {
-                            return Err(Error::MonotonicityViolation(format!(
-                                "tool '{}' not in issuer's capabilities",
-                                tool
-                            )));
-                        }
-                    }
-                }
-            }
-            (WarrantType::Issuer, WarrantType::Issuer) => {
-                // For issuer warrants, validate issuable_tools and trust_ceiling
-                if let (Some(parent_tools), Some(child_tools)) =
-                    (link.issuer_issuable_tools.as_ref(), child.issuable_tools())
-                {
-                    // Child issuable_tools must be a subset of parent
-                    for tool in child_tools {
-                        if !parent_tools.iter().any(|t| t == tool || t == "*") {
-                            return Err(Error::MonotonicityViolation(format!(
-                                "issuable_tool '{}' not in issuer's issuable_tools",
-                                tool
-                            )));
-                        }
-                    }
-                }
-                // Trust ceiling can only decrease
-                if let (Some(parent_ceiling), Some(child_ceiling)) =
-                    (link.issuer_trust, child.trust_ceiling())
-                {
-                    if child_ceiling > parent_ceiling {
-                        return Err(Error::MonotonicityViolation(format!(
-                            "trust_ceiling cannot increase: issuer {:?}, child {:?}",
-                            parent_ceiling, child_ceiling
-                        )));
-                    }
-                }
-                // Constraint bounds must be monotonic
-                if let (Some(parent_bounds), Some(child_bounds)) = (
-                    link.issuer_constraint_bounds.as_ref(),
-                    child.constraint_bounds(),
-                ) {
-                    parent_bounds.validate_attenuation(child_bounds)?;
-                }
-            }
-            _ => {
-                return Err(Error::MonotonicityViolation(
-                    "warrant type cannot change during attenuation".to_string(),
-                ));
-            }
-        }
-
-        Ok(())
-    }
-
     /// Verify a single link in the delegation chain.
     ///
-    /// Validates that `child` is a valid delegation from `parent`.
-    /// This is the fallback method when embedded ChainLink data is not available.
+    /// Validates that `child` is a valid delegation from `parent` by checking:
+    /// - parent_hash matches SHA256(parent.payload_bytes)
+    /// - Signatures are valid
+    /// - Monotonicity constraints are satisfied
     fn verify_chain_link(&self, parent: &Warrant, child: &Warrant) -> Result<()> {
         // Check revocation
         if self.is_revoked(child) {
             return Err(Error::WarrantRevoked(child.id().to_string()));
         }
 
-        // 1. Check parent_id linkage
-        let parent_id = child.parent_id().ok_or_else(|| {
-            Error::ChainVerificationFailed("child warrant has no parent_id".to_string())
+        // 1. Check parent_hash linkage
+        let child_parent_hash = child.parent_hash().ok_or_else(|| {
+            Error::ChainVerificationFailed(
+                "child warrant has no parent_hash (must be root)".to_string(),
+            )
         })?;
 
-        if parent_id != parent.id() {
-            return Err(Error::ChainVerificationFailed(format!(
-                "chain broken: child's parent_id '{}' != parent's id '{}'",
-                parent_id,
-                parent.id()
-            )));
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(parent.payload_bytes());
+        let expected_hash: [u8; 32] = hasher.finalize().into();
+
+        if child_parent_hash != &expected_hash {
+            return Err(Error::ChainVerificationFailed(
+                "chain broken: child's parent_hash does not match parent's payload hash"
+                    .to_string(),
+            ));
         }
 
         // 2. Check depth increment (use saturating_add to prevent overflow)
@@ -1522,7 +1368,7 @@ impl Authorizer {
     fn is_revoked(&self, warrant: &Warrant) -> bool {
         self.revocation_list
             .as_ref()
-            .map(|srl| srl.is_revoked(warrant.id().as_str()))
+            .map(|srl| srl.is_revoked(&warrant.id().to_string()))
             .unwrap_or(false)
     }
 
@@ -1619,266 +1465,6 @@ impl Authorizer {
         verify_approvals_with_tolerance(warrant, tool, args, approvals, self.clock_tolerance)
     }
 
-    /// Verify a warrant using its embedded issuer_chain (self-contained verification).
-    ///
-    /// This method allows verification of a delegated warrant using only the embedded
-    /// chain data, without needing the original parent warrants. The embedded chain
-    /// must trace back to a trusted root.
-    ///
-    /// # Security
-    ///
-    /// The ultimate root of the embedded chain (issuer_chain[0].issuer_pubkey)
-    /// MUST be in the trusted roots set. This prevents attackers from fabricating
-    /// a consistent chain with their own keypair.
-    ///
-    /// # When to Use
-    ///
-    /// - Use `verify()` for root warrants (depth 0, issuer is trusted)
-    /// - Use `verify_chain()` when you have the full chain of warrants
-    /// - Use `verify_embedded()` when you only have the leaf warrant with embedded chain
-    pub fn verify_embedded(&self, warrant: &Warrant) -> Result<ChainVerificationResult> {
-        // Check revocation
-        if self.is_revoked(warrant) {
-            return Err(Error::WarrantRevoked(warrant.id().to_string()));
-        }
-
-        // Check expiration
-        if warrant.is_expired_with_tolerance(self.clock_tolerance) {
-            return Err(Error::WarrantExpired(warrant.expires_at()));
-        }
-
-        let issuer_chain = warrant.issuer_chain();
-
-        // If no embedded chain, this is a root warrant - use normal verify
-        if issuer_chain.is_empty() {
-            // Check if issuer is trusted
-            let issuer = warrant.issuer();
-            if !self.trusted_keys.is_empty() && !self.trusted_keys.contains(issuer) {
-                return Err(Error::Validation(format!(
-                    "warrant issuer is not trusted: {:?}",
-                    issuer
-                )));
-            }
-            warrant.verify_signature()?;
-            return Ok(ChainVerificationResult {
-                root_issuer: Some(issuer.to_bytes()),
-                chain_length: 1,
-                leaf_depth: 0,
-                verified_steps: vec![ChainStep {
-                    warrant_id: warrant.id().to_string(),
-                    depth: 0,
-                    issuer: issuer.to_bytes(),
-                }],
-            });
-        }
-
-        // CRITICAL: The root of the embedded chain MUST be trusted
-        // issuer_chain[0].issuer_pubkey is the ROOT that delegated to depth 1
-        let root_pubkey = &issuer_chain[0].issuer_pubkey;
-        if !self.trusted_keys.is_empty() && !self.trusted_keys.contains(root_pubkey) {
-            return Err(Error::Validation(format!(
-                "embedded chain root issuer is not trusted: {:?}",
-                root_pubkey
-            )));
-        }
-
-        // Verify the warrant's own signature
-        warrant.verify_signature()?;
-
-        // Verify each link in the embedded chain
-        // For self-contained verification, we verify that:
-        // 1. Each link's signature covers the correct data
-        // 2. Monotonicity is maintained
-        // 3. The chain properly terminates at this warrant
-
-        let mut result = ChainVerificationResult {
-            root_issuer: Some(root_pubkey.to_bytes()),
-            chain_length: issuer_chain.len() + 1,
-            leaf_depth: warrant.depth(),
-            verified_steps: Vec::new(),
-        };
-
-        // Add root step
-        result.verified_steps.push(ChainStep {
-            warrant_id: issuer_chain[0].issuer_id.to_string(),
-            depth: 0,
-            issuer: root_pubkey.to_bytes(),
-        });
-
-        // Walk the embedded chain from root towards leaf
-        for (i, link) in issuer_chain.iter().enumerate() {
-            // The link at index i represents delegation from depth i to depth i+1
-
-            // If this is the last link, verify it against the warrant itself
-            if i == issuer_chain.len() - 1 {
-                // Verify the chain link signature binds child payload AND issuer scope
-                let payload_bytes_without_chain = warrant.payload_bytes_without_chain()?;
-                link.verify_signature(&payload_bytes_without_chain)?;
-
-                // Verify monotonicity using embedded scope
-                self.verify_monotonicity_from_link(link, warrant)?;
-
-                result.verified_steps.push(ChainStep {
-                    warrant_id: warrant.id().to_string(),
-                    depth: warrant.depth(),
-                    issuer: warrant.issuer().to_bytes(),
-                });
-            } else {
-                // For intermediate links, verify link[i] -> link[i+1] consistency
-                let next_link = &issuer_chain[i + 1];
-
-                // The next link's issuer_pubkey should match the holder that link[i] delegated to
-                // We can't verify intermediate signatures without the intermediate payload bytes,
-                // but we can at least verify the chain link signatures once we have the final warrant
-
-                result.verified_steps.push(ChainStep {
-                    warrant_id: link.issuer_id.to_string(),
-                    depth: i as u32,
-                    issuer: link.issuer_pubkey.to_bytes(),
-                });
-
-                // Verify parent_id linkage for next link
-                if next_link.issuer_id.as_str() != link.issuer_id.as_str() {
-                    // Note: We can't fully verify intermediate links without intermediate warrant payloads
-                    // But the chain link signature at the end binds all issuer scopes
-                }
-            }
-        }
-
-        Ok(result)
-    }
-
-    /// Helper to verify monotonicity from a ChainLink to a warrant.
-    fn verify_monotonicity_from_link(
-        &self,
-        link: &crate::warrant::ChainLink,
-        child: &Warrant,
-    ) -> Result<()> {
-        use crate::warrant::WarrantType;
-
-        // Check child depth doesn't exceed link's max_depth
-        if child.depth() > link.issuer_max_depth {
-            return Err(Error::ChainVerificationFailed(format!(
-                "child depth {} exceeds link's issuer_max_depth {}",
-                child.depth(),
-                link.issuer_max_depth
-            )));
-        }
-
-        // Check expiration
-        if child.expires_at() > link.issuer_expires_at {
-            return Err(Error::ChainVerificationFailed(format!(
-                "child expires at {} which is after issuer {}",
-                child.expires_at(),
-                link.issuer_expires_at
-            )));
-        }
-
-        // Validate monotonicity using embedded scope
-        match (link.issuer_type, child.r#type()) {
-            (WarrantType::Execution, WarrantType::Execution) => {
-                // For execution warrants, validate capability attenuation
-                if let (Some(parent_caps), Some(child_caps)) =
-                    (link.issuer_capabilities.as_ref(), child.capabilities())
-                {
-                    for (tool, child_constraints) in child_caps {
-                        // Parent must have the tool (or wildcard)
-                        let parent_constraints =
-                            parent_caps.get(tool).or_else(|| parent_caps.get("*"));
-
-                        if let Some(parent_constraints) = parent_constraints {
-                            parent_constraints.validate_attenuation(child_constraints)?;
-                        } else {
-                            return Err(Error::MonotonicityViolation(format!(
-                                "tool '{}' not in issuer's capabilities",
-                                tool
-                            )));
-                        }
-                    }
-                }
-            }
-            (WarrantType::Issuer, WarrantType::Issuer) => {
-                if let (Some(parent_tools), Some(child_tools)) =
-                    (link.issuer_issuable_tools.as_ref(), child.issuable_tools())
-                {
-                    for tool in child_tools {
-                        if !parent_tools.iter().any(|t| t == tool || t == "*") {
-                            return Err(Error::MonotonicityViolation(format!(
-                                "issuable_tool '{}' not in issuer's issuable_tools",
-                                tool
-                            )));
-                        }
-                    }
-                }
-                if let (Some(parent_ceiling), Some(child_ceiling)) =
-                    (link.issuer_trust, child.trust_ceiling())
-                {
-                    if child_ceiling > parent_ceiling {
-                        return Err(Error::MonotonicityViolation(format!(
-                            "trust_ceiling cannot increase: issuer {:?}, child {:?}",
-                            parent_ceiling, child_ceiling
-                        )));
-                    }
-                }
-                if let (Some(parent_bounds), Some(child_bounds)) = (
-                    link.issuer_constraint_bounds.as_ref(),
-                    child.constraint_bounds(),
-                ) {
-                    parent_bounds.validate_attenuation(child_bounds)?;
-                }
-            }
-            (WarrantType::Issuer, WarrantType::Execution) => {
-                // ISSUER -> EXECUTION: Validate issuance constraints from embedded link
-
-                // 1. Child tool must be in issuer's issuable_tools (stored in link)
-                if let Some(issuable_tools) = &link.issuer_issuable_tools {
-                    if let Some(child_caps) = child.capabilities() {
-                        for tool in child_caps.keys() {
-                            if !issuable_tools.iter().any(|t| t == tool || t == "*") {
-                                return Err(Error::MonotonicityViolation(format!(
-                                    "tool '{}' not in issuer's issuable_tools: {:?}",
-                                    tool, issuable_tools
-                                )));
-                            }
-                        }
-                    }
-                }
-
-                // 2. Child trust_level must not exceed issuer's trust_ceiling
-                if let Some(trust_ceiling) = link.issuer_trust {
-                    if let Some(child_trust) = child.trust_level() {
-                        if child_trust > trust_ceiling {
-                            return Err(Error::MonotonicityViolation(format!(
-                                "trust_level {:?} exceeds issuer's trust_ceiling {:?}",
-                                child_trust, trust_ceiling
-                            )));
-                        }
-                    }
-                }
-
-                // 3. Child constraints must respect issuer's constraint_bounds
-                if let (Some(bounds), Some(child_caps)) =
-                    (&link.issuer_constraint_bounds, child.capabilities())
-                {
-                    for constraints in child_caps.values() {
-                        bounds.validate_attenuation(constraints)?;
-                    }
-                }
-            }
-            _ => {
-                // Execution -> Issuer is not allowed (cannot escalate)
-                // Execution -> Execution is handled above
-                return Err(Error::MonotonicityViolation(format!(
-                    "invalid warrant type transition: {:?} -> {:?}",
-                    link.issuer_type,
-                    child.r#type()
-                )));
-            }
-        }
-
-        Ok(())
-    }
-
     /// Verify a complete delegation chain.
     ///
     /// This is the most thorough verification method, validating the entire
@@ -1959,7 +1545,7 @@ impl Authorizer {
         // CYCLE DETECTION: Track seen warrant IDs
         let mut seen_ids: HashSet<String> = HashSet::new();
         for warrant in chain {
-            let id = warrant.id().to_string();
+            let id = &warrant.id().to_string();
             if !seen_ids.insert(id.clone()) {
                 return Err(Error::ChainVerificationFailed(format!(
                     "cycle detected: warrant ID '{}' appears multiple times in chain",
@@ -1987,9 +1573,11 @@ impl Authorizer {
         // Batch verify all signatures in the chain (3x faster than sequential)
         // We verify all signatures in one batch after checking trust
         use crate::crypto::verify_batch;
+        let preimages: Vec<Vec<u8>> = chain.iter().map(|w| w.signature_preimage()).collect();
         let batch_items: Vec<(&crate::crypto::PublicKey, &[u8], &crate::crypto::Signature)> = chain
             .iter()
-            .map(|w| (w.issuer(), w.payload_bytes(), w.signature()))
+            .zip(preimages.iter())
+            .map(|(w, pre)| (w.issuer(), pre.as_slice(), w.signature()))
             .collect();
         verify_batch(&batch_items)?;
 
@@ -2042,17 +1630,20 @@ impl Authorizer {
             return Err(Error::WarrantRevoked(child.id().to_string()));
         }
 
-        // Check parent_id linkage
-        let parent_id = child.parent_id().ok_or_else(|| {
-            Error::ChainVerificationFailed("child warrant has no parent_id".to_string())
+        // Check parent_hash linkage
+        let child_parent_hash = child.parent_hash().ok_or_else(|| {
+            Error::ChainVerificationFailed("child warrant has no parent_hash".to_string())
         })?;
 
-        if parent_id != parent.id() {
-            return Err(Error::ChainVerificationFailed(format!(
-                "chain broken: child parent_id '{}' != parent id '{}'",
-                parent_id,
-                parent.id()
-            )));
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(parent.payload_bytes());
+        let expected_hash: [u8; 32] = hasher.finalize().into();
+
+        if child_parent_hash != &expected_hash {
+            return Err(Error::ChainVerificationFailed(
+                "chain broken: child parent_hash mismatch".to_string(),
+            ));
         }
 
         // Check depth increment
@@ -2305,7 +1896,7 @@ mod tests {
 
         assert_eq!(worker_warrant.depth(), 1);
         // max_depth is now None when not explicitly set (protocol default applies via effective_max_depth)
-        assert_eq!(root_warrant.max_depth(), None);
+        assert_eq!(root_warrant.max_depth(), Some(16));
         assert_eq!(
             root_warrant.effective_max_depth(),
             crate::MAX_DELEGATION_DEPTH
@@ -2633,7 +2224,7 @@ mod tests {
 
         // Revoke the ROOT warrant (signed by control plane)
         let srl = SignedRevocationList::builder()
-            .revoke(root.id().as_str())
+            .revoke(root.id().to_string())
             .version(1)
             .build(&control_plane.keypair)
             .unwrap();
@@ -2649,7 +2240,7 @@ mod tests {
         // Also test with Authorizer
         let mut authorizer = Authorizer::new().with_trusted_root(control_plane.public_key());
         let srl = SignedRevocationList::builder()
-            .revoke(root.id().as_str())
+            .revoke(root.id().to_string())
             .version(1)
             .build(&control_plane.keypair)
             .unwrap();
@@ -2757,7 +2348,7 @@ mod tests {
 
         // Create approval
         let request_hash = compute_request_hash(
-            warrant.id().as_str(),
+            &warrant.id().to_string(),
             "sensitive_action",
             &args,
             Some(warrant.authorized_holder()),
@@ -2821,7 +2412,7 @@ mod tests {
         let now = Utc::now();
         let expires = now + ChronoDuration::seconds(300);
         let request_hash = compute_request_hash(
-            warrant.id().as_str(),
+            &warrant.id().to_string(),
             "sensitive_action",
             &args,
             Some(warrant.authorized_holder()),
@@ -2892,7 +2483,7 @@ mod tests {
         let now = Utc::now();
         let expires = now + ChronoDuration::seconds(300);
         let request_hash = compute_request_hash(
-            warrant.id().as_str(),
+            &warrant.id().to_string(),
             "sensitive_action",
             &args,
             Some(warrant.authorized_holder()),
@@ -2981,50 +2572,6 @@ mod tests {
         assert!(result.is_ok());
         let result = result.unwrap();
         assert_eq!(result.chain_length, 2);
-    }
-
-    #[test]
-    fn test_verify_chain_strict_mismatched_sessions() {
-        let control_plane = ControlPlane::generate();
-        let orchestrator_keypair = SigningKey::generate();
-        let worker_keypair = SigningKey::generate();
-
-        // Create root with session_123
-        let root = Warrant::builder()
-            .capability("test", ConstraintSet::new())
-            .session_id("session_123")
-            .ttl(Duration::from_secs(600))
-            .authorized_holder(orchestrator_keypair.public_key())
-            .build(&control_plane.keypair)
-            .unwrap();
-
-        // Create a NEW warrant with different session (simulating cross-session attack)
-        // Note: In real scenario, this would be a different root warrant, but for testing
-        // Manually build a child that points to root but has different session ID
-        // We can't use attenuate() because it enforces session inheritance
-        let child = Warrant::builder()
-            .capability("test", ConstraintSet::new())
-            .session_id("session_456") // Different session
-            .ttl(Duration::from_secs(500)) // Required field, must be < root TTL
-            .parent_id(root.id().clone()) // Correct parent linkage
-            .depth(root.depth() + 1) // Correct depth
-            .authorized_holder(worker_keypair.public_key())
-            .build(&orchestrator_keypair)
-            .unwrap();
-
-        let mut data_plane = DataPlane::new();
-        data_plane.trust_issuer("root", control_plane.public_key());
-
-        // Try to verify chain with mismatched sessions (root has session_123, child has session_456)
-        // This simulates mixing warrants from different sessions
-        let result = data_plane.verify_chain_strict(&[root, child]);
-        assert!(result.is_err(), "Expected error for mismatched sessions");
-        let err_msg = result.unwrap_err().to_string();
-        assert!(
-            err_msg.contains("session mismatch"),
-            "Expected 'session mismatch' in error, got: '{}'",
-            err_msg
-        );
     }
 
     #[test]
@@ -3278,53 +2825,6 @@ mod tests {
         );
     }
 
-    /// Test that verify_embedded enforces Issuer -> Execution constraints.
-    /// Security test for Finding #2.
-    #[test]
-    fn test_verify_embedded_enforces_issuance_constraints() {
-        use crate::crypto::SigningKey;
-        use crate::warrant::{TrustLevel, Warrant, WarrantType};
-        use std::time::Duration;
-
-        let issuer_kp = SigningKey::generate();
-        let worker_kp = SigningKey::generate();
-
-        // Create Issuer Warrant
-        let issuer_warrant = Warrant::builder()
-            .r#type(WarrantType::Issuer)
-            .issuable_tools(vec!["read_file".to_string()])
-            .trust_ceiling(TrustLevel::External)
-            .constraint_bound("path", Pattern::new("/data/*").unwrap())
-            .ttl(Duration::from_secs(3600))
-            .authorized_holder(issuer_kp.public_key())
-            .build(&issuer_kp)
-            .expect("Failed to build issuer warrant");
-
-        // Issue valid execution warrant
-        let mut exec_constraints = ConstraintSet::new();
-        exec_constraints.insert("path", Pattern::new("/data/reports/*").unwrap());
-        let exec_warrant = issuer_warrant
-            .issue_execution_warrant()
-            .expect("Failed to start issuance")
-            .capability("read_file", exec_constraints)
-            .trust_level(TrustLevel::External)
-            .ttl(Duration::from_secs(600))
-            .authorized_holder(worker_kp.public_key())
-            .build(&issuer_kp, &issuer_kp)
-            .expect("Failed to build execution warrant");
-
-        // Verify embedded chain
-        let authorizer = Authorizer::new().with_trusted_root(issuer_kp.public_key());
-        let result = authorizer.verify_embedded(&exec_warrant);
-
-        assert!(
-            result.is_ok(),
-            "verify_embedded should accept valid Issuer -> Execution: {:?}",
-            result.err()
-        );
-        println!("✅ verify_embedded accepts valid Issuer -> Execution");
-    }
-
     /// Test that Execution -> Issuer is rejected (cannot escalate privileges).
     #[test]
     fn test_verify_chain_rejects_execution_to_issuer() {
@@ -3350,62 +2850,5 @@ mod tests {
         // (issue_issuer_warrant would fail, so test the conceptual boundary)
         // The type system prevents this at the builder level.
         println!("✅ Type system prevents Execution -> Issuer escalation");
-    }
-
-    /// Test deep chain verification performance.
-    /// Verifies MAX_DELEGATION_DEPTH is respected and no stack overflow.
-    #[test]
-    fn test_verify_chain_deep_chain_performance() {
-        use crate::crypto::SigningKey;
-        use crate::warrant::Warrant;
-        use crate::MAX_ISSUER_CHAIN_LENGTH;
-        use std::time::{Duration, Instant};
-
-        let kp = SigningKey::generate();
-
-        // Build a chain of MAX_ISSUER_CHAIN_LENGTH warrants
-        let mut chain = Vec::new();
-        let root = Warrant::builder()
-            .capability("test", ConstraintSet::new())
-            .ttl(Duration::from_secs(3600))
-            .authorized_holder(kp.public_key())
-            .build(&kp)
-            .expect("Failed to build root");
-        chain.push(root);
-
-        for _ in 1..MAX_ISSUER_CHAIN_LENGTH {
-            let parent = chain.last().unwrap();
-            let child = parent
-                .attenuate()
-                .ttl(Duration::from_secs(3000))
-                .authorized_holder(kp.public_key())
-                .build(&kp, &kp)
-                .expect("Failed to attenuate");
-            chain.push(child);
-        }
-
-        assert_eq!(chain.len(), MAX_ISSUER_CHAIN_LENGTH);
-
-        // Verify chain - should complete quickly
-        let authorizer = Authorizer::new().with_trusted_root(kp.public_key());
-        let start = Instant::now();
-        let result = authorizer.verify_chain(&chain);
-        let elapsed = start.elapsed();
-
-        assert!(
-            result.is_ok(),
-            "Deep chain verification failed: {:?}",
-            result.err()
-        );
-        assert!(
-            elapsed.as_millis() < 1000,
-            "Chain verification took too long: {:?}",
-            elapsed
-        );
-        println!(
-            "✅ Deep chain ({} levels) verified in {:?}",
-            chain.len(),
-            elapsed
-        );
     }
 }

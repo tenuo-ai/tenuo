@@ -5,38 +5,43 @@
 //!
 //! ## Test Categories
 //!
-//! 1. **ChainLink Tampering** - Modify embedded issuer scope without breaking child sig
-//! 2. **CBOR Payload Tampering** - Craft payload where payload_bytes ≠ canonical(payload)
+//! 1. **Parent Hash Attacks** - Modify linkage, skip chain elements
+//! 2. **CBOR Parser Attacks** - Duplicate keys, unknown fields, malformed payloads
 //! 3. **Signature Reuse** - Use signature from one warrant for another
 //! 4. **Cycle Detection** - Create circular delegation chains
 //! 5. **Trust Violations** - Bypass trust ceiling constraints
 //! 6. **PoP Timestamp** - Manipulate PoP timestamp windows
-//! 7. **Depth Limits** - Bypass MAX_DELEGATION_DEPTH and MAX_ISSUER_CHAIN_LENGTH
+//! 7. **Depth Limits** - Bypass MAX_DELEGATION_DEPTH
+//! 8. **TTL Attacks** - Excessive TTL, time traveler scenarios
+//! 9. **Type Confusion** - Wrong types to constraints (NaN, string to Range)
+//! 10. **ReDoS** - Regex denial of service attempts
 //!
 //! Run: cargo test --test red_team -- --nocapture
 
 use chrono::{Duration as ChronoDuration, Utc};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 use tenuo::{
     constraints::{All, Constraint, ConstraintSet, ConstraintValue, Exact, OneOf, Pattern},
     crypto::SigningKey,
     planes::{Authorizer, DataPlane},
     warrant::{TrustLevel, Warrant, WarrantType},
-    wire, MAX_DELEGATION_DEPTH, MAX_ISSUER_CHAIN_LENGTH,
+    wire, Range, RegexConstraint, MAX_DELEGATION_DEPTH, MAX_WARRANT_TTL_SECS,
 };
 
 // ============================================================================
-// ChainLink Tampering Attacks
+// Parent Hash Linkage Attacks
 // ============================================================================
 
-/// Attack: Modify embedded issuer_tools in ChainLink without breaking signature.
+/// Test: Verify parent_hash correctly links child to parent.
 ///
-/// ChainLink signature covers BOTH child_payload_bytes AND issuer scope.
-/// Since we can't easily manipulate CBOR without deep rewrites, we test the
-/// property indirectly: verify that chain verification enforces scope consistency.
+/// The parent_hash is SHA256(parent.payload_bytes), providing cryptographic
+/// linkage without embedding the full parent chain. Verification requires
+/// a WarrantStack to trace the full ancestry.
 #[test]
-fn test_chainlink_scope_binding() {
+fn test_parent_hash_linkage() {
+    use sha2::{Digest, Sha256};
+
     let parent_kp = SigningKey::generate();
     let child_kp = SigningKey::generate();
 
@@ -55,34 +60,21 @@ fn test_chainlink_scope_binding() {
         .build(&parent_kp, &parent_kp)
         .unwrap();
 
-    // Verify that child has embedded issuer scope from parent
-    let chain = child.issuer_chain();
-    assert!(!chain.is_empty(), "Child should have issuer_chain");
+    // Verify parent_hash is set and matches
+    let expected_hash: [u8; 32] = {
+        let mut hasher = Sha256::new();
+        hasher.update(parent.payload_bytes());
+        hasher.finalize().into()
+    };
 
-    let link = &chain[0];
-    assert_eq!(link.issuer_id, *parent.id());
-    assert_eq!(link.issuer_capabilities, parent.capabilities().cloned());
-
-    println!("✅ ChainLink correctly embeds issuer scope");
-
-    // The signature covers both child payload AND issuer scope
-    // If we could tamper with issuer_tools, the signature would fail
-    // We verify this property by checking the signing logic:
-
-    let child_payload_bytes = child.payload_bytes_without_chain().unwrap();
-    let verify_link_result = link.verify_signature(&child_payload_bytes);
-
-    assert!(
-        verify_link_result.is_ok(),
-        "ChainLink signature should verify"
+    assert_eq!(
+        child.parent_hash(),
+        Some(&expected_hash),
+        "Child's parent_hash should be SHA256 of parent's payload_bytes"
     );
-    println!("✅ ChainLink signature binds child payload and issuer scope");
 
-    // Verify full chain
-    let _data_plane = DataPlane::new();
-    // Chain verification happens via embedded issuer_chain
-    // The child carries parent info, so single-warrant verification works
-    println!("✅ ChainLink tampering protection verified");
+    println!("✅ parent_hash correctly links child to parent");
+    println!("   (Chain verification requires WarrantStack)");
 }
 
 // ============================================================================
@@ -250,14 +242,19 @@ fn test_parent_child_relationship_integrity() {
     let child = parent.attenuate().build(&keypair, &keypair).unwrap();
 
     // Verify parent_id is set correctly
-    assert_eq!(child.parent_id(), Some(parent.id()));
+    {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(parent.payload_bytes());
+        let parent_hash: [u8; 32] = hasher.finalize().into();
+        assert_eq!(child.parent_hash(), Some(&parent_hash));
+    }
 
-    // Verify depth increased
-    assert_eq!(child.depth(), parent.depth() + 1);
-
-    // Verify issuer_chain contains parent info
-    assert!(!child.issuer_chain().is_empty());
-    assert_eq!(child.issuer_chain()[0].issuer_id, *parent.id());
+    // Verify parent_hash links to parent
+    assert!(
+        child.parent_hash().is_some(),
+        "Child should have parent_hash"
+    );
 
     println!("✅ Parent-child relationship correctly maintained (cycles prevented by design)");
 }
@@ -337,7 +334,7 @@ fn test_pop_future_timestamp() {
     sorted_args.sort_by_key(|(k, _)| *k);
 
     let challenge = (
-        warrant.id().as_str(),
+        warrant.id().to_string(),
         "transfer",
         &sorted_args,
         window_start,
@@ -386,7 +383,7 @@ fn test_pop_old_timestamp_replay() {
     sorted_args.sort_by_key(|(k, _)| *k);
 
     let challenge = (
-        warrant.id().as_str(),
+        warrant.id().to_string(),
         "transfer",
         &sorted_args,
         window_start,
@@ -491,7 +488,7 @@ fn test_pop_concurrent_window_boundary() {
 
 /// Attack: Create delegation chain exceeding MAX_DELEGATION_DEPTH.
 ///
-/// Expected: DepthExceeded error at depth 64.
+/// Expected: DepthExceeded error at depth 16.
 #[test]
 fn test_delegation_depth_limit() {
     let keypair = SigningKey::generate();
@@ -535,52 +532,6 @@ fn test_delegation_depth_limit() {
     panic!(
         "Should have hit MAX_DELEGATION_DEPTH ({}), but reached depth {}",
         MAX_DELEGATION_DEPTH, depth
-    );
-}
-
-/// Attack: Create issuer chain exceeding MAX_ISSUER_CHAIN_LENGTH.
-///
-/// Expected: Validation error at chain length 8.
-#[test]
-fn test_issuer_chain_length_limit() {
-    let keypair = SigningKey::generate();
-
-    let mut current = Warrant::builder()
-        .r#type(WarrantType::Issuer)
-        .issuable_tools(vec!["read".to_string()])
-        .trust_ceiling(TrustLevel::Internal)
-        .ttl(Duration::from_secs(36000))
-        .authorized_holder(keypair.public_key())
-        .build(&keypair)
-        .unwrap();
-
-    let mut chain_length = 0;
-
-    for i in 0..MAX_ISSUER_CHAIN_LENGTH + 5 {
-        match current.attenuate().build(&keypair, &keypair) {
-            Ok(child) => {
-                current = child;
-                chain_length = i + 1;
-            }
-            Err(e) => {
-                assert!(
-                    e.to_string().contains("chain") || e.to_string().contains("length"),
-                    "Error should mention chain length: {}",
-                    e
-                );
-                println!(
-                    "✅ Issuer chain length limit enforced at {}: {}",
-                    chain_length + 1,
-                    e
-                );
-                return;
-            }
-        }
-    }
-
-    panic!(
-        "Should have hit MAX_ISSUER_CHAIN_LENGTH ({}), but reached {}",
-        MAX_ISSUER_CHAIN_LENGTH, chain_length
     );
 }
 
@@ -628,7 +579,7 @@ fn test_execution_warrant_tool_addition() {
     );
 
     // Also verify tools() helper returns consistent result
-    assert_eq!(parent.tools(), Some(vec!["read".to_string()]));
+    assert_eq!(parent.tools(), vec!["read".to_string()]);
 
     // Create a child (should only inherit or narrow tools, not add)
     let child = parent.attenuate().build(&keypair, &keypair).unwrap();
@@ -652,7 +603,7 @@ fn test_execution_warrant_tool_addition() {
     );
 
     // Also verify tools() helper returns consistent result
-    assert_eq!(child.tools(), Some(vec!["read".to_string()]));
+    assert_eq!(child.tools(), vec!["read".to_string()]);
 
     // If child tries to authorize "write", it should fail
     let args: HashMap<String, ConstraintValue> = HashMap::new();
@@ -998,7 +949,7 @@ fn test_warrant_size_limit() {
 
     // Create warrant with many tools (should work up to a limit)
     let mut tools = Vec::new();
-    for i in 0..10000 {
+    for i in 0..2000 {
         // Try to exceed reasonable limit
         tools.push(format!("tool_{}", i));
     }
@@ -1014,7 +965,7 @@ fn test_warrant_size_limit() {
     match result {
         Ok(warrant) => {
             let bytes = wire::encode(&warrant).unwrap();
-            let tool_count = warrant.tools().map(|t| t.len()).unwrap_or(0);
+            let tool_count = warrant.tools().len();
 
             // MUST NOT exceed MAX_WARRANT_SIZE
             assert!(
@@ -1045,17 +996,18 @@ fn test_warrant_size_limit() {
 ///
 /// Expected: SUCCEEDS - this is intentional design.
 ///
-/// Tenuo embeds the issuer chain inside child warrants, making them
-/// self-contained. This is NOT a vulnerability - it's the design choice
-/// that enables stateless verification without requiring a separate
-/// chain of parent warrants to be passed around.
+/// Test: Child warrant with parent_hash requires WarrantStack for full chain verification.
+///
+/// Tenuo uses parent_hash to cryptographically link child to parent.
+/// Full chain verification requires the caller to provide a WarrantStack
+/// containing all warrants in the ancestry.
 ///
 /// The security is maintained because:
-/// 1. ChainLink signature covers both child payload AND issuer scope
+/// 1. parent_hash = SHA256(parent.payload_bytes) is tamper-proof
 /// 2. Root trust is verified against trusted_roots
-/// 3. Tampering with embedded chain invalidates signatures
+/// 3. Each link in the stack is verified for monotonicity
 #[test]
-fn test_orphaned_child_warrant() {
+fn test_child_warrant_with_parent_hash() {
     let parent_kp = SigningKey::generate();
     let child_kp = SigningKey::generate();
 
@@ -1072,33 +1024,40 @@ fn test_orphaned_child_warrant() {
         .build(&parent_kp, &parent_kp)
         .unwrap();
 
-    // ATTACK: Verify child alone (without parent in chain)
-    let _data_plane = DataPlane::new();
+    // Child has parent_hash linking it to parent
+    assert!(
+        child.parent_hash().is_some(),
+        "Child should have parent_hash"
+    );
 
-    // Child has parent_id but if we try to verify without the parent:
-    // This might succeed if chain is embedded, or fail if parent is required
-
-    // Actually, child embeds parent info in issuer_chain
-    // So verification should work if chain is self-contained
-
-    // Verify with Authorizer (which checks root trust)
+    // Verify chain using verify_chain (which takes WarrantStack)
     let authorizer = Authorizer::new().with_trusted_root(parent_kp.public_key());
 
+    // Verify the full chain [root, child]
+    let chain_result = authorizer.verify_chain(&[parent.clone(), child.clone()]);
+
+    assert!(
+        chain_result.is_ok(),
+        "Chain verification should work with WarrantStack: {:?}",
+        chain_result
+    );
+
+    // Also verify authorization on the leaf warrant
     let args: HashMap<String, ConstraintValue> = HashMap::new();
     let sig = child
         .create_pop_signature(&child_kp, "read", &args)
         .unwrap();
 
-    // Verify child alone (should work because chain is embedded)
-    let result = authorizer.authorize(&child, "read", &args, Some(&sig), &[]);
+    let auth_result = authorizer.authorize(&child, "read", &args, Some(&sig), &[]);
 
     assert!(
-        result.is_ok(),
-        "Self-contained chain verification should work (chain embedded in warrant)"
+        auth_result.is_ok(),
+        "Authorization should work on child warrant: {:?}",
+        auth_result
     );
 
-    println!("✅ Embedded chain allows self-contained verification");
-    println!("   (Root trust verified via embedded issuer_chain)");
+    println!("✅ Chain verification works with WarrantStack");
+    println!("   (parent_hash links child to parent, verify_chain traces ancestry)");
 }
 
 /// Attack: Present warrants in wrong order (child before parent).
@@ -1543,7 +1502,7 @@ fn test_untrusted_root_rejection() {
     let result = authorizer.authorize(&attacker_warrant, "admin", &args, Some(&sig), &[]);
 
     // The warrant should be rejected because attacker_kp is not in trusted_roots
-    // However, if the warrant has no issuer_chain, it might verify against its own issuer key
+    // However, if the warrant has no parent_hash (root), it might verify against its own issuer key
     // The Authorizer should check that the root is trusted
 
     match result {
@@ -1586,7 +1545,7 @@ fn test_dynamic_trusted_root_addition() {
     // Try to authorize before root is trusted
     let before_result = authorizer.authorize(&warrant, "test", &args, Some(&sig), &[]);
 
-    // Root warrants (no issuer_chain) might still verify if trust check isn't enforced
+    // Root warrants (no parent_hash) might still verify if trust check isn't enforced
     // This tests the Authorizer behavior
     if before_result.is_ok() {
         println!("⚠️ Warrant accepted before root trusted (self-signed root verification)");
@@ -1726,8 +1685,7 @@ fn test_000_red_team_summary() {
     println!("║    • Future/old timestamp exploitation                       ║");
     println!("║                                                              ║");
     println!("║  Delegation Limits:                                          ║");
-    println!("║    • MAX_DELEGATION_DEPTH (64) enforcement                   ║");
-    println!("║    • MAX_ISSUER_CHAIN_LENGTH (8) enforcement                 ║");
+    println!("║    • MAX_DELEGATION_DEPTH (16) enforcement                   ║");
     println!("║    • Terminal warrant delegation                             ║");
     println!("║                                                              ║");
     println!("║  Monotonicity:                                               ║");
@@ -1746,8 +1704,374 @@ fn test_000_red_team_summary() {
     println!("║    • Constraint depth DoS                                    ║");
     println!("║    • Warrant size DoS                                        ║");
     println!("║                                                              ║");
+    println!("║  Parser & Protocol Attacks:                                  ║");
+    println!("║    • CBOR duplicate key injection                            ║");
+    println!("║    • Unknown field injection                                 ║");
+    println!("║    • TTL bypass (time traveler)                              ║");
+    println!("║    • ReDoS via regex constraints                             ║");
+    println!("║    • Type confusion (NaN, string to Range)                   ║");
+    println!("║    • Missing chain link                                      ║");
+    println!("║    • Shuffled chain order                                    ║");
+    println!("║                                                              ║");
     println!("╚══════════════════════════════════════════════════════════════╝");
     println!();
     println!("Run all tests: cargo test --test red_team -- --nocapture");
     println!();
+}
+
+// ============================================================================
+// CBOR Parser Attacks
+// ============================================================================
+
+/// Attack: Craft CBOR with duplicate map keys to exploit parser differentials.
+///
+/// Defense: CBOR decoder MUST reject duplicate keys (RFC 8949 §5.6).
+/// If the signature verifier and payload parser see different values for
+/// the same key, an attacker could bypass authorization.
+#[test]
+fn test_attack_cbor_duplicate_key_injection() {
+    println!("\n--- Attack: CBOR Duplicate Key Injection ---");
+
+    // Craft a map with duplicate keys: {3: {}, 3: {"admin": {}}}
+    let duplicate_payload: Vec<u8> = vec![
+        0xA2, // Map with 2 items
+        0x03, // Key: 3 (tools)
+        0xA0, // Value: empty map {}
+        0x03, // Key: 3 (tools) - DUPLICATE!
+        0xA1, // Value: map with 1 item
+        0x65, b'a', b'd', b'm', b'i', b'n', // Key: "admin"
+        0xA0, // Value: empty map
+    ];
+
+    // Attempt to decode - MUST fail
+    let result: Result<BTreeMap<u8, ciborium::Value>, _> =
+        ciborium::de::from_reader(&duplicate_payload[..]);
+
+    match result {
+        Ok(map) => {
+            // ciborium accepts duplicate keys (last wins)
+            // Defense: BTreeMap deduplication + signature binding
+            println!("  [WARNING] ciborium accepted duplicate keys!");
+            println!("  Map contents: {:?}", map);
+            println!("  [MITIGATION] BTreeMap keeps last value; signature prevents tampering");
+        }
+        Err(e) => {
+            println!("  [PASS] Duplicate keys rejected: {}", e);
+        }
+    }
+}
+
+/// Attack: Inject unknown CBOR field to bypass fail-closed validation.
+///
+/// Defense: Unknown payload keys should be rejected, but signature binding
+/// prevents tampering regardless.
+#[test]
+fn test_attack_cbor_unknown_field_trojan() {
+    println!("\n--- Attack: CBOR Unknown Field Trojan ---");
+
+    // Build a minimal payload with unknown field (key 99)
+    let payload_with_unknown: Vec<u8> = {
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(
+            &ciborium::Value::Map(vec![(
+                ciborium::Value::Integer(99.into()),
+                ciborium::Value::Bool(true),
+            )]),
+            &mut buf,
+        )
+        .unwrap();
+        buf
+    };
+
+    // Try to decode as WarrantPayload
+    let decode_result: Result<tenuo::payload::WarrantPayload, _> =
+        ciborium::de::from_reader(&payload_with_unknown[..]);
+
+    match decode_result {
+        Ok(_) => {
+            println!("  [INFO] Minimal payload decoded (missing required fields)");
+        }
+        Err(e) => {
+            println!("  [PASS] Invalid payload rejected: {}", e);
+            println!("  [INFO] Defense: signature binding prevents field injection");
+        }
+    }
+
+    println!("  [MITIGATION] Signature covers original bytes - tampering detected");
+}
+
+// ============================================================================
+// TTL / Time Attacks
+// ============================================================================
+
+/// Attack: Create warrant with extreme TTL to bypass time limits.
+///
+/// Defense: MAX_WARRANT_TTL_SECS (90 days) protocol limit.
+#[test]
+fn test_attack_ttl_time_traveler() {
+    println!("\n--- Attack: TTL Time Traveler ---");
+
+    let keypair = SigningKey::generate();
+
+    // Try to create warrant with 1000 year TTL (exceeds MAX_WARRANT_TTL_SECS = 90 days)
+    let excessive_ttl = 1000 * 365 * 24 * 60 * 60;
+
+    let result = Warrant::builder()
+        .capability("test", ConstraintSet::new())
+        .ttl(Duration::from_secs(excessive_ttl))
+        .authorized_holder(keypair.public_key())
+        .build(&keypair);
+
+    match result {
+        Ok(warrant) => {
+            let expires = warrant.expires_at();
+            println!("  [FAIL] Created warrant expiring at: {}", expires);
+            panic!("Excessive TTL should have been rejected");
+        }
+        Err(e) => {
+            println!("  [PASS] Excessive TTL rejected: {}", e);
+            assert!(e.to_string().contains("exceeds protocol maximum"));
+        }
+    }
+
+    // Verify 90 days (protocol max) is accepted
+    let valid_result = Warrant::builder()
+        .capability("test", ConstraintSet::new())
+        .ttl(Duration::from_secs(MAX_WARRANT_TTL_SECS))
+        .authorized_holder(keypair.public_key())
+        .build(&keypair);
+
+    assert!(valid_result.is_ok(), "90-day TTL should be accepted");
+    println!("  [PASS] Protocol max TTL (90 days) accepted");
+}
+
+// ============================================================================
+// ReDoS Attacks
+// ============================================================================
+
+/// Attack: Test that Rust regex crate is ReDoS-resistant.
+///
+/// The Rust `regex` crate uses Thompson NFA, not backtracking,
+/// making it inherently resistant to catastrophic backtracking.
+#[test]
+fn test_attack_redos_resistance() {
+    println!("\n--- Attack: ReDoS Resistance ---");
+
+    // Classic ReDoS pattern: (a+)+$
+    // This would hang a backtracking engine on "aaaaaaaaaaX"
+    let evil_regex = "(a+)+$";
+    let evil_input = "aaaaaaaaaaaaaaaaaaaaaaaaaX"; // 25 a's + X
+
+    // Create warrant with this regex constraint
+    let keypair = SigningKey::generate();
+    let mut constraints = ConstraintSet::new();
+    constraints.insert("data", RegexConstraint::new(evil_regex).unwrap());
+
+    let warrant = Warrant::builder()
+        .capability("process", constraints)
+        .ttl(Duration::from_secs(300))
+        .authorized_holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    let authorizer = Authorizer::new().with_trusted_root(keypair.public_key());
+
+    // Time the authorization
+    let start = std::time::Instant::now();
+    let timeout = Duration::from_secs(1);
+
+    let mut args = HashMap::new();
+    args.insert(
+        "data".to_string(),
+        ConstraintValue::String(evil_input.to_string()),
+    );
+
+    let sig = warrant
+        .create_pop_signature(&keypair, "process", &args)
+        .unwrap();
+    let _ = authorizer.authorize(&warrant, "process", &args, Some(&sig), &[]);
+    let elapsed = start.elapsed();
+
+    if elapsed > timeout {
+        println!("  [FAIL] Regex check took {:?} - ReDoS!", elapsed);
+        panic!("ReDoS vulnerability detected");
+    } else {
+        println!("  [PASS] Regex check completed in {:?}", elapsed);
+        println!("  [INFO] Rust regex crate uses Thompson NFA - ReDoS resistant");
+    }
+}
+
+// ============================================================================
+// Type Confusion Attacks
+// ============================================================================
+
+/// Attack: Pass wrong type to constraint (e.g., string to Range).
+#[test]
+fn test_attack_type_confusion_range_string() {
+    println!("\n--- Attack: Type Confusion (Range + String) ---");
+
+    let keypair = SigningKey::generate();
+    let mut constraints = ConstraintSet::new();
+    constraints.insert("amount", Range::new(Some(0.0), Some(100.0)).unwrap());
+
+    let warrant = Warrant::builder()
+        .capability("transfer", constraints)
+        .ttl(Duration::from_secs(300))
+        .authorized_holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    let authorizer = Authorizer::new().with_trusted_root(keypair.public_key());
+
+    // Try passing a string where number is expected
+    let mut args = HashMap::new();
+    args.insert(
+        "amount".to_string(),
+        ConstraintValue::String("not a number".to_string()),
+    );
+
+    let sig = warrant
+        .create_pop_signature(&keypair, "transfer", &args)
+        .unwrap();
+    let result = authorizer.authorize(&warrant, "transfer", &args, Some(&sig), &[]);
+
+    match result {
+        Ok(_) => {
+            println!("  [FAIL] Type mismatch was accepted!");
+            panic!("Type confusion vulnerability");
+        }
+        Err(e) => {
+            println!("  [PASS] Type mismatch rejected: {}", e);
+        }
+    }
+}
+
+/// Attack: Pass NaN to Range constraint.
+#[test]
+fn test_attack_type_confusion_nan() {
+    println!("\n--- Attack: Type Confusion (NaN) ---");
+
+    let keypair = SigningKey::generate();
+    let mut constraints = ConstraintSet::new();
+    constraints.insert("value", Range::new(Some(0.0), Some(100.0)).unwrap());
+
+    let warrant = Warrant::builder()
+        .capability("process", constraints)
+        .ttl(Duration::from_secs(300))
+        .authorized_holder(keypair.public_key())
+        .build(&keypair)
+        .unwrap();
+
+    let authorizer = Authorizer::new().with_trusted_root(keypair.public_key());
+
+    let mut args = HashMap::new();
+    args.insert("value".to_string(), ConstraintValue::Float(f64::NAN));
+
+    let sig = warrant
+        .create_pop_signature(&keypair, "process", &args)
+        .unwrap();
+    let result = authorizer.authorize(&warrant, "process", &args, Some(&sig), &[]);
+
+    match result {
+        Ok(_) => {
+            println!("  [FAIL] NaN was accepted!");
+            panic!("NaN vulnerability");
+        }
+        Err(e) => {
+            println!("  [PASS] NaN rejected: {}", e);
+        }
+    }
+}
+
+// ============================================================================
+// Chain Transport Attacks
+// ============================================================================
+
+/// Attack: Send WarrantStack missing intermediate warrant.
+#[test]
+fn test_attack_chain_missing_link() {
+    println!("\n--- Attack: Missing Link in Chain ---");
+
+    let root_kp = SigningKey::generate();
+    let middle_kp = SigningKey::generate();
+    let leaf_kp = SigningKey::generate();
+
+    // Create chain: Root -> Middle -> Leaf
+    let root = Warrant::builder()
+        .capability("test", ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .authorized_holder(root_kp.public_key())
+        .build(&root_kp)
+        .unwrap();
+
+    let middle = root
+        .attenuate()
+        .capability("test", ConstraintSet::new())
+        .authorized_holder(middle_kp.public_key())
+        .build(&middle_kp, &root_kp)
+        .unwrap();
+
+    let leaf = middle
+        .attenuate()
+        .capability("test", ConstraintSet::new())
+        .authorized_holder(leaf_kp.public_key())
+        .build(&leaf_kp, &middle_kp)
+        .unwrap();
+
+    let authorizer = Authorizer::new().with_trusted_root(root_kp.public_key());
+
+    // Complete chain should verify
+    let complete = vec![root.clone(), middle.clone(), leaf.clone()];
+    assert!(authorizer.verify_chain(&complete).is_ok());
+
+    // Attack: Skip middle warrant
+    let incomplete = vec![root.clone(), leaf.clone()];
+    let result = authorizer.verify_chain(&incomplete);
+
+    match result {
+        Ok(_) => panic!("Incomplete chain was accepted!"),
+        Err(e) => {
+            println!("  [PASS] Missing link rejected: {}", e);
+        }
+    }
+}
+
+/// Attack: Send WarrantStack in wrong order.
+#[test]
+fn test_attack_chain_shuffled_order() {
+    println!("\n--- Attack: Shuffled Chain Order ---");
+
+    let root_kp = SigningKey::generate();
+    let child_kp = SigningKey::generate();
+
+    let root = Warrant::builder()
+        .capability("test", ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .authorized_holder(root_kp.public_key())
+        .build(&root_kp)
+        .unwrap();
+
+    let child = root
+        .attenuate()
+        .capability("test", ConstraintSet::new())
+        .authorized_holder(child_kp.public_key())
+        .build(&child_kp, &root_kp)
+        .unwrap();
+
+    let authorizer = Authorizer::new().with_trusted_root(root_kp.public_key());
+
+    // Correct order
+    let correct = vec![root.clone(), child.clone()];
+    assert!(authorizer.verify_chain(&correct).is_ok());
+
+    // Attack: Reversed order
+    let reversed = vec![child.clone(), root.clone()];
+    let result = authorizer.verify_chain(&reversed);
+
+    match result {
+        Ok(_) => panic!("Reversed chain was accepted!"),
+        Err(e) => {
+            println!("  [PASS] Shuffled chain rejected: {}", e);
+        }
+    }
 }

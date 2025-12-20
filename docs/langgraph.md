@@ -140,6 +140,32 @@ async with root_task(
 
 ---
 
+## TenuoToolNode (drop-in ToolNode)
+
+Prefer this if you already have LangChain `BaseTool` instances and want automatic protection without decorating each node.
+
+```python
+from langgraph.graph import StateGraph
+from tenuo.langgraph import TenuoToolNode
+from tenuo import root_task_sync, Capability
+
+# LangChain tools (already defined elsewhere)
+tools = [search_tool, calculator_tool]
+
+# Wrap with authorization and plug into the graph
+tool_node = TenuoToolNode(tools)
+
+graph = StateGraph(dict)
+graph.add_node("tools", tool_node)
+graph.set_entry_point("tools")
+graph.set_finish_point("tools")
+
+with root_task_sync(Capability("search_tool"), Capability("calculator_tool")):
+    result = graph.compile().invoke({"input": "What is 2+2?"})
+```
+
+---
+
 ## Why Two Layers?
 
 | Scenario | @tenuo_node | @lockdown | Result |

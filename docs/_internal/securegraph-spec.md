@@ -1,8 +1,7 @@
 # SecureGraph Specification
 
 **Version**: 0.2  
-**Status**: Ready for implementation  
-**Prerequisite**: Ship `@tenuo_node` decorator first (v0.1)
+**Status**: Ready for implementation
 
 ---
 
@@ -145,38 +144,44 @@ SecureGraph enforces cryptographic verification at every node transition. Tamper
 
 Every warrant is signed. At deserialization:
 
+SecureGraph follows the canonical wire format (`docs/wire-format-spec.md`): verify against the exact payload bytes *before* deserializing to avoid canonicalization bugs.
+
 ```python
-def deserialize(data: str, trusted_roots: List[PublicKey]) -> Warrant:
-    warrant = decode(data)
+def deserialize(raw: bytes, trusted_roots: List[PublicKey]) -> WarrantPayload:
+    # 0. Decode outer envelope (SignedWarrant)
+    signed = decode(raw)
+    if signed.envelope_version != 1:
+        raise UnsupportedEnvelopeVersion()
     
-    # 1. Check expiry (cheapest)
-    if warrant.expires_at and datetime.now() > warrant.expires_at:
-        raise ExpiredWarrant()
+    # 1. Extract issuer with minimal parsing (no full deserialize)
+    issuer = extract_issuer(signed.payload)
     
-    # 2. Check depth (cheap)
-    if warrant.depth > warrant.max_depth:
-        raise DepthExceeded()
+    # 2. Verify signature over domain-separated preimage
+    preimage = build_preimage(
+        signed.envelope_version,
+        signed.payload,  # raw CBOR bytes, no re-serialization
+    )
+    issuer.verify(preimage, signed.signature)  # context: b"tenuo-warrant-v1"
     
-    # 3. Check terminal (cheap)  
-    if warrant.terminal:
-        raise TerminalWarrant("Cannot delegate further")
+    # 3. Now safe to deserialize inner payload
+    payload: WarrantPayload = cbor_deserialize(signed.payload)
+    if payload.version != 1:
+        raise UnsupportedPayloadVersion()
     
-    # 4. Verify signature (expensive)
-    if not verify_signature(warrant.signature, warrant.payload, warrant.issuer):
-        raise InvalidSignature()
-    
-    # 5. Verify chain to trusted root (expensive)
-    if not chains_to_trusted_root(warrant, trusted_roots):
-        raise UntrustedIssuer()
-    
-    # 6. Verify attenuation is valid (child ⊆ parent)
-    if warrant.parent and not is_valid_attenuation(warrant, warrant.parent):
-        raise InvalidAttenuation()
-    
-    return warrant
+    # 4. Validate payload semantics
+    #    - trust chain to known roots
+    #    - expires_at > now
+    #    - max_depth strictly decreases vs parent
+    #    - constraints/tool attenuation holds
+    validate_payload(payload, trusted_roots)
+    return payload
 ```
 
-A malicious node's forged warrant fails at step 5 - it's signed by an unknown key that doesn't chain to any trusted root.
+**Why this order?**
+- Signature validation uses the exact bytes that were signed (no canonicalization gaps).
+- Unknown envelope/payload versions or unknown payload keys fail closed (see `docs/wire-format-spec.md` §1–§4, §10).
+- Constraint types fail closed per `docs/constraints.md` and the wire format's unknown-type handling.
+A malicious node's forged warrant fails before any unsafe parsing or policy evaluation.
 
 ### SecureGraph SigningKey Trust
 
@@ -256,7 +261,7 @@ def _protect_tool(tool: Tool, warrant: Warrant):
 
 ### PoP Binding Options
 
-**Graph-level binding** (recommended for v0.2):
+**Graph-level binding** (projected for v0.2):
 
 All warrants bound to a single agent keypair:
 
@@ -281,22 +286,20 @@ Different nodes have different keypairs. SecureGraph re-binds warrants to target
 
 Cyclic delegation can exhaust memory, CPU, or create infinite loops. SecureGraph uses multiple defense layers.
 
-### Layer 1: Max Chain Depth (Cryptographic)
+### Layer 1: Delegation Budget (`max_depth`, cryptographic)
 
-Warrants carry `depth` and `max_depth` fields. Enforced at attenuation:
+Warrants carry a remaining delegation budget `max_depth` (wire-format §2). Each attenuation MUST strictly decrease it; `max_depth = 0` is terminal.
 
 ```python
 def attenuate(self, **constraints) -> WarrantBuilder:
-    if self.depth >= self.max_depth:
+    if self.max_depth == 0:
         raise AttenuationError(
-            f"Max delegation depth ({self.max_depth}) reached. "
-            "Cannot attenuate further."
+            "max_depth=0 (terminal). Cannot attenuate further."
         )
     
     return WarrantBuilder(
         parent=self,
-        depth=self.depth + 1,
-        max_depth=self.max_depth,  # Cannot increase
+        max_depth=self.max_depth - 1,  # MUST decrease by ≥1
         **constraints,
     )
 ```
@@ -310,7 +313,7 @@ root = create_root_warrant(
 ).build(root_keypair)
 ```
 
-**Cryptographically enforced**: `max_depth` is signed into the warrant. Attenuators cannot increase it.
+**Cryptographically enforced**: `max_depth` is signed into the payload. Attenuators cannot increase it; verification rejects a child whose `max_depth` is not lower than its parent.
 
 ### Layer 2: Warrant Expiry (Cryptographic)
 
@@ -325,15 +328,9 @@ root = create_root_warrant(
 
 Even if a cycle runs, expired warrants become unusable.
 
-### Layer 3: Terminal Flag (Cryptographic)
+### Layer 3: Terminal = `max_depth == 0` (Cryptographic)
 
-Leaf nodes cannot delegate further:
-
-```python
-secure.node("writer", tools=["write_file"], terminal=True)
-```
-
-When SecureGraph attenuates for writer, it sets `terminal=True`. Any attempt to delegate from writer fails at deserialization.
+Leaf nodes cannot delegate further once `max_depth` reaches `0`; there is no separate terminal flag in the wire format. SecureGraph's `terminal=True` helper sets the emitted child warrant to `max_depth=0`.
 
 ### Layer 4: Graph-Level Visit Limit (Runtime)
 
@@ -367,32 +364,26 @@ def _wrap_node(self, node_name: str, fn: Callable, policy: Optional[NodePolicy])
         # ... rest of wrapper ...
 ```
 
-### Issuer Warrant Depth
+### Issuer Warrant Budget
 
-Issuer warrants held by supervisors inherit depth rules. Minted execution warrants increment depth:
+Issuer warrants held by supervisors inherit the same `max_depth` budget. Minted execution warrants must decrement it:
 
 ```python
 def mint_execution(self, **constraints) -> WarrantBuilder:
     if self.type != WarrantType.ISSUER:
         raise TypeError("Only ISSUER warrants can mint")
+    if self.max_depth == 0:
+        raise AttenuationError("Issuer max_depth=0; cannot mint further")
     
     return WarrantBuilder(
         type=WarrantType.EXECUTION,
         parent=self,
-        depth=self.depth + 1,  # Inherits and increments
-        max_depth=self.max_depth,
+        max_depth=self.max_depth - 1,  # MUST decrease
         **constraints,
     )
 ```
 
-For long-running supervisors, use higher `max_depth` on issuer warrants:
-
-```python
-root_issuer = create_issuer_warrant(
-    tools=["search", "read_file", "write_file"],
-    max_depth=100,  # Can mint up to 100 execution warrants
-).build(root_keypair)
-```
+For long-running supervisors, seed issuer warrants with a larger `max_depth` budget.
 
 ### Defense Summary
 
@@ -400,7 +391,7 @@ root_issuer = create_issuer_warrant(
 |---------|-------|---------------|
 | `max_depth` | Warrant (crypto) | Unbounded chain length |
 | `expires_at` | Warrant (crypto) | Stale warrants in long loops |
-| `terminal` | Warrant (crypto) | Delegation from leaf nodes |
+| `max_depth=0` (terminal) | Warrant (crypto) | Delegation from leaf nodes |
 | `max_node_visits` | SecureGraph (runtime) | Runaway graph execution |
 
 ---
@@ -578,37 +569,61 @@ result = await app.ainvoke({
 })
 ```
 
-### Warrant Schema
+### Wire-Format Warrant Schema (canonical)
+
+SecureGraph assumes warrants are encoded exactly as in `docs/wire-format-spec.md`. The outer envelope separates signature from payload:
 
 ```python
 @dataclass
-class Warrant:
-    # Identity
-    id: str
-    issuer: PublicKey
-    signature: bytes
+class SignedWarrant:
+    envelope_version: int  # currently 1
+    payload: bytes         # raw CBOR-encoded WarrantPayload
+    signature: Signature   # algorithm-tagged; preimage = b"tenuo-warrant-v1" || envelope_version || payload
+```
+
+`payload` encodes the inner warrant:
+
+```python
+@dataclass
+class WarrantPayload:
+    # Versioning
+    version: int  # currently 1
+    
+    # Identity + types
+    id: WarrantId
+    warrant_type: WarrantType  # EXECUTION | ISSUER (and future types)
     
     # Authority
-    type: WarrantType  # EXECUTION | ISSUER
-    tools: Optional[List[str]]
-    constraints: Dict[str, Any]
+    tools: Dict[str, ConstraintSet]          # per-tool constraints; see docs/constraints.md
+    holder: PublicKey
+    issuer: PublicKey
     
-    # Binding
-    bound_to: Optional[PublicKey]  # For PoP verification
+    # Time
+    issued_at: int     # unix seconds
+    expires_at: int    # unix seconds
     
-    # Chain control
-    parent_id: Optional[str]
-    depth: int
-    max_depth: int
+    # Delegation budget
+    max_depth: int                     # remaining hops; 0 = terminal
+    parent: Optional[WarrantId]        # hash-bound to parent payload bytes
     
-    # Time control
-    issued_at: datetime
-    expires_at: Optional[datetime]
+    # Metadata
+    extensions: Dict[str, bytes] = field(default_factory=dict)
     
-    # Delegation control
-    terminal: bool  # If True, cannot delegate further
-    authorized_attenuators: Optional[List[PublicKey]]
+    # Auth-critical optional fields (preserved + validated, not ignored)
+    issuable_tools: Optional[List[str]] = None
+    trust_ceiling: Optional[TrustLevel] = None
+    max_issue_depth: Optional[int] = None
+    constraint_bounds: Optional[ConstraintSet] = None
+    required_approvers: Optional[List[PublicKey]] = None
+    min_approvals: Optional[int] = None
+    trust_level: Optional[TrustLevel] = None
 ```
+
+Key points:
+- `max_depth` must strictly decrease on attenuation (child `max_depth` ≤ parent `max_depth - 1`); `max_depth = 0` is the terminal form.
+- Unknown payload keys MUST be rejected unless they are inside `extensions` (wire-format §10).
+- Unknown constraint types deserialize into `Constraint::Unknown` and fail closed.
+- Proof-of-possession bindings should travel in `extensions` (e.g., `tenuo.agent_id`, `tenuo.session_id`) instead of bespoke fields.
 
 ### Supervisor Pattern
 
@@ -1104,15 +1119,15 @@ When `route_fn` returns `"researcher"`, SecureGraph attenuates to researcher's p
 supervisor → researcher → supervisor → writer
 ```
 
-Each transition attenuates and increments depth. Multiple defenses apply:
+Each transition attenuates and consumes the remaining `max_depth` budget. Multiple defenses apply:
 
-1. **Depth limit**: Warrant `max_depth` limits total chain length
+1. **Delegation budget**: Warrant `max_depth` limits total chain length
 2. **Expiry**: Warrant `expires_at` prevents long-running cycles
 3. **Visit limit**: `max_node_visits` catches runaway loops at runtime
 
 The second supervisor invocation has researcher's attenuated execution warrant, not root.
 
-**But:** If supervisor holds issuer (`holds_issuer=True`), it can mint a fresh execution warrant. The minted warrant still increments depth from the issuer's depth, so infinite minting is bounded.
+**But:** If supervisor holds issuer (`holds_issuer=True`), it can mint a fresh execution warrant. The minted warrant still consumes the issuer's remaining `max_depth`, so infinite minting is bounded.
 
 ---
 
@@ -1242,7 +1257,7 @@ State carries `warrant_ref` instead of full serialized warrant. Defer until chai
 | Cryptographic Integrity | Every warrant verified against `trusted_roots` at each transition |
 | Request-Carrying | Warrant travels in `tenuo_warrant`, context is convenience layer |
 | Supervisor Authority | `tenuo_issuer` held by supervisors, never attenuates |
-| Cycle Protection | `max_depth`, `expires_at`, `terminal`, `max_node_visits` |
+| Cycle Protection | `max_depth` (budget), `expires_at`, `max_node_visits` |
 | Proof-of-Possession | PoP verified at tool execution boundary |
 | Declarative Attenuation | Policy defines shape, SecureGraph calls `attenuate()` |
 | Fail-Closed | `deny_unlisted()` + STRICT mode by default |
@@ -1255,10 +1270,10 @@ State carries `warrant_ref` instead of full serialized warrant. Defer until chai
 | Question | Decision | Rationale |
 |----------|----------|-----------|
 | State key name | `tenuo_warrant` | Namespace to avoid collision with user's "warrant" objects |
-| Multiple warrant types | Single field + type discriminator | Warrant class has `type` field; keep state schema simple |
+| Multiple warrant types | Single field + type discriminator | Payload has `warrant_type`; keeps state schema simple |
 | Compression | Defer to v0.3+ | 1-2KB chains negligible for LLM contexts |
 | Supervisor Reset | `tenuo_issuer` held separately | Never attenuates, enables fresh minting |
 | Rollout strategy | REPORT_ONLY mode | Log violations without breaking production |
-| Cycle protection | Multi-layer defense | `max_depth` (crypto) + `expires_at` (crypto) + `max_node_visits` (runtime) |
+| Cycle protection | Multi-layer defense | `max_depth` (budget, crypto) + `expires_at` (crypto) + `max_node_visits` (runtime) |
 | PoP location | Tool execution boundary | Graph is single trust domain; PoP at tool calls |
 | SecureGraph trust | Authorized attenuator | Root warrant authorizes SecureGraph's pubkey |

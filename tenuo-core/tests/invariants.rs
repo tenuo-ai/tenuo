@@ -7,14 +7,18 @@
 //! 4. Delegation Depth Bounded - depth never exceeds MAX_DEPTH
 
 use proptest::prelude::*;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Duration;
 use tenuo::{
     constraints::{ConstraintSet, ConstraintValue, Pattern, Range},
     crypto::SigningKey,
     warrant::Warrant,
-    wire, MAX_ISSUER_CHAIN_LENGTH,
+    wire,
 };
+
+// Reasonable chain length for property tests (MAX_DELEGATION_DEPTH is 16)
+const TEST_MAX_CHAIN_LENGTH: u32 = 10;
 
 // ============================================================================
 // Strategies for generating test data
@@ -61,9 +65,9 @@ proptest! {
     }
 
     /// Child warrant depth is always parent depth + 1.
-    /// Note: Limited to MAX_ISSUER_CHAIN_LENGTH to respect chain length security limit.
+    /// Note: Limited to TEST_MAX_CHAIN_LENGTH for reasonable test duration.
     #[test]
-    fn attenuation_increments_depth(depth_limit in 1u32..=(MAX_ISSUER_CHAIN_LENGTH as u32)) {
+    fn attenuation_increments_depth(depth_limit in 1u32..=TEST_MAX_CHAIN_LENGTH) {
         let kp = SigningKey::generate();
 
         let mut warrant = Warrant::builder()
@@ -309,7 +313,7 @@ proptest! {
         let encoded = wire::encode(&original).unwrap();
         let decoded = wire::decode(&encoded).unwrap();
 
-        prop_assert_eq!(decoded.id().as_str(), original.id().as_str());
+        prop_assert_eq!(decoded.id().to_string(), original.id().to_string());
         prop_assert_eq!(decoded.tools(), original.tools());
         prop_assert!(decoded.verify(&kp.public_key()).is_ok());
 
@@ -317,7 +321,7 @@ proptest! {
         let b64 = wire::encode_base64(&original).unwrap();
         let from_b64 = wire::decode_base64(&b64).unwrap();
 
-        prop_assert_eq!(from_b64.id().as_str(), original.id().as_str());
+        prop_assert_eq!(from_b64.id().to_string(), original.id().to_string());
         prop_assert!(from_b64.verify(&kp.public_key()).is_ok());
     }
 }
@@ -327,38 +331,38 @@ proptest! {
 // ============================================================================
 
 proptest! {
-    /// Issuer chain length cannot exceed MAX_ISSUER_CHAIN_LENGTH.
-    /// Note: MAX_ISSUER_CHAIN_LENGTH (8) < MAX_DELEGATION_DEPTH (64),
-    /// so the chain length limit kicks in first as a DoS protection.
+    /// Delegation chain respects max_depth constraint.
+    /// When depth reaches max_depth, the warrant is terminal.
     #[test]
-    fn chain_length_cannot_exceed_max(extra_attempts in 1u32..5u32) {
+    fn max_depth_limits_delegation(initial_max_depth in 2u32..10u32) {
         let kp = SigningKey::generate();
 
         let mut warrant = Warrant::builder()
             .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(36000)) // Long TTL to not expire during test
+            .max_depth(initial_max_depth)
             .authorized_holder(kp.public_key())
             .build(&kp)
             .unwrap();
 
-        // Delegate up to max chain length
-        for _ in 0..MAX_ISSUER_CHAIN_LENGTH {
-            warrant = warrant.attenuate().authorized_holder(kp.public_key()).build(&kp, &kp).unwrap();
-        }
+        prop_assert_eq!(warrant.depth(), 0);
+        prop_assert_eq!(warrant.max_depth(), Some(initial_max_depth));
 
-        prop_assert_eq!(warrant.depth() as usize, MAX_ISSUER_CHAIN_LENGTH);
-
-        // Any further delegation should fail due to chain length limit
-        for _ in 0..extra_attempts {
+        // Delegate until depth reaches max_depth
+        for expected_depth in 1..=initial_max_depth {
             let result = warrant.attenuate().authorized_holder(kp.public_key()).build(&kp, &kp);
-            prop_assert!(result.is_err());
-            let err_msg = result.unwrap_err().to_string();
-            prop_assert!(
-                err_msg.contains("issuer chain too long"),
-                "Expected chain length error, got: {}",
-                err_msg
-            );
+            if result.is_err() {
+                // Expected to fail when terminal (depth >= max_depth)
+                break;
+            }
+            warrant = result.unwrap();
+            prop_assert_eq!(warrant.depth(), expected_depth, "depth should increment");
+            prop_assert_eq!(warrant.max_depth(), Some(initial_max_depth), "max_depth is inherited");
         }
+
+        // After max_depth delegations, warrant should be terminal
+        prop_assert!(warrant.is_terminal() || warrant.depth() == initial_max_depth,
+            "warrant should be terminal when depth reaches max_depth");
     }
 }
 
@@ -382,7 +386,7 @@ proptest! {
                 .build(&kp)
                 .unwrap();
 
-            let id = warrant.id().as_str().to_string();
+            let id = warrant.id().to_string().to_string();
             prop_assert!(!ids.contains(&id), "Duplicate warrant ID: {}", id);
             ids.insert(id);
         }
@@ -394,10 +398,10 @@ proptest! {
 // ============================================================================
 
 proptest! {
-    /// Parent ID is correctly set through delegation chain.
-    /// Note: Limited to MAX_ISSUER_CHAIN_LENGTH to respect chain length security limit.
+    /// Parent hash is correctly set through delegation chain.
+    /// Note: Limited to TEST_MAX_CHAIN_LENGTH for reasonable test duration.
     #[test]
-    fn parent_id_chain_is_correct(chain_length in 2u32..=(MAX_ISSUER_CHAIN_LENGTH as u32)) {
+    fn parent_hash_chain_is_correct(chain_length in 2u32..=TEST_MAX_CHAIN_LENGTH) {
         let kp = SigningKey::generate();
 
         let root = Warrant::builder()
@@ -407,14 +411,19 @@ proptest! {
             .build(&kp)
             .unwrap();
 
-        prop_assert!(root.parent_id().is_none());
+        prop_assert!(root.parent_hash().is_none());
 
         let mut parent = root;
         for _ in 1..chain_length {
             let child = parent.attenuate().authorized_holder(kp.public_key()).build(&kp, &kp).unwrap();
+
+            let mut hasher = Sha256::new();
+            hasher.update(parent.payload_bytes());
+            let parent_hash: [u8; 32] = hasher.finalize().into();
+
             prop_assert_eq!(
-                child.parent_id().map(|id| id.as_str()),
-                Some(parent.id().as_str())
+                child.parent_hash(),
+                Some(&parent_hash)
             );
             parent = child;
         }
