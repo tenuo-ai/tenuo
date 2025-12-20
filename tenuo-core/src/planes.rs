@@ -737,16 +737,28 @@ impl DataPlane {
     /// Verify a single link in the delegation chain.
     ///
     /// Validates that `child` is a valid delegation from `parent` by checking:
-    /// - parent_hash matches SHA256(parent.payload_bytes)
-    /// - Signatures are valid
-    /// - Monotonicity constraints are satisfied
+    /// - I1: Delegation authority (child.issuer == parent.holder)
+    /// - I2: Depth monotonicity
+    /// - I3: TTL monotonicity
+    /// - I4: Capability monotonicity
+    /// - I5: Cryptographic linkage (parent_hash and signatures)
     fn verify_chain_link(&self, parent: &Warrant, child: &Warrant) -> Result<()> {
         // Check revocation
         if self.is_revoked(child) {
             return Err(Error::WarrantRevoked(child.id().to_string()));
         }
 
-        // 1. Check parent_hash linkage
+        // I1: Delegation Authority (wire-format-spec.md)
+        // Child's issuer must be parent's holder (proves delegation)
+        if child.issuer() != parent.authorized_holder() {
+            return Err(Error::ChainVerificationFailed(format!(
+                "I1 violated: child.issuer ({}) != parent.holder ({})",
+                child.issuer().fingerprint(),
+                parent.authorized_holder().fingerprint()
+            )));
+        }
+
+        // I5: Cryptographic Linkage - Check parent_hash linkage
         let child_parent_hash = child.parent_hash().ok_or_else(|| {
             Error::ChainVerificationFailed(
                 "child warrant has no parent_hash (must be root)".to_string(),
@@ -760,37 +772,37 @@ impl DataPlane {
 
         if child_parent_hash != &expected_hash {
             return Err(Error::ChainVerificationFailed(
-                "chain broken: child's parent_hash does not match parent's payload hash"
+                "I5 violated: chain broken - child's parent_hash does not match parent's payload hash"
                     .to_string(),
             ));
         }
 
-        // 2. Check depth increment (use saturating_add to prevent overflow)
+        // I2: Depth Monotonicity - Check depth increment (use saturating_add to prevent overflow)
         let expected_depth = parent.depth().saturating_add(1);
         if child.depth() != expected_depth {
             return Err(Error::ChainVerificationFailed(format!(
-                "depth mismatch: child depth {} != parent depth {} + 1",
+                "I2 violated: depth mismatch - child depth {} != parent depth {} + 1",
                 child.depth(),
                 parent.depth()
             )));
         }
 
-        // 2b. Check max_depth policy (defense-in-depth)
+        // I2: Check max_depth policy (defense-in-depth)
         // The builder enforces this at creation time, but we verify here too
         // in case someone bypasses the builder and signs manually.
         let parent_max = parent.effective_max_depth();
         if child.depth() > parent_max {
             return Err(Error::ChainVerificationFailed(format!(
-                "child depth {} exceeds parent's max_depth {}",
+                "I2 violated: child depth {} exceeds parent's max_depth {}",
                 child.depth(),
                 parent_max
             )));
         }
 
-        // 3. Check expiration doesn't exceed parent
+        // I3: TTL Monotonicity - Check expiration doesn't exceed parent
         if child.expires_at() > parent.expires_at() {
             return Err(Error::ChainVerificationFailed(format!(
-                "child expires at {} which is after parent {}",
+                "I3 violated: child expires at {} which is after parent {}",
                 child.expires_at(),
                 parent.expires_at()
             )));

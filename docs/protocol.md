@@ -290,7 +290,8 @@ def verify_chain(stack: list[Warrant], trusted_roots: set[PublicKey]) -> bool:
             raise ChainVerificationFailed("I5 violated: parent_hash mismatch")
         
         # Signature must be valid (proves issuer authorized it)
-        child.verify_signature()
+        # Note: child.issuer() == parent.holder() per I1, so this proves parent's holder signed
+        verify(child.issuer(), child.signature_preimage(), child.signature())
     
     return True
 ```
