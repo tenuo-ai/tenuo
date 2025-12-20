@@ -424,7 +424,7 @@ builder = issuer_warrant.issue_execution()
 builder.with_tool("read_file")
 builder.with_holder(worker_kp.public_key)
 builder.with_ttl(300)
-exec_warrant = builder.build(issuer_kp, issuer_kp)
+exec_warrant = builder.delegate_to(issuer_kp, issuer_kp)
 ```
 
 #### Terminal Warrants

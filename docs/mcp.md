@@ -431,7 +431,7 @@ root_warrant = Warrant.issue(
 worker_warrant = root_warrant.attenuate() \
     .with_capability("filesystem_read", {"path": Pattern("/data/reports/*")}) \
     .holder(worker_keypair.public_key) \
-    .build(orchestrator_keypair, control_keypair)
+    .delegate_to(orchestrator_keypair, control_keypair)
 
 # Worker uses attenuated warrant
 # (narrower permissions, cryptographic proof of delegation)

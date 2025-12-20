@@ -138,7 +138,7 @@ worker_warrant = (warrant.attenuate()
     .inherit_all()                           # Start with all parent capabilities
     .with_tools(["manage_infrastructure"])   # Keep only this tool
     .holder(worker_keypair.public_key)
-    .build(worker_keypair, keypair))
+    .delegate_to(worker_keypair, keypair))
 ```
 
 #### 3. Authorize an Action

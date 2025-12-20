@@ -43,12 +43,11 @@ def read_file(file_path: str) -> str:
 
 # 2. Create keypair and warrant
 keypair = SigningKey.generate()
-warrant = Warrant.issue(
-    capabilities=Constraints.for_tool("read_file", {"file_path": Pattern("/tmp/*")}),
-    keypair=keypair,
-    holder=keypair.public_key,
-    ttl_seconds=3600
-)
+warrant = (Warrant.builder()
+    .capability("read_file", {"file_path": Pattern("/tmp/*")})
+    .holder(keypair.public_key)
+    .ttl(3600)
+    .issue(keypair))
 
 # 3. Execute with warrant context
 with set_warrant_context(warrant), set_signing_key_context(keypair):
@@ -235,15 +234,12 @@ def read_file(path: str) -> str:
 
 # Warrant setup
 keypair = SigningKey.generate()
-warrant = Warrant.issue(
-    capabilities=Constraints.for_tools(
-        ["search", "read_file"],
-        {"file_path": Pattern("/tmp/*")}
-    ),
-    keypair=keypair,
-    holder=keypair.public_key,
-    ttl_seconds=3600
-)
+warrant = (Warrant.builder()
+    .capability("search", {})
+    .capability("read_file", {"file_path": Pattern("/tmp/*")})
+    .holder(keypair.public_key)
+    .ttl(3600)
+    .issue(keypair))
 
 # LangChain setup
 tools = [

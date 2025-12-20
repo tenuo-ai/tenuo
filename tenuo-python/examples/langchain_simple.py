@@ -14,7 +14,7 @@ Requirements:
 """
 
 from tenuo import (
-    SigningKey, Warrant, Pattern, Constraints,
+    SigningKey, Warrant, Pattern,
     lockdown, set_warrant_context, set_signing_key_context, AuthorizationError
 )
 
@@ -76,14 +76,13 @@ def main():
         # SIMULATION: Create warrant with hardcoded constraints
         # HARDCODED: Pattern("/tmp/*"), ttl_seconds=3600
         # In production: Constraints come from policy engine or configuration
-        warrant = Warrant.issue(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("read_file", {
+        warrant = (Warrant.builder()
+            .capability("read_file", {
                 "file_path": Pattern("/tmp/*")  # HARDCODED: Only /tmp/ for demo safety
-            }),
-            ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            holder=keypair.public_key  # Bind to self for demo
-        )
+            })
+            .holder(keypair.public_key)  # Bind to self for demo
+            .ttl(3600)  # HARDCODED: 1 hour TTL. In production, use env var or config.
+            .issue(keypair))
         print("   [OK] Warrant created: only /tmp/* files allowed\n")
     except Exception as e:
         print(f"   [ERR] Error creating warrant: {e}")
