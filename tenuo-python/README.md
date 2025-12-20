@@ -5,6 +5,8 @@
 [![PyPI](https://img.shields.io/pypi/v/tenuo.svg)](https://pypi.org/project/tenuo/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/tenuo.svg)](https://pypi.org/project/tenuo/)
 
+> **v0.1.0-alpha.4** — See [CHANGELOG](../CHANGELOG.md) for breaking changes.
+
 Python bindings for [Tenuo](https://github.com/tenuo-ai/tenuo), providing cryptographically-enforced capability attenuation for AI agent workflows.
 
 ## Installation
@@ -33,15 +35,19 @@ warrant = (Warrant.builder()
     .ttl(3600)
     .issue(keypair))
 
-# Attenuate for a worker (capabilities shrink)
+# Attenuate for a worker (POLA: explicitly specify capabilities)
 worker_keypair = SigningKey.generate()
 worker_warrant = (warrant.attenuate_builder()
     .with_capability("manage_infrastructure", {
-        "cluster": Exact("staging-web"),
-        "replicas": Range.max_value(10)
+        "cluster": Exact("staging-web"),  # Narrowed from staging-*
+        "replicas": Range.max_value(10)   # Reduced from 15
     })
     .with_holder(worker_keypair.public_key)
     .delegate_to(worker_keypair, keypair))
+
+# Note: As of v0.1.0-alpha.4, attenuated warrants start with NO capabilities
+# by default (Principle of Least Authority). Use inherit_all() to keep all
+# parent capabilities, then narrow specific ones.
 
 # Authorize an action (requires Proof-of-Possession)
 # See docs/security.md for PoP replay prevention best practices.
@@ -279,7 +285,7 @@ Tenuo provides full [Model Context Protocol](https://modelcontextprotocol.io) cl
 
 ```python
 from tenuo.mcp import SecureMCPClient
-from tenuo import configure, root_task_sync, Pattern, SigningKey
+from tenuo import configure, root_task, Capability, Pattern, SigningKey
 
 # Configure Tenuo
 keypair = SigningKey.generate()
