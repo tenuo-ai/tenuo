@@ -24,10 +24,11 @@ This page covers what Tenuo protects against, how Proof-of-Possession works, and
 Warrants are **bound to keypairs**. To use a warrant, you must prove you hold the private key.
 
 ```python
-warrant = root_warrant.attenuate(
-    holder=worker_keypair.public_key,
-    ...
-)
+# Attenuate with explicit capability (POLA)
+warrant = (root_warrant.attenuate()
+    .with_capability("protected_tool", {"path": Pattern("/data/*")})
+    .holder(worker_keypair.public_key)
+    .build(worker_keypair, root_keypair))
 
 with set_warrant_context(warrant), set_signing_key_context(worker_keypair):
     await protected_tool(...)

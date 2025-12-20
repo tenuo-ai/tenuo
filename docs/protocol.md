@@ -166,13 +166,15 @@ For debugging, use `tenuo inspect` to view constraints as JSON.
 Every delegation **must narrow at least one dimension**:
 
 ```python
-# Fails - no narrowing
-parent.attenuate().delegate_to(worker)  # NarrowingRequired error
+# POLA: Child starts with NO capabilities, must explicitly grant them
 
-# Succeeds
-parent.attenuate().with_tool("read_file").delegate_to(worker)
-parent.attenuate().ttl(60).delegate_to(worker)
-parent.attenuate().terminal().delegate_to(worker)
+# Explicit capability (recommended)
+parent.attenuate().with_capability("read_file", {}).delegate_to(worker)
+
+# Or inherit all, then narrow
+parent.attenuate().inherit_all().with_tools(["read_file"]).delegate_to(worker)
+parent.attenuate().inherit_all().ttl(60).delegate_to(worker)
+parent.attenuate().inherit_all().terminal().delegate_to(worker)
 ```
 
 ---
