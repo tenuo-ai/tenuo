@@ -159,6 +159,97 @@ spec:
 
 ---
 
+## Cost Containment
+
+Prompt injection attacks can cause financial damage by tricking agents into making expensive API calls. Tenuo provides **stateless** mechanisms to contain costs while your infrastructure handles rate limiting.
+
+### Parameter-Level Budget Constraints
+
+Constrain cost-driving parameters directly in the warrant:
+
+```python
+warrant = (Warrant.builder()
+    .capability("call_llm", {
+        "max_tokens": Range.max_value(1000),      # Cap output tokens
+        "model": OneOf(["gpt-3.5-turbo"]),        # No expensive models
+    })
+    .capability("search_api", {
+        "max_results": Range.max_value(10),       # Limit results per call
+    })
+    .ttl(60)  # 1 minute window
+    .issue(keypair))
+```
+
+### Single-Use Warrants for Expensive Operations
+
+Issue terminal warrants (cannot be delegated) for each expensive call:
+
+```python
+async def safe_expensive_call(tool_name: str, params: dict):
+    # One warrant per operation - orchestrator controls issuance
+    single_use = (Warrant.builder()
+        .capability(tool_name, params)
+        .ttl(30)        # 30 second window
+        .terminal()     # max_depth=0, cannot delegate
+        .issue(keypair))
+    
+    async with scoped_task(single_use):
+        return await execute_tool(tool_name, params)
+```
+
+### Orchestrator-Level Budget Tracking
+
+Track call counts in your orchestrator:
+
+```python
+class BudgetedOrchestrator:
+    def __init__(self, max_calls: int = 10):
+        self.remaining_calls = max_calls
+    
+    async def execute_with_budget(self, task):
+        if self.remaining_calls <= 0:
+            raise BudgetExhausted("Call limit reached")
+        
+        self.remaining_calls -= 1
+        
+        # Fresh short-lived warrant for this call
+        warrant = (Warrant.builder()
+            .capability(task.tool, task.constraints)
+            .ttl(30)
+            .terminal()
+            .issue(self.keypair))
+        
+        async with scoped_task(warrant):
+            return await task.execute()
+```
+
+### Gateway-Side Rate Limiting
+
+Your API gateway should enforce call counts per warrant:
+
+```yaml
+# Kong rate limiting example
+plugins:
+  - name: rate-limiting
+    config:
+      minute: 10                    # 10 calls per minute per warrant
+      policy: local
+      header_name: X-Tenuo-Warrant-Id
+```
+
+### Strategy Summary
+
+| Strategy | Where | Stateful? | Best For |
+|----------|-------|-----------|----------|
+| Parameter constraints | Warrant | ❌ No | Limiting per-call cost |
+| Short TTLs + terminal | Warrant | ❌ No | Time-boxing exposure |
+| Orchestrator budget | Application | ✅ In-memory | Task-level budgets |
+| Gateway rate limiting | Infrastructure | ✅ Yes | Hard call limits |
+
+**Design principle:** Tenuo handles **authorization** (what CAN be done). Your infrastructure handles **rate limiting** (how MANY times). This keeps warrant verification fast (~27μs), offline, and stateless.
+
+---
+
 ## Integration Safety
 
 > **The Primary Attack Surface: Integration Mistakes**
