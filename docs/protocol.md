@@ -124,16 +124,18 @@ Constraints form a partial order. Attenuation can only move **toward more restri
 
 ### Constraint Serialization (CBOR)
 
-Constraints are serialized as tagged CBOR maps:
+Constraints are serialized as CBOR arrays `[type_id, value]`:
 
 ```
-Exact:    {type: "exact", value: "/data/q3.pdf"}
-Pattern:  {type: "pattern", value: "/data/*.pdf"}
-Range:    {type: "range", min: 0, max: 1000}
-OneOf:    {type: "one_of", values: ["dev", "staging"]}
-Regex:    {type: "regex", value: "^[a-z]+\\.pdf$"}
-Wildcard: {type: "wildcard"}
+Exact(1):    [1, "/data/q3.pdf"]
+Pattern(2):  [2, {"pattern": "/data/*.pdf"}]
+Range(3):    [3, {"min": 0, "max": 1000}]
+OneOf(4):    [4, {"values": ["dev", "staging"]}]
+Regex(5):    [5, {"pattern": "^[a-z]+\\.pdf$"}]
+Wildcard(16): [16, {}]
 ```
+
+See `docs/wire-format-spec.md` §6 for complete type ID assignments (1-16).
 
 For debugging, use `tenuo inspect` to view constraints as JSON.
 

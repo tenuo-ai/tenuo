@@ -598,15 +598,19 @@ decoded = base64.urlsafe_b64decode(encoded)
 
 #### Constraint Serialization
 
-```json
-{"type": "exact", "value": "/data/q3.pdf"}
-{"type": "pattern", "value": "/data/*.pdf"}
-{"type": "range", "min": 0, "max": 1000}
-{"type": "one_of", "values": ["dev", "staging"]}
-{"type": "not_one_of", "values": ["prod"]}
-{"type": "regex", "value": "^[a-z]+\\.pdf$"}
-{"type": "wildcard"}
+Constraints use integer type IDs in CBOR array format `[type_id, value]`:
+
 ```
+[1, "/data/q3.pdf"]                    # Exact (type_id=1)
+[2, {"pattern": "/data/*.pdf"}]        # Pattern (type_id=2)
+[3, {"min": 0, "max": 1000}]           # Range (type_id=3)
+[4, {"values": ["dev", "staging"]}]    # OneOf (type_id=4)
+[7, {"excluded": ["prod"]}]            # NotOneOf (type_id=7)
+[5, {"pattern": "^[a-z]+\\.pdf$"}]     # Regex (type_id=5)
+[16, {}]                               # Wildcard (type_id=16)
+```
+
+See `docs/wire-format-spec.md` §6 for complete type ID assignments.
 
 #### Cryptographic Values
 
