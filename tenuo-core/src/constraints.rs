@@ -75,27 +75,57 @@ impl Drop for DepthGuard {
     }
 }
 
+/// Wire format type IDs for constraints (per wire-format-spec.md §6).
+///
+/// These IDs are used for compact CBOR serialization as `[type_id, value]`.
+pub mod constraint_type_id {
+    pub const EXACT: u8 = 1;
+    pub const PATTERN: u8 = 2;
+    pub const RANGE: u8 = 3;
+    pub const ONE_OF: u8 = 4;
+    pub const REGEX: u8 = 5;
+    pub const FLOAT_RANGE: u8 = 6;
+    pub const NOT_ONE_OF: u8 = 7;
+    pub const CIDR: u8 = 8;
+    pub const URL_PATTERN: u8 = 9;
+    pub const CONTAINS: u8 = 10;
+    pub const SUBSET: u8 = 11;
+    pub const ALL: u8 = 12;
+    pub const ANY: u8 = 13;
+    pub const NOT: u8 = 14;
+    pub const CEL: u8 = 15;
+    pub const WILDCARD: u8 = 16;
+    // 17-127: Future standard types
+    // 128-255: Experimental / private use
+}
+
 /// A constraint on an argument value.
+///
+/// **Wire format**: Serialized as CBOR array `[type_id, value]` for compactness.
 ///
 /// **Security**: Custom deserialization validates nesting depth to prevent
 /// stack overflow attacks from maliciously nested constraints like `Not(Not(Not(...)))`.
-#[derive(Debug, Clone, Serialize, PartialEq)]
-#[serde(tag = "type", content = "value")]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Constraint {
     /// Wildcard - matches anything. The universal superset.
     /// Can be attenuated to any other constraint type.
+    /// Wire type ID: 16
     Wildcard(Wildcard),
 
     /// Glob-style pattern matching (e.g., "staging-*").
+    /// Wire type ID: 2
     Pattern(Pattern),
 
     /// Regular expression matching.
+    /// Wire type ID: 5
     Regex(RegexConstraint),
 
     /// Exact value match (works for strings, numbers, bools).
+    /// Wire type ID: 1
     Exact(Exact),
 
     /// One of a set of allowed values.
+    /// Wire type ID: 4
     OneOf(OneOf),
 
     /// Value must NOT be in the excluded set ("carving holes").
@@ -106,33 +136,43 @@ pub enum Constraint {
     ///
     /// **Security Rule**: Never start with negation! Always start with
     /// a positive allowlist and use NotOneOf to "carve holes" in children.
+    /// Wire type ID: 7
     NotOneOf(NotOneOf),
 
     /// Numeric range constraint.
+    /// Wire type ID: 3
     Range(Range),
 
     /// CIDR network constraint (IP address must be in network).
+    /// Wire type ID: 8
     Cidr(Cidr),
 
     /// URL pattern constraint (validates URL scheme, host, port, path).
+    /// Wire type ID: 9
     UrlPattern(UrlPattern),
 
     /// List must contain specified values.
+    /// Wire type ID: 10
     Contains(Contains),
 
     /// List must be a subset of allowed values.
+    /// Wire type ID: 11
     Subset(Subset),
 
     /// All nested constraints must match (AND).
+    /// Wire type ID: 12
     All(All),
 
     /// At least one nested constraint must match (OR).
+    /// Wire type ID: 13
     Any(Any),
 
     /// Negation of a constraint.
+    /// Wire type ID: 14
     Not(Not),
 
     /// CEL expression for complex logic.
+    /// Wire type ID: 15
     Cel(CelConstraint),
 
     /// Unknown constraint type (deserialized but not understood).
@@ -140,90 +180,223 @@ pub enum Constraint {
     Unknown { type_id: u8, payload: Vec<u8> },
 }
 
-// Custom Deserialize to enforce constraint depth validation
+// Custom Serialize: outputs [type_id, value] array
+impl Serialize for Constraint {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use constraint_type_id::*;
+        use serde::ser::SerializeTuple;
+
+        let mut tup = serializer.serialize_tuple(2)?;
+
+        match self {
+            Constraint::Exact(v) => {
+                tup.serialize_element(&EXACT)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::Pattern(v) => {
+                tup.serialize_element(&PATTERN)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::Range(v) => {
+                tup.serialize_element(&RANGE)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::OneOf(v) => {
+                tup.serialize_element(&ONE_OF)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::Regex(v) => {
+                tup.serialize_element(&REGEX)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::NotOneOf(v) => {
+                tup.serialize_element(&NOT_ONE_OF)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::Cidr(v) => {
+                tup.serialize_element(&CIDR)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::UrlPattern(v) => {
+                tup.serialize_element(&URL_PATTERN)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::Contains(v) => {
+                tup.serialize_element(&CONTAINS)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::Subset(v) => {
+                tup.serialize_element(&SUBSET)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::All(v) => {
+                tup.serialize_element(&ALL)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::Any(v) => {
+                tup.serialize_element(&ANY)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::Not(v) => {
+                tup.serialize_element(&NOT)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::Cel(v) => {
+                tup.serialize_element(&CEL)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::Wildcard(v) => {
+                tup.serialize_element(&WILDCARD)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::Unknown { type_id, payload } => {
+                tup.serialize_element(type_id)?;
+                tup.serialize_element(&serde_bytes::Bytes::new(payload))?;
+            }
+        }
+
+        tup.end()
+    }
+}
+
+// Custom Deserialize: reads [type_id, value] array format
 impl<'de> serde::Deserialize<'de> for Constraint {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
+        use constraint_type_id::*;
+        use serde::de::{Error as DeError, SeqAccess, Visitor};
+
         let _guard = DepthGuard::new::<D::Error>()?;
 
-        // Helper enum for raw deserialization (same structure, no validation)
-        #[derive(serde::Deserialize)]
-        #[serde(tag = "type", content = "value")]
-        enum ConstraintRaw {
-            Wildcard(Wildcard),
-            Pattern(Pattern),
-            Regex(RegexConstraint),
-            Exact(Exact),
-            OneOf(OneOf),
-            NotOneOf(NotOneOf),
-            Range(Range),
-            Cidr(Cidr),
-            UrlPattern(UrlPattern),
-            Contains(Contains),
-            Subset(Subset),
-            All(AllRaw),
-            Any(AnyRaw),
-            Not(NotRaw),
-            Cel(CelConstraint),
-            // Catch-all for unknown types
-            #[serde(other)]
-            Unknown,
-        }
+        struct ConstraintVisitor;
 
-        // Raw versions of recursive types that deserialize to Constraint
-        #[derive(serde::Deserialize)]
-        struct AllRaw {
-            constraints: Vec<Constraint>,
-        }
-        #[derive(serde::Deserialize)]
-        struct AnyRaw {
-            constraints: Vec<Constraint>,
-        }
-        #[derive(serde::Deserialize)]
-        struct NotRaw {
-            constraint: Box<Constraint>,
-        }
+        impl<'de> Visitor<'de> for ConstraintVisitor {
+            type Value = Constraint;
 
-        let raw = ConstraintRaw::deserialize(deserializer)?;
-
-        let constraint = match raw {
-            ConstraintRaw::Wildcard(v) => Constraint::Wildcard(v),
-            ConstraintRaw::Pattern(v) => Constraint::Pattern(v),
-            ConstraintRaw::Regex(v) => Constraint::Regex(v),
-            ConstraintRaw::Exact(v) => Constraint::Exact(v),
-            ConstraintRaw::OneOf(v) => Constraint::OneOf(v),
-            ConstraintRaw::NotOneOf(v) => Constraint::NotOneOf(v),
-            ConstraintRaw::Range(v) => Constraint::Range(v),
-            ConstraintRaw::Cidr(v) => Constraint::Cidr(v),
-            ConstraintRaw::UrlPattern(v) => Constraint::UrlPattern(v),
-            ConstraintRaw::Contains(v) => Constraint::Contains(v),
-            ConstraintRaw::Subset(v) => Constraint::Subset(v),
-            ConstraintRaw::All(v) => Constraint::All(All {
-                constraints: v.constraints,
-            }),
-            ConstraintRaw::Any(v) => Constraint::Any(Any {
-                constraints: v.constraints,
-            }),
-            ConstraintRaw::Not(v) => Constraint::Not(Not {
-                constraint: v.constraint,
-            }),
-            ConstraintRaw::Cel(v) => Constraint::Cel(v),
-            ConstraintRaw::Unknown => {
-                // For now, since we can't easily capture the raw payload with standard Serde
-                // using #[serde(other)], we'll just store a placeholder.
-                // A more robust implementation would use a custom Visitor or `serde_cbor::Value`.
-                // However, `serde(tag="type")` makes extracting the *original* tag hard with standard Derive.
-                // To truly implement "preserve unknown", we need to manually parse the map using a Visitor.
-                // Given the constraints of this tool, we will start with a basic Unknown variant
-                // that fails closed but might not strictly preserve the payload (yet).
-                Constraint::Unknown {
-                    type_id: 255, // Placeholder
-                    payload: Vec::new(),
-                }
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a constraint array [type_id, value]")
             }
-        };
+
+            fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Self::Value, A::Error>
+            where
+                A: SeqAccess<'de>,
+            {
+                let type_id: u8 = seq
+                    .next_element()?
+                    .ok_or_else(|| A::Error::invalid_length(0, &self))?;
+
+                let constraint = match type_id {
+                    EXACT => {
+                        let v: Exact = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::Exact(v)
+                    }
+                    PATTERN => {
+                        let v: Pattern = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::Pattern(v)
+                    }
+                    RANGE => {
+                        let v: Range = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::Range(v)
+                    }
+                    ONE_OF => {
+                        let v: OneOf = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::OneOf(v)
+                    }
+                    REGEX => {
+                        let v: RegexConstraint = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::Regex(v)
+                    }
+                    NOT_ONE_OF => {
+                        let v: NotOneOf = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::NotOneOf(v)
+                    }
+                    CIDR => {
+                        let v: Cidr = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::Cidr(v)
+                    }
+                    URL_PATTERN => {
+                        let v: UrlPattern = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::UrlPattern(v)
+                    }
+                    CONTAINS => {
+                        let v: Contains = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::Contains(v)
+                    }
+                    SUBSET => {
+                        let v: Subset = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::Subset(v)
+                    }
+                    ALL => {
+                        let v: All = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::All(v)
+                    }
+                    ANY => {
+                        let v: Any = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::Any(v)
+                    }
+                    NOT => {
+                        let v: Not = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::Not(v)
+                    }
+                    CEL => {
+                        let v: CelConstraint = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::Cel(v)
+                    }
+                    WILDCARD => {
+                        let v: Wildcard = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::Wildcard(v)
+                    }
+                    // Unknown type ID (including FloatRange=6 which isn't implemented yet)
+                    _ => {
+                        // Try to read value as raw bytes for preservation
+                        let payload: Vec<u8> = seq
+                            .next_element::<serde_bytes::ByteBuf>()?
+                            .map(|b| b.into_vec())
+                            .unwrap_or_default();
+                        Constraint::Unknown { type_id, payload }
+                    }
+                };
+
+                Ok(constraint)
+            }
+        }
+
+        let constraint = deserializer.deserialize_seq(ConstraintVisitor)?;
 
         // Validate depth after full deserialization
         constraint
@@ -3100,17 +3273,146 @@ mod tests {
     fn test_cidr_constraint_serialization() {
         let constraint = Constraint::Cidr(Cidr::new("10.0.0.0/8").unwrap());
 
-        // Serialize as part of Constraint enum
-        let json = serde_json::to_string(&constraint).unwrap();
-        assert!(json.contains("Cidr"));
-        assert!(json.contains("10.0.0.0/8"));
+        // Serialize as CBOR (wire format: [type_id, value])
+        let mut cbor_bytes = Vec::new();
+        ciborium::ser::into_writer(&constraint, &mut cbor_bytes).unwrap();
+
+        // Verify type ID is CIDR (8)
+        // CBOR array starts with 0x82 (2-element array), then type_id byte
+        assert!(cbor_bytes.len() > 2);
+        // The type ID should be 8 (CIDR)
+        assert_eq!(cbor_bytes[1], constraint_type_id::CIDR);
 
         // Deserialize back
-        let deserialized: Constraint = serde_json::from_str(&json).unwrap();
+        let deserialized: Constraint = ciborium::de::from_reader(&cbor_bytes[..]).unwrap();
         if let Constraint::Cidr(c) = deserialized {
             assert_eq!(c.cidr_string, "10.0.0.0/8");
         } else {
-            panic!("Expected Cidr constraint");
+            panic!("Expected Cidr constraint, got {:?}", deserialized);
+        }
+    }
+
+    /// Comprehensive test for all constraint type IDs in wire format.
+    /// Verifies that each constraint type serializes with the correct type ID
+    /// and round-trips correctly through CBOR.
+    #[test]
+    fn test_all_constraint_type_ids_wire_format() {
+        use constraint_type_id::*;
+
+        // Helper to test a constraint's wire format
+        fn test_constraint(constraint: Constraint, expected_type_id: u8, name: &str) {
+            let mut bytes = Vec::new();
+            ciborium::ser::into_writer(&constraint, &mut bytes).unwrap();
+
+            // CBOR 2-element array starts with 0x82, then type_id
+            assert!(bytes.len() >= 2, "{}: too short", name);
+            assert_eq!(bytes[0], 0x82, "{}: not a 2-element array", name);
+            assert_eq!(bytes[1], expected_type_id, "{}: wrong type ID", name);
+
+            // Round-trip
+            let decoded: Constraint = ciborium::de::from_reader(&bytes[..]).unwrap();
+            assert_eq!(
+                std::mem::discriminant(&constraint),
+                std::mem::discriminant(&decoded),
+                "{}: discriminant mismatch after round-trip",
+                name
+            );
+        }
+
+        // Test all standard constraint types
+        test_constraint(Constraint::Exact(Exact::new("test")), EXACT, "Exact");
+        test_constraint(
+            Constraint::Pattern(Pattern::new("test-*").unwrap()),
+            PATTERN,
+            "Pattern",
+        );
+        test_constraint(
+            Constraint::Range(Range::new(Some(0.0), Some(100.0)).unwrap()),
+            RANGE,
+            "Range",
+        );
+        test_constraint(
+            Constraint::OneOf(OneOf::new(vec!["a".to_string(), "b".to_string()])),
+            ONE_OF,
+            "OneOf",
+        );
+        test_constraint(
+            Constraint::Regex(RegexConstraint::new("^test$").unwrap()),
+            REGEX,
+            "Regex",
+        );
+        test_constraint(
+            Constraint::NotOneOf(NotOneOf::new(vec!["x".to_string()])),
+            NOT_ONE_OF,
+            "NotOneOf",
+        );
+        test_constraint(
+            Constraint::Cidr(Cidr::new("10.0.0.0/8").unwrap()),
+            CIDR,
+            "Cidr",
+        );
+        test_constraint(
+            Constraint::UrlPattern(UrlPattern::new("https://example.com/*").unwrap()),
+            URL_PATTERN,
+            "UrlPattern",
+        );
+        test_constraint(
+            Constraint::Contains(Contains::new(vec!["admin".to_string()])),
+            CONTAINS,
+            "Contains",
+        );
+        test_constraint(
+            Constraint::Subset(Subset::new(vec!["a".to_string(), "b".to_string()])),
+            SUBSET,
+            "Subset",
+        );
+        test_constraint(
+            Constraint::All(All {
+                constraints: vec![Constraint::Exact(Exact::new("x"))],
+            }),
+            ALL,
+            "All",
+        );
+        test_constraint(
+            Constraint::Any(Any {
+                constraints: vec![Constraint::Exact(Exact::new("y"))],
+            }),
+            ANY,
+            "Any",
+        );
+        test_constraint(
+            Constraint::Not(Not {
+                constraint: Box::new(Constraint::Exact(Exact::new("z"))),
+            }),
+            NOT,
+            "Not",
+        );
+        test_constraint(Constraint::Cel(CelConstraint::new("x > 0")), CEL, "Cel");
+        test_constraint(Constraint::Wildcard(Wildcard::new()), WILDCARD, "Wildcard");
+    }
+
+    /// Test that unknown type IDs deserialize to Unknown variant and fail closed.
+    #[test]
+    fn test_unknown_constraint_type_id() {
+        // Manually construct CBOR for unknown type ID 200
+        // [200, <bytes>] - Unknown expects raw bytes as payload
+        let payload_bytes: Vec<u8> = vec![1, 2, 3, 4];
+        let mut bytes = Vec::new();
+        ciborium::ser::into_writer(
+            &(200u8, serde_bytes::Bytes::new(&payload_bytes)),
+            &mut bytes,
+        )
+        .unwrap();
+
+        let constraint: Constraint = ciborium::de::from_reader(&bytes[..]).unwrap();
+
+        match constraint {
+            Constraint::Unknown { type_id, payload } => {
+                assert_eq!(type_id, 200);
+                assert_eq!(payload, payload_bytes);
+                // Unknown constraints always fail authorization (verified in other tests)
+            }
+            _ => panic!("Expected Unknown variant, got {:?}", constraint),
         }
     }
 
