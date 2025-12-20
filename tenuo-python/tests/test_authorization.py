@@ -295,8 +295,9 @@ def test_trust_level_monotonicity():
     
     assert root.trust_level.value() == TrustLevel("internal").value()
     
-    # Attenuate with lower trust level using builder pattern
+    # Attenuate with lower trust level using builder pattern (POLA: inherit_all first)
     builder = root.attenuate_builder()
+    builder.inherit_all()
     builder.with_ttl(60)
     builder.with_holder(kp.public_key)
     builder.with_trust_level(TrustLevel("external"))

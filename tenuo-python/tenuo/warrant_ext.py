@@ -154,12 +154,14 @@ def _warrant_delegate(
         raise RuntimeError("No active keypair context. Use inside a task context or set_keypair_context().")
     
     builder = self.attenuate_builder()
+    
+    # POLA: Start by inheriting all parent capabilities, then narrow
+    builder.inherit_all()
 
     # Narrow tools if specified
     if tools is not None:
         builder.with_tools(tools)
 
-    # Apply constraints
     # Apply constraints (merge logic)
     # We must fetch current capabilities, apply new constraints to target tools, and set them back.
     from tenuo.constraints import ensure_constraint

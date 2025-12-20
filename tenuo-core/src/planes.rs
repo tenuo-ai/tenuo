@@ -2111,9 +2111,10 @@ mod tests {
             .issue_warrant("test2", &[], Duration::from_secs(60))
             .unwrap();
 
-        // Create an attenuated warrant from warrant2
+        // Create an attenuated warrant from warrant2 (POLA: inherit_all)
         let child = warrant2
             .attenuate()
+            .inherit_all()
             .build(&agent_keypair, &control_plane.keypair)
             .unwrap();
 
@@ -2155,8 +2156,10 @@ mod tests {
             )
             .unwrap();
 
+        // POLA: inherit_all to get parent capabilities
         let child = root
             .attenuate()
+            .inherit_all()
             .authorized_holder(agent_keypair.public_key())
             .build(&agent_keypair, &control_plane.keypair)
             .unwrap();
@@ -2209,8 +2212,10 @@ mod tests {
             .issue_warrant("test", &[], Duration::from_secs(60))
             .unwrap();
 
+        // POLA: inherit_all to get parent capabilities
         let child = root
             .attenuate()
+            .inherit_all()
             .build(&orchestrator_keypair, &control_plane.keypair)
             .unwrap();
 
@@ -2557,8 +2562,10 @@ mod tests {
             .build(&control_plane.keypair)
             .unwrap();
 
+        // POLA: inherit_all to get parent capabilities
         let child = root
             .attenuate()
+            .inherit_all()
             // Session ID inherited from root (session_123)
             .authorized_holder(worker_keypair.public_key())
             .build(&orchestrator_keypair, &control_plane.keypair)
@@ -2598,8 +2605,10 @@ mod tests {
             .build(&control_plane.keypair)
             .unwrap();
 
+        // POLA: inherit_all
         let child = root_no_session
             .attenuate()
+            .inherit_all()
             // Session ID inherited (None)
             .authorized_holder(worker_keypair.public_key())
             .build(&orchestrator_keypair, &control_plane.keypair)
@@ -2627,8 +2636,10 @@ mod tests {
             .build(&control_plane.keypair)
             .unwrap();
 
+        // POLA: inherit_all
         let child = root
             .attenuate()
+            .inherit_all()
             // Session ID inherited from root (session_123)
             .authorized_holder(orchestrator_keypair.public_key())
             .build(&orchestrator_keypair, &control_plane.keypair)
@@ -2649,8 +2660,10 @@ mod tests {
             .build(&control_plane.keypair)
             .unwrap();
 
+        // POLA: inherit_all
         let child_bad = root2
             .attenuate()
+            .inherit_all()
             // Session ID inherited from root2 (session_456)
             .authorized_holder(orchestrator_keypair.public_key())
             .build(&orchestrator_keypair, &control_plane.keypair)

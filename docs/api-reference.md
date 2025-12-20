@@ -364,22 +364,41 @@ issuer = (Warrant.builder()
 
 ⚠️ **Replay Window:** PoP signatures are valid for ~2 minutes to handle clock skew. For sensitive operations, implement deduplication using `warrant.dedup_key(tool, args)`. See [Protocol: Replay Protection](./protocol#replay-protection).
 
-#### Tool Narrowing
+#### Principle of Least Authority (POLA)
 
-Execution warrants **CAN have their tools narrowed** via attenuation. This follows the "always shrinking authority" principle.
+Tenuo follows **POLA**: when you attenuate a warrant, the child starts with **NO capabilities**. You must explicitly specify what you want. This prevents accidentally granting more authority than intended.
 
-**Via AttenuationBuilder:**
+| Method | Behavior |
+|--------|----------|
+| `with_capability(tool, {})` | Grant only that tool |
+| `inherit_all()` | Explicitly opt-in to inherit all parent capabilities |
+| `with_tools([...])` | After `inherit_all()`, narrow to subset |
+
+**Pattern 1: Grant specific capabilities (recommended)**
 
 ```python
-# Parent has tools: ["read_file", "send_email", "query_db"]
+# Child only gets what you explicitly grant
 builder = parent.attenuate()
-builder.with_tool("read_file")  # Narrow to single tool
+builder.with_capability("read_file", {"path": Exact("/data/report.txt")})
 builder.with_holder(worker_kp.public_key)
 child = builder.delegate_to(kp, kp)
-# child.tools == ["read_file"]
+# child.tools == ["read_file"] (only!)
 ```
 
-**Via delegate() convenience method:**
+**Pattern 2: Inherit all, then narrow**
+
+```python
+# Start with all parent capabilities, then narrow
+builder = parent.attenuate()
+builder.inherit_all()                    # Explicit opt-in
+builder.with_tools(["read_file"])        # Keep only this tool
+builder.with_holder(worker_kp.public_key)
+child = builder.delegate_to(kp, kp)
+```
+
+**Pattern 3: Via delegate() (convenience)**
+
+The `delegate()` method automatically calls `inherit_all()` internally, making it easier for simple cases:
 
 ```python
 with set_signing_key_context(my_keypair):
@@ -415,7 +434,8 @@ A warrant is **terminal** when it cannot delegate further (`depth >= max_depth`)
 ```python
 # Create terminal warrant
 builder = parent.attenuate()
-builder.terminal()  # Mark as terminal
+builder.inherit_all()     # POLA: inherit parent capabilities
+builder.terminal()        # Mark as terminal
 builder.with_holder(worker_kp.public_key)
 terminal = builder.delegate_to(kp, kp)
 
@@ -459,9 +479,10 @@ builder = warrant.attenuate()
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `with_capability(tool, constraints)` | `AttenuationBuilder` | Set capability with tighter constraints — **recommended** |
-| `with_tool(tool)` | `AttenuationBuilder` | Narrow to single tool (execution warrants) |
-| `with_tools(tools)` | `AttenuationBuilder` | Narrow to subset of tools |
+| `inherit_all()` | `AttenuationBuilder` | **POLA opt-in**: Inherit all capabilities from parent |
+| `with_capability(tool, constraints)` | `AttenuationBuilder` | Grant specific capability with constraints |
+| `with_tool(tool)` | `AttenuationBuilder` | After `inherit_all()`, narrow to single tool |
+| `with_tools(tools)` | `AttenuationBuilder` | After `inherit_all()`, narrow to subset of tools |
 | `with_issuable_tool(tool)` | `AttenuationBuilder` | Narrow issuable tools (issuer warrants) |
 | `with_issuable_tools(tools)` | `AttenuationBuilder` | Narrow issuable tools (issuer warrants) |
 | `with_constraint(field, constraint)` | `AttenuationBuilder` | Add/tighten constraint (legacy) |
@@ -471,12 +492,21 @@ builder = warrant.attenuate()
 | `diff()` | `str` | Preview changes (human-readable) |
 | `delegate_to(keypair, parent_keypair)` | `Warrant` | Issue child with receipt |
 
-#### Example
+> ⚠️ **POLA**: The builder starts with NO capabilities. Use `with_capability()` to grant specific tools, or `inherit_all()` to explicitly inherit all parent capabilities.
+
+#### Examples
 
 ```python
-# Narrow with capability()
+# Pattern 1: Grant specific capability (POLA default)
 child = (parent.attenuate()
     .with_capability("read_file", {"path": Exact("/data/q3.pdf")})
+    .holder(worker_kp.public_key)
+    .delegate_to(worker_kp, parent_kp))
+
+# Pattern 2: Inherit all, then narrow
+child = (parent.attenuate()
+    .inherit_all()                    # Explicit opt-in
+    .with_tools(["read_file"])        # Keep only this tool
     .holder(worker_kp.public_key)
     .delegate_to(worker_kp, parent_kp))
 ```

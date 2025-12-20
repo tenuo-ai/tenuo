@@ -326,9 +326,10 @@ fn demo_session_binding() {
     assert_eq!(session_1_warrant.session_id(), Some("session_001"));
     assert_eq!(session_2_warrant.session_id(), Some("session_002"));
 
-    // Session is preserved through attenuation
+    // Session is preserved through attenuation (POLA: inherit_all)
     let attenuated = session_1_warrant
         .attenuate()
+        .inherit_all()
         .authorized_holder(kp.public_key())
         .build(&kp, &kp)
         .unwrap();

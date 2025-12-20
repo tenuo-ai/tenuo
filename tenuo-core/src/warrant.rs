@@ -657,6 +657,16 @@ impl Warrant {
         &self.payload.holder
     }
 
+    /// Get the extensions map.
+    pub fn extensions(&self) -> &BTreeMap<String, Vec<u8>> {
+        &self.payload.extensions
+    }
+
+    /// Get a specific extension value.
+    pub fn extension(&self, key: &str) -> Option<&Vec<u8>> {
+        self.payload.extensions.get(key)
+    }
+
     /// Check if this warrant requires Proof-of-Possession.
     pub fn requires_pop(&self) -> bool {
         true
@@ -1340,13 +1350,18 @@ pub struct AttenuationBuilder<'a> {
 
 impl<'a> AttenuationBuilder<'a> {
     /// Create a new attenuation builder.
+    ///
+    /// Follows the **Principle of Least Authority (POLA)**: the child warrant
+    /// starts with NO capabilities. You must explicitly specify each capability
+    /// you want using `.capability()`. This prevents accidentally granting
+    /// more authority than intended.
     fn new(parent: &'a Warrant) -> Self {
-        // Inherit from parent based on warrant type
+        // POLA: Start with empty capabilities - must explicitly add each one
         let (tools, issuable_tools, trust_ceiling, max_issue_depth, constraint_bounds) =
             match parent.payload.warrant_type {
                 WarrantType::Execution => (
-                    // Start with parent's tools
-                    parent.payload.tools.clone(),
+                    // POLA: Start empty, not with parent's tools
+                    BTreeMap::new(),
                     None,
                     None,
                     None,
@@ -1354,7 +1369,8 @@ impl<'a> AttenuationBuilder<'a> {
                 ),
                 WarrantType::Issuer => (
                     BTreeMap::new(),
-                    parent.payload.issuable_tools.clone(),
+                    // POLA: Start empty for issuable_tools too
+                    None,
                     parent.payload.trust_ceiling,
                     parent.payload.max_issue_depth,
                     parent.payload.constraint_bounds.clone().unwrap_or_default(),
@@ -1381,10 +1397,31 @@ impl<'a> AttenuationBuilder<'a> {
         }
     }
 
-    /// Add a capability (tool + constraint) to the attenuated warrant.
+    /// Inherit all capabilities from the parent warrant.
     ///
-    /// This effectively narrows the parent's capability for this tool.
-    /// If the tool wasn't in the parent or previous set, it's added (subject to validation).
+    /// This is an **explicit opt-in** to full inheritance. Use this when you
+    /// want to start with all parent capabilities and then narrow specific ones.
+    ///
+    /// Without this, the builder follows POLA and starts empty.
+    pub fn inherit_all(mut self) -> Self {
+        match self.parent.payload.warrant_type {
+            WarrantType::Execution => {
+                self.tools = self.parent.payload.tools.clone();
+            }
+            WarrantType::Issuer => {
+                self.issuable_tools = self.parent.payload.issuable_tools.clone();
+            }
+        }
+        self
+    }
+
+    /// Add a capability (tool + constraints) to the attenuated warrant.
+    ///
+    /// **POLA**: You must explicitly add each capability you want. Only tools
+    /// specified via this method will be in the child warrant.
+    ///
+    /// The tool must exist in the parent warrant, and constraints must be
+    /// equal to or narrower than the parent's constraints for that tool.
     pub fn capability(
         mut self,
         tool: impl Into<String>,
@@ -1752,13 +1789,20 @@ pub struct OwnedAttenuationBuilder {
 
 impl OwnedAttenuationBuilder {
     /// Create a new owned attenuation builder.
+    ///
+    /// Follows the **Principle of Least Authority (POLA)**: the child warrant
+    /// starts with NO capabilities. You must explicitly specify each capability
+    /// you want using `.set_capability()`. This prevents accidentally granting
+    /// more authority than intended.
+    ///
+    /// Use `.inherit_all()` if you explicitly want all parent capabilities.
     pub fn new(parent: Warrant) -> Self {
-        // Inherit from parent based on warrant type
+        // POLA: Start with empty capabilities - must explicitly add each one
         let (tools, issuable_tools, trust_ceiling, max_issue_depth, constraint_bounds) =
             match parent.payload.warrant_type {
                 WarrantType::Execution => (
-                    // Start with parent's tools
-                    parent.payload.tools.clone(),
+                    // POLA: Start empty, not with parent's tools
+                    BTreeMap::new(),
                     None,
                     None,
                     None,
@@ -1766,7 +1810,8 @@ impl OwnedAttenuationBuilder {
                 ),
                 WarrantType::Issuer => (
                     BTreeMap::new(),
-                    parent.payload.issuable_tools.clone(),
+                    // POLA: Start empty for issuable_tools too
+                    None,
                     parent.payload.trust_ceiling,
                     parent.payload.max_issue_depth,
                     parent.payload.constraint_bounds.clone().unwrap_or_default(),
@@ -1791,6 +1836,23 @@ impl OwnedAttenuationBuilder {
             max_depth: None,
             intent: None,
             extensions: BTreeMap::new(),
+        }
+    }
+
+    /// Inherit all capabilities from the parent warrant.
+    ///
+    /// This is an **explicit opt-in** to full inheritance. Use this when you
+    /// want to start with all parent capabilities and then narrow specific ones.
+    ///
+    /// Without this, the builder follows POLA and starts empty.
+    pub fn inherit_all(&mut self) {
+        match self.parent.payload.warrant_type {
+            WarrantType::Execution => {
+                self.tools = self.parent.payload.tools.clone();
+            }
+            WarrantType::Issuer => {
+                self.issuable_tools = self.parent.payload.issuable_tools.clone();
+            }
         }
     }
 
@@ -3134,6 +3196,7 @@ mod tests {
         // Request longer TTL - should be capped to parent
         let child = parent
             .attenuate()
+            .inherit_all() // POLA: explicitly inherit all capabilities
             .ttl(Duration::from_secs(3600))
             .build(&child_keypair, &parent_keypair)
             .unwrap();
@@ -3159,19 +3222,32 @@ mod tests {
         assert_eq!(warrant.max_depth(), Some(5));
 
         // Delegate - depth increases, max_depth is inherited
-        let child = warrant.attenuate().build(&keypair, &keypair).unwrap();
+        // POLA: must inherit_all() to get parent capabilities
+        let child = warrant
+            .attenuate()
+            .inherit_all()
+            .build(&keypair, &keypair)
+            .unwrap();
         assert_eq!(child.depth(), 1);
         assert_eq!(child.max_depth(), Some(5)); // Inherited
 
         // When depth reaches max_depth, warrant is terminal
         let mut current = child;
         for _ in 2..5 {
-            current = current.attenuate().build(&keypair, &keypair).unwrap();
+            current = current
+                .attenuate()
+                .inherit_all()
+                .build(&keypair, &keypair)
+                .unwrap();
         }
         assert_eq!(current.depth(), 4);
 
         // depth=5 would equal max_depth=5, so next attenuation should still work
-        let level5 = current.attenuate().build(&keypair, &keypair).unwrap();
+        let level5 = current
+            .attenuate()
+            .inherit_all()
+            .build(&keypair, &keypair)
+            .unwrap();
         assert_eq!(level5.depth(), 5);
         assert!(
             level5.is_terminal(),
@@ -3179,7 +3255,7 @@ mod tests {
         );
 
         // Further attenuation should fail
-        let result = level5.attenuate().build(&keypair, &keypair);
+        let result = level5.attenuate().inherit_all().build(&keypair, &keypair);
         assert!(result.is_err(), "cannot attenuate terminal warrant");
     }
 
@@ -3196,13 +3272,17 @@ mod tests {
             .build(&keypair)
             .unwrap();
 
-        // Delegate up to max depth
+        // Delegate up to max depth (POLA: inherit_all)
         for _ in 0..3 {
-            warrant = warrant.attenuate().build(&keypair, &keypair).unwrap();
+            warrant = warrant
+                .attenuate()
+                .inherit_all()
+                .build(&keypair, &keypair)
+                .unwrap();
         }
 
         // Next delegation should fail due to depth limit
-        let result = warrant.attenuate().build(&keypair, &keypair);
+        let result = warrant.attenuate().inherit_all().build(&keypair, &keypair);
         assert!(result.is_err());
         match result.unwrap_err() {
             Error::DepthExceeded(_, _) => {}
@@ -3257,8 +3337,12 @@ mod tests {
 
         assert_eq!(warrant.session_id(), Some("session_123"));
 
-        // Session ID is preserved through attenuation
-        let child = warrant.attenuate().build(&keypair, &keypair).unwrap();
+        // Session ID is preserved through attenuation (POLA: inherit_all)
+        let child = warrant
+            .attenuate()
+            .inherit_all()
+            .build(&keypair, &keypair)
+            .unwrap();
         assert_eq!(child.session_id(), Some("session_123"));
     }
 
@@ -3438,19 +3522,31 @@ mod tests {
         assert_eq!(root.max_depth(), Some(3));
         assert_eq!(root.effective_max_depth(), 3);
 
-        // Can delegate up to depth 3 (self-delegation in this test)
-        let level1 = root.attenuate().build(&keypair, &keypair).unwrap();
+        // Can delegate up to depth 3 (POLA: inherit_all for all)
+        let level1 = root
+            .attenuate()
+            .inherit_all()
+            .build(&keypair, &keypair)
+            .unwrap();
         assert_eq!(level1.depth(), 1);
         assert_eq!(level1.max_depth(), Some(3)); // Inherited
 
-        let level2 = level1.attenuate().build(&keypair, &keypair).unwrap();
+        let level2 = level1
+            .attenuate()
+            .inherit_all()
+            .build(&keypair, &keypair)
+            .unwrap();
         assert_eq!(level2.depth(), 2);
 
-        let level3 = level2.attenuate().build(&keypair, &keypair).unwrap();
+        let level3 = level2
+            .attenuate()
+            .inherit_all()
+            .build(&keypair, &keypair)
+            .unwrap();
         assert_eq!(level3.depth(), 3);
 
         // Depth 4 should fail (exceeds policy limit)
-        let result = level3.attenuate().build(&keypair, &keypair);
+        let result = level3.attenuate().inherit_all().build(&keypair, &keypair);
         assert!(result.is_err());
         match result.unwrap_err() {
             Error::DepthExceeded(4, 3) => {}
@@ -3470,16 +3566,21 @@ mod tests {
             .build(&keypair)
             .unwrap();
 
-        // Can shrink max_depth
+        // Can shrink max_depth (POLA: inherit_all)
         let child = root
             .attenuate()
+            .inherit_all()
             .max_depth(3)
             .build(&keypair, &keypair)
             .unwrap();
         assert_eq!(child.max_depth(), Some(3));
 
         // Cannot expand max_depth
-        let result = child.attenuate().max_depth(10).build(&keypair, &keypair);
+        let result = child
+            .attenuate()
+            .inherit_all()
+            .max_depth(10)
+            .build(&keypair, &keypair);
         assert!(result.is_err());
         match result.unwrap_err() {
             Error::MonotonicityViolation(_) => {}
@@ -3602,8 +3703,10 @@ mod tests {
             .unwrap();
 
         // Attenuate and ADD another approver (valid: more restrictive)
+        // POLA: inherit_all to get parent capabilities
         let child = root
             .attenuate()
+            .inherit_all()
             .add_approvers(vec![approver2.public_key()])
             .raise_min_approvals(2)
             .build(&delegator, &issuer)
@@ -3630,11 +3733,12 @@ mod tests {
             .build(&issuer)
             .unwrap();
 
-        // Create attenuation builder and clear approvers (simulating removal)
-        // The builder inherits from parent, so we can't directly remove.
-        // But if the internal field is manipulated, the build should fail.
-        // For now, verify that inherited approvers are preserved.
-        let child = root.attenuate().build(&delegator, &issuer).unwrap();
+        // POLA: inherit_all to get parent capabilities
+        let child = root
+            .attenuate()
+            .inherit_all()
+            .build(&delegator, &issuer)
+            .unwrap();
 
         // All parent approvers should be preserved
         assert_eq!(child.required_approvers().unwrap().len(), 2);
@@ -3657,10 +3761,10 @@ mod tests {
             .build(&issuer)
             .unwrap();
 
-        // Try to lower threshold using raise_min_approvals (should be ignored)
-        // raise_min_approvals uses max() so it cannot lower
+        // POLA: inherit_all to get parent capabilities
         let child = root
             .attenuate()
+            .inherit_all()
             .raise_min_approvals(1) // Tries to set 1, but max(current, 1) = 2
             .build(&delegator, &issuer)
             .unwrap();
@@ -3832,8 +3936,10 @@ mod tests {
         assert_eq!(child_b.depth(), 1);
 
         // B delegates back to A - this IS allowed because A gets a weaker warrant
+        // POLA: inherit_all since B is just passing on the same capabilities
         let result = child_b
             .attenuate()
+            .inherit_all()
             .authorized_holder(keypair_a.public_key())
             .build(&keypair_a, &keypair_b);
 
@@ -4028,9 +4134,10 @@ mod tests {
 
         assert_eq!(root.effective_max_depth(), MAX_DELEGATION_DEPTH);
 
-        // 2. Child warrant sets limit (Some(5))
+        // 2. Child warrant sets limit (Some(5)) - POLA: inherit_all
         let child = root
             .attenuate()
+            .inherit_all()
             .max_depth(5)
             .build(&root_kp, &root_kp)
             .unwrap();
@@ -4038,8 +4145,11 @@ mod tests {
         assert_eq!(child.effective_max_depth(), 5);
 
         // 3. Grandchild tries to increase limit (Some(10)) - Should fail/latch
-        // The build() method calls validate which checks monotonicity
-        let result = child.attenuate().max_depth(10).build(&root_kp, &root_kp);
+        let result = child
+            .attenuate()
+            .inherit_all()
+            .max_depth(10)
+            .build(&root_kp, &root_kp);
 
         // Expect error because 10 > 5
         assert!(result.is_err());
@@ -4056,6 +4166,7 @@ mod tests {
         // 4. Grandchild with lower limit (Some(3)) - Should succeed
         let grandchild = child
             .attenuate()
+            .inherit_all()
             .max_depth(3)
             .build(&root_kp, &root_kp)
             .unwrap();

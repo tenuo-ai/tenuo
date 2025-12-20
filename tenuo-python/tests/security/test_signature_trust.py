@@ -153,7 +153,9 @@ class TestSignatureTrust:
             ttl_seconds=3600
         )
         
-        attacker_child = attacker_root.attenuate_builder().delegate_to(
+        builder = attacker_root.attenuate_builder()
+        builder.inherit_all()  # POLA: explicit inheritance
+        attacker_child = builder.delegate_to(
             attacker_keypair, attacker_keypair
         )
         

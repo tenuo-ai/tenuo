@@ -53,8 +53,10 @@ proptest! {
             .build(&parent_kp)
             .unwrap();
 
+        // POLA: inherit_all to get parent capabilities
         let child = parent
             .attenuate()
+            .inherit_all()
             .ttl(Duration::from_secs(ttl_child))
             .authorized_holder(child_kp.public_key())
             .build(&child_kp, &child_kp)
@@ -80,7 +82,8 @@ proptest! {
         prop_assert_eq!(warrant.depth(), 0);
 
         for expected_depth in 1..=depth_limit {
-            warrant = warrant.attenuate().authorized_holder(kp.public_key()).build(&kp, &kp).unwrap();
+            // POLA: inherit_all
+            warrant = warrant.attenuate().inherit_all().authorized_holder(kp.public_key()).build(&kp, &kp).unwrap();
             prop_assert_eq!(warrant.depth(), expected_depth);
         }
     }
@@ -348,9 +351,9 @@ proptest! {
         prop_assert_eq!(warrant.depth(), 0);
         prop_assert_eq!(warrant.max_depth(), Some(initial_max_depth));
 
-        // Delegate until depth reaches max_depth
+        // Delegate until depth reaches max_depth (POLA: inherit_all)
         for expected_depth in 1..=initial_max_depth {
-            let result = warrant.attenuate().authorized_holder(kp.public_key()).build(&kp, &kp);
+            let result = warrant.attenuate().inherit_all().authorized_holder(kp.public_key()).build(&kp, &kp);
             if result.is_err() {
                 // Expected to fail when terminal (depth >= max_depth)
                 break;
@@ -415,7 +418,8 @@ proptest! {
 
         let mut parent = root;
         for _ in 1..chain_length {
-            let child = parent.attenuate().authorized_holder(kp.public_key()).build(&kp, &kp).unwrap();
+            // POLA: inherit_all
+            let child = parent.attenuate().inherit_all().authorized_holder(kp.public_key()).build(&kp, &kp).unwrap();
 
             let mut hasher = Sha256::new();
             hasher.update(parent.payload_bytes());

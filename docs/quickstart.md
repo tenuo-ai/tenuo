@@ -73,13 +73,15 @@ warrant = (Warrant.builder()
 
 ### 2. Attenuate (Delegate with Narrower Scope)
 
+Tenuo follows the **Principle of Least Authority (POLA)**: when attenuating, the child warrant starts with NO capabilities. You must explicitly specify what you want.
+
 ```python
 from tenuo import Exact
 
 # Worker gets a narrower warrant
 worker_keypair = SigningKey.generate()
 
-# Use attenuate() for fluent delegation
+# POLA: Explicitly specify only the capabilities you want to grant
 worker_warrant = (warrant.attenuate()
     .with_capability("manage_infrastructure", {
         "cluster": Exact("staging-web"),     # Narrowed from staging-*
@@ -87,6 +89,17 @@ worker_warrant = (warrant.attenuate()
     })
     .holder(worker_keypair.public_key)
     .delegate_to(worker_keypair, keypair))  # Child signs, parent authorizes
+```
+
+**Alternative: Inherit all, then narrow:**
+
+```python
+# Use inherit_all() to start with all parent capabilities
+worker_warrant = (warrant.attenuate()
+    .inherit_all()                           # Start with all parent capabilities
+    .with_tools(["manage_infrastructure"])   # Keep only this tool
+    .holder(worker_keypair.public_key)
+    .build(worker_keypair, keypair))
 ```
 
 ### 3. Authorize an Action

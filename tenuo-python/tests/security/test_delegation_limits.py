@@ -39,6 +39,7 @@ class TestDelegationLimits:
         try:
             for i in range(MAX_DELEGATION_DEPTH + 10):
                 builder = current.attenuate_builder()
+                builder.inherit_all()  # POLA: explicit inheritance
                 builder.with_holder(keypair.public_key)
                 current = builder.delegate_to(keypair, keypair)
                 
@@ -71,6 +72,7 @@ class TestDelegationLimits:
             for i in range(max_attempts):
                 depth += 1
                 builder = current.attenuate_builder()
+                builder.inherit_all()  # POLA: explicit inheritance
                 current = builder.delegate_to(keypair, keypair)
                 
             print(f"  [WARNING] Attack 18 SUCCEEDED: Created chain of depth {depth}")
@@ -104,6 +106,7 @@ class TestDelegationLimits:
         try:
             for i in range(test_limit + 5):
                 builder = current.attenuate_builder()
+                builder.inherit_all()  # POLA: explicit inheritance
                 builder.with_holder(keypair.public_key)
                 current = builder.delegate_to(keypair, keypair)
                 
@@ -177,8 +180,9 @@ class TestDelegationLimits:
             ttl_seconds=3600
         )
         
-        # Create terminal warrant
+        # Create terminal warrant (POLA: inherit_all first)
         builder = parent.attenuate_builder()
+        builder.inherit_all()
         builder.terminal()
         terminal = builder.delegate_to(keypair, keypair)
         
@@ -187,6 +191,7 @@ class TestDelegationLimits:
         print("  [Attack 31] Attempting to delegate from terminal warrant...")
         with pytest.raises(DepthExceeded):
             builder2 = terminal.attenuate_builder()
+            builder2.inherit_all()
             builder2.delegate_to(keypair, keypair)
         
         print("  [Result] Attack 31 blocked (Terminal warrants cannot delegate)")

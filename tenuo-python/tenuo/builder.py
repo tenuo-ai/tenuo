@@ -405,8 +405,31 @@ class AttenuationBuilder:
         return self._rust_builder.capabilities
     
     def with_capability(self, tool: str, constraints: Dict[str, Any]) -> 'AttenuationBuilder':
-        """Add or override a capability."""
+        """Add a capability (tool + constraints).
+        
+        **POLA**: You must explicitly add each capability you want. Only tools
+        specified via this method will be in the child warrant.
+        """
         self._rust_builder.with_capability(tool, constraints)
+        return self
+
+    def inherit_all(self) -> 'AttenuationBuilder':
+        """Inherit all capabilities from the parent warrant.
+        
+        This is an **explicit opt-in** to full inheritance. Use this when you
+        want to start with all parent capabilities and then narrow specific ones.
+        
+        Without this, the builder follows POLA (Principle of Least Authority)
+        and starts with NO capabilities.
+        
+        Example:
+            # Keep all parent capabilities but reduce TTL
+            child = (parent.attenuate()
+                .inherit_all()
+                .with_ttl(300)
+                .delegate_to(kp, kp))
+        """
+        self._rust_builder.inherit_all()
         return self
     
     def with_ttl(self, seconds: int) -> 'AttenuationBuilder':

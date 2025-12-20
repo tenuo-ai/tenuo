@@ -1837,6 +1837,9 @@ pub struct PyAttenuationBuilder {
 #[pymethods]
 impl PyAttenuationBuilder {
     /// Add a capability (tool + constraints) to the warrant.
+    ///
+    /// **POLA**: You must explicitly add each capability you want. Only tools
+    /// specified via this method will be in the child warrant.
     fn with_capability(&mut self, tool: &str, constraints: &Bound<'_, PyDict>) -> PyResult<()> {
         let mut constraint_set = crate::constraints::ConstraintSet::new();
         for (field_key, constraint_val) in constraints.iter() {
@@ -1846,6 +1849,17 @@ impl PyAttenuationBuilder {
         }
         self.inner.set_capability(tool, constraint_set);
         Ok(())
+    }
+
+    /// Inherit all capabilities from the parent warrant.
+    ///
+    /// This is an **explicit opt-in** to full inheritance. Use this when you
+    /// want to start with all parent capabilities and then narrow specific ones.
+    ///
+    /// Without this, the builder follows POLA (Principle of Least Authority)
+    /// and starts with NO capabilities.
+    fn inherit_all(&mut self) {
+        self.inner.inherit_all();
     }
 
     /// Set a shorter TTL in seconds.

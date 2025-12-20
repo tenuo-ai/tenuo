@@ -709,6 +709,42 @@ CBOR Map {
 - Wide language support
 - Used by COSE, WebAuthn, FIDO2
 
+### Extension Value Encoding
+
+Extension values MUST be CBOR-encoded. The outer `extensions` map uses string keys and byte values, where each value is a CBOR-encoded structure.
+
+**Example:**
+```rust
+// Extension definition
+struct RateLimitExtension {
+    limit: u64,
+    window_secs: u64,
+    scope: u8,
+}
+
+// Encoding
+let ext = RateLimitExtension { limit: 5, window_secs: 60, scope: 0 };
+let cbor_bytes = cbor::encode(&ext)?;
+
+// Storage in warrant
+extensions.insert("tenuo.rate_limit", cbor_bytes);
+```
+
+**Extension key namespaces:**
+
+- **`tenuo.*`** - Reserved for framework use. Current extensions: `tenuo.session_id`, `tenuo.agent_id` (metadata), `tenuo.nonce`, `tenuo.rate_limit`, `tenuo.revocable` (stateful, see THI spec).
+- **User-defined** - Use reverse domain notation: `com.example.trace_id`, `org.acme.workflow_id`
+
+### Stateful Extensions
+
+Some framework extensions require host-side state enforcement (nonces, rate limits, revocation). These are defined in the **Tenuo Host Interface (THI) Specification** (`docs/_internal/thi-spec.md`).
+
+**Separation of concerns:**
+- **Wire format** (this document) - Defines extension storage mechanism and reserves `tenuo.` prefix
+- **THI spec** - Defines stateful extension semantics and enforcement
+
+Warrants with stateful extensions remain cryptographically valid but require a THI-compliant host for full enforcement. Verifiers without THI support SHOULD reject warrants with unknown `tenuo.*` extensions to fail closed.
+
 ---
 
 ## 11. Warrant Stack (Transport)
