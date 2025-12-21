@@ -19,7 +19,7 @@ use tenuo::{
     extraction::RequestContext,
     gateway_config::GatewayConfig,
     planes::DataPlane,
-    warrant::{TrustLevel, Warrant, WarrantType},
+    warrant::{Warrant, WarrantType},
     wire,
 };
 // We use the pkcs8/spki crates for standard PEM handling
@@ -73,10 +73,6 @@ enum Commands {
         /// Comma-separated issuable tools (e.g., read_file,send_email) - required for issuer warrants
         #[arg(long = "issuable-tools")]
         issuable_tools: Option<String>,
-
-        /// Trust ceiling for issuer warrants: external, internal, or system
-        #[arg(long = "trust-ceiling")]
-        trust_ceiling: Option<String>,
 
         /// Maximum issue depth for issuer warrants
         #[arg(long = "max-issue-depth")]
@@ -305,7 +301,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             warrant_type,
             tool,
             issuable_tools,
-            trust_ceiling,
             max_issue_depth,
             trust_level,
             ttl,
@@ -322,7 +317,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 warrant_type,
                 tool,
                 issuable_tools,
-                trust_ceiling,
                 max_issue_depth,
                 trust_level,
                 ttl,
@@ -898,7 +892,6 @@ fn handle_issue(
     warrant_type: String,
     tool: Option<String>,
     issuable_tools: Option<String>,
-    trust_ceiling: Option<String>,
     max_issue_depth: Option<u32>,
     trust_level: Option<String>,
     ttl: String,
@@ -966,12 +959,6 @@ fn handle_issue(
                 .map(|s| s.trim().to_string())
                 .collect();
             builder = builder.issuable_tools(issuable_tools_vec);
-
-            let ceiling = trust_ceiling
-                .ok_or("Issuer warrant requires --trust-ceiling")?
-                .parse::<TrustLevel>()
-                .map_err(|e| format!("Invalid trust ceiling: {}", e))?;
-            builder = builder.trust_ceiling(ceiling);
 
             if let Some(max_issue) = max_issue_depth {
                 builder = builder.max_issue_depth(max_issue);

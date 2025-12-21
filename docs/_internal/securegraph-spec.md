@@ -615,7 +615,6 @@ class WarrantPayload:
     
     # Auth-critical optional fields (preserved + validated, not ignored)
     issuable_tools: Optional[List[str]] = None
-    trust_ceiling: Optional[TrustLevel] = None
     max_issue_depth: Optional[int] = None
     constraint_bounds: Optional[ConstraintSet] = None
     required_approvers: Optional[List[PublicKey]] = None

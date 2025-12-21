@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### ⚠️ Breaking Changes
+
+- **Removed `trust_ceiling`**: The `trust_ceiling` field has been removed from issuer warrants. Trust level monotonicity is now enforced using the issuer's own `trust_level` instead. This simplifies the API and aligns with the capability-based security model.
+  
+  ```python
+  # Before (alpha.6)
+  Warrant.issue_issuer(
+      issuable_tools=["read_file"],
+      trust_ceiling=TrustLevel.Internal,  # Removed
+      keypair=kp,
+  )
+  
+  # After (alpha.7)
+  Warrant.issue_issuer(
+      issuable_tools=["read_file"],
+      keypair=kp,
+      trust_level=TrustLevel.Internal,  # Optional, uses monotonicity
+  )
+  ```
+
+- **Python API**: `Warrant.issue_issuer()` no longer requires `trust_ceiling` parameter
+- **Rust API**: `WarrantBuilder::trust_ceiling()` method removed
+- **Wire Format**: Field 12 (`trust_ceiling`) is now reserved and ignored on read
+
+### Changed
+
+- Trust level enforcement now uses standard monotonicity (child cannot exceed parent's trust level)
+- Simplified documentation to de-emphasize trust levels as a core concept
+
+---
+
 ## [0.1.0-alpha.6] - 2025-12-19
 
 ### Added

@@ -219,7 +219,7 @@ class TestEdgeCases:
         
         issuer_warrant = Warrant.issue_issuer(
             issuable_tools=["search", "read"],
-            trust_ceiling=TrustLevel.Internal,
+            trust_level=TrustLevel.Internal,
             ttl_seconds=3600,
             keypair=keypair
         )

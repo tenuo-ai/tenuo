@@ -52,7 +52,6 @@ pub struct WarrantPayload {
     
     // Auth-critical optional fields (validated like core fields)
     pub issuable_tools: Option<Vec<String>>,
-    pub trust_ceiling: Option<TrustLevel>,
     pub max_issue_depth: Option<u32>,
     pub constraint_bounds: Option<ConstraintSet>,
     pub required_approvers: Option<Vec<PublicKey>>,
@@ -823,7 +822,7 @@ CBOR Map {
 
     // Auth-critical additional fields (validated like core fields)
     11: issuable_tools (array<string>, optional),
-    12: trust_ceiling (u8 enum, optional),
+    // 12: removed (was trust_ceiling)
     13: max_issue_depth (u32, optional),
     14: constraint_bounds (constraint_set, optional),
     15: required_approvers (array<public_key>, optional),

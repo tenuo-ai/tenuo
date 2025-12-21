@@ -42,7 +42,7 @@ class WarrantBuilder:
         issuer = (Warrant.builder()
             .issuer()  # Switch to issuer mode
             .issuable_tools(["read_file", "write_file"])
-            .trust_ceiling(TrustLevel.Privileged)
+            .trust_level(TrustLevel.Privileged)
             .constraint_bound("path", Pattern("/data/*"))
             .max_issue_depth(3)
             .issue(keypair))
@@ -68,7 +68,6 @@ class WarrantBuilder:
         # Issuer-specific fields
         self._is_issuer: bool = False
         self._issuable_tools: Optional[List[str]] = None
-        self._trust_ceiling: Optional[TrustLevel] = None
         self._constraint_bounds: Dict[str, Any] = {}
         self._max_issue_depth: Optional[int] = None
     
@@ -180,16 +179,6 @@ class WarrantBuilder:
         self._issuable_tools = tools
         return self
     
-    def trust_ceiling(self, level: TrustLevel) -> 'WarrantBuilder':
-        """Set max trust level for issued warrants (issuer warrants only).
-        
-        Args:
-            level: Maximum TrustLevel for child warrants
-        """
-        self._is_issuer = True
-        self._trust_ceiling = level
-        return self
-    
     def constraint_bound(self, field: str, value: Any) -> 'WarrantBuilder':
         """Add a constraint bound (issuer warrants only).
         
@@ -272,13 +261,9 @@ class WarrantBuilder:
         if self._issuable_tools is None:
             from .exceptions import ValidationError
             raise ValidationError("issuable_tools are required for issuer warrants")
-        if self._trust_ceiling is None:
-            from .exceptions import ValidationError
-            raise ValidationError("trust_ceiling is required for issuer warrants")
         
         return Warrant.issue_issuer(
             issuable_tools=self._issuable_tools,
-            trust_ceiling=self._trust_ceiling,
             keypair=keypair,
             constraint_bounds=self._constraint_bounds if self._constraint_bounds else None,
             max_issue_depth=self._max_issue_depth,
@@ -298,13 +283,12 @@ class WarrantBuilder:
             return {
                 "type": "issuer",
                 "issuable_tools": self._issuable_tools,
-                "trust_ceiling": self._trust_ceiling,
+                "trust_level": self._trust_level,
                 "constraint_bounds": self._constraint_bounds,
                 "max_issue_depth": self._max_issue_depth,
                 "ttl_seconds": self._ttl_seconds,
                 "holder": self._holder,
                 "session_id": self._session_id,
-                "trust_level": self._trust_level,
             }
         else:
             return {
