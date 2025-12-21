@@ -503,6 +503,17 @@ class ParentRequired(ChainError):
         super().__init__("Parent warrant required for attenuation")
 
 
+class DelegationAuthorityError(ChainError):
+    """Signing key doesn't match parent warrant's holder."""
+    error_code = "delegation_authority_error"
+    rust_variant = "DelegationAuthorityError"
+    
+    def __init__(self, expected: str = "", actual: str = ""):
+        msg = f"signing key mismatch: expected {expected}, got {actual}" if expected else "signing key doesn't match parent warrant's holder"
+        super().__init__(msg)
+        self.details = {"expected": expected, "actual": actual}
+
+
 # =============================================================================
 # Limit Errors (protocol limits)
 # =============================================================================
@@ -978,6 +989,7 @@ RUST_ERROR_MAP: dict[str, type[TenuoError]] = {
     # General
     "MissingField": MissingField,
     "ChainVerificationFailed": ChainError,
+    "DelegationAuthorityError": DelegationAuthorityError,
     # Approval
     "ApprovalExpired": ApprovalExpired,
     "InsufficientApprovals": InsufficientApprovals,

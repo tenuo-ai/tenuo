@@ -58,7 +58,7 @@ fn test_parent_hash_linkage() {
         .attenuate()
         .inherit_all()
         .authorized_holder(child_kp.public_key())
-        .build(&parent_kp, &parent_kp)
+        .build(&parent_kp)
         .unwrap();
 
     // Verify parent_hash is set and matches
@@ -241,11 +241,7 @@ fn test_parent_child_relationship_integrity() {
         .unwrap();
 
     // POLA: inherit_all
-    let child = parent
-        .attenuate()
-        .inherit_all()
-        .build(&keypair, &keypair)
-        .unwrap();
+    let child = parent.attenuate().inherit_all().build(&keypair).unwrap();
 
     // Verify parent_id is set correctly
     {
@@ -294,7 +290,7 @@ fn test_trust_ceiling_violation() {
             .ttl(Duration::from_secs(3600)) // Add required ttl
             .trust_level(TrustLevel::System) // Exceeds ceiling
             .authorized_holder(worker_kp.public_key())
-            .build(&issuer_kp, &issuer_kp)
+            .build(&issuer_kp)
     });
 
     assert!(
@@ -510,7 +506,7 @@ fn test_delegation_depth_limit() {
 
     // POLA: inherit_all for each delegation
     for i in 0..MAX_DELEGATION_DEPTH + 5 {
-        match current.attenuate().inherit_all().build(&keypair, &keypair) {
+        match current.attenuate().inherit_all().build(&keypair) {
             Ok(child) => {
                 current = child;
                 depth = i + 1;
@@ -589,11 +585,7 @@ fn test_execution_warrant_tool_addition() {
     assert_eq!(parent.tools(), vec!["read".to_string()]);
 
     // POLA: Must explicitly inherit capability
-    let child = parent
-        .attenuate()
-        .inherit_all()
-        .build(&keypair, &keypair)
-        .unwrap();
+    let child = parent.attenuate().inherit_all().build(&keypair).unwrap();
 
     // CRITICAL: Verify child capabilities map directly (the security property)
     let child_caps = child
@@ -669,11 +661,7 @@ fn test_issuer_warrant_tool_addition() {
     );
 
     // Attenuate (POLA: inherit_all for issuer warrants)
-    let child = parent
-        .attenuate()
-        .inherit_all()
-        .build(&keypair, &keypair)
-        .unwrap();
+    let child = parent.attenuate().inherit_all().build(&keypair).unwrap();
 
     // Child should have same or fewer issuable_tools (direct verification)
     let child_issuable = child
@@ -1038,7 +1026,7 @@ fn test_child_warrant_with_parent_hash() {
         .attenuate()
         .inherit_all()
         .authorized_holder(child_kp.public_key())
-        .build(&parent_kp, &parent_kp)
+        .build(&parent_kp)
         .unwrap();
 
     // Child has parent_hash linking it to parent
@@ -1097,7 +1085,7 @@ fn test_chain_wrong_order() {
         .attenuate()
         .inherit_all()
         .authorized_holder(child_kp.public_key())
-        .build(&parent_kp, &parent_kp)
+        .build(&parent_kp)
         .unwrap();
 
     // ATTACK: Verify with reversed chain
@@ -1230,11 +1218,7 @@ fn test_trust_level_amplification() {
     assert_eq!(parent.trust_level(), Some(TrustLevel::Internal));
 
     // Attenuate (POLA: inherit_all, should inherit or lower trust)
-    let child = parent
-        .attenuate()
-        .inherit_all()
-        .build(&keypair, &keypair)
-        .unwrap();
+    let child = parent.attenuate().inherit_all().build(&keypair).unwrap();
 
     // Child should have same or lower trust
     // (AttenuationBuilder doesn't allow setting higher trust)
@@ -1264,15 +1248,11 @@ fn test_terminal_warrant_delegation() {
         .unwrap();
 
     // First delegation (depth 0→1) should work (POLA: inherit_all)
-    let child = parent
-        .attenuate()
-        .inherit_all()
-        .build(&keypair, &keypair)
-        .unwrap();
+    let child = parent.attenuate().inherit_all().build(&keypair).unwrap();
     assert_eq!(child.depth(), 1);
 
     // ATTACK: Try to delegate again (depth 1→2, but max_depth=1)
-    let result = child.attenuate().inherit_all().build(&keypair, &keypair);
+    let result = child.attenuate().inherit_all().build(&keypair);
 
     assert!(result.is_err(), "Terminal warrant should not delegate");
 
@@ -1355,7 +1335,7 @@ fn test_mixed_chain_attack() {
         .attenuate()
         .inherit_all()
         .authorized_holder(child_kp.public_key())
-        .build(&root1_kp, &root1_kp)
+        .build(&root1_kp)
         .unwrap();
 
     // ATTACK: Present chain [chain2_parent, chain1_child]
@@ -2037,14 +2017,14 @@ fn test_attack_chain_missing_link() {
         .attenuate()
         .capability("test", ConstraintSet::new())
         .authorized_holder(middle_kp.public_key())
-        .build(&middle_kp, &root_kp)
+        .build(&root_kp) // root_kp is parent's holder
         .unwrap();
 
     let leaf = middle
         .attenuate()
         .capability("test", ConstraintSet::new())
         .authorized_holder(leaf_kp.public_key())
-        .build(&leaf_kp, &middle_kp)
+        .build(&middle_kp) // middle_kp is parent's holder
         .unwrap();
 
     let authorizer = Authorizer::new().with_trusted_root(root_kp.public_key());
@@ -2084,7 +2064,7 @@ fn test_attack_chain_shuffled_order() {
         .attenuate()
         .capability("test", ConstraintSet::new())
         .authorized_holder(child_kp.public_key())
-        .build(&child_kp, &root_kp)
+        .build(&root_kp) // root_kp is parent's holder
         .unwrap();
 
     let authorizer = Authorizer::new().with_trusted_root(root_kp.public_key());

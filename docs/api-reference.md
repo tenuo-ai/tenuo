@@ -381,7 +381,7 @@ Tenuo follows **POLA**: when you attenuate a warrant, the child starts with **NO
 builder = parent.attenuate()
 builder.with_capability("read_file", {"path": Exact("/data/report.txt")})
 builder.with_holder(worker_kp.public_key)
-child = builder.delegate_to(kp, kp)
+child = builder.delegate(kp)
 # child.tools == ["read_file"] (only!)
 ```
 
@@ -393,7 +393,7 @@ builder = parent.attenuate()
 builder.inherit_all()                    # Explicit opt-in
 builder.with_tools(["read_file"])        # Keep only this tool
 builder.with_holder(worker_kp.public_key)
-child = builder.delegate_to(kp, kp)
+child = builder.delegate(kp)
 ```
 
 **Pattern 3: Via delegate() (convenience)**
@@ -424,7 +424,7 @@ builder = issuer_warrant.issue_execution()
 builder.with_tool("read_file")
 builder.with_holder(worker_kp.public_key)
 builder.with_ttl(300)
-exec_warrant = builder.delegate_to(issuer_kp, issuer_kp)
+exec_warrant = builder.delegate(issuer_kp)
 ```
 
 #### Terminal Warrants
@@ -437,10 +437,10 @@ builder = parent.attenuate()
 builder.inherit_all()     # POLA: inherit parent capabilities
 builder.terminal()        # Mark as terminal
 builder.with_holder(worker_kp.public_key)
-terminal = builder.delegate_to(kp, kp)
+terminal = builder.delegate(kp)
 
 assert terminal.is_terminal()  # True
-# terminal.attenuate().delegate_to(...) will fail
+# terminal.attenuate().delegate(...) will fail
 ```
 
 ---
@@ -490,7 +490,7 @@ builder = warrant.attenuate()
 | `ttl(seconds)` | `AttenuationBuilder` | Set shorter TTL |
 | `terminal()` | `AttenuationBuilder` | Make warrant terminal (no further delegation) |
 | `diff()` | `str` | Preview changes (human-readable) |
-| `delegate_to(keypair, parent_keypair)` | `Warrant` | Issue child with receipt |
+| `delegate(signing_key)` | `Warrant` | Issue child with receipt |
 
 > ⚠️ **POLA**: The builder starts with NO capabilities. Use `with_capability()` to grant specific tools, or `inherit_all()` to explicitly inherit all parent capabilities.
 
@@ -501,14 +501,14 @@ builder = warrant.attenuate()
 child = (parent.attenuate()
     .with_capability("read_file", {"path": Exact("/data/q3.pdf")})
     .holder(worker_kp.public_key)
-    .delegate_to(worker_kp, parent_kp))
+    .delegate(parent_kp))
 
 # Pattern 2: Inherit all, then narrow
 child = (parent.attenuate()
     .inherit_all()                    # Explicit opt-in
     .with_tools(["read_file"])        # Keep only this tool
     .holder(worker_kp.public_key)
-    .delegate_to(worker_kp, parent_kp))
+    .delegate(parent_kp))
 ```
 
 ---

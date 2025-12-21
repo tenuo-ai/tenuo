@@ -737,16 +737,28 @@ impl DataPlane {
     /// Verify a single link in the delegation chain.
     ///
     /// Validates that `child` is a valid delegation from `parent` by checking:
-    /// - parent_hash matches SHA256(parent.payload_bytes)
-    /// - Signatures are valid
-    /// - Monotonicity constraints are satisfied
+    /// - I1: Delegation authority (child.issuer == parent.holder)
+    /// - I2: Depth monotonicity
+    /// - I3: TTL monotonicity
+    /// - I4: Capability monotonicity
+    /// - I5: Cryptographic linkage (parent_hash and signatures)
     fn verify_chain_link(&self, parent: &Warrant, child: &Warrant) -> Result<()> {
         // Check revocation
         if self.is_revoked(child) {
             return Err(Error::WarrantRevoked(child.id().to_string()));
         }
 
-        // 1. Check parent_hash linkage
+        // I1: Delegation Authority (wire-format-spec.md)
+        // Child's issuer must be parent's holder (proves delegation)
+        if child.issuer() != parent.authorized_holder() {
+            return Err(Error::ChainVerificationFailed(format!(
+                "I1 violated: child.issuer ({}) != parent.holder ({})",
+                child.issuer().fingerprint(),
+                parent.authorized_holder().fingerprint()
+            )));
+        }
+
+        // I5: Cryptographic Linkage - Check parent_hash linkage
         let child_parent_hash = child.parent_hash().ok_or_else(|| {
             Error::ChainVerificationFailed(
                 "child warrant has no parent_hash (must be root)".to_string(),
@@ -760,37 +772,37 @@ impl DataPlane {
 
         if child_parent_hash != &expected_hash {
             return Err(Error::ChainVerificationFailed(
-                "chain broken: child's parent_hash does not match parent's payload hash"
+                "I5 violated: chain broken - child's parent_hash does not match parent's payload hash"
                     .to_string(),
             ));
         }
 
-        // 2. Check depth increment (use saturating_add to prevent overflow)
+        // I2: Depth Monotonicity - Check depth increment (use saturating_add to prevent overflow)
         let expected_depth = parent.depth().saturating_add(1);
         if child.depth() != expected_depth {
             return Err(Error::ChainVerificationFailed(format!(
-                "depth mismatch: child depth {} != parent depth {} + 1",
+                "I2 violated: depth mismatch - child depth {} != parent depth {} + 1",
                 child.depth(),
                 parent.depth()
             )));
         }
 
-        // 2b. Check max_depth policy (defense-in-depth)
+        // I2: Check max_depth policy (defense-in-depth)
         // The builder enforces this at creation time, but we verify here too
         // in case someone bypasses the builder and signs manually.
         let parent_max = parent.effective_max_depth();
         if child.depth() > parent_max {
             return Err(Error::ChainVerificationFailed(format!(
-                "child depth {} exceeds parent's max_depth {}",
+                "I2 violated: child depth {} exceeds parent's max_depth {}",
                 child.depth(),
                 parent_max
             )));
         }
 
-        // 3. Check expiration doesn't exceed parent
+        // I3: TTL Monotonicity - Check expiration doesn't exceed parent
         if child.expires_at() > parent.expires_at() {
             return Err(Error::ChainVerificationFailed(format!(
-                "child expires at {} which is after parent {}",
+                "I3 violated: child expires at {} which is after parent {}",
                 child.expires_at(),
                 parent.expires_at()
             )));
@@ -1003,14 +1015,14 @@ impl DataPlane {
     ///
     /// * `parent` - The parent warrant to attenuate from
     /// * `constraints` - Constraints to apply to the child warrant
-    /// * `parent_keypair` - The keypair of the parent warrant issuer (for chain link signature)
+    /// * `holder_keypair` - The keypair of the parent warrant holder (who is delegating)
     pub fn attenuate(
         &self,
         parent: &Warrant,
         constraints: &[(&str, Constraint)],
-        parent_keypair: &SigningKey,
+        holder_keypair: &SigningKey,
     ) -> Result<Warrant> {
-        let keypair = self.own_keypair.as_ref().ok_or_else(|| {
+        let _own_keypair = self.own_keypair.as_ref().ok_or_else(|| {
             Error::CryptoError("data plane has no keypair for attenuation".to_string())
         })?;
 
@@ -1047,7 +1059,7 @@ impl DataPlane {
             }
         }
 
-        builder.build(keypair, parent_keypair)
+        builder.build(holder_keypair)
     }
 
     /// Get this data plane's public key (if it has one).
@@ -1967,13 +1979,14 @@ mod tests {
             )
             .unwrap();
 
-        // Orchestrator delegates
+        // Control plane delegates to orchestrator
         let mut child_constraints = ConstraintSet::new();
         child_constraints.insert("cluster", Exact::new("staging-web"));
         let child = root
             .attenuate()
             .capability("upgrade_cluster", child_constraints)
-            .build(&orchestrator_keypair, &control_plane.keypair)
+            .authorized_holder(orchestrator_keypair.public_key())
+            .build(&control_plane.keypair) // Control plane signs (they hold root)
             .unwrap();
 
         // Data plane verifies the chain
@@ -2006,7 +2019,8 @@ mod tests {
         let orchestrator_warrant = root
             .attenuate()
             .capability("query", orch_constraints)
-            .build(&orchestrator_keypair, &control_plane.keypair)
+            .authorized_holder(orchestrator_keypair.public_key())
+            .build(&control_plane.keypair) // Control plane signs (they hold root)
             .unwrap();
 
         let mut worker_constraints = ConstraintSet::new();
@@ -2014,7 +2028,8 @@ mod tests {
         let worker_warrant = orchestrator_warrant
             .attenuate()
             .capability("query", worker_constraints)
-            .build(&worker_keypair, &orchestrator_keypair)
+            .authorized_holder(worker_keypair.public_key())
+            .build(&orchestrator_keypair) // Orchestrator signs (they hold orchestrator_warrant)
             .unwrap();
 
         let mut data_plane = DataPlane::new();
@@ -2050,7 +2065,7 @@ mod tests {
             .attenuate()
             .capability("upgrade_cluster", agent_constraints)
             .authorized_holder(agent_keypair.public_key())
-            .build(&agent_keypair, &control_plane.keypair)
+            .build(&control_plane.keypair) // Control plane signs (they hold root)
             .unwrap();
 
         let mut data_plane = DataPlane::new();
@@ -2115,7 +2130,8 @@ mod tests {
         let child = warrant2
             .attenuate()
             .inherit_all()
-            .build(&agent_keypair, &control_plane.keypair)
+            .authorized_holder(agent_keypair.public_key())
+            .build(&control_plane.keypair) // Control plane signs (they hold warrant2)
             .unwrap();
 
         let mut data_plane = DataPlane::new();
@@ -2161,7 +2177,7 @@ mod tests {
             .attenuate()
             .inherit_all()
             .authorized_holder(agent_keypair.public_key())
-            .build(&agent_keypair, &control_plane.keypair)
+            .build(&control_plane.keypair) // Control plane signs (they hold root)
             .unwrap();
 
         let authorizer = Authorizer::new().with_trusted_root(control_plane.public_key());
@@ -2216,7 +2232,8 @@ mod tests {
         let child = root
             .attenuate()
             .inherit_all()
-            .build(&orchestrator_keypair, &control_plane.keypair)
+            .authorized_holder(orchestrator_keypair.public_key())
+            .build(&control_plane.keypair) // Control plane signs (they hold root)
             .unwrap();
 
         let mut data_plane = DataPlane::new();
@@ -2568,7 +2585,7 @@ mod tests {
             .inherit_all()
             // Session ID inherited from root (session_123)
             .authorized_holder(worker_keypair.public_key())
-            .build(&orchestrator_keypair, &control_plane.keypair)
+            .build(&orchestrator_keypair)
             .unwrap();
 
         let mut data_plane = DataPlane::new();
@@ -2611,7 +2628,7 @@ mod tests {
             .inherit_all()
             // Session ID inherited (None)
             .authorized_holder(worker_keypair.public_key())
-            .build(&orchestrator_keypair, &control_plane.keypair)
+            .build(&orchestrator_keypair)
             .unwrap();
 
         let mut data_plane = DataPlane::new();
@@ -2642,7 +2659,7 @@ mod tests {
             .inherit_all()
             // Session ID inherited from root (session_123)
             .authorized_holder(orchestrator_keypair.public_key())
-            .build(&orchestrator_keypair, &control_plane.keypair)
+            .build(&orchestrator_keypair)
             .unwrap();
 
         let authorizer = Authorizer::new().with_trusted_root(control_plane.public_key());
@@ -2666,7 +2683,7 @@ mod tests {
             .inherit_all()
             // Session ID inherited from root2 (session_456)
             .authorized_holder(orchestrator_keypair.public_key())
-            .build(&orchestrator_keypair, &control_plane.keypair)
+            .build(&orchestrator_keypair)
             .unwrap();
 
         // Should fail - mixing warrants from different sessions
@@ -2739,7 +2756,7 @@ mod tests {
             .trust_level(TrustLevel::External)
             .ttl(Duration::from_secs(600))
             .authorized_holder(worker_kp.public_key())
-            .build(&issuer_kp, &issuer_kp)
+            .build(&issuer_kp)
             .expect("Failed to build execution warrant");
 
         assert_eq!(child.r#type(), WarrantType::Execution);
@@ -2793,7 +2810,7 @@ mod tests {
             .capability("send_email", ConstraintSet::new()) // NOT in issuable_tools
             .ttl(Duration::from_secs(600))
             .authorized_holder(worker_kp.public_key())
-            .build(&issuer_kp, &issuer_kp);
+            .build(&issuer_kp);
 
         assert!(result.is_err(), "Should reject tool not in issuable_tools");
         println!(
@@ -2809,7 +2826,7 @@ mod tests {
             .trust_level(TrustLevel::Internal) // Exceeds External ceiling
             .ttl(Duration::from_secs(600))
             .authorized_holder(worker_kp.public_key())
-            .build(&issuer_kp, &issuer_kp);
+            .build(&issuer_kp);
 
         assert!(
             result.is_err(),
@@ -2829,7 +2846,7 @@ mod tests {
             .capability("read_file", bad_constraints)
             .ttl(Duration::from_secs(600))
             .authorized_holder(worker_kp.public_key())
-            .build(&issuer_kp, &issuer_kp);
+            .build(&issuer_kp);
 
         assert!(result.is_err(), "Should reject constraint outside bounds");
         println!(

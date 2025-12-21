@@ -28,7 +28,7 @@ Warrants are **bound to keypairs**. To use a warrant, you must prove you hold th
 warrant = (root_warrant.attenuate()
     .with_capability("protected_tool", {"path": Pattern("/data/*")})
     .holder(worker_keypair.public_key)
-    .delegate_to(worker_keypair, root_keypair))
+    .delegate(root_keypair))  # Root keypair signs (they hold the parent warrant)
 
 with set_warrant_context(warrant), set_signing_key_context(worker_keypair):
     await protected_tool(...)
@@ -94,12 +94,12 @@ parent = (Warrant.builder()
 # Child can only narrow
 child = (parent.attenuate()
     .with_capability("read", {"path": Pattern("/data/*")})
-    .delegate_to(child_kp, keypair))
+    .delegate(keypair))  # Keypair signs (they hold the parent warrant)
 
 # This would FAIL:
 child = (parent.attenuate()
     .with_capability("execute", {})  # FAILS (parent doesn't have "execute")
-    .delegate_to(child_kp, keypair))
+    .delegate(keypair))
 ```
 
 ---

@@ -124,8 +124,7 @@ def test_constraint_attenuation():
     # Child with narrower constraint
     child = parent.attenuate(
         capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/reports/*")}),
-        keypair=kp,
-        parent_keypair=kp,
+        signing_key=kp,  # kp signs (they hold parent)
         holder=kp.public_key,
         ttl_seconds=60
     )
@@ -166,8 +165,7 @@ def test_constraint_field_addition():
             "endpoint": Pattern("/api/users/*"),
             "method": Exact("GET")
         }),
-        keypair=kp,
-        parent_keypair=kp,
+        signing_key=kp,  # kp signs (they hold parent)
         holder=kp.public_key,
         ttl_seconds=60
     )
@@ -298,8 +296,7 @@ def test_cidr_attenuation():
     # Child with narrower subnet - should work
     child = parent.attenuate(
         capabilities=Constraints.for_tool("network_ops", {"source_ip": Cidr("10.1.0.0/16")}),
-        keypair=kp,
-        parent_keypair=kp,
+        signing_key=kp,  # kp signs (they hold parent)
         holder=kp.public_key,
         ttl_seconds=60
     )
@@ -417,8 +414,7 @@ def test_url_pattern_attenuation():
     # Child with narrower pattern - should work
     child = parent.attenuate(
         capabilities=Constraints.for_tool("api_call", {"endpoint": UrlPattern("https://api.example.com/v1/*")}),
-        keypair=kp,
-        parent_keypair=kp,
+        signing_key=kp,  # kp signs (they hold parent)
         holder=kp.public_key,
         ttl_seconds=60
     )

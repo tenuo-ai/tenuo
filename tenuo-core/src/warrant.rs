@@ -1176,8 +1176,10 @@ impl WarrantBuilder {
             }
         }
 
-        // Default TTL: 1 hour for better DX, but validate against protocol max
-        let ttl = self.ttl.unwrap_or_else(|| Duration::from_secs(3600));
+        // Default TTL: 5 minutes - ephemeral by design, expand only as needed
+        let ttl = self
+            .ttl
+            .unwrap_or_else(|| Duration::from_secs(crate::DEFAULT_WARRANT_TTL_SECS));
 
         // Validate TTL doesn't exceed protocol maximum (90 days)
         if ttl.as_secs() > crate::MAX_WARRANT_TTL_SECS {
@@ -1536,7 +1538,26 @@ impl<'a> AttenuationBuilder<'a> {
     }
 
     /// Build and sign the attenuated warrant.
-    pub fn build(self, keypair: &SigningKey, _parent_keypair: &SigningKey) -> Result<Warrant> {
+    ///
+    /// The signing key must belong to the holder of the parent warrant.
+    /// This enforces the delegation authority rule: you can only delegate
+    /// what you hold.
+    ///
+    /// # Arguments
+    /// * `signing_key` - The keypair of the parent warrant's holder (the delegator)
+    ///
+    /// # Errors
+    /// Returns `DelegationAuthorityError` if the signing key doesn't match
+    /// the parent warrant's holder.
+    pub fn build(self, signing_key: &SigningKey) -> Result<Warrant> {
+        // Delegation authority check: signer must be the parent's holder
+        if signing_key.public_key() != *self.parent.authorized_holder() {
+            return Err(Error::DelegationAuthorityError {
+                expected: self.parent.authorized_holder().fingerprint(),
+                actual: signing_key.public_key().fingerprint(),
+            });
+        }
+
         let new_depth = self.parent.depth() + 1;
         if new_depth > MAX_DELEGATION_DEPTH {
             return Err(Error::DepthExceeded(new_depth, MAX_DELEGATION_DEPTH));
@@ -1690,7 +1711,7 @@ impl<'a> AttenuationBuilder<'a> {
             depth: self.parent.depth() + 1, // Increment depth from parent
             session_id: self.session_id,
             agent_id: self.agent_id,
-            issuer: keypair.public_key(),
+            issuer: signing_key.public_key(),
             parent_hash: Some(parent_hash),
             required_approvers: self.required_approvers,
             min_approvals: effective_min,
@@ -1712,7 +1733,7 @@ impl<'a> AttenuationBuilder<'a> {
         preimage.push(1); // envelope_version
         preimage.extend_from_slice(&payload_bytes);
 
-        let signature = keypair.sign(&preimage);
+        let signature = signing_key.sign(&preimage);
 
         let warrant = Warrant {
             payload,
@@ -1728,10 +1749,10 @@ impl<'a> AttenuationBuilder<'a> {
             timestamp: Utc::now(),
             provider: "tenuo".to_string(),
             external_id: None,
-            public_key_hex: Some(hex::encode(keypair.public_key().to_bytes())),
+            public_key_hex: Some(hex::encode(signing_key.public_key().to_bytes())),
             actor: format!(
                 "delegator:{}",
-                hex::encode(&keypair.public_key().to_bytes()[..8])
+                hex::encode(&signing_key.public_key().to_bytes()[..8])
             ),
             details: Some(format!(
                 "warrant attenuated: type={:?}, depth={}, parent={}",
@@ -1759,7 +1780,7 @@ impl<'a> AttenuationBuilder<'a> {
 /// let child = builder
 ///     .constraint("path", Pattern::new("/data/specific/*"))
 ///     .ttl(Duration::from_secs(60))
-///     .build(&delegator_keypair, &parent_keypair)?;
+///     .build(&delegator_keypair)?;  // delegator holds the parent warrant
 /// ```
 
 #[derive(Debug, Clone)]
@@ -2205,7 +2226,17 @@ impl OwnedAttenuationBuilder {
     }
 
     /// Build and sign the attenuated warrant.
-    pub fn build(self, keypair: &SigningKey, _parent_keypair: &SigningKey) -> Result<Warrant> {
+    ///
+    /// The signing key must belong to the holder of the parent warrant.
+    pub fn build(self, signing_key: &SigningKey) -> Result<Warrant> {
+        // Delegation authority check: signer must be the parent's holder
+        if signing_key.public_key() != *self.parent.authorized_holder() {
+            return Err(Error::DelegationAuthorityError {
+                expected: self.parent.authorized_holder().fingerprint(),
+                actual: signing_key.public_key().fingerprint(),
+            });
+        }
+
         let new_depth = self.parent.depth() + 1;
 
         let parent_max = self.parent.payload.max_depth as u32;
@@ -2353,7 +2384,7 @@ impl OwnedAttenuationBuilder {
             depth: self.parent.depth() + 1, // Increment depth from parent
             session_id: self.session_id,
             agent_id: self.agent_id,
-            issuer: keypair.public_key(),
+            issuer: signing_key.public_key(),
             parent_hash: {
                 use sha2::{Digest, Sha256};
                 let mut hasher = Sha256::new();
@@ -2380,7 +2411,7 @@ impl OwnedAttenuationBuilder {
         preimage.push(1); // envelope_version
         preimage.extend_from_slice(&payload_bytes);
 
-        let signature = keypair.sign(&preimage);
+        let signature = signing_key.sign(&preimage);
 
         Ok(Warrant {
             payload,
@@ -2391,23 +2422,24 @@ impl OwnedAttenuationBuilder {
     }
 
     /// Build and sign the attenuated warrant, returning both warrant and receipt.
+    ///
+    /// The signing key must belong to the holder of the parent warrant.
     pub fn build_with_receipt(
         self,
-        keypair: &SigningKey,
-        parent_keypair: &SigningKey,
+        signing_key: &SigningKey,
     ) -> Result<(Warrant, crate::diff::DelegationReceipt)> {
         // Capture diff before build consumes self
         let mut diff = self.diff();
 
         // Get fingerprints before build
-        let delegator_fingerprint = keypair.public_key().fingerprint();
+        let delegator_fingerprint = signing_key.public_key().fingerprint();
         let delegatee_fingerprint = self
             .get_holder()
             .map(|h| h.fingerprint())
-            .unwrap_or_else(|| keypair.public_key().fingerprint());
+            .unwrap_or_else(|| signing_key.public_key().fingerprint());
 
         // Build the warrant
-        let child = self.build(keypair, parent_keypair)?;
+        let child = self.build(signing_key)?;
 
         // Update diff with child warrant ID
         diff.child_warrant_id = Some(child.id().to_string());
@@ -2555,12 +2587,20 @@ impl<'a> IssuanceBuilder<'a> {
     /// - Trust level <= issuer's `trust_ceiling`
     /// - Constraints are within issuer's `constraint_bounds`
     /// - Depth doesn't exceed issuer's `max_issue_depth`
+    /// - Signing key matches issuer warrant's holder (delegation authority)
     ///
     /// # Arguments
     ///
-    /// * `keypair` - The keypair of the issuer warrant holder (who is creating the execution warrant)
-    /// * `issuer_keypair` - The keypair of the issuer warrant issuer (for chain link signature)
-    pub fn build(self, keypair: &SigningKey, _issuer_keypair: &SigningKey) -> Result<Warrant> {
+    /// * `signing_key` - The keypair of the issuer warrant holder (the delegator)
+    pub fn build(self, signing_key: &SigningKey) -> Result<Warrant> {
+        // Delegation authority check: signer must be the issuer warrant's holder
+        if signing_key.public_key() != *self.issuer.authorized_holder() {
+            return Err(Error::DelegationAuthorityError {
+                expected: self.issuer.authorized_holder().fingerprint(),
+                actual: signing_key.public_key().fingerprint(),
+            });
+        }
+
         // Validate issuer is not expired
         if self.issuer.is_expired() {
             use chrono::TimeZone;
@@ -2750,7 +2790,7 @@ impl<'a> IssuanceBuilder<'a> {
             depth: self.issuer.depth() + 1, // Increment depth from issuer
             session_id: self.session_id,
             agent_id: self.agent_id,
-            issuer: keypair.public_key(),
+            issuer: signing_key.public_key(),
             parent_hash: {
                 use sha2::{Digest, Sha256};
                 let mut hasher = Sha256::new();
@@ -2772,7 +2812,7 @@ impl<'a> IssuanceBuilder<'a> {
         preimage.push(1); // envelope_version
         preimage.extend_from_slice(&payload_bytes);
 
-        let signature = keypair.sign(&preimage);
+        let signature = signing_key.sign(&preimage);
 
         let warrant = Warrant {
             payload,
@@ -2789,7 +2829,7 @@ impl<'a> IssuanceBuilder<'a> {
             timestamp: Utc::now(),
             provider: "tenuo".to_string(),
             external_id: None,
-            public_key_hex: Some(hex::encode(keypair.public_key().to_bytes())),
+            public_key_hex: Some(hex::encode(signing_key.public_key().to_bytes())),
             actor: format!("issuer_warrant:{}", &self.issuer.id().to_string()[..8]),
             details: Some(format!(
                 "execution warrant issued from issuer: tools={:?}, depth={}, issuer_id={}",
@@ -3004,7 +3044,9 @@ impl OwnedIssuanceBuilder {
     }
 
     /// Build and sign the execution warrant.
-    pub fn build(self, keypair: &SigningKey, issuer_keypair: &SigningKey) -> Result<Warrant> {
+    ///
+    /// The signing key must belong to the holder of the issuer warrant.
+    pub fn build(self, signing_key: &SigningKey) -> Result<Warrant> {
         // Delegate to IssuanceBuilder
         IssuanceBuilder {
             issuer: &self.issuer,
@@ -3019,7 +3061,7 @@ impl OwnedIssuanceBuilder {
             min_approvals: self.min_approvals,
             extensions: self.extensions,
         }
-        .build(keypair, issuer_keypair)
+        .build(signing_key)
     }
 }
 
@@ -3121,7 +3163,7 @@ mod tests {
     #[test]
     fn test_attenuation_basic() {
         let parent_keypair = create_test_keypair();
-        let child_keypair = create_test_keypair();
+        let _child_keypair = create_test_keypair(); // Unused with new delegation API
 
         let mut parent_constraints = ConstraintSet::new();
         parent_constraints.insert("cluster", Pattern::new("staging-*").unwrap());
@@ -3137,7 +3179,7 @@ mod tests {
         let child = parent
             .attenuate()
             .capability("upgrade_cluster", child_constraints)
-            .build(&child_keypair, &parent_keypair)
+            .build(&parent_keypair) // parent_keypair is parent's holder
             .unwrap();
 
         assert_eq!(child.depth(), 1);
@@ -3152,7 +3194,7 @@ mod tests {
     #[test]
     fn test_attenuation_monotonicity_enforced() {
         let parent_keypair = create_test_keypair();
-        let child_keypair = create_test_keypair();
+        let _child_keypair = create_test_keypair(); // Unused with new delegation API
 
         let mut parent_constraints = ConstraintSet::new();
         parent_constraints.insert("cluster", Pattern::new("staging-*").unwrap());
@@ -3169,13 +3211,16 @@ mod tests {
         let result = parent
             .attenuate()
             .capability("upgrade_cluster", child_constraints)
-            .build(&child_keypair, &parent_keypair);
+            .build(&parent_keypair); // parent_keypair is parent's holder
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::PatternExpanded { parent, child } => {
-                assert_eq!(parent, "staging-*");
-                assert_eq!(child, "*");
+            Error::PatternExpanded {
+                parent: p,
+                child: c,
+            } => {
+                assert_eq!(p, "staging-*");
+                assert_eq!(c, "*");
             }
             e => panic!("Expected PatternExpanded, got {:?}", e),
         }
@@ -3184,7 +3229,7 @@ mod tests {
     #[test]
     fn test_attenuation_ttl_cannot_exceed_parent() {
         let parent_keypair = create_test_keypair();
-        let child_keypair = create_test_keypair();
+        let _child_keypair = create_test_keypair(); // Unused with new delegation API
 
         let parent = Warrant::builder()
             .capability("test", ConstraintSet::new())
@@ -3198,7 +3243,7 @@ mod tests {
             .attenuate()
             .inherit_all() // POLA: explicitly inherit all capabilities
             .ttl(Duration::from_secs(3600))
-            .build(&child_keypair, &parent_keypair)
+            .build(&parent_keypair) // parent_keypair is parent's holder
             .unwrap();
 
         assert!(child.expires_at() <= parent.expires_at());
@@ -3223,31 +3268,19 @@ mod tests {
 
         // Delegate - depth increases, max_depth is inherited
         // POLA: must inherit_all() to get parent capabilities
-        let child = warrant
-            .attenuate()
-            .inherit_all()
-            .build(&keypair, &keypair)
-            .unwrap();
+        let child = warrant.attenuate().inherit_all().build(&keypair).unwrap();
         assert_eq!(child.depth(), 1);
         assert_eq!(child.max_depth(), Some(5)); // Inherited
 
         // When depth reaches max_depth, warrant is terminal
         let mut current = child;
         for _ in 2..5 {
-            current = current
-                .attenuate()
-                .inherit_all()
-                .build(&keypair, &keypair)
-                .unwrap();
+            current = current.attenuate().inherit_all().build(&keypair).unwrap();
         }
         assert_eq!(current.depth(), 4);
 
         // depth=5 would equal max_depth=5, so next attenuation should still work
-        let level5 = current
-            .attenuate()
-            .inherit_all()
-            .build(&keypair, &keypair)
-            .unwrap();
+        let level5 = current.attenuate().inherit_all().build(&keypair).unwrap();
         assert_eq!(level5.depth(), 5);
         assert!(
             level5.is_terminal(),
@@ -3255,7 +3288,7 @@ mod tests {
         );
 
         // Further attenuation should fail
-        let result = level5.attenuate().inherit_all().build(&keypair, &keypair);
+        let result = level5.attenuate().inherit_all().build(&keypair);
         assert!(result.is_err(), "cannot attenuate terminal warrant");
     }
 
@@ -3274,15 +3307,11 @@ mod tests {
 
         // Delegate up to max depth (POLA: inherit_all)
         for _ in 0..3 {
-            warrant = warrant
-                .attenuate()
-                .inherit_all()
-                .build(&keypair, &keypair)
-                .unwrap();
+            warrant = warrant.attenuate().inherit_all().build(&keypair).unwrap();
         }
 
         // Next delegation should fail due to depth limit
-        let result = warrant.attenuate().inherit_all().build(&keypair, &keypair);
+        let result = warrant.attenuate().inherit_all().build(&keypair);
         assert!(result.is_err());
         match result.unwrap_err() {
             Error::DepthExceeded(_, _) => {}
@@ -3293,7 +3322,7 @@ mod tests {
     #[test]
     fn test_range_constraint_attenuation() {
         let parent_keypair = create_test_keypair();
-        let child_keypair = create_test_keypair();
+        let _child_keypair = create_test_keypair(); // Unused with new delegation API
 
         let mut parent_constraints = ConstraintSet::new();
         parent_constraints.insert("amount", Range::max(10000.0).unwrap());
@@ -3310,7 +3339,7 @@ mod tests {
         let child = parent
             .attenuate()
             .capability("transfer_funds", child_constraints)
-            .build(&child_keypair, &parent_keypair);
+            .build(&parent_keypair); // parent_keypair is parent's holder
         assert!(child.is_ok());
 
         // Invalid: wider range
@@ -3319,7 +3348,7 @@ mod tests {
         let invalid = parent
             .attenuate()
             .capability("transfer_funds", invalid_constraints)
-            .build(&child_keypair, &parent_keypair);
+            .build(&parent_keypair); // parent_keypair is parent's holder
         assert!(invalid.is_err());
     }
 
@@ -3338,11 +3367,7 @@ mod tests {
         assert_eq!(warrant.session_id(), Some("session_123"));
 
         // Session ID is preserved through attenuation (POLA: inherit_all)
-        let child = warrant
-            .attenuate()
-            .inherit_all()
-            .build(&keypair, &keypair)
-            .unwrap();
+        let child = warrant.attenuate().inherit_all().build(&keypair).unwrap();
         assert_eq!(child.session_id(), Some("session_123"));
     }
 
@@ -3523,30 +3548,18 @@ mod tests {
         assert_eq!(root.effective_max_depth(), 3);
 
         // Can delegate up to depth 3 (POLA: inherit_all for all)
-        let level1 = root
-            .attenuate()
-            .inherit_all()
-            .build(&keypair, &keypair)
-            .unwrap();
+        let level1 = root.attenuate().inherit_all().build(&keypair).unwrap();
         assert_eq!(level1.depth(), 1);
         assert_eq!(level1.max_depth(), Some(3)); // Inherited
 
-        let level2 = level1
-            .attenuate()
-            .inherit_all()
-            .build(&keypair, &keypair)
-            .unwrap();
+        let level2 = level1.attenuate().inherit_all().build(&keypair).unwrap();
         assert_eq!(level2.depth(), 2);
 
-        let level3 = level2
-            .attenuate()
-            .inherit_all()
-            .build(&keypair, &keypair)
-            .unwrap();
+        let level3 = level2.attenuate().inherit_all().build(&keypair).unwrap();
         assert_eq!(level3.depth(), 3);
 
         // Depth 4 should fail (exceeds policy limit)
-        let result = level3.attenuate().inherit_all().build(&keypair, &keypair);
+        let result = level3.attenuate().inherit_all().build(&keypair);
         assert!(result.is_err());
         match result.unwrap_err() {
             Error::DepthExceeded(4, 3) => {}
@@ -3571,7 +3584,7 @@ mod tests {
             .attenuate()
             .inherit_all()
             .max_depth(3)
-            .build(&keypair, &keypair)
+            .build(&keypair)
             .unwrap();
         assert_eq!(child.max_depth(), Some(3));
 
@@ -3580,7 +3593,7 @@ mod tests {
             .attenuate()
             .inherit_all()
             .max_depth(10)
-            .build(&keypair, &keypair);
+            .build(&keypair);
         assert!(result.is_err());
         match result.unwrap_err() {
             Error::MonotonicityViolation(_) => {}
@@ -3709,7 +3722,8 @@ mod tests {
             .inherit_all()
             .add_approvers(vec![approver2.public_key()])
             .raise_min_approvals(2)
-            .build(&delegator, &issuer)
+            .authorized_holder(delegator.public_key())
+            .build(&issuer) // issuer signs (they hold root)
             .unwrap();
 
         assert_eq!(child.required_approvers().unwrap().len(), 2);
@@ -3719,7 +3733,7 @@ mod tests {
     #[test]
     fn test_multisig_attenuation_cannot_remove_approvers() {
         let issuer = create_test_keypair();
-        let delegator = create_test_keypair();
+        let delegatee = create_test_keypair();
         let approver1 = create_test_keypair();
         let approver2 = create_test_keypair();
 
@@ -3737,7 +3751,8 @@ mod tests {
         let child = root
             .attenuate()
             .inherit_all()
-            .build(&delegator, &issuer)
+            .authorized_holder(delegatee.public_key())
+            .build(&issuer) // issuer signs (they hold root)
             .unwrap();
 
         // All parent approvers should be preserved
@@ -3747,7 +3762,7 @@ mod tests {
     #[test]
     fn test_multisig_attenuation_cannot_lower_threshold() {
         let issuer = create_test_keypair();
-        let delegator = create_test_keypair();
+        let delegatee = create_test_keypair();
         let approver1 = create_test_keypair();
         let approver2 = create_test_keypair();
 
@@ -3766,7 +3781,8 @@ mod tests {
             .attenuate()
             .inherit_all()
             .raise_min_approvals(1) // Tries to set 1, but max(current, 1) = 2
-            .build(&delegator, &issuer)
+            .authorized_holder(delegatee.public_key())
+            .build(&issuer) // issuer signs (they hold root)
             .unwrap();
 
         // Threshold should still be 2 (inherited, max applied)
@@ -3817,7 +3833,7 @@ mod tests {
             .trust_level(TrustLevel::External)
             .ttl(Duration::from_secs(60))
             .authorized_holder(holder_kp.public_key())
-            .build(&issuer_kp, &issuer_kp) // issuer_kp is both holder and issuer
+            .build(&issuer_kp) // issuer_kp is both holder and issuer
             .unwrap();
 
         assert_eq!(execution_warrant.r#type(), WarrantType::Execution);
@@ -3857,7 +3873,7 @@ mod tests {
             .capability("read_file", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
             .authorized_holder(issuer_kp.public_key()) // Same as issuer warrant holder!
-            .build(&issuer_kp, &issuer_kp);
+            .build(&issuer_kp);
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -3893,7 +3909,7 @@ mod tests {
             .capability("read_file", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
             .authorized_holder(issuer_kp.public_key()) // Same as issuer warrant's issuer!
-            .build(&holder_kp, &issuer_kp);
+            .build(&holder_kp); // holder_kp signs (they hold issuer_warrant)
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -3930,7 +3946,7 @@ mod tests {
             .attenuate()
             .capability("test", child_b_constraints)
             .authorized_holder(keypair_b.public_key())
-            .build(&keypair_b, &keypair_a)
+            .build(&keypair_a) // keypair_a is parent's holder
             .unwrap();
 
         assert_eq!(child_b.depth(), 1);
@@ -3941,7 +3957,7 @@ mod tests {
             .attenuate()
             .inherit_all()
             .authorized_holder(keypair_a.public_key())
-            .build(&keypair_a, &keypair_b);
+            .build(&keypair_b); // keypair_b is parent's holder
 
         // Should succeed - A now has a warrant limited to staging-*, not the original *
         assert!(result.is_ok());
@@ -3971,7 +3987,7 @@ mod tests {
             .capability("send_email", ConstraintSet::new()) // Not in issuable_tools
             .ttl(Duration::from_secs(60))
             .authorized_holder(holder_kp.public_key())
-            .build(&issuer_kp, &issuer_kp);
+            .build(&issuer_kp);
 
         let err = result.expect_err("expected unauthorized tool issuance error");
         let msg = err.to_string();
@@ -4004,7 +4020,7 @@ mod tests {
             .trust_level(TrustLevel::Internal) // Exceeds External ceiling
             .ttl(Duration::from_secs(60))
             .authorized_holder(holder_kp.public_key())
-            .build(&issuer_kp, &issuer_kp);
+            .build(&issuer_kp);
 
         assert!(result.is_err());
         assert!(result
@@ -4037,7 +4053,7 @@ mod tests {
             .capability("read_file", constraints)
             .ttl(Duration::from_secs(60))
             .authorized_holder(holder_kp.public_key())
-            .build(&issuer_kp, &issuer_kp);
+            .build(&issuer_kp);
 
         match result {
             Err(Error::PatternExpanded { parent, child }) => {
@@ -4071,7 +4087,7 @@ mod tests {
             .capability("read_file", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
             .authorized_holder(holder_kp.public_key())
-            .build(&issuer_kp, &issuer_kp)
+            .build(&issuer_kp)
             .unwrap();
 
         assert_eq!(exec1.depth(), 1);
@@ -4139,7 +4155,7 @@ mod tests {
             .attenuate()
             .inherit_all()
             .max_depth(5)
-            .build(&root_kp, &root_kp)
+            .build(&root_kp)
             .unwrap();
 
         assert_eq!(child.effective_max_depth(), 5);
@@ -4149,7 +4165,7 @@ mod tests {
             .attenuate()
             .inherit_all()
             .max_depth(10)
-            .build(&root_kp, &root_kp);
+            .build(&root_kp);
 
         // Expect error because 10 > 5
         assert!(result.is_err());
@@ -4168,7 +4184,7 @@ mod tests {
             .attenuate()
             .inherit_all()
             .max_depth(3)
-            .build(&root_kp, &root_kp)
+            .build(&root_kp)
             .unwrap();
         assert_eq!(grandchild.effective_max_depth(), 3);
     }

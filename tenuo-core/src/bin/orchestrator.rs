@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Get control plane keypair for chain link signature
     // In production, the control plane would sign the chain link
     // For demo, we get it from environment or use a placeholder
-    let control_plane_keypair = if let Ok(cp_key_hex) = env::var("TENUO_CONTROL_PLANE_KEY") {
+    let _control_plane_keypair = if let Ok(cp_key_hex) = env::var("TENUO_CONTROL_PLANE_KEY") {
         let cp_key_bytes: [u8; 32] = hex::decode(cp_key_hex)?
             .try_into()
             .map_err(|_| "Control plane key must be 32 bytes")?;
@@ -189,7 +189,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .authorized_holder(worker_keypair.public_key()) // PoP
         .agent_id("worker-agent-01") // Traceability
         // Session ID is inherited from parent automatically
-        .build(&orchestrator_keypair, &control_plane_keypair)?;
+        .build(&orchestrator_keypair)?;
 
     println!("\n  ✓ Worker Warrant Created:");
     println!("    • ID:          {}", worker_warrant.id());
@@ -263,7 +263,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // MULTI-SIG: Require 1-of-1 approval from the admin
         .add_approvers(vec![admin_keypair.public_key()])
         .raise_min_approvals(1)
-        .build(&orchestrator_keypair, &control_plane_keypair)?;
+        .build(&orchestrator_keypair)?;
 
     println!("\n  ✓ Multi-Sig Warrant Created:");
     println!("    • ID:          {}", sensitive_warrant.id());

@@ -105,7 +105,15 @@ pub use diff::{
 ///
 /// 16 levels is sufficient for any realistic delegation hierarchy:
 /// Control Plane → Orchestrator → Worker → Sub-agent (4 levels typical).
+///
+/// **SAFETY**: This MUST NOT exceed 255 because `WarrantPayload.max_depth` is `u8`.
 pub const MAX_DELEGATION_DEPTH: u32 = 16;
+
+// Compile-time assertion: MAX_DELEGATION_DEPTH must fit in u8 (wire format uses u8)
+const _: () = assert!(
+    MAX_DELEGATION_DEPTH <= 255,
+    "MAX_DELEGATION_DEPTH must not exceed 255 (u8 max) for wire format compatibility"
+);
 
 /// Protocol-level maximum TTL (90 days).
 ///
@@ -160,7 +168,7 @@ mod tests {
     #[test]
     fn test_attenuation_narrows_constraints() {
         let keypair = SigningKey::generate();
-        let child_keypair = SigningKey::generate();
+        let _child_keypair = SigningKey::generate(); // Unused with new delegation API
 
         let mut p_constraints = ConstraintSet::new();
         p_constraints.insert("cluster".to_string(), Pattern::new("staging-*").unwrap());
@@ -178,7 +186,7 @@ mod tests {
         let child = parent
             .attenuate()
             .capability("upgrade_cluster", c_constraints)
-            .build(&child_keypair, &keypair) // keypair is the parent issuer
+            .build(&keypair) // keypair is parent's holder
             .unwrap();
 
         assert!(child.expires_at() <= parent.expires_at());

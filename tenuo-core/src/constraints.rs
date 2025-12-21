@@ -81,10 +81,12 @@ impl Drop for DepthGuard {
 pub mod constraint_type_id {
     pub const EXACT: u8 = 1;
     pub const PATTERN: u8 = 2;
+    /// Range constraint with f64 bounds. Note: i64 values > 2^53 lose precision.
     pub const RANGE: u8 = 3;
     pub const ONE_OF: u8 = 4;
     pub const REGEX: u8 = 5;
-    pub const FLOAT_RANGE: u8 = 6;
+    /// Reserved for future IntRange with i64 bounds (not implemented).
+    pub const RESERVED_INT_RANGE: u8 = 6;
     pub const NOT_ONE_OF: u8 = 7;
     pub const CIDR: u8 = 8;
     pub const URL_PATTERN: u8 = 9;
@@ -381,7 +383,7 @@ impl<'de> serde::Deserialize<'de> for Constraint {
                             .ok_or_else(|| A::Error::invalid_length(1, &self))?;
                         Constraint::Wildcard(v)
                     }
-                    // Unknown type ID (including FloatRange=6 which isn't implemented yet)
+                    // Unknown type ID (ID 6 reserved for future IntRange with i64 bounds)
                     _ => {
                         // Try to read value as raw bytes for preservation
                         let payload: Vec<u8> = seq

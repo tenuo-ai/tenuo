@@ -1047,14 +1047,8 @@ fn handle_attenuate(
     let parent_warrant = read_warrant(&warrant)?;
     let current_kp = load_private_key(&signing_key)?;
 
-    // Get parent keypair - use provided one, or assume same as signing key
-    let parent_kp = if let Some(parent_key_path) = parent_key {
-        load_private_key(&parent_key_path)?
-    } else {
-        // Assume parent was signed by the same keypair (common in tests)
-        // In production, this should be explicitly provided
-        current_kp.clone()
-    };
+    // Note: parent_key is now unused - the signing key is the parent's holder
+    let _parent_key = parent_key; // Suppress unused warning
 
     // Collect child constraints for diff/preview
     let mut child_constraints: HashMap<String, Constraint> = HashMap::new();
@@ -1153,7 +1147,7 @@ fn handle_attenuate(
         return Ok(());
     }
 
-    let child_warrant = builder.build(&current_kp, &parent_kp).map_err(|e| {
+    let child_warrant = builder.build(&current_kp).map_err(|e| {
         // Format error messages to match spec format
         let error_str = format!("{}", e);
         // Check for PatternExpanded error and format it per spec

@@ -400,11 +400,11 @@ Most delegations should be terminal (cannot delegate further). This naturally li
 
 ```python
 # Default: terminal
-child = parent.attenuate().tool("read_file").delegate_to(worker)
+child = parent.attenuate().tool("read_file").with_holder(worker.public_key).delegate(parent_kp)
 # child.max_depth = 0 (terminal)
 
 # Explicit: allow one more delegation
-child = parent.attenuate().tool("read_file").max_depth(1).delegate_to(worker)
+child = parent.attenuate().tool("read_file").max_depth(1).with_holder(worker.public_key).delegate(parent_kp)
 # child.max_depth = 1
 ```
 
@@ -1029,8 +1029,8 @@ builder = parent_warrant.narrow()     # Same thing
 ### Terminal Methods
 
 ```python
-# Delegate to another holder
-child_warrant = builder.delegate_to(worker_pubkey)
+# Delegate to another holder (signing key = parent's holder)
+child_warrant = builder.delegate(parent_kp)
 
 # Self-attenuation (same holder, narrower scope)
 narrow_warrant = builder.self_scoped()
@@ -1042,18 +1042,18 @@ Every delegation must narrow at least one dimension (tools, constraints, TTL, de
 
 ```python
 # Fails - no narrowing
-parent.attenuate().delegate_to(worker)  # NarrowingRequired
+parent.attenuate().delegate(parent_kp)  # NarrowingRequired
 
 # Succeeds
-parent.attenuate().tool("read_file").delegate_to(worker)
-parent.attenuate().ttl(seconds=60).delegate_to(worker)
-parent.attenuate().terminal().delegate_to(worker)
+parent.attenuate().tool("read_file").delegate(parent_kp)
+parent.attenuate().ttl(seconds=60).delegate(parent_kp)
+parent.attenuate().terminal().delegate(parent_kp)
 ```
 
 Escape hatch:
 
 ```python
-parent.attenuate().pass_through(reason="Sub-orchestrator needs full scope").delegate_to(worker)
+parent.attenuate().pass_through(reason="Sub-orchestrator needs full scope").delegate(parent_kp)
 ```
 
 ### Pass-Through Controls
@@ -1692,7 +1692,7 @@ secure_tools = protect_tools(
 warrant = (parent.attenuate()
     .tool("search")
     .unconstrained(reason="Internal search, trusted corpus only")
-    .delegate_to(worker))
+    .delegate(parent_kp))
 ```
 
 ### LangChain Integration
@@ -1801,7 +1801,7 @@ diff = builder.diff_structured()
 print(diff.to_json())
 
 # After delegation, receipt is attached
-child = builder.delegate_to(worker)
+child = builder.delegate(parent_kp)
 receipt = child.delegation_receipt  # Same structure as diff_structured()
 ```
 
@@ -2241,7 +2241,7 @@ Attenuator  # Also aliased as NarrowBuilder
   .unconstrained(reason)  # Explicit acknowledgment for no constraints
   .diff() -> str
   .diff_structured() -> DelegationDiff
-  .delegate_to(holder) -> Warrant
+  .delegate(signing_key) -> Warrant
   .self_scoped() -> Warrant
 ```
 

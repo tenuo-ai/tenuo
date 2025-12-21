@@ -49,7 +49,7 @@ fn demo_kubernetes_upgrade_delegation_chain() {
         .capability("upgrade_cluster", orch_constraints)
         .ttl(Duration::from_secs(600))
         .authorized_holder(worker_kp.public_key())
-        .build(&orchestrator_kp, &orchestrator_kp)
+        .build(&orchestrator_kp)
         .unwrap();
 
     assert_eq!(orchestrator_warrant.depth(), 1);
@@ -71,7 +71,7 @@ fn demo_kubernetes_upgrade_delegation_chain() {
         .attenuate()
         .capability("upgrade_cluster", worker_constraints)
         .authorized_holder(worker_kp.public_key())
-        .build(&worker_kp, &worker_kp)
+        .build(&worker_kp)
         .unwrap();
 
     assert_eq!(worker_warrant.depth(), 2);
@@ -155,7 +155,7 @@ fn demo_finance_delegation_with_budget() {
         .attenuate()
         .capability("transfer_funds", finance_constraints)
         .authorized_holder(payment_worker_kp.public_key())
-        .build(&finance_agent_kp, &finance_agent_kp)
+        .build(&finance_agent_kp)
         .unwrap();
 
     // Payment worker gets even narrower: $1k max
@@ -166,7 +166,7 @@ fn demo_finance_delegation_with_budget() {
         .attenuate()
         .capability("transfer_funds", worker_constraints)
         .authorized_holder(payment_worker_kp.public_key())
-        .build(&payment_worker_kp, &payment_worker_kp)
+        .build(&payment_worker_kp)
         .unwrap();
 
     // Worker can process small payments
@@ -331,7 +331,7 @@ fn demo_session_binding() {
         .attenuate()
         .inherit_all()
         .authorized_holder(kp.public_key())
-        .build(&kp, &kp)
+        .build(&kp)
         .unwrap();
     assert_eq!(attenuated.session_id(), Some("session_001"));
 }
@@ -363,7 +363,7 @@ fn demo_audit_chain_reconstruction() {
         .attenuate()
         .capability("sensitive_operation", l1_constraints)
         .authorized_holder(level2_kp.public_key())
-        .build(&level1_kp, &level1_kp)
+        .build(&level1_kp)
         .unwrap();
 
     let mut l2_constraints = ConstraintSet::new();
@@ -372,7 +372,7 @@ fn demo_audit_chain_reconstruction() {
         .attenuate()
         .capability("sensitive_operation", l2_constraints)
         .authorized_holder(level3_kp.public_key())
-        .build(&level2_kp, &level2_kp)
+        .build(&level2_kp)
         .unwrap();
 
     let mut l3_constraints = ConstraintSet::new();
@@ -381,7 +381,7 @@ fn demo_audit_chain_reconstruction() {
         .attenuate()
         .capability("sensitive_operation", l3_constraints)
         .authorized_holder(level3_kp.public_key())
-        .build(&level3_kp, &level3_kp)
+        .build(&level3_kp)
         .unwrap();
 
     // Reconstruct the chain from the leaf
@@ -436,7 +436,7 @@ fn demo_mixed_constraint_narrowing() {
         .attenuate()
         .capability("data_export", child_constraints)
         .authorized_holder(child_kp.public_key())
-        .build(&child_kp, &child_kp)
+        .build(&child_kp)
         .unwrap();
 
     // Valid request within child constraints
@@ -496,7 +496,7 @@ fn test_monotonicity_violation_rejected() {
         .attenuate()
         .capability("test", child_constraints)
         .authorized_holder(child_kp.public_key())
-        .build(&child_kp, &child_kp);
+        .build(&child_kp);
 
     assert!(result.is_err());
     let err = result.unwrap_err();

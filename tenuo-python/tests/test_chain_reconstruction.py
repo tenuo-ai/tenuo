@@ -28,7 +28,7 @@ def test_compute_diff_basic():
     builder.with_ttl(60)
     builder.with_holder(worker_kp.public_key)
     
-    child = builder.delegate_to(control_kp, control_kp)
+    child = builder.delegate(control_kp)
     
     # Compute diff
     diff = compute_diff(parent, child)
@@ -62,14 +62,14 @@ def test_chain_reconstruction_simple():
     builder1.with_ttl(300)
     builder1.with_holder(worker_kp.public_key)
     
-    child1 = builder1.delegate_to(orchestrator_kp, control_kp)
+    child1 = builder1.delegate(orchestrator_kp)
     
     # Second delegation
     builder2 = child1.attenuate_builder()
     builder2.with_capability("read_file", {"path": Exact("/data/reports/q3.pdf")})
     builder2.with_ttl(60)
     
-    child2 = builder2.delegate_to(worker_kp, orchestrator_kp)
+    child2 = builder2.delegate(worker_kp)
     
     # Reconstruct chain - need a store with all warrants
     # Create a simple store
@@ -124,7 +124,7 @@ def test_chain_reconstruction_with_store():
     builder1.with_capability("read_file", {"path": Pattern("/data/reports/*")})
     builder1.with_ttl(300)
     
-    child1 = builder1.delegate_to(orchestrator_kp, control_kp)
+    child1 = builder1.delegate(orchestrator_kp)
     
     # Mock warrant store
     class MockWarrantStore:
@@ -253,7 +253,7 @@ def test_receipt_serialization_roundtrip():
     builder.with_holder(worker_kp.public_key)
     builder.with_intent("Test delegation")
     
-    child = builder.delegate_to(control_kp, control_kp)
+    child = builder.delegate(control_kp)
     receipt = child.delegation_receipt
     
     # Serialize to JSON
@@ -320,7 +320,7 @@ def test_receipt_after_delegation():
     builder.with_holder(worker_kp.public_key)
     builder.with_intent("Read Q3 report")
     
-    child = builder.delegate_to(control_kp, control_kp)
+    child = builder.delegate(control_kp)
     
     # Check receipt exists (stored in module dict, accessed via property)
     receipt = child.delegation_receipt

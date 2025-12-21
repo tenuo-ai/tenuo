@@ -148,15 +148,154 @@ fn verify(
 ```
 
 ### Chain attenuation rules
+### Testable Invariants
 
-When a warrant is derived from a parent warrant (attenuation):
+**Every implementation MUST verify these properties.** Tests should reference these invariants by number.
 
-- The child `issuer` MUST equal the parent `holder`.
-- The child `depth` MUST be `parent.depth + 1`.
-- The child `depth` MUST NOT exceed `max_depth` (or `parent.max_depth` if inherited).
-- `expires_at` MUST be ≤ the parent’s `expires_at`.
-- Each tool’s constraints MUST be equal to or stricter than the parent for that tool (per-constraint semantics define “stricter”; equality is allowed).
-- The child `parent_hash` field MUST equal `SHA256(parent payload bytes)`; missing or mismatched parents MUST be rejected.
+#### I1: Delegation Authority
+```
+child.issuer == parent.holder
+```
+
+**Rationale:** The parent's holder is the entity authorized to delegate. This establishes clear audit trail: "parent.holder delegated to child.holder".
+
+**Why this matters:**
+- Audit clarity: "Who authorized this delegation?"
+- Trust model: Authority flows from issuer (who authorized) to holder (who can use)
+- Industry standard: Matches X.509, Macaroons, SPIFFE, UCAN
+
+**Enforcement points:**
+1. **Builder**: `AttenuationBuilder::build()` MUST use parent's holder keypair to sign
+2. **Verifier**: `verify_chain_link()` MUST check `child.issuer() == parent.holder()`
+
+**Test requirement:**
+```rust
+assert_eq!(child.issuer(), parent.holder(), "Invariant I1 violated");
+```
+
+#### I2: Depth Monotonicity
+```
+child.depth == parent.depth + 1
+child.depth <= MAX_DELEGATION_DEPTH (16)
+child.depth <= parent.max_depth
+```
+
+**Rationale:** Prevents unbounded chains (DoS) and enforces delegation limits.
+
+**Enforcement points:**
+1. **Builder**: Increment depth, check against limits
+2. **Verifier**: Validate depth increment and limits
+
+#### I3: TTL Monotonicity
+```
+child.expires_at <= parent.expires_at
+child.ttl <= MAX_WARRANT_TTL_SECS (90 days)
+```
+
+**Rationale:** Authority cannot outlive its source. Prevents time-based privilege escalation.
+
+**Enforcement points:**
+1. **Builder**: Cap child TTL at parent's remaining time
+2. **Verifier**: Check expiration doesn't exceed parent
+
+#### I4: Capability Monotonicity
+```
+child.tools ⊆ parent.tools
+∀ tool ∈ child.tools: child.constraints[tool] ⊑ parent.constraints[tool]
+```
+
+**Rationale:** Principle of Least Authority (POLA) - capabilities only shrink.
+
+**Enforcement points:**
+1. **Builder**: Validate tool subset and constraint narrowing
+2. **Verifier**: Check monotonicity for each tool
+
+#### I5: Cryptographic Linkage
+```
+child.parent_hash == SHA256(parent.payload_bytes)
+verify(parent.issuer, parent.signature_preimage, parent.signature)
+verify(child.issuer, child.signature_preimage, child.signature)
+```
+
+**Rationale:** Prevents chain tampering and warrant forgery.
+
+**Enforcement points:**
+1. **Builder**: Compute parent_hash from parent payload
+2. **Verifier**: Verify hash matches and signatures valid
+
+#### I6: Holder Binding (Proof-of-Possession)
+```
+pop_signature = sign(holder_private_key, challenge)
+verify(warrant.holder, challenge, pop_signature)
+```
+
+**Rationale:** Prevents warrant theft - holder must prove key possession.
+
+**Enforcement points:**
+1. **Execution**: Holder creates PoP signature for each action
+2. **Verifier**: Validate PoP against warrant.holder (not issuer!)
+
+### Verification Checklist
+
+Implementations MUST verify ALL invariants. Missing checks create security vulnerabilities.
+
+| Invariant | Builder | Verifier | Test |
+|-----------|---------|----------|------|
+| I1: Delegation Authority | ✅ Sign with parent.holder | ✅ Check issuer == parent.holder | ✅ Required |
+| I2: Depth Monotonicity | ✅ Increment & validate | ✅ Check depth rules | ✅ Required |
+| I3: TTL Monotonicity | ✅ Cap at parent TTL | ✅ Check expiration | ✅ Required |
+| I4: Capability Monotonicity | ✅ Validate narrowing | ✅ Check tool/constraint subset | ✅ Required |
+| I5: Cryptographic Linkage | ✅ Compute parent_hash | ✅ Verify hash & signatures | ✅ Required |
+| I6: Holder Binding | N/A | ✅ Verify PoP signature | ✅ Required |
+
+### Common Implementation Errors
+
+**❌ Error 1: Child signs own warrant**
+```rust
+// WRONG - violates I1
+let child = parent.attenuate()
+    .holder(child_kp.public_key())
+    .build(&child_kp);  // Child signs - WRONG!
+```
+
+**✅ Correct:**
+```rust
+let child = parent.attenuate()
+    .holder(child_kp.public_key())
+    .build(&parent_kp);  // Parent's holder signs - CORRECT
+```
+
+**❌ Error 2: Missing issuer check in verifier**
+```rust
+// WRONG - violates I1 verification
+fn verify_chain_link(parent, child) {
+    check_parent_hash(parent, child);  // ✅
+    check_depth(parent, child);        // ✅
+    // Missing: check child.issuer == parent.holder  ❌
+}
+```
+
+**✅ Correct:**
+```rust
+fn verify_chain_link(parent, child) {
+    check_parent_hash(parent, child);
+    check_depth(parent, child);
+    assert_eq!(child.issuer(), parent.holder());  // ✅ I1
+}
+```
+
+**❌ Error 3: Verifying PoP against issuer**
+```rust
+// WRONG - violates I6
+verify(child.issuer(), pop_challenge, pop_sig);  // ❌
+```
+
+**✅ Correct:**
+```rust
+verify(child.holder(), pop_challenge, pop_sig);  // ✅
+```
+
+> **Note:** For details on how delegation is cryptographically proven, see the "Cryptographic Proof of Delegation" section in [`protocol.md`](protocol.md#cryptographic-proof-of-delegation).
 
 ---
 
@@ -289,7 +428,9 @@ pub struct WarrantPayload {
 - Matches Unix timestamp convention
 - Avoids confusion between seconds/milliseconds
 
-**Clock tolerance:** Implementations should allow ±120 seconds to handle clock skew.
+**Clock tolerance for TTL validation:** ±30 seconds to handle clock skew.
+
+**PoP replay window:** 120 seconds (30s window × 4 max windows) - see Proof-of-Possession section.
 
 ---
 
@@ -390,10 +531,10 @@ pub enum Constraint {
 |----|------|---------------------|-------|
 | 1 | Exact | string | Exact value match |
 | 2 | Pattern | string | Glob (`*`, `?`, `**`) |
-| 3 | Range | map {min?: i64, max?: i64} | Inclusive integer bounds |
+| 3 | Range | map {min?: f64, max?: f64, min_inclusive?: bool, max_inclusive?: bool} | Numeric bounds (see precision note) |
 | 4 | OneOf | array<string> | Allowed set |
 | 5 | Regex | string | Pattern as string |
-| 6 | FloatRange | map {min?: f64, max?: f64} | Inclusive, finite floats |
+| 6 | (reserved) | — | Reserved for future IntRange with i64 bounds |
 | 7 | NotOneOf | array<string> | Excluded set |
 | 8 | Cidr | string | CIDR notation |
 | 9 | UrlPattern | string | URL pattern (scheme/host/path) |
@@ -404,6 +545,10 @@ pub enum Constraint {
 | 14 | Not | Constraint | Negation of child |
 | 15 | Cel | string | CEL expression, must return bool |
 | 16 | Wildcard | null/empty | Matches anything |
+
+**Range precision note:** `Range` (ID 3) uses `f64` bounds. Converting `i64` values larger than 2^53 (9,007,199,254,740,992) to `f64` loses precision. For practical use cases (monetary amounts, counts, file sizes), this is not a concern. For very large integer constraints (e.g., snowflake IDs), use `Exact` or `OneOf` instead.
+
+**Reserved ID 6:** Originally reserved for `FloatRange`, ID 6 is now reserved for a future `IntRange` type with `i64` bounds if precise large-integer range comparisons are needed. Currently, `Range` handles both integer and float values with `f64` precision.
 
 **Attenuation semantics:** For containment/attenuation rules (what “stricter” means), see `docs/constraints.md` (Attenuation Compatibility Matrix). Minimal reminders for some types:
 - `NotOneOf`: child must exclude >= parent’s exclusions (never remove exclusions).

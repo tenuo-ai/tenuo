@@ -5,7 +5,7 @@
 [![PyPI](https://img.shields.io/pypi/v/tenuo.svg)](https://pypi.org/project/tenuo/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/tenuo.svg)](https://pypi.org/project/tenuo/)
 
-> **v0.1.0-alpha.4** — See [CHANGELOG](../CHANGELOG.md) for breaking changes.
+> **v0.1.0-alpha.5** — See [CHANGELOG](../CHANGELOG.md) for breaking changes.
 
 Python bindings for [Tenuo](https://github.com/tenuo-ai/tenuo), providing cryptographically-enforced capability attenuation for AI agent workflows.
 
@@ -43,9 +43,9 @@ worker_warrant = (warrant.attenuate_builder()
         "replicas": Range.max_value(10)   # Reduced from 15
     })
     .with_holder(worker_keypair.public_key)
-    .delegate_to(worker_keypair, keypair))
+    .delegate(keypair))  # keypair signs (they hold the parent warrant)
 
-# Note: As of v0.1.0-alpha.4, attenuated warrants start with NO capabilities
+# Note: As of v0.1.0-alpha.4+, attenuated warrants start with NO capabilities
 # by default (Principle of Least Authority). Use inherit_all() to keep all
 # parent capabilities, then narrow specific ones.
 

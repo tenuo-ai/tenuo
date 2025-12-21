@@ -111,7 +111,7 @@ def test_builder_delegation():
     builder.with_intent("Q3 report access")
     
     # Delegate
-    child = builder.delegate_to(control_kp, control_kp)
+    child = builder.delegate(control_kp)
     
     assert child.tools == ["file_operations"]
     assert child.depth == 1
@@ -161,7 +161,7 @@ def test_delegation_receipt_to_dict():
     builder.with_holder(worker_kp.public_key)
     builder.with_intent("Test delegation")
     
-    child = builder.delegate_to(control_kp, control_kp)
+    child = builder.delegate(control_kp)
     receipt = child.delegation_receipt
     
     # Check receipt exists and has expected structure
@@ -193,7 +193,7 @@ def test_delegation_receipt_siem_json():
     builder.with_ttl(60)
     builder.with_holder(worker_kp.public_key)
     
-    child = builder.delegate_to(control_kp, control_kp)
+    child = builder.delegate(control_kp)
     receipt = child.delegation_receipt
     
     # Convert to SIEM JSON

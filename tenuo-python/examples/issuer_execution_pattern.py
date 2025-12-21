@@ -78,7 +78,7 @@ worker_warrant = (
     })
     .with_holder(worker_kp.public_key)
     .with_ttl(60)  # Much shorter TTL
-    .delegate_to(orchestrator_kp, control_kp)  # orchestrator signs, control_kp is parent
+    .delegate(orchestrator_kp)  # orchestrator signs (they hold the parent warrant)
 )
 
 print("\n✓ Attenuated warrant for worker")

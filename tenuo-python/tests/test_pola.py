@@ -38,7 +38,7 @@ class TestPOLADefaultBehavior:
 
         # Should fail: "execution warrant must have at least one tool"
         with pytest.raises(ValidationError) as exc_info:
-            builder.delegate_to(kp, kp)
+            builder.delegate(kp)
 
         assert "at least one tool" in str(exc_info.value).lower()
 
@@ -60,7 +60,7 @@ class TestPOLADefaultBehavior:
         builder = parent.attenuate_builder()
         builder.inherit_all()
         builder.with_holder(worker_kp.public_key)
-        child = builder.delegate_to(kp, kp)
+        child = builder.delegate(kp)
 
         assert sorted(child.tools) == ["read_file", "write_file"]
 
@@ -83,7 +83,7 @@ class TestPOLADefaultBehavior:
         builder = parent.attenuate_builder()
         builder.with_capability("read_file", {"path": Exact("/data/report.txt")})
         builder.with_holder(worker_kp.public_key)
-        child = builder.delegate_to(kp, kp)
+        child = builder.delegate(kp)
 
         # Child should ONLY have read_file
         assert child.tools == ["read_file"]
@@ -114,7 +114,7 @@ class TestPOLAWithInheritAll:
         builder.inherit_all()
         builder.with_tools(["read_file"])
         builder.with_holder(worker_kp.public_key)
-        child = builder.delegate_to(kp, kp)
+        child = builder.delegate(kp)
 
         assert child.tools == ["read_file"]
 
@@ -134,7 +134,7 @@ class TestPOLAWithInheritAll:
         builder.inherit_all()
         builder.with_capability("query", {"max_rows": Range.max_value(100)})
         builder.with_holder(worker_kp.public_key)
-        child = builder.delegate_to(kp, kp)
+        child = builder.delegate(kp)
 
         assert child.tools == ["query"]
         # Constraint should be narrowed
@@ -216,7 +216,7 @@ class TestPOLASecurityGuarantees:
         builder = parent.attenuate_builder()
         builder.with_capability("read_file", {})
         builder.with_holder(worker_kp.public_key)
-        child = builder.delegate_to(kp, kp)
+        child = builder.delegate(kp)
 
         assert child.tools == ["read_file"]
         assert "delete_file" not in child.tools  # Safe!
@@ -239,7 +239,7 @@ class TestPOLASecurityGuarantees:
         builder = parent.attenuate_builder()
         builder.inherit_all()  # Developer explicitly chose this
         builder.with_holder(worker_kp.public_key)
-        child = builder.delegate_to(kp, kp)
+        child = builder.delegate(kp)
 
         # Both capabilities granted - this was intentional
         assert sorted(child.tools) == ["admin_action", "read_file"]

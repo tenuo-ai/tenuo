@@ -349,9 +349,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Get orchestrator keypair for chain link signature
-    // In production, the orchestrator (parent issuer) would sign the chain link
+    // Note: With the new API, the signing_key must be the parent warrant's holder
     // For demo, we get it from environment or use a placeholder
-    let orchestrator_keypair = if let Ok(orch_key_hex) = env::var("TENUO_ORCHESTRATOR_KEY") {
+    let _orchestrator_keypair = if let Ok(orch_key_hex) = env::var("TENUO_ORCHESTRATOR_KEY") {
         let orch_key_bytes: [u8; 32] = hex::decode(orch_key_hex)?
             .try_into()
             .map_err(|_| "Orchestrator key must be 32 bytes")?;
@@ -375,7 +375,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ttl(Duration::from_secs(300)) // 5 minutes
         .authorized_holder(sub_agent_keypair.public_key())
         .agent_id("sub-agent-tool-handler")
-        .build(&worker_keypair, &orchestrator_keypair)
+        .build(&worker_keypair)  // Worker is leaf_warrant's holder
     {
         Ok(sub_warrant) => {
             println!(
@@ -398,7 +398,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .attenuate()
                 .capability("cluster_manager", sub_constraints)
                 .ttl(Duration::from_secs(60))
-                .build(&sub_agent_keypair, &worker_keypair) // Worker signed the parent
+                .build(&sub_agent_keypair)  // Sub-agent is sub_warrant's holder
             {
                 Ok(deep_warrant) => {
                     println!("  ✓ Deep warrant created (depth {})", deep_warrant.depth());
@@ -416,7 +416,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     match deep_warrant
                         .attenuate()
                         .capability("cluster_manager", deep_constraints)
-                        .build(&another_keypair, &sub_agent_keypair) // Sub-agent signed the parent
+                        .build(&another_keypair)  // Another is deep_warrant's holder
                     {
                         Ok(w) => {
                             println!(

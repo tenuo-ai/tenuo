@@ -42,7 +42,7 @@ class TestMonotonicity:
         with pytest.raises(PatternExpanded):
             builder = parent.attenuate_builder()
             builder.with_capability("search", {"query": Pattern("*")})
-            builder.delegate_to(keypair, keypair)
+            builder.delegate(keypair)
             
         print("  [Result] Attack 3A blocked (Monotonicity enforced)")
 
@@ -65,7 +65,7 @@ class TestMonotonicity:
             builder = parent.attenuate_builder()
             # Try to add a capability for a tool not in the parent
             builder.with_capability("delete", {})
-            builder.delegate_to(keypair, keypair)
+            builder.delegate(keypair)
              
         print("  [Result] Attack 3B blocked (Cannot add tools not in parent)")
 
@@ -86,7 +86,7 @@ class TestMonotonicity:
         # Attenuate inheriting all constraints (POLA)
         builder = parent.attenuate_builder()
         builder.inherit_all()  # POLA: constraints inherited
-        child = builder.delegate_to(keypair, keypair)
+        child = builder.delegate(keypair)
         
         print(f"  [Check] Parent capabilities: {parent.capabilities}")
         print(f"  [Check] Child capabilities: {child.capabilities}")
@@ -117,7 +117,7 @@ class TestMonotonicity:
         with pytest.raises(MonotonicityError):
             builder = parent.attenuate_builder()
             builder.with_capability("spend", {"budget_check": CEL("true")})
-            builder.delegate_to(keypair, keypair)
+            builder.delegate(keypair)
         
         print("  [Result] Attack 23A blocked (CEL attenuation enforces conjunction)")
         
@@ -126,7 +126,7 @@ class TestMonotonicity:
         with pytest.raises(MonotonicityError):
             builder = parent.attenuate_builder()
             builder.with_capability("spend", {"budget_check": CEL("budget < 10000 || true")})
-            builder.delegate_to(keypair, keypair)
+            builder.delegate(keypair)
         
         print("  [Result] Attack 23B blocked (Must be (parent) && X format)")
 
@@ -148,7 +148,7 @@ class TestMonotonicity:
         with pytest.raises(MonotonicityError):
             builder = parent.attenuate_builder()
             builder.with_capability("read_file", {"path": Range(max=100)})
-            builder.delegate_to(keypair, keypair)
+            builder.delegate(keypair)
         
         print("  [Result] Attack 26 blocked (Incompatible types rejected)")
 
@@ -170,7 +170,7 @@ class TestMonotonicity:
         with pytest.raises(WildcardExpansion):
             builder = parent.attenuate_builder()
             builder.with_capability("search", {"query": Wildcard()})
-            builder.delegate_to(keypair, keypair)
+            builder.delegate(keypair)
         
         print("  [Result] Attack 27 blocked (Cannot attenuate to Wildcard)")
 
@@ -193,7 +193,7 @@ class TestMonotonicity:
         builder = parent.attenuate_builder()
         builder.inherit_all()  # POLA: explicit inheritance
         builder.with_ttl(3600)  # Try to extend
-        child = builder.delegate_to(keypair, keypair)
+        child = builder.delegate(keypair)
         
         # Child's expiration should not be later than parent's
         parent_exp = parent.expires_at()
@@ -225,7 +225,7 @@ class TestMonotonicity:
         with pytest.raises(EmptyResultSet):
             builder = parent.attenuate_builder()
             builder.with_capability("action", {"type": NotOneOf(["read", "write"])})
-            builder.delegate_to(keypair, keypair)
+            builder.delegate(keypair)
         
         print("  [Result] Attack 34 blocked (Empty result set detected)")
 
@@ -275,7 +275,7 @@ class TestMonotonicity:
         with pytest.raises(MonotonicityError):
             builder = parent.attenuate_builder()
             builder.with_capability("access", {"permissions": Subset(["read", "write"])})
-            builder.delegate_to(keypair, keypair)
+            builder.delegate(keypair)
         
         print("  [Result] Attack 38A blocked (Incompatible types)")
         
@@ -283,7 +283,7 @@ class TestMonotonicity:
         print("  [Attack 38B] Attenuating Contains to require more values...")
         builder = parent.attenuate_builder()
         builder.with_capability("access", {"permissions": Contains(["read", "write"])})
-        _child = builder.delegate_to(keypair, keypair)
+        _child = builder.delegate(keypair)
         
         print("  [Result] Attack 38B: Valid attenuation (Contains can add requirements)")
 
@@ -309,7 +309,7 @@ class TestMonotonicity:
         builder = warrant.attenuate_builder()
         builder.inherit_all()
         builder.with_tools(["search"])
-        child = builder.delegate_to(keypair, keypair)
+        child = builder.delegate(keypair)
 
         assert child.tools == ["search"]
         print("  [Result] Attack 11 N/A (Tenuo doesn't support wildcard tools syntax)")
