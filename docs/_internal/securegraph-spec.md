@@ -68,7 +68,7 @@ Instead of writing this in every node:
 ```python
 async def researcher(state):
     parent = get_warrant()
-    child = parent.attenuate().with_capability("search", {"path": Pattern("/data/*")}).build(keypair, keypair)
+    child = parent.attenuate().with_capability("search", {"path": Pattern("/data/*")}).build(keypair)
     with warrant_context(child):
         return await do_research(state)
 ```

@@ -484,15 +484,15 @@ All([
 
 ---
 
-### AnyOf (OR)
+### Any (OR)
 
 At least one nested constraint must match.
 
 ```python
-from tenuo import AnyOf, Pattern
+from tenuo import Any, Pattern
 
 # Path must match at least one pattern
-AnyOf([
+Any([
     Pattern("/data/reports/*"),
     Pattern("/data/analytics/*")
 ])
@@ -733,22 +733,26 @@ When attenuating a warrant, child constraints must be **contained** within paren
 | Parent Type | Can Attenuate To |
 |-------------|------------------|
 | `Wildcard()` | **Any** constraint type (universal) |
-| `Pattern()` | Pattern (if narrower), Exact (if matches), Regex |
+| `Pattern()` | Pattern (if narrower), Exact (if matches) |
 | `Regex()` | **Same** Regex only, Exact (if matches) |
 | `Exact()` | Same Exact only |
 | `OneOf()` | OneOf (subset), NotOneOf, Exact (if in set) |
 | `NotOneOf()` | NotOneOf (more exclusions) |
 | `Range()` | Range (narrower bounds), Exact (if in range) |
 | `Cidr()` | Cidr (subnet), Exact (if IP in network) |
+| `UrlPattern()` | UrlPattern (narrower), Exact (if matches) |
 | `Contains()` | Contains (more required values) |
 | `Subset()` | Subset (fewer allowed values) |
 | `All()` | All (more constraints) |
+| `Any()` | Any (fewer alternatives) |
 | `CEL()` | CEL (conjunction with parent) |
 
 **Key Limitations**:
 - **Regex**: Cannot narrow to different regex patterns (undecidable subset problem)
 - **Exact**: Cannot change value at all
+- **Range**: If parent bound is exclusive, child cannot make it inclusive at the same value (would widen)
 - **No attenuation TO Wildcard**: Would re-widen authority
+- **Not**: Attenuation not supported (use positive constraints instead)
 
 ### Cross-Type Containment
 
@@ -846,10 +850,10 @@ parent = Warrant.issue(
 )
 
 # Child: /data/reports/* (narrower) - OK
-child = parent.attenuate().with_capability("read_file", {"path": Pattern("/data/reports/*")}).build(kp, kp)
+child = parent.attenuate().with_capability("read_file", {"path": Pattern("/data/reports/*")}).build(kp)
 
 # Child: /* (wider) - FAILS
-child = parent.attenuate().with_capability("read_file", {"path": Pattern("/*")}).build(kp, kp)  # MonotonicityViolation
+child = parent.attenuate().with_capability("read_file", {"path": Pattern("/*")}).build(kp)  # MonotonicityViolation
 ```
 
 ### Range Narrowing
@@ -864,10 +868,10 @@ parent = Warrant.issue(
 )
 
 # Child: max 10 (narrower) - OK
-child = parent.attenuate().with_capability("scale", {"replicas": Range.max_value(10)}).build(kp, kp)
+child = parent.attenuate().with_capability("scale", {"replicas": Range.max_value(10)}).build(kp)
 
 # Child: max 20 (wider) - FAILS
-child = parent.attenuate().with_capability("scale", {"replicas": Range.max_value(20)}).build(kp, kp)  # MonotonicityViolation
+child = parent.attenuate().with_capability("scale", {"replicas": Range.max_value(20)}).build(kp)  # MonotonicityViolation
 ```
 
 ### OneOf Narrowing
@@ -882,10 +886,10 @@ parent = Warrant.issue(
 )
 
 # Child: ["a", "b"] (subset) - OK
-child = parent.attenuate().with_capability("action", {"type": OneOf(["a", "b"])}).build(kp, kp)
+child = parent.attenuate().with_capability("action", {"type": OneOf(["a", "b"])}).build(kp)
 
 # Child: ["a", "b", "d"] (adds "d") - FAILS
-child = parent.attenuate().with_capability("action", {"type": OneOf(["a", "b", "d"])}).build(kp, kp)  # MonotonicityViolation
+child = parent.attenuate().with_capability("action", {"type": OneOf(["a", "b", "d"])}).build(kp)  # MonotonicityViolation
 ```
 
 ### Regex Narrowing
@@ -902,13 +906,13 @@ parent = Warrant.issue(
 )
 
 # Cannot narrow to different regex (even if provably narrower) - FAILS
-child = parent.attenuate().with_capability("query", {"env": Regex(r"^staging-.*$")}).build(kp, kp)  # MonotonicityViolation
+child = parent.attenuate().with_capability("query", {"env": Regex(r"^staging-.*$")}).build(kp)  # MonotonicityViolation
 
 # Can keep same pattern - OK
-child = parent.attenuate().with_capability("query", {"env": Regex(r"^(staging|dev)-.*$")}).build(kp, kp)
+child = parent.attenuate().with_capability("query", {"env": Regex(r"^(staging|dev)-.*$")}).build(kp)
 
 # Can narrow to Exact (if it matches parent regex) - OK
-child = parent.attenuate().with_capability("query", {"env": Exact("staging-web")}).build(kp, kp)
+child = parent.attenuate().with_capability("query", {"env": Exact("staging-web")}).build(kp)
 ```
 
 **Why**: Determining if one regex is a subset of another is undecidable in general. Tenuo takes a conservative approach for security.

@@ -114,18 +114,27 @@ issuer_warrant = Warrant.issue_issuer(
 Constraints form a partial order. Attenuation can only move **toward more restrictive types**:
 
 ```
-                    Wildcard (⊤)
-                        │
-          ┌─────────────┼─────────────┐
-          │             │             │
-       Pattern        Range        OneOf
-          │             │             │
-        Regex           │             │
-          │             │             │
-          └─────────────┼─────────────┘
-                        │
-                     Exact (⊥)
+                        Wildcard (⊤)
+                             │
+        ┌────────────────────┼────────────────────┐
+        │                    │                    │
+    Pattern              Range/Cidr          OneOf/NotOneOf
+        │                    │                    │
+      Regex            UrlPattern            Contains/Subset
+        │                    │                    │
+        └────────────────────┼────────────────────┘
+                             │
+                         Exact (⊥)
+
+Logical operators: All (AND), Any (OR)
+Complex: CEL (conjunction with parent)
 ```
+
+**Key relationships:**
+- **Wildcard** is the universal parent (⊤) - can attenuate to any type
+- **Exact** is the universal child (⊥) - most restrictive
+- **Cross-type attenuation** is allowed when child value satisfies parent constraint
+- **Not** does not support attenuation (use positive constraints instead)
 
 ### Constraint Serialization (CBOR)
 
@@ -139,6 +148,8 @@ OneOf(4):    [4, {"values": ["dev", "staging"]}]
 Regex(5):    [5, {"pattern": "^[a-z]+\\.pdf$"}]
 Wildcard(16): [16, {}]
 ```
+
+**Note:** Type ID 6 is reserved for a future `IntRange` type with `i64` bounds. Currently, `Range` (ID 3) handles all numeric constraints using `f64` bounds. For values > 2^53, use `Exact` or `OneOf` to avoid precision loss.
 
 See `docs/wire-format-spec.md` §6 for complete type ID assignments (1-16).
 
@@ -187,11 +198,22 @@ See [`wire-format-spec.md` Invariant I1](wire-format-spec.md#i1-delegation-autho
 
 | Parent Type | Valid Child Types | Check |
 |-------------|-------------------|-------|
-| `Wildcard` | Any | Always valid |
-| `Pattern` | Pattern, Exact | Child matches subset |
-| `Range` | Range, Exact | `child.min >= parent.min && child.max <= parent.max` |
-| `OneOf` | OneOf, Exact | `child.values ⊆ parent.values` |
+| `Wildcard` | Any type | Universal parent - always valid |
+| `Pattern` | Pattern, Exact | Child pattern is subset of parent |
+| `Regex` | Regex (same), Exact | Child regex must match parent or be exact value |
 | `Exact` | Exact (same value) | `child.value == parent.value` |
+| `OneOf` | OneOf, NotOneOf, Exact | `child.values ⊆ parent.values` or carve holes |
+| `NotOneOf` | NotOneOf | `parent.excluded ⊆ child.excluded` (more exclusions) |
+| `Range` | Range, Exact | `child.min >= parent.min && child.max <= parent.max` |
+| `Cidr` | Cidr, Exact | Child network is subnet of parent |
+| `UrlPattern` | UrlPattern, Exact | Child pattern is narrower (scheme/host/port/path) |
+| `Contains` | Contains | `parent.required ⊆ child.required` (more requirements) |
+| `Subset` | Subset | `child.allowed ⊆ parent.allowed` (fewer allowed) |
+| `All` | All | Child may add more constraints |
+| `Any` | Any | Child may remove alternatives |
+| `CEL` | CEL | Child must be `(parent) && new_predicate` |
+
+**Note:** `Not` constraint does not support attenuation. See `docs/constraints.md` for detailed attenuation rules.
 
 ### Required Narrowing
 
@@ -444,7 +466,7 @@ def verify_pop(warrant, signature, tool, args, max_windows=4) -> bool:
 |-----------|---------|---------|
 | Window size | 30 seconds | Groups signatures into buckets |
 | Max windows | 4 | ~2 minute total validity |
-| Clock tolerance | ±60 seconds | Handles distributed clock skew |
+| Clock tolerance | ±30 seconds | Handles distributed clock skew |
 
 **Trade-off**: Larger windows allow more clock skew but increase replay risk. Within the ~2 minute window, a captured PoP can be replayed for the **same** (warrant, tool, args) tuple.
 
@@ -498,6 +520,25 @@ warrant = Warrant.builder().capability("my_app:revoke", {})
 
 **Potential future uses**:
 - `tenuo:revoke` — Inline revocation directive
+- `tenuo:audit` — Audit logging trigger
+
+### Extension Keys: `tenuo.*`
+
+Extension keys starting with `tenuo.*` are **reserved for framework use**:
+
+```python
+# Current framework extensions (metadata only):
+extensions = {
+    "tenuo.session_id": cbor.encode("session-123"),
+    "tenuo.agent_id": cbor.encode("agent-worker-1"),
+}
+```
+
+**Extension value encoding:** All extension values MUST be CBOR-encoded. See `wire-format-spec.md` §10 for encoding rules.
+
+**Fail-closed behavior:** Verifiers SHOULD reject warrants with unknown `tenuo.*` extensions to fail closed. This prevents forward compatibility issues where newer warrant features are silently ignored by older verifiers.
+
+**User-defined extensions:** Use reverse domain notation (e.g., `com.example.trace_id`, `org.acme.workflow_id`).
 - `tenuo:require_mfa` — Enforcement flag
 - `tenuo:audit` — Force audit log entry
 

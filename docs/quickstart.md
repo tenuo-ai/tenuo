@@ -234,7 +234,7 @@ narrower.insert("replicas", Range::max(10.0)?);
 let worker_warrant = warrant.attenuate()
     .capability("manage_infrastructure", narrower)
     .authorized_holder(worker_keypair.public_key())
-    .build(&keypair, &keypair)?;
+    .build(&keypair)?;  // Parent's holder signs
 ```
 
 ### 3. Authorize

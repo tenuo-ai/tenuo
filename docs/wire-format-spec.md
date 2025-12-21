@@ -428,7 +428,9 @@ pub struct WarrantPayload {
 - Matches Unix timestamp convention
 - Avoids confusion between seconds/milliseconds
 
-**Clock tolerance:** Implementations should allow ±120 seconds to handle clock skew.
+**Clock tolerance for TTL validation:** ±30 seconds to handle clock skew.
+
+**PoP replay window:** 120 seconds (30s window × 4 max windows) - see Proof-of-Possession section.
 
 ---
 
@@ -529,10 +531,10 @@ pub enum Constraint {
 |----|------|---------------------|-------|
 | 1 | Exact | string | Exact value match |
 | 2 | Pattern | string | Glob (`*`, `?`, `**`) |
-| 3 | Range | map {min?: i64, max?: i64} | Inclusive integer bounds |
+| 3 | Range | map {min?: f64, max?: f64, min_inclusive?: bool, max_inclusive?: bool} | Numeric bounds (see precision note) |
 | 4 | OneOf | array<string> | Allowed set |
 | 5 | Regex | string | Pattern as string |
-| 6 | FloatRange | map {min?: f64, max?: f64} | Inclusive, finite floats |
+| 6 | (reserved) | — | Reserved for future IntRange with i64 bounds |
 | 7 | NotOneOf | array<string> | Excluded set |
 | 8 | Cidr | string | CIDR notation |
 | 9 | UrlPattern | string | URL pattern (scheme/host/path) |
@@ -543,6 +545,10 @@ pub enum Constraint {
 | 14 | Not | Constraint | Negation of child |
 | 15 | Cel | string | CEL expression, must return bool |
 | 16 | Wildcard | null/empty | Matches anything |
+
+**Range precision note:** `Range` (ID 3) uses `f64` bounds. Converting `i64` values larger than 2^53 (9,007,199,254,740,992) to `f64` loses precision. For practical use cases (monetary amounts, counts, file sizes), this is not a concern. For very large integer constraints (e.g., snowflake IDs), use `Exact` or `OneOf` instead.
+
+**Reserved ID 6:** Originally reserved for `FloatRange`, ID 6 is now reserved for a future `IntRange` type with `i64` bounds if precise large-integer range comparisons are needed. Currently, `Range` handles both integer and float values with `f64` precision.
 
 **Attenuation semantics:** For containment/attenuation rules (what “stricter” means), see `docs/constraints.md` (Attenuation Compatibility Matrix). Minimal reminders for some types:
 - `NotOneOf`: child must exclude >= parent’s exclusions (never remove exclusions).

@@ -1176,8 +1176,10 @@ impl WarrantBuilder {
             }
         }
 
-        // Default TTL: 1 hour for better DX, but validate against protocol max
-        let ttl = self.ttl.unwrap_or_else(|| Duration::from_secs(3600));
+        // Default TTL: 5 minutes - ephemeral by design, expand only as needed
+        let ttl = self
+            .ttl
+            .unwrap_or_else(|| Duration::from_secs(crate::DEFAULT_WARRANT_TTL_SECS));
 
         // Validate TTL doesn't exceed protocol maximum (90 days)
         if ttl.as_secs() > crate::MAX_WARRANT_TTL_SECS {

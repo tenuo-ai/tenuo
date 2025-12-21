@@ -94,7 +94,7 @@ parent = (Warrant.builder()
 # Child can only narrow
 child = (parent.attenuate()
     .with_capability("read", {"path": Pattern("/data/*")})
-    .delegate(keypair))
+    .delegate(keypair))  # Keypair signs (they hold the parent warrant)
 
 # This would FAIL:
 child = (parent.attenuate()

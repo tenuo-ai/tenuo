@@ -105,7 +105,15 @@ pub use diff::{
 ///
 /// 16 levels is sufficient for any realistic delegation hierarchy:
 /// Control Plane → Orchestrator → Worker → Sub-agent (4 levels typical).
+///
+/// **SAFETY**: This MUST NOT exceed 255 because `WarrantPayload.max_depth` is `u8`.
 pub const MAX_DELEGATION_DEPTH: u32 = 16;
+
+// Compile-time assertion: MAX_DELEGATION_DEPTH must fit in u8 (wire format uses u8)
+const _: () = assert!(
+    MAX_DELEGATION_DEPTH <= 255,
+    "MAX_DELEGATION_DEPTH must not exceed 255 (u8 max) for wire format compatibility"
+);
 
 /// Protocol-level maximum TTL (90 days).
 ///
