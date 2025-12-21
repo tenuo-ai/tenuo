@@ -486,8 +486,8 @@ builder = warrant.attenuate()
 | `with_issuable_tool(tool)` | `AttenuationBuilder` | Narrow issuable tools (issuer warrants) |
 | `with_issuable_tools(tools)` | `AttenuationBuilder` | Narrow issuable tools (issuer warrants) |
 | `with_constraint(field, constraint)` | `AttenuationBuilder` | Add/tighten constraint (legacy) |
-| `holder(public_key)` | `AttenuationBuilder` | Set new holder |
-| `ttl(seconds)` | `AttenuationBuilder` | Set shorter TTL |
+| `with_holder(public_key)` | `AttenuationBuilder` | Set new holder |
+| `with_ttl(seconds)` | `AttenuationBuilder` | Set shorter TTL |
 | `terminal()` | `AttenuationBuilder` | Make warrant terminal (no further delegation) |
 | `diff()` | `str` | Preview changes (human-readable) |
 | `delegate(signing_key)` | `Warrant` | Issue child with receipt |
@@ -500,14 +500,14 @@ builder = warrant.attenuate()
 # Pattern 1: Grant specific capability (POLA default)
 child = (parent.attenuate()
     .with_capability("read_file", {"path": Exact("/data/q3.pdf")})
-    .holder(worker_kp.public_key)
+    .with_holder(worker_kp.public_key)
     .delegate(parent_kp))
 
 # Pattern 2: Inherit all, then narrow
 child = (parent.attenuate()
     .inherit_all()                    # Explicit opt-in
     .with_tools(["read_file"])        # Keep only this tool
-    .holder(worker_kp.public_key)
+    .with_holder(worker_kp.public_key)
     .delegate(parent_kp))
 ```
 

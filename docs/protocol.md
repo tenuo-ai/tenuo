@@ -164,15 +164,15 @@ For debugging, use `tenuo inspect` to view constraints as JSON.
 When attenuating a warrant (delegating to another entity):
 
 **The parent's holder signs the child warrant:**
-```python
-# Parent's holder signs the child warrant
-child = parent.attenuate()
+```rust
+// Parent's holder signs the child warrant
+let child = parent.attenuate()
     .holder(child_kp.public_key())
-    .build(&parent_kp)  # parent_kp is parent's holder keypair
+    .build(&parent_kp)?;  // parent_kp is parent's holder keypair
 
-# Result:
-# child.issuer == parent.holder ✅  (delegation authority)
-# child.holder == child_kp.public_key ✅  (who can use it)
+// Result:
+// child.issuer == parent.holder ✅  (delegation authority)
+// child.holder == child_kp.public_key ✅  (who can use it)
 ```
 
 **This creates a cryptographically provable delegation chain:**

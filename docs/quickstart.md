@@ -126,7 +126,7 @@ worker_warrant = (warrant.attenuate()
         "cluster": Exact("staging-web"),     # Narrowed from staging-*
         "replicas": Range.max_value(10),     # Reduced to 10 replicas
     })
-    .holder(worker_keypair.public_key)
+    .with_holder(worker_keypair.public_key)
     .delegate(keypair))  # Parent signs (they hold the warrant)
 ```
 
@@ -137,7 +137,7 @@ worker_warrant = (warrant.attenuate()
 worker_warrant = (warrant.attenuate()
     .inherit_all()                           # Start with all parent capabilities
     .with_tools(["manage_infrastructure"])   # Keep only this tool
-    .holder(worker_keypair.public_key)
+    .with_holder(worker_keypair.public_key)
     .delegate(keypair))
 ```
 

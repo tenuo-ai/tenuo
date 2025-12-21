@@ -430,7 +430,7 @@ root_warrant = Warrant.issue(
 # Orchestrator attenuates for worker
 worker_warrant = root_warrant.attenuate() \
     .with_capability("filesystem_read", {"path": Pattern("/data/reports/*")}) \
-    .holder(worker_keypair.public_key) \
+    .with_holder(worker_keypair.public_key) \
     .delegate(orchestrator_keypair)  # Orchestrator signs (they hold the parent)
 
 # Worker uses attenuated warrant

@@ -27,7 +27,7 @@ Warrants are **bound to keypairs**. To use a warrant, you must prove you hold th
 # Attenuate with explicit capability (POLA)
 warrant = (root_warrant.attenuate()
     .with_capability("protected_tool", {"path": Pattern("/data/*")})
-    .holder(worker_keypair.public_key)
+    .with_holder(worker_keypair.public_key)
     .delegate(root_keypair))  # Root keypair signs (they hold the parent warrant)
 
 with set_warrant_context(warrant), set_signing_key_context(worker_keypair):

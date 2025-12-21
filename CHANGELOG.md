@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   # Or specify only needed capabilities (recommended)
   child = (parent.attenuate()
       .with_capability("read_file", {"path": Pattern("/data/*")})
-      .holder(worker_kp.public_key)
+      .with_holder(worker_kp.public_key)
       .delegate(parent_kp))  # parent_kp signs (they hold the parent warrant)
   ```
 

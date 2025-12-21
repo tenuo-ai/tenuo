@@ -168,8 +168,8 @@ cs.insert("path", Exact(file_path))
 child = (parent.attenuate()
     .with_capability("read_file", cs)
     .terminal()
-    .holder(worker.public_key)
-    .build(worker, parent_keypair))
+    .with_holder(worker.public_key)
+    .delegate(parent_keypair))
 ```
 
 One line for common orchestration patterns.
@@ -187,12 +187,12 @@ cs.insert("max_results", Range(max=100))
 child = (parent.attenuate()
     .with_capability("read_file", cs)
     .with_capability("search", cs)
-    .trust(TrustLevel.EXTERNAL)
-    .ttl(seconds=300)
-    .intent("Research task for user query")
-    .max_depth(1)  # Allow one more delegation
-    .holder(worker.public_key)
-    .build(worker, parent_keypair))
+    .with_trust_level(TrustLevel.EXTERNAL)
+    .with_ttl(300)
+    .with_intent("Research task for user query")
+    .with_max_depth(1)  # Allow one more delegation
+    .with_holder(worker.public_key)
+    .delegate(parent_keypair))
 
 # Preview before committing
 print(child.delegation_receipt.diff())
