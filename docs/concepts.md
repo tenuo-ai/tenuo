@@ -157,10 +157,10 @@ issuer = Warrant.issue_issuer(
     keypair=planner_kp,
 )
 
-exec_warrant = issuer.issue_execution()
-    .with_tool("read_file")
-    .with_holder(worker_kp.public_key)
-    .build(planner_kp)  # Planner's holder signs
+exec_warrant = (issuer.issue_execution()
+    .tool("read_file")
+    .holder(worker_kp.public_key)
+    .build(planner_kp))  # Planner's holder signs
 ```
 
 Root execution warrants start tasks. Issuer warrants supervise without executing.

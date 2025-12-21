@@ -24,17 +24,17 @@ def test_builder_basic():
     
     # Use builder
     builder = AttenuationBuilder(root)
-    builder.with_capability("file_operations", {"path": Exact("/data/reports/q3.pdf")})
-    builder.with_ttl(60)
-    builder.with_holder(worker_kp.public_key)
+    builder.capability("file_operations", {"path": Exact("/data/reports/q3.pdf")})
+    builder.ttl(60)
+    builder.holder(worker_kp.public_key)
     builder.with_intent("Q3 report access for worker")
     
-    # Check builder state
+    # Check builder state (use method calls for getters)
     assert "file_operations" in builder.capabilities
-    assert builder.ttl_seconds == 60
-    assert builder.holder is not None
-    assert builder.holder.to_bytes() == worker_kp.public_key.to_bytes()  # Compare bytes
-    assert builder.intent == "Q3 report access for worker"
+    assert builder.ttl() == 60
+    assert builder.holder() is not None
+    assert builder.holder().to_bytes() == worker_kp.public_key.to_bytes()  # Compare bytes
+    assert builder.intent() == "Q3 report access for worker"
 
 
 def test_builder_diff_computation():
@@ -50,9 +50,9 @@ def test_builder_diff_computation():
     )
     
     builder = AttenuationBuilder(root)
-    builder.with_capability("file_operations", {"path": Exact("/data/reports/q3.pdf")})
-    builder.with_ttl(60)
-    builder.with_holder(worker_kp.public_key)
+    builder.capability("file_operations", {"path": Exact("/data/reports/q3.pdf")})
+    builder.ttl(60)
+    builder.holder(worker_kp.public_key)
     
     # Get structured diff
     diff = builder.diff_structured()
@@ -78,9 +78,9 @@ def test_builder_human_readable_diff():
     )
     
     builder = AttenuationBuilder(root)
-    builder.with_capability("file_operations", {"path": Exact("/data/reports/q3.pdf")})
-    builder.with_ttl(60)
-    builder.with_holder(worker_kp.public_key)
+    builder.capability("file_operations", {"path": Exact("/data/reports/q3.pdf")})
+    builder.ttl(60)
+    builder.holder(worker_kp.public_key)
     builder.with_intent("Q3 report access")
     
     # Get human-readable diff
@@ -105,9 +105,9 @@ def test_builder_delegation():
     )
     
     builder = AttenuationBuilder(root)
-    builder.with_capability("file_operations", {"path": Exact("/data/reports/q3.pdf")})
-    builder.with_ttl(60)
-    builder.with_holder(worker_kp.public_key)
+    builder.capability("file_operations", {"path": Exact("/data/reports/q3.pdf")})
+    builder.ttl(60)
+    builder.holder(worker_kp.public_key)
     builder.with_intent("Q3 report access")
     
     # Delegate
@@ -140,7 +140,7 @@ def test_warrant_attenuate_builder_method():
     builder = root.attenuate_builder()
     
     assert isinstance(builder, AttenuationBuilder)
-    assert builder.parent == root
+    assert builder.parent() == root
 
 
 def test_delegation_receipt_to_dict():
@@ -156,9 +156,9 @@ def test_delegation_receipt_to_dict():
     )
     
     builder = AttenuationBuilder(root)
-    builder.with_capability("file_operations", {"path": Exact("/data/q3.pdf")})
-    builder.with_ttl(60)
-    builder.with_holder(worker_kp.public_key)
+    builder.capability("file_operations", {"path": Exact("/data/q3.pdf")})
+    builder.ttl(60)
+    builder.holder(worker_kp.public_key)
     builder.with_intent("Test delegation")
     
     child = builder.delegate(control_kp)
@@ -189,9 +189,9 @@ def test_delegation_receipt_siem_json():
     )
     
     builder = AttenuationBuilder(root)
-    builder.with_capability("file_operations", {"path": Exact("/data/q3.pdf")})
-    builder.with_ttl(60)
-    builder.with_holder(worker_kp.public_key)
+    builder.capability("file_operations", {"path": Exact("/data/q3.pdf")})
+    builder.ttl(60)
+    builder.holder(worker_kp.public_key)
     
     child = builder.delegate(control_kp)
     receipt = child.delegation_receipt

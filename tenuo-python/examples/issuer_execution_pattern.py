@@ -73,11 +73,11 @@ print("="*70)
 # Orchestrator creates narrow warrant for specific task
 worker_warrant = (
     root_warrant.attenuate()
-    .with_capability("file_operations", {
+    .capability("file_operations", {
         "path": Pattern("/data/reports/*"),  # Narrower path
     })
-    .with_holder(worker_kp.public_key)
-    .with_ttl(60)  # Much shorter TTL
+    .holder(worker_kp.public_key)
+    .ttl(60)  # Much shorter TTL
     .delegate(orchestrator_kp)  # orchestrator signs (they hold the parent warrant)
 )
 

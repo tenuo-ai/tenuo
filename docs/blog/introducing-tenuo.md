@@ -124,12 +124,12 @@ cfo_warrant = Warrant.issue(
 
 # Attenuate for intern
 intern_warrant = cfo_warrant.attenuate() \
-    .with_capability("spend", {
+    .capability("spend", {
         "amount": Range.max_value(500),
         "category": OneOf(["travel", "meals"])
     }) \
-    .with_ttl(3600) \
-    .with_holder(intern_keypair.public_key) \
+    .ttl(3600) \
+    .holder(intern_keypair.public_key) \
     .delegate(cfo_keypair)
 ```
 The intern can't:
@@ -142,9 +142,8 @@ And yeah, the intern can't issue *themselves* a better card.
 
 ```python
 # This raises MonotonicityError
-# This raises MonotonicityError
 bad_warrant = intern_warrant.attenuate() \
-    .with_capability("spend", {"amount": Range.max_value(10000)}) \
+    .capability("spend", {"amount": Range.max_value(10000)}) \
     .delegate(intern_keypair)  # Can't exceed parent's $500
 ```
 Attenuation isn't policy. It's physics.
@@ -187,17 +186,17 @@ async def handle_user_request(user_request: str):
     
     # Phase 1: Research (read-only, scoped to reports)
     research_warrant = warrant.attenuate() \
-        .with_capability("read_file", {"path": Pattern("/data/reports/*")}) \
-        .with_ttl(60) \
-        .with_holder(researcher_keypair.public_key) \
+        .capability("read_file", {"path": Pattern("/data/reports/*")}) \
+        .ttl(60) \
+        .holder(researcher_keypair.public_key) \
         .delegate(orchestrator_keypair)
     findings = await researcher.execute(research_warrant, researcher_keypair)
     
     # Phase 2: Write summary (write-only, narrower path)
     write_warrant = warrant.attenuate() \
-        .with_capability("write_file", {"path": Pattern("/data/output/summary.md")}) \
-        .with_ttl(30) \
-        .with_holder(writer_keypair.public_key) \
+        .capability("write_file", {"path": Pattern("/data/output/summary.md")}) \
+        .ttl(30) \
+        .holder(writer_keypair.public_key) \
         .delegate(orchestrator_keypair)
     await writer.execute(write_warrant, writer_keypair, findings)
 

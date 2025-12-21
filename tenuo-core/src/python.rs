@@ -339,6 +339,20 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                 "DelegationAuthorityError",
                 PyTuple::new(py, [expected.as_str(), actual.as_str()]),
             ),
+            crate::error::Error::InsufficientTrustLevel {
+                tool,
+                required,
+                actual,
+            } => (
+                "Unauthorized",
+                PyTuple::new(
+                    py,
+                    [&format!(
+                        "insufficient trust level for tool '{}': requires {}, has {}",
+                        tool, required, actual
+                    )],
+                ),
+            ),
         };
 
         // Unwrap the args Result (PyTuple::new can fail on conversion)
@@ -3051,6 +3065,50 @@ impl PyAuthorizer {
     ///     max_windows: Number of windows to accept
     fn set_pop_window(&mut self, window_secs: i64, max_windows: u32) {
         self.inner.set_pop_window(window_secs, max_windows);
+    }
+
+    /// Set minimum trust level required for a tool.
+    ///
+    /// This is **gateway-level policy** for defense in depth. Even if a warrant
+    /// has the tool in its capabilities, authorization will fail if the warrant's
+    /// trust level is below the requirement.
+    ///
+    /// Args:
+    ///     tool_pattern: Tool name or pattern. Supports:
+    ///         - Exact match: "delete_database"
+    ///         - Prefix pattern: "admin_*" (matches admin_users, admin_config)
+    ///         - Default: "*" (applies to all tools without specific rules)
+    ///     level: Minimum TrustLevel required
+    ///
+    /// Raises:
+    ///     ValueError: If the pattern is invalid (e.g., "**", "*admin*")
+    ///
+    /// Example:
+    ///     ```python
+    ///     authorizer = Authorizer(trusted_roots=[root_key])
+    ///     authorizer.require_trust("*", TrustLevel.External)  # Default baseline
+    ///     authorizer.require_trust("delete_*", TrustLevel.Privileged)
+    ///     authorizer.require_trust("admin_reset", TrustLevel.System)
+    ///     ```
+    fn require_trust(&mut self, tool_pattern: &str, level: &PyTrustLevel) -> PyResult<()> {
+        self.inner
+            .require_trust(tool_pattern, level.inner)
+            .map_err(to_py_err)
+    }
+
+    /// Get the required trust level for a tool.
+    ///
+    /// Args:
+    ///     tool: Tool name to check
+    ///
+    /// Returns:
+    ///     TrustLevel if a requirement is configured, None otherwise
+    ///
+    /// Lookup precedence: Exact match → Glob pattern → Default "*" → None
+    fn get_required_trust(&self, tool: &str) -> Option<PyTrustLevel> {
+        self.inner
+            .get_required_trust(tool)
+            .map(|tl| PyTrustLevel { inner: tl })
     }
 
     // =========================================================================

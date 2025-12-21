@@ -50,8 +50,8 @@ In multi-agent systems, manually managing warrant attenuation is error-prone:
 ```python
 # Without Tenuo: Manual attenuation at every delegation
 researcher_warrant = root_warrant.attenuate() \
-    .with_capability("search", {"file_path": Pattern("/tmp/research/*")}) \
-    .build(researcher_keypair, root_keypair)
+    .capability("search", {"file_path": Pattern("/tmp/research/*")}) \
+    .delegate(root_keypair)
 
 with set_warrant_context(researcher_warrant):
     researcher_node(state)

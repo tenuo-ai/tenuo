@@ -11,7 +11,8 @@ pip install tenuo
 ## Available Examples
 
 ### Basics
-- **[basic_usage.py](basic_usage.py)**: The "Hello World" of Tenuo. Shows how to create a keypair, issue a warrant, and authorize a tool call.
+- **[basic_usage.py](basic_usage.py)**: The "Hello World" of Tenuo. Shows how to create a keypair, issue a warrant, and authorize a tool call. Demonstrates POLA (Principle of Least Authority) with explicit capabilities.
+- **[trust_levels_demo.py](trust_levels_demo.py)**: **NEW in alpha.5** - Shows how to assign trust levels to warrants and configure trust requirements per tool (gateway policy). Demonstrates trust hierarchy enforcement and defense in depth.
 - **[issuer_execution_pattern.py](issuer_execution_pattern.py)**: **RECOMMENDED PATTERN** - Shows the production best practice: ISSUER warrants for planners, EXECUTION warrants for workers. Demonstrates trust levels and separation of concerns. **Start here for production deployments.**
 - **[decorator_example.py](decorator_example.py)**: Demonstrates the `@lockdown` decorator pattern for protecting functions with minimal boilerplate.
 - **[context_pattern.py](context_pattern.py)**: Shows how to use `set_warrant_context` for thread-safe/async-safe warrant passing (essential for web frameworks like FastAPI).
@@ -56,6 +57,7 @@ All examples are standalone scripts. You can run them directly:
 ```bash
 # Basic examples (no dependencies beyond tenuo)
 python basic_usage.py
+python trust_levels_demo.py  # NEW in alpha.5: Trust level enforcement
 python decorator_example.py
 python context_pattern.py
 
@@ -92,10 +94,11 @@ python kubernetes_integration.py
 ## Learning Path
 
 **New to Tenuo?** Start here:
-1. `basic_usage.py` - Core concepts (warrants, constraints, attenuation)
-2. `decorator_example.py` - Simplest protection pattern
-3. `context_pattern.py` - Context-based patterns (for web frameworks)
-4. `orchestrator_worker.py` - **Multi-agent delegation (core value proposition)**
+1. `basic_usage.py` - Core concepts (warrants, constraints, attenuation, POLA)
+2. `trust_levels_demo.py` - **NEW in alpha.5**: Trust level enforcement
+3. `decorator_example.py` - Simplest protection pattern
+4. `context_pattern.py` - Context-based patterns (for web frameworks)
+5. `orchestrator_worker.py` - **Multi-agent delegation (core value proposition)**
 
 **Integrating with LangChain?**
 1. `langchain_simple.py` - Basic LangChain protection

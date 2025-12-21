@@ -24,9 +24,9 @@ def test_compute_diff_basic():
     
     # Create child via builder
     builder = parent.attenuate_builder()
-    builder.with_capability("read_file", {"path": Exact("/data/q3.pdf")})
-    builder.with_ttl(60)
-    builder.with_holder(worker_kp.public_key)
+    builder.capability("read_file", {"path": Exact("/data/q3.pdf")})
+    builder.ttl(60)
+    builder.holder(worker_kp.public_key)
     
     child = builder.delegate(control_kp)
     
@@ -58,16 +58,16 @@ def test_chain_reconstruction_simple():
     
     # First delegation
     builder1 = root.attenuate_builder()
-    builder1.with_capability("read_file", {"path": Pattern("/data/reports/*")})
-    builder1.with_ttl(300)
-    builder1.with_holder(worker_kp.public_key)
+    builder1.capability("read_file", {"path": Pattern("/data/reports/*")})
+    builder1.ttl(300)
+    builder1.holder(worker_kp.public_key)
     
     child1 = builder1.delegate(orchestrator_kp)
     
     # Second delegation
     builder2 = child1.attenuate_builder()
-    builder2.with_capability("read_file", {"path": Exact("/data/reports/q3.pdf")})
-    builder2.with_ttl(60)
+    builder2.capability("read_file", {"path": Exact("/data/reports/q3.pdf")})
+    builder2.ttl(60)
     
     child2 = builder2.delegate(worker_kp)
     
@@ -121,8 +121,8 @@ def test_chain_reconstruction_with_store():
     
     # First delegation
     builder1 = root.attenuate_builder()
-    builder1.with_capability("read_file", {"path": Pattern("/data/reports/*")})
-    builder1.with_ttl(300)
+    builder1.capability("read_file", {"path": Pattern("/data/reports/*")})
+    builder1.ttl(300)
     
     child1 = builder1.delegate(orchestrator_kp)
     
@@ -169,11 +169,11 @@ def test_multiple_constraint_changes():
     )
     
     builder = parent.attenuate_builder()
-    builder.with_capability("file_ops", {
+    builder.capability("file_ops", {
         "path": Exact("/data/q3.pdf"),
         "max_size": Range.max_value(500000),
     })
-    builder.with_ttl(60)
+    builder.ttl(60)
     
     diff = builder.diff_structured()
     
@@ -196,8 +196,8 @@ def test_trust_level_change():
     )
     
     builder = parent.attenuate_builder()
-    builder.with_trust_level(TrustLevel("external"))  # Demote trust - TrustLevel is created with string
-    builder.with_ttl(60)
+    builder.trust_level(TrustLevel("external"))  # Demote trust - TrustLevel is created with string
+    builder.ttl(60)
     
     diff = builder.diff_structured()
     
@@ -223,7 +223,7 @@ def test_tool_dropping():
     # For issuer warrants, we'd use issuable_tools
     # This test verifies the diff shows tool inheritance
     builder = parent.attenuate_builder()
-    builder.with_capability("read_file", {"path": Exact("/data/q3.pdf")})
+    builder.capability("read_file", {"path": Exact("/data/q3.pdf")})
     
     diff = builder.diff_structured()
     
@@ -248,10 +248,10 @@ def test_receipt_serialization_roundtrip():
     )
     
     builder = AttenuationBuilder(parent)
-    builder.with_capability("file_operations", {"path": Exact("/data/q3.pdf")})
-    builder.with_ttl(60)
-    builder.with_holder(worker_kp.public_key)
-    builder.with_intent("Test delegation")
+    builder.capability("file_operations", {"path": Exact("/data/q3.pdf")})
+    builder.ttl(60)
+    builder.holder(worker_kp.public_key)
+    builder.intent("Test delegation")
     
     child = builder.delegate(control_kp)
     receipt = child.delegation_receipt
@@ -293,7 +293,7 @@ def test_diff_with_no_changes():
     # Create builder but don't make any changes
     builder = parent.attenuate_builder()
     # Just change holder (self-attenuation)
-    builder.with_holder(control_kp.public_key)
+    builder.holder(control_kp.public_key)
     
     diff = builder.diff_structured()
     
@@ -315,10 +315,10 @@ def test_receipt_after_delegation():
     )
     
     builder = parent.attenuate_builder()
-    builder.with_capability("read_file", {"path": Exact("/data/q3.pdf")})
-    builder.with_ttl(60)
-    builder.with_holder(worker_kp.public_key)
-    builder.with_intent("Read Q3 report")
+    builder.capability("read_file", {"path": Exact("/data/q3.pdf")})
+    builder.ttl(60)
+    builder.holder(worker_kp.public_key)
+    builder.intent("Read Q3 report")
     
     child = builder.delegate(control_kp)
     

@@ -370,17 +370,17 @@ Tenuo follows **POLA**: when you attenuate a warrant, the child starts with **NO
 
 | Method | Behavior |
 |--------|----------|
-| `with_capability(tool, {})` | Grant only that tool |
+| `capability(tool, {})` | Grant only that tool |
 | `inherit_all()` | Explicitly opt-in to inherit all parent capabilities |
-| `with_tools([...])` | After `inherit_all()`, narrow to subset |
+| `tools([...])` | After `inherit_all()`, narrow to subset |
 
 **Pattern 1: Grant specific capabilities (recommended)**
 
 ```python
 # Child only gets what you explicitly grant
 builder = parent.attenuate()
-builder.with_capability("read_file", {"path": Exact("/data/report.txt")})
-builder.with_holder(worker_kp.public_key)
+builder.capability("read_file", {"path": Exact("/data/report.txt")})
+builder.holder(worker_kp.public_key)
 child = builder.delegate(kp)
 # child.tools == ["read_file"] (only!)
 ```
@@ -391,8 +391,8 @@ child = builder.delegate(kp)
 # Start with all parent capabilities, then narrow
 builder = parent.attenuate()
 builder.inherit_all()                    # Explicit opt-in
-builder.with_tools(["read_file"])        # Keep only this tool
-builder.with_holder(worker_kp.public_key)
+builder.tools(["read_file"])             # Keep only this tool
+builder.holder(worker_kp.public_key)
 child = builder.delegate(kp)
 ```
 
@@ -421,10 +421,10 @@ issuer_warrant = Warrant.issue_issuer(
 )
 
 builder = issuer_warrant.issue_execution()
-builder.with_tool("read_file")
-builder.with_holder(worker_kp.public_key)
-builder.with_ttl(300)
-exec_warrant = builder.delegate(issuer_kp)
+builder.tool("read_file")
+builder.holder(worker_kp.public_key)
+builder.ttl(300)
+exec_warrant = builder.build(issuer_kp)
 ```
 
 #### Terminal Warrants
@@ -436,7 +436,7 @@ A warrant is **terminal** when it cannot delegate further (`depth >= max_depth`)
 builder = parent.attenuate()
 builder.inherit_all()     # POLA: inherit parent capabilities
 builder.terminal()        # Mark as terminal
-builder.with_holder(worker_kp.public_key)
+builder.holder(worker_kp.public_key)
 terminal = builder.delegate(kp)
 
 assert terminal.is_terminal()  # True
@@ -453,17 +453,33 @@ Builder for issuing execution warrants from issuer warrants.
 builder = issuer_warrant.issue_execution()
 ```
 
-#### Methods
+#### Setter Methods (Chainable)
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `with_tool(tool)` | `IssuanceBuilder` | Set single tool |
-| `with_tools(tools)` | `IssuanceBuilder` | Set multiple tools |
-| `with_holder(public_key)` | `IssuanceBuilder` | Set authorized holder |
-| `with_constraint(field, constraint)` | `IssuanceBuilder` | Add constraint |
-| `with_ttl(seconds)` | `IssuanceBuilder` | Set TTL (required) |
-| `with_trust_level(level)` | `IssuanceBuilder` | Set trust level |
-| `build(keypair, issuer_keypair)` | `Warrant` | Build and sign the warrant |
+| `tool(name)` | `IssuanceBuilder` | Add single tool |
+| `tools(names)` | `IssuanceBuilder` | Add multiple tools |
+| `capability(tool, constraints)` | `IssuanceBuilder` | Add tool with constraints |
+| `holder(public_key)` | `IssuanceBuilder` | Set authorized holder |
+| `ttl(seconds)` | `IssuanceBuilder` | Set TTL (required) |
+| `trust_level(level)` | `IssuanceBuilder` | Set trust level |
+| `intent(intent)` | `IssuanceBuilder` | Set intent/purpose |
+| `max_depth(depth)` | `IssuanceBuilder` | Set max delegation depth |
+| `terminal()` | `IssuanceBuilder` | Make warrant non-delegatable |
+| `build(keypair)` | `Warrant` | Build and sign the warrant |
+
+#### Getter Methods (Dual-Purpose)
+
+All setter methods are dual-purpose - call without arguments to get current value:
+
+```python
+builder.holder()       # Returns configured holder or None
+builder.ttl()          # Returns configured TTL or None
+builder.trust_level()  # Returns configured trust level or None
+builder.intent()       # Returns configured intent or None
+```
+
+Note: `with_*` methods are available as aliases for backward compatibility.
 
 ---
 
@@ -477,38 +493,45 @@ builder = warrant.attenuate()
 
 #### Methods
 
+All setter methods are **dual-purpose**: call with argument to set (returns self for chaining), call without to get current value.
+
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `inherit_all()` | `AttenuationBuilder` | **POLA opt-in**: Inherit all capabilities from parent |
-| `with_capability(tool, constraints)` | `AttenuationBuilder` | Grant specific capability with constraints |
-| `with_tool(tool)` | `AttenuationBuilder` | After `inherit_all()`, narrow to single tool |
-| `with_tools(tools)` | `AttenuationBuilder` | After `inherit_all()`, narrow to subset of tools |
-| `with_issuable_tool(tool)` | `AttenuationBuilder` | Narrow issuable tools (issuer warrants) |
-| `with_issuable_tools(tools)` | `AttenuationBuilder` | Narrow issuable tools (issuer warrants) |
-| `with_constraint(field, constraint)` | `AttenuationBuilder` | Add/tighten constraint (legacy) |
-| `with_holder(public_key)` | `AttenuationBuilder` | Set new holder |
-| `with_ttl(seconds)` | `AttenuationBuilder` | Set shorter TTL |
+| `capability(tool, constraints)` | `AttenuationBuilder` | Grant specific capability with constraints |
+| `tool(name)` | `AttenuationBuilder` | After `inherit_all()`, narrow to single tool |
+| `tools(names)` | `AttenuationBuilder` | After `inherit_all()`, narrow to subset of tools |
+| `issuable_tool(name)` | `AttenuationBuilder` | Narrow issuable tools (issuer warrants) |
+| `issuable_tools(names)` | `AttenuationBuilder` | Narrow issuable tools (issuer warrants) |
+| `holder(pk)` / `holder()` | `AttenuationBuilder` / `PublicKey` | Set/get holder |
+| `ttl(seconds)` / `ttl()` | `AttenuationBuilder` / `int` | Set/get TTL |
+| `trust_level(level)` / `trust_level()` | `AttenuationBuilder` / `TrustLevel` | Set/get trust level |
+| `intent(text)` / `intent()` | `AttenuationBuilder` / `str` | Set/get intent |
 | `terminal()` | `AttenuationBuilder` | Make warrant terminal (no further delegation) |
 | `diff()` | `str` | Preview changes (human-readable) |
 | `delegate(signing_key)` | `Warrant` | Issue child with receipt |
 
-> ⚠️ **POLA**: The builder starts with NO capabilities. Use `with_capability()` to grant specific tools, or `inherit_all()` to explicitly inherit all parent capabilities.
+> ⚠️ **POLA**: The builder starts with NO capabilities. Use `capability()` to grant specific tools, or `inherit_all()` to explicitly inherit all parent capabilities.
 
 #### Examples
 
 ```python
 # Pattern 1: Grant specific capability (POLA default)
 child = (parent.attenuate()
-    .with_capability("read_file", {"path": Exact("/data/q3.pdf")})
-    .with_holder(worker_kp.public_key)
+    .capability("read_file", {"path": Exact("/data/q3.pdf")})
+    .holder(worker_kp.public_key)
     .delegate(parent_kp))
 
 # Pattern 2: Inherit all, then narrow
 child = (parent.attenuate()
     .inherit_all()                    # Explicit opt-in
-    .with_tools(["read_file"])        # Keep only this tool
-    .with_holder(worker_kp.public_key)
+    .tools(["read_file"])             # Keep only this tool
+    .holder(worker_kp.public_key)
     .delegate(parent_kp))
+
+# Reading builder state
+assert builder.holder() == worker_kp.public_key
+assert builder.ttl() == 300
 ```
 
 ---
@@ -543,6 +566,38 @@ Authorizer(
 | `check(warrant, tool, args, signature=None)` | `None` | Verify + authorize in one call |
 | `verify_chain(chain)` | `ChainVerificationResult` | Verify complete delegation chain |
 | `check_chain(chain, tool, args, signature=None)` | `ChainVerificationResult` | Verify chain + authorize |
+
+#### Tool Trust Requirements
+
+The Authorizer can enforce minimum trust levels per tool as defense in depth:
+
+```python
+from tenuo import Authorizer, TrustLevel
+
+authorizer = Authorizer(trusted_roots=[root_key])
+
+# Require specific trust levels for tools
+authorizer.require_trust("*", TrustLevel.External)        # Default baseline
+authorizer.require_trust("delete_*", TrustLevel.Privileged)  # Prefix pattern
+authorizer.require_trust("admin_reset", TrustLevel.System)   # Exact match
+
+# Check what's required for a tool
+print(authorizer.get_required_trust("delete_file"))  # TrustLevel.Privileged
+```
+
+**Pattern types:**
+- `"exact_name"` - Exact tool name match
+- `"prefix_*"` - Prefix pattern (e.g., `admin_*` matches `admin_users`, `admin_config`)
+- `"*"` - Default for all tools (recommended for defense in depth)
+
+**Lookup precedence:** Exact match → Glob pattern → Default `*` → No requirement (check skipped)
+
+**Security note:** If no trust requirement is configured for a tool, the check is skipped. Configure a default `"*"` pattern for defense in depth.
+
+| Method | Description |
+|--------|-------------|
+| `require_trust(pattern, level)` | Set minimum trust for tool pattern |
+| `get_required_trust(tool)` | Get required trust level (or None) |
 
 ---
 
@@ -1188,7 +1243,7 @@ audit_logger.log_authorization_success(
 
 ## See Also
 
-- [CLI Reference](./cli) — Command-line interface
+- [AI Agent Patterns](./ai-agents) — P-LLM/Q-LLM, prompt injection defense
 - [Constraints Guide](./constraints) — Detailed constraint usage
 - [Security](./security) — Threat model and protections
 - [Examples](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples) — Python usage examples

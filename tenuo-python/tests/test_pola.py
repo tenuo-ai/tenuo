@@ -34,7 +34,7 @@ class TestPOLADefaultBehavior:
 
         # Attempt to attenuate without specifying any capabilities
         builder = parent.attenuate_builder()
-        builder.with_holder(worker_kp.public_key)
+        builder.holder(worker_kp.public_key)
 
         # Should fail: "execution warrant must have at least one tool"
         with pytest.raises(ValidationError) as exc_info:
@@ -59,13 +59,13 @@ class TestPOLADefaultBehavior:
         # With inherit_all(), child gets all parent capabilities
         builder = parent.attenuate_builder()
         builder.inherit_all()
-        builder.with_holder(worker_kp.public_key)
+        builder.holder(worker_kp.public_key)
         child = builder.delegate(kp)
 
         assert sorted(child.tools) == ["read_file", "write_file"]
 
     def test_explicit_capability_grants_only_that_tool(self):
-        """with_capability() grants only the specified tool."""
+        """capability() grants only the specified tool."""
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
@@ -81,8 +81,8 @@ class TestPOLADefaultBehavior:
 
         # Only grant read_file
         builder = parent.attenuate_builder()
-        builder.with_capability("read_file", {"path": Exact("/data/report.txt")})
-        builder.with_holder(worker_kp.public_key)
+        builder.capability("read_file", {"path": Exact("/data/report.txt")})
+        builder.holder(worker_kp.public_key)
         child = builder.delegate(kp)
 
         # Child should ONLY have read_file
@@ -95,7 +95,7 @@ class TestPOLAWithInheritAll:
     """Test inherit_all() followed by narrowing."""
 
     def test_inherit_all_then_narrow_tools(self):
-        """inherit_all() + with_tools() narrows to subset."""
+        """inherit_all() + tools() narrows to subset."""
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
@@ -112,14 +112,14 @@ class TestPOLAWithInheritAll:
         # Inherit all, then narrow to just read_file
         builder = parent.attenuate_builder()
         builder.inherit_all()
-        builder.with_tools(["read_file"])
-        builder.with_holder(worker_kp.public_key)
+        builder.tools(["read_file"])
+        builder.holder(worker_kp.public_key)
         child = builder.delegate(kp)
 
         assert child.tools == ["read_file"]
 
     def test_inherit_all_then_narrow_constraints(self):
-        """inherit_all() + with_capability() narrows constraints."""
+        """inherit_all() + capability() narrows constraints."""
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
@@ -132,8 +132,8 @@ class TestPOLAWithInheritAll:
         # Inherit all, then narrow max_rows
         builder = parent.attenuate_builder()
         builder.inherit_all()
-        builder.with_capability("query", {"max_rows": Range.max_value(100)})
-        builder.with_holder(worker_kp.public_key)
+        builder.capability("query", {"max_rows": Range.max_value(100)})
+        builder.holder(worker_kp.public_key)
         child = builder.delegate(kp)
 
         assert child.tools == ["query"]
@@ -214,8 +214,8 @@ class TestPOLASecurityGuarantees:
         # Developer only adds read_file, forgets about delete_file
         # With POLA, this is SAFE - delete_file is NOT granted
         builder = parent.attenuate_builder()
-        builder.with_capability("read_file", {})
-        builder.with_holder(worker_kp.public_key)
+        builder.capability("read_file", {})
+        builder.holder(worker_kp.public_key)
         child = builder.delegate(kp)
 
         assert child.tools == ["read_file"]
@@ -238,7 +238,7 @@ class TestPOLASecurityGuarantees:
         # Explicit inherit_all = deliberate choice to grant all
         builder = parent.attenuate_builder()
         builder.inherit_all()  # Developer explicitly chose this
-        builder.with_holder(worker_kp.public_key)
+        builder.holder(worker_kp.public_key)
         child = builder.delegate(kp)
 
         # Both capabilities granted - this was intentional

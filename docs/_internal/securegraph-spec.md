@@ -68,7 +68,7 @@ Instead of writing this in every node:
 ```python
 async def researcher(state):
     parent = get_warrant()
-    child = parent.attenuate().with_capability("search", {"path": Pattern("/data/*")}).build(keypair)
+    child = parent.attenuate().capability("search", {"path": Pattern("/data/*")}).delegate(keypair)
     with warrant_context(child):
         return await do_research(state)
 ```
@@ -113,8 +113,8 @@ def attenuate_for_node(incoming: Warrant, policy: NodePolicy) -> Warrant:
         )
     
     return incoming.attenuate() \
-        .with_capability(granted_tools[0] if granted_tools else None, policy.constraints) \
-        .build(keypair, keypair)
+        .capability(granted_tools[0] if granted_tools else None, policy.constraints) \
+        .delegate(keypair)
 ```
 
 **Test case for philosophical consistency:**
@@ -1085,15 +1085,15 @@ def _attenuate(
     builder = parent.attenuate()
     
     if granted_tools:
-        builder = builder.with_tools(list(granted_tools))
+        builder = builder.tools(list(granted_tools))
     
     for key, value in policy.constraints.items():
-        builder = builder.with_constraint(key, value)
+        builder = builder.constraint(key, value)
     
     if policy.terminal:
         builder = builder.terminal()
     
-    return builder.build(self._keypair)
+    return builder.delegate(self._keypair)
 ```
 
 ---

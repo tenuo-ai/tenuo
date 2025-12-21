@@ -478,7 +478,7 @@ class ScopedTaskBuilder:
         target_tools = list(child_capabilities.keys())
         
         # Restrict to only the specified tools
-        builder.with_tools(target_tools)
+        builder.tools(target_tools)
         
         # Validate containment and build capabilities
         for tool, child_constraints in child_capabilities.items():
@@ -495,11 +495,11 @@ class ScopedTaskBuilder:
                         )
                 merged_constraints[key] = child_value
 
-            builder.with_capability(tool, merged_constraints)
+            builder.capability(tool, merged_constraints)
         
         # Apply TTL
         if self.ttl:
-            builder.with_ttl(self.ttl)
+            builder.ttl(self.ttl)
         
         # Build child warrant
         try:

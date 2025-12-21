@@ -352,7 +352,25 @@ class AttenuationBuilder:
     - diff() - Human-readable diff preview (from Rust)
     - diff_structured() - Structured diff for programmatic use (from Rust)
     - delegate() - Creates child warrant with attached receipt
+    
+    All setter methods use a dual-purpose pattern:
+    - Called with argument: sets value, returns self for chaining
+    - Called without argument: returns current value (getter)
+    
+    Example:
+        child = (parent.attenuate()
+            .capability("read", {"path": Pattern("/data/*")})
+            .holder(worker_kp.public_key)
+            .ttl(300)
+            .delegate(keypair))
+        
+        # Reading configured values
+        print(builder.holder())   # Returns configured holder or None
+        print(builder.ttl())      # Returns configured TTL or None
     """
+    
+    # Sentinel for detecting "no argument passed"
+    _NOT_SET = object()
     
     def __init__(
         self,
@@ -374,41 +392,83 @@ class AttenuationBuilder:
             from .warrant_ext import _original_attenuate_builder
             self._rust_builder = _original_attenuate_builder(parent)
     
-    @property
     def parent(self) -> Warrant:
         """Get the parent warrant."""
         return self._parent
     
-    @property
-    def ttl_seconds(self) -> Optional[int]:
-        """Get the configured TTL in seconds."""
-        return self._rust_builder.ttl_seconds
+    def ttl(self, seconds: Any = _NOT_SET) -> Union['AttenuationBuilder', Optional[int]]:
+        """Get or set TTL in seconds.
+        
+        Args:
+            seconds: TTL in seconds (omit to get current value)
+            
+        Returns:
+            Self for chaining (if setting), or current TTL (if getting)
+        """
+        if seconds is self._NOT_SET:
+            return self._rust_builder.ttl_seconds
+        self._rust_builder.with_ttl(seconds)
+        return self
     
-    @property
-    def holder(self) -> Optional[PublicKey]:
-        """Get the configured holder."""
-        return self._rust_builder.holder
+    def holder(self, public_key: Any = _NOT_SET) -> Union['AttenuationBuilder', Optional[PublicKey]]:
+        """Get or set the authorized holder.
+        
+        Args:
+            public_key: The holder's public key (omit to get current value)
+            
+        Returns:
+            Self for chaining (if setting), or current holder (if getting)
+        """
+        if public_key is self._NOT_SET:
+            return self._rust_builder.holder
+        self._rust_builder.with_holder(public_key)
+        return self
     
-    @property
-    def trust_level(self) -> Optional[TrustLevel]:
-        """Get the configured trust level."""
-        return self._rust_builder.trust_level
+    def trust_level(self, level: Any = _NOT_SET) -> Union['AttenuationBuilder', Optional[TrustLevel]]:
+        """Get or set trust level.
+        
+        Args:
+            level: TrustLevel value (omit to get current value)
+            
+        Returns:
+            Self for chaining (if setting), or current trust level (if getting)
+        """
+        if level is self._NOT_SET:
+            return self._rust_builder.trust_level
+        self._rust_builder.with_trust_level(level)
+        return self
     
-    @property
-    def intent(self) -> Optional[str]:
-        """Get the configured intent."""
-        return self._rust_builder.intent
+    def intent(self, text: Any = _NOT_SET) -> Union['AttenuationBuilder', Optional[str]]:
+        """Get or set human-readable intent for this delegation.
+        
+        Args:
+            text: Intent description (omit to get current value)
+            
+        Returns:
+            Self for chaining (if setting), or current intent (if getting)
+        """
+        if text is self._NOT_SET:
+            return self._rust_builder.intent
+        self._rust_builder.with_intent(text)
+        return self
     
     @property
     def capabilities(self) -> Dict[str, Dict[str, Any]]:
-        """Get the configured capabilities as a dict."""
+        """Get the configured capabilities as a dict (read-only)."""
         return self._rust_builder.capabilities
     
-    def with_capability(self, tool: str, constraints: Dict[str, Any]) -> 'AttenuationBuilder':
+    def capability(self, tool: str, constraints: Dict[str, Any]) -> 'AttenuationBuilder':
         """Add a capability (tool + constraints).
         
         **POLA**: You must explicitly add each capability you want. Only tools
         specified via this method will be in the child warrant.
+        
+        Args:
+            tool: Tool name
+            constraints: Dict of field -> constraint mappings
+            
+        Returns:
+            Self for chaining
         """
         self._rust_builder.with_capability(tool, constraints)
         return self
@@ -426,33 +486,13 @@ class AttenuationBuilder:
             # Keep all parent capabilities but reduce TTL
             child = (parent.attenuate()
                 .inherit_all()
-                .with_ttl(300)
+                .ttl(300)
                 .delegate(kp))
         """
         self._rust_builder.inherit_all()
         return self
-    
-    def with_ttl(self, seconds: int) -> 'AttenuationBuilder':
-        """Set TTL in seconds."""
-        self._rust_builder.with_ttl(seconds)
-        return self
-    
-    def with_holder(self, public_key: PublicKey) -> 'AttenuationBuilder':
-        """Set the authorized holder."""
-        self._rust_builder.with_holder(public_key)
-        return self
-    
-    def with_trust_level(self, level: TrustLevel) -> 'AttenuationBuilder':
-        """Set trust level."""
-        self._rust_builder.with_trust_level(level)
-        return self
-    
-    def with_intent(self, intent: str) -> 'AttenuationBuilder':
-        """Set human-readable intent for this delegation."""
-        self._rust_builder.with_intent(intent)
-        return self
 
-    def with_tool(self, tool: str) -> 'AttenuationBuilder':
+    def tool(self, name: str) -> 'AttenuationBuilder':
         """Narrow to a single tool (for execution warrants).
         
         The specified tool must be in the parent warrant's tools.
@@ -461,22 +501,22 @@ class AttenuationBuilder:
         For ISSUER warrants (narrowing issuable_tools), this also works.
         
         Args:
-            tool: The tool name to keep
+            name: The tool name to keep
             
         Returns:
             Self for method chaining
             
         Example:
             # Parent has ["read_file", "send_email", "query_db"]
-            child = parent.attenuate_builder()
-                .with_tool("read_file")  # Narrow to just read_file
-                .with_holder(worker_key)
-                .delegate(kp)
+            child = (parent.attenuate()
+                .tool("read_file")  # Narrow to just read_file
+                .holder(worker_key)
+                .delegate(kp))
         """
-        self._rust_builder.with_tool(tool)
+        self._rust_builder.with_tool(name)
         return self
 
-    def with_tools(self, tools: List[str]) -> 'AttenuationBuilder':
+    def tools(self, names: List[str]) -> 'AttenuationBuilder':
         """Narrow to a subset of tools (for execution warrants).
         
         The specified tools must all be in the parent warrant's tools.
@@ -485,39 +525,83 @@ class AttenuationBuilder:
         For ISSUER warrants (narrowing issuable_tools), this also works.
         
         Args:
-            tools: List of tool names to keep
+            names: List of tool names to keep
             
         Returns:
             Self for method chaining
         """
-        self._rust_builder.with_tools(tools)
+        self._rust_builder.with_tools(names)
         return self
 
-    def with_issuable_tool(self, tool: str) -> 'AttenuationBuilder':
+    def issuable_tool(self, name: str) -> 'AttenuationBuilder':
         """Set a single issuable tool (for ISSUER warrants only).
         
-        For EXECUTION warrants, use with_tool() instead.
+        For EXECUTION warrants, use tool() instead.
         """
-        self._rust_builder.with_issuable_tool(tool)
+        self._rust_builder.with_issuable_tool(name)
         return self
 
-    def with_issuable_tools(self, tools: List[str]) -> 'AttenuationBuilder':
+    def issuable_tools(self, names: List[str]) -> 'AttenuationBuilder':
         """Set issuable tools (for ISSUER warrants only).
         
-        For EXECUTION warrants, use with_tools() instead.
+        For EXECUTION warrants, use tools() instead.
         """
-        self._rust_builder.with_issuable_tools(tools)
+        self._rust_builder.with_issuable_tools(names)
         return self
 
-    def drop_tools(self, tools: List[str]) -> 'AttenuationBuilder':
+    def drop_tools(self, names: List[str]) -> 'AttenuationBuilder':
         """Drop tools from issuable_tools (for issuer warrants only)."""
-        self._rust_builder.drop_tools(tools)
+        self._rust_builder.drop_tools(names)
         return self
 
     def terminal(self) -> 'AttenuationBuilder':
         """Make this warrant terminal (cannot be delegated further)."""
         self._rust_builder.terminal()
         return self
+    
+    # =========================================================================
+    # Aliases for backward compatibility (deprecated, will be removed)
+    # =========================================================================
+    
+    def with_capability(self, tool: str, constraints: Dict[str, Any]) -> 'AttenuationBuilder':
+        """Alias for capability() - deprecated, use capability() instead."""
+        return self.capability(tool, constraints)
+    
+    def with_ttl(self, seconds: int) -> 'AttenuationBuilder':
+        """Alias for ttl() - deprecated, use ttl() instead."""
+        return self.ttl(seconds)  # type: ignore[return-value]
+    
+    def with_holder(self, public_key: PublicKey) -> 'AttenuationBuilder':
+        """Alias for holder() - deprecated, use holder() instead."""
+        return self.holder(public_key)  # type: ignore[return-value]
+    
+    def with_trust_level(self, level: TrustLevel) -> 'AttenuationBuilder':
+        """Alias for trust_level() - deprecated, use trust_level() instead."""
+        return self.trust_level(level)  # type: ignore[return-value]
+    
+    def with_intent(self, text: str) -> 'AttenuationBuilder':
+        """Alias for intent() - deprecated, use intent() instead."""
+        return self.intent(text)  # type: ignore[return-value]
+    
+    def with_tool(self, name: str) -> 'AttenuationBuilder':
+        """Alias for tool() - deprecated, use tool() instead."""
+        return self.tool(name)
+    
+    def with_tools(self, names: List[str]) -> 'AttenuationBuilder':
+        """Alias for tools() - deprecated, use tools() instead."""
+        return self.tools(names)
+    
+    def with_issuable_tool(self, name: str) -> 'AttenuationBuilder':
+        """Alias for issuable_tool() - deprecated."""
+        return self.issuable_tool(name)
+    
+    def with_issuable_tools(self, names: List[str]) -> 'AttenuationBuilder':
+        """Alias for issuable_tools() - deprecated."""
+        return self.issuable_tools(names)
+    
+    # =========================================================================
+    # Diff and build methods
+    # =========================================================================
     
     def diff(self) -> str:
         """Get human-readable diff preview.
@@ -581,6 +665,15 @@ class AttenuationBuilder:
         _delegation_receipts[child.id] = receipt
         
         return child, receipt
+    
+    # =========================================================================
+    # Legacy property aliases (for backward compatibility with tests)
+    # =========================================================================
+    
+    @property
+    def ttl_seconds(self) -> Optional[int]:
+        """Deprecated: Use ttl() instead."""
+        return self.ttl()  # type: ignore[return-value]
 
 
 def wrap_rust_builder(rust_builder: RustAttenuationBuilder) -> AttenuationBuilder:
@@ -590,3 +683,277 @@ def wrap_rust_builder(rust_builder: RustAttenuationBuilder) -> AttenuationBuilde
     """
     parent = rust_builder.parent
     return AttenuationBuilder(parent, _rust_builder=rust_builder)
+
+
+class IssuanceBuilder:
+    """Builder for issuing execution warrants from issuer warrants.
+    
+    This wraps the Rust IssuanceBuilder and provides dual-purpose methods:
+    - Called with argument: sets value, returns self for chaining
+    - Called without argument: returns current value (getter)
+    
+    Example:
+        exec_warrant = (issuer_warrant.issue_execution()
+            .tool("read_file")
+            .capability("read_file", {"path": Pattern("/data/*")})
+            .holder(worker_kp.public_key)
+            .ttl(300)
+            .build(issuer_kp))
+        
+        # Reading configured values
+        print(builder.holder())   # Returns configured holder or None
+        print(builder.ttl())      # Returns configured TTL or None
+    """
+    
+    # Sentinel for detecting "no argument passed"
+    _NOT_SET = object()
+    
+    def __init__(self, rust_builder):
+        """Initialize builder with Rust IssuanceBuilder.
+        
+        Args:
+            rust_builder: The Rust IssuanceBuilder from issue_execution()
+        """
+        self._rust_builder = rust_builder
+    
+    @property
+    def issuer(self) -> Warrant:
+        """Get the issuer warrant."""
+        return self._rust_builder.issuer
+    
+    def ttl(self, seconds: Any = _NOT_SET) -> Union['IssuanceBuilder', Optional[int]]:
+        """Get or set TTL in seconds.
+        
+        Args:
+            seconds: TTL in seconds (omit to get current value)
+            
+        Returns:
+            Self for chaining (if setting), or current TTL (if getting)
+        """
+        if seconds is self._NOT_SET:
+            return self._rust_builder.ttl_seconds
+        self._rust_builder.with_ttl(seconds)
+        return self
+    
+    def holder(self, public_key: Any = _NOT_SET) -> Union['IssuanceBuilder', Optional[PublicKey]]:
+        """Get or set the authorized holder.
+        
+        Args:
+            public_key: The holder's public key (omit to get current value)
+            
+        Returns:
+            Self for chaining (if setting), or current holder (if getting)
+        """
+        if public_key is self._NOT_SET:
+            return self._rust_builder.holder
+        self._rust_builder.with_holder(public_key)
+        return self
+    
+    def trust_level(self, level: Any = _NOT_SET) -> Union['IssuanceBuilder', Optional[TrustLevel]]:
+        """Get or set trust level.
+        
+        Args:
+            level: Trust level (omit to get current value)
+            
+        Returns:
+            Self for chaining (if setting), or current trust level (if getting)
+        """
+        if level is self._NOT_SET:
+            return self._rust_builder.trust_level
+        self._rust_builder.with_trust_level(level)
+        return self
+    
+    def intent(self, value: Any = _NOT_SET) -> Union['IssuanceBuilder', Optional[str]]:
+        """Get or set intent/purpose.
+        
+        Args:
+            value: Intent string (omit to get current value)
+            
+        Returns:
+            Self for chaining (if setting), or current intent (if getting)
+        """
+        if value is self._NOT_SET:
+            return self._rust_builder.intent
+        self._rust_builder.with_intent(value)
+        return self
+    
+    def tool(self, name: str) -> 'IssuanceBuilder':
+        """Add a single tool with empty constraints.
+        
+        Args:
+            name: Tool name to add
+            
+        Returns:
+            Self for chaining
+        """
+        self._rust_builder.with_tool(name)
+        return self
+    
+    def tools(self, names: List[str]) -> 'IssuanceBuilder':
+        """Get configured tools or set multiple tools.
+        
+        When called without arguments, returns list of configured tools.
+        When called with names, adds all specified tools.
+        
+        Args:
+            names: List of tool names to add
+            
+        Returns:
+            Self for chaining (if setting), or list of tools (if getting)
+        """
+        for name in names:
+            self._rust_builder.with_tool(name)
+        return self
+    
+    @property 
+    def configured_tools(self) -> Optional[List[str]]:
+        """Get configured tools list."""
+        return self._rust_builder.tools
+    
+    def capability(self, tool: str, constraints: Dict[str, Any]) -> 'IssuanceBuilder':
+        """Add a capability (tool + constraints).
+        
+        Args:
+            tool: Tool name
+            constraints: Dict of field->constraint mappings
+            
+        Returns:
+            Self for chaining
+        """
+        self._rust_builder.with_capability(tool, constraints)
+        return self
+    
+    def max_depth(self, depth: int) -> 'IssuanceBuilder':
+        """Set maximum delegation depth.
+        
+        Args:
+            depth: Maximum delegation depth
+            
+        Returns:
+            Self for chaining
+        """
+        self._rust_builder.with_max_depth(depth)
+        return self
+    
+    def session_id(self, value: str) -> 'IssuanceBuilder':
+        """Set session ID.
+        
+        Args:
+            value: Session ID string
+            
+        Returns:
+            Self for chaining
+        """
+        self._rust_builder.with_session_id(value)
+        return self
+    
+    def agent_id(self, value: str) -> 'IssuanceBuilder':
+        """Set agent ID.
+        
+        Args:
+            value: Agent ID string
+            
+        Returns:
+            Self for chaining
+        """
+        self._rust_builder.with_agent_id(value)
+        return self
+    
+    def required_approvers(self, approvers: List[PublicKey]) -> 'IssuanceBuilder':
+        """Set required approvers.
+        
+        Args:
+            approvers: List of approver public keys
+            
+        Returns:
+            Self for chaining
+        """
+        self._rust_builder.with_required_approvers(approvers)
+        return self
+    
+    def min_approvals(self, count: int) -> 'IssuanceBuilder':
+        """Set minimum approvals required.
+        
+        Args:
+            count: Minimum number of approvals
+            
+        Returns:
+            Self for chaining
+        """
+        self._rust_builder.with_min_approvals(count)
+        return self
+    
+    def terminal(self) -> 'IssuanceBuilder':
+        """Make warrant terminal (cannot delegate further).
+        
+        Returns:
+            Self for chaining
+        """
+        self._rust_builder.terminal()
+        return self
+    
+    def build(self, signing_key: SigningKey) -> Warrant:
+        """Build and sign the execution warrant.
+        
+        The signing key must belong to the holder of the issuer warrant.
+        
+        Args:
+            signing_key: The keypair of the issuer warrant's holder
+            
+        Returns:
+            The newly created execution warrant
+        """
+        return self._rust_builder.build(signing_key)
+    
+    def issue(self, signing_key: SigningKey) -> Warrant:
+        """Issue the execution warrant (alias for build).
+        
+        Semantically preferred name when issuing execution warrants from an issuer warrant.
+        
+        Args:
+            signing_key: The keypair of the issuer warrant's holder
+            
+        Returns:
+            The newly created execution warrant
+        """
+        return self.build(signing_key)
+    
+    # =========================================================================
+    # Legacy aliases (for backward compatibility)
+    # =========================================================================
+    
+    def with_tool(self, name: str) -> 'IssuanceBuilder':
+        """Alias for tool()."""
+        return self.tool(name)
+    
+    def with_capability(self, tool: str, constraints: Dict[str, Any]) -> 'IssuanceBuilder':
+        """Alias for capability()."""
+        return self.capability(tool, constraints)
+    
+    def with_ttl(self, seconds: int) -> 'IssuanceBuilder':
+        """Alias for ttl()."""
+        return self.ttl(seconds)  # type: ignore[return-value]
+    
+    def with_holder(self, public_key: PublicKey) -> 'IssuanceBuilder':
+        """Alias for holder()."""
+        return self.holder(public_key)  # type: ignore[return-value]
+    
+    def with_trust_level(self, level: TrustLevel) -> 'IssuanceBuilder':
+        """Alias for trust_level()."""
+        return self.trust_level(level)  # type: ignore[return-value]
+    
+    def with_intent(self, value: str) -> 'IssuanceBuilder':
+        """Alias for intent()."""
+        return self.intent(value)  # type: ignore[return-value]
+    
+    def with_max_depth(self, depth: int) -> 'IssuanceBuilder':
+        """Alias for max_depth()."""
+        return self.max_depth(depth)
+
+
+def wrap_rust_issuance_builder(rust_builder) -> IssuanceBuilder:
+    """Wrap a Rust IssuanceBuilder in Python IssuanceBuilder.
+    
+    This is used when getting a builder from Warrant.issue_execution().
+    """
+    return IssuanceBuilder(rust_builder)
