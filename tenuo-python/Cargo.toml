@@ -1,6 +1,6 @@
 [package]
 name = "tenuo-python"
-version = "0.1.0-alpha.5"
+version = "0.1.0-alpha.6"
 edition = "2021"
 authors = ["Tenuo Contributors"]
 description = "Capability tokens for AI agents - Python SDK"

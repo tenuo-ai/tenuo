@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-alpha.6] - 2025-12-19
+
+### Added
+
+- **Tool Trust Requirements**: Gateway-level policy overlay for defense in depth
+  ```python
+  authorizer = Authorizer(trusted_roots=[root_key])
+  authorizer.require_trust("admin_*", TrustLevel.System)
+  authorizer.require_trust("delete_*", TrustLevel.Privileged)
+  authorizer.require_trust("*", TrustLevel.External)  # Default
+  ```
+  - `require_trust(pattern, level)` on `Authorizer` and `DataPlane`
+  - `get_required_trust(tool)` to check requirements
+  - Pattern validation (rejects invalid patterns like `**`, `*admin*`)
+  - Exact match → Glob pattern → Default `*` precedence
+
+- **Trust Level Monotonicity**: Execution→Execution attenuation now enforces that child `trust_level` cannot exceed parent's trust level (cryptographically enforced)
+
+- **InsufficientTrustLevel Error**: New error variant when warrant's trust level is below tool's required level
+
+- `trust_levels_demo.py` - Comprehensive example showing trust level enforcement
+
+### Changed
+
+- `ai-agents.md` - Simplified with honest trust level framing, added CaMeL paper reference
+- `Warrant` now exposes `trust_level` setter on `AttenuationBuilder`
+- Cross-linked documentation (ai-agents, quickstart, constraints, security)
+
+### Documentation
+
+- Added "Offline Verification" to security guarantees
+- Clarified trust levels are an optional safety net, not a security boundary
+- Added CaMeL framework reference (Google DeepMind)
+
+---
+
 ## [0.1.0-alpha.5] - 2025-12-20
 
 ### ⚠️ Breaking Changes
