@@ -25,7 +25,7 @@ class TestErrorMapping:
         
         with pytest.raises(PatternExpanded) as excinfo:
             builder = parent.attenuate_builder()
-            builder.with_capability("search", {"query": Pattern("*")})
+            builder.capability("search", {"query": Pattern("*")})
             builder.delegate(keypair)
         
         assert excinfo.value.details["parent_pattern"] == "allowed*"
@@ -41,7 +41,7 @@ class TestErrorMapping:
         
         with pytest.raises(RangeExpanded) as excinfo:
             builder = parent.attenuate_builder()
-            builder.with_capability("calc", {"val": Range(min=-10, max=100)})
+            builder.capability("calc", {"val": Range(min=-10, max=100)})
             builder.delegate(keypair)
             
         # Details might vary slightly depending on float representation
@@ -89,7 +89,7 @@ class TestErrorMapping:
         # Delegate with correct key (parent's holder)
         builder = parent.attenuate_builder()
         builder.inherit_all()
-        builder.with_holder(child_keypair.public_key)
+        builder.holder(child_keypair.public_key)
         child = builder.delegate(keypair)  # Correct: keypair is parent's holder
         
         # Verify delegation semantics: child.issuer == parent.authorized_holder

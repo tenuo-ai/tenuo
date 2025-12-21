@@ -334,5 +334,6 @@ For automatic attenuation in multi-agent graphs, see [LangGraph Integration](./l
 - [Argument Extraction](./argument-extraction) - How extraction works and security considerations
 - [Python API Reference](./api-reference) - Full `@lockdown` documentation
 - [CLI Reference](./cli) - Command-line tools
+- [AI Agent Patterns](./ai-agents) - P-LLM/Q-LLM, security patterns
 - [LangGraph Integration](./langgraph) - Multi-agent graph scoping
 - [Protocol](./protocol) - Cryptographic protocol details

@@ -303,5 +303,6 @@ For production use, the configuration is compiled into optimized data structures
 
 - [Proxy Configurations](./proxy-configs.md) — Envoy, Istio, nginx integration
 - [Kubernetes Integration](./kubernetes.md) — Deployment patterns
-- [CLI Reference](./cli.md) — Command-line usage
+- [CLI Reference](./cli) — Command-line usage
+- [AI Agent Patterns](./ai-agents) — P-LLM/Q-LLM, security patterns
 - [Protocol](./protocol.md) — Warrant format and verification

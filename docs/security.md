@@ -26,8 +26,8 @@ Warrants are **bound to keypairs**. To use a warrant, you must prove you hold th
 ```python
 # Attenuate with explicit capability (POLA)
 warrant = (root_warrant.attenuate()
-    .with_capability("protected_tool", {"path": Pattern("/data/*")})
-    .with_holder(worker_keypair.public_key)
+    .capability("protected_tool", {"path": Pattern("/data/*")})
+    .holder(worker_keypair.public_key)
     .delegate(root_keypair))  # Root keypair signs (they hold the parent warrant)
 
 with set_warrant_context(warrant), set_signing_key_context(worker_keypair):
@@ -93,12 +93,12 @@ parent = (Warrant.builder()
 
 # Child can only narrow
 child = (parent.attenuate()
-    .with_capability("read", {"path": Pattern("/data/*")})
+    .capability("read", {"path": Pattern("/data/*")})
     .delegate(keypair))  # Keypair signs (they hold the parent warrant)
 
 # This would FAIL:
 child = (parent.attenuate()
-    .with_capability("execute", {})  # FAILS (parent doesn't have "execute")
+    .capability("execute", {})  # FAILS (parent doesn't have "execute")
     .delegate(keypair))
 ```
 
@@ -468,6 +468,7 @@ def tenuo_strict():
 
 ## See Also
 
+- [AI Agent Patterns](./ai-agents) — P-LLM/Q-LLM, prompt injection defense, multi-agent security
 - [Enforcement Models](./enforcement) — In-process, sidecar, gateway deployment patterns
 - [Argument Extraction](./argument-extraction) — How tool arguments are extracted and validated
 - [Protocol](./protocol) — Full protocol details

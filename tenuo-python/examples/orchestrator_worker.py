@@ -69,16 +69,16 @@ def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: Sig
     
     # Use builder pattern with diff preview
     research_builder = warrant.attenuate_builder()
-    research_builder.with_capability("search", {
+    research_builder.capability("search", {
         "query": Pattern("*competitor*"),
         "max_results": Range.max_value(5)
     })
-    research_builder.with_capability("fetch", {
+    research_builder.capability("fetch", {
         "url": Pattern("https://public.*")
     })
-    research_builder.with_ttl(60)  # Short-lived
-    research_builder.with_holder(worker_keypair.public_key)
-    research_builder.with_intent("Research Q3 competitors")
+    research_builder.ttl(60)  # Short-lived
+    research_builder.holder(worker_keypair.public_key)
+    research_builder.intent("Research Q3 competitors")
     
     # Optional: Preview diff before delegation
     # print("\nDelegation Diff Preview:")

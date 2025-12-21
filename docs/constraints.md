@@ -370,19 +370,19 @@ Regex(r"^[a-z]+@company\.com$")
 > )
 >
 > # Cannot narrow to different regex (even if provably narrower)
-> child = parent.attenuate().with_capability("query", {
+> child = parent.attenuate().capability("query", {
 >     "env": Regex(r"^staging-.*$")  # FAILS
-> }).build(kp, kp)
+> }).delegate(kp)
 >
 > # Can narrow to Exact value (if it matches parent regex)
-> child = parent.attenuate().with_capability("query", {
+> child = parent.attenuate().capability("query", {
 >     "env": Exact("staging-web")  # OK
-> }).build(kp, kp)
+> }).delegate(kp)
 >
 > # Can keep same regex pattern
-> child = parent.attenuate().with_capability("query", {
+> child = parent.attenuate().capability("query", {
 >     "env": Regex(r"^(staging|dev)-.*$")  # OK
-> }).build(kp, kp)
+> }).delegate(kp)
 > ```
 >
 > **Workaround**: If you need to narrow regex constraints during delegation:
@@ -638,9 +638,9 @@ parent = Warrant.issue(
 )
 
 # Child: Add additional constraint (auto-AND'd)
-child = parent.attenuate().with_capability("spend", {
+child = parent.attenuate().capability("spend", {
     "budget_rule": CEL("currency == 'USD'")
-}).build(kp, kp)
+}).delegate(kp)
 
 # Effective child expression: (budget < 10000) && (currency == 'USD')
 ```
@@ -663,15 +663,15 @@ parent = Warrant.issue(
 )
 
 # REJECTED: Semantically narrower but not syntactically derived
-child = parent.attenuate().with_capability("api_call", {
+child = parent.attenuate().capability("api_call", {
     "network": CEL("net_in_cidr(ip, '10.1.0.0/16')")  # FAILS
-}).build(kp, kp)
+}).delegate(kp)
 # Even though 10.1.0.0/16 is subset of 10.0.0.0/8, this is REJECTED
 
 # ALLOWED: Syntactically derived (AND'd)
-child = parent.attenuate().with_capability("api_call", {
+child = parent.attenuate().capability("api_call", {
     "network": CEL("(net_in_cidr(ip, '10.0.0.0/8')) && net_in_cidr(ip, '10.1.0.0/16')")
-}).build(kp, kp)
+}).delegate(kp)
 # Now it's ALLOWED because it's (parent) && additional_check
 ```
 
@@ -850,10 +850,10 @@ parent = Warrant.issue(
 )
 
 # Child: /data/reports/* (narrower) - OK
-child = parent.attenuate().with_capability("read_file", {"path": Pattern("/data/reports/*")}).build(kp)
+child = parent.attenuate().capability("read_file", {"path": Pattern("/data/reports/*")}).delegate(kp)
 
 # Child: /* (wider) - FAILS
-child = parent.attenuate().with_capability("read_file", {"path": Pattern("/*")}).build(kp)  # MonotonicityViolation
+child = parent.attenuate().capability("read_file", {"path": Pattern("/*")}).delegate(kp)  # MonotonicityViolation
 ```
 
 ### Range Narrowing
@@ -868,10 +868,10 @@ parent = Warrant.issue(
 )
 
 # Child: max 10 (narrower) - OK
-child = parent.attenuate().with_capability("scale", {"replicas": Range.max_value(10)}).build(kp)
+child = parent.attenuate().capability("scale", {"replicas": Range.max_value(10)}).delegate(kp)
 
 # Child: max 20 (wider) - FAILS
-child = parent.attenuate().with_capability("scale", {"replicas": Range.max_value(20)}).build(kp)  # MonotonicityViolation
+child = parent.attenuate().capability("scale", {"replicas": Range.max_value(20)}).delegate(kp)  # MonotonicityViolation
 ```
 
 ### OneOf Narrowing
@@ -886,10 +886,10 @@ parent = Warrant.issue(
 )
 
 # Child: ["a", "b"] (subset) - OK
-child = parent.attenuate().with_capability("action", {"type": OneOf(["a", "b"])}).build(kp)
+child = parent.attenuate().capability("action", {"type": OneOf(["a", "b"])}).delegate(kp)
 
 # Child: ["a", "b", "d"] (adds "d") - FAILS
-child = parent.attenuate().with_capability("action", {"type": OneOf(["a", "b", "d"])}).build(kp)  # MonotonicityViolation
+child = parent.attenuate().capability("action", {"type": OneOf(["a", "b", "d"])}).delegate(kp)  # MonotonicityViolation
 ```
 
 ### Regex Narrowing
@@ -906,13 +906,13 @@ parent = Warrant.issue(
 )
 
 # Cannot narrow to different regex (even if provably narrower) - FAILS
-child = parent.attenuate().with_capability("query", {"env": Regex(r"^staging-.*$")}).build(kp)  # MonotonicityViolation
+child = parent.attenuate().capability("query", {"env": Regex(r"^staging-.*$")}).delegate(kp)  # MonotonicityViolation
 
 # Can keep same pattern - OK
-child = parent.attenuate().with_capability("query", {"env": Regex(r"^(staging|dev)-.*$")}).build(kp)
+child = parent.attenuate().capability("query", {"env": Regex(r"^(staging|dev)-.*$")}).delegate(kp)
 
 # Can narrow to Exact (if it matches parent regex) - OK
-child = parent.attenuate().with_capability("query", {"env": Exact("staging-web")}).build(kp)
+child = parent.attenuate().capability("query", {"env": Exact("staging-web")}).delegate(kp)
 ```
 
 **Why**: Determining if one regex is a subset of another is undecidable in general. Tenuo takes a conservative approach for security.

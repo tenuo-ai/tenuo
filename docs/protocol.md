@@ -223,10 +223,10 @@ Every delegation **must narrow at least one dimension**:
 # POLA: Child starts with NO capabilities, must explicitly grant them
 
 # Explicit capability (recommended)
-parent.attenuate().with_capability("read_file", {}).delegate(parent_kp)
+parent.attenuate().capability("read_file", {}).delegate(parent_kp)
 
 # Or inherit all, then narrow
-parent.attenuate().inherit_all().with_tools(["read_file"]).delegate(parent_kp)
+parent.attenuate().inherit_all().tools(["read_file"]).delegate(parent_kp)
 parent.attenuate().inherit_all().ttl(60).delegate(parent_kp)
 parent.attenuate().inherit_all().terminal().delegate(parent_kp)
 ```

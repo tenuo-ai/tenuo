@@ -122,11 +122,11 @@ worker_keypair = SigningKey.generate()
 
 # POLA: Explicitly specify only the capabilities you want to grant
 worker_warrant = (warrant.attenuate()
-    .with_capability("manage_infrastructure", {
+    .capability("manage_infrastructure", {
         "cluster": Exact("staging-web"),     # Narrowed from staging-*
         "replicas": Range.max_value(10),     # Reduced to 10 replicas
     })
-    .with_holder(worker_keypair.public_key)
+    .holder(worker_keypair.public_key)
     .delegate(keypair))  # Parent signs (they hold the warrant)
 ```
 
@@ -136,8 +136,8 @@ worker_warrant = (warrant.attenuate()
 # Use inherit_all() to start with all parent capabilities
 worker_warrant = (warrant.attenuate()
     .inherit_all()                           # Start with all parent capabilities
-    .with_tools(["manage_infrastructure"])   # Keep only this tool
-    .with_holder(worker_keypair.public_key)
+    .tools(["manage_infrastructure"])        # Keep only this tool
+    .holder(worker_keypair.public_key)
     .delegate(keypair))
 ```
 

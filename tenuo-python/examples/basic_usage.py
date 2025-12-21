@@ -41,11 +41,11 @@ def main():
     print("3. Attenuating warrant for worker...")
     worker_warrant = (
         root_warrant.attenuate()
-        .with_capability("manage_infrastructure", {
+        .capability("manage_infrastructure", {
             "cluster": Exact("staging-web"),
             "replicas": Range.max_value(10)
         })
-        .with_holder(worker_key.public_key)
+        .holder(worker_key.public_key)
         .delegate(control_key)
     )
     print(f"   Worker tools: {worker_warrant.tools}")

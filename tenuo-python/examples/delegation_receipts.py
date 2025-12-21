@@ -71,10 +71,10 @@ def main():
     builder = root_warrant.attenuate_builder()
     
     # Configure child warrant - narrow to specific file
-    builder.with_capability("read_file", {"path": Exact("/data/q3.pdf")})
-    builder.with_ttl(60)  # Reduce TTL to 60 seconds
-    builder.with_holder(worker_kp.public_key)  # Bind to worker
-    builder.with_intent("Read Q3 report for analysis")  # Human-readable intent
+    builder.capability("read_file", {"path": Exact("/data/q3.pdf")})
+    builder.ttl(60)  # Reduce TTL to 60 seconds
+    builder.holder(worker_kp.public_key)  # Bind to worker
+    builder.intent("Read Q3 report for analysis")  # Human-readable intent
     
     # Preview human-readable diff
     print("\nHuman-Readable Diff:")
@@ -174,8 +174,8 @@ def main():
     
     # Create another delegation from child
     builder2 = child_warrant.attenuate_builder()
-    builder2.with_ttl(30)  # Further reduce TTL
-    builder2.with_intent("Final read before expiration")
+    builder2.ttl(30)  # Further reduce TTL
+    builder2.intent("Final read before expiration")
     
     print("\nSecond delegation diff:")
     print(builder2.diff())

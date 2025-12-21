@@ -166,9 +166,9 @@ cs = ConstraintSet()
 cs.insert("path", Exact(file_path))
 
 child = (parent.attenuate()
-    .with_capability("read_file", cs)
+    .capability("read_file", cs)
     .terminal()
-    .with_holder(worker.public_key)
+    .holder(worker.public_key)
     .delegate(parent_keypair))
 ```
 
@@ -185,13 +185,13 @@ cs.insert("path", Pattern("/data/project-*/*.pdf"))
 cs.insert("max_results", Range(max=100))
 
 child = (parent.attenuate()
-    .with_capability("read_file", cs)
-    .with_capability("search", cs)
-    .with_trust_level(TrustLevel.EXTERNAL)
-    .with_ttl(300)
-    .with_intent("Research task for user query")
-    .with_max_depth(1)  # Allow one more delegation
-    .with_holder(worker.public_key)
+    .capability("read_file", cs)
+    .capability("search", cs)
+    .trust_level(TrustLevel.EXTERNAL)
+    .ttl(300)
+    .intent("Research task for user query")
+    .max_depth(1)  # Allow one more delegation
+    .holder(worker.public_key)
     .delegate(parent_keypair))
 
 # Preview before committing
@@ -400,11 +400,11 @@ Most delegations should be terminal (cannot delegate further). This naturally li
 
 ```python
 # Default: terminal
-child = parent.attenuate().tool("read_file").with_holder(worker.public_key).delegate(parent_kp)
+child = parent.attenuate().tool("read_file").holder(worker.public_key).delegate(parent_kp)
 # child.max_depth = 0 (terminal)
 
 # Explicit: allow one more delegation
-child = parent.attenuate().tool("read_file").max_depth(1).with_holder(worker.public_key).delegate(parent_kp)
+child = parent.attenuate().tool("read_file").max_depth(1).holder(worker.public_key).delegate(parent_kp)
 # child.max_depth = 1
 ```
 

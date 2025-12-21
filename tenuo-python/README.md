@@ -37,12 +37,12 @@ warrant = (Warrant.builder()
 
 # Attenuate for a worker (POLA: explicitly specify capabilities)
 worker_keypair = SigningKey.generate()
-worker_warrant = (warrant.attenuate_builder()
-    .with_capability("manage_infrastructure", {
+worker_warrant = (warrant.attenuate()
+    .capability("manage_infrastructure", {
         "cluster": Exact("staging-web"),  # Narrowed from staging-*
         "replicas": Range.max_value(10)   # Reduced from 15
     })
-    .with_holder(worker_keypair.public_key)
+    .holder(worker_keypair.public_key)
     .delegate(keypair))  # keypair signs (they hold the parent warrant)
 
 # Note: As of v0.1.0-alpha.4+, attenuated warrants start with NO capabilities

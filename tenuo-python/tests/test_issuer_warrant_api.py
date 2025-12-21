@@ -93,10 +93,10 @@ class TestIssueExecutionExists:
         
         # Should be a builder with fluent API methods
         assert builder is not None
-        assert hasattr(builder, 'with_tool'), "IssuanceBuilder should have with_tool()"
-        assert hasattr(builder, 'with_tool'), "IssuanceBuilder should have with_tool()"
-        assert hasattr(builder, 'with_capability'), "IssuanceBuilder should have with_capability()"
-        assert hasattr(builder, 'with_holder'), "IssuanceBuilder should have with_holder()"
+        assert hasattr(builder, 'tool'), "IssuanceBuilder should have tool()"
+        assert hasattr(builder, 'capability'), "IssuanceBuilder should have capability()"
+        assert hasattr(builder, 'holder'), "IssuanceBuilder should have holder()"
+        assert hasattr(builder, 'ttl'), "IssuanceBuilder should have ttl()"
         assert hasattr(builder, 'build'), "IssuanceBuilder should have build()"
     
     def test_issue_execution_only_on_issuer_warrants(self):
@@ -128,12 +128,10 @@ class TestIssueExecutionExists:
         
         # Step 2: Issue execution warrant from issuer warrant
         builder = issuer_warrant.issue_execution()
-        builder.with_tool("read_file")
-        builder.with_holder(worker_kp.public_key)
-        builder.with_tool("read_file")
-        builder.with_holder(worker_kp.public_key)
-        builder.with_capability("read_file", {"path": Pattern("/data/*")})
-        builder.with_ttl(300)  # TTL is required
+        builder.tool("read_file")
+        builder.holder(worker_kp.public_key)
+        builder.capability("read_file", {"path": Pattern("/data/*")})
+        builder.ttl(300)  # TTL is required
         
         # Step 3: Build (needs keypair of issuer warrant holder)
         exec_warrant = builder.build(issuer_kp)
@@ -221,7 +219,7 @@ class TestAttenuateBuilderToolSelection:
     
     def test_attenuate_builder_can_narrow_tools(self):
         """
-        AttenuationBuilder.with_tools() CAN narrow tools for execution warrants.
+        AttenuationBuilder.tools() CAN narrow tools for execution warrants.
         This enables "always shrinking authority" for non-terminal warrants.
         """
         kp = SigningKey.generate()
@@ -237,8 +235,8 @@ class TestAttenuateBuilderToolSelection:
         # POLA: inherit_all first, then narrow
         builder = parent.attenuate_builder()
         builder.inherit_all()  # Start with all parent capabilities
-        builder.with_tools(["read_file"])  # Then narrow
-        builder.with_holder(worker_kp.public_key)
+        builder.tools(["read_file"])  # Then narrow
+        builder.holder(worker_kp.public_key)
         child = builder.delegate(kp)
         
         # Child has ONLY the narrowed tools
@@ -248,8 +246,8 @@ class TestAttenuateBuilderToolSelection:
         assert "send_email" not in child.tools
         assert "query_db" not in child.tools
     
-    def test_attenuate_builder_with_tool_single(self):
-        """with_tool() narrows to a single tool."""
+    def test_attenuate_builder_tool_single(self):
+        """tool() narrows to a single tool."""
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
         
@@ -262,8 +260,8 @@ class TestAttenuateBuilderToolSelection:
         # POLA: inherit_all first, then narrow
         builder = parent.attenuate_builder()
         builder.inherit_all()
-        builder.with_tool("send_email")  # Narrow to just send_email
-        builder.with_holder(worker_kp.public_key)
+        builder.tool("send_email")  # Narrow to just send_email
+        builder.holder(worker_kp.public_key)
         child = builder.delegate(kp)
         
         assert child.tools == ["send_email"]
@@ -284,8 +282,8 @@ class TestAttenuateBuilderToolSelection:
         # POLA: inherit_all first, then narrow
         builder = parent.attenuate_builder()
         builder.inherit_all()
-        builder.with_tools(["read_file", "delete_file"])  # delete_file not in parent!
-        builder.with_holder(worker_kp.public_key)
+        builder.tools(["read_file", "delete_file"])  # delete_file not in parent!
+        builder.holder(worker_kp.public_key)
         
         # Should not raise, but silently ignore 'delete_file'
         child = builder.delegate(kp)
@@ -310,9 +308,9 @@ class TestAttenuateBuilderToolSelection:
         
         # Issue execution warrant with ONLY read_file
         builder = issuer_warrant.issue_execution()
-        builder.with_tool("read_file")
-        builder.with_holder(worker_kp.public_key)
-        builder.with_ttl(300)
+        builder.tool("read_file")
+        builder.holder(worker_kp.public_key)
+        builder.ttl(300)
         exec_warrant = builder.build(issuer_kp)
         
         assert exec_warrant.tools == ["read_file"]
@@ -351,7 +349,7 @@ class TestTerminalWarrants:
         builder = parent.attenuate_builder()
         builder.inherit_all()
         builder.terminal()  # Make it terminal
-        builder.with_holder(worker_kp.public_key)
+        builder.holder(worker_kp.public_key)
         child = builder.delegate(kp)
         
         # Child should be terminal
@@ -375,7 +373,7 @@ class TestTerminalWarrants:
         builder = parent.attenuate_builder()
         builder.inherit_all()
         builder.terminal()
-        builder.with_holder(worker_kp.public_key)
+        builder.holder(worker_kp.public_key)
         terminal = builder.delegate(kp)
         
         assert terminal.is_terminal()
@@ -383,7 +381,7 @@ class TestTerminalWarrants:
         # Try to delegate from terminal warrant - should fail
         builder2 = terminal.attenuate_builder()
         builder2.inherit_all()
-        builder2.with_holder(another_kp.public_key)
+        builder2.holder(another_kp.public_key)
         
         with pytest.raises(Exception) as exc_info:
             builder2.delegate(worker_kp)

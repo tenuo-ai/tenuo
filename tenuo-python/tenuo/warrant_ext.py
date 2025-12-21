@@ -160,7 +160,7 @@ def _warrant_delegate(
 
     # Narrow tools if specified
     if tools is not None:
-        builder.with_tools(tools)
+        builder.tools(tools)
 
     # Apply constraints (merge logic)
     # We must fetch current capabilities, apply new constraints to target tools, and set them back.
@@ -182,13 +182,13 @@ def _warrant_delegate(
         # But wait, attenuation cannot ADD tools. The Rust builder will fail validation if we try to add a tool not in parent?
         # Actually OwnedAttenuationBuilder allows adding capabilities, but `build()` checks against parent?
         # OwnedAttenuationBuilder initializes with parent caps.
-        # If we use `builder.with_capability`, we update self.capabilities.
+        # If we use `builder.capability`, we update self.capabilities.
         # If we add a tool that wasn't there, it's effectively "keeping" it? 
         # But if it wasn't in parent, we can't have it.
-        # If it WAS in parent but removed by earlier `with_tools`?
-        builder.with_capability(tool, tool_constraints)
+        # If it WAS in parent but removed by earlier `tools`?
+        builder.capability(tool, tool_constraints)
         
-    builder.with_holder(holder)
+    builder.holder(holder)
     
     # We are the holder of the parent warrant, so we sign both
     return builder.delegate(keypair)
@@ -197,6 +197,26 @@ def _warrant_delegate(
 # Add delegate method to Warrant
 if not hasattr(Warrant, 'delegate'):
     Warrant.delegate = _warrant_delegate
+
+
+# Store the original issue_execution method
+_original_issue_execution = Warrant.issue_execution if hasattr(Warrant, 'issue_execution') else None
+
+
+def _wrapped_issue_execution(self):
+    """Wrap issue_execution() to return Python IssuanceBuilder.
+    
+    Returns:
+        IssuanceBuilder (Python wrapper) with dual-purpose methods
+    """
+    from .builder import wrap_rust_issuance_builder
+    rust_builder = _original_issue_execution(self)
+    return wrap_rust_issuance_builder(rust_builder)
+
+
+# Replace with wrapped version
+if _original_issue_execution is not None:
+    Warrant.issue_execution = _wrapped_issue_execution
 
 
 def get_chain_with_diffs(

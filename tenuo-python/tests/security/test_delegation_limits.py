@@ -40,7 +40,7 @@ class TestDelegationLimits:
             for i in range(MAX_DELEGATION_DEPTH + 10):
                 builder = current.attenuate_builder()
                 builder.inherit_all()  # POLA: explicit inheritance
-                builder.with_holder(keypair.public_key)
+                builder.holder(keypair.public_key)
                 current = builder.delegate(keypair)
                 
             print(f"  [CRITICAL] Attack 9 SUCCEEDED: Created {MAX_DELEGATION_DEPTH + 10} depth chain!")
@@ -107,7 +107,7 @@ class TestDelegationLimits:
             for i in range(test_limit + 5):
                 builder = current.attenuate_builder()
                 builder.inherit_all()  # POLA: explicit inheritance
-                builder.with_holder(keypair.public_key)
+                builder.holder(keypair.public_key)
                 current = builder.delegate(keypair)
                 
             print(f"  [Info] Created chain of depth {test_limit + 5}")

@@ -9,23 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### ⚠️ Breaking Changes
 
-- **Principle of Least Authority (POLA)**: `attenuate()` now creates a child warrant with NO capabilities by default. You must explicitly specify capabilities using `with_capability()` or opt-in to full inheritance with `inherit_all()`.
+- **Principle of Least Authority (POLA)**: `attenuate()` now creates a child warrant with NO capabilities by default. You must explicitly specify capabilities using `capability()` or opt-in to full inheritance with `inherit_all()`.
 
   ```python
   # Before (alpha.3) - implicit inheritance, recipient signed
   child = parent.attenuate().with_ttl(300).delegate_to(child_kp, parent_kp)
 
-  # After (alpha.4) - explicit inheritance, parent holder signs
-  child = parent.attenuate().inherit_all().with_ttl(300).delegate(parent_kp)
+  # After (alpha.5) - explicit inheritance, parent holder signs
+  child = parent.attenuate().inherit_all().ttl(300).delegate(parent_kp)
   
   # Or specify only needed capabilities (recommended)
   child = (parent.attenuate()
-      .with_capability("read_file", {"path": Pattern("/data/*")})
-      .with_holder(worker_kp.public_key)
+      .capability("read_file", {"path": Pattern("/data/*")})
+      .holder(worker_kp.public_key)
       .delegate(parent_kp))  # parent_kp signs (they hold the parent warrant)
   ```
 
 - **Delegation API**: Renamed `delegate_to(child_kp, parent_kp)` to `delegate(parent_kp)` to clarify that the parent's holder signs the child warrant (standard delegation model). This enforces `child.issuer == parent.holder` (Invariant I1).
+
+- **AttenuationBuilder API**: Unified method naming (removed `with_` prefix for consistency with `WarrantBuilder`):
+  - `.with_capability()` → `.capability()`
+  - `.with_holder()` → `.holder()`
+  - `.with_ttl()` → `.ttl()`
+  - `.with_tools()` → `.tools()`
+  - `.with_intent()` → `.intent()`
+  - All methods are dual-purpose: call with arg to set, call without to get current value
+  - Old `with_*` methods kept as aliases for backward compatibility
 
 - **Wire format**: Removed `issuer_chain` field from warrant payload. Chain verification now uses `WarrantStack` (ordered array of warrants) with `parent_hash` linking.
 
@@ -35,12 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `test_pola.py` - comprehensive test suite for POLA behavior
 - `docs/_internal/thi-spec.md` - Tenuo Host Interface specification for stateful extensions
 - Wire format compliance tests
+- Dual-purpose getter/setter methods on `AttenuationBuilder`
 
 ### Changed
 
 - Documentation now prioritizes Simple API (`root_task`, `scoped_task`, `protect_tools`) over low-level API
 - Updated quickstart, README, and landing page with clearer examples
 - Internal wire format aligned with `docs/wire-format-spec.md`
+- `AttenuationBuilder` API unified with `WarrantBuilder` (no `with_` prefix)
 
 ### Security
 
