@@ -999,6 +999,7 @@ async with root_task(Capability("query", table=OneOf(["users", "orders"]))):
 
 ## See Also
 
+- [AI Agent Patterns](./ai-agents) — P-LLM/Q-LLM, prompt injection defense
 - [API Reference](./api-reference) — Full constraint API
 - [Security](./security) — How constraints fit into the security model
 - [LangGraph Integration](./langgraph) — Using constraints with LangGraph

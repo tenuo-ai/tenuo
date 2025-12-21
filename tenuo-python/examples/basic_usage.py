@@ -38,18 +38,22 @@ def main():
     print()
     
     # 3. Attenuate (delegate) the warrant to a worker using builder pattern
-    print("3. Attenuating warrant for worker...")
+    # POLA (Principle of Least Authority): Explicit capabilities only
+    print("3. Attenuating warrant for worker (POLA - explicit capabilities)...")
     worker_warrant = (
         root_warrant.attenuate()
+        # ✓ POLA: Explicitly grant only what's needed
         .capability("manage_infrastructure", {
-            "cluster": Exact("staging-web"),
-            "replicas": Range.max_value(10)
+            "cluster": Exact("staging-web"),     # Narrowed from staging-*
+            "replicas": Range.max_value(10)      # Reduced from 15
         })
         .holder(worker_key.public_key)
         .delegate(control_key)
     )
     print(f"   Worker tools: {worker_warrant.tools}")
     print(f"   Worker depth: {worker_warrant.depth} (attenuated)")
+    print("   ℹ️  POLA: Worker only gets explicitly granted capabilities")
+    print("   ℹ️  No inherit_all() - must specify each capability")
     print()
     
     # 4. Test authorization

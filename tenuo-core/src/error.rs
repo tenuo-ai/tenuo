@@ -190,6 +190,16 @@ pub enum Error {
     #[error("constraint not satisfied: {field} - {reason}")]
     ConstraintNotSatisfied { field: String, reason: String },
 
+    /// Trust level insufficient for the requested tool.
+    #[error(
+        "insufficient trust level: tool '{tool}' requires {required:?}, warrant has {actual:?}"
+    )]
+    InsufficientTrustLevel {
+        tool: String,
+        required: String,
+        actual: String,
+    },
+
     // =========================================================================
     // Constraint Syntax Errors
     // =========================================================================

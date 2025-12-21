@@ -567,6 +567,38 @@ Authorizer(
 | `verify_chain(chain)` | `ChainVerificationResult` | Verify complete delegation chain |
 | `check_chain(chain, tool, args, signature=None)` | `ChainVerificationResult` | Verify chain + authorize |
 
+#### Tool Trust Requirements
+
+The Authorizer can enforce minimum trust levels per tool as defense in depth:
+
+```python
+from tenuo import Authorizer, TrustLevel
+
+authorizer = Authorizer(trusted_roots=[root_key])
+
+# Require specific trust levels for tools
+authorizer.require_trust("*", TrustLevel.External)        # Default baseline
+authorizer.require_trust("delete_*", TrustLevel.Privileged)  # Prefix pattern
+authorizer.require_trust("admin_reset", TrustLevel.System)   # Exact match
+
+# Check what's required for a tool
+print(authorizer.get_required_trust("delete_file"))  # TrustLevel.Privileged
+```
+
+**Pattern types:**
+- `"exact_name"` - Exact tool name match
+- `"prefix_*"` - Prefix pattern (e.g., `admin_*` matches `admin_users`, `admin_config`)
+- `"*"` - Default for all tools (recommended for defense in depth)
+
+**Lookup precedence:** Exact match → Glob pattern → Default `*` → No requirement (check skipped)
+
+**Security note:** If no trust requirement is configured for a tool, the check is skipped. Configure a default `"*"` pattern for defense in depth.
+
+| Method | Description |
+|--------|-------------|
+| `require_trust(pattern, level)` | Set minimum trust for tool pattern |
+| `get_required_trust(tool)` | Get required trust level (or None) |
+
 ---
 
 ## Constraints

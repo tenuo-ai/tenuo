@@ -333,6 +333,7 @@ Tenuo provides a full Model Context Protocol (MCP) client with automatic tool pr
 
 ## Next Steps
 
+- **[AI Agent Patterns](./ai-agents)** — P-LLM/Q-LLM, prompt injection defense
 - **[Concepts](./concepts)** — Why Tenuo? Threat model, core invariants
 - **[Enforcement Models](./enforcement)** — In-process, sidecar, gateway, MCP
 - **[Kubernetes Guide](./kubernetes)** — Production deployment patterns

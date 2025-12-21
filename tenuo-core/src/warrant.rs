@@ -1488,6 +1488,14 @@ impl<'a> AttenuationBuilder<'a> {
         self
     }
 
+    /// Set the trust level (can only decrease from parent).
+    ///
+    /// Trust level monotonicity is enforced at build time.
+    pub fn trust_level(mut self, level: TrustLevel) -> Self {
+        self.trust_level = Some(level);
+        self
+    }
+
     /// Add an extension.
     pub fn extension(mut self, key: impl Into<String>, value: Vec<u8>) -> Self {
         self.extensions.insert(key.into(), value);
@@ -1617,6 +1625,18 @@ impl<'a> AttenuationBuilder<'a> {
                     return Err(Error::Validation(
                         "execution warrant must have at least one tool".to_string(),
                     ));
+                }
+
+                // Trust level monotonicity: child trust_level cannot exceed parent's
+                if let (Some(parent_trust), Some(child_trust)) =
+                    (self.parent.payload.trust_level, self.trust_level)
+                {
+                    if child_trust > parent_trust {
+                        return Err(Error::MonotonicityViolation(format!(
+                            "trust_level cannot increase: parent {:?}, child {:?}",
+                            parent_trust, child_trust
+                        )));
+                    }
                 }
             }
             WarrantType::Issuer => {
@@ -2294,6 +2314,18 @@ impl OwnedAttenuationBuilder {
                     return Err(Error::Validation(
                         "execution warrant must have at least one tool".to_string(),
                     ));
+                }
+
+                // Trust level monotonicity: child trust_level cannot exceed parent's
+                if let (Some(parent_trust), Some(child_trust)) =
+                    (self.parent.payload.trust_level, self.trust_level)
+                {
+                    if child_trust > parent_trust {
+                        return Err(Error::MonotonicityViolation(format!(
+                            "trust_level cannot increase: parent {:?}, child {:?}",
+                            parent_trust, child_trust
+                        )));
+                    }
                 }
             }
             WarrantType::Issuer => {
