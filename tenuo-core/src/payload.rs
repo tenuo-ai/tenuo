@@ -43,7 +43,6 @@ pub struct WarrantPayload {
 
     // Issuer Warrant Fields
     pub issuable_tools: Option<Vec<String>>,
-    pub trust_ceiling: Option<TrustLevel>,
     pub max_issue_depth: Option<u32>,
     pub constraint_bounds: Option<ConstraintSet>,
 
@@ -68,7 +67,7 @@ pub struct WarrantPayload {
 // 9: parent_hash
 // 10: extensions
 // 11: issuable_tools
-// 12: trust_ceiling
+// 12: (removed - was trust_ceiling)
 // 13: max_issue_depth
 // 14: constraint_bounds
 // 15: required_approvers
@@ -105,9 +104,6 @@ impl Serialize for WarrantPayload {
         if self.issuable_tools.is_some() {
             entries += 1;
         }
-        if self.trust_ceiling.is_some() {
-            entries += 1;
-        }
         if self.max_issue_depth.is_some() {
             entries += 1;
         }
@@ -142,9 +138,6 @@ impl Serialize for WarrantPayload {
         }
         if let Some(issuable) = &self.issuable_tools {
             map.serialize_entry(&11u8, issuable)?;
-        }
-        if let Some(ceiling) = &self.trust_ceiling {
-            map.serialize_entry(&12u8, ceiling)?;
         }
         if let Some(max_issue) = &self.max_issue_depth {
             map.serialize_entry(&13u8, max_issue)?;
@@ -198,7 +191,6 @@ impl<'de> Deserialize<'de> for WarrantPayload {
                 let mut parent_hash = None;
                 let mut extensions: BTreeMap<String, Vec<u8>> = BTreeMap::new();
                 let mut issuable_tools = None;
-                let mut trust_ceiling = None;
                 let mut max_issue_depth = None;
                 let mut constraint_bounds = None;
                 let mut required_approvers = None;
@@ -223,7 +215,7 @@ impl<'de> Deserialize<'de> for WarrantPayload {
                         9 => parent_hash = map.next_value()?,
                         10 => extensions = map.next_value()?,
                         11 => issuable_tools = map.next_value()?,
-                        12 => trust_ceiling = map.next_value()?,
+                        // 12 was trust_ceiling, removed in alpha.7
                         13 => max_issue_depth = map.next_value()?,
                         14 => constraint_bounds = map.next_value()?,
                         15 => required_approvers = map.next_value()?,
@@ -280,7 +272,6 @@ impl<'de> Deserialize<'de> for WarrantPayload {
                     parent_hash,
                     extensions,
                     issuable_tools,
-                    trust_ceiling,
                     max_issue_depth,
                     constraint_bounds,
                     trust_level,

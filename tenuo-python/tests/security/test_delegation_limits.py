@@ -95,7 +95,7 @@ class TestDelegationLimits:
         # Test issuer warrant depth limit
         current = Warrant.issue_issuer(
             issuable_tools=["search"],
-            trust_ceiling=TrustLevel.Internal,
+            trust_level=TrustLevel.Internal,
             ttl_seconds=3600,
             keypair=keypair
         )
@@ -149,7 +149,7 @@ class TestDelegationLimits:
         
         issuer = Warrant.issue_issuer(
             issuable_tools=["delete"],
-            trust_ceiling=TrustLevel.Internal,
+            trust_level=TrustLevel.Internal,
             ttl_seconds=3600,
             keypair=keypair
         )

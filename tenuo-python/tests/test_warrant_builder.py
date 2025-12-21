@@ -129,13 +129,13 @@ class TestWarrantBuilderIssuer:
     """Tests for issuer warrant creation."""
     
     def test_basic_issuer_warrant(self):
-        """Basic issuer warrant with issuable_tools and trust_ceiling."""
+        """Basic issuer warrant with issuable_tools."""
         kp = SigningKey.generate()
         
         warrant = (Warrant.builder()
             .issuer()
             .issuable_tools(["read_file", "write_file"])
-            .trust_ceiling(TrustLevel.Internal)
+            .trust_level(TrustLevel.Internal)
             .issue(kp))
         
         # Issuer warrants have different structure
@@ -148,7 +148,7 @@ class TestWarrantBuilderIssuer:
         
         warrant = (Warrant.builder()
             .issuable_tools(["read_file"])  # Implicitly sets issuer mode
-            .trust_ceiling(TrustLevel.Privileged)
+            .trust_level(TrustLevel.Privileged)
             .constraint_bound("path", Pattern("/data/*"))
             .constraint_bound("size", Range(0, 1000000))
             .issue(kp))
@@ -162,7 +162,7 @@ class TestWarrantBuilderIssuer:
         warrant = (Warrant.builder()
             .issuer()
             .issuable_tools(["read_file"])
-            .trust_ceiling(TrustLevel.Internal)
+            .trust_level(TrustLevel.Internal)
             .max_issue_depth(3)
             .issue(kp))
         
@@ -175,17 +175,7 @@ class TestWarrantBuilderIssuer:
         with pytest.raises(ValidationError, match="issuable_tools"):
             (Warrant.builder()
                 .issuer()
-                .trust_ceiling(TrustLevel.Internal)
-                .issue(kp))
-    
-    def test_missing_trust_ceiling_raises(self):
-        """Missing trust_ceiling should raise ValidationError."""
-        kp = SigningKey.generate()
-        
-        with pytest.raises(ValidationError, match="trust_ceiling"):
-            (Warrant.builder()
-                .issuer()
-                .issuable_tools(["read_file"])
+                .trust_level(TrustLevel.Internal)
                 .issue(kp))
 
 
@@ -211,7 +201,7 @@ class TestWarrantBuilderPreview:
         builder = (Warrant.builder()
             .issuer()
             .issuable_tools(["read_file"])
-            .trust_ceiling(TrustLevel.Internal)
+            .trust_level(TrustLevel.Internal)
             .max_issue_depth(5))
         
         preview = builder.preview()
@@ -240,7 +230,6 @@ class TestWarrantBuilderMethodChaining:
         assert builder.trust_level(TrustLevel.Internal) is builder
         assert builder.issuer() is builder
         assert builder.issuable_tools(["read"]) is builder
-        assert builder.trust_ceiling(TrustLevel.Internal) is builder
         assert builder.constraint_bound("x", Pattern("*")) is builder
         assert builder.constraint_bounds({}) is builder
         assert builder.max_issue_depth(3) is builder

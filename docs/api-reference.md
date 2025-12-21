@@ -271,7 +271,6 @@ warrant = Warrant.issue(
 ```python
 Warrant.issue_issuer(
     issuable_tools: List[str],
-    trust_ceiling: TrustLevel,
     keypair: SigningKey,
     constraint_bounds: Optional[dict] = None,
     max_issue_depth: Optional[int] = None,
@@ -284,7 +283,6 @@ Warrant.issue_issuer(
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `issuable_tools` | `List[str]` | Tools this warrant can issue |
-| `trust_ceiling` | `TrustLevel` | Maximum trust level for issued warrants |
 | `keypair` | `SigningKey` | Issuer's keypair |
 | `constraint_bounds` | `dict` | Optional constraint bounds |
 | `max_issue_depth` | `int` | Max depth for issued warrants |
@@ -312,7 +310,7 @@ warrant = (Warrant.builder()
 issuer = (Warrant.builder()
     .issuer()  # Switch to issuer mode
     .issuable_tools(["read_file", "write_file"])
-    .trust_ceiling(TrustLevel.Internal)
+    .trust_level(TrustLevel.Internal)  # Optional
     .constraint_bound("path", Pattern("/data/*"))
     .max_issue_depth(3)
     .issue(keypair))
@@ -329,7 +327,6 @@ issuer = (Warrant.builder()
 | `.trust_level(level)` | Set trust level |
 | `.issuer()` | Switch to issuer warrant mode |
 | `.issuable_tools(list)` | Tools this issuer can delegate |
-| `.trust_ceiling(level)` | Max trust for issued warrants |
 | `.constraint_bound(field, value)` | Add constraint bound |
 | `.max_issue_depth(n)` | Max delegation depth |
 | `.preview()` | Preview configuration before building |
@@ -415,7 +412,6 @@ with set_signing_key_context(my_keypair):
 # Create issuer warrant, then issue execution with specific tools
 issuer_warrant = Warrant.issue_issuer(
     issuable_tools=["read_file", "send_email"],
-    trust_ceiling=TrustLevel.Internal,
     keypair=control_plane_kp,
     ttl_seconds=3600,
 )

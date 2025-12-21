@@ -9,7 +9,7 @@ def test_with_issuable_tool_single():
     # Create issuer warrant with multiple tools
     issuer = Warrant.issue_issuer(
         issuable_tools=["read_file", "send_email", "query_db"],
-        trust_ceiling=TrustLevel.Internal,
+        trust_level=TrustLevel.Internal,
         keypair=parent_kp,
         ttl_seconds=3600,
     )
@@ -28,7 +28,7 @@ def test_with_issuable_tools_multiple():
     # Create issuer warrant with multiple tools
     issuer = Warrant.issue_issuer(
         issuable_tools=["read_file", "send_email", "query_db", "delete_file"],
-        trust_ceiling=TrustLevel.Internal,
+        trust_level=TrustLevel.Internal,
         keypair=parent_kp,
         ttl_seconds=3600,
     )
@@ -47,7 +47,7 @@ def test_drop_tools():
     # Create issuer warrant with multiple tools
     issuer = Warrant.issue_issuer(
         issuable_tools=["read_file", "send_email", "query_db"],
-        trust_ceiling=TrustLevel.Internal,
+        trust_level=TrustLevel.Internal,
         keypair=parent_kp,
         ttl_seconds=3600,
     )
@@ -66,7 +66,7 @@ def test_issuable_tool_selection_combinations():
     # Create issuer warrant
     issuer = Warrant.issue_issuer(
         issuable_tools=["read_file", "send_email", "query_db", "delete_file"],
-        trust_ceiling=TrustLevel.Internal,
+        trust_level=TrustLevel.Internal,
         keypair=parent_kp,
         ttl_seconds=3600,
     )
@@ -90,7 +90,7 @@ def test_with_issuable_tool_replaces_all():
     # Create issuer warrant
     issuer = Warrant.issue_issuer(
         issuable_tools=["read_file", "send_email", "query_db"],
-        trust_ceiling=TrustLevel.Internal,
+        trust_level=TrustLevel.Internal,
         keypair=parent_kp,
         ttl_seconds=3600,
     )

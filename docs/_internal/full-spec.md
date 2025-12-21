@@ -245,7 +245,7 @@ issuer_warrant = Warrant(
     type=WarrantType.ISSUER,
     holder=planner_pubkey,
     issuable_tools=["read_file", "send_email", "query_database"],
-    trust_ceiling=TrustLevel.INTERNAL,
+    trust_level=TrustLevel.INTERNAL,
     max_issue_depth=1,
 )
 ```
@@ -255,7 +255,7 @@ This enables CaMeL-style architectures where P-LLM (privileged, never sees untru
 ### Monotonicity
 
 Both types enforce monotonicity:
-- **Issuers**: Can only issue within `issuable_tools` and `trust_ceiling`
+- **Issuers**: Can only issue within `issuable_tools` and their own `trust_level`
 - **Executors**: Can only attenuate (narrow), never expand
 
 ### Wire Structure (Current Implementation)
@@ -282,7 +282,6 @@ Warrant {
     
     # Issuer warrants
     issuable_tools: string[]
-    trust_ceiling: TrustLevel
     max_issue_depth: int
     constraint_bounds: ConstraintSet (optional - limits on issued constraints)
     
@@ -1132,8 +1131,8 @@ issuer_warrant = Warrant.issue_issuer(
     # What tools can this issuer grant?
     issuable_tools=["read_file", "send_email", "query_db"],
     
-    # What's the maximum trust level for issued warrants?
-    trust_ceiling=TrustLevel.INTERNAL,
+    # Set the issuer's trust level (issued warrants can't exceed this)
+    trust_level=TrustLevel.INTERNAL,
     
     # How many levels of delegation can issued warrants have?
     max_issue_depth=1,
@@ -1211,11 +1210,11 @@ def validate_issue(issuer: Warrant, issued: Warrant):
             f"Issuable: {issuer.issuable_tools}"
         )
     
-    # 2. Trust must be at or below ceiling
-    if issued.trust_level and issuer.trust_ceiling:
-        if issued.trust_level > issuer.trust_ceiling:
-            raise TrustCeilingExceeded(
-                f"Ceiling is {issuer.trust_ceiling.name}, "
+    # 2. Trust level must be monotonic (can't exceed issuer's trust level)
+    if issued.trust_level and issuer.trust_level:
+        if issued.trust_level > issuer.trust_level:
+            raise TrustLevelExceeded(
+                f"Issuer has {issuer.trust_level.name}, "
                 f"issued {issued.trust_level.name}"
             )
     

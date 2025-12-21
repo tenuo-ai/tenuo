@@ -2282,10 +2282,9 @@ impl PyWarrant {
     /// Issuer warrants can issue execution warrants but cannot execute tools themselves.
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (issuable_tools, trust_ceiling, keypair, constraint_bounds=None, max_issue_depth=None, ttl_seconds=3600, holder=None, session_id=None, trust_level=None))]
+    #[pyo3(signature = (issuable_tools, keypair, constraint_bounds=None, max_issue_depth=None, ttl_seconds=3600, holder=None, session_id=None, trust_level=None))]
     fn issue_issuer(
         issuable_tools: Vec<String>,
-        trust_ceiling: &PyTrustLevel,
         keypair: &PySigningKey,
         constraint_bounds: Option<&Bound<'_, PyDict>>,
         max_issue_depth: Option<u32>,
@@ -2297,7 +2296,6 @@ impl PyWarrant {
         let mut builder = RustWarrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(issuable_tools)
-            .trust_ceiling(trust_ceiling.inner)
             .ttl(Duration::from_secs(ttl_seconds));
 
         if let Some(depth) = max_issue_depth {
@@ -2375,14 +2373,6 @@ impl PyWarrant {
     #[getter]
     fn issuable_tools(&self) -> Option<Vec<String>> {
         self.inner.issuable_tools().map(|t| t.to_vec())
-    }
-
-    /// Get trust ceiling (Issuer warrants only).
-    #[getter]
-    fn trust_ceiling(&self) -> Option<PyTrustLevel> {
-        self.inner
-            .trust_ceiling()
-            .map(|t| PyTrustLevel { inner: t })
     }
 
     /// Get max issue depth (Issuer warrants only).

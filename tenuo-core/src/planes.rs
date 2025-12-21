@@ -979,7 +979,7 @@ impl DataPlane {
                 }
             }
             (WarrantType::Issuer, WarrantType::Issuer) => {
-                // For issuer warrants, validate issuable_tools and trust_ceiling
+                // For issuer warrants, validate issuable_tools
                 if let (Some(parent_tools), Some(child_tools)) =
                     (parent.issuable_tools(), child.issuable_tools())
                 {
@@ -991,17 +991,6 @@ impl DataPlane {
                                 tool
                             )));
                         }
-                    }
-                }
-                // Trust ceiling can only decrease
-                if let (Some(parent_ceiling), Some(child_ceiling)) =
-                    (parent.trust_ceiling(), child.trust_ceiling())
-                {
-                    if child_ceiling > parent_ceiling {
-                        return Err(Error::MonotonicityViolation(format!(
-                            "trust_ceiling cannot increase: parent {:?}, child {:?}",
-                            parent_ceiling, child_ceiling
-                        )));
                     }
                 }
                 // Constraint bounds must be monotonic
@@ -1026,13 +1015,13 @@ impl DataPlane {
                         }
                     }
                 }
-                // 2. Child trust_level must not exceed issuer's trust_ceiling
-                if let Some(trust_ceiling) = parent.trust_ceiling() {
+                // 2. Child trust_level must not exceed issuer's trust_level (monotonicity)
+                if let Some(parent_trust) = parent.trust_level() {
                     if let Some(child_trust) = child.trust_level() {
-                        if child_trust > trust_ceiling {
+                        if child_trust > parent_trust {
                             return Err(Error::MonotonicityViolation(format!(
-                                "trust_level {:?} exceeds issuer's trust_ceiling {:?}",
-                                child_trust, trust_ceiling
+                                "trust_level {:?} exceeds issuer's trust_level {:?}",
+                                child_trust, parent_trust
                             )));
                         }
                     }
@@ -2119,7 +2108,7 @@ impl Authorizer {
                 }
             }
             (WarrantType::Issuer, WarrantType::Issuer) => {
-                // For issuer warrants, validate issuable_tools and trust_ceiling
+                // For issuer warrants, validate issuable_tools
                 if let (Some(parent_tools), Some(child_tools)) =
                     (parent.issuable_tools(), child.issuable_tools())
                 {
@@ -2131,17 +2120,6 @@ impl Authorizer {
                                 tool
                             )));
                         }
-                    }
-                }
-                // Trust ceiling can only decrease
-                if let (Some(parent_ceiling), Some(child_ceiling)) =
-                    (parent.trust_ceiling(), child.trust_ceiling())
-                {
-                    if child_ceiling > parent_ceiling {
-                        return Err(Error::MonotonicityViolation(format!(
-                            "trust_ceiling cannot increase: parent {:?}, child {:?}",
-                            parent_ceiling, child_ceiling
-                        )));
                     }
                 }
                 // Constraint bounds must be monotonic
@@ -2169,13 +2147,13 @@ impl Authorizer {
                     }
                 }
 
-                // 2. Child trust_level must not exceed issuer's trust_ceiling
-                if let Some(trust_ceiling) = parent.trust_ceiling() {
+                // 2. Child trust_level must not exceed issuer's trust_level (monotonicity)
+                if let Some(parent_trust) = parent.trust_level() {
                     if let Some(child_trust) = child.trust_level() {
-                        if child_trust > trust_ceiling {
+                        if child_trust > parent_trust {
                             return Err(Error::MonotonicityViolation(format!(
-                                "trust_level {:?} exceeds issuer's trust_ceiling {:?}",
-                                child_trust, trust_ceiling
+                                "trust_level {:?} exceeds issuer's trust_level {:?}",
+                                child_trust, parent_trust
                             )));
                         }
                     }
@@ -3157,7 +3135,7 @@ mod tests {
         let root = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string(), "write_file".to_string()])
-            .trust_ceiling(TrustLevel::Internal)
+            .trust_level(TrustLevel::Internal)
             .constraint_bound("path", Pattern::new("/data/*").unwrap())
             .ttl(Duration::from_secs(3600))
             .authorized_holder(issuer_kp.public_key())
@@ -3212,7 +3190,7 @@ mod tests {
         let root = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_ceiling(TrustLevel::External)
+            .trust_level(TrustLevel::External)
             .constraint_bound("path", Pattern::new("/data/*").unwrap())
             .ttl(Duration::from_secs(3600))
             .authorized_holder(issuer_kp.public_key())
@@ -3316,7 +3294,7 @@ mod tests {
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_ceiling(TrustLevel::Internal)
+            .trust_level(TrustLevel::Internal)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(issuer_kp.public_key())
             .build(&issuer_kp)
@@ -3383,7 +3361,7 @@ mod tests {
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_ceiling(TrustLevel::Internal)
+            .trust_level(TrustLevel::Internal)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(planner_kp.public_key())
             .build(&creator_kp)

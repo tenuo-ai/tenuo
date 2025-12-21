@@ -82,8 +82,8 @@ User Request --> [P-LLM Planner] -------------> [Q-LLM Executor] --> Tool Server
 # P-LLM: Holds an issuer warrant (cannot execute)
 issuer_warrant = Warrant.issue_issuer(
     issuable_tools=["search", "read_file"],
-    trust_ceiling=TrustLevel.Internal,
     keypair=planner_kp,
+    trust_level=TrustLevel.Internal,  # Optional
 )
 
 # P-LLM creates execution warrant for Q-LLM

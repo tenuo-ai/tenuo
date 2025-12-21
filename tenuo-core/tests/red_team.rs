@@ -265,11 +265,11 @@ fn test_parent_child_relationship_integrity() {
 // Trust Ceiling Violations
 // ============================================================================
 
-/// Attack: Issuer warrant with trust_ceiling=Internal issues execution warrant with trust_level=System.
+/// Attack: Issuer warrant with trust_level=Internal issues execution warrant with trust_level=System.
 ///
 /// Expected: Validation error (child trust exceeds ceiling).
 #[test]
-fn test_trust_ceiling_violation() {
+fn test_trust_level_escalation() {
     let issuer_kp = SigningKey::generate();
     let worker_kp = SigningKey::generate();
 
@@ -277,7 +277,7 @@ fn test_trust_ceiling_violation() {
     let issuer = Warrant::builder()
         .r#type(WarrantType::Issuer)
         .issuable_tools(vec!["read".to_string()])
-        .trust_ceiling(TrustLevel::Internal)
+        .trust_level(TrustLevel::Internal)
         .ttl(Duration::from_secs(3600))
         .authorized_holder(issuer_kp.public_key())
         .build(&issuer_kp)
@@ -639,7 +639,7 @@ fn test_issuer_warrant_tool_addition() {
     let parent = Warrant::builder()
         .r#type(WarrantType::Issuer)
         .issuable_tools(vec!["read".to_string()])
-        .trust_ceiling(TrustLevel::Internal)
+        .trust_level(TrustLevel::Internal)
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair)

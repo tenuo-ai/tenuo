@@ -73,7 +73,7 @@ pub enum WarrantType {
 /// Trust level for warrants.
 ///
 /// Used to enforce trust boundaries in multi-tenant or multi-component systems.
-/// Issuers can only issue warrants with trust levels at or below their `trust_ceiling`.
+/// Issuers can only issue warrants with trust levels at or below their own `trust_level` (monotonicity).
 ///
 /// Trust levels are ordered numerically, with higher values indicating greater trust.
 /// This allows for simple comparisons: `trust_level >= TrustLevel::INTERNAL`.
@@ -480,11 +480,6 @@ impl Warrant {
         self.payload.issuable_tools.as_deref()
     }
 
-    /// Get trust ceiling (None for execution warrants).
-    pub fn trust_ceiling(&self) -> Option<TrustLevel> {
-        self.payload.trust_ceiling
-    }
-
     /// Get max issue depth (None for execution warrants).
     pub fn max_issue_depth(&self) -> Option<u32> {
         self.payload.max_issue_depth
@@ -542,11 +537,6 @@ impl Warrant {
                         message: "execution warrant cannot have issuable_tools".to_string(),
                     });
                 }
-                if self.payload.trust_ceiling.is_some() {
-                    return Err(Error::InvalidWarrantType {
-                        message: "execution warrant cannot have trust_ceiling".to_string(),
-                    });
-                }
                 if self.payload.max_issue_depth.is_some() {
                     return Err(Error::InvalidWarrantType {
                         message: "execution warrant cannot have max_issue_depth".to_string(),
@@ -568,23 +558,6 @@ impl Warrant {
                         message: "issuer warrant must have at least one issuable_tool".to_string(),
                     });
                 }
-                if self.payload.trust_ceiling.is_none() {
-                    return Err(Error::InvalidWarrantType {
-                        message: "issuer warrant must have trust_ceiling".to_string(),
-                    });
-                }
-            }
-        }
-
-        // Validate trust level doesn't exceed trust_ceiling for issuer warrants
-        if let (Some(trust_level), Some(trust_ceiling)) =
-            (self.payload.trust_level, self.payload.trust_ceiling)
-        {
-            if trust_level > trust_ceiling {
-                return Err(Error::TrustLevelExceeded {
-                    requested: format!("{:?}", trust_level),
-                    ceiling: format!("{:?}", trust_ceiling),
-                });
             }
         }
 
@@ -954,7 +927,6 @@ pub struct WarrantBuilder {
     tools: BTreeMap<String, ConstraintSet>,
     // Issuer fields
     issuable_tools: Option<Vec<String>>,
-    trust_ceiling: Option<TrustLevel>,
     max_issue_depth: Option<u32>,
     constraint_bounds: ConstraintSet,
     // Common
@@ -979,7 +951,6 @@ impl WarrantBuilder {
             warrant_type: None,
             tools: BTreeMap::new(),
             issuable_tools: None,
-            trust_ceiling: None,
             max_issue_depth: None,
             constraint_bounds: ConstraintSet::new(),
             trust_level: None,
@@ -1008,11 +979,6 @@ impl WarrantBuilder {
 
     pub fn issuable_tools(mut self, tools: Vec<String>) -> Self {
         self.issuable_tools = Some(tools);
-        self
-    }
-
-    pub fn trust_ceiling(mut self, ceiling: TrustLevel) -> Self {
-        self.trust_ceiling = Some(ceiling);
         self
     }
 
@@ -1120,10 +1086,7 @@ impl WarrantBuilder {
         if self.warrant_type.is_none() {
             if !self.tools.is_empty() {
                 self.warrant_type = Some(WarrantType::Execution);
-            } else if self.issuable_tools.is_some()
-                || self.trust_ceiling.is_some()
-                || self.max_issue_depth.is_some()
-            {
+            } else if self.issuable_tools.is_some() || self.max_issue_depth.is_some() {
                 self.warrant_type = Some(WarrantType::Issuer);
             }
         }
@@ -1145,11 +1108,6 @@ impl WarrantBuilder {
                         message: "execution warrant cannot have issuable_tools".to_string(),
                     });
                 }
-                if self.trust_ceiling.is_some() {
-                    return Err(Error::InvalidWarrantType {
-                        message: "execution warrant cannot have trust_ceiling".to_string(),
-                    });
-                }
                 if self.max_issue_depth.is_some() {
                     return Err(Error::InvalidWarrantType {
                         message: "execution warrant cannot have max_issue_depth".to_string(),
@@ -1166,11 +1124,6 @@ impl WarrantBuilder {
                 {
                     return Err(Error::InvalidWarrantType {
                         message: "issuer warrant requires at least one issuable_tool".to_string(),
-                    });
-                }
-                if self.trust_ceiling.is_none() {
-                    return Err(Error::InvalidWarrantType {
-                        message: "issuer warrant requires trust_ceiling".to_string(),
                     });
                 }
             }
@@ -1215,16 +1168,6 @@ impl WarrantBuilder {
             }
         }
 
-        // Validate trust_level doesn't exceed trust_ceiling for issuer warrants
-        if let (Some(trust_level), Some(trust_ceiling)) = (self.trust_level, self.trust_ceiling) {
-            if trust_level > trust_ceiling {
-                return Err(Error::TrustLevelExceeded {
-                    requested: format!("{:?}", trust_level),
-                    ceiling: format!("{:?}", trust_ceiling),
-                });
-            }
-        }
-
         // Validate min_approvals if set
         if let (Some(approvers), Some(min)) = (&self.required_approvers, self.min_approvals) {
             if min as usize > approvers.len() {
@@ -1263,7 +1206,6 @@ impl WarrantBuilder {
             extensions: self.extensions,
 
             issuable_tools: self.issuable_tools,
-            trust_ceiling: self.trust_ceiling,
             max_issue_depth: self.max_issue_depth,
             constraint_bounds: if self.constraint_bounds.is_empty() {
                 None
@@ -1334,7 +1276,6 @@ pub struct AttenuationBuilder<'a> {
     tools: BTreeMap<String, ConstraintSet>,
     // Issuer warrant fields
     issuable_tools: Option<Vec<String>>,
-    trust_ceiling: Option<TrustLevel>,
     max_issue_depth: Option<u32>,
     constraint_bounds: ConstraintSet,
     // Common fields
@@ -1359,12 +1300,11 @@ impl<'a> AttenuationBuilder<'a> {
     /// more authority than intended.
     fn new(parent: &'a Warrant) -> Self {
         // POLA: Start with empty capabilities - must explicitly add each one
-        let (tools, issuable_tools, trust_ceiling, max_issue_depth, constraint_bounds) =
+        let (tools, issuable_tools, max_issue_depth, constraint_bounds) =
             match parent.payload.warrant_type {
                 WarrantType::Execution => (
                     // POLA: Start empty, not with parent's tools
                     BTreeMap::new(),
-                    None,
                     None,
                     None,
                     ConstraintSet::new(),
@@ -1373,7 +1313,6 @@ impl<'a> AttenuationBuilder<'a> {
                     BTreeMap::new(),
                     // POLA: Start empty for issuable_tools too
                     None,
-                    parent.payload.trust_ceiling,
                     parent.payload.max_issue_depth,
                     parent.payload.constraint_bounds.clone().unwrap_or_default(),
                 ),
@@ -1383,7 +1322,6 @@ impl<'a> AttenuationBuilder<'a> {
             parent,
             tools,
             issuable_tools,
-            trust_ceiling,
             max_issue_depth,
             constraint_bounds,
             trust_level: parent.payload.trust_level,
@@ -1652,16 +1590,6 @@ impl<'a> AttenuationBuilder<'a> {
                         }
                     }
                 }
-                if let (Some(parent_ceiling), Some(child_ceiling)) =
-                    (self.parent.payload.trust_ceiling, self.trust_ceiling)
-                {
-                    if child_ceiling > parent_ceiling {
-                        return Err(Error::MonotonicityViolation(format!(
-                            "trust_ceiling cannot increase: parent {:?}, child {:?}",
-                            parent_ceiling, child_ceiling
-                        )));
-                    }
-                }
                 if let Some(parent_bounds) = &self.parent.payload.constraint_bounds {
                     parent_bounds.validate_attenuation(&self.constraint_bounds)?;
                 }
@@ -1702,10 +1630,6 @@ impl<'a> AttenuationBuilder<'a> {
             tools: self.tools,
             issuable_tools: match self.parent.payload.warrant_type {
                 WarrantType::Issuer => self.issuable_tools.clone(),
-                WarrantType::Execution => None,
-            },
-            trust_ceiling: match self.parent.payload.warrant_type {
-                WarrantType::Issuer => self.trust_ceiling,
                 WarrantType::Execution => None,
             },
             max_issue_depth: match self.parent.payload.warrant_type {
@@ -1810,7 +1734,6 @@ pub struct OwnedAttenuationBuilder {
     tools: BTreeMap<String, ConstraintSet>,
     // Issuer warrant fields
     issuable_tools: Option<Vec<String>>,
-    trust_ceiling: Option<TrustLevel>,
     max_issue_depth: Option<u32>,
     constraint_bounds: ConstraintSet,
     // Common fields
@@ -1839,12 +1762,11 @@ impl OwnedAttenuationBuilder {
     /// Use `.inherit_all()` if you explicitly want all parent capabilities.
     pub fn new(parent: Warrant) -> Self {
         // POLA: Start with empty capabilities - must explicitly add each one
-        let (tools, issuable_tools, trust_ceiling, max_issue_depth, constraint_bounds) =
+        let (tools, issuable_tools, max_issue_depth, constraint_bounds) =
             match parent.payload.warrant_type {
                 WarrantType::Execution => (
                     // POLA: Start empty, not with parent's tools
                     BTreeMap::new(),
-                    None,
                     None,
                     None,
                     ConstraintSet::new(),
@@ -1853,7 +1775,6 @@ impl OwnedAttenuationBuilder {
                     BTreeMap::new(),
                     // POLA: Start empty for issuable_tools too
                     None,
-                    parent.payload.trust_ceiling,
                     parent.payload.max_issue_depth,
                     parent.payload.constraint_bounds.clone().unwrap_or_default(),
                 ),
@@ -1870,7 +1791,6 @@ impl OwnedAttenuationBuilder {
 
             tools,
             issuable_tools,
-            trust_ceiling,
             max_issue_depth,
             constraint_bounds,
             ttl: None,
@@ -2341,16 +2261,6 @@ impl OwnedAttenuationBuilder {
                         }
                     }
                 }
-                if let (Some(parent_ceiling), Some(child_ceiling)) =
-                    (self.parent.payload.trust_ceiling, self.trust_ceiling)
-                {
-                    if child_ceiling > parent_ceiling {
-                        return Err(Error::MonotonicityViolation(format!(
-                            "trust_ceiling cannot increase: parent {:?}, child {:?}",
-                            parent_ceiling, child_ceiling
-                        )));
-                    }
-                }
                 if let Some(parent_bounds) = &self.parent.payload.constraint_bounds {
                     parent_bounds.validate_attenuation(&self.constraint_bounds)?;
                 }
@@ -2389,10 +2299,6 @@ impl OwnedAttenuationBuilder {
             tools: self.tools,
             issuable_tools: match self.parent.payload.warrant_type {
                 WarrantType::Issuer => self.issuable_tools.clone(),
-                WarrantType::Execution => None,
-            },
-            trust_ceiling: match self.parent.payload.warrant_type {
-                WarrantType::Issuer => self.trust_ceiling,
                 WarrantType::Execution => None,
             },
             max_issue_depth: match self.parent.payload.warrant_type {
@@ -2493,7 +2399,7 @@ impl OwnedAttenuationBuilder {
 /// This builder validates that the issued execution warrant complies with
 /// the issuer warrant's constraints:
 /// - Tool must be in `issuable_tools`
-/// - Trust level must be <= `trust_ceiling`
+/// - Trust level must be <= issuer's `trust_level` (monotonicity)
 /// - Constraints must be within `constraint_bounds`
 /// - Depth must not exceed `max_issue_depth`
 #[derive(Debug)]
@@ -2549,7 +2455,7 @@ impl<'a> IssuanceBuilder<'a> {
 
     /// Set the trust level for the execution warrant.
     ///
-    /// The trust level must be <= the issuer's `trust_ceiling`.
+    /// The trust level must be <= the issuer's `trust_level` (monotonicity).
     pub fn trust_level(mut self, level: TrustLevel) -> Self {
         self.trust_level = Some(level);
         self
@@ -2616,7 +2522,7 @@ impl<'a> IssuanceBuilder<'a> {
     ///
     /// This validates:
     /// - Tool is in issuer's `issuable_tools`
-    /// - Trust level <= issuer's `trust_ceiling`
+    /// - Trust level <= issuer's `trust_level` (monotonicity)
     /// - Constraints are within issuer's `constraint_bounds`
     /// - Depth doesn't exceed issuer's `max_issue_depth`
     /// - Signing key matches issuer warrant's holder (delegation authority)
@@ -2710,13 +2616,13 @@ impl<'a> IssuanceBuilder<'a> {
             });
         }
 
-        // Validate trust_level <= trust_ceiling
+        // Validate trust_level <= issuer's trust_level (monotonicity)
         if let Some(trust_level) = self.trust_level {
-            if let Some(trust_ceiling) = self.issuer.payload.trust_ceiling {
-                if trust_level > trust_ceiling {
+            if let Some(issuer_trust) = self.issuer.payload.trust_level {
+                if trust_level > issuer_trust {
                     return Err(Error::TrustLevelExceeded {
                         requested: format!("{:?}", trust_level),
-                        ceiling: format!("{:?}", trust_ceiling),
+                        ceiling: format!("{:?}", issuer_trust),
                     });
                 }
             }
@@ -2812,7 +2718,6 @@ impl<'a> IssuanceBuilder<'a> {
             holder,
             tools: self.tools,
             issuable_tools: None,
-            trust_ceiling: None,
             max_issue_depth: None,
             constraint_bounds: None,
             trust_level: self.trust_level,
@@ -3846,7 +3751,7 @@ mod tests {
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string(), "send_email".to_string()])
-            .trust_ceiling(TrustLevel::Internal)
+            .trust_level(TrustLevel::Internal)
             .max_issue_depth(2)
             .constraint_bound("path", Pattern::new("/data/*").unwrap())
             .ttl(Duration::from_secs(3600))
@@ -3891,7 +3796,7 @@ mod tests {
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_ceiling(TrustLevel::Internal)
+            .trust_level(TrustLevel::Internal)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(issuer_kp.public_key())
             .build(&issuer_kp)
@@ -3927,7 +3832,7 @@ mod tests {
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_ceiling(TrustLevel::Internal)
+            .trust_level(TrustLevel::Internal)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(holder_kp.public_key())
             .build(&issuer_kp)
@@ -4006,7 +3911,7 @@ mod tests {
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_ceiling(TrustLevel::Internal)
+            .trust_level(TrustLevel::Internal)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(issuer_kp.public_key())
             .build(&issuer_kp)
@@ -4038,7 +3943,7 @@ mod tests {
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_ceiling(TrustLevel::External) // Low ceiling
+            .trust_level(TrustLevel::External)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(issuer_kp.public_key())
             .build(&issuer_kp)
@@ -4069,7 +3974,7 @@ mod tests {
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_ceiling(TrustLevel::Internal)
+            .trust_level(TrustLevel::Internal)
             .constraint_bound("path", Pattern::new("/data/*").unwrap())
             .ttl(Duration::from_secs(3600))
             .authorized_holder(issuer_kp.public_key())
@@ -4105,7 +4010,7 @@ mod tests {
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_ceiling(TrustLevel::Internal)
+            .trust_level(TrustLevel::Internal)
             .max_issue_depth(1) // Only allow depth 1
             .ttl(Duration::from_secs(3600))
             .authorized_holder(issuer_kp.public_key())

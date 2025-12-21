@@ -36,7 +36,6 @@ Warrant {
     
     # Issuer warrants
     issuable_tools: string[]
-    trust_ceiling: TrustLevel
     constraint_bounds: ConstraintSet (optional)
     max_issue_depth: int (optional)
     
