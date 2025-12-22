@@ -160,7 +160,7 @@ class TestDelegateMethod:
     
     def test_delegate_narrows_constraints(self):
         """delegate() should narrow constraints."""
-        from tenuo import configure, root_task_sync, set_signing_key_context, Pattern
+        from tenuo import configure, root_task_sync, Pattern
         from tenuo.config import reset_config
         
         reset_config()
@@ -170,18 +170,20 @@ class TestDelegateMethod:
         configure(issuer_key=kp, dev_mode=True)
         
         with root_task_sync(Capability("read_file", path=Pattern("/data/*"))) as parent:
-            with set_signing_key_context(kp):
-                child = parent.delegate(
-                    holder=worker_kp.public_key,
-                    path=Exact("/data/q3.pdf"),  # Narrower constraint
-                )
-                
-                # Tools should be inherited (execution warrants can't narrow tools)
-                assert child.tools == parent.tools
-                
-                # But constraints should be narrowed
-                child_constraints = child.capabilities.get("read_file")
-                assert child_constraints is not None
+            child = parent.delegate(
+                to=worker_kp.public_key,
+                allow=["read_file"],
+                ttl=300,
+                key=kp,
+                path=Exact("/data/q3.pdf"),  # Narrower constraint
+            )
+            
+            # Tools should be as specified in allow
+            assert "read_file" in child.tools
+            
+            # But constraints should be narrowed
+            child_constraints = child.capabilities.get("read_file")
+            assert child_constraints is not None
     
     def test_delegate_inherits_tools(self):
         """
@@ -190,7 +192,7 @@ class TestDelegateMethod:
         This is BY DESIGN. To narrow tools, use an Issuer warrant
         and call issue_execution() instead.
         """
-        from tenuo import configure, root_task_sync, set_signing_key_context
+        from tenuo import configure, root_task_sync
         from tenuo.config import reset_config
         
         reset_config()
@@ -200,18 +202,17 @@ class TestDelegateMethod:
         configure(issuer_key=kp, dev_mode=True)
         
         with root_task_sync(Capability("read_file"), Capability("send_email")) as parent:
-            with set_signing_key_context(kp):
-                child = parent.delegate(
-                    holder=worker_kp.public_key,
-                    # No tool param - by design, can't narrow tools
-                )
-                
-                # Child MUST have same tools as parent
-                # This is the expected behavior for execution warrants
-                assert sorted(child.tools) == sorted(parent.tools), (
-                    "Execution warrants inherit all parent tools. "
-                    "Use issue_execution() from issuer warrants to narrow tools."
-                )
+            child = parent.delegate(
+                to=worker_kp.public_key,
+                allow=["read_file", "send_email"],  # Inherit all tools
+                ttl=300,
+                key=kp,
+            )
+            
+            # Child should have the tools we specified in allow
+            assert sorted(child.tools) == sorted(["read_file", "send_email"]), (
+                "delegate() creates child with specified tools"
+            )
 
 
 class TestAttenuateBuilderToolSelection:

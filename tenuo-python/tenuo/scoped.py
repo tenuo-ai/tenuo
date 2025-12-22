@@ -394,7 +394,7 @@ class ScopedTaskBuilder:
             # Compute TTL
             parent_ttl = None
             if hasattr(parent, 'ttl_remaining'):
-                parent_ttl = parent.ttl_remaining()
+                parent_ttl = parent.ttl_remaining.total_seconds()
             
             child_ttl = self.ttl
             if child_ttl and parent_ttl:

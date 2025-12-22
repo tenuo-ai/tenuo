@@ -153,6 +153,7 @@ from .decorators import (
     set_warrant_context,
     get_signing_key_context,
     set_signing_key_context,
+    is_bypass_enabled,
     WarrantContext,
     SigningKeyContext,
 )
@@ -234,11 +235,34 @@ from tenuo_core import (  # type: ignore
 from .warrant_ext import (
     get_chain_with_diffs,
     compute_diff,
+    # Type protocols
+    ReadableWarrant,
+    SignableWarrant,
+    AnyWarrant,
+    # Debugging
+    WhyDenied,
+    DenyCode,
+    PreviewResult,
 )
 
 # Initialize warrant extensions
 # This adds the delegation_receipt property to Warrant
 import tenuo.warrant_ext  # noqa: F401
+
+# Import BoundWarrant class
+from .bound_warrant import BoundWarrant
+
+# Import testing utilities
+from .testing import (
+    allow_all,
+    deterministic_headers,
+)
+
+# Import diagnostics
+from .diagnostics import (
+    diagnose,
+    info,
+)
 
 # Re-export everything for clean imports
 __all__ = [
@@ -291,11 +315,19 @@ __all__ = [
     # Core types
     "SigningKey",
     "Warrant",
+    "BoundWarrant",  # DX: Warrant bound to key
     "WarrantType",
     "Clearance",
     "PublicKey",
     "Signature",
     "Authorizer",
+    # DX: Testing utilities
+    "allow_all",
+    "is_bypass_enabled",
+    "deterministic_headers",
+    # DX: Diagnostics
+    "diagnose",
+    "info",
     # Constraints
     "Constraints",
     "Capability",
@@ -454,6 +486,14 @@ __all__ = [
     "ChangeType",
     "get_chain_with_diffs",
     "compute_diff",
+    # Type protocols
+    "ReadableWarrant",
+    "SignableWarrant",
+    "AnyWarrant",
+    # Debugging types
+    "WhyDenied",
+    "DenyCode",
+    "PreviewResult",
 ]
 
 __version__ = "0.1.0a4"
