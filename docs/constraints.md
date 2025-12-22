@@ -997,6 +997,75 @@ async with root_task(Capability("query", table=OneOf(["users", "orders"]))):
 
 ---
 
+## Pattern Best Practices
+
+### Pattern Uses Glob Syntax, Not Regex
+
+`Pattern` uses **glob syntax** (like shell wildcards), not regular expressions:
+
+| Syntax | Meaning | Example |
+|--------|---------|---------|
+| `*` | Match any characters | `staging-*` → `staging-web` |
+| `?` | Match single character | `env-?` → `env-a` |
+| `[abc]` | Character class | `[abc].txt` → `a.txt` |
+| `{a,b}` | Alternation | `{dev,staging}-*` → `dev-web` |
+
+**Common mistakes:**
+```python
+# ❌ WRONG: Pipe is not OR in glob
+Pattern("weather *|news *")  # Treats | as literal character
+
+# ✅ CORRECT: Use curly braces for alternation
+Pattern("{weather,news} *")
+
+# ✅ CORRECT: Or use Any() for complex cases
+Any([Pattern("weather *"), Pattern("news *")])
+```
+
+### Prefer Explicit Over Permissive
+
+```python
+# ⚠️ Too permissive - matches everything
+Pattern("*")
+
+# ✅ Better - explicit prefix
+Pattern("staging-*")
+
+# ✅ Best for known values - use Exact or OneOf
+Exact("staging-web")
+OneOf(["staging-web", "staging-db"])
+```
+
+### Keep Patterns Simple
+
+Attenuation validation works best with simple prefix/suffix patterns:
+
+```python
+# ✅ Simple prefix - attenuation works reliably
+Pattern("/data/*")           # Parent
+Pattern("/data/reports/*")   # Child (narrower) ✓
+
+# ⚠️ Complex patterns - attenuation may be conservative
+Pattern("*-{prod,staging}-*")  # Harder to validate containment
+```
+
+### Use Exact/OneOf for High-Security Cases
+
+When precision matters more than flexibility:
+
+```python
+# For known, enumerable values
+OneOf(["read", "write", "delete"])
+
+# For exact matches
+Exact("/etc/passwd")  # Only this exact path
+
+# For IP ranges
+Cidr("10.0.0.0/8")
+```
+
+---
+
 ## See Also
 
 - [AI Agent Patterns](./ai-agents) — P-LLM/Q-LLM, prompt injection defense
