@@ -1,8 +1,8 @@
 # Tenuo DX Enhancement Spec: Warrant Convenience API
 
-**Version:** 0.1  
+**Version:** 0.2  
 **Status:** Draft  
-**Date:** 2025-12-20
+**Date:** 2025-12-22
 
 ---
 
@@ -17,24 +17,189 @@ Use Tenuo when you need authority that:
 
 **Simplest usage:**
 ```python
-# Delegate to a worker
+# Configure once (key is implicit in subsequent calls)
+configure(issuer_key=my_key)
+
+# Delegate to a worker - key optional when configured
 worker_warrant = my_warrant.delegate(
-    key=my_key,
     to=worker_public_key,
-    allow=["search"],
+    allow=["search"],  # Or allow="search" for single tool
     ttl=300
 )
 ```
 
 **For LangGraph:**
 ```python
-configure(issuer_key=kp)
+configure(issuer_key=kp, strict=True, registered_tools=["search"])
 
 @lockdown(tool="search")  # Enforcement on tools
 async def search(query): ...
 
 async with root_task(Capability("search")):
     await graph.compile().ainvoke(state)
+```
+
+---
+
+## Security Considerations
+
+### Critical: BoundWarrant Serialization Protection
+
+`BoundWarrant` holds a private key and **must never be serialized**:
+
+```python
+class BoundWarrant:  # NOT a Warrant subclass (type separation)
+    """Warrant bound to a signing key. Cannot be serialized."""
+    
+    def __init__(self, warrant: Warrant, key: SigningKey):
+        self._warrant = warrant
+        self._key = key
+    
+    def __getstate__(self):
+        raise TypeError(
+            "BoundWarrant cannot be serialized (contains private key). "
+            "Store the Warrant separately and rebind at runtime."
+        )
+    
+    def __reduce__(self):
+        raise TypeError("BoundWarrant cannot be pickled")
+    
+    def __repr__(self):
+        return f"<BoundWarrant id={self._warrant.id[:12]}... KEY_BOUND=True>"
+```
+
+#### Why BoundWarrant Is NOT a Warrant Subclass
+
+**The Problem:** If `BoundWarrant` inherited from `Warrant`, it could be assigned to `TenuoState.warrant` in LangGraph:
+
+```python
+# ❌ DANGEROUS if BoundWarrant(Warrant):
+state.warrant = warrant.bind_key(key)  # Type checks pass!
+# → LangGraph checkpoints state → Private key serialized to DB!
+```
+
+**The Solution:** Separate types prevent this at dev time:
+
+```python
+# ✅ SAFE with BoundWarrant as separate type:
+state.warrant = warrant.bind_key(key)  # Type error!
+# → mypy/pyright catch this before it reaches production
+```
+
+This is why `BoundWarrant` **wraps** a `Warrant` instead of inheriting from it.
+
+### `dry_run()` vs `auth_headers()`
+
+| Method | Use Case | PoP Signature |
+|--------|----------|---------------|
+| `auth_headers(tool, args)` | Production API calls | Real (timestamp-based, changes each call) |
+| `dry_run(tool, args)` | Unit testing | Deterministic (same inputs = same output) |
+
+```python
+# Production - timestamp in PoP changes each call
+headers = bound.auth_headers("search", {"query": "test"})
+
+# Testing - deterministic for assertions
+headers = bound.dry_run("search", {"query": "test"})
+assert headers["X-Tenuo-PoP"] == expected_pop  # Stable for test
+```
+
+**Note:** If deterministic PoP isn't needed, `dry_run()` can be removed. The primary use case is unit tests that assert exact header values.
+
+### Process-Wide Key Safety
+
+```python
+configure(issuer_key=kp)
+```
+
+The configured key is **not publicly accessible**:
+- No `get_configured_key()` function exposed
+- Only internal code (`@lockdown`, `root_task`, `delegate()`) can access
+- Key stored in module-level `_config` with no getter
+
+### Strict Mode (Fail-Closed)
+
+Prevent forgotten `@lockdown` decorators:
+
+```python
+configure(
+    issuer_key=kp,
+    strict=True,
+    registered_tools=["search", "read_file", "delete_file"]
+)
+
+# Later, calling unregistered tool raises:
+# TenuoConfigError: Tool 'unknown_tool' not registered.
+# Add to registered_tools or decorate with @lockdown.
+```
+
+### Thread-Safe KeyRegistry
+
+```python
+class KeyRegistry:
+    _instance: ClassVar[Optional["KeyRegistry"]] = None
+    _lock: ClassVar[threading.Lock] = threading.Lock()
+    
+    @classmethod
+    def get_instance(cls) -> "KeyRegistry":
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = cls()
+        return cls._instance
+```
+
+### Logic Consistency: Python Calls Rust
+
+All authorization logic **must** call through to Rust via PyO3:
+
+```python
+# ✅ CORRECT: Calls Rust
+def would_allow(self, tool: str, args: dict) -> bool:
+    return self._inner.check_constraints(tool, args)
+
+# ❌ WRONG: Python reimplementation (logic divergence risk)
+def would_allow(self, tool: str, args: dict) -> bool:
+    for constraint in self.constraints[tool]:
+        if not constraint.matches(args):  # Python logic!
+            return False
+    return True
+```
+
+### ContextVar Limitations
+
+> ⚠️ **Important:** This limitation should also be documented in FastAPI/LangChain integration docs.
+
+`set_warrant_context()` uses Python's `contextvars`. Context propagation works in most cases but has known edge cases:
+
+| ✅ Works | ❌ May Not Work |
+|----------|-----------------|
+| Standard async/await | `run_in_executor()` without explicit context copy |
+| `asyncio.create_task()` | Some third-party async libraries |
+| Most LangChain/LangGraph patterns | `multiprocessing` (separate processes) |
+| FastAPI dependencies | Thread pools without `copy_context()` |
+
+**Workaround:** For edge cases, use explicit warrant passing or `KeyRegistry`:
+
+```python
+# Option 1: Explicit passing (most reliable)
+await my_function(warrant=warrant, key=key)
+
+# Option 2: Copy context for executors
+import contextvars
+ctx = contextvars.copy_context()
+await loop.run_in_executor(None, ctx.run, my_sync_function)
+```
+
+**Reference:** [Python contextvars asyncio support](https://docs.python.org/3/library/contextvars.html#asyncio-support)
+
+### `__repr__` Redaction
+
+Never print keys or signatures in repr/str:
+
+```python
+def __repr__(self):
+    return f"<Warrant id={self.id[:12]}... tools={self.tools} expires_in={self.ttl_remaining}>"
 ```
 
 ---
@@ -1688,7 +1853,9 @@ result = await app.ainvoke({
 ## Implementation Plan
 
 ### Phase 1: Warrant Convenience Methods (Foundation)
-**Effort:** 2-3 days | **Priority:** P0 | **Dependencies:** None
+**Effort:** 3-4 days | **Priority:** P0 | **Dependencies:** None
+
+#### 1.1 Core Properties
 
 | Task | File | Effort |
 |------|------|--------|
@@ -1696,24 +1863,69 @@ result = await app.ainvoke({
 | Add `expires_at` property (returns `datetime`) | `warrant_ext.py` | 0.5h |
 | Add `is_terminal` property (`depth >= max_depth`) | `warrant_ext.py` | 0.5h |
 | Add `is_expired` property | `warrant_ext.py` | 0.5h |
-| Add `capabilities` property (dict of string representations) | `warrant_ext.py` | 2h |
 | Add `can(tool)` method | `warrant_ext.py` | 1h |
-| Add `would_allow(tool, args)` method | `warrant_ext.py` | 2h |
+| Add `would_allow(tool, args)` method (⚠️ calls Rust, not Python) | `warrant_ext.py` | 2h |
+
+#### 1.2 Debugging & Introspection
+
+| Task | File | Effort |
+|------|------|--------|
 | Add `explain()` method (formatted string) | `warrant_ext.py` | 3h |
+| Add `explain(include_chain=True)` for full authority chain | `warrant_ext.py` | 2h |
+| Add `inspect()` alias for `explain()` (pretty tree output) | `warrant_ext.py` | 1h |
 | Add `why_denied(tool, args)` with `WhyDenied` dataclass | `warrant_ext.py` | 4h |
-| Add `auth_headers(key, tool, args)` method | `warrant_ext.py` | 2h |
-| Add `sign_request(key, tool, args)` method | `warrant_ext.py` | 1h |
-| Add `bind_key(key)` returning key-bound warrant | `warrant_ext.py` | 2h |
-| Add `delegate(to, allow, ttl)` convenience method | `warrant_ext.py` | 3h |
+| Add `parent.diff(child)` exposure via `DelegationDiff` | `warrant_ext.py` | 1h |
+| Implement `__repr__` redaction (no keys/signatures) | `warrant_ext.py` | 0.5h |
+
+#### 1.3 Delegation
+
+| Task | File | Effort |
+|------|------|--------|
+| Add `delegate(to, allow, ttl, key=None)` - key optional when configured | `warrant_ext.py` | 3h |
+| Support `allow` as string or list (`allow="search"` or `allow=["a","b"]`) | `warrant_ext.py` | 1h |
+| Add improved error messages with fix suggestions | `warrant_ext.py` | 2h |
+
+#### 1.4 BoundWarrant (Security-Critical)
+
+| Task | File | Effort |
+|------|------|--------|
+| Implement `BoundWarrant` class (NOT a Warrant subclass) | `warrant_ext.py` | 2h |
+| Add `__getstate__` / `__reduce__` serialization guards | `warrant_ext.py` | 1h |
+| Add `bind_key(key)` returning `BoundWarrant` | `warrant_ext.py` | 1h |
+| Add `dry_run(tool, args)` for testing (returns headers dict) | `warrant_ext.py` | 1h |
+
+#### 1.5 Prototyping & Testing Utilities
+
+| Task | File | Effort |
+|------|------|--------|
+| Add `Warrant.quick_issue(tools, ttl)` returns `(warrant, key)` | `warrant_ext.py` | 1h |
+| Add `Warrant.for_testing(tools)` with runtime guard | `testing.py` | 1h |
+| Add `tenuo.testing.allow_all()` context manager with runtime guard | `testing.py` | 2h |
+| Implement `_is_test_environment()` check | `testing.py` | 1h |
+
+#### 1.6 Diagnostics
+
+| Task | File | Effort |
+|------|------|--------|
+| Add `tenuo.diagnose(warrant)` troubleshooting output | `diagnostics.py` | 3h |
+| Add `tenuo.info()` configuration status | `diagnostics.py` | 1h |
+
+#### 1.7 Tests & Docs
+
+| Task | File | Effort |
+|------|------|--------|
 | Unit tests for all methods | `tests/test_warrant_convenience.py` | 4h |
+| Unit tests for BoundWarrant serialization guards | `tests/test_bound_warrant.py` | 2h |
 | Update API reference documentation | `docs/api-reference.md` | 2h |
 
-**Deliverable:** Enhanced `Warrant` class with all convenience methods.
+**Deliverable:** Enhanced `Warrant` class with all convenience methods and security guards.
 
 ---
 
-### Phase 2: Key Management (`tenuo.keys`)
-**Effort:** 1-2 days | **Priority:** P1 | **Dependencies:** None (parallel with Phase 1)
+### Phase 2: Key Management & Configuration (`tenuo.keys`, `tenuo.config`)
+**Effort:** 2-3 days | **Priority:** P1 | **Dependencies:** None (parallel with Phase 1)
+
+#### 2.1 Key Loading
 
 | Task | File | Effort |
 |------|------|--------|
@@ -1722,10 +1934,25 @@ result = await app.ainvoke({
 | Implement `SigningKey.from_file(path)` with format auto-detect | `keys.py` | 2h |
 | Implement `Keyring` class (root + previous keys) | `keys.py` | 2h |
 | Add `keyring.all_public_keys` property | `keys.py` | 0.5h |
-| Unit tests | `tests/test_keys.py` | 2h |
+
+#### 2.2 Configuration
+
+| Task | File | Effort |
+|------|------|--------|
+| Implement `configure(issuer_key, strict, registered_tools, dev_mode)` | `config.py` | 2h |
+| No public `get_configured_key()` - internal access only | `config.py` | - |
+| Implement strict mode validation | `config.py` | 2h |
+| Thread-safe `KeyRegistry` singleton with double-checked locking | `keys.py` | 2h |
+
+#### 2.3 Tests & Docs
+
+| Task | File | Effort |
+|------|------|--------|
+| Unit tests for key loading | `tests/test_keys.py` | 2h |
+| Unit tests for strict mode | `tests/test_config.py` | 2h |
 | Documentation | `docs/api-reference.md` | 1h |
 
-**Deliverable:** Simple, explicit key loading without magic.
+**Deliverable:** Simple, explicit key loading with strict mode for fail-closed security.
 
 ---
 
@@ -1830,12 +2057,25 @@ Week 3:
 
 ### Risk Mitigation
 
+#### Security Risks
+
+| Risk | Severity | Mitigation |
+|------|----------|------------|
+| **Poisoned Checkpoint** - BoundWarrant serialized to DB | High | `BoundWarrant` not a `Warrant` subclass + `__getstate__` throws |
+| **Forgotten @lockdown** - Unprotected tool callable | High | `strict=True` mode with `registered_tools` allowlist |
+| **Process-wide key access** - Unintended code accesses key | Medium | No public `get_configured_key()`, internal access only |
+| **Logic divergence** - Python/Rust constraint mismatch | Medium | All Python convenience methods call Rust via PyO3 |
+| **Key in __repr__** - Key leaked to logs | Medium | Custom `__repr__` with redaction |
+| **KeyRegistry race condition** | Low | Double-checked locking with `threading.Lock` |
+| **ContextVar propagation** - Context lost in executor | Medium | Document limitations, recommend explicit passing |
+
+#### Technical Risks
+
 | Risk | Mitigation |
 |------|------------|
 | FastAPI version compatibility | Test against FastAPI 0.100+ (Pydantic v2) |
 | LangChain API changes | Pin to langchain-core, avoid langchain meta-package |
 | LangGraph is new/unstable | Keep integration minimal, document version requirements |
-| Key registry thread safety | Use `threading.Lock` or `contextvars` |
 | Breaking existing API | All additions are new methods, no changes to existing |
 
 ---
@@ -1847,6 +2087,9 @@ Week 3:
 - [ ] All integration tests pass on CI
 - [ ] `why_denied()` provides actionable error messages
 - [ ] No private keys in LangGraph state (enforced by design)
+- [ ] `BoundWarrant` serialization attempt raises `TypeError`
+- [ ] Strict mode catches unregistered tools at runtime
+- [ ] All `would_allow()` / constraint checks call Rust (no Python reimplementation)
 
 ---
 
@@ -1857,15 +2100,43 @@ Week 3:
 - [ ] `expires_at` returns `datetime`
 - [ ] `is_terminal` returns `bool` (`depth >= max_depth`)
 - [ ] `is_expired` returns `bool`
-- [ ] `capabilities` returns readable dict
 - [ ] `can(tool)` returns `bool` (UX introspection)
-- [ ] `would_allow(tool, args)` returns `bool` (UX introspection)
+- [ ] `would_allow(tool, args)` returns `bool` (calls Rust, NOT Python reimplementation)
 - [ ] `explain()` returns formatted string
-- [ ] `why_denied(tool, args)` returns `WhyDenied`
-- [ ] `auth_headers(key, tool, args)` returns header dict
-- [ ] `sign_request(key, tool, args)` returns tuple
-- [ ] `bind_key(key)` returns key-bound `Warrant`
-- [ ] Key-bound warrant passes `isinstance(w, Warrant)`
+- [ ] `explain(include_chain=True)` shows full authority chain
+- [ ] `inspect()` alias for `explain()` with tree output
+- [ ] `why_denied(tool, args)` returns `WhyDenied` with `.code`, `.field`, `.expected`, `.received`
+- [ ] `parent.diff(child)` returns `DelegationDiff`
+- [ ] `__repr__` never prints keys or signatures
+
+### Delegation
+- [ ] `delegate(to, allow, ttl, key=None)` - key optional when `configure()` used
+- [ ] `allow` accepts string or list (`allow="search"` or `allow=["a","b"]`)
+- [ ] Error messages include fix suggestions
+
+### BoundWarrant (Security-Critical)
+- [ ] `BoundWarrant` is NOT a `Warrant` subclass
+- [ ] `bind_key(key)` returns `BoundWarrant`
+- [ ] `BoundWarrant.__getstate__()` raises `TypeError`
+- [ ] `BoundWarrant.__reduce__()` raises `TypeError`
+- [ ] `BoundWarrant.__repr__()` shows `KEY_BOUND=True`, not the key
+- [ ] `BoundWarrant.dry_run(tool, args)` returns headers dict
+
+### Prototyping & Testing
+- [ ] `Warrant.quick_issue(tools, ttl)` returns `(warrant, key)`
+- [ ] `Warrant.for_testing(tools)` raises outside test environment
+- [ ] `tenuo.testing.allow_all()` raises outside test environment
+- [ ] `_is_test_environment()` detects pytest/TENUO_TEST_MODE
+
+### Configuration
+- [ ] `configure(issuer_key, strict, registered_tools)` sets process-wide config
+- [ ] No public `get_configured_key()` function
+- [ ] `strict=True` raises on unregistered tool access
+- [ ] `KeyRegistry` is thread-safe (double-checked locking)
+
+### Diagnostics
+- [ ] `tenuo.diagnose(warrant)` shows validity, expiry, chain issues
+- [ ] `tenuo.info()` shows current configuration status
 
 ### FastAPI Integration
 - [ ] `TenuoGuard` dependency extracts and verifies warrant
@@ -1909,28 +2180,93 @@ Week 3:
 
 ## Appendix: Full Example
 
-```python
-from tenuo import SigningKey, Warrant
+### Basic Usage with New DX
 
-# Setup
+```python
+from tenuo import SigningKey, Warrant, configure
+
+# Setup - configure once
 key = SigningKey.generate()
+configure(issuer_key=key, strict=True, registered_tools=["search", "read_file"])
+
+# Receive warrant from orchestrator
 warrant = receive_warrant_from_orchestrator()
 
 # Introspection
-print(warrant.explain())
+print(warrant.explain(include_chain=True))
 print(f"Tools: {warrant.tools}")
 print(f"Expires in: {warrant.ttl_remaining}")
 print(f"Can delegate: {not warrant.is_terminal}")
 
+# Quick tool check (UX only - not authorization!)
+if warrant.can("read_file"):
+    print("UI: read_file button enabled")
+
+# Delegate to worker (key implicit from configure())
+worker_warrant = warrant.delegate(
+    to=worker_public_key,
+    allow=["read_file"],  # Or allow="read_file" for single tool
+    ttl=300
+)
+
 # Make the call - gateway enforces authorization
 args = {"path": "/data/report.pdf"}
-headers = warrant.auth_headers(key, "read_file", args)
+bound = worker_warrant.bind_key(worker_key)
+headers = bound.dry_run("read_file", args)  # For testing
 response = requests.get("https://gateway/read_file", headers=headers)
 
 if response.status_code == 403:
     # Use why_denied() to understand the failure
     result = warrant.why_denied("read_file", args)
-    print(f"Denied: {result.suggestion}")
+    print(f"Denied: {result.code}")
+    print(f"Field: {result.field}")
+    print(f"Expected: {result.expected}")
+    print(f"Received: {result.received}")
+    print(f"Suggestion: {result.suggestion}")
 else:
     print(f"Success: {response.json()}")
+```
+
+### Prototyping (Dev Only)
+
+```python
+from tenuo import Warrant
+
+# Quick start for demos - NOT for production!
+warrant, key = Warrant.quick_issue(tools=["search", "read_file"], ttl=3600)
+
+# Testing utilities (only work in test environment)
+from tenuo.testing import allow_all
+
+def test_my_function():
+    with allow_all():
+        # Authorization bypassed for testing
+        result = my_protected_function()
+```
+
+### Troubleshooting
+
+```python
+import tenuo
+
+# Check configuration
+tenuo.info()
+# Output:
+# Tenuo Configuration
+# ├── Issuer Key: Configured ✓
+# ├── Dev Mode: False
+# ├── Strict Mode: True
+# ├── Registered Tools: search, read_file
+# └── Default TTL: 300s
+
+# Diagnose a warrant
+tenuo.diagnose(warrant)
+# Output:
+# Warrant Status: ⚠️ Issues Found
+#
+# ✅ Signature: Valid
+# ✅ Chain: Valid (depth 2)
+# ❌ Expired: 3 minutes ago
+#
+# Suggestion: Warrant has expired. Request a fresh warrant from the issuer.
 ```
