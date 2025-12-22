@@ -1937,7 +1937,7 @@ dependencies = [
 
 [[package]]
 name = "tenuo"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.8"
 dependencies = [
  "base64 0.22.1",
  "cel-interpreter",

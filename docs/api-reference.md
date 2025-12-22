@@ -1187,24 +1187,6 @@ with root_task_sync(Capability("search"), Capability("calculator")):
 | `warn_on_missing_warrant` | `bool` | `True` | Log warnings for unprotected calls |
 | `schemas` | `Dict[str, ToolSchema]` | `None` | Custom tool schemas |
 
-### Legacy Example
-
-```python
-from tenuo import configure, root_task, protect_tools, SigningKey
-from langchain_community.tools import DuckDuckGoSearchRun
-
-# Setup
-kp = SigningKey.generate()
-configure(issuer_key=kp)
-
-# Protect tools
-tools = [DuckDuckGoSearchRun()]
-protect_tools(tools)
-
-# Use with scoped authority
-async with root_task(Capability("duckduckgo_search", query=Wildcard())):
-    result = await tools[0].ainvoke({"query": "AI news"})
-```
 
 ---
 

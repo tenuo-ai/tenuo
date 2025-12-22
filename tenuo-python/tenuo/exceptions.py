@@ -127,8 +127,6 @@ class MissingSignature(CryptoError):
         super().__init__(f"Missing signature: {reason}" if reason else "Missing signature", {"reason": reason})
 
 
-# Alias for backwards compatibility
-InvalidSignature = SignatureInvalid
 
 
 # =============================================================================
@@ -139,6 +137,10 @@ class ScopeViolation(TenuoError):
     """Authorization scope was exceeded."""
     error_code = "scope_violation"
     rust_variant = "Unauthorized"
+
+
+# User-facing alias - ScopeViolation is the internal name
+AuthorizationError = ScopeViolation
 
 
 class ToolNotAuthorized(ScopeViolation):
@@ -936,12 +938,6 @@ def _constraint_repr(constraint: Any) -> str:
     return repr(constraint)
 
 
-# =============================================================================
-# Legacy Aliases (for backwards compatibility)
-# =============================================================================
-
-WarrantError = ScopeViolation
-AuthorizationError = ScopeViolation
 
 
 # =============================================================================

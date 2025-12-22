@@ -1,12 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tenuo - Architecture & Integration Points</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
-        
+
         :root {
             --bg-dark: #0a0e17;
             --bg-card: #121a2a;
@@ -23,13 +24,13 @@
             --text-muted: #64748b;
             --border: #1e293b;
         }
-        
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-        
+
         body {
             font-family: 'Space Grotesk', sans-serif;
             background: var(--bg-dark);
@@ -37,7 +38,7 @@
             min-height: 100vh;
             overflow-x: hidden;
         }
-        
+
         body::before {
             content: '';
             position: fixed;
@@ -45,13 +46,13 @@
             left: 0;
             right: 0;
             bottom: 0;
-            background: 
+            background:
                 radial-gradient(circle at 10% 20%, rgba(168, 85, 247, 0.08) 0%, transparent 50%),
                 radial-gradient(circle at 90% 80%, rgba(0, 212, 255, 0.08) 0%, transparent 50%),
                 radial-gradient(circle at 50% 50%, rgba(0, 255, 136, 0.03) 0%, transparent 70%);
             pointer-events: none;
         }
-        
+
         .container {
             max-width: 1600px;
             margin: 0 auto;
@@ -59,13 +60,13 @@
             position: relative;
             z-index: 1;
         }
-        
+
         /* Header */
         header {
             text-align: center;
             margin-bottom: 48px;
         }
-        
+
         .logo {
             font-size: 3.5rem;
             font-weight: 700;
@@ -75,13 +76,13 @@
             background-clip: text;
             margin-bottom: 8px;
         }
-        
+
         .tagline {
             font-size: 1.5rem;
             color: var(--text-secondary);
             margin-bottom: 16px;
         }
-        
+
         .subtitle {
             font-size: 1rem;
             color: var(--text-muted);
@@ -89,7 +90,7 @@
             margin: 0 auto;
             line-height: 1.6;
         }
-        
+
         /* Section titles */
         .section-title {
             font-size: 1.75rem;
@@ -98,14 +99,14 @@
             text-align: center;
             color: var(--text-primary);
         }
-        
+
         .section-title span {
             background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
         }
-        
+
         /* Architecture diagram */
         .architecture {
             display: grid;
@@ -114,7 +115,7 @@
             margin-bottom: 64px;
             align-items: stretch;
         }
-        
+
         .plane {
             background: var(--bg-card);
             border: 1px solid var(--border);
@@ -122,22 +123,22 @@
             padding: 32px;
             position: relative;
         }
-        
+
         .plane.control {
             border-top: 3px solid var(--accent-purple);
         }
-        
+
         .plane.data {
             border-top: 3px solid var(--accent-cyan);
         }
-        
+
         .plane-header {
             display: flex;
             align-items: center;
             gap: 16px;
             margin-bottom: 24px;
         }
-        
+
         .plane-icon {
             width: 56px;
             height: 56px;
@@ -147,25 +148,30 @@
             justify-content: center;
             font-size: 28px;
         }
-        
-        .plane-icon.control { background: linear-gradient(135deg, var(--accent-purple), #6366f1); }
-        .plane-icon.data { background: linear-gradient(135deg, var(--accent-cyan), #0ea5e9); }
-        
+
+        .plane-icon.control {
+            background: linear-gradient(135deg, var(--accent-purple), #6366f1);
+        }
+
+        .plane-icon.data {
+            background: linear-gradient(135deg, var(--accent-cyan), #0ea5e9);
+        }
+
         .plane-title {
             font-size: 1.5rem;
             font-weight: 600;
         }
-        
+
         .plane-subtitle {
             font-size: 0.875rem;
             color: var(--text-muted);
         }
-        
+
         .plane-features {
             list-style: none;
             margin-bottom: 24px;
         }
-        
+
         .plane-features li {
             display: flex;
             align-items: flex-start;
@@ -174,20 +180,20 @@
             border-bottom: 1px solid var(--border);
             color: var(--text-secondary);
         }
-        
+
         .plane-features li:last-child {
             border-bottom: none;
         }
-        
+
         .plane-features .icon {
             font-size: 1.25rem;
             flex-shrink: 0;
         }
-        
+
         .plane-features strong {
             color: var(--text-primary);
         }
-        
+
         /* Separator */
         .separator {
             display: flex;
@@ -196,14 +202,14 @@
             justify-content: center;
             position: relative;
         }
-        
+
         .separator-line {
             width: 3px;
             flex: 1;
             background: linear-gradient(to bottom, var(--accent-purple), var(--accent-cyan));
             border-radius: 2px;
         }
-        
+
         .separator-badge {
             background: var(--bg-dark);
             border: 2px solid var(--accent-cyan);
@@ -215,24 +221,24 @@
             text-align: center;
             margin: 16px 0;
         }
-        
+
         .separator-badge .big {
             display: block;
             font-size: 1.25rem;
             margin-bottom: 4px;
         }
-        
+
         /* Integration Grid */
         .integrations {
             margin-bottom: 64px;
         }
-        
+
         .integration-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
             gap: 20px;
         }
-        
+
         .integration-card {
             background: var(--bg-card);
             border: 1px solid var(--border);
@@ -242,7 +248,7 @@
             position: relative;
             overflow: hidden;
         }
-        
+
         .integration-card::before {
             content: '';
             position: absolute;
@@ -251,27 +257,44 @@
             right: 0;
             height: 3px;
         }
-        
-        .integration-card.sdk::before { background: var(--accent-green); }
-        .integration-card.http::before { background: var(--accent-yellow); }
-        .integration-card.sidecar::before { background: var(--accent-orange); }
-        .integration-card.library::before { background: var(--accent-purple); }
-        .integration-card.agents::before { background: var(--accent-pink); }
-        .integration-card.infra::before { background: var(--accent-cyan); }
-        
+
+        .integration-card.sdk::before {
+            background: var(--accent-green);
+        }
+
+        .integration-card.http::before {
+            background: var(--accent-yellow);
+        }
+
+        .integration-card.sidecar::before {
+            background: var(--accent-orange);
+        }
+
+        .integration-card.library::before {
+            background: var(--accent-purple);
+        }
+
+        .integration-card.agents::before {
+            background: var(--accent-pink);
+        }
+
+        .integration-card.infra::before {
+            background: var(--accent-cyan);
+        }
+
         .integration-card:hover {
             transform: translateY(-4px);
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
             border-color: var(--text-muted);
         }
-        
+
         .integration-header {
             display: flex;
             align-items: center;
             gap: 14px;
             margin-bottom: 16px;
         }
-        
+
         .integration-icon {
             width: 44px;
             height: 44px;
@@ -282,12 +305,12 @@
             font-size: 22px;
             background: rgba(255, 255, 255, 0.05);
         }
-        
+
         .integration-title {
             font-size: 1.125rem;
             font-weight: 600;
         }
-        
+
         .integration-badge {
             font-size: 0.7rem;
             padding: 3px 8px;
@@ -296,14 +319,14 @@
             color: var(--text-muted);
             margin-left: auto;
         }
-        
+
         .integration-desc {
             color: var(--text-secondary);
             font-size: 0.9rem;
             line-height: 1.5;
             margin-bottom: 16px;
         }
-        
+
         .integration-code {
             background: rgba(0, 0, 0, 0.3);
             border-radius: 8px;
@@ -313,12 +336,12 @@
             color: var(--accent-cyan);
             overflow-x: auto;
         }
-        
+
         /* Flow section */
         .flow-section {
             margin-bottom: 64px;
         }
-        
+
         .flow-diagram {
             display: flex;
             align-items: center;
@@ -330,7 +353,7 @@
             border: 1px solid var(--border);
             border-radius: 20px;
         }
-        
+
         .flow-node {
             display: flex;
             flex-direction: column;
@@ -339,7 +362,7 @@
             padding: 20px;
             min-width: 140px;
         }
-        
+
         .flow-node-icon {
             width: 64px;
             height: 64px;
@@ -350,34 +373,45 @@
             font-size: 32px;
             margin-bottom: 12px;
         }
-        
-        .flow-node-icon.user { background: linear-gradient(135deg, #6366f1, #8b5cf6); }
-        .flow-node-icon.cp { background: linear-gradient(135deg, var(--accent-purple), #a855f7); }
-        .flow-node-icon.agent { background: linear-gradient(135deg, var(--accent-cyan), #0ea5e9); }
-        .flow-node-icon.tool { background: linear-gradient(135deg, var(--accent-green), #22c55e); }
-        
+
+        .flow-node-icon.user {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        }
+
+        .flow-node-icon.cp {
+            background: linear-gradient(135deg, var(--accent-purple), #a855f7);
+        }
+
+        .flow-node-icon.agent {
+            background: linear-gradient(135deg, var(--accent-cyan), #0ea5e9);
+        }
+
+        .flow-node-icon.tool {
+            background: linear-gradient(135deg, var(--accent-green), #22c55e);
+        }
+
         .flow-node-label {
             font-weight: 600;
             margin-bottom: 4px;
         }
-        
+
         .flow-node-sub {
             font-size: 0.75rem;
             color: var(--text-muted);
         }
-        
+
         .flow-arrow {
             display: flex;
             flex-direction: column;
             align-items: center;
             color: var(--text-muted);
         }
-        
+
         .flow-arrow-line {
             font-size: 2rem;
             line-height: 1;
         }
-        
+
         .flow-arrow-label {
             font-size: 0.7rem;
             background: var(--bg-dark);
@@ -386,25 +420,25 @@
             margin-top: -8px;
             white-space: nowrap;
         }
-        
+
         /* Use cases */
         .use-cases {
             margin-bottom: 64px;
         }
-        
+
         .use-case-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
             gap: 20px;
         }
-        
+
         .use-case {
             background: linear-gradient(135deg, rgba(168, 85, 247, 0.1), rgba(0, 212, 255, 0.1));
             border: 1px solid var(--border);
             border-radius: 16px;
             padding: 24px;
         }
-        
+
         .use-case-title {
             font-size: 1.125rem;
             font-weight: 600;
@@ -413,25 +447,25 @@
             align-items: center;
             gap: 10px;
         }
-        
+
         .use-case-desc {
             color: var(--text-secondary);
             font-size: 0.9rem;
             line-height: 1.5;
         }
-        
+
         /* Roadmap */
         .roadmap {
             margin-bottom: 64px;
         }
-        
+
         .roadmap-timeline {
             display: flex;
             gap: 24px;
             overflow-x: auto;
             padding: 20px 0;
         }
-        
+
         .roadmap-item {
             flex: 0 0 260px;
             background: var(--bg-card);
@@ -440,7 +474,7 @@
             padding: 24px;
             position: relative;
         }
-        
+
         .roadmap-item::before {
             content: '';
             position: absolute;
@@ -450,11 +484,11 @@
             height: 2px;
             background: var(--border);
         }
-        
+
         .roadmap-item:last-child::before {
             display: none;
         }
-        
+
         .roadmap-phase {
             font-size: 0.75rem;
             font-weight: 600;
@@ -462,54 +496,62 @@
             letter-spacing: 0.05em;
             margin-bottom: 8px;
         }
-        
-        .roadmap-phase.now { color: var(--accent-green); }
-        .roadmap-phase.next { color: var(--accent-cyan); }
-        .roadmap-phase.future { color: var(--accent-purple); }
-        
+
+        .roadmap-phase.now {
+            color: var(--accent-green);
+        }
+
+        .roadmap-phase.next {
+            color: var(--accent-cyan);
+        }
+
+        .roadmap-phase.future {
+            color: var(--accent-purple);
+        }
+
         .roadmap-title {
             font-size: 1.125rem;
             font-weight: 600;
             margin-bottom: 12px;
         }
-        
+
         .roadmap-list {
             list-style: none;
             font-size: 0.85rem;
             color: var(--text-secondary);
         }
-        
+
         .roadmap-list li {
             padding: 4px 0;
             display: flex;
             align-items: center;
             gap: 8px;
         }
-        
+
         .roadmap-list li::before {
             content: '•';
             color: var(--text-muted);
         }
-        
+
         /* Footer */
         footer {
             text-align: center;
             padding: 40px;
             color: var(--text-muted);
         }
-        
+
         footer a {
             color: var(--accent-cyan);
             text-decoration: none;
         }
-        
+
         .footer-links {
             display: flex;
             justify-content: center;
             gap: 32px;
             margin-top: 16px;
         }
-        
+
         .footer-links a {
             display: flex;
             align-items: center;
@@ -517,31 +559,41 @@
             color: var(--text-secondary);
             transition: color 0.2s;
         }
-        
+
         .footer-links a:hover {
             color: var(--accent-cyan);
         }
-        
+
         /* Animations */
         @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
-        
-        .plane, .integration-card, .use-case, .roadmap-item {
+
+        .plane,
+        .integration-card,
+        .use-case,
+        .roadmap-item {
             animation: fadeIn 0.6s ease forwards;
         }
-        
+
         @media (max-width: 900px) {
             .architecture {
                 grid-template-columns: 1fr;
             }
-            
+
             .separator {
                 flex-direction: row;
                 padding: 20px 0;
             }
-            
+
             .separator-line {
                 width: auto;
                 height: 3px;
@@ -550,17 +602,18 @@
         }
     </style>
 </head>
+
 <body>
     <div class="container">
         <header>
             <div class="logo">tenuo</div>
             <div class="tagline">Agent Capability Flow Control</div>
             <div class="subtitle">
-                Cryptographically-enforced authorization for AI agent workflows. 
+                Cryptographically-enforced authorization for AI agent workflows.
                 Unlike IAM ("Who are you?"), Tenuo asks: "Do you hold a valid, scoped token for this action?"
             </div>
         </header>
-        
+
         <!-- Architecture -->
         <section class="architecture">
             <div class="plane control">
@@ -582,7 +635,9 @@
                     </li>
                     <li>
                         <span class="icon">✅</span>
-                        <div><strong>Approval Workflows:</strong> Human-in-the-loop for sensitive ops <span style="background: rgba(255, 204, 0, 0.2); color: var(--accent-yellow); padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; margin-left: 8px;">v0.2</span></div>
+                        <div><strong>Approval Workflows:</strong> Human-in-the-loop for sensitive ops <span
+                                style="background: rgba(255, 204, 0, 0.2); color: var(--accent-yellow); padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; margin-left: 8px;">v0.2</span>
+                        </div>
                     </li>
                     <li>
                         <span class="icon">📊</span>
@@ -590,14 +645,18 @@
                     </li>
                     <li>
                         <span class="icon">🔑</span>
-                        <div><strong>Key Rotation:</strong> Scheduled and emergency rotation <span style="background: rgba(255, 204, 0, 0.2); color: var(--accent-yellow); padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; margin-left: 8px;">v0.2</span></div>
+                        <div><strong>Key Rotation:</strong> Scheduled and emergency rotation <span
+                                style="background: rgba(255, 204, 0, 0.2); color: var(--accent-yellow); padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; margin-left: 8px;">v0.2</span>
+                        </div>
                     </li>
                 </ul>
-                <div style="background: rgba(168, 85, 247, 0.1); border-radius: 8px; padding: 12px; font-size: 0.85rem; color: var(--text-secondary);">
-                    <strong style="color: var(--accent-purple);">Deploy:</strong> Isolated namespace, RBAC-protected, limited network access
+                <div
+                    style="background: rgba(168, 85, 247, 0.1); border-radius: 8px; padding: 12px; font-size: 0.85rem; color: var(--text-secondary);">
+                    <strong style="color: var(--accent-purple);">Deploy:</strong> Isolated namespace, RBAC-protected,
+                    limited network access
                 </div>
             </div>
-            
+
             <div class="separator">
                 <div class="separator-line"></div>
                 <div class="separator-badge">
@@ -607,7 +666,7 @@
                 </div>
                 <div class="separator-line"></div>
             </div>
-            
+
             <div class="plane data">
                 <div class="plane-header">
                     <div class="plane-icon data">⚡</div>
@@ -638,15 +697,18 @@
                         <div><strong>Constraint Enforcement:</strong> Pattern, Range, CEL expressions</div>
                     </li>
                 </ul>
-                <div style="background: rgba(0, 212, 255, 0.1); border-radius: 8px; padding: 12px; font-size: 0.85rem; color: var(--text-secondary);">
-                    <strong style="color: var(--accent-cyan);">Deploy:</strong> Sidecar, library embed, or gateway. Works during CP outages
+                <div
+                    style="background: rgba(0, 212, 255, 0.1); border-radius: 8px; padding: 12px; font-size: 0.85rem; color: var(--text-secondary);">
+                    <strong style="color: var(--accent-cyan);">Deploy:</strong> Sidecar, library embed, or gateway.
+                    Works during CP outages
                 </div>
             </div>
         </section>
-        
+
         <!-- Key Value Proposition -->
         <section style="margin-bottom: 48px;">
-            <div style="background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(168, 85, 247, 0.1)); border: 1px solid rgba(0, 212, 255, 0.3); border-radius: 16px; padding: 24px; text-align: center;">
+            <div
+                style="background: linear-gradient(135deg, rgba(0, 212, 255, 0.1), rgba(168, 85, 247, 0.1)); border: 1px solid rgba(0, 212, 255, 0.3); border-radius: 16px; padding: 24px; text-align: center;">
                 <div style="font-size: 1.25rem; font-weight: 600; color: var(--text-primary); margin-bottom: 12px;">
                     Why Tenuo?
                 </div>
@@ -663,33 +725,40 @@
                     </div>
                     <div style="text-align: center;">
                         <div style="font-size: 1.5rem;">🔐</div>
-                        <div style="font-size: 0.85rem; color: var(--accent-purple); font-weight: 600;">Holder-Bound</div>
+                        <div style="font-size: 0.85rem; color: var(--accent-purple); font-weight: 600;">Holder-Bound
+                        </div>
                         <div style="font-size: 0.75rem; color: var(--text-muted);">Stolen warrants useless</div>
                     </div>
                     <div style="text-align: center;">
                         <div style="font-size: 1.5rem;">⚡</div>
-                        <div style="font-size: 0.85rem; color: var(--accent-yellow); font-weight: 600;">~27μs / ~150ns</div>
+                        <div style="font-size: 0.85rem; color: var(--accent-yellow); font-weight: 600;">~27μs / ~150ns
+                        </div>
                         <div style="font-size: 0.75rem; color: var(--text-muted);">Allow / Block latency</div>
                     </div>
                 </div>
                 <div style="font-size: 0.85rem; color: var(--text-secondary);">
-                    Unlike IAM ("Who are you?"), Tenuo asks: <strong style="color: var(--text-primary);">"Do you hold a valid, scoped token for this action?"</strong>
+                    Unlike IAM ("Who are you?"), Tenuo asks: <strong style="color: var(--text-primary);">"Do you hold a
+                        valid, scoped token for this action?"</strong>
                 </div>
             </div>
         </section>
-        
+
         <!-- Unified Flow -->
         <section class="flow-section">
             <h2 class="section-title">Complete <span>Flow</span></h2>
             <div class="flow-diagram" style="flex-direction: column; gap: 32px; padding: 48px 32px;">
-                
+
                 <!-- Phase 1: Registration & Issuance -->
                 <div style="width: 100%;">
                     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
-                        <span style="background: var(--accent-purple); color: white; padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">STEP 1</span>
-                        <span style="color: var(--text-secondary); font-size: 0.9rem;">Agent Registration & Warrant Issuance (Control Plane)</span>
+                        <span
+                            style="background: var(--accent-purple); color: white; padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">STEP
+                            1</span>
+                        <span style="color: var(--text-secondary); font-size: 0.9rem;">Agent Registration & Warrant
+                            Issuance (Control Plane)</span>
                     </div>
-                    <div style="display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap;">
+                    <div
+                        style="display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap;">
                         <div class="flow-node">
                             <div class="flow-node-icon user">👤</div>
                             <div class="flow-node-label">User/System</div>
@@ -706,7 +775,8 @@
                         </div>
                         <div class="flow-arrow">
                             <div class="flow-arrow-line">→</div>
-                            <div class="flow-arrow-label" style="background: rgba(168, 85, 247, 0.3);">root warrant</div>
+                            <div class="flow-arrow-label" style="background: rgba(168, 85, 247, 0.3);">root warrant
+                            </div>
                         </div>
                         <div class="flow-node">
                             <div class="flow-node-icon agent">🎭</div>
@@ -717,23 +787,30 @@
                     <!-- Connecting Arrow -->
                     <div style="display: flex; justify-content: center; margin-top: 16px;">
                         <div style="display: flex; flex-direction: column; align-items: center;">
-                            <div style="width: 2px; height: 24px; background: linear-gradient(to bottom, var(--accent-purple), var(--accent-cyan));"></div>
+                            <div
+                                style="width: 2px; height: 24px; background: linear-gradient(to bottom, var(--accent-purple), var(--accent-cyan));">
+                            </div>
                             <div style="color: var(--accent-cyan); font-size: 1.25rem;">▼</div>
                         </div>
                     </div>
                 </div>
-                
+
                 <!-- Step 2: Orchestrator's Perspective -->
                 <div style="width: 100%; border-top: 1px dashed var(--border); padding-top: 32px;">
                     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
-                        <span style="background: var(--accent-cyan); color: black; padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">STEP 2</span>
-                        <span style="color: var(--text-secondary); font-size: 0.9rem;">Orchestrator's Perspective: Attenuate & Delegate</span>
+                        <span
+                            style="background: var(--accent-cyan); color: black; padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">STEP
+                            2</span>
+                        <span style="color: var(--text-secondary); font-size: 0.9rem;">Orchestrator's Perspective:
+                            Attenuate & Delegate</span>
                     </div>
-                    <div style="display: flex; align-items: flex-start; justify-content: center; gap: 24px; flex-wrap: wrap;">
+                    <div
+                        style="display: flex; align-items: flex-start; justify-content: center; gap: 24px; flex-wrap: wrap;">
                         <!-- Orchestrator receives -->
                         <div style="display: flex; flex-direction: column; align-items: center; gap: 12px;">
                             <div style="font-size: 0.75rem; color: var(--text-muted);">1. Receives Root Warrant</div>
-                            <div style="background: rgba(168, 85, 247, 0.2); padding: 8px 12px; border-radius: 8px; font-size: 0.75rem; color: var(--accent-purple);">
+                            <div
+                                style="background: rgba(168, 85, 247, 0.2); padding: 8px 12px; border-radius: 8px; font-size: 0.75rem; color: var(--accent-purple);">
                                 root warrant<br>max_depth: 3
                             </div>
                         </div>
@@ -742,7 +819,8 @@
                             <div class="flow-arrow-label">2. Attenuates</div>
                         </div>
                         <!-- Orchestrator -->
-                        <div class="flow-node" style="background: rgba(0, 212, 255, 0.1); border-radius: 12px; padding: 20px;">
+                        <div class="flow-node"
+                            style="background: rgba(0, 212, 255, 0.1); border-radius: 12px; padding: 20px;">
                             <div class="flow-node-icon agent">🎭</div>
                             <div class="flow-node-label">Orchestrator</div>
                             <div class="flow-node-sub">Creates narrower warrant</div>
@@ -755,139 +833,190 @@
                         <!-- Delegates to workers -->
                         <div style="display: flex; flex-direction: column; gap: 12px;">
                             <div style="background: rgba(0, 255, 136, 0.15); padding: 10px 14px; border-radius: 8px;">
-                                <div style="font-size: 0.8rem; color: var(--accent-green); font-weight: 600;">⚙️ Worker A</div>
-                                <div style="font-size: 0.7rem; color: var(--text-muted);">action: [upgrade, restart]</div>
+                                <div style="font-size: 0.8rem; color: var(--accent-green); font-weight: 600;">⚙️ Worker
+                                    A</div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">action: [upgrade, restart]
+                                </div>
                             </div>
-                            <div style="background: rgba(255, 204, 0, 0.15); padding: 10px 14px; border-radius: 8px; border: 1px dashed var(--accent-yellow); opacity: 0.8;">
-                                <div style="font-size: 0.8rem; color: var(--accent-yellow); font-weight: 600;">🔐 Worker B <span style="font-size: 0.6rem;">v0.2</span></div>
-                                <div style="font-size: 0.7rem; color: var(--text-muted);">action: [delete] + multi-sig</div>
+                            <div
+                                style="background: rgba(255, 204, 0, 0.15); padding: 10px 14px; border-radius: 8px; border: 1px dashed var(--accent-yellow); opacity: 0.8;">
+                                <div style="font-size: 0.8rem; color: var(--accent-yellow); font-weight: 600;">🔐 Worker
+                                    B <span style="font-size: 0.6rem;">v0.2</span></div>
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">action: [delete] + multi-sig
+                                </div>
                             </div>
                         </div>
                     </div>
                     <!-- Connecting Arrow -->
                     <div style="display: flex; justify-content: center; margin-top: 16px;">
                         <div style="display: flex; flex-direction: column; align-items: center;">
-                            <div style="width: 2px; height: 24px; background: linear-gradient(to bottom, var(--accent-cyan), var(--accent-green));"></div>
+                            <div
+                                style="width: 2px; height: 24px; background: linear-gradient(to bottom, var(--accent-cyan), var(--accent-green));">
+                            </div>
                             <div style="color: var(--accent-green); font-size: 1.25rem;">▼</div>
                         </div>
                     </div>
                 </div>
-                
+
                 <!-- Step 3: Worker's Perspective -->
                 <div style="width: 100%; border-top: 1px dashed var(--border); padding-top: 32px;">
                     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
-                        <span style="background: var(--accent-green); color: black; padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">STEP 3</span>
-                        <span style="color: var(--text-secondary); font-size: 0.9rem;">Worker's Perspective: Verify Chain & Execute (100% Offline)</span>
+                        <span
+                            style="background: var(--accent-green); color: black; padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; font-weight: 600;">STEP
+                            3</span>
+                        <span style="color: var(--text-secondary); font-size: 0.9rem;">Worker's Perspective: Verify
+                            Chain & Execute (100% Offline)</span>
                     </div>
-                    <div style="display: flex; gap: 32px; flex-wrap: wrap; justify-content: center; align-items: flex-start;">
+                    <div
+                        style="display: flex; gap: 32px; flex-wrap: wrap; justify-content: center; align-items: flex-start;">
                         <!-- Routine Worker Flow -->
-                        <div style="display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 220px; background: rgba(0, 255, 136, 0.05); padding: 20px; border-radius: 12px;">
-                            <div style="font-size: 0.85rem; color: var(--accent-green); font-weight: 600;">⚙️ Worker A (Routine Actions)</div>
-                            <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 8px;">action: [upgrade, restart]</div>
-                            <div style="display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%;">
-                                <div style="display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.2); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
+                        <div
+                            style="display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 220px; background: rgba(0, 255, 136, 0.05); padding: 20px; border-radius: 12px;">
+                            <div style="font-size: 0.85rem; color: var(--accent-green); font-weight: 600;">⚙️ Worker A
+                                (Routine Actions)</div>
+                            <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 8px;">action:
+                                [upgrade, restart]</div>
+                            <div
+                                style="display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%;">
+                                <div
+                                    style="display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.2); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
                                     <span style="font-size: 0.75rem; color: var(--text-muted);">1.</span>
-                                    <span style="font-size: 0.75rem; color: var(--text-secondary);">Receive warrant chain</span>
+                                    <span style="font-size: 0.75rem; color: var(--text-secondary);">Receive warrant
+                                        chain</span>
                                 </div>
                                 <div style="color: var(--text-muted);">↓</div>
-                                <div style="display: flex; align-items: center; gap: 8px; background: rgba(0,212,255,0.1); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
+                                <div
+                                    style="display: flex; align-items: center; gap: 8px; background: rgba(0,212,255,0.1); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
                                     <span style="font-size: 0.75rem; color: var(--accent-cyan);">2.</span>
-                                    <span style="font-size: 0.75rem; color: var(--accent-cyan);">Verify chain offline (~20μs)</span>
+                                    <span style="font-size: 0.75rem; color: var(--accent-cyan);">Verify chain offline
+                                        (~20μs)</span>
                                 </div>
                                 <div style="color: var(--text-muted);">↓</div>
-                                <div style="display: flex; align-items: center; gap: 8px; background: rgba(168,85,247,0.1); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
+                                <div
+                                    style="display: flex; align-items: center; gap: 8px; background: rgba(168,85,247,0.1); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
                                     <span style="font-size: 0.75rem; color: var(--accent-purple);">3.</span>
-                                    <span style="font-size: 0.75rem; color: var(--accent-purple);">Sign request (PoP, ~2min)</span>
+                                    <span style="font-size: 0.75rem; color: var(--accent-purple);">Sign request (PoP,
+                                        ~50μs)</span>
                                 </div>
                                 <div style="color: var(--text-muted);">↓</div>
-                                <div style="background: rgba(0, 255, 136, 0.3); padding: 8px 16px; border-radius: 8px; width: 100%; text-align: center;">
-                                    <div style="font-size: 0.8rem; color: var(--accent-green); font-weight: 600;">4. ✓ Execute Tool</div>
+                                <div
+                                    style="background: rgba(0, 255, 136, 0.3); padding: 8px 16px; border-radius: 8px; width: 100%; text-align: center;">
+                                    <div style="font-size: 0.8rem; color: var(--accent-green); font-weight: 600;">4. ✓
+                                        Execute Tool</div>
                                 </div>
                             </div>
-                            <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 8px; width: 100%; text-align: center;">
+                            <div
+                                style="font-size: 0.65rem; color: var(--text-muted); margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 8px; width: 100%; text-align: center;">
                                 Can delegate further to sub-agents (depth +1)
                             </div>
                         </div>
-                        
+
                         <!-- Sensitive Worker Flow -->
-                        <div style="display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 220px; background: rgba(255, 204, 0, 0.05); padding: 20px; border-radius: 12px; border: 1px dashed var(--accent-yellow); opacity: 0.8;">
-                            <div style="font-size: 0.85rem; color: var(--accent-yellow); font-weight: 600;">🔐 Worker B (Sensitive Actions) <span style="background: rgba(255, 204, 0, 0.2); padding: 2px 6px; border-radius: 4px; font-size: 0.6rem;">v0.2</span></div>
-                            <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 8px;">action: [delete] + requires approval</div>
-                            <div style="display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%;">
-                                <div style="display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.2); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
+                        <div
+                            style="display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 220px; background: rgba(255, 204, 0, 0.05); padding: 20px; border-radius: 12px; border: 1px dashed var(--accent-yellow); opacity: 0.8;">
+                            <div style="font-size: 0.85rem; color: var(--accent-yellow); font-weight: 600;">🔐 Worker B
+                                (Sensitive Actions) <span
+                                    style="background: rgba(255, 204, 0, 0.2); padding: 2px 6px; border-radius: 4px; font-size: 0.6rem;">v0.2</span>
+                            </div>
+                            <div style="font-size: 0.7rem; color: var(--text-muted); margin-bottom: 8px;">action:
+                                [delete] + requires approval</div>
+                            <div
+                                style="display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%;">
+                                <div
+                                    style="display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.2); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
                                     <span style="font-size: 0.75rem; color: var(--text-muted);">1.</span>
-                                    <span style="font-size: 0.75rem; color: var(--text-secondary);">Receive warrant chain</span>
+                                    <span style="font-size: 0.75rem; color: var(--text-secondary);">Receive warrant
+                                        chain</span>
                                 </div>
                                 <div style="color: var(--text-muted);">↓</div>
-                                <div style="display: flex; align-items: center; gap: 8px; background: rgba(0,212,255,0.1); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
+                                <div
+                                    style="display: flex; align-items: center; gap: 8px; background: rgba(0,212,255,0.1); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
                                     <span style="font-size: 0.75rem; color: var(--accent-cyan);">2.</span>
-                                    <span style="font-size: 0.75rem; color: var(--accent-cyan);">Verify chain offline (~20μs)</span>
+                                    <span style="font-size: 0.75rem; color: var(--accent-cyan);">Verify chain offline
+                                        (~20μs)</span>
                                 </div>
                                 <div style="color: var(--text-muted);">↓</div>
-                                <div style="display: flex; align-items: center; gap: 8px; background: rgba(255,204,0,0.2); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
+                                <div
+                                    style="display: flex; align-items: center; gap: 8px; background: rgba(255,204,0,0.2); padding: 6px 12px; border-radius: 6px; width: 100%; justify-content: center;">
                                     <span style="font-size: 0.75rem; color: var(--accent-yellow);">3.</span>
-                                    <span style="font-size: 0.75rem; color: var(--accent-yellow);">Check: multi-sig required</span>
+                                    <span style="font-size: 0.75rem; color: var(--accent-yellow);">Check: multi-sig
+                                        required</span>
                                 </div>
                                 <div style="color: var(--text-muted);">↓</div>
-                                <div style="background: rgba(255, 204, 0, 0.3); padding: 8px 16px; border-radius: 8px; width: 100%; text-align: center;">
-                                    <div style="font-size: 0.8rem; color: var(--accent-yellow); font-weight: 600;">4. ✍️ Get Admin Signature</div>
-                                    <div style="font-size: 0.6rem; color: var(--text-muted);">Admin signs (warrant_id, tool, args, holder)</div>
+                                <div
+                                    style="background: rgba(255, 204, 0, 0.3); padding: 8px 16px; border-radius: 8px; width: 100%; text-align: center;">
+                                    <div style="font-size: 0.8rem; color: var(--accent-yellow); font-weight: 600;">4. ✍️
+                                        Get Admin Signature</div>
+                                    <div style="font-size: 0.6rem; color: var(--text-muted);">Admin signs (warrant_id,
+                                        tool, args, holder)</div>
                                 </div>
                                 <div style="color: var(--text-muted);">↓</div>
-                                <div style="background: rgba(0, 255, 136, 0.3); padding: 8px 16px; border-radius: 8px; width: 100%; text-align: center;">
-                                    <div style="font-size: 0.8rem; color: var(--accent-green); font-weight: 600;">5. ✓ Execute Tool</div>
+                                <div
+                                    style="background: rgba(0, 255, 136, 0.3); padding: 8px 16px; border-radius: 8px; width: 100%; text-align: center;">
+                                    <div style="font-size: 0.8rem; color: var(--accent-green); font-weight: 600;">5. ✓
+                                        Execute Tool</div>
                                 </div>
                             </div>
-                            <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 8px; width: 100%; text-align: center;">
+                            <div
+                                style="font-size: 0.65rem; color: var(--text-muted); margin-top: 8px; border-top: 1px dashed var(--border); padding-top: 8px; width: 100%; text-align: center;">
                                 Approval bound to holder (theft protected)
                             </div>
                         </div>
                     </div>
                 </div>
-                
+
                 <!-- Verification Checks Summary -->
                 <div style="width: 100%; border-top: 1px dashed var(--border); padding-top: 24px; margin-top: 8px;">
                     <div style="text-align: center; margin-bottom: 16px;">
-                        <span style="color: var(--text-muted); font-size: 0.8rem;">What gets verified at each step (all offline, ~27μs)</span>
+                        <span style="color: var(--text-muted); font-size: 0.8rem;">What gets verified at each step (all
+                            offline, ~27μs)</span>
                     </div>
                     <div style="display: flex; justify-content: center; gap: 16px; flex-wrap: wrap;">
-                        <div style="background: rgba(0, 0, 0, 0.2); padding: 10px 16px; border-radius: 8px; text-align: center;">
+                        <div
+                            style="background: rgba(0, 0, 0, 0.2); padding: 10px 16px; border-radius: 8px; text-align: center;">
                             <div style="font-size: 1rem;">🔗</div>
                             <div style="font-size: 0.75rem; color: var(--text-secondary);">Chain</div>
                         </div>
-                        <div style="background: rgba(0, 0, 0, 0.2); padding: 10px 16px; border-radius: 8px; text-align: center;">
+                        <div
+                            style="background: rgba(0, 0, 0, 0.2); padding: 10px 16px; border-radius: 8px; text-align: center;">
                             <div style="font-size: 1rem;">✍️</div>
                             <div style="font-size: 0.75rem; color: var(--text-secondary);">Signatures</div>
                         </div>
-                        <div style="background: rgba(0, 0, 0, 0.2); padding: 10px 16px; border-radius: 8px; text-align: center;">
+                        <div
+                            style="background: rgba(0, 0, 0, 0.2); padding: 10px 16px; border-radius: 8px; text-align: center;">
                             <div style="font-size: 1rem;">⬇️</div>
                             <div style="font-size: 0.75rem; color: var(--text-secondary);">Monotonicity</div>
                         </div>
-                        <div style="background: rgba(0, 0, 0, 0.2); padding: 10px 16px; border-radius: 8px; text-align: center;">
+                        <div
+                            style="background: rgba(0, 0, 0, 0.2); padding: 10px 16px; border-radius: 8px; text-align: center;">
                             <div style="font-size: 1rem;">🔐</div>
                             <div style="font-size: 0.75rem; color: var(--text-secondary);">Holder PoP</div>
                         </div>
-                        <div style="background: rgba(0, 0, 0, 0.2); padding: 10px 16px; border-radius: 8px; text-align: center;">
+                        <div
+                            style="background: rgba(0, 0, 0, 0.2); padding: 10px 16px; border-radius: 8px; text-align: center;">
                             <div style="font-size: 1rem;">🔄</div>
                             <div style="font-size: 0.75rem; color: var(--text-secondary);">Replay</div>
                         </div>
-                        <div style="background: rgba(0, 0, 0, 0.2); padding: 10px 16px; border-radius: 8px; text-align: center;">
+                        <div
+                            style="background: rgba(0, 0, 0, 0.2); padding: 10px 16px; border-radius: 8px; text-align: center;">
                             <div style="font-size: 1rem;">⏱️</div>
                             <div style="font-size: 0.75rem; color: var(--text-secondary);">Expiration</div>
                         </div>
                     </div>
                 </div>
-                
+
             </div>
         </section>
-        
+
         <!-- Integrations -->
         <section class="integrations">
             <h2 class="section-title">Integration <span>Points</span></h2>
-            
+
             <!-- Control Plane Integrations -->
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
-                <span style="background: var(--accent-purple); color: white; padding: 4px 12px; border-radius: 8px; font-size: 0.75rem; font-weight: 600;">CONTROL PLANE</span>
+                <span
+                    style="background: var(--accent-purple); color: white; padding: 4px 12px; border-radius: 8px; font-size: 0.75rem; font-weight: 600;">CONTROL
+                    PLANE</span>
                 <span style="color: var(--text-muted); font-size: 0.85rem;">Warrant issuance, policy management</span>
             </div>
             <div class="integration-grid" style="margin-bottom: 32px;">
@@ -905,12 +1034,13 @@
                         GET /v1/public-key
                     </div>
                 </div>
-                
+
                 <div class="integration-card" style="border-top: 3px solid var(--accent-purple); opacity: 0.7;">
                     <div class="integration-header">
                         <div class="integration-icon">🔑</div>
                         <div class="integration-title">Notary Registry</div>
-                        <div class="integration-badge" style="background: rgba(255, 204, 0, 0.2); color: var(--accent-yellow);">v0.2</div>
+                        <div class="integration-badge"
+                            style="background: rgba(255, 204, 0, 0.2); color: var(--accent-yellow);">v0.2</div>
                     </div>
                     <div class="integration-desc">
                         Map external identities (AWS IAM, Okta, OIDC) to Ed25519 keys for multi-sig approvals.
@@ -921,10 +1051,12 @@
                     </div>
                 </div>
             </div>
-            
+
             <!-- Data Plane Integrations -->
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 16px;">
-                <span style="background: var(--accent-cyan); color: black; padding: 4px 12px; border-radius: 8px; font-size: 0.75rem; font-weight: 600;">DATA PLANE</span>
+                <span
+                    style="background: var(--accent-cyan); color: black; padding: 4px 12px; border-radius: 8px; font-size: 0.75rem; font-weight: 600;">DATA
+                    PLANE</span>
                 <span style="color: var(--text-muted); font-size: 0.85rem;">Offline verification, authorization</span>
             </div>
             <div class="integration-grid">
@@ -942,7 +1074,7 @@
                         use tenuo::Authorizer;
                     </div>
                 </div>
-                
+
                 <div class="integration-card sdk">
                     <div class="integration-header">
                         <div class="integration-icon">🐍</div>
@@ -957,7 +1089,7 @@
                         from tenuo import Authorizer
                     </div>
                 </div>
-                
+
                 <div class="integration-card sidecar">
                     <div class="integration-header">
                         <div class="integration-icon">🚢</div>
@@ -972,7 +1104,7 @@
                         &nbsp;&nbsp;- name: tenuo-authorizer
                     </div>
                 </div>
-                
+
                 <div class="integration-card agents">
                     <div class="integration-header">
                         <div class="integration-icon">🤖</div>
@@ -987,7 +1119,7 @@
                         def read_file(path: str): ...
                     </div>
                 </div>
-                
+
                 <div class="integration-card infra">
                     <div class="integration-header">
                         <div class="integration-icon">☁️</div>
@@ -1004,7 +1136,7 @@
                 </div>
             </div>
         </section>
-        
+
         <!-- Use Cases -->
         <section class="use-cases">
             <h2 class="section-title">Use <span>Cases</span></h2>
@@ -1012,7 +1144,7 @@
                 <div class="use-case">
                     <div class="use-case-title">🔧 Tool Authorization</div>
                     <div class="use-case-desc">
-                        Control which tools an agent can invoke and with what parameters. 
+                        Control which tools an agent can invoke and with what parameters.
                         "Agent X can call <code>query_db</code> but only on <code>public_*</code> tables."
                     </div>
                 </div>
@@ -1024,7 +1156,9 @@
                     </div>
                 </div>
                 <div class="use-case" style="border: 1px dashed var(--accent-yellow);">
-                    <div class="use-case-title">🔐 Multi-Sig Approvals <span style="background: rgba(255, 204, 0, 0.2); color: var(--accent-yellow); padding: 2px 6px; border-radius: 4px; font-size: 0.65rem;">v0.2</span></div>
+                    <div class="use-case-title">🔐 Multi-Sig Approvals <span
+                            style="background: rgba(255, 204, 0, 0.2); color: var(--accent-yellow); padding: 2px 6px; border-radius: 4px; font-size: 0.65rem;">v0.2</span>
+                    </div>
                     <div class="use-case-desc">
                         Sensitive actions require M-of-N human approval.
                         "Delete requires 2-of-3 admins. Approvals bound to holder."
@@ -1040,43 +1174,47 @@
                 <div class="use-case">
                     <div class="use-case-title">🏗️ Infrastructure Access</div>
                     <div class="use-case-desc">
-                        Kubernetes cluster operations, cloud resource management. 
+                        Kubernetes cluster operations, cloud resource management.
                         "Upgrade staging-web only, not production."
                     </div>
                 </div>
                 <div class="use-case">
                     <div class="use-case-title">⏱️ Time-Bounded Tasks</div>
                     <div class="use-case-desc">
-                        Warrants with TTL ensure capabilities expire. 
+                        Warrants with TTL ensure capabilities expire.
                         10-minute window for a specific operation.
                     </div>
                 </div>
             </div>
         </section>
-        
+
         <!-- Performance -->
         <section class="use-cases" style="margin-bottom: 48px;">
             <h2 class="section-title">Performance <span>Metrics</span></h2>
             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px;">
-                <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
+                <div
+                    style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
                     <div style="font-size: 2.5rem; font-weight: 700; color: var(--accent-green);">~27μs</div>
                     <div style="color: var(--text-secondary); margin-top: 8px;">Allowed actions</div>
                 </div>
-                <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
+                <div
+                    style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
                     <div style="font-size: 2.5rem; font-weight: 700; color: var(--accent-red);">~150ns</div>
                     <div style="color: var(--text-secondary); margin-top: 8px;">Blocked (short-circuit)</div>
                 </div>
-                <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
+                <div
+                    style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
                     <div style="font-size: 2.5rem; font-weight: 700; color: var(--accent-cyan);">20μs</div>
                     <div style="color: var(--text-secondary); margin-top: 8px;">Chain verify (3-hop)</div>
                 </div>
-                <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
+                <div
+                    style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; text-align: center;">
                     <div style="font-size: 2.5rem; font-weight: 700; color: var(--accent-purple);">0</div>
                     <div style="color: var(--text-secondary); margin-top: 8px;">Network calls</div>
                 </div>
             </div>
         </section>
-        
+
         <!-- Roadmap -->
         <section class="roadmap">
             <h2 class="section-title">Road<span>map</span></h2>
@@ -1125,9 +1263,9 @@
                 </div>
             </div>
         </section>
-        
+
         <footer>
-            <p style="margin-bottom: 12px; opacity: 0.7;">🦀 Rust core  •  🐍 Python SDK  •  ⚡ ~27μs verification</p>
+            <p style="margin-bottom: 12px; opacity: 0.7;">🦀 Rust core • 🐍 Python SDK • ⚡ ~27μs verification</p>
             <p>
                 <a href="index.html">Home</a> ·
                 <a href="quickstart">Quick Start</a> ·
@@ -1138,5 +1276,5 @@
         </footer>
     </div>
 </body>
-</html>
 
+</html>

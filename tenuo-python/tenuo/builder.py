@@ -548,45 +548,6 @@ class AttenuationBuilder:
         self._rust_builder.terminal()
         return self
     
-    # =========================================================================
-    # Aliases for backward compatibility (deprecated, will be removed)
-    # =========================================================================
-    
-    def with_capability(self, tool: str, constraints: Dict[str, Any]) -> 'AttenuationBuilder':
-        """Alias for capability() - deprecated, use capability() instead."""
-        return self.capability(tool, constraints)
-    
-    def with_ttl(self, seconds: int) -> 'AttenuationBuilder':
-        """Alias for ttl() - deprecated, use ttl() instead."""
-        return self.ttl(seconds)  # type: ignore[return-value]
-    
-    def with_holder(self, public_key: PublicKey) -> 'AttenuationBuilder':
-        """Alias for holder() - deprecated, use holder() instead."""
-        return self.holder(public_key)  # type: ignore[return-value]
-    
-    def with_clearance(self, level: Clearance) -> 'AttenuationBuilder':
-        """Alias for clearance() - deprecated, use clearance() instead."""
-        return self.clearance(level)  # type: ignore[return-value]
-    
-    def with_intent(self, text: str) -> 'AttenuationBuilder':
-        """Alias for intent() - deprecated, use intent() instead."""
-        return self.intent(text)  # type: ignore[return-value]
-    
-    def with_tool(self, name: str) -> 'AttenuationBuilder':
-        """Alias for tool() - deprecated, use tool() instead."""
-        return self.tool(name)
-    
-    def with_tools(self, names: List[str]) -> 'AttenuationBuilder':
-        """Alias for tools() - deprecated, use tools() instead."""
-        return self.tools(names)
-    
-    def with_issuable_tool(self, name: str) -> 'AttenuationBuilder':
-        """Alias for issuable_tool() - deprecated."""
-        return self.issuable_tool(name)
-    
-    def with_issuable_tools(self, names: List[str]) -> 'AttenuationBuilder':
-        """Alias for issuable_tools() - deprecated."""
-        return self.issuable_tools(names)
     
     # =========================================================================
     # Diff and build methods
@@ -907,37 +868,6 @@ class IssuanceBuilder:
         """
         return self.build(signing_key)
     
-    # =========================================================================
-    # Legacy aliases (for backward compatibility)
-    # =========================================================================
-    
-    def with_tool(self, name: str) -> 'IssuanceBuilder':
-        """Alias for tool()."""
-        return self.tool(name)
-    
-    def with_capability(self, tool: str, constraints: Dict[str, Any]) -> 'IssuanceBuilder':
-        """Alias for capability()."""
-        return self.capability(tool, constraints)
-    
-    def with_ttl(self, seconds: int) -> 'IssuanceBuilder':
-        """Alias for ttl()."""
-        return self.ttl(seconds)  # type: ignore[return-value]
-    
-    def with_holder(self, public_key: PublicKey) -> 'IssuanceBuilder':
-        """Alias for holder()."""
-        return self.holder(public_key)  # type: ignore[return-value]
-    
-    def with_clearance(self, level: Clearance) -> 'IssuanceBuilder':
-        """Alias for clearance()."""
-        return self.clearance(level)  # type: ignore[return-value]
-    
-    def with_intent(self, value: str) -> 'IssuanceBuilder':
-        """Alias for intent()."""
-        return self.intent(value)  # type: ignore[return-value]
-    
-    def with_max_depth(self, depth: int) -> 'IssuanceBuilder':
-        """Alias for max_depth()."""
-        return self.max_depth(depth)
 
 
 def wrap_rust_issuance_builder(rust_builder) -> IssuanceBuilder:

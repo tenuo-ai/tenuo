@@ -66,9 +66,9 @@ from .exceptions import (
     CryptoError,
     SignatureInvalid,
     MissingSignature,
-    InvalidSignature,  # alias for SignatureInvalid
     # Scope violations
     ScopeViolation,
+    AuthorizationError,
     ToolNotAuthorized,
     ToolMismatch,
     ConstraintViolation,
@@ -141,9 +141,6 @@ from .exceptions import (
     # DX (diff-style errors)
     AuthorizationDenied,
     ConstraintResult,
-    # Legacy aliases
-    WarrantError,
-    AuthorizationError,
     # Helper
     categorize_rust_error,
 )
@@ -387,9 +384,9 @@ __all__ = [
     "CryptoError",
     "SignatureInvalid",
     "MissingSignature",
-    "InvalidSignature",  # alias for SignatureInvalid
     # Exceptions - Scope violations
     "ScopeViolation",
+    "AuthorizationError",
     "ToolNotAuthorized",
     "ToolMismatch",
     "ConstraintViolation",
@@ -464,9 +461,6 @@ __all__ = [
     # Exceptions - DX (diff-style errors)
     "AuthorizationDenied",
     "ConstraintResult",
-    # Exceptions - Legacy aliases
-    "WarrantError",
-    "AuthorizationError",
     # Exceptions - Helper
     "categorize_rust_error",
     # Decorators
@@ -511,4 +505,4 @@ __all__ = [
     "PreviewResult",
 ]
 
-__version__ = "0.1.0a4"
+__version__ = "0.1.0a8"

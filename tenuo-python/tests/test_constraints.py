@@ -15,7 +15,7 @@ import pytest
 from tenuo import (
     SigningKey, Warrant, Pattern, Exact, Cidr, UrlPattern, Constraints,
     lockdown, set_warrant_context, set_signing_key_context,
-    AuthorizationError
+    ScopeViolation
 )
 
 
@@ -40,7 +40,7 @@ def test_pattern_constraint_matching():
         assert access_file(path="/data/subdir/file.txt") == "accessed /data/subdir/file.txt"
         
         # Should not match
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ScopeViolation):
             access_file(path="/other/file.txt")
 
 
@@ -64,10 +64,10 @@ def test_exact_constraint_matching():
         assert delete_database(db_name="test-db") == "deleted test-db"
         
         # Should not match different values
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ScopeViolation):
             delete_database(db_name="prod-db")
         
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ScopeViolation):
             delete_database(db_name="test-db-2")
 
 
@@ -95,15 +95,15 @@ def test_multiple_constraints():
         assert result == "transferred $100 from checking-001"
         
         # First constraint violated
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ScopeViolation):
             transfer(account="savings-001", amount="100")
         
         # Second constraint violated
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ScopeViolation):
             transfer(account="checking-001", amount="200")
         
         # Both constraints violated
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ScopeViolation):
             transfer(account="savings-001", amount="200")
 
 
@@ -142,7 +142,7 @@ def test_constraint_attenuation():
     with set_warrant_context(child), set_signing_key_context(kp):
         assert access_file(path="/data/reports/q3.pdf") == "accessed /data/reports/q3.pdf"
         
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ScopeViolation):
             access_file(path="/data/file.txt")
 
 
@@ -184,11 +184,11 @@ def test_constraint_field_addition():
         assert call_api(endpoint="/api/users/123", method="GET") == "GET /api/users/123"
         
         # Wrong method
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ScopeViolation):
             call_api(endpoint="/api/users/123", method="POST")
         
         # Wrong endpoint
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ScopeViolation):
             call_api(endpoint="/api/data", method="GET")
 
 
@@ -277,7 +277,7 @@ def test_cidr_constraint_matching():
         assert allow_ip(source_ip="10.255.255.255") == "allowed 10.255.255.255"
         
         # Should not match IPs outside network
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ScopeViolation):
             allow_ip(source_ip="192.168.1.1")
 
 
@@ -314,7 +314,7 @@ def test_cidr_attenuation():
     with set_warrant_context(child), set_signing_key_context(kp):
         assert allow_ip(source_ip="10.1.2.3") == "allowed 10.1.2.3"
         
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ScopeViolation):
             allow_ip(source_ip="10.2.3.4")
 
 
@@ -395,7 +395,7 @@ def test_url_pattern_constraint_matching():
         assert call_api(endpoint="https://api.example.com/v1/users") == "called https://api.example.com/v1/users"
 
         # Should not match invalid URLs
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ScopeViolation):
             call_api(endpoint="https://evil.com/v1")
 
 
@@ -432,7 +432,7 @@ def test_url_pattern_attenuation():
     with set_warrant_context(child), set_signing_key_context(kp):
         assert call_api(endpoint="https://api.example.com/v1/users") == "called https://api.example.com/v1/users"
 
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ScopeViolation):
             call_api(endpoint="https://www.example.com/other")
 
 
