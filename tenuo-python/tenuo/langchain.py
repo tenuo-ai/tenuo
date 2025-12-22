@@ -243,24 +243,21 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                         signing_key, self.name, constraint_args
                     ))
                     authorized = warrant.authorize(
-                        tool=self.name,
-                        args=constraint_args,
-                        signature=pop_signature
+                        self.name, constraint_args, pop_signature
                     )
                 else:
-                    # No key available - fail closed
-                    raise ConstraintViolation(
-                        field="signature",
-                        reason="No signing key available for PoP signature",
-                        value=None,
-                    )
+                    # No key context - cannot authorize (or fallback to basic checks?)
+                    # If warrant requires signature, this fails.
+                    # Assuming basic authorize without signature if key missing?
+                    # No, strict security requirement.
+                    # But for now, let's assume authorize(tool, args) exists on PlainWarrant
+                    # if checking WITHOUT signature (which is deprecated/removed in Rust?)
+                    # Rust core expects pop_signature.
+                    # If no key, we can't authorize.
+                    authorized = False
 
             if not authorized:
-                raise ConstraintViolation(
-                    field="unknown",
-                    reason="Authorization failed - constraint violation",
-                    value=None,
-                )
+                raise ToolNotAuthorized(tool=self.name)
             
             log_authorization_success(warrant, self.name, tool_input)
 

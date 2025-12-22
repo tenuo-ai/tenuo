@@ -117,10 +117,14 @@ class TestFastAPIIntegration:
         
         resp = client.get("/admin", headers=headers)
         assert resp.status_code == 403
-        # Should mention tool not authorized
+        # Error should be opaque (no constraint details exposed)
         detail = resp.json()["detail"]
-        assert detail["error"] == "tool_not_authorized"
-        assert "search" in detail["authorized_tools"]
+        assert detail["error"] == "authorization_denied"
+        assert detail["message"] == "Authorization denied"
+        # Should have request_id for log correlation
+        assert "request_id" in detail
+        # Should NOT expose authorized_tools (information leakage)
+        assert "authorized_tools" not in detail
 
     def test_custom_arg_extraction(self, app, client, key):
         def extract_custom(request: Request) -> Dict[str, Any]:

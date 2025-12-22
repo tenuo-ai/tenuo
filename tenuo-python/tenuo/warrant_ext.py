@@ -331,6 +331,19 @@ def _warrant_preview_would_allow(self: Warrant, tool: str, args: dict) -> Previe
     """
     Check if args would satisfy constraints (UX only, not authorization).
     
+    ⚠️  SECURITY WARNING: THIS IS NOT A SECURITY CHECK  ⚠️
+    
+    This method checks constraints WITHOUT verifying Proof-of-Possession.
+    It is intended for UI hints ("should I show this button?"), NOT for
+    authorization decisions that gate sensitive operations.
+    
+    For actual authorization, use:
+        bound_warrant.authorize(tool, args)  # Verifies PoP signature
+    
+    NEVER do this:
+        if warrant.preview_would_allow("tool", args).allowed:
+            execute_dangerous_operation()  # ❌ NO PoP CHECK!
+    
     This delegates to Rust for constraint checking to avoid logic divergence.
     """
     # First check if tool is in warrant

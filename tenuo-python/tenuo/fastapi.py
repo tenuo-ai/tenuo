@@ -23,6 +23,12 @@ Usage:
 from dataclasses import dataclass
 from typing import Optional, Any, Dict, List, Callable
 import base64
+import uuid
+import logging
+
+from tenuo_core import Warrant, PublicKey  # type: ignore[import-untyped]
+
+logger = logging.getLogger("tenuo.fastapi")
 
 # Use string forward refs or try import, FastAPI must be installed
 try:
@@ -39,9 +45,6 @@ except ImportError:
     status = Any  # type: ignore
     APIKeyHeader = Any  # type: ignore
     FASTAPI_AVAILABLE = False
-
-
-from tenuo_core import Warrant, PublicKey  # type: ignore[import-untyped]
 
 
 # Define standard headers
@@ -61,6 +64,7 @@ _config: Dict[str, Any] = {
     "trusted_issuers": [],
     "strict": False,
     "error_handler": None,
+    "expose_error_details": False,  # SECURITY: keep False in production
 }
 
 
@@ -70,6 +74,7 @@ def configure_tenuo(
     trusted_issuers: Optional[List[PublicKey]] = None,
     strict: bool = False,
     error_handler: Optional[Callable[[Exception], Any]] = None,
+    expose_error_details: bool = False,
 ) -> None:
     """
     Configure Tenuo for a FastAPI application.
@@ -79,6 +84,8 @@ def configure_tenuo(
         trusted_issuers: List of trusted issuer public keys for chain verification
         strict: If True, require all routes to have Tenuo protection
         error_handler: Custom error handler for authorization failures
+        expose_error_details: If True, include constraint details in error responses.
+                              SECURITY: Keep False in production to prevent information leakage.
         
     Usage:
         from tenuo.fastapi import configure_tenuo
@@ -87,13 +94,15 @@ def configure_tenuo(
         configure_tenuo(
             app,
             trusted_issuers=[issuer_key.public_key],
-            strict=True
+            strict=True,
+            expose_error_details=False,  # Default, recommended for production
         )
     """
     global _config
     _config["trusted_issuers"] = trusted_issuers or []
     _config["strict"] = strict
     _config["error_handler"] = error_handler
+    _config["expose_error_details"] = expose_error_details
     
     # Store config in app state for access in dependencies
     app.state.tenuo_config = _config
@@ -293,25 +302,54 @@ class TenuoGuard:
 
         # 5. Authorize - 403 for authorization failure
         if not warrant.authorize(self.tool, auth_args, pop_sig_bytes):
-            # Try to get a better error message
+            # Generate a request ID for log correlation
+            request_id = str(uuid.uuid4())[:8]
+            
+            # Log detailed info for operators (never exposed to clients)
+            logger.warning(
+                f"[{request_id}] Authorization denied for tool '{self.tool}' "
+                f"with args {auth_args}. Warrant ID: {warrant.id}"
+            )
+            
+            # Check if detailed errors are allowed (dev mode only)
+            expose_details = _config.get("expose_error_details", False)
+            
             if self.tool not in (warrant.tools or []):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={
+                if expose_details:
+                    detail = {
                         "error": "tool_not_authorized",
                         "message": f"Warrant does not authorize tool '{self.tool}'",
                         "authorized_tools": warrant.tools,
-                    },
-                )
-            else:
+                        "request_id": request_id,
+                    }
+                else:
+                    detail = {
+                        "error": "authorization_denied",
+                        "message": "Authorization denied",
+                        "request_id": request_id,
+                    }
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail={
+                    detail=detail,
+                )
+            else:
+                if expose_details:
+                    detail = {
                         "error": "authorization_denied",
                         "message": f"Authorization denied for tool '{self.tool}'",
                         "tool": self.tool,
                         "args": auth_args,
-                    },
+                        "request_id": request_id,
+                    }
+                else:
+                    detail = {
+                        "error": "authorization_denied",
+                        "message": "Authorization denied",
+                        "request_id": request_id,
+                    }
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=detail,
                 )
             
         return SecurityContext(

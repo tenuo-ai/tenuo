@@ -90,12 +90,17 @@ class WarrantBuilder:
         return self
     
     def tool(self, tool: str) -> 'WarrantBuilder':
-        """Set a single tool (convenience method).
+        """Add a single tool (accumulates).
         
         Args:
             tool: Tool name
         """
-        self._tools = tool
+        if self._tools is None:
+            self._tools = [tool]
+        elif isinstance(self._tools, str):
+            self._tools = [self._tools, tool]
+        else:
+            self._tools.append(tool)
         return self
     
     def constraint(self, field: str, value: Any) -> 'WarrantBuilder':

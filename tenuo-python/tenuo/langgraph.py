@@ -50,6 +50,7 @@ import os
 from .exceptions import ConfigurationError
 from .bound_warrant import BoundWarrant
 from .keys import KeyRegistry, load_signing_key_from_env
+from tenuo_core import Warrant
 
 # Optional LangGraph imports
 try:
@@ -169,8 +170,18 @@ def _get_bound_warrant(
             "Ensure your State TypedDict includes 'warrant: Warrant'."
         )
     
-    # Resolve key_id: explicit > config > default
-    resolved_key_id = key_id or _get_key_id_from_config(config)
+    # Auto-inflate from string (Base64) if needed (for serialization safety)
+    if isinstance(warrant, str):
+        try:
+            warrant = Warrant.from_base64(warrant)
+        except Exception as e:
+            raise ConfigurationError(f"Failed to decode warrant from string token: {e}")
+    
+    if key_id is None:
+        # Try config first
+        resolved_key_id = _get_key_id_from_config(config)
+    else:
+        resolved_key_id = key_id
     
     # Get key from registry
     registry = KeyRegistry.get_instance()
@@ -231,6 +242,10 @@ def secure(
         config: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Any:
+        # print(f"DEBUG: wrapper called. config type: {type(config)}. kwargs: {kwargs.keys()}")
+        if config is None and 'config' in kwargs:
+             config = kwargs['config']
+             
         state_dict = state if isinstance(state, dict) else vars(state)
         
         try:
@@ -384,10 +399,13 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         try:
             bw = _get_bound_warrant(input, config)
         except Exception as e:
+            import uuid
+            request_id = str(uuid.uuid4())[:8]
+            logger.warning(f"[{request_id}] Failed to get BoundWarrant: {e}")
             return {
                 "messages": [
                     ToolMessage(
-                        content=f"Security Error: {str(e)}",
+                        content=f"Security configuration error (ref: {request_id})",
                         tool_call_id="unknown",
                         status="error"
                     )
@@ -433,8 +451,18 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
                     name=tool_name
                 ))
             except Exception as e:
+                # Generate request ID for log correlation
+                import uuid
+                request_id = str(uuid.uuid4())[:8]
+                
+                # Log detailed error for operators (never exposed to LLM)
+                logger.warning(
+                    f"[{request_id}] Tool '{tool_name}' authorization failed: {e}"
+                )
+                
+                # Return opaque error to LLM (prevents constraint probing)
                 results.append(ToolMessage(
-                    content=f"Error: {str(e)}",
+                    content=f"Authorization denied (ref: {request_id})",
                     tool_call_id=tool_id,
                     status="error"
                 ))
