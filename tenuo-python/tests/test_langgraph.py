@@ -9,7 +9,7 @@ Tests the improved KeyRegistry pattern where:
 """
 
 import pytest
-from typing import Dict, Any, TypedDict
+from typing import Dict, Any, TypedDict, Optional
 
 from tenuo import (
     SigningKey,
@@ -98,7 +98,7 @@ class TestSecureWrapper:
         
         received_bw = None
         
-        def my_agent(state: Dict[str, Any], bound_warrant: BoundWarrant = None) -> Dict[str, Any]:
+        def my_agent(state: Dict[str, Any], bound_warrant: Optional[BoundWarrant] = None) -> Dict[str, Any]:
             nonlocal received_bw
             received_bw = bound_warrant
             return {"result": "done"}
