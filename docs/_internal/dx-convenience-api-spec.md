@@ -88,6 +88,186 @@ state.warrant = warrant.bind_key(key)  # Type error!
 
 This is why `BoundWarrant` **wraps** a `Warrant` instead of inheriting from it.
 
+#### Type Hints for BoundWarrant
+
+Since `BoundWarrant` is not a `Warrant` subclass, provide type hints for functions that accept either:
+
+```python
+# In tenuo/types.py
+from typing import Protocol, Union
+
+class ReadableWarrant(Protocol):
+    """Protocol for warrant-like objects (read-only operations)."""
+    @property
+    def id(self) -> str: ...
+    @property
+    def tools(self) -> list[str]: ...
+    @property
+    def ttl_remaining(self) -> timedelta: ...
+    def can(self, tool: str) -> bool: ...
+    def would_allow(self, tool: str, args: dict) -> bool: ...
+    def explain(self) -> str: ...
+
+# For functions that need signing capability
+class SignableWarrant(Protocol):
+    """Protocol for warrant-like objects that can sign requests."""
+    def auth_headers(self, tool: str, args: dict) -> dict[str, str]: ...
+    def delegate(self, to: PublicKey, allow: list, ttl: int) -> Warrant: ...
+
+# Union type for convenience
+AnyWarrant = Union[Warrant, BoundWarrant]
+```
+
+**Usage in SDK:**
+
+```python
+def inspect_warrant(warrant: ReadableWarrant) -> None:
+    """Works with both Warrant and BoundWarrant."""
+    print(warrant.explain())
+    for tool in warrant.tools:
+        print(f"  {tool}: {warrant.can(tool)}")
+```
+
+#### BoundWarrant Usage Examples
+
+**Example 1: Basic Binding and API Calls**
+
+```python
+from tenuo import Warrant, SigningKey
+
+# Receive warrant and key separately
+warrant = Warrant.from_base64(received_warrant_b64)
+key = SigningKey.from_env("WORKER_KEY")
+
+# Bind once, use multiple times
+bound = warrant.bind_key(key)
+
+# Make API calls - key is implicit
+headers = bound.auth_headers("search", {"query": "test"})
+response = requests.get("https://api/search", headers=headers)
+
+headers = bound.auth_headers("read_file", {"path": "/data/report.pdf"})
+response = requests.get("https://api/read_file", headers=headers)
+```
+
+**Example 2: Delegation with BoundWarrant**
+
+```python
+# Orchestrator binds its warrant
+orchestrator_bound = orchestrator_warrant.bind_key(orchestrator_key)
+
+# Delegate to workers - signing is implicit
+worker1_warrant = orchestrator_bound.delegate(
+    to=worker1_key.public_key,
+    allow=["search"],
+    ttl=300
+)
+
+worker2_warrant = orchestrator_bound.delegate(
+    to=worker2_key.public_key,
+    allow=["read_file"],
+    ttl=300
+)
+
+# Workers receive plain Warrants (not BoundWarrant)
+# They bind with their own keys
+worker1_bound = worker1_warrant.bind_key(worker1_key)
+```
+
+**Example 3: Short-Lived Binding (Recommended)**
+
+```python
+# DON'T store BoundWarrant in long-lived objects
+class MyService:
+    def __init__(self, warrant: Warrant, key: SigningKey):
+        self.warrant = warrant  # ✅ Store plain Warrant
+        self._key = key         # ✅ Store key separately (private)
+    
+    def call_api(self, tool: str, args: dict):
+        # Bind just-in-time for the call
+        bound = self.warrant.bind_key(self._key)
+        headers = bound.auth_headers(tool, args)
+        return requests.post(f"https://api/{tool}", headers=headers, json=args)
+```
+
+**Example 4: LangGraph Pattern (Key Registry)**
+
+```python
+from tenuo import Warrant
+from tenuo.langgraph import KeyRegistry
+
+# Keys stored in registry (not in state!)
+registry = KeyRegistry.get_instance()
+registry.register("orchestrator", orchestrator_key)
+registry.register("worker", worker_key)
+
+# State only holds plain Warrant
+class AgentState(TypedDict):
+    warrant: Warrant  # ✅ Plain Warrant, safe to checkpoint
+    messages: list
+
+async def worker_node(state: AgentState) -> AgentState:
+    # Get key from registry at runtime
+    key = registry.get("worker")
+    bound = state["warrant"].bind_key(key)
+    
+    # Use bound warrant for API calls
+    headers = bound.auth_headers("search", {"query": state["query"]})
+    result = await fetch("https://api/search", headers=headers)
+    
+    return {"messages": state["messages"] + [result]}
+```
+
+**Example 5: Testing with BoundWarrant**
+
+```python
+import pytest
+from tenuo import Warrant, SigningKey
+from tenuo.testing import allow_all
+
+def test_api_headers():
+    """Test that correct headers are generated."""
+    warrant, key = Warrant.quick_issue(tools=["search"], ttl=3600)
+    bound = warrant.bind_key(key)
+    
+    headers = bound.auth_headers("search", {"query": "test"})
+    
+    assert "X-Tenuo-Warrant" in headers
+    assert "X-Tenuo-PoP" in headers
+
+def test_bound_warrant_cannot_serialize():
+    """Ensure BoundWarrant raises on serialization attempt."""
+    warrant, key = Warrant.quick_issue(tools=["search"], ttl=3600)
+    bound = warrant.bind_key(key)
+    
+    with pytest.raises(TypeError, match="cannot be serialized"):
+        import pickle
+        pickle.dumps(bound)
+
+def test_bound_warrant_repr_hides_key():
+    """Ensure __repr__ doesn't leak the key."""
+    warrant, key = Warrant.quick_issue(tools=["search"], ttl=3600)
+    bound = warrant.bind_key(key)
+    
+    repr_str = repr(bound)
+    assert "KEY_BOUND=True" in repr_str
+    assert str(key) not in repr_str  # Key not in repr
+```
+
+**Anti-Pattern: Don't Do This**
+
+```python
+# ❌ DON'T store BoundWarrant in state that gets serialized
+class BadState(TypedDict):
+    bound_warrant: BoundWarrant  # Type error! And dangerous!
+
+# ❌ DON'T pass BoundWarrant across process boundaries
+await queue.put(bound_warrant)  # Key would be serialized!
+
+# ❌ DON'T log BoundWarrant (even though __repr__ hides key)
+logger.debug(f"Processing with {bound_warrant}")  # Unnecessary risk
+```
+
 ### `dry_run()` vs `auth_headers()`
 
 | Method | Use Case | PoP Signature |
@@ -1900,8 +2080,28 @@ result = await app.ainvoke({
 |------|------|--------|
 | Add `Warrant.quick_issue(tools, ttl)` returns `(warrant, key)` | `warrant_ext.py` | 1h |
 | Add `Warrant.for_testing(tools)` with runtime guard | `testing.py` | 1h |
-| Add `tenuo.testing.allow_all()` context manager with runtime guard | `testing.py` | 2h |
+| Add `tenuo.testing.allow_all()` context manager with safety latch | `testing.py` | 2h |
 | Implement `_is_test_environment()` check | `testing.py` | 1h |
+
+**Safety Latch for `allow_all()`:**
+
+```python
+@contextmanager
+def allow_all():
+    """Bypass authorization for testing. NEVER ships to production."""
+    # Safety latch: fail hard in production
+    if os.getenv("TENUO_ENV") == "production":
+        raise SecurityError(
+            "allow_all() is disabled in production! "
+            "Set TENUO_ENV to 'development' or 'test' to use testing utilities."
+        )
+    if not _is_test_environment():
+        raise RuntimeError(
+            "allow_all() only works in test environments. "
+            "Set TENUO_TEST_MODE=1 or run under pytest."
+        )
+    # ... bypass authorization
+```
 
 #### 1.6 Diagnostics
 
@@ -2126,7 +2326,13 @@ Week 3:
 - [ ] `Warrant.quick_issue(tools, ttl)` returns `(warrant, key)`
 - [ ] `Warrant.for_testing(tools)` raises outside test environment
 - [ ] `tenuo.testing.allow_all()` raises outside test environment
+- [ ] `tenuo.testing.allow_all()` raises `SecurityError` when `TENUO_ENV=production`
 - [ ] `_is_test_environment()` detects pytest/TENUO_TEST_MODE
+
+### Type Hints
+- [ ] `ReadableWarrant` protocol for read-only warrant operations
+- [ ] `SignableWarrant` protocol for signing operations
+- [ ] `AnyWarrant = Union[Warrant, BoundWarrant]` type alias
 
 ### Configuration
 - [ ] `configure(issuer_key, strict, registered_tools)` sets process-wide config
