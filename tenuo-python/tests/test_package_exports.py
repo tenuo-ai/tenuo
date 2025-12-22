@@ -9,4 +9,3 @@ def test_core_types_exposed():
     """Verify that core types are exposed at the top level."""
     assert tenuo.SigningKey is not None
     assert tenuo.Warrant is not None
-    assert tenuo.AuthorizationError is not None

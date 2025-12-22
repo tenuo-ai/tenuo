@@ -16,6 +16,7 @@ Complete API documentation for the Tenuo Python SDK. For wire format details, se
   - [PublicKey](#publickey)
   - [Signature](#signature)
   - [Warrant](#warrant)
+  - [BoundWarrant](#boundwarrant)
   - [Authorizer](#authorizer)
 - [Constraints](#constraints)
 - [Task Scoping](#task-scoping)
@@ -24,8 +25,10 @@ Complete API documentation for the Tenuo Python SDK. For wire format details, se
 - [Decorators & Context](#decorators--context)
 - [LangChain Integration](#langchain-integration)
 - [LangGraph Integration](#langgraph-integration)
+- [Testing Utilities](#testing-utilities)
 - [Exceptions](#exceptions)
 - [Audit Logging](#audit-logging)
+- [Type Protocols](#type-protocols)
 
 ---
 
@@ -341,8 +344,22 @@ issuer = (Warrant.builder()
 | `depth` | `int` | Delegation depth (0 = root) |
 | `session_id` | `str \| None` | Session identifier |
 | `authorized_holder` | `PublicKey \| None` | Bound holder's public key |
-| `expires_at` | `str` | Expiration time (RFC3339) |
+| `ttl_remaining` | `timedelta` | Time remaining until expiration |
+| `ttl` | `timedelta` | Alias for `ttl_remaining` |
+| `expires_at` | `datetime` | Expiration time as datetime object |
+| `is_expired` | `bool` | Whether warrant has expired |
+| `is_terminal` | `bool` | Whether warrant cannot delegate further (depth=0) |
+| `capabilities` | `dict` | Human-readable constraint summary |
 | `delegation_receipt` | `DelegationReceipt \| None` | Receipt if created via delegation |
+
+```python
+# Property examples
+warrant.ttl_remaining       # timedelta(seconds=299, ...)
+warrant.expires_at          # datetime(2025, 12, 22, 21, 30, ...)
+warrant.is_expired          # False
+warrant.is_terminal         # False  
+warrant.capabilities        # {'tools': ['read_file'], 'path': '/data/*', 'max_size': 1000000}
+```
 
 #### Instance Methods
 
@@ -356,8 +373,51 @@ issuer = (Warrant.builder()
 | `verify(public_key)` | `bool` | Verify signature against issuer |
 | `create_pop_signature(keypair, tool, args)` | `list[int]` | Create PoP signature |
 | `to_base64()` | `str` | Serialize to base64 |
-| `is_expired()` | `bool` | Check if warrant has expired |
-| `is_terminal()` | `bool` | Check if warrant cannot delegate further |
+| `preview_can(tool, **args)` | `PreviewResult` | Check if action would be allowed (UX only) |
+| `why_denied(tool, **args)` | `WhyDenied` | Get structured denial reason |
+| `auth_headers(keypair, tool, args)` | `dict` | Generate HTTP authorization headers |
+
+#### Preview & Debugging Methods
+
+```python
+from tenuo import Warrant, PreviewResult, WhyDenied, DenyCode
+
+# Preview (UX-only, not security-enforced)
+result = warrant.preview_can("read_file", path="/data/report.txt")
+if result.allowed:
+    print("Would be allowed")
+else:
+    print(f"Would be denied: {result.reason}")
+
+# Why denied (for debugging)
+reason = warrant.why_denied("write_file", path="/etc/passwd")
+# WhyDenied(deny_code=DenyCode.TOOL_NOT_ALLOWED, tool='write_file', ...)
+
+if reason.deny_code == DenyCode.TOOL_NOT_ALLOWED:
+    print("Tool not in warrant")
+
+# Generate HTTP headers
+headers = warrant.auth_headers(keypair, "read_file", {"path": "/data/x.txt"})
+# {'Authorization': 'TenuoWarrant ...', 'X-Tenuo-Pop': '...'}
+```
+
+| Class | Description |
+|-------|-------------|
+| `PreviewResult` | Result with `.allowed`, `.reason`, `.tool` |
+| `WhyDenied` | Denial info with `.deny_code`, `.tool`, `.field`, `.constraint`, `.value` |
+| `DenyCode` | Enum: `ALLOWED`, `TOOL_NOT_ALLOWED`, `CONSTRAINT_VIOLATED`, `EXPIRED` |
+
+#### Repr (Safe Logging)
+
+Warrant `repr()` hides sensitive data for safe logging:
+
+```python
+print(repr(warrant))
+# <Warrant id=tnu_wrt_019b... tools=[read_file, write_file] ttl=0:04:59>
+
+# Many tools are truncated
+# <Warrant id=tnu_wrt_019b... tools=[a, b, c, +3 more] ttl=0:04:59>
+```
 
 ⚠️ **Replay Window:** PoP signatures are valid for ~2 minutes to handle clock skew. For sensitive operations, implement deduplication using `warrant.dedup_key(tool, args)`. See [Protocol: Replay Protection](./protocol#replay-protection).
 
@@ -437,6 +497,71 @@ terminal = builder.delegate(kp)
 
 assert terminal.is_terminal()  # True
 # terminal.attenuate().delegate(...) will fail
+```
+
+---
+
+### BoundWarrant
+
+Warrant bound to a signing key for convenience. **Non-serializable** to prevent accidental key exposure.
+
+```python
+from tenuo import Warrant, BoundWarrant
+
+# Create bound warrant
+warrant, keypair = Warrant.quick_issue(["read_file"], ttl=300)
+bound = BoundWarrant(warrant, keypair)
+
+# Or bind from existing warrant
+bound = warrant.bind(keypair)
+```
+
+#### Why BoundWarrant?
+
+- **Convenience**: No need to pass keypair to every method
+- **Safety**: Cannot be serialized (prevents accidental key exposure)
+- **Ergonomic**: All warrant properties/methods available via forwarding
+
+#### Properties (Forwarded from Warrant)
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `id` | `str` | Unique warrant ID |
+| `tools` | `List[str]` | Authorized tools |
+| `ttl_remaining` | `timedelta` | Time remaining |
+| `ttl` | `timedelta` | Alias for `ttl_remaining` |
+| `expires_at` | `datetime` | Expiration datetime |
+| `is_expired` | `bool` | Whether expired |
+| `is_terminal` | `bool` | Whether terminal |
+| `capabilities` | `dict` | Constraint summary |
+
+#### Methods
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `delegate(holder, tools=None, **constraints)` | `BoundWarrant` | Delegate (uses bound key) |
+| `auth_headers(tool, args)` | `dict` | HTTP headers (uses bound key) |
+| `unbind()` | `tuple[Warrant, SigningKey]` | Extract warrant and key |
+| `preview_can(tool, **args)` | `PreviewResult` | Check if allowed |
+| `why_denied(tool, **args)` | `WhyDenied` | Get denial reason |
+
+```python
+# Delegation with bound key (no keypair arg needed)
+child = bound.delegate(worker.public_key, tools=["read_file"])
+
+# Generate headers
+headers = bound.auth_headers("read_file", {"path": "/data/x.txt"})
+
+# Serialization blocked
+import pickle
+pickle.dumps(bound)  # Raises TypeError!
+```
+
+#### Repr (Safe)
+
+```python
+print(repr(bound))
+# <BoundWarrant id=tnu_wrt_019b... KEY_BOUND=True>
 ```
 
 ---
@@ -1062,24 +1187,6 @@ with root_task_sync(Capability("search"), Capability("calculator")):
 | `warn_on_missing_warrant` | `bool` | `True` | Log warnings for unprotected calls |
 | `schemas` | `Dict[str, ToolSchema]` | `None` | Custom tool schemas |
 
-### Legacy Example
-
-```python
-from tenuo import configure, root_task, protect_tools, SigningKey
-from langchain_community.tools import DuckDuckGoSearchRun
-
-# Setup
-kp = SigningKey.generate()
-configure(issuer_key=kp)
-
-# Protect tools
-tools = [DuckDuckGoSearchRun()]
-protect_tools(tools)
-
-# Use with scoped authority
-async with root_task(Capability("duckduckgo_search", query=Wildcard())):
-    result = await tools[0].ainvoke({"query": "AI news"})
-```
 
 ---
 
@@ -1104,10 +1211,13 @@ Scope authority for a LangGraph node.
 from tenuo.langgraph import tenuo_node
 from tenuo import Capability, Pattern
 
-@tenuo_node(Capability("search", query=Pattern("*public*")))
-async def researcher(state):
-    results = await search_tool(query=state["query"])
-    return {"results": results}
+@tenuo_node
+async def researcher(state, bound_warrant):
+    # bound_warrant is injected automatically
+    if bound_warrant.preview_can("search"):
+        results = await search_tool(query=state["query"])
+        return {"results": results}
+    return {"messages": ["Not authorized"]}
 ```
 
 #### Parameters
@@ -1159,6 +1269,146 @@ with root_task_sync(Capability("search"), Capability("calculator")):
 | `tools` | `List[BaseTool]` | *required* | LangChain tools to protect |
 | `strict` | `bool` | `False` | Require constraints for high-risk tools |
 | `**kwargs` | `Any` | — | Additional arguments passed to ToolNode |
+ 
+ ### `KeyRegistry`
+ 
+ Registry for binding private keys to warrant holders at runtime. Essential for safe checkpointing (prevents keys in state).
+ 
+ ```python
+ from tenuo import KeyRegistry, SigningKey
+ 
+ # Register key at startup
+ key = SigningKey.generate()
+ KeyRegistry.get_instance().register("worker-key", key)
+ 
+ # In LangGraph config:
+ config = {"configurable": {"tenuo_key_id": "worker-key"}}
+ ```
+ 
+ > **Mechanism**: `_get_bound_warrant` checks `config["configurable"]["tenuo_key_id"]` and looks up the key in the registry to re-bind warrants inflated from state.
+
+---
+
+---
+ 
+ ## FastAPI Integration
+ 
+ Middleware and dependency injection for FastAPI applications.
+ 
+ ```python
+ from tenuo.fastapi import TenuoGuard, SecurityContext, require_warrant
+ ```
+ 
+ ### `TenuoGuard` (Middleware)
+ 
+ Global middleware that extracts warrants/keys from headers and manages request context.
+ 
+ ```python
+ from fastapi import FastAPI
+ from tenuo import configure, SigningKey
+ from tenuo.fastapi import TenuoGuard
+ 
+ app = FastAPI()
+ 
+ app.add_middleware(
+     TenuoGuard,
+     # Optional config overrides
+     # trusted_roots=[...], 
+     # verbose_errors=True
+ )
+ ```
+ 
+ ### Dependencies
+ 
+ #### `require_warrant`
+ 
+ Dependency that enforces presence of a valid warrant. Returns `SecurityContext`.
+ 
+ ```python
+ @app.get("/secure")
+ async def secure_endpoint(
+     ctx: SecurityContext = Depends(require_warrant)
+ ):
+     return {"warrant_id": ctx.warrant_id}
+ ```
+ 
+ ### `SecurityContext`
+ 
+ Context object injected into route handlers.
+ 
+ | Property | Type | Description |
+ |----------|------|-------------|
+ | `warrant` | `AnyWarrant` | The verified warrant object |
+ | `warrant_id` | `str` | Unique warrant ID |
+ | `fields` | `dict` | Custom warrant fields |
+ | `key_id` | `str \| None` | ID of the signing key (if registered) |
+ 
+ ---
+ 
+ ## Testing Utilities
+
+Utilities for testing code that uses Tenuo authorization.
+
+```python
+from tenuo import allow_all, for_testing, quick_issue, deterministic_headers
+```
+
+### `allow_all()`
+
+Context manager that bypasses all `@lockdown` authorization checks. **Only works in test environments.**
+
+```python
+from tenuo import allow_all, lockdown
+
+@lockdown(tool="dangerous_action")
+def dangerous_action():
+    return "executed"
+
+# In tests (pytest, unittest, or TENUO_TEST_MODE=1)
+def test_dangerous_action():
+    with allow_all():
+        result = dangerous_action()  # No warrant needed!
+        assert result == "executed"
+```
+
+**Environment Detection:**
+- Automatically enabled under `pytest` or `unittest`
+- Manually enable with `TENUO_TEST_MODE=1`
+- Raises `RuntimeError` if called outside test environments
+
+### `Warrant.for_testing()`
+
+Create test warrants without real cryptographic setup.
+
+```python
+from tenuo import Warrant
+
+def test_my_function():
+    warrant = Warrant.for_testing(["read_file", "write_file"])
+    # Use for testing without real key management
+```
+
+### `Warrant.quick_issue()`
+
+Quickly issue a warrant with auto-generated keys (for development/testing).
+
+```python
+from tenuo import Warrant
+
+# Returns (warrant, keypair)
+warrant, keypair = Warrant.quick_issue(["read_file"], ttl=300)
+```
+
+### `deterministic_headers()`
+
+Generate deterministic HTTP headers for snapshot testing.
+
+```python
+from tenuo import deterministic_headers
+
+headers = deterministic_headers(["read_file"])
+# Always produces the same headers for the same tools
+```
 
 ---
 
@@ -1233,6 +1483,57 @@ audit_logger.log_authorization_success(
     tool="process_payment",
     constraints={"amount": 100.0}
 )
+```
+
+---
+
+## Type Protocols
+
+For type hinting generic warrant operations:
+
+```python
+from tenuo import ReadableWarrant, SignableWarrant, AnyWarrant
+```
+
+### `ReadableWarrant`
+
+Protocol for objects with readable warrant properties:
+
+```python
+from typing import Protocol
+
+class ReadableWarrant(Protocol):
+    @property
+    def id(self) -> str: ...
+    @property
+    def tools(self) -> list[str]: ...
+    @property
+    def ttl_remaining(self) -> timedelta: ...
+    @property
+    def is_expired(self) -> bool: ...
+    @property
+    def is_terminal(self) -> bool: ...
+```
+
+### `SignableWarrant`
+
+Protocol for objects that can sign (delegate, create PoP):
+
+```python
+class SignableWarrant(Protocol):
+    def delegate(self, holder: PublicKey, ...) -> "Warrant": ...
+    def auth_headers(self, tool: str, args: dict) -> dict: ...
+```
+
+### `AnyWarrant`
+
+Union type accepting both `Warrant` and `BoundWarrant`:
+
+```python
+AnyWarrant = Union[Warrant, BoundWarrant]
+
+def process_warrant(w: AnyWarrant) -> None:
+    print(w.id, w.tools)  # Works for both types
 ```
 
 ---

@@ -24,7 +24,14 @@ pip install tenuo
 - **[langchain_simple.py](langchain_simple.py)**: Minimal example of protecting LangChain tools. Shows how to wrap a tool and run an agent with a warrant. **Start here for LangChain integration.**
 - **[langchain_integration.py](langchain_integration.py)**: Advanced LangChain integration with callbacks. Demonstrates warrant context propagation through LangChain's callback system.
 - **[langchain_protect_tools.py](langchain_protect_tools.py)**: Protecting third-party tools (e.g., from `langchain_community`) using `protect_tools()`. Shows how to secure tools you don't control.
-- **[langchain_mcp_integration.py](langchain_mcp_integration.py)**: **LangChain + MCP + Tenuo** - Complete integration showing how to authorize MCP tool calls with Tenuo warrants. Demonstrates constraint extraction, authorization flow, and end-to-end security.
+- [langchain_mcp_integration.py](langchain_mcp_integration.py): **LangChain + MCP + Tenuo** - Complete integration showing how to authorize MCP tool calls with Tenuo warrants. Demonstrates constraint extraction, authorization flow, and end-to-end security.
+
+### LangGraph Integration
+- **[langgraph_protected.py](langgraph_protected.py)**: **State-Aware Agent (Advanced)** - Shows how to secure LangGraph agents with checkpointing. Key patterns:
+    1.  **Serialization**: Storing base64 warrant tokens in state (not generic objects) to support `MemorySaver`.
+    2.  **Key Binding**: Binding keys at runtime based on process identity (`KeyRegistry`).
+    3.  **TenuoToolNode**: Drop-in secure tool execution node.
+    4.  **Authorization**: Enforcing capabilities on state transitions.
 
 ### MCP (Model Context Protocol)
 - **[mcp_integration.py](mcp_integration.py)**: Demonstrates how to integrate Tenuo with MCP servers, extracting constraints from MCP tool calls.
@@ -68,7 +75,11 @@ python orchestrator_worker.py
 python langchain_simple.py
 python langchain_integration.py
 python langchain_protect_tools.py
+python langchain_protect_tools.py
 python langchain_mcp_integration.py  # LangChain + MCP + Tenuo
+
+# LangGraph example (requires: pip install langgraph)
+python langgraph_protected.py
 
 # MCP example (uses local config file, no external server needed)
 python mcp_integration.py
@@ -107,6 +118,7 @@ python kubernetes_integration.py
 
 **Production Patterns:**
 - `orchestrator_worker.py` - **Multi-agent delegation (understand this first!)**
+- `langgraph_protected.py` - **State-aware agents with checkpointing (LangGraph)**
 - `fastapi_integration.py` - Complete web application with authorization
 - `error_handling_guide.py` - Production error handling strategies
 - `kubernetes_integration.py` - Real-world deployment patterns

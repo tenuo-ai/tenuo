@@ -3,7 +3,7 @@ from tenuo import SigningKey, Warrant, Clearance
 
 
 def test_with_issuable_tool_single():
-    """Test with_issuable_tool() sets a single tool for issuer warrants."""
+    """Test issuable_tool() sets a single tool for issuer warrants."""
     parent_kp = SigningKey.generate()
     
     # Create issuer warrant with multiple tools
@@ -15,14 +15,14 @@ def test_with_issuable_tool_single():
     )
     
     # Attenuate to single tool using with_issuable_tool (for issuer warrants)
-    child = issuer.attenuate().with_issuable_tool("read_file").delegate(parent_kp)
+    child = issuer.attenuate().issuable_tool("read_file").delegate(parent_kp)
     
     # Verify only one tool remains
     assert child.issuable_tools == ["read_file"]
 
 
 def test_with_issuable_tools_multiple():
-    """Test with_issuable_tools() sets multiple tools for issuer warrants."""
+    """Test issuable_tools() sets multiple tools for issuer warrants."""
     parent_kp = SigningKey.generate()
     
     # Create issuer warrant with multiple tools
@@ -34,7 +34,7 @@ def test_with_issuable_tools_multiple():
     )
     
     # Attenuate to subset of tools using with_issuable_tools (for issuer warrants)
-    child = issuer.attenuate().with_issuable_tools(["read_file", "query_db"]).delegate(parent_kp)
+    child = issuer.attenuate().issuable_tools(["read_file", "query_db"]).delegate(parent_kp)
     
     # Verify correct tools remain
     assert set(child.issuable_tools) == {"read_file", "query_db"}
@@ -74,7 +74,7 @@ def test_issuable_tool_selection_combinations():
     # First narrow to subset, then drop one more (using issuable_tools methods)
     child = (
         issuer.attenuate()
-        .with_issuable_tools(["read_file", "send_email", "query_db"])
+        .issuable_tools(["read_file", "send_email", "query_db"])
         .drop_tools(["send_email"])
         .delegate(parent_kp)
     )
@@ -84,7 +84,7 @@ def test_issuable_tool_selection_combinations():
 
 
 def test_with_issuable_tool_replaces_all():
-    """Test that with_issuable_tool() replaces entire tool list for issuer warrants."""
+    """Test that issuable_tool() replaces entire tool list for issuer warrants."""
     parent_kp = SigningKey.generate()
     
     # Create issuer warrant
@@ -96,7 +96,7 @@ def test_with_issuable_tool_replaces_all():
     )
     
     # Set single tool using with_issuable_tool (should replace all)
-    child = issuer.attenuate().with_issuable_tool("query_db").delegate(parent_kp)
+    child = issuer.attenuate().issuable_tool("query_db").delegate(parent_kp)
     
     # Verify only one tool
     assert child.issuable_tools == ["query_db"]

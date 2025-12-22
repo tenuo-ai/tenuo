@@ -62,8 +62,7 @@ original_tool = ThirdPartySearchTool()
 # This applies @lockdown(tool="search") dynamically
 protected_tools = protect_tools(
     tools=[original_tool],
-    warrant=warrant,
-    keypair=keypair
+    bound_warrant=warrant.bind_key(keypair)
 )
 protected_search = protected_tools[0]
 

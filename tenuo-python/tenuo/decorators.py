@@ -143,6 +143,15 @@ _keypair_context: ContextVar[Optional[SigningKey]] = ContextVar('_keypair_contex
 # Used by scoped_task to restrict tools beyond what the warrant allows
 _allowed_tools_context: ContextVar[Optional[List[str]]] = ContextVar('_allowed_tools_context', default=None)
 
+# Context variable for test bypass mode (set by allow_all())
+# When True, @lockdown skips authorization entirely
+_bypass_context: ContextVar[bool] = ContextVar('_bypass_context', default=False)
+
+
+def is_bypass_enabled() -> bool:
+    """Check if authorization bypass is enabled (for testing)."""
+    return _bypass_context.get()
+
 
 def get_warrant_context() -> Optional[Warrant]:
     """
@@ -325,6 +334,10 @@ def lockdown(
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         def wrapper(*args, **kwargs):
+            # Check for test bypass mode (set by allow_all())
+            if is_bypass_enabled():
+                return func(*args, **kwargs)
+            
             from .config import get_config
             
             config = get_config()

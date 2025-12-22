@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-alpha.8] - 2025-12-22
+
+### ⚠️ Breaking Changes
+
+- **LangGraph API**: Removed legacy `key_id` in state pattern. Key IDs must now be passed via config:
+  ```python
+  # Before (alpha.7)
+  state = {"warrant": warrant, "key_id": "worker"}
+  
+  # After (alpha.8) 
+  state = {"warrant": warrant}
+  config = {"configurable": {"tenuo_key_id": "worker"}}
+  graph.invoke(state, config=config)
+  ```
+
+- **LangChain API**: Unified `protect_tools()` and `protect_langchain_tools()` into single `protect()` function:
+  ```python
+  # Before (alpha.7)
+  from tenuo.langchain import protect_tools, protect_langchain_tools
+  
+  # After (alpha.8)
+  from tenuo.langchain import protect
+  protected = protect(tools, bound_warrant=bw)
+  ```
+
+### Added
+
+- **`BoundWarrant`**: Convenience wrapper for `Warrant` + `SigningKey` for repeated operations
+  ```python
+  bound = warrant.bind_key(key)
+  bound.auth_headers("tool", args)  # No need to pass key each time
+  bound.authorize("tool", args)     # Automatic PoP signing
+  ```
+
+- **Key Management**:
+  - `SigningKey.from_env(name)` - Load key from environment variable (auto-detects base64/hex)
+  - `SigningKey.from_file(path)` - Load key from file
+  - `Keyring` - Manage root key + previous keys for rotation
+  - `KeyRegistry` - Thread-safe singleton for multi-agent key access
+
+- **LangGraph Integration**:
+  - `auto_load_keys()` - Load all `TENUO_KEY_*` environment variables automatically
+  - `secure(node, key_id=...)` - Wrap pure nodes with authorization
+  - `TenuoToolNode` - Drop-in replacement for LangGraph's ToolNode with authorization
+
+- **FastAPI Integration**:
+  - `TenuoGuard(tool)` - Dependency for route protection
+  - `SecurityContext` - Returns verified warrant and extracted args
+  - `configure_tenuo(app, ...)` - App-level configuration
+
+- **Debugging**:
+  - `why_denied(tool, args)` - Structured explanation of authorization failures
+  - `diagnose(warrant)` - Full warrant inspection
+  - `warrant.ttl` - Alias for `ttl_remaining`
+  - `warrant.capabilities` - Human-readable constraint dict
+
+- **Security**:
+  - `BoundWarrant` uses `__slots__` to prevent `__dict__`/`vars()` access to private key
+  - Opaque error messages by default (detailed info logged, not exposed to clients)
+  - `expose_error_details=False` config option to control error verbosity
+
+### Changed
+
+- Warrant convenience properties (`ttl_remaining`, `is_expired`, `is_terminal`) now consistently exposed
+- `preview_would_allow()` docstring includes security warning about PoP
+- Error responses include `request_id` for log correlation
+- Documentation comprehensively updated for new patterns
+
+### Security
+
+- **Error Leakage Prevention**: Authorization errors no longer reveal constraint details to clients by default. Detailed info is logged server-side with `request_id` for correlation.
+- **BoundWarrant Protection**: `__slots__` prevents accidental exposure of private key via introspection.
+
+---
+
 ## [0.1.0-alpha.7] - 2025-12-22
 
 ### ⚠️ Breaking Changes

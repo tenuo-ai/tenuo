@@ -2451,6 +2451,21 @@ impl PyWarrant {
         self.inner.depth()
     }
 
+    /// Get the maximum delegation depth for this warrant chain.
+    #[getter]
+    fn max_depth(&self) -> Option<u32> {
+        self.inner.max_depth()
+    }
+
+    /// Get remaining TTL in seconds.
+    ///
+    /// Returns the number of seconds until expiration, or 0 if already expired.
+    fn ttl_seconds(&self) -> u64 {
+        let now = chrono::Utc::now().timestamp() as u64;
+        let expires = self.inner.expires_at().timestamp() as u64;
+        expires.saturating_sub(now)
+    }
+
     /// Get the parent warrant hash.
     #[getter]
     fn parent_hash(&self) -> Option<String> {

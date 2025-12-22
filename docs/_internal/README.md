@@ -48,15 +48,15 @@
 
 ---
 
-## In Progress (v0.1.0-alpha.8)
-
-| Feature | Spec | Status |
-|---------|------|--------|
-| Warrant convenience methods | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | 🚧 Phase 1 |
-| `BoundWarrant` with serialization guards | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | 🚧 Phase 1 |
-| `delegate()` with optional key | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | 🚧 Phase 1 |
-| Strict mode (`registered_tools`) | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | 🚧 Phase 2 |
-| Testing utilities (`quick_issue`, `allow_all`) | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | 🚧 Phase 1 |
+## Completed (v0.1.0-alpha.8)
+ 
+ | Feature | Spec | Status |
+ |---------|------|--------|
+ | Warrant convenience methods | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | ✅ Phase 1 |
+ | `BoundWarrant` with serialization guards | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | ✅ Phase 2 |
+ | `delegate()` with optional key | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | ✅ Phase 1 |
+ | Framework Integrations (FastAPI, LangChain, LangGraph) | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | ✅ Phase 3 |
+ | Testing utilities (`quick_issue`, `allow_all`) | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | ✅ Phase 1 |
 
 ---
 

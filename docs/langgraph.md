@@ -1,275 +1,398 @@
 ---
 title: LangGraph Integration
-description: Node scoping for LangGraph workflows
+description: Secure LangGraph workflows with Tenuo
 ---
 
 # Tenuo LangGraph Integration
 
-> **Status**: ✅ Implemented (v0.1)  
-> **Future**: SecureGraph (v0.2)
+> **Status**: ✅ Implemented (v0.1)
 
 ---
 
 ## Quick Start
 
 ```python
-from langgraph.graph import StateGraph
-from tenuo import configure, SigningKey, lockdown, root_task, Capability
-from tenuo.langgraph import tenuo_node
+from tenuo import Warrant, SigningKey, KeyRegistry
+from tenuo.langgraph import secure, TenuoToolNode, auto_load_keys
 
-# Setup
-kp = SigningKey.generate()
-configure(issuer_key=kp)
+# 1. Load keys from environment
+auto_load_keys()  # Loads TENUO_KEY_DEFAULT, TENUO_KEY_WORKER_1, etc.
 
-# 1. Protect your tools (ENFORCEMENT layer)
-@lockdown(tool="search")
-async def search(query: str) -> list:
-    return [f"Result for {query}"]
+# 2. Define tools
+from langchain_core.tools import tool
 
-# 2. Scope your nodes (SCOPING layer)
-@tenuo_node(Capability("search"))
-async def researcher(state):
-    return {"results": await search(state["query"])}
+@tool
+def search(query: str) -> str:
+    """Search the web."""
+    return f"Results for {query}"
 
-# 3. Build and run with root authority
-graph = StateGraph(dict)
-graph.add_node("researcher", researcher)
-graph.set_entry_point("researcher")
-graph.set_finish_point("researcher")
+# 3. Create secure tool node
+tool_node = TenuoToolNode([search])
 
-async with root_task(Capability("search")):
-    result = await graph.compile().ainvoke({"query": "test"})
+# 4. Wrap pure nodes with secure()
+def my_agent(state):
+    return {"messages": [...]}
+
+graph.add_node("agent", secure(my_agent))
+graph.add_node("tools", tool_node)
+
+# 5. Run with warrant in state
+state = {"warrant": warrant, "messages": [...]}
+result = graph.invoke(state, config={"configurable": {"tenuo_key_id": "worker"}})
 ```
 
 ---
 
-## Problem
+## Key Concepts
 
-In multi-agent systems, manually managing warrant attenuation is error-prone:
+### Keys Stay Out of State
+
+**The fundamental principle**: Warrants travel in state, keys stay in the registry.
 
 ```python
-# Without Tenuo: Manual attenuation at every delegation
-researcher_warrant = root_warrant.attenuate() \
-    .capability("search", {"file_path": Pattern("/tmp/research/*")}) \
-    .delegate(root_keypair)
+# ✅ CORRECT: Warrant in state, key_id in config
+state = {"warrant": warrant, "messages": [...]}
+config = {"configurable": {"tenuo_key_id": "worker"}}
+graph.invoke(state, config=config)
 
-with set_warrant_context(researcher_warrant):
-    researcher_node(state)
+# ❌ WRONG: Key in state (security risk, serialization fails)
+state = {"warrant": warrant, "key": signing_key}  # Never do this!
 ```
 
-This becomes unmanageable as graphs grow.
+### Convention Over Configuration
 
----
-
-## Solution: Two-Layer Security Model
-
-Tenuo uses a **two-layer model** for LangGraph security:
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  LAYER 1: SCOPING (@tenuo_node)                             │
-│  - Narrows what tools/constraints are ALLOWED               │
-│  - Creates attenuated warrant for node's duration           │
-│  - Does NOT enforce - just narrows scope                    │
-├─────────────────────────────────────────────────────────────┤
-│  LAYER 2: ENFORCEMENT (@lockdown / protect_tools)           │
-│  - Checks warrant against actual tool invocation            │
-│  - Raises AuthorizationError if tool/constraints don't match│
-│  - The actual security gate                                 │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Both layers are required for security:**
-- `@tenuo_node` without `@lockdown` = scoping with no enforcement
-- `@lockdown` without `@tenuo_node` = enforcement with no scoping
-
----
-
-## Example
+Load keys automatically from environment variables:
 
 ```python
-from langgraph.graph import StateGraph
-from tenuo import configure, SigningKey, lockdown, root_task, Capability
+from tenuo.langgraph import auto_load_keys
+
+# Before app startup, set env vars:
+# TENUO_KEY_DEFAULT=base64encodedkey...
+# TENUO_KEY_WORKER_1=base64encodedkey...
+# TENUO_KEY_ORCHESTRATOR=base64encodedkey...
+
+auto_load_keys()  # Registers all TENUO_KEY_* vars
+
+# Keys are now available:
+# - "default" (from TENUO_KEY_DEFAULT)
+# - "worker-1" (from TENUO_KEY_WORKER_1)
+# - "orchestrator" (from TENUO_KEY_ORCHESTRATOR)
+```
+
+---
+
+## API Reference
+
+### `auto_load_keys()`
+
+Load signing keys from environment variables matching `TENUO_KEY_*`.
+
+```python
+from tenuo.langgraph import auto_load_keys
+
+# Naming convention: TENUO_KEY_{NAME} -> key_id="{name}" (lowercase, underscores to hyphens)
+# TENUO_KEY_WORKER_1 -> "worker-1"
+# TENUO_KEY_DEFAULT -> "default"
+
+auto_load_keys()
+```
+
+### `KeyRegistry`
+
+Thread-safe singleton for key management:
+
+```python
+from tenuo import KeyRegistry, SigningKey
+
+registry = KeyRegistry.get_instance()
+
+# Register keys manually
+registry.register("worker", SigningKey.generate())
+registry.register("orchestrator", SigningKey.from_env("ORCH_KEY"))
+
+# Retrieve
+key = registry.get("worker")
+
+# Namespaced (multi-tenant)
+registry.register("worker", key1, namespace="tenant-a")
+registry.register("worker", key2, namespace="tenant-b")
+```
+
+### `secure(node, key_id=None, inject_warrant=False)`
+
+Wrap a pure node function with Tenuo authorization.
+
+```python
+from tenuo.langgraph import secure
+
+# Basic usage - key_id from config or "default"
+def my_node(state):
+    return {"result": "done"}
+
+graph.add_node("my_node", secure(my_node))
+
+# Explicit key_id
+graph.add_node("worker", secure(worker_node, key_id="worker-1"))
+
+# Inject BoundWarrant for advanced use
+def node_with_warrant(state, bound_warrant):
+    if bound_warrant.authorize("search", {"query": "test"}):
+        return {"authorized": True}
+    return {"authorized": False}
+
+graph.add_node("checker", secure(node_with_warrant, inject_warrant=True))
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `node` | `Callable` | The node function to wrap |
+| `key_id` | `str` | Key ID to use (default: from config or "default") |
+| `inject_warrant` | `bool` | If True, inject `bound_warrant` parameter |
+
+### `@tenuo_node`
+
+Decorator for nodes that need explicit BoundWarrant access:
+
+```python
 from tenuo.langgraph import tenuo_node
+from tenuo import BoundWarrant
 
-# Setup (once at startup)
-kp = SigningKey.generate()
-configure(issuer_key=kp)
+@tenuo_node
+def my_agent(state, bound_warrant: BoundWarrant):
+    # Check permissions
+    if bound_warrant.preview_can("search"):
+        # ...
+    
+    # Delegate to sub-agent
+    child = bound_warrant.delegate(
+        to=worker_pubkey,
+        allow=["search"],
+        ttl=60
+    )
+    return {"messages": [...], "warrant": child.warrant}
 
-# LAYER 2: Tool wrapper (ENFORCEMENT)
-# This is where authorization is actually checked
-@lockdown(tool="search")
-async def search_tool(query: str) -> list:
-    return [f"Result for {query}"]
+graph.add_node("agent", my_agent)
+```
 
-@lockdown(tool="write_file")
-async def write_file(path: str, content: str) -> None:
-    print(f"Writing to {path}")
+### `TenuoToolNode`
 
-# LAYER 1: Node decorator (SCOPING)
-# Narrows the warrant for this node's execution
-@tenuo_node(Capability("search", query=Pattern("*public*")))
-async def researcher(state):
-    # Warrant is scoped to: tools=["search"], query must match "*public*"
-    # But enforcement happens when search_tool() is called
-    results = await search_tool(query=state["query"])
+Drop-in replacement for LangGraph's `ToolNode` with automatic authorization:
+
+```python
+from tenuo.langgraph import TenuoToolNode
+from langchain_core.tools import tool
+
+@tool
+def search(query: str) -> str:
+    return f"Results for {query}"
+
+@tool
+def calculator(expression: str) -> str:
+    return str(eval(expression))
+
+# Create secure tool node
+tool_node = TenuoToolNode([search, calculator])
+
+graph.add_node("tools", tool_node)
+```
+
+**How it works:**
+1. Extracts warrant from state
+2. Gets key from registry (via `key_id` in config or "default")
+3. Wraps each tool with authorization check
+4. Returns error ToolMessage if authorization fails
+
+---
+
+## Patterns
+
+### Pattern 1: Pure Nodes with `secure()`
+
+Keep your node functions pure (no Tenuo imports):
+
+```python
+# nodes.py - Pure business logic
+def researcher(state):
+    query = state["messages"][-1].content
+    results = web_search(query)
     return {"results": results}
 
-@tenuo_node(Capability("write_file", path=Pattern("/output/*")))
-async def writer(state):
-    # Warrant is scoped to: tools=["write_file"], path must match "/output/*"
-    await write_file(path="/output/report.txt", content=state["content"])
-    return {"done": True}
+def writer(state):
+    content = generate_content(state["results"])
+    return {"output": content}
 
-# Build graph
-graph = StateGraph(dict)
-graph.add_node("researcher", researcher)
-graph.add_node("writer", writer)
+# graph.py - Wire up with security
+from tenuo.langgraph import secure
 
-# Run with root authority (async)
-async with root_task(
-    Capability("search", query="*"), 
-    Capability("write_file", path="/*")
-):
-    result = await graph.compile().ainvoke({"query": "public data"})
-
-# For sync code, use root_task_sync:
-# with root_task_sync(Capability("search", query="*"), Capability("write_file", path="/*")):
-#     result = graph.compile().invoke({"query": "public data"})
+graph.add_node("researcher", secure(researcher, key_id="worker"))
+graph.add_node("writer", secure(writer, key_id="worker"))
 ```
 
----
+### Pattern 2: Nodes that Need Warrant Access
 
-## TenuoToolNode (drop-in ToolNode)
-
-Prefer this if you already have LangChain `BaseTool` instances and want automatic protection without decorating each node.
+Use `inject_warrant=True` or `@tenuo_node`:
 
 ```python
-from langgraph.graph import StateGraph
-from tenuo.langgraph import TenuoToolNode
-from tenuo import root_task_sync, Capability
+from tenuo.langgraph import secure
+from tenuo import BoundWarrant
 
-# LangChain tools (already defined elsewhere)
-tools = [search_tool, calculator_tool]
+def smart_router(state, bound_warrant: BoundWarrant):
+    # Route based on available permissions
+    if bound_warrant.preview_can("write_file"):
+        return {"next": "writer"}
+    elif bound_warrant.preview_can("search"):
+        return {"next": "researcher"}
+    else:
+        return {"next": "fallback"}
 
-# Wrap with authorization and plug into the graph
-tool_node = TenuoToolNode(tools)
+graph.add_node("router", secure(smart_router, inject_warrant=True))
+```
 
-graph = StateGraph(dict)
-graph.add_node("tools", tool_node)
-graph.set_entry_point("tools")
-graph.set_finish_point("tools")
+### Pattern 3: Delegation in Nodes
 
-with root_task_sync(Capability("search_tool"), Capability("calculator_tool")):
-    result = graph.compile().invoke({"input": "What is 2+2?"})
+Attenuate warrants for sub-agents:
+
+```python
+from tenuo.langgraph import tenuo_node
+from tenuo import BoundWarrant, Pattern
+
+@tenuo_node
+def orchestrator(state, bound_warrant: BoundWarrant):
+    # Create narrower warrant for worker
+    worker_warrant = bound_warrant.delegate(
+        to=worker_pubkey,
+        allow={"search": {"query": Pattern("safe*")}},
+        ttl=60
+    )
+    
+    # Pass delegated warrant in state
+    return {
+        "messages": [...],
+        "warrant": worker_warrant.warrant  # Unbind for serialization
+    }
+```
+
+### Pattern 4: Multi-Tenant Key Isolation
+
+Use namespaced keys for tenant isolation:
+
+```python
+from tenuo import KeyRegistry
+
+registry = KeyRegistry.get_instance()
+
+# Register tenant-specific keys
+registry.register("worker", tenant_a_key, namespace="tenant-a")
+registry.register("worker", tenant_b_key, namespace="tenant-b")
+
+# In your node, determine namespace from state/context
+def tenant_aware_node(state, bound_warrant):
+    tenant_id = state.get("tenant_id", "default")
+    key = registry.get("worker", namespace=tenant_id)
+    # ...
 ```
 
 ---
 
-## Why Two Layers?
+## Error Handling
 
-| Scenario | @tenuo_node | @lockdown | Result |
-|----------|-------------|-----------|--------|
-| Both | ✅ | ✅ | **Secure**: Scoped AND enforced |
-| Node only | ✅ | ❌ | ⚠️ Scoped but not enforced |
-| Tool only | ❌ | ✅ | ⚠️ Enforced but not scoped per-node |
-| Neither | ❌ | ❌ | ❌ No protection |
+Authorization errors return `ToolMessage` with `status="error"`:
 
----
+```python
+# TenuoToolNode returns error messages, not exceptions
+result = graph.invoke(state)
 
-## Context vs State
-
-> **Important**: Context (`set_warrant_context`) is a **convenience layer** for tool protection. For distributed workflows, checkpointing, or serialized state, authority must travel in the graph state (e.g., `tenuo_warrant` field).
->
-> **Context is convenience; state is the security boundary.**
-
-For v0.1, `@tenuo_node` uses context internally. For advanced use cases requiring serialization (v0.2 SecureGraph), warrants will be carried in state.
-
----
-
-## Error Handling & Troubleshooting
+for msg in result["messages"]:
+    if hasattr(msg, "status") and msg.status == "error":
+        print(f"Authorization denied: {msg.content}")
+        # Content includes request_id for log correlation
+```
 
 ### Common Errors
 
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `State is missing 'warrant' field` | No warrant in state | Add warrant to state: `{"warrant": warrant, ...}` |
+| `Key 'worker' not found` | Key not registered | Register key or use `auto_load_keys()` |
+| `Authorization denied` | Warrant doesn't allow action | Check warrant constraints with `why_denied()` |
+
+---
+
+## Security Notes
+
+### Error Messages are Opaque
+
+By default, authorization errors don't reveal constraint details:
+
 ```python
-# Missing parent warrant context
+# Client sees: "Authorization denied (ref: abc123)"
+# Logs show: "[abc123] Tool 'search' denied: query=/etc/passwd, expected=Pattern(/data/*)"
+```
+
+This prevents attackers from learning your constraint boundaries.
+
+### BoundWarrant is Never Serialized
+
+`BoundWarrant` contains a private key and will raise `TypeError` if serialization is attempted:
+
+```python
+# ❌ This will fail
+state["bound_warrant"] = bound_warrant  # TypeError on checkpoint
+
+# ✅ Correct: unbind before storing
+state["warrant"] = bound_warrant.warrant  # Just the warrant (serializable)
+```
+
+### preview_can() is Not Authorization
+
+`preview_can()` and `preview_would_allow()` are for UX hints only:
+
+```python
+# ✅ OK for UI hints
+if bound_warrant.preview_can("delete"):
+    show_delete_button()
+
+# ❌ WRONG: Not a security check!
+if bound_warrant.preview_can("delete"):
+    delete_database()  # No PoP verification happened!
+
+# ✅ Correct: Use authorize() for security decisions
+if bound_warrant.authorize("delete", {"target": "users"}):
+    delete_database()
+```
+
+---
+
+## Migration from Context-Based API
+
+If you were using `@tenuo_node(Capability(...))` with `root_task()`:
+
+```python
+# OLD (context-based)
 @tenuo_node(Capability("search"))
 async def researcher(state):
     ...
-    
-# ERROR: "No parent warrant in context. @tenuo_node requires root_task() or parent scoped_task()"
+
+async with root_task(Capability("search")):
+    await graph.ainvoke(state)
+
+# NEW (state-based)
+from tenuo.langgraph import secure
+
+def researcher(state):
+    ...
+
+graph.add_node("researcher", secure(researcher))
+graph.invoke({"warrant": warrant, "messages": [...]})
 ```
-
-**Fix**: Wrap graph invocation in `root_task()`:
-
-```python
-async with root_task(Capability("search"), Capability("write_file")):
-    await app.ainvoke(initial_state)
-```
-
-### Error Messages Reference
-
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `No parent warrant in context` | `@tenuo_node` called outside `root_task()` | Wrap graph invocation in `root_task()` |
-| `Tool 'write_file' not in parent warrant` | Node requests tool parent doesn't have | Add tool to parent scope, or remove from node |
-| `Constraint 'path' failed` | Tool argument violates constraint | Request within allowed constraint bounds |
-| `MonotonicityViolation` | Trying to expand scope | Scopes can only narrow, not expand |
-
-### Debugging a Node
-
-```python
-from tenuo import get_warrant_context
-from tenuo.langgraph import tenuo_node
-
-@tenuo_node(Capability("read_file", path=Pattern("/data/*")))
-async def my_node(state):
-    warrant = get_warrant_context()
-    
-    # Inspect active warrant
-    print(f"Node has tools: {warrant.tools}")
-    print(f"Node has constraints: {warrant.constraints}")
-    
-    # ... rest of node
-```
-
----
-
-## Important Notes
-
-1. **Raw calls bypass Tenuo**: `await http_client.get(...)` is not protected.
-   All tools you want governed MUST use `@lockdown` or `protect_tools()`.
-
-2. **Constraints are for scoping, not enforcement**: When you write
-   `@tenuo_node(query="*public*")`, this narrows the warrant. But if
-   `@lockdown` doesn't check the `query` parameter, it won't be enforced.
-
-3. **The tool wrapper is the gate**: Even if a node has a narrow scope,
-   the tool wrapper is what actually blocks unauthorized calls.
-
-4. **Async/Sync**: Use `root_task` (async) with `ainvoke()`, use `root_task_sync` (sync) with `invoke()`. The `@lockdown` decorator works with both sync and async functions.
-
-5. **Use Capability objects for constraints**:
-   ```python
-   @tenuo_node(Capability("search", query=Pattern("*public*")))
-   ```
-   For other constraint types, use explicit constructors:
-   ```python
-   from tenuo import Range, Exact, Capability
-   @tenuo_node(Capability("search", max_results=Range(max=100), env=Exact("prod")))
-   ```
-
----
-
-## Coming in v0.2: SecureGraph
-
-Declarative authority policy with automatic attenuation at graph edges. Stay tuned!
 
 ---
 
 ## See Also
 
-- [MCP Integration](./mcp) — Secure your AI agent interaction with MCP tools
 - [LangChain Integration](./langchain) — Tool protection for LangChain
-- [Protocol](./protocol) — Protocol fundamentals and cycle protection
+- [FastAPI Integration](./fastapi) — Zero-boilerplate API protection
+- [Security](./security) — Threat model, best practices
 - [API Reference](./api-reference) — Full Python API documentation

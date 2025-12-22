@@ -74,6 +74,11 @@ class TenuoConfig:
     
     # Tripwire: flip to hard-fail after N warnings (0 = disabled)
     max_missing_warrant_warnings: int = 0
+    
+    # Error detail exposure (SECURITY: keep False in production)
+    # If True, detailed constraint info is returned in error responses.
+    # If False (default), errors are opaque with request_id for log correlation.
+    expose_error_details: bool = False
     _missing_warrant_count: int = field(default=0, repr=False)
     
     # Cached authorizer (lazily created)
@@ -130,6 +135,7 @@ def configure(
     strict_mode: bool = False,
     warn_on_missing_warrant: bool = False,
     max_missing_warrant_warnings: int = 0,
+    expose_error_details: bool = False,
 ) -> None:
     """
     Configure Tenuo globally.
@@ -150,6 +156,7 @@ def configure(
         strict_mode: Raise RuntimeError on missing warrant (fail-closed)
         warn_on_missing_warrant: Emit warnings for missing warrant contexts
         max_missing_warrant_warnings: Tripwire - auto-flip to strict after N warnings (0=disabled)
+        expose_error_details: Include constraint details in error responses (SECURITY: keep False in production)
     
     Raises:
         ConfigurationError: If invalid configuration
@@ -212,6 +219,7 @@ def configure(
         strict_mode=strict_mode,
         warn_on_missing_warrant=warn_on_missing_warrant,
         max_missing_warrant_warnings=max_missing_warrant_warnings,
+        expose_error_details=expose_error_details,
     )
 
 

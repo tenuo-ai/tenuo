@@ -1,231 +1,499 @@
 """
 Tenuo LangGraph Integration
 
-Provides the tenuo_node decorator for scoping authority in LangGraph nodes.
+This module provides tools for securing LangGraph agents with Tenuo.
+It solves the key management problem by keeping private keys out of the graph state.
+
+Recommended Pattern:
+    1. Auto-load keys from env vars OR register manually
+    2. Pass warrant in state (it attenuates dynamically)
+    3. Pass key_id via LangGraph config (infrastructure concern)
+    4. Use secure() wrapper OR @tenuo_node decorator
 
 Usage:
-    from tenuo.langgraph import tenuo_node
-    from tenuo import Capability, Pattern
+    from tenuo import KeyRegistry, SigningKey
+    from tenuo.langgraph import secure, TenuoToolNode, auto_load_keys
     
-    @tenuo_node(Capability("search", query=Pattern("*")))
-    async def researcher(state):
-        # Automatically scoped to search tool with query constraint
-        return await search_tool.invoke(state["query"])
+    # Option 1: Auto-load keys from TENUO_KEY_* env vars
+    auto_load_keys()  # Loads TENUO_KEY_DEFAULT, TENUO_KEY_WORKER_1, etc.
     
-    graph.add_node("researcher", researcher)
-
-For the full SecureGraph with automatic attenuation, see the design spec
-in docs/langgraph-spec.md.
+    # Option 2: Manual registration
+    KeyRegistry.get_instance().register("worker", SigningKey.generate())
+    
+    # Define State (only warrant - key_id goes in config)
+    class State(TypedDict):
+        messages: List[BaseMessage]
+        warrant: Warrant
+    
+    # Option A: secure() wrapper (keeps node pure)
+    def my_agent(state: State) -> dict:
+        return {"messages": [...]}
+    
+    graph.add_node("agent", secure(my_agent))
+    
+    # Option B: @tenuo_node decorator (explicit access to bound_warrant)
+    @tenuo_node
+    def my_agent(state: State, bound_warrant: BoundWarrant) -> dict:
+        if bound_warrant.preview_can("search"):
+            ...
+        return {"messages": [...]}
+    
+    # Invoke with key_id in config
+    graph.invoke(state, config={"configurable": {"tenuo_key_id": "worker"}})
 """
 
-import asyncio
+from typing import Any, Callable, Dict, List, Optional, Union, TypeVar
 from functools import wraps
-from typing import Any, Callable, Optional, TypeVar
+import logging
+import os
 
-from .scoped import scoped_task
-from .decorators import get_warrant_context
-from .constraints import Capability
+from .exceptions import ConfigurationError
+from .bound_warrant import BoundWarrant
+from .keys import KeyRegistry, load_signing_key_from_env
+from tenuo_core import Warrant
 
-# Type variable for node functions
+# Optional LangGraph imports
+try:
+    from langgraph.prebuilt import ToolNode  # type: ignore
+    from langchain_core.messages import ToolMessage
+    from langchain_core.tools import BaseTool
+    from langchain_core.runnables import RunnableConfig
+    LANGGRAPH_AVAILABLE = True
+except ImportError:
+    LANGGRAPH_AVAILABLE = False
+    ToolNode = object  # type: ignore
+    BaseTool = object  # type: ignore
+    RunnableConfig = dict  # type: ignore
+
+logger = logging.getLogger("tenuo.langgraph")
+
 F = TypeVar('F', bound=Callable)
 
 
-def tenuo_node(
-    *capabilities: Capability,
-    ttl: Optional[int] = None,
-) -> Callable[[F], F]:
+# =============================================================================
+# Key Auto-Loading (Convention over Configuration)
+# =============================================================================
+
+def auto_load_keys(prefix: str = "TENUO_KEY_") -> int:
     """
-    Decorator to scope authority for a LangGraph node.
+    Auto-load signing keys from environment variables.
     
-    This decorator wraps a node function with scoped_task(), automatically
-    narrowing the warrant scope for the duration of the node execution.
+    Scans for env vars matching the prefix and registers them in KeyRegistry.
+    
+    Naming convention:
+        TENUO_KEY_DEFAULT -> key_id="default"
+        TENUO_KEY_WORKER_1 -> key_id="worker-1"
+        TENUO_KEY_MY_SERVICE -> key_id="my-service"
     
     Args:
-        *capabilities: Capability objects defining tool access
-        ttl: Optional TTL override
-    
+        prefix: Environment variable prefix (default: "TENUO_KEY_")
+        
     Returns:
-        Decorated function with automatic scope narrowing
-    
+        Number of keys loaded
+        
     Example:
-        @tenuo_node(Capability("search", query=Pattern("*")))
-        async def researcher(state):
-            return await search_tool.invoke(state["query"])
+        # Set env vars:
+        # TENUO_KEY_DEFAULT=base64...
+        # TENUO_KEY_WORKER=base64...
+        
+        count = auto_load_keys()
+        print(f"Loaded {count} keys")
     """
-    caps_list = list(capabilities)
+    registry = KeyRegistry.get_instance()
+    loaded = 0
+    
+    for name, value in os.environ.items():
+        if name.startswith(prefix) and value:
+            # Convert TENUO_KEY_WORKER_1 -> worker-1
+            key_id = name[len(prefix):].lower().replace("_", "-")
+            if not key_id:
+                key_id = "default"
             
-    def decorator(fn: F) -> F:
-        if asyncio.iscoroutinefunction(fn):
-            @wraps(fn)
-            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                async with scoped_task(*caps_list, ttl=ttl):
-                    return await fn(*args, **kwargs)
-            return async_wrapper  # type: ignore
-        else:
-            @wraps(fn)
-            def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-                with scoped_task(*caps_list, ttl=ttl):
-                    return fn(*args, **kwargs)
-            return sync_wrapper  # type: ignore
+            try:
+                key = load_signing_key_from_env(name)
+                registry.register(key_id, key)
+                logger.info(f"Auto-loaded key '{key_id}' from {name}")
+                loaded += 1
+            except Exception as e:
+                logger.warning(f"Failed to load key from {name}: {e}")
     
-    return decorator
+    return loaded
 
 
-def require_warrant(fn: F) -> F:
+# =============================================================================
+# Core: Get BoundWarrant from State + Config
+# =============================================================================
+
+def _get_key_id_from_config(config: Optional[Dict[str, Any]]) -> str:
+    """Extract key_id from LangGraph config, with fallback to 'default'."""
+    if config is None:
+        return "default"
+    
+    # LangGraph stores custom config in "configurable"
+    configurable = config.get("configurable", {})
+    return configurable.get("tenuo_key_id", "default")
+
+
+def _get_bound_warrant(
+    state: Dict[str, Any],
+    config: Optional[Dict[str, Any]] = None,
+    *,
+    key_id: Optional[str] = None,
+) -> BoundWarrant:
     """
-    Decorator to require a warrant in context before executing.
+    Get BoundWarrant from state warrant + key from registry.
     
-    Use this for nodes that should only run with authorization,
-    but don't need to narrow scope.
+    Key resolution order:
+    1. Explicit key_id parameter
+    2. config["configurable"]["tenuo_key_id"]
+    3. "default"
+    
+    Args:
+        state: Graph state containing 'warrant'
+        config: LangGraph config (optional)
+        key_id: Explicit key_id override (optional)
+        
+    Returns:
+        BoundWarrant
+        
+    Raises:
+        ConfigurationError: If warrant missing or key not found
+    """
+    # Get warrant from state
+    warrant = state.get("warrant")
+    if not warrant:
+        raise ConfigurationError(
+            "State is missing 'warrant' field. "
+            "Ensure your State TypedDict includes 'warrant: Warrant'."
+        )
+    
+    # Auto-inflate from string (Base64) if needed (for serialization safety)
+    if isinstance(warrant, str):
+        try:
+            warrant = Warrant.from_base64(warrant)
+        except Exception as e:
+            raise ConfigurationError(f"Failed to decode warrant from string token: {e}")
+    
+    if key_id is None:
+        # Try config first
+        resolved_key_id = _get_key_id_from_config(config)
+    else:
+        resolved_key_id = key_id
+    
+    # Get key from registry
+    registry = KeyRegistry.get_instance()
+    try:
+        key = registry.get(resolved_key_id)
+    except KeyError:
+        raise ConfigurationError(
+            f"Key '{resolved_key_id}' not found in KeyRegistry. "
+            f"Either register it manually or use auto_load_keys() to load from env vars."
+        )
+    
+    # Bind key to warrant
+    if hasattr(warrant, 'bind_key'):
+        return warrant.bind_key(key)
+    elif isinstance(warrant, BoundWarrant):
+        # Already bound - use as-is (rare in state)
+        return warrant
+    
+    raise ConfigurationError(f"Invalid warrant type in state: {type(warrant)}")
+
+
+# =============================================================================
+# secure() - Wrapper for Pure Nodes
+# =============================================================================
+
+def secure(
+    node: Callable,
+    *,
+    key_id: Optional[str] = None,
+    inject_warrant: bool = False,
+) -> Callable:
+    """
+    Wrap a LangGraph node with Tenuo authorization.
+    
+    This keeps the node function pure (standard LangGraph signature).
+    Authorization context is set up before the node runs.
+    
+    Args:
+        node: The node function (state) -> dict
+        key_id: Explicit key_id (default: from config or "default")
+        inject_warrant: If True, pass bound_warrant as kwarg
+        
+    Returns:
+        Wrapped node function
+        
+    Example:
+        def my_agent(state: State) -> dict:
+            # Pure domain logic - no Tenuo imports needed
+            return {"messages": [...]}
+        
+        # Wrap at graph construction:
+        graph.add_node("agent", secure(my_agent))
+        graph.add_node("worker", secure(worker_node, key_id="worker"))
+    """
+    @wraps(node)
+    def wrapper(
+        state: Union[Dict[str, Any], Any],
+        config: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Any:
+        # print(f"DEBUG: wrapper called. config type: {type(config)}. kwargs: {kwargs.keys()}")
+        if config is None and 'config' in kwargs:
+             config = kwargs['config']
+             
+        state_dict = state if isinstance(state, dict) else vars(state)
+        
+        try:
+            bw = _get_bound_warrant(state_dict, config, key_id=key_id)
+        except Exception as e:
+            raise ConfigurationError(
+                f"Authorization failed in node '{node.__name__}': {e}"
+            ) from e
+        
+        if inject_warrant:
+            kwargs['bound_warrant'] = bw
+        
+        # For now, we just validate the warrant exists and is bound
+        # The actual tool authorization happens in TenuoTool or protect()
+        # This wrapper primarily ensures the key binding works
+        
+        # Check if wrapped function accepts config parameter
+        import inspect
+        sig = inspect.signature(node)
+        accepts_config = 'config' in sig.parameters or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        
+        if config and accepts_config:
+            return node(state, config=config, **kwargs)
+        else:
+            return node(state, **kwargs)
+    
+    return wrapper
+
+
+# =============================================================================
+# @tenuo_node - Decorator with Explicit Access
+# =============================================================================
+
+def tenuo_node(func: F) -> F:
+    """
+    Decorator for LangGraph nodes that need explicit BoundWarrant access.
+    
+    Injects `bound_warrant` as a keyword argument. Use this when you need
+    to check permissions, delegate, or attenuate within the node.
+    
+    For simple authorization (just ensuring the warrant is valid), prefer
+    the `secure()` wrapper which keeps nodes pure.
+    
+    Args:
+        func: Node function with signature (state, bound_warrant=...) -> dict
+        
+    Returns:
+        Wrapped function
+        
+    Example:
+        @tenuo_node
+        def my_agent(state: State, bound_warrant: BoundWarrant) -> dict:
+            # Check permissions before expensive operation
+            if not bound_warrant.preview_can("search"):
+                return {"messages": ["Not authorized for search"]}
+            
+            # Delegate to sub-agent
+            child_warrant = bound_warrant.delegate(
+                to=worker_pubkey,
+                allow=["search"],
+                ttl=60
+            )
+            return {"messages": [...], "warrant": child_warrant}
+    """
+    @wraps(func)
+    def wrapper(
+        state: Union[Dict[str, Any], Any],
+        config: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Any:
+        state_dict = state if isinstance(state, dict) else vars(state)
+        
+        try:
+            bw = _get_bound_warrant(state_dict, config)
+        except Exception as e:
+            raise ConfigurationError(
+                f"Failed to bind warrant in node '{func.__name__}': {e}"
+            ) from e
+        
+        kwargs['bound_warrant'] = bw
+        
+        return func(state, **kwargs)
+    
+    return wrapper  # type: ignore
+
+
+# =============================================================================
+# require_warrant - Manual Helper
+# =============================================================================
+
+def require_warrant(
+    state: Dict[str, Any],
+    config: Optional[Dict[str, Any]] = None,
+) -> BoundWarrant:
+    """
+    Manually get BoundWarrant from state + config.
+    
+    Use this if you can't use decorators/wrappers.
     
     Example:
-        @require_warrant
-        async def sensitive_node(state):
-            # Only runs if warrant is in context
-            ...
+        def my_node(state, config=None):
+            bw = require_warrant(state, config)
+            if bw.authorize("search", {"query": "test"}):
+                ...
+    """
+    return _get_bound_warrant(state, config)
+
+
+# =============================================================================
+# TenuoToolNode - Secure ToolNode
+# =============================================================================
+
+class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignore
+    """
+    A Secure ToolNode that authorizes tool calls using warrant from state.
     
-    Important:
-        - If the decorated function is async, use it in async context
-        - If the decorated function is sync, use it in sync context
-    """
-    if asyncio.iscoroutinefunction(fn):
-        @wraps(fn)
-        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            warrant = get_warrant_context()
-            if warrant is None:
-                from .exceptions import ScopeViolation
-                raise ScopeViolation(
-                    "Node requires warrant in context. "
-                    "Use root_task() before invoking the graph."
-                )
-            return await fn(*args, **kwargs)
-        return async_wrapper  # type: ignore
-    else:
-        @wraps(fn)
-        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-            warrant = get_warrant_context()
-            if warrant is None:
-                from .exceptions import ScopeViolation
-                raise ScopeViolation(
-                    "Node requires warrant in context. "
-                    "Use root_task() before invoking the graph."
-                )
-            return fn(*args, **kwargs)
-        return sync_wrapper  # type: ignore
-
-
-# =============================================================================
-# DX: TenuoToolNode - Drop-in ToolNode replacement
-# =============================================================================
-
-
-# Check if LangGraph is available (for pytest.mark.skipif, etc.)
-try:
-    import langgraph.prebuilt  # noqa: F401
-    LANGGRAPH_TOOLNODE_AVAILABLE = True
-except ImportError:
-    LANGGRAPH_TOOLNODE_AVAILABLE = False
-
-
-class TenuoToolNode:
-    """
     Drop-in replacement for LangGraph's ToolNode with automatic Tenuo protection.
     
-    This is the recommended way to use tools in LangGraph with Tenuo.
-    It automatically wraps tools with authorization checks.
-    
-    Example:
+    Usage:
         from tenuo.langgraph import TenuoToolNode
-        from tenuo import root_task_sync
         
-        # Before (manual protection):
-        # tools = [search, calculator]
-        # protected = protect_langchain_tools(tools)
-        # tool_node = ToolNode(protected)
+        tools = [search, calculator]
+        tool_node = TenuoToolNode(tools)
         
-        # After (automatic protection):
-        tool_node = TenuoToolNode([search, calculator])
-        
-        # Build graph as normal
         graph.add_node("tools", tool_node)
         
-        # Run with authorization
-        with root_task_sync(Capability("search"), Capability("calculator")):
-            result = graph.invoke(...)
-    
-    Args:
-        tools: List of LangChain BaseTool objects
-        strict: If True, require constraints for high-risk tools
-        **kwargs: Additional arguments passed to ToolNode
-    
-    Raises:
-        ImportError: If langgraph or langchain is not installed
+        # Invoke with key_id in config
+        graph.invoke(state, config={"configurable": {"tenuo_key_id": "worker"}})
     """
     
-    def __init__(
-        self,
-        tools: list,
-        *,
-        strict: bool = False,
-        **kwargs: Any,
-    ):
-        # Import dependencies at runtime (langgraph is optional)
-        try:
-            from langgraph.prebuilt import ToolNode
-        except ImportError:
+    def __init__(self, tools: List[BaseTool], **kwargs: Any):
+        if not LANGGRAPH_AVAILABLE:
             raise ImportError(
                 "LangGraph is required for TenuoToolNode. "
                 "Install with: pip install langgraph"
             )
-        
-        from .langchain import protect_langchain_tools, LANGCHAIN_AVAILABLE
-        if not LANGCHAIN_AVAILABLE:
-            raise ImportError(
-                "LangChain is required for TenuoToolNode. "
-                "Install with: pip install langchain-core"
-            )
-        
-        # Wrap tools with Tenuo protection
-        protected_tools = protect_langchain_tools(tools, strict=strict)
-        
-        # Create the underlying ToolNode
-        self._tool_node: Any = ToolNode(protected_tools, **kwargs)
-        
-        # Store for introspection
-        self._tools = tools
-        self._protected_tools = protected_tools
-        self._strict = strict
+        super().__init__(tools, **kwargs)
     
-    def __call__(self, state: Any, config: Any = None) -> Any:
-        """Execute the tool node (delegates to underlying ToolNode)."""
-        if config is not None:
-            return self._tool_node(state, config)
-        return self._tool_node(state)
+    def _run_with_auth(
+        self,
+        input: Dict[str, Any],
+        config: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Execute tools with authorization from state warrant."""
+        from .langchain import TenuoTool
+        
+        # Get BoundWarrant from state + config
+        try:
+            bw = _get_bound_warrant(input, config)
+        except Exception as e:
+            import uuid
+            request_id = str(uuid.uuid4())[:8]
+            logger.warning(f"[{request_id}] Failed to get BoundWarrant: {e}")
+            return {
+                "messages": [
+                    ToolMessage(
+                        content=f"Security configuration error (ref: {request_id})",
+                        tool_call_id="unknown",
+                        status="error"
+                    )
+                ]
+            }
+        
+        # Wrap tools with authorization
+        protected_map = {
+            name: TenuoTool(tool, bound_warrant=bw)
+            for name, tool in self.tools_by_name.items()
+        }
+        
+        # Dispatch tool calls
+        messages = input.get("messages", [])
+        if not messages:
+            return {"messages": []}
+        
+        last_message = messages[-1]
+        if not hasattr(last_message, "tool_calls"):
+            return {"messages": []}
+        
+        results = []
+        for call in last_message.tool_calls:
+            tool_name = call["name"]
+            tool_args = call["args"]
+            tool_id = call["id"]
+            
+            if tool_name not in protected_map:
+                results.append(ToolMessage(
+                    content=f"Error: Tool '{tool_name}' not found.",
+                    tool_call_id=tool_id,
+                    status="error"
+                ))
+                continue
+            
+            tool = protected_map[tool_name]
+            
+            try:
+                output = tool.invoke(tool_args, config=config)  # type: ignore[arg-type]
+                results.append(ToolMessage(
+                    content=str(output),
+                    tool_call_id=tool_id,
+                    name=tool_name
+                ))
+            except Exception as e:
+                # Generate request ID for log correlation
+                import uuid
+                request_id = str(uuid.uuid4())[:8]
+                
+                # Log detailed error for operators (never exposed to LLM)
+                logger.warning(
+                    f"[{request_id}] Tool '{tool_name}' authorization failed: {e}"
+                )
+                
+                # Return opaque error to LLM (prevents constraint probing)
+                results.append(ToolMessage(
+                    content=f"Authorization denied (ref: {request_id})",
+                    tool_call_id=tool_id,
+                    status="error"
+                ))
+        
+        return {"messages": results}
     
-    async def __acall__(self, state: Any, config: Any = None) -> Any:
-        """Async execution (delegates to underlying ToolNode)."""
-        if hasattr(self._tool_node, '__acall__'):
-            if config is not None:
-                return await self._tool_node.__acall__(state, config)
-            return await self._tool_node.__acall__(state)
-        # Fallback to sync
-        return self(state, config)
+    def __call__(
+        self,
+        input: Dict[str, Any],
+        config: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Execute as callable."""
+        return self._run_with_auth(input, config=config, **kwargs)
     
-    @property
-    def tools(self) -> list:
-        """Get the protected tools."""
-        return self._protected_tools
-    
-    @property
-    def original_tools(self) -> list:
-        """Get the original unprotected tools."""
-        return self._tools
+    def invoke(
+        self,
+        input: Dict[str, Any],
+        config: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """Execute via invoke()."""
+        return self._run_with_auth(input, config=config, **kwargs)
 
 
 __all__ = [
+    # Key loading
+    "auto_load_keys",
+    # Wrappers
+    "secure",
     "tenuo_node",
     "require_warrant",
-    # DX: Drop-in ToolNode replacement
+    # ToolNode
     "TenuoToolNode",
-    "LANGGRAPH_TOOLNODE_AVAILABLE",
+    # Flags
+    "LANGGRAPH_AVAILABLE",
 ]

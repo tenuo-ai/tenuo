@@ -18,21 +18,21 @@ kubectl get pods -n istio-system
 ### 1. Deploy Tenuo Authorizer
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/horkosdev/tenuo/main/docs/quickstart/istio/tenuo.yaml
+kubectl apply -f https://raw.githubusercontent.com/tenuo-ai/tenuo/main/docs/quickstart/istio/tenuo.yaml
 ```
 
 ### 2. Configure Istio ExtensionProvider
 
 ```bash
 kubectl patch configmap istio -n istio-system --type merge \
-  --patch-file https://raw.githubusercontent.com/horkosdev/tenuo/main/docs/quickstart/istio/mesh-config.yaml
+  --patch-file https://raw.githubusercontent.com/tenuo-ai/tenuo/main/docs/quickstart/istio/mesh-config.yaml
 kubectl rollout restart deployment/istiod -n istio-system
 ```
 
 ### 3. Deploy Test App
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/horkosdev/tenuo/main/docs/quickstart/istio/httpbin.yaml
+kubectl apply -f https://raw.githubusercontent.com/tenuo-ai/tenuo/main/docs/quickstart/istio/httpbin.yaml
 ```
 
 This deploys httpbin with an AuthorizationPolicy that routes requests to Tenuo.
@@ -153,6 +153,6 @@ kubectl get configmap istio -n istio-system -o yaml | grep -A10 extensionProvide
 ## Clean Up
 
 ```bash
-kubectl delete -f https://raw.githubusercontent.com/horkosdev/tenuo/main/docs/quickstart/istio/httpbin.yaml
-kubectl delete -f https://raw.githubusercontent.com/horkosdev/tenuo/main/docs/quickstart/istio/tenuo.yaml
+kubectl delete -f https://raw.githubusercontent.com/tenuo-ai/tenuo/main/docs/quickstart/istio/httpbin.yaml
+kubectl delete -f https://raw.githubusercontent.com/tenuo-ai/tenuo/main/docs/quickstart/istio/tenuo.yaml
 ```

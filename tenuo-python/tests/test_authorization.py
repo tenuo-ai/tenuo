@@ -14,7 +14,7 @@ from tenuo import (
     SigningKey, Warrant, Pattern, Exact,
     lockdown, set_warrant_context, set_signing_key_context,
     get_warrant_context, get_signing_key_context,
-    AuthorizationError, Clearance, Constraints
+    ScopeViolation, Clearance, Constraints
 )
 
 
@@ -160,8 +160,8 @@ def test_pop_prevents_cross_tenant_misuse():
     with set_warrant_context(warrant), set_signing_key_context(tenant_a_kp):
         try:
             sensitive_operation(resource="secret-data")
-            assert False, "Should have raised AuthorizationError - wrong keypair!"
-        except AuthorizationError:
+            assert False, "Should have raised ScopeViolation - wrong keypair!"
+        except ScopeViolation:
             # Expected: Authorization denied because PoP signature doesn't match authorized_holder
             # The specific error message may vary, but access MUST be denied
             pass  # Success - access was denied
@@ -269,7 +269,7 @@ def test_warrant_chain_verification():
         assert result == "accessed /data/reports/q3.pdf"
         
         # Should fail for broader path
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ScopeViolation):
             access_file(path="/data/other/file.txt")
 
 
@@ -439,7 +439,7 @@ def test_authorization_fails_without_warrant():
     
     # Should fail without warrant context
     with set_signing_key_context(kp):
-        with pytest.raises(AuthorizationError, match="No warrant"):
+        with pytest.raises(ScopeViolation, match="No warrant"):
             protected_function(value="test")
 
 
@@ -461,7 +461,7 @@ def test_authorization_fails_with_wrong_tool():
     )
     
     with set_warrant_context(warrant), set_signing_key_context(kp):
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ScopeViolation):
             protected_function(value="test")
 
 
@@ -488,7 +488,7 @@ def test_authorization_fails_with_constraint_violation():
         assert result == "content of /allowed/file.txt"
         
         # Should fail for disallowed path
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ScopeViolation):
             read_file(path="/forbidden/file.txt")
 
 
@@ -513,5 +513,5 @@ def test_authorization_fails_with_expired_warrant():
     time.sleep(1)  # Wait for expiration
     
     with set_warrant_context(warrant), set_signing_key_context(kp):
-        with pytest.raises(AuthorizationError):
+        with pytest.raises(ScopeViolation):
             protected_function(value="test")

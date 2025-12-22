@@ -66,9 +66,9 @@ from .exceptions import (
     CryptoError,
     SignatureInvalid,
     MissingSignature,
-    InvalidSignature,  # alias for SignatureInvalid
     # Scope violations
     ScopeViolation,
+    AuthorizationError,
     ToolNotAuthorized,
     ToolMismatch,
     ConstraintViolation,
@@ -141,9 +141,6 @@ from .exceptions import (
     # DX (diff-style errors)
     AuthorizationDenied,
     ConstraintResult,
-    # Legacy aliases
-    WarrantError,
-    AuthorizationError,
     # Helper
     categorize_rust_error,
 )
@@ -153,6 +150,7 @@ from .decorators import (
     set_warrant_context,
     get_signing_key_context,
     set_signing_key_context,
+    is_bypass_enabled,
     WarrantContext,
     SigningKeyContext,
 )
@@ -175,6 +173,12 @@ from .config import (
     is_configured,
     is_dev_mode,
     TenuoConfig,
+)
+from .keys import (
+    load_signing_key_from_env,
+    load_signing_key_from_file,
+    Keyring,
+    KeyRegistry,
 )
 from .scoped import (
     root_task,
@@ -211,7 +215,7 @@ from .langgraph import (
     tenuo_node,
     require_warrant,
     TenuoToolNode,  # DX: Drop-in ToolNode replacement
-    LANGGRAPH_TOOLNODE_AVAILABLE,
+    LANGGRAPH_AVAILABLE,
 )
 
 # Tier 1 API - Error explanation
@@ -234,11 +238,37 @@ from tenuo_core import (  # type: ignore
 from .warrant_ext import (
     get_chain_with_diffs,
     compute_diff,
+    # Type protocols
+    ReadableWarrant,
+    SignableWarrant,
+    AnyWarrant,
+    # Debugging
+    WhyDenied,
+    DenyCode,
+    PreviewResult,
 )
 
 # Initialize warrant extensions
 # This adds the delegation_receipt property to Warrant
 import tenuo.warrant_ext  # noqa: F401
+
+# Import BoundWarrant class
+from .bound_warrant import BoundWarrant
+
+# Import testing utilities
+from .testing import (
+    allow_all,
+    deterministic_headers,
+)
+
+# Import diagnostics
+from .diagnostics import (
+    diagnose,
+    info,
+)
+
+# Import Client
+
 
 # Re-export everything for clean imports
 __all__ = [
@@ -255,6 +285,11 @@ __all__ = [
     "is_configured",
     "is_dev_mode",
     "TenuoConfig",
+    # Key management
+    "load_signing_key_from_env",
+    "load_signing_key_from_file",
+    "Keyring",
+    "KeyRegistry",
     "ScopedTaskBuilder",
     "ScopePreview",
     # Tool protection
@@ -280,7 +315,7 @@ __all__ = [
     "tenuo_node",
     "require_warrant",
     "TenuoToolNode",  # DX: Drop-in ToolNode replacement
-    "LANGGRAPH_TOOLNODE_AVAILABLE",
+    "LANGGRAPH_AVAILABLE",
     # Error explanation
     "explain",
     "explain_str",
@@ -288,14 +323,23 @@ __all__ = [
     # =========================================================================
     # Tier 2 API (Explicit control)
     # =========================================================================
+
     # Core types
     "SigningKey",
     "Warrant",
+    "BoundWarrant",  # DX: Warrant bound to key
     "WarrantType",
     "Clearance",
     "PublicKey",
     "Signature",
     "Authorizer",
+    # DX: Testing utilities
+    "allow_all",
+    "is_bypass_enabled",
+    "deterministic_headers",
+    # DX: Diagnostics
+    "diagnose",
+    "info",
     # Constraints
     "Constraints",
     "Capability",
@@ -340,9 +384,9 @@ __all__ = [
     "CryptoError",
     "SignatureInvalid",
     "MissingSignature",
-    "InvalidSignature",  # alias for SignatureInvalid
     # Exceptions - Scope violations
     "ScopeViolation",
+    "AuthorizationError",
     "ToolNotAuthorized",
     "ToolMismatch",
     "ConstraintViolation",
@@ -417,9 +461,6 @@ __all__ = [
     # Exceptions - DX (diff-style errors)
     "AuthorizationDenied",
     "ConstraintResult",
-    # Exceptions - Legacy aliases
-    "WarrantError",
-    "AuthorizationError",
     # Exceptions - Helper
     "categorize_rust_error",
     # Decorators
@@ -454,6 +495,14 @@ __all__ = [
     "ChangeType",
     "get_chain_with_diffs",
     "compute_diff",
+    # Type protocols
+    "ReadableWarrant",
+    "SignableWarrant",
+    "AnyWarrant",
+    # Debugging types
+    "WhyDenied",
+    "DenyCode",
+    "PreviewResult",
 ]
 
-__version__ = "0.1.0a4"
+__version__ = "0.1.0a8"

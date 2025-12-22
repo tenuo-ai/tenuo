@@ -147,8 +147,6 @@ class TestPOLADelegateMethod:
 
     def test_delegate_inherits_all_internally(self):
         """delegate() should call inherit_all() internally."""
-        from tenuo import set_signing_key_context
-
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
@@ -161,17 +159,19 @@ class TestPOLADelegateMethod:
             ttl_seconds=3600
         )
 
-        # delegate() should work without explicit inherit_all()
-        with set_signing_key_context(kp):
-            child = parent.delegate(holder=worker_kp.public_key)
+        # delegate() requires explicit allow= list
+        child = parent.delegate(
+            to=worker_kp.public_key,
+            allow=["read_file", "write_file"],  # Must specify tools
+            ttl=300,
+            key=kp
+        )
 
-        # Child should have all parent tools
+        # Child should have specified tools
         assert sorted(child.tools) == ["read_file", "write_file"]
 
     def test_delegate_with_tools_narrows(self):
-        """delegate(tools=[...]) narrows to specified tools."""
-        from tenuo import set_signing_key_context
-
+        """delegate(allow=[...]) narrows to specified tools."""
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
@@ -185,11 +185,12 @@ class TestPOLADelegateMethod:
             ttl_seconds=3600
         )
 
-        with set_signing_key_context(kp):
-            child = parent.delegate(
-                holder=worker_kp.public_key,
-                tools=["read_file"]
-            )
+        child = parent.delegate(
+            to=worker_kp.public_key,
+            allow=["read_file"],  # Narrow to just read_file
+            ttl=300,
+            key=kp
+        )
 
         assert child.tools == ["read_file"]
 

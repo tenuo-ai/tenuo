@@ -21,7 +21,7 @@ Tenuo is a cryptographic authorization primitive for AI agents. **Think prepaid 
 It constrains ambient identity-based permissions with task-scoped capabilities that attenuate as they delegate. Offline verification in ~27μs.
 If an agent is prompt-injected, the authority still can't escape its bounds.
 
-> **v0.1.0-alpha.7** - Early release. Cryptographic core is stable; integration APIs are evolving. See [CHANGELOG](./CHANGELOG.md).
+> **v0.1.0-alpha.8** - Early release. Cryptographic core is stable; integration APIs are evolving. See [CHANGELOG](./CHANGELOG.md).
 
 ```bash
 pip install tenuo
@@ -30,46 +30,41 @@ pip install tenuo
 ## Quick Start
 
 ```python
-from tenuo import configure, root_task, scoped_task, protect_tools
-from tenuo import Capability, Pattern, SigningKey
+from tenuo import Warrant, SigningKey, Pattern
 
-# 1. Configure once at startup
-configure(issuer_key=SigningKey.generate(), dev_mode=True)
+# Warrant in state - serializable, no secrets
+warrant = receive_warrant_from_orchestrator()
 
-# 2. Wrap your tools
-protect_tools([read_file, send_email, query_db])
+# Explicit key at call site - keys never in state
+key = SigningKey.from_env("MY_SERVICE_KEY")
+headers = warrant.auth_headers(key, "search", {"query": "test"})
 
-# 3. Scope authority to tasks
-async with root_task(Capability("read_file", path=Pattern("/data/*"))):
-    async with scoped_task(Capability("read_file", path=Pattern("/data/reports/*"))):
-        result = await agent.run("Summarize Q3 reports")
-        # read_file("/data/reports/q3.pdf") → ✅ Allowed
-        # read_file("/etc/passwd") → ❌ Blocked
-        # send_email(...) → ❌ Blocked (not in scope)
+# Delegation with attenuation
+child = warrant.delegate(
+    to=worker_pubkey,
+    allow={"search": {"query": Pattern("safe*")}},
+    ttl=300,
+    key=key
+)
 ```
 
-The agent can be prompt-injected. The authorization layer doesn't care. The warrant says `/data/reports/*`. The request says `/etc/passwd`. **Denied.**
+The agent can be prompt-injected. The authorization layer doesn't care. The warrant says `safe*`. The request says `dangerous`. **Denied.**
 
 <details>
-<summary><strong>Low-level API (for production)</strong></summary>
+<summary><strong>Context-based API (for prototyping)</strong></summary>
 
 ```python
-from tenuo import SigningKey, Warrant, Pattern, lockdown, set_warrant_context, set_signing_key_context
+from tenuo import configure, root_task, Capability, Pattern, SigningKey, lockdown
 
-keypair = SigningKey.generate()
-warrant = (Warrant.builder()
-    .capability("read_file", {"path": Pattern("/data/*")})
-    .holder(keypair.public_key)
-    .ttl(300)
-    .issue(keypair))
+configure(issuer_key=SigningKey.generate(), dev_mode=True)
 
 @lockdown(tool="read_file")
 def read_file(path: str):
     return open(path).read()
 
-with set_warrant_context(warrant), set_signing_key_context(keypair):
-    read_file("/data/report.txt")  # Allowed
-    read_file("/etc/passwd")       # Blocked
+async with root_task(Capability("read_file", path=Pattern("/data/*"))):
+    read_file("/data/report.txt")  # ✅ Allowed
+    read_file("/etc/passwd")       # ❌ Blocked
 ```
 
 </details>
@@ -96,41 +91,19 @@ IAM answers "who are you?" Tenuo answers "what can you do right now?"
 Tenuo implements **Subtractive Delegation**.
 
 ```
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│ Control      │     │ Orchestrator │     │ Worker       │
-│ Plane        │     │              │     │              │
-│              │     │              │     │              │
-│ Issues root  │────▶│ Attenuates   │────▶│ Executes     │
-│ warrant      │     │ for task     │     │ with proof   │
-└──────────────┘     └──────────────┘     └──────────────┘
-     Full scope    →    Narrower     →    Narrowest
-     (all tools)       (some tools)      (one tool, one path)
+┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+│  Control Plane   │     │  Orchestrator    │     │  Worker          │
+│                  │     │                  │     │                  │
+│  Issues root     │────▶│  Attenuates      │────▶│  Executes with   │
+│  warrant         │     │  for task        │     │  proof           │
+└──────────────────┘     └──────────────────┘     └──────────────────┘
+     Full scope      →      Narrower       →       Narrowest
 ```
 
 1. **Control plane** issues a root warrant
 2. **Orchestrator** attenuates it (scope can only shrink)
 3. **Worker** proves possession and executes
 4. **Warrant expires** - no revocation needed
-
-Warrants can only **shrink** when delegated: 15 replicas becomes 10, access to `staging-*` narrows to `staging-web`. Verification is 100% offline in ~27μs on commodity hardware (benchmarks in repo).
-
----
-
-## Warrant Types
-
-Tenuo supports two types of warrants for separation of concerns:
-
-### ISSUER Warrants (Planners)
-- **Purpose**: Issue EXECUTION warrants to workers
-- **Use Case**: Orchestrators, P-LLMs that decide capabilities
-- **Capabilities**: Can issue warrants, cannot execute tools
-- **Security**: Prevents planning components from directly invoking tools
-
-### EXECUTION Warrants (Workers)
-- **Purpose**: Invoke specific tools with specific constraints
-- **Use Case**: Workers that execute actions
-- **Capabilities**: Can execute tools, cannot issue new warrants
-- **Security**: Prevents execution components from escalating privileges
 
 ---
 
@@ -142,7 +115,7 @@ Tenuo supports two types of warrants for separation of concerns:
 | **Holder binding (PoP)** | Stolen tokens are useless without the key |
 | **Constraint types** | `Exact`, `Pattern`, `Range`, `OneOf`, `Regex`, `Cidr`, `UrlPattern`, `CEL` |
 | **Monotonic attenuation** | Capabilities only shrink, never expand |
-| **Framework integrations** | LangChain, LangGraph, MCP (full client) |
+| **Framework integrations** | FastAPI, LangChain, LangGraph, MCP |
 
 ---
 
@@ -152,50 +125,66 @@ Tenuo supports two types of warrants for separation of concerns:
 |-----------|-----------|
 | **Python** | 3.9, 3.10, 3.11, 3.12 |
 | **OS** | Linux, macOS, Windows |
-| **Rust** | Not required (binary wheels provided). 1.70+ only if building from source. |
+| **Rust** | Not required (binary wheels provided) |
 
 ### Optional Dependencies
 
 ```bash
 pip install tenuo                # Core only
+pip install tenuo[fastapi]       # + FastAPI integration
 pip install tenuo[langchain]     # + LangChain (langchain-core ≥0.2)
 pip install tenuo[langgraph]     # + LangGraph (includes LangChain)
 pip install tenuo[mcp]           # + MCP client (Python ≥3.10 required)
 ```
 
-LangChain/LangGraph are optional to keep the core package lightweight. MCP integration requires Python ≥3.10 (MCP SDK limitation).
-
 ---
 
 ## Integrations
 
+**FastAPI**
+```python
+from fastapi import FastAPI, Depends
+from tenuo.fastapi import TenuoGuard, SecurityContext, configure_tenuo
+
+app = FastAPI()
+configure_tenuo(app, trusted_issuers=[issuer_pubkey])
+
+@app.get("/search")
+async def search(query: str, ctx: SecurityContext = Depends(TenuoGuard("search"))):
+    return {"results": [...]}
+```
+
 **LangChain**
 ```python
-from tenuo.langchain import protect_tools
-# Wrap tools so every invocation requires a valid warrant
-secure_tools = protect_tools([search_tool, file_tool])
+from tenuo import Warrant, SigningKey
+from tenuo.langchain import protect
+
+warrant = Warrant.builder().tool("search").issue(keypair)
+bound = warrant.bind_key(keypair)
+
+protected_tools = protect([search_tool], bound_warrant=bound)
 ```
 
 **LangGraph**
 ```python
-from tenuo.langgraph import tenuo_node
-from tenuo import Capability, Pattern
+from tenuo import KeyRegistry
+from tenuo.langgraph import secure, TenuoToolNode, auto_load_keys
 
-@tenuo_node(Capability("read_file", path=Pattern("/tmp/*")))
-async def reader(state):
-    return {"content": open("/tmp/demo.txt").read()}
+# Load keys from TENUO_KEY_* env vars
+auto_load_keys()
+
+# Wrap pure nodes with security
+graph.add_node("agent", secure(my_agent, key_id="worker"))
+graph.add_node("tools", TenuoToolNode([search, calculator]))
+
+# Run with warrant in state
+graph.invoke({"warrant": warrant, ...})
 ```
 
 **MCP (Model Context Protocol)** _(Requires Python 3.10+)_
 ```python
-from tenuo import configure, SigningKey
 from tenuo.mcp import SecureMCPClient
 
-# Configure Tenuo
-keypair = SigningKey.generate()
-configure(issuer_key=keypair)
-
-# Connect to MCP server with automatic tool protection
 async with SecureMCPClient("python", ["mcp_server.py"]) as client:
     tools = await client.get_protected_tools()
 ```
@@ -213,31 +202,14 @@ docker pull tenuo/authorizer:latest  # Sidecar for warrant verification
 docker pull tenuo/control:latest     # Control plane (demo/reference)
 ```
 
-| Image | Description | Base |
-|-------|-------------|------|
-| `tenuo/authorizer` | Verifies warrants, checks PoP | Distroless |
-| `tenuo/control` | Issues root warrants (reference implementation) | Debian slim |
-
-**Helm Chart** — Production-ready deployment with HA, autoscaling, and PodDisruptionBudget:
+**Helm Chart**:
 
 ```bash
 helm install tenuo-authorizer ./charts/tenuo-authorizer \
   --set config.trustedRoots[0]="YOUR_CONTROL_PLANE_PUBLIC_KEY"
 ```
 
-See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https://tenuo.ai/kubernetes) for deployment patterns.
-
----
-
-## Try the Demo
-
-Run the multi-agent demo locally:
-
-```bash
-docker compose up orchestrator worker
-```
-
-This launches an orchestrator that delegates scoped warrants to workers. See the [examples](./tenuo-python/examples) for LangChain, LangGraph, and more patterns.
+See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https://tenuo.ai/kubernetes).
 
 ---
 
@@ -247,11 +219,11 @@ This launches an orchestrator that delegates scoped warrants to workers. See the
 |----------|-------------|
 | **[Quickstart](https://tenuo.ai/quickstart)** | Get running in 5 minutes |
 | **[Concepts](https://tenuo.ai/concepts)** | Why capability tokens? |
+| **[FastAPI](https://tenuo.ai/fastapi)** | Zero-boilerplate API protection |
 | **[LangChain](https://tenuo.ai/langchain)** | Tool protection |
+| **[LangGraph](https://tenuo.ai/langgraph)** | Multi-agent graph security |
 | **[MCP Integration](https://tenuo.ai/mcp)** | Model Context Protocol client |
-| **[Kubernetes](https://tenuo.ai/kubernetes)** | Deployment patterns |
 | **[Security](https://tenuo.ai/security)** | Threat model |
-| **[API Reference](https://tenuo.ai/api-reference)** | Full SDK docs |
 
 ---
 
@@ -272,7 +244,7 @@ Building a sidecar or gateway? Use the core directly:
 tenuo = "0.1"
 ```
 
-See [docs.rs/tenuo](https://docs.rs/tenuo) for Rust API and the [Kubernetes Integration Guide](https://tenuo.ai/kubernetes) for sidecar/gateway deployment patterns.
+See [docs.rs/tenuo](https://docs.rs/tenuo) for Rust API.
 
 ---
 

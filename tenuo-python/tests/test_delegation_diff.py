@@ -27,7 +27,7 @@ def test_builder_basic():
     builder.capability("file_operations", {"path": Exact("/data/reports/q3.pdf")})
     builder.ttl(60)
     builder.holder(worker_kp.public_key)
-    builder.with_intent("Q3 report access for worker")
+    builder.intent("Q3 report access for worker")
     
     # Check builder state (use method calls for getters)
     assert "file_operations" in builder.capabilities
@@ -81,7 +81,7 @@ def test_builder_human_readable_diff():
     builder.capability("file_operations", {"path": Exact("/data/reports/q3.pdf")})
     builder.ttl(60)
     builder.holder(worker_kp.public_key)
-    builder.with_intent("Q3 report access")
+    builder.intent("Q3 report access")
     
     # Get human-readable diff
     diff_str = builder.diff()
@@ -108,7 +108,7 @@ def test_builder_delegation():
     builder.capability("file_operations", {"path": Exact("/data/reports/q3.pdf")})
     builder.ttl(60)
     builder.holder(worker_kp.public_key)
-    builder.with_intent("Q3 report access")
+    builder.intent("Q3 report access")
     
     # Delegate
     child = builder.delegate(control_kp)
@@ -159,7 +159,7 @@ def test_delegation_receipt_to_dict():
     builder.capability("file_operations", {"path": Exact("/data/q3.pdf")})
     builder.ttl(60)
     builder.holder(worker_kp.public_key)
-    builder.with_intent("Test delegation")
+    builder.intent("Test delegation")
     
     child = builder.delegate(control_kp)
     receipt = child.delegation_receipt

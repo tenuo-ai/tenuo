@@ -1,6 +1,6 @@
 [package]
 name = "tenuo"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.8"
 edition = "2021"
 authors = ["Tenuo Contributors"]
 description = "Agent Capability Flow Control - Rust core library"
@@ -75,10 +75,12 @@ required-features = ["data-plane"]
 # ============================================================================
 [dependencies]
 # Cryptography
-ed25519-dalek = { version = "2.1", features = ["rand_core", "serde", "batch", "pkcs8"] }
+ed25519-dalek = { version = "2.1", features = ["rand_core", "serde", "batch", "pkcs8", "zeroize"] }
 rand = "0.8"
 sha2 = "0.10"
 subtle = "2.6"  # Constant-time comparison for secrets
+secrecy = { version = "0.8", features = ["serde"] }
+zeroize = "1.7"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }

@@ -13,7 +13,7 @@ Get your first 403 in under 5 minutes.
 ### 1. Deploy Everything
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/horkosdev/tenuo/main/docs/quickstart/envoy/all-in-one.yaml
+kubectl apply -f https://raw.githubusercontent.com/tenuo-ai/tenuo/main/docs/quickstart/envoy/all-in-one.yaml
 ```
 
 This creates the `tenuo-system` namespace with:
@@ -100,5 +100,5 @@ kubectl get pods -n tenuo-system
 ## Clean Up
 
 ```bash
-kubectl delete -f https://raw.githubusercontent.com/horkosdev/tenuo/main/docs/quickstart/envoy/all-in-one.yaml
+kubectl delete -f https://raw.githubusercontent.com/tenuo-ai/tenuo/main/docs/quickstart/envoy/all-in-one.yaml
 ```
