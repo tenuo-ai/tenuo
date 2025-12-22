@@ -1342,8 +1342,8 @@ impl AuthorizerBuilder {
     /// # Example
     ///
     /// ```rust
-    /// use tenuo_core::planes::Authorizer;
-    /// use tenuo_core::warrant::Clearance;
+    /// use tenuo::Authorizer;
+    /// use tenuo::Clearance;
     ///
     /// let auth = Authorizer::builder()
     ///     .with_clearance_requirement("admin_*", Clearance::SYSTEM)

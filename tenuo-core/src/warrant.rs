@@ -103,7 +103,7 @@ impl Clearance {
     ///
     /// # Example
     /// ```
-    /// use tenuo_core::Clearance;
+    /// use tenuo::Clearance;
     ///
     /// // Organization-specific levels
     /// const CONTRACTOR: Clearance = Clearance::custom(15);  // Between External and Partner
