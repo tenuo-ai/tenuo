@@ -11,27 +11,30 @@
 
 | Document | Description | Status |
 |----------|-------------|--------|
-| [full-spec.md](./full-spec.md) | Complete internal specification (v2.0 - current implementation) | ✅ Reference |
-| [thi-spec.md](./thi-spec.md) | Tenuo Host Interface - stateful features (nonces, rate limits, revocation) | ⚠️ Conceptual (not planned) |
-| [securegraph-spec.md](./securegraph-spec.md) | SecureGraph - declarative attenuation for LangGraph | ⚠️ Conceptual (not planned) |
+| [full-spec.md](./full-spec.md) | Complete internal specification - warrant model, constraints, wire format | ✅ Reference |
+| [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | DX improvements - convenience methods, BoundWarrant, testing utilities | 🚧 In Progress (v0.2) |
+| [thi-spec.md](./thi-spec.md) | Tenuo Host Interface - stateful features (nonces, rate limits) | ⚠️ Conceptual |
+| [securegraph-spec.md](./securegraph-spec.md) | SecureGraph - declarative attenuation for LangGraph | ⚠️ Conceptual |
 
 ---
 
-## Implementation Status (v0.1)
+## Implementation Status (v0.1.0-alpha.7)
 
 ### Core ✅
-- Warrant model (execution warrants)
-- Constraint types (Exact, Pattern, Range, OneOf, NotOneOf, Regex, Wildcard)
+- Warrant model (execution + issuer warrants)
+- Constraint types (Exact, Pattern, Range, OneOf, NotOneOf, Regex, Wildcard, CEL)
 - Cryptographic chain verification
 - Mandatory PoP with timestamp validation
 - Monotonic attenuation
 - Chain limits (MAX_DELEGATION_DEPTH = 16)
+- Clearance levels (optional, enforcement opt-in)
 
 ### Python SDK ✅
 - Tiered API (`Capability` objects, `root_task`, `scoped_task`, `configure`)
 - `@lockdown` decorator
 - `protect_tools()` for LangChain
 - `@tenuo_node` for LangGraph
+- `Clearance` with `custom()`, `level`, `meets()` API
 
 ### MCP Integration ✅
 - `McpConfig` / `CompiledMcpConfig` (Rust + Python)
@@ -41,6 +44,19 @@
 ### CLI ✅
 - `tenuo keygen`, `issue`, `attenuate`, `verify`, `inspect`
 - `--diff` and `--preview` flags
+- `--clearance` flag for clearance levels
+
+---
+
+## In Progress (v0.1.0-alpha.8)
+
+| Feature | Spec | Status |
+|---------|------|--------|
+| Warrant convenience methods | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | 🚧 Phase 1 |
+| `BoundWarrant` with serialization guards | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | 🚧 Phase 1 |
+| `delegate()` with optional key | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | 🚧 Phase 1 |
+| Strict mode (`registered_tools`) | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | 🚧 Phase 2 |
+| Testing utilities (`quick_issue`, `allow_all`) | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | 🚧 Phase 1 |
 
 ---
 
@@ -48,11 +64,40 @@
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Clearance Levels | 📋 Design | Enforcement opt-in (data model exists) |
 | Multi-sig approvals | 📋 Planned | M-of-N for sensitive actions |
 | Cascading revocation | 📋 Planned | Surgical or nuclear revocation |
 | `tenuo-mcp` package | 📋 Planned | Standalone MCP server wrapper |
 | Google A2A | 📋 Planned | Agent-to-Agent protocol integration |
+
+---
+
+## Document Descriptions
+
+### full-spec.md (Reference)
+Complete internal specification covering:
+- Warrant model and wire format
+- Constraint types and evaluation
+- Cryptographic verification
+- Clearance levels (optional)
+- Delegation receipts
+
+### dx-convenience-api-spec.md (In Progress)
+Developer experience improvements:
+- **Phase 1**: Warrant convenience methods (`explain()`, `why_denied()`, `delegate()`)
+- **Phase 2**: Key management and `configure()` with strict mode
+- **Phase 3-5**: Framework integrations (FastAPI, LangChain, LangGraph)
+- **Security**: BoundWarrant serialization protection, KeyRegistry thread safety
+
+### thi-spec.md (Conceptual)
+Stateful host interface features (not planned for implementation):
+- Nonce-based replay prevention
+- Per-key rate limiting
+- Cascading revocation
+
+### securegraph-spec.md (Conceptual)
+Declarative attenuation for LangGraph (exploration only):
+- Graph-level policies
+- Node trust requirements
 
 ---
 
