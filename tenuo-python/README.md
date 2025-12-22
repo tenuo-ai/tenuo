@@ -5,7 +5,7 @@
 [![PyPI](https://img.shields.io/pypi/v/tenuo.svg)](https://pypi.org/project/tenuo/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/tenuo.svg)](https://pypi.org/project/tenuo/)
 
-> **v0.1.0-alpha.5** — See [CHANGELOG](../CHANGELOG.md) for breaking changes.
+> **v0.1.0-alpha.7** — See [CHANGELOG](../CHANGELOG.md) for breaking changes.
 
 Python bindings for [Tenuo](https://github.com/tenuo-ai/tenuo), providing cryptographically-enforced capability attenuation for AI agent workflows.
 
