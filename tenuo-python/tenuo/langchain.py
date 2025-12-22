@@ -135,12 +135,14 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
     wrapped: Any = None
     strict: bool = False
     _schemas: Dict[str, ToolSchema] = {}
+    _bound_warrant: Optional[Any] = None
     
     def __init__(
         self,
         wrapped: Any,
         strict: bool = False,
         schemas: Optional[Dict[str, ToolSchema]] = None,
+        bound_warrant: Optional[Any] = None,
         **kwargs: Any,
     ):
         """
@@ -150,6 +152,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
             wrapped: The LangChain tool to wrap
             strict: Enforce constraints for require_at_least_one tools
             schemas: Tool schemas for risk level checking
+            bound_warrant: Explicit BoundWarrant to use (optional, overrides context)
         """
         # Get tool name and description
         tool_name = _get_tool_name(wrapped)
@@ -162,6 +165,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         object.__setattr__(self, 'wrapped', wrapped)
         object.__setattr__(self, 'strict', strict)
         object.__setattr__(self, '_schemas', schemas or TOOL_SCHEMAS)
+        object.__setattr__(self, '_bound_warrant', bound_warrant)
         
         # Copy args_schema if present
         if hasattr(wrapped, 'args_schema'):
@@ -169,7 +173,14 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
     
     def _check_authorization(self, tool_input: Dict[str, Any]) -> None:
         """Check authorization before tool execution."""
-        warrant = get_warrant_context()
+        # Use explicit bound_warrant if provided, else context
+        bound_warrant = getattr(self, '_bound_warrant', None)
+        
+        if bound_warrant:
+            warrant = bound_warrant
+        else:
+            warrant = get_warrant_context()
+             
         schema = self._schemas.get(self.name)
         
         if warrant is None:
@@ -213,21 +224,54 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                     f"Strict mode: tool '{self.name}' requires at least one constraint."
                 )
         
-        constraints = _get_constraints_dict(warrant)
-        for key, constraint in constraints.items():
-            if key in tool_input:
-                value = tool_input[key]
-                if hasattr(constraint, 'check'):
-                    try:
-                        constraint.check(value)
-                    except Exception as e:
-                        raise ConstraintViolation(
-                            field=key,
-                            reason=str(e),
-                            value=value,
-                        ) from e
+        # Build args dict for authorization
+        constraint_args = {k: v for k, v in tool_input.items()}
         
-        log_authorization_success(warrant, self.name, tool_input)
+        try:
+            # Detect if we have a BoundWarrant (has .authorize without signature param)
+            # or a plain Warrant (requires explicit signature)
+            is_bound = hasattr(warrant, 'warrant') and hasattr(warrant, '_key')
+            
+            if is_bound:
+                # BoundWarrant - handles PoP signing internally
+                authorized = warrant.authorize(self.name, constraint_args)
+            else:
+                # Plain Warrant - need to sign with key from context
+                signing_key = get_signing_key_context()
+                if signing_key:
+                    pop_signature = bytes(warrant.create_pop_signature(
+                        signing_key, self.name, constraint_args
+                    ))
+                    authorized = warrant.authorize(
+                        tool=self.name,
+                        args=constraint_args,
+                        signature=pop_signature
+                    )
+                else:
+                    # No key available - fail closed
+                    raise ConstraintViolation(
+                        field="signature",
+                        reason="No signing key available for PoP signature",
+                        value=None,
+                    )
+
+            if not authorized:
+                raise ConstraintViolation(
+                    field="unknown",
+                    reason="Authorization failed - constraint violation",
+                    value=None,
+                )
+            
+            log_authorization_success(warrant, self.name, tool_input)
+
+        except (ToolNotAuthorized, ConstraintViolation, ConfigurationError):
+            raise
+        except Exception as e:
+            raise ConstraintViolation(
+                field="unknown",
+                reason=f"Authorization error: {str(e)}",
+                value=None,
+            ) from e
     
     def _run(self, *args: Any, **kwargs: Any) -> Any:
         """Synchronous tool execution with authorization."""
@@ -361,21 +405,18 @@ def protect_tool(
     tool: Any,
     name: Optional[str] = None, 
     extract_args: Optional[Callable[..., dict]] = None,
-    warrant: Optional[Any] = None,
-    keypair: Optional[Any] = None,
+    bound_warrant: Optional[Any] = None,
 ) -> Callable:
     """
     Wrap a tool function to enforce Tenuo authorization (Tier 2 API).
     
-    If warrant/keypair are provided, they are used directly.
-    If not, they are retrieved from context.
+    Uses `BoundWarrant` (which contains both warrant and key) for validation.
     
     Args:
         tool: The tool function or LangChain BaseTool to wrap.
         name: Tool name (defaults to tool.name or function name).
         extract_args: Function to extract authorization args from tool call.
-        warrant: Explicit warrant to use (optional).
-        keypair: Explicit keypair to use (optional).
+        bound_warrant: Explicit BoundWarrant to use (optional).
     
     Returns:
         Wrapped function that enforces authorization before execution.
@@ -395,26 +436,29 @@ def protect_tool(
     
     @wraps(callable_func)
     def protected_tool(*args: Any, **kwargs: Any) -> Any:
-        current_warrant = warrant or get_warrant_context()
-        current_keypair = keypair or get_signing_key_context()
+        # Get BoundWarrant from arg or context
+        bw = bound_warrant
+        if bw is None:
+             # Try to get from context (Tier 1 style)
+             # NOTE: In Tier 1, we might have separate Warrant and Key.
+             # This helper is primarily for Tier 2 (Explicit BoundWarrant).
+             # For mixed usage, use TenuoTool.
+             warrant = get_warrant_context()
+             key = get_signing_key_context()
+             if warrant and key:
+                 bw = warrant.bind_key(key)
         
-        if not current_warrant:
+        if not bw:
             raise AuthorizationError(
-                f"No warrant found for tool '{tool_name}'. "
-                "Either pass warrant explicitly or set it in context."
+                f"No authorized warrant found for tool '{tool_name}'. "
+                "Pass 'bound_warrant' explicitly or set context."
             )
-        
-        if not current_keypair:
-            raise AuthorizationError(
-                f"No keypair found for tool '{tool_name}'. "
-                "Either pass keypair explicitly or set it in context."
-            )
-        
-        if current_warrant.is_expired():
-            expires_at = current_warrant.expires_at() if hasattr(current_warrant, 'expires_at') else "unknown"
+            
+        if bw.warrant.is_expired():
+            expires_at = bw.warrant.expires_at() if hasattr(bw.warrant, 'expires_at') else "unknown"
             audit_logger.log(AuditEvent(
                 event_type=AuditEventType.WARRANT_EXPIRED,
-                warrant_id=current_warrant.id,
+                warrant_id=bw.warrant.id,
                 tool=tool_name,
                 action="denied",
                 error_code="warrant_expired",
@@ -437,37 +481,34 @@ def protect_tool(
             for i, arg_val in enumerate(args):
                 if i < len(params):
                     auth_args[params[i]] = arg_val
-            
-        signature = current_warrant.create_pop_signature(
-            current_keypair, tool_name, auth_args
-        )
-            
-        if not current_warrant.authorize(tool_name, auth_args, bytes(signature)):
-            audit_logger.log(AuditEvent(
+
+        # Use BoundWarrant's authorization method (handles PoP internally)
+        if not bw.authorize(tool_name, auth_args):
+             audit_logger.log(AuditEvent(
                 event_type=AuditEventType.AUTHORIZATION_FAILURE,
-                warrant_id=current_warrant.id,
+                warrant_id=bw.warrant.id,
                 tool=tool_name,
                 action="denied",
-                trace_id=current_warrant.session_id,
+                trace_id=bw.warrant.session_id,
                 constraints=auth_args,
                 error_code="constraint_not_satisfied",
-                details=f"Warrant does not authorize tool '{tool_name}' with provided args",
+                details=f"BoundWarrant does not authorize tool '{tool_name}'",
             ))
-            raise AuthorizationError(
-                f"Warrant does not authorize tool '{tool_name}' with args {auth_args}"
+             raise AuthorizationError(
+                f"BoundWarrant does not authorize tool '{tool_name}' with args {auth_args}"
             )
-            
+
         audit_logger.log(AuditEvent(
             event_type=AuditEventType.AUTHORIZATION_SUCCESS,
-            warrant_id=current_warrant.id,
+            warrant_id=bw.warrant.id,
             tool=tool_name,
             action="authorized",
-            trace_id=current_warrant.session_id,
+            trace_id=bw.warrant.session_id,
             constraints=auth_args,
             details=f"Authorization successful for tool '{tool_name}'",
         ))
             
-        logger.debug(f"Authorized access to '{tool_name}' with args {auth_args}")
+        logger.debug(f"Authorized access to '{tool_name}' via BoundWarrant")
         return callable_func(*args, **kwargs)
     
     # Preserve metadata
@@ -484,20 +525,15 @@ def protect_tool(
 
 def protect_tools(
     tools: List[Any],
-    warrant: Any,
-    keypair: Any,
+    bound_warrant: Any,
     config: Optional[Union[str, dict, LangChainConfig]] = None,
 ) -> List[Callable]:
     """
     Wrap tools for Single Agent use with Tenuo authorization (Tier 2 API).
     
-    This is the Tier 2 entry point requiring explicit warrant/keypair.
-    For Tier 1 (context-based), use protect_langchain_tools().
-    
     Args:
         tools: List of tool functions to protect.
-        warrant: Root warrant to enforce.
-        keypair: SigningKey for PoP.
+        bound_warrant: BoundWarrant to enforce.
         config: Optional config for per-tool constraints.
     
     Returns:
@@ -521,28 +557,29 @@ def protect_tools(
         tool_name = _get_tool_name(tool)
         tool_config = parsed_config.tools.get(tool_name) if parsed_config else None
         
+        # NOTE: BoundWarrant attenuation requires the bound key, which BoundWarrant has.
+        # However, BoundWarrant.attenuate returns a NEW BoundWarrant signed by the original's key.
         if tool_config and tool_config.constraints:
-            # Attenuate warrant for this specific tool
             constraints = {}
             for constraint_name, constraint_value in tool_config.constraints.items():
                 constraints[constraint_name] = build_constraint(constraint_value)
             
-            tool_warrant = warrant.attenuate(
+            # This creates a delegated warrant signed by the bound key
+            tool_bw = bound_warrant.delegate(
                 constraints=constraints,
-                keypair=keypair,
+                ttl=None # Inherit
             )
             logger.debug(
-                f"Attenuated warrant for tool '{tool_name}': {tool_warrant.id}"
+                f"Delegated warrant for tool '{tool_name}': {tool_bw.warrant.id}"
             )
         else:
-            tool_warrant = warrant
+            tool_bw = bound_warrant
         
         protected.append(
             protect_tool(
                 tool,
                 name=tool_name,
-                warrant=tool_warrant,
-                keypair=keypair,
+                bound_warrant=tool_bw,
                 extract_args=tool_config.extract_args if tool_config else None,
             )
         )
@@ -627,7 +664,82 @@ def secure_agent(
     return [TenuoTool(t, strict=strict_mode, schemas=merged_schemas) for t in tools]
 
 
+# =============================================================================
+# Unified protect() - Smart Type Detection
+# =============================================================================
+
+def protect(
+    tools: List[Any],
+    *,
+    bound_warrant: Optional[Any] = None,
+    strict: bool = False,
+    config: Optional[Union[str, dict, LangChainConfig]] = None,
+) -> List[Any]:
+    """
+    Protect tools with Tenuo authorization (unified API).
+    
+    Smart-detects input type and returns the appropriate wrapper:
+    - Callable functions → protected Callable functions
+    - LangChain BaseTool → TenuoTool (BaseTool subclass)
+    
+    This is the recommended single entry point for protecting tools.
+    
+    Args:
+        tools: List of tools (functions or BaseTools)
+        bound_warrant: Optional BoundWarrant for explicit auth (Tier 2)
+                      If None, uses context (Tier 1)
+        strict: Require constraints for critical tools
+        config: Optional per-tool configuration
+        
+    Returns:
+        List of protected tools (same type as input)
+        
+    Example:
+        # Tier 1 (context-based):
+        tools = protect([search, calculator])
+        with root_task_sync(Capability("search")):
+            agent.invoke(...)
+        
+        # Tier 2 (explicit):
+        bw = warrant.bind_key(key)
+        tools = protect([search, calculator], bound_warrant=bw)
+        
+        # With LangChain BaseTools:
+        from langchain_community.tools import TavilySearchResults
+        tools = protect([TavilySearchResults()], bound_warrant=bw)
+    """
+    if not tools:
+        return []
+    
+    # Detect if these are LangChain BaseTools
+    first = tools[0]
+    is_langchain = (
+        LANGCHAIN_AVAILABLE and 
+        hasattr(first, 'name') and 
+        hasattr(first, '_run')
+    )
+    
+    if is_langchain:
+        # Return TenuoTool wrappers (BaseTool subclass)
+        return [
+            TenuoTool(t, strict=strict, bound_warrant=bound_warrant)
+            for t in tools
+        ]
+    else:
+        # Return protected callables
+        if bound_warrant:
+            return [
+                protect_tool(t, bound_warrant=bound_warrant)
+                for t in tools
+            ]
+        else:
+            # Context-based (Tier 1)
+            return protect_langchain_tools(tools, strict=strict)
+
+
 __all__ = [
+    # Unified API (recommended)
+    "protect",
     # DX: One-liner entry point
     "secure_agent",
     # Tier 1 API (context-based)

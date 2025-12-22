@@ -212,6 +212,27 @@ class BoundWarrant:
             "X-Tenuo-PoP": pop_b64
         }
     
+    def authorize(self, tool: str, args: dict) -> bool:
+        """
+        Authorize a tool call with automatic Proof-of-Possession signing.
+        
+        Args:
+            tool: Tool name
+            args: Tool arguments (constraints)
+            
+        Returns:
+            True if authorized and PoP is valid
+        """
+        # 1. Sign
+        pop_signature = self._warrant.create_pop_signature(self._key, tool, args)
+        
+        # 2. Verify (calls Rust authorize)
+        return self._warrant.authorize(
+            tool=tool,
+            args=args,
+            signature=bytes(pop_signature)
+        )
+    
     # ========================================================================
     # Forward preview/debugging methods
     # ========================================================================

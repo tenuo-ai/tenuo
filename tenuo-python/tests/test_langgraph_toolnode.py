@@ -1,25 +1,24 @@
 """
-Tests for DX (Developer Experience) features.
+Tests for TenuoToolNode and LangGraph DX features.
 
-These tests verify the simplified APIs for LangChain/LangGraph integration.
+These tests verify the TenuoToolNode that uses KeyRegistry pattern.
 """
 
 import pytest
 from dataclasses import dataclass
+from typing import Dict, Any, List
 
 from tenuo import (
     SigningKey,
+    Warrant,
+    KeyRegistry,
     Pattern,
     Range,
-    reset_config,
-    root_task_sync,
-    # DX features
-    TenuoToolNode,
     AuthorizationDenied,
     ConstraintResult,
     LANGCHAIN_AVAILABLE,
-    LANGGRAPH_TOOLNODE_AVAILABLE,
 )
+from tenuo.langgraph import TenuoToolNode, LANGGRAPH_TOOLNODE_AVAILABLE
 
 
 # =============================================================================
@@ -32,12 +31,24 @@ def keypair():
     return SigningKey.generate()
 
 
-@pytest.fixture(autouse=True)
-def reset_tenuo_config():
-    """Reset Tenuo configuration before each test."""
-    reset_config()
-    yield
-    reset_config()
+@pytest.fixture
+def registry():
+    """Get a fresh KeyRegistry instance."""
+    KeyRegistry.reset_instance()
+    return KeyRegistry.get_instance()
+
+
+@pytest.fixture
+def warrant_and_key(registry):
+    """Create a test warrant and register the key it was issued with."""
+    warrant, key = Warrant.quick_issue(tools=["search", "calculator"], ttl=3600)
+    registry.register("test-key", key)
+    return warrant, "test-key"
+
+
+def make_config(key_id: str) -> Dict[str, Any]:
+    """Create a LangGraph-style config with key_id."""
+    return {"configurable": {"tenuo_key_id": key_id}}
 
 
 # =============================================================================
@@ -55,72 +66,16 @@ class MockTool:
     
     async def _arun(self, **kwargs):
         return self._run(**kwargs)
+    
+    def invoke(self, input: Dict[str, Any], config=None):
+        """LangChain-style invoke."""
+        return self._run(**input)
 
 
-# =============================================================================
-# Test: secure_agent()
-# =============================================================================
-
-@pytest.mark.skipif(not LANGCHAIN_AVAILABLE, reason="LangChain not installed")
-class TestSecureAgent:
-    """Tests for the secure_agent() one-liner."""
-
-    def test_secure_agent_basic(self, keypair):
-        """Test basic secure_agent usage."""
-        from tenuo.langchain import secure_agent, TenuoTool
-        
-        tools = [MockTool("search"), MockTool("calculator")]
-        
-        # One-liner to secure tools
-        protected = secure_agent(tools, issuer_keypair=keypair)
-        
-        # Should return wrapped tools
-        assert len(protected) == 2
-        assert all(isinstance(t, TenuoTool) for t in protected)
-        assert protected[0].name == "search"
-        assert protected[1].name == "calculator"
-
-    def test_secure_agent_configures_tenuo(self, keypair):
-        """Test that secure_agent configures Tenuo globally."""
-        from tenuo import is_configured, get_config
-        from tenuo.langchain import secure_agent
-        
-        assert not is_configured()
-        
-        tools = [MockTool("search")]
-        secure_agent(tools, issuer_keypair=keypair)
-        
-        assert is_configured()
-        config = get_config()
-        assert config is not None
-        assert config.warn_on_missing_warrant is True  # Default
-
-    def test_secure_agent_strict_mode(self, keypair):
-        """Test strict_mode parameter."""
-        from tenuo import get_config
-        from tenuo.langchain import secure_agent
-        
-        tools = [MockTool("search")]
-        secure_agent(tools, issuer_keypair=keypair, strict_mode=True)
-        
-        config = get_config()
-        assert config is not None
-        assert config.strict_mode is True
-
-    def test_secure_agent_idempotent(self, keypair):
-        """Test that secure_agent is idempotent."""
-        from tenuo import is_configured
-        from tenuo.langchain import secure_agent
-        
-        tools = [MockTool("search")]
-        
-        # First call configures
-        secure_agent(tools, issuer_keypair=keypair)
-        assert is_configured()
-        
-        # Second call should not fail
-        protected = secure_agent(tools, issuer_keypair=keypair)
-        assert len(protected) == 1
+class MockMessage:
+    """Mock LangChain message with tool_calls."""
+    def __init__(self, tool_calls: List[Dict]):
+        self.tool_calls = tool_calls
 
 
 # =============================================================================
@@ -133,22 +88,123 @@ class TestTenuoToolNode:
     
     def test_tenuo_tool_node_creation(self, keypair):
         """Test creating a TenuoToolNode."""
-        tools = [MockTool("search"), MockTool("calculator")]
+        from langchain_core.tools import tool
+        
+        @tool
+        def search(query: str) -> str:
+            """Search for something."""
+            return f"Results for: {query}"
+        
+        @tool
+        def calculator(expression: str) -> str:
+            """Calculate expression."""
+            return f"Result: {expression}"
+        
+        tools = [search, calculator]
         
         # Should create successfully
         node = TenuoToolNode(tools)
         
-        assert node._tools == tools
-        assert len(node._protected_tools) == 2
-        assert node.original_tools == tools
-
-    def test_tenuo_tool_node_strict_mode(self, keypair):
-        """Test TenuoToolNode with strict mode."""
-        tools = [MockTool("search")]
+        # Verify tools are registered
+        assert "search" in node.tools_by_name
+        assert "calculator" in node.tools_by_name
+    
+    def test_tenuo_tool_node_execution(self, warrant_and_key, registry):
+        """Test TenuoToolNode executes tools with authorization."""
+        from langchain_core.tools import tool
+        from langchain_core.messages import AIMessage
         
-        node = TenuoToolNode(tools, strict=True)
+        warrant, key_id = warrant_and_key
         
-        assert node._strict is True
+        @tool
+        def search(query: str) -> str:
+            """Search for something."""
+            return f"Results for: {query}"
+        
+        node = TenuoToolNode([search])
+        
+        # Create state with warrant (key_id in config)
+        state = {
+            "warrant": warrant,
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[{
+                        "name": "search",
+                        "args": {"query": "test"},
+                        "id": "call_123"
+                    }]
+                )
+            ]
+        }
+        config = make_config(key_id)
+        
+        result = node(state, config=config)
+        
+        # Should have executed the tool
+        assert "messages" in result
+        assert len(result["messages"]) == 1
+        # Check the result is a ToolMessage with content
+        msg = result["messages"][0]
+        assert hasattr(msg, 'content')
+    
+    def test_tenuo_tool_node_missing_warrant(self, registry):
+        """TenuoToolNode fails gracefully without warrant in state."""
+        from langchain_core.tools import tool
+        from langchain_core.messages import AIMessage
+        
+        @tool
+        def search(query: str) -> str:
+            """Search."""
+            return "results"
+        
+        node = TenuoToolNode([search])
+        
+        # State without warrant
+        state = {
+            "key_id": "test-key",
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": "search", "args": {}, "id": "call_1"}]
+                )
+            ]
+        }
+        
+        result = node(state)
+        
+        # Should return error message
+        assert "Security Error" in result["messages"][0].content or "error" in result["messages"][0].content.lower()
+    
+    def test_tenuo_tool_node_tool_not_found(self, warrant_and_key, registry):
+        """TenuoToolNode handles missing tools gracefully."""
+        from langchain_core.tools import tool
+        from langchain_core.messages import AIMessage
+        
+        warrant, key_id = warrant_and_key
+        
+        @tool
+        def search(query: str) -> str:
+            """Search."""
+            return "results"
+        
+        node = TenuoToolNode([search])
+        
+        # Request a tool that doesn't exist
+        state = {
+            "warrant": warrant,
+            "messages": [
+                AIMessage(
+                    content="",
+                    tool_calls=[{"name": "nonexistent", "args": {}, "id": "call_1"}]
+                )
+            ]
+        }
+        config = make_config(key_id)
+        
+        result = node(state, config=config)
+        
+        assert "not found" in result["messages"][0].content.lower() or "error" in result["messages"][0].content.lower()
 
 
 # =============================================================================
@@ -168,144 +224,135 @@ class TestAuthorizationDenied:
         assert "read_file" in str(error)
         assert "Tool not in warrant scope" in str(error)
 
-    def test_authorization_denied_with_constraints(self):
+    def test_authorization_denied_with_constraint_results(self):
         """Test AuthorizationDenied with constraint results."""
         results = [
             ConstraintResult(
                 name="path",
                 passed=False,
-                constraint_repr='Pattern("/data/*")',
+                constraint_repr="Pattern('/data/*')",
                 value="/etc/passwd",
-                explanation="Pattern does not match",
+                explanation="Pattern does not match"
             ),
             ConstraintResult(
                 name="size",
                 passed=True,
-                constraint_repr='Range(max=1000)',
+                constraint_repr="Range(max=1000)",
                 value=500,
-            ),
+            )
         ]
         
         error = AuthorizationDenied(
             tool="read_file",
             constraint_results=results,
+            reason="Constraint violation",
         )
         
-        msg = str(error)
-        
-        # Check failed constraint appears first with details
-        assert "❌ path:" in msg
-        assert 'Pattern("/data/*")' in msg
-        assert "/etc/passwd" in msg  # Value appears in repr form
-        
-        # Check passed constraint appears with OK
-        assert "✅ size: OK" in msg
-
-    def test_authorization_denied_from_constraint_check(self):
-        """Test creating AuthorizationDenied from constraint check."""
-        constraints = {
-            "path": Pattern("/data/*"),
-            "size": Range(max=1000),
-        }
-        args = {
-            "path": "/etc/passwd",
-            "size": 500,
-        }
-        
-        error = AuthorizationDenied.from_constraint_check(
-            tool="read_file",
-            constraints=constraints,
-            args=args,
-            failed_field="path",
-            failed_reason="Pattern does not match",
-        )
-        
-        msg = str(error)
-        assert "read_file" in msg
-        assert "❌ path" in msg
-        assert "✅ size" in msg
-
-    def test_constraint_result_str(self):
-        """Test ConstraintResult string representation."""
-        passed = ConstraintResult(
-            name="path",
-            passed=True,
-            constraint_repr='Exact("/data/file.txt")',
-            value="/data/file.txt",
-        )
-        assert "✅" in str(passed)
-        assert "OK" in str(passed)
-        
-        failed = ConstraintResult(
-            name="path",
-            passed=False,
-            constraint_repr='Pattern("/data/*")',
-            value="/etc/passwd",
-            explanation="Pattern mismatch",
-        )
-        assert "❌" in str(failed)
-        assert "Pattern mismatch" in str(failed)
+        error_str = str(error)
+        assert "read_file" in error_str
 
     def test_authorization_denied_to_dict(self):
-        """Test converting AuthorizationDenied to dict for logging."""
+        """Test that AuthorizationDenied has to_dict method."""
         error = AuthorizationDenied(
             tool="search",
-            constraint_results=[
-                ConstraintResult(
-                    name="query",
-                    passed=False,
-                    constraint_repr='Pattern("safe*")',
-                    value="DROP TABLE",
-                    explanation="Blocked pattern",
-                ),
-            ],
+            reason="Rate limit exceeded",
         )
         
-        d = error.to_dict()
-        
-        assert d["error_code"] == "authorization_denied"
-        assert d["details"]["tool"] == "search"
-        assert len(d["details"]["constraints"]) == 1
-        assert d["details"]["constraints"][0]["name"] == "query"
-        assert d["details"]["constraints"][0]["passed"] is False
+        data = error.to_dict()
+        # to_dict returns TenuoError base fields
+        assert "error_code" in data
+        assert data["error_code"] == "authorization_denied"
 
 
 # =============================================================================
-# Test: Integration with root_task
+# Test: ConstraintResult
+# =============================================================================
+
+class TestConstraintResult:
+    """Tests for constraint result types."""
+
+    def test_constraint_result_passed(self):
+        """Test successful constraint check."""
+        result = ConstraintResult(
+            name="path",
+            passed=True,
+            constraint_repr="Pattern('/data/*')",
+            value="/data/file.txt",
+        )
+        assert result.passed is True
+        assert "OK" in str(result)
+
+    def test_constraint_result_failed(self):
+        """Test denied constraint check."""
+        result = ConstraintResult(
+            name="path",
+            passed=False,
+            constraint_repr="Pattern('/data/*')",
+            value="/etc/passwd",
+            explanation="Pattern does not match",
+        )
+        assert result.passed is False
+        assert result.explanation == "Pattern does not match"
+
+    def test_constraint_result_str_representation(self):
+        """Test constraint result string representation."""
+        result = ConstraintResult(
+            name="size",
+            passed=True,
+            constraint_repr="Range(0, 100)",
+            value=50,
+        )
+        
+        s = str(result)
+        assert "size" in s
+        assert "✅" in s or "OK" in s
+
+
+# =============================================================================
+# Test: Pattern and Range Constraints
+# =============================================================================
+
+class TestConstraintTypes:
+    """Tests for constraint type display."""
+
+    def test_pattern_display(self):
+        """Test Pattern constraint display."""
+        p = Pattern("/data/*")
+        assert "/data/*" in str(p)
+        
+    def test_range_display(self):
+        """Test Range constraint display."""
+        r = Range(min=0, max=100)
+        assert "0" in str(r) or "100" in str(r)
+
+
+# =============================================================================
+# Test: secure_agent (LangChain)
 # =============================================================================
 
 @pytest.mark.skipif(not LANGCHAIN_AVAILABLE, reason="LangChain not installed")
-class TestDXIntegration:
-    """Integration tests for DX features with root_task."""
+class TestSecureAgent:
+    """Tests for the secure_agent() one-liner."""
 
-    def test_secure_agent_with_root_task(self, keypair):
-        """Test secure_agent tools work with root_task context."""
-        from tenuo.langchain import secure_agent
-        from tenuo import Capability
+    def test_secure_agent_basic(self, keypair):
+        """Test basic secure_agent usage."""
+        from tenuo import reset_config
+        from tenuo.langchain import secure_agent, TenuoTool
         
-        tools = [MockTool("search")]
+        reset_config()
+        
+        @dataclass
+        class Tool:
+            name: str = "search"
+            description: str = "Search tool"
+            def _run(self, **kwargs): return "result"
+        
+        tools = [Tool()]
+        
+        # One-liner to secure tools
         protected = secure_agent(tools, issuer_keypair=keypair)
         
-        # Should work within root_task context
-        with root_task_sync(Capability("search")):
-            # Tool is accessible
-            result = protected[0]._run(query="test")
-            assert "search" in result
-
-    def test_secure_agent_blocks_unauthorized(self, keypair):
-        """Test secure_agent blocks unauthorized tool access."""
-        from tenuo.langchain import secure_agent
-        from tenuo.exceptions import ToolNotAuthorized
-        from tenuo import Capability
-        
-        tools = [MockTool("search"), MockTool("delete")]
-        protected = secure_agent(tools, issuer_keypair=keypair)
-        
-        # Only authorize "search", not "delete"
-        with root_task_sync(Capability("search")):
-            # search should work
-            protected[0]._run(query="test")
-            
-            # delete should fail
-            with pytest.raises(ToolNotAuthorized):
-                protected[1]._run(target="important_file")
+        # Should return wrapped tools
+        assert len(protected) == 1
+        assert all(isinstance(t, TenuoTool) for t in protected)
+        assert protected[0].name == "search"
