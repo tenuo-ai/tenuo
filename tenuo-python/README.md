@@ -17,328 +17,330 @@ pip install tenuo
 
 ## Quick Start
 
-The package provides a clean Python API that wraps the Rust extension:
+### The Safe Path (Recommended)
+
+Keep keys separate from warrants:
 
 ```python
-from tenuo import SigningKey, Warrant, Pattern, Exact, Range
+from tenuo import Warrant, SigningKey, Pattern
 
-# Generate a keypair
+# Warrant in state/storage - serializable, no secrets
+warrant = receive_warrant_from_orchestrator()
+
+# Explicit key at call site - keys never in state
+key = SigningKey.from_env("MY_SERVICE_KEY")
+headers = warrant.auth_headers(key, "search", {"query": "test"})
+
+# Delegation with attenuation
+child = warrant.delegate(
+    to=worker_pubkey,
+    allow={"search": {"query": Pattern("safe*")}},
+    ttl=300,
+    key=key
+)
+```
+
+### BoundWarrant (For Repeated Operations)
+
+When you need to make many calls with the same warrant+key:
+
+```python
+from tenuo import Warrant, SigningKey
+
+warrant = receive_warrant()
+key = SigningKey.from_env("MY_KEY")
+
+# Bind key for repeated use
+bound = warrant.bind_key(key)
+
+for item in items:
+    headers = bound.auth_headers("process", {"item": item})
+    # ...
+
+# Authorize directly
+if bound.authorize("search", {"query": "test"}):
+    # Authorized!
+    pass
+
+# ⚠️ BoundWarrant is non-serializable (contains key)
+# Use bound.warrant to get the plain Warrant for storage
+```
+
+### Low-Level API (Full Control)
+
+```python
+from tenuo import SigningKey, Warrant, Pattern, Range
+
+# Generate keypair
 keypair = SigningKey.generate()
 
-# Issue a warrant with fluent builder (recommended)
+# Issue warrant with fluent builder
 warrant = (Warrant.builder()
     .capability("manage_infrastructure", {
         "cluster": Pattern("staging-*"),
         "replicas": Range.max_value(15)
     })
-    .holder(keypair.public_key)         # Bind to self initially
-    .ttl(3600)
-    .issue(keypair))
-
-# Attenuate for a worker (POLA: explicitly specify capabilities)
-worker_keypair = SigningKey.generate()
-worker_warrant = (warrant.attenuate()
-    .capability("manage_infrastructure", {
-        "cluster": Exact("staging-web"),  # Narrowed from staging-*
-        "replicas": Range.max_value(10)   # Reduced from 15
-    })
-    .holder(worker_keypair.public_key)
-    .delegate(keypair))  # keypair signs (they hold the parent warrant)
-
-# Note: As of v0.1.0-alpha.4+, attenuated warrants start with NO capabilities
-# by default (Principle of Least Authority). Use inherit_all() to keep all
-# parent capabilities, then narrow specific ones.
-
-# Authorize an action (requires Proof-of-Possession)
-# See docs/security.md for PoP replay prevention best practices.
-#
-# 1. Create a PoP signature using the worker's private key
-args = {"cluster": "staging-web", "replicas": 5}
-pop_signature = worker_warrant.create_pop_signature(worker_keypair, "manage_infrastructure", args)
-
-# 2. Authorize with the signature
-# Note: signature must be converted to bytes
-authorized = worker_warrant.authorize(
-    tool="manage_infrastructure",
-    args=args,
-    signature=bytes(pop_signature)
-)
-print(f"Authorized: {authorized}")  # True
-```
-
-## Installation Options
-
-### With Framework Support
-
-For LangChain integration:
-```bash
-pip install tenuo[langchain]
-```
-
-For LangGraph integration (includes LangChain):
-```bash
-pip install tenuo[langgraph]
-```
-
-### Development
-
-```bash
-pip install tenuo[dev]
-```
-
-This includes all optional dependencies plus development tools (pytest, mypy, ruff).
-
-### From Source
-
-```bash
-pip install maturin
-cd tenuo-python
-maturin develop
-```
-
-## Security Considerations
-
-### Secret Key Management
-
-The `SigningKey.secret_key_bytes()` method creates a copy of the secret key in Python's managed memory. Python's garbage collector does not guarantee secure erasure of secrets, and the key material may persist in memory until garbage collection occurs.
-
-**Best Practices:**
-- **Minimize signing key lifetime**: Create keys only when needed and let them go out of scope quickly
-- **Avoid `secret_key_bytes()` unless necessary**: Only call this method when absolutely required (e.g., for key backup/export)
-- **Don't store secret keys in long-lived variables**: Avoid keeping secret key bytes in variables that persist across function calls
-- **Use Rust for production key management**: For high-security deployments, consider using the Rust API directly, which provides better memory safety guarantees
-
-**For most use cases**, you should not need to access secret key bytes directly. The `SigningKey` object handles signing operations internally, and you can use `public_key` (property) to share public keys.
-
-### Memory Safety
-
-Tenuo's Python bindings use PyO3 to wrap the Rust core, providing memory safety from corruption. However, Python's memory management model means that secret material copied into Python objects may persist in memory until garbage collection. This is a standard limitation of Python crypto bindings and is consistent with libraries like `cryptography` and `pyca/cryptography`.
-
-## Pythonic Features
-
-The `tenuo` package provides a clean Python API with additional features:
-
-### Decorators
-
-Use the `@lockdown` decorator to enforce authorization. It supports two patterns:
-
-**Explicit warrant (simple case):**
-```python
-from tenuo import lockdown, Warrant, Pattern, Range
-
-warrant = (Warrant.builder()
-    .capability("scale_cluster", {"cluster": Pattern("staging-*")})
     .holder(keypair.public_key)
     .ttl(3600)
     .issue(keypair))
 
-@lockdown(warrant, tool="scale_cluster")
-def scale_cluster(cluster: str, replicas: int):
-    # This function can only be called if the warrant authorizes it
-    print(f"Scaling {cluster} to {replicas} replicas")
-    # ... implementation
+# Authorize with Proof-of-Possession
+args = {"cluster": "staging-web", "replicas": 5}
+pop_sig = warrant.create_pop_signature(keypair, "manage_infrastructure", args)
+authorized = warrant.authorize(
+    tool="manage_infrastructure",
+    args=args,
+    signature=bytes(pop_sig)
+)
 ```
 
-**ContextVar pattern (LangChain/FastAPI):**
-```python
-from tenuo import lockdown, set_warrant_context, set_signing_key_context
+## Installation Options
 
-# Set warrant in context (e.g., in FastAPI middleware or LangChain callback)
-@lockdown(tool="scale_cluster")  # No explicit warrant - uses context
-def scale_cluster(cluster: str, replicas: int):
-    # Warrant is automatically retrieved from context
-    print(f"Scaling {cluster} to {replicas} replicas")
-
-# In your request handler:
-# Set BOTH warrant and keypair in context (required for PoP)
-with set_warrant_context(warrant), set_signing_key_context(keypair):
-    scale_cluster(cluster="staging-web", replicas=5)
+```bash
+pip install tenuo                # Core only
+pip install tenuo[fastapi]       # + FastAPI integration
+pip install tenuo[langchain]     # + LangChain
+pip install tenuo[langgraph]     # + LangGraph (includes LangChain)
+pip install tenuo[mcp]           # + MCP client (Python ≥3.10)
+pip install tenuo[dev]           # Development tools
 ```
 
-See `examples/context_pattern.py` for a complete LangChain/FastAPI integration example.
+## Key Management
 
-### Exceptions
-
-Pythonic exceptions for better error handling:
+### Loading Keys
 
 ```python
-from tenuo import TenuoError, AuthorizationError, WarrantError
+from tenuo import SigningKey
 
-try:
-    # Create PoP signature first
-    pop_sig = warrant.create_pop_signature(keypair, "tool", args)
-    warrant.authorize("tool", args, signature=bytes(pop_sig))
-except AuthorizationError as e:
-    print(f"Authorization failed: {e}")
+# From environment variable (auto-detects base64/hex)
+key = SigningKey.from_env("TENUO_ROOT_KEY")
+
+# From file (auto-detects format)
+key = SigningKey.from_file("/run/secrets/tenuo-key")
+
+# Generate new
+key = SigningKey.generate()
+```
+
+### KeyRegistry (For LangGraph)
+
+Thread-safe key management for multi-agent workflows:
+
+```python
+from tenuo import KeyRegistry, SigningKey
+
+registry = KeyRegistry.get_instance()
+registry.register("worker", SigningKey.from_env("WORKER_KEY"))
+registry.register("orchestrator", SigningKey.from_env("ORCH_KEY"))
+
+# Retrieve
+key = registry.get("worker")
+```
+
+### Keyring (For Key Rotation)
+
+```python
+from tenuo import Keyring, SigningKey
+
+keyring = Keyring(
+    root=SigningKey.from_env("CURRENT_KEY"),
+    previous=[SigningKey.from_env("OLD_KEY")]
+)
+
+# All public keys for verification
+all_pubkeys = keyring.all_public_keys
+```
+
+## FastAPI Integration
+
+```python
+from fastapi import FastAPI, Depends
+from tenuo.fastapi import TenuoGuard, SecurityContext, configure_tenuo
+
+app = FastAPI()
+configure_tenuo(app, trusted_issuers=[issuer_pubkey])
+
+@app.get("/search")
+async def search(
+    query: str,
+    ctx: SecurityContext = Depends(TenuoGuard("search"))
+):
+    # ctx.warrant is verified
+    # ctx.args contains extracted arguments
+    return {"results": [...]}
 ```
 
 ## LangChain Integration
 
-### `secure_agent()` - One-Liner Setup (Recommended)
-
-The simplest way to protect LangChain tools:
-
 ```python
-from tenuo import SigningKey, root_task_sync, Capability
-from tenuo.langchain import secure_agent
+from tenuo import Warrant, SigningKey
+from tenuo.langchain import protect
+
+# Create bound warrant
+keypair = SigningKey.generate()
+warrant = Warrant.builder().tool("search").issue(keypair)
+bound = warrant.bind_key(keypair)
+
+# Protect tools
 from langchain_community.tools import DuckDuckGoSearchRun
-from langchain.agents import AgentExecutor, create_openai_tools_agent
-from langchain_openai import ChatOpenAI
+protected_tools = protect([DuckDuckGoSearchRun()], bound_warrant=bound)
 
-# One line to secure your tools
-kp = SigningKey.generate()
-tools = secure_agent(
-    [DuckDuckGoSearchRun()],
-    issuer_keypair=kp,
-    warn_on_missing_warrant=True  # Loud warnings if you forget context
-)
-
-# Create agent as normal
-llm = ChatOpenAI(model="gpt-3.5-turbo")
-agent = create_openai_tools_agent(llm, tools, prompt)
-executor = AgentExecutor(agent=agent, tools=tools)
-
-# Run with scoped authority
-with root_task_sync(Capability("duckduckgo_search", query="*")):
-    result = executor.invoke({"input": "What's the latest AI news?"})
+# Use in agent
+agent = create_openai_tools_agent(llm, protected_tools, prompt)
 ```
 
-### Protecting Custom Tool Functions
-
-For your own tools, use the `@lockdown` decorator:
+### Using `@lockdown` Decorator
 
 ```python
 from tenuo import lockdown, set_warrant_context, set_signing_key_context
 
 @lockdown(tool="read_file")
-def read_file(file_path: str) -> str:
-    """Read a file. Protected by Tenuo."""
-    with open(file_path, 'r') as f:
-        return f.read()
+def read_file(path: str) -> str:
+    return open(path).read()
 
-# Set context and call
 with set_warrant_context(warrant), set_signing_key_context(keypair):
-    content = read_file("/tmp/test.txt")
+    content = read_file("/tmp/test.txt")  # ✅ Authorized
+    content = read_file("/etc/passwd")    # ❌ Blocked
 ```
-
-See `examples/langchain_simple.py` for a complete working example.
 
 ## LangGraph Integration
 
-### `TenuoToolNode` - Drop-in ToolNode Replacement
-
-For LangGraph users, `TenuoToolNode` is a drop-in replacement for `ToolNode`:
-
 ```python
-from tenuo import root_task_sync
-from tenuo.langgraph import TenuoToolNode
+from tenuo import KeyRegistry
+from tenuo.langgraph import secure, TenuoToolNode, auto_load_keys
 
-# Before (manual protection):
-# protected = protect_langchain_tools(tools)
-# tool_node = ToolNode(protected)
+# Load keys from TENUO_KEY_* environment variables
+auto_load_keys()
 
-# After (automatic protection):
-tool_node = TenuoToolNode([search, calculator])
+# Wrap pure nodes
+def my_agent(state):
+    return {"messages": [...]}
 
-graph.add_node("tools", tool_node)
+graph.add_node("agent", secure(my_agent, key_id="worker"))
+graph.add_node("tools", TenuoToolNode([search, calculator]))
 
-# Run with authorization
-with root_task_sync(Capability("search"), Capability("calculator")):
-    result = graph.invoke({"messages": [...]})
+# Run with warrant in state
+state = {"warrant": warrant, "messages": [...]}
+config = {"configurable": {"tenuo_key_id": "worker"}}
+result = graph.invoke(state, config=config)
 ```
 
-### Scoping Graph Nodes
-
-Use `@tenuo_node` to scope authority for specific nodes:
+### Nodes That Need Warrant Access
 
 ```python
 from tenuo.langgraph import tenuo_node
+from tenuo import BoundWarrant
 
 @tenuo_node
-async def researcher(state, bound_warrant):
-    # Check permissions explicitly using the injected bound_warrant
+def smart_router(state, bound_warrant: BoundWarrant):
     if bound_warrant.preview_can("search"):
-         return await search_tool(state["query"])
-    return {"messages": ["Not authorized"]}
+        return {"next": "researcher"}
+    return {"next": "fallback"}
 ```
 
-## Diff-Style Error Messages
+## Debugging
 
-When authorization fails, Tenuo provides detailed error messages showing exactly what went wrong:
+### `why_denied()` - Understand Failures
 
 ```python
-from tenuo import AuthorizationDenied
-
-# Error output shows expected vs received:
-# Access denied for tool 'read_file'
-#
-#   ❌ path:
-#      Expected: Pattern("/data/*")
-#      Received: '/etc/passwd'
-#      Reason: Pattern does not match
-#   ✅ size: OK
+result = warrant.why_denied("read_file", {"path": "/etc/passwd"})
+if result.denied:
+    print(f"Code: {result.deny_code}")
+    print(f"Field: {result.field}")
+    print(f"Suggestion: {result.suggestion}")
 ```
 
-This makes debugging authorization issues fast and straightforward.
+### `diagnose()` - Inspect Warrants
+
+```python
+from tenuo import diagnose
+
+diagnose(warrant)
+# Prints: ID, TTL, constraints, tools, etc.
+```
+
+### Convenience Properties
+
+```python
+# Time remaining
+warrant.ttl_remaining  # timedelta
+warrant.ttl            # alias for ttl_remaining
+
+# Status
+warrant.is_expired     # bool
+warrant.is_terminal    # bool (can't delegate further)
+
+# Human-readable
+warrant.capabilities   # dict of tool -> constraints
+```
 
 ## MCP Integration
 
-Tenuo provides full [Model Context Protocol](https://modelcontextprotocol.io) client integration:
+_(Requires Python ≥3.10)_
 
 ```python
 from tenuo.mcp import SecureMCPClient
-from tenuo import configure, root_task, Capability, Pattern, SigningKey
 
-# Configure Tenuo
-keypair = SigningKey.generate()
-configure(issuer_key=keypair)
-
-# Connect to MCP server
 async with SecureMCPClient("python", ["mcp_server.py"]) as client:
-    # Auto-discover and protect tools
-    protected_tools = await client.get_protected_tools()
+    tools = await client.get_protected_tools()
     
-    # Use with warrant authorization
     async with root_task(Capability("read_file", path=Pattern("/data/*"))):
-        result = await protected_tools["read_file"](path="/data/file.txt")
+        result = await tools["read_file"](path="/data/file.txt")
 ```
 
-**Requires Python ≥3.10** (MCP SDK limitation)
+## Security Considerations
 
-See `examples/mcp_client_demo.py` for a complete end-to-end example with a real MCP server.
+### BoundWarrant Serialization
 
-## Audit Logging
-
-Tenuo provides SIEM-compatible structured audit logging for all authorization decisions:
+`BoundWarrant` contains a private key and **cannot be serialized**:
 
 ```python
-from tenuo import audit_logger, AuditEventType
+bound = warrant.bind_key(key)
 
-# Configure audit logger (optional, defaults to stdout)
-# audit_logger.configure(service_name="my-service")
+# ❌ This raises TypeError
+pickle.dumps(bound)
+json.dumps(bound)
 
-# Authorization events are automatically logged by @lockdown and protect_tools
-# You can also log manually:
-audit_logger.log_authorization_success(
-    warrant_id=warrant.id,
-    tool="read_file",
-    constraints={"path": "/tmp/test.txt"}
-)
+# ✅ Extract warrant for storage
+state["warrant"] = bound.warrant  # Plain Warrant is serializable
+```
+
+### preview_can() is Not Authorization
+
+```python
+# ✅ OK for UI hints
+if bound.preview_can("delete"):
+    show_delete_button()
+
+# ❌ WRONG: Not a security check!
+if bound.preview_can("delete"):
+    delete_database()  # No PoP verification!
+
+# ✅ Correct: Use authorize()
+if bound.authorize("delete", {"target": "users"}):
+    delete_database()
+```
+
+### Error Details Not Exposed
+
+Authorization errors are opaque by default:
+
+```python
+# Client sees: "Authorization denied (ref: abc123)"
+# Logs show: "[abc123] Constraint failed: path=/etc/passwd, expected=Pattern(/data/*)"
 ```
 
 ## Examples
 
-Run the examples to see Tenuo in action:
-
 ```bash
-# Basic usage (explicit warrant pattern)
+# Basic usage
 python examples/basic_usage.py
 
-# ContextVar pattern (LangChain/FastAPI integration)
-python examples/context_pattern.py
+# FastAPI integration
+python examples/fastapi_integration.py
 
-# Decorator with explicit warrant
-python examples/decorator_example.py
+# LangGraph protected
+python examples/langgraph_protected.py
 
 # MCP integration
 python examples/mcp_integration.py
@@ -346,13 +348,12 @@ python examples/mcp_integration.py
 
 ## Documentation
 
-- **[Concepts](https://tenuo.ai/concepts)**: Why Tenuo? Problem/solution
-- **[API Reference](https://tenuo.ai/api-reference)**: Python SDK reference
-- **[Constraints](https://tenuo.ai/constraints)**: Constraint types and usage
-- **[LangChain Integration](https://tenuo.ai/langchain)**: Tool protection
-- **[Security Model](https://tenuo.ai/security)**: Threat model, best practices
-- **[Examples](examples/README.md)**: Python usage examples
-
+- **[Quickstart](https://tenuo.ai/quickstart)** — Get running in 5 minutes
+- **[FastAPI](https://tenuo.ai/fastapi)** — Zero-boilerplate API protection
+- **[LangChain](https://tenuo.ai/langchain)** — Tool protection
+- **[LangGraph](https://tenuo.ai/langgraph)** — Multi-agent security
+- **[Security](https://tenuo.ai/security)** — Threat model, best practices
+- **[API Reference](https://tenuo.ai/api-reference)** — Full SDK docs
 
 ## License
 

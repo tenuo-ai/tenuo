@@ -40,117 +40,220 @@ Tenuo adds a **delegation layer** on top of your existing IAM. It tracks *who* d
 pip install tenuo
 ```
 
+**With framework support**
+```bash
+pip install tenuo[langchain]   # LangChain integration
+pip install tenuo[langgraph]   # LangGraph integration (includes LangChain)
+pip install tenuo[fastapi]     # FastAPI integration
+```
+
 **Rust**
 ```toml
 [dependencies]
 tenuo = "0.1"
 ```
 
-**CLI**
-```bash
-cargo install tenuo-cli
-```
+---
 
 ## Python Quick Start
 
-### Option A: Simple API (Recommended for Getting Started)
+### Option A: The Safe Path (Recommended)
 
-The simplest way to add Tenuo to your agent:
+The primary API keeps keys separate from warrants:
 
 ```python
-from tenuo import configure, root_task, scoped_task, protect_tools
-from tenuo import Capability, Pattern, SigningKey
+from tenuo import Warrant, SigningKey, Pattern
+
+# Warrant in state/storage - serializable, no secrets
+warrant = receive_warrant_from_orchestrator()
+
+# Explicit key at call site - keys never in state
+key = SigningKey.from_env("MY_SERVICE_KEY")
+headers = warrant.auth_headers(key, "search", {"query": "test"})
+
+# Explicit key in delegation
+child = warrant.delegate(
+    to=worker_pubkey,
+    allow={"search": {"query": Pattern("safe*")}},
+    ttl=300,
+    key=key
+)
+```
+
+### Option B: BoundWarrant (For Repeated Operations)
+
+When you need to make many calls with the same warrant+key:
+
+```python
+from tenuo import Warrant, SigningKey
+
+warrant = receive_warrant()
+key = SigningKey.from_env("MY_KEY")
+
+# Bind key for repeated use
+bound = warrant.bind_key(key)
+
+for item in items:
+    headers = bound.auth_headers("process", {"item": item})
+    # Make API call with headers...
+
+# ⚠️ BoundWarrant should NOT be stored in state/cache (contains key)
+```
+
+### Option C: Context-Based (Simple Prototyping)
+
+For quick prototyping with `@lockdown` decorators:
+
+```python
+from tenuo import configure, root_task, scoped_task, Capability, Pattern, SigningKey
 
 # 1. Configure once at startup
 configure(issuer_key=SigningKey.generate(), dev_mode=True)
 
-# 2. Wrap your existing tools
-protect_tools([read_file, send_email, query_db])
+# 2. Protect tools with @lockdown
+from tenuo import lockdown
+
+@lockdown(tool="read_file")
+def read_file(path: str):
+    return open(path).read()
 
 # 3. Scope authority to tasks
 async with root_task(
     Capability("read_file", path=Pattern("/data/*")),
-    Capability("send_email", to=Pattern("*@company.com")),
 ):
     # Inner scope narrows further
     async with scoped_task(
         Capability("read_file", path=Pattern("/data/reports/*"))
     ):
-        result = await agent.run("Summarize Q3 reports")
-        # read_file("/data/reports/q3.pdf") → ✅ Allowed
-        # read_file("/etc/passwd") → ❌ Blocked
-        # send_email(...) → ❌ Blocked (not in inner scope)
+        result = read_file("/data/reports/q3.pdf")  # ✅ Allowed
+        result = read_file("/etc/passwd")           # ❌ Blocked
 ```
-
-**Why this works**: The `root_task` defines maximum authority. Each `scoped_task` can only narrow—never widen. Even if the agent is prompt-injected, it can't escape its bounds.
-
-For synchronous code, use `root_task_sync` and `scoped_task_sync`.
 
 ---
 
-### Option B: Low-Level API (Full Control)
+## Framework Integrations
 
-For production deployments, explicit keypair management, or custom integrations.
+### FastAPI
 
-#### 1. Create a Warrant
+```python
+from fastapi import FastAPI, Depends
+from tenuo.fastapi import TenuoGuard, SecurityContext, configure_tenuo
+
+app = FastAPI()
+configure_tenuo(app, trusted_issuers=[issuer_pubkey])
+
+@app.get("/search")
+async def search(
+    query: str,
+    ctx: SecurityContext = Depends(TenuoGuard("search"))
+):
+    # ctx.warrant is verified, ctx.args contains extracted arguments
+    return {"results": [...]}
+```
+
+### LangChain
+
+```python
+from tenuo import Warrant, SigningKey
+from tenuo.langchain import protect
+
+# Create warrant and bind key
+keypair = SigningKey.generate()
+warrant = (Warrant.builder()
+    .tool("search")
+    .tool("calculator")
+    .issue(keypair))
+bound = warrant.bind_key(keypair)
+
+# Protect your tools
+from langchain_community.tools import DuckDuckGoSearchRun
+protected_tools = protect([DuckDuckGoSearchRun()], bound_warrant=bound)
+
+# Use in your agent
+agent = create_openai_tools_agent(llm, protected_tools, prompt)
+```
+
+### LangGraph
+
+```python
+from tenuo import Warrant, SigningKey, KeyRegistry
+from tenuo.langgraph import secure, TenuoToolNode, auto_load_keys
+
+# 1. Load keys from environment (convention: TENUO_KEY_*)
+auto_load_keys()  # Loads TENUO_KEY_DEFAULT, TENUO_KEY_WORKER, etc.
+
+# 2. Define your tools
+@tool
+def search(query: str) -> str:
+    return f"Results for {query}"
+
+# 3. Create secure tool node
+tool_node = TenuoToolNode([search])
+
+# 4. Wrap pure nodes with secure()
+def my_agent(state):
+    # Pure function - no Tenuo imports needed
+    return {"messages": [...]}
+
+graph.add_node("agent", secure(my_agent, key_id="worker"))
+graph.add_node("tools", tool_node)
+
+# 5. Run with warrant in state, key_id in config
+state = {"warrant": warrant, "messages": [...]}
+config = {"configurable": {"tenuo_key_id": "worker"}}
+result = graph.invoke(state, config=config)
+```
+
+---
+
+## Low-Level API (Full Control)
+
+For production deployments with explicit keypair management.
+
+### 1. Create a Warrant
 
 ```python
 from tenuo import SigningKey, Warrant, Pattern, Range
 
 keypair = SigningKey.generate()
 
-# Fluent builder pattern (recommended)
 warrant = (Warrant.builder()
     .capability("manage_infrastructure", {
-        "cluster": Pattern("staging-*"),    # Glob pattern
-        "replicas": Range.max_value(15),    # Max 15 replicas
+        "cluster": Pattern("staging-*"),
+        "replicas": Range.max_value(15),
     })
     .holder(keypair.public_key)
     .ttl(3600)
     .issue(keypair))
 ```
 
-#### 2. Attenuate (Delegate with Narrower Scope)
-
-Tenuo follows the **Principle of Least Authority (POLA)**: when attenuating, the child warrant starts with NO capabilities. You must explicitly specify what you want.
+### 2. Delegate with Attenuation
 
 ```python
-from tenuo import Exact
-
-# Worker gets a narrower warrant
 worker_keypair = SigningKey.generate()
 
-# POLA: Explicitly specify only the capabilities you want to grant
-worker_warrant = (warrant.attenuate()
-    .capability("manage_infrastructure", {
-        "cluster": Exact("staging-web"),     # Narrowed from staging-*
-        "replicas": Range.max_value(10),     # Reduced to 10 replicas
-    })
-    .holder(worker_keypair.public_key)
-    .delegate(keypair))  # Parent signs (they hold the warrant)
+# Child warrant has narrower scope
+worker_warrant = warrant.delegate(
+    to=worker_keypair.public_key,
+    allow={"manage_infrastructure": {
+        "cluster": Pattern("staging-web"),  # Narrowed
+        "replicas": Range.max_value(10),    # Reduced
+    }},
+    ttl=300,
+    key=keypair  # Parent signs
+)
 ```
 
-**Alternative: Inherit all, then narrow:**
+### 3. Authorize an Action
 
 ```python
-# Use inherit_all() to start with all parent capabilities
-worker_warrant = (warrant.attenuate()
-    .inherit_all()                           # Start with all parent capabilities
-    .tools(["manage_infrastructure"])        # Keep only this tool
-    .holder(worker_keypair.public_key)
-    .delegate(keypair))
-```
-
-#### 3. Authorize an Action
-
-```python
-# Worker signs a Proof-of-Possession
+# Worker signs Proof-of-Possession
 args = {"cluster": "staging-web", "replicas": 5}
 pop_sig = worker_warrant.create_pop_signature(
     worker_keypair, "manage_infrastructure", args
 )
 
-# Check authorization
+# Verify authorization
 authorized = worker_warrant.authorize(
     tool="manage_infrastructure",
     args=args,
@@ -159,134 +262,38 @@ authorized = worker_warrant.authorize(
 print(f"Authorized: {authorized}")  # True
 ```
 
-#### 4. Protect Tools with Decorators
+---
+
+## Debugging Authorization Failures
+
+Use `why_denied()` for detailed diagnostics:
 
 ```python
-from tenuo import lockdown, set_warrant_context, set_signing_key_context
-
-@lockdown(tool="scale_cluster")
-def scale_cluster(cluster: str, replicas: int):
-    print(f"Scaling {cluster} to {replicas} replicas")
-
-# Set context for all decorated functions
-with set_warrant_context(warrant), set_signing_key_context(keypair):
-    scale_cluster(cluster="staging-web", replicas=5)
+result = warrant.why_denied("read_file", {"path": "/etc/passwd"})
+if result.denied:
+    print(f"Denied: {result.deny_code}")
+    print(f"Field: {result.field}")
+    print(f"Suggestion: {result.suggestion}")
 ```
 
-#### 5. LangChain Integration
+Or use `diagnose()` for a full warrant inspection:
 
 ```python
-from tenuo import SigningKey, root_task_sync, Capability
-from tenuo.langchain import secure_agent
-
-# One line to secure your LangChain tools
-kp = SigningKey.generate()
-tools = secure_agent([search, calculator], issuer_keypair=kp)
-
-# Run with scoped authority
-with root_task_sync(Capability("search"), Capability("calculator")):
-    result = executor.invoke({"input": "What is 2+2?"})
+from tenuo import diagnose
+diagnose(warrant)  # Prints warrant details, TTL, constraints, etc.
 ```
 
-#### 6. LangGraph Drop-in
-
-```python
-from tenuo.langgraph import TenuoToolNode
-
-# Drop-in replacement for ToolNode
-tool_node = TenuoToolNode([search, calculator])
-graph.add_node("tools", tool_node)
-```
-
-## Rust Quick Start
-
-### 1. Create a Warrant
-
-```rust
-use tenuo::{SigningKey, Warrant, Pattern, Range, ConstraintSet};
-use std::time::Duration;
-
-let keypair = SigningKey::generate();
-
-// Build constraint set
-let mut constraints = ConstraintSet::new();
-constraints.insert("cluster", Pattern::new("staging-*")?);
-constraints.insert("replicas", Range::max(15.0)?);
-
-let warrant = Warrant::builder()
-    .capability("manage_infrastructure", constraints)
-    .ttl(Duration::from_secs(3600))
-    .authorized_holder(keypair.public_key())
-    .build(&keypair)?;
-```
-
-### 2. Attenuate
-
-```rust
-use tenuo::Exact;
-
-let worker_keypair = SigningKey::generate();
-
-let mut narrower = ConstraintSet::new();
-narrower.insert("cluster", Exact::new("staging-web"));
-narrower.insert("replicas", Range::max(10.0)?);
-
-let worker_warrant = warrant.attenuate()
-    .capability("manage_infrastructure", narrower)
-    .authorized_holder(worker_keypair.public_key())
-    .build(&keypair)?;  // Parent's holder signs
-```
-
-### 3. Authorize
-
-```rust
-use tenuo::Authorizer;
-
-let authorizer = Authorizer::new(keypair.public_key());
-let chain = vec![warrant, worker_warrant];
-
-let sig = worker_warrant.create_pop_signature(
-    "manage_infrastructure", &args, &worker_keypair
-);
-
-authorizer.authorize(&chain, "manage_infrastructure", &args, Some(&sig), &[])?;
-```
-
-## CLI Quick Start
-
-```bash
-# Generate keys
-tenuo keygen --out root.pem
-tenuo keygen --out worker.pem
-
-# Issue a warrant
-tenuo issue \
-  --tool manage_infrastructure \
-  --signing-key root.pem \
-  --constraint "cluster=pattern:staging-*" \
-  --constraint "replicas=range:..15" \
-  --ttl 3600 \
-  --out root.warrant
-
-# Attenuate for a worker
-tenuo attenuate \
-  --warrant root.warrant \
-  --signing-key root.pem \
-  --holder worker.pem \
-  --constraint "cluster=exact:staging-web" \
-  --constraint "replicas=range:..10" \
-  --out worker.warrant
-
-# Verify and inspect
-tenuo verify --warrant worker.warrant --tool manage_infrastructure \
-  --args '{"cluster": "staging-web", "replicas": 5}'
-tenuo inspect --warrant worker.warrant
-```
+---
 
 ## Key Concepts
 
-A **warrant** is a signed token granting specific capabilities. **Attenuation** creates a child warrant with narrower scope. **Constraints** are rules limiting what a warrant can authorize (Pattern, Range, Exact, etc.). 
-**PoP** (Proof-of-Possession) is a signature proving holder identity. A **chain** is the sequence of warrants from root to current holder.
+| Concept | Description |
+|---------|-------------|
+| **Warrant** | Signed token granting specific capabilities |
+| **Attenuation** | Creating a child warrant with narrower scope |
+| **Constraints** | Rules limiting what a warrant can authorize (`Pattern`, `Range`, `Exact`, etc.) |
+| **PoP** | Proof-of-Possession: signature proving holder identity |
+| **BoundWarrant** | Warrant + SigningKey for convenience (non-serializable) |
 
 ## Constraint Types
 
@@ -300,44 +307,13 @@ A **warrant** is a signed token granting specific capabilities. **Attenuation** 
 
 See [Constraints](./constraints) for the full list.
 
-## Debugging Authorization Failures
-
-Tenuo provides diff-style error messages when authorization fails:
-
-```
-Access denied for tool 'read_file'
-
-  ❌ path:
-     Expected: Pattern("/data/*")
-     Received: '/etc/passwd'
-     Reason: Pattern does not match
-  ✅ size: OK
-```
-
-This makes it easy to see exactly which constraint failed and why.
-
-## Gateway Quickstarts
-
-Deploy Tenuo as a gateway authorizer:
-
-- **[Envoy Quickstart](./quickstart/envoy/)** - Standalone Envoy proxy (5 min)
-- **[Istio Quickstart](./quickstart/istio/)** - Istio service mesh (5 min)
-
-## MCP Integration
-
-Tenuo provides a full Model Context Protocol (MCP) client with automatic tool protection (requires Python 3.10+).
-
-- **[MCP Integration Guide](./mcp)** — Full documentation and examples
-
 ---
 
 ## Next Steps
 
 - **[AI Agent Patterns](./ai-agents)** — P-LLM/Q-LLM, prompt injection defense
 - **[Concepts](./concepts)** — Why Tenuo? Threat model, core invariants
-- **[Enforcement Models](./enforcement)** — In-process, sidecar, gateway, MCP
-- **[Kubernetes Guide](./kubernetes)** — Production deployment patterns
-- **[API Reference](./api-reference)** — Complete Python SDK docs
 - **[LangChain](./langchain)** — Protect LangChain tools
 - **[LangGraph](./langgraph)** — Scope LangGraph nodes
+- **[FastAPI](./fastapi)** — Zero-boilerplate API protection
 - **[Security](./security)** — Threat model, best practices

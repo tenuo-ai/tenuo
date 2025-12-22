@@ -1229,10 +1229,13 @@ Scope authority for a LangGraph node.
 from tenuo.langgraph import tenuo_node
 from tenuo import Capability, Pattern
 
-@tenuo_node(Capability("search", query=Pattern("*public*")))
-async def researcher(state):
-    results = await search_tool(query=state["query"])
-    return {"results": results}
+@tenuo_node
+async def researcher(state, bound_warrant):
+    # bound_warrant is injected automatically
+    if bound_warrant.preview_can("search"):
+        results = await search_tool(query=state["query"])
+        return {"results": results}
+    return {"messages": ["Not authorized"]}
 ```
 
 #### Parameters
@@ -1284,10 +1287,83 @@ with root_task_sync(Capability("search"), Capability("calculator")):
 | `tools` | `List[BaseTool]` | *required* | LangChain tools to protect |
 | `strict` | `bool` | `False` | Require constraints for high-risk tools |
 | `**kwargs` | `Any` | — | Additional arguments passed to ToolNode |
+ 
+ ### `KeyRegistry`
+ 
+ Registry for binding private keys to warrant holders at runtime. Essential for safe checkpointing (prevents keys in state).
+ 
+ ```python
+ from tenuo import KeyRegistry, SigningKey
+ 
+ # Register key at startup
+ key = SigningKey.generate()
+ KeyRegistry.get_instance().register("worker-key", key)
+ 
+ # In LangGraph config:
+ config = {"configurable": {"tenuo_key_id": "worker-key"}}
+ ```
+ 
+ > **Mechanism**: `_get_bound_warrant` checks `config["configurable"]["tenuo_key_id"]` and looks up the key in the registry to re-bind warrants inflated from state.
 
 ---
 
-## Testing Utilities
+---
+ 
+ ## FastAPI Integration
+ 
+ Middleware and dependency injection for FastAPI applications.
+ 
+ ```python
+ from tenuo.fastapi import TenuoGuard, SecurityContext, require_warrant
+ ```
+ 
+ ### `TenuoGuard` (Middleware)
+ 
+ Global middleware that extracts warrants/keys from headers and manages request context.
+ 
+ ```python
+ from fastapi import FastAPI
+ from tenuo import configure, SigningKey
+ from tenuo.fastapi import TenuoGuard
+ 
+ app = FastAPI()
+ 
+ app.add_middleware(
+     TenuoGuard,
+     # Optional config overrides
+     # trusted_roots=[...], 
+     # verbose_errors=True
+ )
+ ```
+ 
+ ### Dependencies
+ 
+ #### `require_warrant`
+ 
+ Dependency that enforces presence of a valid warrant. Returns `SecurityContext`.
+ 
+ ```python
+ @app.get("/secure")
+ async def secure_endpoint(
+     ctx: SecurityContext = Depends(require_warrant)
+ ):
+     return {"warrant_id": ctx.warrant_id}
+ ```
+ 
+ ### `SecurityContext`
+ 
+ Context object injected into route handlers.
+ 
+ | Property | Type | Description |
+ |----------|------|-------------|
+ | `warrant` | `AnyWarrant` | The verified warrant object |
+ | `warrant_id` | `str` | Unique warrant ID |
+ | `fields` | `dict` | Custom warrant fields |
+ | `key_id` | `str \| None` | ID of the signing key (if registered) |
+ 
+ ---
+ 
+ ## Testing Utilities
 
 Utilities for testing code that uses Tenuo authorization.
 
