@@ -177,9 +177,9 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         bound_warrant = getattr(self, '_bound_warrant', None)
         
         if bound_warrant:
-            warrant = bound_warrant
+             warrant = bound_warrant
         else:
-            warrant = get_warrant_context()
+             warrant = get_warrant_context()
              
         schema = self._schemas.get(self.name)
         
@@ -234,15 +234,15 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
             
             if is_bound:
                 # BoundWarrant - handles PoP signing internally
-                authorized = warrant.authorize(self.name, constraint_args)
+                 authorized = warrant.authorize(self.name, constraint_args)
             else:
                 # Plain Warrant - need to sign with key from context
-                signing_key = get_signing_key_context()
-                if signing_key:
-                    pop_signature = bytes(warrant.create_pop_signature(
+                 signing_key = get_signing_key_context()
+                 if signing_key:
+                     pop_signature = bytes(warrant.create_pop_signature(
                         signing_key, self.name, constraint_args
                     ))
-                    authorized = warrant.authorize(
+                 authorized = warrant.authorize(
                         self.name, constraint_args, pop_signature
                     )
                 else:
@@ -258,17 +258,17 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
 
             if not authorized:
                 raise ToolNotAuthorized(tool=self.name)
-            
+             
             log_authorization_success(warrant, self.name, tool_input)
 
         except (ToolNotAuthorized, ConstraintViolation, ConfigurationError):
             raise
         except Exception as e:
-            raise ConstraintViolation(
-                field="unknown",
-                reason=f"Authorization error: {str(e)}",
-                value=None,
-            ) from e
+             raise ConstraintViolation(
+                    field="unknown",
+                    reason=f"Authorization error: {str(e)}",
+                    value=None,
+                ) from e
     
     def _run(self, *args: Any, **kwargs: Any) -> Any:
         """Synchronous tool execution with authorization."""

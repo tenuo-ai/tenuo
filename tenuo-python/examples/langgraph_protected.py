@@ -19,7 +19,7 @@ from uuid import uuid4
 from tenuo import (
     Warrant, 
     SigningKey, 
-    KeyRegistry,
+    KeyRegistry, 
 )
 from tenuo.langgraph import (
     secure, 

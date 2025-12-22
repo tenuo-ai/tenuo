@@ -66,7 +66,7 @@ class MockTool:
     
     async def _arun(self, **kwargs):
         return self._run(**kwargs)
-    
+
     def invoke(self, input: Dict[str, Any], config=None):
         """LangChain-style invoke."""
         return self._run(**input)
@@ -147,7 +147,7 @@ class TestTenuoToolNode:
         # Check the result is a ToolMessage with content
         msg = result["messages"][0]
         assert hasattr(msg, 'content')
-    
+
     def test_tenuo_tool_node_missing_warrant(self, registry):
         """TenuoToolNode fails gracefully without warrant in state."""
         from langchain_core.tools import tool
@@ -281,7 +281,7 @@ class TestConstraintResult:
         )
         assert result.passed is True
         assert "OK" in str(result)
-
+        
     def test_constraint_result_failed(self):
         """Test denied constraint check."""
         result = ConstraintResult(

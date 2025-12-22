@@ -57,7 +57,7 @@ def diagnose(warrant: Warrant) -> str:
             max_d = getattr(warrant, 'max_issue_depth', None)
         if max_d is not None:
             remaining = max_d - warrant.depth
-            lines.append(f"[OK] Can delegate: {remaining} levels remaining")
+        lines.append(f"[OK] Can delegate: {remaining} levels remaining")
         else:
             lines.append(f"[OK] Depth: {warrant.depth}")
     

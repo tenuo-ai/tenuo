@@ -285,14 +285,14 @@ class TenuoGuard:
             auth_args = self.extract_args(request)
         else:
             # Default: combine path params + query params
-            query_params = dict(request.query_params)
+        query_params = dict(request.query_params)
             auth_args = {**request.path_params, **query_params}
         
         # 4. Decode PoP Signature
         try:
             pop_sig_bytes = base64.b64decode(x_tenuo_pop)
         except Exception:
-            raise HTTPException(
+             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
                     "error": "invalid_pop",
@@ -347,8 +347,8 @@ class TenuoGuard:
                         "message": "Authorization denied",
                         "request_id": request_id,
                     }
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
+             raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
                     detail=detail,
                 )
             

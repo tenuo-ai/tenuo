@@ -90,7 +90,7 @@ class TestSecureWrapper:
         state = {"warrant": warrant}
         # No config needed - key_id is explicit
         result = wrapped(state)
-        assert result == {"result": "done"}
+            assert result == {"result": "done"}
     
     def test_secure_inject_warrant(self, warrant_and_key, registry):
         """secure(inject_warrant=True) passes bound_warrant."""
@@ -192,7 +192,7 @@ class TestTenuoNode:
         
         assert my_documented_node.__name__ == "my_documented_node"
         assert "docstring" in my_documented_node.__doc__
-    
+
     def test_bound_warrant_can_authorize(self, warrant_and_key, registry):
         """BoundWarrant injected by @tenuo_node can authorize calls."""
         warrant, key_id = warrant_and_key

@@ -5,7 +5,7 @@ description: Secure LangGraph workflows with Tenuo
 
 # Tenuo LangGraph Integration
 
-> **Status**: ✅ Implemented (v0.1)
+> **Status**: ✅ Implemented (v0.1)  
 
 ---
 
@@ -337,19 +337,19 @@ This prevents attackers from learning your constraint boundaries.
 
 `BoundWarrant` contains a private key and will raise `TypeError` if serialization is attempted:
 
-```python
+   ```python
 # ❌ This will fail
 state["bound_warrant"] = bound_warrant  # TypeError on checkpoint
 
 # ✅ Correct: unbind before storing
 state["warrant"] = bound_warrant.warrant  # Just the warrant (serializable)
-```
+   ```
 
 ### preview_can() is Not Authorization
 
 `preview_can()` and `preview_would_allow()` are for UX hints only:
 
-```python
+   ```python
 # ✅ OK for UI hints
 if bound_warrant.preview_can("delete"):
     show_delete_button()
@@ -361,7 +361,7 @@ if bound_warrant.preview_can("delete"):
 # ✅ Correct: Use authorize() for security decisions
 if bound_warrant.authorize("delete", {"target": "users"}):
     delete_database()
-```
+   ```
 
 ---
 

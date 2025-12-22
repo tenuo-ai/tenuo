@@ -5,7 +5,7 @@ description: Tool protection for LangChain agents
 
 # Tenuo LangChain Integration
 
-> **Status**: ✅ Implemented
+> **Status**: ✅ Implemented  
 
 📊 **Visual guide**: See the [LangChain Infographic](./langchain-infographic.html) for where Tenuo fits in your agent stack.
 

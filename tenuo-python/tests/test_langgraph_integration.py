@@ -19,9 +19,9 @@ from tenuo import (
     BoundWarrant,
 )
 from tenuo.langgraph import (
-    tenuo_node,
+    tenuo_node, 
     secure,
-    TenuoToolNode,
+    TenuoToolNode, 
     LANGGRAPH_AVAILABLE,
 )
 
@@ -147,7 +147,7 @@ class TestTenuoNodeDecorator:
             
         bw = my_node(state, config=config)
         assert isinstance(bw, BoundWarrant)
-        
+
     def test_raises_if_missing_warrant(self):
         state = {}
         config = make_config("worker")

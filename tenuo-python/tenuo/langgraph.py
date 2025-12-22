@@ -35,9 +35,9 @@ Usage:
     @tenuo_node
     def my_agent(state: State, bound_warrant: BoundWarrant) -> dict:
         if bound_warrant.preview_can("search"):
-            ...
+        ...
         return {"messages": [...]}
-    
+        
     # Invoke with key_id in config
     graph.invoke(state, config={"configurable": {"tenuo_key_id": "worker"}})
 """
@@ -152,7 +152,7 @@ def _get_bound_warrant(
         state: Graph state containing 'warrant'
         config: LangGraph config (optional)
         key_id: Explicit key_id override (optional)
-        
+    
     Returns:
         BoundWarrant
         
@@ -189,14 +189,14 @@ def _get_bound_warrant(
             f"Key '{resolved_key_id}' not found in KeyRegistry. "
             f"Either register it manually or use auto_load_keys() to load from env vars."
         )
-    
+        
     # Bind key to warrant
     if hasattr(warrant, 'bind_key'):
         return warrant.bind_key(key)
     elif isinstance(warrant, BoundWarrant):
         # Already bound - use as-is (rare in state)
         return warrant
-    
+        
     raise ConfigurationError(f"Invalid warrant type in state: {type(warrant)}")
 
 
@@ -323,11 +323,11 @@ def tenuo_node(func: F) -> F:
             raise ConfigurationError(
                 f"Failed to bind warrant in node '{func.__name__}': {e}"
             ) from e
-        
+            
         kwargs['bound_warrant'] = bw
         
         return func(state, **kwargs)
-    
+        
     return wrapper  # type: ignore
 
 
@@ -382,7 +382,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
                 "Install with: pip install langgraph"
             )
         super().__init__(tools, **kwargs)
-    
+        
     def _run_with_auth(
         self,
         input: Dict[str, Any],
@@ -408,7 +408,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
                     )
                 ]
             }
-        
+            
         # Wrap tools with authorization
         protected_map = {
             name: TenuoTool(tool, bound_warrant=bw)
@@ -419,11 +419,11 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         messages = input.get("messages", [])
         if not messages:
             return {"messages": []}
-        
+            
         last_message = messages[-1]
         if not hasattr(last_message, "tool_calls"):
             return {"messages": []}
-        
+            
         results = []
         for call in last_message.tool_calls:
             tool_name = call["name"]
@@ -432,20 +432,20 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
             
             if tool_name not in protected_map:
                 results.append(ToolMessage(
-                    content=f"Error: Tool '{tool_name}' not found.",
-                    tool_call_id=tool_id,
-                    status="error"
+                        content=f"Error: Tool '{tool_name}' not found.",
+                        tool_call_id=tool_id,
+                        status="error"
                 ))
                 continue
-            
+                
             tool = protected_map[tool_name]
             
             try:
                 output = tool.invoke(tool_args, config=config)  # type: ignore[arg-type]
                 results.append(ToolMessage(
                     content=str(output),
-                    tool_call_id=tool_id,
-                    name=tool_name
+                       tool_call_id=tool_id,
+                       name=tool_name
                 ))
             except Exception as e:
                 # Generate request ID for log correlation
@@ -460,12 +460,12 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
                 # Return opaque error to LLM (prevents constraint probing)
                 results.append(ToolMessage(
                     content=f"Authorization denied (ref: {request_id})",
-                    tool_call_id=tool_id,
-                    status="error"
+                        tool_call_id=tool_id,
+                        status="error"
                 ))
-        
+                
         return {"messages": results}
-    
+
     def __call__(
         self,
         input: Dict[str, Any],
@@ -474,7 +474,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
     ) -> Dict[str, Any]:
         """Execute as callable."""
         return self._run_with_auth(input, config=config, **kwargs)
-    
+         
     def invoke(
         self,
         input: Dict[str, Any],
