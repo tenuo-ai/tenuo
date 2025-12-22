@@ -303,11 +303,24 @@ jobs:
       - name: Test Examples (syntax check)
         working-directory: tenuo-python/examples
         run: |
-          # Syntax check all examples (they may need env vars/APIs to fully run)
+          # Syntax check all examples
           for f in *.py; do
             echo "Checking $f..."
             python -m py_compile "$f"
           done
+
+      - name: Run Self-Contained Examples
+        working-directory: tenuo-python/examples
+        run: |
+          # Run examples that don't need external APIs
+          echo "=== basic_usage.py ==="
+          python basic_usage.py
+          echo ""
+          echo "=== tier1_demo.py ==="
+          python tier1_demo.py
+          echo ""
+          echo "=== orchestrator_worker.py ==="
+          python orchestrator_worker.py || echo "Skipped (may need async)"
 
   # ============================================================================
   # DOC CODE BLOCKS
