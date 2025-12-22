@@ -27,7 +27,7 @@ If an agent is prompt-injected, the authority still can't escape its bounds.
 pip install tenuo
 ```
 
-<a href="https://colab.research.google.com/drive/1bBEXZgWzLhIbxJa3Iz2uIR216pwh_jhC?usp=sharing"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
+<a href="https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
 
 ## Quick Start
 

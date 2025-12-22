@@ -15,7 +15,7 @@ Python bindings for [Tenuo](https://github.com/tenuo-ai/tenuo), providing crypto
 pip install tenuo
 ```
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1bBEXZgWzLhIbxJa3Iz2uIR216pwh_jhC?usp=sharing)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb)
 
 ## Quick Start
 

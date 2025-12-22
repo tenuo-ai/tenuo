@@ -1,167 +1,21 @@
-    Finished `bench` profile [optimized] target(s) in 0.39s
-     Running benches/warrant_benchmarks.rs (target/release/deps/warrant_benchmarks-455a768a72b98221)
-Gnuplot not found, using plotters backend
-Benchmarking warrant_create_minimal
-Benchmarking warrant_create_minimal: Warming up for 3.0000 s
-Benchmarking warrant_create_minimal: Collecting 100 samples in estimated 5.0264 s (364k iterations)
-Benchmarking warrant_create_minimal: Analyzing
-warrant_create_minimal  time:   [13.475 µs 13.533 µs 13.603 µs]
-                        change: [-0.0500% +1.1273% +1.9449%] (p = 0.02 < 0.05)
-                        Change within noise threshold.
-Found 9 outliers among 100 measurements (9.00%)
-  1 (1.00%) low mild
-  3 (3.00%) high mild
-  5 (5.00%) high severe
+Benchmark Results (2025-12-22)
+================================
 
-Benchmarking warrant_create_with_constraints
-Benchmarking warrant_create_with_constraints: Warming up for 3.0000 s
-Benchmarking warrant_create_with_constraints: Collecting 100 samples in estimated 5.0535 s (328k iterations)
-Benchmarking warrant_create_with_constraints: Analyzing
-warrant_create_with_constraints
-                        time:   [15.462 µs 15.524 µs 15.590 µs]
-                        change: [-2.1142% -0.6607% +0.5643%] (p = 0.38 > 0.05)
-                        No change in performance detected.
-Found 7 outliers among 100 measurements (7.00%)
-  1 (1.00%) low mild
-  4 (4.00%) high mild
-  2 (2.00%) high severe
+Core Operations:
+- warrant_create_minimal:  14.1 µs
+- warrant_verify:          25.3 µs  (Blog claim: ~27µs)
+- warrant_authorize:       25.7 µs
 
-Benchmarking warrant_verify
-Benchmarking warrant_verify: Warming up for 3.0000 s
-Benchmarking warrant_verify: Collecting 100 samples in estimated 5.0399 s (197k iterations)
-Benchmarking warrant_verify: Analyzing
-warrant_verify          time:   [26.225 µs 26.583 µs 26.991 µs]
-                        change: [+1.2032% +3.3326% +5.6031%] (p = 0.00 < 0.05)
-                        Performance has regressed.
-Found 15 outliers among 100 measurements (15.00%)
-  4 (4.00%) high mild
-  11 (11.00%) high severe
+Denial Performance (Fail Fast):
+- wrong_tool:              87 ns    (Blog claim: ~200ns)
+- constraint_violation:    149 ns
+- missing_pop:             153 ns
 
-Benchmarking warrant_authorize
-Benchmarking warrant_authorize: Warming up for 3.0000 s
-Benchmarking warrant_authorize: Collecting 100 samples in estimated 5.0955 s (192k iterations)
-Benchmarking warrant_authorize: Analyzing
-warrant_authorize       time:   [39.831 µs 43.483 µs 46.587 µs]
-                        change: [+12.591% +21.350% +30.455%] (p = 0.00 < 0.05)
-                        Performance has regressed.
+Protocol:
+- wire_decode:             33.5 µs
+- chain_depth_8:           144.0 µs (Blog claim: ~250µs)
 
-Benchmarking authorize_deny_wrong_tool
-Benchmarking authorize_deny_wrong_tool: Warming up for 3.0000 s
-Benchmarking authorize_deny_wrong_tool: Collecting 100 samples in estimated 5.0004 s (41M iterations)
-Benchmarking authorize_deny_wrong_tool: Analyzing
-authorize_deny_wrong_tool
-                        time:   [112.71 ns 114.10 ns 115.99 ns]
-                        change: [-3.8896% +0.0754% +5.4244%] (p = 0.97 > 0.05)
-                        No change in performance detected.
-Found 12 outliers among 100 measurements (12.00%)
-  3 (3.00%) high mild
-  9 (9.00%) high severe
-
-Benchmarking authorize_deny_constraint_violation
-Benchmarking authorize_deny_constraint_violation: Warming up for 3.0000 s
-Benchmarking authorize_deny_constraint_violation: Collecting 100 samples in estimated 5.0009 s (26M iterations)
-Benchmarking authorize_deny_constraint_violation: Analyzing
-authorize_deny_constraint_violation
-                        time:   [190.72 ns 192.21 ns 194.01 ns]
-                        change: [-9.4859% +1.6487% +16.046%] (p = 0.85 > 0.05)
-                        No change in performance detected.
-Found 13 outliers among 100 measurements (13.00%)
-  3 (3.00%) low mild
-  1 (1.00%) high mild
-  9 (9.00%) high severe
-
-Benchmarking authorize_deny_invalid_pop
-Benchmarking authorize_deny_invalid_pop: Warming up for 3.0000 s
-Benchmarking authorize_deny_invalid_pop: Collecting 100 samples in estimated 5.3094 s (50k iterations)
-Benchmarking authorize_deny_invalid_pop: Analyzing
-authorize_deny_invalid_pop
-                        time:   [106.54 µs 109.44 µs 113.61 µs]
-                        change: [-5.2512% -2.3002% +1.1206%] (p = 0.16 > 0.05)
-                        No change in performance detected.
-Found 13 outliers among 100 measurements (13.00%)
-  1 (1.00%) low mild
-  2 (2.00%) high mild
-  10 (10.00%) high severe
-
-Benchmarking authorize_deny_missing_pop
-Benchmarking authorize_deny_missing_pop: Warming up for 3.0000 s
-Benchmarking authorize_deny_missing_pop: Collecting 100 samples in estimated 5.0004 s (26M iterations)
-Benchmarking authorize_deny_missing_pop: Analyzing
-authorize_deny_missing_pop
-                        time:   [187.91 ns 192.14 ns 197.83 ns]
-                        change: [-2.2932% -0.0999% +1.8510%] (p = 0.93 > 0.05)
-                        No change in performance detected.
-Found 9 outliers among 100 measurements (9.00%)
-  3 (3.00%) low mild
-  1 (1.00%) high mild
-  5 (5.00%) high severe
-
-Benchmarking warrant_attenuate
-Benchmarking warrant_attenuate: Warming up for 3.0000 s
-Benchmarking warrant_attenuate: Collecting 100 samples in estimated 5.0004 s (162k iterations)
-Benchmarking warrant_attenuate: Analyzing
-warrant_attenuate       time:   [30.355 µs 30.791 µs 31.382 µs]
-                        change: [+2.5940% +9.9089% +21.601%] (p = 0.01 < 0.05)
-                        Performance has regressed.
-Found 16 outliers among 100 measurements (16.00%)
-  3 (3.00%) high mild
-  13 (13.00%) high severe
-
-Benchmarking wire_encode
-Benchmarking wire_encode: Warming up for 3.0000 s
-Benchmarking wire_encode: Collecting 100 samples in estimated 5.0020 s (4.3M iterations)
-Benchmarking wire_encode: Analyzing
-wire_encode             time:   [1.1106 µs 1.1193 µs 1.1290 µs]
-                        change: [-1.8318% +0.7248% +3.1066%] (p = 0.58 > 0.05)
-                        No change in performance detected.
-Found 6 outliers among 100 measurements (6.00%)
-  1 (1.00%) low mild
-  3 (3.00%) high mild
-  2 (2.00%) high severe
-
-Benchmarking wire_decode
-Benchmarking wire_decode: Warming up for 3.0000 s
-Benchmarking wire_decode: Collecting 100 samples in estimated 5.0178 s (591k iterations)
-Benchmarking wire_decode: Analyzing
-wire_decode             time:   [8.5038 µs 8.5275 µs 8.5554 µs]
-                        change: [-2.6036% -0.9688% +0.7161%] (p = 0.28 > 0.05)
-                        No change in performance detected.
-Found 7 outliers among 100 measurements (7.00%)
-  4 (4.00%) high mild
-  3 (3.00%) high severe
-
-Benchmarking wire_encode_base64
-Benchmarking wire_encode_base64: Warming up for 3.0000 s
-Benchmarking wire_encode_base64: Collecting 100 samples in estimated 5.0025 s (3.5M iterations)
-Benchmarking wire_encode_base64: Analyzing
-wire_encode_base64      time:   [1.4069 µs 1.4214 µs 1.4416 µs]
-                        change: [-10.282% -6.5235% -2.8574%] (p = 0.00 < 0.05)
-                        Performance has improved.
-Found 7 outliers among 100 measurements (7.00%)
-  3 (3.00%) high mild
-  4 (4.00%) high severe
-
-Benchmarking wire_decode_base64
-Benchmarking wire_decode_base64: Warming up for 3.0000 s
-Benchmarking wire_decode_base64: Collecting 100 samples in estimated 5.0013 s (566k iterations)
-Benchmarking wire_decode_base64: Analyzing
-wire_decode_base64      time:   [8.8215 µs 8.8474 µs 8.8808 µs]
-                        change: [-12.546% -7.3288% -2.6909%] (p = 0.00 < 0.05)
-                        Performance has improved.
-Found 5 outliers among 100 measurements (5.00%)
-  1 (1.00%) low mild
-  3 (3.00%) high mild
-  1 (1.00%) high severe
-
-Benchmarking delegation_chain_depth_8
-Benchmarking delegation_chain_depth_8: Warming up for 3.0000 s
-Benchmarking delegation_chain_depth_8: Collecting 100 samples in estimated 5.0799 s (20k iterations)
-Benchmarking delegation_chain_depth_8: Analyzing
-delegation_chain_depth_8
-                        time:   [249.78 µs 251.23 µs 253.03 µs]
-                        change: [-4.3688% -1.8291% +0.4345%] (p = 0.16 > 0.05)
-                        No change in performance detected.
-Found 5 outliers among 100 measurements (5.00%)
-  3 (3.00%) high mild
-  2 (2.00%) high severe
-
+Constraints:
+- pattern_match:           78.2 ns
+- exact_match:             5.2 ns
+- range_check:             0.75 ns (!!!)
