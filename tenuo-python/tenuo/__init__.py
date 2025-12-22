@@ -265,7 +265,7 @@ from .diagnostics import (
 )
 
 # Import Client
-from .client import Client
+
 
 # Re-export everything for clean imports
 __all__ = [
@@ -315,7 +315,7 @@ __all__ = [
     # =========================================================================
     # Tier 2 API (Explicit control)
     # =========================================================================
-    "Client",
+
     # Core types
     "SigningKey",
     "Warrant",

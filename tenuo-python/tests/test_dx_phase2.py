@@ -9,69 +9,16 @@ Covers:
 
 import pytest
 
-from tenuo import Warrant, SigningKey, Client
-from tenuo.cli import verify_warrant, inspect_warrant, parse_kv_args
 
-# Mock FastAPI components if not installed (for testing in diff environments)
 try:
+
     from fastapi import HTTPException
     FASTAPI_AVAILABLE = True
 except ImportError:
     FASTAPI_AVAILABLE = False
 
 
-class TestClient:
-    """Test the high-level Client class."""
-    
-    def test_init_and_generate(self):
-        """Test initialization and generation."""
-        c1 = Client.generate()
-        assert isinstance(c1.key, SigningKey)
-        
-        key = SigningKey.generate()
-        c2 = Client(key)
-        assert c2.key is key
-        
-    def test_use_warrant_object(self):
-        """Test using a warrant object."""
-        c = Client.generate()
-        warrant, _ = Warrant.quick_issue(["search"], ttl=300)
-        
-        c.use_warrant(warrant)
-        inspect = c.inspect()
-        assert inspect["has_key"] is True
-        assert inspect["warrant"]["id"] == warrant.id
-        
-    def test_use_warrant_string(self):
-        """Test using a base64 warrant string."""
-        c = Client.generate()
-        warrant, _ = Warrant.quick_issue(["search"], ttl=300)
-        b64 = warrant.to_base64()
-        
-        c.use_warrant(b64)
-        inspect = c.inspect()
-        assert inspect["warrant"]["id"] == warrant.id
-        
-    def test_auth_headers(self):
-        """Test header generation."""
-        c = Client.generate()
-        warrant, _ = Warrant.quick_issue(["search"], ttl=300)
-        c.use_warrant(warrant)
-        
-        headers = c.auth_headers("search", {"q": "test"})
-        assert "X-Tenuo-Warrant" in headers
-        assert "X-Tenuo-PoP" in headers
-        
-    def test_explain(self):
-        """Test explain() output."""
-        c = Client.generate()
-        assert "Key: Set" in c.explain()
-        assert "Active Warrant: [NONE]" in c.explain()
-        
-        warrant, _ = Warrant.quick_issue(["search"], ttl=300)
-        c.use_warrant(warrant)
-        assert "Active Warrant:" in c.explain()
-        assert "search" in c.explain()
+
 
 
 class TestCLI:

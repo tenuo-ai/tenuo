@@ -44,13 +44,19 @@ def verify_warrant(warrant_str: str, tool: str, args: Dict[str, Any]) -> None:
     # Since CLI user doesn't have the private key, we can't sign.
     # We can only INSPECT constraints.
     
-    constraints = warrant.constraints_dict()
+    # Use capabilities property for constraint info
+    caps = warrant.capabilities
     print("Constraints present:")
-    if not constraints:
+    if not caps:
         print("  (None)")
     else:
-        for k, v in constraints.items():
-            print(f"  {k}: {v}")
+        for tool, cons in caps.items():
+            if cons:
+                print(f"  {tool}:")
+                for k, v in cons.items():
+                    print(f"    {k}: {v}")
+            else:
+                print(f"  {tool}: (no constraints)")
             
     print("\n⚠️  Note: Full verification requires a valid PoP signature signed by the holder key.")
     print("This CLI tool currently only checks static properties (expiry, tool allowance).")
@@ -66,19 +72,20 @@ def inspect_warrant(warrant_str: str) -> None:
         
     print("=== Warrant Inspection ===")
     print(f"ID:           {warrant.id}")
-    print(f"Holder Key:   {warrant.holder}")
-    print(f"Expires At:   {warrant.expires_at()}")
+    print(f"Holder Key:   {warrant.authorized_holder}")
+    print(f"Expires At:   {warrant.expires_at}")
     print(f"TTL Remain:   {warrant.ttl_remaining}")
     print(f"Tools:        {warrant.tools if warrant.tools else '*'}")
-    print(f"Is Terminal:  {warrant.is_terminal()}")
-    print(f"Max Depth:    {warrant.max_depth()}")
+    print(f"Is Terminal:  {warrant.is_terminal}")
+    print(f"Max Depth:    {warrant.max_issue_depth}")
     
     print("\n[Constraints]")
-    constraints = warrant.constraints_dict()
-    if not constraints:
+    caps = warrant.capabilities
+    if not caps:
         print("  (None)")
     else:
-        print(json.dumps(constraints, indent=2))
+        for tool, cons in caps.items():
+            print(f"  {tool}: {cons}")
         
     print("\n[Base64]")
     print(warrant.to_base64())
