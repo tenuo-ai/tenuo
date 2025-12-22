@@ -26,6 +26,11 @@ class BoundWarrant:
     This is NOT a Warrant subclass to prevent accidental serialization.
     Use for convenience in repeated operations, but never store in state.
     
+    Security:
+        - Uses __slots__ to prevent __dict__ access (key not exposed via vars())
+        - __getstate__/__reduce__ raise TypeError (blocks pickle)
+        - Not JSON serializable
+    
     Example:
         # Bind once, use multiple times
         bound = warrant.bind_key(key)
@@ -36,6 +41,9 @@ class BoundWarrant:
         # DON'T do this:
         state.warrant = warrant.bind_key(key)  # Type error! (good)
     """
+    
+    # Use __slots__ to prevent __dict__ access (security: key not exposed via vars())
+    __slots__ = ('_warrant', '_key')
     
     def __init__(self, warrant: Warrant, key: SigningKey):
         """
@@ -216,7 +224,7 @@ class BoundWarrant:
         """Check if args would satisfy constraints (UX only)."""
         return self._warrant.preview_would_allow(tool, args)
     
-    def why_denied(self, tool: str, args: dict = None):
+    def why_denied(self, tool: str, args: Optional[dict] = None):
         """Get structured explanation for why a request would be denied."""
         return self._warrant.why_denied(tool, args)
     
