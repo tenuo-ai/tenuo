@@ -177,6 +177,12 @@ from .config import (
     is_dev_mode,
     TenuoConfig,
 )
+from .keys import (
+    load_signing_key_from_env,
+    load_signing_key_from_file,
+    Keyring,
+    KeyRegistry,
+)
 from .scoped import (
     root_task,
     root_task_sync,
@@ -282,6 +288,11 @@ __all__ = [
     "is_configured",
     "is_dev_mode",
     "TenuoConfig",
+    # Key management
+    "load_signing_key_from_env",
+    "load_signing_key_from_file",
+    "Keyring",
+    "KeyRegistry",
     "ScopedTaskBuilder",
     "ScopePreview",
     # Tool protection

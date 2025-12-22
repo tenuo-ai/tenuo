@@ -2,16 +2,16 @@
 Tests for Phase 2 DX Improvements.
 
 Covers:
-- tenuo.Client
-- tenuo.fastapi (mocked)
-- tenuo.cli (mocked args)
+- tenuo.cli
+- tenuo.fastapi
 """
 
 import pytest
 
+from tenuo import Warrant, SigningKey
+from tenuo.cli import verify_warrant, inspect_warrant, parse_kv_args
 
 try:
-
     from fastapi import HTTPException
     FASTAPI_AVAILABLE = True
 except ImportError:
