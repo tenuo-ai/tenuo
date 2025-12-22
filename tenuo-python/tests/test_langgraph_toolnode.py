@@ -18,7 +18,7 @@ from tenuo import (
     ConstraintResult,
     LANGCHAIN_AVAILABLE,
 )
-from tenuo.langgraph import TenuoToolNode, LANGGRAPH_TOOLNODE_AVAILABLE
+from tenuo.langgraph import TenuoToolNode, LANGGRAPH_AVAILABLE
 
 
 # =============================================================================
@@ -82,7 +82,7 @@ class MockMessage:
 # Test: TenuoToolNode
 # =============================================================================
 
-@pytest.mark.skipif(not LANGGRAPH_TOOLNODE_AVAILABLE, reason="LangGraph not installed")
+@pytest.mark.skipif(not LANGGRAPH_AVAILABLE, reason="LangGraph not installed")
 class TestTenuoToolNode:
     """Tests for TenuoToolNode (requires langgraph)."""
     

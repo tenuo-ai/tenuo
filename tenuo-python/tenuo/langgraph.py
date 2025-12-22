@@ -65,9 +65,6 @@ except ImportError:
     BaseTool = object  # type: ignore
     RunnableConfig = dict  # type: ignore
 
-# Backwards compat alias
-LANGGRAPH_TOOLNODE_AVAILABLE = LANGGRAPH_AVAILABLE
-
 logger = logging.getLogger("tenuo.langgraph")
 
 F = TypeVar('F', bound=Callable)
@@ -499,5 +496,4 @@ __all__ = [
     "TenuoToolNode",
     # Flags
     "LANGGRAPH_AVAILABLE",
-    "LANGGRAPH_TOOLNODE_AVAILABLE",  # Backwards compat
 ]

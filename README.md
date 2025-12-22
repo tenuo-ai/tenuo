@@ -181,8 +181,9 @@ secure_tools = protect_tools([search_tool, file_tool])
 from tenuo.langgraph import tenuo_node
 from tenuo import Capability, Pattern
 
-@tenuo_node(Capability("read_file", path=Pattern("/tmp/*")))
-async def reader(state):
+@tenuo_node
+async def reader(state, bound_warrant):
+    # bound_warrant is injected automatically
     return {"content": open("/tmp/demo.txt").read()}
 ```
 

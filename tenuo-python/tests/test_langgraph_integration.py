@@ -22,7 +22,7 @@ from tenuo.langgraph import (
     tenuo_node,
     secure,
     TenuoToolNode,
-    LANGGRAPH_TOOLNODE_AVAILABLE,
+    LANGGRAPH_AVAILABLE,
 )
 
 
@@ -161,7 +161,7 @@ class TestTenuoNodeDecorator:
 
 class TestTenuoToolNode:
     
-    @pytest.mark.skipif(not LANGGRAPH_TOOLNODE_AVAILABLE, reason="LangGraph not installed")
+    @pytest.mark.skipif(not LANGGRAPH_AVAILABLE, reason="LangGraph not installed")
     def test_executes_protected_tools(self):
         """Test that TenuoToolNode wraps and executes tools."""
         key = SigningKey.generate()
@@ -199,7 +199,7 @@ class TestTenuoToolNode:
         assert len(messages) == 1
         assert messages[0].content == "Echo: hello world"
         
-    @pytest.mark.skipif(not LANGGRAPH_TOOLNODE_AVAILABLE, reason="LangGraph not installed")
+    @pytest.mark.skipif(not LANGGRAPH_AVAILABLE, reason="LangGraph not installed")
     def test_blocks_unauthorized_tools(self):
         """Test blocking unauthorized calls."""
         key = SigningKey.generate()

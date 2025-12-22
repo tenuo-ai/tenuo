@@ -254,10 +254,12 @@ Use `@tenuo_node` to scope authority for specific nodes:
 ```python
 from tenuo.langgraph import tenuo_node
 
-@tenuo_node(Capability("search", query="*public*"))
-async def researcher(state):
-    # Only search tool allowed, query must contain "public"
-    return await search_tool(state["query"])
+@tenuo_node
+async def researcher(state, bound_warrant):
+    # Check permissions explicitly using the injected bound_warrant
+    if bound_warrant.preview_can("search"):
+         return await search_tool(state["query"])
+    return {"messages": ["Not authorized"]}
 ```
 
 ## Diff-Style Error Messages

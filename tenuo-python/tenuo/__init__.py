@@ -218,7 +218,7 @@ from .langgraph import (
     tenuo_node,
     require_warrant,
     TenuoToolNode,  # DX: Drop-in ToolNode replacement
-    LANGGRAPH_TOOLNODE_AVAILABLE,
+    LANGGRAPH_AVAILABLE,
 )
 
 # Tier 1 API - Error explanation
@@ -318,7 +318,7 @@ __all__ = [
     "tenuo_node",
     "require_warrant",
     "TenuoToolNode",  # DX: Drop-in ToolNode replacement
-    "LANGGRAPH_TOOLNODE_AVAILABLE",
+    "LANGGRAPH_AVAILABLE",
     # Error explanation
     "explain",
     "explain_str",
