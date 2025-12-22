@@ -132,7 +132,7 @@ def _warrant_ttl_remaining(self: Warrant) -> timedelta:
     """Time remaining until expiration."""
     # Prefer ttl_seconds() from Rust (accurate, no parsing needed)
     if hasattr(self, 'ttl_seconds') and callable(getattr(self, 'ttl_seconds', None)):
-    return timedelta(seconds=self.ttl_seconds())
+        return timedelta(seconds=self.ttl_seconds())
 
     # Fallback: calculate from is_expired() and expires_at()
     # This is less precise but works with older Rust builds

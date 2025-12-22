@@ -1,7 +1,7 @@
 ---
 title: "Flowing Authority: Introducing Tenuo"
 description: "Attenuating capability tokens for AI agents"
-date: 2025-12-18
+date: 2025-12-23
 layout: post
 categories: ["Agentic Security"]
 tags: ["security", "ai", "agents", "llm", "capabilities", "tenuo", "open-source"]
@@ -27,17 +27,18 @@ Rust core. Python bindings. ~27μs verification.
 pip install tenuo
 ```
 ```python
-from tenuo import SigningKey, Warrant, Constraints, Pattern, lockdown, set_warrant_context, set_signing_key_context
+from tenuo import SigningKey, Warrant, Pattern, lockdown, set_warrant_context, set_signing_key_context
 
 # === Issue warrant ===
 issuer_keypair = SigningKey.generate()
 agent_keypair = SigningKey.generate()
 
-warrant = Warrant.issue(
-    capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
-    keypair=issuer_keypair,
-    holder=agent_keypair.public_key,
-    ttl_seconds=300
+warrant = (Warrant.builder()
+    .tool("read_file")
+    .capability("read_file", {"path": Pattern("/data/*")})
+    .holder(agent_keypair.public_key)
+    .ttl(300)
+    .issue(issuer_keypair)
 )
 
 # === Use warrant ===
@@ -61,17 +62,13 @@ In my [last post](https://niyikiza.com/posts/capability-delegation/), I used the
 
 A **Tenuo warrant** is that key:
 ```python
-warrant = Warrant.issue(
-    capabilities=Constraints.for_tools(
-        ["read_file", "search"],
-        {
-            "path": Pattern("/data/project-x/*"),
-            "query": Pattern("*public*")
-        }
-    ),
-    ttl_seconds=300,
-    keypair=issuer_keypair,
-    holder=agent_keypair.public_key
+warrant = (Warrant.builder()
+    .tool("read_file").tool("search")
+    .capability("read_file", {"path": Pattern("/data/project-x/*")})
+    .capability("search", {"query": Pattern("*public*")})
+    .holder(agent_keypair.public_key)
+    .ttl(300)
+    .issue(issuer_keypair)
 )
 ```
 No ambient authority. No policy server. 
@@ -108,44 +105,36 @@ That's exactly what Tenuo warrants encode:
 
 ```python
 # CFO-level warrant
-cfo_warrant = Warrant.issue(
-    capabilities=Constraints.for_tools(
-        ["spend", "approve", "audit"],
-        {
-            "amount": Range.max_value(1_000_000),
-            "category": Pattern("*"),
-            "vendor": Pattern("*")
-        }
-    ),
-    ttl_seconds=86400,
-    keypair=cfo_keypair,
-    holder=cfo_keypair.public_key
+cfo_warrant = (Warrant.builder()
+    .tool("spend").tool("approve").tool("audit")
+    .capability("spend", {
+        "amount": Range(max=1_000_000),
+        "category": Pattern("*"),
+        "vendor": Pattern("*")
+    })
+    .holder(cfo_keypair.public_key)
+    .ttl(86400)
+    .issue(cfo_keypair)
 )
 
 # Attenuate for intern
-intern_warrant = cfo_warrant.attenuate() \
+intern_warrant = (cfo_warrant.attenuate()
     .capability("spend", {
-        "amount": Range.max_value(500),
+        "amount": Range(max=500),
         "category": OneOf(["travel", "meals"])
-    }) \
-    .ttl(3600) \
-    .holder(intern_keypair.public_key) \
+    })
+    .holder(intern_keypair.public_key)
+    .ttl(3600)
     .delegate(cfo_keypair)
-```
-The intern can't:
-- Approve expenses (tool not delegated)
-- Spend over $500 (Range constraint)
-- Pivot the subsidiary to crypto (Scope violation)
-- Use the card tomorrow (TTL expired)
+)
 
-And yeah, the intern can't issue *themselves* a better card.
+# ...
 
-```python
 # This raises MonotonicityError
-bad_warrant = intern_warrant.attenuate() \
-    .capability("spend", {"amount": Range.max_value(10000)}) \
+bad_warrant = (intern_warrant.attenuate()
+    .capability("spend", {"amount": Range(max=10000)})
     .delegate(intern_keypair)  # Can't exceed parent's $500
-```
+)```
 Attenuation isn't policy. It's physics.
 
 ## Part 3: Authority That Lives and Dies With the Task
@@ -177,27 +166,27 @@ Here's how authority flows through each layer:
 async def handle_user_request(user_request: str):
     # Broad warrant from root issuer
     warrant = await issuer.request_warrant(
-        capabilities=Constraints.for_tools(
-            ["read_file", "write_file", "search"],
-            {"path": Pattern("/data/*")}
-        ),
-        ttl_seconds=300
+        tools=["read_file", "write_file", "search"],
+        constraints={"path": Pattern("/data/*")},
+        ttl=300
     )
     
     # Phase 1: Research (read-only, scoped to reports)
-    research_warrant = warrant.attenuate() \
-        .capability("read_file", {"path": Pattern("/data/reports/*")}) \
-        .ttl(60) \
-        .holder(researcher_keypair.public_key) \
+    research_warrant = (warrant.attenuate()
+        .capability("read_file", {"path": Pattern("/data/reports/*")})
+        .holder(researcher_keypair.public_key)
+        .ttl(60)
         .delegate(orchestrator_keypair)
+    )
     findings = await researcher.execute(research_warrant, researcher_keypair)
     
     # Phase 2: Write summary (write-only, narrower path)
-    write_warrant = warrant.attenuate() \
-        .capability("write_file", {"path": Pattern("/data/output/summary.md")}) \
-        .ttl(30) \
-        .holder(writer_keypair.public_key) \
+    write_warrant = (warrant.attenuate()
+        .capability("write_file", {"path": Pattern("/data/output/summary.md")})
+        .holder(writer_keypair.public_key)
+        .ttl(30)
         .delegate(orchestrator_keypair)
+    )
     await writer.execute(write_warrant, writer_keypair, findings)
 
 # Researcher: can only read_file within /data/reports/*
@@ -330,7 +319,7 @@ Tenuo constraints mirror the tool's schema. A few common patterns:
 ```python
 constraints={
     "path": Pattern("/workspace/project-x/*"),  # Glob matching
-    "max_size_bytes": Range.max_value(10_485_760),  # Numeric bounds (10MB)
+    "max_size_bytes": Range(max=10_485_760),  # Numeric bounds (10MB)
     "encoding": OneOf(["utf-8", "ascii"]),       # Allowlist
 }
 ```
@@ -339,7 +328,7 @@ constraints={
 constraints={
     "table": OneOf(["products", "inventory"]),   # No access to 'users' or 'secrets'
     "operation": Exact("SELECT"),                # Read-only enforcement
-    "limit": Range.max_value(1000),              # Prevent DoS
+    "limit": Range(max=1000),              # Prevent DoS
 }
 ```
 **The SaaS Tenant Pattern.** For multi-tenant APIs, scope authority to specific IDs and roles:

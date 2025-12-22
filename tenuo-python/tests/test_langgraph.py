@@ -90,7 +90,7 @@ class TestSecureWrapper:
         state = {"warrant": warrant}
         # No config needed - key_id is explicit
         result = wrapped(state)
-            assert result == {"result": "done"}
+        assert result == {"result": "done"}
     
     def test_secure_inject_warrant(self, warrant_and_key, registry):
         """secure(inject_warrant=True) passes bound_warrant."""

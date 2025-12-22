@@ -237,23 +237,17 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                  authorized = warrant.authorize(self.name, constraint_args)
             else:
                 # Plain Warrant - need to sign with key from context
-                 signing_key = get_signing_key_context()
-                 if signing_key:
-                     pop_signature = bytes(warrant.create_pop_signature(
+                signing_key = get_signing_key_context()
+                if signing_key:
+                    pop_signature = bytes(warrant.create_pop_signature(
                         signing_key, self.name, constraint_args
                     ))
-                 authorized = warrant.authorize(
+                    authorized = warrant.authorize(
                         self.name, constraint_args, pop_signature
                     )
                 else:
-                    # No key context - cannot authorize (or fallback to basic checks?)
-                    # If warrant requires signature, this fails.
-                    # Assuming basic authorize without signature if key missing?
-                    # No, strict security requirement.
-                    # But for now, let's assume authorize(tool, args) exists on PlainWarrant
-                    # if checking WITHOUT signature (which is deprecated/removed in Rust?)
-                    # Rust core expects pop_signature.
-                    # If no key, we can't authorize.
+                    # No key context - cannot authorize
+                    # Rust core expects pop_signature, so we can't authorize without a key
                     authorized = False
 
             if not authorized:
