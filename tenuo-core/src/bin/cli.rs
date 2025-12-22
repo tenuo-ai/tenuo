@@ -78,9 +78,9 @@ enum Commands {
         #[arg(long = "max-issue-depth")]
         max_issue_depth: Option<u32>,
 
-        /// Trust level (optional): external, internal, or system
-        #[arg(long = "trust-level")]
-        trust_level: Option<String>,
+        /// Clearance level (optional): untrusted, external, partner, internal, privileged, system
+        #[arg(long = "clearance")]
+        clearance: Option<String>,
 
         /// Validity duration (default: 5m). Formats: 300s, 10m, 1h
         #[arg(long = "ttl", default_value = "5m")]
@@ -302,7 +302,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tool,
             issuable_tools,
             max_issue_depth,
-            trust_level,
+            clearance,
             ttl,
             id,
             constraint,
@@ -318,7 +318,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tool,
                 issuable_tools,
                 max_issue_depth,
-                trust_level,
+                clearance,
                 ttl,
                 id,
                 constraint,
@@ -893,7 +893,7 @@ fn handle_issue(
     tool: Option<String>,
     issuable_tools: Option<String>,
     max_issue_depth: Option<u32>,
-    trust_level: Option<String>,
+    clearance: Option<String>,
     ttl: String,
     id: Option<String>,
     constraint: Vec<String>,
@@ -924,12 +924,12 @@ fn handle_issue(
         .ttl(ttl_duration)
         .authorized_holder(holder_pubkey.clone());
 
-    // Set trust level if provided
-    if let Some(trust_level_str) = trust_level {
-        let level = trust_level_str
+    // Set clearance if provided
+    if let Some(clearance_str) = clearance {
+        let level = clearance_str
             .parse()
-            .map_err(|e: String| format!("Invalid trust level: {}", e))?;
-        builder = builder.trust_level(level);
+            .map_err(|e: String| format!("Invalid clearance level: {}", e))?;
+        builder = builder.clearance(level);
     }
 
     match warrant_type_enum {

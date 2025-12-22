@@ -215,11 +215,11 @@ class TestEdgeCases:
         """
         print("\n--- Attack 5: Issuer Warrant Abuse ---")
         
-        from tenuo import TrustLevel
+        from tenuo import Clearance
         
         issuer_warrant = Warrant.issue_issuer(
             issuable_tools=["search", "read"],
-            trust_level=TrustLevel.Internal,
+            clearance=Clearance.INTERNAL,
             ttl_seconds=3600,
             keypair=keypair
         )

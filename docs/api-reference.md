@@ -294,7 +294,7 @@ Warrant.issue_issuer(
 For improved DX, use the fluent builder pattern:
 
 ```python
-from tenuo import Warrant, Pattern, Range, TrustLevel
+from tenuo import Warrant, Pattern, Range, Clearance
 
 # Execution warrant with builder
 warrant = (Warrant.builder()
@@ -310,7 +310,7 @@ warrant = (Warrant.builder()
 issuer = (Warrant.builder()
     .issuer()  # Switch to issuer mode
     .issuable_tools(["read_file", "write_file"])
-    .trust_level(TrustLevel.Internal)  # Optional
+    .clearance(Clearance.INTERNAL)  # Optional
     .constraint_bound("path", Pattern("/data/*"))
     .max_issue_depth(3)
     .issue(keypair))
@@ -324,7 +324,7 @@ issuer = (Warrant.builder()
 | `.ttl(seconds)` | Set time-to-live |
 | `.holder(pubkey)` | Set authorized holder |
 | `.session_id(str)` | Set session identifier |
-| `.trust_level(level)` | Set trust level |
+| `.clearance(level)` | Set clearance level |
 | `.issuer()` | Switch to issuer warrant mode |
 | `.issuable_tools(list)` | Tools this issuer can delegate |
 | `.constraint_bound(field, value)` | Add constraint bound |
@@ -458,7 +458,7 @@ builder = issuer_warrant.issue_execution()
 | `capability(tool, constraints)` | `IssuanceBuilder` | Add tool with constraints |
 | `holder(public_key)` | `IssuanceBuilder` | Set authorized holder |
 | `ttl(seconds)` | `IssuanceBuilder` | Set TTL (required) |
-| `trust_level(level)` | `IssuanceBuilder` | Set trust level |
+| `clearance(level)` | `IssuanceBuilder` | Set clearance level |
 | `intent(intent)` | `IssuanceBuilder` | Set intent/purpose |
 | `max_depth(depth)` | `IssuanceBuilder` | Set max delegation depth |
 | `terminal()` | `IssuanceBuilder` | Make warrant non-delegatable |
@@ -471,7 +471,7 @@ All setter methods are dual-purpose - call without arguments to get current valu
 ```python
 builder.holder()       # Returns configured holder or None
 builder.ttl()          # Returns configured TTL or None
-builder.trust_level()  # Returns configured trust level or None
+builder.clearance()    # Returns configured clearance level or None
 builder.intent()       # Returns configured intent or None
 ```
 
@@ -501,7 +501,7 @@ All setter methods are **dual-purpose**: call with argument to set (returns self
 | `issuable_tools(names)` | `AttenuationBuilder` | Narrow issuable tools (issuer warrants) |
 | `holder(pk)` / `holder()` | `AttenuationBuilder` / `PublicKey` | Set/get holder |
 | `ttl(seconds)` / `ttl()` | `AttenuationBuilder` / `int` | Set/get TTL |
-| `trust_level(level)` / `trust_level()` | `AttenuationBuilder` / `TrustLevel` | Set/get trust level |
+| `clearance(level)` / `clearance()` | `AttenuationBuilder` / `Clearance` | Set/get clearance level |
 | `intent(text)` / `intent()` | `AttenuationBuilder` / `str` | Set/get intent |
 | `terminal()` | `AttenuationBuilder` | Make warrant terminal (no further delegation) |
 | `diff()` | `str` | Preview changes (human-readable) |
@@ -563,22 +563,22 @@ Authorizer(
 | `verify_chain(chain)` | `ChainVerificationResult` | Verify complete delegation chain |
 | `check_chain(chain, tool, args, signature=None)` | `ChainVerificationResult` | Verify chain + authorize |
 
-#### Tool Trust Requirements
+#### Tool Clearance Requirements (Optional)
 
-The Authorizer can enforce minimum trust levels per tool as defense in depth:
+The Authorizer can *optionally* enforce minimum clearance levels per tool as defense in depth. Clearance is a coarse-grained policy overlay—**not a security boundary**. Capabilities and monotonicity provide the cryptographic guarantees; clearance adds organizational convenience.
 
 ```python
-from tenuo import Authorizer, TrustLevel
+from tenuo import Authorizer, Clearance
 
 authorizer = Authorizer(trusted_roots=[root_key])
 
-# Require specific trust levels for tools
-authorizer.require_trust("*", TrustLevel.External)        # Default baseline
-authorizer.require_trust("delete_*", TrustLevel.Privileged)  # Prefix pattern
-authorizer.require_trust("admin_reset", TrustLevel.System)   # Exact match
+# Require specific clearance levels for tools
+authorizer.require_clearance("*", Clearance.EXTERNAL)        # Default baseline
+authorizer.require_clearance("delete_*", Clearance.PRIVILEGED)  # Prefix pattern
+authorizer.require_clearance("admin_reset", Clearance.SYSTEM)   # Exact match
 
 # Check what's required for a tool
-print(authorizer.get_required_trust("delete_file"))  # TrustLevel.Privileged
+print(authorizer.get_required_clearance("delete_file"))  # Clearance.PRIVILEGED
 ```
 
 **Pattern types:**
@@ -588,12 +588,12 @@ print(authorizer.get_required_trust("delete_file"))  # TrustLevel.Privileged
 
 **Lookup precedence:** Exact match → Glob pattern → Default `*` → No requirement (check skipped)
 
-**Security note:** If no trust requirement is configured for a tool, the check is skipped. Configure a default `"*"` pattern for defense in depth.
+**Security note:** If no clearance requirement is configured for a tool, the check is skipped. Configure a default `"*"` pattern for defense in depth.
 
 | Method | Description |
 |--------|-------------|
-| `require_trust(pattern, level)` | Set minimum trust for tool pattern |
-| `get_required_trust(tool)` | Get required trust level (or None) |
+| `require_clearance(pattern, level)` | Set minimum clearance for tool pattern |
+| `get_required_clearance(tool)` | Get required clearance level (or None) |
 
 ---
 

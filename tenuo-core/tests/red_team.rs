@@ -9,7 +9,7 @@
 //! 2. **CBOR Parser Attacks** - Duplicate keys, unknown fields, malformed payloads
 //! 3. **Signature Reuse** - Use signature from one warrant for another
 //! 4. **Cycle Detection** - Create circular delegation chains
-//! 5. **Trust Violations** - Bypass trust ceiling constraints
+//! 5. **Clearance Violations** - Bypass clearance ceiling constraints
 //! 6. **PoP Timestamp** - Manipulate PoP timestamp windows
 //! 7. **Depth Limits** - Bypass MAX_DELEGATION_DEPTH
 //! 8. **TTL Attacks** - Excessive TTL, time traveler scenarios
@@ -25,7 +25,7 @@ use tenuo::{
     constraints::{All, Constraint, ConstraintSet, ConstraintValue, Exact, OneOf, Pattern},
     crypto::SigningKey,
     planes::{Authorizer, DataPlane},
-    warrant::{TrustLevel, Warrant, WarrantType},
+    warrant::{Clearance, Warrant, WarrantType},
     wire, Range, RegexConstraint, MAX_DELEGATION_DEPTH, MAX_WARRANT_TTL_SECS,
 };
 
@@ -262,45 +262,45 @@ fn test_parent_child_relationship_integrity() {
 }
 
 // ============================================================================
-// Trust Ceiling Violations
+// Clearance Ceiling Violations
 // ============================================================================
 
-/// Attack: Issuer warrant with trust_level=Internal issues execution warrant with trust_level=System.
+/// Attack: Issuer warrant with clearance=INTERNAL issues execution warrant with clearance=SYSTEM.
 ///
-/// Expected: Validation error (child trust exceeds ceiling).
+/// Expected: Validation error (child clearance exceeds ceiling).
 #[test]
-fn test_trust_level_escalation() {
+fn test_clearance_level_escalation() {
     let issuer_kp = SigningKey::generate();
     let worker_kp = SigningKey::generate();
 
-    // Create issuer warrant with Internal ceiling
+    // Create issuer warrant with INTERNAL ceiling
     let issuer = Warrant::builder()
         .r#type(WarrantType::Issuer)
         .issuable_tools(vec!["read".to_string()])
-        .trust_level(TrustLevel::Internal)
+        .clearance(Clearance::INTERNAL)
         .ttl(Duration::from_secs(3600))
         .authorized_holder(issuer_kp.public_key())
         .build(&issuer_kp)
         .unwrap();
 
-    // ATTACK: Try to issue execution warrant with System trust level (exceeds Internal ceiling)
+    // ATTACK: Try to issue execution warrant with SYSTEM clearance (exceeds INTERNAL ceiling)
     let result = issuer.issue_execution_warrant().and_then(|builder| {
         builder
             .capability("read", ConstraintSet::new())
             .ttl(Duration::from_secs(3600)) // Add required ttl
-            .trust_level(TrustLevel::System) // Exceeds ceiling
+            .clearance(Clearance::SYSTEM) // Exceeds ceiling
             .authorized_holder(worker_kp.public_key())
             .build(&issuer_kp)
     });
 
     assert!(
         result.is_err(),
-        "Trust level should not exceed issuer's ceiling"
+        "Clearance level should not exceed issuer's ceiling"
     );
 
     let err = result.unwrap_err();
     // Error message might vary
-    println!("✅ Trust ceiling violation blocked: {}", err);
+    println!("✅ Clearance ceiling violation blocked: {}", err);
 }
 
 // ============================================================================
@@ -639,7 +639,7 @@ fn test_issuer_warrant_tool_addition() {
     let parent = Warrant::builder()
         .r#type(WarrantType::Issuer)
         .issuable_tools(vec!["read".to_string()])
-        .trust_level(TrustLevel::Internal)
+        .clearance(Clearance::INTERNAL)
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair)
@@ -1201,28 +1201,27 @@ fn test_pop_tool_binding() {
 ///
 /// Expected: Validation error (trust can only shrink).
 #[test]
-fn test_trust_level_amplification() {
+fn test_clearance_amplification() {
     let keypair = SigningKey::generate();
 
     let parent = Warrant::builder()
         .capability("query", ConstraintSet::new())
-        .trust_level(TrustLevel::Internal)
+        .clearance(Clearance::INTERNAL)
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
-    // ATTACK: Try to elevate trust level during attenuation
-    // Trust level should not increase
-
-    assert_eq!(parent.trust_level(), Some(TrustLevel::Internal));
-
     // Attenuate (POLA: inherit_all, should inherit or lower trust)
     let child = parent.attenuate().inherit_all().build(&keypair).unwrap();
 
-    // Child should have same or lower trust
-    // (AttenuationBuilder doesn't allow setting higher trust)
-    assert_eq!(child.trust_level(), Some(TrustLevel::Internal));
+    // Verify parent has trust
+    assert_eq!(parent.clearance(), Some(Clearance::INTERNAL));
+
+    // Verify child inherited trust
+    // Monotonicity ensures child trust <= parent trust
+    // inherit_all() copies it unless overridden
+    assert_eq!(child.clearance(), Some(Clearance::INTERNAL));
 
     println!("✅ Trust level amplification prevented (monotonic attenuation)");
 }

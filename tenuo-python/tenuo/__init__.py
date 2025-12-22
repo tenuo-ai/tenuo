@@ -9,7 +9,7 @@ from tenuo_core import (  # type: ignore
     SigningKey,
     Warrant,
     WarrantType,
-    TrustLevel,
+    Clearance,
     PublicKey,
     Signature,
     Authorizer,
@@ -86,8 +86,8 @@ from .exceptions import (
     RequiredValueRemoved,
     ExactValueMismatch,
     # Trust violations
-    TrustViolation,
-    TrustLevelExceeded,
+    ClearanceViolation,
+    ClearanceLevelExceeded,
     # Issuance errors
     IssuanceError,
     UnauthorizedToolIssuance,
@@ -227,7 +227,6 @@ from tenuo_core import (  # type: ignore
     ToolsDiff,
     ConstraintDiff,
     TtlDiff,
-    TrustDiff,
     DepthDiff,
     ChangeType,
 )
@@ -293,7 +292,7 @@ __all__ = [
     "SigningKey",
     "Warrant",
     "WarrantType",
-    "TrustLevel",
+    "Clearance",
     "PublicKey",
     "Signature",
     "Authorizer",
@@ -362,9 +361,9 @@ __all__ = [
     "PatternExpanded",
     "RequiredValueRemoved",
     "ExactValueMismatch",
-    # Exceptions - Trust violations
-    "TrustViolation",
-    "TrustLevelExceeded",
+    # Exceptions - Clearance violations
+    "ClearanceViolation",
+    "ClearanceLevelExceeded",
     # Exceptions - Issuance errors
     "IssuanceError",
     "UnauthorizedToolIssuance",

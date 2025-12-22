@@ -206,5 +206,5 @@ def test_delegation_receipt_siem_json():
     assert "deltas" in siem
     assert "summary" in siem
     assert siem["summary"]["ttl_reduced"] is True
-    # trust_demoted is False when both trusts are None (unchanged)
-    assert siem["summary"]["trust_demoted"] is False
+    # clearance_demoted is False when both trusts are None (unchanged)
+    assert siem["summary"]["clearance_demoted"] is False

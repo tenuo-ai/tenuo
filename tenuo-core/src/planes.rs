@@ -35,7 +35,7 @@ use crate::constraints::{Constraint, ConstraintSet, ConstraintValue};
 use crate::crypto::{PublicKey, SigningKey};
 use crate::error::{Error, Result};
 use crate::revocation::RevocationRequest;
-use crate::warrant::{TrustLevel, Warrant, WarrantType};
+use crate::warrant::{Clearance, Warrant, WarrantType};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
@@ -358,9 +358,9 @@ pub struct DataPlane {
     revocation_list: Option<crate::revocation::SignedRevocationList>,
     /// Local cache of directly revoked warrants (Parental Revocation)
     local_revocation_cache: RwLock<HashSet<String>>,
-    /// Tool trust requirements: minimum trust level required per tool.
+    /// Tool clearance requirements: minimum clearance required per tool.
     /// Supports exact matches and glob patterns (e.g., "admin_*").
-    tool_trust_requirements: HashMap<String, TrustLevel>,
+    tool_clearance_requirements: HashMap<String, Clearance>,
 }
 
 impl DataPlane {
@@ -374,7 +374,7 @@ impl DataPlane {
             clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
             revocation_list: None,
             local_revocation_cache: RwLock::new(HashSet::new()),
-            tool_trust_requirements: HashMap::new(),
+            tool_clearance_requirements: HashMap::new(),
         }
     }
 
@@ -389,7 +389,7 @@ impl DataPlane {
             clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
             revocation_list: None,
             local_revocation_cache: RwLock::new(HashSet::new()),
-            tool_trust_requirements: HashMap::new(),
+            tool_clearance_requirements: HashMap::new(),
         }
     }
 
@@ -401,7 +401,7 @@ impl DataPlane {
             clock_tolerance: chrono::Duration::seconds(DEFAULT_CLOCK_TOLERANCE_SECS),
             revocation_list: None,
             local_revocation_cache: RwLock::new(HashSet::new()),
-            tool_trust_requirements: HashMap::new(),
+            tool_clearance_requirements: HashMap::new(),
         }
     }
 
@@ -535,10 +535,10 @@ impl DataPlane {
         Ok(())
     }
 
-    /// Set minimum trust level required for a tool.
+    /// Set minimum clearance level required for a tool.
     ///
     /// This is **gateway-level policy**, not warrant content. The gateway defines
-    /// what trust levels are required for its tools. This is an **offline check** -
+    /// what clearance is required for its tools. This is an **offline check** -
     /// no network calls are made.
     ///
     /// Supports exact tool names or glob patterns:
@@ -556,38 +556,38 @@ impl DataPlane {
     ///
     /// # Security Note
     ///
-    /// If no trust requirement is configured for a tool, the check is skipped
+    /// If no clearance requirement is configured for a tool, the check is skipped
     /// (permissive). For defense in depth, configure a default:
     ///
     /// ```ignore
-    /// data_plane.require_trust("*", TrustLevel::External)?;  // Baseline
-    /// data_plane.require_trust("admin_*", TrustLevel::System)?;  // Override
+    /// data_plane.require_clearance("*", Clearance::EXTERNAL)?;  // Baseline
+    /// data_plane.require_clearance("admin_*", Clearance::SYSTEM)?;  // Override
     /// ```
     ///
     /// # Errors
     ///
     /// Returns an error if the pattern is invalid.
-    pub fn require_trust(
+    pub fn require_clearance(
         &mut self,
         tool_pattern: impl Into<String>,
-        level: TrustLevel,
+        level: Clearance,
     ) -> Result<()> {
         let pattern = tool_pattern.into();
-        Self::validate_trust_pattern(&pattern)?;
-        self.tool_trust_requirements.insert(pattern, level);
+        Self::validate_clearance_pattern(&pattern)?;
+        self.tool_clearance_requirements.insert(pattern, level);
         Ok(())
     }
 
-    /// Validate a trust requirement pattern.
+    /// Validate a clearance requirement pattern.
     ///
     /// Valid patterns:
     /// - `"*"` - match all (default)
     /// - `"exact_name"` - exact match (no wildcards)
     /// - `"prefix_*"` - prefix match (wildcard at end only)
-    fn validate_trust_pattern(pattern: &str) -> Result<()> {
+    fn validate_clearance_pattern(pattern: &str) -> Result<()> {
         if pattern.is_empty() {
             return Err(Error::Validation(
-                "trust pattern cannot be empty".to_string(),
+                "clearance pattern cannot be empty".to_string(),
             ));
         }
 
@@ -606,7 +606,7 @@ impl DataPlane {
                         Ok(())
                     } else if prefix.contains('*') {
                         Err(Error::Validation(format!(
-                            "invalid trust pattern '{}': wildcard must be at end only",
+                            "invalid clearance pattern '{}': wildcard must be at end only",
                             pattern
                         )))
                     } else {
@@ -614,19 +614,19 @@ impl DataPlane {
                     }
                 } else {
                     Err(Error::Validation(format!(
-                        "invalid trust pattern '{}': wildcard must be at end (e.g., 'admin_*')",
+                        "invalid clearance pattern '{}': wildcard must be at end (e.g., 'admin_*')",
                         pattern
                     )))
                 }
             }
             _ => Err(Error::Validation(format!(
-                "invalid trust pattern '{}': only one wildcard allowed",
+                "invalid clearance pattern '{}': only one wildcard allowed",
                 pattern
             ))),
         }
     }
 
-    /// Get the required trust level for a tool.
+    /// Get the required clearance for a tool.
     ///
     /// This is an **offline operation** - no network calls.
     ///
@@ -635,21 +635,21 @@ impl DataPlane {
     /// 2. Glob pattern match (e.g., "admin_*")
     /// 3. Default "*" if configured
     /// 4. None (no requirement - check is skipped)
-    pub fn get_required_trust(&self, tool: &str) -> Option<TrustLevel> {
+    pub fn get_required_clearance(&self, tool: &str) -> Option<Clearance> {
         // 1. Exact match
-        if let Some(&level) = self.tool_trust_requirements.get(tool) {
+        if let Some(&level) = self.tool_clearance_requirements.get(tool) {
             return Some(level);
         }
 
         // 2. Glob pattern match
-        for (pattern, &level) in &self.tool_trust_requirements {
+        for (pattern, &level) in &self.tool_clearance_requirements {
             if pattern != "*" && Self::matches_glob_pattern(pattern, tool) {
                 return Some(level);
             }
         }
 
         // 3. Default "*"
-        self.tool_trust_requirements.get("*").copied()
+        self.tool_clearance_requirements.get("*").copied()
     }
 
     /// Check if a tool name matches a glob pattern (supports trailing * only).
@@ -966,13 +966,13 @@ impl DataPlane {
                         }
                     }
                 }
-                // Trust level monotonicity: child trust_level cannot exceed parent's
+                // Clearance monotonicity: child clearance cannot exceed parent's
                 if let (Some(parent_trust), Some(child_trust)) =
-                    (parent.trust_level(), child.trust_level())
+                    (parent.clearance(), child.clearance())
                 {
                     if child_trust > parent_trust {
                         return Err(Error::MonotonicityViolation(format!(
-                            "trust_level cannot increase: parent {:?}, child {:?}",
+                            "clearance cannot increase: parent {:?}, child {:?}",
                             parent_trust, child_trust
                         )));
                     }
@@ -1015,12 +1015,12 @@ impl DataPlane {
                         }
                     }
                 }
-                // 2. Child trust_level must not exceed issuer's trust_level (monotonicity)
-                if let Some(parent_trust) = parent.trust_level() {
-                    if let Some(child_trust) = child.trust_level() {
+                // 2. Child clearance must not exceed issuer's clearance (monotonicity)
+                if let Some(parent_trust) = parent.clearance() {
+                    if let Some(child_trust) = child.clearance() {
                         if child_trust > parent_trust {
                             return Err(Error::MonotonicityViolation(format!(
-                                "trust_level {:?} exceeds issuer's trust_level {:?}",
+                                "clearance {:?} exceeds issuer's clearance {:?}",
                                 child_trust, parent_trust
                             )));
                         }
@@ -1101,18 +1101,17 @@ impl DataPlane {
         signature: Option<&crate::crypto::Signature>,
         approvals: &[crate::approval::Approval],
     ) -> Result<()> {
-        // Check trust level requirements first
-        if let Some(required_trust) = self.get_required_trust(tool) {
-            let warrant_trust = warrant.trust_level().unwrap_or(TrustLevel::Untrusted);
-            if warrant_trust < required_trust {
-                return Err(Error::InsufficientTrustLevel {
+        // Check clearance requirement
+        if let Some(required) = self.get_required_clearance(tool) {
+            let actual = warrant.payload.clearance.unwrap_or(Clearance::UNTRUSTED);
+            if !actual.meets(required) {
+                return Err(Error::InsufficientClearance {
                     tool: tool.to_string(),
-                    required: format!("{:?}", required_trust),
-                    actual: format!("{:?}", warrant_trust),
+                    required: required.to_string(),
+                    actual: actual.to_string(),
                 });
             }
         }
-
         // Standard constraint authorization
         let result = warrant.authorize(tool, args, signature).and_then(|_| {
             // Multi-sig verification
@@ -1270,7 +1269,7 @@ pub struct AuthorizerBuilder {
     pop_window_secs: i64,
     pop_max_windows: u32,
     pending_srl: Option<(SignedRevocationList, PublicKey)>,
-    tool_trust_requirements: HashMap<String, TrustLevel>,
+    tool_clearance_requirements: HashMap<String, Clearance>,
 }
 
 impl AuthorizerBuilder {
@@ -1282,7 +1281,7 @@ impl AuthorizerBuilder {
             pop_window_secs: DEFAULT_POP_WINDOW_SECS,
             pop_max_windows: DEFAULT_POP_MAX_WINDOWS,
             pending_srl: None,
-            tool_trust_requirements: HashMap::new(),
+            tool_clearance_requirements: HashMap::new(),
         }
     }
 
@@ -1338,49 +1337,46 @@ impl AuthorizerBuilder {
         self
     }
 
-    /// Set minimum trust level required for a tool.
-    ///
-    /// Supports exact tool names or glob patterns:
-    /// - `"delete_database"` - exact match
-    /// - `"admin_*"` - prefix match (admin_users, admin_config, etc.)
-    /// - `"*"` - default for all tools (recommended for defense in depth)
-    ///
-    /// # Panics
-    ///
-    /// Panics if the pattern is invalid. Use `try_trust_requirement` for fallible version.
+    /// Set minimum clearance required for a tool (builder style).
     ///
     /// # Example
-    /// ```ignore
-    /// let authorizer = Authorizer::builder()
-    ///     .trusted_root(root_key)
-    ///     .trust_requirement("*", TrustLevel::External)
-    ///     .trust_requirement("admin_*", TrustLevel::System)
-    ///     .build()?;
+    ///
+    /// ```rust
+    /// use tenuo_core::planes::Authorizer;
+    /// use tenuo_core::warrant::Clearance;
+    ///
+    /// let auth = Authorizer::builder()
+    ///     .with_clearance_requirement("admin_*", Clearance::SYSTEM)
+    ///     .build();
     /// ```
-    pub fn trust_requirement(self, tool_pattern: impl Into<String>, level: TrustLevel) -> Self {
-        self.try_trust_requirement(tool_pattern, level)
-            .expect("invalid trust pattern")
+    pub fn with_clearance_requirement(
+        self,
+        tool_pattern: impl Into<String>,
+        level: Clearance,
+    ) -> Self {
+        self.try_clearance_requirement(tool_pattern, level)
+            .expect("invalid clearance pattern")
     }
 
-    /// Set minimum trust level required for a tool (fallible version).
+    /// Set minimum clearance required for a tool (chainable, fallible).
     ///
-    /// Like `trust_requirement`, but returns a Result instead of panicking.
-    pub fn try_trust_requirement(
+    /// Like `with_clearance_requirement`, but returns a Result instead of panicking.
+    pub fn try_clearance_requirement(
         mut self,
         tool_pattern: impl Into<String>,
-        level: TrustLevel,
+        level: Clearance,
     ) -> Result<Self> {
         let pattern = tool_pattern.into();
-        Self::validate_trust_pattern(&pattern)?;
-        self.tool_trust_requirements.insert(pattern, level);
+        Self::validate_clearance_pattern(&pattern)?;
+        self.tool_clearance_requirements.insert(pattern, level);
         Ok(self)
     }
 
-    /// Validate a trust requirement pattern.
-    fn validate_trust_pattern(pattern: &str) -> Result<()> {
+    /// Validate a clearance requirement pattern.
+    fn validate_clearance_pattern(pattern: &str) -> Result<()> {
         if pattern.is_empty() {
             return Err(Error::Validation(
-                "trust pattern cannot be empty".to_string(),
+                "clearance pattern cannot be empty".to_string(),
             ));
         }
 
@@ -1396,19 +1392,19 @@ impl AuthorizerBuilder {
                         Ok(())
                     } else {
                         Err(Error::Validation(format!(
-                            "invalid trust pattern '{}': wildcard must be at end only",
+                            "invalid clearance pattern '{}': wildcard must be at end only",
                             pattern
                         )))
                     }
                 } else {
                     Err(Error::Validation(format!(
-                        "invalid trust pattern '{}': wildcard must be at end (e.g., 'admin_*')",
+                        "invalid clearance pattern '{}': wildcard must be at end (e.g., 'admin_*')",
                         pattern
                     )))
                 }
             }
             _ => Err(Error::Validation(format!(
-                "invalid trust pattern '{}': only one wildcard allowed",
+                "invalid clearance pattern '{}': only one wildcard allowed",
                 pattern
             ))),
         }
@@ -1441,7 +1437,7 @@ impl AuthorizerBuilder {
             revocation_list,
             pop_window_secs: self.pop_window_secs,
             pop_max_windows: self.pop_max_windows,
-            tool_trust_requirements: self.tool_trust_requirements,
+            tool_clearance_requirements: self.tool_clearance_requirements,
         })
     }
 }
@@ -1477,7 +1473,7 @@ pub struct Authorizer {
     pop_window_secs: i64,
     pop_max_windows: u32,
     /// Tool trust requirements: minimum trust level required per tool.
-    tool_trust_requirements: HashMap<String, TrustLevel>,
+    tool_clearance_requirements: HashMap<String, Clearance>,
 }
 
 impl Default for Authorizer {
@@ -1505,7 +1501,7 @@ impl Authorizer {
             revocation_list: None,
             pop_window_secs: DEFAULT_POP_WINDOW_SECS,
             pop_max_windows: DEFAULT_POP_MAX_WINDOWS,
-            tool_trust_requirements: HashMap::new(),
+            tool_clearance_requirements: HashMap::new(),
         }
     }
 
@@ -1587,9 +1583,9 @@ impl Authorizer {
         self.clock_tolerance = tolerance;
     }
 
-    /// Set minimum trust level required for a tool (chainable, validated).
+    /// Set minimum clearance required for a tool (builder style).
     ///
-    /// This is **gateway-level policy**. The authorizer defines what trust levels
+    /// This is **gateway-level policy**. The authorizer defines what clearance levels
     /// are required for its tools. This is an **offline check**.
     ///
     /// Supports exact tool names or glob patterns:
@@ -1599,59 +1595,59 @@ impl Authorizer {
     ///
     /// # Panics
     ///
-    /// Panics if the pattern is invalid. Use `try_trust_requirement` for fallible version.
+    /// Panics if the pattern is invalid.
     ///
     /// # Example
     /// ```ignore
     /// let authorizer = Authorizer::new()
     ///     .with_trusted_root(root_key)
-    ///     .with_trust_requirement("*", TrustLevel::External)
-    ///     .with_trust_requirement("admin_*", TrustLevel::System);
+    ///     .with_clearance_requirement("*", Clearance::External)
+    ///     .with_clearance_requirement("admin_*", Clearance::System);
     /// ```
-    pub fn with_trust_requirement(
+    pub fn with_clearance_requirement(
         self,
         tool_pattern: impl Into<String>,
-        level: TrustLevel,
+        level: Clearance,
     ) -> Self {
-        self.try_trust_requirement(tool_pattern, level)
-            .expect("invalid trust pattern")
+        self.try_clearance_requirement(tool_pattern, level)
+            .expect("invalid clearance pattern")
     }
 
-    /// Set minimum trust level required for a tool (chainable, fallible).
+    /// Set minimum clearance required for a tool (chainable, fallible).
     ///
-    /// Like `with_trust_requirement`, but returns a Result instead of panicking.
-    pub fn try_trust_requirement(
+    /// Like `with_clearance_requirement`, but returns a Result instead of panicking.
+    pub fn try_clearance_requirement(
         mut self,
         tool_pattern: impl Into<String>,
-        level: TrustLevel,
+        level: Clearance,
     ) -> Result<Self> {
         let pattern = tool_pattern.into();
-        Self::validate_trust_pattern(&pattern)?;
-        self.tool_trust_requirements.insert(pattern, level);
+        Self::validate_clearance_pattern(&pattern)?;
+        self.tool_clearance_requirements.insert(pattern, level);
         Ok(self)
     }
 
-    /// Set minimum trust level required for a tool (mutable version).
+    /// Set minimum clearance required for a tool (mutable version).
     ///
     /// # Errors
     ///
     /// Returns an error if the pattern is invalid.
-    pub fn require_trust(
+    pub fn require_clearance(
         &mut self,
         tool_pattern: impl Into<String>,
-        level: TrustLevel,
+        level: Clearance,
     ) -> Result<()> {
         let pattern = tool_pattern.into();
-        Self::validate_trust_pattern(&pattern)?;
-        self.tool_trust_requirements.insert(pattern, level);
+        Self::validate_clearance_pattern(&pattern)?;
+        self.tool_clearance_requirements.insert(pattern, level);
         Ok(())
     }
 
-    /// Validate a trust requirement pattern.
-    fn validate_trust_pattern(pattern: &str) -> Result<()> {
+    /// Validate a clearance requirement pattern.
+    fn validate_clearance_pattern(pattern: &str) -> Result<()> {
         if pattern.is_empty() {
             return Err(Error::Validation(
-                "trust pattern cannot be empty".to_string(),
+                "clearance pattern cannot be empty".to_string(),
             ));
         }
 
@@ -1667,53 +1663,63 @@ impl Authorizer {
                         Ok(())
                     } else {
                         Err(Error::Validation(format!(
-                            "invalid trust pattern '{}': wildcard must be at end only",
+                            "invalid clearance pattern '{}': wildcard must be at end only",
                             pattern
                         )))
                     }
                 } else {
                     Err(Error::Validation(format!(
-                        "invalid trust pattern '{}': wildcard must be at end (e.g., 'admin_*')",
+                        "invalid clearance pattern '{}': wildcard must be at end (e.g., 'admin_*')",
                         pattern
                     )))
                 }
             }
             _ => Err(Error::Validation(format!(
-                "invalid trust pattern '{}': only one wildcard allowed",
+                "invalid clearance pattern '{}': max one wildcard allowed",
                 pattern
             ))),
         }
     }
 
-    /// Get the required trust level for a tool.
+    /// Get the required clearance for a tool.
     ///
-    /// Checks in order: exact match, glob pattern, default "*", then None.
-    pub fn get_required_trust(&self, tool: &str) -> Option<TrustLevel> {
+    /// Checks exact match first, then most specific wildcard match.
+    /// Get required clearance for a tool.
+    pub fn get_required_clearance(&self, tool: &str) -> Option<Clearance> {
         // 1. Exact match
-        if let Some(&level) = self.tool_trust_requirements.get(tool) {
-            return Some(level);
+        if let Some(level) = self.tool_clearance_requirements.get(tool) {
+            return Some(*level);
         }
 
-        // 2. Glob pattern match
-        for (pattern, &level) in &self.tool_trust_requirements {
-            if pattern != "*" && Self::matches_glob_pattern(pattern, tool) {
-                return Some(level);
+        // 2. Wildcard matches (longest prefix wins)
+        // Iterate over requirements, filter for wildcards, verify prefix match
+        // and pick the one with longest prefix.
+        let mut best_match: Option<Clearance> = None;
+        let mut max_prefix_len = -1; // -1 indicates no match found yet
+
+        for (pattern, level) in &self.tool_clearance_requirements {
+            if pattern == "*" {
+                // Global default, length 0
+                if max_prefix_len < 0 {
+                    best_match = Some(*level);
+                    max_prefix_len = 0;
+                }
+                continue;
+            }
+
+            if let Some(prefix) = pattern.strip_suffix('*') {
+                if tool.starts_with(prefix) {
+                    let len = prefix.len() as i32;
+                    if len > max_prefix_len {
+                        best_match = Some(*level);
+                        max_prefix_len = len;
+                    }
+                }
             }
         }
 
-        // 3. Default "*"
-        self.tool_trust_requirements.get("*").copied()
+        best_match
     }
-
-    /// Check if a tool name matches a glob pattern (supports trailing * only).
-    fn matches_glob_pattern(pattern: &str, tool: &str) -> bool {
-        if let Some(prefix) = pattern.strip_suffix('*') {
-            tool.starts_with(prefix)
-        } else {
-            pattern == tool
-        }
-    }
-
     // =========================================================================
     // Getters
     // =========================================================================
@@ -1812,10 +1818,10 @@ impl Authorizer {
         approvals: &[crate::approval::Approval],
     ) -> Result<()> {
         // 1. Check trust level requirements first (fast fail)
-        if let Some(required_trust) = self.get_required_trust(tool) {
-            let warrant_trust = warrant.trust_level().unwrap_or(TrustLevel::Untrusted);
+        if let Some(required_trust) = self.get_required_clearance(tool) {
+            let warrant_trust = warrant.clearance().unwrap_or(Clearance::UNTRUSTED);
             if warrant_trust < required_trust {
-                return Err(Error::InsufficientTrustLevel {
+                return Err(Error::InsufficientClearance {
                     tool: tool.to_string(),
                     required: format!("{:?}", required_trust),
                     actual: format!("{:?}", warrant_trust),
@@ -2095,13 +2101,13 @@ impl Authorizer {
                         }
                     }
                 }
-                // Trust level monotonicity: child trust_level cannot exceed parent's
+                // Clearance monotonicity: child clearance cannot exceed parent's
                 if let (Some(parent_trust), Some(child_trust)) =
-                    (parent.trust_level(), child.trust_level())
+                    (parent.clearance(), child.clearance())
                 {
                     if child_trust > parent_trust {
                         return Err(Error::MonotonicityViolation(format!(
-                            "trust_level cannot increase: parent {:?}, child {:?}",
+                            "clearance cannot increase: parent {:?}, child {:?}",
                             parent_trust, child_trust
                         )));
                     }
@@ -2147,12 +2153,12 @@ impl Authorizer {
                     }
                 }
 
-                // 2. Child trust_level must not exceed issuer's trust_level (monotonicity)
-                if let Some(parent_trust) = parent.trust_level() {
-                    if let Some(child_trust) = child.trust_level() {
+                // 2. Child clearance must not exceed issuer's clearance (monotonicity)
+                if let Some(parent_trust) = parent.clearance() {
+                    if let Some(child_trust) = child.clearance() {
                         if child_trust > parent_trust {
                             return Err(Error::MonotonicityViolation(format!(
-                                "trust_level {:?} exceeds issuer's trust_level {:?}",
+                                "clearance {:?} exceeds issuer's clearance {:?}",
                                 child_trust, parent_trust
                             )));
                         }
@@ -3125,7 +3131,7 @@ mod tests {
     #[test]
     fn test_verify_chain_issuer_to_execution() {
         use crate::crypto::SigningKey;
-        use crate::warrant::{TrustLevel, Warrant, WarrantType};
+        use crate::warrant::{Clearance, Warrant, WarrantType};
         use std::time::Duration;
 
         let issuer_kp = SigningKey::generate();
@@ -3135,7 +3141,7 @@ mod tests {
         let root = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string(), "write_file".to_string()])
-            .trust_level(TrustLevel::Internal)
+            .clearance(Clearance::INTERNAL)
             .constraint_bound("path", Pattern::new("/data/*").unwrap())
             .ttl(Duration::from_secs(3600))
             .authorized_holder(issuer_kp.public_key())
@@ -3151,7 +3157,7 @@ mod tests {
             .issue_execution_warrant()
             .expect("Failed to start issuance")
             .capability("read_file", child_constraints)
-            .trust_level(TrustLevel::External)
+            .clearance(Clearance::EXTERNAL)
             .ttl(Duration::from_secs(600))
             .authorized_holder(worker_kp.public_key())
             .build(&issuer_kp)
@@ -3180,7 +3186,7 @@ mod tests {
     #[test]
     fn test_verify_chain_rejects_issuer_execution_constraint_violation() {
         use crate::crypto::SigningKey;
-        use crate::warrant::{TrustLevel, Warrant, WarrantType};
+        use crate::warrant::{Clearance, Warrant, WarrantType};
         use std::time::Duration;
 
         let issuer_kp = SigningKey::generate();
@@ -3190,7 +3196,7 @@ mod tests {
         let root = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_level(TrustLevel::External)
+            .clearance(Clearance::EXTERNAL)
             .constraint_bound("path", Pattern::new("/data/*").unwrap())
             .ttl(Duration::from_secs(3600))
             .authorized_holder(issuer_kp.public_key())
@@ -3216,22 +3222,19 @@ mod tests {
             result.unwrap_err()
         );
 
-        // Try to issue with trust_level exceeding ceiling (builder should reject)
+        // Try to issue with clearance exceeding limit (builder should reject)
         let result = root
             .issue_execution_warrant()
             .expect("Failed to start issuance")
             .capability("read_file", ConstraintSet::new())
-            .trust_level(TrustLevel::Internal) // Exceeds External ceiling
+            .clearance(Clearance::INTERNAL) // Exceeds External ceiling
             .ttl(Duration::from_secs(600))
             .authorized_holder(worker_kp.public_key())
             .build(&issuer_kp);
 
-        assert!(
-            result.is_err(),
-            "Should reject trust_level exceeding ceiling"
-        );
+        assert!(result.is_err(), "Should reject clearance exceeding limit");
         println!(
-            "✅ Builder rejects trust_level exceeding ceiling: {}",
+            "✅ Builder rejects clearance exceeding limit: {}",
             result.unwrap_err()
         );
 
@@ -3285,7 +3288,7 @@ mod tests {
     #[test]
     fn test_verify_chain_rejects_self_issuance() {
         use crate::crypto::SigningKey;
-        use crate::warrant::{TrustLevel, Warrant, WarrantType};
+        use crate::warrant::{Clearance, Warrant, WarrantType};
         use std::time::Duration;
 
         let issuer_kp = SigningKey::generate();
@@ -3294,7 +3297,7 @@ mod tests {
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_level(TrustLevel::Internal)
+            .clearance(Clearance::INTERNAL)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(issuer_kp.public_key())
             .build(&issuer_kp)
@@ -3351,7 +3354,7 @@ mod tests {
     #[test]
     fn test_verify_chain_rejects_issuer_holder_loop() {
         use crate::crypto::SigningKey;
-        use crate::warrant::{TrustLevel, Warrant, WarrantType};
+        use crate::warrant::{Clearance, Warrant, WarrantType};
         use std::time::Duration;
 
         let creator_kp = SigningKey::generate(); // Creates and signs the issuer warrant
@@ -3361,7 +3364,7 @@ mod tests {
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_level(TrustLevel::Internal)
+            .clearance(Clearance::INTERNAL)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(planner_kp.public_key())
             .build(&creator_kp)
@@ -3430,11 +3433,11 @@ mod tests {
         );
     }
 
-    /// Test that trust_level monotonicity is enforced for Execution → Execution attenuation.
+    /// Test that clearance monotonicity is enforced for Execution → Execution attenuation.
     #[test]
-    fn test_trust_level_monotonicity_execution_to_execution() {
+    fn test_clearance_monotonicity_execution_to_execution() {
         use crate::crypto::SigningKey;
-        use crate::warrant::{TrustLevel, Warrant};
+        use crate::warrant::{Clearance, Warrant};
         use std::time::Duration;
 
         let parent_kp = SigningKey::generate();
@@ -3445,46 +3448,46 @@ mod tests {
         constraints.insert("path", Pattern::new("/data/*").unwrap());
         let parent = Warrant::builder()
             .capability("read_file", constraints.clone())
-            .trust_level(TrustLevel::Internal)
+            .clearance(Clearance::INTERNAL)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(parent_kp.public_key())
             .build(&parent_kp)
             .expect("Failed to build parent warrant");
 
-        assert_eq!(parent.trust_level(), Some(TrustLevel::Internal));
+        assert_eq!(parent.clearance(), Some(Clearance::INTERNAL));
 
         // Try to attenuate with HIGHER trust level (should fail)
         let result = parent
             .attenuate()
             .capability("read_file", constraints.clone())
-            .trust_level(TrustLevel::Privileged) // Higher than Internal!
+            .clearance(Clearance::PRIVILEGED) // Higher than Internal!
             .ttl(Duration::from_secs(60))
             .authorized_holder(child_kp.public_key())
             .build(&parent_kp);
 
         assert!(
             result.is_err(),
-            "Builder should reject trust_level escalation"
+            "Builder should reject clearance escalation"
         );
         assert!(
             result
                 .unwrap_err()
                 .to_string()
-                .contains("trust_level cannot increase"),
-            "Error should mention trust_level monotonicity"
+                .contains("clearance cannot increase"),
+            "Error should mention clearance monotonicity"
         );
 
         // Attenuate with LOWER trust level (should succeed)
         let child = parent
             .attenuate()
             .capability("read_file", constraints)
-            .trust_level(TrustLevel::External) // Lower than Internal
+            .clearance(Clearance::EXTERNAL) // Lower than Internal
             .ttl(Duration::from_secs(60))
             .authorized_holder(child_kp.public_key())
             .build(&parent_kp)
-            .expect("Lower trust_level should be allowed");
+            .expect("Lower clearance should be allowed");
 
-        assert_eq!(child.trust_level(), Some(TrustLevel::External));
+        assert_eq!(child.clearance(), Some(Clearance::EXTERNAL));
 
         // Verify the chain passes
         let mut data_plane = DataPlane::new();
@@ -3492,7 +3495,7 @@ mod tests {
         let result = data_plane.verify_chain(&[parent, child]);
         assert!(
             result.is_ok(),
-            "Chain with decreasing trust_level should pass verification"
+            "Chain with decreasing clearance should pass verification"
         );
     }
 
@@ -3500,7 +3503,7 @@ mod tests {
     #[test]
     fn test_tool_trust_requirements_enforcement() {
         use crate::crypto::SigningKey;
-        use crate::warrant::{TrustLevel, Warrant};
+        use crate::warrant::{Clearance, Warrant};
         use std::collections::HashMap;
         use std::time::Duration;
 
@@ -3513,7 +3516,7 @@ mod tests {
             .capability("read_file", constraints.clone())
             .capability("delete_file", constraints.clone())
             .capability("admin_reset", constraints)
-            .trust_level(TrustLevel::External)
+            .clearance(Clearance::EXTERNAL)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(kp.public_key())
             .build(&kp)
@@ -3523,13 +3526,13 @@ mod tests {
         let mut data_plane = DataPlane::new();
         data_plane.trust_issuer("root", kp.public_key());
         data_plane
-            .require_trust("delete_file", TrustLevel::Privileged)
+            .require_clearance("delete_file", Clearance::PRIVILEGED)
             .unwrap();
         data_plane
-            .require_trust("admin_*", TrustLevel::System)
+            .require_clearance("admin_*", Clearance::SYSTEM)
             .unwrap();
         data_plane
-            .require_trust("read_file", TrustLevel::External)
+            .require_clearance("read_file", Clearance::EXTERNAL)
             .unwrap();
 
         let args: HashMap<String, ConstraintValue> = [(
@@ -3557,8 +3560,8 @@ mod tests {
         assert!(result.is_err(), "delete_file should be denied");
         let err = result.unwrap_err().to_string();
         assert!(
-            err.contains("insufficient trust level"),
-            "Error should mention trust level: {}",
+            err.contains("insufficient clearance"),
+            "Error should mention clearance: {}",
             err
         );
         assert!(
@@ -3584,42 +3587,42 @@ mod tests {
 
         // Configure various patterns
         data_plane
-            .require_trust("admin_*", TrustLevel::System)
+            .require_clearance("admin_*", Clearance::SYSTEM)
             .unwrap();
         data_plane
-            .require_trust("write_*", TrustLevel::Internal)
+            .require_clearance("write_*", Clearance::INTERNAL)
             .unwrap();
         data_plane
-            .require_trust("read_public", TrustLevel::External)
+            .require_clearance("read_public", Clearance::EXTERNAL)
             .unwrap();
         data_plane
-            .require_trust("*", TrustLevel::Untrusted)
+            .require_clearance("*", Clearance::UNTRUSTED)
             .unwrap(); // Default
 
         // Test exact match
         assert_eq!(
-            data_plane.get_required_trust("read_public"),
-            Some(TrustLevel::External)
+            data_plane.get_required_clearance("read_public"),
+            Some(Clearance::EXTERNAL)
         );
 
         // Test glob patterns
         assert_eq!(
-            data_plane.get_required_trust("admin_users"),
-            Some(TrustLevel::System)
+            data_plane.get_required_clearance("admin_users"),
+            Some(Clearance::SYSTEM)
         );
         assert_eq!(
-            data_plane.get_required_trust("admin_config"),
-            Some(TrustLevel::System)
+            data_plane.get_required_clearance("admin_config"),
+            Some(Clearance::SYSTEM)
         );
         assert_eq!(
-            data_plane.get_required_trust("write_file"),
-            Some(TrustLevel::Internal)
+            data_plane.get_required_clearance("write_file"),
+            Some(Clearance::INTERNAL)
         );
 
         // Test default fallback
         assert_eq!(
-            data_plane.get_required_trust("unknown_tool"),
-            Some(TrustLevel::Untrusted)
+            data_plane.get_required_clearance("unknown_tool"),
+            Some(Clearance::UNTRUSTED)
         );
     }
 
@@ -3627,7 +3630,7 @@ mod tests {
     #[test]
     fn test_tool_trust_requirements_hierarchy() {
         use crate::crypto::SigningKey;
-        use crate::warrant::{TrustLevel, Warrant};
+        use crate::warrant::{Clearance, Warrant};
         use std::collections::HashMap;
         use std::time::Duration;
 
@@ -3638,7 +3641,7 @@ mod tests {
         constraints.insert("path", Pattern::new("/data/*").unwrap());
         let warrant = Warrant::builder()
             .capability("read_file", constraints)
-            .trust_level(TrustLevel::Privileged)
+            .clearance(Clearance::PRIVILEGED)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(kp.public_key())
             .build(&kp)
@@ -3648,7 +3651,7 @@ mod tests {
         let mut data_plane = DataPlane::new();
         data_plane.trust_issuer("root", kp.public_key());
         data_plane
-            .require_trust("read_file", TrustLevel::External)
+            .require_clearance("read_file", Clearance::EXTERNAL)
             .unwrap();
 
         let args: HashMap<String, ConstraintValue> = [(
@@ -3676,7 +3679,7 @@ mod tests {
     #[test]
     fn test_authorizer_trust_requirements() {
         use crate::crypto::SigningKey;
-        use crate::warrant::{TrustLevel, Warrant};
+        use crate::warrant::{Clearance, Warrant};
         use std::collections::HashMap;
         use std::time::Duration;
 
@@ -3688,7 +3691,7 @@ mod tests {
         let warrant = Warrant::builder()
             .capability("read_file", constraints.clone())
             .capability("admin_reset", constraints)
-            .trust_level(TrustLevel::External)
+            .clearance(Clearance::EXTERNAL)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(kp.public_key())
             .build(&kp)
@@ -3697,8 +3700,8 @@ mod tests {
         // Configure Authorizer with trust requirements using builder
         let authorizer = Authorizer::builder()
             .trusted_root(kp.public_key())
-            .trust_requirement("read_file", TrustLevel::External)
-            .trust_requirement("admin_*", TrustLevel::System)
+            .with_clearance_requirement("read_file", Clearance::EXTERNAL)
+            .with_clearance_requirement("admin_*", Clearance::SYSTEM)
             .build()
             .expect("Failed to build authorizer");
 
@@ -3727,155 +3730,159 @@ mod tests {
         assert!(result.is_err(), "admin_reset should be denied");
         let err = result.unwrap_err().to_string();
         assert!(
-            err.contains("insufficient trust level"),
-            "Error should mention trust level: {}",
+            err.contains("insufficient clearance"),
+            "Error should mention clearance: {}",
             err
         );
     }
 
-    /// Test Authorizer chainable API for trust requirements.
+    /// Test Authorizer chainable API for clearance requirements.
     #[test]
-    fn test_authorizer_chainable_trust_api() {
+    fn test_authorizer_chainable_clearance_api() {
         use crate::crypto::SigningKey;
-        use crate::warrant::TrustLevel;
+        use crate::warrant::Clearance;
 
         let kp = SigningKey::generate();
 
         // Test chainable API
         let authorizer = Authorizer::new()
             .with_trusted_root(kp.public_key())
-            .with_trust_requirement("delete_*", TrustLevel::Privileged)
-            .with_trust_requirement("*", TrustLevel::External);
+            .with_clearance_requirement("delete_*", Clearance::PRIVILEGED)
+            .with_clearance_requirement("*", Clearance::EXTERNAL);
 
         assert_eq!(
-            authorizer.get_required_trust("delete_database"),
-            Some(TrustLevel::Privileged)
+            authorizer.get_required_clearance("delete_database"),
+            Some(Clearance::PRIVILEGED)
         );
         assert_eq!(
-            authorizer.get_required_trust("read_file"),
-            Some(TrustLevel::External)
+            authorizer.get_required_clearance("read_file"),
+            Some(Clearance::EXTERNAL)
         );
 
         // Test mutable API
         let mut authorizer2 = Authorizer::new();
         authorizer2
-            .require_trust("admin_*", TrustLevel::System)
+            .require_clearance("admin_*", Clearance::SYSTEM)
             .unwrap();
 
         assert_eq!(
-            authorizer2.get_required_trust("admin_users"),
-            Some(TrustLevel::System)
+            authorizer2.get_required_clearance("admin_users"),
+            Some(Clearance::SYSTEM)
         );
     }
 
     // =========================================================================
-    // Edge Case Tests for Trust Requirements
+    // Edge Case Tests for Clearance Requirements
     // =========================================================================
 
     /// Test that invalid patterns are rejected at registration time.
     #[test]
-    fn test_trust_pattern_validation() {
-        use crate::warrant::TrustLevel;
+    fn test_clearance_pattern_validation() {
+        use crate::warrant::Clearance;
 
         let mut data_plane = DataPlane::new();
 
         // Valid patterns
-        assert!(data_plane.require_trust("*", TrustLevel::External).is_ok());
         assert!(data_plane
-            .require_trust("admin_*", TrustLevel::System)
+            .require_clearance("*", Clearance::EXTERNAL)
             .is_ok());
         assert!(data_plane
-            .require_trust("exact_tool", TrustLevel::Internal)
+            .require_clearance("admin_*", Clearance::SYSTEM)
             .is_ok());
         assert!(data_plane
-            .require_trust("read_", TrustLevel::External)
+            .require_clearance("exact_tool", Clearance::INTERNAL)
+            .is_ok());
+        assert!(data_plane
+            .require_clearance("read_", Clearance::EXTERNAL)
             .is_ok()); // No wildcard
 
         // Invalid patterns
-        assert!(data_plane.require_trust("", TrustLevel::External).is_err()); // Empty
         assert!(data_plane
-            .require_trust("**", TrustLevel::External)
+            .require_clearance("", Clearance::EXTERNAL)
+            .is_err()); // Empty
+        assert!(data_plane
+            .require_clearance("**", Clearance::EXTERNAL)
             .is_err()); // Double wildcard
         assert!(data_plane
-            .require_trust("*admin", TrustLevel::External)
+            .require_clearance("*admin", Clearance::EXTERNAL)
             .is_err()); // Wildcard at start
         assert!(data_plane
-            .require_trust("*admin*", TrustLevel::External)
+            .require_clearance("*admin*", Clearance::EXTERNAL)
             .is_err()); // Multiple wildcards
         assert!(data_plane
-            .require_trust("admin*foo", TrustLevel::External)
+            .require_clearance("admin*foo", Clearance::EXTERNAL)
             .is_err()); // Wildcard in middle
         assert!(data_plane
-            .require_trust("a*b*", TrustLevel::External)
+            .require_clearance("a*b*", Clearance::EXTERNAL)
             .is_err()); // Multiple wildcards
     }
 
     /// Test that exact matches take precedence over glob patterns.
     #[test]
-    fn test_trust_pattern_precedence() {
-        use crate::warrant::TrustLevel;
+    fn test_clearance_pattern_precedence() {
+        use crate::warrant::Clearance;
 
         let mut data_plane = DataPlane::new();
 
         // Configure overlapping patterns
         data_plane
-            .require_trust("*", TrustLevel::Untrusted)
+            .require_clearance("*", Clearance::UNTRUSTED)
             .unwrap();
         data_plane
-            .require_trust("admin_*", TrustLevel::Privileged)
+            .require_clearance("admin_*", Clearance::PRIVILEGED)
             .unwrap();
         data_plane
-            .require_trust("admin_users", TrustLevel::System)
+            .require_clearance("admin_users", Clearance::SYSTEM)
             .unwrap(); // Exact match
 
         // Exact match should take precedence
         assert_eq!(
-            data_plane.get_required_trust("admin_users"),
-            Some(TrustLevel::System), // Exact match, not glob
+            data_plane.get_required_clearance("admin_users"),
+            Some(Clearance::SYSTEM), // Exact match, not glob
         );
 
         // Glob should match other admin tools
         assert_eq!(
-            data_plane.get_required_trust("admin_config"),
-            Some(TrustLevel::Privileged), // Glob match
+            data_plane.get_required_clearance("admin_config"),
+            Some(Clearance::PRIVILEGED), // Glob match
         );
 
         // Default should catch everything else
         assert_eq!(
-            data_plane.get_required_trust("read_file"),
-            Some(TrustLevel::Untrusted), // Default
+            data_plane.get_required_clearance("read_file"),
+            Some(Clearance::UNTRUSTED), // Default
         );
     }
 
-    /// Test behavior when no trust requirements are configured.
+    /// Test behavior when no clearance requirements are configured.
     #[test]
-    fn test_no_trust_requirements_configured() {
+    fn test_no_clearance_requirements_configured() {
         use crate::crypto::SigningKey;
-        use crate::warrant::{TrustLevel, Warrant};
+        use crate::warrant::{Clearance, Warrant};
         use std::collections::HashMap;
         use std::time::Duration;
 
         let kp = SigningKey::generate();
 
-        // Create warrant with trust level
+        // Create warrant with clearance level
         let mut constraints = ConstraintSet::new();
         constraints.insert("path", Pattern::new("/data/*").unwrap());
         let warrant = Warrant::builder()
             .capability("read_file", constraints)
-            .trust_level(TrustLevel::External)
+            .clearance(Clearance::EXTERNAL)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(kp.public_key())
             .build(&kp)
             .expect("Failed to build warrant");
 
-        // DataPlane with NO trust requirements
+        // DataPlane with NO clearance requirements
         let mut data_plane = DataPlane::new();
         data_plane.trust_issuer("root", kp.public_key());
-        // No require_trust calls
+        // No require_clearance calls
 
-        // get_required_trust should return None
-        assert_eq!(data_plane.get_required_trust("read_file"), None);
-        assert_eq!(data_plane.get_required_trust("any_tool"), None);
+        // get_required_clearance should return None
+        assert_eq!(data_plane.get_required_clearance("read_file"), None);
+        assert_eq!(data_plane.get_required_clearance("any_tool"), None);
 
         let args: HashMap<String, ConstraintValue> = [(
             "path".to_string(),
@@ -3887,43 +3894,45 @@ mod tests {
             .create_pop_signature(&kp, "read_file", &args)
             .expect("sign pop");
 
-        // Authorization should succeed (trust check is skipped when no requirements)
+        // Authorization should succeed (clearance check is skipped when no requirements)
         let result = data_plane.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
         assert!(
             result.is_ok(),
-            "Should succeed when no trust requirements: {:?}",
+            "Should succeed when no clearance requirements: {:?}",
             result
         );
     }
 
-    /// Test behavior when warrant has no trust level but requirements exist.
+    /// Test behavior when warrant has no clearance but requirements exist.
     #[test]
-    fn test_missing_warrant_trust_level() {
+    fn test_missing_warrant_clearance() {
         use crate::crypto::SigningKey;
-        use crate::warrant::{TrustLevel, Warrant};
+        use crate::warrant::{Clearance, Warrant};
         use std::collections::HashMap;
         use std::time::Duration;
 
         let kp = SigningKey::generate();
 
-        // Create warrant WITHOUT trust level
+        // Create warrant WITHOUT clearance
         let mut constraints = ConstraintSet::new();
         constraints.insert("path", Pattern::new("/data/*").unwrap());
         let warrant = Warrant::builder()
             .capability("read_file", constraints)
-            // No .trust_level() call
+            // No .clearance() call
             .ttl(Duration::from_secs(3600))
             .authorized_holder(kp.public_key())
             .build(&kp)
             .expect("Failed to build warrant");
 
-        // Warrant should have no trust level
-        assert!(warrant.trust_level().is_none());
+        // Warrant should have no clearance
+        assert!(warrant.clearance().is_none());
 
-        // DataPlane with trust requirement
+        // DataPlane with clearance requirement
         let mut data_plane = DataPlane::new();
         data_plane.trust_issuer("root", kp.public_key());
-        data_plane.require_trust("*", TrustLevel::External).unwrap();
+        data_plane
+            .require_clearance("*", Clearance::EXTERNAL)
+            .unwrap();
 
         let args: HashMap<String, ConstraintValue> = [(
             "path".to_string(),
@@ -3932,7 +3941,7 @@ mod tests {
         .into_iter()
         .collect();
 
-        // Should fail: warrant has no trust level (treated as Untrusted)
+        // Should fail: warrant has no clearance (treated as Untrusted)
         let result = data_plane.authorize(&warrant, "read_file", &args, None, &[]);
         assert!(result.is_err(), "Should fail: Untrusted < External");
         let err = result.unwrap_err().to_string();
@@ -3946,22 +3955,22 @@ mod tests {
     #[test]
     fn test_authorizer_builder_pattern_validation() {
         use crate::crypto::SigningKey;
-        use crate::warrant::TrustLevel;
+        use crate::warrant::Clearance;
 
         let kp = SigningKey::generate();
 
         // Valid patterns should work
         let result = Authorizer::builder()
             .trusted_root(kp.public_key())
-            .try_trust_requirement("*", TrustLevel::External)
-            .and_then(|b| b.try_trust_requirement("admin_*", TrustLevel::System))
+            .try_clearance_requirement("*", Clearance::EXTERNAL)
+            .and_then(|b| b.try_clearance_requirement("admin_*", Clearance::SYSTEM))
             .and_then(|b| b.build());
         assert!(result.is_ok());
 
         // Invalid pattern should fail
         let result = Authorizer::builder()
             .trusted_root(kp.public_key())
-            .try_trust_requirement("*admin*", TrustLevel::System);
+            .try_clearance_requirement("*admin*", Clearance::SYSTEM);
         assert!(result.is_err());
     }
 }

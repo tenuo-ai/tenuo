@@ -619,7 +619,7 @@ class WarrantPayload:
     constraint_bounds: Optional[ConstraintSet] = None
     required_approvers: Optional[List[PublicKey]] = None
     min_approvals: Optional[int] = None
-    trust_level: Optional[TrustLevel] = None
+    clearance: Optional[Clearance] = None
 ```
 
 Key points:

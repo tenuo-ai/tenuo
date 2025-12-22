@@ -8,7 +8,7 @@
 //! - SIEM integration for security monitoring
 
 use crate::constraints::Constraint;
-use crate::warrant::{TrustLevel, Warrant};
+use crate::warrant::{Clearance, Warrant};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -29,9 +29,9 @@ pub enum ChangeType {
     Reduced,
     /// TTL was increased (should not happen in valid attenuation).
     Increased,
-    /// Trust level was demoted (lower trust).
+    /// Clearance level was demoted (lower clearance).
     Demoted,
-    /// Trust level was promoted (should not happen in valid attenuation).
+    /// Clearance level was promoted (should not happen in valid attenuation).
     Promoted,
     /// Tools were dropped.
     Dropped,
@@ -159,29 +159,29 @@ impl TtlDiff {
     }
 }
 
-/// Diff for trust level.
+/// Diff for clearance level.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrustDiff {
-    /// Parent trust level.
-    pub parent_trust: Option<TrustLevel>,
-    /// Child trust level.
-    pub child_trust: Option<TrustLevel>,
+pub struct ClearanceDiff {
+    /// Parent clearance level.
+    pub parent_clearance: Option<Clearance>,
+    /// Child clearance level.
+    pub child_clearance: Option<Clearance>,
     /// Type of change.
     pub change: ChangeType,
 }
 
-impl TrustDiff {
-    /// Create a new trust diff.
-    pub fn new(parent_trust: Option<TrustLevel>, child_trust: Option<TrustLevel>) -> Self {
-        let change = match (parent_trust, child_trust) {
+impl ClearanceDiff {
+    /// Create a new clearance diff.
+    pub fn new(parent_clearance: Option<Clearance>, child_clearance: Option<Clearance>) -> Self {
+        let change = match (parent_clearance, child_clearance) {
             (Some(p), Some(c)) if c < p => ChangeType::Demoted,
             (Some(p), Some(c)) if c > p => ChangeType::Promoted,
             _ => ChangeType::Unchanged,
         };
 
         Self {
-            parent_trust,
-            child_trust,
+            parent_clearance,
+            child_clearance,
             change,
         }
     }
@@ -225,8 +225,8 @@ pub struct DelegationDiff {
     pub capabilities: HashMap<String, HashMap<String, ConstraintDiff>>,
     /// TTL diff.
     pub ttl: TtlDiff,
-    /// Trust diff.
-    pub trust: TrustDiff,
+    /// Clearance diff.
+    pub clearance: ClearanceDiff,
     /// Depth diff.
     pub depth: DepthDiff,
     /// Intent/purpose for this delegation.
@@ -327,20 +327,23 @@ impl DelegationDiff {
         }
         lines.push(format!("║{:width$}║", "", width = width));
 
-        // Trust section
-        lines.push(format!("║  TRUST{:width$}║", "", width = width - 7));
-        if let Some(ref pt) = self.trust.parent_trust {
-            let line = format!("    parent: {:?}", pt);
+        // Clearance section
+        lines.push(format!("║  CLEARANCE{:width$}║", "", width = width - 11));
+        if let Some(ref pc) = self.clearance.parent_clearance {
+            let line = format!("    parent: {}", pc);
             let padding = width.saturating_sub(line.len());
             lines.push(format!("║{}{:padding$}║", line, "", padding = padding));
         }
-        if let Some(ref ct) = self.trust.child_trust {
-            let line = format!("    child:  {:?}", ct);
+        if let Some(ref cc) = self.clearance.child_clearance {
+            let line = format!("    child:  {}", cc);
             let padding = width.saturating_sub(line.len());
             lines.push(format!("║{}{:padding$}║", line, "", padding = padding));
         }
-        if self.trust.change != ChangeType::Unchanged {
-            let line = format!("    change: {}", self.trust.change.as_str().to_uppercase());
+        if self.clearance.change != ChangeType::Unchanged {
+            let line = format!(
+                "    change: {}",
+                self.clearance.change.as_str().to_uppercase()
+            );
             let padding = width.saturating_sub(line.len());
             lines.push(format!("║{}{:padding$}║", line, "", padding = padding));
         }
@@ -414,17 +417,17 @@ impl DelegationDiff {
             deltas.push(delta);
         }
 
-        // Trust change
-        if self.trust.change != ChangeType::Unchanged {
+        // Clearance change
+        if self.clearance.change != ChangeType::Unchanged {
             let mut delta = serde_json::json!({
-                "field": "trust",
-                "change": self.trust.change.as_str()
+                "field": "clearance",
+                "change": self.clearance.change.as_str()
             });
-            if let Some(ref pt) = self.trust.parent_trust {
-                delta["from"] = serde_json::json!(format!("{:?}", pt));
+            if let Some(ref pc) = self.clearance.parent_clearance {
+                delta["from"] = serde_json::json!(format!("{}", pc));
             }
-            if let Some(ref ct) = self.trust.child_trust {
-                delta["to"] = serde_json::json!(format!("{:?}", ct));
+            if let Some(ref cc) = self.clearance.child_clearance {
+                delta["to"] = serde_json::json!(format!("{}", cc));
             }
             deltas.push(delta);
         }
@@ -441,7 +444,7 @@ impl DelegationDiff {
                 "tools_kept": self.tools.kept,
                 "capabilities_changed": self.capabilities.keys().count(),
                 "ttl_reduced": self.ttl.change == ChangeType::Reduced,
-                "trust_demoted": self.trust.change == ChangeType::Demoted,
+                "clearance_demoted": self.clearance.change == ChangeType::Demoted,
                 "is_terminal": self.depth.is_terminal
             }
         });
@@ -465,8 +468,8 @@ pub struct DelegationReceipt {
     pub capabilities: HashMap<String, HashMap<String, ConstraintDiff>>,
     /// TTL diff.
     pub ttl: TtlDiff,
-    /// Trust diff.
-    pub trust: TrustDiff,
+    /// Clearance diff.
+    pub clearance: ClearanceDiff,
     /// Depth diff.
     pub depth: DepthDiff,
     /// Delegator's key fingerprint.
@@ -496,7 +499,7 @@ impl DelegationReceipt {
             tools: diff.tools,
             capabilities: diff.capabilities,
             ttl: diff.ttl,
-            trust: diff.trust,
+            clearance: diff.clearance,
             depth: diff.depth,
             delegator_fingerprint,
             delegatee_fingerprint,
@@ -556,15 +559,15 @@ impl DelegationReceipt {
             deltas.push(delta);
         }
 
-        if self.trust.change != ChangeType::Unchanged {
+        if self.clearance.change != ChangeType::Unchanged {
             let mut delta = serde_json::json!({
-                "field": "trust",
-                "change": self.trust.change.as_str()
+                "field": "clearance",
+                "change": self.clearance.change.as_str()
             });
-            if let Some(ref pt) = self.trust.parent_trust {
+            if let Some(ref pt) = self.clearance.parent_clearance {
                 delta["from"] = serde_json::json!(format!("{:?}", pt));
             }
-            if let Some(ref ct) = self.trust.child_trust {
+            if let Some(ref ct) = self.clearance.child_clearance {
                 delta["to"] = serde_json::json!(format!("{:?}", ct));
             }
             deltas.push(delta);
@@ -584,7 +587,7 @@ impl DelegationReceipt {
                 "tools_kept": self.tools.kept,
                 "capabilities_changed": self.capabilities.keys().count(),
                 "ttl_reduced": self.ttl.change == ChangeType::Reduced,
-                "trust_demoted": self.trust.change == ChangeType::Demoted,
+                "clearance_demoted": self.clearance.change == ChangeType::Demoted,
                 "is_terminal": self.depth.is_terminal,
                 "used_pass_through": self.used_pass_through
             }
@@ -660,8 +663,8 @@ pub fn compute_diff(parent: &Warrant, child: &Warrant) -> DelegationDiff {
     let child_ttl = (child.expires_at() - now).num_seconds();
     let ttl = TtlDiff::new(Some(parent_ttl.max(0)), Some(child_ttl.max(0)));
 
-    // Trust
-    let trust = TrustDiff::new(parent.trust_level(), child.trust_level());
+    // Clearance
+    let clearance = ClearanceDiff::new(parent.clearance(), child.clearance());
 
     // Depth
     let depth = DepthDiff::new(parent.depth(), child.depth(), parent.max_depth());
@@ -673,7 +676,7 @@ pub fn compute_diff(parent: &Warrant, child: &Warrant) -> DelegationDiff {
         tools,
         capabilities,
         ttl,
-        trust,
+        clearance,
         depth,
         intent: None,
     }
@@ -720,11 +723,11 @@ mod tests {
     }
 
     #[test]
-    fn test_trust_diff() {
-        let diff = TrustDiff::new(Some(TrustLevel::System), Some(TrustLevel::External));
+    fn test_clearance_diff() {
+        let diff = ClearanceDiff::new(Some(Clearance::SYSTEM), Some(Clearance::EXTERNAL));
         assert_eq!(diff.change, ChangeType::Demoted);
 
-        let diff = TrustDiff::new(Some(TrustLevel::External), Some(TrustLevel::System));
+        let diff = ClearanceDiff::new(Some(Clearance::EXTERNAL), Some(Clearance::SYSTEM));
         assert_eq!(diff.change, ChangeType::Promoted);
     }
 }

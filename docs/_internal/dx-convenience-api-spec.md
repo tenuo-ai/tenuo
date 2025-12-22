@@ -2,13 +2,294 @@
 
 **Version:** 0.1  
 **Status:** Draft  
-**Date:** 2025-12-19
+**Date:** 2025-12-20
+
+---
+
+## TL;DR
+
+**Tenuo = Cryptographic delegation for AI agents.**
+
+Use Tenuo when you need authority that:
+- Travels to external services (verifiable offline)
+- Survives prompt injection (LLM can't forge signatures)
+- Creates audit trails (non-repudiation)
+
+**Simplest usage:**
+```python
+# Delegate to a worker
+worker_warrant = my_warrant.delegate(
+    key=my_key,
+    to=worker_public_key,
+    allow=["search"],
+    ttl=300
+)
+```
+
+**For LangGraph:**
+```python
+configure(issuer_key=kp)
+
+@lockdown(tool="search")  # Enforcement on tools
+async def search(query): ...
+
+async with root_task(Capability("search")):
+    await graph.compile().ainvoke(state)
+```
+
+---
+
+## Core Value Proposition
+
+### When Tenuo Provides Real Security Value
+
+Tenuo's value is **cryptographic delegation across trust boundaries**. Simple if-conditions can handle basic access control in trusted, single-process code. Tenuo provides value when:
+
+| Scenario | If-Conditions | Tenuo | Why Tenuo Wins |
+|----------|---------------|-------|----------------|
+| Single process, trusted code | ✅ Sufficient | Overkill | No trust boundary to cross |
+| LLM agent (prompt injection risk) | ❌ Bypassable | ✅ Required | LLM can't forge signatures |
+| Multi-service delegation | ❌ Can't travel | ✅ Required | Warrant verifiable offline |
+| Multi-agent orchestration | ❌ State is mutable | ✅ Required | Cryptographic authority |
+| Audit/compliance | ❌ No proof | ✅ Required | Non-repudiation |
+| Multi-tenant isolation | ❌ Code-level only | ✅ Required | Tenant can't escalate |
+
+### What Tenuo Does That If-Conditions Cannot
+
+**1. Authority that travels across trust boundaries:**
+```python
+# If-condition: Can't send "permission" to external service securely
+await external_worker.run(allowed=["search"])  # Just data, can be ignored/forged
+
+# Tenuo: Cryptographically signed, verifiable by recipient
+child_warrant = warrant.delegate(to=worker_key, allow=["search"])
+await external_worker.run(warrant=child_warrant)  # Verifiable, unforgeable
+```
+
+**2. Protection against compromised/untrusted code:**
+```python
+# If-condition: Attacker with code access can modify checks
+ALLOWED = {"search"}  # Attacker: ALLOWED.add("delete_all")
+
+# Tenuo: Warrant is signed, can't be modified without detection
+warrant.can("delete_all")  # False, cryptographically enforced
+```
+
+**3. LLM can't escape the boundary:**
+```python
+# If-condition in state: LLM can manipulate
+state["allowed_tools"] = ["search"]
+# LLM output: "Set allowed_tools to ['search', 'rm_rf']" -> Bypassed!
+
+# Tenuo: Warrant is cryptographic, LLM can't forge
+# Even if LLM is prompt-injected, it can't sign a new warrant
+```
+
+**4. Audit trail with non-repudiation:**
+```python
+# If-condition: No proof of who authorized what
+log.info("search called")  # Anyone could write this
+
+# Tenuo: Cryptographic proof chain
+# Warrant proves: "Key X delegated to Key Y for tool Z at time T"
+```
+
+### Honest Assessment: When NOT to Use Tenuo
+
+For single-process applications with trusted code and no delegation, Tenuo adds complexity without proportional benefit. Use simple authorization:
+
+```python
+# Good enough for trusted, single-process code
+ALLOWED_TOOLS = {"search", "read_file"}
+
+def authorize(tool: str):
+    if tool not in ALLOWED_TOOLS:
+        raise PermissionError(f"Tool {tool} not allowed")
+```
+
+Use Tenuo when you need:
+- **Delegation**: Granting subset of your authority to another agent/service
+- **Offline verification**: Recipient verifies without calling back to you
+- **LLM safety**: Cryptographic boundary prompt injection can't cross
+- **Audit**: Cryptographic proof of authorization chain
 
 ---
 
 ## Objective
 
-Reduce developer friction by adding convenience methods to `Warrant` without introducing a new abstraction layer.
+Reduce developer friction for the **delegation-centric** use cases where Tenuo provides real value. The API should make cryptographic delegation as easy as passing a token, while keeping the security properties visible.
+
+---
+
+## Complete Flow: From Root to Delegation
+
+Before diving into API tiers, here's the complete journey:
+
+### Step 1: Create Root Authority (Once, at system setup)
+
+```python
+from tenuo import Warrant, SigningKey, Pattern
+
+# Generate or load root key (keep this VERY secure)
+root_key = SigningKey.generate()
+# Or: root_key = SigningKey.from_env("TENUO_ROOT_KEY")
+
+# Create root warrant with explicit capabilities (POLA)
+root_warrant = (Warrant.builder()
+    .capability("search", {"query": Pattern("*")})
+    .capability("read_file", {"path": Pattern("/*")})
+    .capability("write_file", {"path": Pattern("/*")})
+    .capability("delete_file", {"path": Pattern("/*")})
+    .holder(root_key.public_key)
+    .ttl(86400 * 365)  # 1 year
+    .issue(root_key))
+
+# Store root_warrant.to_base64() securely
+```
+
+### Step 2: Delegate to Services/Agents (At runtime)
+
+```python
+# Service receives root_warrant (or a delegated warrant) + its own key
+service_key = SigningKey.from_env("SERVICE_KEY")
+service_warrant = Warrant.from_base64(os.environ["SERVICE_WARRANT"])
+
+# Delegate to a worker agent
+worker_key = SigningKey.generate()  # Or load from env
+worker_warrant = service_warrant.delegate(
+    key=service_key,        # YOU sign the delegation
+    to=worker_key.public_key,  # THEY receive it
+    allow=["search"],       # Subset of your authority
+    ttl=3600,              # 1 hour
+)
+
+# Send warrant to worker (they verify offline)
+await worker.run(warrant=worker_warrant.to_base64())
+```
+
+### Step 3: Worker Uses Warrant
+
+```python
+# Worker receives warrant, has their own key
+worker_key = SigningKey.from_env("WORKER_KEY")
+warrant = Warrant.from_base64(received_warrant_b64)
+
+# Make authorized API calls
+headers = warrant.auth_headers(worker_key, "search", {"query": "AI safety"})
+response = requests.post("https://api.example.com/search", headers=headers)
+```
+
+---
+
+## API Tiers: Complexity Proportional to Security Decision
+
+The API should match complexity to the security decision being made.
+
+### Tier 1: Simple Delegation (Most Common)
+
+```python
+# You have: your warrant + your key
+# You want: delegate subset to worker
+
+worker_warrant = my_warrant.delegate(
+    key=my_key,                # You sign
+    to=worker_public_key,      # They receive
+    allow=["search", "read_file"],
+    ttl=300,
+)
+```
+
+**Note:** `key` is required because delegation is cryptographic. You're signing a new warrant.
+
+### Tier 2: Constrained Delegation
+
+When you need to restrict HOW tools are used:
+
+```python
+from tenuo import Capability, Pattern, Range
+
+worker_warrant = my_warrant.delegate(
+    key=my_key,
+    to=worker_public_key,
+    allow=[
+        Capability("search", query=Pattern("*public*"), max_results=Range(max=50)),
+        Capability("read_file", path=Pattern("/data/public/*")),
+    ],
+    ttl=60,
+)
+```
+
+### Tier 3: Full Control (Rare)
+
+When you need explicit control over every warrant property:
+
+```python
+worker_warrant = (my_warrant.attenuate()
+    .capability("search", {"query": Pattern("*public*")})
+    .capability("read_file", {"path": Pattern("/data/*")})
+    .holder(worker_public_key)
+    .clearance(Clearance.EXTERNAL)
+    .ttl(60)
+    .terminal()  # Cannot delegate further
+    .delegate(my_key))
+```
+
+### Using Bound Keys (Optional Convenience)
+
+If you're doing many operations with the same key:
+
+```python
+# Bind once
+bound = my_warrant.bind_key(my_key)
+
+# Delegate without repeating key
+worker1 = bound.delegate(to=w1_key, allow=["search"])
+worker2 = bound.delegate(to=w2_key, allow=["read_file"])
+
+# HTTP headers without repeating key
+headers = bound.auth_headers("search", {"query": "test"})
+```
+
+### `configure()` for Context-Based Usage
+
+For LangChain/LangGraph apps that use `@lockdown` and `root_task()`, configure the issuer key once:
+
+```python
+from tenuo import configure, SigningKey
+
+# At app startup
+kp = SigningKey.from_env("TENUO_KEY")
+configure(issuer_key=kp)
+
+# Now @lockdown and root_task() can auto-create warrants
+@lockdown(tool="search")
+async def search(query): ...
+
+async with root_task(Capability("search")):
+    await search("test")  # Uses configured key internally
+```
+
+**When to use `configure()` vs explicit keys:**
+
+| Approach | Use When |
+|----------|----------|
+| `configure(issuer_key=...)` | Single-process apps with `@lockdown`/`root_task()` |
+| Explicit `key=...` in API calls | Multi-service delegation, explicit control |
+| `warrant.bind_key(key)` | Repeated operations with same key |
+
+**Note:** `configure()` sets a process-wide default. It doesn't prevent you from using explicit keys where needed.
+
+### Design Principle
+
+**API complexity should be proportional to the security decision:**
+
+| Decision | Complexity | API |
+|----------|------------|-----|
+| "Worker gets these tools" | Simple | `delegate(key=, to=, allow=["tool1", "tool2"])` |
+| "Worker gets these tools with constraints" | Medium | `delegate(..., allow=[Capability(...)])` |
+| "Custom warrant with specific properties" | Full | `attenuate().capability()...delegate()` |
+
+---
 
 ## Non-Goals
 
@@ -87,7 +368,7 @@ This is opt-in, not the default path.
 | Method | Returns | Status | Description |
 |--------|---------|--------|-------------|
 | `warrant.tools` | `list[str]` | ✅ Exists | List of authorized tools |
-| `warrant.trust_level` | `TrustLevel \| None` | ✅ Exists | Warrant's trust level |
+| `warrant.clearance` | `Clearance \| None` | ✅ Exists | Warrant's clearance level |
 | `warrant.depth` | `int` | ✅ Exists | Current delegation depth |
 | `warrant.max_depth` | `int` | ✅ Exists | Maximum delegation depth |
 | `warrant.issuer` | `PublicKey` | ✅ Exists | Who signed this warrant |
@@ -239,11 +520,11 @@ result = warrant.why_denied("read_file", {"path": "/data/report.pdf"})
 headers = warrant.auth_headers(key, "read_file", {"path": "/data/x.txt"})
 # {
 #   'X-Tenuo-Warrant': 'gwFZATSr...',
-#   'X-Tenuo-PoP': 'MEUCIQD...',
-#   'X-Tenuo-Tool': 'read_file'
+#   'X-Tenuo-PoP': 'MEUCIQD...'
 # }
 
-response = requests.post("https://gateway/invoke", headers=headers, json=args)
+
+response = requests.post("https://gateway/files/read", headers=headers, json={"path": "/data/x.txt"})
 ```
 
 ### 5. Key Binding (Optional)
@@ -252,10 +533,19 @@ For cases where passing `key` every time is tedious:
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `warrant.bind_key(key)` | `Warrant` | Returns warrant with key attached |
+| `warrant.bind_key(key)` | `Warrant` | Returns same warrant with key attached |
+| `warrant.unbind()` | `Warrant` | Returns same warrant with key removed |
+| `warrant.bound_key` | `SigningKey \| None` | Get the currently bound key (if any) |
+
+**Key binding behavior:**
+- `bind_key(key)` attaches a key for implicit use in `auth_headers()` calls
+- Calling `bind_key(new_key)` replaces the previously bound key
+- `unbind()` removes the bound key; you must pass `key` explicitly again
+- The warrant itself is unchanged - binding only affects convenience methods
+- You can always override the bound key by passing `key` explicitly
 
 ```python
-# Without binding (explicit, recommended)
+# Without binding (explicit, recommended for clarity)
 headers = warrant.auth_headers(key, "tool", args)
 
 # With binding (convenient for loops)
@@ -264,9 +554,16 @@ for item in items:
     headers = bound.auth_headers("process", {"item": item})  # No key needed
     requests.post(url, headers=headers)
 
+# Rebind to a different key
+bound = bound.bind_key(other_key)
+
+# Unbind to require explicit key again
+unbound = bound.unbind()
+headers = unbound.auth_headers(key, "tool", args)  # Must pass key
+
 # Key-bound warrant is still a Warrant (works everywhere)
-authorizer.verify(bound)  # ✅ Works
-bound.attenuate()         # ✅ Works
+authorizer.verify(bound)  # Works
+bound.attenuate()         # Works
 ```
 
 #### Implementation Note
@@ -306,7 +603,7 @@ Warrant Summary
 ───────────────────────────────────────────────────────
   Type:       Execution
   Tools:      read_file, search
-  Trust:      Internal
+  Clearance:  Internal
   TTL:        4m 32s remaining (expires 2025-12-19 15:30:00 UTC)
   Depth:      2 of 5 (can delegate 3 more times)
   Terminal:   No
@@ -370,6 +667,111 @@ headers = warrant.auth_headers(key, tool, args)
 
 ---
 
+## Testing Your Code
+
+### Unit Testing with Warrants
+
+```python
+import pytest
+from tenuo import Warrant, SigningKey, Capability, Pattern
+
+@pytest.fixture
+def test_keypair():
+    """Generate a fresh keypair for each test."""
+    return SigningKey.generate()
+
+@pytest.fixture
+def test_warrant(test_keypair):
+    """Create a test warrant with known capabilities."""
+    return (Warrant.builder()
+        .capability("search", {"query": Pattern("*")})
+        .capability("read_file", {"path": Pattern("/data/*")})
+        .holder(test_keypair.public_key)
+        .ttl(3600)
+        .issue(test_keypair))
+
+def test_search_authorized(test_warrant, test_keypair):
+    """Test that search tool is authorized."""
+    headers = test_warrant.auth_headers(test_keypair, "search", {"query": "test"})
+    assert "X-Tenuo-Warrant" in headers
+    assert "X-Tenuo-PoP" in headers
+
+def test_delete_not_authorized(test_warrant):
+    """Test that delete_file is NOT authorized."""
+    assert not test_warrant.can("delete_file")
+    result = test_warrant.why_denied("delete_file", {})
+    assert result.denied
+    assert result.reason == "tool_not_found"
+```
+
+### Testing with `@lockdown` and `root_task`
+
+```python
+import pytest
+from tenuo import configure, lockdown, root_task, Capability, SigningKey
+
+@pytest.fixture(autouse=True)
+def setup_tenuo():
+    """Configure Tenuo for each test."""
+    kp = SigningKey.generate()
+    configure(issuer_key=kp)
+    yield
+    # Cleanup happens automatically
+
+@lockdown(tool="search")
+async def search(query: str) -> list:
+    return [f"Result for {query}"]
+
+@pytest.mark.asyncio
+async def test_search_with_authority():
+    """Test that search works with proper authority."""
+    async with root_task(Capability("search")):
+        result = await search("test")
+        assert result == ["Result for test"]
+
+@pytest.mark.asyncio
+async def test_search_without_authority():
+    """Test that search fails without authority."""
+    with pytest.raises(Unauthorized):
+        await search("test")  # No root_task context
+```
+
+### Mocking Warrants (for Integration Tests)
+
+```python
+from unittest.mock import Mock, patch
+
+def test_api_with_mocked_warrant():
+    """Test API handler without real warrant verification."""
+    mock_warrant = Mock()
+    mock_warrant.can.return_value = True
+    mock_warrant.tools = ["search"]
+    
+    with patch("myapp.get_warrant_context", return_value=mock_warrant):
+        result = my_api_handler({"query": "test"})
+        assert result["status"] == "ok"
+```
+
+### Testing Delegation
+
+```python
+def test_delegation_narrows_scope(test_warrant, test_keypair):
+    """Test that delegation reduces capabilities."""
+    worker_key = SigningKey.generate()
+    
+    child = test_warrant.delegate(
+        key=test_keypair,
+        to=worker_key.public_key,
+        allow=["search"],  # Only search, not read_file
+        ttl=60,
+    )
+    
+    assert child.can("search")
+    assert not child.can("read_file")  # Was narrowed out
+```
+
+---
+
 ## Documentation Updates
 
 1. **Quickstart**: Rewrite examples to use `auth_headers()` instead of manual PoP construction
@@ -406,7 +808,7 @@ async def read_file(
     # ✓ Warrant authorizes "read_file" tool
     # ✓ Request args satisfy warrant constraints
     
-    print(f"Authorized by warrant (Trust: {ctx.warrant.trust_level})")
+    print(f"Authorized by warrant (Clearance: {ctx.warrant.clearance})")
     return {"content": open(request.path).read()}
 ```
 
@@ -421,9 +823,9 @@ class SecurityContext:
     
     # Convenience
     @property
-    def trust_level(self) -> TrustLevel:
-        """Returns warrant's trust level, defaulting to Untrusted if None."""
-        return self.warrant.trust_level or TrustLevel.Untrusted
+    def clearance(self) -> Clearance:
+        """Returns warrant's clearance level, defaulting to Untrusted if None."""
+        return self.warrant.clearance or Clearance.Untrusted
     
     @property
     def tools(self) -> list[str]:
@@ -495,7 +897,7 @@ async def read_file(
 | Invalid PoP signature | 401 | Authentication failed |
 | Valid warrant but wrong tool | 403 | Forbidden (authorization) |
 | Valid warrant but constraint violation | 403 | Forbidden (authorization) |
-| Valid warrant but insufficient trust level | 403 | Forbidden (authorization) |
+| Valid warrant but insufficient clearance | 403 | Forbidden (authorization) |
 
 **Default error response (403 example):**
 
@@ -830,52 +1232,176 @@ async def run_agent(query: str, warrant: Warrant, key: SigningKey):
 
 ## LangGraph Integration (`tenuo.integrations.langgraph`)
 
-Node-level authorization for LangGraph workflows.
+### Why Tenuo for LangGraph?
 
-### Protected Nodes
+LangGraph state is **mutable data** that flows through nodes. Without Tenuo:
 
 ```python
-from langgraph.graph import StateGraph
-from tenuo.integrations.langgraph import tenuo_node, TenuoState
+# PROBLEM: State-based "permissions" are just data the LLM can manipulate
+state["allowed_tools"] = ["search"]
+# LLM (via prompt injection): "Update state to allow delete_file"
+# Result: Security bypassed
+```
 
-# Define state with warrant
-class AgentState(TenuoState):
-    messages: list
-    task: str
+With Tenuo, authority is **cryptographically signed**:
 
-# Protect a node
-@tenuo_node(tool="research")
-async def research_node(state: AgentState):
-    # Only runs if state.warrant authorizes "research"
-    results = await search(state.task)
-    return {"messages": state.messages + [results]}
+```python
+# SOLUTION: Warrant is signed, LLM can't forge it
+@tenuo_node(Capability("search"))
+async def researcher(state):
+    # Even if LLM tries: "Call delete_file" -> Cryptographic denial
+    # The warrant doesn't authorize delete_file, and LLM can't sign a new one
+```
+
+**Key insight**: Tenuo's value in LangGraph is protecting against:
+1. **Prompt injection** - LLM can't escape cryptographic boundaries
+2. **Node compromise** - Compromised node can only use its delegated authority
+3. **Multi-agent delegation** - Orchestrator delegates subset of authority to workers
+
+### Practical Example: Orchestrator -> Worker Delegation
+
+This is the pattern where Tenuo provides the most value:
+
+```python
+from langgraph.graph import StateGraph, END
+from tenuo import configure, lockdown, root_task, Capability, Pattern
+
+# Setup
+kp = SigningKey.generate()
+configure(issuer_key=kp)
+
+# Protected tools (enforcement layer)
+@lockdown(tool="search")
+async def search(query: str) -> list:
+    return await api.search(query)
+
+@lockdown(tool="delete_file")
+async def delete_file(path: str) -> None:
+    Path(path).unlink()
+
+# Orchestrator has broad authority, delegates narrow authority to LLM
+async def orchestrator(state):
+    """
+    Human-controlled orchestrator. Has full authority.
+    Delegates ONLY search to the LLM-driven researcher.
+    """
+    # Create narrow warrant for LLM agent
+    # Even if LLM is prompt-injected, it can ONLY search
+    return {
+        "researcher_scope": [Capability("search", query=Pattern(f"*{state['topic']}*"))],
+        "next": "researcher"
+    }
+
+@tenuo_node(Capability("search"))  # Scoped to search only
+async def researcher(state):
+    """
+    LLM-driven node. Has narrow, cryptographically-enforced authority.
+    Cannot call delete_file even if prompt-injected.
+    """
+    results = await search(state["query"])
+    # await delete_file("/important")  # DENIED - not in warrant
+    return {"results": results}
 
 # Build graph
-graph = StateGraph(AgentState)
-graph.add_node("research", research_node)
-graph.add_node("summarize", summarize_node)
-graph.add_edge("research", "summarize")
+graph = StateGraph(dict)
+graph.add_node("orchestrator", orchestrator)
+graph.add_node("researcher", researcher)
+graph.add_edge("orchestrator", "researcher")
+graph.add_edge("researcher", END)
+
+# Run with root authority
+async with root_task(Capability("search"), Capability("delete_file")):
+    # Root has both capabilities
+    # But researcher only gets search (cryptographically enforced)
+    result = await graph.compile().ainvoke({"topic": "AI safety", "query": "AI safety papers"})
 ```
 
-### `TenuoState` Base Class
+**What this protects against:**
+- Prompt injection telling LLM to "delete all files" - cryptographic denial
+- Researcher node code modified to call delete_file - cryptographic denial
+- State manipulation to add delete_file - warrant is signed, can't be modified
+
+### The Two-Layer Security Model (Important!)
+
+Tenuo uses TWO layers for LangGraph security:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  LAYER 1: SCOPING (@tenuo_node)                             │
+│  - Narrows the warrant BEFORE tool calls                    │
+│  - "This node can only use search"                          │
+│  - Defense in depth: limits what's even possible            │
+├─────────────────────────────────────────────────────────────┤
+│  LAYER 2: ENFORCEMENT (@lockdown)                           │
+│  - Checks warrant at EACH tool call                         │
+│  - "Is this specific call authorized?"                      │
+│  - The actual security gate                                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Why two layers?**
+
+| Scenario | @tenuo_node only | @lockdown only | Both |
+|----------|------------------|----------------|------|
+| Node tries unauthorized tool | ❌ No check | ✅ Denied | ✅ Denied |
+| Tool called from wrong node | ✅ Scoped out | ❌ Might allow | ✅ Denied |
+| Direct tool import bypass | ❌ No protection | ✅ Denied | ✅ Denied |
+
+**Simple rule**: Use `@lockdown` on ALL tools. Use `@tenuo_node` on nodes that need scoping.
 
 ```python
-class TenuoState(TypedDict):
-    """Base state that carries warrant context through the graph."""
-    warrant: Warrant | None
-    # NOTE: We do NOT store signing_key in state (security risk)
+# Layer 2: Enforcement on tools (REQUIRED)
+@lockdown(tool="search")
+async def search(query: str): ...
+
+@lockdown(tool="delete_file")  
+async def delete_file(path: str): ...
+
+# Layer 1: Scoping on nodes (OPTIONAL, for defense in depth)
+@tenuo_node(Capability("search"))  # Can ONLY use search
+async def researcher(state):
+    await search(state["query"])  # OK
+    # await delete_file("/x")     # Denied by BOTH layers
 ```
 
-Your state extends this:
+### Simplest LangGraph Integration
+
+For most apps, you just need:
 
 ```python
-class MyState(TenuoState):
-    messages: list
-    current_task: str
-    results: dict
+from tenuo import configure, lockdown, root_task, Capability, SigningKey
+
+# 1. Setup (once at startup)
+kp = SigningKey.generate()
+configure(issuer_key=kp)
+
+# 2. Protect tools
+@lockdown(tool="search")
+async def search(query: str) -> list:
+    return await api.search(query)
+
+# 3. Define nodes (no @tenuo_node needed for simple cases)
+async def researcher(state):
+    return {"results": await search(state["query"])}
+
+# 4. Build graph normally
+graph = StateGraph(dict)
+graph.add_node("researcher", researcher)
+# ...
+
+# 5. Run with authority
+async with root_task(Capability("search")):
+    result = await graph.compile().ainvoke({"query": "test"})
 ```
+
+Add `@tenuo_node` when you need per-node scoping (defense in depth).
 
 ### Key Management in LangGraph
+
+> **Note**: For most use cases, `configure(issuer_key=...)` with a single shared key is sufficient. Per-node keys (KeyRegistry) are only needed for:
+> - Multi-organization workflows (different orgs sign with different keys)
+> - Audit requirements (cryptographic attribution per node)
+> - Blast radius containment (compromised node can't sign as another)
 
 > ⚠️ **Security Warning**: Never pass `SigningKey` through graph state. Keys could be logged, serialized, or leaked.
 
@@ -1019,10 +1545,10 @@ For dynamic key selection:
 ```python
 def get_key_for_node(node_name: str, state: TenuoState) -> SigningKey:
     """Dynamic key selection based on context."""
-    if state.warrant.trust_level >= TrustLevel.Privileged:
-        return high_trust_key
+    if state.warrant.clearance >= Clearance.PRIVILEGED:
+        return high_clearance_key
     else:
-        return low_trust_key
+        return low_clearance_key
 
 graph = TenuoGraph(
     state_schema=AgentState,
@@ -1073,13 +1599,13 @@ from tenuo.integrations.langgraph import TenuoGraph
 graph = TenuoGraph(
     state_schema=AgentState,
     authorizer=authorizer,
-    # Require minimum trust level for entire graph
-    min_trust_level=TrustLevel.Internal,
+    # Require minimum clearance for entire graph
+    min_clearance=Clearance.INTERNAL,
 )
 
 # Or per-node requirements
 graph.add_node("research", research_node, requires_tool="search")
-graph.add_node("write", write_node, requires_trust=TrustLevel.Privileged)
+graph.add_node("write", write_node, requires_clearance=Clearance.PRIVILEGED)
 ```
 
 ### Conditional Edges with Authorization
@@ -1178,6 +1704,7 @@ result = await app.ainvoke({
 | Add `auth_headers(key, tool, args)` method | `warrant_ext.py` | 2h |
 | Add `sign_request(key, tool, args)` method | `warrant_ext.py` | 1h |
 | Add `bind_key(key)` returning key-bound warrant | `warrant_ext.py` | 2h |
+| Add `delegate(to, allow, ttl)` convenience method | `warrant_ext.py` | 3h |
 | Unit tests for all methods | `tests/test_warrant_convenience.py` | 4h |
 | Update API reference documentation | `docs/api-reference.md` | 2h |
 

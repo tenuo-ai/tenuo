@@ -48,7 +48,7 @@
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Trust Levels | 📋 Design | Enforcement opt-in (data model exists) |
+| Clearance Levels | 📋 Design | Enforcement opt-in (data model exists) |
 | Multi-sig approvals | 📋 Planned | M-of-N for sensitive actions |
 | Cascading revocation | 📋 Planned | Surgical or nuclear revocation |
 | `tenuo-mcp` package | 📋 Planned | Standalone MCP server wrapper |

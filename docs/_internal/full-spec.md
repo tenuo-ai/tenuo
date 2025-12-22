@@ -15,7 +15,7 @@
 5. [Quick Start](#5-quick-start)
 6. [Warrant Model](#6-warrant-model)
 7. [Constraints](#7-constraints)
-8. [Trust Levels](#8-trust-levels)
+8. [Clearance Levels](#8-clearance-levels)
 9. [Attenuation API](#9-attenuation-api)
 10. [Issuer API](#10-issuer-api)
 11. [Authorizer](#11-authorizer)
@@ -177,7 +177,7 @@ One line for common orchestration patterns.
 **Tier 3: Full Control**
 
 ```python
-from tenuo import Warrant, ConstraintSet, Pattern, Range, TrustLevel
+from tenuo import Warrant, ConstraintSet, Pattern, Range, Clearance
 
 # Complex orchestration with full control
 cs = ConstraintSet()
@@ -187,7 +187,7 @@ cs.insert("max_results", Range(max=100))
 child = (parent.attenuate()
     .capability("read_file", cs)
     .capability("search", cs)
-    .trust_level(TrustLevel.EXTERNAL)
+    .clearance(Clearance.EXTERNAL)
     .ttl(300)
     .intent("Research task for user query")
     .max_depth(1)  # Allow one more delegation
@@ -230,7 +230,7 @@ execution_warrant = Warrant(
     holder=worker_pubkey,
     tool="read_file",
     constraints={"path": Exact("/data/q3.pdf")},
-    trust_level=TrustLevel.EXTERNAL,  # Optional
+    clearance=Clearance.EXTERNAL,  # Optional
     ttl_seconds=60,
     max_depth=0,  # Terminal
 )
@@ -245,7 +245,7 @@ issuer_warrant = Warrant(
     type=WarrantType.ISSUER,
     holder=planner_pubkey,
     issuable_tools=["read_file", "send_email", "query_database"],
-    trust_level=TrustLevel.INTERNAL,
+    clearance=Clearance.INTERNAL,
     max_issue_depth=1,
 )
 ```
@@ -255,7 +255,7 @@ This enables CaMeL-style architectures where P-LLM (privileged, never sees untru
 ### Monotonicity
 
 Both types enforce monotonicity:
-- **Issuers**: Can only issue within `issuable_tools` and their own `trust_level`
+- **Issuers**: Can only issue within `issuable_tools` and their own `clearance`
 - **Executors**: Can only attenuate (narrow), never expand
 
 ### Wire Structure (Current Implementation)
@@ -286,7 +286,7 @@ Warrant {
     constraint_bounds: ConstraintSet (optional - limits on issued constraints)
     
     # Common
-    trust_level: TrustLevel (optional)
+    clearance: Clearance (optional)
     issued_at: timestamp (seconds since epoch)
     expires_at: timestamp (seconds since epoch)
     max_depth: int
@@ -448,13 +448,13 @@ def verify_issuance(issuer_link: ChainLink, child: Warrant):
             f"Issuable: {issuable}"
         )
     
-    # 2. Trust must be at or below ceiling
-    if child.trust_level is not None:
-        ceiling = issuer_link.issuer_trust or TrustLevel.SYSTEM
-        if child.trust_level > ceiling:
-            raise TrustCeilingExceeded(
+    # 2. Clearance must be at or below ceiling
+    if child.clearance is not None:
+        ceiling = issuer_link.issuer_clearance or Clearance.SYSTEM
+        if child.clearance > ceiling:
+            raise ClearanceCeilingExceeded(
                 f"Issuer ceiling is {ceiling.name}, "
-                f"child has {child.trust_level.name}"
+                f"child has {child.clearance.name}"
             )
     
     # 3. Constraint bounds must be satisfied
@@ -492,13 +492,13 @@ def verify_execution_attenuation(issuer_link: ChainLink, child: Warrant):
                 f"Parent: {parent_constraint}, Child: {child_constraint}"
             )
     
-    # 3. Trust must be at or below parent (can only demote)
-    if child.trust_level is not None:
-        parent_trust = issuer_link.issuer_trust or TrustLevel.SYSTEM
-        if child.trust_level > parent_trust:
+    # 3. Clearance must be at or below parent (can only demote)
+    if child.clearance is not None:
+        parent_clearance = issuer_link.issuer_clearance or Clearance.SYSTEM
+        if child.clearance > parent_clearance:
             raise MonotonicityViolation(
-                f"Trust escalation: parent={parent_trust.name}, "
-                f"child={child.trust_level.name}"
+                f"Clearance escalation: parent={parent_clearance.name}, "
+                f"child={child.clearance.name}"
             )
 
 
@@ -570,7 +570,7 @@ def serialize_for_signing(warrant: Warrant) -> bytes:
     ).encode('utf-8')
 ```
 
-**Important**: Warrants contain no floats (timestamps are integers, trust levels are integers). This avoids the most common cross-language JSON disagreements.
+**Important**: Warrants contain no floats (timestamps are integers, clearance levels are integers). This avoids the most common cross-language JSON disagreements.
 
 #### Raw Bytes Passthrough (PoP, Chain Links)
 
@@ -825,12 +825,12 @@ warrant.extension("com.example.trace_id", b"abc123")
 
 ---
 
-## 8. Trust Levels
+## 8. Clearance Levels
 
 Provenance classification. **Fully opt-in.**
 
 ```python
-class TrustLevel(IntEnum):
+class Clearance(IntEnum):
     UNTRUSTED = 0      # Anonymous
     EXTERNAL = 10      # Authenticated external user
     PARTNER = 20       # Third-party integration
@@ -863,14 +863,14 @@ tenuo.config.enforce_trust = True
 # -> Scope + trust checks. Missing context = UNTRUSTED = denied.
 ```
 
-### Trust Calculation (When Enabled)
+### Clearance Calculation (When Enabled)
 
-**Effective trust = `min(warrant.trust_level, context.trust_level)`**
+**Effective clearance = `min(warrant.clearance, context.clearance)`**
 
 ```python
-def effective_trust(warrant: Warrant, context: AuthorizationContext) -> TrustLevel:
-    warrant_trust = warrant.trust_level or TrustLevel.SYSTEM      # Default: SYSTEM
-    context_trust = context.trust_level or TrustLevel.UNTRUSTED   # Default: UNTRUSTED
+def effective_clearance(warrant: Warrant, context: AuthorizationContext) -> Clearance:
+    warrant_clearance = warrant.clearance or Clearance.SYSTEM      # Default: SYSTEM
+    context_clearance = context.clearance or Clearance.UNTRUSTED   # Default: UNTRUSTED
     return min(warrant_trust, context_trust)
 ```
 
@@ -878,17 +878,17 @@ def effective_trust(warrant: Warrant, context: AuthorizationContext) -> TrustLev
 
 | Missing Value | Default | Rationale                                                                   |
 |---------------|---------|-----------------------------------------------------------------------------|
-| `warrant.trust_level = None` | SYSTEM | Backward compatible                                                         |
-| `context.trust_level = None` | **UNTRUSTED** | Forces ingress to set trust explicitly                                      |
-| Tool not in requirements | `config.default_tool_trust` (INTERNAL) | Unknown tools need internal                                                 |
+| `warrant.clearance = None` | SYSTEM | Backward compatible                                                         |
+| `context.clearance = None` | **UNTRUSTED** | Forces ingress to set clearance explicitly                                      |
+| Tool not in requirements | `config.default_tool_clearance` (INTERNAL) | Unknown tools need internal                                                 |
 
 **Why UNTRUSTED for missing context?**
 
 Security-first. If you enable trust enforcement but forget to wire ingress, requests fail rather than silently succeeding with SYSTEM trust.
 
 ```python
-# When enforce_trust=True, without middleware:
-# context.trust_level = None -> effective = UNTRUSTED
+# When enforce_clearance=True, without middleware:
+# context.clearance = None -> effective = UNTRUSTED
 # Most tools require INTERNAL+ -> DENIED
 
 # Forces you to add this once at ingress:
@@ -904,20 +904,20 @@ async def trust_middleware(request: Request, call_next):
 Trust can only **decrease**, never increase:
 
 ```python
-def trust(self, level: TrustLevel) -> Attenuator:
-    parent_trust = self._parent.trust_level or TrustLevel.SYSTEM
-    if level > parent_trust:
+def clearance(self, level: Clearance) -> Attenuator:
+    parent_clearance = self._parent.clearance or Clearance.SYSTEM
+    if level > parent_clearance:
         raise MonotonicityViolation(
-            f"Cannot raise trust from {parent_trust.name} to {level.name}"
+            f"Cannot raise clearance from {parent_clearance.name} to {level.name}"
         )
-    self._trust_level = level
+    self._clearance = level
     return self
 ```
 
-### Trust in Authorization (When Enabled)
+### Clearance in Authorization (When Enabled)
 
 ```python
-def check_trust(warrant, tool, context) -> TrustResult:
+def check_clearance(warrant, tool, context) -> ClearanceResult:
     # Skip entirely if not enforcing
     if not config.enforce_trust:
         return TrustResult(passed=True, skipped=True)
@@ -930,7 +930,7 @@ def check_trust(warrant, tool, context) -> TrustResult:
             passed=False,
             required=required,
             effective=effective,
-            demoted_by_context=(context.trust_level < warrant.trust_level),
+            demoted_by_context=(context.clearance < warrant.clearance),
         )
     return TrustResult(passed=True)
 ```
@@ -955,15 +955,15 @@ Trust is determined by **infrastructure** at request ingress:
 
 ```python
 @app.middleware("http")
-async def trust_middleware(request: Request, call_next):
+async def clearance_middleware(request: Request, call_next):
     if request.source_ip in INTERNAL_CIDR:
-        trust = TrustLevel.INTERNAL
+        clearance = Clearance.INTERNAL
     elif request.is_authenticated:
-        trust = TrustLevel.EXTERNAL
+        clearance = Clearance.EXTERNAL
     else:
-        trust = TrustLevel.UNTRUSTED
+        clearance = Clearance.UNTRUSTED
     
-    set_trust_context(trust)
+    set_clearance_context(clearance)
     return await call_next(request)
 ```
 
@@ -1016,7 +1016,7 @@ builder = parent_warrant.narrow()     # Same thing
 ### Trust
 
 ```python
-.trust(TrustLevel.INTERNAL)  # Explicit demotion (can only lower)
+.clearance(Clearance.INTERNAL)  # Explicit demotion (can only lower)
 ```
 
 ### Metadata
@@ -1131,8 +1131,8 @@ issuer_warrant = Warrant.issue_issuer(
     # What tools can this issuer grant?
     issuable_tools=["read_file", "send_email", "query_db"],
     
-    # Set the issuer's trust level (issued warrants can't exceed this)
-    trust_level=TrustLevel.INTERNAL,
+    # Set the issuer's clearance (issued warrants can't exceed this)
+    clearance=Clearance.INTERNAL,
     
     # How many levels of delegation can issued warrants have?
     max_issue_depth=1,
@@ -1190,7 +1190,7 @@ execution_warrant = issuer_warrant.issue_execution(
     holder=executor_pubkey,
     tool="read_file",
     constraints={"path": Exact("/data/q3.pdf")},
-    trust_level=TrustLevel.EXTERNAL,
+    clearance=Clearance.EXTERNAL,
     ttl_seconds=60,
     terminal=True,
     intent="Read Q3 report for summarization",
@@ -1210,12 +1210,12 @@ def validate_issue(issuer: Warrant, issued: Warrant):
             f"Issuable: {issuer.issuable_tools}"
         )
     
-    # 2. Trust level must be monotonic (can't exceed issuer's trust level)
-    if issued.trust_level and issuer.trust_level:
-        if issued.trust_level > issuer.trust_level:
-            raise TrustLevelExceeded(
-                f"Issuer has {issuer.trust_level.name}, "
-                f"issued {issued.trust_level.name}"
+    # 2. Clearance must be monotonic (can't exceed issuer's clearance)
+    if issued.clearance and issuer.clearance:
+        if issued.clearance > issuer.clearance:
+            raise ClearanceLevelExceeded(
+                f"Issuer has {issuer.clearance.name}, "
+                f"issued {issued.clearance.name}"
             )
     
     # 3. Constraints must satisfy bounds
@@ -1275,7 +1275,7 @@ result = authorizer.check(
     pop=pop_signature,
     context=AuthorizationContext(
         request_id="req-123",
-        trust_level=TrustLevel.EXTERNAL,  # Optional
+        clearance=Clearance.EXTERNAL,  # Optional
     ),
 )
 ```
@@ -2109,7 +2109,7 @@ These errors mean the **request source isn't trusted enough**, even if the warra
 
 | Error | Message Template | Cause |
 |-------|------------------|-------|
-| `TrustLevelInsufficient` | `Trust Violation: Effective trust {effective} < required {required} for tool '{tool}'` | Request provenance too low |
+| `InsufficientClearance` | `Clearance Violation: Effective clearance {effective} < required {required} for tool '{tool}'` | Request provenance too low |
 
 **Example:**
 ```
@@ -2161,7 +2161,7 @@ All authorization events as structured JSON:
   "session_id": "sess_task123",
   "tool": "read_file",
   "args": {"path": "/data/alpha/report.csv"},
-  "trust_level": "EXTERNAL",
+  "clearance": "EXTERNAL",
   "@timestamp": "2024-01-15T10:30:00Z"
 }
 ```
@@ -2190,7 +2190,7 @@ Exact, Pattern, Regex, OneOf, NotOneOf, Range, Wildcard
 Authorizer, AuthorizationContext, AuthorizationResult
 
 # Trust
-TrustLevel
+Clearance
 
 # Revocation
 SignedRevocationList, RevocationManager
@@ -2303,7 +2303,7 @@ compiled.validate()  # Check for incompatible extraction sources
 | Pass-through controls (TENUO_ALLOW_PASSTHROUGH)                         | [SHIPPED] |
 | **Runtime**                                                             |           |
 | Authorizer                                                              | [SHIPPED] |
-| TrustLevel (data model, enforcement opt-in)                             | [SHIPPED] |
+| Clearance (data model, enforcement opt-in)                             | [SHIPPED] |
 | DelegationDiff / DelegationReceipt                                      | [SHIPPED] |
 | Middleware patterns                                                     | [SHIPPED] |
 | **Python SDK**                                                          |           |
@@ -2365,7 +2365,7 @@ CaMeL is the architecture. Tenuo is the authorization primitive.
 - Cryptographic chain verification
 - Constraint types and evaluation
 - Attenuation rules
-- Trust level data model
+- Clearance level data model
 - Optional trust enforcement
 - Delegation receipts
 - PoP signatures

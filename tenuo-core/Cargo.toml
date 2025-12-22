@@ -33,6 +33,7 @@ data-plane = []
 
 # Python bindings
 python = ["pyo3"]
+python-extension = ["pyo3/extension-module", "python"]
 
 # Server features (adds HTTP/gRPC + structured logging dependencies)
 server = ["tokio", "axum", "tower", "tracing"]

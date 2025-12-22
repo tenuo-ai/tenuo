@@ -69,7 +69,7 @@ User Request --> [P-LLM Planner] -------------> [Q-LLM Executor] --> Tool Server
 
 ### Comparison
 
-| Component | Role | Capabilities | Trust Level |
+| Component | Role | Capabilities | Clearance Level |
 |-----------|------|--------------|-------------|
 | **P-LLM** | Planner | Issue warrants, Reason | `Privileged` / `Internal` |
 | **Q-LLM** | Executor | Execute tools (Terminal) | `Internal` / `External` |
@@ -83,7 +83,7 @@ User Request --> [P-LLM Planner] -------------> [Q-LLM Executor] --> Tool Server
 issuer_warrant = Warrant.issue_issuer(
     issuable_tools=["search", "read_file"],
     keypair=planner_kp,
-    trust_level=TrustLevel.Internal,  # Optional
+    clearance=Clearance.INTERNAL,  # Optional
 )
 
 # P-LLM creates execution warrant for Q-LLM
@@ -190,15 +190,15 @@ Trust flows down the chain. Each step creates a narrower scope of authority.
 └─────────────────────────────┘
 ```
 
-### Trust Levels (Optional Safety Net)
+### Clearance Levels (Optional Safety Net)
 
-Trust levels provide a **coarse-grained policy overlay** at the gateway. They're useful for:
+Clearance levels provide a **coarse-grained policy overlay** at the gateway. They're useful for:
 - Catching accidentally over-permissive warrants
-- Organizational policy enforcement ("all admin tools require System trust")
+- Organizational policy enforcement ("all admin tools require System clearance")
 - Quick kill-switches during incidents
 
 > [!NOTE]
-> Trust levels are **not a security boundary**. Capabilities and monotonicity provide that. Trust levels are an optional layer for operational convenience.
+> Clearance levels are **not a security boundary**. Capabilities and monotonicity provide that. Clearance levels are an optional layer for operational convenience.
 
 ---
 

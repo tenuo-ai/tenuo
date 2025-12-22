@@ -174,6 +174,7 @@ def main():
     
     # Create another delegation from child
     builder2 = child_warrant.attenuate_builder()
+    builder2.inherit_all()  # POLA: inherit all capabilities from parent
     builder2.ttl(30)  # Further reduce TTL
     builder2.intent("Final read before expiration")
     

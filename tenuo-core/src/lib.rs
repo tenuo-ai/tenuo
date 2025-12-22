@@ -94,8 +94,8 @@ pub use wire::MAX_WARRANT_SIZE;
 
 // Re-export diff types
 pub use diff::{
-    ChangeType, ConstraintDiff, DelegationDiff, DelegationReceipt, DepthDiff, ToolsDiff, TrustDiff,
-    TtlDiff,
+    ChangeType, ClearanceDiff, ConstraintDiff, DelegationDiff, DelegationReceipt, DepthDiff,
+    ToolsDiff, TtlDiff,
 };
 
 /// Maximum delegation depth to prevent unbounded chains (protocol-level hard cap).

@@ -13,10 +13,10 @@ use crate::crypto::{
     PublicKey as RustPublicKey, Signature as RustSignature, SigningKey as RustSigningKey,
 };
 use crate::diff::{
-    ChangeType as RustChangeType, ConstraintDiff as RustConstraintDiff,
-    DelegationDiff as RustDelegationDiff, DelegationReceipt as RustDelegationReceipt,
-    DepthDiff as RustDepthDiff, ToolsDiff as RustToolsDiff, TrustDiff as RustTrustDiff,
-    TtlDiff as RustTtlDiff,
+    ChangeType as RustChangeType, ClearanceDiff as RustClearanceDiff,
+    ConstraintDiff as RustConstraintDiff, DelegationDiff as RustDelegationDiff,
+    DelegationReceipt as RustDelegationReceipt, DepthDiff as RustDepthDiff,
+    ToolsDiff as RustToolsDiff, TtlDiff as RustTtlDiff,
 };
 use crate::mcp::{CompiledMcpConfig, McpConfig};
 use crate::planes::{
@@ -24,7 +24,7 @@ use crate::planes::{
     ChainVerificationResult as RustChainVerificationResult,
 };
 use crate::warrant::{
-    OwnedAttenuationBuilder, OwnedIssuanceBuilder, TrustLevel, Warrant as RustWarrant, WarrantType,
+    Clearance, OwnedAttenuationBuilder, OwnedIssuanceBuilder, Warrant as RustWarrant, WarrantType,
 };
 use crate::wire;
 use pyo3::exceptions::{PyRuntimeError, PyValueError};
@@ -209,9 +209,9 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
             }
 
             // Issuance errors
-            crate::error::Error::TrustLevelExceeded { requested, ceiling } => (
-                "TrustLevelExceeded",
-                PyTuple::new(py, [requested.as_str(), ceiling.as_str()]),
+            crate::error::Error::ClearanceLevelExceeded { requested, limit } => (
+                "ClearanceLevelExceeded",
+                PyTuple::new(py, [requested.as_str(), limit.as_str()]),
             ),
             crate::error::Error::UnauthorizedToolIssuance { tool, allowed } => (
                 "UnauthorizedToolIssuance",
@@ -339,7 +339,7 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                 "DelegationAuthorityError",
                 PyTuple::new(py, [expected.as_str(), actual.as_str()]),
             ),
-            crate::error::Error::InsufficientTrustLevel {
+            crate::error::Error::InsufficientClearance {
                 tool,
                 required,
                 actual,
@@ -348,7 +348,7 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                 PyTuple::new(
                     py,
                     [&format!(
-                        "insufficient trust level for tool '{}': requires {}, has {}",
+                        "insufficient clearance for tool '{}': requires {}, has {}",
                         tool, required, actual
                     )],
                 ),
@@ -1226,79 +1226,138 @@ impl PyWarrantType {
     fn __repr__(&self) -> String {
         format!("WarrantType.{:?}", self.inner)
     }
+
+    fn __richcmp__(&self, other: &Self, op: pyo3::basic::CompareOp) -> PyResult<bool> {
+        match op {
+            pyo3::basic::CompareOp::Eq => Ok(self.inner == other.inner),
+            pyo3::basic::CompareOp::Ne => Ok(self.inner != other.inner),
+            _ => Err(pyo3::exceptions::PyTypeError::new_err(
+                "Comparison not supported",
+            )),
+        }
+    }
+
+    #[classattr]
+    #[allow(non_snake_case)]
+    fn Execution() -> Self {
+        Self {
+            inner: WarrantType::Execution,
+        }
+    }
+
+    #[classattr]
+    #[allow(non_snake_case)]
+    fn Issuer() -> Self {
+        Self {
+            inner: WarrantType::Issuer,
+        }
+    }
 }
 
-/// Python enum for TrustLevel.
-#[pyclass(name = "TrustLevel")]
+/// Python class for Clearance.
+#[pyclass(name = "Clearance")]
 #[derive(Clone, Copy)]
-pub struct PyTrustLevel {
-    inner: TrustLevel,
+pub struct PyClearance {
+    inner: Clearance,
 }
 
 #[pymethods]
-impl PyTrustLevel {
+#[allow(non_snake_case)]
+impl PyClearance {
     #[new]
-    fn new(level: &str) -> PyResult<Self> {
-        let inner = level
-            .parse()
-            .map_err(|e: String| PyValueError::new_err(e))?;
-        Ok(Self { inner })
-    }
-
-    #[classattr]
-    #[allow(non_snake_case)]
-    fn Untrusted() -> Self {
-        Self {
-            inner: TrustLevel::Untrusted,
+    fn new(value: &Bound<'_, PyAny>) -> PyResult<Self> {
+        if let Ok(s) = value.extract::<String>() {
+            let inner = s.parse().map_err(|e: String| PyValueError::new_err(e))?;
+            Ok(Self { inner })
+        } else if let Ok(n) = value.extract::<u8>() {
+            Ok(Self {
+                inner: Clearance(n),
+            })
+        } else {
+            Err(PyValueError::new_err(
+                "Clearance must be initialized with a string name or integer (0-255)",
+            ))
         }
     }
 
     #[classattr]
-    #[allow(non_snake_case)]
-    fn External() -> Self {
+    fn UNTRUSTED() -> Self {
         Self {
-            inner: TrustLevel::External,
+            inner: Clearance::UNTRUSTED,
         }
     }
 
     #[classattr]
-    #[allow(non_snake_case)]
-    fn Partner() -> Self {
+    fn EXTERNAL() -> Self {
         Self {
-            inner: TrustLevel::Partner,
+            inner: Clearance::EXTERNAL,
         }
     }
 
     #[classattr]
-    #[allow(non_snake_case)]
-    fn Internal() -> Self {
+    fn PARTNER() -> Self {
         Self {
-            inner: TrustLevel::Internal,
+            inner: Clearance::PARTNER,
         }
     }
 
     #[classattr]
-    #[allow(non_snake_case)]
-    fn Privileged() -> Self {
+    fn INTERNAL() -> Self {
         Self {
-            inner: TrustLevel::Privileged,
+            inner: Clearance::INTERNAL,
         }
     }
 
     #[classattr]
-    #[allow(non_snake_case)]
-    fn System() -> Self {
+    fn PRIVILEGED() -> Self {
         Self {
-            inner: TrustLevel::System,
+            inner: Clearance::PRIVILEGED,
         }
     }
 
-    /// Get the numeric value of the trust level.
+    #[classattr]
+    fn SYSTEM() -> Self {
+        Self {
+            inner: Clearance::SYSTEM,
+        }
+    }
+
+    /// Get the numeric value of the clearance.
     fn value(&self) -> u8 {
-        self.inner as u8
+        self.inner.level()
     }
 
-    /// Compare trust levels numerically.
+    /// Get the numeric value of the clearance (alias for value()).
+    #[getter]
+    fn level(&self) -> u8 {
+        self.inner.level()
+    }
+
+    /// Check if this clearance meets or exceeds the requirement.
+    ///
+    /// More readable than `>=` for checking clearance requirements.
+    ///
+    /// Example:
+    ///     if warrant.clearance.meets(Clearance.INTERNAL):
+    ///         # clearance is INTERNAL or higher
+    fn meets(&self, required: &Self) -> bool {
+        self.inner.meets(required.inner)
+    }
+
+    /// Create a custom clearance level.
+    ///
+    /// Values 0-50 overlap with standard tiers; 51-255 are fully custom.
+    ///
+    /// Example:
+    ///     CONTRACTOR = Clearance.custom(15)  # Between External (10) and Partner (20)
+    #[staticmethod]
+    fn custom(level: u8) -> Self {
+        Self {
+            inner: Clearance::custom(level),
+        }
+    }
+
+    /// Compare clearance levels numerically.
     fn __ge__(&self, other: &Self) -> bool {
         self.inner >= other.inner
     }
@@ -1320,7 +1379,7 @@ impl PyTrustLevel {
     }
 
     fn __repr__(&self) -> String {
-        format!("TrustLevel.{:?}", self.inner)
+        format!("{}", self.inner)
     }
 }
 
@@ -1547,23 +1606,25 @@ impl PyTtlDiff {
     }
 }
 
-/// Python wrapper for TrustDiff.
-#[pyclass(name = "TrustDiff")]
+/// Python wrapper for ClearanceDiff.
+#[pyclass(name = "ClearanceDiff")]
 #[derive(Clone)]
-pub struct PyTrustDiff {
-    inner: RustTrustDiff,
+pub struct PyClearanceDiff {
+    inner: RustClearanceDiff,
 }
 
 #[pymethods]
-impl PyTrustDiff {
+impl PyClearanceDiff {
     #[getter]
-    fn parent_trust(&self) -> Option<PyTrustLevel> {
-        self.inner.parent_trust.map(|t| PyTrustLevel { inner: t })
+    fn parent_clearance(&self) -> Option<PyClearance> {
+        self.inner
+            .parent_clearance
+            .map(|c| PyClearance { inner: c })
     }
 
     #[getter]
-    fn child_trust(&self) -> Option<PyTrustLevel> {
-        self.inner.child_trust.map(|t| PyTrustLevel { inner: t })
+    fn child_clearance(&self) -> Option<PyClearance> {
+        self.inner.child_clearance.map(|c| PyClearance { inner: c })
     }
 
     #[getter]
@@ -1574,7 +1635,7 @@ impl PyTrustDiff {
     }
 
     fn __repr__(&self) -> String {
-        format!("TrustDiff(change={})", self.inner.change.as_str())
+        format!("ClearanceDiff(change={})", self.inner.change.as_str())
     }
 }
 
@@ -1665,9 +1726,9 @@ impl PyDelegationDiff {
     }
 
     #[getter]
-    fn trust(&self) -> PyTrustDiff {
-        PyTrustDiff {
-            inner: self.inner.trust.clone(),
+    fn clearance(&self) -> PyClearanceDiff {
+        PyClearanceDiff {
+            inner: self.inner.clearance.clone(),
         }
     }
 
@@ -1783,9 +1844,9 @@ impl PyDelegationReceipt {
     }
 
     #[getter]
-    fn trust(&self) -> PyTrustDiff {
-        PyTrustDiff {
-            inner: self.inner.trust.clone(),
+    fn clearance(&self) -> PyClearanceDiff {
+        PyClearanceDiff {
+            inner: self.inner.clearance.clone(),
         }
     }
 
@@ -1891,8 +1952,8 @@ impl PyAttenuationBuilder {
     }
 
     /// Set the trust level for the child warrant.
-    fn with_trust_level(&mut self, level: &PyTrustLevel) {
-        self.inner.set_trust_level(level.inner);
+    fn with_clearance(&mut self, level: &PyClearance) {
+        self.inner.set_clearance(level.inner);
     }
 
     /// Set the intent/purpose for this delegation (for audit trails).
@@ -1977,12 +2038,10 @@ impl PyAttenuationBuilder {
             .map(|pk| PyPublicKey { inner: pk.clone() })
     }
 
-    /// Get the configured trust level.
+    /// Get the configured clearance.
     #[getter]
-    fn trust_level(&self) -> Option<PyTrustLevel> {
-        self.inner
-            .trust_level()
-            .map(|tl| PyTrustLevel { inner: tl })
+    fn clearance(&self) -> Option<PyClearance> {
+        self.inner.clearance().map(|tl| PyClearance { inner: tl })
     }
 
     /// Get the configured intent.
@@ -2078,9 +2137,9 @@ impl PyIssuanceBuilder {
         Ok(())
     }
 
-    /// Set the trust level for the execution warrant.
-    fn with_trust_level(&mut self, level: &PyTrustLevel) {
-        self.inner.set_trust_level(level.inner);
+    /// Set the clearance for the execution warrant.
+    fn with_clearance(&mut self, level: &PyClearance) {
+        self.inner.set_clearance(level.inner);
     }
 
     /// Set TTL in seconds.
@@ -2176,12 +2235,10 @@ impl PyIssuanceBuilder {
             .map(|pk| PyPublicKey { inner: pk.clone() })
     }
 
-    /// Get the configured trust level.
+    /// Get the configured clearance.
     #[getter]
-    fn trust_level(&self) -> Option<PyTrustLevel> {
-        self.inner
-            .trust_level()
-            .map(|tl| PyTrustLevel { inner: tl })
+    fn clearance(&self) -> Option<PyClearance> {
+        self.inner.clearance().map(|tl| PyClearance { inner: tl })
     }
 
     /// Get the configured intent.
@@ -2227,14 +2284,14 @@ pub struct PyWarrant {
 impl PyWarrant {
     /// Issue a new warrant.
     #[staticmethod]
-    #[pyo3(signature = (keypair, capabilities=None, ttl_seconds=3600, holder=None, session_id=None, trust_level=None))]
+    #[pyo3(signature = (keypair, capabilities=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None))]
     fn issue(
         keypair: &PySigningKey,
         capabilities: Option<&Bound<'_, PyDict>>,
         ttl_seconds: u64,
         holder: Option<&PyPublicKey>,
         session_id: Option<&str>,
-        trust_level: Option<&PyTrustLevel>,
+        clearance: Option<&PyClearance>,
     ) -> PyResult<Self> {
         let mut builder = RustWarrant::builder().ttl(Duration::from_secs(ttl_seconds));
 
@@ -2257,9 +2314,9 @@ impl PyWarrant {
             }
         }
 
-        // Set trust level if provided
-        if let Some(tl) = trust_level {
-            builder = builder.trust_level(tl.inner);
+        // Set clearance if provided
+        if let Some(tl) = clearance {
+            builder = builder.clearance(tl.inner);
         }
 
         // If holder is provided, use it. Otherwise, default to the issuer (self-signed).
@@ -2282,7 +2339,7 @@ impl PyWarrant {
     /// Issuer warrants can issue execution warrants but cannot execute tools themselves.
     #[staticmethod]
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (issuable_tools, keypair, constraint_bounds=None, max_issue_depth=None, ttl_seconds=3600, holder=None, session_id=None, trust_level=None))]
+    #[pyo3(signature = (issuable_tools, keypair, constraint_bounds=None, max_issue_depth=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None))]
     fn issue_issuer(
         issuable_tools: Vec<String>,
         keypair: &PySigningKey,
@@ -2291,7 +2348,7 @@ impl PyWarrant {
         ttl_seconds: u64,
         holder: Option<&PyPublicKey>,
         session_id: Option<&str>,
-        trust_level: Option<&PyTrustLevel>,
+        clearance: Option<&PyClearance>,
     ) -> PyResult<Self> {
         let mut builder = RustWarrant::builder()
             .r#type(WarrantType::Issuer)
@@ -2302,9 +2359,9 @@ impl PyWarrant {
             builder = builder.max_issue_depth(depth);
         }
 
-        // Set trust level if provided
-        if let Some(tl) = trust_level {
-            builder = builder.trust_level(tl.inner);
+        // Set clearance if provided
+        if let Some(tl) = clearance {
+            builder = builder.clearance(tl.inner);
         }
 
         // If holder is provided, use it. Otherwise, default to the issuer (self-signed).
@@ -2351,6 +2408,13 @@ impl PyWarrant {
         Ok(PyIssuanceBuilder {
             inner: OwnedIssuanceBuilder::new(self.inner.clone()),
         })
+    }
+
+    /// Get the warrant type.
+    #[getter]
+    fn warrant_type(&self) -> PyWarrantType {
+        let wt = self.inner.r#type();
+        PyWarrantType { inner: wt }
     }
 
     /// Get the warrant ID.
@@ -2426,10 +2490,8 @@ impl PyWarrant {
 
     /// Get the trust level (optional, for audit/classification).
     #[getter]
-    fn trust_level(&self) -> Option<PyTrustLevel> {
-        self.inner
-            .trust_level()
-            .map(|tl| PyTrustLevel { inner: tl })
+    fn clearance(&self) -> Option<PyClearance> {
+        self.inner.clearance().map(|tl| PyClearance { inner: tl })
     }
 
     /// Check if the warrant has expired.
@@ -2509,14 +2571,14 @@ impl PyWarrant {
     ///
     /// The signing_key must be the holder of THIS warrant. The new warrant's
     /// holder defaults to the same key, but can be set with holder=.
-    #[pyo3(signature = (capabilities, signing_key, ttl_seconds=None, holder=None, trust_level=None))]
+    #[pyo3(signature = (capabilities, signing_key, ttl_seconds=None, holder=None, clearance=None))]
     fn attenuate(
         &self,
         capabilities: &Bound<'_, PyDict>,
         signing_key: &PySigningKey,
         ttl_seconds: Option<u64>,
         holder: Option<&PyPublicKey>,
-        trust_level: Option<&PyTrustLevel>,
+        clearance: Option<&PyClearance>,
     ) -> PyResult<PyWarrant> {
         let mut builder = self.inner.attenuate();
 
@@ -2545,10 +2607,9 @@ impl PyWarrant {
             builder = builder.capability(tool_name, constraint_set);
         }
 
-        // Note: TrustLevel on AttenuationBuilder requires mutable access
-        // For the Owned version, we need to use the set_ method
-        if trust_level.is_some() {
-            // Trust diff logic handled internally or via wrapper
+        // Note: Clearance on AttenuationBuilder requires mutable access
+        if let Some(c) = clearance {
+            builder = builder.clearance(c.inner);
         }
 
         let warrant = builder.build(&signing_key.inner).map_err(to_py_err)?;
@@ -2801,7 +2862,7 @@ impl PyExtractionResult {
         let auth_info = if self.warrant_base64.is_some() {
             " +auth"
         } else {
-            ""
+            " "
         };
         format!(
             "ExtractionResult(tool='{}', constraints={{...}}{})",
@@ -2830,6 +2891,16 @@ impl PyPublicKey {
 
     fn to_bytes(&self) -> Vec<u8> {
         self.inner.to_bytes().to_vec()
+    }
+
+    fn __richcmp__(&self, other: &Self, op: pyo3::basic::CompareOp) -> PyResult<bool> {
+        match op {
+            pyo3::basic::CompareOp::Eq => Ok(self.inner == other.inner),
+            pyo3::basic::CompareOp::Ne => Ok(self.inner != other.inner),
+            _ => Err(pyo3::exceptions::PyTypeError::new_err(
+                "Comparison not supported",
+            )),
+        }
     }
 
     fn __repr__(&self) -> String {
@@ -3057,18 +3128,18 @@ impl PyAuthorizer {
         self.inner.set_pop_window(window_secs, max_windows);
     }
 
-    /// Set minimum trust level required for a tool.
+    /// Set minimum clearance required for a tool.
     ///
     /// This is **gateway-level policy** for defense in depth. Even if a warrant
     /// has the tool in its capabilities, authorization will fail if the warrant's
-    /// trust level is below the requirement.
+    /// clearance is below the requirement.
     ///
     /// Args:
     ///     tool_pattern: Tool name or pattern. Supports:
     ///         - Exact match: "delete_database"
     ///         - Prefix pattern: "admin_*" (matches admin_users, admin_config)
     ///         - Default: "*" (applies to all tools without specific rules)
-    ///     level: Minimum TrustLevel required
+    ///     level: Minimum Clearance required
     ///
     /// Raises:
     ///     ValueError: If the pattern is invalid (e.g., "**", "*admin*")
@@ -3076,29 +3147,29 @@ impl PyAuthorizer {
     /// Example:
     ///     ```python
     ///     authorizer = Authorizer(trusted_roots=[root_key])
-    ///     authorizer.require_trust("*", TrustLevel.External)  # Default baseline
-    ///     authorizer.require_trust("delete_*", TrustLevel.Privileged)
-    ///     authorizer.require_trust("admin_reset", TrustLevel.System)
+    ///     authorizer.require_clearance("*", Clearance.EXTERNAL)  # Default baseline
+    ///     authorizer.require_clearance("delete_*", Clearance.PRIVILEGED)
+    ///     authorizer.require_clearance("admin_reset", Clearance.SYSTEM)
     ///     ```
-    fn require_trust(&mut self, tool_pattern: &str, level: &PyTrustLevel) -> PyResult<()> {
+    fn require_clearance(&mut self, tool: String, level: &PyClearance) -> PyResult<()> {
         self.inner
-            .require_trust(tool_pattern, level.inner)
+            .require_clearance(&tool, level.inner)
             .map_err(to_py_err)
     }
 
-    /// Get the required trust level for a tool.
+    /// Get the required clearance for a tool.
     ///
     /// Args:
     ///     tool: Tool name to check
     ///
     /// Returns:
-    ///     TrustLevel if a requirement is configured, None otherwise
+    ///     Clearance if a requirement is configured, None otherwise
     ///
     /// Lookup precedence: Exact match → Glob pattern → Default "*" → None
-    fn get_required_trust(&self, tool: &str) -> Option<PyTrustLevel> {
+    fn get_required_clearance(&self, tool: String) -> Option<PyClearance> {
         self.inner
-            .get_required_trust(tool)
-            .map(|tl| PyTrustLevel { inner: tl })
+            .get_required_clearance(&tool)
+            .map(|tl| PyClearance { inner: tl })
     }
 
     // =========================================================================
@@ -3299,7 +3370,7 @@ impl PyAuthorizer {
 /// This function is public so it can be called from tenuo-python package.
 pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyWarrantType>()?;
-    m.add_class::<PyTrustLevel>()?;
+    m.add_class::<PyClearance>()?;
     m.add_class::<PyPattern>()?;
     m.add_class::<PyExact>()?;
     m.add_class::<PyOneOf>()?;
@@ -3327,12 +3398,11 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyToolsDiff>()?;
     m.add_class::<PyConstraintDiff>()?;
     m.add_class::<PyTtlDiff>()?;
-    m.add_class::<PyTrustDiff>()?;
+    m.add_class::<PyClearanceDiff>()?;
     m.add_class::<PyDepthDiff>()?;
     m.add_class::<PyDelegationDiff>()?;
     m.add_class::<PyDelegationReceipt>()?;
     m.add_class::<PyWarrantType>()?;
-    m.add_class::<PyTrustLevel>()?;
     m.add_class::<PyMcpConfig>()?;
     m.add_class::<PyCompiledMcpConfig>()?;
     m.add_class::<PyAuthorizer>()?;

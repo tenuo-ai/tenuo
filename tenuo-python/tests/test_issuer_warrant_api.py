@@ -11,7 +11,7 @@ import pytest
 from tenuo import (
     Warrant,
     SigningKey,
-    TrustLevel,
+    Clearance,
     Pattern,
     Exact,
     Constraints,
@@ -33,7 +33,7 @@ class TestIssuerWarrantExists:
         
         issuer_warrant = Warrant.issue_issuer(
             issuable_tools=["read_file", "send_email"],
-            trust_level=TrustLevel.Internal,
+            clearance=Clearance.INTERNAL,
             keypair=issuer_kp,
             ttl_seconds=3600,
         )
@@ -52,7 +52,7 @@ class TestIssuerWarrantExists:
         
         issuer_warrant = Warrant.issue_issuer(
             issuable_tools=["read_file"],
-            trust_level=TrustLevel.Internal,
+            clearance=Clearance.INTERNAL,
             keypair=issuer_kp,
             holder=holder_kp.public_key,
             ttl_seconds=3600,
@@ -70,7 +70,7 @@ class TestIssueExecutionExists:
         
         issuer_warrant = Warrant.issue_issuer(
             issuable_tools=["read_file"],
-            trust_level=TrustLevel.Internal,
+            clearance=Clearance.INTERNAL,
             keypair=issuer_kp,
             ttl_seconds=3600,
         )
@@ -84,7 +84,7 @@ class TestIssueExecutionExists:
         
         issuer_warrant = Warrant.issue_issuer(
             issuable_tools=["read_file"],
-            trust_level=TrustLevel.Internal,
+            clearance=Clearance.INTERNAL,
             keypair=issuer_kp,
             ttl_seconds=3600,
         )
@@ -121,7 +121,7 @@ class TestIssueExecutionExists:
         # Step 1: Create issuer warrant
         issuer_warrant = Warrant.issue_issuer(
             issuable_tools=["read_file", "send_email"],
-            trust_level=TrustLevel.Internal,
+            clearance=Clearance.INTERNAL,
             keypair=issuer_kp,
             ttl_seconds=3600,
         )
@@ -301,7 +301,7 @@ class TestAttenuateBuilderToolSelection:
         # Create issuer warrant with all tools
         issuer_warrant = Warrant.issue_issuer(
             issuable_tools=["read_file", "send_email", "query_db"],
-            trust_level=TrustLevel.Internal,
+            clearance=Clearance.INTERNAL,
             keypair=issuer_kp,
             ttl_seconds=3600,
         )

@@ -9,9 +9,9 @@
 //! - **EXECUTION**: Can invoke specific tools with specific constraints. Used by
 //!   workers that execute actions.
 //!
-//! ## Trust Levels
+//! ## Clearance Levels
 //!
-//! Warrants have hierarchical trust levels (Untrusted=0 → System=50):
+//! Warrants have hierarchical clearance levels (Untrusted=0 → System=50):
 //! - **Untrusted** (0): Anonymous/unauthenticated entities
 //! - **External** (10): Authenticated external users
 //! - **Partner** (20): Third-party integrations
@@ -19,7 +19,7 @@
 //! - **Privileged** (40): Admin operations
 //! - **System** (50): Control plane
 //!
-//! Trust levels can only decrease during delegation, preventing privilege escalation.
+//! Clearance levels can only decrease during delegation, preventing privilege escalation.
 //!
 //! ## Core Components
 //!
@@ -40,6 +40,7 @@ use crate::approval::{AuditEvent, AuditEventType};
 use crate::audit::log_event;
 use crate::constraints::{Constraint, ConstraintSet, ConstraintValue};
 use crate::crypto::{PublicKey, Signature, SigningKey};
+use crate::diff::ClearanceDiff;
 use crate::error::{Error, Result};
 use crate::MAX_DELEGATION_DEPTH;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -70,46 +71,99 @@ pub enum WarrantType {
     Execution,
 }
 
-/// Trust level for warrants.
+/// Clearance level for warrants.
 ///
-/// Used to enforce trust boundaries in multi-tenant or multi-component systems.
-/// Issuers can only issue warrants with trust levels at or below their own `trust_level` (monotonicity).
+/// Used to enforce boundaries in multi-tenant or multi-component systems.
+/// Issuers can only issue warrants with clearance levels at or below their own `clearance` (monotonicity).
 ///
-/// Trust levels are ordered numerically, with higher values indicating greater trust.
-/// This allows for simple comparisons: `trust_level >= TrustLevel::INTERNAL`.
+/// Clearance levels are ordered numerically, with higher values indicating greater authority.
+/// This allows for simple comparisons: `clearance >= Clearance::INTERNAL`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[repr(u8)]
-#[serde(rename_all = "lowercase")]
-pub enum TrustLevel {
+#[repr(transparent)]
+#[serde(transparent)]
+pub struct Clearance(pub u8);
+
+impl Clearance {
     /// Untrusted - anonymous or unauthenticated entities (0).
-    Untrusted = 0,
+    pub const UNTRUSTED: Self = Self(0);
     /// External - authenticated external users (10).
-    External = 10,
+    pub const EXTERNAL: Self = Self(10);
     /// Partner - third-party integrations (20).
-    Partner = 20,
+    pub const PARTNER: Self = Self(20);
     /// Internal - internal services (30).
-    Internal = 30,
+    pub const INTERNAL: Self = Self(30);
     /// Privileged - admin-level access (40).
-    Privileged = 40,
-    /// System - control plane and highest trust (50).
-    System = 50,
+    pub const PRIVILEGED: Self = Self(40);
+    /// System - control plane and highest authority (50).
+    pub const SYSTEM: Self = Self(50);
+
+    /// Create a new custom clearance level.
+    ///
+    /// Values 0-50 overlap with standard tiers; 51-255 are fully custom.
+    ///
+    /// # Example
+    /// ```
+    /// use tenuo_core::Clearance;
+    ///
+    /// // Organization-specific levels
+    /// const CONTRACTOR: Clearance = Clearance::custom(15);  // Between External and Partner
+    /// const SENIOR_ENGINEER: Clearance = Clearance::custom(35);  // Between Internal and Privileged
+    ///
+    /// assert!(CONTRACTOR.meets(Clearance::EXTERNAL));  // 15 >= 10
+    /// assert!(!CONTRACTOR.meets(Clearance::PARTNER));  // 15 < 20
+    /// ```
+    pub const fn custom(level: u8) -> Self {
+        Self(level)
+    }
+
+    /// Alias for `custom()` - create a clearance level from a raw value.
+    pub const fn new(level: u8) -> Self {
+        Self(level)
+    }
+
+    /// Get the raw numeric value.
+    pub const fn level(&self) -> u8 {
+        self.0
+    }
+
+    /// Check if this clearance meets or exceeds the requirement.
+    pub fn meets(&self, required: Clearance) -> bool {
+        self.0 >= required.0
+    }
 }
 
-impl std::str::FromStr for TrustLevel {
+impl std::str::FromStr for Clearance {
     type Err = String;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "untrusted" => Ok(TrustLevel::Untrusted),
-            "external" => Ok(TrustLevel::External),
-            "partner" => Ok(TrustLevel::Partner),
-            "internal" => Ok(TrustLevel::Internal),
-            "privileged" => Ok(TrustLevel::Privileged),
-            "system" => Ok(TrustLevel::System),
-            _ => Err(format!(
-                "Invalid trust level: {}. Must be one of: 'untrusted', 'external', 'partner', 'internal', 'privileged', 'system'",
-                s
-            )),
+            "untrusted" => Ok(Clearance::UNTRUSTED),
+            "external" => Ok(Clearance::EXTERNAL),
+            "partner" => Ok(Clearance::PARTNER),
+            "internal" => Ok(Clearance::INTERNAL),
+            "privileged" => Ok(Clearance::PRIVILEGED),
+            "system" => Ok(Clearance::SYSTEM),
+            // Allow parsing integers (e.g. "25")
+            s => s.parse::<u8>().map(Clearance).map_err(|_| {
+                format!(
+                    "Invalid clearance: {}. Must be a named level or integer (0-255).",
+                    s
+                )
+            }),
+        }
+    }
+}
+
+impl std::fmt::Display for Clearance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            0 => write!(f, "Untrusted"),
+            10 => write!(f, "External"),
+            20 => write!(f, "Partner"),
+            30 => write!(f, "Internal"),
+            40 => write!(f, "Privileged"),
+            50 => write!(f, "System"),
+            n => write!(f, "Level({})", n),
         }
     }
 }
@@ -490,9 +544,9 @@ impl Warrant {
         self.payload.constraint_bounds.as_ref()
     }
 
-    /// Get trust level (optional, for audit/classification).
-    pub fn trust_level(&self) -> Option<TrustLevel> {
-        self.payload.trust_level
+    /// Get clearance (optional, for sensitivity enforcement).
+    pub fn clearance(&self) -> Option<Clearance> {
+        self.payload.clearance
     }
 
     /// Get when this warrant was issued.
@@ -930,7 +984,7 @@ pub struct WarrantBuilder {
     max_issue_depth: Option<u32>,
     constraint_bounds: ConstraintSet,
     // Common
-    trust_level: Option<TrustLevel>,
+    clearance: Option<Clearance>,
     ttl: Option<Duration>,
     max_depth: Option<u32>,
     session_id: Option<String>,
@@ -953,7 +1007,7 @@ impl WarrantBuilder {
             issuable_tools: None,
             max_issue_depth: None,
             constraint_bounds: ConstraintSet::new(),
-            trust_level: None,
+            clearance: None,
             ttl: None,
             max_depth: None,
             session_id: None,
@@ -972,8 +1026,8 @@ impl WarrantBuilder {
         self
     }
 
-    pub fn trust_level(mut self, level: TrustLevel) -> Self {
-        self.trust_level = Some(level);
+    pub fn clearance(mut self, level: Clearance) -> Self {
+        self.clearance = Some(level);
         self
     }
 
@@ -1213,7 +1267,7 @@ impl WarrantBuilder {
                 Some(self.constraint_bounds)
             },
 
-            trust_level: self.trust_level,
+            clearance: self.clearance,
             session_id: self.session_id,
             agent_id: self.agent_id,
             required_approvers: self.required_approvers,
@@ -1279,7 +1333,7 @@ pub struct AttenuationBuilder<'a> {
     max_issue_depth: Option<u32>,
     constraint_bounds: ConstraintSet,
     // Common fields
-    trust_level: Option<TrustLevel>,
+    clearance: Option<Clearance>,
     ttl: Option<Duration>,
     max_depth: Option<u32>,
     session_id: Option<String>,
@@ -1324,7 +1378,7 @@ impl<'a> AttenuationBuilder<'a> {
             issuable_tools,
             max_issue_depth,
             constraint_bounds,
-            trust_level: parent.payload.trust_level,
+            clearance: parent.payload.clearance,
             ttl: None,
             max_depth: None, // Will inherit from parent if not set
             session_id: parent.payload.session_id.clone(),
@@ -1426,11 +1480,11 @@ impl<'a> AttenuationBuilder<'a> {
         self
     }
 
-    /// Set the trust level (can only decrease from parent).
+    /// Set the clearance (can only decrease from parent).
     ///
-    /// Trust level monotonicity is enforced at build time.
-    pub fn trust_level(mut self, level: TrustLevel) -> Self {
-        self.trust_level = Some(level);
+    /// Clearance monotonicity is enforced at build time.
+    pub fn clearance(mut self, clearance: Clearance) -> Self {
+        self.clearance = Some(clearance);
         self
     }
 
@@ -1565,14 +1619,14 @@ impl<'a> AttenuationBuilder<'a> {
                     ));
                 }
 
-                // Trust level monotonicity: child trust_level cannot exceed parent's
-                if let (Some(parent_trust), Some(child_trust)) =
-                    (self.parent.payload.trust_level, self.trust_level)
+                // Clearance monotonicity: child clearance cannot exceed parent's
+                if let (Some(parent_clearance), Some(child_clearance)) =
+                    (self.parent.payload.clearance, self.clearance)
                 {
-                    if child_trust > parent_trust {
+                    if child_clearance > parent_clearance {
                         return Err(Error::MonotonicityViolation(format!(
-                            "trust_level cannot increase: parent {:?}, child {:?}",
-                            parent_trust, child_trust
+                            "clearance cannot increase: parent {:?}, child {:?}",
+                            parent_clearance, child_clearance
                         )));
                     }
                 }
@@ -1646,7 +1700,7 @@ impl<'a> AttenuationBuilder<'a> {
                 }
                 WarrantType::Execution => None,
             },
-            trust_level: self.trust_level,
+            clearance: self.clearance,
             issued_at: now_sec,
             expires_at,
             max_depth: effective_max
@@ -1737,7 +1791,7 @@ pub struct OwnedAttenuationBuilder {
     max_issue_depth: Option<u32>,
     constraint_bounds: ConstraintSet,
     // Common fields
-    trust_level: Option<TrustLevel>,
+    clearance: Option<Clearance>,
     ttl: Option<Duration>,
     max_depth: Option<u32>,
     session_id: Option<String>,
@@ -1781,7 +1835,7 @@ impl OwnedAttenuationBuilder {
             };
 
         Self {
-            trust_level: parent.payload.trust_level,
+            clearance: parent.payload.clearance,
             session_id: parent.payload.session_id.clone(),
             agent_id: parent.payload.agent_id.clone(),
             holder: Some(parent.payload.holder.clone()),
@@ -1858,8 +1912,8 @@ impl OwnedAttenuationBuilder {
     }
 
     /// Get the configured trust level.
-    pub fn trust_level(&self) -> Option<TrustLevel> {
-        self.trust_level
+    pub fn clearance(&self) -> Option<Clearance> {
+        self.clearance
     }
 
     /// Get the configured intent.
@@ -1956,9 +2010,9 @@ impl OwnedAttenuationBuilder {
         self.set_holder(public_key);
     }
 
-    /// Set the trust level for the child warrant.
-    pub fn set_trust_level(&mut self, level: TrustLevel) {
-        self.trust_level = Some(level);
+    /// Set the clearance for the child warrant.
+    pub fn set_clearance(&mut self, level: Clearance) {
+        self.clearance = Some(level);
     }
 
     /// Set the intent/purpose for this delegation.
@@ -2034,9 +2088,7 @@ impl OwnedAttenuationBuilder {
     ///
     /// This can be used to preview what will change before calling `build()`.
     pub fn diff(&self) -> crate::diff::DelegationDiff {
-        use crate::diff::{
-            ConstraintDiff, DelegationDiff, DepthDiff, ToolsDiff, TrustDiff, TtlDiff,
-        };
+        use crate::diff::{ConstraintDiff, DelegationDiff, DepthDiff, ToolsDiff, TtlDiff};
         use chrono::Utc;
         use std::collections::HashMap;
 
@@ -2099,8 +2151,8 @@ impl OwnedAttenuationBuilder {
         let child_ttl = self.ttl.map(|d| d.as_secs() as i64);
         let ttl = TtlDiff::new(Some(parent_remaining), child_ttl);
 
-        // Trust
-        let trust = TrustDiff::new(self.parent.trust_level(), self.trust_level);
+        // Clearance
+        let clearance = ClearanceDiff::new(self.parent.clearance(), self.clearance());
 
         // Depth
         let depth = DepthDiff::new(
@@ -2116,7 +2168,7 @@ impl OwnedAttenuationBuilder {
             tools,
             capabilities,
             ttl,
-            trust,
+            clearance,
             depth,
             intent: self.intent.clone(),
         }
@@ -2236,14 +2288,14 @@ impl OwnedAttenuationBuilder {
                     ));
                 }
 
-                // Trust level monotonicity: child trust_level cannot exceed parent's
-                if let (Some(parent_trust), Some(child_trust)) =
-                    (self.parent.payload.trust_level, self.trust_level)
+                // Clearance monotonicity: child clearance cannot exceed parent's
+                if let (Some(parent_clearance), Some(child_clearance)) =
+                    (self.parent.payload.clearance, self.clearance)
                 {
-                    if child_trust > parent_trust {
+                    if child_clearance > parent_clearance {
                         return Err(Error::MonotonicityViolation(format!(
-                            "trust_level cannot increase: parent {:?}, child {:?}",
-                            parent_trust, child_trust
+                            "clearance cannot increase: parent {:?}, child {:?}",
+                            parent_clearance, child_clearance
                         )));
                     }
                 }
@@ -2315,7 +2367,7 @@ impl OwnedAttenuationBuilder {
                 }
                 WarrantType::Execution => None,
             },
-            trust_level: self.trust_level,
+            clearance: self.clearance,
             issued_at: now_sec,
             expires_at,
             max_depth: effective_max.unwrap_or(MAX_DELEGATION_DEPTH) as u8,
@@ -2399,14 +2451,14 @@ impl OwnedAttenuationBuilder {
 /// This builder validates that the issued execution warrant complies with
 /// the issuer warrant's constraints:
 /// - Tool must be in `issuable_tools`
-/// - Trust level must be <= issuer's `trust_level` (monotonicity)
+/// - Clearance must be <= issuer's clearance (monotonicity)
 /// - Constraints must be within `constraint_bounds`
 /// - Depth must not exceed `max_issue_depth`
 #[derive(Debug)]
 pub struct IssuanceBuilder<'a> {
     issuer: &'a Warrant,
     tools: BTreeMap<String, ConstraintSet>,
-    trust_level: Option<TrustLevel>,
+    clearance: Option<Clearance>,
     ttl: Option<Duration>,
     max_depth: Option<u32>,
     session_id: Option<String>,
@@ -2423,7 +2475,7 @@ impl<'a> IssuanceBuilder<'a> {
         Self {
             issuer,
             tools: BTreeMap::new(),
-            trust_level: None,
+            clearance: None,
             ttl: None,
             max_depth: None,
             session_id: issuer.payload.session_id.clone(),
@@ -2453,11 +2505,9 @@ impl<'a> IssuanceBuilder<'a> {
         self.tool(tool, constraints)
     }
 
-    /// Set the trust level for the execution warrant.
-    ///
-    /// The trust level must be <= the issuer's `trust_level` (monotonicity).
-    pub fn trust_level(mut self, level: TrustLevel) -> Self {
-        self.trust_level = Some(level);
+    /// Set the clearance (optional).
+    pub fn clearance(mut self, clearance: Clearance) -> Self {
+        self.clearance = Some(clearance);
         self
     }
 
@@ -2522,7 +2572,7 @@ impl<'a> IssuanceBuilder<'a> {
     ///
     /// This validates:
     /// - Tool is in issuer's `issuable_tools`
-    /// - Trust level <= issuer's `trust_level` (monotonicity)
+    /// - Clearance <= issuer's clearance (monotonicity)
     /// - Constraints are within issuer's `constraint_bounds`
     /// - Depth doesn't exceed issuer's `max_issue_depth`
     /// - Signing key matches issuer warrant's holder (delegation authority)
@@ -2616,13 +2666,13 @@ impl<'a> IssuanceBuilder<'a> {
             });
         }
 
-        // Validate trust_level <= issuer's trust_level (monotonicity)
-        if let Some(trust_level) = self.trust_level {
-            if let Some(issuer_trust) = self.issuer.payload.trust_level {
-                if trust_level > issuer_trust {
-                    return Err(Error::TrustLevelExceeded {
-                        requested: format!("{:?}", trust_level),
-                        ceiling: format!("{:?}", issuer_trust),
+        // Validate clearance <= issuer's clearance (monotonicity)
+        if let Some(clearance) = self.clearance {
+            if let Some(issuer_clearance) = self.issuer.payload.clearance {
+                if clearance > issuer_clearance {
+                    return Err(Error::ClearanceLevelExceeded {
+                        requested: format!("{:?}", clearance),
+                        limit: format!("{:?}", issuer_clearance),
                     });
                 }
             }
@@ -2720,7 +2770,7 @@ impl<'a> IssuanceBuilder<'a> {
             issuable_tools: None,
             max_issue_depth: None,
             constraint_bounds: None,
-            trust_level: self.trust_level,
+            clearance: self.clearance,
             issued_at: now_sec,
             expires_at,
             max_depth: effective_max_u8,
@@ -2788,7 +2838,7 @@ impl<'a> IssuanceBuilder<'a> {
 pub struct OwnedIssuanceBuilder {
     issuer: Warrant,
     tools: BTreeMap<String, ConstraintSet>,
-    trust_level: Option<TrustLevel>,
+    clearance: Option<Clearance>,
     ttl: Option<Duration>,
     max_depth: Option<u32>,
     session_id: Option<String>,
@@ -2808,7 +2858,7 @@ impl OwnedIssuanceBuilder {
             agent_id: issuer.payload.agent_id.clone(),
             issuer,
             tools: BTreeMap::new(),
-            trust_level: None,
+            clearance: None,
             ttl: None,
             max_depth: None,
             holder: None,
@@ -2835,8 +2885,8 @@ impl OwnedIssuanceBuilder {
     }
 
     /// Get the configured trust level.
-    pub fn trust_level(&self) -> Option<TrustLevel> {
-        self.trust_level
+    pub fn clearance(&self) -> Option<Clearance> {
+        self.clearance
     }
 
     /// Get the configured TTL.
@@ -2903,9 +2953,9 @@ impl OwnedIssuanceBuilder {
         self.tool(tool, constraints)
     }
 
-    /// Set the trust level (mutable version for FFI).
-    pub fn set_trust_level(&mut self, level: TrustLevel) {
-        self.trust_level = Some(level);
+    /// Set the clearance (mutable version for FFI).
+    pub fn set_clearance(&mut self, level: Clearance) {
+        self.clearance = Some(level);
     }
 
     /// Set TTL (mutable version for FFI).
@@ -2988,7 +3038,7 @@ impl OwnedIssuanceBuilder {
         IssuanceBuilder {
             issuer: &self.issuer,
             tools: self.tools,
-            trust_level: self.trust_level,
+            clearance: self.clearance,
             ttl: self.ttl,
             max_depth: self.max_depth,
             session_id: self.session_id,
@@ -3751,7 +3801,7 @@ mod tests {
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string(), "send_email".to_string()])
-            .trust_level(TrustLevel::Internal)
+            .clearance(Clearance::INTERNAL)
             .max_issue_depth(2)
             .constraint_bound("path", Pattern::new("/data/*").unwrap())
             .ttl(Duration::from_secs(3600))
@@ -3767,7 +3817,7 @@ mod tests {
             .issue_execution_warrant()
             .unwrap()
             .capability("read_file", constraints)
-            .trust_level(TrustLevel::External)
+            .clearance(Clearance::EXTERNAL)
             .ttl(Duration::from_secs(60))
             .authorized_holder(holder_kp.public_key())
             .build(&issuer_kp) // issuer_kp is both holder and issuer
@@ -3796,7 +3846,7 @@ mod tests {
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_level(TrustLevel::Internal)
+            .clearance(Clearance::INTERNAL)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(issuer_kp.public_key())
             .build(&issuer_kp)
@@ -3832,7 +3882,7 @@ mod tests {
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_level(TrustLevel::Internal)
+            .clearance(Clearance::INTERNAL)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(holder_kp.public_key())
             .build(&issuer_kp)
@@ -3911,7 +3961,7 @@ mod tests {
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_level(TrustLevel::Internal)
+            .clearance(Clearance::INTERNAL)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(issuer_kp.public_key())
             .build(&issuer_kp)
@@ -3936,14 +3986,14 @@ mod tests {
     }
 
     #[test]
-    fn test_issuance_validates_trust_level() {
+    fn test_issuance_validates_clearance() {
         let issuer_kp = create_test_keypair();
         let holder_kp = create_test_keypair();
 
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_level(TrustLevel::External)
+            .clearance(Clearance::EXTERNAL)
             .ttl(Duration::from_secs(3600))
             .authorized_holder(issuer_kp.public_key())
             .build(&issuer_kp)
@@ -3954,7 +4004,7 @@ mod tests {
             .issue_execution_warrant()
             .unwrap()
             .capability("read_file", ConstraintSet::new())
-            .trust_level(TrustLevel::Internal) // Exceeds External ceiling
+            .clearance(Clearance::INTERNAL) // Exceeds External ceiling
             .ttl(Duration::from_secs(60))
             .authorized_holder(holder_kp.public_key())
             .build(&issuer_kp);
@@ -3963,7 +4013,7 @@ mod tests {
         assert!(result
             .unwrap_err()
             .to_string()
-            .contains("trust level exceeded"));
+            .contains("clearance level exceeded"));
     }
 
     #[test]
@@ -3974,7 +4024,7 @@ mod tests {
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_level(TrustLevel::Internal)
+            .clearance(Clearance::INTERNAL)
             .constraint_bound("path", Pattern::new("/data/*").unwrap())
             .ttl(Duration::from_secs(3600))
             .authorized_holder(issuer_kp.public_key())
@@ -4010,7 +4060,7 @@ mod tests {
         let issuer_warrant = Warrant::builder()
             .r#type(WarrantType::Issuer)
             .issuable_tools(vec!["read_file".to_string()])
-            .trust_level(TrustLevel::Internal)
+            .clearance(Clearance::INTERNAL)
             .max_issue_depth(1) // Only allow depth 1
             .ttl(Duration::from_secs(3600))
             .authorized_holder(issuer_kp.public_key())
@@ -4057,20 +4107,20 @@ mod tests {
     }
 
     #[test]
-    fn test_trust_level_ordering() {
-        assert!(TrustLevel::System > TrustLevel::Privileged);
-        assert!(TrustLevel::Privileged > TrustLevel::Internal);
-        assert!(TrustLevel::Internal > TrustLevel::Partner);
-        assert!(TrustLevel::Partner > TrustLevel::External);
-        assert!(TrustLevel::External > TrustLevel::Untrusted);
+    fn test_clearance_ordering() {
+        assert!(Clearance::SYSTEM > Clearance::PRIVILEGED);
+        assert!(Clearance::PRIVILEGED > Clearance::INTERNAL);
+        assert!(Clearance::INTERNAL > Clearance::PARTNER);
+        assert!(Clearance::PARTNER > Clearance::EXTERNAL);
+        assert!(Clearance::EXTERNAL > Clearance::UNTRUSTED);
 
         // Explicit check of values to prevent reordering
-        assert_eq!(TrustLevel::Untrusted as u8, 0);
-        assert_eq!(TrustLevel::External as u8, 10);
-        assert_eq!(TrustLevel::Partner as u8, 20);
-        assert_eq!(TrustLevel::Internal as u8, 30);
-        assert_eq!(TrustLevel::Privileged as u8, 40);
-        assert_eq!(TrustLevel::System as u8, 50);
+        assert_eq!(Clearance::UNTRUSTED.0, 0);
+        assert_eq!(Clearance::EXTERNAL.0, 10);
+        assert_eq!(Clearance::PARTNER.0, 20);
+        assert_eq!(Clearance::INTERNAL.0, 30);
+        assert_eq!(Clearance::PRIVILEGED.0, 40);
+        assert_eq!(Clearance::SYSTEM.0, 50);
     }
 
     #[test]

@@ -182,11 +182,11 @@ def test_multiple_constraint_changes():
     # The constraints within the capability should show changes
 
 
-def test_trust_level_change():
-    """Test diff with trust level change."""
+def test_clearance_change():
+    """Test diff with clearance level change."""
     control_kp = SigningKey.generate()
     
-    from tenuo import TrustLevel
+    from tenuo import Clearance
     
     parent = Warrant.issue(
         keypair=control_kp,
@@ -196,14 +196,14 @@ def test_trust_level_change():
     )
     
     builder = parent.attenuate_builder()
-    builder.trust_level(TrustLevel("external"))  # Demote trust - TrustLevel is created with string
+    builder.clearance(Clearance("external"))  # Demote trust - Clearance is created with string
     builder.ttl(60)
     
     diff = builder.diff_structured()
     
     # Trust should be demoted (if parent had higher trust)
     # Note: Parent might not have explicit trust level set
-    assert diff.trust is not None
+    assert diff.clearance is not None
     # The change type depends on parent's trust level
 
 
@@ -269,7 +269,7 @@ def test_receipt_serialization_roundtrip():
     assert "used_pass_through" in data
     assert "tools" in data
     assert "ttl" in data
-    assert "trust" in data
+    assert "clearance" in data
     assert "depth" in data
     
     # Verify values

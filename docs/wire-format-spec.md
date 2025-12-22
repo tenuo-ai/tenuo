@@ -56,7 +56,7 @@ pub struct WarrantPayload {
     pub constraint_bounds: Option<ConstraintSet>,
     pub required_approvers: Option<Vec<PublicKey>>,
     pub min_approvals: Option<u32>,
-    pub trust_level: Option<TrustLevel>,
+    pub clearance: Option<Clearance>,
     pub depth: u32,
 }
 ```
@@ -827,7 +827,7 @@ CBOR Map {
     14: constraint_bounds (constraint_set, optional),
     15: required_approvers (array<public_key>, optional),
     16: min_approvals (u32, optional),
-    17: trust_level (u8 enum, optional),
+    17: clearance (u8 enum, optional),
     18: depth (u32, default=0),
 }
 ```

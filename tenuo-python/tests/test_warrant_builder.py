@@ -16,9 +16,10 @@ from tenuo import (
     Pattern,
     Exact,
     Range,
-    TrustLevel,
+    Clearance,
     ValidationError,
     Constraints,
+    WarrantType,
 )
 
 
@@ -91,18 +92,18 @@ class TestWarrantBuilderExecution:
             .issue(issuer_kp))
         
         # Warrant should be bound to holder
-        assert warrant is not None
+        assert warrant.authorized_holder.to_bytes() == holder_kp.public_key.to_bytes()
     
-    def test_with_trust_level(self):
-        """Warrant with explicit trust level."""
+    def test_with_clearance(self):
+        """Warrant with explicit clearance."""
         kp = SigningKey.generate()
         
         warrant = (Warrant.builder()
             .tools(["admin_task"])
-            .trust_level(TrustLevel.Internal)
+            .clearance(Clearance.INTERNAL)
             .issue(kp))
         
-        assert warrant is not None
+        assert warrant.clearance == Clearance.INTERNAL
     
     def test_with_session_id(self):
         """Warrant with session ID."""
@@ -113,7 +114,7 @@ class TestWarrantBuilderExecution:
             .session_id("session-123")
             .issue(kp))
         
-        assert warrant is not None
+        assert warrant.session_id == "session-123"
     
     def test_missing_tools_raises(self):
         """Missing tools should raise ValidationError."""
@@ -135,11 +136,11 @@ class TestWarrantBuilderIssuer:
         warrant = (Warrant.builder()
             .issuer()
             .issuable_tools(["read_file", "write_file"])
-            .trust_level(TrustLevel.Internal)
+            .clearance(Clearance.INTERNAL)
             .issue(kp))
         
         # Issuer warrants have different structure
-        assert warrant is not None
+        assert warrant.warrant_type == WarrantType.Issuer
         assert warrant.depth == 0
     
     def test_issuer_with_constraint_bounds(self):
@@ -148,12 +149,12 @@ class TestWarrantBuilderIssuer:
         
         warrant = (Warrant.builder()
             .issuable_tools(["read_file"])  # Implicitly sets issuer mode
-            .trust_level(TrustLevel.Privileged)
+            .clearance(Clearance.PRIVILEGED)
             .constraint_bound("path", Pattern("/data/*"))
             .constraint_bound("size", Range(0, 1000000))
             .issue(kp))
         
-        assert warrant is not None
+        assert warrant.warrant_type == WarrantType.Issuer
     
     def test_issuer_with_max_depth(self):
         """Issuer warrant with max issue depth."""
@@ -162,11 +163,11 @@ class TestWarrantBuilderIssuer:
         warrant = (Warrant.builder()
             .issuer()
             .issuable_tools(["read_file"])
-            .trust_level(TrustLevel.Internal)
+            .clearance(Clearance.INTERNAL)
             .max_issue_depth(3)
             .issue(kp))
         
-        assert warrant is not None
+        assert warrant.max_issue_depth == 3
     
     def test_missing_issuable_tools_raises(self):
         """Missing issuable_tools should raise ValidationError."""
@@ -175,7 +176,7 @@ class TestWarrantBuilderIssuer:
         with pytest.raises(ValidationError, match="issuable_tools"):
             (Warrant.builder()
                 .issuer()
-                .trust_level(TrustLevel.Internal)
+                .clearance(Clearance.INTERNAL)
                 .issue(kp))
 
 
@@ -201,7 +202,7 @@ class TestWarrantBuilderPreview:
         builder = (Warrant.builder()
             .issuer()
             .issuable_tools(["read_file"])
-            .trust_level(TrustLevel.Internal)
+            .clearance(Clearance.INTERNAL)
             .max_issue_depth(5))
         
         preview = builder.preview()
@@ -227,7 +228,7 @@ class TestWarrantBuilderMethodChaining:
         assert builder.ttl(3600) is builder
         assert builder.holder(kp.public_key) is builder
         assert builder.session_id("test") is builder
-        assert builder.trust_level(TrustLevel.Internal) is builder
+        assert builder.clearance(Clearance.INTERNAL) is builder
         assert builder.issuer() is builder
         assert builder.issuable_tools(["read"]) is builder
         assert builder.constraint_bound("x", Pattern("*")) is builder

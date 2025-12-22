@@ -190,11 +190,9 @@ pub enum Error {
     #[error("constraint not satisfied: {field} - {reason}")]
     ConstraintNotSatisfied { field: String, reason: String },
 
-    /// Trust level insufficient for the requested tool.
-    #[error(
-        "insufficient trust level: tool '{tool}' requires {required:?}, warrant has {actual:?}"
-    )]
-    InsufficientTrustLevel {
+    /// Clearance insufficient for the requested tool.
+    #[error("insufficient clearance: tool '{tool}' requires {required}, warrant has {actual}")]
+    InsufficientClearance {
         tool: String,
         required: String,
         actual: String,
@@ -248,9 +246,9 @@ pub enum Error {
     // =========================================================================
     // Issuance Errors (Issuer Warrant Operations)
     // =========================================================================
-    /// Trust level exceeds the issuer's trust ceiling.
-    #[error("trust level exceeded: requested {requested:?} exceeds ceiling {ceiling:?}")]
-    TrustLevelExceeded { requested: String, ceiling: String },
+    /// Clearance level exceeds the issuer's clearance.
+    #[error("clearance level exceeded: requested {requested:?} exceeds limit {limit:?}")]
+    ClearanceLevelExceeded { requested: String, limit: String },
 
     /// Tool not authorized for issuance by the issuer warrant.
     #[error("unauthorized tool issuance: '{tool}' not in issuable_tools {allowed:?}")]

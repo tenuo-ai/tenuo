@@ -14,7 +14,7 @@ from tenuo import (
     SigningKey, Warrant, Pattern, Exact,
     lockdown, set_warrant_context, set_signing_key_context,
     get_warrant_context, get_signing_key_context,
-    AuthorizationError, TrustLevel, Constraints
+    AuthorizationError, Clearance, Constraints
 )
 
 
@@ -277,8 +277,8 @@ def test_warrant_chain_verification():
 # Trust Level Tests
 # ============================================================================
 
-def test_trust_level_monotonicity():
-    """Test that trust levels can only decrease during delegation."""
+def test_clearance_monotonicity():
+    """Test that clearance levels can only decrease during delegation."""
     
     kp = SigningKey.generate()
     
@@ -288,27 +288,27 @@ def test_trust_level_monotonicity():
         capabilities=Constraints.for_tool("test_tool", {}),
         holder=kp.public_key,
         ttl_seconds=3600,
-        trust_level=TrustLevel("internal")
+        clearance=Clearance.INTERNAL
     )
     
-    assert root.trust_level.value() == TrustLevel("internal").value()
+    assert root.clearance.value() == Clearance.INTERNAL.value()
     
     # Attenuate with lower trust level using builder pattern (POLA: inherit_all first)
     builder = root.attenuate_builder()
     builder.inherit_all()
     builder.ttl(60)
     builder.holder(kp.public_key)
-    builder.trust_level(TrustLevel("external"))
+    builder.clearance(Clearance.EXTERNAL)
     child = builder.delegate(kp)
     
-    assert child.trust_level.value() == TrustLevel("external").value()
+    assert child.clearance.value() == Clearance.EXTERNAL.value()
     
     # Trust level decreased (Internal -> External)
-    assert child.trust_level < root.trust_level
+    assert child.clearance < root.clearance
 
 
-def test_trust_level_enforcement():
-    """Test that operations respect trust level boundaries."""
+def test_clearance_enforcement():
+    """Test that operations respect clearance boundaries."""
     
     kp = SigningKey.generate()
     
@@ -318,7 +318,7 @@ def test_trust_level_enforcement():
         capabilities=Constraints.for_tool("read_data", {"sensitivity": Exact("public")}),
         holder=kp.public_key,
         ttl_seconds=60,
-        trust_level=TrustLevel("external")
+        clearance=Clearance.EXTERNAL
     )
     
     @lockdown(tool="read_data")
@@ -330,16 +330,16 @@ def test_trust_level_enforcement():
         assert result == "data with sensitivity: public"
 
 
-def test_trust_levels_hierarchy():
-    """Test that trust levels follow the correct hierarchy."""
+def test_clearance_hierarchy():
+    """Test that clearance levels follow the correct hierarchy."""
     
     # Verify trust level ordering (using string names)
-    untrusted = TrustLevel("untrusted")
-    external = TrustLevel("external")
-    partner = TrustLevel("partner")
-    internal = TrustLevel("internal")
-    privileged = TrustLevel("privileged")
-    system = TrustLevel("system")
+    untrusted = Clearance.UNTRUSTED
+    external = Clearance.EXTERNAL
+    partner = Clearance.PARTNER
+    internal = Clearance.INTERNAL
+    privileged = Clearance.PRIVILEGED
+    system = Clearance.SYSTEM
     
     # Verify hierarchy
     assert untrusted < external

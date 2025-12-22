@@ -9,7 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### ⚠️ Breaking Changes
 
-- **Removed `trust_ceiling`**: The `trust_ceiling` field has been removed from issuer warrants. Trust level monotonicity is now enforced using the issuer's own `trust_level` instead. This simplifies the API and aligns with the capability-based security model.
+- **Renamed `TrustLevel` → `Clearance`**: The `TrustLevel` type has been renamed to `Clearance` throughout the codebase for clearer terminology.
+  
+  ```python
+  # Before (alpha.6)
+  from tenuo import TrustLevel
+  warrant.trust_level = TrustLevel.Internal
+  
+  # After (alpha.7)
+  from tenuo import Clearance
+  warrant.clearance = Clearance.INTERNAL
+  ```
+
+- **Removed `trust_ceiling`**: The `trust_ceiling` field has been removed from issuer warrants. Clearance monotonicity is now enforced using the issuer's own `clearance` instead.
   
   ```python
   # Before (alpha.6)
@@ -23,18 +35,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Warrant.issue_issuer(
       issuable_tools=["read_file"],
       keypair=kp,
-      trust_level=TrustLevel.Internal,  # Optional, uses monotonicity
+      clearance=Clearance.INTERNAL,  # Optional, uses monotonicity
   )
   ```
 
-- **Python API**: `Warrant.issue_issuer()` no longer requires `trust_ceiling` parameter
+- **CLI**: `--trust-level` renamed to `--clearance`
+- **Python API**: `warrant.trust_level` → `warrant.clearance`
 - **Rust API**: `WarrantBuilder::trust_ceiling()` method removed
-- **Wire Format**: Field 12 (`trust_ceiling`) is now reserved and ignored on read
+- **Wire Format**: Field 12 (`trust_ceiling`) removed, Field 17 renamed from `trust_level` to `clearance`
+
+### Added
+
+- **`Clearance.custom(level)`**: Create organization-specific clearance levels (0-255)
+- **`Clearance.level`** property: Get the raw numeric value
+- **`Clearance.meets(required)`** method: Readable check if clearance meets requirement
+  
+  ```python
+  # Organization-specific levels
+  CONTRACTOR = Clearance.custom(15)  # Between External (10) and Partner (20)
+  
+  # Readable checks
+  if warrant.clearance.meets(Clearance.INTERNAL):
+      # clearance is INTERNAL or higher
+  ```
 
 ### Changed
 
-- Trust level enforcement now uses standard monotonicity (child cannot exceed parent's trust level)
-- Simplified documentation to de-emphasize trust levels as a core concept
+- Clearance enforcement now uses standard monotonicity (child cannot exceed parent's clearance)
+- Simplified documentation to de-emphasize clearance levels as a secondary feature
 
 ---
 

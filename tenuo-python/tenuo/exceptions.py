@@ -26,8 +26,8 @@ Error Hierarchy:
     │   ├── PatternExpanded
     │   ├── RequiredValueRemoved
     │   └── ExactValueMismatch
-    ├── TrustViolation (trust level issues)
-    │   └── TrustLevelExceeded
+    ├── ClearanceViolation (clearance level issues)
+    │   └── ClearanceLevelExceeded
     ├── IssuanceError (issuer warrant operations)
     │   ├── UnauthorizedToolIssuance
     │   ├── SelfIssuanceProhibited
@@ -308,24 +308,24 @@ class ExactValueMismatch(MonotonicityError):
 
 
 # =============================================================================
-# Trust Violations
+# Clearance Violations
 # =============================================================================
 
-class TrustViolation(TenuoError):
-    """Trust level constraint was violated."""
-    error_code = "trust_violation"
+class ClearanceViolation(TenuoError):
+    """Clearance level constraint was violated."""
+    error_code = "clearance_violation"
     rust_variant = ""  # No direct Rust equivalent (handled via MonotonicityViolation)
 
 
-class TrustLevelExceeded(TrustViolation):
-    """Requested trust level exceeds the issuer's trust ceiling."""
-    error_code = "trust_level_exceeded"
-    rust_variant = "TrustLevelExceeded"
+class ClearanceLevelExceeded(ClearanceViolation):
+    """Requested clearance level exceeds the issuer's clearance limit."""
+    error_code = "clearance_level_exceeded"
+    rust_variant = "ClearanceLevelExceeded"
     
-    def __init__(self, requested: str, ceiling: str):
+    def __init__(self, requested: str, limit: str):
         super().__init__(
-            f"Trust level exceeded: requested {requested} exceeds ceiling {ceiling}",
-            {"requested": requested, "ceiling": ceiling}
+            f"Clearance level exceeded: requested {requested} exceeds limit {limit}",
+            {"requested": requested, "limit": limit}
         )
 
 
@@ -997,6 +997,8 @@ RUST_ERROR_MAP: dict[str, type[TenuoError]] = {
     "UnknownProvider": UnknownProvider,
     "Unauthorized": Unauthorized,
     "Validation": ValidationError,
+    "ClearanceLevelExceeded": ClearanceLevelExceeded,
+    "InsufficientClearance": ClearanceViolation,  # Map InsufficientClearance to ClearanceViolation
 }
 
 # All Rust Error variants that must have Python equivalents
@@ -1118,9 +1120,9 @@ def categorize_rust_error(error_message: str) -> TenuoError:
     if "unsupported" in msg and "version" in msg:
         return UnsupportedVersion(0)
     
-    # Trust violations
-    if "trust" in msg and ("level" in msg or "exceed" in msg):
-        return TrustViolation(error_message)
+    # Clearance violations
+    if "clearance" in msg and ("level" in msg or "exceed" in msg):
+        return ClearanceViolation(error_message)
     
     # Default to base error
     return TenuoError(error_message)

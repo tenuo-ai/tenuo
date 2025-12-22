@@ -101,9 +101,8 @@ tenuo issue --signing-key <KEY> --holder <KEY> [OPTIONS]
 | `--type` | Warrant type: `execution` (default) or `issuer` |
 | `--tool`, `-t` | Comma-separated allowed tools (required for execution warrants) |
 | `--issuable-tools` | Comma-separated issuable tools (required for issuer warrants) |
-| `--trust-ceiling` | Trust ceiling for issuer warrants: `external`, `internal`, or `system` |
 | `--max-issue-depth` | Maximum issue depth for issuer warrants |
-| `--trust-level` | Trust level: `external`, `internal`, or `system` |
+| `--clearance` | Clearance level: `untrusted`, `external`, `partner`, `internal`, `privileged`, `system` |
 | `--ttl` | Validity duration (default: `5m`). Formats: `300s`, `10m`, `1h` |
 | `--id` | Warrant ID (default: generated `wrt_...`) |
 | `--constraint`, `-c` | Add constraint (repeatable). See constraint syntax below. |
@@ -149,7 +148,7 @@ $ tenuo issue \
     --holder ./orchestrator.pub \
     --type issuer \
     --issuable-tools read_file,send_email \
-    --trust-ceiling internal \
+    --clearance internal \
     --max-issue-depth 3 \
     --ttl 24h
 ```

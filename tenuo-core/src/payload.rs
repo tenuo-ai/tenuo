@@ -1,6 +1,6 @@
 use crate::constraints::ConstraintSet;
 use crate::crypto::PublicKey;
-use crate::warrant::{TrustLevel, WarrantId, WarrantType};
+use crate::warrant::{Clearance, WarrantId, WarrantType};
 use serde::de::{Error as DeError, MapAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -47,7 +47,7 @@ pub struct WarrantPayload {
     pub constraint_bounds: Option<ConstraintSet>,
 
     // Common Fields
-    pub trust_level: Option<TrustLevel>,
+    pub clearance: Option<Clearance>,
     pub session_id: Option<String>,
     pub agent_id: Option<String>,
     pub required_approvers: Option<Vec<PublicKey>>,
@@ -72,7 +72,7 @@ pub struct WarrantPayload {
 // 14: constraint_bounds
 // 15: required_approvers
 // 16: min_approvals
-// 17: trust_level
+// 17: clearance
 // 18: depth
 // Metadata fields not in authz-critical path (session_id, agent_id)
 // are serialized into extensions with reserved keys:
@@ -116,7 +116,7 @@ impl Serialize for WarrantPayload {
         if self.min_approvals.is_some() {
             entries += 1;
         }
-        if self.trust_level.is_some() {
+        if self.clearance.is_some() {
             entries += 1;
         }
 
@@ -151,8 +151,8 @@ impl Serialize for WarrantPayload {
         if let Some(min) = &self.min_approvals {
             map.serialize_entry(&16u8, min)?;
         }
-        if let Some(tl) = &self.trust_level {
-            map.serialize_entry(&17u8, tl)?;
+        if let Some(c) = &self.clearance {
+            map.serialize_entry(&17u8, c)?;
         }
         map.serialize_entry(&18u8, &self.depth)?;
         map.end()
@@ -195,7 +195,7 @@ impl<'de> Deserialize<'de> for WarrantPayload {
                 let mut constraint_bounds = None;
                 let mut required_approvers = None;
                 let mut min_approvals = None;
-                let mut trust_level = None;
+                let mut clearance = None;
                 let mut depth: Option<u32> = None;
 
                 while let Some(key) = map.next_key::<u8>()? {
@@ -220,7 +220,7 @@ impl<'de> Deserialize<'de> for WarrantPayload {
                         14 => constraint_bounds = map.next_value()?,
                         15 => required_approvers = map.next_value()?,
                         16 => min_approvals = map.next_value()?,
-                        17 => trust_level = map.next_value()?,
+                        17 => clearance = map.next_value()?,
                         18 => depth = Some(map.next_value()?),
                         _ => {
                             // Spec requires FAIL CLOSED on unknown keys
@@ -274,7 +274,7 @@ impl<'de> Deserialize<'de> for WarrantPayload {
                     issuable_tools,
                     max_issue_depth,
                     constraint_bounds,
-                    trust_level,
+                    clearance,
                     session_id,
                     agent_id,
                     required_approvers,

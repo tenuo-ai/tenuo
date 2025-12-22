@@ -18,7 +18,7 @@ from tenuo_core import (  # type: ignore[import-untyped]
     Warrant,
     SigningKey,
     PublicKey,
-    TrustLevel,
+    Clearance,
     AttenuationBuilder as RustAttenuationBuilder,
     DelegationDiff as RustDelegationDiff,
 )
@@ -34,7 +34,7 @@ class WarrantBuilder:
             .tools(["read_file", "write_file"])
             .constraint("path", Pattern("/data/*"))
             .constraint("max_size", Range(0, 1000000))
-            .trust_level(TrustLevel.Trusted)
+            .clearance(Clearance.System)
             .ttl(3600)
             .issue(keypair))
     
@@ -42,7 +42,7 @@ class WarrantBuilder:
         issuer = (Warrant.builder()
             .issuer()  # Switch to issuer mode
             .issuable_tools(["read_file", "write_file"])
-            .trust_level(TrustLevel.Privileged)
+            .clearance(Clearance.Privileged)
             .constraint_bound("path", Pattern("/data/*"))
             .max_issue_depth(3)
             .issue(keypair))
@@ -63,7 +63,7 @@ class WarrantBuilder:
         self._ttl_seconds: int = 3600  # Default 1 hour
         self._holder: Optional[PublicKey] = None
         self._session_id: Optional[str] = None
-        self._trust_level: Optional[TrustLevel] = None
+        self._clearance: Optional[Clearance] = None
         
         # Issuer-specific fields
         self._is_issuer: bool = False
@@ -156,13 +156,13 @@ class WarrantBuilder:
         self._session_id = session_id
         return self
     
-    def trust_level(self, level: TrustLevel) -> 'WarrantBuilder':
-        """Set the trust level.
+    def clearance(self, level: Clearance) -> 'WarrantBuilder':
+        """Set the clearance level.
         
         Args:
-            level: TrustLevel enum value
+            level: Clearance enum value
         """
-        self._trust_level = level
+        self._clearance = level
         return self
     
     # =========================================================================
@@ -253,7 +253,7 @@ class WarrantBuilder:
             ttl_seconds=self._ttl_seconds,
             holder=self._holder,
             session_id=self._session_id,
-            trust_level=self._trust_level,
+            clearance=self._clearance,
         )
     
     def _issue_issuer(self, keypair: SigningKey) -> Warrant:
@@ -270,7 +270,7 @@ class WarrantBuilder:
             ttl_seconds=self._ttl_seconds,
             holder=self._holder,
             session_id=self._session_id,
-            trust_level=self._trust_level,
+            clearance=self._clearance,
         )
     
     def preview(self) -> Dict[str, Any]:
@@ -283,7 +283,7 @@ class WarrantBuilder:
             return {
                 "type": "issuer",
                 "issuable_tools": self._issuable_tools,
-                "trust_level": self._trust_level,
+                "clearance": self._clearance,
                 "constraint_bounds": self._constraint_bounds,
                 "max_issue_depth": self._max_issue_depth,
                 "ttl_seconds": self._ttl_seconds,
@@ -298,7 +298,7 @@ class WarrantBuilder:
                 "ttl_seconds": self._ttl_seconds,
                 "holder": self._holder,
                 "session_id": self._session_id,
-                "trust_level": self._trust_level,
+                "clearance": self._clearance,
             }
 
 
@@ -408,18 +408,18 @@ class AttenuationBuilder:
         self._rust_builder.with_holder(public_key)
         return self
     
-    def trust_level(self, level: Any = _NOT_SET) -> Union['AttenuationBuilder', Optional[TrustLevel]]:
-        """Get or set trust level.
+    def clearance(self, level: Any = _NOT_SET) -> Union['AttenuationBuilder', Optional[Clearance]]:
+        """Get or set clearance level.
         
         Args:
-            level: TrustLevel value (omit to get current value)
+            level: Clearance value (omit to get current value)
             
         Returns:
-            Self for chaining (if setting), or current trust level (if getting)
+            Self for chaining (if setting), or current clearance level (if getting)
         """
         if level is self._NOT_SET:
-            return self._rust_builder.trust_level
-        self._rust_builder.with_trust_level(level)
+            return self._rust_builder.clearance
+        self._rust_builder.with_clearance(level)
         return self
     
     def intent(self, text: Any = _NOT_SET) -> Union['AttenuationBuilder', Optional[str]]:
@@ -559,9 +559,9 @@ class AttenuationBuilder:
         """Alias for holder() - deprecated, use holder() instead."""
         return self.holder(public_key)  # type: ignore[return-value]
     
-    def with_trust_level(self, level: TrustLevel) -> 'AttenuationBuilder':
-        """Alias for trust_level() - deprecated, use trust_level() instead."""
-        return self.trust_level(level)  # type: ignore[return-value]
+    def with_clearance(self, level: Clearance) -> 'AttenuationBuilder':
+        """Alias for clearance() - deprecated, use clearance() instead."""
+        return self.clearance(level)  # type: ignore[return-value]
     
     def with_intent(self, text: str) -> 'AttenuationBuilder':
         """Alias for intent() - deprecated, use intent() instead."""
@@ -733,18 +733,18 @@ class IssuanceBuilder:
         self._rust_builder.with_holder(public_key)
         return self
     
-    def trust_level(self, level: Any = _NOT_SET) -> Union['IssuanceBuilder', Optional[TrustLevel]]:
-        """Get or set trust level.
+    def clearance(self, level: Any = _NOT_SET) -> Union['IssuanceBuilder', Optional[Clearance]]:
+        """Get or set clearance level.
         
         Args:
-            level: Trust level (omit to get current value)
+            level: Clearance level (omit to get current value)
             
         Returns:
-            Self for chaining (if setting), or current trust level (if getting)
+            Self for chaining (if setting), or current clearance level (if getting)
         """
         if level is self._NOT_SET:
-            return self._rust_builder.trust_level
-        self._rust_builder.with_trust_level(level)
+            return self._rust_builder.clearance
+        self._rust_builder.with_clearance(level)
         return self
     
     def intent(self, value: Any = _NOT_SET) -> Union['IssuanceBuilder', Optional[str]]:
@@ -922,9 +922,9 @@ class IssuanceBuilder:
         """Alias for holder()."""
         return self.holder(public_key)  # type: ignore[return-value]
     
-    def with_trust_level(self, level: TrustLevel) -> 'IssuanceBuilder':
-        """Alias for trust_level()."""
-        return self.trust_level(level)  # type: ignore[return-value]
+    def with_clearance(self, level: Clearance) -> 'IssuanceBuilder':
+        """Alias for clearance()."""
+        return self.clearance(level)  # type: ignore[return-value]
     
     def with_intent(self, value: str) -> 'IssuanceBuilder':
         """Alias for intent()."""

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Trust Levels and Tool Requirements Demo
+Clearance Levels and Tool Requirements Demo
 
-Demonstrates alpha.5 trust level features with realistic scenarios.
+Demonstrates alpha.5 clearance level features with realistic scenarios.
 
 REAL-WORLD USE CASES:
 
@@ -40,66 +40,66 @@ This demo shows how to enforce these boundaries at the gateway level.
 """
 
 from tenuo import (
-    SigningKey, Warrant, Authorizer, TrustLevel, Pattern, Unauthorized
+    SigningKey, Warrant, Authorizer, Clearance, Pattern, Unauthorized
 )
 
 def main():
     print("="*70)
-    print("Trust Levels and Tool Requirements Demo")
+    print("Clearance Levels and Tool Requirements Demo")
     print("="*70)
     
     # ========================================================================
-    # Setup: Create warrants with different trust levels
+    # Setup: Create warrants with different clearance levels
     # ========================================================================
     
-    print("\n1. Creating warrants with different trust levels:")
+    print("\n1. Creating warrants with different clearance levels:")
     print("-" * 70)
     
-    # System-level warrant (highest trust)
+    # System-level warrant (highest clearance)
     system_kp = SigningKey.generate()
     system_warrant = (Warrant.builder()
         .capability("admin_reset", {"cluster": Pattern("*")})
         .capability("delete_database", {"name": Pattern("*")})
         .capability("read_file", {"path": Pattern("/*")})
-        .trust_level(TrustLevel.System)
+        .clearance(Clearance.SYSTEM)
         .holder(system_kp.public_key)
         .ttl(3600)
         .issue(system_kp))
     
-    print("   ✓ System warrant (TrustLevel.System)")
+    print("   ✓ System warrant (Clearance.SYSTEM)")
     print(f"     Tools: {system_warrant.tools}")
     
-    # Privileged warrant (mid-level trust)
+    # Privileged warrant (mid-level clearance)
     privileged_kp = SigningKey.generate()
     privileged_warrant = (Warrant.builder()
         .capability("delete_database", {"name": Pattern("test_*")})
         .capability("read_file", {"path": Pattern("/data/*")})
-        .trust_level(TrustLevel.Privileged)
+        .clearance(Clearance.PRIVILEGED)
         .holder(privileged_kp.public_key)
         .ttl(3600)
         .issue(privileged_kp))
     
-    print("   ✓ Privileged warrant (TrustLevel.Privileged)")
+    print("   ✓ Privileged warrant (Clearance.PRIVILEGED)")
     print(f"     Tools: {privileged_warrant.tools}")
     
-    # External warrant (low trust)
+    # External warrant (low clearance)
     external_kp = SigningKey.generate()
     external_warrant = (Warrant.builder()
         .capability("read_file", {"path": Pattern("/public/*")})
-        .trust_level(TrustLevel.External)
+        .clearance(Clearance.EXTERNAL)
         .holder(external_kp.public_key)
         .ttl(3600)
         .issue(external_kp))
 
     
-    print("   ✓ External warrant (TrustLevel.External)")
+    print("   ✓ External warrant (Clearance.External)")
     print(f"     Tools: {external_warrant.tools}")
     
     # ========================================================================
-    # Configure Authorizer with trust requirements (gateway policy)
+    # Configure Authorizer with clearance requirements (gateway policy)
     # ========================================================================
     
-    print("\n2. Configuring gateway trust requirements:")
+    print("\n2. Configuring gateway clearance requirements:")
     print("-" * 70)
     
     # Create authorizer with trusted roots
@@ -109,16 +109,16 @@ def main():
         external_kp.public_key
     ])
     
-    # Configure trust requirements (gateway policy)
-    authorizer.require_trust("admin_*", TrustLevel.System)       # Admin tools need System
-    authorizer.require_trust("delete_*", TrustLevel.Privileged)  # Delete tools need Privileged
-    authorizer.require_trust("read_*", TrustLevel.External)      # Read tools need External
+    # Configure clearance requirements (gateway policy)
+    authorizer.require_clearance("admin_*", Clearance.SYSTEM)       # Admin tools need System
+    authorizer.require_clearance("delete_*", Clearance.PRIVILEGED)  # Delete tools need Privileged
+    authorizer.require_clearance("read_*", Clearance.EXTERNAL)      # Read tools need External
 
     
-    print("   ✓ Configured trust requirements:")
-    print("     admin_*  → TrustLevel.System")
-    print("     delete_* → TrustLevel.Privileged")
-    print("     read_*   → TrustLevel.External")
+    print("   ✓ Configured clearance requirements:")
+    print("     admin_*  → Clearance.SYSTEM")
+    print("     delete_* → Clearance.PRIVILEGED")
+    print("     read_*   → Clearance.EXTERNAL")
     
     # ========================================================================
     # Test 1: System warrant can access admin tools
@@ -132,7 +132,7 @@ def main():
     
     try:
         authorizer.authorize(system_warrant, "admin_reset", args, bytes(pop_sig))
-        print("   ✅ ALLOWED: System trust level can access admin tools")
+        print("   ✅ ALLOWED: System clearance level can access admin tools")
     except Unauthorized as e:
         print(f"   ❌ BLOCKED: {e}")
     
@@ -146,12 +146,12 @@ def main():
     args = {"cluster": "staging"}
     
     try:
-        # No PoP signature needed - trust check happens first
+        # No PoP signature needed - clearance check happens first
         authorizer.authorize(privileged_warrant, "admin_reset", args, None)
         print("   ❌ SECURITY FAILURE: Privileged should not access admin tools!")
     except Unauthorized as e:
         print(f"   ✅ BLOCKED (expected): {e}")
-        print("      Privileged < System (trust hierarchy enforced)")
+        print("      Privileged < System (clearance hierarchy enforced)")
     
     # ========================================================================
     # Test 3: Privileged warrant CAN access delete tools
@@ -165,15 +165,15 @@ def main():
     
     try:
         authorizer.authorize(privileged_warrant, "delete_database", args, bytes(pop_sig))
-        print("   ✅ ALLOWED: Privileged trust level can access delete tools")
+        print("   ✅ ALLOWED: Privileged clearance level can access delete tools")
     except Unauthorized as e:
         print(f"   ❌ BLOCKED: {e}")
     
     # ========================================================================
-    # Test 4: Trust hierarchy (higher can access lower)
+    # Test 4: Clearance hierarchy (higher can access lower)
     # ========================================================================
     
-    print("\n6. Test 4: System warrant → read_file (trust hierarchy)")
+    print("\n6. Test 4: System warrant → read_file (clearance hierarchy)")
     print("-" * 70)
     
     args = {"path": "/public/readme.txt"}
@@ -181,8 +181,8 @@ def main():
     
     try:
         authorizer.authorize(system_warrant, "read_file", args, bytes(pop_sig))
-        print("   ✅ ALLOWED: System > External (trust hierarchy)")
-        print("      Higher trust levels can access lower-trust tools")
+        print("   ✅ ALLOWED: System > External (clearance hierarchy)")
+        print("      Higher clearance levels can access lower-clearance tools")
     except Unauthorized as e:
         print(f"   ❌ BLOCKED: {e}")
     
@@ -198,7 +198,7 @@ def main():
     
     try:
         authorizer.authorize(external_warrant, "read_file", args, bytes(pop_sig))
-        print("   ✅ ALLOWED: External trust level can access read tools")
+        print("   ✅ ALLOWED: External clearance level can access read tools")
     except Unauthorized as e:
         print(f"   ❌ BLOCKED: {e}")
     
@@ -216,7 +216,7 @@ def main():
         print("   ❌ SECURITY FAILURE: External should not access delete tools!")
     except Unauthorized as e:
         print(f"   ✅ BLOCKED (expected): {e}")
-        print("      External < Privileged (trust hierarchy enforced)")
+        print("      External < Privileged (clearance hierarchy enforced)")
     
     # ========================================================================
     # Summary
@@ -225,12 +225,12 @@ def main():
     print("\n" + "="*70)
     print("Key Takeaways:")
     print("="*70)
-    print("1. Trust levels are assigned to warrants at creation time")
-    print("2. Trust requirements are gateway policy (not in warrant)")
-    print("3. Trust hierarchy: System > Privileged > Internal > External > Untrusted")
-    print("4. Higher trust can access lower-trust tools")
-    print("5. Lower trust CANNOT access higher-trust tools")
-    print("6. Trust check happens BEFORE PoP verification (fail fast)")
+    print("1. Clearance levels are assigned to warrants at creation time")
+    print("2. Clearance requirements are gateway policy (not in warrant)")
+    print("3. Clearance hierarchy: System > Privileged > Internal > External > Untrusted")
+    print("4. Higher clearance can access lower-clearance tools")
+    print("5. Lower clearance CANNOT access higher-clearance tools")
+    print("6. Clearance check happens BEFORE PoP verification (fail fast)")
     print("7. Use glob patterns for tool families (admin_*, delete_*, etc.)")
     print("\n" + "="*70)
     print("Real-World Scenarios:")
@@ -239,7 +239,7 @@ def main():
     print("• Healthcare: External (public chatbot) vs Privileged (clinical AI)")
     print("• Finance: Internal (fraud detection) vs System (compliance agents)")
     print("• DevOps: Internal (auto-scaling) vs System (production deploys)")
-    print("\nTrust levels provide defense in depth for sensitive operations!")
+    print("\nClearance levels provide defense in depth for sensitive operations!")
 
 if __name__ == "__main__":
     main()
