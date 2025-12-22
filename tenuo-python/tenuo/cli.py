@@ -9,8 +9,7 @@ Usage:
 
 import sys
 import argparse
-import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 
 from tenuo_core import Warrant  # type: ignore[import-untyped]
 
@@ -93,24 +92,25 @@ def inspect_warrant(warrant_str: str) -> None:
 
 def parse_kv_args(args_list: List[str]) -> Dict[str, Any]:
     """Parse key=value arguments into a dictionary."""
-    args = {}
+    args: Dict[str, Union[str, int, float, bool]] = {}
     for item in args_list:
         if "=" in item:
             k, v = item.split("=", 1)
             # Try to infer type
+            parsed: Union[str, int, float, bool]
             if v.lower() == "true":
-                v_box = True
+                parsed = True
             elif v.lower() == "false":
-                v_box = False
+                parsed = False
             else:
                 try:
-                    v_box = int(v)
+                    parsed = int(v)
                 except ValueError:
                     try:
-                        v_box = float(v)
+                        parsed = float(v)
                     except ValueError:
-                        v_box = v
-            args[k] = v_box
+                        parsed = v
+            args[k] = parsed
     return args
 
 

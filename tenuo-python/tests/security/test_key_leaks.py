@@ -3,7 +3,6 @@ import pickle
 import json
 import re
 from tenuo import SigningKey, Warrant
-from tenuo.bound_warrant import BoundWarrant
 
 class TestKeyLeaks:
     def test_signing_key_repr_does_not_leak(self):
@@ -38,8 +37,8 @@ class TestKeyLeaks:
         try:
             pickle.dumps(key)
         except TypeError:
-            pass # Good
-        except Exception as e:
+            pass  # Good
+        except Exception:
             # Other errors are fine
             pass
 

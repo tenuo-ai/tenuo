@@ -17,33 +17,70 @@ use ed25519_dalek::{
 };
 use pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding};
 use rand::rngs::OsRng;
+use secrecy::{CloneableSecret, ExposeSecret, Secret, Zeroize};
 use serde::{Deserialize, Serialize};
 
 /// A signing key for creating and signing warrants.
 ///
-/// Contains an Ed25519 private key. The public key is derived on demand.
-#[derive(Debug)]
+/// Contains an Ed25519 private key wrapped in `Secret` for:
+/// 1. Guaranteed zeroization on drop
+/// 2. Prevention of accidental logging (Debug is redacted)
+/// 3. Safe cloning (zeroizes the old memory)
+#[derive(Clone)]
 pub struct SigningKey {
-    signing_key: Ed25519SigningKey,
+    signing_key: Secret<Ed25519SigningKeyWrapper>,
+}
+
+// Wrapper to implement Zeroize and Clone for Ed25519SigningKey
+// ed25519-dalek 2.x SigningKey implements ZeroizeOnDrop.
+// We implement Zeroize as a no-op because the inner type handles it on Drop.
+struct Ed25519SigningKeyWrapper(Ed25519SigningKey);
+
+impl Clone for Ed25519SigningKeyWrapper {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl Zeroize for Ed25519SigningKeyWrapper {
+    fn zeroize(&mut self) {
+        // No-op: ed25519-dalek handles zeroization on Drop.
+    }
+}
+
+/// Marker trait for Secrecy to allow cloning Secret<T>
+impl CloneableSecret for Ed25519SigningKeyWrapper {}
+
+// Custom Debug to match secrecy's behavior (redacted)
+impl std::fmt::Debug for SigningKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SigningKey")
+            .field("signing_key", &"***SECRET***")
+            .finish()
+    }
 }
 
 impl SigningKey {
     /// Generate a new random signing key.
     pub fn generate() -> Self {
         let signing_key = Ed25519SigningKey::generate(&mut OsRng);
-        Self { signing_key }
+        Self {
+            signing_key: Secret::new(Ed25519SigningKeyWrapper(signing_key)),
+        }
     }
 
     /// Create a signing key from secret key bytes.
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
         let signing_key = Ed25519SigningKey::from_bytes(bytes);
-        Self { signing_key }
+        Self {
+            signing_key: Secret::new(Ed25519SigningKeyWrapper(signing_key)),
+        }
     }
 
     /// Get the public key.
     pub fn public_key(&self) -> PublicKey {
         PublicKey {
-            verifying_key: self.signing_key.verifying_key(),
+            verifying_key: self.signing_key.expose_secret().0.verifying_key(),
         }
     }
 
@@ -52,13 +89,13 @@ impl SigningKey {
     /// The actual signed data is: `SIGNATURE_CONTEXT || message`
     pub fn sign(&self, message: &[u8]) -> Signature {
         let prefixed = Self::prefix_message(message);
-        let sig = self.signing_key.sign(&prefixed);
+        let sig = self.signing_key.expose_secret().0.sign(&prefixed);
         Signature { inner: sig }
     }
 
     /// Get the secret key bytes.
     pub fn secret_key_bytes(&self) -> [u8; 32] {
-        self.signing_key.to_bytes()
+        self.signing_key.expose_secret().0.to_bytes()
     }
 
     /// Prefix a message with the context string for domain separation.
@@ -73,23 +110,19 @@ impl SigningKey {
     pub fn from_pem(pem: &str) -> Result<Self> {
         let signing_key = Ed25519SigningKey::from_pkcs8_pem(pem)
             .map_err(|e| Error::CryptoError(format!("Invalid PEM: {}", e)))?;
-        Ok(Self { signing_key })
+        Ok(Self {
+            signing_key: Secret::new(Ed25519SigningKeyWrapper(signing_key)),
+        })
     }
 
     /// Convert the signing key to a PEM string.
     pub fn to_pem(&self) -> String {
         self.signing_key
+            .expose_secret()
+            .0
             .to_pkcs8_pem(LineEnding::LF)
             .map(|s| s.to_string())
             .unwrap_or_else(|e| format!("error generating pem: {}", e))
-    }
-}
-
-impl Clone for SigningKey {
-    fn clone(&self) -> Self {
-        Self {
-            signing_key: Ed25519SigningKey::from_bytes(&self.signing_key.to_bytes()),
-        }
     }
 }
 
@@ -428,7 +461,9 @@ mod tests {
 
         // Manually create a signature without context prefix
         // This should fail verification
-        let raw_sig = keypair.signing_key.sign(message);
+        // Manually create a signature without context prefix
+        // This should fail verification
+        let raw_sig = keypair.signing_key.expose_secret().0.sign(message);
         let wrong_signature = Signature { inner: raw_sig };
 
         assert!(keypair

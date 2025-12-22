@@ -16,8 +16,6 @@ import pytest
 
 from tenuo import (
     SigningKey,
-    load_signing_key_from_env,
-    load_signing_key_from_file,
     Keyring,
     KeyRegistry,
 )

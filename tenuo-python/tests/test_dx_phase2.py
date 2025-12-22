@@ -8,7 +8,7 @@ Covers:
 
 import pytest
 
-from tenuo import Warrant, SigningKey
+from tenuo import Warrant
 from tenuo.cli import verify_warrant, inspect_warrant, parse_kv_args
 
 try:
