@@ -254,7 +254,7 @@ Warrant.issue(
 
 # Example
 warrant = Warrant.issue(
-    capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
+    tools={"read_file": Constraints.for_tool("read_file", {"path": Pattern("/data/*")})},
     keypair=my_keypair,
     holder=my_keypair.public_key,
     ttl_seconds=3600,
@@ -263,7 +263,7 @@ warrant = Warrant.issue(
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `capabilities` | `dict` | Tool→constraint mapping (use `Constraints.for_tool()` helper) |
+| `tools` | `dict` | Tool→constraint mapping (use `Constraints.for_tool()` helper) |
 | `keypair` | `SigningKey` | Issuer's keypair |
 | `holder` | `PublicKey` | Holder's public key |
 | `ttl_seconds` | `int` | Time-to-live in seconds |
@@ -367,7 +367,7 @@ warrant.capabilities        # {'tools': ['read_file'], 'path': '/data/*', 'max_s
 |--------|---------|-------------|
 | `attenuate(constraints, keypair, ttl_seconds=None, holder=None)` | `Warrant` | Create narrower child warrant |
 | `attenuate()` | `AttenuationBuilder` | Create builder for attenuation with diff preview |
-| `issue_execution()` | `IssuanceBuilder` | Create execution warrant from issuer warrant |
+| `issue()` | `IssuanceBuilder` | Create execution warrant from issuer warrant |
 | `delegate(holder, tools=None, **constraints)` | `Warrant` | Convenience method to delegate (requires context) |
 | `authorize(tool, args, signature?)` | `bool` | Check if action is authorized |
 | `verify(public_key)` | `bool` | Verify signature against issuer |
@@ -476,7 +476,7 @@ issuer_warrant = Warrant.issue_issuer(
     ttl_seconds=3600,
 )
 
-builder = issuer_warrant.issue_execution()
+builder = issuer_warrant.issue()
 builder.tool("read_file")
 builder.holder(worker_kp.public_key)
 builder.ttl(300)
@@ -571,7 +571,7 @@ print(repr(bound))
 Builder for issuing execution warrants from issuer warrants.
 
 ```python
-builder = issuer_warrant.issue_execution()
+builder = issuer_warrant.issue()
 ```
 
 #### Setter Methods (Chainable)

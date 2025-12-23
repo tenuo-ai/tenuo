@@ -389,6 +389,8 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
     """
     args = args or {}
     
+    playground_hint = " Debug at: https://tenuo.ai/explorer/"
+    
     # Check if warrant is expired
     if self.is_expired():
         return WhyDenied(
@@ -396,7 +398,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
             deny_code=DenyCode.WARRANT_EXPIRED,
             deny_path="warrant.expired",
             tool=tool,
-            suggestion=f"Warrant expired at {self.expires_at()}. Request a fresh warrant.",
+            suggestion=f"Warrant expired at {self.expires_at()}. Request a fresh warrant.{playground_hint}",
         )
     
     # Check if tool is in warrant
@@ -407,7 +409,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
             deny_code=DenyCode.TOOL_NOT_FOUND,
             deny_path="tool.not_found",
             tool=tool,
-            suggestion=f"Tool '{tool}' not in warrant. Available: {available}",
+            suggestion=f"Tool '{tool}' not in warrant. Available: {available}.{playground_hint}",
         )
     
     # Check if warrant is terminal (can't delegate)
@@ -423,6 +425,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
         try:
             result = self.check_constraints(tool, args)
             if not result.get('allowed', True):
+                reason = result.get('reason', 'Constraint not satisfied')
                 return WhyDenied(
                     denied=True,
                     deny_code=DenyCode.CONSTRAINT_MISMATCH,
@@ -431,7 +434,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
                     field=result.get('field'),
                     constraint=result.get('constraint'),
                     value=result.get('value'),
-                    suggestion=result.get('reason', 'Constraint not satisfied'),
+                    suggestion=f"{reason}.{playground_hint}",
                 )
         except Exception:
             pass  # Fall through to allowed

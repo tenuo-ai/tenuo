@@ -539,7 +539,7 @@ from tenuo import lockdown, Warrant, SigningKey, Exact, set_warrant_context, set
 
 def test_extraction():
     kp = SigningKey.generate()
-    w = Warrant.issue(capabilities=Constraints.for_tool("test", {"a": Exact(1)}), keypair=kp, ttl_seconds=300)
+    w = Warrant.issue(tools={"test": Constraints.for_tool("test", {"a": Exact(1)})}, keypair=kp, ttl_seconds=300)
     
     @lockdown(tool="test")
     def func(a: int, b: int = 2):

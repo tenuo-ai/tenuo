@@ -87,7 +87,7 @@ issuer_warrant = Warrant.issue_issuer(
 )
 
 # P-LLM creates execution warrant for Q-LLM
-exec_warrant = (issuer_warrant.issue_execution()
+exec_warrant = (issuer_warrant.issue()
     .tool("search")
     .capability("search", {"query": Pattern("*quarterly*")})
     .holder(q_llm_kp.public_key)  # Different identity!
@@ -100,7 +100,7 @@ Tenuo strictly enforces that a planner cannot grant execution authority to itsel
 
 ```python
 # This FAILS with SelfIssuanceProhibited error:
-bad_warrant = (issuer_warrant.issue_execution()
+bad_warrant = (issuer_warrant.issue()
     .holder(planner_kp.public_key)  # Same as issuer!
     .issue(planner_kp))
 # Error: "issuer cannot grant execution warrants to themselves"

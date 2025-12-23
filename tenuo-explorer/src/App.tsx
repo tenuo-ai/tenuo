@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import init, { decode_warrant, check_access, init_panic_hook } from './wasm/tenuo_wasm'
 
+// Mock implementations for WASM functions not yet available
+// These will be replaced with real WASM bindings when available
+const WASM_POP_AVAILABLE = false;
+
 // Types
 interface AuthResult {
   authorized: boolean;
@@ -34,55 +38,59 @@ interface ValidationWarning {
 }
 
 // Sample warrants library
+// Note: For demo purposes, we have one real warrant. The diff feature works best with user-provided warrants.
+const SAMPLE_WARRANT_1 = "gwFYq6oAAQFQAZtInVrHd8GeImZh3XfXOQJpZXhlY3V0aW9uA6FpcmVhZF9maWxloWtjb25zdHJhaW50c6FkcGF0aIICoWdwYXR0ZXJuZmRvY3MvKgSCAVggWVfWp8pMNgmK3yrmtHztN1zP-Bp3ttO7RcWoOJuhDa8FggFYIEATw2eU8OrpXAJi7keI9s-PLc612ssObrzDTN4KTlZOBhppSeKmBxppSfC2CBASAIIBWECJwEZ27MILOh05dBsPqS7CNVMiMJwN0YJNoFUJil2-AbIksCE7pLKQPpQeJelXcrrkBtK_wdHeeRjlS9cn4IEP";
+const SAMPLE_ROOT_KEY = "4013c36794f0eae95c0262ee4788f6cf8f2dceb5dacb0e6ebcc34cde0a4e564e";
+
 const SAMPLES: Record<string, { name: string; description: string; warrant: string; rootKey: string; tool: string; args: string }> = {
-  simple_read: {
-    name: "📁 Simple File Read",
-    description: "Read access to docs folder with path constraint",
-    warrant: "gwFYq6oAAQFQAZtInVrHd8GeImZh3XfXOQJpZXhlY3V0aW9uA6FpcmVhZF9maWxloWtjb25zdHJhaW50c6FkcGF0aIICoWdwYXR0ZXJuZmRvY3MvKgSCAVggWVfWp8pMNgmK3yrmtHztN1zP-Bp3ttO7RcWoOJuhDa8FggFYIEATw2eU8OrpXAJi7keI9s-PLc612ssObrzDTN4KTlZOBhppSeKmBxppSfC2CBASAIIBWECJwEZ27MILOh05dBsPqS7CNVMiMJwN0YJNoFUJil2-AbIksCE7pLKQPpQeJelXcrrkBtK_wdHeeRjlS9cn4IEP",
-    rootKey: "4013c36794f0eae95c0262ee4788f6cf8f2dceb5dacb0e6ebcc34cde0a4e564e",
+  valid_read: {
+    name: "✅ Valid Read",
+    description: "Authorized: path matches docs/* constraint",
+    warrant: SAMPLE_WARRANT_1,
+    rootKey: SAMPLE_ROOT_KEY,
     tool: "read_file",
     args: JSON.stringify({ path: "docs/readme.md" }, null, 2)
   },
-  multi_tool: {
-    name: "🔧 Multi-Tool Access",
-    description: "Access to multiple tools with different constraints",
-    warrant: "gwFYq6oAAQFQAZtInVrHd8GeImZh3XfXOQJpZXhlY3V0aW9uA6FpcmVhZF9maWxloWtjb25zdHJhaW50c6FkcGF0aIICoWdwYXR0ZXJuZmRvY3MvKgSCAVggWVfWp8pMNgmK3yrmtHztN1zP-Bp3ttO7RcWoOJuhDa8FggFYIEATw2eU8OrpXAJi7keI9s-PLc612ssObrzDTN4KTlZOBhppSeKmBxppSfC2CBASAIIBWECJwEZ27MILOh05dBsPqS7CNVMiMJwN0YJNoFUJil2-AbIksCE7pLKQPpQeJelXcrrkBtK_wdHeeRjlS9cn4IEP",
-    rootKey: "4013c36794f0eae95c0262ee4788f6cf8f2dceb5dacb0e6ebcc34cde0a4e564e",
+  valid_nested: {
+    name: "✅ Nested Path",
+    description: "Authorized: nested paths like docs/api/guide.md",
+    warrant: SAMPLE_WARRANT_1,
+    rootKey: SAMPLE_ROOT_KEY,
     tool: "read_file",
-    args: JSON.stringify({ path: "docs/api.md" }, null, 2)
+    args: JSON.stringify({ path: "docs/api/reference.md" }, null, 2)
   },
-  wildcard: {
-    name: "⚠️ Wildcard Pattern",
-    description: "Overly permissive - demonstrates validation warnings",
-    warrant: "gwFYq6oAAQFQAZtInVrHd8GeImZh3XfXOQJpZXhlY3V0aW9uA6FpcmVhZF9maWxloWtjb25zdHJhaW50c6FkcGF0aIICoWdwYXR0ZXJuZmRvY3MvKgSCAVggWVfWp8pMNgmK3yrmtHztN1zP-Bp3ttO7RcWoOJuhDa8FggFYIEATw2eU8OrpXAJi7keI9s-PLc612ssObrzDTN4KTlZOBhppSeKmBxppSfC2CBASAIIBWECJwEZ27MILOh05dBsPqS7CNVMiMJwN0YJNoFUJil2-AbIksCE7pLKQPpQeJelXcrrkBtK_wdHeeRjlS9cn4IEP",
-    rootKey: "4013c36794f0eae95c0262ee4788f6cf8f2dceb5dacb0e6ebcc34cde0a4e564e",
-    tool: "delete_file",
+  denied_path: {
+    name: "❌ Wrong Path",
+    description: "Denied: /etc/passwd is outside docs/* scope",
+    warrant: SAMPLE_WARRANT_1,
+    rootKey: SAMPLE_ROOT_KEY,
+    tool: "read_file",
     args: JSON.stringify({ path: "/etc/passwd" }, null, 2)
   },
-  short_ttl: {
-    name: "⏱️ Short-Lived Token",
-    description: "Expires in 60 seconds - time-boxed access",
-    warrant: "gwFYq6oAAQFQAZtInVrHd8GeImZh3XfXOQJpZXhlY3V0aW9uA6FpcmVhZF9maWxloWtjb25zdHJhaW50c6FkcGF0aIICoWdwYXR0ZXJuZmRvY3MvKgSCAVggWVfWp8pMNgmK3yrmtHztN1zP-Bp3ttO7RcWoOJuhDa8FggFYIEATw2eU8OrpXAJi7keI9s-PLc612ssObrzDTN4KTlZOBhppSeKmBxppSfC2CBASAIIBWECJwEZ27MILOh05dBsPqS7CNVMiMJwN0YJNoFUJil2-AbIksCE7pLKQPpQeJelXcrrkBtK_wdHeeRjlS9cn4IEP",
-    rootKey: "4013c36794f0eae95c0262ee4788f6cf8f2dceb5dacb0e6ebcc34cde0a4e564e",
-    tool: "read_file",
-    args: JSON.stringify({ path: "docs/secret.md" }, null, 2)
+  denied_tool: {
+    name: "❌ Wrong Tool",
+    description: "Denied: delete_file not in warrant's tools",
+    warrant: SAMPLE_WARRANT_1,
+    rootKey: SAMPLE_ROOT_KEY,
+    tool: "delete_file",
+    args: JSON.stringify({ path: "docs/readme.md" }, null, 2)
   },
-  delegated: {
-    name: "🔗 Delegated Chain",
-    description: "Depth 2 - shows delegation provenance",
-    warrant: "gwFYq6oAAQFQAZtInVrHd8GeImZh3XfXOQJpZXhlY3V0aW9uA6FpcmVhZF9maWxloWtjb25zdHJhaW50c6FkcGF0aIICoWdwYXR0ZXJuZmRvY3MvKgSCAVggWVfWp8pMNgmK3yrmtHztN1zP-Bp3ttO7RcWoOJuhDa8FggFYIEATw2eU8OrpXAJi7keI9s-PLc612ssObrzDTN4KTlZOBhppSeKmBxppSfC2CBASAIIBWECJwEZ27MILOh05dBsPqS7CNVMiMJwN0YJNoFUJil2-AbIksCE7pLKQPpQeJelXcrrkBtK_wdHeeRjlS9cn4IEP",
-    rootKey: "4013c36794f0eae95c0262ee4788f6cf8f2dceb5dacb0e6ebcc34cde0a4e564e",
-    tool: "read_file",
-    args: JSON.stringify({ path: "docs/delegated.md" }, null, 2)
+  denied_write: {
+    name: "❌ Write Attempt",
+    description: "Denied: write_file not authorized",
+    warrant: SAMPLE_WARRANT_1,
+    rootKey: SAMPLE_ROOT_KEY,
+    tool: "write_file",
+    args: JSON.stringify({ path: "docs/new.md", content: "hello" }, null, 2)
   },
-  api_access: {
-    name: "🌐 API Access",
-    description: "HTTP API access with endpoint constraints",
-    warrant: "gwFYq6oAAQFQAZtInVrHd8GeImZh3XfXOQJpZXhlY3V0aW9uA6FpcmVhZF9maWxloWtjb25zdHJhaW50c6FkcGF0aIICoWdwYXR0ZXJuZmRvY3MvKgSCAVggWVfWp8pMNgmK3yrmtHztN1zP-Bp3ttO7RcWoOJuhDa8FggFYIEATw2eU8OrpXAJi7keI9s-PLc612ssObrzDTN4KTlZOBhppSeKmBxppSfC2CBASAIIBWECJwEZ27MILOh05dBsPqS7CNVMiMJwN0YJNoFUJil2-AbIksCE7pLKQPpQeJelXcrrkBtK_wdHeeRjlS9cn4IEP",
-    rootKey: "4013c36794f0eae95c0262ee4788f6cf8f2dceb5dacb0e6ebcc34cde0a4e564e",
-    tool: "http_request",
-    args: JSON.stringify({ url: "https://api.example.com/users", method: "GET" }, null, 2)
-  }
+  execution_only: {
+    name: "🔍 Inspect Warrant",
+    description: "Just decode to see warrant structure",
+    warrant: SAMPLE_WARRANT_1,
+    rootKey: SAMPLE_ROOT_KEY,
+    tool: "",
+    args: "{}"
+  },
 };
 
 // Utility functions
@@ -176,13 +184,278 @@ const ExpirationDisplay = ({ issuedAt, expiresAt }: { issuedAt: number; expiresA
           {formatTime(remaining)}
         </span>
       </div>
-      <div className="validity-bar">
-        <div className="validity-progress" style={{ width: `${percent}%`, background: isExpired ? 'var(--red)' : 'linear-gradient(90deg, var(--green), var(--accent))' }} />
+      
+      {/* Timeline Visualization */}
+      <div className="timeline">
+        <div className="timeline-track">
+          <div className="timeline-fill" style={{ width: `${percent}%`, background: isExpired ? 'var(--red)' : 'linear-gradient(90deg, var(--green), var(--accent))' }} />
+          <div className="timeline-now" style={{ left: `${Math.min(percent, 100)}%` }} />
+        </div>
+        <div className="timeline-labels">
+          <div className="timeline-label">
+            <div className="timeline-dot" style={{ background: 'var(--green)' }} />
+            <span>Issued</span>
+            <span className="timeline-time">{new Date(issuedAt * 1000).toLocaleTimeString()}</span>
+          </div>
+          <div className="timeline-label" style={{ position: 'absolute', left: `${Math.min(percent, 95)}%`, transform: 'translateX(-50%)' }}>
+            <div className="timeline-dot pulse" style={{ background: isExpired ? 'var(--red)' : 'var(--accent)' }} />
+            <span>Now</span>
+          </div>
+          <div className="timeline-label" style={{ marginLeft: 'auto' }}>
+            <div className="timeline-dot" style={{ background: 'var(--red)' }} />
+            <span>Expires</span>
+            <span className="timeline-time">{new Date(expiresAt * 1000).toLocaleTimeString()}</span>
+          </div>
+        </div>
       </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '11px', color: 'var(--muted)' }}>
-        <span>Issued: {new Date(issuedAt * 1000).toLocaleString()}</span>
-        <span>Expires: {new Date(expiresAt * 1000).toLocaleString()}</span>
+    </div>
+  );
+};
+
+// PoP Signature Simulator
+const PopSimulator = ({ warrant, tool, args: _args, onPopGenerated }: { 
+  warrant: string; 
+  tool: string; 
+  args: string; // Will be used when real WASM PoP is available
+  onPopGenerated: (pop: string, publicKey: string) => void;
+}) => {
+  void _args; // Will be used for real PoP signing
+  const [privateKey, setPrivateKey] = useState('');
+  const [publicKey, setPublicKey] = useState('');
+  const [popSignature, setPopSignature] = useState('');
+  const [error, setError] = useState('');
+  
+  const handleGenerateKeypair = () => {
+    // Generate mock keypair for demo (real WASM bindings coming soon)
+    const mockPrivate = Array.from({length: 64}, () => Math.floor(Math.random() * 16).toString(16)).join('');
+    const mockPublic = Array.from({length: 64}, () => Math.floor(Math.random() * 16).toString(16)).join('');
+    setPrivateKey(mockPrivate);
+    setPublicKey(mockPublic);
+    setPopSignature('');
+    setError(WASM_POP_AVAILABLE ? '' : 'Demo mode: Using simulated keypair');
+  };
+  
+  const handleCreatePop = () => {
+    if (!privateKey || !warrant || !tool) {
+      setError('Need keypair, warrant, and tool name');
+      return;
+    }
+    
+    // Generate mock signature for demo (real WASM bindings coming soon)
+    const mockSig = Array.from({length: 128}, () => Math.floor(Math.random() * 16).toString(16)).join('');
+    setPopSignature(mockSig);
+    onPopGenerated(mockSig, publicKey);
+    setError(WASM_POP_AVAILABLE ? '' : 'Demo mode: Using simulated signature');
+  };
+  
+  return (
+    <div className="panel" style={{ padding: '16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+        <span style={{ fontSize: '16px' }}>🔐</span>
+        <h3 style={{ fontSize: '14px', fontWeight: 600 }}>PoP Signature Simulator</h3>
       </div>
+      
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <button onClick={handleGenerateKeypair} className="btn btn-secondary" style={{ fontSize: '12px' }}>
+          🔑 Generate Test Keypair
+        </button>
+        
+        {privateKey && (
+          <>
+            <div>
+              <label className="label">Public Key (Holder)</label>
+              <div className="input" style={{ fontSize: '10px', wordBreak: 'break-all', background: 'var(--bg)' }}>
+                {truncate(publicKey, 24)}
+                <CopyBtn text={publicKey} />
+              </div>
+            </div>
+            
+            <div>
+              <label className="label">Private Key (Secret - for signing)</label>
+              <div className="input" style={{ fontSize: '10px', wordBreak: 'break-all', background: 'var(--bg)', color: 'var(--red)' }}>
+                {truncate(privateKey, 24)} 🔒
+              </div>
+            </div>
+            
+            <button onClick={handleCreatePop} className="btn btn-primary" style={{ fontSize: '12px' }} disabled={!tool}>
+              ✍️ Create PoP Signature
+            </button>
+          </>
+        )}
+        
+        {popSignature && (
+          <div>
+            <label className="label">PoP Signature</label>
+            <div className="input" style={{ fontSize: '10px', wordBreak: 'break-all', background: 'rgba(34, 197, 94, 0.1)', borderColor: 'var(--green)' }}>
+              {truncate(popSignature, 32)}
+              <CopyBtn text={popSignature} />
+            </div>
+          </div>
+        )}
+        
+        {error && (
+          <div style={{ fontSize: '11px', color: 'var(--yellow)', padding: '8px', background: 'rgba(234, 179, 8, 0.1)', borderRadius: '6px' }}>
+            {error}
+          </div>
+        )}
+      </div>
+      
+      <Explainer title="How Proof-of-Possession works" docLink="https://tenuo.ai/security">
+        <p style={{ marginBottom: '8px' }}><strong>Why PoP?</strong> Without it, anyone who intercepts a warrant can use it. PoP ensures only the legitimate holder can authorize actions.</p>
+        <p style={{ marginBottom: '6px' }}><strong>The flow:</strong></p>
+        <p>1. <strong>Keypair</strong> → Holder has a private key; warrant binds to their public key</p>
+        <p>2. <strong>Challenge</strong> → Tool name + args are hashed into a unique challenge</p>
+        <p>3. <strong>Sign</strong> → Holder signs the challenge with their private key</p>
+        <p>4. <strong>Verify</strong> → Authorization checks signature matches warrant's <code>authorized_holder</code></p>
+        <p style={{ marginTop: '8px', fontSize: '11px', opacity: 0.8 }}>💡 This is cryptographic proof that the request comes from the intended recipient, not an attacker.</p>
+      </Explainer>
+    </div>
+  );
+};
+
+// Presets Manager
+interface Preset {
+  id: string;
+  name: string;
+  warrant: string;
+  tool: string;
+  args: string;
+  rootKey: string;
+}
+
+const PresetsManager = ({ 
+  currentWarrant, 
+  currentTool, 
+  currentArgs,
+  currentRootKey,
+  onLoad 
+}: { 
+  currentWarrant: string;
+  currentTool: string;
+  currentArgs: string;
+  currentRootKey: string;
+  onLoad: (preset: Preset) => void;
+}) => {
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [showSave, setShowSave] = useState(false);
+  const [presetName, setPresetName] = useState('');
+  
+  // Load presets from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('tenuo-explorer-presets');
+    if (saved) {
+      try { setPresets(JSON.parse(saved)); } catch {}
+    }
+  }, []);
+  
+  // Save presets to localStorage
+  useEffect(() => {
+    localStorage.setItem('tenuo-explorer-presets', JSON.stringify(presets));
+  }, [presets]);
+  
+  const handleSave = () => {
+    if (!presetName.trim() || !currentWarrant) return;
+    const newPreset: Preset = {
+      id: generateId(),
+      name: presetName.trim(),
+      warrant: currentWarrant,
+      tool: currentTool,
+      args: currentArgs,
+      rootKey: currentRootKey,
+    };
+    setPresets([...presets, newPreset]);
+    setPresetName('');
+    setShowSave(false);
+  };
+  
+  const handleDelete = (id: string) => {
+    setPresets(presets.filter(p => p.id !== id));
+  };
+  
+  const handleExport = () => {
+    const data = JSON.stringify(presets, null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'tenuo-presets.json';
+    a.click();
+  };
+  
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const imported = JSON.parse(event.target?.result as string);
+        if (Array.isArray(imported)) {
+          setPresets([...presets, ...imported]);
+        }
+      } catch {}
+    };
+    reader.readAsText(file);
+  };
+  
+  if (presets.length === 0 && !showSave) {
+    return (
+      <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+        <button onClick={() => setShowSave(true)} className="btn btn-secondary" style={{ flex: 1, fontSize: '11px' }} disabled={!currentWarrant}>
+          💾 Save as Preset
+        </button>
+        <label className="btn btn-secondary" style={{ flex: 1, fontSize: '11px', cursor: 'pointer' }}>
+          📂 Import
+          <input type="file" accept=".json" onChange={handleImport} style={{ display: 'none' }} />
+        </label>
+      </div>
+    );
+  }
+  
+  return (
+    <div className="presets-panel">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+        <span style={{ fontSize: '12px', color: 'var(--muted)' }}>💾 Presets</span>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          <button onClick={() => setShowSave(!showSave)} className="btn btn-secondary" style={{ padding: '4px 8px', fontSize: '10px' }}>
+            + Save
+          </button>
+          {presets.length > 0 && (
+            <button onClick={handleExport} className="btn btn-secondary" style={{ padding: '4px 8px', fontSize: '10px' }}>
+              ↓ Export
+            </button>
+          )}
+        </div>
+      </div>
+      
+      {showSave && (
+        <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+          <input 
+            className="input" 
+            placeholder="Preset name..." 
+            value={presetName} 
+            onChange={e => setPresetName(e.target.value)}
+            style={{ flex: 1, fontSize: '11px', padding: '6px 10px' }}
+          />
+          <button onClick={handleSave} className="btn btn-primary" style={{ padding: '6px 12px', fontSize: '11px' }}>
+            Save
+          </button>
+        </div>
+      )}
+      
+      {presets.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          {presets.map(preset => (
+            <div key={preset.id} className="preset-item">
+              <button onClick={() => onLoad(preset)} className="preset-name">
+                {preset.name}
+              </button>
+              <button onClick={() => handleDelete(preset.id)} className="close-btn" style={{ padding: '2px 4px', fontSize: '10px' }}>
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
@@ -231,85 +504,72 @@ const VerificationSteps = ({ decoded, tool, args, authResult }: {
 
 // Code Generation Component
 const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null; tool: string; args: string }) => {
-  const [lang, setLang] = useState<'python' | 'rust' | 'typescript'>('python');
+  const [lang, setLang] = useState<'python' | 'rust'>('python');
   const [copied, setCopied] = useState(false);
   
   if (!decoded) return null;
   
   const code = useMemo(() => {
     const argsObj = (() => { try { return JSON.parse(args); } catch { return {}; } })();
+    const constraintEntries = Object.entries(argsObj);
     
     if (lang === 'python') {
-      return `from tenuo import SigningKey, Warrant, Pattern
+      return `from tenuo import SigningKey, Warrant, Pattern, Constraints
 
 # Generate keys
 issuer_key = SigningKey.generate()
 holder_key = SigningKey.generate()
 
-# Issue warrant
-warrant = (
-    Warrant.builder()
-    .issuer(issuer_key.public_key)
-    .holder(holder_key.public_key)
-    .tool("${tool}", constraints={
-${Object.entries(argsObj).map(([k, v]) => `        "${k}": Pattern("${v}")`).join(',\n')}
-    })
-    .ttl(3600)  # 1 hour
-    .sign(issuer_key)
+# Issue warrant with constraints
+warrant = Warrant.issue(
+    keypair=issuer_key,
+    capabilities=Constraints.for_tool("${tool}", {
+${constraintEntries.length > 0 ? constraintEntries.map(([k, v]) => `        "${k}": Pattern("${v}")`).join(',\n') : '        # No constraints'}
+    }),
+    ttl_seconds=3600,  # 1 hour
+    holder=holder_key.public_key
 )
 
-# Authorize
-args = ${JSON.stringify(argsObj, null, 4).split('\n').map((l, i) => i === 0 ? l : '    ' + l).join('\n')}
-pop_signature = holder_key.sign(warrant.challenge("${tool}", args))
-result = warrant.authorize("${tool}", args, pop_signature)
-print(f"Authorized: {result}")`;
-    } else if (lang === 'rust') {
-      return `use tenuo::{SigningKey, Warrant, Pattern};
+# Test authorization with Proof-of-Possession
+args = ${JSON.stringify(argsObj, null, 4).split('\n').map((l, i) => i === 0 ? l : l).join('\n')}
+pop_signature = warrant.create_pop_signature(holder_key, "${tool}", args)
+result = warrant.authorize("${tool}", args, bytes(pop_signature))
+print(f"Authorized: {result}")
+
+# Serialize for transmission
+warrant_b64 = warrant.to_base64()
+print(f"Warrant: {warrant_b64[:60]}...")`;
+    } else {
+      return `use tenuo::{SigningKey, Warrant, Pattern, ConstraintSet};
+use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Generate keys
     let issuer_key = SigningKey::generate();
     let holder_key = SigningKey::generate();
 
+    // Build constraints
+    let mut constraints = ConstraintSet::new();
+${constraintEntries.length > 0 ? constraintEntries.map(([k, v]) => `    constraints.insert("${k}".to_string(), Pattern::new("${v}")?);`).join('\n') : '    // No constraints'}
+
     // Issue warrant
     let warrant = Warrant::builder()
-        .issuer(issuer_key.public_key())
-        .holder(holder_key.public_key())
-        .tool("${tool}", &[
-${Object.entries(argsObj).map(([k, v]) => `            ("${k}", Pattern::new("${v}"))`).join(',\n')}
-        ])
+        .capability("${tool}", constraints)
         .ttl(Duration::from_secs(3600))
-        .sign(&issuer_key)?;
+        .authorized_holder(holder_key.public_key())
+        .build(&issuer_key)?;
 
-    // Authorize
+    // Authorize with Proof-of-Possession
     let args = serde_json::json!(${JSON.stringify(argsObj)});
-    let pop = holder_key.sign(&warrant.challenge("${tool}", &args));
+    let pop = warrant.create_pop_signature(&holder_key, "${tool}", &args)?;
     let result = warrant.authorize("${tool}", &args, &pop)?;
     println!("Authorized: {}", result);
+
+    // Serialize for transmission
+    let warrant_b64 = warrant.to_base64()?;
+    println!("Warrant: {}...", &warrant_b64[..60]);
     Ok(())
 }`;
-    } else {
-      return `import { SigningKey, Warrant, Pattern } from 'tenuo';
-
-// Generate keys
-const issuerKey = SigningKey.generate();
-const holderKey = SigningKey.generate();
-
-// Issue warrant
-const warrant = Warrant.builder()
-  .issuer(issuerKey.publicKey)
-  .holder(holderKey.publicKey)
-  .tool("${tool}", {
-${Object.entries(argsObj).map(([k, v]) => `    ${k}: Pattern("${v}")`).join(',\n')}
-  })
-  .ttl(3600)
-  .sign(issuerKey);
-
-// Authorize
-const args = ${JSON.stringify(argsObj, null, 2).split('\n').map((l, i) => i === 0 ? l : '  ' + l).join('\n')};
-const pop = holderKey.sign(warrant.challenge("${tool}", args));
-const result = warrant.authorize("${tool}", args, pop);
-console.log(\`Authorized: \${result}\`);`;
     }
   }, [lang, decoded, tool, args]);
   
@@ -322,19 +582,27 @@ console.log(\`Authorized: \${result}\`);`;
   return (
     <div className="panel" style={{ padding: '16px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-        <span style={{ fontSize: '12px', color: 'var(--muted)' }}>💻 Code Generation</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '16px' }}>💻</span>
+          <span style={{ fontSize: '14px', fontWeight: 600 }}>Code Generation</span>
+        </div>
         <div style={{ display: 'flex', gap: '4px' }}>
-          {(['python', 'rust', 'typescript'] as const).map(l => (
+          {(['python', 'rust'] as const).map(l => (
             <button key={l} onClick={() => setLang(l)} className={`lang-btn ${lang === l ? 'active' : ''}`}>
-              {l === 'python' ? '🐍' : l === 'rust' ? '🦀' : '📘'} {l}
+              {l === 'python' ? '🐍' : '🦀'} {l}
             </button>
           ))}
         </div>
       </div>
-      <pre className="code-block">{code}</pre>
-      <button onClick={handleCopy} className="btn btn-secondary" style={{ marginTop: '12px', width: '100%' }}>
-        {copied ? '✓ Copied!' : '📋 Copy Code'}
-      </button>
+      <pre className="code-block" style={{ height: '320px', minHeight: '200px', maxHeight: '600px', fontSize: '12px', lineHeight: '1.6' }}>{code}</pre>
+      <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+        <button onClick={handleCopy} className="btn btn-secondary" style={{ flex: 1 }}>
+          {copied ? '✓ Copied!' : '📋 Copy Code'}
+        </button>
+      </div>
+      <p style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '8px', textAlign: 'center' }}>
+        💡 Drag bottom-right corner to resize
+      </p>
     </div>
   );
 };
@@ -495,6 +763,425 @@ const TestCaseGenerator = ({ decoded, tool }: { decoded: DecodedWarrant | null; 
   );
 };
 
+// Warrant Builder Component
+interface ToolConstraint {
+  name: string;
+  constraints: { key: string; type: 'pattern' | 'exact' | 'range'; value: string }[];
+}
+
+const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void }) => {
+  const [tools, setTools] = useState<ToolConstraint[]>([{ name: 'read_file', constraints: [{ key: 'path', type: 'pattern', value: 'docs/*' }] }]);
+  const [ttl, setTtl] = useState(3600);
+  const [maxDepth, setMaxDepth] = useState(3);
+  
+  const addTool = () => setTools([...tools, { name: '', constraints: [] }]);
+  const removeTool = (i: number) => setTools(tools.filter((_, idx) => idx !== i));
+  const updateTool = (i: number, field: string, value: string) => {
+    const updated = [...tools];
+    updated[i] = { ...updated[i], [field]: value };
+    setTools(updated);
+  };
+  const addConstraint = (toolIdx: number) => {
+    const updated = [...tools];
+    updated[toolIdx].constraints.push({ key: '', type: 'pattern', value: '' });
+    setTools(updated);
+  };
+  const updateConstraint = (toolIdx: number, constIdx: number, field: string, value: string) => {
+    const updated = [...tools];
+    updated[toolIdx].constraints[constIdx] = { ...updated[toolIdx].constraints[constIdx], [field]: value };
+    setTools(updated);
+  };
+  const removeConstraint = (toolIdx: number, constIdx: number) => {
+    const updated = [...tools];
+    updated[toolIdx].constraints = updated[toolIdx].constraints.filter((_, i) => i !== constIdx);
+    setTools(updated);
+  };
+
+  const templates = [
+    { name: '📁 File Read Only', tools: [{ name: 'read_file', constraints: [{ key: 'path', type: 'pattern' as const, value: 'data/*' }] }], ttl: 3600 },
+    { name: '🔧 Multi-Tool', tools: [{ name: 'read_file', constraints: [{ key: 'path', type: 'pattern' as const, value: '*' }] }, { name: 'write_file', constraints: [{ key: 'path', type: 'pattern' as const, value: 'tmp/*' }] }], ttl: 1800 },
+    { name: '🌐 API Access', tools: [{ name: 'http_request', constraints: [{ key: 'url', type: 'pattern' as const, value: 'https://api.example.com/*' }, { key: 'method', type: 'exact' as const, value: 'GET' }] }], ttl: 300 },
+    { name: '💰 Limited Spend', tools: [{ name: 'transfer', constraints: [{ key: 'amount', type: 'range' as const, value: '0-1000' }, { key: 'currency', type: 'exact' as const, value: 'USD' }] }], ttl: 600 },
+  ];
+
+  const applyTemplate = (template: typeof templates[0]) => {
+    setTools(template.tools);
+    setTtl(template.ttl);
+  };
+
+  const generatePreview = () => {
+    const config = {
+      tools: tools.reduce((acc, t) => {
+        if (t.name) {
+          acc[t.name] = t.constraints.reduce((c, con) => {
+            if (con.key) {
+              c[con.key] = { [con.type]: con.value };
+            }
+            return c;
+          }, {} as Record<string, unknown>);
+        }
+        return acc;
+      }, {} as Record<string, unknown>),
+      ttl,
+      max_depth: maxDepth
+    };
+    onGenerate(config);
+  };
+
+  return (
+    <div className="panel">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+        <span style={{ fontSize: '18px' }}>🏗️</span>
+        <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Warrant Builder</h2>
+      </div>
+      
+      {/* Templates */}
+      <div style={{ marginBottom: '16px' }}>
+        <label className="label">Quick Templates</label>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+          {templates.map((t, i) => (
+            <button key={i} onClick={() => applyTemplate(t)} className="tool-tag">{t.name}</button>
+          ))}
+        </div>
+      </div>
+      
+      {/* TTL & Depth */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+        <div>
+          <label className="label">TTL (seconds)</label>
+          <input className="input" type="number" value={ttl} onChange={e => setTtl(Number(e.target.value))} />
+        </div>
+        <div>
+          <label className="label">Max Delegation Depth</label>
+          <input className="input" type="number" value={maxDepth} onChange={e => setMaxDepth(Number(e.target.value))} min={0} max={10} />
+        </div>
+      </div>
+      
+      {/* Tools */}
+      <div style={{ marginBottom: '16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+          <label className="label" style={{ margin: 0 }}>Tools & Constraints</label>
+          <button onClick={addTool} className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '11px' }}>+ Add Tool</button>
+        </div>
+        
+        {tools.map((tool, ti) => (
+          <div key={ti} className="builder-tool">
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+              <input className="input" placeholder="Tool name (e.g., read_file)" value={tool.name} onChange={e => updateTool(ti, 'name', e.target.value)} style={{ flex: 1 }} />
+              <button onClick={() => removeTool(ti)} className="close-btn">✕</button>
+            </div>
+            
+            {tool.constraints.map((con, ci) => (
+              <div key={ci} style={{ display: 'flex', gap: '6px', marginBottom: '6px', marginLeft: '12px' }}>
+                <input className="input" placeholder="key" value={con.key} onChange={e => updateConstraint(ti, ci, 'key', e.target.value)} style={{ width: '70px' }} />
+                <select className="input" value={con.type} onChange={e => updateConstraint(ti, ci, 'type', e.target.value)} style={{ width: '100px' }}>
+                  <option value="pattern">Pattern</option>
+                  <option value="exact">Exact</option>
+                  <option value="range">Range</option>
+                </select>
+                <input className="input" placeholder="value" value={con.value} onChange={e => updateConstraint(ti, ci, 'value', e.target.value)} style={{ flex: 1 }} />
+                <button onClick={() => removeConstraint(ti, ci)} className="close-btn" style={{ padding: '4px' }}>✕</button>
+              </div>
+            ))}
+            <button onClick={() => addConstraint(ti)} style={{ marginLeft: '12px', fontSize: '11px', color: 'var(--accent)', background: 'none', border: 'none', cursor: 'pointer' }}>+ Add Constraint</button>
+          </div>
+        ))}
+      </div>
+      
+      <button onClick={generatePreview} className="btn btn-primary" style={{ width: '100%' }}>
+        Generate Preview
+      </button>
+      
+      <Explainer title="Constraint Types" docLink="https://tenuo.ai/concepts#constraints">
+        <p><strong>Pattern</strong>: Glob-style matching (e.g., <code>docs/*</code>, <code>*.txt</code>)</p>
+        <p><strong>Exact</strong>: Must match exactly (e.g., <code>GET</code>, <code>user123</code>)</p>
+        <p><strong>Range</strong>: Numeric range (e.g., <code>0-1000</code> for amounts)</p>
+      </Explainer>
+    </div>
+  );
+};
+
+// Chain Tester Component
+interface ChainNode {
+  id: string;
+  name: string;
+  tools: string[];
+  attenuations: string;
+  depth: number;
+}
+
+const ChainTester = () => {
+  const [nodes, setNodes] = useState<ChainNode[]>([
+    { id: '1', name: 'Root (Orchestrator)', tools: ['read_file', 'write_file', 'send_email'], attenuations: 'Full access', depth: 0 },
+    { id: '2', name: 'Worker Agent', tools: ['read_file'], attenuations: 'path: docs/*', depth: 1 },
+  ]);
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  
+  const addNode = () => {
+    const parent = nodes[nodes.length - 1];
+    setNodes([...nodes, {
+      id: generateId(),
+      name: `Delegate ${nodes.length}`,
+      tools: parent.tools.slice(0, 1),
+      attenuations: 'Attenuated',
+      depth: parent.depth + 1
+    }]);
+  };
+  
+  const removeNode = (id: string) => {
+    const idx = nodes.findIndex(n => n.id === id);
+    if (idx > 0) setNodes(nodes.slice(0, idx));
+  };
+  
+  const updateNode = (id: string, field: string, value: string | string[]) => {
+    setNodes(nodes.map(n => n.id === id ? { ...n, [field]: value } : n));
+  };
+
+  return (
+    <div className="panel">
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+        <span style={{ fontSize: '18px' }}>🔗</span>
+        <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Delegation Chain Tester</h2>
+      </div>
+      
+      {/* Chain Visualization */}
+      <div className="chain-tester">
+        {nodes.map((node, i) => (
+          <div key={node.id}>
+            <div 
+              className={`chain-tester-node ${selectedNode === node.id ? 'selected' : ''} ${i === 0 ? 'root' : ''}`}
+              onClick={() => setSelectedNode(selectedNode === node.id ? null : node.id)}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: 600, fontSize: '13px' }}>{node.name}</span>
+                <span className="depth-badge">depth {node.depth}</span>
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '6px' }}>
+                Tools: {node.tools.join(', ') || 'None'}
+              </div>
+              <div style={{ fontSize: '10px', color: 'var(--accent)', marginTop: '4px' }}>
+                {node.attenuations}
+              </div>
+            </div>
+            
+            {/* Editor for selected node */}
+            {selectedNode === node.id && (
+              <div className="chain-node-editor">
+                <div style={{ marginBottom: '8px' }}>
+                  <label className="label">Name</label>
+                  <input className="input" value={node.name} onChange={e => updateNode(node.id, 'name', e.target.value)} />
+                </div>
+                <div style={{ marginBottom: '8px' }}>
+                  <label className="label">Tools (comma-separated)</label>
+                  <input className="input" value={node.tools.join(', ')} onChange={e => updateNode(node.id, 'tools', e.target.value.split(',').map(s => s.trim()).filter(Boolean))} />
+                </div>
+                <div style={{ marginBottom: '8px' }}>
+                  <label className="label">Attenuations</label>
+                  <input className="input" value={node.attenuations} onChange={e => updateNode(node.id, 'attenuations', e.target.value)} />
+                </div>
+                {i > 0 && (
+                  <button onClick={() => removeNode(node.id)} className="btn btn-secondary" style={{ width: '100%', fontSize: '11px' }}>
+                    Remove & Truncate Chain
+                  </button>
+                )}
+              </div>
+            )}
+            
+            {/* Connector arrow */}
+            {i < nodes.length - 1 && (
+              <div className="chain-arrow">
+                <div className="chain-arrow-line" />
+                <div className="chain-arrow-head">▼</div>
+                <div className="chain-arrow-label">delegates to</div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      
+      <button onClick={addNode} className="btn btn-secondary" style={{ width: '100%', marginTop: '16px' }}>
+        + Add Delegate
+      </button>
+      
+      {/* Attenuation Warnings */}
+      {nodes.length > 1 && (
+        <div className="chain-analysis">
+          <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '8px' }}>📊 Chain Analysis</div>
+          {nodes.slice(1).map((node, i) => {
+            const parent = nodes[i];
+            const toolsRemoved = parent.tools.filter(t => !node.tools.includes(t));
+            return (
+              <div key={node.id} className="attenuation-item">
+                <span style={{ color: 'var(--green)' }}>✓</span>
+                <span>
+                  {parent.name} → {node.name}: 
+                  {toolsRemoved.length > 0 && <span style={{ color: 'var(--red)' }}> -{toolsRemoved.join(', ')}</span>}
+                  {toolsRemoved.length === 0 && <span style={{ color: 'var(--muted)' }}> (same tools)</span>}
+                </span>
+              </div>
+            );
+          })}
+          {nodes.length > 4 && (
+            <div className="attenuation-item" style={{ color: 'var(--yellow)' }}>
+              <span>⚠️</span>
+              <span>Deep chain ({nodes.length} levels) - consider flattening</span>
+            </div>
+          )}
+        </div>
+      )}
+      
+      <Explainer title="Monotonic Delegation" docLink="https://tenuo.ai/concepts#delegation">
+        <p>In Tenuo, capabilities can only <strong>shrink</strong> as they delegate:</p>
+        <ul style={{ marginTop: '8px', paddingLeft: '20px' }}>
+          <li>Tools can be removed, never added</li>
+          <li>Constraints can be tightened, never loosened</li>
+          <li>TTL can be shortened, never extended</li>
+        </ul>
+        <p style={{ marginTop: '8px' }}>This ensures that a compromised agent can never exceed its granted authority.</p>
+      </Explainer>
+    </div>
+  );
+};
+
+// Diff Viewer Component
+// Note: For meaningful comparisons, users should paste their own warrants.
+// We provide a few example scenarios using our sample warrant.
+const DIFF_SAMPLES = [
+  {
+    name: "🔬 Same Warrant",
+    description: "Load same warrant in both to verify tool works",
+    a: SAMPLE_WARRANT_1,
+    b: SAMPLE_WARRANT_1,
+  },
+  {
+    name: "📄 A Only",
+    description: "Load sample in A, paste your own in B",
+    a: SAMPLE_WARRANT_1,
+    b: "",
+  },
+  {
+    name: "📝 B Only",
+    description: "Load sample in B, paste your own in A",
+    a: "",
+    b: SAMPLE_WARRANT_1,
+  },
+];
+
+const DiffViewer = () => {
+  const [warrantA, setWarrantA] = useState('');
+  const [warrantB, setWarrantB] = useState('');
+  const [decodedA, setDecodedA] = useState<DecodedWarrant | null>(null);
+  const [decodedB, setDecodedB] = useState<DecodedWarrant | null>(null);
+  
+  const loadSample = (sample: typeof DIFF_SAMPLES[0]) => {
+    setWarrantA(sample.a);
+    setWarrantB(sample.b);
+    setDecodedA(null);
+    setDecodedB(null);
+  };
+  
+  const handleCompare = () => {
+    try {
+      if (warrantA) setDecodedA(decode_warrant(warrantA));
+      if (warrantB) setDecodedB(decode_warrant(warrantB));
+    } catch {}
+  };
+  
+  const getDiff = (a: unknown, b: unknown, path: string = ''): { path: string; a: unknown; b: unknown }[] => {
+    const diffs: { path: string; a: unknown; b: unknown }[] = [];
+    if (typeof a !== typeof b || JSON.stringify(a) !== JSON.stringify(b)) {
+      diffs.push({ path: path || 'root', a, b });
+    }
+    if (typeof a === 'object' && a && typeof b === 'object' && b) {
+      const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+      for (const key of keys) {
+        diffs.push(...getDiff((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key], path ? `${path}.${key}` : key));
+      }
+    }
+    return diffs;
+  };
+  
+  const diffs = decodedA && decodedB ? getDiff(decodedA, decodedB) : [];
+
+  return (
+    <div className="panel">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ fontSize: '18px' }}>📊</span>
+          <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Warrant Diff Viewer</h2>
+        </div>
+      </div>
+      
+      {/* Samples */}
+      <div style={{ marginBottom: '16px' }}>
+        <label className="label">Load Sample Comparison</label>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+          {DIFF_SAMPLES.map((sample, i) => (
+            <button key={i} onClick={() => loadSample(sample)} className="tool-tag" title={sample.description}>
+              {sample.name}
+            </button>
+          ))}
+        </div>
+      </div>
+      
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+        <div>
+          <label className="label" style={{ color: 'var(--red)', opacity: 0.8 }}>Warrant A (Original)</label>
+          <textarea className="input" style={{ height: '80px', resize: 'none', borderColor: warrantA ? 'rgba(239, 68, 68, 0.3)' : undefined }} placeholder="Paste parent/original warrant..." value={warrantA} onChange={e => setWarrantA(e.target.value)} />
+        </div>
+        <div>
+          <label className="label" style={{ color: 'var(--green)', opacity: 0.8 }}>Warrant B (Modified)</label>
+          <textarea className="input" style={{ height: '80px', resize: 'none', borderColor: warrantB ? 'rgba(34, 197, 94, 0.3)' : undefined }} placeholder="Paste child/attenuated warrant..." value={warrantB} onChange={e => setWarrantB(e.target.value)} />
+        </div>
+      </div>
+      
+      <button onClick={handleCompare} className="btn btn-secondary" style={{ width: '100%', marginBottom: '16px' }}>
+        Compare Warrants
+      </button>
+      
+      {diffs.length > 0 && (
+        <div className="diff-results">
+          <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '8px' }}>🔍 Differences Found: {diffs.length}</div>
+          {diffs.slice(0, 10).map((d, i) => (
+            <div key={i} className="diff-item">
+              <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--accent)', marginBottom: '4px' }}>{d.path}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <div className="diff-value diff-a">
+                  <span style={{ fontSize: '9px', color: 'var(--red)' }}>A:</span>
+                  <code>{JSON.stringify(d.a)}</code>
+                </div>
+                <div className="diff-value diff-b">
+                  <span style={{ fontSize: '9px', color: 'var(--green)' }}>B:</span>
+                  <code>{JSON.stringify(d.b)}</code>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      
+      {decodedA && decodedB && diffs.length === 0 && (
+        <div className="result-box success" style={{ padding: '16px' }}>
+          <span style={{ fontSize: '24px' }}>✓</span>
+          <p style={{ color: 'var(--green)', fontWeight: 600 }}>Warrants are identical</p>
+        </div>
+      )}
+      
+      {!decodedA && !decodedB && (
+        <div className="empty-state" style={{ padding: '24px', textAlign: 'center' }}>
+          <div style={{ fontSize: '32px', marginBottom: '12px', opacity: 0.3 }}>📊</div>
+          <p style={{ color: 'var(--muted)', fontSize: '13px', maxWidth: '300px', margin: '0 auto' }}>
+            Paste two warrants above and click "Compare" to see the differences.
+          </p>
+          <p style={{ color: 'var(--muted)', fontSize: '11px', marginTop: '8px', opacity: 0.7 }}>
+            Tip: Compare parent vs child warrants to verify attenuation
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // History Sidebar Component
 const HistorySidebar = ({ 
   history, 
@@ -544,6 +1231,10 @@ function App() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [showSamples, setShowSamples] = useState(false);
   const [activeTab, setActiveTab] = useState<'decode' | 'debug' | 'code'>('decode');
+  const [mode, setMode] = useState<'decoder' | 'builder' | 'chain' | 'diff'>('decoder');
+  const [builderPreview, setBuilderPreview] = useState<unknown>(null);
+  const [popSignature, setPopSignature] = useState('');
+  const [, setPopPublicKey] = useState('');
 
   // Initialize WASM
   useEffect(() => {
@@ -592,12 +1283,30 @@ function App() {
         } else if (e.key === 'k') {
           e.preventDefault();
           handleClear();
+        } else if (e.key === 'd') {
+          e.preventDefault();
+          setMode(mode === 'diff' ? 'decoder' : 'diff');
+        } else if (e.key === 'b') {
+          e.preventDefault();
+          setMode(mode === 'builder' ? 'decoder' : 'builder');
+        } else if (e.key === '1') {
+          e.preventDefault();
+          setMode('decoder');
+        } else if (e.key === '2') {
+          e.preventDefault();
+          setMode('builder');
+        } else if (e.key === '3') {
+          e.preventDefault();
+          setMode('chain');
+        } else if (e.key === '4') {
+          e.preventDefault();
+          setMode('diff');
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [warrantB64, tool, argsJson, wasmReady]);
+  }, [warrantB64, tool, argsJson, wasmReady, mode]);
 
   const generateShareUrl = useCallback(() => {
     const state = { warrant: warrantB64, tool, args: argsJson, root: rootKeyHex };
@@ -721,43 +1430,86 @@ function App() {
         </nav>
 
         {/* Hero */}
-        <header style={{ textAlign: 'center', padding: '48px 24px 32px' }}>
-          <div className="badge" style={{ marginBottom: '16px' }}>
-            <span style={{ color: 'var(--accent)' }}>Explorer</span>
-          </div>
-          <h1 style={{ fontSize: '36px', fontWeight: 700, letterSpacing: '-0.02em', marginBottom: '12px' }}>
+        <header style={{ textAlign: 'center', padding: '40px 24px 24px' }}>
+          <h1 style={{ fontSize: '32px', fontWeight: 700, letterSpacing: '-0.02em', marginBottom: '8px' }}>
             Warrant <span className="gradient-text">Playground</span>
           </h1>
-          <p style={{ fontSize: '16px', color: 'var(--muted)', maxWidth: '480px', margin: '0 auto 24px' }}>
-            Decode, debug, and test authorization in real-time
+          <p style={{ fontSize: '15px', color: 'var(--muted)', maxWidth: '520px', margin: '0 auto 12px' }}>
+            Decode, build, and test authorization in real-time
+          </p>
+          <p style={{ fontSize: '12px', color: 'var(--green)', maxWidth: '520px', margin: '0 auto 20px', padding: '8px 16px', background: 'rgba(34, 197, 94, 0.1)', borderRadius: '8px', border: '1px solid rgba(34, 197, 94, 0.2)' }}>
+            🔒 Warrants contain only signed claims, not secrets. Safe to paste and share.
           </p>
           
-          {/* Sample Library Dropdown */}
-          <div style={{ position: 'relative', display: 'inline-block' }}>
-            <button onClick={() => setShowSamples(!showSamples)} className="btn btn-secondary" style={{ gap: '8px' }}>
-              <span>📦</span>
-              <span>Sample Library</span>
-              <span style={{ marginLeft: '4px' }}>{showSamples ? '▲' : '▼'}</span>
+          {/* Mode Switcher */}
+          <div className="mode-switcher">
+            <button onClick={() => setMode('decoder')} className={`mode-btn ${mode === 'decoder' ? 'active' : ''}`}>
+              🔍 Decoder
             </button>
-            {showSamples && (
-              <div className="samples-dropdown">
-                {Object.entries(SAMPLES).map(([key, sample]) => (
-                  <div key={key} className="sample-item" onClick={() => handleLoadSample(key)}>
-                    <div style={{ fontWeight: 500 }}>{sample.name}</div>
-                    <div style={{ fontSize: '11px', color: 'var(--muted)' }}>{sample.description}</div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <button onClick={() => setMode('builder')} className={`mode-btn ${mode === 'builder' ? 'active' : ''}`}>
+              🏗️ Builder
+            </button>
+            <button onClick={() => setMode('chain')} className={`mode-btn ${mode === 'chain' ? 'active' : ''}`}>
+              🔗 Chain
+            </button>
+            <button onClick={() => setMode('diff')} className={`mode-btn ${mode === 'diff' ? 'active' : ''}`}>
+              📊 Diff
+            </button>
           </div>
+          
         </header>
 
         {/* Main Content */}
         <main style={{ flex: 1, maxWidth: '1200px', width: '100%', margin: '0 auto', padding: '0 24px 64px' }}>
-          {/* Validation Warnings */}
-          <ValidationWarnings decoded={decodedWarrant} tool={tool} args={argsJson} />
+          {/* Builder Mode */}
+          {mode === 'builder' && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+              <WarrantBuilder onGenerate={setBuilderPreview} />
+              <div className="panel">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+                  <span style={{ fontSize: '18px' }}>👁️</span>
+                  <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Preview</h2>
+                </div>
+                {builderPreview ? (
+                  <div>
+                    <pre className="code-block" style={{ maxHeight: '300px' }}>
+                      {JSON.stringify(builderPreview, null, 2)}
+                    </pre>
+                    <div style={{ marginTop: '12px' }}>
+                      <CodeGenerator decoded={{ id: '', issuer: '', tools: Object.keys((builderPreview as {tools: Record<string, unknown>}).tools || {}), capabilities: (builderPreview as {tools: Record<string, unknown>}).tools || {}, issued_at: 0, expires_at: 0, authorized_holder: '', depth: 0 }} tool={Object.keys((builderPreview as {tools: Record<string, unknown>}).tools || {})[0] || ''} args="{}" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="empty-state">
+                    <div style={{ fontSize: '40px', marginBottom: '12px', opacity: 0.2 }}>👁️</div>
+                    <p>Click "Generate Preview" to see the warrant structure</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
           
-          <div style={{ display: 'grid', gridTemplateColumns: history.length > 0 ? '200px 1fr 1fr' : '1fr 1fr', gap: '24px' }}>
+          {/* Chain Mode */}
+          {mode === 'chain' && (
+            <div style={{ maxWidth: '600px', margin: '0 auto' }}>
+              <ChainTester />
+            </div>
+          )}
+          
+          {/* Diff Mode */}
+          {mode === 'diff' && (
+            <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+              <DiffViewer />
+            </div>
+          )}
+          
+          {/* Decoder Mode */}
+          {mode === 'decoder' && (
+            <>
+              {/* Validation Warnings */}
+              <ValidationWarnings decoded={decodedWarrant} tool={tool} args={argsJson} />
+              
+              <div style={{ display: 'grid', gridTemplateColumns: history.length > 0 ? '200px 1fr 1fr' : '1fr 1fr', gap: '24px' }}>
             {/* History Sidebar */}
             {history.length > 0 && (
               <HistorySidebar history={history} onLoad={loadHistoryItem} onClear={clearHistory} />
@@ -767,9 +1519,34 @@ function App() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               {/* Warrant Input Panel */}
               <div className="panel">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                  <span style={{ fontSize: '18px' }}>📄</span>
-                  <h2 style={{ fontSize: '15px', fontWeight: 600 }}>1. Paste Warrant</h2>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ fontSize: '18px' }}>📄</span>
+                    <h2 style={{ fontSize: '15px', fontWeight: 600 }}>1. Paste Warrant</h2>
+                  </div>
+                  <div style={{ position: 'relative' }}>
+                    <button onClick={() => setShowSamples(!showSamples)} className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '11px', gap: '6px' }}>
+                      <span>📦</span>
+                      <span>Samples</span>
+                      <span>{showSamples ? '▲' : '▼'}</span>
+                    </button>
+                    {showSamples && (
+                      <div className="samples-dropdown" style={{ right: 0, left: 'auto', transform: 'none', minWidth: '280px' }}>
+                        <div style={{ padding: '8px 12px', fontSize: '10px', color: 'var(--muted)', borderBottom: '1px solid var(--border)', marginBottom: '4px' }}>
+                          📋 Same warrant, different scenarios
+                        </div>
+                        {Object.entries(SAMPLES).map(([key, sample]) => (
+                          <div key={key} className="sample-item" onClick={() => handleLoadSample(key)}>
+                            <div style={{ fontWeight: 500 }}>{sample.name}</div>
+                            <div style={{ fontSize: '11px', color: 'var(--muted)' }}>{sample.description}</div>
+                          </div>
+                        ))}
+                        <div style={{ padding: '8px 12px', fontSize: '10px', color: 'var(--muted)', borderTop: '1px solid var(--border)', marginTop: '4px' }}>
+                          💡 Paste your own warrant for real testing
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
                 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -777,7 +1554,7 @@ function App() {
                     <label className="label">Base64 Encoded Warrant</label>
                     <textarea
                       className="input"
-                      style={{ height: '80px', resize: 'none' }}
+                      style={{ height: '100px', minHeight: '60px', maxHeight: '300px', resize: 'vertical' }}
                       placeholder="Paste your warrant here..."
                       value={warrantB64}
                       onChange={(e) => setWarrantB64(e.target.value)}
@@ -801,6 +1578,20 @@ function App() {
                   <button onClick={handleDecode} disabled={!wasmReady || !warrantB64} className="btn btn-secondary">
                     {wasmReady ? 'Decode Warrant' : 'Loading WASM...'}
                   </button>
+                  
+                  {/* Presets */}
+                  <PresetsManager
+                    currentWarrant={warrantB64}
+                    currentTool={tool}
+                    currentArgs={argsJson}
+                    currentRootKey={rootKeyHex}
+                    onLoad={(preset) => {
+                      setWarrantB64(preset.warrant);
+                      setTool(preset.tool);
+                      setArgsJson(preset.args);
+                      setRootKeyHex(preset.rootKey);
+                    }}
+                  />
                 </div>
                 
                 <Explainer title="What is a warrant?" docLink="https://tenuo.ai/concepts#warrants">
@@ -834,7 +1625,7 @@ function App() {
                   
                   <div>
                     <label className="label">Arguments (JSON)</label>
-                    <textarea className="input" style={{ height: '60px', resize: 'none' }} value={argsJson} onChange={(e) => setArgsJson(e.target.value)} />
+                    <textarea className="input" style={{ height: '80px', minHeight: '50px', maxHeight: '200px', resize: 'vertical' }} value={argsJson} onChange={(e) => setArgsJson(e.target.value)} />
                   </div>
                   
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -846,8 +1637,30 @@ function App() {
                     </Tooltip>
                   </div>
                   
+                  <Explainer title="What is Proof-of-Possession (PoP)?" docLink="https://tenuo.ai/security">
+                    <p><strong>Proof-of-Possession</strong> prevents stolen warrants from being used by attackers.</p>
+                    <p style={{ marginTop: '8px' }}>When authorizing, the holder must sign a challenge with their private key, proving they possess the key that matches the warrant's <code>authorized_holder</code> public key.</p>
+                    <p style={{ marginTop: '8px' }}>Without PoP: Anyone who intercepts a warrant can use it.</p>
+                    <p>With PoP: Only the legitimate holder can use the warrant.</p>
+                    <p style={{ marginTop: '8px', color: 'var(--accent)' }}>💡 Dry run skips this check for playground testing.</p>
+                  </Explainer>
+                  
+                  {/* PoP Signature Simulator */}
+                  {!dryRun && (
+                    <PopSimulator 
+                      warrant={warrantB64}
+                      tool={tool}
+                      args={argsJson}
+                      onPopGenerated={(pop, pubKey) => {
+                        setPopSignature(pop);
+                        setPopPublicKey(pubKey);
+                      }}
+                    />
+                  )}
+                  
                   <button onClick={handleAuthorize} disabled={!wasmReady || !warrantB64 || !tool} className="btn btn-primary">
                     Check Authorization
+                    {popSignature && !dryRun && <span style={{ marginLeft: '6px', fontSize: '10px' }}>+ PoP</span>}
                   </button>
                 </div>
               </div>
@@ -868,13 +1681,11 @@ function App() {
             {/* Right Column - Outputs */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               {/* Tab Navigation */}
-              {decodedWarrant && (
-                <div className="tabs">
-                  <button onClick={() => setActiveTab('decode')} className={`tab ${activeTab === 'decode' ? 'active' : ''}`}>🔍 Decoded</button>
-                  <button onClick={() => setActiveTab('debug')} className={`tab ${activeTab === 'debug' ? 'active' : ''}`}>🐛 Debug</button>
-                  <button onClick={() => setActiveTab('code')} className={`tab ${activeTab === 'code' ? 'active' : ''}`}>💻 Code</button>
-                </div>
-              )}
+              <div className="tabs">
+                <button onClick={() => setActiveTab('decode')} className={`tab ${activeTab === 'decode' ? 'active' : ''}`}>🔍 Decoded</button>
+                <button onClick={() => setActiveTab('debug')} className={`tab ${activeTab === 'debug' ? 'active' : ''}`}>🐛 Debug</button>
+                <button onClick={() => setActiveTab('code')} className={`tab ${activeTab === 'code' ? 'active' : ''}`}>💻 Code</button>
+              </div>
               
               {/* Decoded Panel */}
               {activeTab === 'decode' && (
@@ -884,63 +1695,66 @@ function App() {
                       <span style={{ fontSize: '18px' }}>🔍</span>
                       <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Decoded Warrant</h2>
                     </div>
-                    {warrantB64 && (
+                    {decodedWarrant && warrantB64 && (
                       <button onClick={handleShare} className="btn btn-secondary" style={{ padding: '6px 10px', fontSize: '11px' }}>
                         {shareUrl ? '✓ Copied!' : '🔗 Share'}
                       </button>
                     )}
                   </div>
                   
-                  {decoded ? (
-                    typeof decoded === 'string' ? (
-                      <div className="error-box">
-                        <p>⚠ {decoded}</p>
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        {/* Chain Visualization */}
-                        <div className="chain-box">
-                          <div className="chain-node">
-                            <div className="chain-icon">🔑</div>
-                            <div className="chain-label">Issuer</div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                              <code style={{ fontSize: '10px', color: 'var(--accent)' }}>{truncate(decoded.issuer)}</code>
-                              <CopyBtn text={decoded.issuer} />
-                            </div>
-                          </div>
-                          <div className="chain-connector">
-                            <div className="chain-line" />
-                            <div className="chain-depth">depth {decoded.depth}</div>
-                          </div>
-                          <div className="chain-node">
-                            <div className="chain-icon">🤖</div>
-                            <div className="chain-label">Holder</div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                              <code style={{ fontSize: '10px', color: 'var(--green)' }}>{truncate(decoded.authorized_holder)}</code>
-                              <CopyBtn text={decoded.authorized_holder} />
-                            </div>
+                  {!decoded && (
+                    <div className="empty-state" style={{ padding: '40px' }}>
+                      <div style={{ fontSize: '40px', marginBottom: '12px', opacity: 0.3 }}>🔍</div>
+                      <p style={{ color: 'var(--muted)' }}>Paste a warrant and click "Decode" to see its contents</p>
+                    </div>
+                  )}
+                  
+                  {typeof decoded === 'string' && (
+                    <div className="result-box error" style={{ padding: '16px' }}>
+                      <span style={{ fontSize: '24px' }}>⚠️</span>
+                      <p style={{ color: 'var(--red)', fontWeight: 600 }}>{decoded}</p>
+                    </div>
+                  )}
+                  
+                  {decodedWarrant && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {/* Chain Visualization */}
+                      <div className="chain-box">
+                        <div className="chain-node">
+                          <div className="chain-icon">🔑</div>
+                          <div className="chain-label">Issuer</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <code style={{ fontSize: '10px', color: 'var(--accent)' }}>{truncate(decodedWarrant.issuer)}</code>
+                            <CopyBtn text={decodedWarrant.issuer} />
                           </div>
                         </div>
-
-                        <ExpirationDisplay issuedAt={decoded.issued_at} expiresAt={decoded.expires_at} />
-
-                        <div style={{ padding: '12px', background: 'var(--surface-2)', borderRadius: '10px', border: '1px solid var(--border)' }}>
-                          <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '8px' }}>🔧 Authorized Tools</div>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                            {decoded.tools.map(t => <span key={t} className="tool-tag">{t}</span>)}
-                          </div>
+                        <div className="chain-connector">
+                          <div className="chain-line" />
+                          <div className="chain-depth">depth {decodedWarrant.depth}</div>
                         </div>
-
-                        <div style={{ padding: '12px', background: 'var(--surface-2)', borderRadius: '10px', border: '1px solid var(--border)' }}>
-                          <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '8px' }}>📋 Constraints</div>
-                          <pre className="code-block" style={{ maxHeight: '120px' }}>{JSON.stringify(decoded.capabilities, null, 2)}</pre>
+                        <div className="chain-node">
+                          <div className="chain-icon">🤖</div>
+                          <div className="chain-label">Holder</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <code style={{ fontSize: '10px', color: 'var(--green)' }}>{truncate(decodedWarrant.authorized_holder)}</code>
+                            <CopyBtn text={decodedWarrant.authorized_holder} />
+                          </div>
                         </div>
                       </div>
-                    )
-                  ) : (
-                    <div className="empty-state">
-                      <div style={{ fontSize: '40px', marginBottom: '12px', opacity: 0.2 }}>🔐</div>
-                      <p>Paste a warrant and click Decode</p>
+
+                      <ExpirationDisplay issuedAt={decodedWarrant.issued_at} expiresAt={decodedWarrant.expires_at} />
+
+                      <div style={{ padding: '12px', background: 'var(--surface-2)', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '8px' }}>🔧 Authorized Tools</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                          {decodedWarrant.tools.map(t => <span key={t} className="tool-tag">{t}</span>)}
+                        </div>
+                      </div>
+
+                      <div style={{ padding: '12px', background: 'var(--surface-2)', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '8px' }}>📋 Constraints</div>
+                        <pre className="code-block" style={{ height: '120px', minHeight: '80px', maxHeight: '400px', resize: 'vertical' }}>{JSON.stringify(decodedWarrant.capabilities, null, 2)}</pre>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -955,8 +1769,17 @@ function App() {
               )}
               
               {/* Code Panel */}
-              {activeTab === 'code' && decodedWarrant && (
-                <CodeGenerator decoded={decodedWarrant} tool={tool} args={argsJson} />
+              {activeTab === 'code' && (
+                decodedWarrant ? (
+                  <CodeGenerator decoded={decodedWarrant} tool={tool} args={argsJson} />
+                ) : (
+                  <div className="panel">
+                    <div className="empty-state" style={{ padding: '40px' }}>
+                      <div style={{ fontSize: '40px', marginBottom: '12px', opacity: 0.3 }}>💻</div>
+                      <p style={{ color: 'var(--muted)' }}>Decode a warrant first to generate code</p>
+                    </div>
+                  </div>
+                )
               )}
 
               {/* Result Panel */}
@@ -992,13 +1815,19 @@ function App() {
               </div>
             </div>
           </div>
+            </>
+          )}
         </main>
 
         {/* Keyboard Shortcuts Help */}
         <div className="shortcuts-help">
           <div className="shortcut"><kbd>⌘</kbd><kbd>↵</kbd><span>Decode</span></div>
-          <div className="shortcut"><kbd>⌘</kbd><kbd>⇧</kbd><kbd>↵</kbd><span>Authorize</span></div>
+          <div className="shortcut"><kbd>⌘</kbd><kbd>⇧</kbd><kbd>↵</kbd><span>Auth</span></div>
           <div className="shortcut"><kbd>⌘</kbd><kbd>K</kbd><span>Clear</span></div>
+          <div className="shortcut-divider" />
+          <div className="shortcut"><kbd>⌘</kbd><kbd>1-4</kbd><span>Modes</span></div>
+          <div className="shortcut"><kbd>⌘</kbd><kbd>B</kbd><span>Builder</span></div>
+          <div className="shortcut"><kbd>⌘</kbd><kbd>D</kbd><span>Diff</span></div>
         </div>
 
         {/* Footer */}

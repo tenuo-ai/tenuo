@@ -120,10 +120,10 @@ compiled = CompiledMcpConfig.compile(config)
 # 2. Create warrant (usually done by control plane)
 control_keypair = SigningKey.generate()
 warrant = Warrant.issue(
-    capabilities=Constraints.for_tool("filesystem_read", {
+    tools={"filesystem_read": Constraints.for_tool("filesystem_read", {
         "path": Pattern("/var/log/*"),
         "max_size": Range.max_value(1024 * 1024)
-    }),
+    })},
     ttl_seconds=3600,
     keypair=control_keypair,
     holder=control_keypair.public_key
@@ -399,7 +399,7 @@ from tenuo import Authorizer, Warrant
 
 # Create warrant
 warrant = Warrant.issue(
-    capabilities=Constraints.for_tool("filesystem_read", {"path": Pattern("/var/log/*")}),
+    tools={"filesystem_read": Constraints.for_tool("filesystem_read", {"path": Pattern("/var/log/*")})},
     ttl_seconds=3600,
     keypair=keypair,
     holder=keypair.public_key
@@ -418,10 +418,10 @@ authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop
 ```python
 # Control plane issues root warrant
 root_warrant = Warrant.issue(
-    capabilities=Constraints.for_tools(
-        ["filesystem_read", "database_query"],
-        {"path": Pattern("/data/*")}
-    ),
+    tools={
+        "filesystem_read": Constraints.for_tool("filesystem_read", {"path": Pattern("/data/*")}),
+        "database_query": Constraints.for_tool("database_query", {"path": Pattern("/data/*")})
+    },
     ttl_seconds=3600,
     keypair=control_keypair,
     holder=orchestrator_keypair.public_key
@@ -496,7 +496,7 @@ MCP tools are often high-risk (filesystem, database). Use short TTLs:
 
 ```python
 warrant = Warrant.issue(
-    capabilities=Constraints.for_tool("filesystem_write", {}),
+    tools={"filesystem_write": Constraints.for_tool("filesystem_write", {})},
     ttl_seconds=300,  # 5 minutes
     ...
 )

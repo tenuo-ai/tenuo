@@ -75,6 +75,10 @@ def diagnose(warrant: Warrant) -> str:
     # Check type
     lines.append(f"[OK] Type: {warrant.warrant_type}")
     
+    # Add playground link
+    lines.append("")
+    lines.append("Debug interactively: https://tenuo.ai/explorer/")
+    
     return "\n".join(lines)
 
 
