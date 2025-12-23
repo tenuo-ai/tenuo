@@ -70,9 +70,9 @@ Authority to invoke specific tools with specific constraints:
 from tenuo import Warrant, Constraints, Exact
 
 execution_warrant = Warrant.issue(
-    capabilities=Constraints.for_tool("read_file", {
+    tools={"read_file": Constraints.for_tool("read_file", {
         "path": Exact("/data/q3.pdf")
-    }),
+    })},
     keypair=issuer_keypair,
     holder=worker_public_key,
     ttl_seconds=60,
@@ -508,11 +508,11 @@ Tool names starting with `tenuo:` are **reserved for framework use** and will be
 
 ```python
 # ❌ This will fail
-warrant = Warrant.builder().capability("tenuo:revoke", {})
+warrant = Warrant.builder().tool("tenuo:revoke", {}).build(kp)
 # Error: Reserved tool namespace
 
 # ✅ Use your own namespace
-warrant = Warrant.builder().capability("my_app:revoke", {})
+warrant = Warrant.builder().tool("my_app:revoke", {}).build(kp)
 ```
 
 **Rationale**: Prevents collision between user-defined tools and future framework features.

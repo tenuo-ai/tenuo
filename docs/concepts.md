@@ -133,16 +133,17 @@ Warrants are **bound to keypairs**. To use a warrant, you must prove you hold th
 
 | Type | Can Execute? | Can Delegate? | Use Case |
 |------|--------------|---------------|----------|
-| **Execution (non-terminal)** | Yes | Yes (narrower) | Orchestrator delegating to workers |
-| **Execution (terminal)** | Yes | No | Leaf workers, Q-LLM |
+| **Execution** | Yes | Yes (if depth < max_depth) | Workers, Q-LLM |
 | **Issuer** | No | Yes (issues execution) | P-LLM, Planner, Control plane |
+
+> **Terminal State**: A warrant becomes terminal when `depth >= max_depth`. Terminal warrants can execute tools but cannot delegate further. This is determined at runtime by comparing the warrant's current depth against its `max_depth`, not by warrant type.
 
 **Root Execution Warrant**: The first execution warrant in a task chain, typically minted by the control plane. Starts at `depth=0` and can be attenuated.
 
 ```python
 # Root Execution Warrant: The first execution warrant in a task chain...
 root = Warrant.issue(
-    capabilities=Constraints.for_tool("read_file", {}),  # or specific constraints
+    tools={"read_file": Constraints.for_tool("read_file", {})},
     keypair=control_plane_kp,
     holder=agent_kp.public_key,
     ttl_seconds=3600
@@ -157,7 +158,7 @@ issuer = Warrant.issue_issuer(
     keypair=planner_kp,
 )
 
-exec_warrant = (issuer.issue_execution()
+exec_warrant = (issuer.issue()
     .tool("read_file")
     .holder(worker_kp.public_key)
     .build(planner_kp))  # Planner's holder signs
@@ -188,12 +189,11 @@ The orchestrator decomposes work into phases. Each phase gets a fresh warrant.
 ```python
 async def orchestrator(task: str):
     for phase in planner.decompose(task):
-        warrant = orchestrator_warrant.attenuate(
-            tools=phase.tools,
-            constraints=phase.constraints,
-            ttl=60,
-            holder=worker_keypair.public_key
-        )
+        warrant = (orchestrator_warrant.attenuate()
+            .tools(phase.tools)
+            .ttl(60)
+            .holder(worker_keypair.public_key)
+            .build(parent_keypair))
         await worker.execute(phase, warrant)
         # Warrant expires. Next phase gets a new one.
 ```
@@ -209,7 +209,7 @@ For streaming workers, the orchestrator periodically pushes fresh warrants.
 ```python
 async def orchestrator():
     while task_active:
-        warrant = orchestrator_warrant.attenuate(ttl=300)
+        warrant = orchestrator_warrant.attenuate().ttl(300).build(parent_keypair)
         await worker.update_warrant(warrant)
         await asyncio.sleep(240)  # Push before expiry
 
@@ -273,7 +273,7 @@ Authority can only **shrink**, never expand:
 
 ### Terminal Warrants
 
-A warrant is **terminal** when `depth >= max_depth`. Terminal warrants can execute tools but cannot delegate further. Use `.terminal()` when creating warrants for leaf workers.
+A warrant is **terminal** when `depth >= max_depth`. Terminal warrants can execute tools but cannot delegate further. This is enforced automatically during attenuation—you don't need to explicitly mark a warrant as terminal.
 
 ### Stateless Verification
 

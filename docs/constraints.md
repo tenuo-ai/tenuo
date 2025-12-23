@@ -18,10 +18,10 @@ from tenuo import Warrant, Constraints, Pattern, Range
 
 # Create warrant with per-tool constraints
 warrant = Warrant.issue(
-    capabilities=Constraints.for_tool("read_file", {
+    tools={"read_file": Constraints.for_tool("read_file", {
         "path": Pattern("/data/*"),      # Path must match /data/*
         "max_size": Range.max_value(1000) # Size must be ≤ 1000
-    }),
+    })},
     keypair=keypair,
     holder=worker_pubkey,
     ttl_seconds=3600,
@@ -365,7 +365,7 @@ Regex(r"^[a-z]+@company\.com$")
 >
 > # Parent with regex
 > parent = Warrant.issue(
->     capabilities=Constraints.for_tool("query", {"env": Regex(r"^(staging|dev)-.*$")}),
+>     tools={"query": Constraints.for_tool("query", {"env": Regex(r"^(staging|dev)-.*$")})},
 >     keypair=kp, holder=kp.public_key, ttl_seconds=3600
 > )
 >
@@ -424,9 +424,9 @@ from tenuo import Warrant, Constraints, Contains
 
 # Warrant requires ["read", "write"] permissions
 warrant = Warrant.issue(
-    capabilities=Constraints.for_tool("access_resource", {
+    tools={"access_resource": Constraints.for_tool("access_resource", {
         "permissions": Contains(["read", "write"])
-    }),
+    })},
     keypair=kp, holder=kp.public_key, ttl_seconds=3600
 )
 
@@ -453,9 +453,9 @@ from tenuo import Warrant, Constraints, Subset
 
 # Warrant allows only specific environments
 warrant = Warrant.issue(
-    capabilities=Constraints.for_tool("deploy", {
+    tools={"deploy": Constraints.for_tool("deploy", {
         "environments": Subset(["staging", "dev"])
-    }),
+    })},
     keypair=kp, holder=kp.public_key, ttl_seconds=3600
 )
 
@@ -541,9 +541,9 @@ from tenuo import Warrant, Constraints, CEL
 
 # Budget must be less than 10% of revenue
 warrant = Warrant.issue(
-    capabilities=Constraints.for_tool("create_campaign", {
+    tools={"create_campaign": Constraints.for_tool("create_campaign", {
         "budget_check": CEL("budget < revenue * 0.1 && budget > 0")
-    }),
+    })},
     keypair=keypair,
     holder=holder_pubkey,
     ttl_seconds=3600
@@ -598,9 +598,9 @@ from tenuo import Warrant, Constraints, CEL
 
 # Only allow if order created within last 24 hours
 warrant = Warrant.issue(
-    capabilities=Constraints.for_tool("process_order", {
+    tools={"process_order": Constraints.for_tool("process_order", {
         "freshness": CEL("time_since(created_at) < 86400")
-    }),
+    })},
     keypair=keypair,
     holder=holder_pubkey,
     ttl_seconds=3600
@@ -613,9 +613,9 @@ from tenuo import Warrant, Constraints, CEL
 
 # Only allow API calls from private network
 warrant = Warrant.issue(
-    capabilities=Constraints.for_tool("api_call", {
+    tools={"api_call": Constraints.for_tool("api_call", {
         "network": CEL("net_in_cidr(source_ip, '10.0.0.0/8')")
-    }),
+    })},
     keypair=keypair,
     holder=holder_pubkey,
     ttl_seconds=3600
@@ -631,7 +631,7 @@ from tenuo import Warrant, Constraints, CEL
 
 # Parent: budget < 10000
 parent = Warrant.issue(
-    capabilities=Constraints.for_tool("spend", {"budget_rule": CEL("budget < 10000")}),
+    tools={"spend": Constraints.for_tool("spend", {"budget_rule": CEL("budget < 10000")})},
     keypair=kp,
     holder=kp.public_key,
     ttl_seconds=3600
@@ -656,7 +656,7 @@ from tenuo import Warrant, Constraints, CEL
 
 # Parent CEL
 parent = Warrant.issue(
-    capabilities=Constraints.for_tool("api_call", {"network": CEL("net_in_cidr(ip, '10.0.0.0/8')")}),
+    tools={"api_call": Constraints.for_tool("api_call", {"network": CEL("net_in_cidr(ip, '10.0.0.0/8')")})},
     keypair=kp,
     holder=kp.public_key,
     ttl_seconds=3600
@@ -798,8 +798,8 @@ parent = Pattern("*@company.com")
 child = Exact("cfo@company.com")  # OK - matches pattern
 
 # Regex -> Exact: exact value must match the regex
-parent = Regex(r"^staging-.*$")
-child = Exact("staging-web")  # OK - matches regex
+parent = Regex(r"^dev-.*$")
+child = Exact("dev-web")  # OK - matches regex
 child = Exact("production")   # FAILS - doesn't match
 
 # Regex -> Regex: must be identical (subset is undecidable)
@@ -845,7 +845,7 @@ from tenuo import Warrant, Constraints, Pattern
 
 # Parent: /data/*
 parent = Warrant.issue(
-    capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
+    tools={"read_file": Constraints.for_tool("read_file", {"path": Pattern("/data/*")})},
     keypair=kp, holder=kp.public_key, ttl_seconds=3600
 )
 
@@ -863,7 +863,7 @@ from tenuo import Warrant, Constraints, Range
 
 # Parent: max 15 replicas
 parent = Warrant.issue(
-    capabilities=Constraints.for_tool("scale", {"replicas": Range.max_value(15)}),
+    tools={"scale": Constraints.for_tool("scale", {"replicas": Range.max_value(15)})},
     keypair=kp, holder=kp.public_key, ttl_seconds=3600
 )
 
@@ -881,7 +881,7 @@ from tenuo import Warrant, Constraints, OneOf
 
 # Parent: ["a", "b", "c"]
 parent = Warrant.issue(
-    capabilities=Constraints.for_tool("action", {"type": OneOf(["a", "b", "c"])}),
+    tools={"action": Constraints.for_tool("action", {"type": OneOf(["a", "b", "c"])})},
     keypair=kp, holder=kp.public_key, ttl_seconds=3600
 )
 
@@ -901,7 +901,7 @@ from tenuo import Warrant, Constraints, Regex, Exact
 
 # Parent: regex pattern
 parent = Warrant.issue(
-    capabilities=Constraints.for_tool("query", {"env": Regex(r"^(staging|dev)-.*$")}),
+    tools={"query": Constraints.for_tool("query", {"env": Regex(r"^(staging|dev)-.*$")})},
     keypair=kp, holder=kp.public_key, ttl_seconds=3600
 )
 
