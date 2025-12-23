@@ -21,10 +21,11 @@ interface DecodedWarrant {
 const SAMPLE_ROOT_KEY = "4013c36794f0eae95c0262ee4788f6cf8f2dceb5dacb0e6ebcc34cde0a4e564e";
 const SAMPLE_WARRANT = "gwFYq6oAAQFQAZtInVrHd8GeImZh3XfXOQJpZXhlY3V0aW9uA6FpcmVhZF9maWxloWtjb25zdHJhaW50c6FkcGF0aIICoWdwYXR0ZXJuZmRvY3MvKgSCAVggWVfWp8pMNgmK3yrmtHztN1zP-Bp3ttO7RcWoOJuhDa8FggFYIEATw2eU8OrpXAJi7keI9s-PLc612ssObrzDTN4KTlZOBhppSeKmBxppSfC2CBASAIIBWECJwEZ27MILOh05dBsPqS7CNVMiMJwN0YJNoFUJil2-AbIksCE7pLKQPpQeJelXcrrkBtK_wdHeeRjlS9cn4IEP";
 
-const truncateKey = (hex: string) => `${hex.slice(0, 6)}...${hex.slice(-4)}`;
+const truncate = (str: string, len: number = 12) => 
+  str.length > len ? `${str.slice(0, 6)}...${str.slice(-4)}` : str;
 
-// Copy button
-const CopyBtn = ({ text, label = "Copy" }: { text: string; label?: string }) => {
+// Copy button component
+const CopyBtn = ({ text }: { text: string }) => {
   const [copied, setCopied] = useState(false);
   const handleCopy = async () => {
     await navigator.clipboard.writeText(text);
@@ -34,9 +35,10 @@ const CopyBtn = ({ text, label = "Copy" }: { text: string; label?: string }) => 
   return (
     <button
       onClick={handleCopy}
-      className="text-[10px] px-2 py-1 rounded text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface-2)] transition-all"
+      className="text-xs px-2 py-1 rounded text-[var(--muted)] hover:text-[var(--accent)] hover:bg-[var(--surface-2)] transition-all"
+      title="Copy to clipboard"
     >
-      {copied ? '✓' : label}
+      {copied ? '✓' : '📋'}
     </button>
   );
 };
@@ -45,29 +47,20 @@ const CopyBtn = ({ text, label = "Copy" }: { text: string; label?: string }) => 
 const Explainer = ({ title, children, docLink }: { title: string; children: React.ReactNode; docLink?: string }) => {
   const [open, setOpen] = useState(false);
   return (
-    <div className="mb-4">
-      <button 
-        onClick={() => setOpen(!open)}
-        className="group flex items-center gap-2 text-[11px] text-[var(--muted)] hover:text-[var(--accent)] transition-colors"
-      >
-        <span className={`text-[10px] transition-transform duration-200 ${open ? 'rotate-90' : ''}`}>▶</span>
-        <span className="opacity-60 group-hover:opacity-100">?</span>
-        <span>{title}</span>
-      </button>
+    <div className="explainer">
+      <div className="explainer-header" onClick={() => setOpen(!open)}>
+        <span style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</span>
+        <span>💡 {title}</span>
+      </div>
       {open && (
-        <div className="mt-2 ml-6 p-3 rounded-lg font-readable text-[12px] text-[#a0a0a0] leading-[1.7] bg-[var(--surface)] border border-[var(--border)]">
-          <div className="space-y-1">
-            {children}
-          </div>
+        <div className="explainer-content">
+          {children}
           {docLink && (
-            <a 
-              href={docLink} 
-              className="mt-3 inline-flex items-center gap-1 text-[11px] text-[var(--accent)] hover:underline"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Read the docs →
-            </a>
+            <p style={{ marginTop: '12px' }}>
+              <a href={docLink} target="_blank" rel="noopener noreferrer">
+                📖 Read the docs →
+              </a>
+            </p>
           )}
         </div>
       )}
@@ -75,55 +68,8 @@ const Explainer = ({ title, children, docLink }: { title: string; children: Reac
   );
 };
 
-// Chain Visualizer
-const ChainVisualizer = ({ decoded }: { decoded: DecodedWarrant }) => (
-  <div className="relative overflow-hidden rounded-lg" style={{ background: 'linear-gradient(135deg, rgba(0,212,255,0.05), rgba(168,85,247,0.05))' }}>
-    <div className="absolute inset-0 opacity-30" style={{ background: 'radial-gradient(circle at 20% 50%, rgba(0,212,255,0.15), transparent 50%), radial-gradient(circle at 80% 50%, rgba(0,255,136,0.15), transparent 50%)' }} />
-    <div className="relative p-4 flex items-center justify-between">
-      <div className="flex flex-col items-center gap-2">
-        <div className="w-10 h-10 rounded-lg flex items-center justify-center text-lg" style={{ background: 'linear-gradient(135deg, rgba(0,212,255,0.2), rgba(0,212,255,0.05))', border: '1px solid rgba(0,212,255,0.3)' }}>
-          🔑
-        </div>
-        <div className="text-center">
-          <span className="block text-[9px] text-[var(--muted)] uppercase tracking-wider">Issuer</span>
-          <code className="text-[10px] text-[var(--accent)] font-medium">{truncateKey(decoded.issuer)}</code>
-        </div>
-      </div>
-      
-      <div className="flex-1 flex items-center justify-center gap-3 px-4">
-        <div className="flex-1 h-px" style={{ background: 'linear-gradient(90deg, var(--accent), var(--accent2))' }} />
-        <div className="px-3 py-1.5 rounded-full text-[10px] font-medium" style={{ background: 'rgba(168,85,247,0.15)', border: '1px solid rgba(168,85,247,0.3)', color: 'var(--accent2)' }}>
-          depth {decoded.depth}
-        </div>
-        <div className="flex-1 h-px" style={{ background: 'linear-gradient(90deg, var(--accent2), var(--green))' }} />
-      </div>
-      
-      <div className="flex flex-col items-center gap-2">
-        <div className="w-10 h-10 rounded-lg flex items-center justify-center text-lg" style={{ background: 'linear-gradient(135deg, rgba(0,255,136,0.2), rgba(0,255,136,0.05))', border: '1px solid rgba(0,255,136,0.3)' }}>
-          🤖
-        </div>
-        <div className="text-center">
-          <span className="block text-[9px] text-[var(--muted)] uppercase tracking-wider">Holder</span>
-          <code className="text-[10px] text-[var(--green)] font-medium">{truncateKey(decoded.authorized_holder)}</code>
-        </div>
-      </div>
-    </div>
-  </div>
-);
-
-// Info Row
-const InfoRow = ({ label, value, color, copyable }: { label: string; value: string; color?: string; copyable?: string }) => (
-  <div className="flex items-center justify-between py-2 border-b border-[var(--border)] last:border-0">
-    <span className="text-[10px] text-[var(--muted)] uppercase tracking-wide">{label}</span>
-    <div className="flex items-center gap-1">
-      <span className={`text-[11px] font-mono ${color || 'text-[var(--text)]'}`}>{value}</span>
-      {copyable && <CopyBtn text={copyable} label="📋" />}
-    </div>
-  </div>
-);
-
-// Expiration Bar
-const ExpirationBar = ({ issuedAt, expiresAt }: { issuedAt: number; expiresAt: number }) => {
+// Expiration display with live countdown
+const ExpirationDisplay = ({ issuedAt, expiresAt }: { issuedAt: number; expiresAt: number }) => {
   const [now, setNow] = useState(Date.now() / 1000);
   
   useEffect(() => {
@@ -131,79 +77,52 @@ const ExpirationBar = ({ issuedAt, expiresAt }: { issuedAt: number; expiresAt: n
     return () => clearInterval(interval);
   }, []);
   
+  const remaining = expiresAt - now;
+  const isExpired = remaining <= 0;
   const total = expiresAt - issuedAt;
   const elapsed = now - issuedAt;
   const percent = Math.min(100, Math.max(0, (elapsed / total) * 100));
-  const remaining = expiresAt - now;
-  const isExpired = remaining <= 0;
-  const isWarning = percent > 75;
   
-  const formatTime = (secs: number) => {
-    if (secs <= 0) return 'Expired';
-    const d = Math.floor(secs / 86400);
-    const h = Math.floor((secs % 86400) / 3600);
-    const m = Math.floor((secs % 3600) / 60);
-    const s = Math.floor(secs % 60);
-    if (d > 0) return `${d}d ${h}h remaining`;
-    if (h > 0) return `${h}h ${m}m remaining`;
-    if (m > 0) return `${m}m ${s}s remaining`;
-    return `${s}s remaining`;
+  const formatTime = (seconds: number) => {
+    if (seconds <= 0) return 'Expired';
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = Math.floor(seconds % 60);
+    if (d > 0) return `${d}d ${h}h ${m}m`;
+    if (h > 0) return `${h}h ${m}m ${s}s`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
   };
-  
+
   return (
-    <div className="panel-inner p-3">
-      <div className="flex justify-between items-center mb-2">
-        <div className="flex items-center gap-2">
-          <span className={`w-2 h-2 rounded-full pulse ${isExpired ? 'bg-[var(--red)]' : isWarning ? 'bg-yellow-500' : 'bg-[var(--green)]'}`} />
-          <span className={`text-[11px] font-medium ${isExpired ? 'text-[var(--red)]' : isWarning ? 'text-yellow-500' : 'text-[var(--green)]'}`}>
-            {formatTime(remaining)}
-          </span>
-        </div>
-        <span className="text-[10px] text-[var(--muted)]">
-          expires {new Date(expiresAt * 1000).toLocaleString()}
+    <div className="panel" style={{ padding: '16px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+        <span style={{ fontSize: '12px', color: 'var(--muted)' }}>⏱ Time Remaining</span>
+        <span style={{ 
+          fontSize: '14px', 
+          fontWeight: 600, 
+          fontFamily: "'JetBrains Mono', monospace",
+          color: isExpired ? 'var(--red)' : 'var(--green)' 
+        }}>
+          {formatTime(remaining)}
         </span>
       </div>
-      <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-2)' }}>
+      <div className="validity-bar">
         <div 
-          className="h-full rounded-full transition-all duration-1000"
+          className="validity-progress"
           style={{ 
-            width: `${Math.min(100, percent)}%`,
+            width: `${percent}%`,
             background: isExpired 
               ? 'var(--red)' 
-              : isWarning 
-                ? 'linear-gradient(90deg, #eab308, var(--red))'
-                : 'linear-gradient(90deg, var(--green), var(--accent))'
+              : `linear-gradient(90deg, var(--green), var(--accent))`
           }}
         />
       </div>
-    </div>
-  );
-};
-
-// Tool Badge
-const ToolBadge = ({ name }: { name: string }) => (
-  <span className="inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono" style={{ background: 'rgba(0,212,255,0.1)', border: '1px solid rgba(0,212,255,0.2)', color: 'var(--accent)' }}>
-    <span style={{ color: 'var(--green)' }}>✓</span> {name}
-  </span>
-);
-
-// Constraint Display
-const ConstraintDisplay = ({ capabilities }: { capabilities: Record<string, unknown> }) => {
-  const entries = Object.entries(capabilities);
-  if (entries.length === 0) return <span className="text-[11px] text-[var(--muted)]">No constraints</span>;
-  
-  return (
-    <div className="space-y-2">
-      {entries.map(([tool, constraints]) => (
-        <div key={tool} className="panel-inner p-2">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-[10px] font-mono text-[var(--accent)]">{tool}</span>
-          </div>
-          <pre className="text-[9px] text-[var(--muted)] overflow-x-auto">
-            {JSON.stringify(constraints, null, 2)}
-          </pre>
-        </div>
-      ))}
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '11px', color: 'var(--muted)' }}>
+        <span>Issued: {new Date(issuedAt * 1000).toLocaleString()}</span>
+        <span>Expires: {new Date(expiresAt * 1000).toLocaleString()}</span>
+      </div>
     </div>
   );
 };
@@ -217,39 +136,37 @@ function App() {
   const [dryRun, setDryRun] = useState(true);
   const [decoded, setDecoded] = useState<DecodedWarrant | string | null>(null);
   const [authResult, setAuthResult] = useState<AuthResult | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
 
+  // Initialize WASM
   useEffect(() => {
     init().then(() => {
       init_panic_hook();
       setWasmReady(true);
+    }).catch(err => {
+      console.error("WASM init failed:", err);
     });
   }, []);
   
+  // Load state from URL
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const shared = params.get('s');
-    if (shared) {
+    const state = params.get('s');
+    if (state) {
       try {
-        const state = JSON.parse(atob(shared));
-        if (state.warrant) setWarrantB64(state.warrant);
-        if (state.tool) setTool(state.tool);
-        if (state.args) setArgsJson(state.args);
-        if (state.root) setRootKeyHex(state.root);
-      } catch { /* ignore */ }
+        const parsed = JSON.parse(atob(state));
+        if (parsed.warrant) setWarrantB64(parsed.warrant);
+        if (parsed.tool) setTool(parsed.tool);
+        if (parsed.args) setArgsJson(parsed.args);
+        if (parsed.root) setRootKeyHex(parsed.root);
+      } catch {}
     }
   }, []);
   
-  const getShareUrl = useCallback(() => {
+  const generateShareUrl = useCallback(() => {
     const state = { warrant: warrantB64, tool, args: argsJson, root: rootKeyHex };
     return `${window.location.origin}${window.location.pathname}?s=${btoa(JSON.stringify(state))}`;
   }, [warrantB64, tool, argsJson, rootKeyHex]);
-
-  const handleCopyShare = async () => {
-    await navigator.clipboard.writeText(getShareUrl());
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
 
   const handleLoadSample = () => {
     setWarrantB64(SAMPLE_WARRANT);
@@ -261,312 +178,379 @@ function App() {
   };
 
   const handleDecode = () => {
-    if (!wasmReady) return;
-    setDecoded(decode_warrant(warrantB64));
-    setAuthResult(null);
+    if (!wasmReady || !warrantB64) return;
+    try {
+      const result = decode_warrant(warrantB64);
+      setDecoded(result);
+      setAuthResult(null);
+    } catch (e) {
+      setDecoded(`Decode error: ${e instanceof Error ? e.message : 'Unknown error'}`);
+    }
   };
 
   const handleAuthorize = () => {
-    if (!wasmReady) return;
+    if (!wasmReady || !warrantB64 || !tool) return;
     try {
-      setAuthResult(check_access(warrantB64, tool, JSON.parse(argsJson), rootKeyHex, dryRun));
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Unknown error';
-      setAuthResult({ authorized: false, reason: "Invalid JSON: " + msg });
+      const args = JSON.parse(argsJson);
+      const result = check_access(warrantB64, tool, args, rootKeyHex, dryRun);
+      setAuthResult(result);
+    } catch (e) {
+      setAuthResult({ 
+        authorized: false, 
+        reason: `Error: ${e instanceof Error ? e.message : 'Invalid JSON'}` 
+      });
     }
+  };
+
+  const handleShare = async () => {
+    const url = generateShareUrl();
+    await navigator.clipboard.writeText(url);
+    setShareUrl(url);
+    setTimeout(() => setShareUrl(""), 2000);
   };
 
   return (
     <>
+      {/* Background orbs */}
       <div className="orb orb-1" />
       <div className="orb orb-2" />
       
-      <div className="relative z-10 min-h-screen flex flex-col">
-        {/* Nav */}
-        <nav className="border-b border-[var(--border)]">
-          <div className="max-w-[900px] mx-auto px-4 md:px-6 py-4 md:py-6 flex justify-between items-center">
-            <a href="https://tenuo.ai" className="text-lg md:text-[1.25rem] font-semibold">tenuo</a>
-            <div className="flex gap-4 md:gap-8">
-              <a href="https://tenuo.ai/quickstart" className="text-xs md:text-sm text-[var(--muted)] hover:text-white transition-colors hidden sm:block">Quick Start</a>
-              <a href="https://tenuo.ai/concepts" className="text-xs md:text-sm text-[var(--muted)] hover:text-white transition-colors hidden md:block">Concepts</a>
-              <a href="https://tenuo.ai/api-reference" className="text-xs md:text-sm text-[var(--muted)] hover:text-white transition-colors">Docs</a>
-              <a href="https://github.com/tenuo-ai/tenuo" className="text-xs md:text-sm text-[var(--muted)] hover:text-white transition-colors">GitHub</a>
+      <div style={{ position: 'relative', zIndex: 1, minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+        {/* Navigation */}
+        <nav style={{ borderBottom: '1px solid var(--border)' }}>
+          <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <a href="https://tenuo.ai" style={{ fontSize: '20px', fontWeight: 600, color: 'white', textDecoration: 'none' }}>
+              tenuo
+            </a>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <a href="https://tenuo.ai/quickstart" className="nav-link">Quick Start</a>
+              <a href="https://tenuo.ai/concepts" className="nav-link">Concepts</a>
+              <a href="https://tenuo.ai/api-reference" className="nav-link">API</a>
+              <a href="https://github.com/tenuo-ai/tenuo" className="nav-link">GitHub</a>
             </div>
           </div>
         </nav>
 
-        {/* Main content - centered */}
-        <main className="flex-1 flex items-start justify-center py-6 md:py-8 px-4 md:px-6">
-          <div className="w-full max-w-[900px]">
-            {/* Header */}
-            <header className="text-center mb-6">
-              <div className="badge text-[11px] px-3 py-1 mb-3">
-                <span className="text-[var(--accent)]">explorer</span>
-              </div>
-              <h1 className="text-2xl font-bold tracking-tight mb-2">
-                Warrant <span className="bg-gradient-to-r from-[var(--accent)] to-[var(--accent2)] bg-clip-text text-transparent">Playground</span>
-              </h1>
-              <p className="text-sm text-[var(--muted)] mb-4">Decode warrants and simulate authorization</p>
-              <div className="flex justify-center gap-2">
-                <button onClick={handleLoadSample} className="btn btn-secondary text-xs py-2 px-4">
-                  Load Sample
-                </button>
-                <button onClick={handleCopyShare} className="btn btn-ghost text-xs">
-                  {copied ? '✓ Copied' : '🔗 Share'}
-                </button>
-              </div>
-            </header>
+        {/* Hero */}
+        <header style={{ textAlign: 'center', padding: '64px 24px 48px' }}>
+          <div className="badge" style={{ marginBottom: '20px' }}>
+            <span style={{ color: 'var(--accent)' }}>Explorer</span>
+          </div>
+          <h1 style={{ fontSize: '42px', fontWeight: 700, letterSpacing: '-0.02em', marginBottom: '16px' }}>
+            Warrant <span className="gradient-text">Playground</span>
+          </h1>
+          <p style={{ fontSize: '18px', color: 'var(--muted)', maxWidth: '480px', margin: '0 auto 32px' }}>
+            Decode warrants, inspect constraints, and simulate authorization checks
+          </p>
+          
+          {/* Load Sample */}
+          <button onClick={handleLoadSample} className="btn btn-secondary" style={{ gap: '10px' }}>
+            <span>📦</span>
+            <span>Load Sample Warrant</span>
+          </button>
+        </header>
 
-            {/* Grid */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Left: Input */}
-              <div className="space-y-4">
-                {/* Warrant Input */}
-                <section className="panel p-4">
-                  <h2 className="section-title mb-3 flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)]" />
-                    <span className="text-[var(--accent)]">01</span>
-                    <span>Warrant Input</span>
-                  </h2>
-                  
-                  <Explainer title="What is a warrant?" docLink="https://tenuo.ai/concepts">
-                    A <strong className="text-[var(--text)]">warrant</strong> is a signed capability token that grants specific permissions to an AI agent. 
-                    It contains: <span className="text-[var(--accent)]">issuer</span>, <span className="text-[var(--green)]">holder</span>, allowed tools, constraints, and TTL. 
-                    Warrants can only be <em>attenuated</em> (narrowed), never expanded.
-                  </Explainer>
-                  
-                  <div className="space-y-3">
-                    <div>
-                      <label className="label">Base64 Warrant</label>
-                      <textarea
-                        className="h-20 text-xs"
-                        placeholder="Paste base64 encoded warrant..."
-                        value={warrantB64}
-                        onChange={(e) => setWarrantB64(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <label className="label">Trusted Root Key (Hex)</label>
-                      <input
-                        type="text"
-                        className="text-xs"
-                        placeholder="64-char hex public key..."
-                        value={rootKeyHex}
-                        onChange={(e) => setRootKeyHex(e.target.value)}
-                      />
-                    </div>
-                    <button
-                      onClick={handleDecode}
-                      disabled={!wasmReady || !warrantB64}
-                      className="btn btn-secondary w-full text-xs py-2"
-                    >
-                      Decode
-                    </button>
+        {/* Main Content */}
+        <main style={{ flex: 1, maxWidth: '1100px', width: '100%', margin: '0 auto', padding: '0 24px 64px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(480px, 1fr))', gap: '32px' }}>
+            
+            {/* Left Column - Inputs */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              
+              {/* Warrant Input Panel */}
+              <div className="panel">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+                  <span style={{ fontSize: '20px' }}>📄</span>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>1. Paste Warrant</h2>
+                </div>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: 'var(--muted)', marginBottom: '8px' }}>
+                      Base64 Encoded Warrant
+                    </label>
+                    <textarea
+                      className="input"
+                      style={{ height: '100px', resize: 'none' }}
+                      placeholder="Paste your warrant here..."
+                      value={warrantB64}
+                      onChange={(e) => setWarrantB64(e.target.value)}
+                    />
                   </div>
-                </section>
-
-                {/* Authorization */}
-                <section className="panel p-4">
-                  <h2 className="section-title mb-3 flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--green)]" />
-                    <span className="text-[var(--green)]">02</span>
-                    <span>Authorization Check</span>
-                  </h2>
                   
-                  <Explainer title="How does authorization work?" docLink="https://tenuo.ai/enforcement">
-                    Authorization verifies: <strong className="text-[var(--text)]">1)</strong> tool is in warrant, 
-                    <strong className="text-[var(--text)]">2)</strong> arguments match constraints (patterns, ranges, exact values), 
-                    <strong className="text-[var(--text)]">3)</strong> warrant hasn't expired, 
-                    <strong className="text-[var(--text)]">4)</strong> chain verifies to trusted root.
-                    In production, a <span className="text-[var(--accent)]">Proof-of-Possession</span> signature is also required.
-                  </Explainer>
-                  
-                  <div className="space-y-3">
-                    {decoded && typeof decoded !== 'string' && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {decoded.tools.slice(0, 5).map(t => (
-                          <button
-                            key={t}
-                            onClick={() => setTool(t)}
-                            className={`tool-chip text-[10px] py-1 px-2 ${tool === t ? 'active' : ''}`}
-                          >
-                            {t}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <div>
-                      <label className="label">Tool Name</label>
-                      <input
-                        type="text"
-                        className="text-xs"
-                        placeholder="e.g. read_file"
-                        value={tool}
-                        onChange={(e) => setTool(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <label className="label">Arguments (JSON)</label>
-                      <textarea
-                        className="h-16 text-xs"
-                        value={argsJson}
-                        onChange={(e) => setArgsJson(e.target.value)}
-                      />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div
-                        className={`toggle ${dryRun ? 'active' : ''}`}
-                        onClick={() => setDryRun(!dryRun)}
-                      />
-                      <span className="text-[11px] text-[var(--muted)]">Dry run (skip PoP)</span>
-                    </div>
-                    <button
-                      onClick={handleAuthorize}
-                      disabled={!wasmReady || !warrantB64 || !tool}
-                      className="btn btn-primary w-full text-xs py-2"
-                    >
-                      Check
-                    </button>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: 'var(--muted)', marginBottom: '8px' }}>
+                      Trusted Root Public Key (Hex)
+                    </label>
+                    <input
+                      className="input"
+                      placeholder="64-character hex string..."
+                      value={rootKeyHex}
+                      onChange={(e) => setRootKeyHex(e.target.value)}
+                    />
                   </div>
-                </section>
+                  
+                  <button
+                    onClick={handleDecode}
+                    disabled={!wasmReady || !warrantB64}
+                    className="btn btn-secondary"
+                  >
+                    {wasmReady ? 'Decode Warrant' : 'Loading WASM...'}
+                  </button>
+                </div>
+                
+                <Explainer title="What is a warrant?" docLink="https://tenuo.ai/concepts#warrants">
+                  <p>A <strong>warrant</strong> is a cryptographic capability token that grants an AI agent permission to perform specific actions. It contains:</p>
+                  <ul style={{ marginTop: '8px', paddingLeft: '20px' }}>
+                    <li>Authorized tools and their constraints</li>
+                    <li>Issuer and holder public keys</li>
+                    <li>Expiration time and delegation depth</li>
+                  </ul>
+                </Explainer>
               </div>
 
-              {/* Right: Output */}
-              <div className="space-y-4">
-                {/* Decoded */}
-                <section className="panel p-4">
-                  <h2 className="section-title mb-3 flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent2)]" />
-                    <span>Decoded Warrant</span>
-                  </h2>
+              {/* Authorization Check Panel */}
+              <div className="panel">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+                  <span style={{ fontSize: '20px' }}>🔐</span>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>2. Check Authorization</h2>
+                </div>
+                
+                {/* Tool quick-select */}
+                {decoded && typeof decoded !== 'string' && decoded.tools.length > 0 && (
+                  <div style={{ marginBottom: '16px' }}>
+                    <label style={{ display: 'block', fontSize: '12px', color: 'var(--muted)', marginBottom: '8px' }}>
+                      Quick Select Tool
+                    </label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                      {decoded.tools.slice(0, 6).map(t => (
+                        <button
+                          key={t}
+                          onClick={() => setTool(t)}
+                          className={`tool-tag ${tool === t ? 'active' : ''}`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: 'var(--muted)', marginBottom: '8px' }}>
+                      Tool Name
+                    </label>
+                    <input
+                      className="input"
+                      placeholder="e.g., read_file"
+                      value={tool}
+                      onChange={(e) => setTool(e.target.value)}
+                    />
+                  </div>
                   
-                  <Explainer title="Understanding the decoded warrant" docLink="https://tenuo.ai/constraints">
-                    <span className="text-[var(--accent)]">Issuer</span> → <span className="text-[var(--green)]">Holder</span> shows the delegation chain. 
-                    <strong className="text-[var(--text)]">Depth</strong> = how many times delegated (0 = root authority).
-                    <strong className="text-[var(--text)]">Constraints</strong> define allowed argument values using patterns (<code className="px-1 py-0.5 rounded bg-[var(--surface)] text-[10px]">docs/*</code>), 
-                    ranges (<code className="px-1 py-0.5 rounded bg-[var(--surface)] text-[10px]">0..1000</code>), or exact values.
-                  </Explainer>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: 'var(--muted)', marginBottom: '8px' }}>
+                      Arguments (JSON)
+                    </label>
+                    <textarea
+                      className="input"
+                      style={{ height: '80px', resize: 'none' }}
+                      value={argsJson}
+                      onChange={(e) => setArgsJson(e.target.value)}
+                    />
+                  </div>
                   
-                  {decoded ? (
-                    typeof decoded === 'string' ? (
-                      <div className="p-3 rounded-lg" style={{ background: 'rgba(255,68,102,0.08)', border: '1px solid rgba(255,68,102,0.2)' }}>
-                        <p className="text-xs text-[var(--red)]">⚠ {decoded}</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {/* Chain */}
-                        <ChainVisualizer decoded={decoded} />
-                        
-                        {/* Expiration */}
-                        <ExpirationBar issuedAt={decoded.issued_at} expiresAt={decoded.expires_at} />
-                        
-                        {/* Info */}
-                        <div className="panel-inner px-3 py-1">
-                          <InfoRow label="Warrant ID" value={decoded.id.slice(0, 16) + '...'} copyable={decoded.id} />
-                          <InfoRow label="Issuer" value={truncateKey(decoded.issuer)} color="text-[var(--accent)]" copyable={decoded.issuer} />
-                          <InfoRow label="Holder" value={truncateKey(decoded.authorized_holder)} color="text-[var(--green)]" copyable={decoded.authorized_holder} />
-                        </div>
-                        
-                        {/* Tools */}
-                        <div>
-                          <span className="label text-[9px] mb-2 block">Authorized Tools</span>
-                          <div className="flex flex-wrap gap-1.5">
-                            {decoded.tools.map(t => <ToolBadge key={t} name={t} />)}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div 
+                      className={`toggle ${dryRun ? 'active' : ''}`}
+                      onClick={() => setDryRun(!dryRun)}
+                    >
+                      <div className="toggle-knob" />
+                    </div>
+                    <span style={{ fontSize: '14px', color: 'var(--muted)' }}>
+                      Dry run (skip signature verification)
+                    </span>
+                  </div>
+                  
+                  <button
+                    onClick={handleAuthorize}
+                    disabled={!wasmReady || !warrantB64 || !tool}
+                    className="btn btn-primary"
+                  >
+                    Check Authorization
+                  </button>
+                </div>
+                
+                <Explainer title="How does authorization work?" docLink="https://tenuo.ai/concepts#authorization">
+                  <p>Authorization checks verify that:</p>
+                  <ol style={{ marginTop: '8px', paddingLeft: '20px' }}>
+                    <li>The tool is listed in the warrant</li>
+                    <li>The arguments satisfy all constraints</li>
+                    <li>The warrant hasn't expired</li>
+                    <li>The signature chain is valid (unless dry run)</li>
+                  </ol>
+                </Explainer>
+              </div>
+            </div>
+
+            {/* Right Column - Outputs */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              
+              {/* Decoded Panel */}
+              <div className="panel">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ fontSize: '20px' }}>🔍</span>
+                    <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Decoded Warrant</h2>
+                  </div>
+                  {warrantB64 && (
+                    <button onClick={handleShare} className="btn btn-secondary" style={{ padding: '8px 12px', fontSize: '12px' }}>
+                      {shareUrl ? '✓ Copied!' : '🔗 Share'}
+                    </button>
+                  )}
+                </div>
+                
+                {decoded ? (
+                  typeof decoded === 'string' ? (
+                    <div style={{ padding: '16px', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: '12px' }}>
+                      <p style={{ fontSize: '14px', color: 'var(--red)' }}>⚠ {decoded}</p>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      {/* Chain Visualization */}
+                      <div className="chain-box">
+                        <div className="chain-node">
+                          <div className="chain-icon">🔑</div>
+                          <div className="chain-label">Issuer</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <code style={{ fontSize: '11px', color: 'var(--accent)' }}>{truncate(decoded.issuer)}</code>
+                            <CopyBtn text={decoded.issuer} />
                           </div>
                         </div>
-                        
-                        {/* Constraints */}
-                        <div>
-                          <span className="label text-[9px] mb-2 block">Constraints</span>
-                          <ConstraintDisplay capabilities={decoded.capabilities} />
+                        <div className="chain-connector">
+                          <div className="chain-line" />
+                          <div className="chain-depth">depth {decoded.depth}</div>
+                        </div>
+                        <div className="chain-node">
+                          <div className="chain-icon">🤖</div>
+                          <div className="chain-label">Holder</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <code style={{ fontSize: '11px', color: 'var(--green)' }}>{truncate(decoded.authorized_holder)}</code>
+                            <CopyBtn text={decoded.authorized_holder} />
+                          </div>
                         </div>
                       </div>
-                    )
-                  ) : (
-                    <div className="py-10 text-center">
-                      <div className="w-12 h-12 mx-auto mb-3 rounded-xl flex items-center justify-center text-2xl opacity-20" style={{ background: 'var(--surface-2)' }}>
-                        🔐
-                      </div>
-                      <p className="text-[11px] text-[var(--muted)]">Decode a warrant to inspect</p>
-                    </div>
-                  )}
-                </section>
 
-                {/* Result */}
-                <section className="panel p-4">
-                  <h2 className="section-title mb-3 flex items-center gap-2">
-                    <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'linear-gradient(135deg, var(--green), var(--accent))' }} />
-                    <span>Result</span>
-                  </h2>
-                  
-                  <Explainer title="What does the result mean?" docLink="https://tenuo.ai/debugging">
-                    <div className="space-y-1.5">
-                      <div><span className="text-[var(--green)]">✓ Authorized</span> — Tool and arguments satisfy all constraints. In production, PoP signature would also be verified.</div>
-                      <div><span className="text-[var(--red)]">✕ Denied</span> — Tool not in warrant, argument violates constraint, or chain verification failed. Error code tells you why.</div>
-                    </div>
-                  </Explainer>
-                  
-                  {authResult ? (
-                    <div className={`rounded-lg p-4 text-center ${authResult.authorized ? 'result-success' : 'result-error'}`}>
-                      <div className={`text-2xl mb-1 ${authResult.authorized ? 'text-[var(--green)]' : 'text-[var(--red)]'}`}>
-                        {authResult.authorized ? '✓' : '✕'}
-                      </div>
-                      <p className={`text-sm font-semibold mb-1 ${authResult.authorized ? 'text-[var(--green)]' : 'text-[var(--red)]'}`}>
-                        {authResult.authorized ? 'Authorized' : 'Denied'}
-                      </p>
-                      {authResult.authorized ? (
-                        <p className="text-[11px] text-[var(--muted)]">
-                          Permitted{dryRun && ' · PoP skipped'}
-                        </p>
-                      ) : (
-                        <div>
-                          {authResult.deny_code && (
-                            <span className="badge badge-red text-[9px] px-2 py-0.5 mb-1">{authResult.deny_code}</span>
-                          )}
-                          <p className="text-[11px] text-[var(--muted)]">{authResult.reason}</p>
+                      {/* Expiration */}
+                      <ExpirationDisplay issuedAt={decoded.issued_at} expiresAt={decoded.expires_at} />
+
+                      {/* Tools */}
+                      <div style={{ padding: '16px', background: 'var(--surface-2)', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '10px' }}>🔧 Authorized Tools</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                          {decoded.tools.map(t => (
+                            <span key={t} className="tool-tag">{t}</span>
+                          ))}
                         </div>
-                      )}
+                      </div>
+
+                      {/* Constraints */}
+                      <div style={{ padding: '16px', background: 'var(--surface-2)', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '10px' }}>📋 Constraints</div>
+                        <pre style={{ 
+                          fontSize: '11px', 
+                          fontFamily: "'JetBrains Mono', monospace",
+                          color: 'var(--muted)', 
+                          overflowX: 'auto',
+                          maxHeight: '150px',
+                          overflowY: 'auto'
+                        }}>
+                          {JSON.stringify(decoded.capabilities, null, 2)}
+                        </pre>
+                      </div>
                     </div>
-                  ) : (
-                    <div className="py-6 text-center text-[var(--muted)]">
-                      <div className="text-xl mb-1 opacity-30">⚡</div>
-                      <p className="text-[11px]">Run a check to see results</p>
+                  )
+                ) : (
+                  <div style={{ padding: '48px', textAlign: 'center', color: 'var(--muted)' }}>
+                    <div style={{ fontSize: '48px', marginBottom: '16px', opacity: 0.2 }}>🔐</div>
+                    <p style={{ fontSize: '14px' }}>Paste a warrant and click Decode</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Result Panel */}
+              <div className="panel">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+                  <span style={{ fontSize: '20px' }}>⚡</span>
+                  <h2 style={{ fontSize: '16px', fontWeight: 600 }}>Authorization Result</h2>
+                </div>
+                
+                {authResult ? (
+                  <div 
+                    className={authResult.authorized ? 'result-success' : 'result-error'}
+                    style={{ padding: '32px', borderRadius: '12px', textAlign: 'center' }}
+                  >
+                    <div style={{ fontSize: '48px', marginBottom: '12px' }}>
+                      {authResult.authorized ? '✓' : '✕'}
                     </div>
-                  )}
-                </section>
+                    <p style={{ 
+                      fontSize: '24px', 
+                      fontWeight: 600, 
+                      marginBottom: '8px',
+                      color: authResult.authorized ? 'var(--green)' : 'var(--red)'
+                    }}>
+                      {authResult.authorized ? 'Authorized' : 'Denied'}
+                    </p>
+                    {authResult.authorized ? (
+                      <p style={{ fontSize: '14px', color: 'var(--muted)' }}>
+                        Access permitted by warrant constraints
+                        {dryRun && <span style={{ opacity: 0.6 }}> · PoP verification skipped</span>}
+                      </p>
+                    ) : (
+                      <>
+                        {authResult.deny_code && (
+                          <span style={{ 
+                            display: 'inline-block', 
+                            padding: '4px 12px', 
+                            marginBottom: '8px',
+                            fontSize: '12px', 
+                            fontFamily: "'JetBrains Mono', monospace",
+                            borderRadius: '6px', 
+                            background: 'rgba(239, 68, 68, 0.15)', 
+                            color: 'var(--red)' 
+                          }}>
+                            {authResult.deny_code}
+                          </span>
+                        )}
+                        <p style={{ fontSize: '14px', color: 'var(--muted)' }}>{authResult.reason}</p>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ padding: '48px', textAlign: 'center', color: 'var(--muted)' }}>
+                    <div style={{ fontSize: '48px', marginBottom: '16px', opacity: 0.2 }}>⚡</div>
+                    <p style={{ fontSize: '14px' }}>Run an authorization check to see results</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
         </main>
 
         {/* Footer */}
-        <footer className="border-t border-[var(--border)] py-6">
-          <div className="max-w-[900px] mx-auto px-4 md:px-6">
-            {/* Tech badges */}
-            <div className="flex justify-center flex-wrap gap-2 md:gap-3 mb-4">
-              <a href="https://crates.io/crates/tenuo" className="flex items-center gap-1.5 px-2 md:px-3 py-1 md:py-1.5 rounded-lg text-[10px] md:text-xs transition-all hover:bg-[var(--surface)]" style={{ background: 'rgba(0,212,255,0.05)', border: '1px solid rgba(0,212,255,0.1)' }}>
-                <span>🦀</span>
-                <span className="text-[var(--muted)]">Rust</span>
-              </a>
-              <a href="https://pypi.org/project/tenuo/" className="flex items-center gap-1.5 px-2 md:px-3 py-1 md:py-1.5 rounded-lg text-[10px] md:text-xs transition-all hover:bg-[var(--surface)]" style={{ background: 'rgba(0,255,136,0.05)', border: '1px solid rgba(0,255,136,0.1)' }}>
-                <span>🐍</span>
-                <span className="text-[var(--muted)]">Python</span>
-              </a>
-              <div className="flex items-center gap-1.5 px-2 md:px-3 py-1 md:py-1.5 rounded-lg text-[10px] md:text-xs" style={{ background: 'rgba(168,85,247,0.05)', border: '1px solid rgba(168,85,247,0.1)' }}>
-                <span>⚡</span>
-                <span className="text-[var(--muted)]">~27μs</span>
-              </div>
+        <footer style={{ borderTop: '1px solid var(--border)', padding: '48px 24px' }}>
+          <div style={{ maxWidth: '1100px', margin: '0 auto', textAlign: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '32px', marginBottom: '16px', fontSize: '14px' }}>
+              <a href="https://crates.io/crates/tenuo" style={{ color: 'var(--muted)', textDecoration: 'none' }} className="nav-link">🦀 Rust Core</a>
+              <a href="https://pypi.org/project/tenuo/" style={{ color: 'var(--muted)', textDecoration: 'none' }} className="nav-link">🐍 Python SDK</a>
+              <span style={{ color: 'var(--muted)' }}>⚡ ~27μs verification</span>
             </div>
-            
-            {/* Links */}
-            <div className="flex justify-center items-center flex-wrap gap-x-3 gap-y-1 text-[10px] md:text-xs text-[var(--muted)]">
-              <a href="https://tenuo.ai" className="hover:text-[var(--text)] transition-colors">Home</a>
-              <span className="opacity-30">·</span>
-              <a href="https://tenuo.ai/quickstart" className="hover:text-[var(--text)] transition-colors">Docs</a>
-              <span className="opacity-30">·</span>
-              <a href="https://github.com/tenuo-ai/tenuo" className="hover:text-[var(--text)] transition-colors">GitHub</a>
-              <span className="opacity-30 hidden md:inline">·</span>
-              <span className="opacity-60 hidden md:inline">MIT/Apache-2.0</span>
+            <div style={{ display: 'flex', justifyContent: 'center', gap: '24px', fontSize: '13px', color: 'var(--muted)' }}>
+              <a href="https://github.com/tenuo-ai/tenuo" style={{ color: 'var(--muted)', textDecoration: 'none' }}>GitHub</a>
+              <a href="https://tenuo.ai/quickstart" style={{ color: 'var(--muted)', textDecoration: 'none' }}>Quick Start</a>
+              <a href="https://tenuo.ai/api-reference" style={{ color: 'var(--muted)', textDecoration: 'none' }}>API Reference</a>
+              <span>MIT / Apache-2.0</span>
             </div>
           </div>
         </footer>
