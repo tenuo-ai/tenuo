@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>tenuo - Capability Tokens for AI Agents</title>
+
+    <!-- SEO -->
+    <meta name="description"
+        content="Tenuo is an open-source capability token library for AI agents. Rust core, Python bindings, ~27μs verification. Stop ambient authority.">
+    <meta name="keywords"
+        content="AI agents, capability tokens, authorization, LangChain, LangGraph, security, Rust, Python">
+    <meta name="author" content="Tenuo">
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://tenuo.dev/">
+    <meta property="og:title" content="Tenuo - Capability Tokens for AI Agents">
+    <meta property="og:description"
+        content="Stop ambient authority. Signed tokens that carry delegation provenance and task context. ~27μs verification.">
+    <meta property="og:image" content="https://tenuo.dev/images/og-preview.png">
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:url" content="https://tenuo.dev/">
+    <meta name="twitter:title" content="Tenuo - Capability Tokens for AI Agents">
+    <meta name="twitter:description"
+        content="Stop ambient authority. Signed tokens that carry delegation provenance and task context. ~27μs verification.">
+    <meta name="twitter:image" content="https://tenuo.dev/images/og-preview.png">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="images/favicon-t.svg">
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg: #000;
+            --surface: #111;
+            --surface-2: #1a1a1a;
+            --border: #222;
+            --text: #fff;
+            --muted: #888;
+            --accent: #00d4ff;
+            --accent2: #a855f7;
+            --green: #00ff88;
+            --red: #ff4466;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        .orb {
+            position: fixed;
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            filter: blur(120px);
+            opacity: 0.15;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .orb-1 {
+            background: var(--accent);
+            top: -200px;
+            left: -200px;
+        }
+
+        .orb-2 {
+            background: var(--accent2);
+            bottom: -200px;
+            right: -200px;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 0 24px;
+            position: relative;
+            z-index: 1;
+        }
+
+        /* Nav */
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 24px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .nav-logo {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 32px;
+        }
+
+        .nav-links a {
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 0.9rem;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover {
+            color: var(--text);
+        }
+
+        /* Hero */
+        .hero {
+            padding: 100px 0 60px;
+            text-align: center;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 6px 14px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 100px;
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin-bottom: 24px;
+        }
+
+        .badge span {
+            color: var(--accent);
+        }
+
+        h1 {
+            font-size: clamp(2.5rem, 6vw, 3.5rem);
+            font-weight: 700;
+            letter-spacing: -2px;
+            line-height: 1.1;
+            margin-bottom: 24px;
+        }
+
+        h1 .gradient {
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .hero p {
+            font-size: 1.1rem;
+            color: var(--muted);
+            max-width: 540px;
+            margin: 0 auto 32px;
+        }
+
+        .cta {
+            display: inline-flex;
+            gap: 12px;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--text);
+            color: var(--bg);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(255, 255, 255, 0.1);
+        }
+
+        .btn-secondary {
+            background: var(--surface);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            border-color: #444;
+        }
+
+        /* Install */
+        .install {
+            margin: 48px auto;
+            max-width: 400px;
+        }
+
+        .install-box {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .install-box code {
+            color: var(--accent);
+        }
+
+        .install-box button {
+            background: none;
+            border: none;
+            color: var(--muted);
+            cursor: pointer;
+            padding: 4px;
+        }
+
+        .install-box button:hover {
+            color: var(--text);
+        }
+
+        /* Features */
+        .features {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1px;
+            background: var(--border);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            overflow: hidden;
+            margin: 60px 0;
+        }
+
+        .feature {
+            background: var(--bg);
+            padding: 28px;
+        }
+
+        .feature-icon {
+            font-size: 1.5rem;
+            margin-bottom: 12px;
+        }
+
+        .feature h3 {
+            font-size: 0.95rem;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        .feature p {
+            font-size: 0.85rem;
+            color: var(--muted);
+        }
+
+        /* Code Example */
+        .section {
+            padding: 60px 0;
+            border-top: 1px solid var(--border);
+        }
+
+        .section-header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .section-header h2 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .section-header p {
+            color: var(--muted);
+        }
+
+        .code-example {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .code-header {
+            display: flex;
+            gap: 8px;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .code-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: var(--border);
+        }
+
+        .code-content {
+            padding: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            line-height: 1.7;
+            overflow-x: auto;
+        }
+
+        .code-content .comment {
+            color: #6a737d;
+        }
+
+        .code-content .keyword {
+            color: var(--accent2);
+        }
+
+        .code-content .string {
+            color: var(--green);
+        }
+
+        .code-content .function {
+            color: var(--accent);
+        }
+
+        /* Attack Scenario */
+        .attack-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+        }
+
+        .attack-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 28px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .attack-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+        }
+
+        .attack-card.bad::before {
+            background: linear-gradient(90deg, var(--red), transparent);
+        }
+
+        .attack-card.good::before {
+            background: linear-gradient(90deg, var(--accent), var(--accent2));
+        }
+
+        .attack-card h4 {
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .attack-card.bad h4 {
+            color: var(--muted);
+        }
+
+        .attack-card.good h4 {
+            color: var(--text);
+        }
+
+        .attack-step {
+            font-size: 0.85rem;
+            color: var(--muted);
+            padding: 10px 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 14px;
+        }
+
+        .attack-step .num {
+            background: var(--surface-2);
+            color: var(--muted);
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: 500;
+            flex-shrink: 0;
+        }
+
+        .attack-card.good .attack-step .num {
+            background: rgba(0, 212, 255, 0.1);
+            color: var(--accent);
+        }
+
+        .attack-result {
+            margin-top: 20px;
+            padding: 14px 16px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .attack-card.bad .attack-result {
+            background: rgba(255, 68, 102, 0.08);
+            border: 1px solid rgba(255, 68, 102, 0.2);
+            color: #ff6b7a;
+        }
+
+        .attack-card.good .attack-result {
+            background: rgba(0, 212, 255, 0.08);
+            border: 1px solid rgba(0, 212, 255, 0.2);
+            color: var(--accent);
+        }
+
+        /* Integrations */
+        .integrations {
+            display: flex;
+            justify-content: center;
+            gap: 40px;
+            flex-wrap: wrap;
+        }
+
+        .integration {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px 24px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            text-decoration: none;
+            color: var(--text);
+            transition: border-color 0.2s;
+        }
+
+        .integration:hover {
+            border-color: #444;
+        }
+
+        .integration-icon {
+            font-size: 1.5rem;
+        }
+
+        .integration-name {
+            font-weight: 500;
+            font-size: 0.9rem;
+        }
+
+        /* Docs */
+        .docs {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+        }
+
+        .doc {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            text-decoration: none;
+            color: inherit;
+            transition: border-color 0.2s;
+        }
+
+        .doc:hover {
+            border-color: #444;
+        }
+
+        .doc-icon {
+            font-size: 1.5rem;
+            margin-bottom: 12px;
+        }
+
+        .doc h4 {
+            font-size: 0.95rem;
+            margin-bottom: 4px;
+        }
+
+        .doc p {
+            font-size: 0.8rem;
+            color: var(--muted);
+        }
+
+        /* Footer */
+        footer {
+            padding: 48px 0;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            color: var(--muted);
+            font-size: 0.85rem;
+        }
+
+        footer a {
+            color: var(--muted);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            color: var(--text);
+        }
+
+        .footer-tech {
+            margin-bottom: 16px;
+            font-size: 0.9rem;
+            color: var(--text);
+            opacity: 0.7;
+        }
+
+        @media (max-width: 768px) {
+
+            .features,
+            .docs,
+            .attack-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .nav-links {
+                display: none;
+            }
+
+            .integrations {
+                flex-direction: column;
+                align-items: center;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+
+    <div class="container">
+        <nav>
+            <div class="nav-logo">tenuo</div>
+            <div class="nav-links">
+                <a href="quickstart">Quick Start</a>
+                <a href="concepts">Concepts</a>
+                <a href="api-reference">API</a>
+                <a href="/explorer/">Explorer</a>
+                <a href="https://github.com/tenuo-ai/tenuo">GitHub</a>
+            </div>
+        </nav>
+
+        <section class="hero">
+            <div class="badge">v0.1 · <span>MIT/Apache-2.0</span></div>
+            <h1>Task-Scoped Authority<br>for <span class="gradient">AI Agents</span></h1>
+            <p>
+                Ambient authority is dangerous for AI agents. Tenuo enforces least-privilege cryptographically.
+                Warrants <em>narrow as they delegate</em> and expire when tasks end.
+            </p>
+            <div class="cta">
+                <a href="quickstart" class="btn btn-primary">Get Started</a>
+                <a href="https://github.com/tenuo-ai/tenuo" class="btn btn-secondary">GitHub</a>
+            </div>
+        </section>
+
+        <div class="install">
+            <div class="install-box">
+                <code>pip install tenuo</code>
+                <button onclick="navigator.clipboard.writeText('pip install tenuo')">📋</button>
+            </div>
+        </div>
+
+        <div class="features">
+            <div class="feature">
+                <div class="feature-icon">📋</div>
+                <h3>Task-scoped authority</h3>
+                <p>Constraints scope authority to exactly what each task needs. Tools, paths, arguments, TTLs.</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">⬇️</div>
+                <h3>Monotonic bounds</h3>
+                <p>Capabilities can only shrink. $1000 → $500. "staging-*" → "staging-web".</p>
+            </div>
+            <div class="feature">
+                <div class="feature-icon">🔗</div>
+                <h3>Delegation provenance</h3>
+                <p>Cryptographically verify who authorized an action and trace the full chain.</p>
+            </div>
+        </div>
+
+        <!-- Code Example -->
+        <section class="section">
+            <div class="section-header">
+                <h2>3 lines to protect your tools</h2>
+                <p>Works with LangChain, LangGraph, and any Python agent</p>
+            </div>
+            <div class="code-example">
+                <div class="code-header">
+                    <div class="code-dot"></div>
+                    <div class="code-dot"></div>
+                    <div class="code-dot"></div>
+                </div>
+                <pre class="code-content"><span class="keyword">from</span> tenuo <span class="keyword">import</span> <span class="function">configure</span>, <span class="function">root_task</span>, <span class="function">scoped_task</span>, <span class="function">protect_tools</span>
+<span class="keyword">from</span> tenuo <span class="keyword">import</span> <span class="function">Capability</span>, <span class="function">Pattern</span>, <span class="function">SigningKey</span>
+
+<span class="comment"># 1. Configure once at startup</span>
+<span class="function">configure</span>(issuer_key=<span class="function">SigningKey</span>.generate(), dev_mode=<span class="keyword">True</span>)
+
+<span class="comment"># 2. Wrap your tools</span>
+<span class="function">protect_tools</span>([read_file, send_email, query_db])
+
+<span class="comment"># 3. Scope authority to tasks — damage is contained</span>
+<span class="keyword">async with</span> <span class="function">root_task</span>(<span class="function">Capability</span>(<span class="string">"read_file"</span>, path=<span class="function">Pattern</span>(<span class="string">"/data/*"</span>))):
+    <span class="keyword">async with</span> <span class="function">scoped_task</span>(<span class="function">Capability</span>(<span class="string">"read_file"</span>, path=<span class="function">Pattern</span>(<span class="string">"/data/reports/*"</span>))):
+        result = <span class="keyword">await</span> agent.run(<span class="string">"Summarize Q3 reports"</span>)</pre>
+            </div>
+        </section>
+
+        <!-- Attack Scenario -->
+        <section class="section">
+            <div class="section-header">
+                <h2>Prompt Injections, Bounded</h2>
+                <p>The model gets tricked. The damage stays contained.</p>
+            </div>
+            <div class="attack-grid">
+                <div class="attack-card bad">
+                    <h4>Without tenuo</h4>
+                    <div class="attack-step"><span class="num">1</span> User: "Summarize Q3 report"</div>
+                    <div class="attack-step"><span class="num">2</span> Agent inherits <strong>ambient
+                            authority</strong> (full credentials)</div>
+                    <div class="attack-step"><span class="num">3</span> Worker reads /data/q3.pdf</div>
+                    <div class="attack-step"><span class="num">4</span> PDF contains malicious prompt injection</div>
+                    <div class="attack-step"><span class="num">5</span> Worker has send_email capability (inherited)
+                    </div>
+                    <div class="attack-result">⚠️ Data exfiltrated via email</div>
+                </div>
+                <div class="attack-card good">
+                    <h4>With tenuo</h4>
+                    <div class="attack-step"><span class="num">1</span> User: "Summarize Q3 report"</div>
+                    <div class="attack-step"><span class="num">2</span> Warrant issued: read_file, path=/data/q3.pdf,
+                        ttl=60s</div>
+                    <div class="attack-step"><span class="num">3</span> Worker reads /data/q3.pdf</div>
+                    <div class="attack-step"><span class="num">4</span> PDF contains malicious prompt injection</div>
+                    <div class="attack-step"><span class="num">5</span> Worker attempts send_email → Denied</div>
+                    <div class="attack-result">✓ Attack blocked — tool not in warrant</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Integrations -->
+        <section class="section">
+            <div class="section-header">
+                <h2>Integrations</h2>
+                <p>First-class support for popular frameworks</p>
+            </div>
+            <div class="integrations">
+                <a href="langchain" class="integration">
+                    <div class="integration-icon">🦜</div>
+                    <div class="integration-name">LangChain</div>
+                </a>
+                <a href="langgraph" class="integration">
+                    <div class="integration-icon">📊</div>
+                    <div class="integration-name">LangGraph</div>
+                </a>
+                <a href="mcp" class="integration">
+                    <div class="integration-icon">🔌</div>
+                    <div class="integration-name">MCP</div>
+                </a>
+            </div>
+        </section>
+
+        <!-- Docs -->
+        <section class="section">
+            <div class="section-header">
+                <h2>Documentation</h2>
+                <p>Everything you need to get started</p>
+            </div>
+            <div class="docs">
+                <a href="kubernetes" class="doc">
+                    <div class="doc-icon">☸️</div>
+                    <h4>Kubernetes</h4>
+                    <p>Deploy as sidecar or admission controller</p>
+                </a>
+                <a href="concepts" class="doc">
+                    <div class="doc-icon">💡</div>
+                    <h4>Concepts</h4>
+                    <p>Why tenuo? Threat model explained</p>
+                </a>
+                <a href="enforcement" class="doc">
+                    <div class="doc-icon">🛡️</div>
+                    <h4>Enforcement Models</h4>
+                    <p>In-process, sidecar, gateway, MCP</p>
+                </a>
+                <a href="security" class="doc">
+                    <div class="doc-icon">🔒</div>
+                    <h4>Security</h4>
+                    <p>PoP, replay protection, best practices</p>
+                </a>
+                <a href="ai-agents" class="doc">
+                    <div class="doc-icon">🤖</div>
+                    <h4>AI Agent Patterns</h4>
+                    <p>P-LLM/Q-LLM, prompt injection defense</p>
+                </a>
+                <a href="api-reference" class="doc">
+                    <div class="doc-icon">📖</div>
+                    <h4>API Reference</h4>
+                    <p>Complete SDK documentation</p>
+                </a>
+            </div>
+        </section>
+    </div>
+
+    <footer>
+        <p class="footer-tech">
+            <a href="https://crates.io/crates/tenuo">🦀 Rust core</a> •
+            <a href="https://pypi.org/project/tenuo/">🐍 Python SDK</a> •
+            ⚡ ~27μs verification
+        </p>
+        <p>
+            <a href="https://github.com/tenuo-ai/tenuo">GitHub</a> ·
+            <a href="quickstart">Quick Start</a> ·
+            <a href="api-reference">API Reference</a> ·
+            <a href="security">Security</a> ·
+            MIT/Apache-2.0
+        </p>
+    </footer>
+</body>
+
+</html>

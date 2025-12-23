@@ -1,0 +1,20 @@
+[package]
+name = "tenuo-python"
+version = "0.1.0-alpha.8"
+edition = "2021"
+authors = ["Tenuo Contributors"]
+description = "Capability tokens for AI agents - Python SDK"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tenuo-ai/tenuo"
+keywords = ["authorization", "capabilities", "agents", "security", "warrants", "mcp"]
+categories = ["authentication", "cryptography", "ai", "security"]
+
+[lib]
+# Build the Python extension module as `tenuo_core` (matches pyproject module-name)
+name = "tenuo_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+tenuo = { path = "../tenuo-core", features = ["python-extension"] }
+# pyo3 is re-exported from tenuo crate with python feature
+pyo3 = { version = "0.24", features = ["abi3-py38", "extension-module"] }

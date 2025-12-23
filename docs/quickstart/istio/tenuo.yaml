@@ -1,0 +1,89 @@
+# Tenuo Authorizer for Istio
+# Apply with: kubectl apply -f tenuo.yaml
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenuo-system
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tenuo-config
+  namespace: tenuo-system
+data:
+  gateway.yaml: |
+    version: "1"
+    settings:
+      warrant_header: "X-Tenuo-Warrant"
+      pop_header: "X-Tenuo-PoP"
+      clock_tolerance_secs: 30
+      debug_mode: true
+      # Demo key - replace in production
+      trusted_roots:
+        - "f32e74b5b8569dc288db0109b7ec0d8eb3b4e5be7b07c647171d53fd31e7391f"
+    tools:
+      http_request:
+        extract:
+          path: "$.path"
+          method: "$.method"
+    routes:
+      - path_prefix: "/"
+        tool: http_request
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tenuo-authorizer
+  namespace: tenuo-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tenuo-authorizer
+  template:
+    metadata:
+      labels:
+        app: tenuo-authorizer
+    spec:
+      containers:
+      - name: authorizer
+        image: tenuo/authorizer:latest
+        imagePullPolicy: IfNotPresent
+        args: ["serve", "--port", "9090", "--config", "/etc/tenuo/gateway.yaml"]
+        ports:
+        - containerPort: 9090
+        env:
+        - name: RUST_LOG
+          value: "info"
+        volumeMounts:
+        - name: config
+          mountPath: /etc/tenuo
+          readOnly: true
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+      volumes:
+      - name: config
+        configMap:
+          name: tenuo-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tenuo-authorizer
+  namespace: tenuo-system
+spec:
+  ports:
+  - port: 9090
+    targetPort: 9090
+  selector:
+    app: tenuo-authorizer

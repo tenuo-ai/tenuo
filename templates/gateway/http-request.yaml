@@ -1,0 +1,130 @@
+# HTTP Request Gateway Configuration
+# Use this template for HTTP API access control
+
+version: "1"
+
+settings:
+  warrant_header: "X-Tenuo-Warrant"
+  pop_header: "X-Tenuo-PoP"
+  clock_tolerance_secs: 30
+  
+  # Add your control plane's public key here
+  trusted_roots:
+    - "YOUR_CONTROL_PLANE_PUBLIC_KEY_HEX"
+  
+  # Debug mode (adds X-Tenuo-Deny-Reason header on 403)
+  # WARNING: Do not enable in production!
+  # debug_mode: false
+
+tools:
+  http_get:
+    description: "HTTP GET requests"
+    constraints:
+      path:
+        from: path
+        path: "*"
+        description: "Request path"
+        required: true
+      
+      tenant_id:
+        from: header
+        path: "x-tenant-id"
+        description: "Tenant identifier"
+        required: true
+  
+  http_post:
+    description: "HTTP POST requests"
+    constraints:
+      path:
+        from: path
+        path: "*"
+        description: "Request path"
+        required: true
+      
+      tenant_id:
+        from: header
+        path: "x-tenant-id"
+        description: "Tenant identifier"
+        required: true
+      
+      content_type:
+        from: header
+        path: "content-type"
+        description: "Content type of request body"
+        required: true
+      
+      payload_size:
+        from: header
+        path: "content-length"
+        description: "Size of request payload"
+        type: integer
+  
+  http_put:
+    description: "HTTP PUT requests"
+    constraints:
+      path:
+        from: path
+        path: "*"
+        description: "Request path"
+        required: true
+      
+      tenant_id:
+        from: header
+        path: "x-tenant-id"
+        description: "Tenant identifier"
+        required: true
+      
+      resource_id:
+        from: path
+        path: "id"
+        description: "Resource identifier"
+        required: true
+  
+  http_delete:
+    description: "HTTP DELETE requests"
+    constraints:
+      path:
+        from: path
+        path: "*"
+        description: "Request path"
+        required: true
+      
+      tenant_id:
+        from: header
+        path: "x-tenant-id"
+        description: "Tenant identifier"
+        required: true
+      
+      resource_id:
+        from: path
+        path: "id"
+        description: "Resource identifier"
+        required: true
+      
+      confirm:
+        from: query
+        path: "confirm"
+        description: "Deletion confirmation"
+        type: boolean
+        required: true
+
+routes:
+  # GET requests
+  - pattern: "/{*path}"
+    method: ["GET"]
+    tool: "http_get"
+  
+  # POST requests
+  - pattern: "/{*path}"
+    method: ["POST"]
+    tool: "http_post"
+  
+  # PUT requests (resource updates)
+  - pattern: "/{*path}/{id}"
+    method: ["PUT"]
+    tool: "http_put"
+  
+  # DELETE requests
+  - pattern: "/{*path}/{id}"
+    method: ["DELETE"]
+    tool: "http_delete"

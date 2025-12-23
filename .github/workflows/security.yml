@@ -1,0 +1,88 @@
+name: Security Tests
+
+on:
+  push:
+    branches: [main, camel]
+  pull_request:
+    branches: [main, camel]
+  schedule:
+    # Run security tests weekly on Sunday at 3am UTC
+    - cron: '0 3 * * 0'
+
+jobs:
+  python-security:
+    runs-on: ubuntu-latest
+    name: Python Red Team Tests
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tenuo-python
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Create venv and install dependencies
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          pip install --upgrade pip
+          pip install maturin pytest langchain langchain-core langgraph
+      
+      - name: Build Rust extension
+        working-directory: tenuo-python
+        run: |
+          source ../.venv/bin/activate
+          maturin develop
+          # Add tenuo Python package to path
+          echo "$(pwd)" > ../.venv/lib/python3.11/site-packages/tenuo.pth
+      
+      - name: Run security tests
+        working-directory: tenuo-python
+        run: |
+          source ../.venv/bin/activate
+          pytest tests/security/ -v --tb=short
+
+  rust-security:
+    runs-on: ubuntu-latest
+    name: Rust Red Team Tests
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tenuo-core
+      
+      - name: Run red team tests
+        working-directory: tenuo-core
+        run: |
+          cargo test --test red_team -- --nocapture
+
+  security-audit:
+    runs-on: ubuntu-latest
+    name: Dependency Audit
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Rust audit
+        working-directory: tenuo-core
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit

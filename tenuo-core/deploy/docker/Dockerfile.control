@@ -1,0 +1,73 @@
+# Tenuo Control Plane Docker Image
+#
+# Build:
+#   docker build -f deploy/docker/Dockerfile.control -t tenuo/control:latest .
+#
+# Run:
+#   docker run -e TENUO_SECRET_KEY=<hex> -p 8080:8080 tenuo/control:latest
+
+# ============================================================================
+# Build stage
+# ============================================================================
+# ============================================================================
+# Chef stage - Install cargo-chef
+# ============================================================================
+FROM rust:1.85-bookworm as chef
+WORKDIR /app
+RUN cargo install cargo-chef
+
+# ============================================================================
+# Planner stage - Compute recipe
+# ============================================================================
+FROM chef as planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ============================================================================
+# Builder stage - Build dependencies and app
+# ============================================================================
+FROM chef as builder
+COPY --from=planner /app/recipe.json recipe.json
+# Build dependencies - this is cached if recipe.json doesn't change
+RUN cargo chef cook --release --recipe-path recipe.json --features "control-plane,server"
+
+# Build application
+COPY . .
+RUN cargo build --release --bin tenuo-control --features "control-plane,server"
+
+# ============================================================================
+# Runtime stage
+# ============================================================================
+FROM debian:bookworm-slim
+
+# Install CA certificates and curl for healthcheck
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -m -u 1000 tenuo
+
+# Copy binary
+COPY --from=builder /app/target/release/tenuo-control /usr/local/bin/
+
+# Set ownership
+RUN chown tenuo:tenuo /usr/local/bin/tenuo-control
+
+# Switch to non-root user
+USER tenuo
+
+# Environment
+ENV TENUO_BIND_ADDR=0.0.0.0:8080
+
+# Expose port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Run
+ENTRYPOINT ["/usr/local/bin/tenuo-control"]
+

@@ -1,0 +1,36 @@
+{{- $name := include "tenuo-authorizer.fullname" . -}}
+
+🔐 Tenuo Authorizer has been deployed!
+
+{{- if not .Values.config.trustedRoots }}
+
+⚠️  WARNING: No trusted roots configured!
+   The authorizer will REJECT ALL REQUESTS until you configure trusted issuer keys.
+   
+   To fix, upgrade with your control plane's public key:
+   
+     helm upgrade {{ .Release.Name }} ./charts/tenuo-authorizer \
+       --set 'config.trustedRoots[0]=YOUR_PUBLIC_KEY_HEX'
+
+{{- else }}
+
+✅ Configured with {{ len .Values.config.trustedRoots }} trusted root(s).
+
+{{- end }}
+
+📊 Service Details:
+   - Service: {{ $name }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+   - Replicas: {{ .Values.replicaCount }}
+
+🔍 Verify the deployment:
+
+   kubectl get pods -l app.kubernetes.io/name=tenuo-authorizer -n {{ .Release.Namespace }}
+   kubectl logs -l app.kubernetes.io/name=tenuo-authorizer -n {{ .Release.Namespace }} --tail=20
+
+🩺 Health check:
+
+   kubectl port-forward svc/{{ $name }} {{ .Values.service.port }}:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+   curl http://localhost:{{ .Values.service.port }}/health
+
+📚 Documentation: https://tenuo.dev/kubernetes
+

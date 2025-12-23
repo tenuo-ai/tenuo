@@ -1,0 +1,222 @@
+# ============================================================
+# Tenuo MCP (Model Context Protocol) Configuration Example
+# ============================================================
+# This configuration file defines how Tenuo extracts constraint
+# values from MCP tool call arguments and maps them to warrant
+# constraints for authorization.
+#
+# MCP is the standard protocol for AI agent tool calling.
+# Tenuo's MCP integration provides cryptographic authorization
+# for AI agent workflows without custom middleware.
+#
+# See: https://modelcontextprotocol.io
+# ============================================================
+
+version: "1"
+
+# Global Settings
+# ============================================================
+settings:
+  # Trusted Control Plane public keys (hex-encoded Ed25519)
+  # These are the root issuers that can create valid warrants
+  trusted_issuers:
+    - "f32e74b5a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8"
+
+# Tool Definitions
+# ============================================================
+# Each tool maps an MCP tool name to Tenuo tool configuration.
+# Unlike HTTP gateway configs, MCP doesn't need route matching—
+# tools are identified by name directly.
+#
+tools:
+  # Filesystem operations
+  # ============================================================
+  filesystem_read:
+    description: "Read files from the filesystem"
+    
+    constraints:
+      path:
+        from: body
+        path: "path"
+        description: "File path to read"
+        required: true
+      
+      max_size:
+        from: body
+        path: "maxSize"
+        description: "Maximum file size in bytes"
+        type: integer
+        default: 1048576  # 1 MB default
+      
+      allowed_paths:
+        from: body
+        path: "allowedPaths"
+        description: "List of allowed path prefixes (for wildcard extraction)"
+        # Note: Wildcard extraction returns List, ensure warrant constraints
+        # are compatible (e.g., use OneOf, NotOneOf, or CEL expressions)
+
+  filesystem_write:
+    description: "Write files to the filesystem"
+    
+    constraints:
+      path:
+        from: body
+        path: "path"
+        description: "File path to write"
+        required: true
+      
+      max_size:
+        from: body
+        path: "maxSize"
+        description: "Maximum file size in bytes"
+        type: integer
+        default: 1048576
+      
+      allowed_paths:
+        from: body
+        path: "allowedPaths"
+        description: "List of allowed path prefixes"
+
+  # Database operations
+  # ============================================================
+  database_query:
+    description: "Execute database queries"
+    
+    constraints:
+      table:
+        from: body
+        path: "query.table"
+        description: "Target table name"
+        required: true
+      
+      operation:
+        from: body
+        path: "query.operation"
+        description: "SQL operation type"
+        required: true
+        allowed_values: ["select", "insert", "update", "delete"]
+      
+      row_limit:
+        from: body
+        path: "query.limit"
+        description: "Maximum rows to return"
+        type: integer
+        default: 100
+      
+      allowed_tables:
+        from: body
+        path: "query.allowedTables"
+        description: "List of allowed table names"
+
+  # Code execution
+  # ============================================================
+  execute_code:
+    description: "Execute code in a sandboxed environment"
+    
+    constraints:
+      language:
+        from: body
+        path: "code.language"
+        description: "Programming language"
+        required: true
+        allowed_values: ["python", "javascript", "bash"]
+      
+      timeout:
+        from: body
+        path: "code.timeout"
+        description: "Execution timeout in seconds"
+        type: integer
+        default: 30
+      
+      max_memory:
+        from: body
+        path: "code.maxMemory"
+        description: "Maximum memory in MB"
+        type: integer
+        default: 512
+      
+      allowed_modules:
+        from: body
+        path: "code.allowedModules"
+        description: "List of allowed import modules"
+
+  # API calls
+  # ============================================================
+  http_request:
+    description: "Make HTTP requests to external APIs"
+    
+    constraints:
+      url:
+        from: body
+        path: "request.url"
+        description: "Target URL"
+        required: true
+      
+      method:
+        from: body
+        path: "request.method"
+        description: "HTTP method"
+        required: true
+        allowed_values: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+      
+      allowed_domains:
+        from: body
+        path: "request.allowedDomains"
+        description: "List of allowed domain patterns"
+      
+      max_response_size:
+        from: body
+        path: "request.maxResponseSize"
+        description: "Maximum response size in bytes"
+        type: integer
+        default: 10485760  # 10 MB
+
+# ============================================================
+# Notes on Extraction Sources
+# ============================================================
+# MCP tool calls only provide an "arguments" JSON object.
+# Therefore, extraction rules should use:
+#
+#   - from: body    (default for MCP) - Extract from arguments object
+#   - from: literal                   - Use default/literal value
+#
+# Config sugar: "from: body" is implicit in MCP. These are equivalent:
+#   path: "path"              # Implicit from: body
+#   path: { from: body, path: "path" }  # Explicit
+#
+# Rules using from: path, from: query, or from: header will
+# not work in MCP context and will be flagged by validate().
+#
+# ============================================================
+# Warrant Transport in MCP
+# ============================================================
+# MCP doesn't have HTTP headers. Warrants travel in a reserved _tenuo field:
+#
+#   {
+#     "path": "/data/file.txt",
+#     "_tenuo": {
+#       "warrant": "eyJ0eXA...",    # Base64-encoded warrant chain
+#       "signature": "c2lnXy4uLg=="  # Base64-encoded PoP signature
+#     }
+#   }
+#
+# The _tenuo field is automatically stripped before tool execution.
+# Tools never see it - keeps the authorization layer separate.
+#
+# ============================================================
+# Wildcard Extraction
+# ============================================================
+# Wildcard paths (e.g., "items.*.id") produce List values.
+# Ensure your Warrant Constraints are compatible:
+#
+#   - Use OneOf or NotOneOf for membership checks
+#   - Use CEL for complex list operations:
+#     * All items: items.all(x, x.cost < 100)
+#     * Any item: items.exists(x, x.approved)
+#     * Sum: items.map(x, x.cost).sum() < 1000
+#
+# Scalar constraints (Exact, Range, Pattern) will NOT match
+# List values and will return false (request blocked).
+#
+# ============================================================
+

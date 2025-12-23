@@ -1,0 +1,86 @@
+# File Operations Gateway Configuration
+# Use this template for file system access control
+
+version: "1"
+
+settings:
+  warrant_header: "X-Tenuo-Warrant"
+  pop_header: "X-Tenuo-PoP"
+  clock_tolerance_secs: 30
+  
+  # Add your control plane's public key here
+  trusted_roots:
+    - "YOUR_CONTROL_PLANE_PUBLIC_KEY_HEX"
+  
+  # Debug mode (adds X-Tenuo-Deny-Reason header on 403)
+  # WARNING: Do not enable in production!
+  # debug_mode: false
+
+tools:
+  read_file:
+    description: "Read file contents"
+    constraints:
+      path:
+        from: body
+        path: "path"
+        description: "File path to read"
+        required: true
+      
+      max_size:
+        from: body
+        path: "max_size_bytes"
+        description: "Maximum file size in bytes"
+        type: integer
+        default: 1048576  # 1MB default
+  
+  write_file:
+    description: "Write or modify file contents"
+    constraints:
+      path:
+        from: body
+        path: "path"
+        description: "File path to write"
+        required: true
+      
+      content_length:
+        from: header
+        path: "content-length"
+        description: "Size of content being written"
+        type: integer
+        required: true
+      
+      overwrite:
+        from: body
+        path: "overwrite"
+        description: "Whether to overwrite existing file"
+        type: boolean
+        default: false
+  
+  delete_file:
+    description: "Delete a file"
+    constraints:
+      path:
+        from: body
+        path: "path"
+        description: "File path to delete"
+        required: true
+      
+      confirm:
+        from: body
+        path: "confirm"
+        description: "Confirmation flag"
+        type: boolean
+        required: true
+
+routes:
+  - pattern: "/api/v1/files/read"
+    method: ["POST"]
+    tool: "read_file"
+  
+  - pattern: "/api/v1/files/write"
+    method: ["POST", "PUT"]
+    tool: "write_file"
+  
+  - pattern: "/api/v1/files/delete"
+    method: ["DELETE"]
+    tool: "delete_file"

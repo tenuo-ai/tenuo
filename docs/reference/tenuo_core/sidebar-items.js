@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_DELEGATION_DEPTH","SIGNATURE_CONTEXT","WIRE_VERSION"],"mod":["approval","cel","constraints","crypto","error","planes","revocation","warrant","wire"]};

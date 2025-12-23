@@ -1,0 +1,24 @@
+[package]
+name = "tenuo-wasm"
+version = "0.1.0-alpha.8"
+edition = "2021"
+authors = ["Tenuo Contributors"]
+description = "WASM bindings for Tenuo"
+license = "MIT OR Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+console_error_panic_hook = "0.1"
+
+# Tenuo Core
+tenuo = { path = "../tenuo-core", default-features = false, features = ["control-plane", "data-plane"] }
+hex = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

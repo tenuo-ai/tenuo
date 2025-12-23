@@ -1,0 +1,200 @@
+# ============================================================
+# Tenuo Gateway Configuration
+# ============================================================
+#
+# This file configures how the Tenuo gateway/sidecar extracts
+# constraint values from incoming HTTP requests and maps them
+# to warrant constraints for authorization.
+#
+# ============================================================
+# EXTRACTION SEMANTICS
+# ============================================================
+#
+# Values can be extracted from:
+#   - path:   URL path parameters (/api/{cluster}/action)
+#   - query:  Query string parameters (?namespace=default)
+#   - header: HTTP headers (X-Tenant-Id)
+#   - body:   JSON body with dot notation (spec.replicas)
+#
+# JSONPath supports:
+#   - Nested paths: parent.child.grandchild
+#   - Array index:  items.0.name
+#   - Wildcards:    items.*.id (returns a List)
+#
+# IMPORTANT: Wildcard extractions produce Lists.
+# Ensure your Warrant Constraints are compatible:
+#   - Use OneOf/NotOneOf for membership checks
+#   - Use CEL for complex list operations:
+#     - items.all(x, x.cost < 100)
+#     - items.exists(x, x.approved)
+#
+# ============================================================
+
+version: "1"
+
+# ============================================================
+# Global Settings
+# ============================================================
+settings:
+  # Header containing the base64-encoded warrant chain
+  chain_header: "X-Tenuo-Chain"
+  
+  # Header containing the PoP signature (hex)
+  pop_header: "X-Tenuo-PoP"
+  
+  # Clock tolerance for expiration checks (seconds)
+  clock_tolerance_secs: 30
+  
+  # Trusted Control Plane public keys (hex)
+  # In production, these come from your Control Plane
+  trusted_issuers:
+    - "f32e74b5b8569dc288db0109b7ec0d8eb3b4e5be7b07c647171d53fd31e7391f"
+
+# ============================================================
+# Tool Definitions
+# ============================================================
+# Each tool defines what constraints can be extracted and
+# from where in the HTTP request.
+#
+tools:
+  # Kubernetes cluster management
+  manage_infrastructure:
+    description: "Kubernetes cluster management operations"
+    
+    constraints:
+      cluster:
+        from: path
+        path: "cluster"
+        description: "Target cluster name (e.g., staging-web, prod-api)"
+        required: true
+        
+      action:
+        from: path
+        path: "action"
+        description: "Operation to perform (scale, upgrade, restart)"
+        required: true
+        
+      namespace:
+        from: query
+        path: "namespace"
+        description: "Kubernetes namespace"
+        default: "default"
+        
+      replicas:
+        from: body
+        path: "spec.replicas"
+        description: "Desired replica count"
+        type: integer
+        
+      cost:
+        from: body
+        path: "metadata.estimatedCost"
+        description: "Estimated cost in USD"
+        type: float
+
+  # Database query operations
+  database_query:
+    description: "Database query and mutation operations"
+    
+    constraints:
+      table:
+        from: body
+        path: "query.table"
+        description: "Target table name"
+        required: true
+        
+      operation:
+        from: body
+        path: "query.operation"
+        description: "SQL operation type"
+        required: true
+        allowed_values: ["select", "insert", "update", "delete"]
+        
+      row_limit:
+        from: body
+        path: "query.limit"
+        description: "Maximum rows to return"
+        type: integer
+        default: 100
+
+  # Financial transfer operations
+  transfer_funds:
+    description: "Financial transfer operations"
+    
+    constraints:
+      amount:
+        from: body
+        path: "transfer.amount"
+        description: "Transfer amount"
+        type: float
+        required: true
+        
+      currency:
+        from: body
+        path: "transfer.currency"
+        description: "Currency code (USD, EUR, etc.)"
+        default: "USD"
+        
+      recipient_verified:
+        from: body
+        path: "transfer.recipient.isVerified"
+        description: "Whether recipient is verified"
+        type: boolean
+        
+      recipient_country:
+        from: body
+        path: "transfer.recipient.address.country"
+        description: "Recipient's country code"
+
+  # Batch operations (demonstrates wildcard extraction)
+  batch_transfer:
+    description: "Process multiple transfers in one request"
+    
+    constraints:
+      batch_id:
+        from: body
+        path: "batchId"
+        description: "Unique batch identifier"
+        type: integer  # Preserved as i64 for snowflake IDs
+        required: true
+        
+      # Wildcard extraction - produces a List
+      # Use CEL constraint: amounts.all(x, x < 1000)
+      amounts:
+        from: body
+        path: "transfers.*.amount"
+        type: list
+        # Note: Extracted as List. Use CEL for validation.
+
+# ============================================================
+# Route Matching
+# ============================================================
+# Maps HTTP request patterns to tools.
+#
+routes:
+  # Kubernetes operations
+  - pattern: "/api/v1/clusters/{cluster}/{action}"
+    method: ["POST", "PUT", "DELETE"]
+    tool: "manage_infrastructure"
+    
+  # Database queries
+  - pattern: "/api/v1/database/query"
+    method: ["POST"]
+    tool: "database_query"
+    
+  # Single transfer
+  - pattern: "/api/v1/transfers"
+    method: ["POST"]
+    tool: "transfer_funds"
+    # Additional constraints from headers
+    extra_constraints:
+      tenant_id:
+        from: header
+        path: "X-Tenant-Id"
+        required: true
+        
+  # Batch transfers
+  - pattern: "/api/v1/transfers/batch"
+    method: ["POST"]
+    tool: "batch_transfer"
+

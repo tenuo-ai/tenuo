@@ -1,0 +1,166 @@
+[package]
+name = "tenuo"
+version = "0.1.0-alpha.8"
+edition = "2021"
+authors = ["Tenuo Contributors"]
+description = "Agent Capability Flow Control - Rust core library"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tenuo-ai/tenuo"
+readme = "README.md"
+keywords = ["authorization", "capabilities", "agents", "security", "middleware"]
+categories = ["authentication", "cryptography", "network-programming", "web-programming", "security"]
+
+[lints.rust]
+deprecated = "allow"  # Allow Keypair usage during SigningKey migration
+
+[lib]
+name = "tenuo"
+# When used as a Python extension dependency, only build as rlib to avoid linking issues
+# cdylib is only needed for standalone dynamic library usage
+crate-type = ["rlib"]
+
+# ============================================================================
+# Feature Flags for Deployment Flexibility
+# ============================================================================
+[features]
+default = ["control-plane", "data-plane"]
+
+# Control Plane - for the central authority service
+control-plane = []
+
+# Data Plane - for edge agents and verifiers  
+data-plane = []
+
+# Python bindings
+python = ["pyo3"]
+python-extension = ["pyo3/extension-module", "python"]
+
+# Server features (adds HTTP/gRPC + structured logging dependencies)
+server = ["tokio", "axum", "tower", "tracing"]
+
+# ============================================================================
+# Binary Targets
+# ============================================================================
+
+# Control Plane server (issues warrants, manages approvals)
+[[bin]]
+name = "tenuo-control"
+path = "src/bin/control.rs"
+required-features = ["control-plane", "server"]
+
+# Data Plane / Authorizer (embeddable verifier, with optional HTTP server)
+[[bin]]
+name = "tenuo-authorizer"
+path = "src/bin/authorizer.rs"
+required-features = ["data-plane", "server"]
+
+# CLI for development and debugging (needs both planes for full functionality)
+[[bin]]
+name = "tenuo"
+path = "src/bin/cli.rs"
+required-features = ["control-plane", "data-plane"]
+
+[[bin]]
+name = "tenuo-orchestrator"
+path = "src/bin/orchestrator.rs"
+required-features = ["control-plane", "data-plane"]
+
+[[bin]]
+name = "tenuo-worker"
+path = "src/bin/worker.rs"
+required-features = ["data-plane"]
+
+# ============================================================================
+# Dependencies
+# ============================================================================
+[dependencies]
+# Cryptography
+ed25519-dalek = { version = "2.1", features = ["rand_core", "serde", "batch", "pkcs8", "zeroize"] }
+rand = "0.8"
+sha2 = "0.10"
+subtle = "2.6"  # Constant-time comparison for secrets
+secrecy = { version = "0.8", features = ["serde"] }
+zeroize = "1.7"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = "1.0"
+serde_yaml = "0.9"
+ciborium = "0.2"
+base64 = "0.22"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Network handling
+ipnetwork = "0.20"
+url = "2.5"
+reqwest = { version = "0.11", features = ["blocking", "json"] }
+
+# Pattern matching (glob-style)
+glob = "0.3"
+regex = "1.10"
+
+# Fast URL routing (radix tree based)
+matchit = "0.7"
+
+# Small vector optimization
+smallvec = { version = "1.13", features = ["union"] }
+
+# CEL expression evaluation
+cel-interpreter = "0.8"
+
+# Caching for CEL compiled programs
+moka = { version = "0.12", features = ["sync"] }
+
+# Error handling
+thiserror = "1.0"
+
+# UUID for warrant IDs (v4 for random, v7 for time-ordered)
+uuid = { version = "1.6", features = ["v4", "v7", "serde", "js"] }
+
+# Python bindings (optional)
+# Note: extension-module must NOT be here - it goes in the final cdylib (tenuo-python)
+# abi3-py38 allows building without linking Python at compile time
+pyo3 = { version = "0.24", features = ["abi3-py38"], optional = true }
+
+# Server dependencies (optional)
+tokio = { version = "1.35", features = ["full"], optional = true }
+axum = { version = "0.7", optional = true }
+tower = { version = "0.4", optional = true }
+tracing = { version = "0.1", optional = true }
+
+# CLI dependencies
+clap = { version = "4.4", features = ["derive", "env"] }
+hex = "0.4"
+pem = "3.0"
+pkcs8 = { version = "0.10", features = ["alloc", "pem"] }
+spki = { version = "0.7", features = ["alloc", "pem"] }
+der = { version = "0.7", features = ["pem"] }
+humantime = "2.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+
+[dev-dependencies]
+proptest = "1.4"
+criterion = "0.5"
+tokio = { version = "1.35", features = ["full", "test-util"] }
+tempfile = "3.8"
+
+[[bench]]
+name = "warrant_benchmarks"
+harness = false
+
+[profile.release]
+lto = "thin"        # Faster than "true" (fat LTO), still good optimization
+codegen-units = 16  # Allow parallel code generation (faster builds)
+strip = true        # Strip symbols to reduce binary size
+opt-level = 3       # Maximum optimization
+
+# Optimize dependencies even in debug builds
+# This makes 'cargo test' and 'maturin develop' much faster after the initial build
+[profile.dev.package."*"]
+opt-level = 3
+

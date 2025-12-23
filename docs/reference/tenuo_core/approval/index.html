@@ -1,0 +1,51 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Approval types for human-in-the-loop and multi-sig workflows."><title>tenuo_core::approval - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-e56847b5.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="tenuo_core" data-themes="" data-resource-suffix="" data-rustdoc-version="1.91.1 (ed61e7d7e 2025-11-07)" data-channel="1.91.1" data-search-js="search-e256b49e.js" data-stringdex-js="stringdex-c3e638e9.js" data-settings-js="settings-c38705f0.js" ><script src="../../static.files/storage-e2aeef58.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-6dc2a7f3.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module approval</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../tenuo_core/index.html">tenuo_<wbr>core</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module approval</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#philosophy" title="Philosophy">Philosophy</a></li><li><a href="#notary-registry" title="Notary Registry">Notary Registry</a></li><li><a href="#implementation-status" title="Implementation Status">Implementation Status</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate tenuo_<wbr>core</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">tenuo_core</a></div><h1>Module <span>approval</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/tenuo_core/approval.rs.html#1-758">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Approval types for human-in-the-loop and multi-sig workflows.</p>
+<p>Tenuo treats Identity Providers as “Notaries” - they map enterprise
+identities (AWS IAM ARNs, Okta users, YubiKey certificates) to Ed25519
+public keys. Tenuo only cares about the cryptographic signature.</p>
+<h3 id="philosophy"><a class="doc-anchor" href="#philosophy">§</a>Philosophy</h3><div class="example-wrap"><pre class="language-text"><code>┌─────────────────────────────────────────────────────────────────┐
+│  IDENTITY PROVIDER (Notary)          TENUO CORE (The Math)     │
+│  ─────────────────────────           ──────────────────────    │
+│                                                                 │
+│  &quot;arn:aws:iam::123:user/admin&quot;  →    PublicKey [32 bytes]      │
+│  &quot;okta:user:alice@corp.com&quot;     →    PublicKey [32 bytes]      │
+│  &quot;yubikey:serial:12345678&quot;      →    PublicKey [32 bytes]      │
+│                                                                 │
+│  Provider handles:                   Tenuo verifies:           │
+│  • Identity verification             • Signature math          │
+│  • Key derivation/storage            • Multi-sig counting      │
+│  • Key rotation                      • Offline verification    │
+└─────────────────────────────────────────────────────────────────┘</code></pre></div><h3 id="notary-registry"><a class="doc-anchor" href="#notary-registry">§</a>Notary Registry</h3>
+<p>The <code>NotaryRegistry</code> manages the lifecycle of identity-to-key bindings:</p>
+
+<div class="example-wrap ignore"><a href="#" class="tooltip" title="This example is not tested">ⓘ</a><pre class="rust rust-example-rendered"><code><span class="kw">let </span><span class="kw-2">mut </span>registry = NotaryRegistry::new();
+
+<span class="comment">// Register an AWS IAM user's key
+</span>registry.register_key(KeyBinding {
+    external_id: <span class="string">"arn:aws:iam::123:user/admin"</span>.into(),
+    provider: <span class="string">"aws-iam"</span>.into(),
+    public_key: admin_keypair.public_key(),
+    registered_by: <span class="string">"bootstrap"</span>.into(),
+    <span class="comment">// ...
+</span>})<span class="question-mark">?</span>;
+
+<span class="comment">// All operations emit audit events
+</span><span class="kw">for </span>event <span class="kw">in </span>registry.drain_events() {
+    audit_log.record(event);
+}</code></pre></div><h3 id="implementation-status"><a class="doc-anchor" href="#implementation-status">§</a>Implementation Status</h3>
+<ul>
+<li><input disabled="" type="checkbox" checked=""/>
+Approval struct (data model)</li>
+<li><input disabled="" type="checkbox" checked=""/>
+NotaryRegistry (key lifecycle management)</li>
+<li><input disabled="" type="checkbox" checked=""/>
+KeyBinding (identity → key mapping)</li>
+<li><input disabled="" type="checkbox" checked=""/>
+AuditEvent (key lifecycle auditing)</li>
+<li><input disabled="" type="checkbox"/>
+Multi-sig verification in Authorizer</li>
+<li><input disabled="" type="checkbox"/>
+Python SDK: ApprovalProvider ABC</li>
+<li><input disabled="" type="checkbox"/>
+Provider implementations (AWS IAM, Okta, YubiKey)</li>
+</ul>
+</div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.Approval.html" title="struct tenuo_core::approval::Approval">Approval</a></dt><dd>A cryptographically signed approval from a human or external system.</dd><dt><a class="struct" href="struct.AuditEvent.html" title="struct tenuo_core::approval::AuditEvent">Audit<wbr>Event</a></dt><dd>An audit event for key lifecycle operations.</dd><dt><a class="struct" href="struct.KeyBinding.html" title="struct tenuo_core::approval::KeyBinding">KeyBinding</a></dt><dd>A binding between an external identity and a Tenuo public key.</dd><dt><a class="struct" href="struct.NotaryRegistry.html" title="struct tenuo_core::approval::NotaryRegistry">Notary<wbr>Registry</a></dt><dd>Registry for managing Notaries (identity providers and their key bindings).</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.AuditEventType.html" title="enum tenuo_core::approval::AuditEventType">Audit<wbr>Event<wbr>Type</a></dt><dd>Types of key lifecycle events.</dd></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.compute_request_hash.html" title="fn tenuo_core::approval::compute_request_hash">compute_<wbr>request_<wbr>hash</a></dt><dd>Compute a request hash for approval binding.</dd></dl></section></div></main></body></html>

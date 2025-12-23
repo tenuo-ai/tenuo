@@ -1,0 +1,130 @@
+# Tenuo Data Plane Sidecar Example
+#
+# This shows how to add Tenuo authorization to any existing application
+# by adding the authorizer as a sidecar container.
+#
+# The sidecar:
+# - Runs independently of the control plane
+# - Only needs the public key(s) of trusted issuers
+# - Provides local, fast authorization (no network calls)
+#
+# Your application can:
+# 1. Call the sidecar's HTTP endpoint for authorization checks
+# 2. Use the tenuo_core library directly (no sidecar needed)
+# 3. Use the CLI for scripted checks
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tenuo-trusted-keys
+  namespace: default
+data:
+  # Add your control plane's public key here
+  # Get it from: curl http://tenuo-control.tenuo-system/v1/public-key
+  TENUO_TRUSTED_KEYS: ""
+
+---
+# Example: Adding Tenuo to an existing deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-agent-service
+  namespace: default
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: my-agent-service
+  template:
+    metadata:
+      labels:
+        app: my-agent-service
+        # This label allows the pod to call the control plane
+        tenuo.io/client: "true"
+    spec:
+      containers:
+      # Your existing application container
+      - name: app
+        image: my-org/my-agent:latest
+        ports:
+        - containerPort: 8000
+        env:
+        # Point your app to the sidecar for authorization
+        - name: TENUO_AUTHORIZER_URL
+          value: "http://localhost:9090"
+        # Or use the library directly with the public key
+        - name: TENUO_TRUSTED_KEYS
+          valueFrom:
+            configMapKeyRef:
+              name: tenuo-trusted-keys
+              key: TENUO_TRUSTED_KEYS
+
+      # Tenuo authorizer sidecar (optional - only if using HTTP API)
+      - name: tenuo-authorizer
+        image: tenuo/authorizer:latest
+        args: ["serve", "--port", "9090"]
+        ports:
+        - name: authz
+          containerPort: 9090
+        env:
+        - name: TENUO_TRUSTED_KEYS
+          valueFrom:
+            configMapKeyRef:
+              name: tenuo-trusted-keys
+              key: TENUO_TRUSTED_KEYS
+        resources:
+          # The authorizer is very lightweight
+          requests:
+            memory: "16Mi"
+            cpu: "10m"
+          limits:
+            memory: "32Mi"
+            cpu: "50m"
+        securityContext:
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+
+---
+# Alternative: Init container to validate trusted keys at startup
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-agent-service-with-validation
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: my-agent-validated
+  template:
+    metadata:
+      labels:
+        app: my-agent-validated
+    spec:
+      initContainers:
+      # Validate that we have trusted keys configured
+      - name: validate-keys
+        image: tenuo/authorizer:latest
+        command: ["tenuo-authorizer", "info"]
+        env:
+        - name: TENUO_TRUSTED_KEYS
+          valueFrom:
+            configMapKeyRef:
+              name: tenuo-trusted-keys
+              key: TENUO_TRUSTED_KEYS
+
+      containers:
+      - name: app
+        image: my-org/my-agent:latest
+        env:
+        - name: TENUO_TRUSTED_KEYS
+          valueFrom:
+            configMapKeyRef:
+              name: tenuo-trusted-keys
+              key: TENUO_TRUSTED_KEYS
+

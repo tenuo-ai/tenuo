@@ -1,0 +1,70 @@
+# Tenuo Authorizer Docker Image
+#
+# This is a minimal distroless image for the data plane authorizer.
+# Designed to be small (~15MB) and fast for sidecar deployment.
+#
+# Note: No HEALTHCHECK instruction - distroless has no shell/curl.
+# For Kubernetes, use HTTP probes:
+#   livenessProbe:
+#     httpGet:
+#       path: /health
+#       port: 8080
+#   readinessProbe:
+#     httpGet:
+#       path: /ready
+#       port: 8080
+#
+# Available health endpoints (no auth required):
+#   GET /health  - Returns {"status": "healthy"}
+#   GET /healthz - Same (K8s convention)
+#   GET /ready   - Same (readiness probe)
+#
+# Build:
+#   docker build -f deploy/docker/Dockerfile.authorizer -t tenuo/authorizer:latest .
+#
+# Run:
+#   docker run -p 8080:8080 -e TENUO_TRUSTED_KEYS=<hex> tenuo/authorizer:latest serve
+
+# ============================================================================
+# Build stage
+# ============================================================================
+# ============================================================================
+# Chef stage - Install cargo-chef
+# ============================================================================
+FROM rust:1.85-bookworm as chef
+WORKDIR /app
+RUN cargo install cargo-chef
+
+# ============================================================================
+# Planner stage - Compute recipe
+# ============================================================================
+FROM chef as planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ============================================================================
+# Builder stage - Build dependencies and app
+# ============================================================================
+FROM chef as builder
+COPY --from=planner /app/recipe.json recipe.json
+# Build dependencies - this is cached if recipe.json doesn't change
+RUN cargo chef cook --release --recipe-path recipe.json --features "data-plane,server"
+
+# Build application
+COPY . .
+RUN cargo build --release --bin tenuo-authorizer --features "data-plane,server"
+
+# ============================================================================
+# Runtime stage - minimal image
+# ============================================================================
+FROM gcr.io/distroless/cc-debian12
+
+# Copy binary
+COPY --from=builder /app/target/release/tenuo-authorizer /tenuo-authorizer
+
+# Run as non-root
+USER 1000
+
+# Entry point
+ENTRYPOINT ["/tenuo-authorizer"]
+

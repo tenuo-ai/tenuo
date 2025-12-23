@@ -1,0 +1,121 @@
+# Tenuo Development Environment
+#
+# Start the complete Tenuo stack:
+#   docker compose up
+#
+# Run just the multi-agent demo:
+#   docker compose up orchestrator worker
+#
+# This runs:
+#   - Control Plane (port 8080) - issues warrants
+#   - Authorizer (port 9090) - verifies warrants
+#   - Orchestrator - receives root warrant, delegates to worker
+#   - Worker - receives delegated warrant, performs actions
+
+# ============================================================================
+# Shared Configuration
+# ============================================================================
+x-common-env: &common-env
+  # This keypair is for DEVELOPMENT ONLY - generate your own for production
+  TENUO_SECRET_KEY: "f07521a0719ae0a02b8acfa92e6e779f9c3ef082e6865549a6eba1dda3b3a606"
+  # Corresponding public key (derived from secret key)
+  TENUO_PUBLIC_KEY: "02b04e930d436f40552de8e2fd3222a9840c8343c6332908a6b0a07039a4b53e"
+  # Enrollment token for orchestrator registration (shared between control plane and orchestrator)
+  TENUO_ENROLLMENT_TOKEN: "demo-enrollment-token-2024"
+
+services:
+  # ============================================================================
+  # Control Plane - Central authority that issues warrants
+  # ============================================================================
+  control-plane:
+    build:
+      context: ./tenuo-core
+      dockerfile: deploy/docker/Dockerfile.control
+    ports:
+      - "8080:8080"
+    environment:
+      <<: *common-env
+      TENUO_BIND_ADDR: "0.0.0.0:8080"
+      # Enrollment token (shared with orchestrator)
+      TENUO_ENROLLMENT_TOKEN: "demo-enrollment-token-2024"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+    networks:
+      - tenuo-net
+
+  # ============================================================================
+  # Authorizer - Data plane that verifies warrants (sidecar simulation)
+  # ============================================================================
+  authorizer:
+    build:
+      context: ./tenuo-core
+      dockerfile: deploy/docker/Dockerfile.authorizer
+    command: ["info"]
+    ports:
+      - "9090:9090"
+    environment:
+      TENUO_TRUSTED_KEYS: "02b04e930d436f40552de8e2fd3222a9840c8343c6332908a6b0a07039a4b53e"
+    networks:
+      - tenuo-net
+
+  # ============================================================================
+  # MULTI-AGENT DEMO
+  # ============================================================================
+  # Run with: docker compose up orchestrator worker
+  #
+  # Flow:
+  #   1. Orchestrator receives broad warrant from Control Plane
+  #   2. Orchestrator attenuates warrant and delegates to Worker
+  #   3. Worker verifies chain and attempts various actions
+  # ============================================================================
+
+  # Orchestrator Agent - Receives root warrant, creates delegations
+  orchestrator:
+    build:
+      context: ./tenuo-core
+      dockerfile: demo/docker/Dockerfile.agents
+    entrypoint: ["tenuo-orchestrator"]
+    environment:
+      # Enrollment token (must match control plane)
+      TENUO_ENROLLMENT_TOKEN: "demo-enrollment-token-2024"
+      # Control plane URL
+      TENUO_CONTROL_URL: "http://control-plane:8080"
+      # Where to write the delegation chain
+      TENUO_CHAIN_OUTPUT: "/data/chain.json"
+    volumes:
+      - demo-data:/data
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    networks:
+      - tenuo-net
+
+  # Worker Agent - Receives delegated warrant, performs constrained actions
+  worker:
+    build:
+      context: ./tenuo-core
+      dockerfile: demo/docker/Dockerfile.agents
+    entrypoint: ["tenuo-worker"]
+    environment:
+      # Worker only needs the Control Plane's PUBLIC key (not secret!)
+      TENUO_TRUSTED_KEYS: "02b04e930d436f40552de8e2fd3222a9840c8343c6332908a6b0a07039a4b53e"
+      # Where to read the delegation chain
+      TENUO_CHAIN_INPUT: "/data/chain.json"
+    volumes:
+      - demo-data:/data
+    depends_on:
+      orchestrator:
+        condition: service_completed_successfully
+    networks:
+      - tenuo-net
+
+volumes:
+  demo-data:
+    driver: local
+
+networks:
+  tenuo-net:
+    driver: bridge

@@ -1,0 +1,27 @@
+# Istio Mesh Config Patch for Tenuo
+#
+# Apply with:
+#   kubectl patch configmap istio -n istio-system --type merge --patch-file mesh-config.yaml
+#
+# Then restart istiod:
+#   kubectl rollout restart deployment/istiod -n istio-system
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: istio
+  namespace: istio-system
+data:
+  mesh: |
+    extensionProviders:
+    - name: tenuo-ext-authz
+      envoyExtAuthzGrpc:
+        service: tenuo-authorizer.tenuo-system.svc.cluster.local
+        port: 9090
+        includeRequestBodyInCheck:
+          maxRequestBytes: 8192
+          allowPartialMessage: true
+        includeHeadersInCheck:
+        - "x-tenuo-warrant"
+        - "x-tenuo-pop"
+        timeout: 1s

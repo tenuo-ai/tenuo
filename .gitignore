@@ -1,0 +1,60 @@
+# Rust build artifacts
+target/
+**/*.rs.bk
+# Cargo.lock should be checked in for reproducible builds
+# Cargo.lock
+.DS_Store
+*.key
+*.pub
+test_cli_output/
+# Virtual environments
+.venv/
+.venv*/
+venv/
+.env/
+env/
+verify_cli.sh
+reproduce_pickle.py
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment files (contain secrets!)
+.env
+.env.local
+.env.*.local
+
+# Development keypairs
+*.pem
+*-key.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.eggs/
+*.so
+
+# Test artifacts
+*.profraw
+coverage/
+
+# Test output artifacts
+test_failures.txt
+test_output.txt
+
+tenuo-core/check.log
+
+# Benchmark results
+results/
+*.log

@@ -1,0 +1,40 @@
+# ============================================================================
+# Chef stage - Install cargo-chef
+# ============================================================================
+FROM rust:1.85-bookworm as chef
+WORKDIR /app
+RUN cargo install cargo-chef
+
+# ============================================================================
+# Planner stage - Compute recipe
+# ============================================================================
+FROM chef as planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ============================================================================
+# Builder stage - Build dependencies and app
+# ============================================================================
+FROM chef as builder
+COPY --from=planner /app/recipe.json recipe.json
+# Build dependencies - this is cached if recipe.json doesn't change
+RUN cargo chef cook --release --recipe-path recipe.json --features "control-plane,data-plane"
+
+# Build application
+COPY . .
+RUN cargo build --release --bin tenuo-orchestrator --bin tenuo-worker --features "control-plane,data-plane"
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/target/release/tenuo-orchestrator /usr/local/bin/
+COPY --from=builder /app/target/release/tenuo-worker /usr/local/bin/
+
+# Create a directory for shared data
+RUN mkdir -p /data && chmod 777 /data
+
+USER 1000

@@ -1,0 +1,65 @@
+# httpbin + AuthorizationPolicy for Istio Quickstart
+# Apply with: kubectl apply -f httpbin.yaml
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: httpbin
+  namespace: default
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpbin
+  namespace: default
+spec:
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 80
+  selector:
+    app: httpbin
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: httpbin
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: httpbin
+  template:
+    metadata:
+      labels:
+        app: httpbin
+    spec:
+      serviceAccountName: httpbin
+      containers:
+      - name: httpbin
+        image: docker.io/kennethreitz/httpbin
+        ports:
+        - containerPort: 80
+
+---
+# AuthorizationPolicy: require Tenuo auth for /api/* paths
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: tenuo-authz
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: httpbin
+  action: CUSTOM
+  provider:
+    name: tenuo-ext-authz
+  rules:
+  - to:
+    - operation:
+        paths: ["/api/*", "/get", "/post", "/put", "/delete"]

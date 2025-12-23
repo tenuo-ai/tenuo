@@ -1,0 +1,21 @@
+Benchmark Results (2025-12-22)
+================================
+
+Core Operations:
+- warrant_create_minimal:  14.1 µs
+- warrant_verify:          25.3 µs  (Blog claim: ~27µs)
+- warrant_authorize:       25.7 µs
+
+Denial Performance (Fail Fast):
+- wrong_tool:              87 ns    (Blog claim: ~200ns)
+- constraint_violation:    149 ns
+- missing_pop:             153 ns
+
+Protocol:
+- wire_decode:             33.5 µs
+- chain_depth_8:           144.0 µs (Blog claim: ~250µs)
+
+Constraints:
+- pattern_match:           78.2 ns
+- exact_match:             5.2 ns
+- range_check:             0.75 ns (!!!)

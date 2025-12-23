@@ -1,0 +1,29 @@
+title: Tenuo
+description: Capability tokens for AI agents
+url: "https://tenuo.dev"
+baseurl: ""
+
+# Build settings
+markdown: kramdown
+highlighter: rouge
+
+# Exclude from build
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor
+  - blog
+
+# Collections (if needed for blog)
+collections:
+  posts:
+    output: true
+    permalink: /blog/:title/
+
+defaults:
+  - scope:
+      path: ""
+      type: "posts"
+    values:
+      layout: "post"
