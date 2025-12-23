@@ -1,6 +1,6 @@
 use wasm_bindgen::prelude::*;
 use tenuo::{
-    Warrant, PublicKey, Authorizer, 
+    Warrant, PublicKey, Authorizer, SigningKey,
     wire, 
     constraints::{ConstraintValue, ConstraintSet}
 };
@@ -239,4 +239,148 @@ fn to_auth_error(msg: &str) -> JsValue {
         deny_code: Some("ERROR".to_string()),
         field: None,
     }).unwrap()
+}
+
+/// Result of keypair generation
+#[derive(serde::Serialize)]
+pub struct KeypairResult {
+    pub private_key_hex: String,
+    pub public_key_hex: String,
+}
+
+/// Generate a new Ed25519 keypair for testing PoP
+#[wasm_bindgen]
+pub fn generate_keypair() -> JsValue {
+    let keypair = SigningKey::generate();
+    let result = KeypairResult {
+        private_key_hex: hex::encode(keypair.secret_key_bytes()),
+        public_key_hex: hex::encode(keypair.public_key().to_bytes()),
+    };
+    serde_wasm_bindgen::to_value(&result).unwrap()
+}
+
+/// Result of PoP signature creation
+#[derive(serde::Serialize)]
+pub struct PopSignatureResult {
+    pub signature_hex: String,
+    pub error: Option<String>,
+}
+
+/// Create a Proof-of-Possession signature for a warrant
+#[wasm_bindgen]
+pub fn create_pop_signature(
+    private_key_hex: &str,
+    warrant_b64: &str,
+    tool: &str,
+    args_json: JsValue,
+) -> JsValue {
+    init_panic_hook();
+    
+    // 1. Parse private key
+    let key_bytes: [u8; 32] = match hex::decode(private_key_hex.trim()) {
+        Ok(b) => match b.try_into() {
+            Ok(b) => b,
+            Err(_) => return to_pop_error("Invalid private key length (must be 32 bytes)"),
+        },
+        Err(_) => return to_pop_error("Invalid private key hex"),
+    };
+    let keypair = SigningKey::from_bytes(&key_bytes);
+    
+    // 2. Parse warrant
+    let warrant = match wire::decode_base64(warrant_b64.trim()) {
+        Ok(w) => w,
+        Err(e) => return to_pop_error(&format!("Invalid warrant: {}", e)),
+    };
+    
+    // 3. Parse args
+    let args: HashMap<String, ConstraintValue> = match serde_wasm_bindgen::from_value(args_json) {
+        Ok(a) => a,
+        Err(e) => return to_pop_error(&format!("Invalid arguments JSON: {}", e)),
+    };
+    
+    // 4. Create PoP signature
+    match warrant.create_pop_signature(&keypair, tool, &args) {
+        Ok(sig) => {
+            serde_wasm_bindgen::to_value(&PopSignatureResult {
+                signature_hex: hex::encode(sig.to_bytes()),
+                error: None,
+            }).unwrap()
+        },
+        Err(e) => to_pop_error(&format!("Failed to create PoP: {}", e)),
+    }
+}
+
+fn to_pop_error(msg: &str) -> JsValue {
+    serde_wasm_bindgen::to_value(&PopSignatureResult {
+        signature_hex: String::new(),
+        error: Some(msg.to_string()),
+    }).unwrap()
+}
+
+/// Check authorization with a real PoP signature
+#[wasm_bindgen]
+pub fn check_access_with_pop(
+    warrant_b64: &str, 
+    tool: &str, 
+    args_json: JsValue, 
+    trusted_root_hex: &str,
+    pop_signature_hex: &str,
+) -> JsValue {
+    init_panic_hook();
+    
+    // 1. Parse root key
+    let root_bytes: [u8; 32] = match hex::decode(trusted_root_hex.trim()) {
+        Ok(b) => match b.try_into() {
+            Ok(b) => b,
+            Err(_) => return to_auth_error("Invalid trusted root key length (must be 32 bytes)"),
+        },
+        Err(_) => return to_auth_error("Invalid trusted root hex"),
+    };
+    let root_key = match PublicKey::from_bytes(&root_bytes) {
+        Ok(k) => k,
+        Err(_) => return to_auth_error("Invalid trusted root key bytes"),
+    };
+
+    // 2. Parse warrant
+    let warrant = match wire::decode_base64(warrant_b64.trim()) {
+        Ok(w) => w,
+        Err(e) => return to_auth_error(&format!("Invalid warrant: {}", e)),
+    };
+
+    // 3. Parse args
+    let args: HashMap<String, ConstraintValue> = match serde_wasm_bindgen::from_value(args_json) {
+        Ok(a) => a,
+        Err(e) => return to_auth_error(&format!("Invalid arguments JSON: {}", e)),
+    };
+    
+    // 4. Parse PoP signature
+    let sig_bytes = match hex::decode(pop_signature_hex.trim()) {
+        Ok(b) => b,
+        Err(_) => return to_auth_error("Invalid PoP signature hex"),
+    };
+    let signature = match tenuo::Signature::from_bytes(&sig_bytes) {
+        Ok(s) => s,
+        Err(_) => return to_auth_error("Invalid PoP signature bytes"),
+    };
+
+    // 5. Full authorization with PoP
+    let authorizer = Authorizer::new().with_trusted_root(root_key);
+    match authorizer.check(&warrant, tool, &args, Some(&signature), &[]) {
+        Ok(_) => {
+            serde_wasm_bindgen::to_value(&AuthResult {
+                authorized: true,
+                reason: Some("Full authorization with PoP verified".to_string()),
+                deny_code: None,
+                field: None,
+            }).unwrap()
+        },
+        Err(e) => {
+            serde_wasm_bindgen::to_value(&AuthResult {
+                authorized: false,
+                reason: Some(e.to_string()),
+                deny_code: Some("DENIED".to_string()),
+                field: None,
+            }).unwrap()
+        }
+    }
 }

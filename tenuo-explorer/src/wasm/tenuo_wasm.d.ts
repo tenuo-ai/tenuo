@@ -9,6 +9,12 @@ export function decode_warrant(base64_warrant: string): any;
 
 export function init_panic_hook(): void;
 
+export function generate_keypair(): { private_key_hex: string; public_key_hex: string };
+
+export function create_pop_signature(private_key_hex: string, warrant_b64: string, tool: string, args_json: any): { signature_hex: string; error?: string };
+
+export function check_access_with_pop(warrant_b64: string, tool: string, args_json: any, trusted_root_hex: string, pop_signature_hex: string): any;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
