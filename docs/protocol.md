@@ -674,7 +674,7 @@ result = authorizer.check(
 if result.authorized:
     # Execute tool
 else:
-    raise AuthorizationError(result.reason)
+    raise ScopeViolation(result.reason)
 ```
 
 ---

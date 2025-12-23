@@ -43,13 +43,13 @@ def delete_file(path: str):
     os.remove(path)  # Never reached if unauthorized
 
 with set_warrant_context(warrant), set_signing_key_context(keypair):
-    delete_file("/etc/passwd")  # Raises AuthorizationError
+    delete_file("/etc/passwd")  # Raises ScopeViolation
 ```
 
 1. LLM generates a tool call: `delete_file("/etc/passwd")`
 2. The `@lockdown` decorator intercepts the call
 3. It checks the current `Warrant` in the context
-4. If the warrant says `path: /data/*`, Tenuo raises `AuthorizationError`. The tool code never runs.
+4. If the warrant says `path: /data/*`, Tenuo raises `ScopeViolation`. The tool code never runs.
 
 **Security Guarantee:** Blocks confused deputy attacks. If prompt injection tricks the LLM into calling unauthorized tools, Tenuo stops it.
 
@@ -66,7 +66,7 @@ If your agent exposes tools as HTTP endpoints, you can enforce warrants globally
 ```python
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from tenuo import Authorizer, Warrant, AuthorizationError
+from tenuo import Authorizer, Warrant, ScopeViolation
 
 app = FastAPI()
 
@@ -101,7 +101,7 @@ async def tenuo_guard(request: Request, call_next):
     # 3. Enforce
     try:
         authorizer.check(warrant, tool_name, args)
-    except AuthorizationError:
+    except ScopeViolation:
         return JSONResponse(status_code=403, content={"error": "Access denied"})
     
     return await call_next(request)
@@ -111,7 +111,7 @@ async def tenuo_guard(request: Request, call_next):
 
 ```python
 from flask import Flask, request, abort
-from tenuo import Authorizer, Warrant, AuthorizationError
+from tenuo import Authorizer, Warrant, ScopeViolation
 
 app = Flask(__name__)
 authorizer = Authorizer(trusted_roots=[control_plane_public_key])
@@ -131,7 +131,7 @@ def check_warrant():
         warrant = Warrant.from_base64(warrant_b64)
         args = request.get_json() or {}
         authorizer.check(warrant, request.path, args)
-    except AuthorizationError:
+    except ScopeViolation:
         abort(403, description="Access denied")
 ```
 
@@ -144,7 +144,7 @@ from fastapi import FastAPI, Depends, Request, HTTPException
 from tenuo import (
     Warrant, lockdown,
     set_warrant_context, set_signing_key_context,
-    AuthorizationError
+    ScopeViolation
 )
 
 app = FastAPI()
@@ -166,7 +166,7 @@ async def get_file(path: str, warrant: Warrant = Depends(require_warrant)):
     with set_warrant_context(warrant), set_signing_key_context(AGENT_KEYPAIR):
         try:
             return {"content": read_file(path)}
-        except AuthorizationError as e:
+        except ScopeViolation as e:
             raise HTTPException(status_code=403, detail=str(e))
 ```
 

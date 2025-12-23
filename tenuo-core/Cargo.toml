@@ -118,7 +118,7 @@ moka = { version = "0.12", features = ["sync"] }
 thiserror = "1.0"
 
 # UUID for warrant IDs (v4 for random, v7 for time-ordered)
-uuid = { version = "1.6", features = ["v4", "v7", "serde"] }
+uuid = { version = "1.6", features = ["v4", "v7", "serde", "js"] }
 
 # Python bindings (optional)
 # Note: extension-module must NOT be here - it goes in the final cdylib (tenuo-python)
@@ -139,6 +139,9 @@ pkcs8 = { version = "0.10", features = ["alloc", "pem"] }
 spki = { version = "0.7", features = ["alloc", "pem"] }
 der = { version = "0.7", features = ["pem"] }
 humantime = "2.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 proptest = "1.4"

@@ -161,6 +161,7 @@ impl GatewayConfig {
     }
 
     /// Load configuration from a file.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path.as_ref())
             .map_err(|e| ConfigError::FileRead(path.as_ref().display().to_string(), e))?;

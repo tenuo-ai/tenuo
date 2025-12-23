@@ -16,6 +16,7 @@ pip install tenuo
 ```
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb)
+[![Explorer](https://img.shields.io/badge/🔬_Explorer-decode_warrants-00d4ff)](https://tenuo.ai/explorer/)
 
 ## Quick Start
 

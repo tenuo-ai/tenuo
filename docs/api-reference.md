@@ -1415,16 +1415,15 @@ headers = deterministic_headers(["read_file"])
 ## Exceptions
 
 ```python
-from tenuo import TenuoError, AuthorizationError, WarrantError
+from tenuo import TenuoError, ScopeViolation, WarrantViolation
 ```
 
 ### Exception Hierarchy
 
 ```
 TenuoError (base)
-├── AuthorizationError    # Authorization failed
-├── AuthorizationDenied   # Authorization failed (diff-style)
-├── WarrantError          # Warrant creation/validation failed
+├── ScopeViolation        # Authorization failed (formerly AuthorizationError)
+├── WarrantViolation      # Warrant creation/validation failed (formerly WarrantError)
 ├── ConstraintError       # Invalid constraint definition
 └── ConfigurationError    # Invalid configuration
 ```
