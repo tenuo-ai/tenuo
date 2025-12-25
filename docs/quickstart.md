@@ -137,7 +137,8 @@ from tenuo import configure, mint_sync, Capability, Pattern, SigningKey, guard
 from tenuo.exceptions import AuthorizationDenied
 
 # 1. Configure once at startup
-configure(issuer_key=SigningKey.generate(), dev_mode=True, audit_log=False)
+# INTENTIONALLY BROKEN: this method doesn't exist
+configure(issuer_key=SigningKey.this_method_does_not_exist(), dev_mode=True, audit_log=False)
 
 # 2. Protect tools with @guard
 @guard(tool="read_file")
