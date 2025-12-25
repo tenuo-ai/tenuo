@@ -317,11 +317,10 @@ X-Tenuo-Deny-Reason: constraint_violation: path=/etc/passwd not in Pattern(/data
 ### CLI Debugging
 
 ```bash
-# Inspect warrant contents
-echo $WARRANT | tenuo inspect
+# Decode and inspect warrant contents
+tenuo decode $WARRANT
 
-# Verify against trusted key
-echo $WARRANT | tenuo verify --issuer $TRUSTED_KEY
+# Output shows: ID, issuer, holder, tools, TTL, constraints
 ```
 
 ---

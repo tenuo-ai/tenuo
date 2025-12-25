@@ -477,18 +477,15 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
     # Check constraints if we have a method for it
     if hasattr(self, 'check_constraints'):
         try:
-            result = self.check_constraints(tool, args)
-            if not result.get('allowed', True):
-                reason = result.get('reason', 'Constraint not satisfied')
+            # New API: returns None (success) or failure reason string
+            failure_reason = self.check_constraints(tool, args)
+            if failure_reason:
                 return WhyDenied(
                     denied=True,
                     deny_code=DenyCode.CONSTRAINT_MISMATCH,
-                    deny_path=f"constraints.{result.get('field', 'unknown')}",
+                    deny_path="constraints.violation",
                     tool=tool,
-                    field=result.get('field'),
-                    constraint=result.get('constraint'),
-                    value=result.get('value'),
-                    suggestion=f"{reason}.{playground_hint}",
+                    suggestion=f"{failure_reason}.{playground_hint}",
                 )
         except Exception:
             pass  # Fall through to allowed

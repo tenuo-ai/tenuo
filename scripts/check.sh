@@ -99,13 +99,16 @@ fi
 if [ -d ".venv" ]; then
     echo -e "\n${GREEN}[5/6] Running Python Checks...${NC}"
     source .venv/bin/activate
+    # Unset CONDA_PREFIX to avoid maturin error if both are set
+    unset CONDA_PREFIX
     cd tenuo-python
     
     echo "  → Building and installing Rust extension..."
     maturin develop
     
     # Ensure the Python wrapper is importable (maturin develop doesn't always create .pth file)
-    echo "$(pwd)" > ../.venv/lib/python3.9/site-packages/tenuo.pth
+    SITE_PACKAGES=$(python3 -c "import sysconfig; print(sysconfig.get_path('purelib'))")
+    echo "$(pwd)" > "${SITE_PACKAGES}/tenuo.pth"
     
     echo "  → Linting with ruff..."
     ruff check .

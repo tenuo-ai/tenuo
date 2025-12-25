@@ -152,7 +152,7 @@ Wildcard(16): [16, {}]
 
 See `docs/wire-format-spec.md` §6 for complete type ID assignments (1-16).
 
-For debugging, use `tenuo inspect` to view constraints as JSON.
+For debugging, use `tenuo decode` to view constraints as JSON.
 
 ---
 

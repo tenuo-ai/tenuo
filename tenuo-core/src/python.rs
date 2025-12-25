@@ -2647,6 +2647,25 @@ impl PyWarrant {
         Ok(PyWarrant { inner: warrant })
     }
 
+    /// Check if constraints match without performing other authorization checks.
+    ///
+    /// Returns None if satisfied, or a failure reason string if not.
+    /// Useful for diagnostics to distinguish constraint failures from other errors.
+    #[pyo3(signature = (tool, args))]
+    fn check_constraints(&self, tool: &str, args: &Bound<'_, PyDict>) -> PyResult<Option<String>> {
+        let mut rust_args = HashMap::new();
+        for (key, value) in args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_args.insert(field, cv);
+        }
+
+        match self.inner.check_constraints(tool, &rust_args) {
+            Ok(()) => Ok(None),
+            Err(e) => Ok(Some(e.to_string())),
+        }
+    }
+
     /// Authorize an action against this warrant.
     ///
     /// Args:

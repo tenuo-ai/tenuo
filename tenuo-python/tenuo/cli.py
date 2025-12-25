@@ -2,13 +2,18 @@
 Tenuo CLI Tools.
 
 Commands:
-    tenuo discover    - Analyze logs and generate capability definitions
+    tenuo init        - Initialize a new Tenuo project
+    tenuo mint        - Create a test warrant
     tenuo decode      - Decode and inspect a warrant
-    tenuo validate    - Validate a warrant against constraints
+    tenuo validate    - Check if a tool call would be authorized
+    tenuo discover    - Analyze logs and generate capability definitions
 
 Usage:
-    python -m tenuo discover --input audit.log --output capabilities.yaml
-    python -m tenuo decode <warrant_base64>
+    tenuo init
+    tenuo mint --tool read_file --tool search --ttl 1h
+    tenuo decode <warrant_base64>
+    tenuo validate <warrant> --tool read_file --args '{"path": "/data/x.txt"}'
+    tenuo discover --input audit.log --output capabilities.yaml
 """
 
 import argparse
@@ -406,6 +411,69 @@ def decode_warrant(warrant_str: str) -> str:
     return ""  # Return empty string to satisfy signature or caller expect printing handled inside
 
 
+def mint_warrant(tools: List[str], ttl: str = "1h") -> str:
+    """
+    Create a simple test warrant.
+    
+    Uses TENUO_ROOT_KEY from environment (set by `tenuo init`).
+    
+    Args:
+        tools: List of tool names to authorize
+        ttl: Time-to-live (e.g., "1h", "30m", "300s")
+        
+    Returns:
+        Base64-encoded warrant string
+    """
+    import os
+    import base64
+    
+    # Get key from environment
+    key_b64 = os.environ.get("TENUO_ROOT_KEY")
+    if not key_b64:
+        print("❌ TENUO_ROOT_KEY not set. Run 'tenuo init' first or set manually.")
+        sys.exit(1)
+    
+    try:
+        from tenuo_core import SigningKey, Warrant
+        
+        # Decode key
+        key_bytes = base64.b64decode(key_b64)
+        key = SigningKey.from_bytes(key_bytes)
+        
+        # Parse TTL
+        ttl_seconds = _parse_ttl(ttl)
+        
+        # Build warrant
+        builder = Warrant.mint_builder()
+        for tool in tools:
+            builder = builder.tool(tool)
+        builder = builder.ttl(ttl_seconds)
+        builder = builder.holder(key.public_key)
+        
+        warrant = builder.mint(key)
+        warrant_b64 = warrant.to_base64()
+        
+        return warrant_b64
+        
+    except Exception as e:
+        print(f"❌ Failed to mint warrant: {e}")
+        sys.exit(1)
+
+
+def _parse_ttl(ttl: str) -> int:
+    """Parse TTL string like '1h', '30m', '300s' to seconds."""
+    ttl = ttl.strip().lower()
+    
+    if ttl.endswith('h'):
+        return int(ttl[:-1]) * 3600
+    elif ttl.endswith('m'):
+        return int(ttl[:-1]) * 60
+    elif ttl.endswith('s'):
+        return int(ttl[:-1])
+    else:
+        # Assume seconds if no suffix
+        return int(ttl)
+
 
 def main():
     """CLI entry point."""
@@ -447,6 +515,44 @@ def main():
         help="Base64-encoded warrant string",
     )
     
+    # mint command
+    mint_parser = subparsers.add_parser(
+        "mint",
+        help="Create a test warrant (uses TENUO_ROOT_KEY from env)",
+    )
+    mint_parser.add_argument(
+        "--tool", "-t",
+        action="append",
+        dest="tools",
+        required=True,
+        help="Tool to authorize (repeatable)",
+    )
+    mint_parser.add_argument(
+        "--ttl",
+        default="1h",
+        help="Time-to-live (default: 1h). Examples: 1h, 30m, 300s",
+    )
+    
+    # validate command
+    validate_parser = subparsers.add_parser(
+        "validate",
+        help="Check if a tool call would be authorized",
+    )
+    validate_parser.add_argument(
+        "warrant",
+        help="Base64-encoded warrant string",
+    )
+    validate_parser.add_argument(
+        "--tool", "-t",
+        required=True,
+        help="Tool name to check",
+    )
+    validate_parser.add_argument(
+        "--args", "-a",
+        default="{}",
+        help="Tool arguments as JSON (default: {})",
+    )
+    
     # init command
     subparsers.add_parser(
         "init",
@@ -467,7 +573,20 @@ def main():
             print(result)
     
     elif args.command == "decode":
-        print(decode_warrant(args.warrant))
+        decode_warrant(args.warrant)
+        
+    elif args.command == "mint":
+        warrant = mint_warrant(args.tools, args.ttl)
+        print(warrant)
+        
+    elif args.command == "validate":
+        try:
+            tool_args = json.loads(args.args)
+        except json.JSONDecodeError as e:
+            print(f"❌ Invalid JSON for --args: {e}")
+            sys.exit(1)
+        success = verify_warrant(args.warrant, args.tool, tool_args)
+        sys.exit(0 if success else 1)
         
     elif args.command == "init":
         init_project()
@@ -488,7 +607,7 @@ def init_project() -> None:
     import base64
     from tenuo_core import SigningKey
     
-    print("🚀 Initializing Tenuo project...")
+    print("🚀 Initializing Tenuo project (development mode)...")
     
     # 1. Generate Root Key
     key = SigningKey.generate()
@@ -534,7 +653,10 @@ if __name__ == "__main__":
         Path("tenuo_config.py").write_text(config_content)
         print("✅ Created tenuo_config.py with sensible defaults")
         
-    print("\n🎉 You are ready to mint. Try 'python tenuo_config.py'")
+    print("\n🎉 Ready! Next steps:")
+    print("   tenuo mint --tool read_file --ttl 1h   # Create a test warrant")
+    print("   tenuo decode <warrant>                 # Inspect it")
+    print("\n💡 Tip: Root keys grant unlimited authority—protect them with a secrets manager in production.")
 
 
 if __name__ == "__main__":

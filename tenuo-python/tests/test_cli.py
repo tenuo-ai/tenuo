@@ -65,12 +65,16 @@ class TestCLI:
         assert "not in allowed tools" in captured.out
         
     def test_inspect_warrant(self, capsys):
-        """Test inspect command output."""
+        """Test inspect command output (fallback mode)."""
         warrant, _ = Warrant.quick_mint(["search"], ttl=300)
-        inspect_warrant(warrant.to_base64())
+        
+        # Force fallback to plain text by mocking print_rich_warrant
+        with patch("tenuo.cli.print_rich_warrant", return_value=False):
+            inspect_warrant(warrant.to_base64())
         
         captured = capsys.readouterr()
-        assert "Tenuo Authority Inspector" in captured.out
+        # Expect the plain text header we set previously
+        assert "=== Warrant Inspection ===" in captured.out
         assert "tnu_wrt_" in captured.out
 
 
@@ -146,6 +150,8 @@ class TestRichInspector:
         sys.modules["rich.tree"] = MagicMock()
         sys.modules["rich.table"] = MagicMock()
         sys.modules["rich.console"] = MagicMock()
+        sys.modules["rich.panel"] = MagicMock()
+        sys.modules["rich.text"] = MagicMock()
         
         # Should not raise
         print_rich_warrant(mock_warrant)

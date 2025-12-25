@@ -67,9 +67,12 @@ dev = [
     "tenuo[langchain,langgraph]",
 ]
 
+[project.scripts]
+tenuo = "tenuo.cli:main"
+
 [project.urls]
-Homepage = "https://github.com/tenuo-ai/tenuo"
-Documentation = "https://tenuo.github.io/tenuo/"
+Homepage = "https://tenuo.dev"
+Documentation = "https://tenuo.dev/quickstart"
 Repository = "https://github.com/tenuo-ai/tenuo"
 Issues = "https://github.com/tenuo-ai/tenuo/issues"
 

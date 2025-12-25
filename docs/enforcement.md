@@ -83,15 +83,21 @@ async def tenuo_guard(request: Request, call_next):
     if request.url.path in ["/health", "/ready"]:
         return await call_next(request)
     
-    # 1. Extract Warrant from header
+    # 1. Extract Warrant and PoP Signature
     warrant_b64 = request.headers.get("X-Tenuo-Warrant")
+    pop_b64 = request.headers.get("X-Tenuo-PoP")
+    
     if not warrant_b64:
         return JSONResponse(status_code=401, content={"error": "Missing warrant"})
     
     try:
-        warrant = Warrant.from_base64(warrant_b64)
+        # Decode Warrant
+        warrant = Warrant(warrant_b64)
+        
+        # Decode Signature (if present)
+        pop_sig = base64.b64decode(pop_b64) if pop_b64 else None
     except Exception:
-        return JSONResponse(status_code=400, content={"error": "Invalid warrant"})
+        return JSONResponse(status_code=400, content={"error": "Invalid warrant or signature"})
     
     # 2. Identify the Tool (Endpoint) & Arguments
     tool_name = request.url.path  # e.g., "/tools/read_file"
@@ -102,10 +108,10 @@ async def tenuo_guard(request: Request, call_next):
     except:
         args = {}
 
-    # 3. Enforce
+    # 3. Enforce (including PoP verification)
     try:
-        authorizer.check(warrant, tool_name, args)
-    except ScopeViolation:
+        authorizer.check(warrant, tool_name, args, signature=pop_sig)
+    except Exception:  # Authorizer raises generic exception on failure
         return JSONResponse(status_code=403, content={"error": "Access denied"})
     
     return await call_next(request)
@@ -115,7 +121,8 @@ async def tenuo_guard(request: Request, call_next):
 
 ```python
 from flask import Flask, request, abort
-from tenuo import Authorizer, Warrant, ScopeViolation
+from tenuo import Authorizer, Warrant
+import base64
 
 app = Flask(__name__)
 authorizer = Authorizer(trusted_roots=[control_plane_public_key])
@@ -126,16 +133,21 @@ def check_warrant():
     if request.path in ["/health", "/ready"]:
         return
 
-    # Extract and validate warrant
+    # Extract headers
     warrant_b64 = request.headers.get("X-Tenuo-Warrant")
+    pop_b64 = request.headers.get("X-Tenuo-PoP")
+    
     if not warrant_b64:
         abort(401, description="Missing warrant")
     
     try:
-        warrant = Warrant.from_base64(warrant_b64)
+        warrant = Warrant(warrant_b64)
+        pop_sig = base64.b64decode(pop_b64) if pop_b64 else None
+        
         args = request.get_json() or {}
-        authorizer.check(warrant, request.path, args)
-    except ScopeViolation:
+        # Verify warrant and authorize action
+        authorizer.check(warrant, request.path, args, signature=pop_sig)
+    except Exception:
         abort(403, description="Access denied")
 ```
 
@@ -158,7 +170,10 @@ async def require_warrant(request: Request) -> Warrant:
     warrant_b64 = request.headers.get("X-Tenuo-Warrant")
     if not warrant_b64:
         raise HTTPException(status_code=401, detail="Missing warrant")
-    return Warrant.from_base64(warrant_b64)
+    try:
+        return Warrant(warrant_b64)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid warrant")
 
 @guard(tool="read_file")
 def read_file(path: str) -> str:

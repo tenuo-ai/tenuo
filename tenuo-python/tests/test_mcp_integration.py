@@ -99,7 +99,7 @@ async def test_mcp_tool_call_blocked(mcp_server_script):
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
     
-    from tenuo import ConstraintViolation
+    from tenuo import ConstraintViolation, AuthorizationDenied
     
     # Configure Tenuo
     keypair = SigningKey.generate()
@@ -112,10 +112,9 @@ async def test_mcp_tool_call_blocked(mcp_server_script):
         protected_tools = await client.get_protected_tools()
         read_file = protected_tools["read_file"]
         
-        # Try to read outside allowed path (Pattern matches nothing effectively or specific file)
-        # We allow * but check a specific exclusion or just use a restricted pattern
+        # Try to read outside allowed path
         async with mint(Capability("read_file", path=Pattern("*.allowed"))):
-            with pytest.raises(ConstraintViolation):
+            with pytest.raises((ConstraintViolation, AuthorizationDenied)):
                 # This file doesn't match *.allowed
                 await read_file(path=str(Path(tempfile.gettempdir()) / "forbidden.txt"))
 

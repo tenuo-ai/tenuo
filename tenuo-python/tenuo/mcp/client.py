@@ -438,4 +438,4 @@ async def discover_and_protect(
                 result = await tools["read_file"](path="/data/file.txt")
     """
     async with SecureMCPClient(command, args, env, config_path) as client:
-        yield await client.tools
+        yield client.tools

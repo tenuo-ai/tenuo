@@ -826,11 +826,11 @@ impl Warrant {
             });
         };
 
-        // Check constraints
-        constraints.matches(args)?;
-
         // Check Proof-of-Possession (mandatory)
-        self.verify_pop(tool, args, signature, POP_TIMESTAMP_WINDOW_SECS, 4)
+        self.verify_pop(tool, args, signature, POP_TIMESTAMP_WINDOW_SECS, 4)?;
+
+        // Check constraints
+        constraints.matches(args)
     }
 
     /// Authorize an action with custom PoP window configuration.
@@ -864,13 +864,35 @@ impl Warrant {
             });
         };
 
-        constraints.matches(args)?;
+        self.verify_pop(tool, args, signature, pop_window_secs, pop_max_windows)?;
 
-        self.verify_pop(tool, args, signature, pop_window_secs, pop_max_windows)
+        constraints.matches(args)
+    }
+
+    /// Check if constraints match without performing other authorization checks (like PoP or expiration).
+    /// useful for diagnostics.
+    pub fn check_constraints(
+        &self,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+    ) -> Result<()> {
+        // Check if tool is allowed
+        let constraints = if let Some(c) = self.payload.tools.get(tool) {
+            c
+        } else if let Some(c) = self.payload.tools.get("*") {
+            c
+        } else {
+            return Err(Error::ConstraintNotSatisfied {
+                field: "tool".to_string(),
+                reason: format!("warrant does not authorize tool '{}'", tool),
+            });
+        };
+
+        constraints.matches(args)
     }
 
     /// Verify PoP signature with configurable window.
-    fn verify_pop(
+    pub fn verify_pop(
         &self,
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
