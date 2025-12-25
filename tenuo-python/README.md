@@ -18,10 +18,6 @@ pip install tenuo
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb)
 [![Explorer](https://img.shields.io/badge/🔬_Explorer-decode_warrants-00d4ff)](https://tenuo.dev/explorer)
 
-### AgentDojo Benchmark: 100% Attack Block Rate
-
-Tested against GPT-5.1 prompt injection attacks—240 successful injections, **0 escaped**. [Details →](../README.md#benchmark-results)
-
 ## Quick Start
 
 ### 30-Second Demo (Copy-Paste)
