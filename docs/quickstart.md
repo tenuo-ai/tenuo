@@ -105,14 +105,21 @@ for item in items:
 For maximum speed, let Tenuo configure from environment:
 
 ```python
-from tenuo import auto_configure
+from tenuo import auto_configure, guard, mint_sync, Capability
 
-# Reads TENUO_* environment variables automatically:
-# TENUO_ISSUER_KEY, TENUO_MODE, TENUO_TRUSTED_ROOTS, etc.
-auto_configure()
+auto_configure()  # Reads TENUO_* environment variables
+
+# Now just use decorators and context managers!
+@guard(tool="search")
+def search(query: str) -> str:
+    return f"Results for {query}"
+
+with mint_sync(Capability("search")):
+    print(search("hello"))  # ✅ Works
 ```
 
 **Environment variables:**
+
 | Variable | Description |
 |----------|-------------|
 | `TENUO_ISSUER_KEY` | Base64-encoded signing key |
@@ -125,28 +132,20 @@ auto_configure()
 For quick prototyping with `@guard` decorators:
 
 ```python
-from tenuo import configure, mint, grant, Capability, Pattern, SigningKey
+from tenuo import configure, mint_sync, Capability, Pattern, SigningKey, guard
 
 # 1. Configure once at startup
 configure(issuer_key=SigningKey.generate(), dev_mode=True, mode="audit")
 
 # 2. Protect tools with @guard
-from tenuo import guard
+@guard(tool="read_file")
+def read_file(path: str) -> str:
+    return f"Contents of {path}"
 
-@guard(tool="delete_user")
-def delete_user(user_id: str):
-    print(f"Deleting {user_id}...")
-
-# 3. Scope authority to tasks
-async with mint(
-    Capability("read_file", path=Pattern("/data/*")),
-):
-    # Inner scope narrows further
-    async with grant(
-        Capability("read_file", path=Pattern("/data/reports/*"))
-    ):
-        result = read_file("/data/reports/q3.pdf")  # ✅ Allowed
-        result = read_file("/etc/passwd")           # ❌ Blocked
+# 3. Scope authority to tasks (mint_sync for scripts, mint for async)
+with mint_sync(Capability("read_file", path=Pattern("/data/*"))):
+    result = read_file("/data/reports/q3.pdf")  # ✅ Allowed
+    result = read_file("/etc/passwd")           # ❌ Blocked
 ```
 
 ---
@@ -327,8 +326,8 @@ def my_agent(state):
 graph.add_node("agent", guard(my_agent, key_id="worker"))
 graph.add_node("tools", tool_node)
 
-# 5. Run with warrant in state, key_id in config
-state = {"warrant": warrant, "messages": [...]}
+# 5. Run with warrant in state (str() = base64, safe for JSON serialization)
+state = {"warrant": str(warrant), "messages": [...]}
 config = {"configurable": {"tenuo_key_id": "worker"}}
 result = graph.invoke(state, config=config)
 ```

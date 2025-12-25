@@ -85,8 +85,8 @@ def my_agent(state):
 graph.add_node("agent", guard(my_agent))
 graph.add_node("tools", tool_node)
 
-# 5. Run with warrant in state
-state = {"warrant": warrant, "messages": [...]}
+# 5. Run with warrant in state (str() converts to base64 for safe serialization)
+state = {"warrant": str(warrant), "messages": [...]}
 result = graph.invoke(state, config={"configurable": {"tenuo_key_id": "worker"}})
 ```
 
@@ -101,8 +101,8 @@ result = graph.invoke(state, config={"configurable": {"tenuo_key_id": "worker"}}
 **The Solution**: Warrants travel in state (they're just signed claims, no secrets). Keys stay in `KeyRegistry` (in-memory only). Only a string `key_id` flows through config.
 
 ```python
-# ✅ CORRECT: Warrant in state, key_id in config
-state = {"warrant": warrant, "messages": [...]}  # Warrant is safe to checkpoint
+# ✅ CORRECT: Warrant as string in state, key_id in config
+state = {"warrant": str(warrant), "messages": [...]}  # str() = base64, safe for JSON
 config = {"configurable": {"tenuo_key_id": "worker"}}  # Just a string ID
 graph.invoke(state, config=config)
 
@@ -370,7 +370,7 @@ for msg in result["messages"]:
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `State is missing 'warrant' field` | No warrant in state | Add warrant to state: `{"warrant": warrant, ...}` |
+| `State is missing 'warrant' field` | No warrant in state | Add warrant to state: `{"warrant": str(warrant), ...}` |
 | `Key 'worker' not found` | Key not registered | Register key or use `load_tenuo_keys()` |
 | `Authorization denied` | Warrant doesn't allow action | Check warrant constraints with `why_denied()` |
 
@@ -446,7 +446,7 @@ def researcher(state):
     ...
 
 graph.add_node("researcher", guard(researcher))
-graph.invoke({"warrant": warrant, "messages": [...]})
+graph.invoke({"warrant": str(warrant), "messages": [...]})
 ```
 
 ---
