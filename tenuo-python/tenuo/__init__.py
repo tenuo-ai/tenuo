@@ -92,6 +92,9 @@ from .bound_warrant import BoundWarrant
 # Validation result
 from .validation import ValidationResult
 
+# Key management
+from .keys import KeyRegistry, Keyring
+
 # =============================================================================
 # Initialize extensions (must run)
 # =============================================================================
@@ -154,6 +157,10 @@ __all__ = [
     
     # Result types
     "ValidationResult",
+    
+    # Key management
+    "KeyRegistry",
+    "Keyring",
 ]
 
 __version__ = "0.1.0a9"
