@@ -15,32 +15,48 @@ different authority per task phase.
 """
 
 from tenuo import (
-    SigningKey, Warrant, Pattern, Range, Wildcard, Constraints,
-    Authorizer,
-    ChainVerificationResult,
-    lockdown, set_warrant_context, set_signing_key_context
+    Warrant, SigningKey, guard, Pattern, Range,
+    Authorizer, warrant_scope, key_scope
 )
+from tenuo_core import Wildcard, ChainVerificationResult  # Constraint for "any value"
+from tenuo.constraints import Constraints
 
 # ============================================================================
 # Protected Tools
 # ============================================================================
 
-@lockdown(tool="search")
-def search(query: str, max_results: int = 10) -> list:
+@guard(tool="search")
+async def search_tool(query: str, max_results: int = 10) -> list:
     """Search tool - simulated."""
     return [f"Result {i} for '{query}'" for i in range(max_results)]
 
 
-@lockdown(tool="fetch")
-def fetch(url: str) -> str:
+@guard(tool="fetch")
+async def fetch_tool(url: str) -> str:
     """Fetch tool - simulated."""
     return f"Content from {url}"
 
 
-@lockdown(tool="write")
-def write(path: str, content: str) -> None:
+@guard(tool="write")
+async def write_tool(path: str, content: str) -> None:
     """Write tool - simulated."""
     print(f"  [write] {path}: {content[:50]}...")
+
+
+# Aliases for example code readability
+def search(query: str, max_results: int = 10):
+    """Sync wrapper for examples."""
+    pass  # Placeholder - actual execution would use search_tool
+
+
+def fetch(url: str):
+    """Sync wrapper for examples."""
+    pass  # Placeholder - actual execution would use fetch_tool
+
+
+def write(path: str, content: str):
+    """Sync wrapper for examples."""
+    pass  # Placeholder - actual execution would use write_tool
 
 
 # ============================================================================
@@ -68,7 +84,7 @@ def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: Sig
     print("\n[Orchestrator] Phase 1: Delegating research to Worker")
     
     # Use builder pattern with diff preview
-    research_builder = warrant.attenuate_builder()
+    research_builder = warrant.grant_builder()
     research_builder.capability("search", {
         "query": Pattern("*competitor*"),
         "max_results": Range.max_value(5)
@@ -84,7 +100,7 @@ def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: Sig
     # print("\nDelegation Diff Preview:")
     # print(research_builder.diff())
     
-    research_warrant = research_builder.delegate(keypair)
+    research_warrant = research_builder.grant(keypair)
     print(f"  Attenuated: tools={research_warrant.tools} (inherited)")
     print("  Constraints: query=*competitor*, max_results<=5, url=https://public.*, ttl=60s")
     
@@ -124,14 +140,14 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
     print("\n  [Worker/Research] Received research warrant")
     print(f"  [Worker/Research] Warrant allows: {warrant.tools}")
     
-    with set_warrant_context(warrant), set_signing_key_context(keypair):
+    with warrant_scope(warrant), key_scope(keypair):
         print("\n  [Worker/Research] Demonstrating explicit warrant.authorize calls with signatures:")
 
         # 1. Search (Allowed)
         try:
             print("  > Attempting: search(query='competitor analysis', max_results=3)")
             args = {"query": "competitor analysis", "max_results": 3}
-            sig = warrant.create_pop_signature(keypair, "search", args)
+            sig = warrant.sign(keypair, "search", args)
             if warrant.authorize("search", args, signature=bytes(sig)):
                 print("    [Allowed] Search executed")
                 search(query="competitor analysis", max_results=3) # Execute the actual tool
@@ -144,7 +160,7 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
         try:
             print("  > Attempting: search(query='internal salary data', max_results=3)")
             args = {"query": "internal salary data", "max_results": 3}
-            sig = warrant.create_pop_signature(keypair, "search", args)
+            sig = warrant.sign(keypair, "search", args)
             if warrant.authorize("search", args, signature=bytes(sig)):
                 print("    [Allowed] Search executed (unexpected)")
             else:
@@ -156,7 +172,7 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
         try:
             print("  > Attempting: fetch(url='https://public.example.com/report')")
             args = {"url": "https://public.example.com/report"}
-            sig = warrant.create_pop_signature(keypair, "fetch", args)
+            sig = warrant.sign(keypair, "fetch", args)
             if warrant.authorize("fetch", args, signature=bytes(sig)):
                 print("    [Allowed] Fetch executed")
                 fetch(url="https://public.example.com/report") # Execute the actual tool
@@ -169,7 +185,7 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
         try:
             print("  > Attempting: fetch(url='https://internal.example.com/secret')")
             args = {"url": "https://internal.example.com/secret"}
-            sig = warrant.create_pop_signature(keypair, "fetch", args)
+            sig = warrant.sign(keypair, "fetch", args)
             if warrant.authorize("fetch", args, signature=bytes(sig)):
                 print("    [Allowed] Fetch executed (unexpected)")
             else:
@@ -181,7 +197,7 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
         try:
             print("  > Attempting: write(path='/output/reports/research.txt', content='data')")
             args = {"path": "/output/reports/research.txt", "content": "data"}
-            sig = warrant.create_pop_signature(keypair, "write", args)
+            sig = warrant.sign(keypair, "write", args)
             if warrant.authorize("write", args, signature=bytes(sig)):
                 print("    [Allowed] Write executed (unexpected)")
             else:
@@ -195,14 +211,14 @@ def worker_write(warrant: Warrant, keypair: SigningKey):
     print("\n  [Worker/Write] Received write warrant")
     print(f"  [Worker/Write] Warrant allows: {warrant.tools}")
     
-    with set_warrant_context(warrant), set_signing_key_context(keypair):
+    with warrant_scope(warrant), key_scope(keypair):
         print("\n  [Worker/Write] Demonstrating explicit warrant.authorize calls with signatures:")
 
         # 1. Write (Allowed)
         try:
             print("  > Attempting: write(path='/output/reports/q3-analysis.txt', content='Q3 competitor analysis...')")
             args = {"path": "/output/reports/q3-analysis.txt", "content": "Q3 competitor analysis..."}
-            sig = warrant.create_pop_signature(keypair, "write", args)
+            sig = warrant.sign(keypair, "write", args)
             if warrant.authorize("write", args, signature=bytes(sig)):
                 print("    [Allowed] Write executed")
                 write(path="/output/reports/q3-analysis.txt", content="Q3 competitor analysis...") # Execute the actual tool
@@ -215,7 +231,7 @@ def worker_write(warrant: Warrant, keypair: SigningKey):
         try:
             print("  > Attempting: write(path='/etc/passwd', content='malicious')")
             args = {"path": "/etc/passwd", "content": "malicious"}
-            sig = warrant.create_pop_signature(keypair, "write", args)
+            sig = warrant.sign(keypair, "write", args)
             if warrant.authorize("write", args, signature=bytes(sig)):
                 print("    [Allowed] Write executed (unexpected)")
             else:
@@ -227,7 +243,7 @@ def worker_write(warrant: Warrant, keypair: SigningKey):
         try:
             print("  > Attempting: search(query='more data', max_results=1)")
             args = {"query": "more data", "max_results": 1}
-            sig = warrant.create_pop_signature(keypair, "search", args)
+            sig = warrant.sign(keypair, "search", args)
             if warrant.authorize("search", args, signature=bytes(sig)):
                 print("    [Allowed] Search executed (unexpected)")
             else:

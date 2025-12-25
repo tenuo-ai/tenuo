@@ -82,10 +82,17 @@ class TenuoError(Exception):
     error_code: str = "tenuo_error"
     rust_variant: str = ""  # Corresponding Rust Error variant name
     
-    def __init__(self, message: str, details: Optional[dict[str, Any]] = None):
+    def __init__(self, message: str, details: Optional[dict[str, Any]] = None, hint: Optional[str] = None):
         super().__init__(message)
         self.message = message
         self.details = details or {}
+        self.hint = hint
+    
+    def __str__(self) -> str:
+        base = super().__str__()
+        if self.hint:
+            return f"{base}\nHint: {self.hint}"
+        return base
     
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for structured logging."""
@@ -114,8 +121,8 @@ class SignatureInvalid(CryptoError):
     error_code = "signature_invalid"
     rust_variant = "SignatureInvalid"
     
-    def __init__(self, reason: str = ""):
-        super().__init__(f"Signature verification failed: {reason}" if reason else "Signature verification failed", {"reason": reason})
+    def __init__(self, reason: str = "", hint: Optional[str] = None):
+        super().__init__(f"Signature verification failed: {reason}" if reason else "Signature verification failed", {"reason": reason}, hint=hint)
 
 
 class MissingSignature(CryptoError):
@@ -123,8 +130,8 @@ class MissingSignature(CryptoError):
     error_code = "missing_signature"
     rust_variant = "MissingSignature"
     
-    def __init__(self, reason: str = ""):
-        super().__init__(f"Missing signature: {reason}" if reason else "Missing signature", {"reason": reason})
+    def __init__(self, reason: str = "", hint: Optional[str] = None):
+        super().__init__(f"Missing signature: {reason}" if reason else "Missing signature", {"reason": reason}, hint=hint)
 
 
 
@@ -148,11 +155,11 @@ class ToolNotAuthorized(ScopeViolation):
     error_code = "tool_not_authorized"
     rust_variant = "Unauthorized"
     
-    def __init__(self, tool: str, authorized_tools: Optional[list[str]] = None):
+    def __init__(self, tool: str, authorized_tools: Optional[list[str]] = None, hint: Optional[str] = None):
         details: dict[str, Any] = {"tool": tool}
         if authorized_tools:
             details["authorized_tools"] = authorized_tools
-        super().__init__(f"Tool '{tool}' is not authorized", details)
+        super().__init__(f"Tool '{tool}' is not authorized", details, hint=hint)
 
 
 class ToolMismatch(ScopeViolation):
@@ -160,10 +167,11 @@ class ToolMismatch(ScopeViolation):
     error_code = "tool_mismatch"
     rust_variant = "ToolMismatch"
     
-    def __init__(self, parent_tool: str, child_tool: str):
+    def __init__(self, parent_tool: str, child_tool: str, hint: Optional[str] = None):
         super().__init__(
             f"Tool name mismatch: parent has '{parent_tool}', child has '{child_tool}'",
-            {"parent_tool": parent_tool, "child_tool": child_tool}
+            {"parent_tool": parent_tool, "child_tool": child_tool},
+            hint=hint
         )
 
 
@@ -172,11 +180,11 @@ class ConstraintViolation(ScopeViolation):
     error_code = "constraint_violation"
     rust_variant = "ConstraintNotSatisfied"
     
-    def __init__(self, field: str, reason: str, value: Optional[Any] = None):
+    def __init__(self, field: str, reason: str, value: Optional[Any] = None, hint: Optional[str] = None):
         details: dict[str, Any] = {"field": field, "reason": reason}
         if value is not None:
             details["value"] = str(value)
-        super().__init__(f"Constraint '{field}' not satisfied: {reason}", details)
+        super().__init__(f"Constraint '{field}' not satisfied: {reason}", details, hint=hint)
 
 
 class ExpiredError(ScopeViolation):
@@ -184,11 +192,11 @@ class ExpiredError(ScopeViolation):
     error_code = "expired"
     rust_variant = "WarrantExpired"
     
-    def __init__(self, warrant_id: str, expired_at: Optional[str] = None):
+    def __init__(self, warrant_id: str, expired_at: Optional[str] = None, hint: Optional[str] = None):
         details: dict[str, Any] = {"warrant_id": warrant_id}
         if expired_at:
             details["expired_at"] = expired_at
-        super().__init__(f"Warrant '{warrant_id}' has expired", details)
+        super().__init__(f"Warrant '{warrant_id}' has expired", details, hint=hint)
 
 
 class Unauthorized(ScopeViolation):
@@ -196,8 +204,8 @@ class Unauthorized(ScopeViolation):
     error_code = "unauthorized"
     rust_variant = "Unauthorized"
     
-    def __init__(self, reason: str = ""):
-        super().__init__(f"Unauthorized: {reason}" if reason else "Unauthorized", {"reason": reason})
+    def __init__(self, reason: str = "", hint: Optional[str] = None):
+        super().__init__(f"Unauthorized: {reason}" if reason else "Unauthorized", {"reason": reason}, hint=hint)
 
 
 # =============================================================================
@@ -209,11 +217,11 @@ class MonotonicityError(TenuoError):
     error_code = "monotonicity_violation"
     rust_variant = "MonotonicityViolation"
     
-    def __init__(self, reason: str, field: Optional[str] = None):
+    def __init__(self, reason: str, field: Optional[str] = None, hint: Optional[str] = None):
         details: dict[str, Any] = {"reason": reason}
         if field:
             details["field"] = field
-        super().__init__(f"Monotonicity violation: {reason}", details)
+        super().__init__(f"Monotonicity violation: {reason}", details, hint=hint)
 
 
 class IncompatibleConstraintTypes(MonotonicityError):
@@ -221,10 +229,11 @@ class IncompatibleConstraintTypes(MonotonicityError):
     error_code = "incompatible_constraint_types"
     rust_variant = "IncompatibleConstraintTypes"
     
-    def __init__(self, parent_type: str, child_type: str):
+    def __init__(self, parent_type: str, child_type: str, hint: Optional[str] = None):
         super().__init__(
             f"Cannot attenuate {parent_type} to {child_type}",
-            field=None
+            field=None,
+            hint=hint
         )
         self.details = {"parent_type": parent_type, "child_type": child_type}
 
@@ -234,8 +243,8 @@ class WildcardExpansion(MonotonicityError):
     error_code = "wildcard_expansion"
     rust_variant = "WildcardExpansion"
     
-    def __init__(self, parent_type: str):
-        super().__init__(f"Cannot attenuate to Wildcard from {parent_type}")
+    def __init__(self, parent_type: str, hint: Optional[str] = None):
+        super().__init__(f"Cannot attenuate to Wildcard from {parent_type}", hint=hint)
         self.details = {"parent_type": parent_type}
 
 
@@ -244,8 +253,8 @@ class EmptyResultSet(MonotonicityError):
     error_code = "empty_result_set"
     rust_variant = "EmptyResultSet"
     
-    def __init__(self, parent_type: str, count: int):
-        super().__init__(f"NotOneOf excludes all {count} values from parent {parent_type}")
+    def __init__(self, parent_type: str, count: int, hint: Optional[str] = None):
+        super().__init__(f"NotOneOf excludes all {count} values from parent {parent_type}", hint=hint)
         self.details = {"parent_type": parent_type, "count": count}
 
 
@@ -254,8 +263,8 @@ class ExclusionRemoved(MonotonicityError):
     error_code = "exclusion_removed"
     rust_variant = "ExclusionRemoved"
     
-    def __init__(self, value: str):
-        super().__init__(f"Child must still exclude '{value}'")
+    def __init__(self, value: str, hint: Optional[str] = None):
+        super().__init__(f"Child must still exclude '{value}'", hint=hint)
         self.details = {"value": value}
 
 
@@ -264,8 +273,8 @@ class ValueNotInParentSet(MonotonicityError):
     error_code = "value_not_in_parent_set"
     rust_variant = "ValueNotInParentSet"
     
-    def __init__(self, value: str):
-        super().__init__(f"Value '{value}' is not in parent's allowed set")
+    def __init__(self, value: str, hint: Optional[str] = None):
+        super().__init__(f"Value '{value}' is not in parent's allowed set", hint=hint)
         self.details = {"value": value}
 
 
@@ -274,8 +283,8 @@ class RangeExpanded(MonotonicityError):
     error_code = "range_expanded"
     rust_variant = "RangeExpanded"
     
-    def __init__(self, bound: str, parent_value: float, child_value: float):
-        super().__init__(f"Child {bound} ({child_value}) exceeds parent {bound} ({parent_value})")
+    def __init__(self, bound: str, parent_value: float, child_value: float, hint: Optional[str] = None):
+        super().__init__(f"Child {bound} ({child_value}, hint=hint) exceeds parent {bound} ({parent_value}, hint=hint)", hint=hint)
         self.details = {"bound": bound, "parent_value": parent_value, "child_value": child_value}
 
 
@@ -284,8 +293,8 @@ class PatternExpanded(MonotonicityError):
     error_code = "pattern_expanded"
     rust_variant = "PatternExpanded"
     
-    def __init__(self, parent_pattern: str, child_pattern: str):
-        super().__init__(f"Child pattern '{child_pattern}' is broader than parent '{parent_pattern}'")
+    def __init__(self, parent_pattern: str, child_pattern: str, hint: Optional[str] = None):
+        super().__init__(f"Child pattern '{child_pattern}' is broader than parent '{parent_pattern}'", hint=hint)
         self.details = {"parent_pattern": parent_pattern, "child_pattern": child_pattern}
 
 
@@ -294,8 +303,8 @@ class RequiredValueRemoved(MonotonicityError):
     error_code = "required_value_removed"
     rust_variant = "RequiredValueRemoved"
     
-    def __init__(self, value: str):
-        super().__init__(f"Child must still require '{value}'")
+    def __init__(self, value: str, hint: Optional[str] = None):
+        super().__init__(f"Child must still require '{value}'", hint=hint)
         self.details = {"value": value}
 
 
@@ -304,8 +313,8 @@ class ExactValueMismatch(MonotonicityError):
     error_code = "exact_value_mismatch"
     rust_variant = "ExactValueMismatch"
     
-    def __init__(self, parent_value: str, child_value: str):
-        super().__init__(f"Parent requires '{parent_value}', child has '{child_value}'")
+    def __init__(self, parent_value: str, child_value: str, hint: Optional[str] = None):
+        super().__init__(f"Parent requires '{parent_value}', child has '{child_value}'", hint=hint)
         self.details = {"parent_value": parent_value, "child_value": child_value}
 
 
@@ -324,10 +333,11 @@ class ClearanceLevelExceeded(ClearanceViolation):
     error_code = "clearance_level_exceeded"
     rust_variant = "ClearanceLevelExceeded"
     
-    def __init__(self, requested: str, limit: str):
+    def __init__(self, requested: str, limit: str, hint: Optional[str] = None):
         super().__init__(
             f"Clearance level exceeded: requested {requested} exceeds limit {limit}",
-            {"requested": requested, "limit": limit}
+            {"requested": requested, "limit": limit},
+            hint=hint
         )
 
 
@@ -346,7 +356,7 @@ class UnauthorizedToolIssuance(IssuanceError):
     error_code = "unauthorized_tool_issuance"
     rust_variant = "UnauthorizedToolIssuance"
     
-    def __init__(self, tool: str, allowed: list[str]):
+    def __init__(self, tool: str, allowed: list[str], hint: Optional[str] = None):
         super().__init__(
             f"Unauthorized tool issuance: '{tool}' not in issuable_tools {allowed}",
             {"tool": tool, "allowed": allowed}
@@ -358,7 +368,7 @@ class SelfIssuanceProhibited(IssuanceError):
     error_code = "self_issuance_prohibited"
     rust_variant = "SelfIssuanceProhibited"
     
-    def __init__(self, reason: str):
+    def __init__(self, reason: str, hint: Optional[str] = None):
         super().__init__(
             f"Self-issuance prohibited: {reason}",
             {"reason": reason}
@@ -370,7 +380,7 @@ class IssueDepthExceeded(IssuanceError):
     error_code = "issue_depth_exceeded"
     rust_variant = "IssueDepthExceeded"
     
-    def __init__(self, depth: int, max_depth: int):
+    def __init__(self, depth: int, max_depth: int, hint: Optional[str] = None):
         super().__init__(
             f"Issue depth exceeded: depth {depth} exceeds max_issue_depth {max_depth}",
             {"depth": depth, "max": max_depth}
@@ -382,7 +392,7 @@ class InvalidWarrantType(IssuanceError):
     error_code = "invalid_warrant_type"
     rust_variant = "InvalidWarrantType"
     
-    def __init__(self, message: str):
+    def __init__(self, message: str, hint: Optional[str] = None):
         super().__init__(
             f"Invalid warrant type: {message}",
             {"message": message}
@@ -394,7 +404,7 @@ class IssuerChainTooLong(IssuanceError):
     error_code = "issuer_chain_too_long"
     rust_variant = "IssuerChainTooLong"
     
-    def __init__(self, length: int, max_length: int):
+    def __init__(self, length: int, max_length: int, hint: Optional[str] = None):
         super().__init__(
             f"Issuer chain too long: length {length} would exceed maximum {max_length}",
             {"length": length, "max": max_length}
@@ -416,10 +426,11 @@ class MissingSigningKey(PopError):
     error_code = "missing_signing_key"
     rust_variant = "MissingSignature"
     
-    def __init__(self, tool: str):
+    def __init__(self, tool: str, hint: Optional[str] = None):
         super().__init__(
             f"No signing key available for PoP signature on tool '{tool}'",
-            {"tool": tool}
+            {"tool": tool},
+            hint=hint
         )
 
 
@@ -428,13 +439,14 @@ class SignatureMismatch(PopError):
     error_code = "signature_mismatch"
     rust_variant = "SignatureInvalid"
     
-    def __init__(self, warrant_id: Optional[str] = None):
+    def __init__(self, warrant_id: Optional[str] = None, hint: Optional[str] = None):
         details: dict[str, Any] = {}
         if warrant_id:
             details["warrant_id"] = warrant_id
         super().__init__(
             "PoP signature does not match authorized_holder",
-            details
+            details,
+            hint=hint
         )
 
 
@@ -443,8 +455,8 @@ class PopExpired(PopError):
     error_code = "pop_expired"
     rust_variant = "SignatureInvalid"
     
-    def __init__(self, message: str = "PoP signature expired"):
-        super().__init__(message)
+    def __init__(self, message: str = "PoP signature expired", hint: Optional[str] = None):
+        super().__init__(message, hint=hint)
 
 
 # =============================================================================
@@ -462,10 +474,11 @@ class BrokenChain(ChainError):
     error_code = "broken_chain"
     rust_variant = "ChainVerificationFailed"
     
-    def __init__(self, child_parent_hash: str, expected_hash: str):
+    def __init__(self, child_parent_hash: str, expected_hash: str, hint: Optional[str] = None):
         super().__init__(
             f"Chain broken: child references parent_hash '{child_parent_hash}' but parent payload hash is '{expected_hash}'",
-            {"child_parent_hash": child_parent_hash, "expected_hash": expected_hash}
+            {"child_parent_hash": child_parent_hash, "expected_hash": expected_hash},
+            hint=hint
         )
 
 
@@ -474,10 +487,11 @@ class CycleDetected(ChainError):
     error_code = "cycle_detected"
     rust_variant = "ChainVerificationFailed"
     
-    def __init__(self, warrant_id: str):
+    def __init__(self, warrant_id: str, hint: Optional[str] = None):
         super().__init__(
             f"Cycle detected: warrant '{warrant_id}' appears multiple times",
-            {"duplicate_warrant_id": warrant_id}
+            {"duplicate_warrant_id": warrant_id},
+            hint=hint
         )
 
 
@@ -486,13 +500,14 @@ class UntrustedRoot(ChainError):
     error_code = "untrusted_root"
     rust_variant = "SignatureInvalid"
     
-    def __init__(self, issuer_fingerprint: Optional[str] = None):
+    def __init__(self, issuer_fingerprint: Optional[str] = None, hint: Optional[str] = None):
         details: dict[str, Any] = {}
         if issuer_fingerprint:
             details["issuer_fingerprint"] = issuer_fingerprint
         super().__init__(
             "Root warrant issuer is not trusted",
-            details
+            details,
+            hint=hint
         )
 
 
@@ -501,8 +516,8 @@ class ParentRequired(ChainError):
     error_code = "parent_required"
     rust_variant = "ParentRequired"
     
-    def __init__(self):
-        super().__init__("Parent warrant required for attenuation")
+    def __init__(self, hint: Optional[str] = None):
+        super().__init__("Parent warrant required for attenuation", hint=hint)
 
 
 class DelegationAuthorityError(ChainError):
@@ -510,9 +525,9 @@ class DelegationAuthorityError(ChainError):
     error_code = "delegation_authority_error"
     rust_variant = "DelegationAuthorityError"
     
-    def __init__(self, expected: str = "", actual: str = ""):
+    def __init__(self, expected: str = "", actual: str = "", hint: Optional[str] = None):
         msg = f"signing key mismatch: expected {expected}, got {actual}" if expected else "signing key doesn't match parent warrant's holder"
-        super().__init__(msg)
+        super().__init__(msg, hint=hint)
         self.details = {"expected": expected, "actual": actual}
 
 
@@ -531,10 +546,11 @@ class DepthExceeded(LimitError):
     error_code = "depth_exceeded"
     rust_variant = "DepthExceeded"
     
-    def __init__(self, depth: int, max_depth: int):
+    def __init__(self, depth: int, max_depth: int, hint: Optional[str] = None):
         super().__init__(
             f"Delegation depth {depth} exceeds maximum {max_depth}",
-            {"depth": depth, "max_depth": max_depth}
+            {"depth": depth, "max_depth": max_depth},
+            hint=hint
         )
 
 
@@ -543,10 +559,11 @@ class ConstraintDepthExceeded(LimitError):
     error_code = "constraint_depth_exceeded"
     rust_variant = "ConstraintDepthExceeded"
     
-    def __init__(self, depth: int, max_depth: int):
+    def __init__(self, depth: int, max_depth: int, hint: Optional[str] = None):
         super().__init__(
             f"Constraint depth {depth} exceeds maximum {max_depth}",
-            {"depth": depth, "max_depth": max_depth}
+            {"depth": depth, "max_depth": max_depth},
+            hint=hint
         )
 
 
@@ -555,10 +572,11 @@ class PayloadTooLarge(LimitError):
     error_code = "payload_too_large"
     rust_variant = "PayloadTooLarge"
     
-    def __init__(self, size: int, max_size: int):
+    def __init__(self, size: int, max_size: int, hint: Optional[str] = None):
         super().__init__(
             f"Payload size {size} bytes exceeds maximum {max_size} bytes",
-            {"size": size, "max_size": max_size}
+            {"size": size, "max_size": max_size},
+            hint=hint
         )
 
 
@@ -567,10 +585,11 @@ class TtlExceeded(LimitError):
     error_code = "ttl_exceeded"
     rust_variant = ""  # Handled via MonotonicityViolation in Rust
     
-    def __init__(self, child_ttl: int, parent_remaining: int):
+    def __init__(self, child_ttl: int, parent_remaining: int, hint: Optional[str] = None):
         super().__init__(
             f"Child TTL {child_ttl}s exceeds parent's remaining {parent_remaining}s",
-            {"child_ttl": child_ttl, "parent_remaining": parent_remaining}
+            {"child_ttl": child_ttl, "parent_remaining": parent_remaining},
+            hint=hint
         )
 
 
@@ -583,11 +602,11 @@ class RevokedError(TenuoError):
     error_code = "revoked"
     rust_variant = "WarrantRevoked"
     
-    def __init__(self, warrant_id: str, reason: Optional[str] = None):
+    def __init__(self, warrant_id: str, reason: Optional[str] = None, hint: Optional[str] = None):
         details: dict[str, Any] = {"warrant_id": warrant_id}
         if reason:
             details["reason"] = reason
-        super().__init__(f"Warrant '{warrant_id}' has been revoked", details)
+        super().__init__(f"Warrant '{warrant_id}' has been revoked", details, hint=hint)
 
 
 # =============================================================================
@@ -599,8 +618,8 @@ class ValidationError(TenuoError):
     error_code = "validation_error"
     rust_variant = "Validation"
     
-    def __init__(self, reason: str):
-        super().__init__(f"Validation error: {reason}", {"reason": reason})
+    def __init__(self, reason: str, hint: Optional[str] = None):
+        super().__init__(f"Validation error: {reason}", {"reason": reason}, hint=hint)
 
 
 class MissingField(ValidationError):
@@ -608,8 +627,8 @@ class MissingField(ValidationError):
     error_code = "missing_field"
     rust_variant = "MissingField"
     
-    def __init__(self, field: str):
-        super().__init__(f"Missing required field: {field}")
+    def __init__(self, field: str, hint: Optional[str] = None):
+        super().__init__(f"Missing required field: {field}", hint=hint)
         self.details = {"field": field}
 
 
@@ -618,8 +637,8 @@ class InvalidWarrantId(ValidationError):
     error_code = "invalid_warrant_id"
     rust_variant = "InvalidWarrantId"
     
-    def __init__(self, warrant_id: str):
-        super().__init__(f"Invalid warrant ID: {warrant_id}")
+    def __init__(self, warrant_id: str, hint: Optional[str] = None):
+        super().__init__(f"Invalid warrant ID: {warrant_id}", hint=hint)
         self.details = {"warrant_id": warrant_id}
 
 
@@ -628,8 +647,8 @@ class InvalidTtl(ValidationError):
     error_code = "invalid_ttl"
     rust_variant = "InvalidTtl"
     
-    def __init__(self, reason: str):
-        super().__init__(f"Invalid TTL: {reason}")
+    def __init__(self, reason: str, hint: Optional[str] = None):
+        super().__init__(f"Invalid TTL: {reason}", hint=hint)
         self.details = {"reason": reason}
 
 
@@ -648,8 +667,8 @@ class InvalidPattern(ConstraintSyntaxError):
     error_code = "invalid_pattern"
     rust_variant = "InvalidPattern"
     
-    def __init__(self, pattern: str, reason: str = ""):
-        super().__init__(f"Invalid pattern: {pattern}" + (f" - {reason}" if reason else ""))
+    def __init__(self, pattern: str, reason: str = "", hint: Optional[str] = None):
+        super().__init__(f"Invalid pattern: {pattern}" + (f" - {reason}" if reason else ""), hint=hint)
         self.details = {"pattern": pattern, "reason": reason}
 
 
@@ -658,8 +677,8 @@ class InvalidRange(ConstraintSyntaxError):
     error_code = "invalid_range"
     rust_variant = "InvalidRange"
     
-    def __init__(self, reason: str):
-        super().__init__(f"Invalid range: {reason}")
+    def __init__(self, reason: str, hint: Optional[str] = None):
+        super().__init__(f"Invalid range: {reason}", hint=hint)
         self.details = {"reason": reason}
 
 
@@ -668,8 +687,8 @@ class InvalidRegex(ConstraintSyntaxError):
     error_code = "invalid_regex"
     rust_variant = "InvalidRegex"
     
-    def __init__(self, pattern: str, reason: str = ""):
-        super().__init__(f"Invalid regex: {pattern}" + (f" - {reason}" if reason else ""))
+    def __init__(self, pattern: str, reason: str = "", hint: Optional[str] = None):
+        super().__init__(f"Invalid regex: {pattern}" + (f" - {reason}" if reason else ""), hint=hint)
         self.details = {"pattern": pattern, "reason": reason}
 
 
@@ -678,8 +697,8 @@ class CelError(ConstraintSyntaxError):
     error_code = "cel_error"
     rust_variant = "CelError"
     
-    def __init__(self, reason: str):
-        super().__init__(f"CEL expression error: {reason}")
+    def __init__(self, reason: str, hint: Optional[str] = None):
+        super().__init__(f"CEL expression error: {reason}", hint=hint)
         self.details = {"reason": reason}
 
 
@@ -692,8 +711,8 @@ class SerializationError(TenuoError):
     error_code = "serialization_error"
     rust_variant = "SerializationError"
     
-    def __init__(self, reason: str = ""):
-        super().__init__(f"Serialization error: {reason}" if reason else "Serialization error")
+    def __init__(self, reason: str = "", hint: Optional[str] = None):
+        super().__init__(f"Serialization error: {reason}" if reason else "Serialization error", hint=hint)
         self.details = {"reason": reason}
 
 
@@ -702,8 +721,8 @@ class DeserializationError(SerializationError):
     error_code = "deserialization_error"
     rust_variant = "DeserializationError"
     
-    def __init__(self, reason: str = ""):
-        super().__init__(f"Deserialization error: {reason}" if reason else "Deserialization error")
+    def __init__(self, reason: str = "", hint: Optional[str] = None):
+        super().__init__(f"Deserialization error: {reason}" if reason else "Deserialization error", hint=hint)
         self.details = {"reason": reason}
 
 
@@ -712,8 +731,8 @@ class UnsupportedVersion(SerializationError):
     error_code = "unsupported_version"
     rust_variant = "UnsupportedVersion"
     
-    def __init__(self, version: int):
-        super().__init__(f"Unsupported wire format version: {version}")
+    def __init__(self, version: int, hint: Optional[str] = None):
+        super().__init__(f"Unsupported wire format version: {version}", hint=hint)
         self.details = {"version": version}
 
 
@@ -732,8 +751,8 @@ class ApprovalExpired(ApprovalError):
     error_code = "approval_expired"
     rust_variant = "ApprovalExpired"
     
-    def __init__(self, approved_at: str, expired_at: str):
-        super().__init__(f"Approval expired: approved at {approved_at}, expired at {expired_at}")
+    def __init__(self, approved_at: str, expired_at: str, hint: Optional[str] = None):
+        super().__init__(f"Approval expired: approved at {approved_at}, expired at {expired_at}", hint=hint)
         self.details = {"approved_at": approved_at, "expired_at": expired_at}
 
 
@@ -742,8 +761,8 @@ class InsufficientApprovals(ApprovalError):
     error_code = "insufficient_approvals"
     rust_variant = "InsufficientApprovals"
     
-    def __init__(self, required: int, received: int):
-        super().__init__(f"Insufficient approvals: required {required}, received {received}")
+    def __init__(self, required: int, received: int, hint: Optional[str] = None):
+        super().__init__(f"Insufficient approvals: required {required}, received {received}", hint=hint)
         self.details = {"required": required, "received": received}
 
 
@@ -752,8 +771,8 @@ class InvalidApproval(ApprovalError):
     error_code = "invalid_approval"
     rust_variant = "InvalidApproval"
     
-    def __init__(self, reason: str):
-        super().__init__(f"Invalid approval: {reason}")
+    def __init__(self, reason: str, hint: Optional[str] = None):
+        super().__init__(f"Invalid approval: {reason}", hint=hint)
         self.details = {"reason": reason}
 
 
@@ -762,8 +781,8 @@ class UnknownProvider(ApprovalError):
     error_code = "unknown_provider"
     rust_variant = "UnknownProvider"
     
-    def __init__(self, provider: str):
-        super().__init__(f"Unknown approval provider: {provider}")
+    def __init__(self, provider: str, hint: Optional[str] = None):
+        super().__init__(f"Unknown approval provider: {provider}", hint=hint)
         self.details = {"provider": provider}
 
 
@@ -825,6 +844,7 @@ class AuthorizationDenied(ScopeViolation):
         tool: str,
         constraint_results: Optional[list[ConstraintResult]] = None,
         reason: str = "",
+        hint: Optional[str] = None,
     ):
         self.tool = tool
         self.constraint_results = constraint_results or []
@@ -844,7 +864,7 @@ class AuthorizationDenied(ScopeViolation):
                 }
                 for r in self.constraint_results
             ],
-        })
+        }, hint=hint)
     
     def _build_message(self) -> str:
         """Build the diff-style error message."""

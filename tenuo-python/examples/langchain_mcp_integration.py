@@ -17,18 +17,17 @@ Pattern: LangChain connects → Tenuo authorizes → MCP executes
 """
 
 from tenuo import (
-    McpConfig,
-    CompiledMcpConfig,
     Authorizer,
     SigningKey,
     Warrant,
     Pattern,
     Range,
-    Constraints,
-    lockdown,
-    set_warrant_context,
-    set_signing_key_context,
+    guard,
+    warrant_scope,
+    key_scope,
 )
+from tenuo.constraints import Constraints
+from tenuo_core import CompiledMcpConfig, McpConfig
 
 
 def main():
@@ -98,7 +97,7 @@ def main():
     # In production, these would call actual MCP servers
     # For demo, we simulate the MCP tool behavior
     
-    @lockdown(tool="filesystem_read")
+    @guard(tool="filesystem_read")
     def filesystem_read(path: str, max_size: int = 1048576) -> str:
         """
         Read file from filesystem (MCP tool).
@@ -113,7 +112,7 @@ def main():
         print(f"      [MCP] Reading file: {path} (max {max_size} bytes)")
         return f"[Simulated content of {path}]"
     
-    @lockdown(tool="database_query")
+    @guard(tool="database_query")
     def database_query(table: str, operation: str, limit: int = 100) -> str:
         """
         Execute database query (MCP tool).
@@ -133,12 +132,12 @@ def main():
     print("     - database_query")
     
     # =========================================================================
-    # 4. Issue Root Warrant (Control Plane)
+    # 4. Mint Root Warrant (Control Plane)
     # =========================================================================
-    print("\n4. Issuing root warrant...")
+    print("\n4. Minting root warrant...")
     
-    # Issue warrant for filesystem_read only (simpler demo)
-    root_warrant = Warrant.issue(
+    # Mint warrant for filesystem_read only (simpler demo)
+    root_warrant = Warrant.mint(
         keypair=control_keypair,
         capabilities=Constraints.for_tool("filesystem_read", {
             "path": Pattern("/var/log/*"),
@@ -159,7 +158,7 @@ def main():
     print("\n5. Executing MCP tools with authorization...\n")
     
     # Set warrant context for authorization
-    with set_warrant_context(root_warrant), set_signing_key_context(worker_keypair):
+    with warrant_scope(root_warrant), key_scope(worker_keypair):
         
         # =====================================================================
         # Test 1: Authorized filesystem read
@@ -210,7 +209,7 @@ def main():
     print(f"   Extracted constraints: {dict(result.constraints)}")
     
     # Authorize with extracted constraints
-    pop_sig = root_warrant.create_pop_signature(
+    pop_sig = root_warrant.sign(
         worker_keypair, "filesystem_read", dict(result.constraints)
     )
     
@@ -233,7 +232,7 @@ def main():
     print("=" * 60)
     print("\n✓ MCP configuration loaded and compiled")
     print("✓ Warrants issued with constraints")
-    print("✓ MCP tools protected with @lockdown")
+    print("✓ MCP tools protected with @guard")
     print("✓ Authorization enforced on every call")
     print("✓ Constraint extraction from MCP arguments")
     print("\nPattern:")
@@ -258,13 +257,13 @@ def demo_without_config():
     worker_keypair = SigningKey.generate()
     
     # Define simulated MCP tool
-    @lockdown(tool="filesystem_read")
+    @guard(tool="filesystem_read")
     def filesystem_read(path: str, max_size: int = 1048576) -> str:
         print(f"   [MCP] Reading: {path}")
         return f"[Content of {path}]"
     
-    # Issue warrant
-    warrant = Warrant.issue(
+    # Mint warrant
+    warrant = Warrant.mint(
         keypair=control_keypair,
         capabilities=Constraints.for_tool("filesystem_read", {
             "path": Pattern("/var/log/*"),
@@ -277,7 +276,7 @@ def demo_without_config():
     print("✓ Warrant issued: filesystem_read, path=/var/log/*, max_size≤1MB\n")
     
     # Execute with authorization
-    with set_warrant_context(warrant), set_signing_key_context(worker_keypair):
+    with warrant_scope(warrant), key_scope(worker_keypair):
         print("Test 1: Authorized read")
         try:
             result = filesystem_read("/var/log/app.log", max_size=512 * 1024)

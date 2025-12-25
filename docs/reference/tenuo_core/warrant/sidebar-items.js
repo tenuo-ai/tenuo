@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["POP_TIMESTAMP_WINDOW_SECS","WARRANT_ID_PREFIX"],"struct":["AttenuationBuilder","Warrant","WarrantBuilder","WarrantId","WarrantPayload"]};

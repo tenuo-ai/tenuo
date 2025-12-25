@@ -10,9 +10,11 @@ Tests verifying:
 import pytest
 
 from tenuo import (
-    Warrant, Clearance, Constraints,
-    DepthExceeded, MAX_DELEGATION_DEPTH
+    Warrant,
 )
+from tenuo.constraints import Constraints
+from tenuo.exceptions import DepthExceeded
+from tenuo_core import Clearance, MAX_DELEGATION_DEPTH
 from tenuo.exceptions import ValidationError
 
 
@@ -30,7 +32,7 @@ class TestDelegationLimits:
         print("\n--- Attack 9: Delegate-to-Self Amplification ---")
         print(f"  [Info] MAX_DELEGATION_DEPTH = {MAX_DELEGATION_DEPTH}")
         
-        current = Warrant.issue(
+        current = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("search", {}),
             ttl_seconds=3600
@@ -38,10 +40,10 @@ class TestDelegationLimits:
         
         try:
             for i in range(MAX_DELEGATION_DEPTH + 10):
-                builder = current.attenuate_builder()
+                builder = current.grant_builder()
                 builder.inherit_all()  # POLA: explicit inheritance
                 builder.holder(keypair.public_key)
-                current = builder.delegate(keypair)
+                current = builder.grant(keypair)
                 
             print(f"  [CRITICAL] Attack 9 SUCCEEDED: Created {MAX_DELEGATION_DEPTH + 10} depth chain!")
             assert False, "Should have hit depth or chain limit"
@@ -60,7 +62,7 @@ class TestDelegationLimits:
         """
         print("\n--- Attack 18: Chain Length DoS ---")
         
-        current = Warrant.issue(
+        current = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("search", {}),
             ttl_seconds=3600
@@ -71,9 +73,9 @@ class TestDelegationLimits:
         try:
             for i in range(max_attempts):
                 depth += 1
-                builder = current.attenuate_builder()
+                builder = current.grant_builder()
                 builder.inherit_all()  # POLA: explicit inheritance
-                current = builder.delegate(keypair)
+                current = builder.grant(keypair)
                 
             print(f"  [WARNING] Attack 18 SUCCEEDED: Created chain of depth {depth}")
             
@@ -105,10 +107,10 @@ class TestDelegationLimits:
         
         try:
             for i in range(test_limit + 5):
-                builder = current.attenuate_builder()
+                builder = current.grant_builder()
                 builder.inherit_all()  # POLA: explicit inheritance
                 builder.holder(keypair.public_key)
-                current = builder.delegate(keypair)
+                current = builder.grant(keypair)
                 
             print(f"  [Info] Created chain of depth {test_limit + 5}")
             
@@ -126,7 +128,7 @@ class TestDelegationLimits:
         """
         print("\n--- Attack 29: Execution Warrant Issuing ---")
         
-        exec_warrant = Warrant.issue(
+        exec_warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("search", {}),
             ttl_seconds=3600
@@ -174,24 +176,24 @@ class TestDelegationLimits:
         """
         print("\n--- Attack 31: Terminal Warrant Delegation ---")
         
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("search", {}),
             ttl_seconds=3600
         )
         
         # Create terminal warrant (POLA: inherit_all first)
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         builder.inherit_all()
         builder.terminal()
-        terminal = builder.delegate(keypair)
+        terminal = builder.grant(keypair)
         
         print(f"  [Info] Created terminal warrant: is_terminal={terminal.is_terminal()}")
         
         print("  [Attack 31] Attempting to delegate from terminal warrant...")
         with pytest.raises(DepthExceeded):
-            builder2 = terminal.attenuate_builder()
+            builder2 = terminal.grant_builder()
             builder2.inherit_all()
-            builder2.delegate(keypair)
+            builder2.grant(keypair)
         
         print("  [Result] Attack 31 blocked (Terminal warrants cannot delegate)")

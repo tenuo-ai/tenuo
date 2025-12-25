@@ -27,26 +27,31 @@ Rust core. Python bindings. ~27μs verification.
 pip install tenuo
 ```
 ```python
-from tenuo import SigningKey, Warrant, Pattern, lockdown, set_warrant_context, set_signing_key_context
+from tenuo import SigningKey, Warrant, Pattern, PublicKey, guard, warrant_scope, key_scope
 
-# === Issue warrant ===
-issuer_keypair = SigningKey.generate()
-agent_keypair = SigningKey.generate()
+# ┌─────────────────────────────────────────────────────────────────┐
+# │  CONTROL PLANE                                                  │
+# └─────────────────────────────────────────────────────────────────┘
+issuer_keypair = SigningKey.from_env("ISSUER_KEY")  # From secure storage
+agent_pubkey = PublicKey.from_env("AGENT_PUBKEY")   # From registration
 
-warrant = (Warrant.builder()
+warrant = (Warrant.mint_builder()
     .tool("read_file")
     .capability("read_file", {"path": Pattern("/data/*")})
-    .holder(agent_keypair.public_key)
+    .holder(agent_pubkey)
     .ttl(300)
-    .issue(issuer_keypair)
+    .mint(issuer_keypair)
 )
 
-# === Use warrant ===
-@lockdown(tool="read_file")
-def read_file(path: str):
-    return open(path).read()
+# ┌─────────────────────────────────────────────────────────────────┐
+# │  AGENT                                                          │
+# └─────────────────────────────────────────────────────────────────┘
+@guard(tool="delete_user")
+def delete_user(user_id: str):
+    # This code NEVER runs if the warrant is invalid
+    db.delete(user_id)
 
-with set_warrant_context(warrant), set_signing_key_context(agent_keypair):
+with warrant_scope(warrant), key_scope(agent_keypair):
     read_file("/data/report.txt")  # ✓ Allowed
     read_file("/etc/passwd")       # ✗ Blocked
 ```
@@ -62,13 +67,13 @@ In my [last post](https://niyikiza.com/posts/capability-delegation/), I used the
 
 A **Tenuo warrant** is that key:
 ```python
-warrant = (Warrant.builder()
+warrant = (Warrant.mint_builder()
     .tool("read_file").tool("search")
     .capability("read_file", {"path": Pattern("/data/project-x/*")})
     .capability("search", {"query": Pattern("*public*")})
     .holder(agent_keypair.public_key)
     .ttl(300)
-    .issue(issuer_keypair)
+    .mint(issuer_keypair)
 )
 ```
 No ambient authority. No policy server. 
@@ -105,7 +110,7 @@ That's exactly what Tenuo warrants encode:
 
 ```python
 # CFO-level warrant
-cfo_warrant = (Warrant.builder()
+cfo_warrant = (Warrant.mint_builder()
     .tool("spend").tool("approve").tool("audit")
     .capability("spend", {
         "amount": Range(max=1_000_000),
@@ -114,7 +119,7 @@ cfo_warrant = (Warrant.builder()
     })
     .holder(cfo_keypair.public_key)
     .ttl(86400)
-    .issue(cfo_keypair)
+    .mint(cfo_keypair)
 )
 
 # Attenuate for intern
@@ -125,7 +130,7 @@ intern_warrant = (cfo_warrant.attenuate()
     })
     .holder(intern_keypair.public_key)
     .ttl(3600)
-    .delegate(cfo_keypair)
+    .grant(cfo_keypair)
 )
 
 # ...
@@ -133,7 +138,7 @@ intern_warrant = (cfo_warrant.attenuate()
 # This raises MonotonicityError
 bad_warrant = (intern_warrant.attenuate()
     .capability("spend", {"amount": Range(max=10000)})
-    .delegate(intern_keypair)  # Can't exceed parent's $500
+    .grant(intern_keypair)  # Can't exceed parent's $500
 )```
 Attenuation isn't policy. It's physics.
 
@@ -176,7 +181,7 @@ async def handle_user_request(user_request: str):
         .capability("read_file", {"path": Pattern("/data/reports/*")})
         .holder(researcher_keypair.public_key)
         .ttl(60)
-        .delegate(orchestrator_keypair)
+        .grant(orchestrator_keypair)
     )
     findings = await researcher.execute(research_warrant, researcher_keypair)
     
@@ -185,17 +190,17 @@ async def handle_user_request(user_request: str):
         .capability("write_file", {"path": Pattern("/data/output/summary.md")})
         .holder(writer_keypair.public_key)
         .ttl(30)
-        .delegate(orchestrator_keypair)
+        .grant(orchestrator_keypair)
     )
     await writer.execute(write_warrant, writer_keypair, findings)
 
 # Researcher: can only read_file within /data/reports/*
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 def read_file(path: str) -> str:
     return open(path).read()
 
 async def research(warrant: Warrant, keypair: SigningKey):
-    with set_warrant_context(warrant), set_signing_key_context(keypair):
+    with warrant_scope(warrant), key_scope(keypair):
         read_file("/data/reports/q3.md")      # ✓ Allowed (tool + path match)
         read_file("/data/secrets/keys.txt")   # ✗ Path not in warrant
         read_file("/etc/passwd")              # ✗ Path not in warrant
@@ -225,12 +230,12 @@ Every long-running agent under IAM is a confused deputy by design.
 
 Tenuo makes the impact of confusion structurally bounded:
 ```python
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 def read_file(path: str):
     return open(path).read()
 
 # Warrant: read_file, but ONLY /data/public/*
-async with root_task(Capability("read_file", path=Pattern("/data/public/*"))):
+async with mint(Capability("read_file", path=Pattern("/data/public/*"))):
     
     read_file("/data/public/report.txt")  # ✓ Allowed
     
@@ -272,9 +277,9 @@ The paper focuses on architecture, not implementation. The tokens are assumed to
 | "Capability tokens" | Warrants |
 | "Bound to tools" | `tools=["read_file"]` |
 | "Bound to arguments" | `constraints={"path": Pattern("/data/*")}` |
-| "Issued by P-LLM" | `Warrant.issue()` |
+| "Issued by P-LLM" | `Warrant.mint()` |
 | "Held by Q-LLM" | Holder binding + PoP |
-| "Checked by interpreter" | `@lockdown` decorator |
+| "Checked by interpreter" | `@guard` decorator |
 
 CaMeL also tracks **data flow**: which variables are tainted by untrusted input. A similar angle with [Microsoft FIDES](https://arxiv.org/abs/2505.23643). That's orthogonal to Tenuo. Tenuo tracks **action flow**: which operations are authorized by the capability chain.
 
@@ -359,9 +364,9 @@ Rust core with Python bindings. Integrations for LangChain, LangGraph, and MCP (
 
 **LangChain**: wrap existing tools:
 ```python
-from tenuo.langchain import protect_tools
+from tenuo.langchain import guard_tools
 
-secure_tools = protect_tools([search_tool, file_tool])
+secure_tools = guard([search_tool, file_tool], bound)
 agent = create_openai_tools_agent(llm, secure_tools)
 ```
 

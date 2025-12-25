@@ -445,9 +445,7 @@ fn test_pop_concurrent_window_boundary() {
     let authorizer = Arc::new(Authorizer::new().with_trusted_root(keypair.public_key()));
 
     // Create PoP signature (at current window)
-    let sig = warrant
-        .create_pop_signature(&keypair, "transfer", &args)
-        .unwrap();
+    let sig = warrant.sign(&keypair, "transfer", &args).unwrap();
     let sig = Arc::new(sig);
 
     // Spawn multiple threads to verify concurrently
@@ -610,9 +608,7 @@ fn test_execution_warrant_tool_addition() {
 
     // If child tries to authorize "write", it should fail
     let args: HashMap<String, ConstraintValue> = HashMap::new();
-    let sig = child
-        .create_pop_signature(&keypair, "write", &args)
-        .unwrap();
+    let sig = child.sign(&keypair, "write", &args).unwrap();
 
     let authorizer = Authorizer::new().with_trusted_root(keypair.public_key());
     let result = authorizer.authorize(&child, "write", &args, Some(&sig), &[]);
@@ -721,9 +717,7 @@ fn test_empty_capabilities_semantics() {
     .into_iter()
     .collect();
 
-    let sig = warrant
-        .create_pop_signature(&keypair, "ping", &random_args)
-        .unwrap();
+    let sig = warrant.sign(&keypair, "ping", &random_args).unwrap();
 
     let result = authorizer.authorize(&warrant, "ping", &random_args, Some(&sig), &[]);
     assert!(
@@ -735,9 +729,7 @@ fn test_empty_capabilities_semantics() {
 
     // Test 2: Should also work with truly empty args
     let empty_args: HashMap<String, ConstraintValue> = HashMap::new();
-    let sig2 = warrant
-        .create_pop_signature(&keypair, "ping", &empty_args)
-        .unwrap();
+    let sig2 = warrant.sign(&keypair, "ping", &empty_args).unwrap();
 
     let result2 = authorizer.authorize(&warrant, "ping", &empty_args, Some(&sig2), &[]);
     assert!(
@@ -748,9 +740,7 @@ fn test_empty_capabilities_semantics() {
     println!("✅ Empty constraints ({{}}) = ALLOWED for empty args");
 
     // Test 3: Other tools should be DENIED (not present in capabilities)
-    let pong_sig = warrant
-        .create_pop_signature(&keypair, "pong", &empty_args)
-        .unwrap();
+    let pong_sig = warrant.sign(&keypair, "pong", &empty_args).unwrap();
 
     let result3 = authorizer.authorize(&warrant, "pong", &empty_args, Some(&pong_sig), &[]);
     assert!(result3.is_err(), "Missing tool should be DENIED");
@@ -802,9 +792,7 @@ fn test_holder_mismatch_pop_fails() {
             .into_iter()
             .collect();
 
-    let attacker_sig = warrant
-        .create_pop_signature(&attacker_kp, "transfer", &args)
-        .unwrap();
+    let attacker_sig = warrant.sign(&attacker_kp, "transfer", &args).unwrap();
 
     let authorizer = Authorizer::new().with_trusted_root(issuer_kp.public_key());
 
@@ -1049,9 +1037,7 @@ fn test_child_warrant_with_parent_hash() {
 
     // Also verify authorization on the leaf warrant
     let args: HashMap<String, ConstraintValue> = HashMap::new();
-    let sig = child
-        .create_pop_signature(&child_kp, "read", &args)
-        .unwrap();
+    let sig = child.sign(&child_kp, "read", &args).unwrap();
 
     let auth_result = authorizer.authorize(&child, "read", &args, Some(&sig), &[]);
 
@@ -1129,9 +1115,7 @@ fn test_pop_args_binding() {
     .into_iter()
     .collect();
 
-    let safe_sig = warrant
-        .create_pop_signature(&keypair, "read_file", &safe_args)
-        .unwrap();
+    let safe_sig = warrant.sign(&keypair, "read_file", &safe_args).unwrap();
 
     // ATTACK: Use that signature with different args
     let malicious_args: HashMap<String, ConstraintValue> = [(
@@ -1177,9 +1161,7 @@ fn test_pop_tool_binding() {
     .collect();
 
     // Create PoP for "read"
-    let read_sig = warrant
-        .create_pop_signature(&keypair, "read", &args)
-        .unwrap();
+    let read_sig = warrant.sign(&keypair, "read", &args).unwrap();
 
     // ATTACK: Use that signature for "write"
     let result = authorizer.authorize(&warrant, "write", &args, Some(&read_sig), &[]);
@@ -1503,9 +1485,7 @@ fn test_untrusted_root_rejection() {
     let authorizer = Authorizer::new().with_trusted_root(trusted_kp.public_key());
 
     let args: HashMap<String, ConstraintValue> = HashMap::new();
-    let sig = attacker_warrant
-        .create_pop_signature(&attacker_kp, "admin", &args)
-        .unwrap();
+    let sig = attacker_warrant.sign(&attacker_kp, "admin", &args).unwrap();
 
     let result = authorizer.authorize(&attacker_warrant, "admin", &args, Some(&sig), &[]);
 
@@ -1546,9 +1526,7 @@ fn test_dynamic_trusted_root_addition() {
         .unwrap();
 
     let args: HashMap<String, ConstraintValue> = HashMap::new();
-    let sig = warrant
-        .create_pop_signature(&new_root_kp, "test", &args)
-        .unwrap();
+    let sig = warrant.sign(&new_root_kp, "test", &args).unwrap();
 
     // Try to authorize before root is trusted
     let before_result = authorizer.authorize(&warrant, "test", &args, Some(&sig), &[]);
@@ -1611,9 +1589,7 @@ fn test_unicode_lookalike_bypass() {
     .into_iter()
     .collect();
 
-    let sig = warrant
-        .create_pop_signature(&keypair, "read", &args)
-        .unwrap();
+    let sig = warrant.sign(&keypair, "read", &args).unwrap();
     let result = authorizer.authorize(&warrant, "read", &args, Some(&sig), &[]);
 
     assert!(
@@ -1651,9 +1627,7 @@ fn test_case_sensitivity_bypass() {
     .into_iter()
     .collect();
 
-    let sig = warrant
-        .create_pop_signature(&keypair, "deploy", &args)
-        .unwrap();
+    let sig = warrant.sign(&keypair, "deploy", &args).unwrap();
     let result = authorizer.authorize(&warrant, "deploy", &args, Some(&sig), &[]);
 
     assert!(result.is_err(), "Case variation should not match pattern");
@@ -1894,9 +1868,7 @@ fn test_attack_redos_resistance() {
         ConstraintValue::String(evil_input.to_string()),
     );
 
-    let sig = warrant
-        .create_pop_signature(&keypair, "process", &args)
-        .unwrap();
+    let sig = warrant.sign(&keypair, "process", &args).unwrap();
     let _ = authorizer.authorize(&warrant, "process", &args, Some(&sig), &[]);
     let elapsed = start.elapsed();
 
@@ -1938,9 +1910,7 @@ fn test_attack_type_confusion_range_string() {
         ConstraintValue::String("not a number".to_string()),
     );
 
-    let sig = warrant
-        .create_pop_signature(&keypair, "transfer", &args)
-        .unwrap();
+    let sig = warrant.sign(&keypair, "transfer", &args).unwrap();
     let result = authorizer.authorize(&warrant, "transfer", &args, Some(&sig), &[]);
 
     match result {
@@ -1975,9 +1945,7 @@ fn test_attack_type_confusion_nan() {
     let mut args = HashMap::new();
     args.insert("value".to_string(), ConstraintValue::Float(f64::NAN));
 
-    let sig = warrant
-        .create_pop_signature(&keypair, "process", &args)
-        .unwrap();
+    let sig = warrant.sign(&keypair, "process", &args).unwrap();
     let result = authorizer.authorize(&warrant, "process", &args, Some(&sig), &[]);
 
     match result {

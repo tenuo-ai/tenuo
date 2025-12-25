@@ -222,12 +222,12 @@ Every delegation **must narrow at least one dimension**:
 # POLA: Child starts with NO capabilities, must explicitly grant them
 
 # Explicit capability (recommended)
-parent.attenuate().capability("read_file", {}).delegate(parent_kp)
+parent.attenuate().capability("read_file", {}).grant(parent_kp)
 
 # Or inherit all, then narrow
-parent.attenuate().inherit_all().tools(["read_file"]).delegate(parent_kp)
-parent.attenuate().inherit_all().ttl(60).delegate(parent_kp)
-parent.attenuate().inherit_all().terminal().delegate(parent_kp)
+parent.attenuate().inherit_all().tools(["read_file"]).grant(parent_kp)
+parent.attenuate().inherit_all().ttl(60).grant(parent_kp)
+parent.attenuate().inherit_all().terminal().grant(parent_kp)
 ```
 
 ---
@@ -508,11 +508,11 @@ Tool names starting with `tenuo:` are **reserved for framework use** and will be
 
 ```python
 # ❌ This will fail
-warrant = Warrant.builder().tool("tenuo:revoke", {}).build(kp)
+warrant = Warrant.mint_builder().tool("tenuo:revoke", {}).mint(kp)
 # Error: Reserved tool namespace
 
 # ✅ Use your own namespace
-warrant = Warrant.builder().tool("my_app:revoke", {}).build(kp)
+warrant = Warrant.mint_builder().tool("my_app:revoke", {}).mint(kp)
 ```
 
 **Rationale**: Prevents collision between user-defined tools and future framework features.

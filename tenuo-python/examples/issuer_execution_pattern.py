@@ -11,10 +11,18 @@ This demonstrates the recommended production pattern using Tenuo's current API.
 """
 
 from tenuo import (
-    SigningKey, Warrant, Pattern, Constraints,
-    lockdown, set_warrant_context, set_signing_key_context,
-    AuthorizationError
+    SigningKey,
+    Warrant,
+    Pattern,
+    guard,
+    warrant_scope,
+    key_scope,
 )
+from tenuo.constraints import Constraints
+from tenuo.exceptions import AuthorizationError
+
+
+
 
 # ============================================================================
 # Setup: Three-Tier Architecture
@@ -72,13 +80,13 @@ print("="*70)
 
 # Orchestrator creates narrow warrant for specific task
 worker_warrant = (
-    root_warrant.attenuate()
+    root_warrant.grant_builder()
     .capability("file_operations", {
         "path": Pattern("/data/reports/*"),  # Narrower path
     })
     .holder(worker_kp.public_key)
     .ttl(60)  # Much shorter TTL
-    .delegate(orchestrator_kp)  # orchestrator signs (they hold the parent warrant)
+    .grant(orchestrator_kp)  # orchestrator signs (they hold the parent warrant)
 )
 
 print("\n✓ Attenuated warrant for worker")
@@ -97,17 +105,18 @@ print("\n" + "="*70)
 print("STEP 3: Worker Executes Tools")
 print("="*70)
 
-@lockdown(tool="file_operations")
-def file_operations(path: str, operation: str) -> str:
-    """Simulated file operation."""
-    return f"[{operation.upper()} {path}]"
+@guard(tool="file_operations")
+def file_operations(path: str, operation: str = "read"):
+    """A sensitive tool that requires authorization."""
+    print(f"  [EXEC] {operation.capitalize()}ing file: {path}")
+    return f"Contents of {path}"
 
 print("\nTesting authorization with attenuated warrant:")
 
 # Test 1: Allowed - within narrow constraints
 print("\n  Test 1: path=/data/reports/q3.txt")
 try:
-    with set_warrant_context(worker_warrant), set_signing_key_context(worker_kp):
+    with warrant_scope(worker_warrant), key_scope(worker_kp):
         result = file_operations(path="/data/reports/q3.txt", operation="read")
         print(f"    ✓ ALLOWED: {result}")
 except AuthorizationError as e:
@@ -116,7 +125,7 @@ except AuthorizationError as e:
 # Test 2: Blocked - outside narrow constraints (but within root)
 print("\n  Test 2: path=/data/secrets/passwords.txt")
 try:
-    with set_warrant_context(worker_warrant), set_signing_key_context(worker_kp):
+    with warrant_scope(worker_warrant), key_scope(worker_kp):
         result = file_operations(path="/data/secrets/passwords.txt", operation="read")
         print(f"    ✗ ALLOWED: {result} (UNEXPECTED!)")
 except AuthorizationError:
@@ -125,7 +134,7 @@ except AuthorizationError:
 # Test 3: Blocked - completely outside bounds
 print("\n  Test 3: path=/etc/passwd")
 try:
-    with set_warrant_context(worker_warrant), set_signing_key_context(worker_kp):
+    with warrant_scope(worker_warrant), key_scope(worker_kp):
         result = file_operations(path="/etc/passwd", operation="read")
         print(f"    ✗ ALLOWED: {result} (UNEXPECTED!)")
 except AuthorizationError:
@@ -144,7 +153,7 @@ print("\nOrchestrator can access paths worker cannot:")
 # Orchestrator can access /data/secrets (within root constraints)
 print("\n  Orchestrator accessing /data/secrets/config.json:")
 try:
-    with set_warrant_context(root_warrant), set_signing_key_context(orchestrator_kp):
+    with warrant_scope(root_warrant), key_scope(orchestrator_kp):
         result = file_operations(path="/data/secrets/config.json", operation="read")
         print(f"    ✓ ALLOWED: {result}")
         print("    ℹ️  Orchestrator has broader /data/* access")

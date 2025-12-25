@@ -7,16 +7,24 @@ use tenuo::*;
 /// Test: Reserved tool namespace rejection (Spec §9)
 /// Requirement: Tools starting with "tenuo:" MUST be rejected
 #[test]
-#[should_panic(expected = "Reserved tool namespace")]
 fn test_reserved_tool_namespace_rejection() {
     let keypair = SigningKey::generate();
 
     // Attempt to create warrant with reserved tool name
-    let _warrant = Warrant::builder()
+    let result = Warrant::builder()
         .capability("tenuo:revoke", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .authorized_holder(keypair.public_key())
         .build(&keypair);
+
+    // Should return an error, not succeed
+    assert!(result.is_err(), "Expected error for reserved namespace");
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("Reserved tool namespace"),
+        "Error message should mention reserved namespace: {}",
+        err
+    );
 }
 
 /// Test: Extension preservation through serialization (Spec §8)

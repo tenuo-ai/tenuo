@@ -9,7 +9,8 @@ Demonstrates:
 - Authorization checks with Proof-of-Possession
 """
 
-from tenuo import SigningKey, Warrant, Pattern, Exact, Range, Constraints
+from tenuo import SigningKey, Warrant, Pattern, Exact, Range
+from tenuo.constraints import Constraints
 
 def main():
     print("=== Tenuo Python SDK - Basic Usage ===\n")
@@ -41,14 +42,14 @@ def main():
     # POLA (Principle of Least Authority): Explicit capabilities only
     print("3. Attenuating warrant for worker (POLA - explicit capabilities)...")
     worker_warrant = (
-        root_warrant.attenuate()
+        root_warrant.grant_builder()
         # ✓ POLA: Explicitly grant only what's needed
         .capability("manage_infrastructure", {
             "cluster": Exact("staging-web"),     # Narrowed from staging-*
             "replicas": Range.max_value(10)      # Reduced from 15
         })
         .holder(worker_key.public_key)
-        .delegate(control_key)
+        .grant(control_key)
     )
     print(f"   Worker tools: {worker_warrant.tools}")
     print(f"   Worker depth: {worker_warrant.depth} (attenuated)")
@@ -62,7 +63,7 @@ def main():
     # Helper to authorize with PoP
     def check_auth(warrant, tool, args, signing_key):
         # Create Proof-of-Possession signature
-        signature = warrant.create_pop_signature(signing_key, tool, args)
+        signature = warrant.sign(signing_key, tool, args)
         # Authorize returns True/False based on constraint check
         return warrant.authorize(tool, args, bytes(signature))
 

@@ -398,7 +398,7 @@ input:focus, textarea:focus, button:focus {
   right: 24px;
   display: flex;
   gap: 16px;
-  padding: 10px 16px;
+  padding: 10px 36px 10px 16px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 10px;

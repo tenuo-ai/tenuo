@@ -116,7 +116,7 @@ test.describe('Regression Tests', () => {
         const codeBlock = page.locator('pre').first();
         await expect(codeBlock).toContainText('Warrant.issue(');
         await expect(codeBlock).toContainText('capabilities=Constraints.for_tool');
-        await expect(codeBlock).toContainText('create_pop_signature');
+        await expect(codeBlock).toContainText('sign');
 
         // Should NOT use old API
         await expect(codeBlock).not.toContainText('Warrant.builder()');
@@ -141,6 +141,6 @@ test.describe('Regression Tests', () => {
         const codeBlock = page.locator('pre').first();
         await expect(codeBlock).toContainText('Warrant::builder()');
         await expect(codeBlock).toContainText('.build(&issuer_key)?');
-        await expect(codeBlock).toContainText('create_pop_signature');
+        await expect(codeBlock).toContainText('sign');
     });
 });

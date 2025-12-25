@@ -31,25 +31,29 @@ In this model, Tenuo runs **inside** your agent's process as a Python library / 
 * **Architecture:**
     ```python
     Agent (Python)
-      └─ @lockdown decorator (Tenuo SDK)
+      └─ @guard decorator (Tenuo SDK)
            └─ Tool Implementation (Function)
     ```
 
 **How it works:**
 
 ```python
-@lockdown(tool="delete_file")
+@guard(tool="delete_file")
 def delete_file(path: str):
     os.remove(path)  # Never reached if unauthorized
 
-with set_warrant_context(warrant), set_signing_key_context(keypair):
+with warrant_scope(warrant), key_scope(keypair):
     delete_file("/etc/passwd")  # Raises ScopeViolation
 ```
 
 1. LLM generates a tool call: `delete_file("/etc/passwd")`
-2. The `@lockdown` decorator intercepts the call
-3. It checks the current `Warrant` in the context
-4. If the warrant says `path: /data/*`, Tenuo raises `ScopeViolation`. The tool code never runs.
+2. The `@guard` decorator serves as the primary enforcement point.
+It checks:
+1. Warrant existence
+2. Warrant validity (expiration)
+3. Tool authorization
+4. Argument constraints
+5. Proof-of-Possession signature. If the warrant says `path: /data/*`, Tenuo raises `ScopeViolation`. The tool code never runs.
 
 **Security Guarantee:** Blocks confused deputy attacks. If prompt injection tricks the LLM into calling unauthorized tools, Tenuo stops it.
 
@@ -142,8 +146,8 @@ For more control over which routes require warrants, use FastAPI's dependency in
 ```python
 from fastapi import FastAPI, Depends, Request, HTTPException
 from tenuo import (
-    Warrant, lockdown,
-    set_warrant_context, set_signing_key_context,
+    Warrant, guard,
+    warrant_scope, key_scope,
     ScopeViolation
 )
 
@@ -156,14 +160,14 @@ async def require_warrant(request: Request) -> Warrant:
         raise HTTPException(status_code=401, detail="Missing warrant")
     return Warrant.from_base64(warrant_b64)
 
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 def read_file(path: str) -> str:
     return open(path).read()
 
 @app.get("/files/{path:path}")
 async def get_file(path: str, warrant: Warrant = Depends(require_warrant)):
-    # Context ensures @lockdown can access warrant in async handlers
-    with set_warrant_context(warrant), set_signing_key_context(AGENT_KEYPAIR):
+    # Context ensures @guard can access warrant in async handlers
+    with warrant_scope(warrant), key_scope(AGENT_KEYPAIR):
         try:
             return {"content": read_file(path)}
         except ScopeViolation as e:
@@ -306,10 +310,10 @@ MCP standardizes how agents talk to tools. Tenuo acts as the "Middleware" that s
 from tenuo.mcp import SecureMCPClient
 
 async with SecureMCPClient("python", ["mcp_server.py"]) as client:
-    tools = await client.get_protected_tools()
+    tools = client.tools
     
     # Every call goes through Tenuo authorization
-    with set_warrant_context(warrant), set_signing_key_context(keypair):
+    with warrant_scope(warrant), key_scope(keypair):
         await tools["read_file"](path="/data/report.txt")  # Checked
         await tools["read_file"](path="/etc/passwd")       # Denied
 ```
@@ -334,7 +338,7 @@ Enforcement Models aren't mutually exclusive. Layer them:
 ┌─────────────────────────────────────────────────────┐
 │  Agent Process                                      │
 │                                                     │
-│    @lockdown ──────────────────────────────────┐    │
+│    @guard ──────────────────────────────────┐    │
 │    (Model 1: catches confused deputy)          │    │
 │                                                │    │
 └────────────────────────────────────────────────┼────┘

@@ -183,7 +183,7 @@ class MCPToolAdapter:
             List of LangChain StructuredTool objects with Tenuo protection
         """
         mcp_tools = await self.client.get_tools()
-        protected_funcs = await self.client.get_protected_tools()
+        protected_funcs = self.client.tools
         
         langchain_tools = []
         for mcp_tool in mcp_tools:

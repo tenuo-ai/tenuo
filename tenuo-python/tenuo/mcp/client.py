@@ -8,8 +8,9 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Dict, List, Optional
 
 from ..config import is_configured
-from ..decorators import lockdown
+from ..decorators import guard, warrant_scope, key_scope
 from ..exceptions import ConfigurationError
+from ..validation import ValidationResult
 
 # Optional MCP import (requires Python 3.10+)
 try:
@@ -38,11 +39,11 @@ class SecureMCPClient:
     Example:
         async with SecureMCPClient("python", ["mcp_server.py"]) as client:
             # Tools are auto-discovered and protected
-            tools = await client.get_tools()
+            # Use the .tools property for easy access
             
             # Use with warrant context
-            async with root_task(Capability("read_file", path=Pattern("/data/*"))):
-                result = await client.call_tool("read_file", {"path": "/data/file.txt"})
+            async with mint(Capability("read_file", path=Pattern("/data/*"))):
+                result = await client.tools["read_file"](path="/data/file.txt")
     """
     
     def __init__(
@@ -62,11 +63,13 @@ class SecureMCPClient:
             args: Arguments to pass to server (e.g., ["server.py"])
             env: Environment variables for server process
             config_path: Path to mcp-config.yaml (optional)
-            register_config: If True, register config globally for @lockdown. 
+            register_config: If True, register config globally for @guard. 
                            Defaults to True if config_path is provided, else False.
             inject_warrant: If True, automatically inject warrants into tool calls (default: False)
         
         Note:
+            # register_config=True enables global configuration for @guard decorators
+            # This allows Tenuo to verify arguments without explicit extraction logic in code
             If register_config=True, this mutates global Tenuo configuration.
             Prefer calling configure(mcp_config=...) explicitly if you need
             fine-grained control.
@@ -91,7 +94,7 @@ class SecureMCPClient:
         self.mcp_config = None
         self.compiled_config = None
         if config_path:
-            from tenuo import McpConfig, CompiledMcpConfig
+            from tenuo_core import McpConfig, CompiledMcpConfig
             
             self.mcp_config = McpConfig.from_file(config_path)
             self.compiled_config = CompiledMcpConfig.compile(self.mcp_config)
@@ -169,6 +172,11 @@ class SecureMCPClient:
         # Discover tools
         response = await self.session.list_tools()
         self._tools = response.tools
+        
+        # Pre-populate protected tools for the .tools property
+        self._wrapped_tools = {}
+        for tool in self._tools:
+            self._wrapped_tools[tool.name] = self.create_protected_tool(tool)
     
     async def close(self):
         """Close the MCP connection."""
@@ -180,10 +188,80 @@ class SecureMCPClient:
         
         Returns list of MCP Tool objects with name, description, inputSchema.
         """
+        if self.session is None:
+            raise RuntimeError(
+                "Not connected to MCP server. "
+                "Use 'async with SecureMCPClient(...) as client:' or call await client.connect() first."
+            )
+            
         if self._tools is None:
             response = await self.session.list_tools()  # type: ignore[union-attr]
             self._tools = response.tools
         return self._tools
+    
+    @property
+    def tools(self) -> Dict[str, Callable]:
+        """
+        Get all MCP tools as protected Python functions.
+        
+        Returns:
+            Dict mapping tool names to protected async functions
+        """
+        if not self._wrapped_tools and self.session is not None:
+            # Fallback for manual calls outside of context manager
+            # but usually initialized in connect()
+            try:
+                # If we're already in a loop and session is active but tools aren't wrapped
+                # this is a safety fallback.
+                if self._tools:
+                    for tool in self._tools:
+                        self._wrapped_tools[tool.name] = self.create_protected_tool(tool)
+            except Exception:
+                pass
+                
+        return self._wrapped_tools
+
+    async def validate_tool(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+    ) -> 'ValidationResult':
+        """
+        Check if a tool call would be authorized under the current warrant.
+        
+        Args:
+            tool_name: Name of the tool
+            arguments: Arguments for the tool
+            
+        Returns:
+            ValidationResult
+        """
+        from ..validation import ValidationResult
+        warrant = warrant_scope()
+        keypair = key_scope()
+        
+        if warrant is None:
+            return ValidationResult.fail(
+                "No active warrant in context",
+                suggestions=["Wrap your call in 'async with mint(...):'"]
+            )
+            
+        if keypair is None:
+            return ValidationResult.fail(
+                "No signing key in context",
+                suggestions=["Call configure(issuer_key=...) or use key_scope()"]
+            )
+            
+        # Re-map arguments if we have a config
+        extraction_args = arguments
+        if self.compiled_config:
+            try:
+                result = self.compiled_config.extract_constraints(tool_name, arguments)
+                extraction_args = result.constraints
+            except Exception:
+                pass
+                
+        return warrant.validate(keypair, tool_name, extraction_args)
     
     async def call_tool(
         self,
@@ -213,7 +291,10 @@ class SecureMCPClient:
             ConstraintViolation: If arguments don't satisfy warrant constraints
         """
         if self.session is None:
-            raise RuntimeError("Not connected to MCP server. Call connect() first.")
+            raise RuntimeError(
+                "Not connected to MCP server. "
+                "Use 'async with SecureMCPClient(...) as client:' or call await client.connect() first."
+            )
         
         should_inject = self.inject_warrant if inject_warrant is None else inject_warrant
         
@@ -222,16 +303,15 @@ class SecureMCPClient:
             call_args = args.copy()
             
             if should_inject:
-                from ..decorators import get_warrant_context, get_signing_key_context
-                warrant = get_warrant_context()
-                keypair = get_signing_key_context()
+                warrant = warrant_scope()
+                keypair = key_scope()
                 
                 if warrant is not None and keypair is not None:
                     import base64
                     
                     warrant_base64 = warrant.to_base64()
                     # Create PoP signature for this specific call
-                    pop_sig = warrant.create_pop_signature(keypair, tool_name, args)
+                    pop_sig = warrant.sign(keypair, tool_name, args)
                     signature_base64 = base64.b64encode(bytes(pop_sig)).decode('utf-8')
                     
                     call_args["_tenuo"] = {
@@ -253,12 +333,12 @@ class SecureMCPClient:
                 )
             
             # Create protected wrapper for local authorization
-            @lockdown(tool=tool_name, extract_args=lambda **kwargs: kwargs)
-            async def _authorized_call(**kwargs):
+            @guard(tool=tool_name, extract_args=lambda **kwargs: kwargs)
+            async def wrapper(**kwargs):
                 return await _perform_call(kwargs)
             
             # Call with local authorization
-            return await _authorized_call(**arguments)
+            return await wrapper(**arguments)
         else:
             # Call without local authorization (but still with optional injection)
             return await _perform_call(arguments)
@@ -283,22 +363,18 @@ class SecureMCPClient:
         
         def _extract_auth_args(**kwargs):
             if self.compiled_config:
-                try:
-                    # Apply defaults and extraction rules from config
-                    result = self.compiled_config.extract_constraints(tool_name, kwargs)
-                    # Merge extracted constraints (which have defaults/types) over raw kwargs
-                    # We start with kwargs to keep unconfigured args (e.g. path),
-                    # then update with extracted values (e.g. max_size with default).
-                    combined = kwargs.copy()
-                    combined.update(result.constraints)
-                    return combined
-                except Exception:
-                    # If extraction fails (e.g. validation error), fallback to raw args
-                    # and let authorization fail naturally or succeed if constraints match
-                    return kwargs
+                # Apply defaults and extraction rules from config
+                # We do NOT suppress exceptions here (Fail Closed). 
+                # If extraction fails, it means the request doesn't match the required configuration.
+                result = self.compiled_config.extract_constraints(tool_name, kwargs)
+                
+                # Merge extracted constraints (which have defaults/types) over raw kwargs
+                combined = kwargs.copy()
+                combined.update(result.constraints)
+                return combined
             return kwargs
         
-        @lockdown(tool=tool_name, extract_args=_extract_auth_args)
+        @guard(tool=tool_name, extract_args=_extract_auth_args)
         async def protected_tool(**kwargs):
             """Protected MCP tool wrapper."""
             # Filter arguments against schema (Schema-Based Argument Stripping)
@@ -322,19 +398,17 @@ class SecureMCPClient:
         
         return protected_tool
     
-    async def get_protected_tools(self) -> Dict[str, Callable]:
-        """
-        Get all MCP tools as protected Python functions.
+    # This method is removed in favor of the .tools property
+    
+    @property
+    def get_protected_tools(self) -> Callable:
+        """Deprecated alias for .tools property."""
+        import warnings
+        warnings.warn("get_protected_tools() is deprecated, use .tools property", DeprecationWarning)
         
-        Returns:
-            Dict mapping tool names to protected async functions
-        """
-        if not self._wrapped_tools:
-            tools = await self.get_tools()
-            for tool in tools:
-                self._wrapped_tools[tool.name] = self.create_protected_tool(tool)
-        
-        return self._wrapped_tools
+        async def _compat():
+            return self.tools
+        return _compat  # type: ignore
 
 
 @asynccontextmanager
@@ -360,8 +434,8 @@ async def discover_and_protect(
     
     Example:
         async with discover_and_protect("python", ["server.py"]) as tools:
-            async with root_task(Capability("read_file", path=Pattern("/data/*"))):
+            async with mint(Capability("read_file", path=Pattern("/data/*"))):
                 result = await tools["read_file"](path="/data/file.txt")
     """
     async with SecureMCPClient(command, args, env, config_path) as client:
-        yield await client.get_protected_tools()
+        yield await client.tools

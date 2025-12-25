@@ -5,24 +5,25 @@ Tests the improved KeyRegistry pattern where:
 - Keys are auto-loaded from env OR registered manually
 - Warrant stays in state (it attenuates)
 - key_id goes in config (infrastructure concern)
-- secure() wrapper OR @tenuo_node decorator
+- guard() wrapper OR @tenuo_node decorator
 """
 
 import pytest
+import tenuo.testing  # noqa: F401
 from typing import Dict, Any, TypedDict, Optional
 
 from tenuo import (
     SigningKey,
     Warrant,
-    KeyRegistry,
     ConfigurationError,
     BoundWarrant,
 )
+from tenuo.keys import KeyRegistry
 from tenuo.langgraph import (
     tenuo_node,
     require_warrant,
-    secure,
-    auto_load_keys,
+    guard,
+    load_tenuo_keys,
 )
 
 
@@ -49,7 +50,7 @@ def registry():
 @pytest.fixture
 def warrant_and_key(registry):
     """Create a test warrant and register the key."""
-    warrant, key = Warrant.quick_issue(tools=["search", "read_file"], ttl=3600)
+    warrant, key = Warrant.quick_mint(tools=["search", "read_file"], ttl=3600)
     registry.register("test-key", key)
     return warrant, "test-key"
 
@@ -59,17 +60,17 @@ def make_config(key_id: str) -> Dict[str, Any]:
     return {"configurable": {"tenuo_key_id": key_id}}
 
 
-class TestSecureWrapper:
-    """Tests for the secure() wrapper (keeps nodes pure)."""
+class TestGuardWrapper:
+    """Tests for the guard() wrapper (keeps nodes pure)."""
     
-    def test_secure_wraps_node(self, warrant_and_key, registry):
-        """secure() wraps a pure node function."""
+    def test_guard_wraps_node(self, warrant_and_key, registry):
+        """guard() wraps a pure node function."""
         warrant, key_id = warrant_and_key
         
         def my_agent(state: Dict[str, Any]) -> Dict[str, Any]:
             return {"result": "done"}
         
-        wrapped = secure(my_agent)
+        wrapped = guard(my_agent)
         
         state = {"warrant": warrant}
         config = make_config(key_id)
@@ -77,23 +78,23 @@ class TestSecureWrapper:
         result = wrapped(state, config=config)
         assert result == {"result": "done"}
     
-    def test_secure_with_explicit_key_id(self, warrant_and_key, registry):
-        """secure() can use explicit key_id."""
+    def test_guard_with_explicit_key_id(self, warrant_and_key, registry):
+        """guard() can use explicit key_id."""
         warrant, key_id = warrant_and_key
         
         def my_agent(state: Dict[str, Any]) -> Dict[str, Any]:
             return {"result": "done"}
         
         # Explicit key_id in wrapper
-        wrapped = secure(my_agent, key_id=key_id)
+        wrapped = guard(my_agent, key_id=key_id)
         
         state = {"warrant": warrant}
         # No config needed - key_id is explicit
         result = wrapped(state)
         assert result == {"result": "done"}
     
-    def test_secure_inject_warrant(self, warrant_and_key, registry):
-        """secure(inject_warrant=True) passes bound_warrant."""
+    def test_guard_inject_warrant(self, warrant_and_key, registry):
+        """guard(inject_warrant=True) passes bound_warrant."""
         warrant, key_id = warrant_and_key
         
         received_bw = None
@@ -103,7 +104,7 @@ class TestSecureWrapper:
             received_bw = bound_warrant
             return {"result": "done"}
         
-        wrapped = secure(my_agent, inject_warrant=True)
+        wrapped = guard(my_agent, inject_warrant=True)
         
         state = {"warrant": warrant}
         config = make_config(key_id)
@@ -113,14 +114,14 @@ class TestSecureWrapper:
         assert received_bw is not None
         assert isinstance(received_bw, BoundWarrant)
     
-    def test_secure_fails_without_warrant(self, registry):
-        """secure() fails if state has no warrant."""
+    def test_guard_fails_without_warrant(self, registry):
+        """guard() fails if state has no warrant."""
         registry.register("test-key", SigningKey.generate())
         
         def my_agent(state: Dict[str, Any]) -> Dict[str, Any]:
             return {"result": "done"}
         
-        wrapped = secure(my_agent)
+        wrapped = guard(my_agent)
         
         state = {}  # No warrant
         config = make_config("test-key")
@@ -128,15 +129,15 @@ class TestSecureWrapper:
         with pytest.raises(ConfigurationError, match="warrant"):
             wrapped(state, config=config)
     
-    def test_secure_uses_default_key(self, registry):
-        """secure() falls back to 'default' key_id."""
-        warrant, key = Warrant.quick_issue(tools=["search"], ttl=3600)
+    def test_guard_uses_default_key(self, registry):
+        """guard() falls back to 'default' key_id."""
+        warrant, key = Warrant.quick_mint(tools=["search"], ttl=3600)
         registry.register("default", key)  # Register as "default"
         
         def my_agent(state: Dict[str, Any]) -> Dict[str, Any]:
             return {"result": "done"}
         
-        wrapped = secure(my_agent)
+        wrapped = guard(my_agent)
         
         state = {"warrant": warrant}
         # No config - should use "default"
@@ -202,7 +203,7 @@ class TestTenuoNode:
         @tenuo_node
         def my_node(state: Dict[str, Any], bound_warrant: BoundWarrant):
             nonlocal auth_result
-            auth_result = bound_warrant.authorize("search", {"query": "test"})
+            auth_result = bound_warrant.validate("search", {"query": "test"})
             return {"result": "done"}
         
         state = {"warrant": warrant}
@@ -210,14 +211,14 @@ class TestTenuoNode:
         
         my_node(state, config=config)
         
-        assert auth_result is True
+        assert auth_result
 
 
 class TestAutoLoadKeys:
-    """Tests for auto_load_keys()."""
+    """Tests for load_tenuo_keys()."""
     
     def test_loads_keys_from_env(self, monkeypatch):
-        """auto_load_keys() loads TENUO_KEY_* env vars."""
+        """load_tenuo_keys() loads TENUO_KEY_* env vars."""
         KeyRegistry.reset_instance()
         
         # Create a test key and encode it
@@ -228,7 +229,7 @@ class TestAutoLoadKeys:
         
         monkeypatch.setenv("TENUO_KEY_WORKER", key_b64)
         
-        count = auto_load_keys()
+        count = load_tenuo_keys()
         
         assert count >= 1
         
@@ -237,7 +238,7 @@ class TestAutoLoadKeys:
         assert loaded is not None
     
     def test_converts_key_names(self, monkeypatch):
-        """auto_load_keys() converts TENUO_KEY_MY_SERVICE to my-service."""
+        """load_tenuo_keys() converts TENUO_KEY_MY_SERVICE to my-service."""
         KeyRegistry.reset_instance()
         
         key = SigningKey.generate()
@@ -246,7 +247,7 @@ class TestAutoLoadKeys:
         
         monkeypatch.setenv("TENUO_KEY_MY_SERVICE", key_b64)
         
-        auto_load_keys()
+        load_tenuo_keys()
         
         registry = KeyRegistry.get_instance()
         loaded = registry.get("my-service")

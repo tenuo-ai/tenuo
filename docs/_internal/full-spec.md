@@ -125,7 +125,7 @@ For container compromise, Tenuo limits damage to current warrant's scope and TTL
 result = worker.invoke(task)
 
 # After: worker can only read this file
-with scoped_task(Capability("read_file", path=task.file)):
+with grant(Capability("read_file", path=task.file)):
     result = worker.invoke(task)
 ```
 
@@ -136,14 +136,14 @@ Tenuo provides three levels of API, from simple to full control:
 **Tier 1: Scope a Task (80% of use cases)**
 
 ```python
-from tenuo import scoped_task, Capability, Pattern
+from tenuo import grant, Capability, Pattern
 
 # Scope authority for a block of code
-with scoped_task(Capability("read_file", path=file_path)):
+with grant(Capability("read_file", path=file_path)):
     content = read_file(file_path)
 
 # Multiple tools
-with scoped_task(
+with grant(
     Capability("read_file", path=Pattern("/data/*")),
     Capability("search", max_results=10),
 ):
@@ -204,7 +204,7 @@ Full builder API when you need visibility and control.
 
 | Scenario                  | API                    | Example                         |
 |---------------------------|------------------------|---------------------------------|
-| Simple tool call          | `scoped_task()`        | Reading a file, making a search |
+| Simple tool call          | `grant()`        | Reading a file, making a search |
 | Worker delegation         | `.delegate()`          | Orchestrator -> worker          |
 | Multi-level orchestration | `.attenuate()` builder | Complex agent graphs            |
 | Auditing/debugging        | `.diff()`              | Understanding delegation chains |
@@ -661,7 +661,7 @@ exec_warrant = issuer_warrant.issue_execution(
 )
 
 # Authorize (local)
-pop_sig = warrant.create_pop_signature(keypair, tool, args)
+pop_sig = warrant.sign(keypair, tool, args)
 authorized = authorizer.check(warrant, tool, args, signature=pop_sig)
 ```
 
@@ -1578,7 +1578,7 @@ Gateway                          Agent
 
 ```python
 from tenuo import Warrant, SigningKey
-from tenuo.context import set_warrant_context, set_signing_key_context
+from tenuo.context import warrant_scope, key_scope
 
 KEYPAIR = SigningKey.from_file("/var/run/secrets/tenuo/keypair")
 
@@ -1593,7 +1593,7 @@ async def tenuo_middleware(request: Request, call_next):
     if warrant.is_expired():
         raise HTTPException(403, "Warrant expired")
     
-    with set_warrant_context(warrant), set_signing_key_context(KEYPAIR):
+    with warrant_scope(warrant), key_scope(KEYPAIR):
         return await call_next(request)
 ```
 
@@ -1608,7 +1608,7 @@ async def process_message(message: QueueMessage):
     if warrant.is_expired():
         raise AuthorizationError("Warrant expired")
     
-    with set_warrant_context(warrant), set_signing_key_context(KEYPAIR):
+    with warrant_scope(warrant), key_scope(KEYPAIR):
         return await handler(message.body)
 ```
 
@@ -1616,11 +1616,11 @@ async def process_message(message: QueueMessage):
 
 ```python
 from tenuo.context import (
-    set_warrant_context,
-    set_signing_key_context,
+    warrant_scope,
+    key_scope,
     get_warrant_context,
     get_signing_key_context,
-    scoped_task,
+    grant,
 )
 
 # Get current context
@@ -1628,7 +1628,7 @@ warrant = get_warrant_context()
 keypair = get_signing_key_context()
 
 # Scoped task (attenuate + set context)
-with scoped_task(tool="read_file", path="/data/q3.pdf"):
+with grant(tool="read_file", path="/data/q3.pdf"):
     content = read_file("/data/q3.pdf")
 ```
 
@@ -1732,7 +1732,7 @@ def protected_read_file(path: str) -> str:
     if not warrant:
         raise AuthorizationError("No warrant available")
     
-    pop_sig = warrant.create_pop_signature(keypair, "read_file", {"path": path})
+    pop_sig = warrant.sign(keypair, "read_file", {"path": path})
     
     result = authorizer.check(
         warrant=warrant,
@@ -1750,9 +1750,9 @@ def protected_read_file(path: str) -> str:
 ### Decorator (Future)
 
 ```python
-from tenuo import lockdown
+from tenuo import guard
 
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 def read_file(path: str) -> str:
     return open(path).read()
 ```
@@ -2203,7 +2203,7 @@ DelegationReceipt, DelegationDiff
 
 ```python
 # Tier 1: Scope a task
-scoped_task(tool, **constraints) -> ContextManager
+grant(tool, **constraints) -> ContextManager
 
 # Tier 2: One-line delegation (terminal by default)
 Warrant.delegate(holder, tool=, **constraints) -> Warrant
@@ -2216,11 +2216,11 @@ Warrant.narrow() -> Attenuator  # Alias
 ### Context (`tenuo.context`)
 
 ```python
-set_warrant_context(warrant) -> ContextManager
-set_signing_key_context(keypair) -> ContextManager
+warrant_scope(warrant) -> ContextManager
+key_scope(keypair) -> ContextManager
 get_warrant_context() -> Optional[Warrant]
 get_signing_key_context() -> Optional[SigningKey]
-scoped_task(tool, **constraints) -> ContextManager
+grant(tool, **constraints) -> ContextManager
 ```
 
 ### Builder (`tenuo.builder`)
@@ -2284,8 +2284,8 @@ compiled.validate()  # Check for incompatible extraction sources
 |-------------------------------------------------------------------------|-----------|
 | **Tiered API**                                                          |           |
 | `configure()` global config                                             | [SHIPPED] |
-| `root_task()` / `root_task_sync()`                                      | [SHIPPED] |
-| `scoped_task()`                                                         | [SHIPPED] |
+| `mint()` / `mint_sync()`                                      | [SHIPPED] |
+| `grant()`                                                         | [SHIPPED] |
 | `.attenuate()` builder                                                  | [SHIPPED] |
 | **Warrant Model**                                                       |           |
 | Warrant (execution + issuer types)                                      | [SHIPPED] |
@@ -2307,7 +2307,7 @@ compiled.validate()  # Check for incompatible extraction sources
 | DelegationDiff / DelegationReceipt                                      | [SHIPPED] |
 | Middleware patterns                                                     | [SHIPPED] |
 | **Python SDK**                                                          |           |
-| `@lockdown` decorator                                                   | [SHIPPED] |
+| `@guard` decorator                                                   | [SHIPPED] |
 | `protect_tools()` (LangChain)                                           | [SHIPPED] |
 | `@tenuo_node` (LangGraph)                                               | [SHIPPED] |
 | Tool constraint schemas                                                 | [SHIPPED] |

@@ -1,143 +1,540 @@
 """
-Tenuo CLI.
+Tenuo CLI Tools.
 
-Provides command-line utilities for inspecting warrants and verifying authorization.
+Commands:
+    tenuo discover    - Analyze logs and generate capability definitions
+    tenuo decode      - Decode and inspect a warrant
+    tenuo validate    - Validate a warrant against constraints
+
 Usage:
-    python -m tenuo.cli inspect <warrant_base64>
-    python -m tenuo.cli verify <warrant_base64> <tool> <arg1=val1> <arg2=val2> ...
+    python -m tenuo discover --input audit.log --output capabilities.yaml
+    python -m tenuo decode <warrant_base64>
 """
 
-import sys
 import argparse
-from typing import List, Dict, Any, Union
+import json
+import sys
+from collections import defaultdict
+from typing import Any, Dict, List, Optional, Set
+from pathlib import Path
 
-from tenuo_core import Warrant  # type: ignore[import-untyped]
 
-
-def verify_warrant(warrant_str: str, tool: str, args: Dict[str, Any]) -> None:
-    """Check if a warrant authorizes a tool call (no PoP check, just logic)."""
-    try:
-        warrant = Warrant.from_base64(warrant_str)
-    except Exception as e:
-        print(f"Error: Invalid warrant format: {e}")
-        sys.exit(1)
-
-    print(f"Verifying warrant {warrant.id} for tool '{tool}' with args {args}...")
+def discover_capabilities(
+    log_file: Optional[str] = None,
+    log_lines: Optional[List[str]] = None,
+    output_format: str = "yaml",
+) -> str:
+    """
+    Analyze audit logs and generate capability definitions.
     
-    # Check if tool is authorized
-    if warrant.tools and tool not in warrant.tools:
-        print(f"❌ DENIED: Tool '{tool}' is not in allowed tools: {warrant.tools}")
-        return
-
-    # Check expiration
-    if warrant.is_expired():
-        print(f"❌ DENIED: Warrant is expired (expired at {warrant.expires_at()})")
-        return
-
-    # Check constraints
-    # Note: We can't easily execute the full constraint check without the PoP signature
-    # because authorize() requires a signature.
-    # However, we can inspect constraints manually or use a "dry run" if available.
-    # Currently, authorize() is the only way to check constraints fully.
-    # But authorize() needs a valid signature matching the args.
-    # Since CLI user doesn't have the private key, we can't sign.
-    # We can only INSPECT constraints.
+    Reads structured JSON audit logs and infers the minimal set of
+    capabilities needed to authorize all observed tool calls.
     
-    # Use capabilities property for constraint info
-    caps = warrant.capabilities
-    print("Constraints present:")
-    if not caps:
-        print("  (None)")
+    Args:
+        log_file: Path to audit log file (JSON lines format)
+        log_lines: List of log lines (alternative to file)
+        output_format: "yaml" or "python"
+        
+    Returns:
+        Generated capability definitions
+    """
+    # Collect all tool calls
+    tool_calls: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    
+    lines = log_lines or []
+    if log_file:
+        with open(log_file, 'r') as f:
+            lines = f.readlines()
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        
+        # Look for authorization events
+        tool = entry.get('tool')
+        constraints = entry.get('constraints', {})
+        event_type = entry.get('event_type', '')
+        
+        if tool and 'authorization' in event_type.lower():
+            tool_calls[tool].append(constraints)
+    
+    # Analyze and generate capabilities
+    capabilities = _analyze_tool_calls(tool_calls)
+    
+    if output_format == "yaml":
+        return _format_as_yaml(capabilities)
     else:
-        for tool, cons in caps.items():
-            if cons:
-                print(f"  {tool}:")
-                for k, v in cons.items():
-                    print(f"    {k}: {v}")
-            else:
-                print(f"  {tool}: (no constraints)")
+        return _format_as_python(capabilities)
+
+
+def _analyze_tool_calls(tool_calls: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:
+    """
+    Analyze tool calls and infer minimal constraints.
+    
+    Strategy:
+    - If all values for a field are the same -> Exact
+    - If values follow a pattern (e.g., "/data/*") -> Pattern
+    - If values are from a small set -> OneOf
+    - If values are numeric with a range -> Range
+    - Otherwise -> Pattern("*") (permissive)
+    """
+    capabilities: Dict[str, Dict[str, Any]] = {}
+    
+    for tool, calls in tool_calls.items():
+        if not calls:
+            capabilities[tool] = {}
+            continue
+        
+        # Collect all values for each field
+        field_values: Dict[str, Set[Any]] = defaultdict(set)
+        for call in calls:
+            for field, value in call.items():
+                if value is not None:
+                    field_values[field].add(_normalize_value(value))
+        
+        # Infer constraints for each field
+        constraints = {}
+        for field, values in field_values.items():
+            constraint = _infer_constraint(field, values)
+            if constraint:
+                constraints[field] = constraint
+        
+        capabilities[tool] = constraints
+    
+    return capabilities
+
+
+def _normalize_value(value: Any) -> Any:
+    """Normalize value for comparison."""
+    if isinstance(value, (list, dict)):
+        return str(value)
+    return value
+
+
+def _infer_constraint(field: str, values: Set[Any]) -> Optional[str]:
+    """
+    Infer the best constraint for a set of values.
+    
+    Returns constraint as a string representation.
+    """
+    if not values:
+        return None
+    
+    values_list = list(values)
+    
+    # Single value -> Exact
+    if len(values_list) == 1:
+        val = values_list[0]
+        if isinstance(val, str):
+            return f'Exact("{val}")'
+        return f'Exact({val})'
+    
+    # All strings
+    if all(isinstance(v, str) for v in values_list):
+        # Check for common prefix pattern
+        prefix = _find_common_prefix(values_list)
+        if prefix and len(prefix) > 3:
+            return f'Pattern("{prefix}*")'
+        
+        # Small set -> OneOf
+        if len(values_list) <= 10:
+            quoted = [f'"{v}"' for v in sorted(values_list)]
+            return f'OneOf([{", ".join(quoted)}])'
+        
+        # Default to wildcard
+        return 'Pattern("*")'
+    
+    # All numbers
+    if all(isinstance(v, (int, float)) for v in values_list):
+        min_val = min(values_list)
+        max_val = max(values_list)
+        return f'Range({min_val}, {max_val})'
+    
+    # Mixed types - use wildcard
+    return 'Pattern("*")'
+
+
+def _find_common_prefix(strings: List[str]) -> str:
+    """Find the longest common prefix among strings."""
+    if not strings:
+        return ""
+    
+    prefix = strings[0]
+    for s in strings[1:]:
+        while not s.startswith(prefix):
+            prefix = prefix[:-1]
+            if not prefix:
+                return ""
+    
+    # Don't return partial words - find last separator
+    for sep in ['/', '_', '-', '.']:
+        if sep in prefix:
+            idx = prefix.rfind(sep)
+            if idx > 0:
+                return prefix[:idx + 1]
+    
+    return prefix
+
+
+def _format_as_yaml(capabilities: Dict[str, Dict[str, Any]]) -> str:
+    """Format capabilities as YAML."""
+    lines = ["# Generated by: tenuo discover", "# Review and adjust constraints as needed", "", "capabilities:"]
+    
+    for tool, constraints in sorted(capabilities.items()):
+        lines.append(f"  - tool: {tool}")
+        if constraints:
+            lines.append("    constraints:")
+            for field, constraint in sorted(constraints.items()):
+                lines.append(f"      {field}: {constraint}")
+        lines.append("")
+    
+    return "\n".join(lines)
+
+
+def _format_as_python(capabilities: Dict[str, Dict[str, Any]]) -> str:
+    """Format capabilities as Python code."""
+    lines = [
+        "# Generated by: tenuo discover",
+        "# Review and adjust constraints as needed",
+        "",
+        "from tenuo import Capability, Pattern, Exact, OneOf, Range",
+        "",
+        "capabilities = [",
+    ]
+    
+    for tool, constraints in sorted(capabilities.items()):
+        if constraints:
+            constraint_strs = [f"{k}={v}" for k, v in sorted(constraints.items())]
+            lines.append(f'    Capability("{tool}", {", ".join(constraint_strs)}),')
+        else:
+            lines.append(f'    Capability("{tool}"),')
+    
+    lines.append("]")
+    return "\n".join(lines)
+
+
+def parse_kv_args(args: List[str]) -> Dict[str, Any]:
+    """
+    Parse key=value arguments.
+    
+    Args:
+        args: List of "key=value" strings
+        
+    Returns:
+        Dict of parsed arguments with auto-typed values
+    """
+    result: Dict[str, Any] = {}
+    
+    for arg in args:
+        if '=' not in arg:
+            continue
+        key, value = arg.split('=', 1)
+        
+        # Auto-type conversion
+        if value.lower() == 'true':
+            result[key] = True
+        elif value.lower() == 'false':
+            result[key] = False
+        elif value.isdigit():
+            result[key] = int(value)
+        else:
+            try:
+                result[key] = float(value)
+            except ValueError:
+                result[key] = value
+    
+    return result
+
+
+def verify_warrant(warrant_str: str, tool: str, args: Dict[str, Any]) -> bool:
+    """
+    Verify if a warrant authorizes a tool call.
+    
+    Prints verification result and details.
+    
+    Args:
+        warrant_str: Base64-encoded warrant
+        tool: Tool name to verify
+        args: Tool arguments
+        
+    Returns:
+        True if authorized, False otherwise
+    """
+    try:
+        from tenuo_core import Warrant
+        
+        warrant = Warrant(warrant_str)
+        
+        print(f"Verifying warrant for tool: {tool}")
+        print(f"  Warrant ID: {warrant.id}")
+        print(f"  Tools: {', '.join(warrant.tools)}")
+        
+        # Check expiry
+        if warrant.is_expired():
+            print("  ❌ DENIED: Warrant has expired")
+            return False
+        
+        # Check tool in warrant
+        if tool not in warrant.tools:
+            print(f"  ❌ DENIED: Tool '{tool}' not in allowed tools: {warrant.tools}")
+            return False
+        
+        # Check allows
+        if hasattr(warrant, 'allows'):
+            if not warrant.allows(tool, args):
+                print("  ❌ DENIED: Arguments do not satisfy constraints")
+                if hasattr(warrant, 'why_denied'):
+                    why = warrant.why_denied(tool, args)
+                    if hasattr(why, 'suggestion'):
+                        print(f"  Suggestion: {why.suggestion}")
+                return False
+        
+        print("  ✅ AUTHORIZED")
+        return True
+        
+    except Exception as e:
+        print(f"  ❌ ERROR: {e}")
+        return False
+
+
+
+def print_rich_warrant(warrant) -> bool:
+    """
+    Print warrant using rich if available.
+    Returns True if rich output was used, False otherwise.
+    """
+    try:
+        from rich.console import Console  # type: ignore[import-not-found]
+        from rich.tree import Tree  # type: ignore[import-not-found]
+        from rich.table import Table  # type: ignore[import-not-found]
+        from rich.panel import Panel  # type: ignore[import-not-found]
+        from rich.text import Text  # type: ignore[import-not-found]
+    except ImportError:
+        return False
+
+    console = Console()
+    
+    # Root node
+    status_icon = "❌" if warrant.is_expired() else "✅"
+    term_icon = "🛑" if warrant.is_terminal() else "➡️"  # noqa: F841
+    
+    root_text = Text(f"{status_icon} Warrant {warrant.id[:8]}... ", style="bold green" if not warrant.is_expired() else "bold red")
+    root_text.append(f"({warrant.warrant_type}) ", style="yellow")
+    if warrant.is_expired():
+        root_text.append("[EXPIRED] ", style="red reverse")
+    if warrant.is_terminal():
+        root_text.append("[TERMINAL]", style="blue reverse")
+        
+    tree = Tree(root_text)
+    
+    # Tools Table
+    table = Table(title="Authorized Tools", show_header=True, header_style="bold magenta")
+    table.add_column("Tool", style="cyan")
+    table.add_column("Constraints", style="green")
+    
+    # Try to get capabilities if available (property or manual)
+    capabilities = getattr(warrant, 'capabilities', {})
+    if not capabilities and warrant.tools:
+        # Fallback if capabilities property not ready/populated
+        for tool in warrant.tools:
+             table.add_row(tool, "All allowed (or unknown)")
+    else:
+        for tool, constraints in capabilities.items():
+            const_str = ", ".join([f"{k}={v}" for k, v in constraints.items()]) if constraints else "*"
+            table.add_row(tool, const_str)
             
-    print("\n⚠️  Note: Full verification requires a valid PoP signature signed by the holder key.")
-    print("This CLI tool currently only checks static properties (expiry, tool allowance).")
+    tree.add(table)
+    
+    # Metadata
+    meta = tree.add("Metadata")
+    if hasattr(warrant, 'ttl_remaining'):
+         meta.add(f"TTL: {warrant.ttl_remaining}")
+    meta.add(f"Expires: {warrant.expires_at()}")
+    if warrant.parent_hash:
+        meta.add(f"Parent: {warrant.parent_hash[:16]}...")
+
+    console.print(Panel(tree, title="Tenuo Authority Inspector", border_style="green"))
+    return True
 
 
 def inspect_warrant(warrant_str: str) -> None:
-    """Print human-readable warrant details."""
+    """
+    Inspect a warrant and print human-readable details.
+    """
     try:
-        warrant = Warrant.from_base64(warrant_str)
+        from tenuo_core import Warrant
+        
+        warrant = Warrant(warrant_str)
+        
+        # Try rich first
+        if print_rich_warrant(warrant):
+            return
+            
+        # Fallback to plain text
+        print("=== Warrant Inspection ===")
+        print(f"ID: {warrant.id}")
+        print(f"Type: {warrant.warrant_type}")
+        print(f"Tools: {', '.join(warrant.tools)}")
+        print(f"Expired: {warrant.is_expired()}")
+        print(f"Terminal: {warrant.is_terminal()}")
+        
+        if hasattr(warrant, 'ttl_remaining'):
+            print(f"TTL Remaining: {warrant.ttl_remaining}")
+        
+        if hasattr(warrant, 'explain'):
+            print("")
+            print("Explanation:")
+            print(warrant.explain(include_chain=True))
+
+        print("\n(Tip: Install 'rich' for a nicer visualization: pip install rich)")
+        
     except Exception as e:
-        print(f"Error: Invalid warrant format: {e}")
-        sys.exit(1)
-        
-    print("=== Warrant Inspection ===")
-    print(f"ID:           {warrant.id}")
-    print(f"Holder Key:   {warrant.authorized_holder}")
-    print(f"Expires At:   {warrant.expires_at}")
-    print(f"TTL Remain:   {warrant.ttl_remaining}")
-    print(f"Tools:        {warrant.tools if warrant.tools else '*'}")
-    print(f"Is Terminal:  {warrant.is_terminal}")
-    print(f"Max Depth:    {warrant.max_issue_depth}")
-    
-    print("\n[Constraints]")
-    caps = warrant.capabilities
-    if not caps:
-        print("  (None)")
-    else:
-        for tool, cons in caps.items():
-            print(f"  {tool}: {cons}")
-        
-    print("\n[Base64]")
-    print(warrant.to_base64())
+        print(f"Error inspecting warrant: {e}")
 
 
-def parse_kv_args(args_list: List[str]) -> Dict[str, Any]:
-    """Parse key=value arguments into a dictionary."""
-    args: Dict[str, Union[str, int, float, bool]] = {}
-    for item in args_list:
-        if "=" in item:
-            k, v = item.split("=", 1)
-            # Try to infer type
-            parsed: Union[str, int, float, bool]
-            if v.lower() == "true":
-                parsed = True
-            elif v.lower() == "false":
-                parsed = False
-            else:
-                try:
-                    parsed = int(v)
-                except ValueError:
-                    try:
-                        parsed = float(v)
-                    except ValueError:
-                        parsed = v
-            args[k] = parsed
-    return args
+def decode_warrant(warrant_str: str) -> str:
+    """Decode and display a warrant's contents."""
+    # This function returns string, mainly used by 'decode' command which prints it.
+    # Refactoring 'decode' command to use inspect_warrant instead for rich output.
+    inspect_warrant(warrant_str)
+    return ""  # Return empty string to satisfy signature or caller expect printing handled inside
+
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Tenuo CLI Utility")
-    subparsers = parser.add_subparsers(dest="command", help="Command to run")
+    """CLI entry point."""
+    parser = argparse.ArgumentParser(
+        description="Tenuo CLI Tools",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     
-    # Inspect command
-    inspect_parser = subparsers.add_parser("inspect", help="Inspect a warrant")
-    inspect_parser.add_argument("warrant", help="Base64 encoded warrant string")
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
     
-    # Verify command
-    verify_parser = subparsers.add_parser("verify", help="Verify tool authorization logic")
-    verify_parser.add_argument("warrant", help="Base64 encoded warrant string")
-    verify_parser.add_argument("tool", help="Tool name to verify")
-    verify_parser.add_argument("args", nargs="*", help="Arguments in key=value format (e.g. query=foo)")
+    # discover command
+    discover_parser = subparsers.add_parser(
+        "discover",
+        help="Analyze audit logs and generate capability definitions",
+    )
+    discover_parser.add_argument(
+        "--input", "-i",
+        help="Path to audit log file (JSON lines format)",
+        required=True,
+    )
+    discover_parser.add_argument(
+        "--output", "-o",
+        help="Output file (default: stdout)",
+    )
+    discover_parser.add_argument(
+        "--format", "-f",
+        choices=["yaml", "python"],
+        default="yaml",
+        help="Output format (default: yaml)",
+    )
+    
+    # decode command
+    decode_parser = subparsers.add_parser(
+        "decode",
+        help="Decode and inspect a warrant",
+    )
+    decode_parser.add_argument(
+        "warrant",
+        help="Base64-encoded warrant string",
+    )
+    
+    # init command
+    subparsers.add_parser(
+        "init",
+        help="Initialize a new Tenuo project",
+    )
     
     args = parser.parse_args()
     
-    if args.command == "inspect":
-        inspect_warrant(args.warrant)
-    elif args.command == "verify":
-        kv_args = parse_kv_args(args.args)
-        verify_warrant(args.warrant, args.tool, kv_args)
+    if args.command == "discover":
+        result = discover_capabilities(
+            log_file=args.input,
+            output_format=args.format,
+        )
+        if args.output:
+            Path(args.output).write_text(result)
+            print(f"Wrote capabilities to {args.output}")
+        else:
+            print(result)
+    
+    elif args.command == "decode":
+        print(decode_warrant(args.warrant))
+        
+    elif args.command == "init":
+        init_project()
+    
     else:
         parser.print_help()
         sys.exit(1)
+
+
+def init_project() -> None:
+    """
+    Initialize a new Tenuo project.
+    
+    Generates:
+    - .env with TENUO_ROOT_KEY
+    - tenuo_config.py with basics
+    """
+    import base64
+    from tenuo_core import SigningKey
+    
+    print("🚀 Initializing Tenuo project...")
+    
+    # 1. Generate Root Key
+    key = SigningKey.generate()
+    key_b64 = base64.b64encode(key.to_string()).decode('ascii')
+    
+    # 2. Create .env
+    env_content = f"TENUO_ROOT_KEY={key_b64}\nTENUO_ENV=dev\n"
+    if Path(".env").exists():
+        print("ℹ️  .env already exists, skipping.")
+    else:
+        Path(".env").write_text(env_content)
+        print("✅ Received root_key (ed25519) -> .env")
+        
+    # 3. Create tenuo_config.py
+    config_content = """# Tenuo Configuration
+# Run this once to setup your environment
+
+import os
+import sys
+from dotenv import load_dotenv
+from tenuo import configure, PublicKey
+
+# Load keys from .env
+load_dotenv()
+
+def setup():
+    root_key = os.getenv("TENUO_ROOT_KEY")
+    if not root_key:
+        print("❌ Missing TENUO_ROOT_KEY in .env")
+        sys.exit(1)
+        
+    # In a real app, you would load the issuer's public key
+    # For dev, we just checking configuration
+    print(f"✅ Tenuo configured locally.")
+    print(f"🔑 Root Key present: {root_key[:10]}...")
+
+if __name__ == "__main__":
+    setup()
+"""
+    if Path("tenuo_config.py").exists():
+        print("ℹ️  tenuo_config.py already exists, skipping.")
+    else:
+        Path("tenuo_config.py").write_text(config_content)
+        print("✅ Created tenuo_config.py with sensible defaults")
+        
+    print("\n🎉 You are ready to mint. Try 'python tenuo_config.py'")
 
 
 if __name__ == "__main__":

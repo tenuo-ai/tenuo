@@ -31,8 +31,8 @@
 - Clearance levels (optional, enforcement opt-in)
 
 ### Python SDK ✅
-- Tiered API (`Capability` objects, `root_task`, `scoped_task`, `configure`)
-- `@lockdown` decorator
+- Tiered API (`Capability` objects, `mint`, `grant`, `configure`)
+- `@guard` decorator
 - `protect_tools()` for LangChain
 - `@tenuo_node` for LangGraph
 - `Clearance` with `custom()`, `level`, `meets()` API
@@ -87,7 +87,7 @@ Developer experience improvements:
 - **Phase 1**: Warrant convenience methods (`explain()`, `why_denied()`, `delegate()`)
 - **Phase 2**: Key management and `configure()` with strict mode
 - **Phase 3-5**: Framework integrations (FastAPI, LangChain, LangGraph)
-- **Security**: BoundWarrant serialization protection, KeyRegistry thread safety
+- **Decorator**: `@guard` handles authorization checks transparently.Registry thread safety
 
 ### thi-spec.md (Conceptual)
 Stateful host interface features (not planned for implementation):

@@ -353,6 +353,9 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                     )],
                 ),
             ),
+            crate::error::Error::ConfigurationError(m) => {
+                ("ConfigurationError", PyTuple::new(py, [m.as_str()]))
+            }
         };
 
         // Unwrap the args Result (PyTuple::new can fail on conversion)
@@ -2282,6 +2285,19 @@ pub struct PyWarrant {
 
 #[pymethods]
 impl PyWarrant {
+    /// Create a Warrant from a base64 string.
+    ///
+    /// To issue a new warrant, use `Warrant.issue()`.
+    #[new]
+    fn new(token: String) -> PyResult<Self> {
+        let inner = crate::wire::decode_base64(&token).map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    fn __str__(&self) -> PyResult<String> {
+        crate::wire::encode_base64(&self.inner).map_err(to_py_err)
+    }
+
     /// Issue a new warrant.
     #[staticmethod]
     #[pyo3(signature = (keypair, capabilities=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None))]
@@ -2699,7 +2715,7 @@ impl PyWarrant {
     ///
     /// Returns:
     ///     64-byte signature as bytes
-    fn create_pop_signature(
+    fn sign(
         &self,
         keypair: &PySigningKey,
         tool: &str,
@@ -2714,7 +2730,7 @@ impl PyWarrant {
 
         let sig = self
             .inner
-            .create_pop_signature(&keypair.inner, tool, &rust_args)
+            .sign(&keypair.inner, tool, &rust_args)
             .map_err(to_py_err)?;
         Ok(sig.to_bytes().to_vec())
     }
@@ -2800,11 +2816,11 @@ pub struct PyCompiledMcpConfig {
 #[pymethods]
 impl PyCompiledMcpConfig {
     #[staticmethod]
-    fn compile(config: &PyMcpConfig) -> Self {
-        let compiled = CompiledMcpConfig::compile(config.inner.clone());
-        Self {
+    fn compile(config: &PyMcpConfig) -> PyResult<Self> {
+        let compiled = CompiledMcpConfig::compile(config.inner.clone()).map_err(to_py_err)?;
+        Ok(Self {
             inner: Arc::new(compiled),
-        }
+        })
     }
 
     /// Validate the configuration.

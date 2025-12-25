@@ -5,6 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tenuo + LangChain Integration</title>
+    <link rel="icon" type="image/svg+xml" href="images/favicon-t.svg">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
@@ -435,7 +436,7 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                     <div class="step-number tenuo">3</div>
                     <div>
                         <div class="step-title">Tenuo Authorization Layer</div>
-                        <div class="step-subtitle">@lockdown decorator checks warrant before execution</div>
+                        <div class="step-subtitle">@guard decorator checks warrant before execution</div>
                     </div>
                 </div>
                 <div class="step-content">
@@ -445,7 +446,7 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                         </div>
                         <p style="color: var(--text-secondary); margin-bottom: 16px;">
                             Before your tool function executes, Tenuo's <code
-                                style="color: var(--accent-cyan);">@lockdown</code> decorator:
+                                style="color: var(--accent-cyan);">@guard</code> decorator:
                         </p>
                         <ul style="color: var(--text-secondary); margin-left: 24px; line-height: 1.8;">
                             <li>Retrieves warrant from ContextVar (set by callback/middleware)</li>
@@ -456,10 +457,10 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                         </ul>
                     </div>
                     <div class="code-block">
-                        <pre><span class="comment"># Your tool function - protected by @lockdown</span>
-<span class="keyword">from</span> tenuo <span class="keyword">import</span> lockdown, set_warrant_context
+                        <pre><span class="comment"># Your tool function - protected by @guard</span>
+<span class="keyword">from</span> tenuo <span class="keyword">import</span> guard, warrant_scope
 
-<span class="decorator">@lockdown</span>(<span class="keyword">tool</span>=<span class="string">"read_file"</span>, 
+<span class="decorator">@guard</span>(<span class="keyword">tool</span>=<span class="string">"read_file"</span>, 
           <span class="function">extract_args</span>=<span class="keyword">lambda</span> file_path, **kwargs: {<span class="string">"file_path"</span>: file_path})
 <span class="keyword">def</span> <span class="function">read_file</span>(<span class="type">file_path</span>: <span class="type">str</span>) -> <span class="type">str</span>:
     <span class="comment"># Tenuo checks authorization BEFORE this code runs</span>
@@ -468,7 +469,7 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
         <span class="keyword">return</span> f.<span class="function">read</span>()</pre>
                     </div>
                     <p style="color: var(--text-secondary); margin-top: 12px; font-size: 0.9rem;">
-                        <strong>How it works:</strong> The <code style="color: var(--accent-cyan);">@lockdown</code>
+                        <strong>How it works:</strong> The <code style="color: var(--accent-cyan);">@guard</code>
                         decorator intercepts the function call,
                         retrieves the warrant from <code style="color: var(--accent-cyan);">ContextVar</code> (set by
                         your callback or middleware),
@@ -548,7 +549,7 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                 <div class="step-content">
                     <p style="color: var(--text-secondary); margin-bottom: 16px;">
                         If authorized, your tool function executes normally. The <code
-                            style="color: var(--accent-cyan);">@lockdown</code>
+                            style="color: var(--accent-cyan);">@guard</code>
                         decorator is transparent - your code doesn't need to know about Tenuo. It's just a regular
                         Python function.
                     </p>
@@ -592,7 +593,7 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                 <div class="feature-icon">🔒</div>
                 <div class="feature-title">Automatic Protection</div>
                 <div class="feature-desc">
-                    Decorate your tool functions with <code>@lockdown</code>. Tenuo handles authorization automatically
+                    Decorate your tool functions with <code>@guard</code>. Tenuo handles authorization automatically
                     - no manual checks needed.
                 </div>
             </div>
@@ -607,7 +608,7 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                 <div class="feature-icon">🔄</div>
                 <div class="feature-title">ContextVar Integration</div>
                 <div class="feature-desc">
-                    Set warrant once in context (via callback or middleware). All <code>@lockdown</code> functions
+                    Set warrant once in context (via callback or middleware). All <code>@guard</code> functions
                     automatically use it.
                 </div>
             </div>
@@ -661,7 +662,7 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                     <tr>
                         <td><strong>Authorization</strong></td>
                         <td class="cross">Manual checks in code<br>or external API calls</td>
-                        <td class="check">Automatic via @lockdown<br>100% offline</td>
+                        <td class="check">Automatic via @guard<br>100% offline</td>
                     </tr>
                     <tr>
                         <td><strong>Tool Functions</strong></td>
@@ -696,10 +697,10 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                     <h4 style="color: var(--accent-cyan); margin-bottom: 16px; font-size: 1.1rem;">Step 1: Decorate Your
                         Tool Functions</h4>
                     <div class="code-block" style="font-size: 0.85rem;">
-                        <pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> lockdown, Warrant, Pattern, SigningKey
+                        <pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> guard, Warrant, Pattern, SigningKey
 
-<span class="comment"># Decorate your tool functions with @lockdown</span>
-<span class="decorator">@lockdown</span>(<span class="keyword">tool</span>=<span class="string">"read_file"</span>,
+<span class="comment"># Decorate your tool functions with @guard</span>
+<span class="decorator">@guard</span>(<span class="keyword">tool</span>=<span class="string">"read_file"</span>,
           <span class="function">extract_args</span>=<span class="keyword">lambda</span> file_path, **kwargs: {<span class="string">"file_path"</span>: file_path})
 <span class="keyword">def</span> <span class="function">read_file</span>(<span class="type">file_path</span>: <span class="type">str</span>) -> <span class="type">str</span>:
     <span class="string">"""Read a file. Protected by Tenuo."""</span>
@@ -738,7 +739,7 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                     <h4 style="color: var(--accent-cyan); margin-bottom: 16px; font-size: 1.1rem;">Step 3: Create
                         Warrant and Set in Context</h4>
                     <div class="code-block" style="font-size: 0.85rem;">
-                        <pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> set_warrant_context
+                        <pre><span class="keyword">from</span> tenuo <span class="keyword">import</span> warrant_scope
 
 <span class="comment"># Create warrant (in production, from control plane)</span>
 <span class="type">keypair</span> = <span class="function">SigningKey.generate</span>()
@@ -749,8 +750,8 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
     .<span class="function">issue</span>(<span class="type">keypair</span>))
 
 <span class="comment"># Set warrant AND keypair in context before running agent</span>
-<span class="keyword">with</span> <span class="function">set_warrant_context</span>(<span class="type">warrant</span>), <span class="function">set_signing_key_context</span>(<span class="type">keypair</span>):
-    <span class="comment"># All @lockdown functions will use this warrant</span>
+<span class="keyword">with</span> <span class="function">warrant_scope</span>(<span class="type">warrant</span>), <span class="function">key_scope</span>(<span class="type">keypair</span>):
+    <span class="comment"># All @guard functions will use this warrant</span>
     <span class="type">response</span> = <span class="type">agent_executor</span>.<span class="function">invoke</span>({
         <span class="string">"input"</span>: <span class="string">"Read the file /tmp/data.txt"</span>
     })
@@ -766,7 +767,7 @@ X-Tenuo-Warrant: &lt;base64-encoded-warrant&gt;
                         needed.
                     </p>
                     <p style="color: var(--text-secondary); text-align: center; margin-top: 12px; font-size: 0.9rem;">
-                        The <code style="color: var(--accent-cyan);">@lockdown</code> decorator handles authorization
+                        The <code style="color: var(--accent-cyan);">@guard</code> decorator handles authorization
                         automatically.
                         If the agent tries to access unauthorized files, Tenuo blocks it instantly.
                     </p>

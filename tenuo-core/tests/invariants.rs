@@ -184,15 +184,15 @@ proptest! {
         let args = HashMap::new();
 
         // Same tool should succeed
-        let sig = warrant.create_pop_signature(&kp, &tool1, &args).unwrap();
+        let sig = warrant.sign(&kp, &tool1, &args).unwrap();
         let res = warrant.authorize(&tool1, &args, Some(&sig));
         prop_assert!(res.is_ok());
 
         // Different tool should fail
-        // Note: create_pop_signature might fail if tool doesn't match warrant tool,
+        // Note: sign might fail if tool doesn't match warrant tool,
         // but here we are testing authorize. Even if we sign for tool2, authorize should reject.
-        // Actually, create_pop_signature doesn't check warrant tool, it just signs.
-        let sig = warrant.create_pop_signature(&kp, &tool2, &args).unwrap();
+        // Actually, sign doesn't check warrant tool, it just signs.
+        let sig = warrant.sign(&kp, &tool2, &args).unwrap();
         prop_assert!(warrant.authorize(&tool2, &args, Some(&sig)).is_err());
     }
 
@@ -219,7 +219,7 @@ proptest! {
             "cluster".to_string(),
             ConstraintValue::String(format!("{}-{}", prefix, suffix)),
         );
-        let sig = warrant.create_pop_signature(&kp, "test", &matching_args).unwrap();
+        let sig = warrant.sign(&kp, "test", &matching_args).unwrap();
         prop_assert!(warrant.authorize("test", &matching_args, Some(&sig)).is_ok());
 
         // Non-matching value should fail
@@ -228,7 +228,7 @@ proptest! {
             "cluster".to_string(),
             ConstraintValue::String(format!("other-{}", suffix)),
         );
-        let sig = warrant.create_pop_signature(&kp, "test", &non_matching_args).unwrap();
+        let sig = warrant.sign(&kp, "test", &non_matching_args).unwrap();
         prop_assert!(warrant.authorize("test", &non_matching_args, Some(&sig)).is_err());
     }
 
@@ -255,7 +255,7 @@ proptest! {
             "amount".to_string(),
             ConstraintValue::Float(max_val - delta.min(max_val - 1.0)),
         );
-        let sig = warrant.create_pop_signature(&kp, "transfer", &within_args).unwrap();
+        let sig = warrant.sign(&kp, "transfer", &within_args).unwrap();
         prop_assert!(warrant.authorize("transfer", &within_args, Some(&sig)).is_ok());
 
         // Exceeding range should fail
@@ -264,7 +264,7 @@ proptest! {
             "amount".to_string(),
             ConstraintValue::Float(max_val + delta),
         );
-        let sig = warrant.create_pop_signature(&kp, "transfer", &exceeding_args).unwrap();
+        let sig = warrant.sign(&kp, "transfer", &exceeding_args).unwrap();
         prop_assert!(warrant.authorize("transfer", &exceeding_args, Some(&sig)).is_err());
     }
 }

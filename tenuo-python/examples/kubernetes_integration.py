@@ -24,13 +24,20 @@ Architecture:
          │ Load warrant at startup
          │ Set in context per-request
          ▼
-    Protected Tool Functions (@lockdown)
+    Protected Tool Functions (@guard)
 """
 
 from tenuo import (
-    SigningKey, Warrant, Pattern, Exact, Constraints,
-    lockdown, set_warrant_context, set_signing_key_context, AuthorizationError
+    Warrant,
+    SigningKey,
+    Pattern,
+    guard,
+    Exact,
+    warrant_scope,
+    key_scope,
 )
+from tenuo.constraints import Constraints
+from tenuo.exceptions import AuthorizationError
 from typing import Optional, Dict, Any
 import os
 
@@ -226,27 +233,25 @@ class ControlPlane:
 # Protected Tool Functions
 # ============================================================================
 
-@lockdown(tool="read_file", extract_args=lambda file_path, **kwargs: {"file_path": file_path})
-def read_file_tool(file_path: str) -> str:
-    """Read a file. Protected by Tenuo."""
-    try:
-        with open(file_path, 'r') as f:
-            return f.read()
-    except FileNotFoundError:
-        return f"Error: File not found: {file_path}"
-    except Exception as e:
-        return f"Error: {str(e)}"
+@guard(tool="read_file", extract_args=lambda file_path, **kwargs: {"file_path": file_path})
+def read_file(file_path: str):
+    """Read a file locally - protected by warrant."""
+    if not os.path.exists(file_path):
+        return f"Error: File {file_path} not found"
+    
+    with open(file_path, "r") as f:
+        return f.read()[:1000] # Limit size
+
+# Alias for example code
+read_file_tool = read_file
 
 
-@lockdown(tool="write_file", extract_args=lambda file_path, content, **kwargs: {"file_path": file_path, "content": content})
-def write_file_tool(file_path: str, content: str) -> str:
-    """Write to a file. Protected by Tenuo."""
-    try:
-        with open(file_path, 'w') as f:
-            f.write(content)
-        return f"Successfully wrote {len(content)} bytes to {file_path}"
-    except Exception as e:
-        return f"Error: {str(e)}"
+@guard(tool="write_file", extract_args=lambda file_path, content, **kwargs: {"file_path": file_path, "content": content})
+def write_file(file_path: str, content: str):
+    """Write content to file - protected by warrant."""
+    with open(file_path, "w") as f:
+        f.write(content)
+    return f"Successfully wrote to {file_path}"
 
 
 # ============================================================================
@@ -314,7 +319,8 @@ def create_fastapi_middleware_example():
     """
     middleware_code = '''
 from fastapi import FastAPI, Request, Header
-from tenuo import set_warrant_context, AuthorizationError
+from tenuo import warrant_scope
+from tenuo.exceptions import AuthorizationError
 from kubernetes_warrant_manager import KubernetesWarrantManager
 
 app = FastAPI()
@@ -333,10 +339,10 @@ async def tenuo_middleware(request: Request, call_next):
     
     # Set warrant in context for this request
     # In production, load agent keypair from secure storage
-    # with set_warrant_context(warrant), set_signing_key_context(agent_keypair):
+    # with warrant_scope(warrant), key_scope(agent_keypair):
     # For demo, we assume agent_keypair is available globally or loaded
-    # with set_warrant_context(warrant), set_signing_key_context(agent_keypair): # Simplified for middleware demo
-    with set_warrant_context(warrant): # WARNING: This will fail PoP check if keypair not set!
+    # with warrant_scope(warrant), key_scope(agent_keypair): # Simplified for middleware demo
+    with warrant_scope(warrant): # WARNING: This will fail PoP check if keypair not set!
         response = await call_next(request)
         return response
 
@@ -344,7 +350,7 @@ async def tenuo_middleware(request: Request, call_next):
 async def run_agent(prompt: str, request: Request):
     """Run LangChain agent with Tenuo protection."""
     # Warrant is already in context from middleware
-    # All @lockdown functions are automatically protected
+    # All @guard functions are automatically protected
     from langchain_agent import agent_executor
     
     response = agent_executor.invoke({"input": prompt})
@@ -571,7 +577,7 @@ def main():
     # ========================================================================
     print("5. Testing protection with loaded warrant...")
     try:
-        with set_warrant_context(agent_warrant), set_signing_key_context(control_keypair):
+        with warrant_scope(agent_warrant), key_scope(control_keypair):
             # Test authorized access
             # HARDCODED PATH: /tmp/test.txt for demo
             # In production: Use tempfile or env-specified test directory
@@ -602,7 +608,7 @@ def main():
     print("   - Control Plane issues warrant → K8s Secret")
     print("   - Agent pods mount secret → Load warrant at startup")
     print("   - Per-request warrants from headers → Set in context")
-    print("   - All @lockdown functions automatically protected\n")
+    print("   - All @guard functions automatically protected\n")
     
     print("=== Kubernetes Integration Complete ===\n")
     print("Key Points:")

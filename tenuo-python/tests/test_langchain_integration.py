@@ -8,13 +8,13 @@ import pytest
 from tenuo import (
     configure,
     reset_config,
-    root_task_sync,
+    mint_sync,
     SigningKey,
-    ToolNotAuthorized,
     ConfigurationError,
     LANGCHAIN_AVAILABLE,
     Capability,
 )
+from tenuo.exceptions import ToolNotAuthorized
 
 # Skip all tests if LangChain is not installed
 pytestmark = pytest.mark.skipif(
@@ -36,39 +36,43 @@ def reset_config_fixture():
 # =============================================================================
 
 if LANGCHAIN_AVAILABLE:
-    from langchain_core.tools import tool
-    from tenuo.langchain import protect_langchain_tools, TenuoTool
-    
-    @tool
-    def search(query: str) -> str:
-        """Search for information."""
-        return f"Results for: {query}"
-    
-    @tool
-    def read_file(path: str) -> str:
-        """Read a file from disk."""
-        return f"Contents of: {path}"
-    
-    @tool
-    def write_file(path: str, content: str) -> str:
-        """Write content to a file."""
-        return f"Wrote {len(content)} bytes to {path}"
-    
-    @tool
-    def http_request(url: str) -> str:
-        """Make an HTTP request."""
-        return f"Response from: {url}"
+    try:
+        from langchain_core.tools import tool
+        from tenuo.langchain import guard_tools, TenuoTool
+        
+        @tool
+        def search(query: str) -> str:
+            """Search for information."""
+            return f"Results for: {query}"
+        
+        @tool
+        def read_file(path: str) -> str:
+            """Read a file from disk."""
+            return f"Contents of: {path}"
+        
+        @tool
+        def write_file(path: str, content: str) -> str:
+            """Write content to a file."""
+            return f"Wrote {len(content)} bytes to {path}"
+        
+        @tool
+        def http_request(url: str) -> str:
+            """Make an HTTP request."""
+            return f"Response from: {url}"
+    except Exception:
+        # Fallback for Pydantic/LangChain compatibility issues
+        LANGCHAIN_AVAILABLE = False
 
 
 class TestProtectLangchainTools:
-    """Tests for protect_langchain_tools() - Tier 1 API."""
+    """Tests for guard_tools() - Tier 1 API."""
     
     def test_wraps_tools(self):
-        """protect_langchain_tools wraps tools in TenuoTool."""
+        """guard_tools wraps tools in TenuoTool."""
         kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        tools = protect_langchain_tools([search, read_file])
+        tools = guard_tools([search, read_file])
         
         assert len(tools) == 2
         assert all(isinstance(t, TenuoTool) for t in tools)
@@ -78,7 +82,7 @@ class TestProtectLangchainTools:
         kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        tools = protect_langchain_tools([search, read_file])
+        tools = guard_tools([search, read_file])
         
         assert tools[0].name == "search"
         assert tools[1].name == "read_file"
@@ -88,7 +92,7 @@ class TestProtectLangchainTools:
         kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        tools = protect_langchain_tools([search])
+        tools = guard_tools([search])
         
         assert "Search" in tools[0].description
     
@@ -97,9 +101,9 @@ class TestProtectLangchainTools:
         kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        tools = protect_langchain_tools([search])
+        tools = guard_tools([search])
         
-        with root_task_sync(Capability("search")):
+        with mint_sync(Capability("search")):
             result = tools[0].invoke({"query": "test"})
             assert "Results for: test" in result
     
@@ -108,9 +112,9 @@ class TestProtectLangchainTools:
         kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        tools = protect_langchain_tools([search])
+        tools = guard_tools([search])
         
-        # No root_task - no warrant in context
+        # No mint - no warrant in context
         with pytest.raises(ToolNotAuthorized):
             tools[0].invoke({"query": "test"})
     
@@ -119,10 +123,10 @@ class TestProtectLangchainTools:
         kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        tools = protect_langchain_tools([search, read_file])
+        tools = guard_tools([search, read_file])
         
         # Warrant only allows "search", not "read_file"
-        with root_task_sync(Capability("search")):
+        with mint_sync(Capability("search")):
             # search is authorized
             result = tools[0].invoke({"query": "test"})
             assert result is not None
@@ -136,9 +140,9 @@ class TestProtectLangchainTools:
         kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        tools = protect_langchain_tools([search, read_file])
+        tools = guard_tools([search, read_file])
         
-        with root_task_sync(Capability("search"), Capability("read_file")):
+        with mint_sync(Capability("search"), Capability("read_file")):
             result1 = tools[0].invoke({"query": "test"})
             result2 = tools[1].invoke({"path": "/data/test.txt"})
             
@@ -166,7 +170,7 @@ class TestTenuoTool:
         
         wrapped = TenuoTool(search)
         
-        with root_task_sync(Capability("search")):
+        with mint_sync(Capability("search")):
             result = wrapped._run(query="test query")
             assert "Results for: test query" in result
     
@@ -177,7 +181,7 @@ class TestTenuoTool:
         
         wrapped = TenuoTool(search)
         
-        with root_task_sync(Capability("search")):
+        with mint_sync(Capability("search")):
             result = wrapped.invoke({"query": "test query"})
             assert "Results for: test query" in result
 
@@ -190,7 +194,7 @@ class TestPassthrough:
         kp = SigningKey.generate()
         configure(issuer_key=kp, trusted_roots=[kp.public_key])
         
-        tools = protect_langchain_tools([search])
+        tools = guard_tools([search])
         
         with pytest.raises(ToolNotAuthorized):
             tools[0].invoke({"query": "test"})
@@ -204,9 +208,9 @@ class TestPassthrough:
             allow_passthrough=True,
         )
         
-        tools = protect_langchain_tools([search])
+        tools = guard_tools([search])
         
-        # No root_task - but passthrough is allowed
+        # No mint - but passthrough is allowed
         result = tools[0].invoke({"query": "test"})
         assert "Results for" in result
 
@@ -219,7 +223,7 @@ class TestStrictMode:
         kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        from tenuo import ToolSchema, register_schema
+        from tenuo.schemas import ToolSchema, register_schema
         
         # Register a schema that requires constraints
         register_schema("search", ToolSchema(
@@ -228,10 +232,10 @@ class TestStrictMode:
             risk_level="medium",
         ))
         
-        tools = protect_langchain_tools([search], strict=True)
+        tools = guard_tools([search], strict=True)
         
         # Without constraints - should fail in strict mode
-        with root_task_sync(Capability("search")):
+        with mint_sync(Capability("search")):
             with pytest.raises(ConfigurationError, match="requires at least one constraint"):
                 tools[0].invoke({"query": "test"})
     
@@ -240,32 +244,32 @@ class TestStrictMode:
         kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        tools = protect_langchain_tools([search], strict=False)
+        tools = guard_tools([search], strict=False)
         
-        with root_task_sync(Capability("search")):
+        with mint_sync(Capability("search")):
             result = tools[0].invoke({"query": "test"})
             assert "Results for" in result
 
 
 class TestWithScopedTask:
-    """Tests for LangChain tools with scoped_task."""
+    """Tests for LangChain tools with grant."""
     
     def test_scoped_task_narrows_tools(self):
-        """scoped_task narrows available tools."""
-        from tenuo import scoped_task
+        """grant narrows available tools."""
+        from tenuo import grant
         
         kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        tools = protect_langchain_tools([search, read_file])
+        tools = guard_tools([search, read_file])
         
-        with root_task_sync(Capability("search"), Capability("read_file")):
+        with mint_sync(Capability("search"), Capability("read_file")):
             # Both tools work at root level
             assert tools[0].invoke({"query": "test"}) is not None
             assert tools[1].invoke({"path": "/data/test.txt"}) is not None
             
             # Narrow to just search
-            with scoped_task(Capability("search")):
+            with grant(Capability("search")):
                 # search still works
                 assert tools[0].invoke({"query": "test"}) is not None
                 

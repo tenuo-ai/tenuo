@@ -72,12 +72,12 @@ class TenuoProtectedPipeline(BasePipelineElement):
             normalized_name = tool_name.lower()
             
             # Build warrant using fluent API
-            builder = Warrant.builder()
+            builder = Warrant.mint_builder()
             builder.capability(normalized_name, tool_constraints)
             builder.holder(self.holder_key.public_key)
             builder.ttl(3600)  # 1 hour
             
-            warrant = builder.issue(self.issuer_key)
+            warrant = builder.mint(self.issuer_key)
             warrants[normalized_name] = warrant
         
         print(f"[DEBUG] Created warrants for: {list(warrants.keys())}")

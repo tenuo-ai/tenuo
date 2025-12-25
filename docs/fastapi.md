@@ -9,7 +9,100 @@ description: Zero-boilerplate API protection for FastAPI
 
 ---
 
+## When to Use This
+
+You have internal APIs that AI agents call. Different agents do different tasks at different times.
+
+```
+                                   ┌─────────────────┐
+                                   │    Agent A      │
+                    warrant A      │  "Research Q3"  │────┐
+                  ┌───────────────▶│                 │    │
+┌─────────────────┐                └─────────────────┘    │
+│   Orchestrator  │                                       │  HTTP + PoP
+│                 │                ┌─────────────────┐    │
+│  Issues scoped  │                │    Agent B      │    │   ┌─────────────────┐
+│  warrants per   │  warrant B     │  "Email CFO"    │────┼──▶│   Your API      │
+│  task           │───────────────▶│                 │    │   │   (FastAPI)     │
+└─────────────────┘                └─────────────────┘    │   │                 │
+                                                          │   │  TenuoGuard     │
+                                   ┌─────────────────┐    │   │  verifies each  │
+                    warrant C      │    Agent C      │────┘   │  request        │
+                  ┌───────────────▶│  (idle - no     │        └─────────────────┘
+                  │                │   warrant)      │
+                  │                └─────────────────┘
+```
+
+**Concrete scenario:**
+
+| Time | Agent | Task | Warrant | API Call | Result |
+|------|-------|------|---------|----------|--------|
+| 9:00 | A | "Research Q3 for Acme" | `search`, query=`"acme *"`, TTL=10min | `/search?query=acme+earnings` | ✅ |
+| 9:00 | B | "Draft email to CFO" | `send_email`, to=`*@acme.com`, TTL=5min | `/email` to `cfo@acme.com` | ✅ |
+| 9:02 | A | Same task | Same warrant | `/search?query=competitor+salaries` | ❌ Pattern mismatch |
+| 9:02 | B | Same task | Same warrant | `/email` to `leak@gmail.com` | ❌ Pattern mismatch |
+| 9:06 | B | (idle) | Warrant expired | `/email` to `cfo@acme.com` | ❌ Expired |
+| 9:08 | A | Same task | Still valid | `/search?query=acme+q3` | ✅ |
+| 9:15 | A | (idle) | Warrant expired | `/search?query=anything` | ❌ Expired |
+
+**What Tenuo solves:**
+
+| Problem | How Tenuo Handles It |
+|---------|---------------------|
+| **Temporal mismatch** — Agent was authorized 10 min ago, is it still? | Warrants have TTL. Expired = denied. |
+| **Context mismatch** — Agent was authorized for Task A, now doing Task B | Each task gets its own warrant with specific constraints. |
+| **Provenance** — Who authorized this agent? Can we trace the chain? | Warrant is signed. Chain of custody is cryptographically verifiable. |
+| **Prompt injection** — Agent is tricked into doing something malicious | Doesn't matter. Warrant only allows what the task intended. |
+
+Your API verifies the warrant. The proof is in the token.
+
+---
+
 ## Quick Start
+
+### Option 1: `SecureAPIRouter` (Recommended)
+
+Drop-in replacement for `APIRouter` with automatic protection:
+
+```python
+from fastapi import FastAPI
+from tenuo.fastapi import SecureAPIRouter, configure_tenuo
+
+app = FastAPI()
+configure_tenuo(app, trusted_issuers=[issuer_pubkey])
+
+# Drop-in replacement for APIRouter
+router = SecureAPIRouter(tool_prefix="api")
+
+@router.get("/users/{user_id}")  # Auto-protected as "api_users_read"
+async def get_user(user_id: str):
+    return {"user_id": user_id}
+
+@router.post("/users", tool="create_user")  # Explicit tool name
+async def create_user(name: str):
+    return {"name": name}
+
+@router.delete("/users/{user_id}")  # Auto: "api_users_delete"
+async def delete_user(user_id: str):
+    return {"deleted": user_id}
+
+app.include_router(router)
+```
+
+**Tool Name Inference:**
+
+The tool name is automatically inferred from the path and HTTP method:
+
+| Path | Method | Inferred Tool |
+|------|--------|---------------|
+| `/users/{id}` | GET | `api_users_read` |
+| `/users` | POST | `api_users_create` |
+| `/users/{id}` | PUT | `api_users_update` |
+| `/users/{id}` | DELETE | `api_users_delete` |
+
+### Option 2: `TenuoGuard` Dependency (Fine Control)
+
+For explicit tool naming per route:
 
 ```python
 from fastapi import FastAPI, Depends
@@ -98,6 +191,38 @@ async def get_data(ctx: SecurityContext = Depends(TenuoGuard("get_data"))):
     print(f"Warrant ID: {ctx.warrant.id}")
     print(f"Tools: {ctx.warrant.tools}")
     print(f"Args: {ctx.args}")
+```
+
+### `SecureAPIRouter`
+
+Drop-in replacement for FastAPI's `APIRouter` with automatic Tenuo protection:
+
+```python
+from tenuo.fastapi import SecureAPIRouter
+
+router = SecureAPIRouter(
+    tool_prefix="api",    # Optional prefix for tool names
+    require_pop=True,     # Require PoP signatures (default: True)
+)
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `tool_prefix` | `str` | `None` | Prefix for auto-generated tool names |
+| `require_pop` | `bool` | `True` | Require Proof-of-Possession signatures |
+
+**Methods:**
+
+All standard `APIRouter` methods are supported, with an additional `tool` parameter:
+
+```python
+@router.get("/path", tool="custom_tool_name")
+@router.post("/path")  # Auto-inferred tool name
+@router.put("/path")
+@router.delete("/path")
+@router.patch("/path")
 ```
 
 ---
@@ -252,13 +377,13 @@ async def read_file(
 # Issue a warrant for testing
 @app.post("/admin/issue-warrant")
 async def issue_warrant():
-    warrant = (Warrant.builder()
+    warrant = (Warrant.mint_builder()
         .tool("search")
         .tool("read_file")
         .capability("read_file", {"path": Pattern("/data/*")})
         .holder(issuer_key.public_key)
         .ttl(3600)
-        .issue(issuer_key))
+        .mint(issuer_key))
     
     return {"warrant": warrant.to_base64()}
 ```

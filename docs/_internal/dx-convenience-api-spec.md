@@ -33,7 +33,7 @@ child = warrant.delegate(to=worker_pubkey, allow=["search"], ttl=300, key=key)
 
 ```python
 # BoundWarrant for loops - explicitly non-serializable
-bound = warrant.bind_key(key)
+bound = warrant.bind(key)
 for item in items:
     headers = bound.auth_headers("process", {"item": item})
     # ...
@@ -43,12 +43,12 @@ for item in items:
 ### For LangGraph (with Guardrails)
 
 ```python
-@lockdown(tool="search")  # Auto-registers tool
+@guard(tool="search")  # Auto-registers tool
 async def search(query): ...
 
 configure(issuer_key=kp, strict=True, registered_tools="auto")
 
-async with root_task(Capability("search")):
+async with mint(Capability("search")):
     await graph.compile().ainvoke(state)
 ```
 
@@ -88,7 +88,7 @@ class BoundWarrant:  # NOT a Warrant subclass (type separation)
         """Return the inner warrant without the key."""
         return self._warrant
     
-    def bind_key(self, key: SigningKey) -> "BoundWarrant":
+    def bind(self, key: SigningKey) -> "BoundWarrant":
         """Return a new BoundWarrant with a different key."""
         return BoundWarrant(self._warrant, key)
     
@@ -111,7 +111,7 @@ class BoundWarrant:  # NOT a Warrant subclass (type separation)
 
 ```python
 # [NO] DANGEROUS if BoundWarrant(Warrant):
-state.warrant = warrant.bind_key(key)  # Type checks pass!
+state.warrant = warrant.bind(key)  # Type checks pass!
 # → LangGraph checkpoints state → Private key serialized to DB!
 ```
 
@@ -119,7 +119,7 @@ state.warrant = warrant.bind_key(key)  # Type checks pass!
 
 ```python
 # [OK] SAFE with BoundWarrant as separate type:
-state.warrant = warrant.bind_key(key)  # Type error!
+state.warrant = warrant.bind(key)  # Type error!
 # → mypy/pyright catch this before it reaches production
 ```
 
@@ -141,8 +141,7 @@ class ReadableWarrant(Protocol):
     def tools(self) -> list[str]: ...
     @property
     def ttl_remaining(self) -> timedelta: ...
-    def preview_can(self, tool: str) -> PreviewResult: ...
-    def preview_would_allow(self, tool: str, args: dict) -> PreviewResult: ...
+    def allows(self, tool: str, args: dict = None) -> bool: ...
     def explain(self) -> str: ...
 
 # For functions that need signing capability
@@ -162,7 +161,7 @@ def inspect_warrant(warrant: ReadableWarrant) -> None:
     """Works with both Warrant and BoundWarrant."""
     print(warrant.explain())
     for tool in warrant.tools:
-        print(f"  {tool}: {warrant.preview_can(tool)}")
+        print(f"  {tool}: {warrant.allows(tool)}")
 ```
 
 #### BoundWarrant Usage Examples
@@ -177,7 +176,7 @@ warrant = Warrant.from_base64(received_warrant_b64)
 key = SigningKey.from_env("WORKER_KEY")
 
 # Bind once, use multiple times
-bound = warrant.bind_key(key)
+bound = warrant.bind(key)
 
 # Make API calls - key is implicit
 headers = bound.auth_headers("search", {"query": "test"})
@@ -191,7 +190,7 @@ response = requests.get("https://api/read_file", headers=headers)
 
 ```python
 # Orchestrator binds its warrant
-orchestrator_bound = orchestrator_warrant.bind_key(orchestrator_key)
+orchestrator_bound = orchestrator_warrant.bind(orchestrator_key)
 
 # Delegate to workers - signing uses bound key
 worker1_warrant = orchestrator_bound.delegate(
@@ -208,7 +207,7 @@ worker2_warrant = orchestrator_bound.delegate(
 
 # Workers receive plain Warrants (not BoundWarrant)
 # They bind with their own keys
-worker1_bound = worker1_warrant.bind_key(worker1_key)
+worker1_bound = worker1_warrant.bind(worker1_key)
 ```
 
 **Example 3: Short-Lived Binding (Recommended)**
@@ -222,7 +221,7 @@ class MyService:
     
     def call_api(self, tool: str, args: dict):
         # Bind just-in-time for the call
-        bound = self.warrant.bind_key(self._key)
+        bound = self.warrant.bind(self._key)
         headers = bound.auth_headers(tool, args)
         return requests.post(f"https://api/{tool}", headers=headers, json=args)
 ```
@@ -246,7 +245,7 @@ class AgentState(TypedDict):
 async def worker_node(state: AgentState) -> AgentState:
     # Get key from registry at runtime
     key = registry.get("worker")
-    bound = state["warrant"].bind_key(key)
+    bound = state["warrant"].bind(key)
     
     # Use bound warrant for API calls
     headers = bound.auth_headers("search", {"query": state["query"]})
@@ -265,7 +264,7 @@ from tenuo.testing import allow_all
 def test_api_headers():
     """Test that correct headers are generated."""
     warrant, key = Warrant.quick_issue(tools=["search"], ttl=3600)
-    bound = warrant.bind_key(key)
+    bound = warrant.bind(key)
     
     headers = bound.auth_headers("search", {"query": "test"})
     
@@ -275,7 +274,7 @@ def test_api_headers():
 def test_bound_warrant_cannot_serialize():
     """Ensure BoundWarrant raises on serialization attempt."""
     warrant, key = Warrant.quick_issue(tools=["search"], ttl=3600)
-    bound = warrant.bind_key(key)
+    bound = warrant.bind(key)
     
     with pytest.raises(TypeError, match="cannot be serialized"):
         import pickle
@@ -284,7 +283,7 @@ def test_bound_warrant_cannot_serialize():
 def test_bound_warrant_repr_hides_key():
     """Ensure __repr__ doesn't leak the key."""
     warrant, key = Warrant.quick_issue(tools=["search"], ttl=3600)
-    bound = warrant.bind_key(key)
+    bound = warrant.bind(key)
     
     repr_str = repr(bound)
     assert "KEY_BOUND=True" in repr_str
@@ -319,7 +318,7 @@ from tenuo.testing import deterministic_headers, allow_all, quick_issue
 
 | Module | Contains | Purpose |
 |--------|----------|---------|
-| `tenuo` | `Warrant`, `SigningKey`, `configure`, `lockdown` | Production APIs |
+| `tenuo` | `Warrant`, `SigningKey`, `configure`, `guard` | Production APIs |
 | `tenuo.testing` | `deterministic_headers`, `allow_all`, `quick_issue` | Test-only utilities |
 
 #### `deterministic_headers()` (Test Only)
@@ -344,7 +343,7 @@ configure(issuer_key=kp)
 
 The configured key is **not publicly accessible**:
 - No `get_configured_key()` function exposed
-- Only internal code (`@lockdown`, `root_task`, `delegate()`) can access
+- Only internal code (`@guard`, `mint`, `delegate()`) can access
 - Key stored in module-level `_config` with no getter
 
 #### [WARNING] `configure()` Is Not a Security Boundary
@@ -352,7 +351,7 @@ The configured key is **not publicly accessible**:
 > **Important:** `configure()` is a *convenience* feature for controlled environments (single-service apps, notebooks, tests). It is NOT a security boundary within a Python process.
 
 **Risks of ambient authority:**
-- Plugins, dynamic imports, or injected code can call `@lockdown`-decorated functions
+- Plugins, dynamic imports, or injected code can call `@guard`-decorated functions
 - In multi-tenant apps, wrong tenant's key could be used if not careful
 - Notebooks/REPLs may leave keys configured across cells
 
@@ -363,21 +362,22 @@ The configured key is **not publicly accessible**:
 key = SigningKey.from_env("MY_SERVICE_KEY")  # Loaded once at startup
 warrant = root_warrant.delegate(to=target, allow=["tool"], key=key)
 
-# [OK] OK: configure() for single-tenant apps with @lockdown/root_task()
+# [OK] OK: configure() for single-tenant apps with @guard/mint()
 configure(issuer_key=kp, strict=True)
-with root_task(Capability("tool")):
+with mint(Capability("tool")):
+    @guard(tool="search")  # Auto-registers tool
     await my_tool()  # Uses configured key internally
 
-# [NO] AVOID: configure() for ad-hoc signing outside @lockdown/root_task()
+# [NO] AVOID: configure() for ad-hoc signing outside @guard/mint()
 configure(issuer_key=kp)
 warrant.delegate(to=x, allow=["tool"])  # Implicit key - harder to audit
 ```
 
-**Summary:** Use `configure()` when you want `@lockdown` and `root_task()` to work without explicit key passing. For explicit delegation (`delegate()`, `auth_headers()`), prefer passing `key=` explicitly.
+**Summary:** Use `configure()` when you want `@guard` and `mint()` to work without explicit key passing. For explicit delegation (`delegate()`, `auth_headers()`), prefer passing `key=` explicitly.
 
 ### Strict Mode (Fail-Closed)
 
-Prevent forgotten `@lockdown` decorators:
+Prevent forgotten `@guard` decorators:
 
 ```python
 configure(
@@ -388,8 +388,159 @@ configure(
 
 # Later, calling unregistered tool raises:
 # TenuoConfigError: Tool 'unknown_tool' not registered.
-# Add to registered_tools or decorate with @lockdown.
+# Add to registered_tools or decorate with @guard.
 ```
+
+For LangChain/LangGraph apps that use `@guard` and `mint()`, configure the issuer key once:
+
+```python
+configure(issuer_key=kp)
+
+# Now @guard and mint() can auto-create warrants
+@guard(tool="search")
+def my_tool(query: str):
+    ...
+```
+
+| Configuration Method | Best For |
+|----------------------|----------|
+| `configure(issuer_key=...)` | Single-process apps with `@guard`/`mint()` |
+| Explicit `key=` parameter | Multi-tenant, multi-service, explicit delegation |
+
+### Testing with `@guard` and `mint`
+
+```python
+import pytest
+from tenuo import configure, guard, mint, Capability, SigningKey
+
+def test_guarded_function_with_mint():
+    issuer_key = SigningKey.generate()
+    configure(issuer_key=issuer_key, strict=True)
+
+    @guard(tool="search")
+    def search_data(query: str):
+        return f"Searching for {query}"
+
+    with mint(Capability("search")):
+        result = search_data("test")
+        assert result == "Searching for test"
+
+    # Test without mint (should fail in strict mode)
+    with pytest.raises(TenuoConfigError, match="not called within a mint"):
+        search_data("test")
+```
+
+```python
+import pytest
+from tenuo import configure, guard, mint, Capability, Pattern
+
+def test_guarded_function_with_pattern_matching():
+    issuer_key = SigningKey.generate()
+    configure(issuer_key=issuer_key, strict=True)
+
+    @guard(tool="search", constraints=[Pattern("query", "startswith", "safe_")])
+    def search_data(query: str):
+        return f"Searching for {query}"
+
+    with mint(Capability("search", constraints=[Pattern("query", "startswith", "safe_")])):
+        result = search_data("safe_query")
+        assert result == "Searching for safe_query"
+
+    with mint(Capability("search")): # No constraint on mint
+        with pytest.raises(TenuoAuthError, match="Constraint 'query' 'startswith' 'safe_' not met"):
+            search_data("unsafe_query")
+
+    @guard(tool="delete_file", constraints=[Pattern("path", "eq", "/tmp/safe.txt")])
+    def delete_file(path: str):
+        return f"Deleting {path}"
+
+    with mint(Capability("delete_file", constraints=[Pattern("path", "eq", "/tmp/safe.txt")])):
+        result = delete_file("/tmp/safe.txt")
+        assert result == "Deleting /tmp/safe.txt"
+
+    with mint(Capability("delete_file")): # No constraint on mint
+        with pytest.raises(TenuoAuthError, match="Constraint 'path' 'eq' '/tmp/safe.txt' not met"):
+            delete_file("/tmp/unsafe.txt")
+```
+
+#### LangGraph Integration
+
+```
+│  LAYER 1: AUTHORIZATION (@tenuo_node)                                │
+│                                                                      │
+│  LAYER 2: ENFORCEMENT (@guard)                                 │
+```
+
+| Scenario | `@tenuo_node` only | `@guard` only | Both |
+|----------|--------------------|---------------|------|
+| Simple tool call | [NO] No enforcement | [OK] Simple enforcement | [OK] Full protection |
+| Delegation | [OK] Scoping | [NO] No scoping | [OK] Full protection |
+| Agent checkpointing | [OK] Safe state | [NO] Unsafe state | [OK] Safe state |
+
+**Simple rule**: Use `@guard` on ALL tools. Use `@tenuo_node` on nodes that need scoping.
+
+```python
+from tenuo import configure, guard, mint, Capability, SigningKey
+
+# Configure issuer key once at startup
+issuer_key = SigningKey.generate()
+configure(issuer_key=issuer_key, strict=True)
+
+@guard(tool="search")
+def search_tool(query: str):
+    print(f"Executing search for: {query}")
+    return {"results": [f"Result for {query}"]}
+
+@guard(tool="delete_file")
+def delete_file_tool(path: str):
+    print(f"Executing delete for: {path}")
+    return {"status": "deleted", "path": path}
+```
+
+#### Strict Mode: `@guard` Context Validation
+
+In `strict=True` mode, `@guard` can optionally verify it's called within a `mint()` context:
+
+```python
+configure(
+    issuer_key=kp,
+    strict=True,
+    registered_tools="auto",  # Use tools registered by @guard
+    require_context=True      # @guard must be in mint()
+)
+
+@guard(tool="search")
+def my_tool():
+    pass
+
+my_tool() # Raises TenuoConfigError: 'my_tool' not called within a mint.
+```
+
+#### Auto-Registration via `@guard`
+
+```python
+configure(issuer_key=kp, registered_tools="auto")
+
+@guard(tool="search")      # Registers "search" at import time
+def search_tool(query: str):
+    ...
+
+@guard(tool="read_file")   # Registers "read_file" at import time
+def read_file_tool(path: str):
+    ...
+```
+
+```python
+def guard(tool: str):
+    """
+    Decorator to enforce warrant authorization for a function.
+    """
+    ...
+```
+
+| Risk | Severity | Mitigation |
+|---|---|---|
+| **Forgotten @guard** - Unprotected tool callable | High | `strict=True` mode with `registered_tools` allowlist |
 
 ### Thread-Safe KeyRegistry
 
@@ -464,23 +615,23 @@ All authorization logic **must** call through to Rust via PyO3:
 
 ```python
 # [OK] CORRECT: Calls Rust
-def preview_would_allow(self, tool: str, args: dict) -> PreviewResult:
+def allows(self, tool: str, args: dict) -> bool:
     allowed = self._inner.check_constraints(tool, args)  # Rust call
-    return PreviewResult(allowed=allowed)
+    return allowed
 
 # [NO] WRONG: Python reimplementation (logic divergence risk)
-def preview_would_allow(self, tool: str, args: dict) -> PreviewResult:
+def allows(self, tool: str, args: dict) -> bool:
     for constraint in self.constraints[tool]:
         if not constraint.matches(args):  # Python logic - BAD!
-            return PreviewResult(allowed=False)
-    return PreviewResult(allowed=True)
+            return False
+    return True
 ```
 
 ### ContextVar Limitations
 
 > [WARNING] **Important:** This limitation should also be documented in FastAPI/LangChain integration docs.
 
-`set_warrant_context()` uses Python's `contextvars`. Context propagation works in most cases but has known edge cases:
+`warrant_scope()` uses Python's `contextvars`. Context propagation works in most cases but has known edge cases:
 
 | [OK] Works | [NO] May Not Work |
 |----------|-----------------|
@@ -564,7 +715,7 @@ def process_data():
 @celery.task
 def process_data(warrant_bytes: bytes):
     warrant = Warrant.from_bytes(warrant_bytes)
-    with root_task(warrant):
+    with mint(warrant):
         # Now context is set in worker
         do_work()
 
@@ -617,7 +768,7 @@ await external_worker.run(warrant=child_warrant)  # Verifiable, unforgeable
 ALLOWED = {"search"}  # Attacker: ALLOWED.add("delete_all")
 
 # Tenuo: Warrant is signed, can't be modified without detection
-warrant.preview_can("delete_all")  # False, cryptographically enforced
+warrant.allows("delete_all")  # False, cryptographically enforced
 ```
 
 **3. LLM can't escape the boundary:**
@@ -785,7 +936,7 @@ If you're doing many operations with the same key:
 
 ```python
 # Bind once
-bound = my_warrant.bind_key(my_key)
+bound = my_warrant.bind(my_key)
 
 # Delegate without repeating key
 worker1 = bound.delegate(to=w1_key, allow=["search"], ttl=300)
@@ -797,7 +948,7 @@ headers = bound.auth_headers("search", {"query": "test"})
 
 ### `configure()` for Context-Based Usage
 
-For LangChain/LangGraph apps that use `@lockdown` and `root_task()`, configure the issuer key once:
+For LangChain/LangGraph apps that use `@guard` and `mint()`, configure the issuer key once:
 
 ```python
 from tenuo import configure, SigningKey
@@ -806,11 +957,11 @@ from tenuo import configure, SigningKey
 kp = SigningKey.from_env("TENUO_KEY")
 configure(issuer_key=kp)
 
-# Now @lockdown and root_task() can auto-create warrants
-@lockdown(tool="search")
+# Now @guard and mint() can auto-create warrants
+@guard(tool="search")
 async def search(query): ...
 
-async with root_task(Capability("search")):
+async with mint(Capability("search")):
     await search("test")  # Uses configured key internally
 ```
 
@@ -818,9 +969,9 @@ async with root_task(Capability("search")):
 
 | Approach | Use When |
 |----------|----------|
-| `configure(issuer_key=...)` | Single-process apps with `@lockdown`/`root_task()` |
+| `configure(issuer_key=...)` | Single-process apps with `@guard`/`mint()` |
 | Explicit `key=...` in API calls | Multi-service delegation, explicit control |
-| `warrant.bind_key(key)` | Repeated operations with same key |
+| `warrant.bind(key)` | Repeated operations with same key |
 
 **Note:** `configure()` sets a process-wide default. It doesn't prevent you from using explicit keys where needed.
 
@@ -881,14 +1032,14 @@ We considered two approaches:
 ```python
 client = Client(key, warrant)
 client.auth_headers("tool", args)
-client.preview_can("tool")
+client.allows("tool")
 ```
 
 ### Option B: Enhance `Warrant` Directly (Chosen)
 
 ```python
 warrant.auth_headers(key, "tool", args)
-warrant.preview_can("tool")
+warrant.allows("tool")
 ```
 
 ### Tradeoff Analysis
@@ -926,7 +1077,7 @@ A separate `Client` class would make sense if:
 For the rare case where passing `key` repeatedly is tedious:
 
 ```python
-bound = warrant.bind_key(key)
+bound = warrant.bind(key)
 bound.auth_headers("tool", args)  # No key needed
 ```
 
@@ -976,8 +1127,7 @@ warrant.capabilities
 
 | Method | Returns | Raises | Description |
 |--------|---------|--------|-------------|
-| `warrant.preview_can(tool)` | `PreviewResult` | - | Is tool in warrant? (UX only) |
-| `warrant.preview_would_allow(tool, args)` | `PreviewResult` | - | Would args satisfy constraints? (UX only) |
+| `warrant.allows(tool, args=None)` | `bool` | - | Logic Check (checks tool or constraints). |
 
 #### `PreviewResult` Type
 
@@ -999,12 +1149,9 @@ class PreviewResult:
         return f"<PreviewResult {status} (UX ONLY - not authorization)>"
 
 # Usage
-result = warrant.preview_can("search")
-if result:  # Works as bool
+result = warrant.allows("search")
+if result:  # Returns bool
     show_search_button()
-
-# But the repr screams "NOT AUTHORIZATION"
-print(result)  # <PreviewResult OK (UX ONLY - not authorization)>
 ```
 
 > **Why not just `bool`?** A plain `bool` return invites cargo-culting into authorization logic. The explicit type + repr makes misuse more obvious during debugging.
@@ -1015,7 +1162,7 @@ Authorization is enforced **at the gateway**, not by the client. Don't do this:
 
 ```python
 # [NO] WRONG: Client-side authorization check
-if warrant.preview_can("read_file"):
+if warrant.allows("read_file"):
     response = requests.post(url, headers=warrant.auth_headers(...))
 ```
 
@@ -1029,19 +1176,19 @@ if response.status_code == 403:
     print(f"Denied: {error['detail']}")
 ```
 
-#### When To Use `preview_can()` and `preview_would_allow()`
+#### When To Use `allows()`
 
 **UX optimization** - show/hide UI elements based on capabilities:
 
 ```python
 # Gray out buttons for unavailable actions
 buttons = [
-    Button("Read File", disabled=not warrant.preview_can("read_file")),
-    Button("Delete", disabled=not warrant.preview_can("delete_file")),
+    Button("Read File", disabled=not warrant.allows("read_file")),
+    Button("Delete", disabled=not warrant.allows("delete_file")),
 ]
 
 # Pre-validate form before submission (better UX)
-if not warrant.preview_would_allow("search", {"query": user_input}):
+if not warrant.allows("search", args={"query": user_input}):
     show_error("Query too broad for your permissions")
 ```
 
@@ -1049,7 +1196,7 @@ if not warrant.preview_would_allow("search", {"query": user_input}):
 
 ```python
 # Route to different implementations based on capabilities
-if warrant.preview_can("fast_search"):
+if warrant.allows("fast_search"):
     result = fast_search(query)
 else:
     result = slow_search(query)
@@ -1206,20 +1353,20 @@ For cases where passing `key` every time is tedious:
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `warrant.bind_key(key)` | `BoundWarrant` | Returns wrapper with key attached |
+| `warrant.bind(key)` | `BoundWarrant` | Returns wrapper with key attached |
 
 **On `BoundWarrant`:**
 
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `bound.unbind()` | `Warrant` | Returns the inner warrant without key |
-| `bound.bind_key(new_key)` | `BoundWarrant` | Returns new wrapper with different key |
+| `bound.bind(new_key)` | `BoundWarrant` | Returns new wrapper with different key |
 | `bound.warrant` | `Warrant` | Get the inner warrant (read-only) |
 
 **Key binding behavior:**
-- `bind_key(key)` returns a new `BoundWarrant` wrapper (immutable pattern)
+- `bind(key)` returns a new `BoundWarrant` wrapper (immutable pattern)
 - `BoundWarrant` forwards all read-only properties to the inner `Warrant` (implements `ReadableWarrant`)
-- Calling `bind_key(new_key)` on a `BoundWarrant` returns a new wrapper with the new key
+- Calling `bind(new_key)` on a `BoundWarrant` returns a new wrapper with the new key
 - `unbind()` returns the original `Warrant` without any key
 - You can always override the bound key by passing `key` explicitly to methods
 
@@ -1228,13 +1375,13 @@ For cases where passing `key` every time is tedious:
 headers = warrant.auth_headers(key, "tool", args)
 
 # With binding (convenient for loops)
-bound = warrant.bind_key(key)
+bound = warrant.bind(key)
 for item in items:
     headers = bound.auth_headers("process", {"item": item})  # No key needed
     requests.post(url, headers=headers)
 
 # Rebind to a different key
-bound = bound.bind_key(other_key)
+bound = bound.bind(other_key)
 
 # Unbind to require explicit key again
 unbound = bound.unbind()
@@ -1247,11 +1394,11 @@ bound.attenuate()         # Works
 
 #### Implementation Note
 
-`bind_key()` returns a `BoundWarrant` wrapper that behaves identically to the original warrant for read operations, with one enhancement: methods that accept an optional `key` parameter will use the bound key as the default.
+`bind()` returns a `BoundWarrant` wrapper that behaves identically to the original warrant for read operations, with one enhancement: methods that accept an optional `key` parameter will use the bound key as the default.
 
 ```python
 class Warrant:
-    def bind_key(self, key: SigningKey) -> "BoundWarrant":
+    def bind(self, key: SigningKey) -> "BoundWarrant":
         """Return a BoundWarrant wrapper with this warrant and key."""
         return BoundWarrant(self, key)
 
@@ -1292,7 +1439,7 @@ child = parent.delegate(
 )
 
 # With BoundWarrant: key implicit
-bound = parent.bind_key(my_signing_key)
+bound = parent.bind(my_signing_key)
 child = bound.delegate(to=worker_pubkey, allow=["search"], ttl=300)
 
 # allow can be string or list
@@ -1377,7 +1524,7 @@ Existing code continues to work unchanged:
 
 ```python
 # This still works
-pop = warrant.create_pop_signature(key, tool, args)
+pop = warrant.sign(key, tool, args)
 authorized = warrant.authorize(tool, args, bytes(pop))
 
 # New convenience (optional)
@@ -1417,17 +1564,17 @@ def test_search_authorized(test_warrant, test_keypair):
 
 def test_delete_not_authorized(test_warrant):
     """Test that delete_file is NOT authorized."""
-    assert not test_warrant.preview_can("delete_file")
+    assert not test_warrant.allows("delete_file")
     result = test_warrant.why_denied("delete_file", {})
     assert result.denied
     assert result.reason == "tool_not_found"
 ```
 
-### Testing with `@lockdown` and `root_task`
+### Testing with `@guard` and `mint`
 
 ```python
 import pytest
-from tenuo import configure, lockdown, root_task, Capability, SigningKey
+from tenuo import configure, guard, mint, Capability, SigningKey
 
 @pytest.fixture(autouse=True)
 def setup_tenuo():
@@ -1437,14 +1584,14 @@ def setup_tenuo():
     yield
     # Cleanup happens automatically
 
-@lockdown(tool="search")
+@guard(tool="search")
 async def search(query: str) -> list:
     return [f"Result for {query}"]
 
 @pytest.mark.asyncio
 async def test_search_with_authority():
     """Test that search works with proper authority."""
-    async with root_task(Capability("search")):
+    async with mint(Capability("search")):
         result = await search("test")
         assert result == ["Result for test"]
 
@@ -1452,7 +1599,7 @@ async def test_search_with_authority():
 async def test_search_without_authority():
     """Test that search fails without authority."""
     with pytest.raises(Unauthorized):
-        await search("test")  # No root_task context
+        await search("test")  # No mint context
 ```
 
 ### Mocking Warrants (for Integration Tests)
@@ -1485,8 +1632,8 @@ def test_delegation_narrows_scope(test_warrant, test_keypair):
         ttl=60,
     )
     
-    assert child.preview_can("search")
-    assert not child.preview_can("read_file")  # Was narrowed out
+    assert child.allows("search")
+    assert not child.allows("read_file")  # Was narrowed out
 ```
 
 ---
@@ -1703,7 +1850,7 @@ response = httpx.post(
 **Before (verbose):**
 ```python
 # Manual PoP generation
-pop_sig = warrant.create_pop_signature(key, "read_file", args)
+pop_sig = warrant.sign(key, "read_file", args)
 headers = {
     "X-Tenuo-Warrant": warrant.to_base64(),
     "X-Tenuo-PoP": base64.b64encode(bytes(pop_sig)).decode(),
@@ -1877,7 +2024,7 @@ def protected_func(*args, **kwargs):
         raise Unauthorized("No warrant in context")
     
     tool_args = extract_args(args, kwargs)
-    pop_sig = warrant.create_pop_signature(signing_key, tool_name, tool_args)
+    pop_sig = warrant.sign(signing_key, tool_name, tool_args)
     
     # authorize() checks constraints + PoP
     if not warrant.authorize(tool_name, tool_args, bytes(pop_sig)):
@@ -1891,13 +2038,13 @@ def protected_func(*args, **kwargs):
 Set warrant context before running the agent:
 
 ```python
-from tenuo import set_warrant_context
+from tenuo import warrant_scope
 
 # In your API handler
 async def handle_request(request):
     warrant = extract_warrant_from_headers(request)
     
-    with set_warrant_context(warrant, signing_key):
+    with warrant_scope(warrant, signing_key):
         # All tool calls inside this block use this warrant
         result = await agent.ainvoke({"input": request.query})
     
@@ -1928,7 +2075,7 @@ Complete example:
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_tool_calling_agent, AgentExecutor
 from tenuo.integrations.langchain import protect_tools, TenuoCallbackHandler
-from tenuo import set_warrant_context
+from tenuo import warrant_scope
 
 # 1. Define tools
 tools = [read_file_tool, search_tool]
@@ -1943,7 +2090,7 @@ executor = AgentExecutor(agent=agent, tools=protected_tools)
 
 # 4. Run with warrant context
 async def run_agent(query: str, warrant: Warrant, key: SigningKey):
-    with set_warrant_context(warrant, key):
+    with warrant_scope(warrant, key):
         return await executor.ainvoke({"input": query})
 ```
 
@@ -1983,18 +2130,18 @@ This is the pattern where Tenuo provides the most value:
 
 ```python
 from langgraph.graph import StateGraph, END
-from tenuo import configure, lockdown, root_task, Capability, Pattern
+from tenuo import configure, guard, mint, Capability, Pattern
 
 # Setup
 kp = SigningKey.generate()
 configure(issuer_key=kp)
 
 # Protected tools (enforcement layer)
-@lockdown(tool="search")
+@guard(tool="search")
 async def search(query: str) -> list:
     return await api.search(query)
 
-@lockdown(tool="delete_file")
+@guard(tool="delete_file")
 async def delete_file(path: str) -> None:
     Path(path).unlink()
 
@@ -2029,7 +2176,7 @@ graph.add_edge("orchestrator", "researcher")
 graph.add_edge("researcher", END)
 
 # Run with root authority
-async with root_task(Capability("search"), Capability("delete_file")):
+async with mint(Capability("search"), Capability("delete_file")):
     # Root has both capabilities
     # But researcher only gets search (cryptographically enforced)
     result = await graph.compile().ainvoke({"topic": "AI safety", "query": "AI safety papers"})
@@ -2051,7 +2198,7 @@ Tenuo uses TWO layers for LangGraph security:
 │  - "This node can only use search"                          │
 │  - Defense in depth: limits what's even possible            │
 ├─────────────────────────────────────────────────────────────┤
-│  LAYER 2: ENFORCEMENT (@lockdown)                           │
+│  LAYER 2: ENFORCEMENT (@guard)                           │
 │  - Checks warrant at EACH tool call                         │
 │  - "Is this specific call authorized?"                      │
 │  - The actual security gate                                 │
@@ -2060,20 +2207,20 @@ Tenuo uses TWO layers for LangGraph security:
 
 **Why two layers?**
 
-| Scenario | @tenuo_node only | @lockdown only | Both |
+| Scenario | @tenuo_node only | @guard only | Both |
 |----------|------------------|----------------|------|
 | Node tries unauthorized tool | [NO] No check | [OK] Denied | [OK] Denied |
 | Tool called from wrong node | [OK] Scoped out | [NO] Might allow | [OK] Denied |
 | Direct tool import bypass | [NO] No protection | [OK] Denied | [OK] Denied |
 
-**Simple rule**: Use `@lockdown` on ALL tools. Use `@tenuo_node` on nodes that need scoping.
+**Simple rule**: Use `@guard` on ALL tools. Use `@tenuo_node` on nodes that need scoping.
 
 ```python
 # Layer 2: Enforcement on tools (REQUIRED)
-@lockdown(tool="search")
+@guard(tool="search")
 async def search(query: str): ...
 
-@lockdown(tool="delete_file")  
+@guard(tool="delete_file")  
 async def delete_file(path: str): ...
 
 # Layer 1: Scoping on nodes (OPTIONAL, for defense in depth)
@@ -2088,14 +2235,14 @@ async def researcher(state):
 For most apps, you just need:
 
 ```python
-from tenuo import configure, lockdown, root_task, Capability, SigningKey
+from tenuo import configure, guard, mint, Capability, SigningKey
 
 # 1. Setup (once at startup)
 kp = SigningKey.generate()
 configure(issuer_key=kp)
 
 # 2. Protect tools
-@lockdown(tool="search")
+@guard(tool="search")
 async def search(query: str) -> list:
     return await api.search(query)
 
@@ -2109,7 +2256,7 @@ graph.add_node("researcher", researcher)
 # ...
 
 # 5. Run with authority
-async with root_task(Capability("search")):
+async with mint(Capability("search")):
     result = await graph.compile().ainvoke({"query": "test"})
 ```
 
@@ -2147,7 +2294,7 @@ def validate_state_for_checkpoint(state: dict) -> None:
         if isinstance(value, BoundWarrant):
             raise TypeError(
                 f"BoundWarrant found at state['{path}'] - cannot checkpoint. "
-                f"Use plain Warrant in state and bind_key() at call site."
+                f"Use plain Warrant in state and bind() at call site."
             )
         if isinstance(value, dict):
             for k, v in value.items():
@@ -2160,31 +2307,31 @@ def validate_state_for_checkpoint(state: dict) -> None:
         check_value(value, key)
 ```
 
-#### Strict Mode: `@lockdown` Context Validation
+#### Strict Mode: `@guard` Context Validation
 
-In `strict=True` mode, `@lockdown` can optionally verify it's called within a `root_task()` context:
+In `strict=True` mode, `@guard` can optionally verify it's called within a `mint()` context:
 
 ```python
 configure(
     issuer_key=kp,
     strict=True,
-    registered_tools="auto",  # Use tools registered by @lockdown
-    require_context=True      # @lockdown must be in root_task()
+    registered_tools="auto",  # Use tools registered by @guard
+    require_context=True      # @guard must be in mint()
 )
 
 # Later...
-@lockdown(tool="search")
+@guard(tool="search")
 async def search(query): ...
 
 # [NO] FAILS in strict mode with require_context=True
-await search("test")  # Error: search() called outside root_task() context
+await search("test")  # Error: search() called outside mint() context
 
 # [OK] OK
-async with root_task(Capability("search")):
+async with mint(Capability("search")):
     await search("test")
 ```
 
-#### Auto-Registration via `@lockdown`
+#### Auto-Registration via `@guard`
 
 Instead of manual tool lists that go stale:
 
@@ -2193,10 +2340,10 @@ Instead of manual tool lists that go stale:
 configure(registered_tools=["search", "read_file", "delete_file"])
 
 # NEW: Auto-registration
-@lockdown(tool="search")      # Registers "search" at import time
+@guard(tool="search")      # Registers "search" at import time
 async def search(query): ...
 
-@lockdown(tool="read_file")   # Registers "read_file" at import time
+@guard(tool="read_file")   # Registers "read_file" at import time
 async def read_file(path): ...
 
 # At startup - use auto-discovered tools
@@ -2208,7 +2355,7 @@ configure(issuer_key=kp, strict=True, registered_tools="auto")
 ```python
 _registered_tools: set[str] = set()
 
-def lockdown(tool: str):
+def guard(tool: str):
     """Decorator that protects a tool function and registers it."""
     _registered_tools.add(tool)  # Auto-register at import time
     
@@ -2329,7 +2476,7 @@ def tenuo_node(tool: str, key_id: str | None = None):
             tool_args = extract_tool_args(state, func)
             
             # Create PoP and verify
-            pop_sig = warrant.create_pop_signature(key, tool, tool_args)
+            pop_sig = warrant.sign(key, tool, tool_args)
             if not warrant.authorize(tool, tool_args, bytes(pop_sig)):
                 raise Unauthorized(f"Warrant does not authorize {tool}")
             
@@ -2442,9 +2589,9 @@ graph.add_node("write", write_node, requires_clearance=Clearance.PRIVILEGED)
 ```python
 def route_by_authorization(state: AgentState) -> str:
     """Route based on what the warrant allows."""
-    if state.warrant.preview_can("write_file"):
+    if state.warrant.allows("write_file"):
         return "write_results"
-    elif state.warrant.preview_can("summarize"):
+    elif state.warrant.allows("summarize"):
         return "summarize_only"
     else:
         return "read_only"
@@ -2555,7 +2702,7 @@ result = await app.ainvoke({
 |------|------|--------|
 | Implement `BoundWarrant` class (NOT a Warrant subclass) | `warrant_ext.py` | 2h |
 | Add `__getstate__` / `__reduce__` serialization guards | `warrant_ext.py` | 1h |
-| Add `Warrant.bind_key(key)` returning `BoundWarrant` | `warrant_ext.py` | 1h |
+| Add `Warrant.bind(key)` returning `BoundWarrant` | `warrant_ext.py` | 1h |
 | Add `BoundWarrant.unbind()` returning inner `Warrant` | `warrant_ext.py` | 0.5h |
 | Add `BoundWarrant.warrant` property (read-only) | `warrant_ext.py` | 0.5h |
 | Forward all `ReadableWarrant` properties to inner warrant | `warrant_ext.py` | 1h |
@@ -2675,7 +2822,7 @@ def allow_all():
 | Create `tenuo/integrations/langchain.py` | `integrations/langchain.py` | - |
 | Implement `protect_tool(tool)` wrapper | `langchain.py` | 3h |
 | Implement `protect_tools(tools)` batch wrapper | `langchain.py` | 1h |
-| Implement `set_warrant_context()` context manager | `langchain.py` | 2h |
+| Implement `warrant_scope()` context manager | `langchain.py` | 2h |
 | Implement `get_warrant_context()` | `langchain.py` | 0.5h |
 | Implement `TenuoCallbackHandler` | `langchain.py` | 3h |
 | Unit tests | `tests/test_langchain_integration.py` | 3h |
@@ -2722,23 +2869,52 @@ def allow_all():
 
 ---
 
-### Timeline Summary
+### Future Enhancements (Post-Launch)
 
+#### Implicit Warrant Serialization
+
+**Goal:** Make passing warrants between services seamless without explicit `to_base64()`/`from_base64()` calls.
+
+**Proposed API:**
+
+```python
+# str(warrant) returns base64
+warrant_str = str(warrant)  # "eyJ3YXJyYW50..."
+
+# Constructor accepts string (auto-detects base64)
+warrant = Warrant(received_string)
+
+# Works with JSON naturally
+json.dumps({"warrant": str(warrant)})
+
+# Receiving side
+data = json.loads(response.text)
+warrant = Warrant(data["warrant"])
 ```
-Week 1:
-  Phase 1: Warrant Convenience (P0) -------->
-  Phase 2: Key Management (P1) ----->
 
-Week 2:
-  Phase 3: FastAPI Integration (P0) -------->
-  Phase 4: LangChain Integration (P1) -------->
+**Implementation:**
 
-Week 3:
-  Phase 5: LangGraph Integration (P2) -------->
-  Phase 6: Documentation (P1) -------->
+| Task | Description |
+|------|-------------|
+| `Warrant.__str__()` | Return `self.to_base64()` |
+| `Warrant.__new__()` or factory | Accept string, delegate to `from_base64()` |
+| `Warrant.__json__()` | For JSON encoder compatibility |
+| Pydantic validator | For FastAPI request body parsing |
+
+**Benefit:** Reduces boilerplate in orchestrator-agent communication:
+
+```python
+# Before
+send_to_agent(warrant.to_base64())
+warrant = Warrant.from_base64(received)
+
+# After
+send_to_agent(warrant)  # str() called implicitly
+warrant = Warrant(received)  # Auto-detects format
 ```
 
-**Total estimated effort:** 12-16 days (2-3 weeks with buffer)
+**Priority:** P2 (nice-to-have, implement after core launch)
+
 
 ---
 
@@ -2749,7 +2925,7 @@ Week 3:
 | Risk | Severity | Mitigation |
 |------|----------|------------|
 | **Poisoned Checkpoint** - BoundWarrant serialized to DB | High | `BoundWarrant` not a `Warrant` subclass + `__getstate__` throws |
-| **Forgotten @lockdown** - Unprotected tool callable | High | `strict=True` mode with `registered_tools` allowlist |
+| **Forgotten @guard** - Unprotected tool callable | High | `strict=True` mode with `registered_tools` allowlist |
 | **Process-wide key access** - Unintended code accesses key | Medium | No public `get_configured_key()`, internal access only |
 | **Logic divergence** - Python/Rust constraint mismatch | Medium | All Python convenience methods call Rust via PyO3 |
 | **Key in __repr__** - Key leaked to logs | Medium | Custom `__repr__` with redaction |
@@ -2787,7 +2963,7 @@ Week 3:
 - [ ] `expires_at` returns `datetime`
 - [ ] `is_terminal` returns `bool` (`depth >= max_depth`)
 - [ ] `is_expired` returns `bool`
-- [ ] `preview_can(tool)` returns `PreviewResult` (UX introspection only)
+- [ ] `allows(tool, args)` returns `bool` (Logic check, replaces preview_can)
 - [ ] `preview_would_allow(tool, args)` returns `PreviewResult` (calls Rust)
 - [ ] `explain()` returns formatted string
 - [ ] `explain(include_chain=True)` shows full authority chain
@@ -2803,10 +2979,10 @@ Week 3:
 
 ### BoundWarrant (Security-Critical)
 - [ ] `BoundWarrant` is NOT a `Warrant` subclass
-- [ ] `Warrant.bind_key(key)` returns `BoundWarrant`
+- [ ] `Warrant.bind(key)` returns `BoundWarrant`
 - [ ] `BoundWarrant.unbind()` returns the inner `Warrant`
 - [ ] `BoundWarrant.warrant` property returns inner `Warrant` (read-only)
-- [ ] `BoundWarrant.bind_key(new_key)` returns new `BoundWarrant` with different key
+- [ ] `BoundWarrant.bind(new_key)` returns new `BoundWarrant` with different key
 - [ ] `BoundWarrant` forwards all `ReadableWarrant` properties to inner warrant
 - [ ] `BoundWarrant.__getstate__()` raises `TypeError`
 - [ ] `BoundWarrant.__reduce__()` raises `TypeError`
@@ -2853,7 +3029,7 @@ Week 3:
 ### LangChain Integration
 - [ ] `protect_tool()` wraps single tool
 - [ ] `protect_tools()` wraps multiple tools
-- [ ] Context propagation via `set_warrant_context()`
+- [ ] Context propagation via `warrant_scope()`
 - [ ] `TenuoCallbackHandler` for audit/metrics
 
 ### LangGraph Integration
@@ -2896,7 +3072,7 @@ print(f"Expires in: {warrant.ttl_remaining}")
 print(f"Can delegate: {not warrant.is_terminal}")
 
 # Quick tool check (UX only - not authorization!)
-if warrant.preview_can("read_file"):
+if warrant.allows("read_file"):
     print("UI: read_file button enabled")
 
 # Delegate to worker (explicit key - recommended)

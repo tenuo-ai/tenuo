@@ -16,7 +16,7 @@ pip install tenuo
 ```
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb)
-[![Explorer](https://img.shields.io/badge/🔬_Explorer-decode_warrants-00d4ff)](https://tenuo.dev/explorer/)
+[![Explorer](https://img.shields.io/badge/🔬_Explorer-decode_warrants-00d4ff)](https://tenuo.dev/explorer)
 
 ### AgentDojo Benchmark: 100% Attack Block Rate
 
@@ -31,17 +31,18 @@ Keep keys separate from warrants:
 ```python
 from tenuo import Warrant, SigningKey, Pattern
 
-# Warrant in state/storage - serializable, no secrets
-warrant = receive_warrant_from_orchestrator()
+# Warrant from orchestrator - Warrant() accepts base64 string
+warrant = Warrant(received_warrant_string)
 
 # Explicit key at call site - keys never in state
 key = SigningKey.from_env("MY_SERVICE_KEY")
-headers = warrant.auth_headers(key, "search", {"query": "test"})
+headers = warrant.headers(key, "search", {"query": "test"})
 
 # Delegation with attenuation
-child = warrant.delegate(
+child = warrant.grant(
     to=worker_pubkey,
-    allow={"search": {"query": Pattern("safe*")}},
+    allow="search",
+    query=Pattern("safe*"),
     ttl=300,
     key=key
 )
@@ -54,18 +55,19 @@ When you need to make many calls with the same warrant+key:
 ```python
 from tenuo import Warrant, SigningKey
 
-warrant = receive_warrant()
+warrant = Warrant(received_string)  # Reconstruct from base64
 key = SigningKey.from_env("MY_KEY")
 
 # Bind key for repeated use
-bound = warrant.bind_key(key)
+bound = warrant.bind(key)
 
 for item in items:
-    headers = bound.auth_headers("process", {"item": item})
+    headers = bound.headers("process", {"item": item})
     # ...
 
-# Authorize directly
-if bound.authorize("search", {"query": "test"}):
+# Validate before use
+result = bound.validate("search", {"query": "test"})
+if result:
     # Authorized!
     pass
 
@@ -76,24 +78,39 @@ if bound.authorize("search", {"query": "test"}):
 ### Low-Level API (Full Control)
 
 ```python
-from tenuo import SigningKey, Warrant, Pattern, Range
+# ┌─────────────────────────────────────────────────────────────────┐
+# │  CONTROL PLANE / ORCHESTRATOR                                   │
+# │  Issues warrants to agents. Only needs agent's PUBLIC key.      │
+# └─────────────────────────────────────────────────────────────────┘
+from tenuo import SigningKey, Warrant, Pattern, Range, PublicKey
 
-# Generate keypair
-keypair = SigningKey.generate()
+issuer_key = SigningKey.from_env("ISSUER_KEY")
+agent_pubkey = PublicKey.from_env("AGENT_PUBKEY")  # From registration
 
-# Issue warrant with fluent builder
-warrant = (Warrant.builder()
+warrant = (Warrant.mint_builder()
     .capability("manage_infrastructure", {
         "cluster": Pattern("staging-*"),
         "replicas": Range.max_value(15)
     })
-    .holder(keypair.public_key)
+    .holder(agent_pubkey)
     .ttl(3600)
-    .issue(keypair))
+    .mint(issuer_key))
 
-# Authorize with Proof-of-Possession
+# Send warrant to agent: send_to_agent(str(warrant))
+```
+
+```python
+# ┌─────────────────────────────────────────────────────────────────┐
+# │  AGENT / WORKER                                                 │
+# │  Receives warrant, uses own private key for Proof-of-Possession │
+# └─────────────────────────────────────────────────────────────────┘
+from tenuo import SigningKey, Warrant
+
+agent_key = SigningKey.from_env("AGENT_KEY")  # Agent's private key (never shared)
+warrant = Warrant(received_warrant_string)    # Deserialize from orchestrator
+
 args = {"cluster": "staging-web", "replicas": 5}
-pop_sig = warrant.create_pop_signature(keypair, "manage_infrastructure", args)
+pop_sig = warrant.sign(agent_key, "manage_infrastructure", args)
 authorized = warrant.authorize(
     tool="manage_infrastructure",
     args=args,
@@ -129,22 +146,37 @@ key = SigningKey.from_file("/run/secrets/tenuo-key")
 key = SigningKey.generate()
 ```
 
-### KeyRegistry (For LangGraph)
+### Key Management
 
-Thread-safe key management for multi-agent workflows:
+#### KeyRegistry (Thread-Safe Singleton)
+
+Manage multiple keys by ID. Useful for multi-agent, multi-tenant, or service-to-service scenarios.
 
 ```python
 from tenuo import KeyRegistry, SigningKey
 
 registry = KeyRegistry.get_instance()
+
+# Register keys at startup
 registry.register("worker", SigningKey.from_env("WORKER_KEY"))
 registry.register("orchestrator", SigningKey.from_env("ORCH_KEY"))
 
-# Retrieve
+# Retrieve by ID
 key = registry.get("worker")
+
+# Multi-tenant: namespace keys per tenant
+registry.register("api", tenant_a_key, namespace="tenant-a")
+registry.register("api", tenant_b_key, namespace="tenant-b")
+key = registry.get("api", namespace="tenant-a")
 ```
 
-### Keyring (For Key Rotation)
+**Use cases:**
+- **LangGraph**: Keep keys out of state (checkpointing-safe)
+- **Multi-tenant SaaS**: Isolate keys per tenant
+- **Service mesh**: Different keys per downstream service
+- **Key rotation**: Register `current` and `previous` keys
+
+#### Keyring (For Key Rotation)
 
 ```python
 from tenuo import Keyring, SigningKey
@@ -154,7 +186,7 @@ keyring = Keyring(
     previous=[SigningKey.from_env("OLD_KEY")]
 )
 
-# All public keys for verification
+# All public keys for verification (current + previous)
 all_pubkeys = keyring.all_public_keys
 ```
 
@@ -181,53 +213,63 @@ async def search(
 
 ```python
 from tenuo import Warrant, SigningKey
-from tenuo.langchain import protect
+from tenuo.langchain import guard
 
 # Create bound warrant
-keypair = SigningKey.generate()
-warrant = Warrant.builder().tool("search").issue(keypair)
-bound = warrant.bind_key(keypair)
+keypair = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
+warrant = (Warrant.mint_builder()
+    .tools(["search"])
+    .mint(keypair))
+bound = warrant.bind(keypair)
 
 # Protect tools
 from langchain_community.tools import DuckDuckGoSearchRun
-protected_tools = protect([DuckDuckGoSearchRun()], bound_warrant=bound)
+protected_tools = guard([DuckDuckGoSearchRun()], bound)
 
 # Use in agent
 agent = create_openai_tools_agent(llm, protected_tools, prompt)
 ```
 
-### Using `@lockdown` Decorator
+### Using `@guard` Decorator
+
+Protect your own functions with `@guard`. Authorization is **evaluated at call time**, not decoration time - the same function can have different permissions with different warrants:
 
 ```python
-from tenuo import lockdown, set_warrant_context, set_signing_key_context
+from tenuo import guard
 
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 def read_file(path: str) -> str:
     return open(path).read()
 
-with set_warrant_context(warrant), set_signing_key_context(keypair):
+# BoundWarrant as context manager - sets both warrant and key
+bound = warrant.bind(keypair)
+with bound:
     content = read_file("/tmp/test.txt")  # ✅ Authorized
     content = read_file("/etc/passwd")    # ❌ Blocked
+
+# Different warrant, different permissions
+with other_warrant.bind(keypair):
+    content = read_file("/etc/passwd")    # Could be ✅ if this warrant allows it
 ```
 
 ## LangGraph Integration
 
 ```python
 from tenuo import KeyRegistry
-from tenuo.langgraph import secure, TenuoToolNode, auto_load_keys
+from tenuo.langgraph import guard, TenuoToolNode, load_tenuo_keys
 
 # Load keys from TENUO_KEY_* environment variables
-auto_load_keys()
+load_tenuo_keys()
 
 # Wrap pure nodes
 def my_agent(state):
     return {"messages": [...]}
 
-graph.add_node("agent", secure(my_agent, key_id="worker"))
+graph.add_node("agent", guard(my_agent, key_id="worker"))
 graph.add_node("tools", TenuoToolNode([search, calculator]))
 
-# Run with warrant in state
-state = {"warrant": warrant, "messages": [...]}
+# Run with warrant in state (str() returns base64)
+state = {"warrant": str(warrant), "messages": [...]}
 config = {"configurable": {"tenuo_key_id": "worker"}}
 result = graph.invoke(state, config=config)
 ```
@@ -240,7 +282,7 @@ from tenuo import BoundWarrant
 
 @tenuo_node
 def smart_router(state, bound_warrant: BoundWarrant):
-    if bound_warrant.preview_can("search"):
+    if bound_warrant.allows("search"):
         return {"next": "researcher"}
     return {"next": "fallback"}
 ```
@@ -291,7 +333,7 @@ from tenuo.mcp import SecureMCPClient
 async with SecureMCPClient("python", ["mcp_server.py"]) as client:
     tools = await client.get_protected_tools()
     
-    async with root_task(Capability("read_file", path=Pattern("/data/*"))):
+    async with mint(Capability("read_file", path=Pattern("/data/*"))):
         result = await tools["read_file"](path="/data/file.txt")
 ```
 
@@ -302,31 +344,36 @@ async with SecureMCPClient("python", ["mcp_server.py"]) as client:
 `BoundWarrant` contains a private key and **cannot be serialized**:
 
 ```python
-bound = warrant.bind_key(key)
+bound = warrant.bind(key)
 
 # ❌ This raises TypeError
 pickle.dumps(bound)
 json.dumps(bound)
 
-# ✅ Extract warrant for storage
-state["warrant"] = bound.warrant  # Plain Warrant is serializable
+# ✅ Extract warrant for storage (str() returns base64)
+state["warrant"] = str(bound.warrant)
+# Reconstruct later with Warrant(string)
 ```
 
-### preview_can() is Not Authorization
-
-```python
-# ✅ OK for UI hints
-if bound.preview_can("delete"):
-    show_delete_button()
-
-# ❌ WRONG: Not a security check!
-if bound.preview_can("delete"):
-    delete_database()  # No PoP verification!
-
-# ✅ Correct: Use authorize()
-if bound.authorize("delete", {"target": "users"}):
-    delete_database()
-```
+### `allows()` vs `validate()`
+ 
+ ```python
+ # ✅ allows() = Logic Check (Math only)
+ # Good for UI logic, conditional routing, fail-fast
+ if bound.allows("delete"):
+     show_delete_button()
+ 
+ if bound.allows("delete", {"target": "users"}):
+     print("Deletion would be permitted by constraints")
+ 
+ # ✅ validate() = Full Security Check (Math + Crypto)
+ # Proves you hold the key and validates the PoP signature
+ result = bound.validate("delete", {"target": "users"})
+ if result:
+     delete_database()
+ else:
+     print(f"Failed: {result.reason}")
+ ```
 
 ### Error Details Not Exposed
 

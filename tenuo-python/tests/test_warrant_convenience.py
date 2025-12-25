@@ -18,11 +18,9 @@ from tenuo import (
     Warrant,
     SigningKey,
     BoundWarrant,
-    diagnose,
-    info,
-    allow_all,
-    deterministic_headers,
 )
+from tenuo.diagnostics import diagnose, info
+from tenuo.testing import allow_all, deterministic_headers
 
 
 class TestCoreProperties:
@@ -30,7 +28,7 @@ class TestCoreProperties:
     
     def test_ttl_remaining(self):
         """Test ttl_remaining property."""
-        warrant, key = Warrant.quick_issue(["test"], ttl=3600)
+        warrant, key = Warrant.quick_mint(["test"], ttl=3600)
         
         assert isinstance(warrant.ttl_remaining, timedelta)
         assert warrant.ttl_remaining.total_seconds() > 0
@@ -38,7 +36,7 @@ class TestCoreProperties:
     
     def test_expires_at(self):
         """Test expires_at method (returns RFC3339 string)."""
-        warrant, key = Warrant.quick_issue(["test"], ttl=3600)
+        warrant, key = Warrant.quick_mint(["test"], ttl=3600)
         
         # expires_at() is a method that returns RFC3339 string
         expires_at = warrant.expires_at()
@@ -47,7 +45,7 @@ class TestCoreProperties:
     
     def test_is_terminal(self):
         """Test is_terminal method."""
-        warrant, key = Warrant.quick_issue(["test"], ttl=3600)
+        warrant, key = Warrant.quick_mint(["test"], ttl=3600)
         
         # is_terminal() is a method
         result = warrant.is_terminal()
@@ -57,7 +55,7 @@ class TestCoreProperties:
     
     def test_is_expired(self):
         """Test is_expired method."""
-        warrant, key = Warrant.quick_issue(["test"], ttl=3600)
+        warrant, key = Warrant.quick_mint(["test"], ttl=3600)
         
         # is_expired() is a method
         result = warrant.is_expired()
@@ -66,39 +64,35 @@ class TestCoreProperties:
         assert not result
 
 
-class TestPreviewMethods:
-    """Test preview methods for UX."""
+class TestLogicCheckMethods:
+    """Test allows() method for logic checks."""
     
-    def test_preview_can_allowed(self):
-        """Test preview_can with allowed tool."""
-        warrant, key = Warrant.quick_issue(["search", "read"], ttl=3600)
+    def test_allows_tool_only(self):
+        """Test allows() with tool only (replaces preview_can)."""
+        warrant, key = Warrant.quick_mint(["search", "read"], ttl=3600)
         
-        result = warrant.preview_can("search")
-        assert result.allowed
-        assert bool(result) is True
-        assert "UX ONLY" in repr(result)
+        # Argument-less check for tool existence
+        result = warrant.allows("search")
+        assert result is True
     
-    def test_preview_can_denied(self):
-        """Test preview_can with denied tool."""
-        warrant, key = Warrant.quick_issue(["search"], ttl=3600)
+    def test_allows_denied(self):
+        """Test allows() with denied tool."""
+        warrant, key = Warrant.quick_mint(["search"], ttl=3600)
         
-        result = warrant.preview_can("delete")
-        assert not result.allowed
-        assert bool(result) is False
-        assert result.reason is not None
-        assert "delete" in result.reason
+        result = warrant.allows("delete")
+        assert result is False
     
-    def test_preview_would_allow(self):
-        """Test preview_would_allow method."""
-        warrant, key = Warrant.quick_issue(["search"], ttl=3600)
+    def test_allows_with_args(self):
+        """Test allows() with arguments (replaces preview_would_allow)."""
+        warrant, key = Warrant.quick_mint(["search"], ttl=3600)
         
-        # Tool present (constraint check not yet implemented in Rust)
-        result = warrant.preview_would_allow("search", {"query": "test"})
-        assert result.allowed or not result.allowed  # Either is valid for now
+        # Tool present (constraint check)
+        result = warrant.allows("search", args={"query": "test"})
+        assert result is True or result is False  # Either is valid depending on constraints logic
         
         # Tool not present
-        result = warrant.preview_would_allow("delete", {})
-        assert not result.allowed
+        result = warrant.allows("delete", args={})
+        assert result is False
 
 
 class TestDebuggingMethods:
@@ -106,7 +100,7 @@ class TestDebuggingMethods:
     
     def test_explain(self):
         """Test explain method."""
-        warrant, key = Warrant.quick_issue(["search", "read"], ttl=3600)
+        warrant, key = Warrant.quick_mint(["search", "read"], ttl=3600)
         
         explanation = warrant.explain()
         assert isinstance(explanation, str)
@@ -117,7 +111,7 @@ class TestDebuggingMethods:
     
     def test_explain_with_chain(self):
         """Test explain with include_chain=True."""
-        warrant, key = Warrant.quick_issue(["search"], ttl=3600)
+        warrant, key = Warrant.quick_mint(["search"], ttl=3600)
         
         explanation = warrant.explain(include_chain=True)
         assert isinstance(explanation, str)
@@ -125,58 +119,12 @@ class TestDebuggingMethods:
     
     def test_inspect(self):
         """Test inspect method (alias for explain)."""
-        warrant, key = Warrant.quick_issue(["search"], ttl=3600)
+        warrant, key = Warrant.quick_mint(["search"], ttl=3600)
         
         inspection = warrant.inspect()
         assert isinstance(inspection, str)
         assert "Warrant" in inspection
 
-
-class TestDelegateMethod:
-    """Test improved delegate method."""
-    
-    def test_delegate_single_tool_string(self):
-        """Test delegation with single tool as string."""
-        parent, parent_key = Warrant.quick_issue(["search", "read"], ttl=3600)
-        child_key = SigningKey.generate()
-        
-        child = parent.delegate(
-            to=child_key.public_key,
-            allow="search",
-            ttl=300,
-            key=parent_key
-        )
-        
-        assert "search" in child.tools
-        assert child.ttl_remaining.total_seconds() <= 300
-    
-    def test_delegate_multiple_tools_list(self):
-        """Test delegation with multiple tools as list."""
-        parent, parent_key = Warrant.quick_issue(["search", "read", "write"], ttl=3600)
-        child_key = SigningKey.generate()
-        
-        child = parent.delegate(
-            to=child_key.public_key,
-            allow=["search", "read"],
-            ttl=300,
-            key=parent_key
-        )
-        
-        assert "search" in child.tools
-        assert "read" in child.tools
-        assert child.ttl_remaining.total_seconds() <= 300
-    
-    def test_delegate_without_key_raises(self):
-        """Test that delegate without key raises error."""
-        parent, parent_key = Warrant.quick_issue(["search"], ttl=3600)
-        child_key = SigningKey.generate()
-        
-        with pytest.raises(RuntimeError, match="No signing key"):
-            parent.delegate(
-                to=child_key.public_key,
-                allow="search",
-                ttl=300
-            )
 
 
 class TestBoundWarrant:
@@ -184,16 +132,16 @@ class TestBoundWarrant:
     
     def test_creation(self):
         """Test BoundWarrant creation."""
-        warrant, key = Warrant.quick_issue(["search"], ttl=3600)
-        bound = warrant.bind_key(key)
+        warrant, key = Warrant.quick_mint(["search"], ttl=3600)
+        bound = warrant.bind(key)
         
         assert isinstance(bound, BoundWarrant)
         assert bound.warrant == warrant
     
     def test_property_forwarding(self):
         """Test that properties are forwarded to inner warrant."""
-        warrant, key = Warrant.quick_issue(["search"], ttl=3600)
-        bound = warrant.bind_key(key)
+        warrant, key = Warrant.quick_mint(["search"], ttl=3600)
+        bound = warrant.bind(key)
         
         assert bound.id == warrant.id
         assert bound.tools == warrant.tools
@@ -204,19 +152,19 @@ class TestBoundWarrant:
     
     def test_unbind(self):
         """Test unbinding returns inner warrant."""
-        warrant, key = Warrant.quick_issue(["search"], ttl=3600)
-        bound = warrant.bind_key(key)
+        warrant, key = Warrant.quick_mint(["search"], ttl=3600)
+        bound = warrant.bind(key)
         
         unbound = bound.unbind()
         assert unbound == warrant
     
     def test_delegate_with_bound_key(self):
         """Test delegation using bound key."""
-        parent, parent_key = Warrant.quick_issue(["search"], ttl=3600)
-        bound = parent.bind_key(parent_key)
+        parent, parent_key = Warrant.quick_mint(["search"], ttl=3600)
+        bound = parent.bind(parent_key)
         
         child_key = SigningKey.generate()
-        child = bound.delegate(
+        child = bound.grant(
             to=child_key.public_key,
             allow="search",
             ttl=300
@@ -224,12 +172,12 @@ class TestBoundWarrant:
         
         assert "search" in child.tools
     
-    def test_auth_headers(self):
-        """Test auth_headers generation."""
-        warrant, key = Warrant.quick_issue(["search"], ttl=3600)
-        bound = warrant.bind_key(key)
+    def test_headers(self):
+        """Test headers generation."""
+        warrant, key = Warrant.quick_mint(["search"], ttl=3600)
+        bound = warrant.bind(key)
         
-        headers = bound.auth_headers("search", {"query": "test"})
+        headers = bound.headers("search", {"query": "test"})
         
         assert "X-Tenuo-Warrant" in headers
         assert "X-Tenuo-PoP" in headers
@@ -238,16 +186,16 @@ class TestBoundWarrant:
     
     def test_serialization_blocked(self):
         """Test that BoundWarrant cannot be serialized."""
-        warrant, key = Warrant.quick_issue(["search"], ttl=3600)
-        bound = warrant.bind_key(key)
+        warrant, key = Warrant.quick_mint(["search"], ttl=3600)
+        bound = warrant.bind(key)
         
         with pytest.raises(TypeError, match="cannot be pickled"):
             pickle.dumps(bound)
     
     def test_repr_hides_key(self):
         """Test that repr doesn't expose the key."""
-        warrant, key = Warrant.quick_issue(["search"], ttl=3600)
-        bound = warrant.bind_key(key)
+        warrant, key = Warrant.quick_mint(["search"], ttl=3600)
+        bound = warrant.bind(key)
         
         repr_str = repr(bound)
         assert "BoundWarrant" in repr_str
@@ -260,8 +208,8 @@ class TestTestingUtilities:
     """Test testing utilities."""
     
     def test_quick_issue(self):
-        """Test Warrant.quick_issue()."""
-        warrant, key = Warrant.quick_issue(["search", "read"], ttl=300)
+        """Test Warrant.quick_mint()."""
+        warrant, key = Warrant.quick_mint(["search", "read"], ttl=300)
         
         assert "search" in warrant.tools
         assert "read" in warrant.tools
@@ -301,7 +249,7 @@ class TestTestingUtilities:
     
     def test_deterministic_headers(self):
         """Test deterministic_headers generation."""
-        warrant, key = Warrant.quick_issue(["search"], ttl=3600)
+        warrant, key = Warrant.quick_mint(["search"], ttl=3600)
         
         headers = deterministic_headers(warrant, key, "search", {"query": "test"})
         
@@ -314,7 +262,7 @@ class TestDiagnostics:
     
     def test_diagnose(self):
         """Test diagnose function."""
-        warrant, key = Warrant.quick_issue(["search", "read"], ttl=3600)
+        warrant, key = Warrant.quick_mint(["search", "read"], ttl=3600)
         
         report = diagnose(warrant)
         

@@ -28,9 +28,10 @@ warrant = Warrant.issue(
 )
 
 # Tool invocation checks constraints
-@lockdown(tool="read_file")
-def read_file(path: str, max_size: int):
-    ...  # Only runs if path matches and max_size ≤ 1000
+@guard(tool="delete_user")
+def delete_user(user_id: str):
+    # This code only runs if user_id matches the warrant constraint
+    ...1000
 ```
 
 ---
@@ -52,11 +53,11 @@ Wildcard()
 
 ```python
 # Parent: any query
-with root_task(Capability("search", query=Wildcard())):
+with mint(Capability("search", query=Wildcard())):
     ...
 
 # Child: narrowed to specific pattern
-with scoped_task(Capability("search", query=Pattern("*public*"))):
+with grant(Capability("search", query=Pattern("*public*"))):
     ...
 ```
 
@@ -126,19 +127,19 @@ Pattern("specific-value")
 >
 > ```python
 > # Flexible: Wildcard can become anything
-> with root_task(Capability("search", query=Wildcard())):
->     with scoped_task(Capability("search", query=Pattern("/data/*"))):  # OK
+> with mint(Capability("search", query=Wildcard())):
+>     with grant(Capability("search", query=Pattern("/data/*"))):  # OK
 >         ...
->     with scoped_task(Capability("search", query=Range.max_value(100))):  # OK
+>     with grant(Capability("search", query=Range.max_value(100))):  # OK
 >         ...
 >
 > # Limited: Pattern can only narrow to other patterns or exact values
-> with root_task(Capability("search", query=Pattern("*"))):
->     with scoped_task(Capability("search", query=Pattern("/data/*"))):  # OK (simple prefix)
+> with mint(Capability("search", query=Pattern("*"))):
+>     with grant(Capability("search", query=Pattern("/data/*"))):  # OK (simple prefix)
 >         ...
->     with scoped_task(Capability("search", query=Exact("specific"))):  # OK
+>     with grant(Capability("search", query=Exact("specific"))):  # OK
 >         ...
->     with scoped_task(Capability("search", query=Range.max_value(100))):  # FAILS - Type mismatch
+>     with grant(Capability("search", query=Range.max_value(100))):  # FAILS - Type mismatch
 >         ...
 > ```
 >
@@ -246,11 +247,11 @@ from tenuo import Warrant, ConstraintSet, Cidr
 cs = ConstraintSet()
 cs.insert("source_ip", Cidr("10.0.0.0/8"))
 
-warrant = (Warrant.builder()
+warrant = (Warrant.mint_builder()
     .capability("api_call", cs)
     .holder(kp.public_key)
     .ttl(3600)
-    .build(kp))
+    .mint(kp))
 ```
 
 **Attenuation:** Child CIDR must be a subnet of parent.
@@ -319,11 +320,11 @@ from tenuo import Warrant, ConstraintSet, UrlPattern
 cs = ConstraintSet()
 cs.insert("endpoint", UrlPattern("https://api.internal.com/v1/*"))
 
-warrant = (Warrant.builder()
+warrant = (Warrant.mint_builder()
     .capability("api_call", cs)
     .holder(kp.public_key)
     .ttl(3600)
-    .build(kp))
+    .mint(kp))
 ```
 
 **Attenuation Rules:**
@@ -379,17 +380,17 @@ Regex(r"^[a-z]+@company\.com$")
 > # Cannot narrow to different regex (even if provably narrower)
 > child = parent.attenuate().capability("query", {
 >     "env": Regex(r"^staging-.*$")  # FAILS
-> }).delegate(kp)
+> }).grant(kp)
 >
 > # Can narrow to Exact value (if it matches parent regex)
 > child = parent.attenuate().capability("query", {
 >     "env": Exact("staging-web")  # OK
-> }).delegate(kp)
+> }).grant(kp)
 >
 > # Can keep same regex pattern
 > child = parent.attenuate().capability("query", {
 >     "env": Regex(r"^(staging|dev)-.*$")  # OK
-> }).delegate(kp)
+> }).grant(kp)
 > ```
 >
 > **Workaround**: If you need to narrow regex constraints during delegation:
@@ -647,7 +648,7 @@ parent = Warrant.issue(
 # Child: Add additional constraint (auto-AND'd)
 child = parent.attenuate().capability("spend", {
     "budget_rule": CEL("currency == 'USD'")
-}).delegate(kp)
+}).grant(kp)
 
 # Effective child expression: (budget < 10000) && (currency == 'USD')
 ```
@@ -672,13 +673,13 @@ parent = Warrant.issue(
 # REJECTED: Semantically narrower but not syntactically derived
 child = parent.attenuate().capability("api_call", {
     "network": CEL("net_in_cidr(ip, '10.1.0.0/16')")  # FAILS
-}).delegate(kp)
+}).grant(kp)
 # Even though 10.1.0.0/16 is subset of 10.0.0.0/8, this is REJECTED
 
 # ALLOWED: Syntactically derived (AND'd)
 child = parent.attenuate().capability("api_call", {
     "network": CEL("(net_in_cidr(ip, '10.0.0.0/8')) && net_in_cidr(ip, '10.1.0.0/16')")
-}).delegate(kp)
+}).grant(kp)
 # Now it's ALLOWED because it's (parent) && additional_check
 ```
 
@@ -857,10 +858,10 @@ parent = Warrant.issue(
 )
 
 # Child: /data/reports/* (narrower) - OK
-child = parent.attenuate().capability("read_file", {"path": Pattern("/data/reports/*")}).delegate(kp)
+child = parent.attenuate().capability("read_file", {"path": Pattern("/data/reports/*")}).grant(kp)
 
 # Child: /* (wider) - FAILS
-child = parent.attenuate().capability("read_file", {"path": Pattern("/*")}).delegate(kp)  # MonotonicityViolation
+child = parent.attenuate().capability("read_file", {"path": Pattern("/*")}).grant(kp)  # MonotonicityViolation
 ```
 
 ### Range Narrowing
@@ -875,10 +876,10 @@ parent = Warrant.issue(
 )
 
 # Child: max 10 (narrower) - OK
-child = parent.attenuate().capability("scale", {"replicas": Range.max_value(10)}).delegate(kp)
+child = parent.attenuate().capability("scale", {"replicas": Range.max_value(10)}).grant(kp)
 
 # Child: max 20 (wider) - FAILS
-child = parent.attenuate().capability("scale", {"replicas": Range.max_value(20)}).delegate(kp)  # MonotonicityViolation
+child = parent.attenuate().capability("scale", {"replicas": Range.max_value(20)}).grant(kp)  # MonotonicityViolation
 ```
 
 ### OneOf Narrowing
@@ -893,10 +894,10 @@ parent = Warrant.issue(
 )
 
 # Child: ["a", "b"] (subset) - OK
-child = parent.attenuate().capability("action", {"type": OneOf(["a", "b"])}).delegate(kp)
+child = parent.attenuate().capability("action", {"type": OneOf(["a", "b"])}).grant(kp)
 
 # Child: ["a", "b", "d"] (adds "d") - FAILS
-child = parent.attenuate().capability("action", {"type": OneOf(["a", "b", "d"])}).delegate(kp)  # MonotonicityViolation
+child = parent.attenuate().capability("action", {"type": OneOf(["a", "b", "d"])}).grant(kp)  # MonotonicityViolation
 ```
 
 ### Regex Narrowing
@@ -913,13 +914,13 @@ parent = Warrant.issue(
 )
 
 # Cannot narrow to different regex (even if provably narrower) - FAILS
-child = parent.attenuate().capability("query", {"env": Regex(r"^staging-.*$")}).delegate(kp)  # MonotonicityViolation
+child = parent.attenuate().capability("query", {"env": Regex(r"^staging-.*$")}).grant(kp)  # MonotonicityViolation
 
 # Can keep same pattern - OK
-child = parent.attenuate().capability("query", {"env": Regex(r"^(staging|dev)-.*$")}).delegate(kp)
+child = parent.attenuate().capability("query", {"env": Regex(r"^(staging|dev)-.*$")}).grant(kp)
 
 # Can narrow to Exact (if it matches parent regex) - OK
-child = parent.attenuate().capability("query", {"env": Exact("staging-web")}).delegate(kp)
+child = parent.attenuate().capability("query", {"env": Exact("staging-web")}).grant(kp)
 ```
 
 **Why**: Determining if one regex is a subset of another is undecidable in general. Tenuo takes a conservative approach for security.
@@ -930,12 +931,12 @@ child = parent.attenuate().capability("query", {"env": Exact("staging-web")}).de
 
 ## Using Constraints with Tools
 
-### With @lockdown Decorator
+### With @guard Decorator
 
 ```python
-from tenuo import lockdown, Pattern, Range
+from tenuo import guard, Pattern, Range
 
-@lockdown(tool="transfer_money")
+@guard(tool="transfer_money")
 def transfer_money(account: str, amount: float):
     # Tenuo checks: 
     # - "account" against any Pattern/Exact constraint
@@ -943,13 +944,13 @@ def transfer_money(account: str, amount: float):
     ...
 ```
 
-### With protect_tools
+### With guard()
 
 ```python
-from tenuo import protect_tools
+from tenuo.langchain import guard
 
-# Protect tools (uses warrant/keypair from context)
-protected = protect_tools([read_file, write_file, delete_file])
+# Protect tools with bound warrant
+protected = guard([read_file, write_file, delete_file], bound)
 ```
 
 ---
@@ -960,9 +961,9 @@ protected = protect_tools([read_file, write_file, delete_file])
 
 ```python
 # Parent: any query
-async with root_task(Capability("search", query=Wildcard())):
+async with mint(Capability("search", query=Wildcard())):
     # Child: narrow to pattern
-    async with scoped_task(Capability("search", query=Pattern("*public*"))):
+    async with grant(Capability("search", query=Pattern("*public*"))):
         await search(query="public data")  # OK
 ```
 
@@ -970,7 +971,7 @@ async with root_task(Capability("search", query=Wildcard())):
 
 ```python
 # Read-only access to reports directory
-async with root_task(Capability("read_file", path=Pattern("/data/reports/*"))):
+async with mint(Capability("read_file", path=Pattern("/data/reports/*"))):
     await read_file(path="/data/reports/q3.csv")  # OK
     await read_file(path="/etc/passwd")           # FAILS
 ```
@@ -979,7 +980,7 @@ async with root_task(Capability("read_file", path=Pattern("/data/reports/*"))):
 
 ```python
 # Limit replica counts
-async with root_task(Capability("scale", replicas=Range.max_value(15))):
+async with mint(Capability("scale", replicas=Range.max_value(15))):
     await scale(replicas=5)   # OK
     await scale(replicas=20)  # FAILS
 ```
@@ -988,7 +989,7 @@ async with root_task(Capability("scale", replicas=Range.max_value(15))):
 
 ```python
 # Only staging and dev
-async with root_task(Capability("deploy", env=OneOf(["staging", "dev"]))):
+async with mint(Capability("deploy", env=OneOf(["staging", "dev"]))):
     await deploy(env="staging")    # OK
     await deploy(env="production") # FAILS
 ```
@@ -997,7 +998,7 @@ async with root_task(Capability("deploy", env=OneOf(["staging", "dev"]))):
 
 ```python
 # Only specific tables
-async with root_task(Capability("query", table=OneOf(["users", "orders"]))):
+async with mint(Capability("query", table=OneOf(["users", "orders"]))):
     await query(table="users")   # OK
     await query(table="secrets") # FAILS
 ```
@@ -1075,7 +1076,7 @@ Cidr("10.0.0.0/8")
 
 ## See Also
 
-- [🔬 Explorer Playground](https://tenuo.dev/explorer/) — Test constraints interactively
+- [🔬 Explorer Playground](https://tenuo.dev/explorer) — Test constraints interactively
 - [AI Agent Patterns](./ai-agents) — P-LLM/Q-LLM, prompt injection defense
 - [API Reference](./api-reference) — Full constraint API
 - [Security](./security) — How constraints fit into the security model

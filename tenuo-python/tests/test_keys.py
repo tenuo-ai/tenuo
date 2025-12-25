@@ -16,9 +16,8 @@ import pytest
 
 from tenuo import (
     SigningKey,
-    Keyring,
-    KeyRegistry,
 )
+from tenuo.keys import KeyRegistry, Keyring
 from tenuo.exceptions import ConfigurationError
 
 
@@ -312,18 +311,8 @@ class TestKeyRegistry:
         assert not hasattr(registry, '__dict__')
 
 
-class TestFunctionExports:
-    """Test that functions are properly exported."""
-    
-    def test_load_signing_key_from_env_exported(self):
-        """load_signing_key_from_env is accessible from tenuo."""
-        from tenuo import load_signing_key_from_env
-        assert callable(load_signing_key_from_env)
-    
-    def test_load_signing_key_from_file_exported(self):
-        """load_signing_key_from_file is accessible from tenuo."""
-        from tenuo import load_signing_key_from_file
-        assert callable(load_signing_key_from_file)
+class TestClassMethodExports:
+    """Test that class methods are properly exported."""
     
     def test_signing_key_from_env_method(self, monkeypatch):
         """SigningKey.from_env() works as class method."""

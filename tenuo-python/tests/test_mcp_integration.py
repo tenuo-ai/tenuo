@@ -12,7 +12,8 @@ from pathlib import Path
 # Check if MCP is available
 try:
     from tenuo.mcp import SecureMCPClient, MCP_AVAILABLE
-    from tenuo import SigningKey, configure, root_task, Pattern, Range, McpConfig, CompiledMcpConfig, Capability
+    from tenuo import SigningKey, configure, mint, Pattern, Range, Capability
+    from tenuo_core import CompiledMcpConfig, McpConfig
     pytestmark = pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
 except ImportError:
     pytestmark = pytest.mark.skip(reason="MCP integration not available")
@@ -82,7 +83,7 @@ async def test_mcp_tool_call_authorized(mcp_server_script):
             read_file = protected_tools["read_file"]
             
             # Call with authorization
-            async with root_task(Capability("read_file", path=Pattern("*"))):
+            async with mint(Capability("read_file", path=Pattern("*"))):
                 result = await read_file(path=str(test_file))
                 assert result is not None
                 assert len(result) > 0
@@ -113,7 +114,7 @@ async def test_mcp_tool_call_blocked(mcp_server_script):
         
         # Try to read outside allowed path (Pattern matches nothing effectively or specific file)
         # We allow * but check a specific exclusion or just use a restricted pattern
-        async with root_task(Capability("read_file", path=Pattern("*.allowed"))):
+        async with mint(Capability("read_file", path=Pattern("*.allowed"))):
             with pytest.raises(ConstraintViolation):
                 # This file doesn't match *.allowed
                 await read_file(path=str(Path(tempfile.gettempdir()) / "forbidden.txt"))
@@ -157,7 +158,7 @@ tools:
             read_file = protected_tools["read_file"]
             
             # This should work and use the default max_size from config
-            async with root_task(Capability("read_file", path=Pattern("*"), max_size=Range.max_value(2000))):
+            async with mint(Capability("read_file", path=Pattern("*"), max_size=Range.max_value(2000))):
                 # Test file
                 with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
                     tf.write("small")
@@ -193,7 +194,7 @@ async def test_mcp_warrant_injection(mcp_server_script):
         test_file = Path(test_file_path)
         
         try:
-            async with root_task(Capability("read_file", path=Pattern("*"))):
+            async with mint(Capability("read_file", path=Pattern("*"))):
                 # Call tool with injection
                 result = await client.call_tool(
                     "read_file",
@@ -253,7 +254,7 @@ async def test_discover_and_protect_usage(mcp_server_script):
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
     
-    from tenuo import SigningKey, configure, root_task, Pattern, Capability
+    from tenuo import SigningKey, configure, mint, Pattern, Capability
     from tenuo.mcp.client import discover_and_protect
     
     # Configure Tenuo
@@ -270,7 +271,7 @@ async def test_discover_and_protect_usage(mcp_server_script):
             assert "read_file" in tools
             read_file = tools["read_file"]
             
-            async with root_task(Capability("read_file", path=Pattern("*"))):
+            async with mint(Capability("read_file", path=Pattern("*"))):
                 result = await read_file(path=test_file)
                 assert "context_manager_test" in result[0].text
     finally:
@@ -283,10 +284,10 @@ async def test_config_auto_registration(mcp_server_script):
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
         
-    from tenuo import get_config, SigningKey, configure
+    from tenuo import SigningKey, configure
+    from tenuo.config import get_config, reset_config
     
     # Reset config
-    from tenuo.config import reset_config
     reset_config()
     
     # Setup minimal config

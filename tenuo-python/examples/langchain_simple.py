@@ -5,7 +5,7 @@ Simple LangChain + Tenuo Integration Example
 A minimal example showing how to protect LangChain tools with Tenuo warrants.
 
 Key Pattern:
-1. Decorate tool functions with @lockdown(tool="...")
+1. Decorate tool functions with @guard(tool="...")
 2. Set warrant in context before agent execution
 3. All tool calls are automatically authorized
 
@@ -14,9 +14,14 @@ Requirements:
 """
 
 from tenuo import (
-    SigningKey, Warrant, Pattern,
-    lockdown, set_warrant_context, set_signing_key_context, AuthorizationError
+    SigningKey,
+    Warrant,
+    Pattern,
+    guard,
+    warrant_scope,
+    key_scope,
 )
+from tenuo.exceptions import AuthorizationError
 
 # Try to import LangChain
 try:
@@ -34,7 +39,7 @@ except ImportError:
 # Protected Tool Functions
 # ============================================================================
 
-@lockdown(tool="read_file", extract_args=lambda file_path, **kwargs: {"file_path": file_path})
+@guard(tool="read_file", extract_args=lambda file_path, **kwargs: {"file_path": file_path})
 def read_file(file_path: str) -> str:
     """Read a file. Protected by Tenuo - only authorized paths allowed."""
     try:
@@ -46,7 +51,7 @@ def read_file(file_path: str) -> str:
         return f"Error: {str(e)}"
 
 
-@lockdown(tool="write_file", extract_args=lambda file_path, content, **kwargs: {"file_path": file_path, "content": content})
+@guard(tool="write_file", extract_args=lambda file_path, content, **kwargs: {"file_path": file_path, "content": content})
 def write_file(file_path: str, content: str) -> str:
     """Write to a file. Protected by Tenuo - only authorized paths allowed."""
     try:
@@ -76,13 +81,13 @@ def main():
         # SIMULATION: Create warrant with hardcoded constraints
         # HARDCODED: Pattern("/tmp/*"), ttl_seconds=3600
         # In production: Constraints come from policy engine or configuration
-        warrant = (Warrant.builder()
+        warrant = (Warrant.mint_builder()
             .capability("read_file", {
                 "file_path": Pattern("/tmp/*")  # HARDCODED: Only /tmp/ for demo safety
             })
             .holder(keypair.public_key)  # Bind to self for demo
             .ttl(3600)  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            .issue(keypair))
+            .mint(keypair))
         print("   [OK] Warrant created: only /tmp/* files allowed\n")
     except Exception as e:
         print(f"   [ERR] Error creating warrant: {e}")
@@ -97,7 +102,7 @@ def main():
         
         # Show it works without LangChain
         try:
-            with set_warrant_context(warrant), set_signing_key_context(keypair):
+            with warrant_scope(warrant), key_scope(keypair):
                 # Test authorized access
                 # HARDCODED PATH: /tmp/test.txt for demo
                 try:
@@ -123,7 +128,7 @@ def main():
         print("With LangChain installed:")
         print("  1. Create tools: Tool(name='read_file', func=read_file, ...)")
         print("  2. Create agent: create_openai_tools_agent(llm, tools)")
-        print("  3. Set warrant: with set_warrant_context(warrant):")
+        print("  3. Set warrant: with warrant_scope(warrant):")
         print("  4. Run agent: agent_executor.invoke(...)")
         print("\nAll tool calls are automatically protected!")
         return
@@ -137,7 +142,7 @@ def main():
         
         # Show it works without LangChain/LLM
         try:
-            with set_warrant_context(warrant), set_signing_key_context(keypair):
+            with warrant_scope(warrant), key_scope(keypair):
                 # Test authorized access
                 try:
                     read_file("/tmp/test.txt")
@@ -210,7 +215,7 @@ def main():
     
     # Set warrant in context and run agent
     try:
-        with set_warrant_context(warrant), set_signing_key_context(keypair):
+        with warrant_scope(warrant), key_scope(keypair):
             # This should work - file is in /tmp/
             try:
                 response = executor.invoke({
@@ -241,7 +246,7 @@ def main():
     
     print("=== Integration complete! ===")
     print("\nKey takeaway:")
-    print("  Set warrant in context once, all @lockdown functions are protected automatically.")
+    print("  Set warrant in context once, all @guard functions are protected automatically.")
 
 
 if __name__ == "__main__":

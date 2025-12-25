@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["DEFAULT_CLOCK_TOLERANCE_SECS"],"fn":["verify_approvals_with_tolerance"],"struct":["Authorizer","ChainStep","ChainVerificationResult","ControlPlane","DataPlane"]};

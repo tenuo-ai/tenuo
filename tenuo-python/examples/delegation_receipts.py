@@ -68,7 +68,7 @@ def main():
     print("=" * 70)
     
     # Create builder
-    builder = root_warrant.attenuate_builder()
+    builder = root_warrant.grant_builder()
     
     # Configure child warrant - narrow to specific file
     builder.capability("read_file", {"path": Exact("/data/q3.pdf")})
@@ -99,7 +99,7 @@ def main():
     
     # Delegate (builds warrant and attaches receipt)
     # The signing key must be the parent warrant's holder (orchestrator_kp)
-    child_warrant = builder.delegate(orchestrator_kp)
+    child_warrant = builder.grant(orchestrator_kp)
     
     print(f"\nChild warrant created: {child_warrant.id}")
     print(f"Depth: {child_warrant.depth}")
@@ -173,7 +173,7 @@ def main():
     print("=" * 70)
     
     # Create another delegation from child
-    builder2 = child_warrant.attenuate_builder()
+    builder2 = child_warrant.grant_builder()
     builder2.inherit_all()  # POLA: inherit all capabilities from parent
     builder2.ttl(30)  # Further reduce TTL
     builder2.intent("Final read before expiration")
@@ -182,7 +182,7 @@ def main():
     print(builder2.diff())
     
     # The signing key must be the parent warrant's holder (worker_kp)
-    grandchild = builder2.delegate(worker_kp)
+    grandchild = builder2.grant(worker_kp)
     
     receipt2 = grandchild.delegation_receipt
     if receipt2:

@@ -1,5 +1,6 @@
 
-from tenuo import SigningKey, Warrant, Pattern, Exact, Range, Constraints
+from tenuo import SigningKey, Warrant, Pattern, Exact, Range
+from tenuo.constraints import Constraints
 
 def test_full_warrant_lifecycle():
     """
@@ -18,7 +19,7 @@ def test_full_warrant_lifecycle():
     assert len(worker_keypair.public_key_bytes()) == 32
     
     # 2. Create a root warrant with constraints
-    root_warrant = Warrant.issue(
+    root_warrant = Warrant.mint(
         keypair=control_keypair,
         capabilities=Constraints.for_tool("manage_infrastructure", {
             "cluster": Pattern("staging-*"),
@@ -50,7 +51,7 @@ def test_full_warrant_lifecycle():
     
     # Helper to authorize with PoP
     def check_auth(warrant, tool, args, keypair):
-        signature = warrant.create_pop_signature(keypair, tool, args)
+        signature = warrant.sign(keypair, tool, args)
         return warrant.authorize(tool, args, bytes(signature))
 
     # Allowed: matches constraints

@@ -14,7 +14,7 @@ description: Tool protection for LangChain agents
 Tenuo integrates with LangChain using a **zero-intrusion** pattern:
 
 1. Tools remain pure business logic - no security imports
-2. Security is applied at composition time via `protect()` or decorators
+2. Security is applied at composition time via `guard()` or decorators
 3. Warrants are passed through context or explicit `BoundWarrant`
 4. Fail-closed: missing or invalid warrants block execution
 
@@ -30,28 +30,28 @@ pip install tenuo[langchain]
 
 ## Quick Start
 
-### Using `protect()` (Recommended)
+### Using `guard()` (Recommended)
 
-The unified `protect()` function wraps any LangChain tools:
+The unified `guard()` function wraps any LangChain tools:
 
 ```python
 from tenuo import Warrant, SigningKey, Pattern
-from tenuo.langchain import protect
+from tenuo.langchain import guard
 from langchain_community.tools import DuckDuckGoSearchRun
 
 # 1. Create warrant and bind key
-keypair = SigningKey.generate()
-warrant = (Warrant.builder()
+keypair = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
+warrant = (Warrant.mint_builder()
     .tool("duckduckgo_search")
     .capability("duckduckgo_search", {"query": Pattern("*")})
     .holder(keypair.public_key)
     .ttl(3600)
-    .issue(keypair))
+    .mint(keypair))
 
-bound = warrant.bind_key(keypair)
+bound = warrant.bind(keypair)
 
 # 2. Protect tools
-protected_tools = protect([DuckDuckGoSearchRun()], bound_warrant=bound)
+protected_tools = guard([DuckDuckGoSearchRun()], bound)
 
 # 3. Use in your agent
 from langchain.agents import AgentExecutor, create_openai_tools_agent
@@ -64,39 +64,40 @@ executor = AgentExecutor(agent=agent, tools=protected_tools)
 result = executor.invoke({"input": "Search for AI news"})
 ```
 
-### Using `@lockdown` Decorator
+### Using `@guard` Decorator
 
 For tools you define yourself:
 
 ```python
-from tenuo import lockdown, set_warrant_context, set_signing_key_context
+from tenuo import guard
 
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 def read_file(file_path: str) -> str:
     """Pure business logic - no security code"""
     with open(file_path, 'r') as f:
         return f.read()
 
-# Execute with warrant context
-with set_warrant_context(warrant), set_signing_key_context(keypair):
+# Execute with BoundWarrant as context manager
+bound = warrant.bind(keypair)
+with bound:
     content = read_file("/tmp/test.txt")  # ✅ Authorized
     content = read_file("/etc/passwd")    # ❌ Blocked
 ```
 
 ---
 
-## The `protect()` Function
+## The `guard()` Function
 
 Unified API for protecting tools - handles both `BaseTool` instances and plain callables:
 
 ```python
-from tenuo.langchain import protect
+from tenuo.langchain import guard
 
 # Protect LangChain BaseTools
-protected = protect([search_tool, calculator_tool], bound_warrant=bw)
+protected = guard([search_tool, calculator_tool], bw)
 
 # Protect plain functions
-protected = protect([my_func, other_func], bound_warrant=bw)
+protected = guard([my_func, other_func], bw)
 
 # With per-tool constraints (attenuation)
 from tenuo.langchain import LangChainConfig, ToolConfig
@@ -107,7 +108,7 @@ config = LangChainConfig(
         "calculator": ToolConfig(constraints={})
     }
 )
-protected = protect([search, calculator], bound_warrant=bw, config=config)
+protected = guard([search, calculator], bw, config=config)
 ```
 
 **Parameters:**
@@ -115,9 +116,9 @@ protected = protect([search, calculator], bound_warrant=bw, config=config)
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `tools` | `List[Any]` | List of `BaseTool` or callable |
-| `bound_warrant` | `BoundWarrant` | Explicit warrant+key (optional) |
-| `config` | `LangChainConfig` | Per-tool constraints (optional) |
+| `bound` | `BoundWarrant` | Bound warrant (positional, optional) |
 | `strict` | `bool` | Require constraints on critical tools |
+| `config` | `LangChainConfig` | Per-tool constraints (optional) |
 
 **Returns:**
 - For `BaseTool` inputs: `List[TenuoTool]`
@@ -125,10 +126,10 @@ protected = protect([search, calculator], bound_warrant=bw, config=config)
 
 ---
 
-## The `@lockdown` Decorator
+## The `@guard` Decorator
 
 ```python
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 def read_file(file_path: str, max_size: int = 1000) -> str:
     with open(file_path) as f:
         return f.read()[:max_size]
@@ -142,21 +143,58 @@ def read_file(file_path: str, max_size: int = 1000) -> str:
 | `extract_args` | Optional function to extract args |
 | `mapping` | Optional dict to rename parameters |
 
-**Behavior:**
+### How It Works: Dynamic Runtime Evaluation
 
-1. Retrieves warrant from context (or uses explicit `BoundWarrant`)
-2. Extracts all parameters including defaults
-3. Verifies tool is in warrant's allowed tools
-4. Verifies args satisfy warrant constraints
-5. Generates PoP signature
-6. Executes if authorized, raises exception if not
+`@guard` does **nothing at decoration time**. Authorization happens **when the function is called**:
+
+```
+┌─────────────────────┐
+│  Import Time        │  @guard wraps function, stores tool name
+│  (no warrant yet)   │  No authorization check happens here
+└─────────────────────┘
+          │
+          ▼
+┌─────────────────────┐
+│  Runtime            │  with bound:  ← warrant+key set in context
+│  (warrant exists)   │      read_file("/data/x")  ← NOW authorization runs
+└─────────────────────┘
+```
+
+**This means the same function can have different permissions at different times:**
+
+```python
+@guard(tool="read_file")
+def read_file(path: str): ...
+
+# Task 1: warrant allows /projects/acme/*
+with warrant_for_acme.bind(key):
+    read_file("/projects/acme/report.pdf")  # ✅ Allowed
+    read_file("/projects/beta/secret.pdf")  # ❌ Blocked
+
+# Task 2: warrant allows /projects/beta/*  
+with warrant_for_beta.bind(key):
+    read_file("/projects/acme/report.pdf")  # ❌ Blocked
+    read_file("/projects/beta/secret.pdf")  # ✅ Allowed
+```
+
+### Authorization Flow
+
+When `read_file("/data/x")` is called inside `with bound:`:
+
+1. Wrapper reads warrant from `_warrant_context`
+2. Wrapper reads key from `_keypair_context`
+3. Extracts all parameters including defaults
+4. Verifies tool is in warrant's allowed tools
+5. Verifies args satisfy warrant constraints
+6. Generates PoP signature using the key
+7. Executes if authorized, raises exception if not
 
 ### Automatic Extraction (Recommended)
 
 When no `extract_args` is provided, Tenuo extracts **all** parameters including defaults:
 
 ```python
-@lockdown(tool="transfer")
+@guard(tool="transfer")
 def transfer(from_account: str, to_account: str, amount: float, memo: str = ""):
     ...
 
@@ -169,7 +207,7 @@ def transfer(from_account: str, to_account: str, amount: float, memo: str = ""):
 For simple renames:
 
 ```python
-@lockdown(
+@guard(
     tool="read_file",
     mapping={"file_path": "path"}  # Rename for constraint matching
 )
@@ -186,20 +224,20 @@ def read_file(file_path: str):
 ```python
 from tenuo import Warrant, SigningKey
 
-warrant = Warrant.builder()...issue(keypair)
-bound = warrant.bind_key(keypair)
+warrant = Warrant.mint_builder()...mint(keypair)
+bound = warrant.bind(keypair)
 
-# Pass to protect()
-protected = protect(tools, bound_warrant=bound)
+# Pass to guard()
+protected = guard(tools, bound)
 ```
 
 ### Context Variables (For Decorators)
 
 ```python
-from tenuo import set_warrant_context, set_signing_key_context
-
-with set_warrant_context(warrant), set_signing_key_context(keypair):
-    # All @lockdown calls use this warrant and keypair
+# BoundWarrant as context manager - sets both warrant and key scope
+bound = warrant.bind(keypair)
+with bound:
+    # All @guard calls use this warrant and keypair
     result = protected_function()
 ```
 
@@ -228,7 +266,7 @@ except AuthorizationDenied as e:
 |-------|-------|-----|
 | `Tool 'x' not authorized` | Tool not in warrant | Add tool to warrant |
 | `Constraint failed` | Argument violates constraint | Request within bounds |
-| `No warrant in context` | Missing context | Use `set_warrant_context()` or `bound_warrant=` |
+| `No warrant in context` | Missing context | Use `warrant_scope()` or pass to `guard()` |
 | `Warrant expired` | TTL exceeded | Request fresh warrant |
 
 ---
@@ -253,33 +291,30 @@ Constraints restrict tool arguments:
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_openai import ChatOpenAI
 from tenuo import SigningKey, Warrant, Pattern
-from tenuo.langchain import protect
+from tenuo.langchain import guard
 
 # 1. Create keypair and warrant
-keypair = SigningKey.generate()
-warrant = (Warrant.builder()
+keypair = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
+warrant = (Warrant.mint_builder()
     .tool("search")
     .tool("read_file")
     .capability("read_file", {"path": Pattern("/tmp/*")})
     .holder(keypair.public_key)
     .ttl(3600)
-    .issue(keypair))
+    .mint(keypair))
 
-bound = warrant.bind_key(keypair)
+bound = warrant.bind(keypair)
 
 # 2. Define tools
 from langchain_community.tools import DuckDuckGoSearchRun
 
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 def read_file(path: str) -> str:
     with open(path) as f:
         return f.read()
 
 # 3. Protect tools
-protected_tools = protect(
-    [DuckDuckGoSearchRun(), read_file],
-    bound_warrant=bound
-)
+protected_tools = guard([DuckDuckGoSearchRun(), read_file], bound)
 
 # 4. Create agent
 llm = ChatOpenAI(model="gpt-4")
@@ -289,6 +324,123 @@ executor = AgentExecutor(agent=agent, tools=protected_tools)
 # 5. Run
 result = executor.invoke({"input": "Read /tmp/test.txt"})
 ```
+
+---
+
+## High-Level APIs
+
+### `auto_protect()` (Zero Config)
+
+The fastest way to add protection - defaults to **audit mode** so you can deploy without breaking anything:
+
+```python
+from tenuo.langchain import auto_protect
+
+# Wrap your executor - logs all tool calls, doesn't block
+protected_executor = auto_protect(executor)
+result = protected_executor.invoke({"input": "Search for AI news"})
+
+# After analyzing logs, switch to enforce mode
+protected_executor = auto_protect(executor, mode="enforce")
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `agent_or_tools` | `Any` | required | AgentExecutor, list of tools, or single tool |
+| `mode` | `str` | `"audit"` | `"audit"` (log only), `"enforce"` (block), `"permissive"` (warn) |
+| `infer_schemas` | `bool` | `True` | Infer tool schemas from type hints |
+
+### `SecureAgentExecutor` (Drop-in Replacement)
+
+A drop-in replacement for LangChain's `AgentExecutor` with built-in protection:
+
+```python
+from tenuo.langchain import SecureAgentExecutor
+from tenuo import configure, mint, Capability, SigningKey
+
+configure(issuer_key=SigningKey.generate(), dev_mode=True)
+
+# Same interface as AgentExecutor
+executor = SecureAgentExecutor(
+    agent=agent,
+    tools=tools,
+    strict=False,  # Require constraints on critical tools
+    warn_on_missing_warrant=True,  # Log when tools called without context
+)
+
+# Use with mint() context
+async with mint(Capability("search"), Capability("read_file")):
+    result = await executor.ainvoke({"input": "Search and read"})
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `agent` | `Any` | required | LangChain agent |
+| `tools` | `List[Any]` | required | List of tools |
+| `strict` | `bool` | `False` | Require constraints on critical tools |
+| `warn_on_missing_warrant` | `bool` | `True` | Log warnings for unprotected calls |
+| `schemas` | `Dict[str, Any]` | `None` | Custom tool schemas |
+
+### `guard_tools()` (Wrap Tools)
+
+Wrap tools with protection - you manage the `mint()`/`grant()` context:
+
+```python
+from tenuo.langchain import guard_tools
+from tenuo import configure, mint_sync, Capability, SigningKey
+
+kp = SigningKey.generate()
+configure(issuer_key=kp, dev_mode=True)
+
+# Wrap tools
+protected_tools = guard_tools([search_tool, calculator], issuer_keypair=kp)
+
+# Create agent with protected tools
+agent = create_openai_tools_agent(llm, protected_tools, prompt)
+executor = AgentExecutor(agent=agent, tools=protected_tools)
+
+# Run with authorization context
+with mint_sync(Capability("search"), Capability("calculator")):
+    result = executor.invoke({"input": "Calculate 2+2"})
+```
+
+### `guard_agent()` (Wrap Entire Executor)
+
+Wrap an entire executor with built-in authorization context:
+
+```python
+from tenuo.langchain import guard_agent
+from tenuo import SigningKey, Capability, Pattern
+
+kp = SigningKey.generate()
+
+# One line to add protection
+protected = guard_agent(
+    executor,
+    issuer_keypair=kp,
+    capabilities=[
+        Capability("search"),
+        Capability("read_file", path=Pattern("/data/*")),
+    ],
+)
+
+# Now run - authorization is automatic!
+result = protected.invoke({"input": "Read /data/report.txt"})
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `agent_or_executor` | `Any` | AgentExecutor, RunnableAgent, or agent with tools |
+| `issuer_keypair` | `SigningKey` | Signing key (enables dev_mode if provided) |
+| `capabilities` | `List[Capability]` | Capabilities to scope the agent to |
+| `strict` | `bool` | Require constraints for critical tools |
+| `warn_on_missing` | `bool` | Log warnings for missing warrants |
 
 ---
 

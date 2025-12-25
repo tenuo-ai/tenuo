@@ -14,8 +14,8 @@ pip install tenuo
 - **[basic_usage.py](basic_usage.py)**: The "Hello World" of Tenuo. Shows how to create a keypair, issue a warrant, and authorize a tool call. Demonstrates POLA (Principle of Least Authority) with explicit capabilities.
 - **[clearance_demo.py](clearance_demo.py)**: Shows how to assign clearance levels to warrants and configure clearance requirements per tool (gateway policy). Demonstrates clearance hierarchy enforcement and defense in depth.
 - **[issuer_execution_pattern.py](issuer_execution_pattern.py)**: **RECOMMENDED PATTERN** - Shows the production best practice: ISSUER warrants for planners, EXECUTION warrants for workers. Demonstrates clearance levels and separation of concerns. **Start here for production deployments.**
-- **[decorator_example.py](decorator_example.py)**: Demonstrates the `@lockdown` decorator pattern for protecting functions with minimal boilerplate.
-- **[context_pattern.py](context_pattern.py)**: Shows how to use `set_warrant_context` for thread-safe/async-safe warrant passing (essential for web frameworks like FastAPI).
+- **[decorator_example.py](decorator_example.py)**: Demonstrates the `@guard` decorator pattern for protecting functions with minimal boilerplate.
+- **[context_pattern.py](context_pattern.py)**: Shows how to use `warrant_scope` for thread-safe/async-safe warrant passing (essential for web frameworks like FastAPI).
 
 ### Multi-Agent Delegation
 - **[orchestrator_worker.py](orchestrator_worker.py)**: **Core delegation pattern** - Shows how orchestrators attenuate warrants for workers. Demonstrates Tenuo's key value: authority that shrinks as it flows through the system. Essential for understanding multi-agent workflows.
@@ -23,7 +23,7 @@ pip install tenuo
 ### LangChain Integration
 - **[langchain_simple.py](langchain_simple.py)**: Minimal example of protecting LangChain tools. Shows how to wrap a tool and run an agent with a warrant. **Start here for LangChain integration.**
 - **[langchain_integration.py](langchain_integration.py)**: Advanced LangChain integration with callbacks. Demonstrates warrant context propagation through LangChain's callback system.
-- **[langchain_protect_tools.py](langchain_protect_tools.py)**: Protecting third-party tools (e.g., from `langchain_community`) using `protect_tools()`. Shows how to secure tools you don't control.
+- **[langchain_protect_tools.py](langchain_protect_tools.py)**: Protecting third-party tools (e.g., from `langchain_community`) using `guard()`. Shows how to secure tools you don't control.
 - [langchain_mcp_integration.py](langchain_mcp_integration.py): **LangChain + MCP + Tenuo** - Complete integration showing how to authorize MCP tool calls with Tenuo warrants. Demonstrates constraint extraction, authorization flow, and end-to-end security.
 
 ### LangGraph Integration
@@ -100,7 +100,7 @@ python kubernetes_integration.py
 1. **Zero-Intrusion**: Tools don't import Tenuo security code. Security is applied via decorators or wrappers, keeping business logic clean.
 2. **Context Propagation**: Warrants are passed via `ContextVar`, making them thread-safe and async-safe. Perfect for web frameworks like FastAPI.
 3. **Fail-Closed**: Missing warrants block execution. If no warrant is in context, authorization fails by default.
-4. **PoP Automation**: Proof-of-Possession signatures are generated automatically by the SDK when using `@lockdown` or `protect_tools()`.
+4. **PoP Automation**: Proof-of-Possession signatures are generated automatically by the SDK when using `@guard` or `guard()`.
 
 ## Learning Path
 

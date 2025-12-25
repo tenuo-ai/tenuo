@@ -11,11 +11,6 @@ export function check_access_with_pop(warrant_b64: string, tool: string, args_js
 export function check_chain_access(warrant_b64_list: string[], tool: string, args_json: any, trusted_root_hex: string): any;
 
 /**
- * Create a Proof-of-Possession signature for a warrant
- */
-export function create_pop_signature(private_key_hex: string, warrant_b64: string, tool: string, args_json: any): any;
-
-/**
  * Create a fresh sample warrant with the given tool and TTL
  * This generates new keys each time, ensuring the warrant is never expired
  */
@@ -30,6 +25,11 @@ export function generate_keypair(): any;
 
 export function init_panic_hook(): void;
 
+/**
+ * Create a Proof-of-Possession signature for a warrant
+ */
+export function sign(private_key_hex: string, warrant_b64: string, tool: string, args_json: any): any;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
@@ -37,10 +37,10 @@ export interface InitOutput {
   readonly check_access: (a: number, b: number, c: number, d: number, e: any, f: number, g: number, h: number) => any;
   readonly check_access_with_pop: (a: number, b: number, c: number, d: number, e: any, f: number, g: number, h: number, i: number) => any;
   readonly check_chain_access: (a: number, b: number, c: number, d: number, e: any, f: number, g: number) => any;
-  readonly create_pop_signature: (a: number, b: number, c: number, d: number, e: number, f: number, g: any) => any;
   readonly create_sample_warrant: (a: number, b: number, c: number, d: number, e: number, f: number, g: bigint) => any;
   readonly decode_warrant: (a: number, b: number) => any;
   readonly generate_keypair: () => any;
+  readonly sign: (a: number, b: number, c: number, d: number, e: number, f: number, g: any) => any;
   readonly init_panic_hook: () => void;
   readonly __wbindgen_malloc: (a: number, b: number) => number;
   readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;

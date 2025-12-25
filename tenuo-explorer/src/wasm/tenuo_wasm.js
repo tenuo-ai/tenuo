@@ -246,25 +246,6 @@ export function check_chain_access(warrant_b64_list, tool, args_json, trusted_ro
 }
 
 /**
- * Create a Proof-of-Possession signature for a warrant
- * @param {string} private_key_hex
- * @param {string} warrant_b64
- * @param {string} tool
- * @param {any} args_json
- * @returns {any}
- */
-export function create_pop_signature(private_key_hex, warrant_b64, tool, args_json) {
-    const ptr0 = passStringToWasm0(private_key_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(warrant_b64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.create_pop_signature(ptr0, len0, ptr1, len1, ptr2, len2, args_json);
-    return ret;
-}
-
-/**
  * Create a fresh sample warrant with the given tool and TTL
  * This generates new keys each time, ensuring the warrant is never expired
  * @param {string} tool
@@ -306,6 +287,25 @@ export function generate_keypair() {
 
 export function init_panic_hook() {
     wasm.init_panic_hook();
+}
+
+/**
+ * Create a Proof-of-Possession signature for a warrant
+ * @param {string} private_key_hex
+ * @param {string} warrant_b64
+ * @param {string} tool
+ * @param {any} args_json
+ * @returns {any}
+ */
+export function sign(private_key_hex, warrant_b64, tool, args_json) {
+    const ptr0 = passStringToWasm0(private_key_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(warrant_b64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.sign(ptr0, len0, ptr1, len1, ptr2, len2, args_json);
+    return ret;
 }
 
 const EXPECTED_RESPONSE_TYPES = new Set(['basic', 'cors', 'default']);

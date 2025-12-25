@@ -13,28 +13,35 @@ Tests cover:
 
 import pytest
 from tenuo import (
-    SigningKey, Warrant, Pattern, Exact, Cidr, UrlPattern, Constraints,
-    lockdown, set_warrant_context, set_signing_key_context,
-    ScopeViolation
+    Warrant,
+    SigningKey,
+    Pattern,
+    guard,
+    warrant_scope,
+    key_scope,
+    Exact,
 )
+from tenuo.constraints import Constraints
+from tenuo.exceptions import ScopeViolation
+from tenuo_core import Cidr, UrlPattern
 
 
 def test_pattern_constraint_matching():
     """Test that Pattern constraints match correctly."""
     
-    @lockdown(tool="file_ops")
+    @guard(tool="file_ops")
     def access_file(path: str) -> str:
         return f"accessed {path}"
     
     kp = SigningKey.generate()
-    warrant = Warrant.issue(
+    warrant = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/*")}),
         holder=kp.public_key,
         ttl_seconds=60
     )
     
-    with set_warrant_context(warrant), set_signing_key_context(kp):
+    with warrant_scope(warrant), key_scope(kp):
         # Should match
         assert access_file(path="/data/file.txt") == "accessed /data/file.txt"
         assert access_file(path="/data/subdir/file.txt") == "accessed /data/subdir/file.txt"
@@ -47,19 +54,19 @@ def test_pattern_constraint_matching():
 def test_exact_constraint_matching():
     """Test that Exact constraints match only exact values."""
     
-    @lockdown(tool="delete_db")
+    @guard(tool="delete_db")
     def delete_database(db_name: str) -> str:
         return f"deleted {db_name}"
     
     kp = SigningKey.generate()
-    warrant = Warrant.issue(
+    warrant = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("delete_db", {"db_name": Exact("test-db")}),
         holder=kp.public_key,
         ttl_seconds=60
     )
     
-    with set_warrant_context(warrant), set_signing_key_context(kp):
+    with warrant_scope(warrant), key_scope(kp):
         # Should match exact value
         assert delete_database(db_name="test-db") == "deleted test-db"
         
@@ -74,12 +81,12 @@ def test_exact_constraint_matching():
 def test_multiple_constraints():
     """Test that multiple constraints are all enforced."""
     
-    @lockdown(tool="transfer_money")
+    @guard(tool="transfer_money")
     def transfer(account: str, amount: str) -> str:
         return f"transferred ${amount} from {account}"
     
     kp = SigningKey.generate()
-    warrant = Warrant.issue(
+    warrant = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("transfer_money", {
             "account": Pattern("checking-*"),
@@ -89,7 +96,7 @@ def test_multiple_constraints():
         ttl_seconds=60
     )
     
-    with set_warrant_context(warrant), set_signing_key_context(kp):
+    with warrant_scope(warrant), key_scope(kp):
         # Both constraints satisfied
         result = transfer(account="checking-001", amount="100")
         assert result == "transferred $100 from checking-001"
@@ -114,7 +121,7 @@ def test_constraint_attenuation():
     kp = SigningKey.generate()
     
     # Parent with broad constraint
-    parent = Warrant.issue(
+    parent = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/*")}),
         holder=kp.public_key,
@@ -129,17 +136,17 @@ def test_constraint_attenuation():
         ttl_seconds=60
     )
     
-    @lockdown(tool="file_ops")
+    @guard(tool="file_ops")
     def access_file(path: str) -> str:
         return f"accessed {path}"
     
     # Parent can access broader paths
-    with set_warrant_context(parent), set_signing_key_context(kp):
+    with warrant_scope(parent), key_scope(kp):
         assert access_file(path="/data/file.txt") == "accessed /data/file.txt"
         assert access_file(path="/data/reports/q3.pdf") == "accessed /data/reports/q3.pdf"
     
     # Child can only access narrower paths
-    with set_warrant_context(child), set_signing_key_context(kp):
+    with warrant_scope(child), key_scope(kp):
         assert access_file(path="/data/reports/q3.pdf") == "accessed /data/reports/q3.pdf"
         
         with pytest.raises(ScopeViolation):
@@ -152,7 +159,7 @@ def test_constraint_field_addition():
     kp = SigningKey.generate()
     
     # Parent with one constraint
-    parent = Warrant.issue(
+    parent = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("api_call", {"endpoint": Pattern("/api/*")}),
         holder=kp.public_key,
@@ -170,17 +177,17 @@ def test_constraint_field_addition():
         ttl_seconds=60
     )
     
-    @lockdown(tool="api_call")
+    @guard(tool="api_call")
     def call_api(endpoint: str, method: str) -> str:
         return f"{method} {endpoint}"
     
     # Parent doesn't require method constraint
-    with set_warrant_context(parent), set_signing_key_context(kp):
+    with warrant_scope(parent), key_scope(kp):
         assert call_api(endpoint="/api/data", method="GET") == "GET /api/data"
         assert call_api(endpoint="/api/data", method="POST") == "POST /api/data"
     
     # Child requires both constraints
-    with set_warrant_context(child), set_signing_key_context(kp):
+    with warrant_scope(child), key_scope(kp):
         assert call_api(endpoint="/api/users/123", method="GET") == "GET /api/users/123"
         
         # Wrong method
@@ -195,19 +202,19 @@ def test_constraint_field_addition():
 def test_missing_constraint_parameter():
     """Test that missing required constraint parameters fail authorization."""
     
-    @lockdown(tool="test_tool")
+    @guard(tool="test_tool")
     def protected_function(required: str, optional: str = "default") -> str:
         return f"{required}-{optional}"
     
     kp = SigningKey.generate()
-    warrant = Warrant.issue(
+    warrant = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("test_tool", {"required": Exact("value")}),
         holder=kp.public_key,
         ttl_seconds=60
     )
     
-    with set_warrant_context(warrant), set_signing_key_context(kp):
+    with warrant_scope(warrant), key_scope(kp):
         # Should work with required parameter
         result = protected_function(required="value")
         assert result == "value-default"
@@ -259,19 +266,19 @@ def test_cidr_contains():
 def test_cidr_constraint_matching():
     """Test that CIDR constraints match correctly."""
     
-    @lockdown(tool="network_ops")
+    @guard(tool="network_ops")
     def allow_ip(source_ip: str) -> str:
         return f"allowed {source_ip}"
     
     kp = SigningKey.generate()
-    warrant = Warrant.issue(
+    warrant = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("network_ops", {"source_ip": Cidr("10.0.0.0/8")}),
         holder=kp.public_key,
         ttl_seconds=60
     )
     
-    with set_warrant_context(warrant), set_signing_key_context(kp):
+    with warrant_scope(warrant), key_scope(kp):
         # Should match IPs in network
         assert allow_ip(source_ip="10.1.2.3") == "allowed 10.1.2.3"
         assert allow_ip(source_ip="10.255.255.255") == "allowed 10.255.255.255"
@@ -286,7 +293,7 @@ def test_cidr_attenuation():
     kp = SigningKey.generate()
     
     # Parent with broad network
-    parent = Warrant.issue(
+    parent = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("network_ops", {"source_ip": Cidr("10.0.0.0/8")}),
         holder=kp.public_key,
@@ -301,17 +308,17 @@ def test_cidr_attenuation():
         ttl_seconds=60
     )
     
-    @lockdown(tool="network_ops")
+    @guard(tool="network_ops")
     def allow_ip(source_ip: str) -> str:
         return f"allowed {source_ip}"
     
     # Parent can access broader network
-    with set_warrant_context(parent), set_signing_key_context(kp):
+    with warrant_scope(parent), key_scope(kp):
         assert allow_ip(source_ip="10.1.2.3") == "allowed 10.1.2.3"
         assert allow_ip(source_ip="10.2.3.4") == "allowed 10.2.3.4"
     
     # Child can only access narrower subnet
-    with set_warrant_context(child), set_signing_key_context(kp):
+    with warrant_scope(child), key_scope(kp):
         assert allow_ip(source_ip="10.1.2.3") == "allowed 10.1.2.3"
         
         with pytest.raises(ScopeViolation):
@@ -378,19 +385,19 @@ def test_url_pattern_matches():
 def test_url_pattern_constraint_matching():
     """Test that URL pattern constraints match correctly."""
 
-    @lockdown(tool="api_call")
+    @guard(tool="api_call")
     def call_api(endpoint: str) -> str:
         return f"called {endpoint}"
 
     kp = SigningKey.generate()
-    warrant = Warrant.issue(
+    warrant = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("api_call", {"endpoint": UrlPattern("https://api.example.com/*")}),
         holder=kp.public_key,
         ttl_seconds=60
     )
 
-    with set_warrant_context(warrant), set_signing_key_context(kp):
+    with warrant_scope(warrant), key_scope(kp):
         # Should match valid URLs
         assert call_api(endpoint="https://api.example.com/v1/users") == "called https://api.example.com/v1/users"
 
@@ -404,7 +411,7 @@ def test_url_pattern_attenuation():
     kp = SigningKey.generate()
 
     # Parent with broad pattern
-    parent = Warrant.issue(
+    parent = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("api_call", {"endpoint": UrlPattern("https://*.example.com/*")}),
         holder=kp.public_key,
@@ -419,17 +426,17 @@ def test_url_pattern_attenuation():
         ttl_seconds=60
     )
 
-    @lockdown(tool="api_call")
+    @guard(tool="api_call")
     def call_api(endpoint: str) -> str:
         return f"called {endpoint}"
 
     # Parent can access broader URLs
-    with set_warrant_context(parent), set_signing_key_context(kp):
+    with warrant_scope(parent), key_scope(kp):
         assert call_api(endpoint="https://api.example.com/v1") == "called https://api.example.com/v1"
         assert call_api(endpoint="https://www.example.com/other") == "called https://www.example.com/other"
 
     # Child can only access narrower URLs
-    with set_warrant_context(child), set_signing_key_context(kp):
+    with warrant_scope(child), key_scope(kp):
         assert call_api(endpoint="https://api.example.com/v1/users") == "called https://api.example.com/v1/users"
 
         with pytest.raises(ScopeViolation):

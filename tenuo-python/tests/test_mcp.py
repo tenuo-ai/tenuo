@@ -1,7 +1,7 @@
 import pytest
 import tempfile
 import os
-from tenuo import McpConfig, CompiledMcpConfig, ExtractionResult
+from tenuo_core import CompiledMcpConfig, ExtractionResult, McpConfig
 
 # Sample MCP Config YAML
 SAMPLE_CONFIG = """

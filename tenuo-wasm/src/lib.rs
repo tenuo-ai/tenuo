@@ -269,7 +269,7 @@ pub struct PopSignatureResult {
 
 /// Create a Proof-of-Possession signature for a warrant
 #[wasm_bindgen]
-pub fn create_pop_signature(
+pub fn sign(
     private_key_hex: &str,
     warrant_b64: &str,
     tool: &str,
@@ -300,7 +300,7 @@ pub fn create_pop_signature(
     };
     
     // 4. Create PoP signature
-    match warrant.create_pop_signature(&keypair, tool, &args) {
+    match warrant.sign(&keypair, tool, &args) {
         Ok(sig) => {
             serde_wasm_bindgen::to_value(&PopSignatureResult {
                 signature_hex: hex::encode(sig.to_bytes()),

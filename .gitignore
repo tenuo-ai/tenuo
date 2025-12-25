@@ -58,3 +58,4 @@ tenuo-core/check.log
 # Benchmark results
 results/
 *.log
+tenuo-core/benchmark_results.txt

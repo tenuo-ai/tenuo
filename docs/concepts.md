@@ -5,7 +5,7 @@ description: Why Tenuo? Problem/solution, threat model, core invariants
 
 # Tenuo Concepts
 
-This page explains the problem Tenuo solves and the core ideas behind it. For a visual walkthrough, see the [Demo](./demo.html), [Architecture Infographic](./architecture-infographic.html), or try the [Explorer Playground](https://tenuo.dev/explorer/) to decode warrants interactively.
+This page explains the problem Tenuo solves and the core ideas behind it. For a visual walkthrough, see the [Demo](./demo.html), [Architecture Infographic](./architecture-infographic.html), or try the [Explorer Playground](https://tenuo.dev/explorer) to decode warrants interactively.
 
 ## The Problem
 
@@ -100,7 +100,7 @@ The injection succeeded at the LLM level. **Authorization stopped the action.**
 
 **Control plane compromise**: A compromised control plane can mint arbitrary warrants. Mitigation: secure your control plane infrastructure.
 
-**Raw API calls**: Calls that bypass Tenuo entirely aren't protected. Mitigation: wrap ALL tools with `@lockdown`.
+**Raw API calls**: Calls that bypass Tenuo entirely aren't protected. Mitigation: wrap ALL tools with `@guard` or `guard()`.
 
 For container compromise, Tenuo still limits damage to the current warrant's scope and TTL.
 
@@ -297,7 +297,7 @@ Authorization happens **locally** at the tool. No control plane calls during exe
 │                              ▼                                              │
 │   ┌─────────────────────────────────────────────────────────────────────┐  │
 │   │                     PROTECTED TOOLS                                  │  │
-│   │   @lockdown decorator or protect_tools() wrapper                     │  │
+│   │   @guard decorator or guard() wrapper                             │  │
 │   │   → Checks warrant → Verifies PoP → Allows or denies                │  │
 │   └─────────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -325,12 +325,12 @@ Supported integrations: Envoy, Istio, nginx, Kubernetes sidecars. See [Proxy Con
 | **SigningKey** | Ed25519 identity for signing |
 | **Warrant** | Capability token with tools, constraints, TTL |
 | **Authorizer** | Local verification (no network) |
-| **@lockdown** | Decorator for tool protection |
-| **protect_tools()** | Wrap LangChain/LangGraph tools |
-| **root_task / scoped_task** | Context managers for scoped authority |
+| **@guard** | Decorator for tool protection |
+| **guard()** | Wrap LangChain/LangGraph tools |
+| **mint / grant** | Context managers for scoped authority |
 | **tenuo-authorizer** | External authorization service for gateway integration |
 
-> **Context vs State**: Context (`set_warrant_context`) is a convenience layer for tool protection within a single process. For distributed systems, serialized state, or multi-agent workflows, warrants must travel in request state. **Context is convenience; state is the security boundary.**
+> **Context vs State**: Context (`warrant_scope`) is a convenience layer for tool protection within a single process. For distributed systems, serialized state, or multi-agent workflows, warrants must travel in request state. **Context is convenience; state is the security boundary.**
 
 ### What's NOT in v0.1
 

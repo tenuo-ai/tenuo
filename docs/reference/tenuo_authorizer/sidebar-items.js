@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["Commands"],"fn":["build_authorizer","load_revocation_list","main","read_warrant"],"struct":["Cli"]};

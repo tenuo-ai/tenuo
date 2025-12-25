@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["DESERIALIZATION_DEPTH","MAX_CONSTRAINT_DEPTH"],"enum":["Constraint","ConstraintValue"],"struct":["All","Any","CelConstraint","ConstraintSet","Contains","DepthGuard","Exact","Not","NotOneOf","OneOf","Pattern","Range","RegexConstraint","Subset","Wildcard"]};

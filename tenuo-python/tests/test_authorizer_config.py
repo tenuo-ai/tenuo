@@ -1,13 +1,12 @@
 import pytest
 import time
 from tenuo import (
-    Authorizer, 
-    SigningKey, 
-    Warrant, 
-    ExpiredError,
-    ValidationError,
-    Constraints
+    Authorizer,
+    SigningKey,
+    Warrant,
 )
+from tenuo.constraints import Constraints
+from tenuo.exceptions import ExpiredError, ValidationError
 
 def test_set_clock_tolerance_preserves_roots():
     """
@@ -27,7 +26,7 @@ def test_set_clock_tolerance_preserves_roots():
     assert auth.trusted_root_count() == 1
     
     # 4. Verify it actually works (functional test)
-    warrant = Warrant.issue(
+    warrant = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("test", {}),
         ttl_seconds=300
@@ -48,7 +47,7 @@ def test_error_mapping_signature_invalid():
     auth = Authorizer(trusted_roots=[kp.public_key])
     
     # Issue warrant signed by WRONG key
-    warrant = Warrant.issue(
+    warrant = Warrant.mint(
         keypair=wrong_kp,  # Not trusted
         capabilities=Constraints.for_tool("test", {}),
         ttl_seconds=300
@@ -68,7 +67,7 @@ def test_error_mapping_expired():
     auth = Authorizer(trusted_roots=[kp.public_key])
     
     # Issue expired warrant
-    warrant = Warrant.issue(
+    warrant = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("test", {}),
         ttl_seconds=0 # Expires immediately

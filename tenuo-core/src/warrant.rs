@@ -915,8 +915,8 @@ impl Warrant {
         Ok(())
     }
 
-    /// Create a Proof-of-Possession signature for a request.
-    pub fn create_pop_signature(
+    /// Sign an action for this warrant (creates Proof-of-Possession).
+    pub fn sign(
         &self,
         keypair: &SigningKey,
         tool: &str,
@@ -996,7 +996,10 @@ pub struct WarrantBuilder {
     // Root warrants have no parent hash
     // parent_id removed as it is not part of root warrant payload
     // extensions
+    // Extensions
     extensions: BTreeMap<String, Vec<u8>>,
+    // Deferred error (from builder methods that can't return Result)
+    error: Option<Error>,
 }
 
 impl WarrantBuilder {
@@ -1018,6 +1021,7 @@ impl WarrantBuilder {
             id: None,
             // parent_id: None,
             extensions: BTreeMap::new(),
+            error: None,
         }
     }
 
@@ -1068,24 +1072,24 @@ impl WarrantBuilder {
 
     // Support    /// Add a capability (tool + constraints).
     pub fn capability(mut self, tool: impl Into<String>, constraints: ConstraintSet) -> Self {
-        let tool_name = tool.into();
+        let tool_name: String = tool.into();
 
         // Validate reserved tool namespace
         if tool_name.starts_with("tenuo:") {
-            // Store error to be returned during build()
-            // For now, we'll panic to match existing builder pattern
-            panic!("Reserved tool namespace: tools starting with 'tenuo:' are reserved for framework use");
+            self.error = Some(Error::Validation(
+                "Reserved tool namespace: tools starting with 'tenuo:' are reserved for framework use"
+                    .to_string(),
+            ));
+            return self;
         }
 
         self.tools.insert(tool_name, constraints);
         self
     }
 
-    // Support old "tools" method? No, refactor to capability/tool
     // But keep "tool" method for single tool?
-    pub fn tool(mut self, tool: impl Into<String>, constraints: ConstraintSet) -> Self {
-        self.tools.insert(tool.into(), constraints);
-        self
+    pub fn tool(self, tool: impl Into<String>, constraints: ConstraintSet) -> Self {
+        self.capability(tool, constraints)
     }
 
     // Support authorized_holder renamed to holder
@@ -1137,6 +1141,11 @@ impl WarrantBuilder {
 
     /// Build and sign the warrant.
     pub fn build(mut self, signing_key: &SigningKey) -> Result<Warrant> {
+        // Return deferred error if any
+        if let Some(err) = self.error {
+            return Err(err);
+        }
+
         if self.warrant_type.is_none() {
             if !self.tools.is_empty() {
                 self.warrant_type = Some(WarrantType::Execution);
@@ -3148,9 +3157,7 @@ mod tests {
         );
 
         // Create PoP signature (mandatory now)
-        let pop_sig = warrant
-            .create_pop_signature(&keypair, "upgrade_cluster", &args)
-            .unwrap();
+        let pop_sig = warrant.sign(&keypair, "upgrade_cluster", &args).unwrap();
 
         assert!(warrant
             .authorize("upgrade_cluster", &args, Some(&pop_sig))
@@ -3406,9 +3413,7 @@ mod tests {
         );
 
         // Create PoP signature with WRONG keypair
-        let wrong_pop_sig = warrant
-            .create_pop_signature(&wrong_keypair, "test", &args)
-            .unwrap();
+        let wrong_pop_sig = warrant.sign(&wrong_keypair, "test", &args).unwrap();
 
         // Authorization should fail - wrong keypair
         assert!(warrant
@@ -3434,9 +3439,7 @@ mod tests {
         );
 
         // Create PoP signature for WRONG tool
-        let pop_sig = warrant
-            .create_pop_signature(&keypair, "wrong_tool", &args)
-            .unwrap();
+        let pop_sig = warrant.sign(&keypair, "wrong_tool", &args).unwrap();
 
         // Authorization should fail - tool mismatch
         assert!(warrant
@@ -3470,9 +3473,7 @@ mod tests {
         );
 
         // Create PoP signature with WRONG args
-        let pop_sig = warrant
-            .create_pop_signature(&keypair, "test", &wrong_args)
-            .unwrap();
+        let pop_sig = warrant.sign(&keypair, "test", &wrong_args).unwrap();
 
         // Authorization with correct args but wrong PoP signature should fail
         // (PoP signature is bound to specific args)
@@ -3494,9 +3495,7 @@ mod tests {
             .unwrap();
 
         let args = HashMap::new();
-        let pop_sig = warrant
-            .create_pop_signature(&keypair, "test", &args)
-            .unwrap();
+        let pop_sig = warrant.sign(&keypair, "test", &args).unwrap();
 
         // Wait for expiration
         std::thread::sleep(Duration::from_secs(2));

@@ -95,7 +95,7 @@ fn demo_kubernetes_upgrade_delegation_chain() {
     );
 
     let sig = worker_warrant
-        .create_pop_signature(&worker_kp, "upgrade_cluster", &args)
+        .sign(&worker_kp, "upgrade_cluster", &args)
         .unwrap();
     assert!(worker_warrant
         .authorize("upgrade_cluster", &args, Some(&sig))
@@ -107,7 +107,7 @@ fn demo_kubernetes_upgrade_delegation_chain() {
         ConstraintValue::String("staging-api".to_string()),
     );
     let sig = worker_warrant
-        .create_pop_signature(&worker_kp, "upgrade_cluster", &args)
+        .sign(&worker_kp, "upgrade_cluster", &args)
         .unwrap();
     assert!(worker_warrant
         .authorize("upgrade_cluster", &args, Some(&sig))
@@ -119,7 +119,7 @@ fn demo_kubernetes_upgrade_delegation_chain() {
         ConstraintValue::String("prod-web".to_string()),
     );
     let sig = worker_warrant
-        .create_pop_signature(&worker_kp, "upgrade_cluster", &args)
+        .sign(&worker_kp, "upgrade_cluster", &args)
         .unwrap();
     assert!(worker_warrant
         .authorize("upgrade_cluster", &args, Some(&sig))
@@ -177,7 +177,7 @@ fn demo_finance_delegation_with_budget() {
         ConstraintValue::String("USD".to_string()),
     );
     let sig = worker_warrant
-        .create_pop_signature(&payment_worker_kp, "transfer_funds", &args)
+        .sign(&payment_worker_kp, "transfer_funds", &args)
         .unwrap();
     assert!(worker_warrant
         .authorize("transfer_funds", &args, Some(&sig))
@@ -186,7 +186,7 @@ fn demo_finance_delegation_with_budget() {
     // Worker cannot exceed $1k
     args.insert("amount".to_string(), ConstraintValue::Float(5_000.0));
     let sig = worker_warrant
-        .create_pop_signature(&payment_worker_kp, "transfer_funds", &args)
+        .sign(&payment_worker_kp, "transfer_funds", &args)
         .unwrap();
     assert!(worker_warrant
         .authorize("transfer_funds", &args, Some(&sig))
@@ -195,7 +195,7 @@ fn demo_finance_delegation_with_budget() {
     // Finance agent can do $5k (but not worker)
     // Note: finance_warrant holder is payment_worker_kp, so payment_worker_kp signs
     let sig = finance_warrant
-        .create_pop_signature(&payment_worker_kp, "transfer_funds", &args)
+        .sign(&payment_worker_kp, "transfer_funds", &args)
         .unwrap();
     assert!(finance_warrant
         .authorize("transfer_funds", &args, Some(&sig))
@@ -204,7 +204,7 @@ fn demo_finance_delegation_with_budget() {
     // Finance agent cannot exceed $10k
     args.insert("amount".to_string(), ConstraintValue::Float(50_000.0));
     let sig = finance_warrant
-        .create_pop_signature(&payment_worker_kp, "transfer_funds", &args)
+        .sign(&payment_worker_kp, "transfer_funds", &args)
         .unwrap();
     assert!(finance_warrant
         .authorize("transfer_funds", &args, Some(&sig))
@@ -213,7 +213,7 @@ fn demo_finance_delegation_with_budget() {
     // CFO warrant can do $50k
     // Note: cfo_warrant holder is finance_agent_kp
     let sig = cfo_warrant
-        .create_pop_signature(&finance_agent_kp, "transfer_funds", &args)
+        .sign(&finance_agent_kp, "transfer_funds", &args)
         .unwrap();
     assert!(cfo_warrant
         .authorize("transfer_funds", &args, Some(&sig))
@@ -274,9 +274,7 @@ fn demo_http_transport() {
         ConstraintValue::String("public_users".to_string()),
     );
 
-    let sig = received
-        .create_pop_signature(&issuer_kp, "query_database", &args)
-        .unwrap();
+    let sig = received.sign(&issuer_kp, "query_database", &args).unwrap();
     assert!(received
         .authorize("query_database", &args, Some(&sig))
         .is_ok());
@@ -286,9 +284,7 @@ fn demo_http_transport() {
         "table".to_string(),
         ConstraintValue::String("private_billing".to_string()),
     );
-    let sig = received
-        .create_pop_signature(&issuer_kp, "query_database", &args)
-        .unwrap();
+    let sig = received.sign(&issuer_kp, "query_database", &args).unwrap();
     assert!(received
         .authorize("query_database", &args, Some(&sig))
         .is_err());
@@ -451,9 +447,7 @@ fn demo_mixed_constraint_narrowing() {
     );
     args.insert("max_rows".to_string(), ConstraintValue::Float(5_000.0));
 
-    let sig = child
-        .create_pop_signature(&child_kp, "data_export", &args)
-        .unwrap();
+    let sig = child.sign(&child_kp, "data_export", &args).unwrap();
     assert!(child.authorize("data_export", &args, Some(&sig)).is_ok());
 
     // Region outside child's scope
@@ -461,16 +455,12 @@ fn demo_mixed_constraint_narrowing() {
         "region".to_string(),
         ConstraintValue::String("eu-west".to_string()),
     );
-    let sig = child
-        .create_pop_signature(&child_kp, "data_export", &args)
-        .unwrap();
+    let sig = child.sign(&child_kp, "data_export", &args).unwrap();
     assert!(child.authorize("data_export", &args, Some(&sig)).is_err());
 
     // But parent can still do eu-west
     // Note: parent holder is child_kp
-    let sig = parent
-        .create_pop_signature(&child_kp, "data_export", &args)
-        .unwrap();
+    let sig = parent.sign(&child_kp, "data_export", &args).unwrap();
     assert!(parent.authorize("data_export", &args, Some(&sig)).is_ok());
 }
 

@@ -1501,7 +1501,7 @@ fn handle_sign(
     }
 
     // Create PoP signature using warrant's method
-    let signature = warrant_obj.create_pop_signature(&keypair, &tool, &args)?;
+    let signature = warrant_obj.sign(&keypair, &tool, &args)?;
 
     let sig_b64 = base64::Engine::encode(
         &base64::engine::general_purpose::STANDARD,

@@ -31,7 +31,7 @@ ${constraintEntries.length > 0 ? constraintEntries.map(([k, v]) => `    constrai
 
     // Authorize with Proof-of-Possession
     let args = serde_json::json!(${JSON.stringify(args)});
-    let pop = warrant.create_pop_signature(&holder_key, "${tool}", &args)?;
+    let pop = warrant.sign(&holder_key, "${tool}", &args)?;
     let result = warrant.authorize("${tool}", &args, &pop)?;
     println!("Authorized: {}", result);
 
@@ -106,9 +106,9 @@ ${constraintEntries.length > 0 ? constraintEntries.map(([k, v]) => `    constrai
     });
 
     describe('Authorization Flow', () => {
-        it('creates PoP signature using create_pop_signature', () => {
+        it('creates PoP signature using sign', () => {
             const code = generateRustCode('read_file', { path: '/data/test.txt' });
-            expect(code).toContain('warrant.create_pop_signature(&holder_key,');
+            expect(code).toContain('warrant.sign(&holder_key,');
         });
 
         it('calls warrant.authorize with tool, args, and signature', () => {

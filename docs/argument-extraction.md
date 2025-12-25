@@ -15,8 +15,8 @@ category: Deep Dive
 | Integration | Extraction Method | Configuration |
 |-------------|-------------------|---------------|
 | Python SDK | `inspect.signature().bind()` | Automatic or `extract_args` |
-| LangChain | Same as Python SDK | `@lockdown` or `protect_tools` |
-| LangGraph | Tool-level (not node-level) | `@lockdown` on tools |
+| LangChain | Same as Python SDK | `@guard` or `guard()` |
+| LangGraph | Tool-level (not node-level) | `@guard` on tools |
 | Gateway | YAML config | `from: path/query/body/header/literal` |
 | MCP | YAML config | Same as Gateway |
 
@@ -42,18 +42,18 @@ Tenuo enforces constraints by comparing **tool arguments** against **warrant con
 
 ---
 
-## Python SDK (`@lockdown`)
+## Python SDK (`@guard`)
 
-The `@lockdown` decorator extracts arguments automatically using Python's `inspect.signature()` API.
+The `@guard` decorator extracts arguments automatically using Python's `inspect.signature()` API.
 
 ### Automatic Extraction (Default)
 
 When no `extract_args` is provided, Tenuo uses **robust signature binding**:
 
 ```python
-from tenuo import lockdown
+from tenuo import guard
 
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 def read_file(path: str, max_size: int = 1000):
     with open(path) as f:
         return f.read()[:max_size]
@@ -75,7 +75,7 @@ read_file(path="/data/file.txt")     # args: {path: "/data/file.txt", max_size: 
 For custom extraction logic or parameter name mapping:
 
 ```python
-@lockdown(
+@guard(
     tool="transfer",
     extract_args=lambda from_account, to_account, amount, **kw: {
         "source": from_account,      # Rename for constraint matching
@@ -99,7 +99,7 @@ def transfer(from_account: str, to_account: str, amount: float, memo: str = ""):
 Alternative to `extract_args` for simple renames:
 
 ```python
-@lockdown(
+@guard(
     tool="transfer",
     mapping={"from_account": "source", "to_account": "destination"}
 )
@@ -116,30 +116,30 @@ def transfer(from_account: str, to_account: str, amount: float):
 
 ## LangChain Integration
 
-LangChain tools are protected using `@lockdown` or `protect_tools`. Argument extraction is the same as above.
+LangChain tools are protected using `@guard` or `guard()`. Argument extraction is the same as above.
 
-### With `@lockdown`
+### With `@guard`
 
 ```python
-from tenuo import lockdown
+from tenuo import guard
 
-@lockdown(tool="search")
+@guard(tool="search")
 def search(query: str, max_results: int = 10):
     # Automatic extraction: {query: "...", max_results: 10}
     ...
 ```
 
-### With `protect_tools`
+### With `guard()`
 
 ```python
-from tenuo.langchain import protect_tools
+from tenuo.langchain import guard_tools
 from langchain_community.tools import DuckDuckGoSearchRun
 
-# protect_tools wraps tool.func with @lockdown(tool=tool.name)
-protected = protect_tools([DuckDuckGoSearchRun()])
+# guard() wraps tool.func with @guard(tool=tool.name)
+protected = guard([DuckDuckGoSearchRun()], bound)
 ```
 
-**How `protect_tools` extracts arguments:**
+**How `guard()` extracts arguments:**
 1. Wraps the tool's `func` attribute
 2. Uses tool's `args_schema` (if available) to validate arguments
 3. Applies automatic extraction via signature binding
@@ -149,13 +149,13 @@ protected = protect_tools([DuckDuckGoSearchRun()])
 
 ## LangGraph Integration (`@tenuo_node`)
 
-LangGraph nodes use `@tenuo_node` which wraps `scoped_task()`. Argument extraction happens at the **tool level**, not the node level.
+LangGraph nodes use `@tenuo_node` which wraps `grant()`. Argument extraction happens at the **tool level**, not the node level.
 
 ```python
 from tenuo.langgraph import tenuo_node
-from tenuo import lockdown
+from tenuo import guard
 
-@lockdown(tool="search")
+@guard(tool="search")
 def search(query: str):
     ...
 
@@ -168,11 +168,11 @@ async def researcher(state):
 
 **How it works:**
 1. `@tenuo_node` narrows warrant scope (tools + constraints)
-2. When `search()` is called, `@lockdown` extracts `{query: state["query"]}`
+2. When `search()` is called, `@guard` extracts `{query: state["query"]}`
 3. Authorization checks against narrowed warrant
-4. Node constraints (e.g., `query="*public*"`) are checked by `scoped_task()`
+4. Node constraints (e.g., `query="*public*"`) are checked by `grant()`
 
-**Key insight:** `@tenuo_node` doesn't extract arguments—it creates a scoped warrant. The underlying tool's `@lockdown` decorator does the extraction.
+**Key insight:** `@tenuo_node` doesn't extract arguments—it creates a scoped warrant. The underlying tool's `@guard` decorator does the extraction.
 
 ---
 
@@ -319,7 +319,7 @@ See [MCP Integration](./mcp) for full details.
 ❌ **Vulnerable:**
 ```python
 # Wrong: If max_size is omitted, it's not checked
-@lockdown(tool="read_file", extract_args=lambda path, **kw: {"path": path})
+@guard(tool="read_file", extract_args=lambda path, **kw: {"path": path})
 def read_file(path: str, max_size: int = 999999):
     ...
 ```
@@ -327,7 +327,7 @@ def read_file(path: str, max_size: int = 999999):
 ✅ **Secure:**
 ```python
 # Automatic extraction includes defaults
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 def read_file(path: str, max_size: int = 1000):
     ...
 # Extraction: {path: "...", max_size: 1000} ← Always included
@@ -341,7 +341,7 @@ If a parameter is security-relevant (affects what the tool does), it MUST be ext
 
 ❌ **Vulnerable:**
 ```python
-@lockdown(tool="query", extract_args=lambda query, **kw: {"query": query})
+@guard(tool="query", extract_args=lambda query, **kw: {"query": query})
 def query_db(query: str, table: str = "users"):
     # table is not extracted! Attacker can query any table
     ...
@@ -349,7 +349,7 @@ def query_db(query: str, table: str = "users"):
 
 ✅ **Secure:**
 ```python
-@lockdown(tool="query")  # Automatic extraction includes both
+@guard(tool="query")  # Automatic extraction includes both
 def query_db(query: str, table: str = "users"):
     # Extraction: {query: "...", table: "users"}
     ...
@@ -412,7 +412,7 @@ tools:
 ### Pattern 1: Simple Tools (Automatic)
 
 ```python
-@lockdown(tool="search")
+@guard(tool="search")
 def search(query: str, max_results: int = 10):
     ...
 # Extraction: automatic, includes defaults
@@ -423,7 +423,7 @@ def search(query: str, max_results: int = 10):
 ### Pattern 2: Parameter Renaming
 
 ```python
-@lockdown(
+@guard(
     tool="read_file",
     mapping={"file_path": "path"}  # Rename for constraint matching
 )
@@ -435,7 +435,7 @@ def read_file(file_path: str):
 ### Pattern 3: Custom Extraction Logic
 
 ```python
-@lockdown(
+@guard(
     tool="api_call",
     extract_args=lambda url, method="GET", headers=None, **kw: {
         "url": url,
@@ -479,7 +479,7 @@ tools:
 # Warrant has constraint: {"file_path": Pattern("/tmp/*")}
 # But tool parameter is named "path"
 
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 def read_file(path: str):  # ← Extracted as {path: "..."}
     ...
 # Constraint key "file_path" != argument key "path" → Constraint not checked!
@@ -487,7 +487,7 @@ def read_file(path: str):  # ← Extracted as {path: "..."}
 
 **Fix:** Use `mapping` to align names:
 ```python
-@lockdown(tool="read_file", mapping={"path": "file_path"})
+@guard(tool="read_file", mapping={"path": "file_path"})
 def read_file(path: str):
     ...
 # Extracted as: {file_path: "..."}
@@ -501,7 +501,7 @@ def read_file(path: str):
 
 ❌ **Vulnerable:**
 ```python
-@lockdown(tool="query", extract_args=lambda query, **kw: {"query": query})
+@guard(tool="query", extract_args=lambda query, **kw: {"query": query})
 def query_db(query: str, limit: int = 999999):  # Dangerous default
     ...
 # If caller omits limit, it's not extracted → uses 999999 unchecked
@@ -509,7 +509,7 @@ def query_db(query: str, limit: int = 999999):  # Dangerous default
 
 ✅ **Secure (automatic):**
 ```python
-@lockdown(tool="query")
+@guard(tool="query")
 def query_db(query: str, limit: int = 100):
     ...
 # Automatic extraction ALWAYS includes limit (even if omitted by caller)
@@ -535,17 +535,17 @@ read_file()  # Missing required arg → TypeError → Authorization denied ✅
 
 ```python
 import inspect
-from tenuo import lockdown, Warrant, SigningKey, Exact, set_warrant_context, set_signing_key_context
+from tenuo import guard, Warrant, SigningKey, Exact, warrant_scope, key_scope
 
 def test_extraction():
     kp = SigningKey.generate()
     w = Warrant.issue(tools={"test": Constraints.for_tool("test", {"a": Exact(1)})}, keypair=kp, ttl_seconds=300)
     
-    @lockdown(tool="test")
+    @guard(tool="test")
     def func(a: int, b: int = 2):
         return f"a={a}, b={b}"
     
-    with set_warrant_context(w), set_signing_key_context(kp):
+    with warrant_scope(w), key_scope(kp):
         # Test default inclusion
         result = func(1)  # Should pass (a=1, b=2 extracted)
         assert result == "a=1, b=2"
@@ -648,7 +648,7 @@ pub fn extract(&self, ctx: &RequestContext) -> Option<ConstraintValue> {
 
 ## See Also
 
-- [API Reference → @lockdown](./api-reference#lockdown) - Full decorator documentation
+- [API Reference → @guard](./api-reference#guard) - Full decorator documentation
 - [Gateway Configuration](./gateway-config) - HTTP extraction reference
 - [LangGraph Integration](./langgraph) - Node scoping patterns
 - [Security](./security) - Authorization model overview

@@ -70,9 +70,7 @@ fn test_duplicate_approvals_rejected() {
     // Submit SAME approval twice
     let approvals = vec![approval.clone(), approval.clone()];
 
-    let sig = warrant
-        .create_pop_signature(&root_key, "critical_op", &args)
-        .unwrap();
+    let sig = warrant.sign(&root_key, "critical_op", &args).unwrap();
     let result = authorizer.authorize(&warrant, "critical_op", &args, Some(&sig), &approvals);
 
     assert!(result.is_err(), "Duplicate approvals should be rejected");

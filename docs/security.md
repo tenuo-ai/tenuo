@@ -28,9 +28,9 @@ Warrants are **bound to keypairs**. To use a warrant, you must prove you hold th
 warrant = (root_warrant.attenuate()
     .capability("protected_tool", {"path": Pattern("/data/*")})
     .holder(worker_keypair.public_key)
-    .delegate(root_keypair))  # Root keypair signs (they hold the parent warrant)
+    .grant(root_keypair))  # Root keypair signs (they hold the parent warrant)
 
-with set_warrant_context(warrant), set_signing_key_context(worker_keypair):
+with warrant_scope(warrant), key_scope(worker_keypair):
     await protected_tool(...)
 ```
 
@@ -83,23 +83,23 @@ Authority can only **shrink**, never expand:
 
 ```python
 # Parent has broad capabilities
-parent = (Warrant.builder()
+parent = (Warrant.mint_builder()
     .capability("read", {"path": Pattern("/*")})
     .capability("write", {"path": Pattern("/*")})
     .capability("delete", {"path": Pattern("/*")})
     .holder(keypair.public_key)
     .ttl(3600)
-    .issue(keypair))
+    .mint(keypair))
 
 # Child can only narrow
 child = (parent.attenuate()
     .capability("read", {"path": Pattern("/data/*")})
-    .delegate(keypair))  # Keypair signs (they hold the parent warrant)
+    .grant(keypair))  # Keypair signs (they hold the parent warrant)
 
 # This would FAIL:
 child = (parent.attenuate()
     .capability("execute", {})  # FAILS (parent doesn't have "execute")
-    .delegate(keypair))
+    .grant(keypair))
 ```
 
 ---
@@ -128,7 +128,7 @@ child = (parent.attenuate()
 
 **Control plane compromise**: Can mint arbitrary warrants. Secure your control plane.
 
-**Raw API calls**: Bypass Tenuo entirely. Wrap ALL tools with `@lockdown` and use Network Policies.
+**Raw API calls**: Bypass Tenuo entirely. 1. **Wrapper usage** - All tools must be protected with `@guard` or `guard()`. Use Network Policies.
 
 #### Defense in Depth: Network Policies
 
@@ -168,7 +168,7 @@ Prompt injection attacks can cause financial damage by tricking agents into maki
 Constrain cost-driving parameters directly in the warrant:
 
 ```python
-warrant = (Warrant.builder()
+warrant = (Warrant.mint_builder()
     .capability("call_llm", {
         "max_tokens": Range.max_value(1000),      # Cap output tokens
         "model": OneOf(["gpt-3.5-turbo"]),        # No expensive models
@@ -177,7 +177,7 @@ warrant = (Warrant.builder()
         "max_results": Range.max_value(10),       # Limit results per call
     })
     .ttl(60)  # 1 minute window
-    .issue(keypair))
+    .mint(keypair))
 ```
 
 ### Single-Use Warrants for Expensive Operations
@@ -187,13 +187,13 @@ Issue terminal warrants (cannot be delegated) for each expensive call:
 ```python
 async def safe_expensive_call(tool_name: str, params: dict):
     # One warrant per operation - orchestrator controls issuance
-    single_use = (Warrant.builder()
+    single_use = (Warrant.mint_builder()
         .capability(tool_name, params)
         .ttl(30)        # 30 second window
         .terminal()     # max_depth=0, cannot delegate
-        .issue(keypair))
+        .mint(keypair))
     
-    async with scoped_task(single_use):
+    async with grant(single_use):
         return await execute_tool(tool_name, params)
 ```
 
@@ -213,13 +213,13 @@ class BudgetedOrchestrator:
         self.remaining_calls -= 1
         
         # Fresh short-lived warrant for this call
-        warrant = (Warrant.builder()
+        warrant = (Warrant.mint_builder()
             .capability(task.tool, task.constraints)
             .ttl(30)
             .terminal()
-            .issue(self.keypair))
+            .mint(self.keypair))
         
-        async with scoped_task(warrant):
+        async with grant(warrant):
             return await task.execute()
 ```
 
@@ -255,10 +255,10 @@ plugins:
 > **The Primary Attack Surface: Integration Mistakes**
 
 Tenuo's core is cryptographically secure. But **integration bugs** are the primary attack surface:
-- Forgetting to add `@lockdown` to a tool
-- Missing `set_warrant_context()` or `root_task()`
+- Forgetting to add `@guard` to a tool
+- Missing `warrant_scope()` or `mint()`
 - Dynamic nodes without wrappers
-- Wrapper that checks tool names but skips `authorize()`
+- Wrapper that checks tool names but skips `validate()`
 
 ### Strict Mode
 
@@ -276,7 +276,7 @@ configure(
 **Behavior:**
 
 ```python
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 def read_file(path: str):
     return open(path).read()
 
@@ -297,9 +297,16 @@ read_file("/data/test.txt")
 ```python
 configure(
     issuer_key=SigningKey.generate(),
+    issuer_key=SigningKey.generate(),
     warn_on_missing_warrant=True,
 )
 ```
+
+> [!CAUTION]
+> **Production Safety**: Never set `TENUO_ENV="test"` in production environments.
+> This environment variable enables special test-only bypass modes (like `allow_any()`) which
+> completely disable authorization checks. Tenuo will emit warnings if this is detected,
+> but for defense-in-depth, ensure your production manifests (Helm, Terraform) strictly avoid this variable.
 
 ### Mode Comparison
 
@@ -313,25 +320,25 @@ configure(
 
 | Bug | Detection |
 |-----|-----------|
-| Missing `@lockdown` decorator | Code review, linting |
-| Missing `set_warrant_context()` | Strict mode catches |
+| Missing `@guard` decorator | Code review, linting |
+| Missing `warrant_scope()` | Strict mode catches |
 | Dynamic node without wrapper | Strict mode (if tools decorated) |
-| Wrapper skips `authorize()` | Integration tests |
+| Wrapper skips `validate()` | Integration tests |
 
 ### Async Context Sharp Edges
 
 ```python
 # ✅ Works correctly
-async with root_task(Capability("search")):
+async with mint(Capability("search")):
     result = await search("query")
 
 # ❌ Context not propagated (task created BEFORE context)
 task = asyncio.create_task(search("query"))
-async with root_task(Capability("search")):
+async with mint(Capability("search")):
     await task  # Task runs without context
 
 # ✅ Fix: create task INSIDE context
-async with root_task(Capability("search")):
+async with mint(Capability("search")):
     task = asyncio.create_task(search("query"))
     await task
 ```
@@ -346,7 +353,7 @@ The control plane holds the **root signing key** and issues the initial warrant 
 
 ```python
 root_key = SigningKey.from_env("TENUO_ROOT_KEY")
-warrant = (Warrant.builder()...issue(root_key))
+warrant = (Warrant.mint_builder()...mint(root_key))
 ```
 
 | | |
@@ -412,7 +419,7 @@ Tenuo prevents infinite delegation cycles through multiple layers:
 
 ```python
 # Good
-@lockdown(tool="delete_file")
+@guard(tool="delete_file")
 def delete_file(path: str): ...
 
 # Bad: bypasses Tenuo
@@ -423,21 +430,21 @@ await http_client.delete(url)
 
 ```python
 # Good: 5 minute TTL
-warrant = (Warrant.builder()...ttl(300).issue(keypair))
+warrant = (Warrant.mint_builder()...ttl(300).mint(keypair))
 
 # Risky: 24 hour TTL
-warrant = (Warrant.builder()...ttl(86400).issue(keypair))
+warrant = (Warrant.mint_builder()...ttl(86400).mint(keypair))
 ```
 
 ### 3. Principle of Least Privilege
 
 ```python
 # Good: only what's needed
-with root_task(Capability("read_file", path="/data/reports/*")):
+with mint(Capability("read_file", path="/data/reports/*")):
     ...
 
 # Risky: overly broad
-with root_task(
+with mint(
     Capability("read_file", path="/*"),
     Capability("write_file", path="/*"),
     Capability("delete_file", path="/*")

@@ -12,10 +12,13 @@ from dataclasses import dataclass
 from typing import Optional
 
 from tenuo import (
-    Warrant, Exact, Range, Constraints,
-    ExpiredError, Unauthorized
+    Warrant,
+    Exact,
+    Range,
 )
-from tenuo.decorators import set_warrant_context, _warrant_context
+from tenuo.constraints import Constraints
+from tenuo.exceptions import ExpiredError, Unauthorized
+from tenuo.decorators import warrant_scope, _warrant_context
 
 
 @dataclass
@@ -43,7 +46,7 @@ class TestEdgeCases:
                 raise Unauthorized("No active warrant")
             return "Tool executed"
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("sensitive_tool", {}),
             ttl_seconds=60
@@ -64,7 +67,7 @@ class TestEdgeCases:
             except Exception as e:
                 result_holder["error"] = e
                 
-        with set_warrant_context(warrant):
+        with warrant_scope(warrant):
             t = threading.Thread(target=thread_target)
             t.start()
             t.join()
@@ -89,7 +92,7 @@ class TestEdgeCases:
             print("  [Dynamic Node] Executing dangerous tool...")
             return "Dangerous Action Executed"
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("search", {}),
             ttl_seconds=60
@@ -113,7 +116,7 @@ class TestEdgeCases:
         """
         print("\n--- Attack 17: Clock Skew Exploitation ---")
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("search", {}),
             ttl_seconds=1
@@ -142,7 +145,7 @@ class TestEdgeCases:
         cafe_nfc = unicodedata.normalize('NFC', 'café')
         cafe_nfd = unicodedata.normalize('NFD', 'café')
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("search", {"query": Exact(cafe_nfc)}),
             ttl_seconds=60
@@ -174,7 +177,7 @@ class TestEdgeCases:
         # Test 1: Issue warrant with huge int constraint
         print(f"  [Attack] Issuing warrant with Range(max={huge_int})...")
         try:
-            _warrant = Warrant.issue(
+            _warrant = Warrant.mint(
                 keypair=keypair,
                 capabilities=Constraints.for_tool("test", {"limit": Range(max=huge_int)}),
                 ttl_seconds=60
@@ -186,7 +189,7 @@ class TestEdgeCases:
 
         # Test 2: Authorize with huge int arg
         print(f"  [Attack] Authorizing with arg val={huge_int}...")
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("test", {}),
             ttl_seconds=60
@@ -215,7 +218,7 @@ class TestEdgeCases:
         """
         print("\n--- Attack 5: Issuer Warrant Abuse ---")
         
-        from tenuo import Clearance
+        from tenuo_core import Clearance
         
         issuer_warrant = Warrant.issue_issuer(
             issuable_tools=["search", "read"],

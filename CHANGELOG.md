@@ -27,8 +27,8 @@ Capability tokens for AI agents. Issue scoped, time-limited warrants that delega
 
 ### Framework Integrations
 
-- **LangChain**: `protect()` for tool authorization
-- **LangGraph**: `TenuoToolNode` drop-in replacement, `auto_load_keys()`
+- **LangChain**: `guard()` for tool authorization
+- **LangGraph**: `TenuoToolNode` drop-in replacement, `load_tenuo_keys()`
 - **FastAPI**: `TenuoGuard` dependency injection, `SecurityContext`
 - **MCP**: `SecureMCPClient` for tool discovery
 

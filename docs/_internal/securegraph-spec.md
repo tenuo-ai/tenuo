@@ -2,7 +2,7 @@
 
 > ⚠️ **Status: Conceptual Exploration — Not Planned**
 > 
-> This document explores a declarative attenuation layer for LangGraph. The core concepts (warrant flow through state, automatic attenuation at transitions) are valid, but the current Tenuo API (`@tenuo_node`, `scoped_task`, `protect_tools`) already covers most use cases with less complexity. Preserved for reference.
+> This document explores a declarative attenuation layer for LangGraph. The core concepts (warrant flow through state, automatic attenuation at transitions) are valid, but the current Tenuo API (`@tenuo_node`, `grant`, `protect_tools`) already covers most use cases with less complexity. Preserved for reference.
 
 **Version**: 0.2  
 **Status**: Conceptual (not planned)

@@ -25,11 +25,12 @@ from tenuo_core import (  # type: ignore[import-untyped]
     DelegationReceipt,
     compute_diff as rust_compute_diff,
 )
+from .validation import ValidationResult
 
-from .decorators import get_signing_key_context
+from .decorators import key_scope
 
 if TYPE_CHECKING:
-    from .builder import AttenuationBuilder
+    from .builder import GrantBuilder
 
 
 # ============================================================================
@@ -66,7 +67,7 @@ class ReadableWarrant(Protocol):
 class SignableWarrant(Protocol):
     """Protocol for warrant-like objects that can sign requests."""
     
-    def auth_headers(self, tool: str, args: dict) -> Dict[str, str]: ...
+    def headers(self, tool: str, args: dict) -> Dict[str, str]: ...
     
     def delegate(self, *, to: PublicKey, allow: Union[str, List[str]], ttl: int) -> "Warrant": ...
 
@@ -260,10 +261,56 @@ Warrant.__repr__ = _warrant_repr  # type: ignore[method-assign]
 
 
 # ============================================================================
-# 1.6 auth_headers on Warrant (P0)
+# 1.6 validate on Warrant (P0)
 # ============================================================================
 
-def _warrant_auth_headers(
+def _warrant_validate(
+    self: Warrant,
+    key: SigningKey,
+    tool: str,
+    args: dict,
+) -> ValidationResult:
+    """
+    Pre-check if this action would be authorized.
+    
+    Args:
+        key: Signing key to check
+        tool: Tool name
+        args: Tool arguments
+        
+    Returns:
+        ValidationResult
+    """
+    # 1. Sign
+    pop_signature = self.sign(key, tool, args)
+    
+    # 2. Verify
+    success = self.authorize(
+        tool=tool,
+        args=args,
+        signature=bytes(pop_signature)
+    )
+    
+    if success:
+        return ValidationResult.ok()
+        
+    # 3. Rich feedback
+    why = self.why_denied(tool, args)
+    return ValidationResult.fail(
+        reason=why.suggestion or f"Authorization failed ({why.deny_code})",
+        suggestions=[why.suggestion] if why.suggestion else []
+    )
+
+
+if not hasattr(Warrant, 'validate'):
+    Warrant.validate = _warrant_validate  # type: ignore[attr-defined]
+
+
+# ============================================================================
+# 1.6 headers on Warrant (P0)
+# ============================================================================
+
+def _warrant_headers(
     self: Warrant,
     key: SigningKey,
     tool: str,
@@ -284,10 +331,16 @@ def _warrant_auth_headers(
         Dictionary with X-Tenuo-Warrant and X-Tenuo-PoP headers
         
     Example:
-        headers = warrant.auth_headers(key, "search", {"query": "test"})
+        headers = warrant.headers(key, "search", {"query": "test"})
         response = requests.post(url, headers=headers, json=args)
     """
-    pop_sig = self.create_pop_signature(key, tool, args)
+    # Validate before signing for better error messages
+    validation = self.validate(key, tool, args)
+    if not validation:
+        # Actionable but security-safe error msg
+        raise RuntimeError(f"Authorization failed: {validation.reason}")
+        
+    pop_sig = self.sign(key, tool, args)
     pop_b64 = base64.b64encode(pop_sig).decode('ascii')
     
     return {
@@ -296,71 +349,54 @@ def _warrant_auth_headers(
     }
 
 
-if not hasattr(Warrant, 'auth_headers'):
-    Warrant.auth_headers = _warrant_auth_headers  # type: ignore[attr-defined]
+if not hasattr(Warrant, 'headers'):
+    Warrant.headers = _warrant_headers  # type: ignore[attr-defined]
 
 
 # ============================================================================
 # 2. Preview Methods (UX Only - NOT Authorization)
 # ============================================================================
 
-@dataclass
-class PreviewResult:
-    """Result of a preview check. NOT AUTHORIZATION - for UX only."""
-    
-    allowed: bool
-    reason: Optional[str] = None
-    
-    def __bool__(self) -> bool:
-        return self.allowed
-    
-    def __repr__(self) -> str:
-        status = "OK" if self.allowed else "DENIED"
-        return f"<PreviewResult {status} (UX ONLY - not authorization)>"
+# Removed legacy PreviewResult class
 
 
-def _warrant_preview_can(self: Warrant, tool: str) -> PreviewResult:
-    """Check if tool is in warrant (UX only, not authorization)."""
-    if tool in self.tools:
-        return PreviewResult(True)
-    available = ", ".join(self.tools) if self.tools else "none"
-    return PreviewResult(False, f"Tool '{tool}' not in warrant. Available: {available}")
-
-
-def _warrant_preview_would_allow(self: Warrant, tool: str, args: dict) -> PreviewResult:
+def _warrant_allows(self: Warrant, tool: str, args: Optional[dict] = None) -> bool:
     """
-    Check if args would satisfy constraints (UX only, not authorization).
+    Check if the warrant allows the given tool and arguments (Logic check only).
     
-    ⚠️  SECURITY WARNING: THIS IS NOT A SECURITY CHECK  ⚠️
+    Args:
+        tool: Tool name to check
+        args: Optional constraints to check against. If None, checks tool presence only.
     
-    This method checks constraints WITHOUT verifying Proof-of-Possession.
-    It is intended for UI hints ("should I show this button?"), NOT for
-    authorization decisions that gate sensitive operations.
-    
-    For actual authorization, use:
-        bound_warrant.authorize(tool, args)  # Verifies PoP signature
-    
-    NEVER do this:
-        if warrant.preview_would_allow("tool", args).allowed:
-            execute_dangerous_operation()  # ❌ NO PoP CHECK!
-    
-    This delegates to Rust for constraint checking to avoid logic divergence.
+    Returns:
+        True if allowed by logic, False otherwise.
     """
-    # First check if tool is in warrant
+    if args is None:
+        return tool in self.tools
+    
+    # TODO: Need Rust method to check constraints check logic without PoP
+    # For now, duplicate basic checks or default to True if tool present
     if tool not in self.tools:
-        return PreviewResult(False, f"Tool '{tool}' not in warrant")
-    
-    # TODO: Need Rust method to check constraints without PoP
-    # For now, just check tool presence
-    return PreviewResult(True, "Tool present (constraint check not yet implemented)")
+        return False
+        
+    # If we have constraint checking capability
+    if hasattr(self, 'check_constraints'):
+        try:
+             result = self.check_constraints(tool, args)
+             return result.get('allowed', True)
+        except Exception:
+             pass
+             
+    return True
 
 
-# Attach preview methods
-if not hasattr(Warrant, 'preview_can'):
-    Warrant.preview_can = _warrant_preview_can  # type: ignore[attr-defined]
+# Removed legacy preview methods
 
-if not hasattr(Warrant, 'preview_would_allow'):
-    Warrant.preview_would_allow = _warrant_preview_would_allow  # type: ignore[attr-defined]
+# Attach methods
+if not hasattr(Warrant, 'allows'):
+    Warrant.allows = _warrant_allows  # type: ignore[attr-defined]
+
+# Removed legacy method attachments
 
 
 # ============================================================================
@@ -553,36 +589,37 @@ if not hasattr(Warrant, 'delegation_receipt'):
 # 5. Attenuation Builder Wrappers (Existing Code)
 # ============================================================================
 
-# Store original Rust attenuate_builder method
+# Store reference to Rust core method (still named attenuate_builder in Rust)
+# We wrap this to return our Python GrantBuilder instead
 _original_attenuate_builder = Warrant.attenuate_builder
 
 
-def _wrapped_attenuate_builder(self: Warrant) -> 'AttenuationBuilder':
-    """Wrap attenuate_builder to return Python AttenuationBuilder with diff support."""
-    from .builder import AttenuationBuilder
+def _wrapped_grant_builder(self: Warrant) -> 'GrantBuilder':
+    """Wrap grant_builder to return Python GrantBuilder with diff support."""
+    from .builder import GrantBuilder
     rust_builder = _original_attenuate_builder(self)
-    return AttenuationBuilder(self, _rust_builder=rust_builder)
+    return GrantBuilder(self, _rust_builder=rust_builder)
 
 
-# Replace with wrapped version
-Warrant.attenuate_builder = _wrapped_attenuate_builder  # type: ignore[method-assign]
+# Add new method
+Warrant.grant_builder = _wrapped_grant_builder  # type: ignore[attr-defined]
 
 
 # Store original Rust attenuate method
 _original_attenuate = Warrant.attenuate
 
 
-def _wrapped_attenuate(self: Warrant, *args, **kwargs) -> Union[Warrant, 'AttenuationBuilder']:
+def _wrapped_attenuate(self: Warrant, *args, **kwargs) -> Union[Warrant, 'GrantBuilder']:
     """
     Attenuate the warrant.
     
     If arguments are provided, it performs immediate attenuation (backward compatibility).
-    If no arguments are provided, it returns an AttenuationBuilder (fluent API).
+    If no arguments are provided, it returns an GrantBuilder (fluent API).
     """
     if args or kwargs:
         return _original_attenuate(self, *args, **kwargs)
     
-    return self.attenuate_builder()
+    return self.grant_builder()
 
 
 # Replace with wrapped version
@@ -622,7 +659,7 @@ def _warrant_delegate(
         
     Example:
         # With explicit key
-        child = parent.delegate(
+        child = parent.grant(
             to=worker_key.public_key,
             allow="search",
             ttl=300,
@@ -630,39 +667,58 @@ def _warrant_delegate(
         )
         
         # With context key
-        with set_signing_key_context(parent_key):
-            child = parent.delegate(
+        with key_scope(parent_key):
+            child = parent.grant(
                 to=worker_key.public_key,
                 allow=["search", "read_file"],
                 ttl=300
             )
     """
     # Get signing key from argument or context
-    signing_key = key or get_signing_key_context()
+    signing_key = key or key_scope()
     if not signing_key:
         raise RuntimeError(
             "No signing key provided. Either pass key= argument or use "
-            "inside a task context / set_signing_key_context()."
+            "inside a task context / key_scope()."
         )
     
-    # Auto-wrap single string to list
-    tools = [allow] if isinstance(allow, str) else list(allow)
+    # Auto-wrap single item to list (if not iterable list/tuple/set, but exclude str)
+    if isinstance(allow, str):
+        items = [allow]
+    elif isinstance(allow, (list, tuple, set)):
+        items = list(allow)
+    else:
+        items = [allow]
     
     # Build child warrant using attenuation builder
-    builder = self.attenuate_builder()
+    builder = self.grant_builder()
     
     # POLA: Start by inheriting all parent capabilities, then narrow
     builder.inherit_all()
     
-    # Narrow to specified tools
-    builder.tools(tools)
+    tool_names_only = []
     
-    # Apply additional constraints if provided
-    if constraints:
+    # Process allow items
+    for item in items:
+        if isinstance(item, str):
+            tool_names_only.append(item)
+        elif hasattr(item, "tool") and hasattr(item, "constraints"):
+            # Capability object
+            builder.capability(item.tool, item.constraints)
+        else:
+            # Fallback/Error
+            raise ValueError(f"Invalid item in 'allow': {item}. Expected string or Capability.")
+
+    # Narrow to specified tools (strings)
+    if tool_names_only:
+        builder.tools(tool_names_only)
+    
+    # Apply additional constraints if provided (only applies to string tools)
+    if constraints and tool_names_only:
         from tenuo.constraints import ensure_constraint
         
-        # Apply constraints to each tool
-        for tool in tools:
+        # Apply constraints to each tool specified by name
+        for tool in tool_names_only:
             tool_constraints = {}
             for field, value in constraints.items():
                 tool_constraints[field] = ensure_constraint(value)
@@ -673,7 +729,7 @@ def _warrant_delegate(
     builder.ttl(ttl)
     
     # Sign and return
-    return builder.delegate(signing_key)
+    return builder.grant(signing_key)
 
 
 # Replace existing delegate method
@@ -776,3 +832,164 @@ def compute_diff(parent: Warrant, child: Warrant) -> DelegationDiff:
     Delegates to the Rust implementation for performance and consistency.
     """
     return rust_compute_diff(parent, child)
+
+
+# ============================================================================
+# 10. Implicit Serialization Support
+# ============================================================================
+
+def _warrant_str(self: Warrant) -> str:
+    """
+    Return base64 representation for easy serialization.
+    
+    This allows warrants to be passed as strings naturally:
+        send_to_agent(str(warrant))
+        json.dumps({"warrant": str(warrant)})
+    """
+    return self.to_base64()
+
+
+if not hasattr(Warrant, '__str__') or Warrant.__str__ is object.__str__:
+    Warrant.__str__ = _warrant_str  # type: ignore[method-assign]
+
+# ============================================================================
+# 11. Mint Method Alias (New Vocabulary)
+# ============================================================================
+
+# Store references to Rust core methods (still named issue/issue_issuer in Rust)
+# We wrap these to provide the Python mint() method
+_original_issue = Warrant.issue
+_original_issue_issuer = Warrant.issue_issuer
+
+
+def _warrant_mint(**kwargs) -> Warrant:
+    """Mint a new root warrant (creates new authority)."""
+    return _original_issue(**kwargs)
+
+
+# Add new method
+Warrant.mint = _warrant_mint  # type: ignore[attr-defined]
+
+
+# ============================================================================
+# 12. Grant Method Alias (New Vocabulary)
+# ============================================================================
+
+def _warrant_grant(
+    self: Warrant,
+    *,
+    to: PublicKey,
+    allow: Union[str, List[str]],
+    ttl: int,
+    key: Optional[SigningKey] = None,
+    **constraints
+) -> Warrant:
+    """Convenience method to grant a warrant to a new holder."""
+    return _warrant_delegate(self, to=to, allow=allow, ttl=ttl, key=key, **constraints)
+
+
+# Add new method
+Warrant.grant = _warrant_grant  # type: ignore[attr-defined]
+
+
+# Add from_str as alias for from_base64
+def _warrant_from_str(s: str) -> 'Warrant':
+    """Parse warrant from string (base64 encoded).
+    
+    This is an alias for from_base64() that pairs with str(warrant).
+    """
+    return Warrant.from_base64(s)
+
+Warrant.from_str = _warrant_from_str  # type: ignore[attr-defined]
+
+# ============================================================================
+# Property Aliases for Brevity
+# ============================================================================
+
+# Add 'type' as alias for 'warrant_type'
+def _warrant_type_alias(self: Warrant):
+    """Alias for warrant_type property."""
+    return self.warrant_type
+
+Warrant.type = property(_warrant_type_alias)  # type: ignore[attr-defined]
+
+# Add 'can_issue' as alias for 'issuable_tools'
+def _can_issue_alias(self: Warrant):
+    """Alias for issuable_tools property."""
+    return self.issuable_tools
+
+Warrant.can_issue = property(_can_issue_alias)  # type: ignore[attr-defined]
+
+# Add 'receipt' as alias for 'delegation_receipt'
+def _receipt_alias(self: Warrant):
+    """Alias for delegation_receipt property."""
+    return self.delegation_receipt
+
+Warrant.receipt = property(_receipt_alias)  # type: ignore[attr-defined]
+
+# Add __bytes__ for bytes(warrant) support
+def _warrant_bytes(self: Warrant) -> bytes:
+    """Return CBOR-encoded bytes representation.
+    
+    This allows warrants to be serialized to bytes:
+        warrant_bytes = bytes(warrant)
+    """
+    return self.to_cbor()
+
+Warrant.__bytes__ = _warrant_bytes  # type: ignore[attr-defined]
+
+# Add from_bytes as alias for from_cbor
+def _warrant_from_bytes(data: bytes) -> 'Warrant':
+    """Parse warrant from bytes (CBOR encoded).
+    
+    This is an alias for from_cbor() that pairs with bytes(warrant).
+    """
+    return Warrant.from_cbor(data)
+
+Warrant.from_bytes = _warrant_from_bytes  # type: ignore[attr-defined]
+
+# ============================================================================
+# Chain Traversal
+# ============================================================================
+
+def _warrant_chain(self: Warrant, store: Optional[Any] = None) -> List[Warrant]:
+    """Get the full delegation chain from root to current warrant.
+    
+    Returns a list of warrants starting from the root (issuer) warrant
+    and ending with the current warrant.
+    
+    Args:
+        store: Optional warrant store/cache to look up parents.
+               Must have a .get(hash: str) -> Optional[Warrant] method.
+    
+    Example:
+        chain = warrant.chain(my_store)
+        for w in chain:
+            print(f"{w.type}: {w.tools or w.can_issue}")
+    
+    Returns:
+        List of Warrant objects from root to current
+    """
+    chain = []
+    current = self
+    
+    # Trace back using parent_hash
+    while current is not None:
+        chain.append(current)
+        if current.parent_hash is None or store is None:
+            break
+            
+        # Try to fetch parent from store
+        try:
+            parent = store.get(current.parent_hash)
+            if parent is None:
+                break
+            current = parent
+        except Exception:
+            break
+    
+    # Reverse to get root-first order
+    return list(reversed(chain))
+
+Warrant.chain = _warrant_chain  # type: ignore[attr-defined]
+

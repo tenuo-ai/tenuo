@@ -1,5 +1,6 @@
-"""Test tool selection methods in AttenuationBuilder."""
-from tenuo import SigningKey, Warrant, Clearance
+"""Test tool selection methods in GrantBuilder."""
+from tenuo import SigningKey, Warrant
+from tenuo_core import Clearance
 
 
 def test_with_issuable_tool_single():
@@ -15,7 +16,7 @@ def test_with_issuable_tool_single():
     )
     
     # Attenuate to single tool using with_issuable_tool (for issuer warrants)
-    child = issuer.attenuate().issuable_tool("read_file").delegate(parent_kp)
+    child = issuer.attenuate().issuable_tool("read_file").grant(parent_kp)
     
     # Verify only one tool remains
     assert child.issuable_tools == ["read_file"]
@@ -34,7 +35,7 @@ def test_with_issuable_tools_multiple():
     )
     
     # Attenuate to subset of tools using with_issuable_tools (for issuer warrants)
-    child = issuer.attenuate().issuable_tools(["read_file", "query_db"]).delegate(parent_kp)
+    child = issuer.attenuate().issuable_tools(["read_file", "query_db"]).grant(parent_kp)
     
     # Verify correct tools remain
     assert set(child.issuable_tools) == {"read_file", "query_db"}
@@ -53,7 +54,7 @@ def test_drop_tools():
     )
     
     # Drop specific tools
-    child = issuer.attenuate().drop_tools(["send_email"]).delegate(parent_kp)
+    child = issuer.attenuate().drop_tools(["send_email"]).grant(parent_kp)
     
     # Verify tool was dropped
     assert set(child.issuable_tools) == {"read_file", "query_db"}
@@ -76,7 +77,7 @@ def test_issuable_tool_selection_combinations():
         issuer.attenuate()
         .issuable_tools(["read_file", "send_email", "query_db"])
         .drop_tools(["send_email"])
-        .delegate(parent_kp)
+        .grant(parent_kp)
     )
     
     # Verify final tool set
@@ -96,7 +97,7 @@ def test_with_issuable_tool_replaces_all():
     )
     
     # Set single tool using with_issuable_tool (should replace all)
-    child = issuer.attenuate().issuable_tool("query_db").delegate(parent_kp)
+    child = issuer.attenuate().issuable_tool("query_db").grant(parent_kp)
     
     # Verify only one tool
     assert child.issuable_tools == ["query_db"]

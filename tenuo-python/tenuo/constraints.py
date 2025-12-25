@@ -64,12 +64,12 @@ class Capability:
             limit=Range.max_value(100)
         )
     
-    Usage with root_task/scoped_task:
-        async with root_task(
+    Usage with mint/grant:
+        async with mint(
             Capability("read_file", path=Pattern("/data/*")),
             Capability("send_email", to=Pattern("*@company.com")),
         ):
-            async with scoped_task(
+            async with grant(
                 Capability("read_file", path=Pattern("/data/reports/*"))
             ):
                 ...
@@ -143,10 +143,10 @@ class Constraints(Dict[str, Any]):
         Create a capabilities dictionary for a single tool.
         
         This is a convenience method for Tier 2 API (Warrant.issue).
-        For Tier 1 API (root_task/scoped_task), use Capability class instead.
+        For Tier 1 API (mint/grant), use Capability class instead.
         
         Example:
-            warrant = Warrant.issue(
+            warrant = Warrant.mint(
                 keypair=kp,
                 capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
                 ttl_seconds=3600

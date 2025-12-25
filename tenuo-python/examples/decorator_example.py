@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-Example demonstrating the @lockdown decorator with explicit warrant.
+Example demonstrating the @guard decorator with explicit warrant.
 
 For LangChain/FastAPI integration using ContextVar, see examples/context_pattern.py
 """
 
-from tenuo import SigningKey, Warrant, Pattern, Range, Constraints, lockdown, AuthorizationError
+from tenuo import SigningKey, Warrant, Pattern, Range, guard
+from tenuo.constraints import Constraints
+from tenuo.exceptions import AuthorizationError
 
 def main():
-    print("=== Tenuo @lockdown Decorator Example ===\n")
+    print("=== Tenuo @guard Decorator Example ===\n")
     
     # Create a warrant
     keypair = SigningKey.generate()
@@ -22,19 +24,21 @@ def main():
         holder=keypair.public_key  # Bind to self
     )
     
-    # Define a function protected by the warrant
-    # Note: We must pass keypair for Proof-of-Possession signing
-    @lockdown(warrant, tool="scale_cluster", keypair=keypair)
-    def scale_cluster(cluster: str, replicas: int):
-        """This function can only be called if the warrant authorizes it."""
-        print(f"[OK] Scaling cluster {cluster} to {replicas} replicas")
-        # ... actual scaling logic here
-    
-    # Test authorized call
-    print("1. Testing authorized call...")
+    # Define a function Example demonstrating the @guard decorator pattern for protecting functions with minimal boilerplate.
+
+    print("=== Tenuo @guard Decorator Example ===\n")
+
+    @guard(warrant, tool="scale_cluster", keypair=keypair)
+    def scale_cluster(cluster_id: str, replicas: int):
+        print(f"  [OK] Scaling cluster {cluster_id} to {replicas} replicas")
+        
+    print("  Decorated 'scale_cluster' function created with @guard")
+
+    # This call should succeed (if warrant allows)
+    print("  Calling protected function...")
     try:
-        scale_cluster(cluster="staging-web", replicas=5)
-        print("   ✓ Function executed successfully\n")
+        scale_cluster(cluster_id="staging-cluster", replicas=3)
+        print("  Function executed successfully.")
     except AuthorizationError as e:
         print(f"   ✗ Authorization failed: {e}\n")
     

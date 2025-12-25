@@ -69,10 +69,10 @@ warrant = receive_warrant_from_orchestrator()
 
 # Explicit key at call site - keys never in state
 key = SigningKey.from_env("MY_SERVICE_KEY")
-headers = warrant.auth_headers(key, "search", {"query": "test"})
+headers = warrant.headers(key, "search", {"query": "test"})
 
 # Explicit key in delegation
-child = warrant.delegate(
+child = warrant.grant(
     to=worker_pubkey,
     allow={"search": {"query": Pattern("safe*")}},
     ttl=300,
@@ -91,38 +91,58 @@ warrant = receive_warrant()
 key = SigningKey.from_env("MY_KEY")
 
 # Bind key for repeated use
-bound = warrant.bind_key(key)
+bound = warrant.bind(key)
 
 for item in items:
-    headers = bound.auth_headers("process", {"item": item})
+    headers = bound.headers("process", {"item": item})
     # Make API call with headers...
 
 # ⚠️ BoundWarrant should NOT be stored in state/cache (contains key)
 ```
 
-### Option C: Context-Based (Simple Prototyping)
+### Option C: Auto-Configure (Zero Setup)
 
-For quick prototyping with `@lockdown` decorators:
+For maximum speed, let Tenuo configure from environment:
 
 ```python
-from tenuo import configure, root_task, scoped_task, Capability, Pattern, SigningKey
+from tenuo import auto_configure
+
+# Reads TENUO_* environment variables automatically:
+# TENUO_ISSUER_KEY, TENUO_MODE, TENUO_TRUSTED_ROOTS, etc.
+auto_configure()
+```
+
+**Environment variables:**
+| Variable | Description |
+|----------|-------------|
+| `TENUO_ISSUER_KEY` | Base64-encoded signing key |
+| `TENUO_MODE` | `enforce` (default), `audit`, or `permissive` |
+| `TENUO_TRUSTED_ROOTS` | Comma-separated public keys |
+| `TENUO_DEV_MODE` | `1` for development mode |
+
+### Option D: Context-Based (Simple Prototyping)
+
+For quick prototyping with `@guard` decorators:
+
+```python
+from tenuo import configure, mint, grant, Capability, Pattern, SigningKey
 
 # 1. Configure once at startup
-configure(issuer_key=SigningKey.generate(), dev_mode=True)
+configure(issuer_key=SigningKey.generate(), dev_mode=True, mode="audit")
 
-# 2. Protect tools with @lockdown
-from tenuo import lockdown
+# 2. Protect tools with @guard
+from tenuo import guard
 
-@lockdown(tool="read_file")
-def read_file(path: str):
-    return open(path).read()
+@guard(tool="delete_user")
+def delete_user(user_id: str):
+    print(f"Deleting {user_id}...").read()
 
 # 3. Scope authority to tasks
-async with root_task(
+async with mint(
     Capability("read_file", path=Pattern("/data/*")),
 ):
     # Inner scope narrows further
-    async with scoped_task(
+    async with grant(
         Capability("read_file", path=Pattern("/data/reports/*"))
     ):
         result = read_file("/data/reports/q3.pdf")  # ✅ Allowed
@@ -131,9 +151,72 @@ async with root_task(
 
 ---
 
+## Enforcement Modes
+
+Tenuo supports three enforcement modes for gradual adoption:
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `enforce` | Block unauthorized requests | Production (default) |
+| `audit` | Log violations but allow execution | Gradual adoption, discovery |
+| `permissive` | Log + warn header, allow execution | Development, testing |
+
+```python
+from tenuo import configure, SigningKey
+
+# Audit mode - deploy without breaking anything
+configure(
+    issuer_key=SigningKey.generate(),
+    mode="audit",  # Log violations, don't block
+    dev_mode=True,
+)
+
+# After analyzing logs, switch to enforce
+configure(
+    issuer_key=issuer_keypair,
+    mode="enforce",  # Block violations
+    trusted_roots=[control_plane_pubkey],
+)
+```
+
+Check current mode programmatically:
+```python
+from tenuo import is_audit_mode, is_enforce_mode, should_block_violation
+
+if is_audit_mode():
+    print("Running in audit mode - violations logged but not blocked")
+```
+
+---
+
 ## Framework Integrations
 
 ### FastAPI
+
+**Option 1: `SecureAPIRouter` (Drop-in Replacement)**
+
+```python
+from fastapi import FastAPI
+from tenuo.fastapi import SecureAPIRouter, configure_tenuo
+
+app = FastAPI()
+configure_tenuo(app, trusted_issuers=[issuer_pubkey])
+
+# Drop-in replacement for APIRouter - auto-protects routes
+router = SecureAPIRouter(tool_prefix="api")
+
+@router.get("/users/{user_id}")  # Auto-protected as "api_users_read"
+async def get_user(user_id: str):
+    return {"user_id": user_id}
+
+@router.post("/users", tool="create_user")  # Explicit tool name
+async def create_user(name: str):
+    return {"name": name}
+
+app.include_router(router)
+```
+
+**Option 2: `TenuoGuard` Dependency (Fine Control)**
 
 ```python
 from fastapi import FastAPI, Depends
@@ -153,34 +236,80 @@ async def search(
 
 ### LangChain
 
+**Option 1: `auto_protect()` (Zero Config)**
+
+```python
+from tenuo.langchain import auto_protect
+
+# Wrap your executor - defaults to audit mode
+protected_executor = auto_protect(executor)
+
+# Run normally
+result = protected_executor.invoke({"input": "Search for AI news"})
+```
+
+**Option 2: `SecureAgentExecutor` (Drop-in Replacement)**
+
+```python
+from tenuo.langchain import SecureAgentExecutor
+from tenuo import configure, mint, Capability, SigningKey
+
+configure(issuer_key=SigningKey.generate(), dev_mode=True)
+
+# Drop-in replacement for AgentExecutor
+executor = SecureAgentExecutor(agent=agent, tools=tools)
+
+# Run with authorization context
+async with mint(Capability("search"), Capability("calculator")):
+    result = await executor.ainvoke({"input": "Calculate 2+2"})
+```
+
+**Option 3: `guard_tools()` and `guard_agent()` (Fine Control)**
+
+```python
+from tenuo import Warrant, SigningKey, Capability
+from tenuo.langchain import guard_tools, guard_agent
+
+keypair = SigningKey.generate()
+
+# guard_tools: wrap tools, manage context yourself
+protected_tools = guard_tools([search_tool, calculator], issuer_keypair=keypair)
+
+# guard_agent: wrap entire executor with built-in context
+protected_executor = guard_agent(
+    executor,
+    issuer_keypair=keypair,
+    capabilities=[Capability("search"), Capability("calculator")],
+)
+
+# Now authorization is automatic
+result = protected_executor.invoke({"input": "Search for AI news"})
+```
+
+**Option 4: Explicit BoundWarrant**
+
 ```python
 from tenuo import Warrant, SigningKey
-from tenuo.langchain import protect
+from tenuo.langchain import guard
 
-# Create warrant and bind key
 keypair = SigningKey.generate()
-warrant = (Warrant.builder()
+warrant = (Warrant.mint_builder()
     .tool("search")
-    .tool("calculator")
-    .issue(keypair))
-bound = warrant.bind_key(keypair)
+    .mint(keypair))
+bound = warrant.bind(keypair)
 
-# Protect your tools
-from langchain_community.tools import DuckDuckGoSearchRun
-protected_tools = protect([DuckDuckGoSearchRun()], bound_warrant=bound)
-
-# Use in your agent
-agent = create_openai_tools_agent(llm, protected_tools, prompt)
+# Pass bound warrant explicitly
+protected_tools = guard([DuckDuckGoSearchRun()], bound)
 ```
 
 ### LangGraph
 
 ```python
 from tenuo import Warrant, SigningKey, KeyRegistry
-from tenuo.langgraph import secure, TenuoToolNode, auto_load_keys
+from tenuo.langgraph import guard, TenuoToolNode, load_tenuo_keys
 
 # 1. Load keys from environment (convention: TENUO_KEY_*)
-auto_load_keys()  # Loads TENUO_KEY_DEFAULT, TENUO_KEY_WORKER, etc.
+load_tenuo_keys()  # Loads TENUO_KEY_DEFAULT, TENUO_KEY_WORKER, etc.
 
 # 2. Define your tools
 @tool
@@ -190,12 +319,12 @@ def search(query: str) -> str:
 # 3. Create secure tool node
 tool_node = TenuoToolNode([search])
 
-# 4. Wrap pure nodes with secure()
+# 4. Wrap pure nodes with guard()
 def my_agent(state):
     # Pure function - no Tenuo imports needed
     return {"messages": [...]}
 
-graph.add_node("agent", secure(my_agent, key_id="worker"))
+graph.add_node("agent", guard(my_agent, key_id="worker"))
 graph.add_node("tools", tool_node)
 
 # 5. Run with warrant in state, key_id in config
@@ -213,28 +342,33 @@ For production deployments with explicit keypair management.
 ### 1. Create a Warrant
 
 ```python
-from tenuo import SigningKey, Warrant, Pattern, Range
+# ── CONTROL PLANE ──
+from tenuo import SigningKey, Warrant, Pattern, Range, PublicKey
 
-keypair = SigningKey.generate()
+issuer_key = SigningKey.from_env("ISSUER_KEY")       # From secure storage
+orchestrator_pubkey = PublicKey.from_env("ORCH_PUBKEY")  # Orchestrator's public key
 
-warrant = (Warrant.builder()
+warrant = (Warrant.mint_builder()
     .capability("manage_infrastructure", {
         "cluster": Pattern("staging-*"),
         "replicas": Range.max_value(15),
     })
-    .holder(keypair.public_key)
+    .holder(orchestrator_pubkey)
     .ttl(3600)
-    .issue(keypair))
+    .mint(issuer_key))
 ```
 
 ### 2. Delegate with Attenuation
 
 ```python
-worker_keypair = SigningKey.generate()
+# ── ORCHESTRATOR ──
+# Has its own key, only needs worker's PUBLIC key
+from tenuo import PublicKey
+worker_pubkey = PublicKey.from_env("WORKER_PUBKEY")
 
 # Child warrant has narrower scope
-worker_warrant = warrant.delegate(
-    to=worker_keypair.public_key,
+worker_warrant = warrant.grant(
+    to=worker_pubkey,
     allow={"manage_infrastructure": {
         "cluster": Pattern("staging-web"),  # Narrowed
         "replicas": Range.max_value(10),    # Reduced
@@ -242,14 +376,17 @@ worker_warrant = warrant.delegate(
     ttl=300,
     key=keypair  # Parent signs
 )
+
+# Send to worker: send_to_worker(str(worker_warrant))
 ```
 
 ### 3. Authorize an Action
 
 ```python
-# Worker signs Proof-of-Possession
+# ── WORKER ──
+# Worker signs Proof-of-Possession with their private key
 args = {"cluster": "staging-web", "replicas": 5}
-pop_sig = worker_warrant.create_pop_signature(
+pop_sig = worker_warrant.sign(
     worker_keypair, "manage_infrastructure", args
 )
 
@@ -283,7 +420,7 @@ from tenuo import diagnose
 diagnose(warrant)  # Prints warrant details, TTL, constraints, etc.
 ```
 
-**Interactive Debugging**: Paste your warrant in the [Explorer Playground](https://tenuo.dev/explorer/) to decode it, inspect constraints, and test authorization - warrants contain only signed claims, not secrets, so they're safe to share.
+**Interactive Debugging**: Paste your warrant in the [Explorer Playground](https://tenuo.dev/explorer) to decode it, inspect constraints, and test authorization - warrants contain only signed claims, not secrets, so they're safe to share.
 
 ---
 

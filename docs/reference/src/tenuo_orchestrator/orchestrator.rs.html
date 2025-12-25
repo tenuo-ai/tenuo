@@ -8,220 +8,334 @@
 <a href=#8 id=8 data-nosnippet>8</a>//! 5. **Multi-sig approval**: Requires human approval for sensitive actions
 <a href=#9 id=9 data-nosnippet>9</a>//! 6. **Notary Registry**: Maps enterprise identities to cryptographic keys
 <a href=#10 id=10 data-nosnippet>10</a>
-<a href=#11 id=11 data-nosnippet>11</a></span><span class="kw">use </span>tenuo_core::{Keypair, Pattern, Exact, Range, Warrant, wire, OneOf, Wildcard};
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>std::time::Duration;
-<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>std::env;
-<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>uuid::Uuid;
-<a href=#15 id=15 data-nosnippet>15</a>
-<a href=#16 id=16 data-nosnippet>16</a><span class="kw">fn </span>main() -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
-<a href=#17 id=17 data-nosnippet>17</a>    <span class="macro">println!</span>(<span class="string">"\n╔══════════════════════════════════════════════════════════════════╗"</span>);
-<a href=#18 id=18 data-nosnippet>18</a>    <span class="macro">println!</span>(<span class="string">"║                    ORCHESTRATOR AGENT DEMO                       ║"</span>);
-<a href=#19 id=19 data-nosnippet>19</a>    <span class="macro">println!</span>(<span class="string">"║          Demonstrating Capability Delegation in Tenuo            ║"</span>);
-<a href=#20 id=20 data-nosnippet>20</a>    <span class="macro">println!</span>(<span class="string">"╚══════════════════════════════════════════════════════════════════╝\n"</span>);
-<a href=#21 id=21 data-nosnippet>21</a>
-<a href=#22 id=22 data-nosnippet>22</a>    <span class="comment">// Generate a session ID for this workflow (for traceability)
-<a href=#23 id=23 data-nosnippet>23</a>    </span><span class="kw">let </span>session_id = <span class="macro">format!</span>(<span class="string">"sess_{}"</span>, Uuid::now_v7().simple());
-<a href=#24 id=24 data-nosnippet>24</a>    <span class="macro">println!</span>(<span class="string">"  Session ID: {}\n"</span>, session_id);
-<a href=#25 id=25 data-nosnippet>25</a>
-<a href=#26 id=26 data-nosnippet>26</a>    <span class="comment">// =========================================================================
-<a href=#27 id=27 data-nosnippet>27</a>    // Step 1: Simulate receiving a root warrant from the Control Plane
-<a href=#28 id=28 data-nosnippet>28</a>    // =========================================================================
-<a href=#29 id=29 data-nosnippet>29</a>    </span><span class="macro">println!</span>(<span class="string">"┌─────────────────────────────────────────────────────────────────┐"</span>);
-<a href=#30 id=30 data-nosnippet>30</a>    <span class="macro">println!</span>(<span class="string">"│ STEP 1: Receiving Root Warrant from Control Plane               │"</span>);
-<a href=#31 id=31 data-nosnippet>31</a>    <span class="macro">println!</span>(<span class="string">"└─────────────────────────────────────────────────────────────────┘"</span>);
-<a href=#32 id=32 data-nosnippet>32</a>
-<a href=#33 id=33 data-nosnippet>33</a>    <span class="kw">let </span>cp_key = env::var(<span class="string">"TENUO_SECRET_KEY"</span>)
-<a href=#34 id=34 data-nosnippet>34</a>        .expect(<span class="string">"TENUO_SECRET_KEY must be set (hex-encoded 32-byte key)"</span>);
-<a href=#35 id=35 data-nosnippet>35</a>    <span class="kw">let </span>cp_key_bytes: [u8; <span class="number">32</span>] = hex::decode(<span class="kw-2">&amp;</span>cp_key)<span class="question-mark">?
-<a href=#36 id=36 data-nosnippet>36</a>        </span>.try_into()
-<a href=#37 id=37 data-nosnippet>37</a>        .map_err(|<span class="kw">_</span>| <span class="string">"Secret key must be 32 bytes"</span>)<span class="question-mark">?</span>;
-<a href=#38 id=38 data-nosnippet>38</a>    
-<a href=#39 id=39 data-nosnippet>39</a>    <span class="kw">let </span>cp_keypair = Keypair::from_bytes(<span class="kw-2">&amp;</span>cp_key_bytes);
-<a href=#40 id=40 data-nosnippet>40</a>
-<a href=#41 id=41 data-nosnippet>41</a>    <span class="macro">println!</span>(<span class="string">"  Control Plane Public Key: {}"</span>, hex::encode(cp_keypair.public_key().to_bytes()));
-<a href=#42 id=42 data-nosnippet>42</a>
-<a href=#43 id=43 data-nosnippet>43</a>    <span class="comment">// The Control Plane issues a broad warrant with POLICY LIMITS
-<a href=#44 id=44 data-nosnippet>44</a>    // action uses Wildcard - can be attenuated to any constraint type
-<a href=#45 id=45 data-nosnippet>45</a>    </span><span class="kw">let </span>root_warrant = Warrant::builder()
-<a href=#46 id=46 data-nosnippet>46</a>        .tool(<span class="string">"manage_infrastructure"</span>)
-<a href=#47 id=47 data-nosnippet>47</a>        .constraint(<span class="string">"cluster"</span>, Pattern::new(<span class="string">"staging-*"</span>)<span class="question-mark">?</span>)
-<a href=#48 id=48 data-nosnippet>48</a>        .constraint(<span class="string">"action"</span>, Wildcard::new())  <span class="comment">// Wildcard: can narrow to anything
-<a href=#49 id=49 data-nosnippet>49</a>        </span>.constraint(<span class="string">"budget"</span>, Range::max(<span class="number">10000.0</span>))
-<a href=#50 id=50 data-nosnippet>50</a>        .ttl(Duration::from_secs(<span class="number">3600</span>))
-<a href=#51 id=51 data-nosnippet>51</a>        .max_depth(<span class="number">3</span>)                          <span class="comment">// POLICY: Only 3 levels of delegation allowed!
-<a href=#52 id=52 data-nosnippet>52</a>        </span>.session_id(session_id.clone())        <span class="comment">// Session binding for traceability
-<a href=#53 id=53 data-nosnippet>53</a>        </span>.agent_id(<span class="string">"orchestrator-main"</span>)         <span class="comment">// Agent ID for audit
-<a href=#54 id=54 data-nosnippet>54</a>        </span>.build(<span class="kw-2">&amp;</span>cp_keypair)<span class="question-mark">?</span>;
-<a href=#55 id=55 data-nosnippet>55</a>
-<a href=#56 id=56 data-nosnippet>56</a>    <span class="macro">println!</span>(<span class="string">"\n  ✓ Root Warrant Received:"</span>);
-<a href=#57 id=57 data-nosnippet>57</a>    <span class="macro">println!</span>(<span class="string">"    • ID:          {}"</span>, root_warrant.id());
-<a href=#58 id=58 data-nosnippet>58</a>    <span class="macro">println!</span>(<span class="string">"    • Tool:        {}"</span>, root_warrant.tool());
-<a href=#59 id=59 data-nosnippet>59</a>    <span class="macro">println!</span>(<span class="string">"    • Depth:       {} (root)"</span>, root_warrant.depth());
-<a href=#60 id=60 data-nosnippet>60</a>    <span class="macro">println!</span>(<span class="string">"    • Max Depth:   {} (policy limit)"</span>, root_warrant.effective_max_depth());
-<a href=#61 id=61 data-nosnippet>61</a>    <span class="macro">println!</span>(<span class="string">"    • Session:     {}"</span>, root_warrant.session_id().unwrap_or(<span class="string">"-"</span>));
-<a href=#62 id=62 data-nosnippet>62</a>    <span class="macro">println!</span>(<span class="string">"    • Expires:     {}"</span>, root_warrant.expires_at());
-<a href=#63 id=63 data-nosnippet>63</a>    <span class="macro">println!</span>(<span class="string">"    • Constraints:"</span>);
-<a href=#64 id=64 data-nosnippet>64</a>    <span class="macro">println!</span>(<span class="string">"      - cluster:   staging-*"</span>);
-<a href=#65 id=65 data-nosnippet>65</a>    <span class="macro">println!</span>(<span class="string">"      - action:    * (Wildcard)"</span>);
-<a href=#66 id=66 data-nosnippet>66</a>    <span class="macro">println!</span>(<span class="string">"      - budget:    ≤ $10,000"</span>);
-<a href=#67 id=67 data-nosnippet>67</a>
-<a href=#68 id=68 data-nosnippet>68</a>    <span class="comment">// =========================================================================
-<a href=#69 id=69 data-nosnippet>69</a>    // Step 2: Orchestrator creates its own identity
-<a href=#70 id=70 data-nosnippet>70</a>    // =========================================================================
-<a href=#71 id=71 data-nosnippet>71</a>    </span><span class="macro">println!</span>(<span class="string">"\n┌─────────────────────────────────────────────────────────────────┐"</span>);
-<a href=#72 id=72 data-nosnippet>72</a>    <span class="macro">println!</span>(<span class="string">"│ STEP 2: Orchestrator Establishes Identity                       │"</span>);
-<a href=#73 id=73 data-nosnippet>73</a>    <span class="macro">println!</span>(<span class="string">"└─────────────────────────────────────────────────────────────────┘"</span>);
-<a href=#74 id=74 data-nosnippet>74</a>
-<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">let </span>orchestrator_keypair = Keypair::generate();
-<a href=#76 id=76 data-nosnippet>76</a>    <span class="macro">println!</span>(<span class="string">"  Generated Orchestrator Keypair"</span>);
-<a href=#77 id=77 data-nosnippet>77</a>    <span class="macro">println!</span>(<span class="string">"    Public Key: {}"</span>, hex::encode(orchestrator_keypair.public_key().to_bytes()));
-<a href=#78 id=78 data-nosnippet>78</a>
-<a href=#79 id=79 data-nosnippet>79</a>    <span class="comment">// Generate worker keypair (for PoP)
-<a href=#80 id=80 data-nosnippet>80</a>    </span><span class="kw">let </span>worker_keypair = Keypair::generate();
-<a href=#81 id=81 data-nosnippet>81</a>    <span class="macro">println!</span>(<span class="string">"  Generated Worker Keypair (for PoP)"</span>);
-<a href=#82 id=82 data-nosnippet>82</a>    <span class="macro">println!</span>(<span class="string">"    Public Key: {}"</span>, hex::encode(worker_keypair.public_key().to_bytes()));
-<a href=#83 id=83 data-nosnippet>83</a>
-<a href=#84 id=84 data-nosnippet>84</a>    <span class="comment">// Save worker key for the worker agent
-<a href=#85 id=85 data-nosnippet>85</a>    </span><span class="kw">let </span>worker_key_path = env::var(<span class="string">"TENUO_WORKER_KEY_OUTPUT"</span>)
-<a href=#86 id=86 data-nosnippet>86</a>        .unwrap_or_else(|<span class="kw">_</span>| <span class="string">"/data/worker.key"</span>.to_string());
-<a href=#87 id=87 data-nosnippet>87</a>    std::fs::write(<span class="kw-2">&amp;</span>worker_key_path, hex::encode(worker_keypair.secret_key_bytes()))<span class="question-mark">?</span>;
-<a href=#88 id=88 data-nosnippet>88</a>    <span class="macro">println!</span>(<span class="string">"    Saved to: {}"</span>, worker_key_path);
-<a href=#89 id=89 data-nosnippet>89</a>
-<a href=#90 id=90 data-nosnippet>90</a>    <span class="comment">// =========================================================================
-<a href=#91 id=91 data-nosnippet>91</a>    // Step 3: Attenuate warrant for the Worker
-<a href=#92 id=92 data-nosnippet>92</a>    // =========================================================================
-<a href=#93 id=93 data-nosnippet>93</a>    </span><span class="macro">println!</span>(<span class="string">"\n┌─────────────────────────────────────────────────────────────────┐"</span>);
-<a href=#94 id=94 data-nosnippet>94</a>    <span class="macro">println!</span>(<span class="string">"│ STEP 3: Attenuating Warrant for Worker                          │"</span>);
-<a href=#95 id=95 data-nosnippet>95</a>    <span class="macro">println!</span>(<span class="string">"└─────────────────────────────────────────────────────────────────┘"</span>);
-<a href=#96 id=96 data-nosnippet>96</a>
-<a href=#97 id=97 data-nosnippet>97</a>    <span class="macro">println!</span>(<span class="string">"  Narrowing capabilities:"</span>);
-<a href=#98 id=98 data-nosnippet>98</a>    <span class="macro">println!</span>(<span class="string">"    • cluster: staging-*  → staging-web (exact)"</span>);
-<a href=#99 id=99 data-nosnippet>99</a>    <span class="macro">println!</span>(<span class="string">"    • action:  * (any)    → [upgrade, restart] (OneOf)"</span>);
-<a href=#100 id=100 data-nosnippet>100</a>    <span class="macro">println!</span>(<span class="string">"    • budget:  ≤$10,000   → ≤$1,000 (reduced)"</span>);
-<a href=#101 id=101 data-nosnippet>101</a>    <span class="macro">println!</span>(<span class="string">"    • TTL:     1 hour     → 10 minutes (shortened)"</span>);
-<a href=#102 id=102 data-nosnippet>102</a>
-<a href=#103 id=103 data-nosnippet>103</a>    <span class="kw">let </span>worker_warrant = root_warrant.attenuate()
-<a href=#104 id=104 data-nosnippet>104</a>        .constraint(<span class="string">"cluster"</span>, Exact::new(<span class="string">"staging-web"</span>))
-<a href=#105 id=105 data-nosnippet>105</a>        .constraint(<span class="string">"action"</span>, OneOf::new(<span class="macro">vec!</span>[<span class="string">"upgrade"</span>, <span class="string">"restart"</span>]))
-<a href=#106 id=106 data-nosnippet>106</a>        .constraint(<span class="string">"budget"</span>, Range::max(<span class="number">1000.0</span>))
-<a href=#107 id=107 data-nosnippet>107</a>        .ttl(Duration::from_secs(<span class="number">600</span>)) <span class="comment">// 10 minutes
-<a href=#108 id=108 data-nosnippet>108</a>        </span>.authorized_holder(worker_keypair.public_key()) <span class="comment">// PoP
-<a href=#109 id=109 data-nosnippet>109</a>        </span>.agent_id(<span class="string">"worker-agent-01"</span>) <span class="comment">// Traceability
-<a href=#110 id=110 data-nosnippet>110</a>        // Session ID is inherited from parent automatically
-<a href=#111 id=111 data-nosnippet>111</a>        </span>.build(<span class="kw-2">&amp;</span>orchestrator_keypair)<span class="question-mark">?</span>;
-<a href=#112 id=112 data-nosnippet>112</a>
-<a href=#113 id=113 data-nosnippet>113</a>    <span class="macro">println!</span>(<span class="string">"\n  ✓ Worker Warrant Created:"</span>);
-<a href=#114 id=114 data-nosnippet>114</a>    <span class="macro">println!</span>(<span class="string">"    • ID:          {}"</span>, worker_warrant.id());
-<a href=#115 id=115 data-nosnippet>115</a>    <span class="macro">println!</span>(<span class="string">"    • Parent ID:   {}"</span>, worker_warrant.parent_id().unwrap());
-<a href=#116 id=116 data-nosnippet>116</a>    <span class="macro">println!</span>(<span class="string">"    • Depth:       {} / {} (delegated)"</span>, worker_warrant.depth(), worker_warrant.effective_max_depth());
-<a href=#117 id=117 data-nosnippet>117</a>    <span class="macro">println!</span>(<span class="string">"    • Session:     {} (inherited)"</span>, worker_warrant.session_id().unwrap_or(<span class="string">"-"</span>));
-<a href=#118 id=118 data-nosnippet>118</a>    <span class="macro">println!</span>(<span class="string">"    • Expires:     {}"</span>, worker_warrant.expires_at());
-<a href=#119 id=119 data-nosnippet>119</a>    <span class="macro">println!</span>(<span class="string">"    • Holder:      {} (PoP required)"</span>, hex::encode(<span class="kw-2">&amp;</span>worker_keypair.public_key().to_bytes()[..<span class="number">8</span>]));
-<a href=#120 id=120 data-nosnippet>120</a>    <span class="macro">println!</span>(<span class="string">"    • Signed by:   Orchestrator"</span>);
-<a href=#121 id=121 data-nosnippet>121</a>
-<a href=#122 id=122 data-nosnippet>122</a>    <span class="comment">// =========================================================================
-<a href=#123 id=123 data-nosnippet>123</a>    // Step 4: Multi-Sig Warrant (Sensitive Actions with Human Approval)
-<a href=#124 id=124 data-nosnippet>124</a>    // =========================================================================
-<a href=#125 id=125 data-nosnippet>125</a>    </span><span class="macro">println!</span>(<span class="string">"\n┌─────────────────────────────────────────────────────────────────┐"</span>);
-<a href=#126 id=126 data-nosnippet>126</a>    <span class="macro">println!</span>(<span class="string">"│ STEP 4: Creating Multi-Sig Warrant (Human Approval Required)    │"</span>);
-<a href=#127 id=127 data-nosnippet>127</a>    <span class="macro">println!</span>(<span class="string">"└─────────────────────────────────────────────────────────────────┘"</span>);
+<a href=#11 id=11 data-nosnippet>11</a></span><span class="kw">use </span>chrono::Utc;
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>std::env;
+<a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>std::time::Duration;
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>tenuo::constraints::{ConstraintSet, Range};
+<a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>tenuo::{wire, Exact, OneOf, SigningKey, Warrant};
+<a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>uuid::Uuid;
+<a href=#17 id=17 data-nosnippet>17</a>
+<a href=#18 id=18 data-nosnippet>18</a><span class="kw">fn </span>main() -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>std::error::Error&gt;&gt; {
+<a href=#19 id=19 data-nosnippet>19</a>    <span class="macro">println!</span>(<span class="string">"\n╔══════════════════════════════════════════════════════════════════╗"</span>);
+<a href=#20 id=20 data-nosnippet>20</a>    <span class="macro">println!</span>(<span class="string">"║                    ORCHESTRATOR AGENT DEMO                       ║"</span>);
+<a href=#21 id=21 data-nosnippet>21</a>    <span class="macro">println!</span>(<span class="string">"║          Demonstrating Capability Delegation in Tenuo            ║"</span>);
+<a href=#22 id=22 data-nosnippet>22</a>    <span class="macro">println!</span>(<span class="string">"╚══════════════════════════════════════════════════════════════════╝\n"</span>);
+<a href=#23 id=23 data-nosnippet>23</a>
+<a href=#24 id=24 data-nosnippet>24</a>    <span class="comment">// Generate a session ID for this workflow (for traceability)
+<a href=#25 id=25 data-nosnippet>25</a>    </span><span class="kw">let </span>session_id = <span class="macro">format!</span>(<span class="string">"sess_{}"</span>, Uuid::now_v7().simple());
+<a href=#26 id=26 data-nosnippet>26</a>    <span class="macro">println!</span>(<span class="string">"  Session ID: {}\n"</span>, session_id);
+<a href=#27 id=27 data-nosnippet>27</a>
+<a href=#28 id=28 data-nosnippet>28</a>    <span class="comment">// =========================================================================
+<a href=#29 id=29 data-nosnippet>29</a>    // Step 1: Enrollment - Request Root Warrant from Control Plane
+<a href=#30 id=30 data-nosnippet>30</a>    // =========================================================================
+<a href=#31 id=31 data-nosnippet>31</a>    </span><span class="macro">println!</span>(<span class="string">"┌─────────────────────────────────────────────────────────────────┐"</span>);
+<a href=#32 id=32 data-nosnippet>32</a>    <span class="macro">println!</span>(<span class="string">"│ STEP 1: Enrollment - Requesting Root Warrant from Control Plane │"</span>);
+<a href=#33 id=33 data-nosnippet>33</a>    <span class="macro">println!</span>(<span class="string">"└─────────────────────────────────────────────────────────────────┘"</span>);
+<a href=#34 id=34 data-nosnippet>34</a>
+<a href=#35 id=35 data-nosnippet>35</a>    <span class="comment">// 1. Generate our OWN keypair (Orchestrator Identity)
+<a href=#36 id=36 data-nosnippet>36</a>    </span><span class="kw">let </span>orchestrator_keypair = SigningKey::generate();
+<a href=#37 id=37 data-nosnippet>37</a>    <span class="kw">let </span>pubkey_hex = hex::encode(orchestrator_keypair.public_key().to_bytes());
+<a href=#38 id=38 data-nosnippet>38</a>    <span class="macro">println!</span>(<span class="string">"  Orchestrator Public Key: {}"</span>, pubkey_hex);
+<a href=#39 id=39 data-nosnippet>39</a>
+<a href=#40 id=40 data-nosnippet>40</a>    <span class="comment">// 2. Get Enrollment Token from Env
+<a href=#41 id=41 data-nosnippet>41</a>    </span><span class="kw">let </span>enrollment_token = env::var(<span class="string">"TENUO_ENROLLMENT_TOKEN"</span>)
+<a href=#42 id=42 data-nosnippet>42</a>        .expect(<span class="string">"TENUO_ENROLLMENT_TOKEN must be set (copy from control plane stdout)"</span>);
+<a href=#43 id=43 data-nosnippet>43</a>
+<a href=#44 id=44 data-nosnippet>44</a>    <span class="kw">let </span>control_url =
+<a href=#45 id=45 data-nosnippet>45</a>        env::var(<span class="string">"TENUO_CONTROL_URL"</span>).unwrap_or_else(|<span class="kw">_</span>| <span class="string">"http://127.0.0.1:8080"</span>.to_string());
+<a href=#46 id=46 data-nosnippet>46</a>
+<a href=#47 id=47 data-nosnippet>47</a>    <span class="comment">// 3. Create Proof of Possession with timestamp (prevents replay attacks)
+<a href=#48 id=48 data-nosnippet>48</a>    // Format: "enroll:{public_key_hex}:{timestamp}"
+<a href=#49 id=49 data-nosnippet>49</a>    </span><span class="kw">let </span>timestamp = Utc::now().timestamp();
+<a href=#50 id=50 data-nosnippet>50</a>    <span class="kw">let </span>pop_message = <span class="macro">format!</span>(<span class="string">"enroll:{}:{}"</span>, pubkey_hex, timestamp);
+<a href=#51 id=51 data-nosnippet>51</a>    <span class="kw">let </span>pop_signature = orchestrator_keypair.sign(pop_message.as_bytes());
+<a href=#52 id=52 data-nosnippet>52</a>    <span class="kw">let </span>pop_signature_hex = hex::encode(pop_signature.to_bytes());
+<a href=#53 id=53 data-nosnippet>53</a>
+<a href=#54 id=54 data-nosnippet>54</a>    <span class="comment">// 4. Send Enrollment Request
+<a href=#55 id=55 data-nosnippet>55</a>    </span><span class="macro">println!</span>(<span class="string">"  Requesting enrollment from {}..."</span>, control_url);
+<a href=#56 id=56 data-nosnippet>56</a>    <span class="kw">let </span>client = reqwest::blocking::Client::new();
+<a href=#57 id=57 data-nosnippet>57</a>    <span class="kw">let </span>resp = client
+<a href=#58 id=58 data-nosnippet>58</a>        .post(<span class="macro">format!</span>(<span class="string">"{}/v1/enroll"</span>, control_url))
+<a href=#59 id=59 data-nosnippet>59</a>        .json(<span class="kw-2">&amp;</span><span class="macro">serde_json::json!</span>({
+<a href=#60 id=60 data-nosnippet>60</a>            <span class="string">"enrollment_token"</span>: enrollment_token,
+<a href=#61 id=61 data-nosnippet>61</a>            <span class="string">"public_key_hex"</span>: pubkey_hex,
+<a href=#62 id=62 data-nosnippet>62</a>            <span class="string">"timestamp"</span>: timestamp,
+<a href=#63 id=63 data-nosnippet>63</a>            <span class="string">"pop_signature_hex"</span>: pop_signature_hex
+<a href=#64 id=64 data-nosnippet>64</a>        }))
+<a href=#65 id=65 data-nosnippet>65</a>        .send()<span class="question-mark">?</span>;
+<a href=#66 id=66 data-nosnippet>66</a>
+<a href=#67 id=67 data-nosnippet>67</a>    <span class="kw">if </span>!resp.status().is_success() {
+<a href=#68 id=68 data-nosnippet>68</a>        <span class="kw">let </span>status = resp.status();
+<a href=#69 id=69 data-nosnippet>69</a>        <span class="kw">let </span>text = resp.text()<span class="question-mark">?</span>;
+<a href=#70 id=70 data-nosnippet>70</a>        <span class="macro">eprintln!</span>(<span class="string">"❌ Enrollment Failed: {} - {}"</span>, status, text);
+<a href=#71 id=71 data-nosnippet>71</a>        std::process::exit(<span class="number">1</span>);
+<a href=#72 id=72 data-nosnippet>72</a>    }
+<a href=#73 id=73 data-nosnippet>73</a>
+<a href=#74 id=74 data-nosnippet>74</a>    <span class="kw">let </span>issue_resp: serde_json::Value = resp.json()<span class="question-mark">?</span>;
+<a href=#75 id=75 data-nosnippet>75</a>    <span class="kw">let </span>warrant_base64 = issue_resp[<span class="string">"warrant_base64"</span>]
+<a href=#76 id=76 data-nosnippet>76</a>        .as_str()
+<a href=#77 id=77 data-nosnippet>77</a>        .ok_or(<span class="string">"Control plane response missing 'warrant_base64' field"</span>)<span class="question-mark">?</span>;
+<a href=#78 id=78 data-nosnippet>78</a>    <span class="kw">let </span>root_warrant: Warrant = wire::decode_base64(warrant_base64)<span class="question-mark">?</span>;
+<a href=#79 id=79 data-nosnippet>79</a>
+<a href=#80 id=80 data-nosnippet>80</a>    <span class="comment">// Get control plane keypair for chain link signature
+<a href=#81 id=81 data-nosnippet>81</a>    // In production, the control plane would sign the chain link
+<a href=#82 id=82 data-nosnippet>82</a>    // For demo, we get it from environment or use a placeholder
+<a href=#83 id=83 data-nosnippet>83</a>    </span><span class="kw">let </span>_control_plane_keypair = <span class="kw">if let </span><span class="prelude-val">Ok</span>(cp_key_hex) = env::var(<span class="string">"TENUO_CONTROL_PLANE_KEY"</span>) {
+<a href=#84 id=84 data-nosnippet>84</a>        <span class="kw">let </span>cp_key_bytes: [u8; <span class="number">32</span>] = hex::decode(cp_key_hex)<span class="question-mark">?
+<a href=#85 id=85 data-nosnippet>85</a>            </span>.try_into()
+<a href=#86 id=86 data-nosnippet>86</a>            .map_err(|<span class="kw">_</span>| <span class="string">"Control plane key must be 32 bytes"</span>)<span class="question-mark">?</span>;
+<a href=#87 id=87 data-nosnippet>87</a>        SigningKey::from_bytes(<span class="kw-2">&amp;</span>cp_key_bytes)
+<a href=#88 id=88 data-nosnippet>88</a>    } <span class="kw">else </span>{
+<a href=#89 id=89 data-nosnippet>89</a>        <span class="comment">// For demo, if not provided, we can't create proper chain link signature
+<a href=#90 id=90 data-nosnippet>90</a>        // In production, this should always be provided
+<a href=#91 id=91 data-nosnippet>91</a>        </span><span class="macro">println!</span>(
+<a href=#92 id=92 data-nosnippet>92</a>            <span class="string">"  ⚠️  WARNING: TENUO_CONTROL_PLANE_KEY not set - chain link signature will be invalid"
+<a href=#93 id=93 data-nosnippet>93</a>        </span>);
+<a href=#94 id=94 data-nosnippet>94</a>        <span class="macro">println!</span>(<span class="string">"     In production, the control plane must sign chain links"</span>);
+<a href=#95 id=95 data-nosnippet>95</a>        SigningKey::generate() <span class="comment">// Placeholder - won't match root_warrant.issuer()
+<a href=#96 id=96 data-nosnippet>96</a>    </span>};
+<a href=#97 id=97 data-nosnippet>97</a>
+<a href=#98 id=98 data-nosnippet>98</a>    <span class="macro">println!</span>(<span class="string">"\n  ✓ Root Warrant Received via Enrollment Protocol:"</span>);
+<a href=#99 id=99 data-nosnippet>99</a>    <span class="macro">println!</span>(<span class="string">"    • ID:          {}"</span>, root_warrant.id());
+<a href=#100 id=100 data-nosnippet>100</a>    <span class="kw">if </span>!root_warrant.payload.tools.is_empty() {
+<a href=#101 id=101 data-nosnippet>101</a>        <span class="macro">println!</span>(<span class="string">"    • Tools:       {:?}"</span>, root_warrant.payload.tools.keys());
+<a href=#102 id=102 data-nosnippet>102</a>    }
+<a href=#103 id=103 data-nosnippet>103</a>    <span class="macro">println!</span>(<span class="string">"    • Depth:       {} (root)"</span>, root_warrant.depth());
+<a href=#104 id=104 data-nosnippet>104</a>    <span class="macro">println!</span>(
+<a href=#105 id=105 data-nosnippet>105</a>        <span class="string">"    • Max Depth:   {} (policy limit)"</span>,
+<a href=#106 id=106 data-nosnippet>106</a>        root_warrant.effective_max_depth()
+<a href=#107 id=107 data-nosnippet>107</a>    );
+<a href=#108 id=108 data-nosnippet>108</a>    <span class="macro">println!</span>(<span class="string">"    • Expires:     {}"</span>, root_warrant.expires_at());
+<a href=#109 id=109 data-nosnippet>109</a>    <span class="macro">println!</span>(<span class="string">"    • Constraints:"</span>);
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="macro">println!</span>(<span class="string">"      - cluster:   staging-*"</span>);
+<a href=#111 id=111 data-nosnippet>111</a>    <span class="macro">println!</span>(<span class="string">"      - action:    * (Wildcard)"</span>);
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="macro">println!</span>(<span class="string">"      - replicas:  ≤ 15"</span>);
+<a href=#113 id=113 data-nosnippet>113</a>
+<a href=#114 id=114 data-nosnippet>114</a>    <span class="comment">// =========================================================================
+<a href=#115 id=115 data-nosnippet>115</a>    // Step 2: Establish Identities (Key Generation)
+<a href=#116 id=116 data-nosnippet>116</a>    // =========================================================================
+<a href=#117 id=117 data-nosnippet>117</a>    </span><span class="macro">println!</span>(<span class="string">"\n┌─────────────────────────────────────────────────────────────────┐"</span>);
+<a href=#118 id=118 data-nosnippet>118</a>    <span class="macro">println!</span>(<span class="string">"│ STEP 2: Establish Identities (Key Generation)                   │"</span>);
+<a href=#119 id=119 data-nosnippet>119</a>    <span class="macro">println!</span>(<span class="string">"└─────────────────────────────────────────────────────────────────┘"</span>);
+<a href=#120 id=120 data-nosnippet>120</a>
+<a href=#121 id=121 data-nosnippet>121</a>    <span class="comment">// Orchestrator already generated its keypair in Step 1 (for enrollment)
+<a href=#122 id=122 data-nosnippet>122</a>    // We reuse the same keypair for signing delegated warrants
+<a href=#123 id=123 data-nosnippet>123</a>    </span><span class="macro">println!</span>(<span class="string">"  Orchestrator keypair (from enrollment):"</span>);
+<a href=#124 id=124 data-nosnippet>124</a>    <span class="macro">println!</span>(
+<a href=#125 id=125 data-nosnippet>125</a>        <span class="string">"    Public Key: {}"</span>,
+<a href=#126 id=126 data-nosnippet>126</a>        hex::encode(orchestrator_keypair.public_key().to_bytes())
+<a href=#127 id=127 data-nosnippet>127</a>    );
 <a href=#128 id=128 data-nosnippet>128</a>
-<a href=#129 id=129 data-nosnippet>129</a>    <span class="macro">println!</span>(<span class="string">"  For sensitive actions (delete, scale-down), we require human approval."</span>);
-<a href=#130 id=130 data-nosnippet>130</a>    <span class="macro">println!</span>(<span class="string">"  This is enforced via multi-sig: the warrant lists required approvers.\n"</span>);
-<a href=#131 id=131 data-nosnippet>131</a>
-<a href=#132 id=132 data-nosnippet>132</a>    <span class="comment">// Create an "approver" keypair (simulates an admin mapped via Notary Registry)
-<a href=#133 id=133 data-nosnippet>133</a>    </span><span class="kw">let </span>admin_keypair = Keypair::generate();
-<a href=#134 id=134 data-nosnippet>134</a>    <span class="macro">println!</span>(<span class="string">"  Generated Admin Keypair (simulating Notary-bound identity):"</span>);
-<a href=#135 id=135 data-nosnippet>135</a>    <span class="macro">println!</span>(<span class="string">"    • Public Key: {}"</span>, hex::encode(<span class="kw-2">&amp;</span>admin_keypair.public_key().to_bytes()[..<span class="number">16</span>]));
-<a href=#136 id=136 data-nosnippet>136</a>    <span class="macro">println!</span>(<span class="string">"    • External ID: arn:aws:iam::123456789:user/admin (simulated)\n"</span>);
-<a href=#137 id=137 data-nosnippet>137</a>
-<a href=#138 id=138 data-nosnippet>138</a>    <span class="comment">// Save admin key for the worker demo
-<a href=#139 id=139 data-nosnippet>139</a>    </span><span class="kw">let </span>admin_key_path = env::var(<span class="string">"TENUO_ADMIN_KEY_OUTPUT"</span>)
-<a href=#140 id=140 data-nosnippet>140</a>        .unwrap_or_else(|<span class="kw">_</span>| <span class="string">"/data/admin.key"</span>.to_string());
-<a href=#141 id=141 data-nosnippet>141</a>    std::fs::write(<span class="kw-2">&amp;</span>admin_key_path, hex::encode(admin_keypair.secret_key_bytes()))<span class="question-mark">?</span>;
-<a href=#142 id=142 data-nosnippet>142</a>    <span class="macro">println!</span>(<span class="string">"    Saved admin key to: {}"</span>, admin_key_path);
-<a href=#143 id=143 data-nosnippet>143</a>
-<a href=#144 id=144 data-nosnippet>144</a>    <span class="comment">// Create a warrant for sensitive operations that REQUIRES multi-sig approval
-<a href=#145 id=145 data-nosnippet>145</a>    </span><span class="kw">let </span>sensitive_warrant = root_warrant.attenuate()
-<a href=#146 id=146 data-nosnippet>146</a>        .constraint(<span class="string">"cluster"</span>, Exact::new(<span class="string">"staging-web"</span>))
-<a href=#147 id=147 data-nosnippet>147</a>        .constraint(<span class="string">"action"</span>, OneOf::new(<span class="macro">vec!</span>[<span class="string">"delete"</span>, <span class="string">"scale-down"</span>]))  <span class="comment">// Dangerous actions
-<a href=#148 id=148 data-nosnippet>148</a>        </span>.constraint(<span class="string">"budget"</span>, Range::max(<span class="number">500.0</span>))
-<a href=#149 id=149 data-nosnippet>149</a>        .ttl(Duration::from_secs(<span class="number">300</span>)) <span class="comment">// 5 minutes (short for sensitive ops)
-<a href=#150 id=150 data-nosnippet>150</a>        </span>.authorized_holder(worker_keypair.public_key())
-<a href=#151 id=151 data-nosnippet>151</a>        .agent_id(<span class="string">"worker-agent-01-sensitive"</span>)
-<a href=#152 id=152 data-nosnippet>152</a>        <span class="comment">// MULTI-SIG: Require 1-of-1 approval from the admin
-<a href=#153 id=153 data-nosnippet>153</a>        </span>.add_approvers(<span class="macro">vec!</span>[admin_keypair.public_key()])
-<a href=#154 id=154 data-nosnippet>154</a>        .raise_min_approvals(<span class="number">1</span>)
-<a href=#155 id=155 data-nosnippet>155</a>        .build(<span class="kw-2">&amp;</span>orchestrator_keypair)<span class="question-mark">?</span>;
-<a href=#156 id=156 data-nosnippet>156</a>
-<a href=#157 id=157 data-nosnippet>157</a>    <span class="macro">println!</span>(<span class="string">"\n  ✓ Multi-Sig Warrant Created:"</span>);
-<a href=#158 id=158 data-nosnippet>158</a>    <span class="macro">println!</span>(<span class="string">"    • ID:          {}"</span>, sensitive_warrant.id());
-<a href=#159 id=159 data-nosnippet>159</a>    <span class="macro">println!</span>(<span class="string">"    • Actions:     [delete, scale-down] (dangerous!)"</span>);
-<a href=#160 id=160 data-nosnippet>160</a>    <span class="macro">println!</span>(<span class="string">"    • Budget:      ≤$500"</span>);
-<a href=#161 id=161 data-nosnippet>161</a>    <span class="macro">println!</span>(<span class="string">"    • Approvers:   1 (admin required)"</span>);
-<a href=#162 id=162 data-nosnippet>162</a>    <span class="macro">println!</span>(<span class="string">"    • Threshold:   1-of-1"</span>);
-<a href=#163 id=163 data-nosnippet>163</a>    <span class="macro">println!</span>(<span class="string">"    • TTL:         5 minutes (short-lived for safety)"</span>);
-<a href=#164 id=164 data-nosnippet>164</a>
-<a href=#165 id=165 data-nosnippet>165</a>    <span class="comment">// =========================================================================
-<a href=#166 id=166 data-nosnippet>166</a>    // Step 5: Create and output the delegation chain
-<a href=#167 id=167 data-nosnippet>167</a>    // =========================================================================
-<a href=#168 id=168 data-nosnippet>168</a>    </span><span class="macro">println!</span>(<span class="string">"\n┌─────────────────────────────────────────────────────────────────┐"</span>);
-<a href=#169 id=169 data-nosnippet>169</a>    <span class="macro">println!</span>(<span class="string">"│ STEP 5: Creating Delegation Chain                               │"</span>);
-<a href=#170 id=170 data-nosnippet>170</a>    <span class="macro">println!</span>(<span class="string">"└─────────────────────────────────────────────────────────────────┘"</span>);
-<a href=#171 id=171 data-nosnippet>171</a>
-<a href=#172 id=172 data-nosnippet>172</a>    <span class="kw">let </span>chain = <span class="macro">vec!</span>[root_warrant.clone(), worker_warrant.clone()];
-<a href=#173 id=173 data-nosnippet>173</a>    <span class="kw">let </span>sensitive_chain = <span class="macro">vec!</span>[root_warrant.clone(), sensitive_warrant.clone()];
-<a href=#174 id=174 data-nosnippet>174</a>    
-<a href=#175 id=175 data-nosnippet>175</a>    <span class="macro">println!</span>(<span class="string">"  Chain Structure:"</span>);
-<a href=#176 id=176 data-nosnippet>176</a>    <span class="macro">println!</span>(<span class="string">"    ┌─────────────────────────────────────────────────────────────┐"</span>);
-<a href=#177 id=177 data-nosnippet>177</a>    <span class="macro">println!</span>(<span class="string">"    │  [0] Root Warrant (Control Plane)                           │"</span>);
-<a href=#178 id=178 data-nosnippet>178</a>    <span class="macro">println!</span>(<span class="string">"    │      └── cluster: staging-*, action: *, budget: ≤$10k       │"</span>);
-<a href=#179 id=179 data-nosnippet>179</a>    <span class="macro">println!</span>(<span class="string">"    │              │                                              │"</span>);
-<a href=#180 id=180 data-nosnippet>180</a>    <span class="macro">println!</span>(<span class="string">"    │              ▼  (attenuation)                               │"</span>);
-<a href=#181 id=181 data-nosnippet>181</a>    <span class="macro">println!</span>(<span class="string">"    │  [1] Worker Warrant (Orchestrator)                          │"</span>);
-<a href=#182 id=182 data-nosnippet>182</a>    <span class="macro">println!</span>(<span class="string">"    │      └── cluster: staging-web, action: upgrade|restart,     │"</span>);
-<a href=#183 id=183 data-nosnippet>183</a>    <span class="macro">println!</span>(<span class="string">"    │          budget: ≤$1k                                       │"</span>);
-<a href=#184 id=184 data-nosnippet>184</a>    <span class="macro">println!</span>(<span class="string">"    └─────────────────────────────────────────────────────────────┘"</span>);
-<a href=#185 id=185 data-nosnippet>185</a>
-<a href=#186 id=186 data-nosnippet>186</a>    <span class="comment">// Serialize the chains for the worker
-<a href=#187 id=187 data-nosnippet>187</a>    </span><span class="kw">let </span>chain_json = serde_json::to_string_pretty(<span class="kw-2">&amp;</span>chain)<span class="question-mark">?</span>;
-<a href=#188 id=188 data-nosnippet>188</a>    <span class="kw">let </span>sensitive_chain_json = serde_json::to_string_pretty(<span class="kw-2">&amp;</span>sensitive_chain)<span class="question-mark">?</span>;
-<a href=#189 id=189 data-nosnippet>189</a>    
-<a href=#190 id=190 data-nosnippet>190</a>    <span class="kw">let </span>output_path = env::var(<span class="string">"TENUO_CHAIN_OUTPUT"</span>)
-<a href=#191 id=191 data-nosnippet>191</a>        .unwrap_or_else(|<span class="kw">_</span>| <span class="string">"/data/chain.json"</span>.to_string());
-<a href=#192 id=192 data-nosnippet>192</a>    std::fs::write(<span class="kw-2">&amp;</span>output_path, <span class="kw-2">&amp;</span>chain_json)<span class="question-mark">?</span>;
-<a href=#193 id=193 data-nosnippet>193</a>    <span class="macro">println!</span>(<span class="string">"\n  ✓ Standard chain written to: {}"</span>, output_path);
-<a href=#194 id=194 data-nosnippet>194</a>
-<a href=#195 id=195 data-nosnippet>195</a>    <span class="kw">let </span>sensitive_output_path = output_path.replace(<span class="string">".json"</span>, <span class="string">"_sensitive.json"</span>);
-<a href=#196 id=196 data-nosnippet>196</a>    std::fs::write(<span class="kw-2">&amp;</span>sensitive_output_path, <span class="kw-2">&amp;</span>sensitive_chain_json)<span class="question-mark">?</span>;
-<a href=#197 id=197 data-nosnippet>197</a>    <span class="macro">println!</span>(<span class="string">"  ✓ Sensitive chain written to: {}"</span>, sensitive_output_path);
-<a href=#198 id=198 data-nosnippet>198</a>
-<a href=#199 id=199 data-nosnippet>199</a>    <span class="comment">// Also output the warrant in wire format (base64)
-<a href=#200 id=200 data-nosnippet>200</a>    </span><span class="kw">let </span>wire_format = wire::encode_base64(<span class="kw-2">&amp;</span>worker_warrant)<span class="question-mark">?</span>;
-<a href=#201 id=201 data-nosnippet>201</a>    <span class="macro">println!</span>(<span class="string">"\n  Worker Warrant (wire format, {} bytes):"</span>, wire_format.len());
-<a href=#202 id=202 data-nosnippet>202</a>    <span class="macro">println!</span>(<span class="string">"    {}"</span>, <span class="kw-2">&amp;</span>wire_format[..<span class="number">80</span>.min(wire_format.len())]);
-<a href=#203 id=203 data-nosnippet>203</a>    <span class="kw">if </span>wire_format.len() &gt; <span class="number">80 </span>{
-<a href=#204 id=204 data-nosnippet>204</a>        <span class="macro">println!</span>(<span class="string">"    ... ({} more bytes)"</span>, wire_format.len() - <span class="number">80</span>);
-<a href=#205 id=205 data-nosnippet>205</a>    }
-<a href=#206 id=206 data-nosnippet>206</a>
-<a href=#207 id=207 data-nosnippet>207</a>    <span class="comment">// =========================================================================
-<a href=#208 id=208 data-nosnippet>208</a>    // Summary
-<a href=#209 id=209 data-nosnippet>209</a>    // =========================================================================
-<a href=#210 id=210 data-nosnippet>210</a>    </span><span class="macro">println!</span>(<span class="string">"\n╔══════════════════════════════════════════════════════════════════╗"</span>);
-<a href=#211 id=211 data-nosnippet>211</a>    <span class="macro">println!</span>(<span class="string">"║                     ORCHESTRATOR COMPLETE                        ║"</span>);
-<a href=#212 id=212 data-nosnippet>212</a>    <span class="macro">println!</span>(<span class="string">"╠══════════════════════════════════════════════════════════════════╣"</span>);
-<a href=#213 id=213 data-nosnippet>213</a>    <span class="macro">println!</span>(<span class="string">"║  Features Demonstrated:                                          ║"</span>);
-<a href=#214 id=214 data-nosnippet>214</a>    <span class="macro">println!</span>(<span class="string">"║  1. max_depth(3)       - Policy limits delegation depth          ║"</span>);
-<a href=#215 id=215 data-nosnippet>215</a>    <span class="macro">println!</span>(<span class="string">"║  2. session_id         - Warrants share same session             ║"</span>);
-<a href=#216 id=216 data-nosnippet>216</a>    <span class="macro">println!</span>(<span class="string">"║  3. agent_id           - Agents are identifiable for audit       ║"</span>);
-<a href=#217 id=217 data-nosnippet>217</a>    <span class="macro">println!</span>(<span class="string">"║  4. holder_key         - Worker must prove possession (PoP)      ║"</span>);
-<a href=#218 id=218 data-nosnippet>218</a>    <span class="macro">println!</span>(<span class="string">"║  5. MULTI-SIG          - 1-of-1 admin approval for delete!       ║"</span>);
-<a href=#219 id=219 data-nosnippet>219</a>    <span class="macro">println!</span>(<span class="string">"║                                                                  ║"</span>);
-<a href=#220 id=220 data-nosnippet>220</a>    <span class="macro">println!</span>(<span class="string">"║  The Worker will demonstrate:                                    ║"</span>);
-<a href=#221 id=221 data-nosnippet>221</a>    <span class="macro">println!</span>(<span class="string">"║  • Standard actions (upgrade/restart) → no approval needed       ║"</span>);
-<a href=#222 id=222 data-nosnippet>222</a>    <span class="macro">println!</span>(<span class="string">"║  • Sensitive actions (delete) → BLOCKED without approval         ║"</span>);
-<a href=#223 id=223 data-nosnippet>223</a>    <span class="macro">println!</span>(<span class="string">"║  • Sensitive actions (delete) → ALLOWED with admin approval      ║"</span>);
-<a href=#224 id=224 data-nosnippet>224</a>    <span class="macro">println!</span>(<span class="string">"╚══════════════════════════════════════════════════════════════════╝\n"</span>);
-<a href=#225 id=225 data-nosnippet>225</a>    
-<a href=#226 id=226 data-nosnippet>226</a>    <span class="prelude-val">Ok</span>(())
-<a href=#227 id=227 data-nosnippet>227</a>}</code></pre></div></section></main></body></html>
+<a href=#129 id=129 data-nosnippet>129</a>    <span class="comment">// ─────────────────────────────────────────────────────────────────────────
+<a href=#130 id=130 data-nosnippet>130</a>    // DEMO SIMPLIFICATION: In production, the worker generates its own keypair
+<a href=#131 id=131 data-nosnippet>131</a>    // and sends ONLY the public key to the orchestrator.
+<a href=#132 id=132 data-nosnippet>132</a>    //
+<a href=#133 id=133 data-nosnippet>133</a>    // Production flow:
+<a href=#134 id=134 data-nosnippet>134</a>    //   1. Worker: keypair = SigningKey::generate()
+<a href=#135 id=135 data-nosnippet>135</a>    //   2. Worker: send(orchestrator, keypair.public_key())
+<a href=#136 id=136 data-nosnippet>136</a>    //   3. Orchestrator: receives worker_public_key
+<a href=#137 id=137 data-nosnippet>137</a>    //   4. Orchestrator: attenuate().authorized_holder(worker_public_key)
+<a href=#138 id=138 data-nosnippet>138</a>    //
+<a href=#139 id=139 data-nosnippet>139</a>    // For this demo, we generate on behalf of worker for simplicity.
+<a href=#140 id=140 data-nosnippet>140</a>    // ─────────────────────────────────────────────────────────────────────────
+<a href=#141 id=141 data-nosnippet>141</a>    </span><span class="kw">let </span>worker_keypair = SigningKey::generate();
+<a href=#142 id=142 data-nosnippet>142</a>    <span class="macro">println!</span>(<span class="string">"\n  [DEMO] Simulating worker key registration:"</span>);
+<a href=#143 id=143 data-nosnippet>143</a>    <span class="macro">println!</span>(<span class="string">"    In production: Worker generates key, sends ONLY public key"</span>);
+<a href=#144 id=144 data-nosnippet>144</a>    <span class="macro">println!</span>(
+<a href=#145 id=145 data-nosnippet>145</a>        <span class="string">"    Worker Public Key: {}"</span>,
+<a href=#146 id=146 data-nosnippet>146</a>        hex::encode(worker_keypair.public_key().to_bytes())
+<a href=#147 id=147 data-nosnippet>147</a>    );
+<a href=#148 id=148 data-nosnippet>148</a>
+<a href=#149 id=149 data-nosnippet>149</a>    <span class="comment">// ⚠️  DEMO ONLY: Writing private key to shared storage
+<a href=#150 id=150 data-nosnippet>150</a>    // ─────────────────────────────────────────────────────────────────────────
+<a href=#151 id=151 data-nosnippet>151</a>    // SECURITY WARNING: In production, private keys MUST NEVER leave the agent.
+<a href=#152 id=152 data-nosnippet>152</a>    // This file-sharing approach is ONLY for demo convenience.
+<a href=#153 id=153 data-nosnippet>153</a>    // Production: Worker generates key locally, sends only PUBLIC key to orchestrator.
+<a href=#154 id=154 data-nosnippet>154</a>    // ─────────────────────────────────────────────────────────────────────────
+<a href=#155 id=155 data-nosnippet>155</a>    </span><span class="kw">let </span>worker_key_path =
+<a href=#156 id=156 data-nosnippet>156</a>        env::var(<span class="string">"TENUO_WORKER_KEY_OUTPUT"</span>).unwrap_or_else(|<span class="kw">_</span>| <span class="string">"/data/worker.key"</span>.to_string());
+<a href=#157 id=157 data-nosnippet>157</a>    std::fs::write(
+<a href=#158 id=158 data-nosnippet>158</a>        <span class="kw-2">&amp;</span>worker_key_path,
+<a href=#159 id=159 data-nosnippet>159</a>        hex::encode(worker_keypair.secret_key_bytes()),
+<a href=#160 id=160 data-nosnippet>160</a>    )<span class="question-mark">?</span>;
+<a href=#161 id=161 data-nosnippet>161</a>    <span class="macro">println!</span>(
+<a href=#162 id=162 data-nosnippet>162</a>        <span class="string">"    ⚠️  [DEMO ONLY] Saved secret key to: {}"</span>,
+<a href=#163 id=163 data-nosnippet>163</a>        worker_key_path
+<a href=#164 id=164 data-nosnippet>164</a>    );
+<a href=#165 id=165 data-nosnippet>165</a>    <span class="macro">println!</span>(<span class="string">"    ⚠️  PRODUCTION: Private keys MUST stay with the agent!"</span>);
+<a href=#166 id=166 data-nosnippet>166</a>
+<a href=#167 id=167 data-nosnippet>167</a>    <span class="comment">// =========================================================================
+<a href=#168 id=168 data-nosnippet>168</a>    // Step 3: Attenuate warrant for the Worker
+<a href=#169 id=169 data-nosnippet>169</a>    // =========================================================================
+<a href=#170 id=170 data-nosnippet>170</a>    </span><span class="macro">println!</span>(<span class="string">"\n┌─────────────────────────────────────────────────────────────────┐"</span>);
+<a href=#171 id=171 data-nosnippet>171</a>    <span class="macro">println!</span>(<span class="string">"│ STEP 3: Attenuating Warrant for Worker                          │"</span>);
+<a href=#172 id=172 data-nosnippet>172</a>    <span class="macro">println!</span>(<span class="string">"└─────────────────────────────────────────────────────────────────┘"</span>);
+<a href=#173 id=173 data-nosnippet>173</a>
+<a href=#174 id=174 data-nosnippet>174</a>    <span class="macro">println!</span>(<span class="string">"  Narrowing capabilities:"</span>);
+<a href=#175 id=175 data-nosnippet>175</a>    <span class="macro">println!</span>(<span class="string">"    • cluster: staging-*  → staging-web (exact)"</span>);
+<a href=#176 id=176 data-nosnippet>176</a>    <span class="macro">println!</span>(<span class="string">"    • action:  * (any)    → [upgrade, restart] (OneOf)"</span>);
+<a href=#177 id=177 data-nosnippet>177</a>    <span class="macro">println!</span>(<span class="string">"    • replicas: ≤15       → ≤10 (reduced)"</span>);
+<a href=#178 id=178 data-nosnippet>178</a>    <span class="macro">println!</span>(<span class="string">"    • TTL:     1 hour     → 10 minutes (shortened)"</span>);
+<a href=#179 id=179 data-nosnippet>179</a>
+<a href=#180 id=180 data-nosnippet>180</a>    <span class="kw">let </span><span class="kw-2">mut </span>worker_constraints = ConstraintSet::new();
+<a href=#181 id=181 data-nosnippet>181</a>    worker_constraints.insert(<span class="string">"cluster"</span>.to_string(), Exact::new(<span class="string">"staging-web"</span>));
+<a href=#182 id=182 data-nosnippet>182</a>    worker_constraints.insert(<span class="string">"action"</span>.to_string(), OneOf::new(<span class="macro">vec!</span>[<span class="string">"upgrade"</span>, <span class="string">"restart"</span>]));
+<a href=#183 id=183 data-nosnippet>183</a>    worker_constraints.insert(<span class="string">"replicas"</span>.to_string(), Range::max(<span class="number">10.0</span>)<span class="question-mark">?</span>);
+<a href=#184 id=184 data-nosnippet>184</a>
+<a href=#185 id=185 data-nosnippet>185</a>    <span class="kw">let </span>worker_warrant = root_warrant
+<a href=#186 id=186 data-nosnippet>186</a>        .attenuate()
+<a href=#187 id=187 data-nosnippet>187</a>        .capability(<span class="string">"manage_infrastructure"</span>, worker_constraints)
+<a href=#188 id=188 data-nosnippet>188</a>        .ttl(Duration::from_secs(<span class="number">600</span>)) <span class="comment">// 10 minutes
+<a href=#189 id=189 data-nosnippet>189</a>        </span>.authorized_holder(worker_keypair.public_key()) <span class="comment">// PoP
+<a href=#190 id=190 data-nosnippet>190</a>        </span>.agent_id(<span class="string">"worker-agent-01"</span>) <span class="comment">// Traceability
+<a href=#191 id=191 data-nosnippet>191</a>        // Session ID is inherited from parent automatically
+<a href=#192 id=192 data-nosnippet>192</a>        </span>.build(<span class="kw-2">&amp;</span>orchestrator_keypair)<span class="question-mark">?</span>;
+<a href=#193 id=193 data-nosnippet>193</a>
+<a href=#194 id=194 data-nosnippet>194</a>    <span class="macro">println!</span>(<span class="string">"\n  ✓ Worker Warrant Created:"</span>);
+<a href=#195 id=195 data-nosnippet>195</a>    <span class="macro">println!</span>(<span class="string">"    • ID:          {}"</span>, worker_warrant.id());
+<a href=#196 id=196 data-nosnippet>196</a>    <span class="macro">println!</span>(
+<a href=#197 id=197 data-nosnippet>197</a>        <span class="string">"    • Parent Hash: {:?}"</span>,
+<a href=#198 id=198 data-nosnippet>198</a>        worker_warrant
+<a href=#199 id=199 data-nosnippet>199</a>            .parent_hash()
+<a href=#200 id=200 data-nosnippet>200</a>            .map(hex::encode)
+<a href=#201 id=201 data-nosnippet>201</a>            .unwrap_or_default()
+<a href=#202 id=202 data-nosnippet>202</a>    );
+<a href=#203 id=203 data-nosnippet>203</a>    <span class="macro">println!</span>(
+<a href=#204 id=204 data-nosnippet>204</a>        <span class="string">"    • Depth:       {} / {} (delegated)"</span>,
+<a href=#205 id=205 data-nosnippet>205</a>        worker_warrant.depth(),
+<a href=#206 id=206 data-nosnippet>206</a>        worker_warrant.effective_max_depth()
+<a href=#207 id=207 data-nosnippet>207</a>    );
+<a href=#208 id=208 data-nosnippet>208</a>    <span class="macro">println!</span>(
+<a href=#209 id=209 data-nosnippet>209</a>        <span class="string">"    • Session:     {} (inherited)"</span>,
+<a href=#210 id=210 data-nosnippet>210</a>        worker_warrant.session_id().unwrap_or(<span class="string">"-"</span>)
+<a href=#211 id=211 data-nosnippet>211</a>    );
+<a href=#212 id=212 data-nosnippet>212</a>    <span class="macro">println!</span>(<span class="string">"    • Expires:     {}"</span>, worker_warrant.expires_at());
+<a href=#213 id=213 data-nosnippet>213</a>    <span class="macro">println!</span>(
+<a href=#214 id=214 data-nosnippet>214</a>        <span class="string">"    • Holder:      {} (PoP required)"</span>,
+<a href=#215 id=215 data-nosnippet>215</a>        hex::encode(<span class="kw-2">&amp;</span>worker_keypair.public_key().to_bytes()[..<span class="number">8</span>])
+<a href=#216 id=216 data-nosnippet>216</a>    );
+<a href=#217 id=217 data-nosnippet>217</a>    <span class="macro">println!</span>(<span class="string">"    • Signed by:   Orchestrator"</span>);
+<a href=#218 id=218 data-nosnippet>218</a>
+<a href=#219 id=219 data-nosnippet>219</a>    <span class="comment">// =========================================================================
+<a href=#220 id=220 data-nosnippet>220</a>    // Step 4: Multi-Sig Warrant (Sensitive Actions with Human Approval)
+<a href=#221 id=221 data-nosnippet>221</a>    // =========================================================================
+<a href=#222 id=222 data-nosnippet>222</a>    </span><span class="macro">println!</span>(<span class="string">"\n┌─────────────────────────────────────────────────────────────────┐"</span>);
+<a href=#223 id=223 data-nosnippet>223</a>    <span class="macro">println!</span>(<span class="string">"│ STEP 4: Creating Multi-Sig Warrant (Human Approval Required)    │"</span>);
+<a href=#224 id=224 data-nosnippet>224</a>    <span class="macro">println!</span>(<span class="string">"└─────────────────────────────────────────────────────────────────┘"</span>);
+<a href=#225 id=225 data-nosnippet>225</a>
+<a href=#226 id=226 data-nosnippet>226</a>    <span class="macro">println!</span>(<span class="string">"  For sensitive actions (delete, scale-down), we require human approval."</span>);
+<a href=#227 id=227 data-nosnippet>227</a>    <span class="macro">println!</span>(<span class="string">"  This is enforced via multi-sig: the warrant lists required approvers.\n"</span>);
+<a href=#228 id=228 data-nosnippet>228</a>
+<a href=#229 id=229 data-nosnippet>229</a>    <span class="comment">// Create an "approver" keypair (simulates an admin mapped via Notary Registry)
+<a href=#230 id=230 data-nosnippet>230</a>    </span><span class="kw">let </span>admin_keypair = SigningKey::generate();
+<a href=#231 id=231 data-nosnippet>231</a>    <span class="macro">println!</span>(<span class="string">"  Generated Admin Keypair (simulating Notary-bound identity):"</span>);
+<a href=#232 id=232 data-nosnippet>232</a>    <span class="macro">println!</span>(
+<a href=#233 id=233 data-nosnippet>233</a>        <span class="string">"    • Public Key: {}"</span>,
+<a href=#234 id=234 data-nosnippet>234</a>        hex::encode(<span class="kw-2">&amp;</span>admin_keypair.public_key().to_bytes()[..<span class="number">16</span>])
+<a href=#235 id=235 data-nosnippet>235</a>    );
+<a href=#236 id=236 data-nosnippet>236</a>    <span class="macro">println!</span>(<span class="string">"    • External ID: arn:aws:iam::123456789:user/admin (simulated)\n"</span>);
+<a href=#237 id=237 data-nosnippet>237</a>
+<a href=#238 id=238 data-nosnippet>238</a>    <span class="comment">// ⚠️  DEMO ONLY: In production, admin keys are managed by the admin (HSM, Yubikey, etc.)
+<a href=#239 id=239 data-nosnippet>239</a>    // This is shared here so the worker demo can simulate admin approval.
+<a href=#240 id=240 data-nosnippet>240</a>    </span><span class="kw">let </span>admin_key_path =
+<a href=#241 id=241 data-nosnippet>241</a>        env::var(<span class="string">"TENUO_ADMIN_KEY_OUTPUT"</span>).unwrap_or_else(|<span class="kw">_</span>| <span class="string">"/data/admin.key"</span>.to_string());
+<a href=#242 id=242 data-nosnippet>242</a>    std::fs::write(
+<a href=#243 id=243 data-nosnippet>243</a>        <span class="kw-2">&amp;</span>admin_key_path,
+<a href=#244 id=244 data-nosnippet>244</a>        hex::encode(admin_keypair.secret_key_bytes()),
+<a href=#245 id=245 data-nosnippet>245</a>    )<span class="question-mark">?</span>;
+<a href=#246 id=246 data-nosnippet>246</a>    <span class="macro">println!</span>(<span class="string">"    ⚠️  [DEMO ONLY] Saved admin key to: {}"</span>, admin_key_path);
+<a href=#247 id=247 data-nosnippet>247</a>
+<a href=#248 id=248 data-nosnippet>248</a>    <span class="comment">// Create a warrant for sensitive operations that REQUIRES multi-sig approval
+<a href=#249 id=249 data-nosnippet>249</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>sensitive_constraints = ConstraintSet::new();
+<a href=#250 id=250 data-nosnippet>250</a>    sensitive_constraints.insert(<span class="string">"cluster"</span>.to_string(), Exact::new(<span class="string">"staging-web"</span>));
+<a href=#251 id=251 data-nosnippet>251</a>    sensitive_constraints.insert(
+<a href=#252 id=252 data-nosnippet>252</a>        <span class="string">"action"</span>.to_string(),
+<a href=#253 id=253 data-nosnippet>253</a>        OneOf::new(<span class="macro">vec!</span>[<span class="string">"delete"</span>, <span class="string">"scale-down"</span>]),
+<a href=#254 id=254 data-nosnippet>254</a>    ); <span class="comment">// Dangerous actions
+<a href=#255 id=255 data-nosnippet>255</a>    </span>sensitive_constraints.insert(<span class="string">"replicas"</span>.to_string(), Range::max(<span class="number">5.0</span>)<span class="question-mark">?</span>);
+<a href=#256 id=256 data-nosnippet>256</a>
+<a href=#257 id=257 data-nosnippet>257</a>    <span class="kw">let </span>sensitive_warrant = root_warrant
+<a href=#258 id=258 data-nosnippet>258</a>        .attenuate()
+<a href=#259 id=259 data-nosnippet>259</a>        .capability(<span class="string">"manage_infrastructure"</span>, sensitive_constraints)
+<a href=#260 id=260 data-nosnippet>260</a>        .ttl(Duration::from_secs(<span class="number">300</span>)) <span class="comment">// 5 minutes (short for sensitive ops)
+<a href=#261 id=261 data-nosnippet>261</a>        </span>.authorized_holder(worker_keypair.public_key())
+<a href=#262 id=262 data-nosnippet>262</a>        .agent_id(<span class="string">"worker-agent-01-sensitive"</span>)
+<a href=#263 id=263 data-nosnippet>263</a>        <span class="comment">// MULTI-SIG: Require 1-of-1 approval from the admin
+<a href=#264 id=264 data-nosnippet>264</a>        </span>.add_approvers(<span class="macro">vec!</span>[admin_keypair.public_key()])
+<a href=#265 id=265 data-nosnippet>265</a>        .raise_min_approvals(<span class="number">1</span>)
+<a href=#266 id=266 data-nosnippet>266</a>        .build(<span class="kw-2">&amp;</span>orchestrator_keypair)<span class="question-mark">?</span>;
+<a href=#267 id=267 data-nosnippet>267</a>
+<a href=#268 id=268 data-nosnippet>268</a>    <span class="macro">println!</span>(<span class="string">"\n  ✓ Multi-Sig Warrant Created:"</span>);
+<a href=#269 id=269 data-nosnippet>269</a>    <span class="macro">println!</span>(<span class="string">"    • ID:          {}"</span>, sensitive_warrant.id());
+<a href=#270 id=270 data-nosnippet>270</a>    <span class="macro">println!</span>(<span class="string">"    • Actions:     [delete, scale-down] (dangerous!)"</span>);
+<a href=#271 id=271 data-nosnippet>271</a>    <span class="macro">println!</span>(<span class="string">"    • Replicas:    ≤5"</span>);
+<a href=#272 id=272 data-nosnippet>272</a>    <span class="macro">println!</span>(<span class="string">"    • Approvers:   1 (admin required)"</span>);
+<a href=#273 id=273 data-nosnippet>273</a>    <span class="macro">println!</span>(<span class="string">"    • Threshold:   1-of-1"</span>);
+<a href=#274 id=274 data-nosnippet>274</a>    <span class="macro">println!</span>(<span class="string">"    • TTL:         5 minutes (short-lived for safety)"</span>);
+<a href=#275 id=275 data-nosnippet>275</a>
+<a href=#276 id=276 data-nosnippet>276</a>    <span class="comment">// =========================================================================
+<a href=#277 id=277 data-nosnippet>277</a>    // Step 5: Create and output the delegation chain
+<a href=#278 id=278 data-nosnippet>278</a>    // =========================================================================
+<a href=#279 id=279 data-nosnippet>279</a>    </span><span class="macro">println!</span>(<span class="string">"\n┌─────────────────────────────────────────────────────────────────┐"</span>);
+<a href=#280 id=280 data-nosnippet>280</a>    <span class="macro">println!</span>(<span class="string">"│ STEP 5: Creating Delegation Chain                               │"</span>);
+<a href=#281 id=281 data-nosnippet>281</a>    <span class="macro">println!</span>(<span class="string">"└─────────────────────────────────────────────────────────────────┘"</span>);
+<a href=#282 id=282 data-nosnippet>282</a>
+<a href=#283 id=283 data-nosnippet>283</a>    <span class="kw">let </span>chain = <span class="macro">vec!</span>[root_warrant.clone(), worker_warrant.clone()];
+<a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">let </span>sensitive_chain = <span class="macro">vec!</span>[root_warrant.clone(), sensitive_warrant.clone()];
+<a href=#285 id=285 data-nosnippet>285</a>
+<a href=#286 id=286 data-nosnippet>286</a>    <span class="macro">println!</span>(<span class="string">"  Chain Structure:"</span>);
+<a href=#287 id=287 data-nosnippet>287</a>    <span class="macro">println!</span>(<span class="string">"    ┌─────────────────────────────────────────────────────────────┐"</span>);
+<a href=#288 id=288 data-nosnippet>288</a>    <span class="macro">println!</span>(<span class="string">"    │  [0] Root Warrant (Control Plane)                           │"</span>);
+<a href=#289 id=289 data-nosnippet>289</a>    <span class="macro">println!</span>(<span class="string">"    │      └── cluster: staging-*, action: *, replicas: ≤15       │"</span>);
+<a href=#290 id=290 data-nosnippet>290</a>    <span class="macro">println!</span>(<span class="string">"    │              │                                              │"</span>);
+<a href=#291 id=291 data-nosnippet>291</a>    <span class="macro">println!</span>(<span class="string">"    │              ▼  (attenuation)                               │"</span>);
+<a href=#292 id=292 data-nosnippet>292</a>    <span class="macro">println!</span>(<span class="string">"    │  [1] Worker Warrant (Orchestrator)                          │"</span>);
+<a href=#293 id=293 data-nosnippet>293</a>    <span class="macro">println!</span>(<span class="string">"    │      └── cluster: staging-web, action: upgrade|restart,     │"</span>);
+<a href=#294 id=294 data-nosnippet>294</a>    <span class="macro">println!</span>(<span class="string">"    │          replicas: ≤10                                       │"</span>);
+<a href=#295 id=295 data-nosnippet>295</a>    <span class="macro">println!</span>(<span class="string">"    └─────────────────────────────────────────────────────────────┘"</span>);
+<a href=#296 id=296 data-nosnippet>296</a>
+<a href=#297 id=297 data-nosnippet>297</a>    <span class="comment">// Serialize the chains for the worker
+<a href=#298 id=298 data-nosnippet>298</a>    </span><span class="kw">let </span>chain_json = serde_json::to_string_pretty(<span class="kw-2">&amp;</span>chain)<span class="question-mark">?</span>;
+<a href=#299 id=299 data-nosnippet>299</a>    <span class="kw">let </span>sensitive_chain_json = serde_json::to_string_pretty(<span class="kw-2">&amp;</span>sensitive_chain)<span class="question-mark">?</span>;
+<a href=#300 id=300 data-nosnippet>300</a>
+<a href=#301 id=301 data-nosnippet>301</a>    <span class="kw">let </span>output_path =
+<a href=#302 id=302 data-nosnippet>302</a>        env::var(<span class="string">"TENUO_CHAIN_OUTPUT"</span>).unwrap_or_else(|<span class="kw">_</span>| <span class="string">"/data/chain.json"</span>.to_string());
+<a href=#303 id=303 data-nosnippet>303</a>    std::fs::write(<span class="kw-2">&amp;</span>output_path, <span class="kw-2">&amp;</span>chain_json)<span class="question-mark">?</span>;
+<a href=#304 id=304 data-nosnippet>304</a>    <span class="macro">println!</span>(<span class="string">"\n  ✓ Standard chain written to: {}"</span>, output_path);
+<a href=#305 id=305 data-nosnippet>305</a>
+<a href=#306 id=306 data-nosnippet>306</a>    <span class="kw">let </span>sensitive_output_path = output_path.replace(<span class="string">".json"</span>, <span class="string">"_sensitive.json"</span>);
+<a href=#307 id=307 data-nosnippet>307</a>    std::fs::write(<span class="kw-2">&amp;</span>sensitive_output_path, <span class="kw-2">&amp;</span>sensitive_chain_json)<span class="question-mark">?</span>;
+<a href=#308 id=308 data-nosnippet>308</a>    <span class="macro">println!</span>(<span class="string">"  ✓ Sensitive chain written to: {}"</span>, sensitive_output_path);
+<a href=#309 id=309 data-nosnippet>309</a>
+<a href=#310 id=310 data-nosnippet>310</a>    <span class="comment">// Also output the warrant in wire format (base64)
+<a href=#311 id=311 data-nosnippet>311</a>    </span><span class="kw">let </span>wire_format = wire::encode_base64(<span class="kw-2">&amp;</span>worker_warrant)<span class="question-mark">?</span>;
+<a href=#312 id=312 data-nosnippet>312</a>    <span class="macro">println!</span>(
+<a href=#313 id=313 data-nosnippet>313</a>        <span class="string">"\n  Worker Warrant (wire format, {} bytes):"</span>,
+<a href=#314 id=314 data-nosnippet>314</a>        wire_format.len()
+<a href=#315 id=315 data-nosnippet>315</a>    );
+<a href=#316 id=316 data-nosnippet>316</a>    <span class="macro">println!</span>(<span class="string">"    {}"</span>, <span class="kw-2">&amp;</span>wire_format[..<span class="number">80</span>.min(wire_format.len())]);
+<a href=#317 id=317 data-nosnippet>317</a>    <span class="kw">if </span>wire_format.len() &gt; <span class="number">80 </span>{
+<a href=#318 id=318 data-nosnippet>318</a>        <span class="macro">println!</span>(<span class="string">"    ... ({} more bytes)"</span>, wire_format.len() - <span class="number">80</span>);
+<a href=#319 id=319 data-nosnippet>319</a>    }
+<a href=#320 id=320 data-nosnippet>320</a>
+<a href=#321 id=321 data-nosnippet>321</a>    <span class="comment">// =========================================================================
+<a href=#322 id=322 data-nosnippet>322</a>    // Summary
+<a href=#323 id=323 data-nosnippet>323</a>    // =========================================================================
+<a href=#324 id=324 data-nosnippet>324</a>    </span><span class="macro">println!</span>(<span class="string">"\n╔══════════════════════════════════════════════════════════════════╗"</span>);
+<a href=#325 id=325 data-nosnippet>325</a>    <span class="macro">println!</span>(<span class="string">"║                     ORCHESTRATOR COMPLETE                        ║"</span>);
+<a href=#326 id=326 data-nosnippet>326</a>    <span class="macro">println!</span>(<span class="string">"╠══════════════════════════════════════════════════════════════════╣"</span>);
+<a href=#327 id=327 data-nosnippet>327</a>    <span class="macro">println!</span>(<span class="string">"║  Features Demonstrated:                                          ║"</span>);
+<a href=#328 id=328 data-nosnippet>328</a>    <span class="macro">println!</span>(<span class="string">"║  1. max_depth(3)       - Policy limits delegation depth          ║"</span>);
+<a href=#329 id=329 data-nosnippet>329</a>    <span class="macro">println!</span>(<span class="string">"║  2. session_id         - Warrants share same session             ║"</span>);
+<a href=#330 id=330 data-nosnippet>330</a>    <span class="macro">println!</span>(<span class="string">"║  3. agent_id           - Agents are identifiable for audit       ║"</span>);
+<a href=#331 id=331 data-nosnippet>331</a>    <span class="macro">println!</span>(<span class="string">"║  4. holder_key         - Worker must prove possession (PoP)      ║"</span>);
+<a href=#332 id=332 data-nosnippet>332</a>    <span class="macro">println!</span>(<span class="string">"║  5. MULTI-SIG          - 1-of-1 admin approval for delete!       ║"</span>);
+<a href=#333 id=333 data-nosnippet>333</a>    <span class="macro">println!</span>(<span class="string">"║                                                                  ║"</span>);
+<a href=#334 id=334 data-nosnippet>334</a>    <span class="macro">println!</span>(<span class="string">"║  The Worker will demonstrate:                                    ║"</span>);
+<a href=#335 id=335 data-nosnippet>335</a>    <span class="macro">println!</span>(<span class="string">"║  • Standard actions (upgrade/restart) → no approval needed       ║"</span>);
+<a href=#336 id=336 data-nosnippet>336</a>    <span class="macro">println!</span>(<span class="string">"║  • Sensitive actions (delete) → BLOCKED without approval         ║"</span>);
+<a href=#337 id=337 data-nosnippet>337</a>    <span class="macro">println!</span>(<span class="string">"║  • Sensitive actions (delete) → ALLOWED with admin approval      ║"</span>);
+<a href=#338 id=338 data-nosnippet>338</a>    <span class="macro">println!</span>(<span class="string">"╚══════════════════════════════════════════════════════════════════╝\n"</span>);
+<a href=#339 id=339 data-nosnippet>339</a>
+<a href=#340 id=340 data-nosnippet>340</a>    <span class="prelude-val">Ok</span>(())
+<a href=#341 id=341 data-nosnippet>341</a>}</code></pre></div></section></main></body></html>

@@ -123,9 +123,7 @@ fn benchmark_warrant_authorization(c: &mut Criterion) {
     );
 
     // Create PoP signature for the benchmark
-    let pop_sig = warrant
-        .create_pop_signature(&keypair, "upgrade_cluster", &args)
-        .unwrap();
+    let pop_sig = warrant.sign(&keypair, "upgrade_cluster", &args).unwrap();
 
     c.bench_function("warrant_authorize", |b| {
         b.iter(|| {
@@ -280,9 +278,7 @@ fn benchmark_authorization_denials(c: &mut Criterion) {
         "path".to_string(),
         ConstraintValue::String("/data/report.txt".to_string()),
     )]);
-    let pop_sig = warrant
-        .create_pop_signature(&keypair, "read_file", &valid_args)
-        .unwrap();
+    let pop_sig = warrant.sign(&keypair, "read_file", &valid_args).unwrap();
 
     c.bench_function("authorize_deny_wrong_tool", |b| {
         b.iter(|| {
@@ -300,9 +296,7 @@ fn benchmark_authorization_denials(c: &mut Criterion) {
         "path".to_string(),
         ConstraintValue::String("/etc/passwd".to_string()),
     )]);
-    let invalid_pop = warrant
-        .create_pop_signature(&keypair, "read_file", &invalid_args)
-        .unwrap();
+    let invalid_pop = warrant.sign(&keypair, "read_file", &invalid_args).unwrap();
 
     c.bench_function("authorize_deny_constraint_violation", |b| {
         b.iter(|| {
@@ -317,7 +311,7 @@ fn benchmark_authorization_denials(c: &mut Criterion) {
 
     // Benchmark 3: Invalid PoP signature (crypto path - signature verification fails)
     let wrong_pop = warrant
-        .create_pop_signature(&wrong_keypair, "read_file", &valid_args)
+        .sign(&wrong_keypair, "read_file", &valid_args)
         .unwrap();
 
     c.bench_function("authorize_deny_invalid_pop", |b| {

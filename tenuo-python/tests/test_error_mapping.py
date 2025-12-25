@@ -2,9 +2,14 @@
 import pytest
 import sys
 from tenuo import (
-    Warrant, SigningKey, Pattern, Range, Exact, PatternExpanded, RangeExpanded, Constraints,
-    DelegationAuthorityError
+    Warrant,
+    SigningKey,
+    Pattern,
+    Range,
+    Exact,
 )
+from tenuo.constraints import Constraints
+from tenuo.exceptions import DelegationAuthorityError, PatternExpanded, RangeExpanded
 
 class TestErrorMapping:
     """
@@ -17,32 +22,32 @@ class TestErrorMapping:
 
     def test_pattern_expanded(self, keypair):
         """Verify PatternExpanded mapping."""
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}),
             ttl_seconds=60
         )
         
         with pytest.raises(PatternExpanded) as excinfo:
-            builder = parent.attenuate_builder()
+            builder = parent.grant_builder()
             builder.capability("search", {"query": Pattern("*")})
-            builder.delegate(keypair)
+            builder.grant(keypair)
         
         assert excinfo.value.details["parent_pattern"] == "allowed*"
         assert excinfo.value.details["child_pattern"] == "*"
 
     def test_range_expanded(self, keypair):
         """Verify RangeExpanded mapping."""
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("calc", {"val": Range(min=0, max=100)}),
             ttl_seconds=60
         )
         
         with pytest.raises(RangeExpanded) as excinfo:
-            builder = parent.attenuate_builder()
+            builder = parent.grant_builder()
             builder.capability("calc", {"val": Range(min=-10, max=100)})
-            builder.delegate(keypair)
+            builder.grant(keypair)
             
         # Details might vary slightly depending on float representation
         assert excinfo.value.details["bound"] == "min"
@@ -55,7 +60,7 @@ class TestErrorMapping:
         """
         wrong_keypair = SigningKey.generate()
         
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("test", {}),
             ttl_seconds=60
@@ -63,9 +68,9 @@ class TestErrorMapping:
         
         # Attempt to delegate with wrong key (not parent's holder)
         with pytest.raises(DelegationAuthorityError) as excinfo:
-            builder = parent.attenuate_builder()
+            builder = parent.grant_builder()
             builder.inherit_all()
-            builder.delegate(wrong_keypair)  # Wrong signer!
+            builder.grant(wrong_keypair)  # Wrong signer!
         
         # Verify error details contain the key fingerprints
         assert "expected" in excinfo.value.details
@@ -80,17 +85,17 @@ class TestErrorMapping:
         """Verify delegation succeeds with correct signer (parent's holder)."""
         child_keypair = SigningKey.generate()
         
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("test", {}),
             ttl_seconds=60
         )
         
         # Delegate with correct key (parent's holder)
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         builder.inherit_all()
         builder.holder(child_keypair.public_key)
-        child = builder.delegate(keypair)  # Correct: keypair is parent's holder
+        child = builder.grant(keypair)  # Correct: keypair is parent's holder
         
         # Verify delegation semantics: child.issuer == parent.authorized_holder
         # Compare by bytes since PublicKey doesn't have __eq__
@@ -99,7 +104,7 @@ class TestErrorMapping:
         
     def test_constraint_violation(self, keypair):
         """Verify ConstraintViolation mapping."""
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("search", {"query": Exact("foo")}),
             ttl_seconds=60
@@ -130,7 +135,7 @@ class TestErrorMapping:
     def test_expired_error(self, keypair):
         """Verify ExpiredError mapping."""
         # Issue warrant with 0 TTL
-        _warrant = Warrant.issue(
+        _warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("test", {}),
             ttl_seconds=0

@@ -1,2 +1,2 @@
-createSrcSidebar('[["tenuo",["",[],["cli.rs"]]],["tenuo_authorizer",["",[],["authorizer.rs"]]],["tenuo_core",["",[],["approval.rs","cel.rs","constraints.rs","crypto.rs","error.rs","lib.rs","planes.rs","revocation.rs","warrant.rs","wire.rs"]]],["tenuo_orchestrator",["",[],["orchestrator.rs"]]],["tenuo_worker",["",[],["worker.rs"]]]]');
-//{"start":19,"fragment_lengths":[28,47,148,51,39]}
+createSrcSidebar('[["tenuo",["",[],["approval.rs","audit.rs","cel.rs","constraints.rs","crypto.rs","diff.rs","error.rs","extraction.rs","gateway_config.rs","lib.rs","mcp.rs","payload.rs","planes.rs","revocation.rs","revocation_manager.rs","warrant.rs","wire.rs"]]],["tenuo",["",[],["cli.rs"]]],["tenuo_orchestrator",["",[],["orchestrator.rs"]]],["tenuo_worker",["",[],["worker.rs"]]]]');
+//{"start":19,"fragment_lengths":[245,29,51,39]}

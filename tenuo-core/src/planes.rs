@@ -2274,7 +2274,7 @@ mod tests {
             .unwrap();
 
         let pop_sig = warrant_for_holder
-            .create_pop_signature(&holder_keypair, "upgrade_cluster", &args)
+            .sign(&holder_keypair, "upgrade_cluster", &args)
             .unwrap();
         assert!(data_plane
             .authorize(
@@ -2341,7 +2341,7 @@ mod tests {
         // Check in one call
         let args = HashMap::new();
         let pop_sig = warrant_for_holder
-            .create_pop_signature(&holder_keypair, "test", &args)
+            .sign(&holder_keypair, "test", &args)
             .unwrap();
         assert!(authorizer
             .check(&warrant_for_holder, "test", &args, Some(&pop_sig), &[])
@@ -2484,7 +2484,7 @@ mod tests {
 
         // Create PoP signature for the agent warrant
         let pop_sig = agent_warrant
-            .create_pop_signature(&agent_keypair, "upgrade_cluster", &args)
+            .sign(&agent_keypair, "upgrade_cluster", &args)
             .unwrap();
 
         let result = data_plane
@@ -2600,9 +2600,7 @@ mod tests {
         );
 
         // Create PoP signature for child warrant
-        let pop_sig = child
-            .create_pop_signature(&agent_keypair, "test", &args)
-            .unwrap();
+        let pop_sig = child.sign(&agent_keypair, "test", &args).unwrap();
 
         assert!(authorizer
             .authorize(&child, "test", &args, Some(&pop_sig), &[])
@@ -2709,7 +2707,7 @@ mod tests {
             .unwrap();
 
         let pop_sig = warrant_for_holder
-            .create_pop_signature(&holder_keypair, "test", &args)
+            .sign(&holder_keypair, "test", &args)
             .unwrap();
 
         // Should pass without any approvals (just PoP)
@@ -2737,7 +2735,7 @@ mod tests {
 
         // Create PoP signature
         let pop_sig = warrant
-            .create_pop_signature(&issuer_keypair, "sensitive_action", &args)
+            .sign(&issuer_keypair, "sensitive_action", &args)
             .unwrap();
 
         // Should FAIL without approval (but WITH PoP signature)
@@ -2769,7 +2767,7 @@ mod tests {
 
         // Create PoP signature
         let pop_sig = warrant
-            .create_pop_signature(&issuer_keypair, "sensitive_action", &args)
+            .sign(&issuer_keypair, "sensitive_action", &args)
             .unwrap();
 
         // Create approval
@@ -2865,7 +2863,7 @@ mod tests {
 
         // Create PoP signature
         let pop_sig = warrant
-            .create_pop_signature(&issuer_keypair, "sensitive_action", &args)
+            .sign(&issuer_keypair, "sensitive_action", &args)
             .unwrap();
 
         // Should FAIL - approver not in required set (even with valid PoP)
@@ -2940,7 +2938,7 @@ mod tests {
 
         // Create PoP signature
         let pop_sig = warrant
-            .create_pop_signature(&issuer_keypair, "sensitive_action", &args)
+            .sign(&issuer_keypair, "sensitive_action", &args)
             .unwrap();
 
         // With 1 approval - should fail (need 2)
@@ -3543,9 +3541,7 @@ mod tests {
         .collect();
 
         // Create PoP signature for read_file
-        let pop_sig = warrant
-            .create_pop_signature(&kp, "read_file", &args)
-            .expect("sign pop");
+        let pop_sig = warrant.sign(&kp, "read_file", &args).expect("sign pop");
 
         // read_file should succeed (External >= External)
         let result = data_plane.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
@@ -3662,9 +3658,7 @@ mod tests {
         .collect();
 
         // Create PoP signature
-        let pop_sig = warrant
-            .create_pop_signature(&kp, "read_file", &args)
-            .expect("sign pop");
+        let pop_sig = warrant.sign(&kp, "read_file", &args).expect("sign pop");
 
         // Privileged > External, so should succeed
         let result = data_plane.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
@@ -3713,9 +3707,7 @@ mod tests {
         .collect();
 
         // Create PoP signature for read_file
-        let pop_sig = warrant
-            .create_pop_signature(&kp, "read_file", &args)
-            .expect("sign pop");
+        let pop_sig = warrant.sign(&kp, "read_file", &args).expect("sign pop");
 
         // read_file should succeed (External >= External)
         let result = authorizer.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
@@ -3890,9 +3882,7 @@ mod tests {
         )]
         .into_iter()
         .collect();
-        let pop_sig = warrant
-            .create_pop_signature(&kp, "read_file", &args)
-            .expect("sign pop");
+        let pop_sig = warrant.sign(&kp, "read_file", &args).expect("sign pop");
 
         // Authorization should succeed (clearance check is skipped when no requirements)
         let result = data_plane.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);

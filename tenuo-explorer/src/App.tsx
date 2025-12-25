@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import init, { decode_warrant, check_access, check_access_with_pop, generate_keypair, create_pop_signature, create_sample_warrant, init_panic_hook } from './wasm/tenuo_wasm'
+import init, { decode_warrant, check_access, check_access_with_pop, generate_keypair, sign, create_sample_warrant, init_panic_hook } from './wasm/tenuo_wasm'
 
 // Types
 interface AuthResult {
@@ -305,7 +305,7 @@ const PopSimulator = ({ warrant, tool, args, onPopGenerated }: {
         parsedArgs = {};
       }
 
-      const result = create_pop_signature(privateKey, warrant, tool, parsedArgs);
+      const result = sign(privateKey, warrant, tool, parsedArgs);
       if (result.error) {
         setError(result.error);
       } else {
@@ -591,7 +591,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
   const parseConstraint = (key: string, value: unknown): ParsedConstraint => {
     if (typeof value === 'object' && value !== null) {
       const v = value as Record<string, unknown>;
-      
+
       // Pattern constraint: { pattern: "docs/*" }
       if (v.pattern && typeof v.pattern === 'string') {
         const pattern = v.pattern;
@@ -602,7 +602,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
           exampleValue: pattern.replace(/\*/g, 'example').replace(/\?/g, 'x')
         };
       }
-      
+
       // Exact constraint: { exact: "value" }
       if (v.exact !== undefined) {
         const exact = String(v.exact);
@@ -613,7 +613,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
           exampleValue: exact
         };
       }
-      
+
       // Range constraint: { min: 0, max: 100 } or { max: 100 }
       if (v.min !== undefined || v.max !== undefined) {
         const min = v.min as number | undefined;
@@ -637,7 +637,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
           exampleValue: max !== undefined ? Math.floor(max / 2) : (min !== undefined ? min + 10 : 50)
         };
       }
-      
+
       // OneOf constraint: { oneof: ["a", "b"] } or { values: ["a", "b"] }
       // Can also be comma-separated string: { oneof: "a,b,c" }
       if (v.oneof || v.values) {
@@ -659,7 +659,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
           exampleValue: values[0] || 'value'
         };
       }
-      
+
       // AnyOf constraint: { anyof: ["a", "b"] }
       if (v.anyof) {
         const rawVal = v.anyof;
@@ -679,7 +679,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
           exampleValue: values[0].replace('*', 'example') || 'value'
         };
       }
-      
+
       // NotOneOf constraint: { notoneof: ["a", "b"] }
       if (v.notoneof) {
         const rawVal = v.notoneof;
@@ -700,7 +700,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
         };
       }
     }
-    
+
     // String value - assume it's a pattern
     if (typeof value === 'string') {
       // Check if it looks like a glob pattern
@@ -720,7 +720,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
         exampleValue: value
       };
     }
-    
+
     // Number - assume range max
     if (typeof value === 'number') {
       return {
@@ -730,7 +730,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
         exampleValue: Math.floor(value / 2)
       };
     }
-    
+
     // Unknown - treat as raw value (best effort)
     const strVal = typeof value === 'object' ? JSON.stringify(value) : String(value);
     return {
@@ -745,11 +745,11 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
   const code = useMemo(() => {
     try {
       const argsObj = (() => { try { return JSON.parse(args); } catch { return {}; } })();
-      
+
       // Get constraints from decoded warrant's capabilities for the selected tool
       const toolCapabilities = decoded.capabilities[tool] as Record<string, unknown> | undefined;
       const constraints: { key: string; parsed: ParsedConstraint }[] = [];
-      
+
       if (toolCapabilities && typeof toolCapabilities === 'object') {
         Object.entries(toolCapabilities).forEach(([key, value]) => {
           try {
@@ -759,7 +759,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
           }
         });
       }
-      
+
       // Fallback to args if no constraints found
       if (constraints.length === 0 && Object.keys(argsObj).length > 0) {
         Object.entries(argsObj).forEach(([k, v]) => {
@@ -771,75 +771,75 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
         });
       }
 
-    // Collect warnings
-    const warnings = constraints
-      .filter(({ parsed }) => parsed.warning)
-      .map(({ key, parsed }) => `# ⚠️ ${key}: ${parsed.warning}`);
-    
-    const warningBlock = warnings.length > 0 
-      ? `# ⚠️ WARNINGS - Review these constraints:\n${warnings.join('\n')}\n\n` 
-      : '';
+      // Collect warnings
+      const warnings = constraints
+        .filter(({ parsed }) => parsed.warning)
+        .map(({ key, parsed }) => `# ⚠️ ${key}: ${parsed.warning}`);
 
-    if (lang === 'python') {
-      const constraintLines = constraints.length > 0 
-        ? constraints.map(({ key, parsed }) => `        "${key}": ${parsed.pythonCode}`).join(',\n')
-        : '        # No constraints - allows any value';
-      
-      const argsLines = Object.entries(argsObj).length > 0
-        ? JSON.stringify(argsObj, null, 4)
-        : constraints.length > 0
-          ? JSON.stringify(Object.fromEntries(constraints.map(({ key, parsed }) => [key, parsed.exampleValue])), null, 4)
-          : '{}';
-      
-      return `${warningBlock}from tenuo import SigningKey, Warrant, Pattern, Exact, Range, OneOf
+      const warningBlock = warnings.length > 0
+        ? `# ⚠️ WARNINGS - Review these constraints:\n${warnings.join('\n')}\n\n`
+        : '';
+
+      if (lang === 'python') {
+        const constraintLines = constraints.length > 0
+          ? constraints.map(({ key, parsed }) => `        "${key}": ${parsed.pythonCode}`).join(',\n')
+          : '        # No constraints - allows any value';
+
+        const argsLines = Object.entries(argsObj).length > 0
+          ? JSON.stringify(argsObj, null, 4)
+          : constraints.length > 0
+            ? JSON.stringify(Object.fromEntries(constraints.map(({ key, parsed }) => [key, parsed.exampleValue])), null, 4)
+            : '{}';
+
+        return `${warningBlock}from tenuo import SigningKey, Warrant, Pattern, Exact, Range, OneOf
 
 # Generate keys
 issuer_key = SigningKey.generate()
 holder_key = SigningKey.generate()
 
 # Issue warrant using builder pattern
-warrant = (Warrant.builder()
+warrant = (Warrant.mint_builder()
     .capability("${tool}", {
 ${constraintLines}
     })
     .holder(holder_key.public_key)
     .ttl(3600)  # 1 hour
-    .issue(issuer_key))
+    .mint(issuer_key))
 
 # Test authorization with Proof-of-Possession
 args = ${argsLines}
-pop_signature = warrant.create_pop_signature(holder_key, "${tool}", args)
+pop_signature = warrant.sign(holder_key, "${tool}", args)
 authorized = warrant.authorize("${tool}", args, bytes(pop_signature))
 print(f"Authorized: {authorized}")
 
 # BoundWarrant for repeated operations
-bound = warrant.bind_key(holder_key)
-if bound.authorize("${tool}", args):
+bound = warrant.bind(holder_key)
+if bound.validate("${tool}", args):
     print("Also works with BoundWarrant!")
 
 # Serialize for transmission
 warrant_b64 = warrant.to_base64()
 print(f"Warrant: {warrant_b64[:60]}...")`;
-    } else {
-      const constraintLines = constraints.length > 0 
-        ? constraints.map(({ key, parsed }) => `    constraints.insert("${key}".to_string(), ${parsed.rustCode});`).join('\n')
-        : '    // No constraints - allows any value';
-      
-      const argsLines = constraints.length > 0
-        ? constraints.map(({ key, parsed }) => {
+      } else {
+        const constraintLines = constraints.length > 0
+          ? constraints.map(({ key, parsed }) => `    constraints.insert("${key}".to_string(), ${parsed.rustCode});`).join('\n')
+          : '    // No constraints - allows any value';
+
+        const argsLines = constraints.length > 0
+          ? constraints.map(({ key, parsed }) => {
             const val = parsed.exampleValue;
             if (typeof val === 'number') {
               return `    args.insert("${key}".to_string(), ConstraintValue::Integer(${val}));`;
             }
             return `    args.insert("${key}".to_string(), ConstraintValue::String("${val}".to_string()));`;
           }).join('\n')
-        : '    // Add args here';
+          : '    // Add args here';
 
-      const rustWarnings = warnings.length > 0 
-        ? `// ⚠️ WARNINGS - Review these constraints:\n${warnings.map(w => w.replace('# ', '// ')).join('\n')}\n\n` 
-        : '';
+        const rustWarnings = warnings.length > 0
+          ? `// ⚠️ WARNINGS - Review these constraints:\n${warnings.map(w => w.replace('# ', '// ')).join('\n')}\n\n`
+          : '';
 
-      return `${rustWarnings}use tenuo::{SigningKey, Warrant, Pattern, Constraint, ConstraintSet, ConstraintValue, Range, wire};
+        return `${rustWarnings}use tenuo::{SigningKey, Warrant, Pattern, Constraint, ConstraintSet, ConstraintValue, Range, wire};
 use std::time::Duration;
 use std::collections::HashMap;
 
@@ -868,7 +868,7 @@ ${constraintLines}
 ${argsLines}
 
     // Create Proof-of-Possession and authorize
-    let pop = warrant.create_pop_signature(&holder_key, "${tool}", &args)?;
+    let pop = warrant.sign(&holder_key, "${tool}", &args)?;
     warrant.authorize("${tool}", &args, Some(&pop))?;
     println!("Authorized!");
 
@@ -878,7 +878,7 @@ ${argsLines}
     
     Ok(())
 }`;
-    }
+      }
     } catch (e) {
       // Return error message as code comment
       const errMsg = e instanceof Error ? e.message : 'Unknown error';
@@ -1109,7 +1109,7 @@ interface ToolConstraint {
 // Validate constraint value based on type
 const validateConstraintValue = (type: string, value: string): { valid: boolean; error?: string; hint?: string } => {
   if (!value.trim()) return { valid: true }; // Empty is ok while typing
-  
+
   switch (type) {
     case 'pattern':
       // Pattern should be a glob string
@@ -1117,11 +1117,11 @@ const validateConstraintValue = (type: string, value: string): { valid: boolean;
         return { valid: false, error: 'Patterns use * and ?, not regex syntax', hint: 'docs/* or *.txt' };
       }
       return { valid: true };
-      
+
     case 'exact':
       // Exact can be any string
       return { valid: true };
-      
+
     case 'range':
       // Range should be "min-max" or just "max"
       if (!/^\d+(-\d+)?$/.test(value.trim())) {
@@ -1132,7 +1132,7 @@ const validateConstraintValue = (type: string, value: string): { valid: boolean;
         return { valid: false, error: 'Min cannot be greater than max' };
       }
       return { valid: true };
-      
+
     case 'oneof':
     case 'anyof':
     case 'notoneof':
@@ -1145,7 +1145,7 @@ const validateConstraintValue = (type: string, value: string): { valid: boolean;
         return { valid: false, error: 'Provide at least one value' };
       }
       return { valid: true };
-      
+
     default:
       return { valid: true };
   }
@@ -1174,7 +1174,7 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
     const constraint = { ...updated[toolIdx].constraints[constIdx], [field]: value };
     updated[toolIdx].constraints[constIdx] = constraint;
     setTools(updated);
-    
+
     // Validate on change
     const errorKey = `${toolIdx}-${constIdx}`;
     if (field === 'value' || field === 'type') {
@@ -1282,12 +1282,12 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
                       <option value="anyof">AnyOf</option>
                       <option value="notoneof">NotOneOf</option>
                     </select>
-                    <input 
-                      className="input" 
-                      placeholder={validation.hint || 'value'} 
-                      value={con.value} 
-                      onChange={e => updateConstraint(ti, ci, 'value', e.target.value)} 
-                      style={{ flex: 1, borderColor: error ? 'var(--red)' : undefined }} 
+                    <input
+                      className="input"
+                      placeholder={validation.hint || 'value'}
+                      value={con.value}
+                      onChange={e => updateConstraint(ti, ci, 'value', e.target.value)}
+                      style={{ flex: 1, borderColor: error ? 'var(--red)' : undefined }}
                     />
                     <button onClick={() => removeConstraint(ti, ci)} className="close-btn" style={{ padding: '4px' }}>✕</button>
                   </div>
@@ -1812,7 +1812,7 @@ function App() {
 
   const validateInputs = (forAuth: boolean = false): boolean => {
     const errors: typeof validationErrors = {};
-    
+
     // Validate warrant (required for both decode and auth)
     if (!warrantB64.trim()) {
       errors.warrant = 'Warrant is required';
@@ -1826,7 +1826,7 @@ function App() {
         errors.warrant = 'Warrant seems too short. Did you paste the full warrant?';
       }
     }
-    
+
     if (forAuth) {
       // Validate tool (required for auth)
       if (!tool.trim()) {
@@ -1834,7 +1834,7 @@ function App() {
       } else if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tool.trim())) {
         errors.tool = 'Tool name should be alphanumeric (e.g., read_file, send_email)';
       }
-      
+
       // Validate args JSON
       if (argsJson.trim()) {
         try {
@@ -1846,7 +1846,7 @@ function App() {
           errors.args = 'Invalid JSON. Check for missing quotes or commas.';
         }
       }
-      
+
       // Validate root key hex (optional but must be valid if provided)
       if (rootKeyHex.trim()) {
         const cleanHex = rootKeyHex.trim().toLowerCase();
@@ -1857,7 +1857,7 @@ function App() {
         }
       }
     }
-    
+
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -1865,7 +1865,7 @@ function App() {
   const handleDecode = () => {
     if (!wasmReady) return;
     if (!validateInputs(false)) return;
-    
+
     try {
       const result = decode_warrant(warrantB64.trim());
       setDecoded(result);
@@ -1892,7 +1892,7 @@ function App() {
   const handleAuthorize = () => {
     if (!wasmReady) return;
     if (!validateInputs(true)) return;
-    
+
     try {
       const args = JSON.parse(argsJson || '{}');
 
@@ -2392,22 +2392,16 @@ function App() {
           <div className="shortcuts-help">
             <button
               onClick={() => setShowShortcuts(false)}
+              className="close-btn"
               style={{
                 position: 'absolute',
-                right: '8px',
+                right: '6px',
                 top: '50%',
                 transform: 'translateY(-50%)',
-                background: 'none',
-                border: 'none',
-                color: 'var(--muted)',
-                cursor: 'pointer',
-                fontSize: '14px',
-                padding: '4px',
-                lineHeight: 1,
               }}
               title="Hide shortcuts (⌘?)"
             >
-              ×
+              ✕
             </button>
             <div className="shortcut"><kbd>⌘</kbd><kbd>↵</kbd><span>Decode</span></div>
             <div className="shortcut"><kbd>⌘</kbd><kbd>⇧</kbd><kbd>↵</kbd><span>Auth</span></div>
