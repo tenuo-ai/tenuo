@@ -538,8 +538,12 @@ import inspect
 from tenuo import guard, Warrant, SigningKey, Exact, warrant_scope, key_scope
 
 def test_extraction():
-    kp = SigningKey.generate()
-    w = Warrant.issue(tools={"test": Constraints.for_tool("test", {"a": Exact(1)})}, keypair=kp, ttl_seconds=300)
+    key = SigningKey.generate()
+    w = (Warrant.mint_builder()
+        .capability("test", a=Exact(1))
+        .holder(key.public_key)
+        .ttl(300)
+        .mint(key))
     
     @guard(tool="test")
     def func(a: int, b: int = 2):

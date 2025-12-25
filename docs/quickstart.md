@@ -74,9 +74,10 @@ headers = warrant.headers(key, "search", {"query": "test"})
 # Explicit key in delegation
 child = warrant.grant(
     to=worker_pubkey,
-    allow={"search": {"query": Pattern("safe*")}},
+    allow="search",
     ttl=300,
-    key=key
+    key=key,
+    query=Pattern("safe*")  # Constraints as kwargs
 )
 ```
 
@@ -368,12 +369,11 @@ worker_pubkey = PublicKey.from_env("WORKER_PUBKEY")
 # Child warrant has narrower scope
 worker_warrant = warrant.grant(
     to=worker_pubkey,
-    allow={"manage_infrastructure": {
-        "cluster": Pattern("staging-web"),  # Narrowed
-        "replicas": Range.max_value(10),    # Reduced
-    }},
+    allow="manage_infrastructure",
     ttl=300,
-    key=keypair  # Parent signs
+    key=key,  # Parent signs
+    cluster=Pattern("staging-web"),  # Narrowed (constraint as kwarg)
+    replicas=Range.max_value(10),    # Reduced
 )
 
 # Send to worker: send_to_worker(str(worker_warrant))

@@ -141,30 +141,38 @@ Warrants are **bound to keypairs**. To use a warrant, you must prove you hold th
 **Root Execution Warrant**: The first execution warrant in a task chain, typically minted by the control plane. Starts at `depth=0` and can be attenuated.
 
 ```python
-# Root Execution Warrant: The first execution warrant in a task chain...
-root = Warrant.issue(
-    tools={"read_file": Constraints.for_tool("read_file", {})},
-    keypair=control_plane_kp,
-    holder=agent_kp.public_key,
-    ttl_seconds=3600
-)
+# Root Execution Warrant: The first execution warrant in a task chain
+from tenuo import Warrant, Capability, Pattern
+
+root = (Warrant.mint_builder()
+    .capability("read_file", path=Pattern("/data/*"))
+    .holder(agent_key.public_key)
+    .ttl(3600)
+    .mint(control_plane_key))
 ```
 
 **Issuer Warrant**: A warrant that *cannot execute tools* but can *issue new execution warrants*. Held by supervisory nodes (P-LLM, planners) that delegate but don't act.
 
 ```python
-issuer = Warrant.issue_issuer(
-    issuable_tools=["read_file", "write_file"],
-    keypair=planner_kp,
-)
+# Issuer warrants are a v0.2 feature. In v0.1, use execution warrants
+# with grant_builder() for delegation:
 
-exec_warrant = (issuer.issue()
-    .tool("read_file")
-    .holder(worker_kp.public_key)
-    .build(planner_kp))  # Planner's holder signs
+orchestrator_warrant = (Warrant.mint_builder()
+    .capability("read_file", path=Pattern("/data/*"))
+    .capability("write_file", path=Pattern("/data/*"))
+    .holder(orchestrator_key.public_key)
+    .ttl(3600)
+    .mint(control_plane_key))
+
+# Delegate narrower scope to worker
+worker_warrant = (orchestrator_warrant.grant_builder()
+    .capability("read_file", path=Pattern("/data/reports/*"))
+    .holder(worker_key.public_key)
+    .ttl(300)
+    .grant(orchestrator_key))
 ```
 
-Root execution warrants start tasks. Issuer warrants supervise without executing.
+Root execution warrants start tasks. Delegation narrows scope for workers.
 
 
 ### Warrant Lifecycle
@@ -189,11 +197,12 @@ The orchestrator decomposes work into phases. Each phase gets a fresh warrant.
 ```python
 async def orchestrator(task: str):
     for phase in planner.decompose(task):
-        warrant = (orchestrator_warrant.attenuate()
-            .tools(phase.tools)
+        # Delegate with narrower scope for each phase
+        warrant = (orchestrator_warrant.grant_builder()
+            .capability(phase.tool, **phase.constraints)
             .ttl(60)
-            .holder(worker_keypair.public_key)
-            .build(parent_keypair))
+            .holder(worker_key.public_key)
+            .grant(orchestrator_key))
         await worker.execute(phase, warrant)
         # Warrant expires. Next phase gets a new one.
 ```
@@ -209,7 +218,11 @@ For streaming workers, the orchestrator periodically pushes fresh warrants.
 ```python
 async def orchestrator():
     while task_active:
-        warrant = orchestrator_warrant.attenuate().ttl(300).build(parent_keypair)
+        # Push fresh warrant before expiry
+        warrant = (orchestrator_warrant.grant_builder()
+            .ttl(300)
+            .holder(worker_key.public_key)
+            .grant(orchestrator_key))
         await worker.update_warrant(warrant)
         await asyncio.sleep(240)  # Push before expiry
 

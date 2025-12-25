@@ -294,51 +294,39 @@ from tenuo import Warrant
 | Method | Description |
 |--------|-------------|
 | `Warrant.from_base64(s: str)` | Deserialize from base64 |
-| `Warrant.issue(...)` | Issue a new execution warrant |
-| `Warrant.issue_issuer(...)` | Issue a new issuer warrant |
+| `Warrant.mint_builder()` | Create a fluent builder for new warrants |
+| `warrant.grant_builder()` | Create a fluent builder for delegation |
 
-#### `Warrant.issue()` Parameters (Execution Warrants)
+#### `Warrant.mint_builder()` — Creating New Warrants
 
 ```python
-from tenuo import Warrant, Constraints, Pattern
+from tenuo import Warrant, Pattern
 
-Warrant.issue(
-    capabilities: dict,  # Constraints.for_tool("name", {...}) or {tool: constraints}
-    keypair: SigningKey,
-    holder: PublicKey,
-    ttl_seconds: int = 3600,
-    session_id: Optional[str] = None
-)
-
-# Example
-warrant = Warrant.issue(
-    tools={"read_file": Constraints.for_tool("read_file", {"path": Pattern("/data/*")})},
-    keypair=my_keypair,
-    holder=my_keypair.public_key,
-    ttl_seconds=3600,
-)
+# Fluent builder pattern
+warrant = (Warrant.mint_builder()
+    .capability("read_file", path=Pattern("/data/*"))
+    .holder(worker_key.public_key)
+    .ttl(3600)
+    .mint(issuer_key))
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `tools` | `dict` | Tool→constraint mapping (use `Constraints.for_tool()` helper) |
-| `keypair` | `SigningKey` | Issuer's keypair |
-| `holder` | `PublicKey` | Holder's public key |
-| `ttl_seconds` | `int` | Time-to-live in seconds |
-| `session_id` | `str` | Optional session ID |
+| Method | Description |
+|--------|-------------|
+| `.tool(name)` | Add tool with no constraints |
+| `.capability(tool, **constraints)` | Add tool with constraints |
+| `.holder(pubkey)` | Set authorized holder |
+| `.ttl(seconds)` | Set time-to-live |
+| `.mint(key)` | Sign and create the warrant |
 
-#### `Warrant.issue_issuer()` Parameters (Issuer Warrants)
+#### `warrant.grant_builder()` — Delegation
 
 ```python
-Warrant.issue_issuer(
-    issuable_tools: List[str],
-    keypair: SigningKey,
-    constraint_bounds: Optional[dict] = None,
-    max_issue_depth: Optional[int] = None,
-    ttl_seconds: int = 3600,
-    holder: Optional[PublicKey] = None,
-    session_id: Optional[str] = None,
-)
+# Delegate with narrower scope
+child = (parent.grant_builder()
+    .capability("read_file", path=Pattern("/data/reports/*"))
+    .holder(worker_key.public_key)
+    .ttl(300)
+    .grant(parent_key))  # Parent holder signs
 ```
 
 | Parameter | Type | Description |
@@ -429,9 +417,11 @@ warrant.capabilities        # {'tools': ['read_file'], 'path': '/data/*', 'max_s
 | `delegate(holder, tools=None, **constraints)` | `Warrant` | Convenience method to delegate (requires context) |
 
 | `verify(public_key)` | `bool` | Verify signature against issuer |
-| `sign(keypair, tool, args)` | `list[int]` | Sign action (Proof-of-Possession) |
+| `sign(keypair, tool, args)` | `bytes` | Sign action (Proof-of-Possession) |
 | `to_base64()` | `str` | Serialize to base64 |
 | `allows(tool, args=None)` | `bool` | Check if action would be allowed (Logic check) |
+| `check_constraints(tool, args)` | `str \| None` | Validate constraints (Logic check) |
+| `dedup_key(tool, args)` | `str` | Get deterministic cache key |
 | `why_denied(tool, **args)` | `WhyDenied` | Get structured denial reason |
 | `headers(keypair, tool, args)` | `dict` | Generate HTTP authorization headers |
 
@@ -493,10 +483,10 @@ Tenuo follows **POLA**: when you attenuate a warrant, the child starts with **NO
 
 ```python
 # Child only gets what you explicitly grant
-builder = parent.attenuate()
-builder.capability("read_file", {"path": Exact("/data/report.txt")})
-builder.holder(worker_kp.public_key)
-child = builder.grant(kp)
+builder = parent.grant_builder()
+builder.capability("read_file", path=Exact("/data/report.txt"))
+builder.holder(worker_key.public_key)
+child = builder.grant(parent_key)
 # child.tools == ["read_file"] (only!)
 ```
 
@@ -504,11 +494,11 @@ child = builder.grant(kp)
 
 ```python
 # Start with all parent capabilities, then narrow
-builder = parent.attenuate()
+builder = parent.grant_builder()
 builder.inherit_all()                    # Explicit opt-in
 builder.tools(["read_file"])             # Keep only this tool
-builder.holder(worker_kp.public_key)
-child = builder.grant(kp)
+builder.holder(worker_key.public_key)
+child = builder.grant(parent_key)
 ```
 
 **Pattern 3: Via delegate() (convenience)**
@@ -527,18 +517,20 @@ with key_scope(my_keypair):
 **Via Issuer warrant (alternative):**
 
 ```python
-# Create issuer warrant, then issue execution with specific tools
-issuer_warrant = Warrant.issue_issuer(
-    issuable_tools=["read_file", "send_email"],
-    keypair=control_plane_kp,
-    ttl_seconds=3600,
-)
+# Create parent warrant, then delegate with specific tools
+parent_warrant = (Warrant.mint_builder()
+    .tool("read_file")
+    .tool("send_email")
+    .holder(control_plane_key.public_key)
+    .ttl(3600)
+    .mint(control_plane_key))
 
-builder = issuer_warrant.issue()
-builder.tool("read_file")
-builder.holder(worker_kp.public_key)
+# Delegate to worker with narrower scope
+builder = parent_warrant.grant_builder()
+builder.tool("read_file")  # Only read, not send_email
+builder.holder(worker_key.public_key)
 builder.ttl(300)
-exec_warrant = builder.build(issuer_kp)
+exec_warrant = builder.grant(control_plane_key)
 ```
 
 #### Terminal Warrants
@@ -546,15 +538,15 @@ exec_warrant = builder.build(issuer_kp)
 A warrant is **terminal** when it cannot delegate further (`depth >= max_depth`).
 
 ```python
-# Create terminal warrant
-builder = parent.attenuate()
-builder.inherit_all()     # POLA: inherit parent capabilities
+# Create terminal warrant (cannot be delegated further)
+builder = parent.grant_builder()
+builder.inherit_all()     # Inherit parent capabilities
 builder.terminal()        # Mark as terminal
-builder.holder(worker_kp.public_key)
-terminal = builder.grant(kp)
+builder.holder(worker_key.public_key)
+terminal = builder.grant(parent_key)
 
 assert terminal.is_terminal()  # True
-# terminal.attenuate().grant(...) will fail
+# terminal.grant_builder().grant(...) will fail
 ```
 
 ---
@@ -627,10 +619,10 @@ print(repr(bound))
 
 ### IssuanceBuilder
 
-Builder for issuing execution warrants from issuer warrants.
+Builder for delegating (granting) from parent warrants.
 
 ```python
-builder = issuer_warrant.issue()
+builder = parent_warrant.grant_builder()
 ```
 
 #### Setter Methods (Chainable)
@@ -668,7 +660,7 @@ Note: `with_*` methods are available as aliases for backward compatibility.
 Builder for attenuating (narrowing) existing warrants.
 
 ```python
-builder = warrant.attenuate()
+builder = warrant.grant_builder()
 ```
 
 #### Methods
@@ -697,20 +689,20 @@ All setter methods are **dual-purpose**: call with argument to set (returns self
 
 ```python
 # Pattern 1: Grant specific capability (POLA default)
-child = (parent.attenuate()
-    .capability("read_file", {"path": Exact("/data/q3.pdf")})
-    .holder(worker_kp.public_key)
-    .grant(parent_kp))
+child = (parent.grant_builder()
+    .capability("read_file", path=Exact("/data/q3.pdf"))
+    .holder(worker_key.public_key)
+    .grant(parent_key))
 
 # Pattern 2: Inherit all, then narrow
-child = (parent.attenuate()
+child = (parent.grant_builder()
     .inherit_all()                    # Explicit opt-in
     .tools(["read_file"])             # Keep only this tool
-    .holder(worker_kp.public_key)
-    .grant(parent_kp))
+    .holder(worker_key.public_key)
+    .grant(parent_key))
 
 # Reading builder state
-assert builder.holder() == worker_kp.public_key
+assert builder.holder() == worker_key.public_key
 assert builder.ttl() == 300
 ```
 
@@ -1275,7 +1267,7 @@ async with mint(Capability("read_file", path=Pattern("/data/*"))):
 **Explicit warrant:**
 
 ```python
-@guard(warrant, tool="read_file", keypair=agent_kp)
+@guard(warrant, tool="read_file", keypair=agent_key)
 def read_file(path: str) -> str:
     return open(path).read()
 ```

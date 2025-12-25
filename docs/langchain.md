@@ -40,15 +40,14 @@ from tenuo.langchain import guard
 from langchain_community.tools import DuckDuckGoSearchRun
 
 # 1. Create warrant and bind key
-keypair = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
+key = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
 warrant = (Warrant.mint_builder()
-    .tool("duckduckgo_search")
-    .capability("duckduckgo_search", {"query": Pattern("*")})
-    .holder(keypair.public_key)
+    .capability("duckduckgo_search", query=Pattern("*"))
+    .holder(key.public_key)
     .ttl(3600)
-    .mint(keypair))
+    .mint(key))
 
-bound = warrant.bind(keypair)
+bound = warrant.bind(key)
 
 # 2. Protect tools
 protected_tools = guard([DuckDuckGoSearchRun()], bound)
@@ -78,7 +77,7 @@ def read_file(file_path: str) -> str:
         return f.read()
 
 # Execute with BoundWarrant as context manager
-bound = warrant.bind(keypair)
+bound = warrant.bind(key)
 with bound:
     content = read_file("/tmp/test.txt")  # ✅ Authorized
     content = read_file("/etc/passwd")    # ❌ Blocked
@@ -98,17 +97,6 @@ protected = guard([search_tool, calculator_tool], bw)
 
 # Protect plain functions
 protected = guard([my_func, other_func], bw)
-
-# With per-tool constraints (attenuation)
-from tenuo.langchain import LangChainConfig, ToolConfig
-
-config = LangChainConfig(
-    tools={
-        "search": ToolConfig(constraints={"query": Pattern("safe*")}),
-        "calculator": ToolConfig(constraints={})
-    }
-)
-protected = guard([search, calculator], bw, config=config)
 ```
 
 **Parameters:**
@@ -118,7 +106,6 @@ protected = guard([search, calculator], bw, config=config)
 | `tools` | `List[Any]` | List of `BaseTool` or callable |
 | `bound` | `BoundWarrant` | Bound warrant (positional, optional) |
 | `strict` | `bool` | Require constraints on critical tools |
-| `config` | `LangChainConfig` | Per-tool constraints (optional) |
 
 **Returns:**
 - For `BaseTool` inputs: `List[TenuoTool]`
@@ -181,13 +168,12 @@ with warrant_for_beta.bind(key):
 
 When `read_file("/data/x")` is called inside `with bound:`:
 
-1. Wrapper reads warrant from `_warrant_context`
-2. Wrapper reads key from `_keypair_context`
-3. Extracts all parameters including defaults
-4. Verifies tool is in warrant's allowed tools
-5. Verifies args satisfy warrant constraints
-6. Generates PoP signature using the key
-7. Executes if authorized, raises exception if not
+1. Wrapper reads warrant and key from context
+2. Extracts all parameters including defaults
+3. Verifies tool is in warrant's allowed tools
+4. Verifies args satisfy warrant constraints
+5. Generates PoP signature using the key
+6. Executes if authorized, raises `AuthorizationDenied` if not
 
 ### Automatic Extraction (Recommended)
 
@@ -224,8 +210,14 @@ def read_file(file_path: str):
 ```python
 from tenuo import Warrant, SigningKey
 
-warrant = Warrant.mint_builder()...mint(keypair)
-bound = warrant.bind(keypair)
+key = SigningKey.generate()
+warrant = (Warrant.mint_builder()
+    .tool("search")
+    .holder(key.public_key)
+    .ttl(3600)
+    .mint(key))
+
+bound = warrant.bind(key)
 
 # Pass to guard()
 protected = guard(tools, bound)
@@ -235,9 +227,9 @@ protected = guard(tools, bound)
 
 ```python
 # BoundWarrant as context manager - sets both warrant and key scope
-bound = warrant.bind(keypair)
+bound = warrant.bind(key)
 with bound:
-    # All @guard calls use this warrant and keypair
+    # All @guard calls use this warrant and key
     result = protected_function()
 ```
 
@@ -293,17 +285,16 @@ from langchain_openai import ChatOpenAI
 from tenuo import SigningKey, Warrant, Pattern
 from tenuo.langchain import guard
 
-# 1. Create keypair and warrant
-keypair = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
+# 1. Create key and warrant
+key = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
 warrant = (Warrant.mint_builder()
-    .tool("search")
-    .tool("read_file")
-    .capability("read_file", {"path": Pattern("/tmp/*")})
-    .holder(keypair.public_key)
+    .tool("search")  # No constraints
+    .capability("read_file", path=Pattern("/tmp/*"))  # With path constraint
+    .holder(key.public_key)
     .ttl(3600)
-    .mint(keypair))
+    .mint(key))
 
-bound = warrant.bind(keypair)
+bound = warrant.bind(key)
 
 # 2. Define tools
 from langchain_community.tools import DuckDuckGoSearchRun

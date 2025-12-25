@@ -195,11 +195,10 @@ warrant = Warrant.builder() \
     .capability("read_file", {"path": Pattern("/data/*")}) \
     .environment(
         ip=CIDR("10.0.0.0/24"), 
-        geo_country=OneOf(["US", "CA"])
-    ) \
-    .holder(agent_kp.public_key) \
-    .ttl(300) \
-    .issue(issuer_kp)
+        geo_country=OneOf(["US", "CA"]))
+    .holder(agent_key.public_key)
+    .ttl(300)
+    .mint(issuer_key))
 ```
 
 ## 6. Security Considerations

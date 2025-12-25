@@ -21,16 +21,16 @@ This page covers what Tenuo protects against, how Proof-of-Possession works, int
 
 ## Proof-of-Possession (PoP)
 
-Warrants are **bound to keypairs**. To use a warrant, you must prove you hold the private key.
+Warrants are **bound to keys**. To use a warrant, you must prove you hold the private key.
 
 ```python
 # Attenuate with explicit capability (POLA)
-warrant = (root_warrant.attenuate()
-    .capability("protected_tool", {"path": Pattern("/data/*")})
-    .holder(worker_keypair.public_key)
-    .grant(root_keypair))  # Root keypair signs (they hold the parent warrant)
+warrant = (root_warrant.grant_builder()
+    .capability("protected_tool", path=Pattern("/data/*"))
+    .holder(worker_key.public_key)
+    .grant(root_key))  # Root key signs (they hold the parent warrant)
 
-with warrant_scope(warrant), key_scope(worker_keypair):
+with warrant_scope(warrant), key_scope(worker_key):
     await protected_tool(...)
 ```
 
@@ -58,6 +58,9 @@ authorizer.check(warrant, tool, args)
 cache.set(dedup_key, "1", ttl=120)  # 120s covers the ~2min window
 ```
 
+> [!NOTE]
+> **Performance & Responsibility**: You are responsible for provisioning and maintaining the storage backend (e.g., Redis). Tenuo provides the deterministic key but does not manage the statestore. The latency and availability of this check depend entirely on your storage infrastructure.
+
 **When to implement deduplication:**
 - High-value operations (payments, deletions, privilege escalation)
 - Environments where network interception is possible
@@ -84,22 +87,22 @@ Authority can only **shrink**, never expand:
 ```python
 # Parent has broad capabilities
 parent = (Warrant.mint_builder()
-    .capability("read", {"path": Pattern("/*")})
-    .capability("write", {"path": Pattern("/*")})
-    .capability("delete", {"path": Pattern("/*")})
-    .holder(keypair.public_key)
+    .capability("read", path=Pattern("/*"))
+    .capability("write", path=Pattern("/*"))
+    .capability("delete", path=Pattern("/*"))
+    .holder(key.public_key)
     .ttl(3600)
-    .mint(keypair))
+    .mint(key))
 
 # Child can only narrow
-child = (parent.attenuate()
-    .capability("read", {"path": Pattern("/data/*")})
-    .grant(keypair))  # Keypair signs (they hold the parent warrant)
+child = (parent.grant_builder()
+    .capability("read", path=Pattern("/data/*"))
+    .grant(key))  # Key signs (they hold the parent warrant)
 
 # This would FAIL:
-child = (parent.attenuate()
-    .capability("execute", {})  # FAILS (parent doesn't have "execute")
-    .grant(keypair))
+child = (parent.grant_builder()
+    .capability("execute")  # FAILS (parent doesn't have "execute")
+    .grant(key))
 ```
 
 ---
@@ -122,7 +125,7 @@ child = (parent.attenuate()
 
 ### What Tenuo Does NOT Protect Against
 
-**Container compromise**: If an attacker has both keypair and warrant, they have full access within that scope. Use separate containers with separate keypairs.
+**Container compromise**: If an attacker has both signing key and warrant, they have full access within that scope. Use separate containers with separate keys.
 
 **Malicious node code**: Same trust boundary as auth logic. Use code review and sandboxing.
 
@@ -192,7 +195,7 @@ warrant = (Warrant.mint_builder()
         "max_results": Range.max_value(10),       # Limit results per call
     })
     .ttl(60)  # 1 minute window
-    .mint(keypair))
+    .mint(key))
 ```
 
 ### Single-Use Warrants for Expensive Operations
@@ -206,7 +209,7 @@ async def safe_expensive_call(tool_name: str, params: dict):
         .capability(tool_name, params)
         .ttl(30)        # 30 second window
         .terminal()     # max_depth=0, cannot delegate
-        .mint(keypair))
+        .mint(key))
     
     async with grant(single_use):
         return await execute_tool(tool_name, params)
@@ -232,7 +235,7 @@ class BudgetedOrchestrator:
             .capability(task.tool, task.constraints)
             .ttl(30)
             .terminal()
-            .mint(self.keypair))
+            .mint(self.key))
         
         async with grant(warrant):
             return await task.execute()
@@ -445,10 +448,10 @@ await http_client.delete(url)
 
 ```python
 # Good: 5 minute TTL
-warrant = (Warrant.mint_builder()...ttl(300).mint(keypair))
+warrant = (Warrant.mint_builder()...ttl(300).mint(key))
 
 # Risky: 24 hour TTL
-warrant = (Warrant.mint_builder()...ttl(86400).mint(keypair))
+warrant = (Warrant.mint_builder()...ttl(86400).mint(key))
 ```
 
 ### 3. Principle of Least Privilege
@@ -469,9 +472,9 @@ with mint(
 
 ### 4. Separate SigningKeys per Trust Boundary
 
-- Control plane: One keypair
-- Each worker: Own keypair
-- Don't share keypairs across trust boundaries
+- Control plane: One signing key
+- Each worker: Own signing key
+- Don't share keys across trust boundaries
 
 ### 5. Use Strict Mode in Tests
 

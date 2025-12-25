@@ -378,9 +378,8 @@ async def read_file(
 @app.post("/admin/issue-warrant")
 async def issue_warrant():
     warrant = (Warrant.mint_builder()
-        .tool("search")
-        .tool("read_file")
-        .capability("read_file", {"path": Pattern("/data/*")})
+        .tool("search")  # No constraints
+        .capability("read_file", path=Pattern("/data/*"))  # With constraint
         .holder(issuer_key.public_key)
         .ttl(3600)
         .mint(issuer_key))
@@ -409,6 +408,36 @@ Enable detailed errors only for development:
 ```python
 configure_tenuo(app, expose_error_details=True)  # Development only!
 ```
+
+### Replay Protection
+
+For sensitive operations (e.g., payments), use `dedup_key` to prevent replay attacks during the PoP window:
+
+```python
+from tenuo.fastapi import TenuoGuard, SecurityContext
+import redis
+
+r = redis.Redis()
+
+@app.post("/payments/transfer")
+async def transfer(
+    ctx: SecurityContext = Depends(TenuoGuard("transfer"))
+):
+    # Generate unique ID for this specific request
+    req_id = ctx.warrant.dedup_key("transfer", ctx.args)
+    
+    # Check if seen in last 2 minutes
+    if r.exists(f"seen:{req_id}"):
+        raise HTTPException(400, "Replay detected")
+    
+    # Mark as seen (expires after PoP window)
+    r.setex(f"seen:{req_id}", 120, "1")
+    
+    process_payment()
+```
+
+> [!NOTE]
+> **Performance & Responsibility**: You are responsible for provisioning and maintaining the storage backend (e.g., Redis). Tenuo provides the deterministic key but does not manage the statestore. The latency and availability of this check depend entirely on your storage infrastructure.
 
 ### Warrant Scope
 

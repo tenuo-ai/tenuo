@@ -165,7 +165,7 @@ child = parent.delegate(worker, tool="read_file", path=file_path)
 cs = ConstraintSet()
 cs.insert("path", Exact(file_path))
 
-child = (parent.attenuate()
+child = (parent.grant_builder()
     .capability("read_file", cs)
     .terminal()
     .holder(worker.public_key)
@@ -184,7 +184,7 @@ cs = ConstraintSet()
 cs.insert("path", Pattern("/data/project-*/*.pdf"))
 cs.insert("max_results", Range(max=100))
 
-child = (parent.attenuate()
+child = (parent.grant_builder()
     .capability("read_file", cs)
     .capability("search", cs)
     .clearance(Clearance.EXTERNAL)
@@ -204,9 +204,9 @@ Full builder API when you need visibility and control.
 
 | Scenario                  | API                    | Example                         |
 |---------------------------|------------------------|---------------------------------|
-| Simple tool call          | `grant()`        | Reading a file, making a search |
-| Worker delegation         | `.delegate()`          | Orchestrator -> worker          |
-| Multi-level orchestration | `.attenuate()` builder | Complex agent graphs            |
+| Simple tool call          | `grant()`              | Reading a file, making a search |
+| Worker delegation         | `.grant_builder()`     | Orchestrator -> worker          |
+| Multi-level orchestration | `.grant_builder()`     | Complex agent graphs            |
 | Auditing/debugging        | `.diff()`              | Understanding delegation chains |
 
 ---
@@ -399,11 +399,18 @@ Most delegations should be terminal (cannot delegate further). This naturally li
 
 ```python
 # Default: terminal
-child = parent.attenuate().tool("read_file").holder(worker.public_key).delegate(parent_kp)
+child = (parent.grant_builder()
+    .tool("read_file")
+    .holder(worker.public_key)
+    .grant(parent_key))
 # child.max_depth = 0 (terminal)
 
 # Explicit: allow one more delegation
-child = parent.attenuate().tool("read_file").max_depth(1).holder(worker.public_key).delegate(parent_kp)
+child = (parent.grant_builder()
+    .tool("read_file")
+    .max_depth(1)
+    .holder(worker.public_key)
+    .grant(parent_key))
 # child.max_depth = 1
 ```
 
@@ -635,10 +642,10 @@ All Tenuo implementations MUST:
 
 ```python
 # Issue (at gateway/control plane)
-warrant = Warrant.issue(
-    tool="search,read_file",
-    keypair=issuer_keypair,
-    holder=agent_public_key,
+warrant = (Warrant.mint_builder()
+    .tool("search")
+    .tool("read_file")
+    .holder(agent_public_key)
     constraints={"path": Pattern("/data/*")},
     ttl_seconds=300,
     session_id="sess_xyz789",
@@ -976,10 +983,10 @@ Fluent API for creating narrower child warrants.
 ### Entry Point
 
 ```python
-builder = parent_warrant.attenuate()  # Returns Attenuator
+builder = parent_warrant.grant_builder()  # Returns GrantBuilder
 
 # Alias for discoverability
-builder = parent_warrant.narrow()     # Same thing
+builder = parent_warrant.grant_builder()  # Same thing
 ```
 
 ### Tool Restriction
@@ -1029,10 +1036,10 @@ builder = parent_warrant.narrow()     # Same thing
 
 ```python
 # Delegate to another holder (signing key = parent's holder)
-child_warrant = builder.delegate(parent_kp)
+child_warrant = builder.grant(parent_key)
 
 # Self-attenuation (same holder, narrower scope)
-narrow_warrant = builder.self_scoped()
+narrow_warrant = builder.grant(parent_key)
 ```
 
 ### Required Narrowing
@@ -1041,18 +1048,18 @@ Every delegation must narrow at least one dimension (tools, constraints, TTL, de
 
 ```python
 # Fails - no narrowing
-parent.attenuate().delegate(parent_kp)  # NarrowingRequired
+parent.grant_builder().grant(parent_key)  # NarrowingRequired
 
 # Succeeds
-parent.attenuate().tool("read_file").delegate(parent_kp)
-parent.attenuate().ttl(seconds=60).delegate(parent_kp)
-parent.attenuate().terminal().delegate(parent_kp)
+parent.grant_builder().tool("read_file").grant(parent_key)
+parent.grant_builder().ttl(60).grant(parent_key)
+parent.grant_builder().terminal().grant(parent_key)
 ```
 
 Escape hatch:
 
 ```python
-parent.attenuate().pass_through(reason="Sub-orchestrator needs full scope").delegate(parent_kp)
+parent.grant_builder().pass_through(reason="Sub-orchestrator needs full scope").grant(parent_key)
 ```
 
 ### Pass-Through Controls
@@ -1124,9 +1131,8 @@ For P-LLM/planner components that decide capabilities without executing tools.
 ### Issuer Warrant Structure
 
 ```python
-issuer_warrant = Warrant.issue_issuer(
-    keypair=control_plane_keypair,
-    holder=planner_pubkey,
+issuer_warrant = (Warrant.mint_builder()
+    .holder(planner_pubkey)
     
     # What tools can this issuer grant?
     issuable_tools=["read_file", "send_email", "query_db"],
@@ -1688,10 +1694,10 @@ secure_tools = protect_tools(
 **Escape hatch:** For legitimately unconstrained tools, use explicit acknowledgment:
 
 ```python
-warrant = (parent.attenuate()
+warrant = (parent.grant_builder()
     .tool("search")
     .unconstrained(reason="Internal search, trusted corpus only")
-    .delegate(parent_kp))
+    .grant(parent_key))
 ```
 
 ### LangChain Integration
@@ -1700,11 +1706,11 @@ warrant = (parent.attenuate()
 from tenuo.langchain import protect_tools
 from tenuo import SigningKey, Warrant, Pattern
 
-keypair = SigningKey.generate()
-warrant = Warrant.issue(
-    tool="search,read_file",
-    keypair=keypair,
-    holder=keypair.public_key(),
+key = SigningKey.generate()
+warrant = (Warrant.mint_builder()
+    .tool("search")
+    .tool("read_file")
+    .holder(key.public_key)
     constraints={"path": Pattern("/data/*")},
     ttl_seconds=3600
 )
@@ -1792,7 +1798,7 @@ Every delegation produces a **diff** showing exactly what changed. First-class a
 
 ```python
 # Human-readable diff (preview before delegation)
-builder = parent.attenuate().tool("read_file").constraint("path", "/data/q3.pdf")
+builder = parent.grant_builder().tool("read_file").constraint("path", "/data/q3.pdf")
 print(builder.diff())
 
 # Machine-readable diff
@@ -1800,7 +1806,7 @@ diff = builder.diff_structured()
 print(diff.to_json())
 
 # After delegation, receipt is attached
-child = builder.delegate(parent_kp)
+child = builder.grant(parent_key)
 receipt = child.delegation_receipt  # Same structure as diff_structured()
 ```
 
@@ -2209,8 +2215,7 @@ grant(tool, **constraints) -> ContextManager
 Warrant.delegate(holder, tool=, **constraints) -> Warrant
 
 # Tier 3: Full control
-Warrant.attenuate() -> Attenuator
-Warrant.narrow() -> Attenuator  # Alias
+Warrant.grant_builder() -> GrantBuilder
 ```
 
 ### Context (`tenuo.context`)
@@ -2286,7 +2291,7 @@ compiled.validate()  # Check for incompatible extraction sources
 | `configure()` global config                                             | [SHIPPED] |
 | `mint()` / `mint_sync()`                                      | [SHIPPED] |
 | `grant()`                                                         | [SHIPPED] |
-| `.attenuate()` builder                                                  | [SHIPPED] |
+| `.grant_builder()` builder                                              | [SHIPPED] |
 | **Warrant Model**                                                       |           |
 | Warrant (execution + issuer types)                                      | [SHIPPED] |
 | Constraints (Exact, Pattern, Range, OneOf, NotOneOf, Regex, Wildcard)   | [SHIPPED] |

@@ -920,9 +920,9 @@ worker_warrant = my_warrant.delegate(
 When you need explicit control over every warrant property:
 
 ```python
-worker_warrant = (my_warrant.attenuate()
-    .capability("search", {"query": Pattern("*public*")})
-    .capability("read_file", {"path": Pattern("/data/*")})
+worker_warrant = (my_warrant.grant_builder()
+    .capability("search", query=Pattern("*public*"))
+    .capability("read_file", path=Pattern("/data/*"))
     .holder(worker_public_key)
     .clearance(Clearance.EXTERNAL)
     .ttl(60)
@@ -1001,8 +1001,8 @@ child = parent.delegate(
 
 **Builder pattern (for complex attenuation):**
 ```python
-child = (parent.attenuate()
-    .capability("search", {"query": Pattern("*public*")})
+child = (parent.grant_builder()
+    .capability("search", query=Pattern("*public*"))
     .holder(worker_pubkey)
     .clearance(Clearance.EXTERNAL)
     .ttl(300)
@@ -1388,8 +1388,8 @@ unbound = bound.unbind()
 headers = unbound.auth_headers(key, "tool", args)  # Must pass key
 
 # Key-bound warrant is still a Warrant (works everywhere)
-authorizer.verify(bound)  # Works
-bound.attenuate()         # Works
+authorizer.verify(bound)    # Works
+bound.grant_builder()       # Works
 ```
 
 #### Implementation Note
@@ -1955,7 +1955,10 @@ keyring = Keyring(root=SigningKey.from_env("TENUO_ROOT_KEY"))
 authorizer = Authorizer(trusted_roots=[keyring.root.public_key])
 
 # Use with warrant issuance
-warrant = Warrant.issue(keypair=keyring.root, ...)
+warrant = (Warrant.mint_builder()
+    .holder(agent_key.public_key)
+    .ttl(3600)
+    .mint(keyring.root))
 ```
 
 ### Key Rotation Pattern
@@ -1970,7 +1973,10 @@ keyring = Keyring(
 authorizer = Authorizer(trusted_roots=keyring.all_public_keys)
 
 # New warrants signed with current key
-warrant = Warrant.issue(keypair=keyring.root, ...)
+warrant = (Warrant.mint_builder()
+    .holder(agent_key.public_key)
+    .ttl(3600)
+    .mint(keyring.root))
 
 # Old warrants (signed with v1) still verify
 authorizer.verify(old_warrant)  # Works
@@ -2548,8 +2554,8 @@ Delegate narrower warrants as you traverse the graph:
 @tenuo_node(tool="orchestrate", key_id="orchestrator")
 async def orchestrator_node(state: AgentState, key: SigningKey):
     # Key injected by decorator, not from state
-    research_warrant = (state.warrant.attenuate()
-        .capability("search", {"query": Pattern(f"*{state.task}*")})
+    research_warrant = (state.warrant.grant_builder()
+        .capability("search", query=Pattern(f"*{state.task}*"))
         .holder(key_registry.get("researcher").public_key)
         .ttl(60)
         .terminal()

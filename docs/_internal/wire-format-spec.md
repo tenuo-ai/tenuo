@@ -253,15 +253,15 @@ Implementations MUST verify ALL invariants. Missing checks create security vulne
 ```rust
 // WRONG - violates I1
 let child = parent.attenuate()
-    .holder(child_kp.public_key())
-    .build(&child_kp);  // Child signs - WRONG!
+    .authorized_holder(child_key.public_key())
+    .build(&child_key);  // Child signs - WRONG!
 ```
 
 **✅ Correct:**
 ```rust
 let child = parent.attenuate()
-    .holder(child_kp.public_key())
-    .build(&parent_kp);  // Parent's holder signs - CORRECT
+    .authorized_holder(child_key.public_key())
+    .build(&parent_key);  // Parent's holder signs - CORRECT
 ```
 
 **❌ Error 2: Missing issuer check in verifier**

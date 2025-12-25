@@ -116,12 +116,14 @@ config = McpConfig.from_file("mcp-config.yaml")
 compiled = CompiledMcpConfig.compile(config)
 
 # 2. Create warrant (usually done by control plane)
-control_keypair = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
-warrant = Warrant.issue(
-    tools={"filesystem_read": Constraints.for_tool("filesystem_read", {
-        "path": Pattern("/var/log/*"),
-        "max_size": Range.max_value(1024 * 1024)
-    })},
+control_key = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
+warrant = (Warrant.mint_builder()
+    .capability("filesystem_read",
+        path=Pattern("/var/log/*"),
+        max_size=Range.max_value(1024 * 1024))
+    .holder(control_key.public_key)
+    .ttl(3600)
+    .mint(control_key)
     ttl_seconds=3600,
     keypair=control_keypair,
     holder=control_keypair.public_key
@@ -395,11 +397,11 @@ with mint_sync(Capability("filesystem_read", path="/var/log/*")):
 from tenuo import Authorizer, Warrant
 
 # Create warrant
-warrant = Warrant.issue(
-    tools={"filesystem_read": Constraints.for_tool("filesystem_read", {"path": Pattern("/var/log/*")})},
-    ttl_seconds=3600,
-    keypair=keypair,
-    holder=keypair.public_key
+warrant = (Warrant.mint_builder()
+    .capability("filesystem_read", path=Pattern("/var/log/*"))
+    .holder(key.public_key)
+    .ttl(3600)
+    .mint(key)
 )
 
 # Extract constraints from MCP call
@@ -414,21 +416,20 @@ authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop
 
 ```python
 # Control plane issues root warrant
-root_warrant = Warrant.issue(
-    tools={
-        "filesystem_read": Constraints.for_tool("filesystem_read", {"path": Pattern("/data/*")}),
-        "database_query": Constraints.for_tool("database_query", {"path": Pattern("/data/*")})
-    },
-    ttl_seconds=3600,
-    keypair=control_keypair,
+root_warrant = (Warrant.mint_builder()
+    .capability("filesystem_read", path=Pattern("/data/*"))
+    .capability("database_query", path=Pattern("/data/*"))
+    .holder(orchestrator_key.public_key)
+    .ttl(3600)
+    .mint(control_key)
     holder=orchestrator_keypair.public_key
 )
 
 # Orchestrator attenuates for worker
-worker_warrant = root_warrant.attenuate() \
-    .capability("filesystem_read", {"path": Pattern("/data/reports/*")}) \
-    .holder(worker_keypair.public_key) \
-    .grant(orchestrator_keypair)  # Orchestrator signs (they hold the parent)
+worker_warrant = (root_warrant.grant_builder()
+    .capability("filesystem_read", path=Pattern("/data/reports/*"))
+    .holder(worker_key.public_key)
+    .grant(orchestrator_key))  # Orchestrator signs (they hold the parent)
 
 # Worker uses attenuated warrant
 # (narrower permissions, cryptographic proof of delegation)
@@ -492,10 +493,11 @@ constraints = {"path": Pattern("/var/log/*")}
 MCP tools are often high-risk (filesystem, database). Use short TTLs:
 
 ```python
-warrant = Warrant.issue(
-    tools={"filesystem_write": Constraints.for_tool("filesystem_write", {})},
-    ttl_seconds=300,  # 5 minutes
-    ...
+warrant = (Warrant.mint_builder()
+    .tool("filesystem_write")
+    .holder(key.public_key)
+    .ttl(300)  # 5 minutes
+    .mint(key)
 )
 ```
 

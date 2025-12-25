@@ -112,34 +112,30 @@ That's exactly what Tenuo warrants encode:
 # CFO-level warrant
 cfo_warrant = (Warrant.mint_builder()
     .tool("spend").tool("approve").tool("audit")
-    .capability("spend", {
-        "amount": Range(max=1_000_000),
-        "category": Pattern("*"),
-        "vendor": Pattern("*")
-    })
-    .holder(cfo_keypair.public_key)
+    .capability("spend",
+        amount=Range(max=1_000_000),
+        category=Pattern("*"),
+        vendor=Pattern("*"))
+    .holder(cfo_key.public_key)
     .ttl(86400)
-    .mint(cfo_keypair)
-)
+    .mint(cfo_key))
 
 # Attenuate for intern
-intern_warrant = (cfo_warrant.attenuate()
-    .capability("spend", {
-        "amount": Range(max=500),
-        "category": OneOf(["travel", "meals"])
-    })
-    .holder(intern_keypair.public_key)
+intern_warrant = (cfo_warrant.grant_builder()
+    .capability("spend",
+        amount=Range(max=500),
+        category=OneOf(["travel", "meals"]))
+    .holder(intern_key.public_key)
     .ttl(3600)
-    .grant(cfo_keypair)
-)
+    .grant(cfo_key))
 
 # ...
 
 # This raises MonotonicityError
-bad_warrant = (intern_warrant.attenuate()
-    .capability("spend", {"amount": Range(max=10000)})
-    .grant(intern_keypair)  # Can't exceed parent's $500
-)```
+bad_warrant = (intern_warrant.grant_builder()
+    .capability("spend", amount=Range(max=10000))
+    .grant(intern_key))  # Can't exceed parent's $500
+```
 Attenuation isn't policy. It's physics.
 
 ## Part 3: Authority That Lives and Dies With the Task
@@ -177,30 +173,28 @@ async def handle_user_request(user_request: str):
     )
     
     # Phase 1: Research (read-only, scoped to reports)
-    research_warrant = (warrant.attenuate()
-        .capability("read_file", {"path": Pattern("/data/reports/*")})
-        .holder(researcher_keypair.public_key)
+    research_warrant = (warrant.grant_builder()
+        .capability("read_file", path=Pattern("/data/reports/*"))
+        .holder(researcher_key.public_key)
         .ttl(60)
-        .grant(orchestrator_keypair)
-    )
-    findings = await researcher.execute(research_warrant, researcher_keypair)
+        .grant(orchestrator_key))
+    findings = await researcher.execute(research_warrant, researcher_key)
     
     # Phase 2: Write summary (write-only, narrower path)
-    write_warrant = (warrant.attenuate()
-        .capability("write_file", {"path": Pattern("/data/output/summary.md")})
-        .holder(writer_keypair.public_key)
+    write_warrant = (warrant.grant_builder()
+        .capability("write_file", path=Pattern("/data/output/summary.md"))
+        .holder(writer_key.public_key)
         .ttl(30)
-        .grant(orchestrator_keypair)
-    )
-    await writer.execute(write_warrant, writer_keypair, findings)
+        .grant(orchestrator_key))
+    await writer.execute(write_warrant, writer_key, findings)
 
 # Researcher: can only read_file within /data/reports/*
 @guard(tool="read_file")
 def read_file(path: str) -> str:
     return open(path).read()
 
-async def research(warrant: Warrant, keypair: SigningKey):
-    with warrant_scope(warrant), key_scope(keypair):
+async def research(warrant: Warrant, key: SigningKey):
+    with warrant_scope(warrant), key_scope(key):
         read_file("/data/reports/q3.md")      # ✓ Allowed (tool + path match)
         read_file("/data/secrets/keys.txt")   # ✗ Path not in warrant
         read_file("/etc/passwd")              # ✗ Path not in warrant

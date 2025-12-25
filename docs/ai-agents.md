@@ -76,34 +76,37 @@ User Request --> [P-LLM Planner] -------------> [Q-LLM Executor] --> Tool Server
 
 ### Implementation Pattern
 
-**Correct: P-LLM Issues to Q-LLM**
+**Correct: P-LLM Delegates to Q-LLM**
 
 ```python
-# P-LLM: Holds an issuer warrant (cannot execute)
-issuer_warrant = Warrant.issue_issuer(
-    issuable_tools=["search", "read_file"],
-    keypair=planner_kp,
-    clearance=Clearance.INTERNAL,  # Optional
-)
+from tenuo import Warrant, Capability, Pattern, SigningKey
 
-# P-LLM creates execution warrant for Q-LLM
-exec_warrant = (issuer_warrant.issue()
-    .tool("search")
-    .capability("search", {"query": Pattern("*quarterly*")})
-    .holder(q_llm_kp.public_key)  # Different identity!
-    .issue(planner_kp))
+# P-LLM (Planner) holds a broad warrant from the control plane
+planner_warrant = (Warrant.mint_builder()
+    .capability("search", query=Pattern("*"))
+    .capability("read_file", path=Pattern("/data/*"))
+    .holder(planner_key.public_key)
+    .ttl(3600)
+    .mint(control_plane_key))
+
+# P-LLM delegates narrower scope to Q-LLM (Executor)
+executor_warrant = (planner_warrant.grant_builder()
+    .capability("search", query=Pattern("*quarterly*"))
+    .holder(executor_key.public_key)  # Different identity!
+    .ttl(300)
+    .grant(planner_key))
 ```
 
 **Blocked: Self-Issuance**
 
-Tenuo strictly enforces that a planner cannot grant execution authority to itself.
+Tenuo strictly enforces that an agent cannot delegate to itself (holder ≠ issuer).
 
 ```python
-# This FAILS with SelfIssuanceProhibited error:
-bad_warrant = (issuer_warrant.issue()
-    .holder(planner_kp.public_key)  # Same as issuer!
-    .issue(planner_kp))
-# Error: "issuer cannot grant execution warrants to themselves"
+# This FAILS - cannot delegate to yourself
+bad_warrant = (planner_warrant.grant_builder()
+    .holder(planner_key.public_key)  # Same as issuer!
+    .grant(planner_key))
+# Error: "issuer and holder cannot be the same"
 ```
 
 ---

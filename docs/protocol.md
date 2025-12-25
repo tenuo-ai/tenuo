@@ -67,16 +67,13 @@ Warrant {
 Authority to invoke specific tools with specific constraints:
 
 ```python
-from tenuo import Warrant, Constraints, Exact
+from tenuo import Warrant, Exact
 
-execution_warrant = Warrant.issue(
-    tools={"read_file": Constraints.for_tool("read_file", {
-        "path": Exact("/data/q3.pdf")
-    })},
-    keypair=issuer_keypair,
-    holder=worker_public_key,
-    ttl_seconds=60,
-)
+execution_warrant = (Warrant.mint_builder()
+    .capability("read_file", path=Exact("/data/q3.pdf"))
+    .holder(worker_public_key)
+    .ttl(60)
+    .mint(issuer_key))
 ```
 
 ### Issuer Warrant
@@ -84,13 +81,15 @@ execution_warrant = Warrant.issue(
 Authority to issue execution warrants (cannot execute tools directly):
 
 ```python
-issuer_warrant = Warrant.issue_issuer(
-    keypair=control_plane_keypair,
-    holder=planner_pubkey,
-    issuable_tools=["read_file", "send_email", "query_db"],
-    max_issue_depth=1,
-    ttl_seconds=3600,
-)
+# Issuer warrants are a v0.2 feature. In v0.1, use execution warrants
+# and delegate with grant_builder() for multi-level orchestration.
+parent_warrant = (Warrant.mint_builder()
+    .tool("read_file")
+    .tool("send_email")
+    .tool("query_db")
+    .holder(planner_pubkey)
+    .ttl(3600)
+    .mint(control_plane_key))
 ```
 
 ---
@@ -166,8 +165,8 @@ When attenuating a warrant (delegating to another entity):
 ```rust
 // Parent's holder signs the child warrant
 let child = parent.attenuate()
-    .holder(child_kp.public_key())
-    .build(&parent_kp)?;  // parent_kp is parent's holder keypair
+    .authorized_holder(child_key.public_key())
+    .build(&parent_key)?;  // parent_key is parent's holder key
 
 // Result:
 // child.issuer == parent.holder ✅  (delegation authority)
@@ -222,12 +221,12 @@ Every delegation **must narrow at least one dimension**:
 # POLA: Child starts with NO capabilities, must explicitly grant them
 
 # Explicit capability (recommended)
-parent.attenuate().capability("read_file", {}).grant(parent_kp)
+parent.grant_builder().capability("read_file").grant(parent_key)
 
 # Or inherit all, then narrow
-parent.attenuate().inherit_all().tools(["read_file"]).grant(parent_kp)
-parent.attenuate().inherit_all().ttl(60).grant(parent_kp)
-parent.attenuate().inherit_all().terminal().grant(parent_kp)
+parent.grant_builder().inherit_all().tools(["read_file"]).grant(parent_key)
+parent.grant_builder().inherit_all().ttl(60).grant(parent_key)
+parent.grant_builder().inherit_all().terminal().grant(parent_key)
 ```
 
 ---
@@ -508,11 +507,11 @@ Tool names starting with `tenuo:` are **reserved for framework use** and will be
 
 ```python
 # ❌ This will fail
-warrant = Warrant.mint_builder().tool("tenuo:revoke", {}).mint(kp)
+warrant = Warrant.mint_builder().tool("tenuo:revoke").mint(key)
 # Error: Reserved tool namespace
 
 # ✅ Use your own namespace
-warrant = Warrant.mint_builder().tool("my_app:revoke", {}).mint(kp)
+warrant = Warrant.mint_builder().tool("my_app:revoke").mint(key)
 ```
 
 **Rationale**: Prevents collision between user-defined tools and future framework features.
