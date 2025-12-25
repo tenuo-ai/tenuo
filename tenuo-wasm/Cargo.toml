@@ -1,6 +1,6 @@
 [package]
 name = "tenuo-wasm"
-version = "0.1.0-alpha.10"
+version = "0.1.0-alpha.11"
 edition = "2021"
 authors = ["Tenuo Contributors"]
 description = "WASM bindings for Tenuo"

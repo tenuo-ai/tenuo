@@ -1938,7 +1938,7 @@ dependencies = [
 
 [[package]]
 name = "tenuo"
-version = "0.1.0-alpha.10"
+version = "0.1.0-alpha.11"
 dependencies = [
  "base64 0.22.1",
  "cel-interpreter",
@@ -1977,7 +1977,7 @@ dependencies = [
 
 [[package]]
 name = "tenuo-python"
-version = "0.1.0-alpha.10"
+version = "0.1.0-alpha.11"
 dependencies = [
  "pyo3",
  "tenuo",

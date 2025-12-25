@@ -381,8 +381,8 @@ class GrantBuilder:
             self._rust_builder = _rust_builder
         else:
             # Get Rust builder directly from warrant (bypass Python wrapper)
-            from .warrant_ext import _original_grant_builder
-            self._rust_builder = _original_grant_builder(parent)
+            from .warrant_ext import _original_attenuate_builder
+            self._rust_builder = _original_attenuate_builder(parent)
     
     def parent(self) -> Warrant:
         """Get the parent warrant."""
