@@ -159,6 +159,21 @@ spec:
 
 ---
 
+## Denial-of-Service (DoS) Protection
+
+Tenuo is designed to protect validation services from CPU exhaustion attacks.
+
+### Fail-Fast Cryptography
+The authorization flow is strictly ordered to reject unauthorized requests before performing expensive logic:
+
+1. **Expiration Check** (Values comparison): $\mathcal{O}(1)$ - Fails instantly if expired.
+2. **Proof-of-Possession** (Ed25519 Verify): $\mathcal{O}(1)$ - Verifies the request signature. Fails fast if signature is invalid or missing.
+3. **Constraint Matching** (Regex/Looping): $\mathcal{O}(N)$ - Only executed **after** the request is cryptographically authenticated.
+
+**Why this matters**: An attacker cannot force the server to evaluate complex regex or deep constraint trees by sending 100k requests, because looking up constraints happens *after* the signature check. If they don't have a valid private key, the request is dropped with minimal CPU cost.
+
+---
+
 ## Cost Containment
 
 Prompt injection attacks can cause financial damage by tricking agents into making expensive API calls. Tenuo provides **stateless** mechanisms to contain costs while your infrastructure handles rate limiting.
