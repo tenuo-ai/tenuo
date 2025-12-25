@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "wasm": "cd ../tenuo-wasm && wasm-pack build --release --target web --out-dir pkg && cp pkg/* ../tenuo-explorer/src/wasm/",
     "dev": "vite",
+    "dev:fresh": "npm run wasm && vite",
+    "prebuild": "npm run wasm",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest",
@@ -12,7 +15,8 @@
     "test:coverage": "vitest --coverage",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:all": "npm test && npm run test:e2e"
+    "test:all": "npm test && npm run test:e2e",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
     "react": "^18.2.0",

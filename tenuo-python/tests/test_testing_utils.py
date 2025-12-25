@@ -1,26 +1,26 @@
 
 import unittest
 import os
+import sys
 from unittest.mock import MagicMock
 
-# Mock tenuo_core BEFORE tenuo imports
-import sys
-sys.modules["tenuo_core"] = MagicMock()
-sys.modules["tenuo_core"].SigningKey = MagicMock()  # type: ignore[attr-defined]
-sys.modules["tenuo_core"].Warrant = MagicMock()  # type: ignore[attr-defined]
+# External dependencies might still be missing in some minimal envs, so we conditionally mock them
+# BUT we always want real tenuo_core to pinpoint integration issues.
 
-# Mock external dependencies
-sys.modules["typing_extensions"] = MagicMock()
-class MockAnnotated:
-    def __class_getitem__(cls, item):  # type: ignore[misc]
-        return item
-sys.modules["typing_extensions"].Annotated = MockAnnotated  # type: ignore[attr-defined]
+# Mock external dependencies if missing
+sys.modules.setdefault("typing_extensions", MagicMock())
+if "typing_extensions" in sys.modules and isinstance(sys.modules["typing_extensions"], MagicMock):
+    class MockAnnotated:
+        def __class_getitem__(cls, item):  # type: ignore[misc]
+            return item
+    sys.modules["typing_extensions"].Annotated = MockAnnotated  # type: ignore[attr-defined]
 
-sys.modules["fastapi"] = MagicMock()
-sys.modules["pydantic"] = MagicMock()
-class MockBaseModel:
-    pass
-sys.modules["pydantic"].BaseModel = MockBaseModel  # type: ignore[attr-defined]
+sys.modules.setdefault("fastapi", MagicMock())
+sys.modules.setdefault("pydantic", MagicMock())
+if "pydantic" in sys.modules and isinstance(sys.modules["pydantic"], MagicMock):
+    class MockBaseModel:
+        pass
+    sys.modules["pydantic"].BaseModel = MockBaseModel  # type: ignore[attr-defined]
 
 # Set test mode
 os.environ["TENUO_TEST_MODE"] = "1"

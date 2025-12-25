@@ -110,6 +110,9 @@ if [ -d ".venv" ]; then
     echo "  → Linting with ruff..."
     ruff check .
     
+    echo "  → Verifying tenuo_core extension..."
+    python3 -c "import tenuo_core; print(f'✓ Found tenuo_core at {tenuo_core.__file__}')" || { echo "❌ Failed to import real tenuo_core"; exit 1; }
+
     echo "  → Type checking with mypy..."
     mypy  # Uses mypy.ini config (files = tenuo/)
     

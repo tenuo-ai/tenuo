@@ -409,6 +409,9 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
     
     Use this for debugging authorization failures.
     
+    The returned object includes a `suggestion` with a link to the Tenuo Explorer,
+    pre-filled with the warrant and request details for interactive debugging.
+    
     Args:
         tool: Tool name to check
         args: Tool arguments (optional)
@@ -423,9 +426,24 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
             print(f"Field: {result.field}")
             print(f"Suggestion: {result.suggestion}")
     """
-    args = args or {}
+    # Create dynamic playground link
+    import json
     
-    playground_hint = " Debug at: https://tenuo.dev/explorer/"
+    playground_url = "https://tenuo.dev/explorer"
+    try:
+        # Construct state object matching App.tsx expectation
+        state = {
+            "warrant": self.to_base64() if hasattr(self, 'to_base64') else str(self),
+            "tool": tool,
+            "args": json.dumps(args) if args else "{}"
+        }
+        # Encode state: JSON -> Bytes -> Base64
+        state_json = json.dumps(state)
+        state_b64 = base64.b64encode(state_json.encode('utf-8')).decode('ascii')
+        playground_hint = f" Debug at: {playground_url}?s={state_b64}"
+    except Exception:
+        # Fallback if encoding fails
+        playground_hint = f" Debug at: {playground_url}"
     
     # Check if warrant is expired
     if self.is_expired():
