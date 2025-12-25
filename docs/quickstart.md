@@ -173,7 +173,7 @@ configure(
 
 # After analyzing logs, switch to enforce
 configure(
-    issuer_key=issuer_keypair,
+    issuer_key=issuer_key,
     mode="enforce",  # Block violations
     trusted_roots=[control_plane_pubkey],
 )
@@ -349,10 +349,9 @@ issuer_key = SigningKey.from_env("ISSUER_KEY")       # From secure storage
 orchestrator_pubkey = PublicKey.from_env("ORCH_PUBKEY")  # Orchestrator's public key
 
 warrant = (Warrant.mint_builder()
-    .capability("manage_infrastructure", {
-        "cluster": Pattern("staging-*"),
-        "replicas": Range.max_value(15),
-    })
+    .capability("manage_infrastructure",
+        cluster=Pattern("staging-*"),
+        replicas=Range.max_value(15))
     .holder(orchestrator_pubkey)
     .ttl(3600)
     .mint(issuer_key))
@@ -384,9 +383,10 @@ worker_warrant = warrant.grant(
 ```python
 # ── WORKER ──
 # Worker signs Proof-of-Possession with their private key
+worker_key = SigningKey.from_env("WORKER_KEY")
 args = {"cluster": "staging-web", "replicas": 5}
 pop_sig = worker_warrant.sign(
-    worker_keypair, "manage_infrastructure", args
+    worker_key, "manage_infrastructure", args
 )
 
 # Verify authorization
@@ -405,7 +405,7 @@ print(f"Authorized: {authorized}")  # True
 Use `why_denied()` for detailed diagnostics:
 
 ```python
-result = warrant.why_denied("read_file", {"path": "/etc/passwd"})
+result = warrant.why_denied("read_file", path="/etc/passwd")
 if result.denied:
     print(f"Denied: {result.deny_code}")
     print(f"Field: {result.field}")

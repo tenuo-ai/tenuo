@@ -48,8 +48,8 @@ from tenuo.mcp import SecureMCPClient
 from tenuo import configure, mint, Capability, Pattern, SigningKey
 
 # 1. Configure Tenuo
-keypair = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
-configure(issuer_key=keypair)
+key = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
+configure(issuer_key=key)
 
 # 2. Connect to MCP server
 # Automatically discovers tools and wraps them with authorization
@@ -123,11 +123,7 @@ warrant = (Warrant.mint_builder()
         max_size=Range.max_value(1024 * 1024))
     .holder(control_key.public_key)
     .ttl(3600)
-    .mint(control_key)
-    ttl_seconds=3600,
-    keypair=control_keypair,
-    holder=control_keypair.public_key
-)
+    .mint(control_key))
 
 # 3. Handle MCP tool call
 # (Simulated MCP arguments)
@@ -140,8 +136,8 @@ mcp_arguments = {
 result = compiled.extract_constraints("filesystem_read", mcp_arguments)
 
 # 5. Authorize with PoP signature
-pop_sig = warrant.sign(control_keypair, "filesystem_read", dict(result.constraints))
-authorizer = Authorizer(trusted_roots=[control_keypair.public_key])
+pop_sig = warrant.sign(control_key, "filesystem_read", dict(result.constraints))
+authorizer = Authorizer(trusted_roots=[control_key.public_key])
 authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop_sig))
 
 # ✓ Authorized - proceed to execute tool
@@ -184,8 +180,8 @@ from tenuo import McpConfig, CompiledMcpConfig, Authorizer, SigningKey, Warrant,
 from tenuo import guard, configure, mint_sync
 
 # 1. Configure Tenuo
-control_keypair = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
-configure(issuer_key=control_keypair)
+control_key = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
+configure(issuer_key=control_key)
 
 # 2. Load MCP configuration
 config = McpConfig.from_file("mcp-config.yaml")
@@ -408,7 +404,7 @@ warrant = (Warrant.mint_builder()
 result = compiled.extract_constraints("filesystem_read", arguments)
 
 # Authorize
-pop_sig = warrant.sign(keypair, "filesystem_read", dict(result.constraints))
+pop_sig = warrant.sign(key, "filesystem_read", dict(result.constraints))
 authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop_sig))
 ```
 
@@ -421,9 +417,7 @@ root_warrant = (Warrant.mint_builder()
     .capability("database_query", path=Pattern("/data/*"))
     .holder(orchestrator_key.public_key)
     .ttl(3600)
-    .mint(control_key)
-    holder=orchestrator_keypair.public_key
-)
+    .mint(control_key))
 
 # Orchestrator attenuates for worker
 worker_warrant = (root_warrant.grant_builder()

@@ -388,7 +388,7 @@ kp = SigningKey.generate()
 configure(issuer_key=kp, dev_mode=True)
 
 # Wrap tools
-protected_tools = guard_tools([search_tool, calculator], issuer_keypair=kp)
+protected_tools = guard_tools([search_tool, calculator], issuer_key=kp)
 
 # Create agent with protected tools
 agent = create_openai_tools_agent(llm, protected_tools, prompt)
@@ -412,7 +412,7 @@ kp = SigningKey.generate()
 # One line to add protection
 protected = guard_agent(
     executor,
-    issuer_keypair=kp,
+    issuer_key=kp,
     capabilities=[
         Capability("search"),
         Capability("read_file", path=Pattern("/data/*")),
@@ -428,7 +428,7 @@ result = protected.invoke({"input": "Read /data/report.txt"})
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `agent_or_executor` | `Any` | AgentExecutor, RunnableAgent, or agent with tools |
-| `issuer_keypair` | `SigningKey` | Signing key (enables dev_mode if provided) |
+| `issuer_key` | `SigningKey` | Signing key (enables dev_mode if provided) |
 | `capabilities` | `List[Capability]` | Capabilities to scope the agent to |
 | `strict` | `bool` | Require constraints for critical tools |
 | `warn_on_missing` | `bool` | Log warnings for missing warrants |

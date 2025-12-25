@@ -23,8 +23,8 @@ from tenuo.langgraph import TenuoToolNode
 
 # Tier 1 agent: can only refund up to $50
 tier1_warrant = (Warrant.mint_builder()
-    .capability("lookup_order", {})
-    .capability("process_refund", {"amount": Range(0, 50)})
+    .capability("lookup_order")
+    .capability("process_refund", amount=Range(0, 50))
     .holder(tier1_agent_key.public_key)
     .ttl(3600)
     .mint(control_plane_key))
@@ -319,8 +319,9 @@ def orchestrator(state, bound_warrant: BoundWarrant):
     # Create narrower warrant for worker
     worker_warrant = bound_warrant.grant(
         to=worker_pubkey,
-        allow={"search": {"query": Pattern("safe*")}},
-        ttl=60
+        allow=["search"],
+        ttl=60,
+        query=Pattern("safe*")
     )
     
     # Pass delegated warrant in state
@@ -396,7 +397,7 @@ This prevents attackers from learning your constraint boundaries.
 ```python
 # ❌ This will fail
 state["bound_warrant"] = bound_warrant  # TypeError on checkpoint
-```
+
 # ✅ Correct: unbind before storing
 state["warrant"] = bound_warrant.warrant  # Just the warrant (serializable)
 ```

@@ -59,3 +59,7 @@ tenuo-core/check.log
 results/
 *.log
 tenuo-core/benchmark_results.txt
+
+# Generated docs (built in CI)
+docs/reference/
+docs/vendor/

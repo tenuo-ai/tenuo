@@ -553,10 +553,7 @@ warrant = (Warrant.mint_builder()
         budget_check=CEL("budget < revenue * 0.1 && budget > 0"))
     .holder(key.public_key)
     .ttl(3600)
-    .mint(key)
-    holder=holder_pubkey,
-    ttl_seconds=3600
-)
+    .mint(key))
 
 # When tool is called with:
 # create_campaign(budget=5000, revenue=100000, ...)
@@ -611,10 +608,7 @@ warrant = (Warrant.mint_builder()
         freshness=CEL("time_since(created_at) < 86400"))
     .holder(key.public_key)
     .ttl(3600)
-    .mint(key)
-    holder=holder_pubkey,
-    ttl_seconds=3600
-)
+    .mint(key))
 ```
 
 **Network Example:**
@@ -627,10 +621,7 @@ warrant = (Warrant.mint_builder()
         network=CEL("net_in_cidr(source_ip, '10.0.0.0/8')"))
     .holder(key.public_key)
     .ttl(3600)
-    .mint(key)
-    holder=holder_pubkey,
-    ttl_seconds=3600
-)
+    .mint(key))
 ```
 
 #### CEL Attenuation
