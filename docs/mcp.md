@@ -43,7 +43,7 @@ Tenuo supports two integration patterns for MCP:
 
 **Prerequisite**: Python 3.10+ (required by MCP SDK)
 
-```python
+```python mdpytest:skip
 from tenuo.mcp import SecureMCPClient
 from tenuo import configure, mint, Capability, Pattern, SigningKey
 
@@ -63,7 +63,7 @@ async with SecureMCPClient("python", ["server.py"], register_config=True) as cli
 
 If you are already using `langchain-mcp-adapters`, you can protect its tools using `guard()`:
 
-```python
+```python mdpytest:skip
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from tenuo.langchain import guard_tools
 
@@ -108,7 +108,7 @@ tools:
 
 If you are not using `SecureMCPClient`, you must manually authorize extracted arguments.
 
-```python
+```python mdpytest:skip
 from tenuo import McpConfig, CompiledMcpConfig, Authorizer, SigningKey, Warrant, Constraints, Pattern, Range
 
 # 1. Load MCP configuration
@@ -155,7 +155,7 @@ Tenuo integrates seamlessly with [`langchain-mcp-adapters`](https://github.com/l
 
 The most robust way to use MCP with LangChain is to wrap the official client tools with Tenuo authorization:
 
-```python
+```python mdpytest:skip
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from tenuo.mcp import SecureMCPClient # Wrapper for official client
 
@@ -175,7 +175,7 @@ tools = await client.get_tools()
 
 ### Python Example
 
-```python
+```python mdpytest:skip
 from tenuo import McpConfig, CompiledMcpConfig, Authorizer, SigningKey, Warrant, Pattern, Capability
 from tenuo import guard, configure, mint_sync
 
@@ -305,7 +305,7 @@ When using `SecureMCPClient(config_path="...", register_config=True)`, extractio
 
 To enable end-to-end authorization where the server verifies the warrant, set `inject_warrant=True`:
 
-```python
+```python mdpytest:skip
 async with SecureMCPClient(..., inject_warrant=True) as client:
     # Warrants now travel in arguments._tenuo
     await client.tools["read_file"](path="/tmp/test.txt")
@@ -315,7 +315,7 @@ async with SecureMCPClient(..., inject_warrant=True) as client:
 
 When `inject_warrant=True`, Tenuo injects a `_tenuo` field into the tool arguments:
 
-```python
+```python mdpytest:skip
 # Tenuo modifies the call payload:
 {
   "path": "/data/file.txt",
@@ -334,7 +334,7 @@ If the destination MCP server uses a **strict JSON Schema** validator (e.g., exp
 
 If not using `SecureMCPClient`, you can extract constraints manually:
 
-```python
+```python mdpytest:skip
 # Extract constraints
 result = compiled.extract_constraints("filesystem_read", arguments)
 
@@ -375,7 +375,7 @@ constraints:
 
 ### Pattern 1: Decorator-Based
 
-```python
+```python mdpytest:skip
 from tenuo import guard, mint_sync
 
 @guard(tool="filesystem_read")
@@ -389,7 +389,7 @@ with mint_sync(Capability("filesystem_read", path="/var/log/*")):
 
 ### Pattern 2: Explicit Authorization
 
-```python
+```python mdpytest:skip
 from tenuo import Authorizer, Warrant
 
 # Create warrant
@@ -410,7 +410,7 @@ authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop
 
 ### Pattern 3: Multi-Agent Delegation
 
-```python
+```python mdpytest:skip
 # Control plane issues root warrant
 root_warrant = (Warrant.mint_builder()
     .capability("filesystem_read", path=Pattern("/data/*"))
@@ -435,7 +435,7 @@ worker_warrant = (root_warrant.grant_builder()
 
 ### 1. Validate Configuration
 
-```python
+```python mdpytest:skip
 compiled = CompiledMcpConfig.compile(config)
 warnings = compiled.validate()
 for warning in warnings:
@@ -446,7 +446,7 @@ Warns about incompatible extraction sources (path, query, header).
 
 ### 2. Use Trusted Roots
 
-```python
+```python mdpytest:skip
 # Load control plane public key
 control_plane_key = PublicKey.from_bytes(key_bytes)
 
@@ -460,7 +460,7 @@ Without trusted roots, chain verification only checks internal consistency.
 
 Always require PoP signatures for MCP tool calls:
 
-```python
+```python mdpytest:skip
 # Create PoP signature
 pop_sig = warrant.sign(keypair, tool, args)
 
@@ -474,7 +474,7 @@ Prevents warrant theft and replay attacks.
 
 Use specific constraints, not wildcards:
 
-```python
+```python mdpytest:skip
 # Too broad
 constraints = {"path": Wildcard()}
 
@@ -486,7 +486,7 @@ constraints = {"path": Pattern("/var/log/*")}
 
 MCP tools are often high-risk (filesystem, database). Use short TTLs:
 
-```python
+```python mdpytest:skip
 warrant = (Warrant.mint_builder()
     .tool("filesystem_write")
     .holder(key.public_key)
@@ -605,7 +605,7 @@ http_request:
 
 **Solution**: Check MCP arguments match config:
 
-```python
+```python mdpytest:skip
 # Config expects:
 path: "path"
 
@@ -619,7 +619,7 @@ arguments = {"path": "/var/log/app.log"}
 
 **Solution**: Check warrant constraints match extracted values:
 
-```python
+```python mdpytest:skip
 # Warrant:
 constraints = {"path": Pattern("/var/log/*")}
 

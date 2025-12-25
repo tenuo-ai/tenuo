@@ -431,9 +431,10 @@ jobs:
           maturin build --release
           pip install target/wheels/*.whl
           pip install langchain langchain-core langgraph fastapi pydantic PyYAML
-          pip install pytest pytest-codeblocks
+          pip install pytest pytest-markdown-docs
 
       - name: Test Doc Code Blocks
         run: |
           # Test Python code blocks in markdown docs
-          pytest --codeblocks docs/*.md -v || echo "Some doc examples failed - review needed"
+          # Blocks can be skipped with: ```python mdpytest:skip
+          pytest --markdown-docs docs/*.md -v

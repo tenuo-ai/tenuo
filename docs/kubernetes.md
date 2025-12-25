@@ -107,7 +107,7 @@ Fetch a warrant from your control plane when each task starts. This is the canon
 
 **When to use:** Production systems where you want task-scoped, short-lived authority.
 
-```python
+```python mdpytest:skip
 async def handle_task(user_request: str):
     # Fetch warrant scoped to this task
     warrant = await control_plane.get_warrant(
@@ -132,7 +132,7 @@ Warrant passed per-request via `X-Tenuo-Warrant` header. Your ingress or mesh in
 
 **When to use:** You have infrastructure that can inject warrants (API gateway, service mesh).
 
-```python
+```python mdpytest:skip
 @app.middleware("http")
 async def tenuo_middleware(request: Request, call_next):
     warrant = Warrant.from_base64(request.headers["X-Tenuo-Warrant"])

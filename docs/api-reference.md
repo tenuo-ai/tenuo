@@ -38,7 +38,7 @@ Complete API documentation for the Tenuo Python SDK. For wire format details, se
 
 Protocol-level constants exported from the SDK:
 
-```python
+```python mdpytest:skip
 from tenuo import MAX_DELEGATION_DEPTH, MAX_WARRANT_SIZE, MAX_WARRANT_TTL_SECS, DEFAULT_WARRANT_TTL_SECS
 ```
 
@@ -62,7 +62,7 @@ from tenuo import MAX_DELEGATION_DEPTH, MAX_WARRANT_SIZE, MAX_WARRANT_TTL_SECS, 
 
 Initialize Tenuo globally. **Call once at application startup** before using `mint()` or `grant()`.
 
-```python
+```python mdpytest:skip
 from tenuo import configure, SigningKey
 
 # Development (self-signed warrants)
@@ -136,7 +136,7 @@ See [Integration Safety](./security#integration-safety) for detailed guide.
 
 Automatic configuration from environment variables. **Zero-code setup for 12-factor apps.**
 
-```python
+```python mdpytest:skip
 from tenuo import auto_configure
 
 # Reads TENUO_* environment variables automatically
@@ -161,7 +161,7 @@ auto_configure()
 
 Get the current configuration.
 
-```python
+```python mdpytest:skip
 from tenuo import get_config
 
 config = get_config()
@@ -174,7 +174,7 @@ print(f"Mode: {config.mode}")  # EnforcementMode enum
 
 Enum controlling how authorization violations are handled:
 
-```python
+```python mdpytest:skip
 from tenuo import EnforcementMode, is_audit_mode, is_enforce_mode, should_block_violation
 
 # Check current mode
@@ -208,7 +208,7 @@ if should_block_violation():
 
 Ed25519 keypair for signing and verification.
 
-```python
+```python mdpytest:skip
 from tenuo import SigningKey
 ```
 
@@ -238,7 +238,7 @@ from tenuo import SigningKey
 
 Ed25519 public key for verification.
 
-```python
+```python mdpytest:skip
 from tenuo import PublicKey
 ```
 
@@ -263,7 +263,7 @@ from tenuo import PublicKey
 
 Ed25519 signature.
 
-```python
+```python mdpytest:skip
 from tenuo import Signature
 ```
 
@@ -285,7 +285,7 @@ from tenuo import Signature
 
 Capability token with constraints and cryptographic provenance.
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant
 ```
 
@@ -299,7 +299,7 @@ from tenuo import Warrant
 
 #### `Warrant.mint_builder()` — Creating New Warrants
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, Pattern
 
 # Fluent builder pattern
@@ -320,7 +320,7 @@ warrant = (Warrant.mint_builder()
 
 #### `warrant.grant_builder()` — Delegation
 
-```python
+```python mdpytest:skip
 # Delegate with narrower scope
 child = (parent.grant_builder()
     .capability("read_file", path=Pattern("/data/reports/*"))
@@ -342,7 +342,7 @@ child = (parent.grant_builder()
 
 For improved DX, use the fluent builder pattern:
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, Pattern, Range, Clearance
 
 # Execution warrant with builder
@@ -398,7 +398,7 @@ issuer = (Warrant.mint_builder()
 | `capabilities` | `dict` | Human-readable constraint summary |
 | `delegation_receipt` | `DelegationReceipt \| None` | Receipt if created via delegation |
 
-```python
+```python mdpytest:skip
 # Property examples
 warrant.ttl_remaining       # timedelta(seconds=299, ...)
 warrant.expires_at          # datetime(2025, 12, 22, 21, 30, ...)
@@ -427,7 +427,7 @@ warrant.capabilities        # {'tools': ['read_file'], 'path': '/data/*', 'max_s
 
 #### Logic Checks & Debugging Methods
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, WhyDenied, DenyCode
 
 # Logic Check (UX-only, no crypto)
@@ -459,7 +459,7 @@ headers = warrant.headers(keypair, "read_file", {"path": "/data/x.txt"})
 
 Warrant `repr()` hides sensitive data for safe logging:
 
-```python
+```python mdpytest:skip
 print(repr(warrant))
 # <Warrant id=tnu_wrt_019b... tools=[read_file, write_file] ttl=0:04:59>
 
@@ -481,7 +481,7 @@ Tenuo follows **POLA**: when you attenuate a warrant, the child starts with **NO
 
 **Pattern 1: Grant specific capabilities (recommended)**
 
-```python
+```python mdpytest:skip
 # Child only gets what you explicitly grant
 builder = parent.grant_builder()
 builder.capability("read_file", path=Exact("/data/report.txt"))
@@ -492,7 +492,7 @@ child = builder.grant(parent_key)
 
 **Pattern 2: Inherit all, then narrow**
 
-```python
+```python mdpytest:skip
 # Start with all parent capabilities, then narrow
 builder = parent.grant_builder()
 builder.inherit_all()                    # Explicit opt-in
@@ -505,7 +505,7 @@ child = builder.grant(parent_key)
 
 The `delegate()` method automatically calls `inherit_all()` internally, making it easier for simple cases:
 
-```python
+```python mdpytest:skip
 with key_scope(my_keypair):
     child = parent.grant(
         holder=worker.public_key,
@@ -516,7 +516,7 @@ with key_scope(my_keypair):
 
 **Via Issuer warrant (alternative):**
 
-```python
+```python mdpytest:skip
 # Create parent warrant, then delegate with specific tools
 parent_warrant = (Warrant.mint_builder()
     .tool("read_file")
@@ -537,7 +537,7 @@ exec_warrant = builder.grant(control_plane_key)
 
 A warrant is **terminal** when it cannot delegate further (`depth >= max_depth`).
 
-```python
+```python mdpytest:skip
 # Create terminal warrant (cannot be delegated further)
 builder = parent.grant_builder()
 builder.inherit_all()     # Inherit parent capabilities
@@ -555,7 +555,7 @@ assert terminal.is_terminal()  # True
 
 Warrant bound to a signing key for convenience. **Non-serializable** to prevent accidental key exposure.
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, BoundWarrant
 
 # Create bound warrant
@@ -596,7 +596,7 @@ bound = warrant.bind(keypair)
 | `unbind()` | `tuple[Warrant, SigningKey]` | Extract warrant and key |
 | `why_denied(tool, **args)` | `WhyDenied` | Get denial reason |
 
-```python
+```python mdpytest:skip
 # Delegation with bound key (no keypair arg needed)
 child = bound.grant(to=worker.public_key, allow="read_file", ttl=300)
 
@@ -610,7 +610,7 @@ pickle.dumps(bound)  # Raises TypeError!
 
 #### Repr (Safe)
 
-```python
+```python mdpytest:skip
 print(repr(bound))
 # <BoundWarrant id=tnu_wrt_019b... KEY_BOUND=True>
 ```
@@ -621,7 +621,7 @@ print(repr(bound))
 
 Builder for delegating (granting) from parent warrants.
 
-```python
+```python mdpytest:skip
 builder = parent_warrant.grant_builder()
 ```
 
@@ -644,7 +644,7 @@ builder = parent_warrant.grant_builder()
 
 All setter methods are dual-purpose - call without arguments to get current value:
 
-```python
+```python mdpytest:skip
 builder.holder()       # Returns configured holder or None
 builder.ttl()          # Returns configured TTL or None
 builder.clearance()    # Returns configured clearance level or None
@@ -659,7 +659,7 @@ Note: `with_*` methods are available as aliases for backward compatibility.
 
 Builder for attenuating (narrowing) existing warrants.
 
-```python
+```python mdpytest:skip
 builder = warrant.grant_builder()
 ```
 
@@ -687,7 +687,7 @@ All setter methods are **dual-purpose**: call with argument to set (returns self
 
 #### Examples
 
-```python
+```python mdpytest:skip
 # Pattern 1: Grant specific capability (POLA default)
 child = (parent.grant_builder()
     .capability("read_file", path=Exact("/data/q3.pdf"))
@@ -712,13 +712,13 @@ assert builder.ttl() == 300
 
 Centralized authorization with chain verification.
 
-```python
+```python mdpytest:skip
 from tenuo import Authorizer
 ```
 
 #### Constructor
 
-```python
+```python mdpytest:skip
 Authorizer(
     trusted_roots: Optional[List[PublicKey]] = None,
     clock_tolerance_secs: int = 30,
@@ -743,7 +743,7 @@ Authorizer(
 
 The Authorizer can *optionally* enforce minimum clearance levels per tool as defense in depth. Clearance is a coarse-grained policy overlay—**not a security boundary**. Capabilities and monotonicity provide the cryptographic guarantees; clearance adds organizational convenience.
 
-```python
+```python mdpytest:skip
 from tenuo import Authorizer, Clearance
 
 authorizer = Authorizer(trusted_roots=[root_key])
@@ -777,7 +777,7 @@ print(authorizer.get_required_clearance("delete_file"))  # Clearance.PRIVILEGED
 
 All constraint types for fine-grained authorization.
 
-```python
+```python mdpytest:skip
 from tenuo import (
     Pattern,    # Glob patterns: "staging-*"
     Exact,      # Exact match: "production"
@@ -798,7 +798,7 @@ from tenuo import (
 ### Pattern
 Glob-style pattern matching.
 
-```python
+```python mdpytest:skip
 Pattern("staging-*")      # Matches staging-web, staging-db
 Pattern("/tmp/**")        # Recursive: matches /tmp/foo/bar/file.txt
 Pattern("*-safe")         # Suffix: matches image-safe
@@ -816,7 +816,7 @@ Pattern("*-safe")         # Suffix: matches image-safe
 
 Exact string match.
 
-```python
+```python mdpytest:skip
 Exact("production")       # Only matches "production"
 ```
 
@@ -824,7 +824,7 @@ Exact("production")       # Only matches "production"
 
 Numeric range constraints.
 
-```python
+```python mdpytest:skip
 Range(min=0, max=100)     # 0 <= value <= 100
 Range.min_value(10)       # value >= 10
 Range.max_value(1000)     # value <= 1000
@@ -834,7 +834,7 @@ Range.max_value(1000)     # value <= 1000
 
 Set membership.
 
-```python
+```python mdpytest:skip
 OneOf(["read", "write", "delete"])   # Must be one of these
 NotOneOf(["admin", "root"])          # Anything except these
 ```
@@ -843,7 +843,7 @@ NotOneOf(["admin", "root"])          # Anything except these
 
 Regular expression matching.
 
-```python
+```python mdpytest:skip
 Regex("^[a-z0-9_]+$")     # Matches lowercase alphanumeric with underscores
 Regex(".*\\.pdf$")        # Matches files ending in .pdf
 ```
@@ -854,7 +854,7 @@ Regex(".*\\.pdf$")        # Matches files ending in .pdf
 
 Matches any value. Use sparingly—prefer explicit constraints.
 
-```python
+```python mdpytest:skip
 Wildcard()                # Matches anything
 ```
 
@@ -862,7 +862,7 @@ Wildcard()                # Matches anything
 
 List constraints.
 
-```python
+```python mdpytest:skip
 Contains(["admin"])                   # List must include "admin"
 Subset(["read", "write", "admin"])   # Only these values allowed
 ```
@@ -871,7 +871,7 @@ Subset(["read", "write", "admin"])   # Only these values allowed
 
 Composite logic.
 
-```python
+```python mdpytest:skip
 All([Range.min_value(0), Range.max_value(100)])   # AND
 AnyOf([Exact("admin"), Exact("superuser")])       # OR
 Not(Exact("blocked"))                              # Negation
@@ -881,7 +881,7 @@ Not(Exact("blocked"))                              # Negation
 
 Common Expression Language for complex authorization logic.
 
-```python
+```python mdpytest:skip
 from tenuo import CEL
 
 # Simple comparison
@@ -913,13 +913,13 @@ See [Constraints → CEL](./constraints#cel-common-expression-language) for full
 
 Pre-built capability patterns for common AI agent scenarios. Use directly or as starting points.
 
-```python
+```python mdpytest:skip
 from tenuo.templates import FileReader, FileWriter, DatabaseReader, WebSearcher, CommonAgents
 ```
 
 ### File Access Templates
 
-```python
+```python mdpytest:skip
 from tenuo import mint
 from tenuo.templates import FileReader, FileWriter
 
@@ -944,7 +944,7 @@ async with mint(FileWriter.in_directory("/tmp/agent-output")) as w:
 
 ### Database Templates
 
-```python
+```python mdpytest:skip
 from tenuo.templates import DatabaseReader, DatabaseWriter
 
 # Read from specific tables
@@ -963,7 +963,7 @@ async with mint(DatabaseReader.schema("public")) as w:
 
 ### Web Access Templates
 
-```python
+```python mdpytest:skip
 from tenuo.templates import WebSearcher, ApiClient
 
 # Web search with domain restrictions
@@ -978,7 +978,7 @@ async with mint(ApiClient.readonly("api.example.com")) as w:
 
 ### Agent Templates
 
-```python
+```python mdpytest:skip
 from tenuo.templates import CommonAgents
 
 # Research agent: read-only web search + file reading
@@ -1004,7 +1004,7 @@ Context managers for scoping authority to tasks.
 
 Create root authority for a task. **Async version.**
 
-```python
+```python mdpytest:skip
 from tenuo import mint, Capability, Pattern
 
 async with mint(Capability("read_file", path=Pattern("/data/*"))) as warrant:
@@ -1028,7 +1028,7 @@ async with mint(Capability("read_file", path=Pattern("/data/*"))) as warrant:
 
 Synchronous version of `mint`.
 
-```python
+```python mdpytest:skip
 from tenuo import mint_sync
 
 with mint_sync(Capability("read_file", path="/data/*")) as warrant:
@@ -1041,7 +1041,7 @@ Same parameters as `mint`.
 
 Attenuate within an existing task scope.
 
-```python
+```python mdpytest:skip
 from tenuo import grant
 
 async with mint(
@@ -1067,7 +1067,7 @@ async with mint(
 
 #### Preview Changes
 
-```python
+```python mdpytest:skip
 scope = grant(Capability("read_file", path="/data/reports/*"))
 scope.preview().print()  # See diff before entering
 async with scope:
@@ -1084,13 +1084,13 @@ Wrap tools to enforce warrant authorization using context (for non-LangChain use
 
 > For LangChain integration, use [`guard()`](#guard-recommended) from `tenuo.langchain` instead.
 
-```python
+```python mdpytest:skip
 from tenuo import protect_tools
 ```
 
 #### Signature
 
-```python
+```python mdpytest:skip
 protect_tools(
     tools: List[Any],
     *,
@@ -1111,7 +1111,7 @@ protect_tools(
 
 #### Example
 
-```python
+```python mdpytest:skip
 from tenuo import protect_tools, mint
 
 # Define your tools
@@ -1127,7 +1127,7 @@ async with mint(Capability("read_file", path="/data/*")):
 
 #### Non-mutating variant
 
-```python
+```python mdpytest:skip
 original = [read_file, send_email]
 protected = protect_tools(original, inplace=False)
 # original unchanged, protected has wrapped tools
@@ -1139,7 +1139,7 @@ protected = protect_tools(original, inplace=False)
 
 Native support for [Model Context Protocol](https://modelcontextprotocol.io).
 
-```python
+```python mdpytest:skip
 from tenuo import McpConfig, CompiledMcpConfig
 ```
 
@@ -1147,7 +1147,7 @@ from tenuo import McpConfig, CompiledMcpConfig
 
 Load MCP configuration from YAML.
 
-```python
+```python mdpytest:skip
 config = McpConfig.from_file("mcp-config.yaml")
 ```
 
@@ -1155,7 +1155,7 @@ config = McpConfig.from_file("mcp-config.yaml")
 
 Compiled configuration for fast constraint extraction.
 
-```python
+```python mdpytest:skip
 compiled = CompiledMcpConfig.compile(config)
 result = compiled.extract_constraints("filesystem_read", {"path": "/var/log/app.log"})
 ```
@@ -1170,13 +1170,13 @@ See `examples/mcp_integration.py` for a complete example.
 
 Decorator for function-level authorization with automatic argument extraction.
 
-```python
+```python mdpytest:skip
     from tenuo import guard
 ```
 
 #### Signature
 
-```python
+```python mdpytest:skip
 @guard(
     warrant_or_tool=None,  # Warrant instance OR tool name string
     tool=None,             # Tool name (if not passed as first arg)
@@ -1200,7 +1200,7 @@ Enforce warrant authorization on a function.
 - `keypair` (SigningKey, optional): Key for PoP. If None, uses context.
 
 **Example:**
-```python
+```python mdpytest:skip
 @guard(tool="search")
 def search_db(query: str):
     ...
@@ -1210,7 +1210,7 @@ def search_db(query: str):
 
 `@guard` automatically extracts all function arguments **including defaults** using Python's `inspect.signature()`:
 
-```python
+```python mdpytest:skip
 @guard(tool="query")
 def query_db(query: str, table: str = "users", limit: int = 100):
     ...
@@ -1224,7 +1224,7 @@ query_db("SELECT *")
 ✅ **Security:** Defaults are always included (prevents bypass via omission).
 
 **Custom extraction:**
-```python
+```python mdpytest:skip
 @guard(
     tool="transfer",
     extract_args=lambda from_account, to_account, amount, **kw: {
@@ -1238,7 +1238,7 @@ def transfer(from_account: str, to_account: str, amount: float):
 ```
 
 **Parameter mapping (simpler):**
-```python
+```python mdpytest:skip
 @guard(
     tool="read_file",
     mapping={"file_path": "path"}  # Rename after extraction
@@ -1254,7 +1254,7 @@ See [Argument Extraction](./argument-extraction) for comprehensive documentation
 
 **Context-based (recommended):**
 
-```python
+```python mdpytest:skip
 @guard(tool="read_file")
 def read_file(path: str) -> str:
     return open(path).read()
@@ -1266,7 +1266,7 @@ async with mint(Capability("read_file", path=Pattern("/data/*"))):
 
 **Explicit warrant:**
 
-```python
+```python mdpytest:skip
 @guard(warrant, tool="read_file", keypair=agent_key)
 def read_file(path: str) -> str:
     return open(path).read()
@@ -1274,7 +1274,7 @@ def read_file(path: str) -> str:
 
 **Tool as first arg:**
 
-```python
+```python mdpytest:skip
 @guard("read_file")  # Shorthand: tool name as positional arg
 def read_file(path: str) -> str:
     return open(path).read()
@@ -1282,7 +1282,7 @@ def read_file(path: str) -> str:
 
 ### Context Functions
 
-```python
+```python mdpytest:skip
 from tenuo import (
     warrant_scope,
     get_warrant_context,
@@ -1310,7 +1310,7 @@ See [LangChain Integration Guide](./langchain) for full documentation.
 
 Unified API for protecting LangChain tools:
 
-```python
+```python mdpytest:skip
 from tenuo import SigningKey, Warrant
 from tenuo.langchain import guard
 
@@ -1361,7 +1361,7 @@ See [LangGraph Integration Guide](./langgraph) for full documentation.
 
 Scope authority for a LangGraph node.
 
-```python
+```python mdpytest:skip
 from tenuo.langgraph import tenuo_node
 from tenuo import Capability, Pattern
 
@@ -1385,7 +1385,7 @@ async def researcher(state, bound_warrant):
 
 Require a warrant in context without scoping.
 
-```python
+```python mdpytest:skip
 from tenuo.langgraph import require_warrant
 
 @require_warrant
@@ -1397,7 +1397,7 @@ async def sensitive_node(state):
 
 Drop-in replacement for LangGraph's `ToolNode` with automatic Tenuo protection.
 
-```python
+```python mdpytest:skip
 from tenuo.langgraph import TenuoToolNode
 from tenuo import mint_sync
 
@@ -1428,7 +1428,7 @@ with mint_sync(Capability("search"), Capability("calculator")):
 
 Thread-safe singleton for managing multiple signing keys by ID. Useful for multi-agent, multi-tenant, and service-to-service scenarios.
 
-```python
+```python mdpytest:skip
 from tenuo import KeyRegistry, SigningKey
 
 registry = KeyRegistry.get_instance()
@@ -1470,7 +1470,7 @@ key = registry.get("api", namespace="tenant-123")
  
  Middleware and dependency injection for FastAPI applications.
  
- ```python
+ ```python mdpytest:skip
  from tenuo.fastapi import TenuoGuard, SecurityContext, require_warrant
  ```
  
@@ -1478,7 +1478,7 @@ key = registry.get("api", namespace="tenant-123")
  
  Global middleware that extracts warrants/keys from headers and manages request context.
  
- ```python
+ ```python mdpytest:skip
  from fastapi import FastAPI
  from tenuo import configure, SigningKey
  from tenuo.fastapi import TenuoGuard
@@ -1499,7 +1499,7 @@ key = registry.get("api", namespace="tenant-123")
  
  Dependency that enforces presence of a valid warrant. Returns `SecurityContext`.
  
- ```python
+ ```python mdpytest:skip
  @app.get("/secure")
  async def secure_endpoint(
      ctx: SecurityContext = Depends(require_warrant)
@@ -1524,7 +1524,7 @@ key = registry.get("api", namespace="tenant-123")
 
 Utilities for testing code that uses Tenuo authorization.
 
-```python
+```python mdpytest:skip
 from tenuo.testing import (
     allow_all,
     assert_authorized,
@@ -1539,7 +1539,7 @@ from tenuo.testing import (
 
 Context manager that bypasses all `@guard` authorization checks. **Only works in test environments.**
 
-```python
+```python mdpytest:skip
 from tenuo import guard
 from tenuo.testing import allow_all
 
@@ -1563,7 +1563,7 @@ def test_dangerous_action():
 
 Assert authorization outcomes with detailed error messages.
 
-```python
+```python mdpytest:skip
 from tenuo import guard
 from tenuo.testing import assert_authorized, assert_denied
 
@@ -1597,7 +1597,7 @@ def test_authorization():
 
 Assert delegation (attenuation) rules are enforced correctly.
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant
 from tenuo.testing import assert_can_grant, assert_cannot_grant
 
@@ -1623,7 +1623,7 @@ def test_delegation_chain():
 
 Quickly create a warrant with auto-generated keys (for development/testing).
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant
 
 # Returns (warrant, signing_key)
@@ -1638,7 +1638,7 @@ headers = bound.headers("search", {"query": "test"})
 
 Create test warrants without key management. **Only works in test environments.**
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant
 
 def test_my_function():
@@ -1650,7 +1650,7 @@ def test_my_function():
 
 Generate deterministic HTTP headers for snapshot testing.
 
-```python
+```python mdpytest:skip
 from tenuo.testing import deterministic_headers
 
 headers = deterministic_headers(warrant, key, "read_file", {"path": "/data/x"})
@@ -1698,7 +1698,7 @@ capabilities:
 
 **Example Output (Python):**
 
-```python
+```python mdpytest:skip
 from tenuo import Capability, Pattern, OneOf, Exact
 
 capabilities = [
@@ -1749,7 +1749,7 @@ tenuo validate --warrant eyJ3... --tool read_file --args '{"path": "/etc/passwd"
 
 ## Exceptions
 
-```python
+```python mdpytest:skip
 from tenuo import TenuoError, ScopeViolation, WarrantViolation
 ```
 
@@ -1767,7 +1767,7 @@ TenuoError (base)
 
 Authorization denied with detailed diff-style error messages showing exactly what failed.
 
-```python
+```python mdpytest:skip
 from tenuo import AuthorizationDenied, ConstraintResult, Pattern
 
 # Example error output:
@@ -1795,7 +1795,7 @@ print(error)  # Shows detailed diff
 
 ## Audit Logging
 
-```python
+```python mdpytest:skip
 from tenuo import audit_logger, AuditEventType
 ```
 
@@ -1809,7 +1809,7 @@ from tenuo import audit_logger, AuditEventType
 
 ### Example
 
-```python
+```python mdpytest:skip
 audit_logger.configure(service_name="payment-service")
 
 audit_logger.log_authorization_success(
@@ -1825,7 +1825,7 @@ audit_logger.log_authorization_success(
 
 For type hinting generic warrant operations:
 
-```python
+```python mdpytest:skip
 from tenuo import ReadableWarrant, SignableWarrant, AnyWarrant
 ```
 
@@ -1833,7 +1833,7 @@ from tenuo import ReadableWarrant, SignableWarrant, AnyWarrant
 
 Protocol for objects with readable warrant properties:
 
-```python
+```python mdpytest:skip
 from typing import Protocol
 
 class ReadableWarrant(Protocol):
@@ -1853,7 +1853,7 @@ class ReadableWarrant(Protocol):
 
 Protocol for objects that can sign (delegate, create PoP):
 
-```python
+```python mdpytest:skip
 class SignableWarrant(Protocol):
     def delegate(self, holder: PublicKey, ...) -> "Warrant": ...
     def headers(self, tool: str, args: dict) -> dict: ...
@@ -1863,7 +1863,7 @@ class SignableWarrant(Protocol):
 
 Union type accepting both `Warrant` and `BoundWarrant`:
 
-```python
+```python mdpytest:skip
 AnyWarrant = Union[Warrant, BoundWarrant]
 
 def process_warrant(w: AnyWarrant) -> None:

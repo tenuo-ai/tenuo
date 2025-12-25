@@ -10,7 +10,6 @@ Demonstrates:
 """
 
 from tenuo import SigningKey, Warrant, Pattern, Exact, Range
-from tenuo.constraints import Constraints
 
 def main():
     print("=== Tenuo Python SDK - Basic Usage ===\n")
@@ -25,15 +24,13 @@ def main():
     
     # 2. Create a root warrant with constraints
     print("2. Creating root warrant...")
-    root_warrant = Warrant.issue(
-        keypair=control_key,
-        capabilities=Constraints.for_tool("manage_infrastructure", {
-            "cluster": Pattern("staging-*"),
-            "replicas": Range.max_value(15)
-        }),
-        ttl_seconds=3600,
-        holder=control_key.public_key  # Bind to control plane initially
-    )
+    root_warrant = (Warrant.mint_builder()
+        .capability("manage_infrastructure",
+            cluster=Pattern("staging-*"),
+            replicas=Range.max_value(15))
+        .holder(control_key.public_key)
+        .ttl(3600)
+        .mint(control_key))
     print(f"   Tools: {root_warrant.tools}")
     print(f"   Depth: {root_warrant.depth}")
     print()
@@ -44,10 +41,9 @@ def main():
     worker_warrant = (
         root_warrant.grant_builder()
         # ✓ POLA: Explicitly grant only what's needed
-        .capability("manage_infrastructure", {
-            "cluster": Exact("staging-web"),     # Narrowed from staging-*
-            "replicas": Range.max_value(10)      # Reduced from 15
-        })
+        .capability("manage_infrastructure",
+            cluster=Exact("staging-web"),     # Narrowed from staging-*
+            replicas=Range.max_value(10))     # Reduced from 15
         .holder(worker_key.public_key)
         .grant(control_key)
     )

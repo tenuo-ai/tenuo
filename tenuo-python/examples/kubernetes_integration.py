@@ -36,7 +36,6 @@ from tenuo import (
     warrant_scope,
     key_scope,
 )
-from tenuo.constraints import Constraints
 from tenuo.exceptions import AuthorizationError
 from typing import Optional, Dict, Any
 import os
@@ -195,12 +194,11 @@ class ControlPlane:
         Returns:
             Warrant object
         """
-        return Warrant.issue(
-            keypair=self.keypair,
-            capabilities=Constraints.for_tool("agent_tools", constraints),  # HARDCODED: General tool name.
-            ttl_seconds=ttl_seconds,  # HARDCODED default: 3600. In production, use env var or config.
-            holder=self.keypair.public_key  # Bind to self for demo
-        )
+        return (Warrant.mint_builder()
+            .capability("agent_tools", **constraints)  # HARDCODED: General tool name.
+            .holder(self.keypair.public_key)  # Bind to self for demo
+            .ttl(ttl_seconds)  # HARDCODED default: 3600. In production, use env var or config.
+            .mint(self.keypair))
     
     def issue_warrant_for_request(
         self,
@@ -215,18 +213,13 @@ class ControlPlane:
         - Dynamic constraint injection based on user/tenant
         - Request-scoped capabilities
         """
-        # Extract constraints from request metadata (user, tenant, etc.)
-        constraints = {
-            "user_id": Exact(request_metadata.get("user_id", "anonymous")),
-            "tenant": Pattern(request_metadata.get("tenant", "*")),
-        }
-        
-        return Warrant.issue(
-            keypair=self.keypair,
-            capabilities=Constraints.for_tool("agent_tools", constraints),
-            ttl_seconds=ttl_seconds,
-            holder=self.keypair.public_key  # Bind to self for demo
-        )
+        return (Warrant.mint_builder()
+            .capability("agent_tools",
+                user_id=Exact(request_metadata.get("user_id", "anonymous")),
+                tenant=Pattern(request_metadata.get("tenant", "*")))
+            .holder(self.keypair.public_key)  # Bind to self for demo
+            .ttl(ttl_seconds)
+            .mint(self.keypair))
 
 
 # ============================================================================
@@ -491,14 +484,11 @@ def main():
         # In production: Constraints come from policy engine, agent registration, or configuration
         # HARDCODED: tool="read_file", Pattern("/tmp/*"), ttl_seconds=3600
         # In production: Use env vars or config for these values
-        agent_warrant = Warrant.issue(
-            keypair=control_keypair,
-            capabilities=Constraints.for_tool("read_file", {
-                "file_path": Pattern("/tmp/*"),  # HARDCODED: Only /tmp/ files for demo safety
-            }),
-            ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            holder=control_keypair.public_key  # Bind to self for demo
-        )
+        agent_warrant = (Warrant.mint_builder()
+            .capability("read_file", file_path=Pattern("/tmp/*"))  # HARDCODED: Only /tmp/ files for demo safety
+            .holder(control_keypair.public_key)  # Bind to self for demo
+            .ttl(3600)  # HARDCODED: 1 hour TTL. In production, use env var or config.
+            .mint(control_keypair))
         print(f"   ✓ Warrant issued (ID: {agent_warrant.id[:8]}...)")
         print("   ✓ Constraints: file_path=/tmp/*\n")
     except Exception as e:

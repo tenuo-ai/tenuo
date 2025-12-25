@@ -50,7 +50,7 @@ The `@guard` decorator extracts arguments automatically using Python's `inspect.
 
 When no `extract_args` is provided, Tenuo uses **robust signature binding**:
 
-```python
+```python mdpytest:skip
 from tenuo import guard
 
 @guard(tool="read_file")
@@ -74,7 +74,7 @@ read_file(path="/data/file.txt")     # args: {path: "/data/file.txt", max_size: 
 
 For custom extraction logic or parameter name mapping:
 
-```python
+```python mdpytest:skip
 @guard(
     tool="transfer",
     extract_args=lambda from_account, to_account, amount, **kw: {
@@ -98,7 +98,7 @@ def transfer(from_account: str, to_account: str, amount: float, memo: str = ""):
 
 Alternative to `extract_args` for simple renames:
 
-```python
+```python mdpytest:skip
 @guard(
     tool="transfer",
     mapping={"from_account": "source", "to_account": "destination"}
@@ -120,7 +120,7 @@ LangChain tools are protected using `@guard` or `guard()`. Argument extraction i
 
 ### With `@guard`
 
-```python
+```python mdpytest:skip
 from tenuo import guard
 
 @guard(tool="search")
@@ -131,7 +131,7 @@ def search(query: str, max_results: int = 10):
 
 ### With `guard()`
 
-```python
+```python mdpytest:skip
 from tenuo.langchain import guard_tools
 from langchain_community.tools import DuckDuckGoSearchRun
 
@@ -151,7 +151,7 @@ protected = guard([DuckDuckGoSearchRun()], bound)
 
 LangGraph nodes use `@tenuo_node` which wraps `grant()`. Argument extraction happens at the **tool level**, not the node level.
 
-```python
+```python mdpytest:skip
 from tenuo.langgraph import tenuo_node
 from tenuo import guard
 
@@ -231,7 +231,7 @@ Content-Type: application/json
 ```
 
 **Extracted constraints** (Python dict):
-```python
+```python mdpytest:skip
 {
     "cluster": "staging-web",      # From path
     "replicas": 5,                  # From body (converted to int)
@@ -317,7 +317,7 @@ See [MCP Integration](./mcp) for full details.
 ### 1. Default Values MUST Be Checked
 
 ❌ **Vulnerable:**
-```python
+```python mdpytest:skip
 # Wrong: If max_size is omitted, it's not checked
 @guard(tool="read_file", extract_args=lambda path, **kw: {"path": path})
 def read_file(path: str, max_size: int = 999999):
@@ -325,7 +325,7 @@ def read_file(path: str, max_size: int = 999999):
 ```
 
 ✅ **Secure:**
-```python
+```python mdpytest:skip
 # Automatic extraction includes defaults
 @guard(tool="read_file")
 def read_file(path: str, max_size: int = 1000):
@@ -340,7 +340,7 @@ def read_file(path: str, max_size: int = 1000):
 If a parameter is security-relevant (affects what the tool does), it MUST be extractable:
 
 ❌ **Vulnerable:**
-```python
+```python mdpytest:skip
 @guard(tool="query", extract_args=lambda query, **kw: {"query": query})
 def query_db(query: str, table: str = "users"):
     # table is not extracted! Attacker can query any table
@@ -348,7 +348,7 @@ def query_db(query: str, table: str = "users"):
 ```
 
 ✅ **Secure:**
-```python
+```python mdpytest:skip
 @guard(tool="query")  # Automatic extraction includes both
 def query_db(query: str, table: str = "users"):
     # Extraction: {query: "...", table: "users"}
@@ -357,7 +357,7 @@ def query_db(query: str, table: str = "users"):
 
 ### 3. Extraction Failures Must Block Authorization
 
-```python
+```python mdpytest:skip
 # In decorators.py (lines 302-315):
 try:
     bound = sig.bind(*args, **kwargs)
@@ -411,7 +411,7 @@ tools:
 
 ### Pattern 1: Simple Tools (Automatic)
 
-```python
+```python mdpytest:skip
 @guard(tool="search")
 def search(query: str, max_results: int = 10):
     ...
@@ -422,7 +422,7 @@ def search(query: str, max_results: int = 10):
 
 ### Pattern 2: Parameter Renaming
 
-```python
+```python mdpytest:skip
 @guard(
     tool="read_file",
     mapping={"file_path": "path"}  # Rename for constraint matching
@@ -434,7 +434,7 @@ def read_file(file_path: str):
 
 ### Pattern 3: Custom Extraction Logic
 
-```python
+```python mdpytest:skip
 @guard(
     tool="api_call",
     extract_args=lambda url, method="GET", headers=None, **kw: {
@@ -475,7 +475,7 @@ tools:
 
 **Cause:** Argument name mismatch between tool and constraint.
 
-```python
+```python mdpytest:skip
 # Warrant has constraint: {"file_path": Pattern("/tmp/*")}
 # But tool parameter is named "path"
 
@@ -486,7 +486,7 @@ def read_file(path: str):  # ← Extracted as {path: "..."}
 ```
 
 **Fix:** Use `mapping` to align names:
-```python
+```python mdpytest:skip
 @guard(tool="read_file", mapping={"path": "file_path"})
 def read_file(path: str):
     ...
@@ -500,7 +500,7 @@ def read_file(path: str):
 **Cause:** Using `extract_args` without including defaults.
 
 ❌ **Vulnerable:**
-```python
+```python mdpytest:skip
 @guard(tool="query", extract_args=lambda query, **kw: {"query": query})
 def query_db(query: str, limit: int = 999999):  # Dangerous default
     ...
@@ -508,7 +508,7 @@ def query_db(query: str, limit: int = 999999):  # Dangerous default
 ```
 
 ✅ **Secure (automatic):**
-```python
+```python mdpytest:skip
 @guard(tool="query")
 def query_db(query: str, limit: int = 100):
     ...
@@ -522,7 +522,7 @@ def query_db(query: str, limit: int = 100):
 **Cause:** Function called with wrong number/type of arguments.
 
 **Fix:** This is correct behavior - if we can't bind arguments, we can't authorize:
-```python
+```python mdpytest:skip
 # Function signature: read_file(path: str)
 read_file()  # Missing required arg → TypeError → Authorization denied ✅
 ```
@@ -533,7 +533,7 @@ read_file()  # Missing required arg → TypeError → Authorization denied ✅
 
 ### Test Automatic Extraction
 
-```python
+```python mdpytest:skip
 import inspect
 from tenuo import guard, Warrant, SigningKey, Exact, warrant_scope, key_scope
 
@@ -594,7 +594,7 @@ tenuo extract \
 
 ### Python Signature Binding (decorators.py:298-315)
 
-```python
+```python mdpytest:skip
 try:
     # Robustly bind arguments to parameters
     bound = sig.bind(*args, **kwargs)

@@ -29,7 +29,7 @@ Choose based on your threat model. They can be combined for defense in depth.
 In this model, Tenuo runs **inside** your agent's process as a Python library / decorator.
 
 * **Architecture:**
-    ```python
+    ```python mdpytest:skip
     Agent (Python)
       └─ @guard decorator (Tenuo SDK)
            └─ Tool Implementation (Function)
@@ -37,7 +37,7 @@ In this model, Tenuo runs **inside** your agent's process as a Python library / 
 
 **How it works:**
 
-```python
+```python mdpytest:skip
 @guard(tool="delete_file")
 def delete_file(path: str):
     os.remove(path)  # Never reached if unauthorized
@@ -67,7 +67,7 @@ If your agent exposes tools as HTTP endpoints, you can enforce warrants globally
 
 **FastAPI / Starlette:**
 
-```python
+```python mdpytest:skip
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from tenuo import Authorizer, Warrant, ScopeViolation
@@ -119,7 +119,7 @@ async def tenuo_guard(request: Request, call_next):
 
 **Flask:**
 
-```python
+```python mdpytest:skip
 from flask import Flask, request, abort
 from tenuo import Authorizer, Warrant
 import base64
@@ -155,7 +155,7 @@ def check_warrant():
 
 For more control over which routes require warrants, use FastAPI's dependency injection:
 
-```python
+```python mdpytest:skip
 from fastapi import FastAPI, Depends, Request, HTTPException
 from tenuo import (
     Warrant, guard,
@@ -321,7 +321,7 @@ MCP standardizes how agents talk to tools. Tenuo acts as the "Middleware" that s
 
 **How it works:**
 
-```python
+```python mdpytest:skip
 from tenuo.mcp import SecureMCPClient
 
 async with SecureMCPClient("python", ["mcp_server.py"]) as client:

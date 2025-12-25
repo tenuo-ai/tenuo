@@ -15,7 +15,6 @@ from tenuo import (
     warrant_scope,
     key_scope,
 )
-from tenuo.constraints import Constraints
 from tenuo.exceptions import AuthorizationError
 
 
@@ -55,22 +54,20 @@ def main():
     # STEP 1: Create Warrant (SIMULATION - In production, from control plane)
     # ========================================================================
     try:
-        # SIMULATION: Generate keypair for demo
-        # In production: Control plane keypair is loaded from secure storage
-        keypair = SigningKey.generate()
+        # SIMULATION: Generate key for demo
+        # In production: Control plane key is loaded from secure storage
+        key = SigningKey.generate()
         
         # SIMULATION: Create warrant with hardcoded constraints
-        # HARDCODED: Pattern("staging-*"), Range.max_value(10000.0), ttl_seconds=3600
+        # HARDCODED: Pattern("staging-*"), Range.max_value(15), ttl=3600
         # In production: Constraints come from policy engine or configuration
-        warrant = Warrant.issue(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("upgrade_cluster", {
-                "cluster": Pattern("staging-*"),  # HARDCODED: Only staging clusters for demo
-                "replicas": Range.max_value(15)   # HARDCODED: Max 15 replicas for demo
-            }),
-            ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            holder=keypair.public_key  # Bind to self
-        )
+        warrant = (Warrant.mint_builder()
+            .capability("upgrade_cluster",
+                cluster=Pattern("staging-*"),  # HARDCODED: Only staging clusters for demo
+                replicas=Range.max_value(15))  # HARDCODED: Max 15 replicas for demo
+            .holder(key.public_key)
+            .ttl(3600)  # HARDCODED: 1 hour TTL.
+            .mint(key))
     except Exception as e:
         print(f"[ERR] Error creating warrant: {e}")
         return
@@ -80,7 +77,7 @@ def main():
     # ========================================================================
     print("1. Setting warrant in context and processing request...")
     try:
-        with warrant_scope(warrant), key_scope(keypair):
+        with warrant_scope(warrant), key_scope(key):
             print("  Context set.")
             try:
                 # All @guard functions in this context will use the warrant
@@ -117,7 +114,7 @@ def main():
         """
         try:
             # In production, keypair would also be loaded (e.g. agent identity)
-            with warrant_scope(request_warrant), key_scope(keypair):
+            with warrant_scope(request_warrant), key_scope(key):
                 # Process the request - all protected functions use context warrant
                 # HARDCODED VALUES: cluster="staging-web", replicas=3
                 scale_cluster(cluster="staging-web", replicas=3)
@@ -148,20 +145,18 @@ def main():
     
     # Pattern 4: Nested contexts (context inheritance)
     print("4. Testing nested contexts...")
-    warrant1 = Warrant.issue(
-        keypair=keypair,
-        capabilities=Constraints.for_tool("scale_cluster", {"cluster": Pattern("staging-*")}),
-        ttl_seconds=3600,
-        holder=keypair.public_key
-    )
-    warrant2 = Warrant.issue(
-        keypair=keypair,
-        capabilities=Constraints.for_tool("scale_cluster", {"cluster": Pattern("production-*")}),
-        ttl_seconds=3600,
-        holder=keypair.public_key
-    )
+    warrant1 = (Warrant.mint_builder()
+        .capability("scale_cluster", cluster=Pattern("staging-*"))
+        .holder(key.public_key)
+        .ttl(3600)
+        .mint(key))
+    warrant2 = (Warrant.mint_builder()
+        .capability("scale_cluster", cluster=Pattern("production-*"))
+        .holder(key.public_key)
+        .ttl(3600)
+        .mint(key))
     
-    with warrant_scope(warrant1), key_scope(keypair):
+    with warrant_scope(warrant1), key_scope(key):
         print("   Outer context: staging-*")
         scale_cluster(cluster="staging-web", replicas=5)
         

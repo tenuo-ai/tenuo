@@ -40,20 +40,13 @@ def main():
     print("Step 1: Control Plane issues root warrant")
     print("=" * 70)
     
-    root_warrant = Warrant.issue(
-        keypair=control_kp,
-        capabilities={
-            "read_file": {
-                "path": Pattern("/data/*"),
-            },
-            "send_email": {
-                "recipient": Pattern("*@company.com"),
-            },
-            "search": {},
-        },
-        holder=orchestrator_kp.public_key,
-        ttl_seconds=3600,  # 1 hour
-    )
+    root_warrant = (Warrant.mint_builder()
+        .capability("read_file", path=Pattern("/data/*"))
+        .capability("send_email", recipient=Pattern("*@company.com"))
+        .tool("search")
+        .holder(orchestrator_kp.public_key)
+        .ttl(3600)  # 1 hour
+        .mint(control_kp))
     
     print(f"Root warrant ID: {root_warrant.id}")
     print(f"Tools: {root_warrant.tools}")
@@ -71,7 +64,7 @@ def main():
     builder = root_warrant.grant_builder()
     
     # Configure child warrant - narrow to specific file
-    builder.capability("read_file", {"path": Exact("/data/q3.pdf")})
+    builder.capability("read_file", path=Exact("/data/q3.pdf"))
     builder.ttl(60)  # Reduce TTL to 60 seconds
     builder.holder(worker_kp.public_key)  # Bind to worker
     builder.intent("Read Q3 report for analysis")  # Human-readable intent

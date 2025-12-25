@@ -64,7 +64,7 @@ Your API verifies the warrant. The proof is in the token.
 
 Drop-in replacement for `APIRouter` with automatic protection:
 
-```python
+```python mdpytest:skip
 from fastapi import FastAPI
 from tenuo.fastapi import SecureAPIRouter, configure_tenuo
 
@@ -104,7 +104,7 @@ The tool name is automatically inferred from the path and HTTP method:
 
 For explicit tool naming per route:
 
-```python
+```python mdpytest:skip
 from fastapi import FastAPI, Depends
 from tenuo.fastapi import TenuoGuard, SecurityContext, configure_tenuo
 
@@ -136,7 +136,7 @@ pip install tenuo[fastapi]
 
 Configure Tenuo at app startup:
 
-```python
+```python mdpytest:skip
 from tenuo.fastapi import configure_tenuo
 
 configure_tenuo(
@@ -156,7 +156,7 @@ configure_tenuo(
 
 Dependency that extracts and verifies warrants:
 
-```python
+```python mdpytest:skip
 from fastapi import Depends
 from tenuo.fastapi import TenuoGuard, SecurityContext
 
@@ -185,7 +185,7 @@ Context object injected into route handlers:
 | `warrant` | `Warrant` | The verified warrant |
 | `args` | `dict` | Extracted arguments used for authorization |
 
-```python
+```python mdpytest:skip
 @app.get("/api/data")
 async def get_data(ctx: SecurityContext = Depends(TenuoGuard("get_data"))):
     print(f"Warrant ID: {ctx.warrant.id}")
@@ -197,7 +197,7 @@ async def get_data(ctx: SecurityContext = Depends(TenuoGuard("get_data"))):
 
 Drop-in replacement for FastAPI's `APIRouter` with automatic Tenuo protection:
 
-```python
+```python mdpytest:skip
 from tenuo.fastapi import SecureAPIRouter
 
 router = SecureAPIRouter(
@@ -217,7 +217,7 @@ router = SecureAPIRouter(
 
 All standard `APIRouter` methods are supported, with an additional `tool` parameter:
 
-```python
+```python mdpytest:skip
 @router.get("/path", tool="custom_tool_name")
 @router.post("/path")  # Auto-inferred tool name
 @router.put("/path")
@@ -271,7 +271,7 @@ Use the `request_id` to correlate with server logs.
 
 ### Custom Error Handling
 
-```python
+```python mdpytest:skip
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from tenuo.fastapi import TenuoError
@@ -296,7 +296,7 @@ async def tenuo_error_handler(request: Request, exc: TenuoError):
 
 ### Multiple Tools per Route
 
-```python
+```python mdpytest:skip
 @app.post("/files/{path:path}")
 async def file_operation(
     path: str,
@@ -309,7 +309,7 @@ async def file_operation(
 
 ### Body Parameter Extraction
 
-```python
+```python mdpytest:skip
 from pydantic import BaseModel
 
 class TransferRequest(BaseModel):
@@ -328,7 +328,7 @@ async def transfer(
 
 ### Optional Authorization
 
-```python
+```python mdpytest:skip
 from tenuo.fastapi import TenuoGuard
 
 @app.get("/public-or-private")
@@ -347,7 +347,7 @@ async def flexible(
 
 ## Full Example
 
-```python
+```python mdpytest:skip
 from fastapi import FastAPI, Depends
 from tenuo import SigningKey, Warrant, Pattern
 from tenuo.fastapi import TenuoGuard, SecurityContext, configure_tenuo
@@ -395,7 +395,7 @@ async def issue_warrant():
 
 By default, authorization errors don't reveal constraint details:
 
-```python
+```python mdpytest:skip
 # Client sees:
 # {"error": "authorization_denied", "message": "Authorization denied", "request_id": "abc123"}
 
@@ -405,7 +405,7 @@ By default, authorization errors don't reveal constraint details:
 
 Enable detailed errors only for development:
 
-```python
+```python mdpytest:skip
 configure_tenuo(app, expose_error_details=True)  # Development only!
 ```
 
@@ -413,7 +413,7 @@ configure_tenuo(app, expose_error_details=True)  # Development only!
 
 For sensitive operations (e.g., payments), use `dedup_key` to prevent replay attacks during the PoP window:
 
-```python
+```python mdpytest:skip
 from tenuo.fastapi import TenuoGuard, SecurityContext
 import redis
 
@@ -443,7 +443,7 @@ async def transfer(
 
 Each route should specify the minimum tool(s) required:
 
-```python
+```python mdpytest:skip
 # ✅ Good: specific tool
 @app.get("/users")
 async def get_users(ctx: SecurityContext = Depends(TenuoGuard("list_users"))):

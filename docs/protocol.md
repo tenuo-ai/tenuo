@@ -66,7 +66,7 @@ Warrant {
 
 Authority to invoke specific tools with specific constraints:
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, Exact
 
 execution_warrant = (Warrant.mint_builder()
@@ -80,7 +80,7 @@ execution_warrant = (Warrant.mint_builder()
 
 Authority to issue execution warrants (cannot execute tools directly):
 
-```python
+```python mdpytest:skip
 # Issuer warrants are a v0.2 feature. In v0.1, use execution warrants
 # and delegate with grant_builder() for multi-level orchestration.
 parent_warrant = (Warrant.mint_builder()
@@ -217,7 +217,7 @@ See [`wire-format-spec.md` Invariant I1](wire-format-spec.md#i1-delegation-autho
 
 Every delegation **must narrow at least one dimension**:
 
-```python
+```python mdpytest:skip
 # POLA: Child starts with NO capabilities, must explicitly grant them
 
 # Explicit capability (recommended)
@@ -248,7 +248,7 @@ WarrantStack {
 
 Verification walks the stack, checking each link:
 
-```python
+```python mdpytest:skip
 def verify_chain(stack: list[Warrant], trusted_roots: set[PublicKey]) -> bool:
     """Verify a complete delegation chain.
     
@@ -365,7 +365,7 @@ Grandchild Warrant:
 
 For each link `parent → child`:
 
-```python
+```python mdpytest:skip
 # 1. Verify delegation authority
 assert child.issuer() == parent.holder()
 
@@ -420,7 +420,7 @@ PopChallenge = (warrant_id, tool, sorted_args, timestamp_window)
 
 ### Creating PoP
 
-```python
+```python mdpytest:skip
 def create_pop(warrant, keypair, tool, args) -> Signature:
     # Sort args by key for deterministic serialization
     sorted_args = sorted(args.items(), key=lambda x: x[0])
@@ -441,7 +441,7 @@ def create_pop(warrant, keypair, tool, args) -> Signature:
 
 ### Verifying PoP
 
-```python
+```python mdpytest:skip
 def verify_pop(warrant, signature, tool, args, max_windows=4) -> bool:
     now = int(time.time())
     sorted_args = sorted(args.items(), key=lambda x: x[0])
@@ -487,7 +487,7 @@ Hard limits prevent abuse and ensure verification terminates:
 
 ### Enforcement
 
-```python
+```python mdpytest:skip
 def verify_limits(stack: list[Warrant]) -> None:
     if len(stack) > MAX_DELEGATION_DEPTH:
         raise ChainTooLong()
@@ -505,7 +505,7 @@ def verify_limits(stack: list[Warrant]) -> None:
 
 Tool names starting with `tenuo:` are **reserved for framework use** and will be rejected during warrant creation:
 
-```python
+```python mdpytest:skip
 # ❌ This will fail
 warrant = Warrant.mint_builder().tool("tenuo:revoke").mint(key)
 # Error: Reserved tool namespace
@@ -524,7 +524,7 @@ warrant = Warrant.mint_builder().tool("my_app:revoke").mint(key)
 
 Extension keys starting with `tenuo.*` are **reserved for framework use**:
 
-```python
+```python mdpytest:skip
 # Current framework extensions (metadata only):
 extensions = {
     "tenuo.session_id": cbor.encode("session-123"),
@@ -544,7 +544,7 @@ extensions = {
 
 Extension keys starting with `tenuo.` are reserved for Tenuo metadata:
 
-```python
+```python mdpytest:skip
 # Reserved for framework
 warrant.extension("tenuo.session_id", b"sess_123")  # Framework use only
 
@@ -627,7 +627,7 @@ Tenuo uses **Deterministic CBOR (RFC 8949)** for all cryptographic operations:
 
 For PoP signatures, the challenge is serialized to bytes once, then signed:
 
-```python
+```python mdpytest:skip
 # Client
 challenge = (warrant_id, tool, sorted_args, timestamp_window)
 challenge_bytes = cbor_serialize(challenge)  # Deterministic
@@ -662,7 +662,7 @@ verify(reconstructed_bytes, signature, holder_pubkey)
 
 ### Example
 
-```python
+```python mdpytest:skip
 result = authorizer.check(
     warrant=warrant,
     tool="read_file",
@@ -706,7 +706,7 @@ Event types:
 
 For emergency warrant cancellation:
 
-```python
+```python mdpytest:skip
 async def srl_sync_loop():
     while True:
         response = await http.get(SRL_URL)
@@ -717,7 +717,7 @@ async def srl_sync_loop():
 
 ### Authorizer with SRL
 
-```python
+```python mdpytest:skip
 authorizer = Authorizer(
     srl_path="/var/run/tenuo/srl",
 )

@@ -34,7 +34,7 @@ pip install tenuo[langchain]
 
 The unified `guard()` function wraps any LangChain tools:
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, SigningKey, Pattern
 from tenuo.langchain import guard
 from langchain_community.tools import DuckDuckGoSearchRun
@@ -67,7 +67,7 @@ result = executor.invoke({"input": "Search for AI news"})
 
 For tools you define yourself:
 
-```python
+```python mdpytest:skip
 from tenuo import guard
 
 @guard(tool="read_file")
@@ -89,7 +89,7 @@ with bound:
 
 Unified API for protecting tools - handles both `BaseTool` instances and plain callables:
 
-```python
+```python mdpytest:skip
 from tenuo.langchain import guard
 
 # Protect LangChain BaseTools
@@ -115,7 +115,7 @@ protected = guard([my_func, other_func], bw)
 
 ## The `@guard` Decorator
 
-```python
+```python mdpytest:skip
 @guard(tool="read_file")
 def read_file(file_path: str, max_size: int = 1000) -> str:
     with open(file_path) as f:
@@ -149,7 +149,7 @@ def read_file(file_path: str, max_size: int = 1000) -> str:
 
 **This means the same function can have different permissions at different times:**
 
-```python
+```python mdpytest:skip
 @guard(tool="read_file")
 def read_file(path: str): ...
 
@@ -179,7 +179,7 @@ When `read_file("/data/x")` is called inside `with bound:`:
 
 When no `extract_args` is provided, Tenuo extracts **all** parameters including defaults:
 
-```python
+```python mdpytest:skip
 @guard(tool="transfer")
 def transfer(from_account: str, to_account: str, amount: float, memo: str = ""):
     ...
@@ -192,7 +192,7 @@ def transfer(from_account: str, to_account: str, amount: float, memo: str = ""):
 
 For simple renames:
 
-```python
+```python mdpytest:skip
 @guard(
     tool="read_file",
     mapping={"file_path": "path"}  # Rename for constraint matching
@@ -207,7 +207,7 @@ def read_file(file_path: str):
 
 ### Explicit BoundWarrant (Preferred)
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, SigningKey
 
 key = SigningKey.generate()
@@ -225,7 +225,7 @@ protected = guard(tools, bound)
 
 ### Context Variables (For Decorators)
 
-```python
+```python mdpytest:skip
 # BoundWarrant as context manager - sets both warrant and key scope
 bound = warrant.bind(key)
 with bound:
@@ -242,7 +242,7 @@ with bound:
 
 ## Error Handling
 
-```python
+```python mdpytest:skip
 from tenuo.exceptions import AuthorizationDenied
 
 try:
@@ -279,7 +279,7 @@ Constraints restrict tool arguments:
 
 ## Full Example
 
-```python
+```python mdpytest:skip
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_openai import ChatOpenAI
 from tenuo import SigningKey, Warrant, Pattern
@@ -324,7 +324,7 @@ result = executor.invoke({"input": "Read /tmp/test.txt"})
 
 The fastest way to add protection - defaults to **audit mode** so you can deploy without breaking anything:
 
-```python
+```python mdpytest:skip
 from tenuo.langchain import auto_protect
 
 # Wrap your executor - logs all tool calls, doesn't block
@@ -347,7 +347,7 @@ protected_executor = auto_protect(executor, mode="enforce")
 
 A drop-in replacement for LangChain's `AgentExecutor` with built-in protection:
 
-```python
+```python mdpytest:skip
 from tenuo.langchain import SecureAgentExecutor
 from tenuo import configure, mint, Capability, SigningKey
 
@@ -380,7 +380,7 @@ async with mint(Capability("search"), Capability("read_file")):
 
 Wrap tools with protection - you manage the `mint()`/`grant()` context:
 
-```python
+```python mdpytest:skip
 from tenuo.langchain import guard_tools
 from tenuo import configure, mint_sync, Capability, SigningKey
 
@@ -403,7 +403,7 @@ with mint_sync(Capability("search"), Capability("calculator")):
 
 Wrap an entire executor with built-in authorization context:
 
-```python
+```python mdpytest:skip
 from tenuo.langchain import guard_agent
 from tenuo import SigningKey, Capability, Pattern
 

@@ -31,7 +31,6 @@ from tenuo import (
     key_scope,
     WarrantError,
 )
-from tenuo.constraints import Constraints
 from tenuo.exceptions import AuthorizationError
 import os
 import logging
@@ -333,33 +332,25 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
     Note: Each tool gets its own warrant. This is the recommended pattern
     for fine-grained authorization control.
     """
-    read_warrant = Warrant.issue(
-        keypair=AGENT_KEYPAIR,
-        capabilities=Constraints.for_tool("read_file", {
-            "file_path": Pattern("/tmp/*")
-        }),
-        holder=AGENT_KEYPAIR.public_key,
-        ttl_seconds=3600
-    )
+    read_warrant = (Warrant.mint_builder()
+        .capability("read_file", file_path=Pattern("/tmp/*"))
+        .holder(AGENT_KEYPAIR.public_key)
+        .ttl(3600)
+        .mint(AGENT_KEYPAIR))
     
-    write_warrant = Warrant.issue(
-        keypair=AGENT_KEYPAIR,
-        capabilities=Constraints.for_tool("write_file", {
-            "file_path": Pattern("/tmp/*")
-        }),
-        holder=AGENT_KEYPAIR.public_key,
-        ttl_seconds=3600
-    )
+    write_warrant = (Warrant.mint_builder()
+        .capability("write_file", file_path=Pattern("/tmp/*"))
+        .holder(AGENT_KEYPAIR.public_key)
+        .ttl(3600)
+        .mint(AGENT_KEYPAIR))
     
-    cluster_warrant = Warrant.issue(
-        keypair=AGENT_KEYPAIR,
-        capabilities=Constraints.for_tool("manage_cluster", {
-            "cluster": Pattern("staging-*"),
-            "replicas": Range.max_value(15)
-        }),
-        holder=AGENT_KEYPAIR.public_key,
-        ttl_seconds=3600
-    )
+    cluster_warrant = (Warrant.mint_builder()
+        .capability("manage_cluster",
+            cluster=Pattern("staging-*"),
+            replicas=Range.max_value(15))
+        .holder(AGENT_KEYPAIR.public_key)
+        .ttl(3600)
+        .mint(AGENT_KEYPAIR))
     
     return {
         "read_file": (read_warrant, read_warrant.to_base64()),

@@ -18,7 +18,6 @@ from tenuo import (
     warrant_scope,
     key_scope,
 )
-from tenuo.constraints import Constraints
 from tenuo.exceptions import AuthorizationError
 
 
@@ -54,14 +53,11 @@ print("STEP 1: Control Plane → Orchestrator (Root Warrant)")
 print("="*70)
 
 # Control plane issues broad warrant to orchestrator
-root_warrant = Warrant.issue(
-    keypair=control_kp,
-    capabilities=Constraints.for_tool("file_operations", {
-        "path": Pattern("/data/*"),  # Broad path access
-    }),
-    holder=orchestrator_kp.public_key,
-    ttl_seconds=3600
-)
+root_warrant = (Warrant.mint_builder()
+    .capability("file_operations", path=Pattern("/data/*"))  # Broad path access
+    .holder(orchestrator_kp.public_key)
+    .ttl(3600)
+    .mint(control_kp))
 
 print("\n✓ Issued root warrant to orchestrator")
 print(f"  Tools: {root_warrant.tools}")
@@ -81,9 +77,7 @@ print("="*70)
 # Orchestrator creates narrow warrant for specific task
 worker_warrant = (
     root_warrant.grant_builder()
-    .capability("file_operations", {
-        "path": Pattern("/data/reports/*"),  # Narrower path
-    })
+    .capability("file_operations", path=Pattern("/data/reports/*"))  # Narrower path
     .holder(worker_kp.public_key)
     .ttl(60)  # Much shorter TTL
     .grant(orchestrator_kp)  # orchestrator signs (they hold the parent warrant)

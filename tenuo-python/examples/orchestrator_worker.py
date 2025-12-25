@@ -19,7 +19,6 @@ from tenuo import (
     Authorizer, warrant_scope, key_scope
 )
 from tenuo_core import Wildcard, ChainVerificationResult  # Constraint for "any value"
-from tenuo.constraints import Constraints
 
 # ============================================================================
 # Protected Tools
@@ -85,13 +84,10 @@ def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: Sig
     
     # Use builder pattern with diff preview
     research_builder = warrant.grant_builder()
-    research_builder.capability("search", {
-        "query": Pattern("*competitor*"),
-        "max_results": Range.max_value(5)
-    })
-    research_builder.capability("fetch", {
-        "url": Pattern("https://public.*")
-    })
+    research_builder.capability("search",
+        query=Pattern("*competitor*"),
+        max_results=Range.max_value(5))
+    research_builder.capability("fetch", url=Pattern("https://public.*"))
     research_builder.ttl(60)  # Short-lived
     research_builder.holder(worker_keypair.public_key)
     research_builder.intent("Research Q3 competitors")
@@ -116,14 +112,11 @@ def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: Sig
     # For write-only phase, we issue a new warrant with only write tool
     # This is the cleanest pattern when you want to completely change the tool set
     print("\n[Orchestrator] Phase 2: Delegating write to Worker")
-    write_warrant = Warrant.issue(
-        keypair=keypair,
-        capabilities=Constraints.for_tool("write", {
-            "path": Pattern("/output/reports/*"),  # Restricted path
-        }),
-        holder=worker_keypair.public_key,
-        ttl_seconds=30
-    )
+    write_warrant = (Warrant.mint_builder()
+        .capability("write", path=Pattern("/output/reports/*"))  # Restricted path
+        .holder(worker_keypair.public_key)
+        .ttl(30)
+        .mint(keypair))
     print("  New warrant: tools=write, path=/output/reports/*, ttl=30s")
     print("  Note: This is a new warrant (not attenuated) to change tool set")
     
@@ -272,22 +265,13 @@ def main():
     
     # Control Plane issues root warrant to Orchestrator
     print("\n[Control Plane] Issuing root warrant to Orchestrator")
-    root_warrant = Warrant.issue(
-        keypair=control_plane_keypair,
-        capabilities={
-            "search": {
-                "query": Wildcard(),  # Any query allowed
-            },
-            "fetch": {
-                "url": Pattern("https://*"),  # Any HTTPS URL
-            },
-            "write": {
-                "path": Pattern("/output/*"),  # Any path under /output
-            },
-        },
-        holder=orchestrator_keypair.public_key,
-        ttl_seconds=3600
-    )
+    root_warrant = (Warrant.mint_builder()
+        .capability("search", query=Wildcard())
+        .capability("fetch", url=Pattern("https://*"))
+        .capability("write", path=Pattern("/output/*"))
+        .holder(orchestrator_keypair.public_key)
+        .ttl(3600)
+        .mint(control_plane_keypair))
     print("  Root warrant: tools=[search, fetch, write], ttl=1h")
     
     # Create Authorizer to verify delegation chain

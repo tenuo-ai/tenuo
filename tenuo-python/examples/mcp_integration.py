@@ -9,7 +9,6 @@ Demonstrates:
 """
 
 from tenuo import Authorizer, SigningKey, Warrant, Pattern, Range
-from tenuo.constraints import Constraints
 from tenuo_core import CompiledMcpConfig, McpConfig
 
 def main():
@@ -81,15 +80,13 @@ def main():
     try:
         # SIMULATION: Create warrant with hardcoded constraints
         # In production: Constraints come from policy engine or configuration
-        warrant = Warrant.mint(
-            keypair=control_keypair,
-            capabilities=Constraints.for_tool("filesystem_read", {
-                "path": Pattern("/var/log/*"),
-                "max_size": Range.max_value(1024 * 1024)
-            }),
-            ttl_seconds=3600,
-            holder=control_keypair.public_key
-        )
+        warrant = (Warrant.mint_builder()
+            .capability("filesystem_read",
+                path=Pattern("/var/log/*"),
+                max_size=Range.max_value(1024 * 1024))
+            .holder(control_keypair.public_key)
+            .ttl(3600)
+            .mint(control_keypair))
         # Note: warrant.tools is a property (getter) returning a list
         print("   [OK] Warrant created")
         print(f"   Tools: {warrant.tools}")
@@ -174,15 +171,13 @@ def demo_without_config(control_keypair):
     
     # Create warrant
     try:
-        warrant = Warrant.mint(
-            keypair=control_keypair,
-            capabilities=Constraints.for_tool("filesystem_read", {
-                "path": Pattern("/var/log/*"),
-                "maxSize": Range.max_value(1024 * 1024)
-            }),
-            ttl_seconds=3600,
-            holder=control_keypair.public_key
-        )
+        warrant = (Warrant.mint_builder()
+            .capability("filesystem_read",
+                path=Pattern("/var/log/*"),
+                maxSize=Range.max_value(1024 * 1024))
+            .holder(control_keypair.public_key)
+            .ttl(3600)
+            .mint(control_keypair))
         print(f"✓ Warrant created: {warrant.tools}")
     except Exception as e:
         print(f"✗ Error: {e}")

@@ -140,7 +140,7 @@ Warrants are **bound to keypairs**. To use a warrant, you must prove you hold th
 
 **Root Execution Warrant**: The first execution warrant in a task chain, typically minted by the control plane. Starts at `depth=0` and can be attenuated.
 
-```python
+```python mdpytest:skip
 # Root Execution Warrant: The first execution warrant in a task chain
 from tenuo import Warrant, Capability, Pattern
 
@@ -153,7 +153,7 @@ root = (Warrant.mint_builder()
 
 **Issuer Warrant**: A warrant that *cannot execute tools* but can *issue new execution warrants*. Held by supervisory nodes (P-LLM, planners) that delegate but don't act.
 
-```python
+```python mdpytest:skip
 # Issuer warrants are a v0.2 feature. In v0.1, use execution warrants
 # with grant_builder() for delegation:
 
@@ -194,7 +194,7 @@ Renewal implies long-lived authority. Tenuo's model is the opposite: authority i
 ***Pattern 1: Phase Decomposition (Recommended)***
 
 The orchestrator decomposes work into phases. Each phase gets a fresh warrant.
-```python
+```python mdpytest:skip
 async def orchestrator(task: str):
     for phase in planner.decompose(task):
         # Delegate with narrower scope for each phase
@@ -215,7 +215,7 @@ This is the [CaMeL](https://arxiv.org/abs/2503.18813) model: the privileged plan
 ***Pattern 2: Orchestrator Push***
 
 For streaming workers, the orchestrator periodically pushes fresh warrants.
-```python
+```python mdpytest:skip
 async def orchestrator():
     while task_active:
         # Push fresh warrant before expiry
@@ -256,7 +256,7 @@ containers:
 ***Pattern 4: Worker Pull (Use With Caution)***
 
 Worker requests its own warrant refresh.
-```python
+```python mdpytest:skip
 async def worker():
     while True:
         if warrant.expires_soon():

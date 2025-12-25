@@ -6,29 +6,25 @@ For LangChain/FastAPI integration using ContextVar, see examples/context_pattern
 """
 
 from tenuo import SigningKey, Warrant, Pattern, Range, guard
-from tenuo.constraints import Constraints
 from tenuo.exceptions import AuthorizationError
 
 def main():
     print("=== Tenuo @guard Decorator Example ===\n")
     
     # Create a warrant
-    keypair = SigningKey.generate()
-    warrant = Warrant.issue(
-        keypair=keypair,
-        capabilities=Constraints.for_tool("scale_cluster", {
-            "cluster": Pattern("staging-*"),
-            "replicas": Range.max_value(15)
-        }),
-        ttl_seconds=3600,
-        holder=keypair.public_key  # Bind to self
-    )
+    key = SigningKey.generate()
+    warrant = (Warrant.mint_builder()
+        .capability("scale_cluster",
+            cluster=Pattern("staging-*"),
+            replicas=Range.max_value(15))
+        .holder(key.public_key)
+        .ttl(3600)
+        .mint(key))
     
-    # Define a function Example demonstrating the @guard decorator pattern for protecting functions with minimal boilerplate.
-
+    # Define a function with @guard decorator
     print("=== Tenuo @guard Decorator Example ===\n")
 
-    @guard(warrant, tool="scale_cluster", keypair=keypair)
+    @guard(tool="scale_cluster")
     def scale_cluster(cluster_id: str, replicas: int):
         print(f"  [OK] Scaling cluster {cluster_id} to {replicas} replicas")
         

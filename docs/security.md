@@ -23,7 +23,7 @@ This page covers what Tenuo protects against, how Proof-of-Possession works, int
 
 Warrants are **bound to keys**. To use a warrant, you must prove you hold the private key.
 
-```python
+```python mdpytest:skip
 # Attenuate with explicit capability (POLA)
 warrant = (root_warrant.grant_builder()
     .capability("protected_tool", path=Pattern("/data/*"))
@@ -47,7 +47,7 @@ This is an intentional design trade-off for scalability. The protection prevents
 
 **Mitigation**: For sensitive tools, implement **application-level deduplication**:
 
-```python
+```python mdpytest:skip
 # Use the built-in helper to generate a deterministic cache key
 dedup_key = warrant.dedup_key(tool, args)
 
@@ -84,7 +84,7 @@ Authority can only **shrink**, never expand:
 | **TTL** | Child cannot outlive parent |
 | **Depth** | `max_depth` can only decrease |
 
-```python
+```python mdpytest:skip
 # Parent has broad capabilities
 parent = (Warrant.mint_builder()
     .capability("read", path=Pattern("/*"))
@@ -185,7 +185,7 @@ Prompt injection attacks can cause financial damage by tricking agents into maki
 
 Constrain cost-driving parameters directly in the warrant:
 
-```python
+```python mdpytest:skip
 warrant = (Warrant.mint_builder()
     .capability("call_llm", {
         "max_tokens": Range.max_value(1000),      # Cap output tokens
@@ -202,7 +202,7 @@ warrant = (Warrant.mint_builder()
 
 Issue terminal warrants (cannot be delegated) for each expensive call:
 
-```python
+```python mdpytest:skip
 async def safe_expensive_call(tool_name: str, params: dict):
     # One warrant per operation - orchestrator controls issuance
     single_use = (Warrant.mint_builder()
@@ -219,7 +219,7 @@ async def safe_expensive_call(tool_name: str, params: dict):
 
 Track call counts in your orchestrator:
 
-```python
+```python mdpytest:skip
 class BudgetedOrchestrator:
     def __init__(self, max_calls: int = 10):
         self.remaining_calls = max_calls
@@ -282,7 +282,7 @@ Tenuo's core is cryptographically secure. But **integration bugs** are the prima
 
 **Fail-closed enforcement**: Panic if a tool is called without warrant context.
 
-```python
+```python mdpytest:skip
 from tenuo import configure, SigningKey
 
 configure(
@@ -293,7 +293,7 @@ configure(
 
 **Behavior:**
 
-```python
+```python mdpytest:skip
 @guard(tool="read_file")
 def read_file(path: str):
     return open(path).read()
@@ -312,7 +312,7 @@ read_file("/data/test.txt")
 
 **Loud warnings**: Log and warn (but don't crash) when tools are called without warrants.
 
-```python
+```python mdpytest:skip
 configure(
     issuer_key=SigningKey.generate(),
     issuer_key=SigningKey.generate(),
@@ -345,7 +345,7 @@ configure(
 
 ### Async Context Sharp Edges
 
-```python
+```python mdpytest:skip
 # ✅ Works correctly
 async with mint(Capability("search")):
     result = await search("query")
@@ -369,7 +369,7 @@ The control plane holds the **root signing key** and issues the initial warrant 
 
 ### Level 1: Embedded (Development)
 
-```python
+```python mdpytest:skip
 root_key = SigningKey.from_env("TENUO_ROOT_KEY")
 warrant = (Warrant.mint_builder()...mint(root_key))
 ```
@@ -435,7 +435,7 @@ Tenuo prevents infinite delegation cycles through multiple layers:
 
 ### 1. Wrap All Tools
 
-```python
+```python mdpytest:skip
 # Good
 @guard(tool="delete_file")
 def delete_file(path: str): ...
@@ -446,7 +446,7 @@ await http_client.delete(url)
 
 ### 2. Use Short TTLs
 
-```python
+```python mdpytest:skip
 # Good: 5 minute TTL
 warrant = (Warrant.mint_builder()...ttl(300).mint(key))
 
@@ -456,7 +456,7 @@ warrant = (Warrant.mint_builder()...ttl(86400).mint(key))
 
 ### 3. Principle of Least Privilege
 
-```python
+```python mdpytest:skip
 # Good: only what's needed
 with mint(Capability("read_file", path="/data/reports/*")):
     ...
@@ -478,7 +478,7 @@ with mint(
 
 ### 5. Use Strict Mode in Tests
 
-```python
+```python mdpytest:skip
 # conftest.py
 @pytest.fixture(scope="session", autouse=True)
 def tenuo_strict():

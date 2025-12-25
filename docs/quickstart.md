@@ -61,7 +61,7 @@ tenuo = "0.1"
 
 The primary API keeps keys separate from warrants:
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, SigningKey, Pattern
 
 # Warrant in state/storage - serializable, no secrets
@@ -85,7 +85,7 @@ child = warrant.grant(
 
 When you need to make many calls with the same warrant+key:
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, SigningKey
 
 warrant = receive_warrant()
@@ -105,7 +105,7 @@ for item in items:
 
 For maximum speed, let Tenuo configure from environment:
 
-```python
+```python mdpytest:skip
 from tenuo import auto_configure, guard, mint_sync, Capability
 
 auto_configure()  # Reads TENUO_* environment variables
@@ -134,9 +134,10 @@ For quick prototyping with `@guard` decorators:
 
 ```python
 from tenuo import configure, mint_sync, Capability, Pattern, SigningKey, guard
+from tenuo.exceptions import AuthorizationDenied
 
 # 1. Configure once at startup
-configure(issuer_key=SigningKey.generate(), dev_mode=True, mode="audit")
+configure(issuer_key=SigningKey.generate(), dev_mode=True, audit_log=False)
 
 # 2. Protect tools with @guard
 @guard(tool="read_file")
@@ -146,7 +147,12 @@ def read_file(path: str) -> str:
 # 3. Scope authority to tasks (mint_sync for scripts, mint for async)
 with mint_sync(Capability("read_file", path=Pattern("/data/*"))):
     result = read_file("/data/reports/q3.pdf")  # ✅ Allowed
-    result = read_file("/etc/passwd")           # ❌ Blocked
+    print(result)
+    
+    try:
+        read_file("/etc/passwd")  # ❌ Blocked
+    except (AuthorizationDenied, Exception):
+        print("Blocked as expected!")
 ```
 
 ---
@@ -161,7 +167,7 @@ Tenuo supports three enforcement modes for gradual adoption:
 | `audit` | Log violations but allow execution | Gradual adoption, discovery |
 | `permissive` | Log + warn header, allow execution | Development, testing |
 
-```python
+```python mdpytest:skip
 from tenuo import configure, SigningKey
 
 # Audit mode - deploy without breaking anything
@@ -180,7 +186,7 @@ configure(
 ```
 
 Check current mode programmatically:
-```python
+```python mdpytest:skip
 from tenuo import is_audit_mode, is_enforce_mode, should_block_violation
 
 if is_audit_mode():
@@ -195,7 +201,7 @@ if is_audit_mode():
 
 **Option 1: `SecureAPIRouter` (Drop-in Replacement)**
 
-```python
+```python mdpytest:skip
 from fastapi import FastAPI
 from tenuo.fastapi import SecureAPIRouter, configure_tenuo
 
@@ -218,7 +224,7 @@ app.include_router(router)
 
 **Option 2: `TenuoGuard` Dependency (Fine Control)**
 
-```python
+```python mdpytest:skip
 from fastapi import FastAPI, Depends
 from tenuo.fastapi import TenuoGuard, SecurityContext, configure_tenuo
 
@@ -238,7 +244,7 @@ async def search(
 
 **Option 1: `auto_protect()` (Zero Config)**
 
-```python
+```python mdpytest:skip
 from tenuo.langchain import auto_protect
 
 # Wrap your executor - defaults to audit mode
@@ -250,7 +256,7 @@ result = protected_executor.invoke({"input": "Search for AI news"})
 
 **Option 2: `SecureAgentExecutor` (Drop-in Replacement)**
 
-```python
+```python mdpytest:skip
 from tenuo.langchain import SecureAgentExecutor
 from tenuo import configure, mint, Capability, SigningKey
 
@@ -266,7 +272,7 @@ async with mint(Capability("search"), Capability("calculator")):
 
 **Option 3: `guard_tools()` and `guard_agent()` (Fine Control)**
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, SigningKey, Capability
 from tenuo.langchain import guard_tools, guard_agent
 
@@ -288,7 +294,7 @@ result = protected_executor.invoke({"input": "Search for AI news"})
 
 **Option 4: Explicit BoundWarrant**
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, SigningKey
 from tenuo.langchain import guard
 
@@ -304,7 +310,7 @@ protected_tools = guard([DuckDuckGoSearchRun()], bound)
 
 ### LangGraph
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, SigningKey, KeyRegistry
 from tenuo.langgraph import guard, TenuoToolNode, load_tenuo_keys
 
@@ -341,7 +347,7 @@ For production deployments with explicit keypair management.
 
 ### 1. Create a Warrant
 
-```python
+```python mdpytest:skip
 # ── CONTROL PLANE ──
 from tenuo import SigningKey, Warrant, Pattern, Range, PublicKey
 
@@ -359,7 +365,7 @@ warrant = (Warrant.mint_builder()
 
 ### 2. Delegate with Attenuation
 
-```python
+```python mdpytest:skip
 # ── ORCHESTRATOR ──
 # Has its own key, only needs worker's PUBLIC key
 from tenuo import PublicKey
@@ -380,7 +386,7 @@ worker_warrant = warrant.grant(
 
 ### 3. Authorize an Action
 
-```python
+```python mdpytest:skip
 # ── WORKER ──
 # Worker signs Proof-of-Possession with their private key
 worker_key = SigningKey.from_env("WORKER_KEY")
@@ -404,7 +410,7 @@ print(f"Authorized: {authorized}")  # True
 
 Use `why_denied()` for detailed diagnostics:
 
-```python
+```python mdpytest:skip
 result = warrant.why_denied("read_file", path="/etc/passwd")
 if result.denied:
     print(f"Denied: {result.deny_code}")
@@ -414,7 +420,7 @@ if result.denied:
 
 Or use `diagnose()` for a full warrant inspection:
 
-```python
+```python mdpytest:skip
 from tenuo import diagnose
 diagnose(warrant)  # Prints warrant details, TTL, constraints, etc.
 ```

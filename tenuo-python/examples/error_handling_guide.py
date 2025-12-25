@@ -32,7 +32,6 @@ from tenuo import (
     Range,
     TenuoError,
 )
-from tenuo.constraints import Constraints
 from tenuo.exceptions import AuthorizationError
 
 # Alias for backwards compatibility
@@ -289,14 +288,11 @@ def main():
     print("\n1. Warrant Expired Error")
     print("-" * 60)
     
-    expired_warrant = Warrant.issue(
-        keypair=signing_key,
-        capabilities=Constraints.for_tool("read_file", {
-            "file_path": Pattern("/tmp/*")
-        }),
-        holder=signing_key.public_key,
-        ttl_seconds=1  # Very short TTL
-    )
+    expired_warrant = (Warrant.mint_builder()
+        .capability("read_file", file_path=Pattern("/tmp/*"))
+        .holder(signing_key.public_key)
+        .ttl(1)  # Very short TTL
+        .mint(signing_key))
     
     time.sleep(2)  # Wait for expiration
     
@@ -316,15 +312,13 @@ def main():
     print("\n2. Constraint Violation Error")
     print("-" * 60)
     
-    restricted_warrant = Warrant.issue(
-        keypair=signing_key,
-        capabilities=Constraints.for_tool("process_payment", {
-            "amount": Range.max_value(1000.0),
-            "currency": Pattern("USD|EUR")
-        }),
-        holder=signing_key.public_key,
-        ttl_seconds=3600
-    )
+    restricted_warrant = (Warrant.mint_builder()
+        .capability("process_payment",
+            amount=Range.max_value(1000.0),
+            currency=Pattern("USD|EUR"))
+        .holder(signing_key.public_key)
+        .ttl(3600)
+        .mint(signing_key))
     
     def try_payment():
         with warrant_scope(restricted_warrant), key_scope(signing_key):
@@ -358,14 +352,11 @@ def main():
     print("-" * 60)
     
     wrong_signing_key = SigningKey.generate()  # Different signing_key
-    warrant = Warrant.issue(
-        keypair=signing_key,
-        capabilities=Constraints.for_tool("read_file", {
-            "file_path": Pattern("/tmp/*")
-        }),
-        holder=signing_key.public_key,  # Bound to original signing_key
-        ttl_seconds=3600
-    )
+    warrant = (Warrant.mint_builder()
+        .capability("read_file", file_path=Pattern("/tmp/*"))
+        .holder(signing_key.public_key)  # Bound to original signing_key
+        .ttl(3600)
+        .mint(signing_key))
     
     def try_with_wrong_signing_key():
         with warrant_scope(warrant), key_scope(wrong_signing_key):

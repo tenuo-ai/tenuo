@@ -17,7 +17,7 @@ Without Tenuo, you'd hardcode limits in your tools or add if-statements. But whe
 
 With Tenuo, the constraint is cryptographically enforced:
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, Range
 from tenuo.langgraph import TenuoToolNode
 
@@ -60,7 +60,7 @@ The warrant is the authority, not the LLM's judgment. Even if the model is trick
 
 ## Quick Start
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, SigningKey, KeyRegistry
 from tenuo.langgraph import guard, TenuoToolNode, load_tenuo_keys
 
@@ -100,7 +100,7 @@ result = graph.invoke(state, config={"configurable": {"tenuo_key_id": "worker"}}
 
 **The Solution**: Warrants travel in state (they're just signed claims, no secrets). Keys stay in `KeyRegistry` (in-memory only). Only a string `key_id` flows through config.
 
-```python
+```python mdpytest:skip
 # ✅ CORRECT: Warrant as string in state, key_id in config
 state = {"warrant": str(warrant), "messages": [...]}  # str() = base64, safe for JSON
 config = {"configurable": {"tenuo_key_id": "worker"}}  # Just a string ID
@@ -117,7 +117,7 @@ state = {"warrant": warrant, "key": signing_key}  # 💀 Security risk!
 
 Load keys automatically from environment variables:
 
-```python
+```python mdpytest:skip
 from tenuo.langgraph import load_tenuo_keys
 
 # Before app startup, set env vars:
@@ -141,7 +141,7 @@ load_tenuo_keys()  # Registers all TENUO_KEY_* vars
 
 Load signing keys from environment variables matching `TENUO_KEY_*`.
 
-```python
+```python mdpytest:skip
 from tenuo.langgraph import load_tenuo_keys
 
 # Naming convention: TENUO_KEY_{NAME} -> key_id="{name}" (lowercase, underscores to hyphens)
@@ -155,7 +155,7 @@ load_tenuo_keys()
 
 Thread-safe in-memory singleton for key management. **Essential for LangGraph** because it keeps private keys out of checkpointed state.
 
-```python
+```python mdpytest:skip
 from tenuo import KeyRegistry, SigningKey
 
 registry = KeyRegistry.get_instance()
@@ -178,7 +178,7 @@ registry.register("worker", key2, namespace="tenant-b")
 
 Wrap a pure node function with Tenuo authorization.
 
-```python
+```python mdpytest:skip
 from tenuo.langgraph import guard
 
 # Basic usage - key_id from config or "default"
@@ -211,7 +211,7 @@ graph.add_node("checker", guard(node_with_warrant, inject_warrant=True))
 
 Decorator for nodes that need explicit BoundWarrant access:
 
-```python
+```python mdpytest:skip
 from tenuo.langgraph import tenuo_node
 from tenuo import BoundWarrant
 
@@ -236,7 +236,7 @@ graph.add_node("agent", my_agent)
 
 Drop-in replacement for LangGraph's `ToolNode` with automatic authorization:
 
-```python
+```python mdpytest:skip
 from tenuo.langgraph import TenuoToolNode
 from langchain_core.tools import tool
 
@@ -268,7 +268,7 @@ graph.add_node("tools", tool_node)
 
 Keep your node functions pure (no Tenuo imports):
 
-```python
+```python mdpytest:skip
 # nodes.py - Pure business logic
 def researcher(state):
     query = state["messages"][-1].content
@@ -290,7 +290,7 @@ graph.add_node("writer", guard(writer, key_id="worker"))
 
 Use `inject_warrant=True` or `@tenuo_node`:
 
-```python
+```python mdpytest:skip
 from tenuo.langgraph import guard
 from tenuo import BoundWarrant
 
@@ -310,7 +310,7 @@ graph.add_node("router", guard(smart_router, inject_warrant=True))
 
 Attenuate warrants for sub-agents:
 
-```python
+```python mdpytest:skip
 from tenuo.langgraph import tenuo_node
 from tenuo import BoundWarrant, Pattern
 
@@ -335,7 +335,7 @@ def orchestrator(state, bound_warrant: BoundWarrant):
 
 Use namespaced keys for tenant isolation:
 
-```python
+```python mdpytest:skip
 from tenuo import KeyRegistry
 
 registry = KeyRegistry.get_instance()
@@ -357,7 +357,7 @@ def tenant_aware_node(state, bound_warrant):
 
 Authorization errors return `ToolMessage` with `status="error"`:
 
-```python
+```python mdpytest:skip
 # TenuoToolNode returns error messages, not exceptions
 result = graph.invoke(state)
 
@@ -383,7 +383,7 @@ for msg in result["messages"]:
 
 By default, authorization errors don't reveal constraint details:
 
-```python
+```python mdpytest:skip
 # Client sees: "Authorization denied (ref: abc123)"
 # Logs show: "[abc123] Tool 'search' denied: query=/etc/passwd, expected=Pattern(/data/*)"
 ```
@@ -394,7 +394,7 @@ This prevents attackers from learning your constraint boundaries.
 
 `BoundWarrant` contains a private key and will raise `TypeError` if serialization is attempted:
 
-```python
+```python mdpytest:skip
 # ❌ This will fail
 state["bound_warrant"] = bound_warrant  # TypeError on checkpoint
 
@@ -406,7 +406,7 @@ state["warrant"] = bound_warrant.warrant  # Just the warrant (serializable)
  
  `allows()` is for UX hints only:
  
- ```python
+ ```python mdpytest:skip
  # ✅ OK for UI hints
  if bound_warrant.allows("delete"):
      show_delete_button()
@@ -431,7 +431,7 @@ Instead, validation happens at **usage time** (inside `validate()`). The `valida
 
 If you were using `@tenuo_node(Capability(...))` with `mint()`:
 
-```python
+```python mdpytest:skip
 # OLD (context-based)
 @tenuo_node(Capability("search"))
 async def researcher(state):

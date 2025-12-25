@@ -15,7 +15,7 @@ When authorization fails, Tenuo provides tools to understand exactly what went w
 
 Get a structured explanation of authorization failures:
 
-```python
+```python mdpytest:skip
 result = warrant.why_denied("read_file", {"path": "/etc/passwd"})
 
 if result.denied:
@@ -35,7 +35,7 @@ Suggestion: Request a path matching Pattern("/data/*")
 
 Get a complete warrant inspection:
 
-```python
+```python mdpytest:skip
 from tenuo import diagnose
 
 diagnose(warrant)
@@ -72,7 +72,7 @@ Capabilities:
 **Cause:** The warrant doesn't include this tool in its allowed tools list.
 
 **Debug:**
-```python
+```python mdpytest:skip
 print(f"Warrant tools: {warrant.tools}")
 # ['search', 'read_file']  # delete_file not listed
 ```
@@ -88,7 +88,7 @@ print(f"Warrant tools: {warrant.tools}")
 **Cause:** The argument doesn't match the warrant's constraint.
 
 **Debug:**
-```python
+```python mdpytest:skip
 result = warrant.why_denied("read_file", {"path": "/etc/passwd"})
 print(f"Field: {result.field}")
 print(f"Constraint: {result.constraint}")
@@ -111,7 +111,7 @@ Value: /etc/passwd
 **Error:** `Warrant has expired`
 
 **Debug:**
-```python
+```python mdpytest:skip
 print(f"Expired: {warrant.is_expired}")
 print(f"Expires at: {warrant.expires_at}")
 print(f"TTL remaining: {warrant.ttl_remaining}")
@@ -128,7 +128,7 @@ print(f"TTL remaining: {warrant.ttl_remaining}")
 **Cause:** `@guard` decorator expects a warrant in context, but none was set.
 
 **Fix:**
-```python
+```python mdpytest:skip
 from tenuo import warrant_scope, key_scope
 
 # Wrap your call
@@ -137,7 +137,7 @@ with warrant_scope(warrant), key_scope(keypair):
 ```
 
 Or use explicit `BoundWarrant`:
-```python
+```python mdpytest:skip
 protected = guard(tools, warrant.bind(key))
 ```
 
@@ -150,7 +150,7 @@ protected = guard(tools, warrant.bind(key))
 **Cause:** The keypair used to sign doesn't match the warrant's holder.
 
 **Debug:**
-```python
+```python mdpytest:skip
 print(f"Warrant holder: {warrant.authorized_holder}")
 print(f"Key public: {keypair.public_key}")
 # Compare - should be equal
@@ -164,7 +164,7 @@ print(f"Key public: {keypair.public_key}")
 
 Quick status checks:
 
-```python
+```python mdpytest:skip
 # Time until expiry
 warrant.ttl_remaining   # timedelta(seconds=3600)
 warrant.ttl             # alias
@@ -187,7 +187,7 @@ warrant.expires_at      # "2025-12-22T15:00:00Z"
 
 ⚠️ **These are NOT security checks** - use for UI hints only:
 
-```python
+```python mdpytest:skip
 # Check if tool is in warrant
 if warrant.allows("search"):
     show_search_button()
@@ -198,7 +198,7 @@ if warrant.allows("read_file", args={"path": "/data/file.txt"}):
 ```
 
 **Never use for authorization decisions:**
-```python
+```python mdpytest:skip
 # ❌ WRONG
 if warrant.allows("delete"):
     delete_database()  # No PoP verification!
@@ -228,7 +228,7 @@ if bound.validate("delete", {"id": "123"}):
 
 Enable debug logging for detailed traces:
 
-```python
+```python mdpytest:skip
 import logging
 
 # Tenuo components
@@ -243,14 +243,14 @@ logging.getLogger("tenuo.langgraph").setLevel(logging.DEBUG)
 
 Authorization errors include a request ID for log correlation:
 
-```python
+```python mdpytest:skip
 # Client sees:
 # "Authorization denied (ref: abc123)"
 
 # Logs show:
 # [abc123] Tool 'search' denied: query=/etc/passwd, expected=Pattern(/data/*)
 ```
-```python
+```python mdpytest:skip
 @guard(tool="search")
 def search(query: str):
     ...

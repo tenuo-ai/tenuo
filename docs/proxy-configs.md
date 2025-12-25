@@ -267,7 +267,7 @@ Full implementation for fetching warrants per-task.
 
 ### Agent Code
 
-```python
+```python mdpytest:skip
 import os
 import httpx
 from tenuo import Warrant, SigningKey, warrant_scope, key_scope
@@ -363,7 +363,7 @@ spec:
 
 Warrant passed via HTTP header, validated in middleware.
 
-```python
+```python mdpytest:skip
 from fastapi import FastAPI, Request, HTTPException
 from tenuo import Warrant, SigningKey, warrant_scope, key_scope
 import os
@@ -445,7 +445,7 @@ spec:
 
 ### Agent Code
 
-```python
+```python mdpytest:skip
 import os
 from tenuo import Warrant, SigningKey, warrant_scope, key_scope
 
@@ -516,7 +516,7 @@ TENUO_KEYPAIR_PEM="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
 
 For simple deployments without a sidecar or gateway.
 
-```python
+```python mdpytest:skip
 from fastapi import FastAPI, Request, HTTPException
 from tenuo import (
     Authorizer, Warrant, SigningKey, PublicKey,

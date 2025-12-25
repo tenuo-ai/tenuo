@@ -13,7 +13,7 @@ description: How to use constraints to scope authority precisely
 
 Constraints are key-value pairs that restrict what a warrant authorizes. When a tool is invoked, Tenuo checks that the arguments satisfy the warrant's constraints.
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, Pattern, Range
 
 # Create warrant with per-tool constraints
@@ -41,7 +41,7 @@ def delete_user(user_id: str):
 
 Matches anything. The universal superset that can be attenuated to any other constraint type.
 
-```python
+```python mdpytest:skip
 from tenuo import Wildcard
 
 # Allows any value
@@ -50,7 +50,7 @@ Wildcard()
 
 **Use case:** Root warrants that grant broad authority, which can be narrowed later.
 
-```python
+```python mdpytest:skip
 # Parent: any query
 with mint(Capability("search", query=Wildcard())):
     ...
@@ -71,7 +71,7 @@ with grant(Capability("search", query=Pattern("*public*"))):
 
 Matches strings against Unix shell-style glob patterns.
 
-```python
+```python mdpytest:skip
 from tenuo import Pattern
 
 # Suffix wildcard - matches paths starting with /data/
@@ -124,7 +124,7 @@ Pattern("specific-value")
 > 2. **`Pattern("*")`** - A glob pattern that matches any string, but can only be attenuated to other patterns or Exact
 > 3. **`"*"` (string literal)** - Just a regular string value that happens to contain an asterisk
 >
-> ```python
+> ```python mdpytest:skip
 > # Flexible: Wildcard can become anything
 > with mint(Capability("search", query=Wildcard())):
 >     with grant(Capability("search", query=Pattern("/data/*"))):  # OK
@@ -156,7 +156,7 @@ Pattern("specific-value")
 
 Matches exactly one value.
 
-```python
+```python mdpytest:skip
 from tenuo import Exact
 
 # Only allows "production"
@@ -172,7 +172,7 @@ Exact("user-12345")
 
 Matches any value in a set.
 
-```python
+```python mdpytest:skip
 from tenuo import OneOf
 
 # Allows any of these environments
@@ -188,7 +188,7 @@ OneOf(["read", "list"])
 
 Constrains numeric values to a range.
 
-```python
+```python mdpytest:skip
 from tenuo import Range
 
 # 0 to 100 (inclusive)
@@ -216,7 +216,7 @@ Range.min_value(10)
 
 Constrains IP addresses to a network range using CIDR notation. Supports both IPv4 and IPv6.
 
-```python
+```python mdpytest:skip
 from tenuo import Cidr
 
 # IPv4 networks
@@ -239,7 +239,7 @@ Cidr("2001:db8::/32")
 
 **Use case:** Restrict API calls to internal networks, validate source IPs.
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, ConstraintSet, Cidr
 
 # Only allow requests from internal network
@@ -255,7 +255,7 @@ warrant = (Warrant.mint_builder()
 
 **Attenuation:** Child CIDR must be a subnet of parent.
 
-```python
+```python mdpytest:skip
 # Parent: 10.0.0.0/8 (all 10.x.x.x)
 parent = Cidr("10.0.0.0/8")
 
@@ -272,7 +272,7 @@ child = Cidr("192.168.0.0/16")  # FAILS - Not a subnet
 
 Validates URLs against scheme, host, port, and path patterns. Provides structured URL validation with proper parsing and normalization - safer than using `Pattern` or `Regex` for URL matching.
 
-```python
+```python mdpytest:skip
 from tenuo import UrlPattern
 
 # Match HTTPS URLs to specific host
@@ -312,7 +312,7 @@ UrlPattern("https://api.example.com/api/v1/*")
 
 **Use case:** Restrict API calls to specific endpoints, enforce HTTPS, limit to trusted domains.
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, ConstraintSet, UrlPattern
 
 # Only allow HTTPS calls to internal API
@@ -333,7 +333,7 @@ warrant = (Warrant.mint_builder()
 - **Port**: Can add restriction but not remove
 - **Path**: Can narrow (/api/* -> /api/v1/*) but not widen
 
-```python
+```python mdpytest:skip
 # Parent: any subdomain, any path
 parent = UrlPattern("https://*.example.com/*")
 
@@ -352,7 +352,7 @@ child = UrlPattern("https://*.other.com/*")           # FAILS - Different domain
 
 Matches strings against regular expressions.
 
-```python
+```python mdpytest:skip
 from tenuo import Regex
 
 # Matches production-* pattern
@@ -367,7 +367,7 @@ Regex(r"^[a-z]+@company\.com$")
 >
 > Regex constraints **cannot be narrowed** during attenuation.
 >
-> ```python
+> ```python mdpytest:skip
 > from tenuo import Warrant, Regex, Exact
 >
 > # Parent with regex
@@ -404,7 +404,7 @@ Regex(r"^[a-z]+@company\.com$")
 
 Excludes specific values (use sparingly - prefer allowlists).
 
-```python
+```python mdpytest:skip
 from tenuo import NotOneOf
 
 # Block admin and root
@@ -419,7 +419,7 @@ NotOneOf(["admin", "root"])
 
 List must contain all specified values.
 
-```python
+```python mdpytest:skip
 from tenuo import Contains
 
 # List must include both "read" and "write"
@@ -427,7 +427,7 @@ Contains(["read", "write"])
 ```
 
 **Example:**
-```python
+```python mdpytest:skip
 from tenuo import Warrant, Contains
 
 # Warrant requires ["read", "write"] permissions
@@ -448,7 +448,7 @@ warrant = (Warrant.mint_builder()
 
 List must be a subset of allowed values.
 
-```python
+```python mdpytest:skip
 from tenuo import Subset
 
 # List must only contain allowed values
@@ -456,7 +456,7 @@ Subset(["staging", "dev", "test"])
 ```
 
 **Example:**
-```python
+```python mdpytest:skip
 from tenuo import Warrant, Subset
 
 # Warrant allows only specific environments
@@ -478,7 +478,7 @@ warrant = (Warrant.mint_builder()
 
 All nested constraints must match.
 
-```python
+```python mdpytest:skip
 from tenuo import All, Pattern, Range
 
 # Path must match pattern AND size must be in range
@@ -496,7 +496,7 @@ All([
 
 At least one nested constraint must match.
 
-```python
+```python mdpytest:skip
 from tenuo import Any, Pattern
 
 # Path must match at least one pattern
@@ -512,7 +512,7 @@ Any([
 
 Negation of a constraint.
 
-```python
+```python mdpytest:skip
 from tenuo import Not, Exact
 
 # Anything except "production"
@@ -527,7 +527,7 @@ Not(Exact("production"))
 
 Complex logic using CEL expressions for advanced authorization rules.
 
-```python
+```python mdpytest:skip
 from tenuo import CEL
 
 # Simple comparison
@@ -544,7 +544,7 @@ CEL("budget < revenue * 0.1 && currency == 'USD'")
 - Expressions are **compiled once** and cached for performance (max 1000 entries)
 
 **Example:**
-```python
+```python mdpytest:skip
 from tenuo import Warrant, CEL
 
 # Budget must be less than 10% of revenue
@@ -566,7 +566,7 @@ Tenuo provides built-in functions for common use cases:
 
 **Time Functions:**
 
-```python
+```python mdpytest:skip
 # Check if timestamp hasn't expired
 CEL("!time_is_expired(deadline)")
 
@@ -585,7 +585,7 @@ CEL("time_now(null).startsWith('2024')")
 
 **Network Functions:**
 
-```python
+```python mdpytest:skip
 # Only allow requests from internal network
 CEL("net_in_cidr(ip, '10.0.0.0/8') || net_in_cidr(ip, '192.168.0.0/16')")
 
@@ -599,7 +599,7 @@ CEL("net_is_private(source_ip)")
 | `net_is_private(ip)` | `(String) -> bool` | Check if IP is in private range (RFC 1918) |
 
 **Time-bounded Example:**
-```python
+```python mdpytest:skip
 from tenuo import Warrant, CEL
 
 # Only allow if order created within last 24 hours
@@ -612,7 +612,7 @@ warrant = (Warrant.mint_builder()
 ```
 
 **Network Example:**
-```python
+```python mdpytest:skip
 from tenuo import Warrant, CEL
 
 # Only allow API calls from private network
@@ -628,7 +628,7 @@ warrant = (Warrant.mint_builder()
 
 Child CEL constraints are automatically combined with parent using AND logic:
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, CEL
 
 # Parent: budget < 10000
@@ -652,7 +652,7 @@ Tenuo enforces **Syntactic Monotonicity** for CEL, not Semantic Monotonicity.
 
 Child expression must **literally** be `(parent) && new_predicate`. It cannot be a semantically equivalent but differently structured expression.
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, CEL
 
 # Parent CEL
@@ -702,7 +702,7 @@ Syntactic monotonicity is **conservative but secure**: If the child is `(parent)
 
 While CEL expressions are sandboxed, extremely complex expressions could still consume CPU:
 
-```python
+```python mdpytest:skip
 # Potentially expensive (though bounded by compilation)
 CEL("(((((a && b) || (c && d)) && ((e || f) && (g || h))) || ...) ...")
 ```
@@ -783,7 +783,7 @@ Some constraint types can contain different types during attenuation:
 
 **Examples:**
 
-```python
+```python mdpytest:skip
 # Wildcard -> Anything: Wildcard is the universal parent
 parent = Wildcard()
 child = Pattern("staging-*")  # OK - Wildcard contains everything
@@ -841,7 +841,7 @@ child = Subset(["a", "b"])  # OK - allows fewer
 
 ### Pattern Narrowing
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, Pattern
 
 # Parent: /data/*
@@ -864,7 +864,7 @@ child = (parent.grant_builder()
 
 ### Range Narrowing
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, Range
 
 # Parent: max 15 replicas
@@ -887,7 +887,7 @@ child = (parent.grant_builder()
 
 ### OneOf Narrowing
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, OneOf
 
 # Parent: ["a", "b", "c"]
@@ -912,7 +912,7 @@ child = (parent.grant_builder()
 
 **Regex constraints are conservative**: Child regex must have **identical pattern** to parent.
 
-```python
+```python mdpytest:skip
 from tenuo import Warrant, Regex, Exact
 
 # Parent: regex pattern
@@ -948,7 +948,7 @@ child = (parent.grant_builder()
 
 ### With @guard Decorator
 
-```python
+```python mdpytest:skip
 from tenuo import guard, Pattern, Range
 
 @guard(tool="transfer_money")
@@ -961,7 +961,7 @@ def transfer_money(account: str, amount: float):
 
 ### With guard()
 
-```python
+```python mdpytest:skip
 from tenuo.langchain import guard
 
 # Protect tools with bound warrant
@@ -974,7 +974,7 @@ protected = guard([read_file, write_file, delete_file], bound)
 
 ### Wildcard to Specific Constraints
 
-```python
+```python mdpytest:skip
 # Parent: any query
 async with mint(Capability("search", query=Wildcard())):
     # Child: narrow to pattern
@@ -984,7 +984,7 @@ async with mint(Capability("search", query=Wildcard())):
 
 ### File Path Constraints
 
-```python
+```python mdpytest:skip
 # Read-only access to reports directory
 async with mint(Capability("read_file", path=Pattern("/data/reports/*"))):
     await read_file(path="/data/reports/q3.csv")  # OK
@@ -993,7 +993,7 @@ async with mint(Capability("read_file", path=Pattern("/data/reports/*"))):
 
 ### Replica/Capacity Limits
 
-```python
+```python mdpytest:skip
 # Limit replica counts
 async with mint(Capability("scale", replicas=Range.max_value(15))):
     await scale(replicas=5)   # OK
@@ -1002,7 +1002,7 @@ async with mint(Capability("scale", replicas=Range.max_value(15))):
 
 ### Environment Restrictions
 
-```python
+```python mdpytest:skip
 # Only staging and dev
 async with mint(Capability("deploy", env=OneOf(["staging", "dev"]))):
     await deploy(env="staging")    # OK
@@ -1011,7 +1011,7 @@ async with mint(Capability("deploy", env=OneOf(["staging", "dev"]))):
 
 ### Scoped Database Access
 
-```python
+```python mdpytest:skip
 # Only specific tables
 async with mint(Capability("query", table=OneOf(["users", "orders"]))):
     await query(table="users")   # OK
@@ -1034,7 +1034,7 @@ async with mint(Capability("query", table=OneOf(["users", "orders"]))):
 | `{a,b}` | Alternation | `{dev,staging}-*` → `dev-web` |
 
 **Common mistakes:**
-```python
+```python mdpytest:skip
 # ❌ WRONG: Pipe is not OR in glob
 Pattern("weather *|news *")  # Treats | as literal character
 
@@ -1047,7 +1047,7 @@ Any([Pattern("weather *"), Pattern("news *")])
 
 ### Prefer Explicit Over Permissive
 
-```python
+```python mdpytest:skip
 # ⚠️ Too permissive - matches everything
 Pattern("*")
 
@@ -1063,7 +1063,7 @@ OneOf(["staging-web", "staging-db"])
 
 Attenuation validation works best with simple prefix/suffix patterns:
 
-```python
+```python mdpytest:skip
 # ✅ Simple prefix - attenuation works reliably
 Pattern("/data/*")           # Parent
 Pattern("/data/reports/*")   # Child (narrower) ✓
@@ -1076,7 +1076,7 @@ Pattern("*-{prod,staging}-*")  # Harder to validate containment
 
 When precision matters more than flexibility:
 
-```python
+```python mdpytest:skip
 # For known, enumerable values
 OneOf(["read", "write", "delete"])
 

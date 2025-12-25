@@ -26,7 +26,6 @@ from tenuo import (
     warrant_scope,
     key_scope,
 )
-from tenuo.constraints import Constraints
 from tenuo_core import CompiledMcpConfig, McpConfig
 
 
@@ -137,15 +136,13 @@ def main():
     print("\n4. Minting root warrant...")
     
     # Mint warrant for filesystem_read only (simpler demo)
-    root_warrant = Warrant.mint(
-        keypair=control_keypair,
-        capabilities=Constraints.for_tool("filesystem_read", {
-            "path": Pattern("/var/log/*"),
-            "max_size": Range.max_value(1024 * 1024),  # Match MCP extraction name
-        }),
-        ttl_seconds=3600,
-        holder=worker_keypair.public_key,  # Bind to worker
-    )
+    root_warrant = (Warrant.mint_builder()
+        .capability("filesystem_read",
+            path=Pattern("/var/log/*"),
+            max_size=Range.max_value(1024 * 1024))  # Match MCP extraction name
+        .holder(worker_keypair.public_key)  # Bind to worker
+        .ttl(3600)
+        .mint(control_keypair))
     
     print("   ✓ Root warrant issued")
     print(f"   Tools: {root_warrant.tools}")
@@ -263,15 +260,13 @@ def demo_without_config():
         return f"[Content of {path}]"
     
     # Mint warrant
-    warrant = Warrant.mint(
-        keypair=control_keypair,
-        capabilities=Constraints.for_tool("filesystem_read", {
-            "path": Pattern("/var/log/*"),
-            "max_size": Range.max_value(1024 * 1024),  # Match extraction name
-        }),
-        ttl_seconds=3600,
-        holder=worker_keypair.public_key,
-    )
+    warrant = (Warrant.mint_builder()
+        .capability("filesystem_read",
+            path=Pattern("/var/log/*"),
+            max_size=Range.max_value(1024 * 1024))  # Match extraction name
+        .holder(worker_keypair.public_key)
+        .ttl(3600)
+        .mint(control_keypair))
     
     print("✓ Warrant issued: filesystem_read, path=/var/log/*, max_size≤1MB\n")
     
