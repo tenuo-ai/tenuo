@@ -5,7 +5,7 @@
 [![PyPI](https://img.shields.io/pypi/v/tenuo.svg)](https://pypi.org/project/tenuo/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/tenuo.svg)](https://pypi.org/project/tenuo/)
 
-> **v0.1.0-alpha.9** — See [CHANGELOG](../CHANGELOG.md) for breaking changes.
+> **v0.1.0-alpha.11** — See [CHANGELOG](../CHANGELOG.md) for breaking changes.
 
 Python bindings for [Tenuo](https://github.com/tenuo-ai/tenuo), providing cryptographically-enforced capability attenuation for AI agent workflows.
 
@@ -23,6 +23,22 @@ pip install tenuo
 Tested against GPT-5.1 prompt injection attacks—240 successful injections, **0 escaped**. [Details →](../README.md#benchmark-results)
 
 ## Quick Start
+
+### 30-Second Demo (Copy-Paste)
+
+```python
+from tenuo import configure, SigningKey, mint_sync, guard, Capability, Pattern
+
+configure(issuer_key=SigningKey.generate(), dev_mode=True, audit_log=False)
+
+@guard(tool="search")
+def search(query: str) -> str:
+    return f"Results for: {query}"
+
+with mint_sync(Capability("search", query=Pattern("weather *"))):
+    print(search(query="weather NYC"))   # ✅ Results for: weather NYC
+    print(search(query="stock prices"))  # ❌ AuthorizationDenied
+```
 
 ### The Safe Path (Recommended)
 
@@ -285,6 +301,29 @@ def smart_router(state, bound_warrant: BoundWarrant):
     if bound_warrant.allows("search"):
         return {"next": "researcher"}
     return {"next": "fallback"}
+```
+
+## Audit Logging
+
+Tenuo logs all authorization events as JSON for observability:
+
+```json
+{"event_type": "authorization_success", "tool": "search", "action": "authorized", ...}
+{"event_type": "authorization_failure", "tool": "delete", "error_code": "CONSTRAINT_VIOLATION", ...}
+```
+
+To suppress logs (for testing/demos):
+
+```python
+configure(issuer_key=key, dev_mode=True, audit_log=False)
+```
+
+Or configure the audit logger directly:
+
+```python
+from tenuo.audit import audit_logger
+audit_logger.configure(enabled=False)  # Disable
+audit_logger.configure(use_python_logging=True, logger_name="tenuo")  # Use Python logging
 ```
 
 ## Debugging

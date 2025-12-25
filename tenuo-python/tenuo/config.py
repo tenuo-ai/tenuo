@@ -168,6 +168,7 @@ def configure(
     warn_on_missing_warrant: bool = False,
     max_missing_warrant_warnings: int = 0,
     expose_error_details: bool = False,
+    audit_log: bool = True,
 ) -> None:
     """
     Configure Tenuo globally.
@@ -190,6 +191,7 @@ def configure(
         warn_on_missing_warrant: Emit warnings for missing warrant contexts
         max_missing_warrant_warnings: Tripwire - auto-flip to strict after N warnings (0=disabled)
         expose_error_details: Include constraint details in error responses (SECURITY: keep False in production)
+        audit_log: Enable audit logging (default: True). Set False for clean demo output.
     
     Raises:
         ConfigurationError: If invalid configuration
@@ -272,6 +274,10 @@ def configure(
             "Authorization violations will be logged but NOT blocked. "
             "Set mode='enforce' for production."
         )
+    
+    # Configure audit logging
+    from .audit import audit_logger
+    audit_logger.configure(enabled=audit_log)
 
 
 def get_config() -> TenuoConfig:

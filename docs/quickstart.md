@@ -135,7 +135,7 @@ from tenuo import guard
 
 @guard(tool="delete_user")
 def delete_user(user_id: str):
-    print(f"Deleting {user_id}...").read()
+    print(f"Deleting {user_id}...")
 
 # 3. Scope authority to tasks
 async with mint(

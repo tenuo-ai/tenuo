@@ -673,13 +673,13 @@ def guard(
                         },
                     ))
                     
-                raise ToolNotAuthorized(
-                    tool=tool_name,
-                    authorized_tools=warrant_tools,
-                    hint=f"Add Capability('{tool_name}', ...) to your mint() call"
-                )
+                    raise ToolNotAuthorized(
+                        tool=tool_name,
+                        authorized_tools=warrant_tools,
+                        hint=f"Add Capability('{tool_name}', ...) to your mint() call"
+                    )
                 
-                # Constraint violation - use rich error with why_denied
+                # Tool is in warrant but constraint violation
                 error_code = AuthErrorCode.CONSTRAINT_VIOLATION
                 
                 # Get structured denial reason

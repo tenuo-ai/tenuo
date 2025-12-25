@@ -97,6 +97,7 @@ from .validation import ValidationResult
 # =============================================================================
 import tenuo.warrant_ext  # noqa: F401
 import tenuo.builder  # noqa: F401 - Adds Warrant.mint_builder()
+import tenuo.keys  # noqa: F401 - Adds SigningKey.from_env(), PublicKey.from_env()
 Warrant.bind = BoundWarrant.bind_warrant
 
 # =============================================================================

@@ -20,7 +20,7 @@ Tenuo is a cryptographic authorization primitive for AI agents. **Think prepaid 
 It constrains ambient identity-based permissions with task-scoped capabilities that attenuate as they delegate. Offline verification in ~27μs.
 If an agent is prompt-injected, the authority still can't escape its bounds.
 
-> **v0.1.0-alpha.9** - Early release. Cryptographic core is stable; integration APIs are evolving. See [CHANGELOG](./CHANGELOG.md).
+> **v0.1.0-alpha.11** - Early release. Cryptographic core is stable; integration APIs are evolving. See [CHANGELOG](./CHANGELOG.md).
 
 ```bash
 pip install tenuo
@@ -34,15 +34,15 @@ pip install tenuo
 ```python
 from tenuo import configure, SigningKey, mint_sync, guard, Capability, Pattern
 
-configure(issuer_key=SigningKey.generate(), dev_mode=True)
+configure(issuer_key=SigningKey.generate(), dev_mode=True, audit_log=False)
 
 @guard(tool="search")
 def search(query: str) -> str:
     return f"Results for: {query}"
 
 with mint_sync(Capability("search", query=Pattern("weather *"))):
-    print(search(query="weather NYC"))      # ✅ "Results for: weather NYC"
-    print(search(query="stock prices"))     # ❌ ConstraintViolation
+    print(search(query="weather NYC"))   # ✅ "Results for: weather NYC"
+    print(search(query="stock prices"))  # ❌ AuthorizationDenied
 ```
 
 The agent can be prompt-injected. The authorization layer doesn't care. The warrant says `weather *`. The request says `stock prices`. **Denied.**
