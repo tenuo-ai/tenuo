@@ -162,18 +162,20 @@ key = SigningKey.generate()
 
 #### KeyRegistry (Thread-Safe Singleton)
 
-Manage multiple keys by ID. Useful for multi-agent, multi-tenant, or service-to-service scenarios.
+**Problem**: In LangGraph and similar frameworks, state gets checkpointed to databases. If you put a `SigningKey` in state, your private key gets persisted—a serious security risk.
+
+**Solution**: KeyRegistry keeps keys in memory, outside of state. Only string IDs flow through your graph.
 
 ```python
 from tenuo import KeyRegistry, SigningKey
 
 registry = KeyRegistry.get_instance()
 
-# Register keys at startup
+# At startup: register keys (keys stay in memory)
 registry.register("worker", SigningKey.from_env("WORKER_KEY"))
 registry.register("orchestrator", SigningKey.from_env("ORCH_KEY"))
 
-# Retrieve by ID
+# In your code: lookup by ID (ID is just a string, safe to checkpoint)
 key = registry.get("worker")
 
 # Multi-tenant: namespace keys per tenant
@@ -183,10 +185,10 @@ key = registry.get("api", namespace="tenant-a")
 ```
 
 **Use cases:**
-- **LangGraph**: Keep keys out of state (checkpointing-safe)
-- **Multi-tenant SaaS**: Isolate keys per tenant
+- **LangGraph**: Keys never in state → checkpointing-safe
+- **Multi-tenant SaaS**: Isolate keys per tenant with namespaces
 - **Service mesh**: Different keys per downstream service
-- **Key rotation**: Register `current` and `previous` keys
+- **Key rotation**: Register both `current` and `previous` keys
 
 #### Keyring (For Key Rotation)
 
