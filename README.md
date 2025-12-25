@@ -20,7 +20,7 @@ Tenuo is a cryptographic authorization primitive for AI agents. **Think prepaid 
 It constrains ambient identity-based permissions with task-scoped capabilities that attenuate as they delegate. Offline verification in ~27μs.
 If an agent is prompt-injected, the authority still can't escape its bounds.
 
-> **v0.1.0-alpha.11** - Early release. Cryptographic core is stable; integration APIs are evolving. See [CHANGELOG](./CHANGELOG.md).
+> **Status: v0.1 Alpha** — Public Research Preview. Cryptographic core is stable; integration APIs are evolving. See [CHANGELOG](./CHANGELOG.md).
 
 ```bash
 pip install tenuo
@@ -142,7 +142,7 @@ configure(issuer_key=SigningKey.generate(), dev_mode=True)
 protected_tools = guard_tools([search_tool, file_tool])
 executor = AgentExecutor(agent=agent, tools=protected_tools)
 
-# Mint scoped authority for this task
+# Mint scoped authority (async context manager for LangChain)
 async with mint(Capability("search", query=Pattern("weather *"))):
     await executor.ainvoke({"input": "What's the weather in NYC?"})  # ✅
     await executor.ainvoke({"input": "Read /etc/passwd"})            # ❌
