@@ -433,6 +433,38 @@ jobs:
           pip install langchain langchain-core langgraph fastapi pydantic PyYAML
           pip install pytest pytest-markdown-docs
 
+      - name: Check for deprecated APIs in docs
+        run: |
+          # Fail if docs contain old API patterns
+          ERRORS=0
+          
+          if grep -rE '\.attenuate\(' docs/ --include='*.md' | grep -v 'mdpytest:skip'; then
+            echo "❌ Found .attenuate() - use .grant_builder().grant()"
+            ERRORS=$((ERRORS + 1))
+          fi
+          
+          if grep -rE 'Warrant\.issue\(' docs/ --include='*.md' | grep -v 'mdpytest:skip'; then
+            echo "❌ Found Warrant.issue() - use Warrant.mint_builder().mint()"
+            ERRORS=$((ERRORS + 1))
+          fi
+          
+          if grep -rE 'Constraints\.for_tool\(' docs/ --include='*.md' | grep -v 'mdpytest:skip'; then
+            echo "❌ Found Constraints.for_tool() - use Capability()"
+            ERRORS=$((ERRORS + 1))
+          fi
+          
+          if grep -rE 'protect_tools\(' docs/ --include='*.md' | grep -v 'mdpytest:skip'; then
+            echo "❌ Found protect_tools() - use guard_tools()"
+            ERRORS=$((ERRORS + 1))
+          fi
+          
+          if [ $ERRORS -gt 0 ]; then
+            echo "Found $ERRORS deprecated API pattern(s) in docs"
+            exit 1
+          fi
+          
+          echo "✅ No deprecated API patterns found in docs"
+
       - name: Test Doc Code Blocks
         run: |
           # Test Python code blocks in markdown docs
