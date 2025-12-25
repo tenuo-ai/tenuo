@@ -37,10 +37,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Generate Rust API docs
+        working-directory: tenuo-core
         run: |
-          cargo doc --no-deps --workspace --exclude tenuo-python
-          mkdir -p docs/reference
-          cp -r target/doc/* docs/reference/
+          cargo doc --no-deps
+          mkdir -p ../docs/reference
+          cp -r target/doc/* ../docs/reference/
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
