@@ -164,7 +164,7 @@ When attenuating a warrant (delegating to another entity):
 **The parent's holder signs the child warrant:**
 ```rust
 // Parent's holder signs the child warrant
-let child = parent.attenuate()
+let child = parent.grant_builder()
     .authorized_holder(child_key.public_key())
     .build(&parent_key)?;  // parent_key is parent's holder key
 

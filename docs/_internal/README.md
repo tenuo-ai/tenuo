@@ -33,7 +33,7 @@
 ### Python SDK ✅
 - Tiered API (`Capability` objects, `mint`, `grant`, `configure`)
 - `@guard` decorator
-- `protect_tools()` for LangChain
+- `guard_tools()` for LangChain
 - `@tenuo_node` for LangGraph
 - `Clearance` with `custom()`, `level`, `meets()` API
 

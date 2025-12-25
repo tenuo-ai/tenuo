@@ -1078,20 +1078,20 @@ async with scope:
 
 ## Tool Protection
 
-### `protect_tools` (Context-Based)
+### `guard_tools` (Context-Based)
 
 Wrap tools to enforce warrant authorization using context (for non-LangChain use).
 
 > For LangChain integration, use [`guard()`](#guard-recommended) from `tenuo.langchain` instead.
 
 ```python mdpytest:skip
-from tenuo import protect_tools
+from tenuo import guard_tools
 ```
 
 #### Signature
 
 ```python mdpytest:skip
-protect_tools(
+guard_tools(
     tools: List[Any],
     *,
     inplace: bool = True,
@@ -1112,13 +1112,13 @@ protect_tools(
 #### Example
 
 ```python mdpytest:skip
-from tenuo import protect_tools, mint
+from tenuo import guard_tools, mint
 
 # Define your tools
 tools = [read_file, send_email, query_db]
 
 # Wrap them (mutates in place by default)
-protect_tools(tools)
+guard_tools(tools)
 
 # Use with scoped authority
 async with mint(Capability("read_file", path="/data/*")):
@@ -1129,7 +1129,7 @@ async with mint(Capability("read_file", path="/data/*")):
 
 ```python mdpytest:skip
 original = [read_file, send_email]
-protected = protect_tools(original, inplace=False)
+protected = guard_tools(original, inplace=False)
 # original unchanged, protected has wrapped tools
 ```
 
@@ -1337,9 +1337,9 @@ agent = create_openai_tools_agent(llm, protected_tools, prompt)
 
 **Returns:** `List[TenuoTool]` for `BaseTool` inputs, `List[Callable]` for callables.
 
-### `protect_tools()` (Alias)
+### `guard_tools()` 
 
-`protect_tools()` and `guard()` are aliases for `guard()` for backward compatibility.
+Wraps multiple tools with Tenuo authorization. See above for full signature.
 
 
 ---

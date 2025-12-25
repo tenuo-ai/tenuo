@@ -252,14 +252,14 @@ Implementations MUST verify ALL invariants. Missing checks create security vulne
 **❌ Error 1: Child signs own warrant**
 ```rust
 // WRONG - violates I1
-let child = parent.attenuate()
+let child = parent.grant_builder()
     .authorized_holder(child_key.public_key())
     .build(&child_key);  // Child signs - WRONG!
 ```
 
 **✅ Correct:**
 ```rust
-let child = parent.attenuate()
+let child = parent.grant_builder()
     .authorized_holder(child_key.public_key())
     .build(&parent_key);  // Parent's holder signs - CORRECT
 ```

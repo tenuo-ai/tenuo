@@ -1998,7 +1998,7 @@ Protect LangChain tools with automatic warrant verification.
 
 ```python
 from langchain.tools import Tool
-from tenuo.integrations.langchain import protect_tool, protect_tools
+from tenuo.integrations.langchain import guard_tool, guard_tools
 
 # Protect a single tool
 read_file_tool = Tool(
@@ -2010,7 +2010,7 @@ protected_tool = protect_tool(read_file_tool)
 
 # Protect multiple tools at once
 tools = [read_file_tool, search_tool, write_tool]
-protected_tools = protect_tools(tools)
+protected_tools = guard_tools(tools)
 ```
 
 ### How It Works
@@ -2080,14 +2080,14 @@ Complete example:
 ```python
 from langchain_openai import ChatOpenAI
 from langchain.agents import create_tool_calling_agent, AgentExecutor
-from tenuo.integrations.langchain import protect_tools, TenuoCallbackHandler
+from tenuo.integrations.langchain import guard_tools, TenuoCallbackHandler
 from tenuo import warrant_scope
 
 # 1. Define tools
 tools = [read_file_tool, search_tool]
 
 # 2. Protect them
-protected_tools = protect_tools(tools)
+protected_tools = guard_tools(tools)
 
 # 3. Create agent
 llm = ChatOpenAI(model="gpt-4")
@@ -2827,7 +2827,7 @@ def allow_all():
 |------|------|--------|
 | Create `tenuo/integrations/langchain.py` | `integrations/langchain.py` | - |
 | Implement `protect_tool(tool)` wrapper | `langchain.py` | 3h |
-| Implement `protect_tools(tools)` batch wrapper | `langchain.py` | 1h |
+| Implement `guard_tools(tools)` batch wrapper | `langchain.py` | 1h |
 | Implement `warrant_scope()` context manager | `langchain.py` | 2h |
 | Implement `get_warrant_context()` | `langchain.py` | 0.5h |
 | Implement `TenuoCallbackHandler` | `langchain.py` | 3h |
@@ -3034,7 +3034,7 @@ warrant = Warrant(received)  # Auto-detects format
 
 ### LangChain Integration
 - [ ] `protect_tool()` wraps single tool
-- [ ] `protect_tools()` wraps multiple tools
+- [ ] `guard_tools()` wraps multiple tools
 - [ ] Context propagation via `warrant_scope()`
 - [ ] `TenuoCallbackHandler` for audit/metrics
 

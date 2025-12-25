@@ -651,10 +651,9 @@ warrant = (Warrant.mint_builder()
     session_id="sess_xyz789",
 )
 
-# Attenuate (local, execution warrants)
-child = warrant.attenuate(
-    tool="read_file",
-    constraints={"path": Exact("/data/report.pdf")},
+# Grant (local, execution warrants)
+child = (warrant.grant_builder()
+    .capability("read_file", path=Exact("/data/report.pdf"))
     keypair=agent_keypair,
     holder=worker_public_key,
 )
@@ -1676,8 +1675,8 @@ TOOL_SCHEMAS = {
     },
 }
 
-# protect_tools() warns or fails
-secure_tools = protect_tools(
+# guard_tools() warns or fails
+secure_tools = guard_tools(
     tools=[search, read_file],
     warrant=warrant,
     keypair=keypair,
@@ -1703,7 +1702,7 @@ warrant = (parent.grant_builder()
 ### LangChain Integration
 
 ```python
-from tenuo.langchain import protect_tools
+from tenuo.langchain import guard_tools
 from tenuo import SigningKey, Warrant, Pattern
 
 key = SigningKey.generate()
@@ -1716,7 +1715,7 @@ warrant = (Warrant.mint_builder()
 )
 
 # Wrap tools
-secure_tools = protect_tools(
+secure_tools = guard_tools(
     tools=[search, read_file],
     warrant=warrant,
     keypair=keypair,
@@ -2252,7 +2251,7 @@ Attenuator  # Also aliased as NarrowBuilder
 ### LangChain (`tenuo.langchain`)
 
 ```python
-protect_tools(tools, warrant, keypair, strict=False) -> list[Callable]
+guard_tools(tools, warrant, keypair, strict=False) -> list[Callable]
 protect_tool(tool, name=None) -> Callable
 TOOL_SCHEMAS  # Recommended constraints per tool
 ```
@@ -2313,7 +2312,7 @@ compiled.validate()  # Check for incompatible extraction sources
 | Middleware patterns                                                     | [SHIPPED] |
 | **Python SDK**                                                          |           |
 | `@guard` decorator                                                   | [SHIPPED] |
-| `protect_tools()` (LangChain)                                           | [SHIPPED] |
+| `guard_tools()` (LangChain)                                           | [SHIPPED] |
 | `@tenuo_node` (LangGraph)                                               | [SHIPPED] |
 | Tool constraint schemas                                                 | [SHIPPED] |
 | Audit logging                                                           | [SHIPPED] |

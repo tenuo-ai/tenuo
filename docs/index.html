@@ -616,11 +616,11 @@
                     <div class="code-dot"></div>
                     <div class="code-dot"></div>
                 </div>
-                <pre class="code-content"><span class="keyword">from</span> tenuo <span class="keyword">import</span> <span class="function">configure</span>, <span class="function">mint</span>, <span class="function">protect_tools</span>, <span class="function">Capability</span>, <span class="function">Pattern</span>
+                <pre class="code-content"><span class="keyword">from</span> tenuo <span class="keyword">import</span> <span class="function">configure</span>, <span class="function">mint</span>, <span class="function">guard_tools</span>, <span class="function">Capability</span>, <span class="function">Pattern</span>
 
 <span class="comment"># 1. Start safely (dev mode auto-generates keys)</span>
 <span class="function">configure</span>(dev_mode=<span class="keyword">True</span>)
-<span class="function">protect_tools</span>([read_file, send_email, query_db])
+<span class="function">guard_tools</span>([read_file, send_email, query_db])
 
 <span class="comment"># 2. Scope authority. The agent can ONLY read data.</span>
 <span class="comment"># send_email and query_db are strictly BLOCKED.</span>
