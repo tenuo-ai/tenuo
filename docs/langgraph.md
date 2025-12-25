@@ -96,16 +96,21 @@ result = graph.invoke(state, config={"configurable": {"tenuo_key_id": "worker"}}
 
 ### Keys Stay Out of State
 
-**The fundamental principle**: Warrants travel in state, keys stay in the registry.
+**The Problem**: LangGraph checkpoints state to databases (Redis, Postgres, etc.). If you put a `SigningKey` in state, your private key gets persisted—a serious security risk.
+
+**The Solution**: Warrants travel in state (they're just signed claims, no secrets). Keys stay in `KeyRegistry` (in-memory only). Only a string `key_id` flows through config.
 
 ```python
 # ✅ CORRECT: Warrant in state, key_id in config
-state = {"warrant": warrant, "messages": [...]}
-config = {"configurable": {"tenuo_key_id": "worker"}}
+state = {"warrant": warrant, "messages": [...]}  # Warrant is safe to checkpoint
+config = {"configurable": {"tenuo_key_id": "worker"}}  # Just a string ID
 graph.invoke(state, config=config)
 
-# ❌ WRONG: Key in state (security risk, serialization fails)
-state = {"warrant": warrant, "key": signing_key}  # Never do this!
+# At execution, TenuoToolNode looks up the key from KeyRegistry
+# Key never leaves memory, never hits the checkpoint database
+
+# ❌ WRONG: Key in state (gets persisted to database!)
+state = {"warrant": warrant, "key": signing_key}  # 💀 Security risk!
 ```
 
 ### Convention Over Configuration
@@ -148,21 +153,21 @@ load_tenuo_keys()
 
 ### `KeyRegistry`
 
-Thread-safe singleton for key management. Essential for LangGraph (keeps keys out of state), but also useful for multi-tenant apps and service-to-service scenarios.
+Thread-safe in-memory singleton for key management. **Essential for LangGraph** because it keeps private keys out of checkpointed state.
 
 ```python
 from tenuo import KeyRegistry, SigningKey
 
 registry = KeyRegistry.get_instance()
 
-# Register keys manually
+# At startup: register keys (keys live in memory only)
 registry.register("worker", SigningKey.from_env("WORKER_KEY"))
 registry.register("orchestrator", SigningKey.from_env("ORCH_KEY"))
 
-# Retrieve
+# At execution: lookup by ID (the ID is just a string, safe anywhere)
 key = registry.get("worker")
 
-# Namespaced (multi-tenant)
+# Multi-tenant: namespace keys per tenant
 registry.register("worker", key1, namespace="tenant-a")
 registry.register("worker", key2, namespace="tenant-b")
 ```
