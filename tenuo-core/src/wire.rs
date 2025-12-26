@@ -12,7 +12,7 @@
 use crate::error::{Error, Result};
 use crate::warrant::Warrant;
 use base64::Engine;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Maximum allowed size for a serialized warrant in bytes (64 KB).
 ///
@@ -66,13 +66,59 @@ pub fn encode_base64(warrant: &Warrant) -> Result<String> {
     Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
 }
 
-/// Decode a warrant from a base64 string.
+/// Encode a warrant to a PEM string (canonical format with headers).
+pub fn encode_pem(warrant: &Warrant) -> Result<String> {
+    let b64 = encode_base64(warrant)?;
+    let mut pem = String::new();
+    pem.push_str("-----BEGIN TENUO WARRANT-----\n");
+    for chunk in b64.as_bytes().chunks(64) {
+        pem.push_str(
+            std::str::from_utf8(chunk).map_err(|e| Error::SerializationError(e.to_string()))?,
+        );
+        pem.push('\n');
+    }
+    pem.push_str("-----END TENUO WARRANT-----\n");
+    Ok(pem)
+}
+
+/// Header name for carrying warrants in HTTP requests.
+pub const WARRANT_HEADER: &str = "X-Tenuo-Warrant";
+
+use std::borrow::Cow;
+
+/// Header name for carrying warrant IDs (for out-of-band transport).
+pub const WARRANT_ID_HEADER: &str = "X-Tenuo-Warrant-Id";
+
+/// Strip PEM armor and remove whitespace to get clean base64.
+/// Returns Cow<str> to avoid allocation if no changes are needed.
+pub fn normalize_token(token: &str) -> Cow<'_, str> {
+    let s = token.trim();
+    if s.starts_with("-----BEGIN TENUO WARRANT-----") {
+        Cow::Owned(
+            s.lines()
+                .filter(|line| !line.trim().starts_with("-----"))
+                .collect::<String>()
+                .replace(|c: char| c.is_whitespace(), ""),
+        )
+    } else if s.chars().any(|c| c.is_whitespace()) {
+        // Only allocate if there's internal whitespace to remove
+        Cow::Owned(s.replace(|c: char| c.is_whitespace(), ""))
+    } else {
+        // Zero-copy path for clean tokens (even if they had surrounding whitespace, as s is a slice)
+        Cow::Borrowed(s)
+    }
+}
+
+/// Decode a warrant from a base64 string (handles raw base64 or PEM).
 ///
 /// Returns `PayloadTooLarge` if the decoded bytes exceed [`MAX_WARRANT_SIZE`].
 pub fn decode_base64(s: &str) -> Result<Warrant> {
+    // Normalize input (strip PEM armor, whitespace) - optimization: zero copy for clean inputs
+    let clean = normalize_token(s);
+
     // Quick check: base64 encodes 3 bytes as 4 chars, so estimate decoded size
     // This is a lower bound; actual decoded size may be slightly smaller
-    let estimated_size = (s.len() * 3) / 4;
+    let estimated_size = (clean.len() * 3) / 4;
     if estimated_size > MAX_WARRANT_SIZE {
         return Err(Error::PayloadTooLarge {
             size: estimated_size,
@@ -81,16 +127,140 @@ pub fn decode_base64(s: &str) -> Result<Warrant> {
     }
 
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(s)
+        .decode(clean.as_ref())
         .map_err(|e| Error::DeserializationError(e.to_string()))?;
     decode(&bytes)
 }
 
-/// Header name for carrying warrants in HTTP requests.
-pub const WARRANT_HEADER: &str = "X-Tenuo-Warrant";
+/// A stack of warrants representing a delegation chain.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct WarrantStack(pub Vec<Warrant>);
 
-/// Header name for carrying warrant IDs (for out-of-band transport).
-pub const WARRANT_ID_HEADER: &str = "X-Tenuo-Warrant-Id";
+impl WarrantStack {
+    /// Create a new warrant stack.
+    pub fn new(warrants: Vec<Warrant>) -> Self {
+        Self(warrants)
+    }
+
+    /// Check if the stack is valid (not empty).
+    pub fn is_valid(&self) -> bool {
+        !self.0.is_empty()
+    }
+
+    /// Get the leaf warrant (last element).
+    pub fn leaf(&self) -> Option<&Warrant> {
+        self.0.last()
+    }
+
+    /// Get the root warrant (first element).
+    pub fn root(&self) -> Option<&Warrant> {
+        self.0.first()
+    }
+}
+
+/// Encode a warrant stack to a compact binary format (CBOR array).
+pub fn encode_stack(stack: &WarrantStack) -> Result<Vec<u8>> {
+    to_vec(stack)
+}
+
+/// Maximum allowed size for a serialized warrant stack (256 KB).
+pub const MAX_STACK_SIZE: usize = 256 * 1024; // 256 KB
+
+/// Decode a warrant stack from binary format.
+pub fn decode_stack(data: &[u8]) -> Result<WarrantStack> {
+    if data.len() > MAX_STACK_SIZE {
+        return Err(Error::PayloadTooLarge {
+            size: data.len(),
+            max: MAX_STACK_SIZE,
+        });
+    }
+    let stack: WarrantStack = ciborium::de::from_reader(data)?;
+    // Basic validation?
+    if stack.0.is_empty() {
+        return Err(Error::DeserializationError(
+            "Warrant stack cannot be empty".to_string(),
+        ));
+    }
+    Ok(stack)
+}
+
+/// Encode a warrant stack to a PEM string (Explicit Chain format).
+pub fn encode_pem_stack(stack: &WarrantStack) -> Result<String> {
+    let bytes = encode_stack(stack)?;
+    let b64 = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+
+    let mut pem = String::new();
+    pem.push_str("-----BEGIN TENUO WARRANT CHAIN-----\n");
+    for chunk in b64.as_bytes().chunks(64) {
+        pem.push_str(
+            std::str::from_utf8(chunk).map_err(|e| Error::SerializationError(e.to_string()))?,
+        );
+        pem.push('\n');
+    }
+    pem.push_str("-----END TENUO WARRANT CHAIN-----\n");
+    Ok(pem)
+}
+
+/// Decode a chain of warrants from a string containing:
+/// 1. Explicit Stack: `-----BEGIN TENUO WARRANT CHAIN-----` (Base64 of CBOR Array)
+/// 2. Implicit Stack: Multiple `-----BEGIN TENUO WARRANT-----` blocks (Leafs/Parents)
+/// 3. Single Warrant: One `-----BEGIN TENUO WARRANT-----` or raw Base64
+pub fn decode_pem_chain(input: &str) -> Result<WarrantStack> {
+    // 1. Check for Explicit Chain Header
+    if let Some(start) = input.find("-----BEGIN TENUO WARRANT CHAIN-----") {
+        let start_processed = start + "-----BEGIN TENUO WARRANT CHAIN-----".len();
+        if let Some(end) = input[start_processed..].find("-----END TENUO WARRANT CHAIN-----") {
+            let content = &input[start_processed..start_processed + end];
+            // Use normalize_token logic to strip whitespace from inner base64?
+            // Or just strip whitespace manually since it's one block.
+            let clean = content.replace(|c: char| c.is_whitespace(), "");
+
+            let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(clean)
+                .map_err(|e| Error::DeserializationError(e.to_string()))?;
+
+            return decode_stack(&bytes);
+        }
+    }
+
+    // 2. Implicit Stack (Multiple individual warrants)
+    let mut warrants = Vec::new();
+    let mut current_pos = 0;
+    let mut found_pem = false;
+
+    while let Some(start) = input[current_pos..].find("-----BEGIN TENUO WARRANT-----") {
+        found_pem = true;
+        let abs_start = current_pos + start;
+        if let Some(end) = input[abs_start..].find("-----END TENUO WARRANT-----") {
+            let abs_end = abs_start + end + "-----END TENUO WARRANT-----".len();
+            let block = &input[abs_start..abs_end];
+            warrants.push(decode_base64(block)?);
+            current_pos = abs_end;
+        } else {
+            break;
+        }
+    }
+
+    // 3. Single Warrant / Raw Base64
+    if !found_pem {
+        if !input.trim().is_empty() {
+            warrants.push(decode_base64(input)?);
+        }
+    } else if warrants.is_empty() {
+        return Err(Error::DeserializationError(
+            "Found PEM headers but failed to extract valid warrants".to_string(),
+        ));
+    }
+
+    if warrants.is_empty() {
+        return Err(Error::DeserializationError(
+            "No valid warrants found".to_string(),
+        ));
+    }
+
+    Ok(WarrantStack(warrants))
+}
 
 #[cfg(test)]
 mod tests {
@@ -100,6 +270,45 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn test_normalize_token() {
+        // Clean input - should be Borrowed
+        let clean = "abcdef";
+        match normalize_token(clean) {
+            Cow::Borrowed(s) => assert_eq!(s, "abcdef"),
+            _ => panic!("Expected Borrowed for clean input"),
+        }
+
+        // Surrounding whitespace only - should be Borrowed (slice)
+        let surrounding = " abcdef ";
+        match normalize_token(surrounding) {
+            Cow::Borrowed(s) => assert_eq!(s, "abcdef"),
+            _ => panic!("Expected Borrowed for surrounding whitespace"),
+        }
+
+        // Internal whitespace - should be Owned
+        let internal = "abc def";
+        match normalize_token(internal) {
+            Cow::Owned(s) => assert_eq!(s, "abcdef"),
+            _ => panic!("Expected Owned for internal whitespace"),
+        }
+
+        // PEM format - should be Owned
+        let pem = "-----BEGIN TENUO WARRANT-----\nabc\ndef\n-----END TENUO WARRANT-----";
+        assert_eq!(normalize_token(pem), "abcdef");
+
+        // PEM with extra junk
+        let pem_junk =
+            "  -----BEGIN TENUO WARRANT-----  \n  abc  \n  def  \n  -----END TENUO WARRANT-----  ";
+        assert_eq!(normalize_token(pem_junk), "abcdef");
+
+        // Not PEM but looks similar (should just strip whitespace)
+        assert_eq!(
+            normalize_token("-----BEGIN PUBLIC KEY----- abc"),
+            "-----BEGINPUBLICKEY-----abc"
+        );
+    }
+
+    #[test]
     fn test_encode_decode_roundtrip() {
         let keypair = SigningKey::generate();
         let mut constraints = ConstraintSet::new();
@@ -107,7 +316,7 @@ mod tests {
         let warrant = Warrant::builder()
             .capability("test_tool", constraints)
             .ttl(Duration::from_secs(300))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -124,7 +333,7 @@ mod tests {
         let warrant = Warrant::builder()
             .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -147,7 +356,7 @@ mod tests {
         let warrant = Warrant::builder()
             .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -172,7 +381,7 @@ mod tests {
         let minimal = Warrant::builder()
             .capability("t", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -186,7 +395,7 @@ mod tests {
         let with_constraints = Warrant::builder()
             .capability("upgrade_cluster", constraints)
             .ttl(Duration::from_secs(600))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -212,7 +421,7 @@ mod tests {
         let warrant1 = Warrant::builder()
             .capability("test", constraints)
             .ttl(Duration::from_secs(300))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -266,7 +475,7 @@ mod tests {
         let warrant1 = Warrant::builder()
             .capability("test", cs1)
             .ttl(Duration::from_secs(300))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -275,7 +484,7 @@ mod tests {
         let warrant2 = Warrant::builder()
             .capability("test", cs2)
             .ttl(Duration::from_secs(300))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -377,7 +586,7 @@ mod tests {
         let warrant = Warrant::builder()
             .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -430,5 +639,105 @@ mod tests {
             deserialized.is_err(),
             "Should fail deserialization for unknown constraint with content (current safe-guard)"
         );
+    }
+
+    #[test]
+    fn test_pem_chain_and_encode() {
+        let keypair = SigningKey::generate();
+        let warrant1 = Warrant::builder()
+            .capability("w1", ConstraintSet::new())
+            .ttl(Duration::from_secs(60))
+            .holder(keypair.public_key())
+            .build(&keypair)
+            .unwrap();
+
+        let warrant2 = Warrant::builder()
+            .capability("w2", ConstraintSet::new())
+            .ttl(Duration::from_secs(60))
+            .holder(keypair.public_key())
+            .build(&keypair)
+            .unwrap();
+
+        // 1. Test encoding single PEM
+        let pem1 = encode_pem(&warrant1).unwrap();
+        assert!(pem1.starts_with("-----BEGIN TENUO WARRANT-----\n"));
+        assert!(pem1.ends_with("-----END TENUO WARRANT-----\n"));
+
+        // 2. Test concatenated PEM parsing (Chain)
+        let pem2 = encode_pem(&warrant2).unwrap();
+        let chain_str = format!("{}{}", pem1, pem2);
+
+        let stack = decode_pem_chain(&chain_str).unwrap();
+        assert_eq!(stack.0.len(), 2);
+        assert_eq!(stack.0[0].id(), warrant1.id());
+        assert_eq!(stack.0[1].id(), warrant2.id());
+
+        // 3. Explicit Stack (New Chain Header)
+        let explicit_stack = WarrantStack(vec![warrant1.clone(), warrant2.clone()]);
+        let explicit_pem = encode_pem_stack(&explicit_stack).unwrap();
+
+        assert!(explicit_pem.starts_with("-----BEGIN TENUO WARRANT CHAIN-----"));
+
+        let decoded_explicit = decode_pem_chain(&explicit_pem).unwrap();
+        assert_eq!(decoded_explicit.0.len(), 2);
+        assert_eq!(decoded_explicit.0[0].id(), warrant1.id());
+
+        // 3. Test mixed garbage fallback (bad chain)
+        let bad = decode_pem_chain("junk");
+        // Verify that invalid non-PEM input properly propagates the base64 decoding error
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn test_stack_size_limit() {
+        let keypair = SigningKey::generate();
+
+        // Create a heavy warrant (approx 50KB)
+        // We do this by adding many constraints
+        let mut constraints = ConstraintSet::new();
+        // 50 constraints of ~1KB each
+        for i in 0..50 {
+            let large_val = "x".repeat(1000);
+            constraints.insert(
+                format!("chk_{}", i),
+                Pattern::new(&format!("{}-*", large_val)).unwrap(),
+            );
+        }
+
+        let heavy_warrant = Warrant::builder()
+            .capability("heavy_loading", constraints)
+            .ttl(Duration::from_secs(60))
+            .holder(keypair.public_key())
+            .build(&keypair)
+            .unwrap();
+
+        let single_size = encode(&heavy_warrant).unwrap().len();
+        println!("Heavy warrant size: {} bytes", single_size);
+        assert!(
+            single_size < MAX_WARRANT_SIZE,
+            "Single warrant must be valid"
+        );
+
+        // Stack 5 of them -> ~250KB + overhead.
+        // If single is ~50KB, 5 is ~250KB. We might need 6 to be sure to cross 256KB limit.
+        // Let's go for 6 to be safe. 6 * 50 = 300KB > 256KB.
+        let chain = vec![heavy_warrant; 6];
+        let stack = WarrantStack(chain);
+
+        let encoded_stack = encode_stack(&stack).unwrap();
+        println!("Encoded stack size: {} bytes", encoded_stack.len());
+        assert!(
+            encoded_stack.len() > MAX_STACK_SIZE,
+            "Test setup failed: stack not large enough"
+        );
+
+        let result = decode_stack(&encoded_stack);
+        match result {
+            Err(Error::PayloadTooLarge { size, max }) => {
+                assert_eq!(max, MAX_STACK_SIZE);
+                assert_eq!(size, encoded_stack.len());
+            }
+            res => panic!("Expected PayloadTooLarge, got {:?}", res),
+        }
     }
 }

@@ -389,6 +389,127 @@ async def extract_body_args(request: Request) -> Dict[str, Any]:
         return {}
 
 
+# =============================================================================
+# SecureAPIRouter: Drop-in replacement for APIRouter
+# =============================================================================
+
+class SecureAPIRouter:
+    """
+    Drop-in replacement for FastAPI APIRouter with automatic Tenuo protection.
+    
+    Routes added to this router are automatically protected by Tenuo.
+    The tool name is inferred from the route path or operation name.
+    
+    Usage:
+        router = SecureAPIRouter()
+        
+        @router.get("/users/{user_id}")  # Auto-protected as "users_read" (or similar)
+        def get_user(user_id: str): ...
+    """
+    
+    def __init__(
+        self, 
+        *args: Any, 
+        tool_prefix: Optional[str] = None,
+        require_pop: bool = True, 
+        **kwargs: Any
+    ):
+        if not FASTAPI_AVAILABLE:
+            raise ImportError("FastAPI is required for SecureAPIRouter")
+            
+        from fastapi import APIRouter
+        self._router = APIRouter(*args, **kwargs)
+        self.tool_prefix = tool_prefix
+        self.require_pop = require_pop
+        
+    def _get_tool_name(self, path: str, method: str, name: Optional[str] = None) -> str:
+        """Infer tool name from route info."""
+        if name:
+            return name
+        # Determine tool name from path: /users/{id} -> users_read
+        # Clean path: remove {params} and slashes
+        clean_path = path.strip("/").replace("{", "").replace("}", "").replace("/", "_")
+        if not clean_path:
+            clean_path = "root"
+            
+        # Add prefix
+        prefix = f"{self.tool_prefix}_" if self.tool_prefix else ""
+        
+        # Method suffix
+        method_map = {
+            "GET": "read",
+            "POST": "create", 
+            "PUT": "update",
+            "DELETE": "delete",
+            "PATCH": "update"
+        }
+        suffix = method_map.get(method.upper(), method.lower())
+        
+        return f"{prefix}{clean_path}_{suffix}"
+
+    def get(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:
+        kwargs.pop("methods", None)  # Remove if present to avoid duplicate
+        return self.api_route(path, methods=["GET"], tool=tool, **kwargs)
+
+    def post(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:
+        kwargs.pop("methods", None)
+        return self.api_route(path, methods=["POST"], tool=tool, **kwargs)
+        
+    def put(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:
+        kwargs.pop("methods", None)
+        return self.api_route(path, methods=["PUT"], tool=tool, **kwargs)
+        
+    def delete(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:
+        kwargs.pop("methods", None)
+        return self.api_route(path, methods=["DELETE"], tool=tool, **kwargs)
+
+    def patch(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:
+        kwargs.pop("methods", None)
+        return self.api_route(path, methods=["PATCH"], tool=tool, **kwargs)
+
+    def api_route(
+        self, 
+        path: str, 
+        methods: List[str], 
+        *args: Any, 
+        tool: Optional[str] = None,
+        dependencies: Optional[List[Any]] = None,
+        **kwargs: Any
+    ) -> Callable:
+        """Add a route with auto-protection."""
+        def decorator(func: Callable) -> Callable:
+            # Determine tool name
+            primary_method = methods[0] if methods else "GET"
+            actual_tool = tool or self._get_tool_name(path, primary_method, kwargs.get("name"))
+            
+            # Create guard dependency
+            guard_dep = TenuoGuard(actual_tool)
+            
+            # Append to dependencies
+            final_deps = list(dependencies) if dependencies else []
+            # We add it as a dependency, so it runs before the handler.
+            # We don't necessarily inject the SecurityContext unless the user asks for it,
+            # but Depends() in the list ensures it executes.
+            final_deps.append(Depends(guard_dep))
+            
+            # Register with underlying router
+            return self._router.api_route(
+                path, 
+                methods=methods, 
+                dependencies=final_deps,
+                *args, 
+                **kwargs
+            )(func)
+        return decorator
+        
+    def include_router(self, router: Any, *args: Any, **kwargs: Any) -> None:
+        self._router.include_router(router, *args, **kwargs)
+        
+    # Delegate other methods to _router
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._router, name)
+
+
 __all__ = [
     # Configuration
     "configure_tenuo",
@@ -402,6 +523,8 @@ __all__ = [
     "SecurityContext",
     # Helpers
     "extract_body_args",
+    # Components
+    "SecureAPIRouter",
     # Constants
     "X_TENUO_WARRANT",
     "X_TENUO_POP",

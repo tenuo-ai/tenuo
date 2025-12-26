@@ -234,7 +234,7 @@ impl ControlPlane {
         Warrant::builder()
             .capability(tool, constraint_set)
             .ttl(ttl)
-            .authorized_holder(self.keypair.public_key())
+            .holder(self.keypair.public_key())
             .build(&self.keypair)
     }
 
@@ -254,7 +254,7 @@ impl ControlPlane {
         Warrant::builder()
             .capability(tool, constraint_set)
             .ttl(ttl)
-            .authorized_holder(holder.clone())
+            .holder(holder.clone())
             .build(&self.keypair)
     }
 
@@ -282,7 +282,7 @@ impl ControlPlane {
         Warrant::builder()
             .capability(tool, constraint_set)
             .ttl(ttl)
-            .authorized_holder(holder.clone())
+            .holder(holder.clone())
             .max_depth(max_depth)
             .build(&self.keypair)
     }
@@ -2274,7 +2274,7 @@ mod tests {
             .unwrap();
 
         let pop_sig = warrant_for_holder
-            .create_pop_signature(&holder_keypair, "upgrade_cluster", &args)
+            .sign(&holder_keypair, "upgrade_cluster", &args)
             .unwrap();
         assert!(data_plane
             .authorize(
@@ -2341,7 +2341,7 @@ mod tests {
         // Check in one call
         let args = HashMap::new();
         let pop_sig = warrant_for_holder
-            .create_pop_signature(&holder_keypair, "test", &args)
+            .sign(&holder_keypair, "test", &args)
             .unwrap();
         assert!(authorizer
             .check(&warrant_for_holder, "test", &args, Some(&pop_sig), &[])
@@ -2389,7 +2389,7 @@ mod tests {
         let child = root
             .attenuate()
             .capability("upgrade_cluster", child_constraints)
-            .authorized_holder(orchestrator_keypair.public_key())
+            .holder(orchestrator_keypair.public_key())
             .build(&control_plane.keypair) // Control plane signs (they hold root)
             .unwrap();
 
@@ -2423,7 +2423,7 @@ mod tests {
         let orchestrator_warrant = root
             .attenuate()
             .capability("query", orch_constraints)
-            .authorized_holder(orchestrator_keypair.public_key())
+            .holder(orchestrator_keypair.public_key())
             .build(&control_plane.keypair) // Control plane signs (they hold root)
             .unwrap();
 
@@ -2432,7 +2432,7 @@ mod tests {
         let worker_warrant = orchestrator_warrant
             .attenuate()
             .capability("query", worker_constraints)
-            .authorized_holder(worker_keypair.public_key())
+            .holder(worker_keypair.public_key())
             .build(&orchestrator_keypair) // Orchestrator signs (they hold orchestrator_warrant)
             .unwrap();
 
@@ -2468,7 +2468,7 @@ mod tests {
         let agent_warrant = root
             .attenuate()
             .capability("upgrade_cluster", agent_constraints)
-            .authorized_holder(agent_keypair.public_key())
+            .holder(agent_keypair.public_key())
             .build(&control_plane.keypair) // Control plane signs (they hold root)
             .unwrap();
 
@@ -2484,7 +2484,7 @@ mod tests {
 
         // Create PoP signature for the agent warrant
         let pop_sig = agent_warrant
-            .create_pop_signature(&agent_keypair, "upgrade_cluster", &args)
+            .sign(&agent_keypair, "upgrade_cluster", &args)
             .unwrap();
 
         let result = data_plane
@@ -2534,7 +2534,7 @@ mod tests {
         let child = warrant2
             .attenuate()
             .inherit_all()
-            .authorized_holder(agent_keypair.public_key())
+            .holder(agent_keypair.public_key())
             .build(&control_plane.keypair) // Control plane signs (they hold warrant2)
             .unwrap();
 
@@ -2580,7 +2580,7 @@ mod tests {
         let child = root
             .attenuate()
             .inherit_all()
-            .authorized_holder(agent_keypair.public_key())
+            .holder(agent_keypair.public_key())
             .build(&control_plane.keypair) // Control plane signs (they hold root)
             .unwrap();
 
@@ -2600,9 +2600,7 @@ mod tests {
         );
 
         // Create PoP signature for child warrant
-        let pop_sig = child
-            .create_pop_signature(&agent_keypair, "test", &args)
-            .unwrap();
+        let pop_sig = child.sign(&agent_keypair, "test", &args).unwrap();
 
         assert!(authorizer
             .authorize(&child, "test", &args, Some(&pop_sig), &[])
@@ -2636,7 +2634,7 @@ mod tests {
         let child = root
             .attenuate()
             .inherit_all()
-            .authorized_holder(orchestrator_keypair.public_key())
+            .holder(orchestrator_keypair.public_key())
             .build(&control_plane.keypair) // Control plane signs (they hold root)
             .unwrap();
 
@@ -2709,7 +2707,7 @@ mod tests {
             .unwrap();
 
         let pop_sig = warrant_for_holder
-            .create_pop_signature(&holder_keypair, "test", &args)
+            .sign(&holder_keypair, "test", &args)
             .unwrap();
 
         // Should pass without any approvals (just PoP)
@@ -2728,7 +2726,7 @@ mod tests {
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![admin_keypair.public_key()])
             .min_approvals(1)
-            .authorized_holder(issuer_keypair.public_key())
+            .holder(issuer_keypair.public_key())
             .build(&issuer_keypair)
             .unwrap();
 
@@ -2737,7 +2735,7 @@ mod tests {
 
         // Create PoP signature
         let pop_sig = warrant
-            .create_pop_signature(&issuer_keypair, "sensitive_action", &args)
+            .sign(&issuer_keypair, "sensitive_action", &args)
             .unwrap();
 
         // Should FAIL without approval (but WITH PoP signature)
@@ -2760,7 +2758,7 @@ mod tests {
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![admin_keypair.public_key()])
             .min_approvals(1)
-            .authorized_holder(issuer_keypair.public_key())
+            .holder(issuer_keypair.public_key())
             .build(&issuer_keypair)
             .unwrap();
 
@@ -2769,7 +2767,7 @@ mod tests {
 
         // Create PoP signature
         let pop_sig = warrant
-            .create_pop_signature(&issuer_keypair, "sensitive_action", &args)
+            .sign(&issuer_keypair, "sensitive_action", &args)
             .unwrap();
 
         // Create approval
@@ -2827,7 +2825,7 @@ mod tests {
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![admin_keypair.public_key()])
             .min_approvals(1)
-            .authorized_holder(issuer_keypair.public_key())
+            .holder(issuer_keypair.public_key())
             .build(&issuer_keypair)
             .unwrap();
 
@@ -2865,7 +2863,7 @@ mod tests {
 
         // Create PoP signature
         let pop_sig = warrant
-            .create_pop_signature(&issuer_keypair, "sensitive_action", &args)
+            .sign(&issuer_keypair, "sensitive_action", &args)
             .unwrap();
 
         // Should FAIL - approver not in required set (even with valid PoP)
@@ -2899,7 +2897,7 @@ mod tests {
                 admin3.public_key(),
             ])
             .min_approvals(2)
-            .authorized_holder(issuer_keypair.public_key()) // Added this line
+            .holder(issuer_keypair.public_key()) // Added this line
             .build(&issuer_keypair)
             .unwrap();
 
@@ -2940,7 +2938,7 @@ mod tests {
 
         // Create PoP signature
         let pop_sig = warrant
-            .create_pop_signature(&issuer_keypair, "sensitive_action", &args)
+            .sign(&issuer_keypair, "sensitive_action", &args)
             .unwrap();
 
         // With 1 approval - should fail (need 2)
@@ -2979,7 +2977,7 @@ mod tests {
             .capability("test", ConstraintSet::new())
             .session_id("session_123")
             .ttl(Duration::from_secs(600))
-            .authorized_holder(orchestrator_keypair.public_key())
+            .holder(orchestrator_keypair.public_key())
             .build(&control_plane.keypair)
             .unwrap();
 
@@ -2988,7 +2986,7 @@ mod tests {
             .attenuate()
             .inherit_all()
             // Session ID inherited from root (session_123)
-            .authorized_holder(worker_keypair.public_key())
+            .holder(worker_keypair.public_key())
             .build(&orchestrator_keypair)
             .unwrap();
 
@@ -3013,7 +3011,7 @@ mod tests {
             .capability("test", ConstraintSet::new())
             .session_id("session_123")
             .ttl(Duration::from_secs(600))
-            .authorized_holder(orchestrator_keypair.public_key())
+            .holder(orchestrator_keypair.public_key())
             .build(&control_plane.keypair)
             .unwrap();
 
@@ -3022,7 +3020,7 @@ mod tests {
             .capability("test", ConstraintSet::new())
             // No session_id
             .ttl(Duration::from_secs(600))
-            .authorized_holder(orchestrator_keypair.public_key())
+            .holder(orchestrator_keypair.public_key())
             .build(&control_plane.keypair)
             .unwrap();
 
@@ -3031,7 +3029,7 @@ mod tests {
             .attenuate()
             .inherit_all()
             // Session ID inherited (None)
-            .authorized_holder(worker_keypair.public_key())
+            .holder(worker_keypair.public_key())
             .build(&orchestrator_keypair)
             .unwrap();
 
@@ -3053,7 +3051,7 @@ mod tests {
             .capability("test", ConstraintSet::new())
             .session_id("session_123")
             .ttl(Duration::from_secs(600))
-            .authorized_holder(orchestrator_keypair.public_key())
+            .holder(orchestrator_keypair.public_key())
             .build(&control_plane.keypair)
             .unwrap();
 
@@ -3062,7 +3060,7 @@ mod tests {
             .attenuate()
             .inherit_all()
             // Session ID inherited from root (session_123)
-            .authorized_holder(orchestrator_keypair.public_key())
+            .holder(orchestrator_keypair.public_key())
             .build(&orchestrator_keypair)
             .unwrap();
 
@@ -3077,7 +3075,7 @@ mod tests {
             .capability("test", ConstraintSet::new())
             .session_id("session_456") // Different session
             .ttl(Duration::from_secs(600))
-            .authorized_holder(orchestrator_keypair.public_key())
+            .holder(orchestrator_keypair.public_key())
             .build(&control_plane.keypair)
             .unwrap();
 
@@ -3086,7 +3084,7 @@ mod tests {
             .attenuate()
             .inherit_all()
             // Session ID inherited from root2 (session_456)
-            .authorized_holder(orchestrator_keypair.public_key())
+            .holder(orchestrator_keypair.public_key())
             .build(&orchestrator_keypair)
             .unwrap();
 
@@ -3144,7 +3142,7 @@ mod tests {
             .clearance(Clearance::INTERNAL)
             .constraint_bound("path", Pattern::new("/data/*").unwrap())
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(issuer_kp.public_key())
+            .holder(issuer_kp.public_key())
             .build(&issuer_kp)
             .expect("Failed to build issuer warrant");
 
@@ -3159,7 +3157,7 @@ mod tests {
             .capability("read_file", child_constraints)
             .clearance(Clearance::EXTERNAL)
             .ttl(Duration::from_secs(600))
-            .authorized_holder(worker_kp.public_key())
+            .holder(worker_kp.public_key())
             .build(&issuer_kp)
             .expect("Failed to build execution warrant");
 
@@ -3199,7 +3197,7 @@ mod tests {
             .clearance(Clearance::EXTERNAL)
             .constraint_bound("path", Pattern::new("/data/*").unwrap())
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(issuer_kp.public_key())
+            .holder(issuer_kp.public_key())
             .build(&issuer_kp)
             .expect("Failed to build issuer warrant");
 
@@ -3213,7 +3211,7 @@ mod tests {
             .expect("Failed to start issuance")
             .capability("send_email", ConstraintSet::new()) // NOT in issuable_tools
             .ttl(Duration::from_secs(600))
-            .authorized_holder(worker_kp.public_key())
+            .holder(worker_kp.public_key())
             .build(&issuer_kp);
 
         assert!(result.is_err(), "Should reject tool not in issuable_tools");
@@ -3229,7 +3227,7 @@ mod tests {
             .capability("read_file", ConstraintSet::new())
             .clearance(Clearance::INTERNAL) // Exceeds External ceiling
             .ttl(Duration::from_secs(600))
-            .authorized_holder(worker_kp.public_key())
+            .holder(worker_kp.public_key())
             .build(&issuer_kp);
 
         assert!(result.is_err(), "Should reject clearance exceeding limit");
@@ -3246,7 +3244,7 @@ mod tests {
             .expect("Failed to start issuance")
             .capability("read_file", bad_constraints)
             .ttl(Duration::from_secs(600))
-            .authorized_holder(worker_kp.public_key())
+            .holder(worker_kp.public_key())
             .build(&issuer_kp);
 
         assert!(result.is_err(), "Should reject constraint outside bounds");
@@ -3271,7 +3269,7 @@ mod tests {
         let exec_root = Warrant::builder()
             .capability("read_file", exec_constraints)
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(kp.public_key())
+            .holder(kp.public_key())
             .build(&kp)
             .expect("Failed to build execution warrant");
 
@@ -3299,7 +3297,7 @@ mod tests {
             .issuable_tools(vec!["read_file".to_string()])
             .clearance(Clearance::INTERNAL)
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(issuer_kp.public_key())
+            .holder(issuer_kp.public_key())
             .build(&issuer_kp)
             .expect("Failed to build issuer warrant");
 
@@ -3318,7 +3316,7 @@ mod tests {
             .unwrap()
             .capability("read_file", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
-            .authorized_holder(worker_kp.public_key())
+            .holder(worker_kp.public_key())
             .build(&issuer_kp)
             .expect("Failed to build valid execution warrant");
 
@@ -3334,7 +3332,7 @@ mod tests {
             .unwrap()
             .capability("read_file", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
-            .authorized_holder(issuer_kp.public_key()) // Same as issuer warrant holder!
+            .holder(issuer_kp.public_key()) // Same as issuer warrant holder!
             .build(&issuer_kp);
 
         assert!(
@@ -3366,7 +3364,7 @@ mod tests {
             .issuable_tools(vec!["read_file".to_string()])
             .clearance(Clearance::INTERNAL)
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(planner_kp.public_key())
+            .holder(planner_kp.public_key())
             .build(&creator_kp)
             .expect("Failed to build issuer warrant");
 
@@ -3376,7 +3374,7 @@ mod tests {
             .unwrap()
             .capability("read_file", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
-            .authorized_holder(creator_kp.public_key()) // Same as issuer warrant's issuer!
+            .holder(creator_kp.public_key()) // Same as issuer warrant's issuer!
             .build(&planner_kp); // planner signs (they hold issuer_warrant)
 
         assert!(
@@ -3408,7 +3406,7 @@ mod tests {
         let root = Warrant::builder()
             .capability("read_file", constraints)
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(agent_kp.public_key())
+            .holder(agent_kp.public_key())
             .build(&agent_kp)
             .expect("Failed to build root warrant");
 
@@ -3419,7 +3417,7 @@ mod tests {
             .attenuate()
             .capability("read_file", narrower)
             .ttl(Duration::from_secs(60))
-            .authorized_holder(agent_kp.public_key()) // Same holder - should be allowed!
+            .holder(agent_kp.public_key()) // Same holder - should be allowed!
             .build(&agent_kp)
             .expect("Self-attenuation should be allowed for execution warrants");
 
@@ -3450,7 +3448,7 @@ mod tests {
             .capability("read_file", constraints.clone())
             .clearance(Clearance::INTERNAL)
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(parent_kp.public_key())
+            .holder(parent_kp.public_key())
             .build(&parent_kp)
             .expect("Failed to build parent warrant");
 
@@ -3462,7 +3460,7 @@ mod tests {
             .capability("read_file", constraints.clone())
             .clearance(Clearance::PRIVILEGED) // Higher than Internal!
             .ttl(Duration::from_secs(60))
-            .authorized_holder(child_kp.public_key())
+            .holder(child_kp.public_key())
             .build(&parent_kp);
 
         assert!(
@@ -3483,7 +3481,7 @@ mod tests {
             .capability("read_file", constraints)
             .clearance(Clearance::EXTERNAL) // Lower than Internal
             .ttl(Duration::from_secs(60))
-            .authorized_holder(child_kp.public_key())
+            .holder(child_kp.public_key())
             .build(&parent_kp)
             .expect("Lower clearance should be allowed");
 
@@ -3518,7 +3516,7 @@ mod tests {
             .capability("admin_reset", constraints)
             .clearance(Clearance::EXTERNAL)
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(kp.public_key())
+            .holder(kp.public_key())
             .build(&kp)
             .expect("Failed to build warrant");
 
@@ -3543,9 +3541,7 @@ mod tests {
         .collect();
 
         // Create PoP signature for read_file
-        let pop_sig = warrant
-            .create_pop_signature(&kp, "read_file", &args)
-            .expect("sign pop");
+        let pop_sig = warrant.sign(&kp, "read_file", &args).expect("sign pop");
 
         // read_file should succeed (External >= External)
         let result = data_plane.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
@@ -3643,7 +3639,7 @@ mod tests {
             .capability("read_file", constraints)
             .clearance(Clearance::PRIVILEGED)
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(kp.public_key())
+            .holder(kp.public_key())
             .build(&kp)
             .expect("Failed to build warrant");
 
@@ -3662,9 +3658,7 @@ mod tests {
         .collect();
 
         // Create PoP signature
-        let pop_sig = warrant
-            .create_pop_signature(&kp, "read_file", &args)
-            .expect("sign pop");
+        let pop_sig = warrant.sign(&kp, "read_file", &args).expect("sign pop");
 
         // Privileged > External, so should succeed
         let result = data_plane.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
@@ -3693,7 +3687,7 @@ mod tests {
             .capability("admin_reset", constraints)
             .clearance(Clearance::EXTERNAL)
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(kp.public_key())
+            .holder(kp.public_key())
             .build(&kp)
             .expect("Failed to build warrant");
 
@@ -3713,9 +3707,7 @@ mod tests {
         .collect();
 
         // Create PoP signature for read_file
-        let pop_sig = warrant
-            .create_pop_signature(&kp, "read_file", &args)
-            .expect("sign pop");
+        let pop_sig = warrant.sign(&kp, "read_file", &args).expect("sign pop");
 
         // read_file should succeed (External >= External)
         let result = authorizer.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
@@ -3871,7 +3863,7 @@ mod tests {
             .capability("read_file", constraints)
             .clearance(Clearance::EXTERNAL)
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(kp.public_key())
+            .holder(kp.public_key())
             .build(&kp)
             .expect("Failed to build warrant");
 
@@ -3890,9 +3882,7 @@ mod tests {
         )]
         .into_iter()
         .collect();
-        let pop_sig = warrant
-            .create_pop_signature(&kp, "read_file", &args)
-            .expect("sign pop");
+        let pop_sig = warrant.sign(&kp, "read_file", &args).expect("sign pop");
 
         // Authorization should succeed (clearance check is skipped when no requirements)
         let result = data_plane.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
@@ -3920,7 +3910,7 @@ mod tests {
             .capability("read_file", constraints)
             // No .clearance() call
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(kp.public_key())
+            .holder(kp.public_key())
             .build(&kp)
             .expect("Failed to build warrant");
 

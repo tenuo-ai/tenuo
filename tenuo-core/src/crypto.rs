@@ -221,7 +221,7 @@ pub fn verify_batch(items: &[(&PublicKey, &[u8], &Signature)]) -> Result<()> {
         .map_err(|e| Error::SignatureInvalid(format!("batch verification failed: {}", e)))
 }
 
-const ED25519_ALG_ID: u8 = 1;
+const ED25519_ALG_ID: u8 = 1; //Djb's gift to the world.
 
 impl Serialize for PublicKey {
     fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>

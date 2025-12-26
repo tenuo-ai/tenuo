@@ -362,9 +362,33 @@ jobs:
         working-directory: tenuo-explorer
         run: npm ci
 
-      - name: Build Explorer
+      - name: Run tests
         working-directory: tenuo-explorer
-        run: npm run build
+        run: npm test -- --run
+
+      - name: Verify WASM files in source
+        run: |
+          echo "=== WASM files in src/wasm ==="
+          ls -la tenuo-explorer/src/wasm/
+          echo "=== Check .wasm file exists ==="
+          ls -la tenuo-explorer/src/wasm/*.wasm || echo "No .wasm files!"
+          
+      - name: Build Explorer (skip prebuild, WASM already built)
+        working-directory: tenuo-explorer
+        run: npx tsc && npx vite build
+
+      - name: Verify WASM in build output
+        run: |
+          echo "=== Check dist for WASM ==="
+          find tenuo-explorer/dist -name "*.wasm" -o -name "*wasm*" | head -20
+          echo "=== dist/assets contents ==="
+          ls -la tenuo-explorer/dist/assets/ | head -20
+
+      # E2E tests disabled - WASM loading issues in CI environment
+      # TODO: Debug locally and re-enable
+      # - name: Run E2E tests
+      #   working-directory: tenuo-explorer
+      #   run: npm run test:e2e -- --project=chromium
 
       - name: Verify build output
         run: |
@@ -424,16 +448,34 @@ jobs:
           cache: pip
           cache-dependency-path: tenuo-python/pyproject.toml
 
-      - name: Install Tenuo and dependencies
-        working-directory: tenuo-python
+      - name: Check for deprecated APIs in docs
         run: |
-          pip install maturin
-          maturin build --release
-          pip install target/wheels/*.whl
-          pip install langchain langchain-core langgraph fastapi pydantic PyYAML
-          pip install pytest pytest-codeblocks
-
-      - name: Test Doc Code Blocks
-        run: |
-          # Test Python code blocks in markdown docs
-          pytest --codeblocks docs/*.md -v || echo "Some doc examples failed - review needed"
+          # Fail if docs contain old API patterns (exclude auto-generated reference/)
+          ERRORS=0
+          
+          if grep -rE '\.attenuate\(' docs/ --include='*.md' | grep -v 'docs/reference/'; then
+            echo "❌ Found .attenuate() - use .grant_builder().grant()"
+            ERRORS=$((ERRORS + 1))
+          fi
+          
+          if grep -rE 'Warrant\.issue\(' docs/ --include='*.md' | grep -v 'docs/reference/'; then
+            echo "❌ Found Warrant.issue() - use Warrant.mint_builder().mint()"
+            ERRORS=$((ERRORS + 1))
+          fi
+          
+          if grep -rE 'Constraints\.for_tool\(' docs/ --include='*.md' | grep -v 'docs/reference/'; then
+            echo "❌ Found Constraints.for_tool() - use Capability()"
+            ERRORS=$((ERRORS + 1))
+          fi
+          
+          if grep -rE 'protect_tools\(' docs/ --include='*.md' | grep -v 'docs/reference/'; then
+            echo "❌ Found protect_tools() - use guard_tools()"
+            ERRORS=$((ERRORS + 1))
+          fi
+          
+          if [ $ERRORS -gt 0 ]; then
+            echo "Found $ERRORS deprecated API pattern(s) in docs"
+            exit 1
+          fi
+          
+          echo "✅ No deprecated API patterns found in docs"

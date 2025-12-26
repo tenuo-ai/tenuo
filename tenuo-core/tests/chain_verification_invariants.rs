@@ -74,7 +74,7 @@ fn test_verify_chain_rejects_i1_violation_wrong_issuer() {
     let parent = Warrant::builder()
         .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(root_keypair.public_key())
+        .holder(root_keypair.public_key())
         .build(&root_keypair)
         .unwrap();
 
@@ -82,7 +82,7 @@ fn test_verify_chain_rejects_i1_violation_wrong_issuer() {
     let victim_warrant = parent
         .attenuate()
         .inherit_all()
-        .authorized_holder(victim_keypair.public_key())
+        .holder(victim_keypair.public_key())
         .build(&root_keypair)
         .unwrap();
 
@@ -164,7 +164,7 @@ fn test_verify_chain_rejects_i3_violation_ttl_extended() {
     let parent = Warrant::builder()
         .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(root_keypair.public_key())
+        .holder(root_keypair.public_key())
         .build(&root_keypair)
         .unwrap();
 
@@ -238,7 +238,7 @@ fn test_verify_chain_rejects_i4_violation_tool_escalation() {
     let parent = Warrant::builder()
         .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(root_keypair.public_key())
+        .holder(root_keypair.public_key())
         .build(&root_keypair)
         .unwrap();
 
@@ -319,7 +319,7 @@ fn test_verify_chain_rejects_i4_violation_constraint_widening() {
     let parent = Warrant::builder()
         .capability("transfer", parent_constraints)
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(root_keypair.public_key())
+        .holder(root_keypair.public_key())
         .build(&root_keypair)
         .unwrap();
 
@@ -382,7 +382,7 @@ fn test_verify_chain_rejects_i2_violation_depth_not_incremented() {
     let parent = Warrant::builder()
         .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(root_keypair.public_key())
+        .holder(root_keypair.public_key())
         .build(&root_keypair)
         .unwrap();
 
@@ -448,7 +448,7 @@ fn test_verify_chain_rejects_i2_violation_depth_exceeds_max() {
         .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .max_depth(1) // Only 1 level of delegation allowed
-        .authorized_holder(root_keypair.public_key())
+        .holder(root_keypair.public_key())
         .build(&root_keypair)
         .unwrap();
 
@@ -518,7 +518,7 @@ fn test_verify_chain_rejects_i5_violation_bad_signature() {
     let parent = Warrant::builder()
         .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(root_keypair.public_key())
+        .holder(root_keypair.public_key())
         .build(&root_keypair)
         .unwrap();
 
@@ -576,7 +576,7 @@ fn test_verify_chain_rejects_i5_violation_wrong_parent_hash() {
     let parent = Warrant::builder()
         .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(root_keypair.public_key())
+        .holder(root_keypair.public_key())
         .build(&root_keypair)
         .unwrap();
 
@@ -650,7 +650,7 @@ fn test_sophisticated_i1_attack() {
     let root = Warrant::builder()
         .capability("sensitive_tool", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(root_keypair.public_key())
+        .holder(root_keypair.public_key())
         .build(&root_keypair)
         .unwrap();
 
@@ -658,7 +658,7 @@ fn test_sophisticated_i1_attack() {
     let legitimate_warrant = root
         .attenuate()
         .inherit_all()
-        .authorized_holder(legitimate_holder.public_key())
+        .holder(legitimate_holder.public_key())
         .build(&root_keypair)
         .unwrap();
 

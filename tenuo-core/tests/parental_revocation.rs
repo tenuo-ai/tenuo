@@ -16,7 +16,7 @@ fn test_parental_revocation() {
     let warrant = Warrant::builder()
         .capability("test_tool", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(holder.public_key())
+        .holder(holder.public_key())
         .build(&issuer)
         .unwrap();
 
@@ -51,7 +51,7 @@ fn test_self_revocation() {
     let warrant = Warrant::builder()
         .capability("test_tool", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(holder.public_key())
+        .holder(holder.public_key())
         .build(&issuer)
         .unwrap();
 
@@ -72,7 +72,7 @@ fn test_unauthorized_revocation() {
     let warrant = Warrant::builder()
         .capability("test_tool", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(issuer.public_key())
+        .holder(issuer.public_key())
         .build(&issuer)
         .unwrap();
 

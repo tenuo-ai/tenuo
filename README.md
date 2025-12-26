@@ -11,7 +11,6 @@
   <a href="https://crates.io/crates/tenuo"><img src="https://img.shields.io/crates/v/tenuo.svg" alt="Crates.io"></a>
   <a href="https://pypi.org/project/tenuo/"><img src="https://img.shields.io/pypi/v/tenuo.svg" alt="PyPI"></a>
   <a href="https://hub.docker.com/r/tenuo/authorizer"><img src="https://img.shields.io/docker/v/tenuo/authorizer?label=docker" alt="Docker"></a>
-  <a href="./charts/tenuo-authorizer"><img src="https://img.shields.io/badge/helm-0.1.0-blue?logo=helm" alt="Helm"></a>
   <a href="https://tenuo.dev"><img src="https://img.shields.io/badge/docs-tenuo.dev-blue" alt="Docs"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" alt="License"></a>
 </p>
@@ -21,58 +20,36 @@ Tenuo is a cryptographic authorization primitive for AI agents. **Think prepaid 
 It constrains ambient identity-based permissions with task-scoped capabilities that attenuate as they delegate. Offline verification in ~27μs.
 If an agent is prompt-injected, the authority still can't escape its bounds.
 
-> **v0.1.0-alpha.9** - Early release. Cryptographic core is stable; integration APIs are evolving. See [CHANGELOG](./CHANGELOG.md).
+> **Status: v0.1 Alpha** — Public Research Preview. Cryptographic core is stable; integration APIs are evolving. See [CHANGELOG](./CHANGELOG.md).
 
 ```bash
 pip install tenuo
 ```
 
-<a href="https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
+<a href="https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open Demo In Colab"></a>
+<a href="https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_integrations.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open Integrations In Colab"></a>
 <a href="https://tenuo.dev/explorer/"><img src="https://img.shields.io/badge/🔬_Explorer-decode_warrants-00d4ff" alt="Explorer"></a>
 
 ## Quick Start
 
 ```python
-from tenuo import Warrant, SigningKey, Pattern
+from tenuo import configure, SigningKey, mint_sync, guard, Capability, Pattern
 
-# Warrant in state - serializable, no secrets
-warrant = receive_warrant_from_orchestrator()
+configure(issuer_key=SigningKey.generate(), dev_mode=True, audit_log=False)
 
-# Explicit key at call site - keys never in state
-key = SigningKey.from_env("MY_SERVICE_KEY")
-headers = warrant.auth_headers(key, "search", {"query": "test"})
+@guard(tool="search")
+def search(query: str) -> str:
+    return f"Results for: {query}"
 
-# Delegation with attenuation
-child = warrant.delegate(
-    to=worker_pubkey,
-    allow={"search": {"query": Pattern("safe*")}},
-    ttl=300,
-    key=key
-)
+# Sync API (shown here for simplicity)
+with mint_sync(Capability("search", query=Pattern("weather *"))):
+    print(search(query="weather NYC"))   # ✅ "Results for: weather NYC"
+    print(search(query="stock prices"))  # ❌ AuthorizationDenied
+
+# Async API: async with mint(...) for LangChain/FastAPI/async workflows
 ```
 
-The agent can be prompt-injected. The authorization layer doesn't care. The warrant says `safe*`. The request says `dangerous`. **Denied.**
-
-<details>
-<summary><strong>Context-based API (for prototyping)</strong></summary>
-
-```python
-from tenuo import configure, root_task, Capability, Pattern, SigningKey, lockdown
-
-configure(issuer_key=SigningKey.generate(), dev_mode=True)
-
-@lockdown(tool="read_file")
-def read_file(path: str):
-    return open(path).read()
-
-async with root_task(Capability("read_file", path=Pattern("/data/*"))):
-    read_file("/data/report.txt")  # ✅ Allowed
-    read_file("/etc/passwd")       # ❌ Blocked
-```
-
-</details>
-
-**[Read the launch post →](https://tenuo.dev/blog/introducing-tenuo)**
+The agent can be prompt-injected. The authorization layer doesn't care. The warrant says `weather *`. The request says `stock prices`. **Denied.**
 
 ---
 
@@ -89,35 +66,6 @@ IAM answers "who are you?" Tenuo answers "what can you do right now?"
 
 ---
 
-## Benchmark Results
-
-Tested against [AgentDojo](https://github.com/ethz-spylab/agentdojo) prompt injection benchmark (workspace suite, GPT-5.1):
-
-| Metric | Without Tenuo | With Tenuo |
-|--------|---------------|------------|
-| **Injection attacks blocked** | 0% | **100%** |
-| **Malicious tool calls denied** | 0 | 36 |
-| **Legitimate operations** | ✅ | ✅ |
-
-<details>
-<summary><strong>What was blocked?</strong></summary>
-
-| Attack Type | Blocked |
-|-------------|---------|
-| Email exfiltration (`send_email` to external) | 29 |
-| Calendar participant injection | 6 |
-| Sensitive file deletion | 1 |
-
-The LLM was successfully prompt-injected 240 times. Every single malicious action was blocked by cryptographic constraints. **No detection. No interpretation. Just math.**
-
-</details>
-
-Run your own:
-```bash
-python -m benchmarks.agentdojo.evaluate --suite workspace --model gpt-4o
-```
-
----
 
 ## How It Works
 
@@ -176,50 +124,63 @@ pip install tenuo[mcp]           # + MCP client (Python ≥3.10 required)
 
 **FastAPI**
 ```python
-from fastapi import FastAPI, Depends
-from tenuo.fastapi import TenuoGuard, SecurityContext, configure_tenuo
-
-app = FastAPI()
-configure_tenuo(app, trusted_issuers=[issuer_pubkey])
+from tenuo.fastapi import TenuoGuard, SecurityContext
 
 @app.get("/search")
 async def search(query: str, ctx: SecurityContext = Depends(TenuoGuard("search"))):
-    return {"results": [...]}
+    # TenuoGuard extracts warrant from headers, verifies PoP
+    return {"results": do_search(query), "warrant_id": ctx.warrant.id}
+
+# Client sends: X-Tenuo-Warrant + X-Tenuo-PoP headers
+# Server verifies offline in microseconds
 ```
 
-**LangChain**
+**LangChain** - Scoped authority that prompt injection can't escape
 ```python
-from tenuo import Warrant, SigningKey
-from tenuo.langchain import protect
+from tenuo import configure, SigningKey, mint, Capability, Pattern
+from tenuo.langchain import guard_tools
 
-warrant = Warrant.builder().tool("search").issue(keypair)
-bound = warrant.bind_key(keypair)
+configure(issuer_key=SigningKey.generate(), dev_mode=True)
 
-protected_tools = protect([search_tool], bound_warrant=bound)
+# Wrap tools with Tenuo authorization
+protected_tools = guard_tools([search_tool, file_tool])
+executor = AgentExecutor(agent=agent, tools=protected_tools)
+
+# Mint scoped authority (async context manager for LangChain)
+async with mint(Capability("search", query=Pattern("weather *"))):
+    await executor.ainvoke({"input": "What's the weather in NYC?"})  # ✅
+    await executor.ainvoke({"input": "Read /etc/passwd"})            # ❌
+
+# Prompt injection → search("hack commands") → denied (not "weather *")
 ```
 
-**LangGraph**
+**LangGraph** - Authority that survives checkpoints
 ```python
-from tenuo import KeyRegistry
-from tenuo.langgraph import secure, TenuoToolNode, auto_load_keys
+from tenuo import configure, SigningKey, Capability, Range
+from tenuo.langgraph import TenuoToolNode
 
-# Load keys from TENUO_KEY_* env vars
-auto_load_keys()
+configure(issuer_key=SigningKey.generate(), dev_mode=True)
 
-# Wrap pure nodes with security
-graph.add_node("agent", secure(my_agent, key_id="worker"))
-graph.add_node("tools", TenuoToolNode([search, calculator]))
+# TenuoToolNode enforces constraints on every tool call
+graph.add_node("tools", TenuoToolNode([lookup_order, process_refund]))
 
-# Run with warrant in state
-graph.invoke({"warrant": warrant, ...})
+# Warrant with spending limit travels in graph state
+result = graph.invoke({
+    "messages": [HumanMessage("Refund $75 for order #123")],
+    "capabilities": [
+        Capability("lookup_order"),
+        Capability("process_refund", amount=Range(min=0, max=50)),  # Max $50
+    ],
+})
+# process_refund(amount=75) → ❌ Range(min=0, max=50) violated
 ```
 
-**MCP (Model Context Protocol)** _(Requires Python 3.10+)_
+**MCP (Model Context Protocol)** _(Python 3.10+)_
 ```python
 from tenuo.mcp import SecureMCPClient
 
-async with SecureMCPClient("python", ["mcp_server.py"]) as client:
-    tools = await client.get_protected_tools()
+async with SecureMCPClient("python", ["server.py"]) as client:
+    tools = await client.get_protected_tools()  # All tools wrapped with Tenuo
 ```
 
 **Kubernetes** — Deploy as sidecar or gateway. See [quickstart](https://github.com/tenuo-ai/tenuo/tree/main/docs/quickstart).
@@ -268,6 +229,18 @@ See [Related Work](https://tenuo.dev/related-work) for detailed comparison.
 
 ---
 
+## Roadmap
+
+| Feature | Status |
+|---------|--------|
+| Revocation service | Basic revocation via Authorizer; distributed revocation in v0.3 |
+| Context-aware constraints | Spec under development |
+| Multi-sig approvals | Planned for v0.3 |
+| Google A2A integration | Planned for v0.2 |
+| TypeScript/Node SDK | Planned for v0.2 |
+
+---
+
 ## Rust
 
 Building a sidecar or gateway? Use the core directly:
@@ -281,9 +254,22 @@ See [docs.rs/tenuo](https://docs.rs/tenuo) for Rust API.
 
 ---
 
+## Etymology
+
+**Tenuo** (/tɛn-ju-oʊ/ • *Ten-YOO-oh*)
+
+From Latin *tenuare*: "to make thin; to attenuate."
+Authority starts broad at the root and is **attenuated** as it flows down the delegation chain.
+
+---
+
 ## Contributing
 
 Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+### TypeScript SDK (Help Wanted)
+
+We're planning a TypeScript/Node SDK for v0.2. If you're interested in leading or contributing to this effort, open an issue or email us at [dev@tenuo.dev](mailto:dev@tenuo.dev).
 
 **Security issues**: Email security@tenuo.dev (not public issues).
 

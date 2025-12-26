@@ -214,7 +214,7 @@ You have limited permissions - only perform actions within your authorized scope
                 
                 # Check against warrant
                 try:
-                    pop = warrant.create_pop_signature(
+                    pop = warrant.sign(
                         self.assistant_key,
                         tc.function.name,
                         call["args"],
@@ -331,7 +331,7 @@ class DelegationChainScenario:
         # Bot: minimal scope
         bot_warrant = (
             assistant_warrant.attenuate_builder()
-            .capability("transfer_money", {"amount": Range(0, 50)})
+            .capability("transfer_money", {"amount": Range(min=0, max=50)})
             .holder(self.bot_key.public_key)
             .ttl(300)
             .delegate(self.assistant_key)
@@ -358,7 +358,7 @@ class DelegationChainScenario:
         
         # Create PoP and try to authorize
         try:
-            pop = warrant.create_pop_signature(
+            pop = warrant.sign(
                 holder_key,
                 "transfer_money",
                 {"amount": target_amount, "to_account": "ATTACKER"},

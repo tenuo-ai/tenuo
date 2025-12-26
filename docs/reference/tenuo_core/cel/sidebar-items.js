@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["cache_size","clear_cache","compile","constraint_value_to_cel","evaluate","evaluate_with_value_context"],"static":["CEL_CACHE"]};

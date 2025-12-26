@@ -186,7 +186,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .attenuate()
         .capability("manage_infrastructure", worker_constraints)
         .ttl(Duration::from_secs(600)) // 10 minutes
-        .authorized_holder(worker_keypair.public_key()) // PoP
+        .holder(worker_keypair.public_key()) // PoP
         .agent_id("worker-agent-01") // Traceability
         // Session ID is inherited from parent automatically
         .build(&orchestrator_keypair)?;
@@ -258,7 +258,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .attenuate()
         .capability("manage_infrastructure", sensitive_constraints)
         .ttl(Duration::from_secs(300)) // 5 minutes (short for sensitive ops)
-        .authorized_holder(worker_keypair.public_key())
+        .holder(worker_keypair.public_key())
         .agent_id("worker-agent-01-sensitive")
         // MULTI-SIG: Require 1-of-1 approval from the admin
         .add_approvers(vec![admin_keypair.public_key()])

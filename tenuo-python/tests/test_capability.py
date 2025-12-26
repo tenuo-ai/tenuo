@@ -3,7 +3,7 @@ Capability API Tests
 
 Tests for the Capability-based Tier 1 API:
 - Capability.merge() behavior
-- scoped_task() boundaries  
+- grant() boundaries  
 - ensure_constraint() behavior
 - Capability object handling
 """
@@ -18,14 +18,14 @@ from tenuo import (
     SigningKey,
     configure,
     reset_config,
-    root_task_sync,
-    scoped_task,
+    mint_sync,
+    grant,
     ConfigurationError,
-    ScopeViolation,
     MonotonicityError,
 )
+from tenuo.exceptions import ScopeViolation
 from tenuo.constraints import ensure_constraint
-from tenuo.decorators import get_warrant_context
+from tenuo.decorators import warrant_scope
 
 
 @pytest.fixture(autouse=True)
@@ -116,68 +116,68 @@ class TestCapabilityMerge:
 
 
 class TestScopedTaskBoundaries:
-    """Tests for scoped_task() authorization boundaries."""
+    """Tests for grant() authorization boundaries."""
 
     def test_scoped_task_requires_capabilities(self, keypair):
         """
-        Attack: Call scoped_task() without any capabilities.
+        Attack: Call grant() without any capabilities.
         
         Expected: ConfigurationError raised.
         """
-        print("\n--- scoped_task: No Capabilities ---")
+        print("\n--- grant: No Capabilities ---")
         
-        with root_task_sync(Capability("read_file", path=Pattern("/data/*"))):
+        with mint_sync(Capability("read_file", path=Pattern("/data/*"))):
             with pytest.raises(ConfigurationError, match="requires at least one Capability"):
-                with scoped_task():  # No capabilities
+                with grant():  # No capabilities
                     pass
         
-        print("  [Result] Empty scoped_task() blocked")
+        print("  [Result] Empty grant() blocked")
 
     def test_scoped_task_tool_not_in_parent(self, keypair):
         """
-        Attack: scoped_task() for tool not in parent's capabilities.
+        Attack: grant() for tool not in parent's capabilities.
         
         Expected: ScopeViolation raised.
         """
-        print("\n--- scoped_task: Tool Not In Parent ---")
+        print("\n--- grant: Tool Not In Parent ---")
         
-        with root_task_sync(Capability("read_file", path=Pattern("/data/*"))):
+        with mint_sync(Capability("read_file", path=Pattern("/data/*"))):
             with pytest.raises(ScopeViolation, match="not in parent"):
-                with scoped_task(Capability("write_file", path=Pattern("/data/*"))):
+                with grant(Capability("write_file", path=Pattern("/data/*"))):
                     pass
         
-        print("  [Result] Tool expansion blocked at scoped_task")
+        print("  [Result] Tool expansion blocked at grant")
 
     def test_scoped_task_widens_constraint(self, keypair):
         """
-        Attack: scoped_task() with wider constraint than parent.
+        Attack: grant() with wider constraint than parent.
         
         Expected: MonotonicityError raised.
         """
-        print("\n--- scoped_task: Constraint Widening ---")
+        print("\n--- grant: Constraint Widening ---")
         
-        with root_task_sync(Capability("read_file", path=Pattern("/data/reports/*"))):
+        with mint_sync(Capability("read_file", path=Pattern("/data/reports/*"))):
             with pytest.raises(MonotonicityError):
-                with scoped_task(Capability("read_file", path=Pattern("/data/*"))):
+                with grant(Capability("read_file", path=Pattern("/data/*"))):
                     pass
         
-        print("  [Result] Constraint widening blocked at scoped_task")
+        print("  [Result] Constraint widening blocked at grant")
 
     def test_scoped_task_narrows_correctly(self, keypair):
         """
-        Verify: scoped_task() correctly narrows capabilities.
+        Verify: grant() correctly narrows capabilities.
         """
-        print("\n--- scoped_task: Correct Narrowing ---")
+        print("\n--- grant: Correct Narrowing ---")
         
-        with root_task_sync(
+        with mint_sync(
             Capability("read_file", path=Pattern("/data/*")),
             Capability("write_file", path=Pattern("/data/*")),
         ):
-            parent = get_warrant_context()
+            parent = warrant_scope()
             assert sorted(parent.tools) == ["read_file", "write_file"]
             
-            with scoped_task(Capability("read_file", path=Pattern("/data/reports/*"))):
-                child = get_warrant_context()
+            with grant(Capability("read_file", path=Pattern("/data/reports/*"))):
+                child = warrant_scope()
                 
                 # Tools narrowed
                 assert child.tools == ["read_file"]
@@ -185,7 +185,7 @@ class TestScopedTaskBoundaries:
                 # Constraint narrowed
                 assert child.capabilities["read_file"]["path"].pattern == "/data/reports/*"
         
-        print("  [Result] scoped_task correctly narrows tools and constraints")
+        print("  [Result] grant correctly narrows tools and constraints")
 
     def test_scoped_task_cannot_add_constraint_field(self, keypair):
         """
@@ -193,12 +193,12 @@ class TestScopedTaskBoundaries:
         
         Expected: Allowed (narrowing), but parent constraints inherited.
         """
-        print("\n--- scoped_task: New Constraint Field ---")
+        print("\n--- grant: New Constraint Field ---")
         
-        with root_task_sync(Capability("read_file", path=Pattern("/data/*"))):
+        with mint_sync(Capability("read_file", path=Pattern("/data/*"))):
             # Add max_size constraint not in parent
-            with scoped_task(Capability("read_file", path=Pattern("/data/reports/*"), max_size=Range(max=1000))):
-                child = get_warrant_context()
+            with grant(Capability("read_file", path=Pattern("/data/reports/*"), max_size=Range(max=1000))):
+                child = warrant_scope()
                 
                 # Both constraints present
                 assert "path" in child.capabilities["read_file"]
@@ -272,8 +272,8 @@ class TestCapabilityImmutability:
         cap = Capability("read_file", path=Pattern("/data/*"))
         
         # Create warrant
-        with root_task_sync(cap):
-            warrant = get_warrant_context()
+        with mint_sync(cap):
+            warrant = warrant_scope()
             
             # Mutate capability after creation
             cap.constraints["path"] = Pattern("/*")

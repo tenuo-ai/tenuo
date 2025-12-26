@@ -4,19 +4,19 @@ Tests for issuer warrant API availability and correctness.
 Verifies:
 1. Warrant.issue_issuer() exists and works
 2. warrant.issue_execution() exists and returns IssuanceBuilder
-3. delegate() tool parameter actually does something (or documents that it doesn't)
+3. grant() tool parameter actually does something (or documents that it doesn't)
 """
 
 import pytest
 from tenuo import (
     Warrant,
     SigningKey,
-    Clearance,
     Pattern,
     Exact,
-    Constraints,
     Capability,
 )
+from tenuo.constraints import Constraints
+from tenuo_core import Clearance
 
 
 class TestIssuerWarrantExists:
@@ -104,7 +104,7 @@ class TestIssueExecutionExists:
         kp = SigningKey.generate()
         
         # Create execution warrant (not issuer)
-        exec_warrant = Warrant.issue(
+        exec_warrant = Warrant.mint(
             keypair=kp,
             capabilities=Constraints.for_tool("read_file", {}),
             ttl_seconds=3600,
@@ -143,24 +143,24 @@ class TestIssueExecutionExists:
         assert "send_email" not in exec_warrant.tools
 
 
-class TestDelegateMethod:
-    """Test delegate() method behavior."""
+class TestGrantMethod:
+    """Test grant() method behavior."""
     
-    def test_delegate_exists(self):
-        """Warrant should have delegate() method."""
+    def test_grant_exists(self):
+        """Warrant should have grant() method."""
         kp = SigningKey.generate()
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=kp,
             capabilities=Constraints.for_tool("read_file", {}),
             ttl_seconds=3600,
         )
         
-        assert hasattr(warrant, 'delegate'), "warrant.delegate() is missing"
+        assert hasattr(warrant, 'grant'), "warrant.grant() is missing"
     
-    def test_delegate_narrows_constraints(self):
-        """delegate() should narrow constraints."""
-        from tenuo import configure, root_task_sync, Pattern
+    def test_grant_narrows_constraints(self):
+        """grant() should narrow constraints."""
+        from tenuo import configure, mint_sync, Pattern
         from tenuo.config import reset_config
         
         reset_config()
@@ -169,8 +169,8 @@ class TestDelegateMethod:
         worker_kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        with root_task_sync(Capability("read_file", path=Pattern("/data/*"))) as parent:
-            child = parent.delegate(
+        with mint_sync(Capability("read_file", path=Pattern("/data/*"))) as parent:
+            child = parent.grant(
                 to=worker_kp.public_key,
                 allow=["read_file"],
                 ttl=300,
@@ -185,14 +185,14 @@ class TestDelegateMethod:
             child_constraints = child.capabilities.get("read_file")
             assert child_constraints is not None
     
-    def test_delegate_inherits_tools(self):
+    def test_grant_inherits_tools(self):
         """
-        delegate() CANNOT narrow tools for execution warrants.
+        grant() CANNOT narrow tools for execution warrants.
         
         This is BY DESIGN. To narrow tools, use an Issuer warrant
         and call issue_execution() instead.
         """
-        from tenuo import configure, root_task_sync
+        from tenuo import configure, mint_sync
         from tenuo.config import reset_config
         
         reset_config()
@@ -201,8 +201,8 @@ class TestDelegateMethod:
         worker_kp = SigningKey.generate()
         configure(issuer_key=kp, dev_mode=True)
         
-        with root_task_sync(Capability("read_file"), Capability("send_email")) as parent:
-            child = parent.delegate(
+        with mint_sync(Capability("read_file"), Capability("send_email")) as parent:
+            child = parent.grant(
                 to=worker_kp.public_key,
                 allow=["read_file", "send_email"],  # Inherit all tools
                 ttl=300,
@@ -211,34 +211,34 @@ class TestDelegateMethod:
             
             # Child should have the tools we specified in allow
             assert sorted(child.tools) == sorted(["read_file", "send_email"]), (
-                "delegate() creates child with specified tools"
+                "grant() creates child with specified tools"
             )
 
 
-class TestAttenuateBuilderToolSelection:
-    """Test tool selection/narrowing via attenuate_builder."""
+class TestGrantBuilderToolSelection:
+    """Test tool selection/narrowing via grant_builder."""
     
-    def test_attenuate_builder_can_narrow_tools(self):
+    def test_grant_builder_can_narrow_tools(self):
         """
-        AttenuationBuilder.tools() CAN narrow tools for execution warrants.
+        GrantBuilder.tools() CAN narrow tools for execution warrants.
         This enables "always shrinking authority" for non-terminal warrants.
         """
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
         
         # Create execution warrant with multiple tools
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=kp,
             capabilities={t: {} for t in ["read_file", "send_email", "query_db"]},
             ttl_seconds=3600,
         )
         
         # POLA: inherit_all first, then narrow
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         builder.inherit_all()  # Start with all parent capabilities
         builder.tools(["read_file"])  # Then narrow
         builder.holder(worker_kp.public_key)
-        child = builder.delegate(kp)
+        child = builder.grant(kp)
         
         # Child has ONLY the narrowed tools
         assert child.tools == ["read_file"], (
@@ -247,47 +247,47 @@ class TestAttenuateBuilderToolSelection:
         assert "send_email" not in child.tools
         assert "query_db" not in child.tools
     
-    def test_attenuate_builder_tool_single(self):
+    def test_grant_builder_tool_single(self):
         """tool() narrows to a single tool."""
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
         
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=kp,
             capabilities={t: {} for t in ["read_file", "send_email"]},
             ttl_seconds=3600,
         )
         
         # POLA: inherit_all first, then narrow
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         builder.inherit_all()
         builder.tool("send_email")  # Narrow to just send_email
         builder.holder(worker_kp.public_key)
-        child = builder.delegate(kp)
+        child = builder.grant(kp)
         
         assert child.tools == ["send_email"]
     
-    def test_attenuate_rejects_tool_not_in_parent(self):
+    def test_grant_builder_rejects_tool_not_in_parent(self):
         """Cannot add tools that weren't in parent."""
 
         
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
         
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=kp,
             capabilities=Constraints.for_tool("read_file", {}),
             ttl_seconds=3600,
         )
         
         # POLA: inherit_all first, then narrow
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         builder.inherit_all()
         builder.tools(["read_file", "delete_file"])  # delete_file not in parent!
         builder.holder(worker_kp.public_key)
         
         # Should not raise, but silently ignore 'delete_file'
-        child = builder.delegate(kp)
+        child = builder.grant(kp)
         
         assert "read_file" in child.tools
         assert "delete_file" not in child.tools
@@ -325,7 +325,7 @@ class TestTerminalWarrants:
         kp = SigningKey.generate()
         
         # Non-terminal warrant (no max_depth or max_depth > depth)
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=kp,
             capabilities=Constraints.for_tool("read_file", {}),
             ttl_seconds=3600,
@@ -340,52 +340,52 @@ class TestTerminalWarrants:
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
         
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=kp,
             capabilities=Constraints.for_tool("read_file", {}),
             ttl_seconds=3600,
         )
         
         # POLA: inherit_all, then make terminal
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         builder.inherit_all()
         builder.terminal()  # Make it terminal
         builder.holder(worker_kp.public_key)
-        child = builder.delegate(kp)
+        child = builder.grant(kp)
         
         # Child should be terminal
         assert child.is_terminal(), "Warrant created with .terminal() should be terminal"
     
-    def test_terminal_warrant_cannot_delegate(self):
-        """Terminal warrants cannot delegate further."""
+    def test_terminal_warrant_cannot_grant(self):
+        """Terminal warrants cannot grant further."""
         import pytest
         
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
         another_kp = SigningKey.generate()
         
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=kp,
             capabilities=Constraints.for_tool("read_file", {}),
             ttl_seconds=3600,
         )
         
         # POLA: inherit_all, then make terminal
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         builder.inherit_all()
         builder.terminal()
         builder.holder(worker_kp.public_key)
-        terminal = builder.delegate(kp)
+        terminal = builder.grant(kp)
         
         assert terminal.is_terminal()
         
         # Try to delegate from terminal warrant - should fail
-        builder2 = terminal.attenuate_builder()
+        builder2 = terminal.grant_builder()
         builder2.inherit_all()
         builder2.holder(another_kp.public_key)
         
         with pytest.raises(Exception) as exc_info:
-            builder2.delegate(worker_kp)
+            builder2.grant(worker_kp)
         
         # Should fail due to depth exceeded
         assert "depth" in str(exc_info.value).lower() or "exceed" in str(exc_info.value).lower()

@@ -10,8 +10,10 @@ Tests verifying:
 import pytest
 
 from tenuo import (
-    Warrant, Range, Constraints
+    Warrant,
+    Range,
 )
+from tenuo.constraints import Constraints
 
 
 @pytest.mark.security
@@ -28,7 +30,7 @@ class TestPopBinding:
         print("\n--- Attack 7: Holder Mismatch (Stolen Warrant) ---")
         
         # Issue warrant bound to keypair
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("admin_access", {}),
             holder=keypair.public_key,
@@ -39,7 +41,7 @@ class TestPopBinding:
         print("  [Attack 7] Attacker stolen warrant, trying to use with wrong keypair...")
         
         args = {"action": "delete"}
-        attacker_pop = warrant.create_pop_signature(attacker_keypair, "admin_access", args)
+        attacker_pop = warrant.sign(attacker_keypair, "admin_access", args)
         
         # Should fail - signature doesn't match holder
         authorized = warrant.authorize("admin_access", args, signature=bytes(attacker_pop))
@@ -58,7 +60,7 @@ class TestPopBinding:
         """
         print("\n--- Attack 13: PoP Tool Swap ---")
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities={
                 "search": {},
@@ -70,7 +72,7 @@ class TestPopBinding:
         
         # Create valid PoP for "search"
         search_args = {"query": "test"}
-        search_pop = warrant.create_pop_signature(keypair, "search", search_args)
+        search_pop = warrant.sign(keypair, "search", search_args)
         
         # Attack: Use that signature for "delete"
         print("  [Attack 13] Using 'search' PoP for 'delete' tool...")
@@ -92,7 +94,7 @@ class TestPopBinding:
         """
         print("\n--- Attack 14: PoP Args Swap ---")
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("transfer", {"amount": Range(max=1000)}),
             holder=keypair.public_key,
@@ -101,7 +103,7 @@ class TestPopBinding:
         
         # Create valid PoP for small amount
         small_args = {"amount": 10}
-        small_pop = warrant.create_pop_signature(keypair, "transfer", small_args)
+        small_pop = warrant.sign(keypair, "transfer", small_args)
         
         # Attack: Use that signature for large amount
         print("  [Attack 14] Using PoP for amount=10 with amount=10000...")
@@ -123,7 +125,7 @@ class TestPopBinding:
         """
         print("\n--- Attack 6: Replay & Confused Deputy ---")
         
-        _warrant = Warrant.issue(
+        _warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("payment", {}),
             holder=keypair.public_key,
@@ -144,7 +146,7 @@ class TestPopBinding:
         """
         print("\n--- Attack 35: PoP Timestamp Window ---")
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("transfer", {}),
             holder=keypair.public_key,
@@ -152,7 +154,7 @@ class TestPopBinding:
         )
         
         args = {"amount": 100}
-        pop_sig = warrant.create_pop_signature(keypair, "transfer", args)
+        pop_sig = warrant.sign(keypair, "transfer", args)
         
         # Immediately verify - should work
         print("  [Check] Verifying fresh PoP...")
@@ -175,7 +177,7 @@ class TestPopBinding:
         """
         print("\n--- Attack: Argument Ordering Non-Determinism ---")
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("test", {}),
             ttl_seconds=60
@@ -187,9 +189,9 @@ class TestPopBinding:
         args3 = {"b": 2, "c": 3, "a": 1}
         
         print("  [Attack] Creating PoP signatures with different arg orderings...")
-        sig1 = warrant.create_pop_signature(keypair, "test", args1)
-        sig2 = warrant.create_pop_signature(keypair, "test", args2)
-        sig3 = warrant.create_pop_signature(keypair, "test", args3)
+        sig1 = warrant.sign(keypair, "test", args1)
+        sig2 = warrant.sign(keypair, "test", args2)
+        sig3 = warrant.sign(keypair, "test", args3)
         
         print(f"  [Check] sig1 == sig2: {sig1 == sig2}")
         print(f"  [Check] sig2 == sig3: {sig2 == sig3}")

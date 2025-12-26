@@ -1,5 +1,11 @@
 import pytest
-from tenuo import lockdown, Warrant, SigningKey, Exact, Constraints
+from tenuo import (
+    Warrant,
+    SigningKey,
+    guard,
+    Exact,
+)
+from tenuo.constraints import Constraints
 
 @pytest.fixture
 def keypair():
@@ -7,16 +13,16 @@ def keypair():
 
 @pytest.fixture
 def warrant(keypair):
-    return Warrant.issue(
+    return Warrant.mint(
         keypair=keypair,
         capabilities=Constraints.for_tool("test_tool", {"a": Exact("1"), "b": Exact("2")}),
         ttl_seconds=300
     )
 
-def test_lockdown_arg_extraction_standard(warrant, keypair):
+def test_guard_arg_extraction_standard(warrant, keypair):
     """Test standard positional and keyword arguments."""
     
-    @lockdown(warrant, tool="test_tool", keypair=keypair)
+    @guard(warrant, tool="test_tool", keypair=keypair)
     def func(a, b="2"):
         return "success"
     
@@ -28,7 +34,7 @@ def test_lockdown_arg_extraction_standard(warrant, keypair):
     with pytest.raises(Exception):
         func("2") # a="2" != "1"
 
-def test_lockdown_arg_extraction_var_args(keypair):
+def test_guard_arg_extraction_var_args(keypair):
     """Test *args extraction."""
     
     # Warrant expects 'args' to be ("2", "3")
@@ -41,13 +47,13 @@ def test_lockdown_arg_extraction_var_args(keypair):
     # If we use a constraint that doesn't exist, it's ignored (allow-by-default for unconstrained args? No, Tenuo is deny-by-default for constrained args).
     
     # Let's use "a" which is supported.
-    w_list = Warrant.issue(
+    w_list = Warrant.mint(
         keypair=keypair,
         capabilities=Constraints.for_tool("list_tool", {"a": Exact("1")}),
         ttl_seconds=300
     )
     
-    @lockdown(w_list, tool="list_tool", keypair=keypair)
+    @guard(w_list, tool="list_tool", keypair=keypair)
     def func(a, *args):
         return "success"
     
@@ -59,20 +65,20 @@ def test_lockdown_arg_extraction_var_args(keypair):
     
     assert func("1", "2", "3") == "success"
 
-def test_lockdown_arg_extraction_keyword_only(warrant, keypair):
+def test_guard_arg_extraction_keyword_only(warrant, keypair):
     """Test keyword-only arguments."""
     
-    @lockdown(warrant, tool="test_tool", keypair=keypair)
+    @guard(warrant, tool="test_tool", keypair=keypair)
     def func(a, *, b):
         return "success"
     
     assert func("1", b="2") == "success"
 
-def test_lockdown_defaults_applied(warrant, keypair):
+def test_guard_defaults_applied(warrant, keypair):
     """Test that defaults are applied and checked against constraints."""
     
     # Warrant requires b="2"
-    @lockdown(warrant, tool="test_tool", keypair=keypair)
+    @guard(warrant, tool="test_tool", keypair=keypair)
     def func(a, b="2"):
         return "success"
     
@@ -80,17 +86,17 @@ def test_lockdown_defaults_applied(warrant, keypair):
     assert func("1") == "success"
     
     # If we change default to "3", it should fail
-    @lockdown(warrant, tool="test_tool", keypair=keypair)
+    @guard(warrant, tool="test_tool", keypair=keypair)
     def func_bad_default(a, b="3"):
         return "success"
         
     with pytest.raises(Exception):
         func_bad_default("1") # b="3" != "2"
 
-def test_lockdown_binding_error(warrant, keypair):
+def test_guard_binding_error(warrant, keypair):
     """Test that binding errors are raised."""
     
-    @lockdown(warrant, tool="test_tool", keypair=keypair)
+    @guard(warrant, tool="test_tool", keypair=keypair)
     def func(a, b):
         return "success"
         

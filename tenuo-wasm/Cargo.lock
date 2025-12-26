@@ -1930,7 +1930,7 @@ dependencies = [
 
 [[package]]
 name = "tenuo"
-version = "0.1.0-alpha.8"
+version = "0.1.0-alpha.13"
 dependencies = [
  "base64 0.22.1",
  "cel-interpreter",
@@ -1968,13 +1968,14 @@ dependencies = [
 
 [[package]]
 name = "tenuo-wasm"
-version = "0.1.0-alpha.8"
+version = "0.1.0-alpha.13"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
  "hex",
  "serde",
  "serde-wasm-bindgen",
+ "serde_json",
  "tenuo",
  "wasm-bindgen",
  "wasm-bindgen-test",

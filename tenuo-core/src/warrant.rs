@@ -500,11 +500,6 @@ impl Warrant {
         self.payload.version
     }
 
-    /// Get the tools map.
-    pub fn tools_map(&self) -> &BTreeMap<String, ConstraintSet> {
-        &self.payload.tools
-    }
-
     /// Get capabilities (compat alias for tools).
     pub fn capabilities(&self) -> Option<&BTreeMap<String, ConstraintSet>> {
         if self.payload.tools.is_empty() {
@@ -826,11 +821,11 @@ impl Warrant {
             });
         };
 
-        // Check constraints
-        constraints.matches(args)?;
-
         // Check Proof-of-Possession (mandatory)
-        self.verify_pop(tool, args, signature, POP_TIMESTAMP_WINDOW_SECS, 4)
+        self.verify_pop(tool, args, signature, POP_TIMESTAMP_WINDOW_SECS, 4)?;
+
+        // Check constraints
+        constraints.matches(args)
     }
 
     /// Authorize an action with custom PoP window configuration.
@@ -864,13 +859,35 @@ impl Warrant {
             });
         };
 
-        constraints.matches(args)?;
+        self.verify_pop(tool, args, signature, pop_window_secs, pop_max_windows)?;
 
-        self.verify_pop(tool, args, signature, pop_window_secs, pop_max_windows)
+        constraints.matches(args)
+    }
+
+    /// Check if constraints match without performing other authorization checks (like PoP or expiration).
+    /// useful for diagnostics.
+    pub fn check_constraints(
+        &self,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+    ) -> Result<()> {
+        // Check if tool is allowed
+        let constraints = if let Some(c) = self.payload.tools.get(tool) {
+            c
+        } else if let Some(c) = self.payload.tools.get("*") {
+            c
+        } else {
+            return Err(Error::ConstraintNotSatisfied {
+                field: "tool".to_string(),
+                reason: format!("warrant does not authorize tool '{}'", tool),
+            });
+        };
+
+        constraints.matches(args)
     }
 
     /// Verify PoP signature with configurable window.
-    fn verify_pop(
+    pub fn verify_pop(
         &self,
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
@@ -915,8 +932,8 @@ impl Warrant {
         Ok(())
     }
 
-    /// Create a Proof-of-Possession signature for a request.
-    pub fn create_pop_signature(
+    /// Sign an action for this warrant (creates Proof-of-Possession).
+    pub fn sign(
         &self,
         keypair: &SigningKey,
         tool: &str,
@@ -996,7 +1013,10 @@ pub struct WarrantBuilder {
     // Root warrants have no parent hash
     // parent_id removed as it is not part of root warrant payload
     // extensions
+    // Extensions
     extensions: BTreeMap<String, Vec<u8>>,
+    // Deferred error (from builder methods that can't return Result)
+    error: Option<Error>,
 }
 
 impl WarrantBuilder {
@@ -1018,6 +1038,7 @@ impl WarrantBuilder {
             id: None,
             // parent_id: None,
             extensions: BTreeMap::new(),
+            error: None,
         }
     }
 
@@ -1050,12 +1071,8 @@ impl WarrantBuilder {
         self
     }
 
-    pub fn depth(self, _: u32) -> Self {
-        // Deprecated/Ignored in builder, calculated from chain?
-        // Actually for root warrants depth is 0.
-        // We removed `depth` field from Payload, it is implicit 0 for root or len of chain.
-        self
-    }
+    // depth() removed in 0.1.0 - root warrants always have depth 0
+    // Use warrant.depth() accessor instead after building.
 
     // Root warrants cannot have a parent ID/hash set manually via this builder.
     // Use AttenuationBuilder for delegated warrants.
@@ -1067,36 +1084,32 @@ impl WarrantBuilder {
     }
 
     // Support    /// Add a capability (tool + constraints).
-    pub fn capability(mut self, tool: impl Into<String>, constraints: ConstraintSet) -> Self {
-        let tool_name = tool.into();
+    /// Add a tool (tool + constraints).
+    pub fn tool(mut self, tool: impl Into<String>, constraints: ConstraintSet) -> Self {
+        let tool_name: String = tool.into();
 
         // Validate reserved tool namespace
         if tool_name.starts_with("tenuo:") {
-            // Store error to be returned during build()
-            // For now, we'll panic to match existing builder pattern
-            panic!("Reserved tool namespace: tools starting with 'tenuo:' are reserved for framework use");
+            self.error = Some(Error::Validation(
+                "Reserved tool namespace: tools starting with 'tenuo:' are reserved for framework use"
+                    .to_string(),
+            ));
+            return self;
         }
 
         self.tools.insert(tool_name, constraints);
         self
     }
 
-    // Support old "tools" method? No, refactor to capability/tool
-    // But keep "tool" method for single tool?
-    pub fn tool(mut self, tool: impl Into<String>, constraints: ConstraintSet) -> Self {
-        self.tools.insert(tool.into(), constraints);
-        self
+    /// Compat alias
+    pub fn capability(self, tool: impl Into<String>, constraints: ConstraintSet) -> Self {
+        self.tool(tool, constraints)
     }
 
     // Support authorized_holder renamed to holder
     pub fn holder(mut self, holder: PublicKey) -> Self {
         self.holder = Some(holder);
         self
-    }
-
-    // Compat alias
-    pub fn authorized_holder(self, holder: PublicKey) -> Self {
-        self.holder(holder)
     }
 
     pub fn ttl(mut self, ttl: Duration) -> Self {
@@ -1137,6 +1150,11 @@ impl WarrantBuilder {
 
     /// Build and sign the warrant.
     pub fn build(mut self, signing_key: &SigningKey) -> Result<Warrant> {
+        // Return deferred error if any
+        if let Some(err) = self.error {
+            return Err(err);
+        }
+
         if self.warrant_type.is_none() {
             if !self.tools.is_empty() {
                 self.warrant_type = Some(WarrantType::Execution);
@@ -1359,7 +1377,7 @@ impl<'a> AttenuationBuilder<'a> {
     ///
     /// Follows the **Principle of Least Authority (POLA)**: the child warrant
     /// starts with NO capabilities. You must explicitly specify each capability
-    /// you want using `.capability()`. This prevents accidentally granting
+    /// you want using `.tool()`. This prevents accidentally granting
     /// more authority than intended.
     fn new(parent: &'a Warrant) -> Self {
         // POLA: Start with empty capabilities - must explicitly add each one
@@ -1425,18 +1443,23 @@ impl<'a> AttenuationBuilder<'a> {
     ///
     /// The tool must exist in the parent warrant, and constraints must be
     /// equal to or narrower than the parent's constraints for that tool.
-    pub fn capability(
-        mut self,
-        tool: impl Into<String>,
-        constraints: impl Into<ConstraintSet>,
-    ) -> Self {
+    /// **POLA**: You must explicitly add each tool you want. Only tools
+    /// specified via this method will be in the child warrant.
+    ///
+    /// The tool must exist in the parent warrant, and constraints must be
+    /// equal to or narrower than the parent's constraints for that tool.
+    pub fn tool(mut self, tool: impl Into<String>, constraints: impl Into<ConstraintSet>) -> Self {
         self.tools.insert(tool.into(), constraints.into());
         self
     }
 
-    /// Add a tool (alias for capability).
-    pub fn tool(self, tool: impl Into<String>, constraints: impl Into<ConstraintSet>) -> Self {
-        self.capability(tool, constraints)
+    /// Compat alias
+    pub fn capability(
+        self,
+        tool: impl Into<String>,
+        constraints: impl Into<ConstraintSet>,
+    ) -> Self {
+        self.tool(tool, constraints)
     }
 
     /// Set a shorter TTL.
@@ -1466,6 +1489,7 @@ impl<'a> AttenuationBuilder<'a> {
     }
 
     /// Compat alias for holder.
+    #[deprecated(since = "0.1.0", note = "Use holder() instead")]
     pub fn authorized_holder(self, public_key: PublicKey) -> Self {
         self.holder(public_key)
     }
@@ -1819,7 +1843,7 @@ impl OwnedAttenuationBuilder {
     ///
     /// Follows the **Principle of Least Authority (POLA)**: the child warrant
     /// starts with NO capabilities. You must explicitly specify each capability
-    /// you want using `.set_capability()`. This prevents accidentally granting
+    /// you want using `.set_tool()`. This prevents accidentally granting
     /// more authority than intended.
     ///
     /// Use `.inherit_all()` if you explicitly want all parent capabilities.
@@ -2005,6 +2029,7 @@ impl OwnedAttenuationBuilder {
     }
 
     /// Compat alias
+    #[deprecated(since = "0.1.0", note = "Use holder() instead")]
     pub fn authorized_holder(self, public_key: PublicKey) -> Self {
         self.holder(public_key)
     }
@@ -2012,11 +2037,6 @@ impl OwnedAttenuationBuilder {
     /// Set holder (mutable version for FFI).
     pub fn set_holder(&mut self, public_key: PublicKey) {
         self.holder = Some(public_key);
-    }
-
-    /// Compat alias
-    pub fn set_authorized_holder(&mut self, public_key: PublicKey) {
-        self.set_holder(public_key);
     }
 
     /// Set the clearance for the child warrant.
@@ -2114,7 +2134,7 @@ impl OwnedAttenuationBuilder {
 
         // iterate distinct tools from both
         let mut all_tools = child_tools.clone();
-        for tool in self.parent.tools_map().keys() {
+        for tool in self.parent.payload.tools.keys() {
             if !all_tools.contains(tool) {
                 all_tools.push(tool.clone());
             }
@@ -2124,7 +2144,8 @@ impl OwnedAttenuationBuilder {
         for tool in all_tools {
             let parent_constraints = self
                 .parent
-                .tools_map()
+                .payload
+                .tools
                 .get(&tool)
                 .cloned()
                 .unwrap_or_default();
@@ -2565,6 +2586,7 @@ impl<'a> IssuanceBuilder<'a> {
     }
 
     /// Compat alias
+    #[deprecated(since = "0.1.0", note = "Use holder() instead")]
     pub fn authorized_holder(self, public_key: PublicKey) -> Self {
         self.holder(public_key)
     }
@@ -3024,11 +3046,6 @@ impl OwnedIssuanceBuilder {
         self.holder.as_ref()
     }
 
-    /// Compat alias
-    pub fn set_authorized_holder(&mut self, public_key: PublicKey) {
-        self.set_holder(public_key)
-    }
-
     /// Set required approvers (mutable version for FFI).
     pub fn set_required_approvers(&mut self, approvers: Vec<PublicKey>) {
         self.required_approvers = Some(approvers);
@@ -3093,9 +3110,9 @@ mod tests {
         let mut constraints = ConstraintSet::new();
         constraints.insert("cluster", Pattern::new("staging-*").unwrap());
         let warrant = Warrant::builder()
-            .capability("upgrade_cluster", constraints)
+            .tool("upgrade_cluster", constraints)
             .ttl(Duration::from_secs(600))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -3111,9 +3128,9 @@ mod tests {
         let keypair = create_test_keypair();
 
         let warrant = Warrant::builder()
-            .capability("test", ConstraintSet::new())
+            .tool("test", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -3131,9 +3148,9 @@ mod tests {
         constraints.insert("cluster", Pattern::new("staging-*").unwrap());
         constraints.insert("version", Pattern::new("1.28.*").unwrap());
         let warrant = Warrant::builder()
-            .capability("upgrade_cluster", constraints)
+            .tool("upgrade_cluster", constraints)
             .ttl(Duration::from_secs(600))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -3148,9 +3165,7 @@ mod tests {
         );
 
         // Create PoP signature (mandatory now)
-        let pop_sig = warrant
-            .create_pop_signature(&keypair, "upgrade_cluster", &args)
-            .unwrap();
+        let pop_sig = warrant.sign(&keypair, "upgrade_cluster", &args).unwrap();
 
         assert!(warrant
             .authorize("upgrade_cluster", &args, Some(&pop_sig))
@@ -3180,9 +3195,9 @@ mod tests {
         let mut parent_constraints = ConstraintSet::new();
         parent_constraints.insert("cluster", Pattern::new("staging-*").unwrap());
         let parent = Warrant::builder()
-            .capability("upgrade_cluster", parent_constraints)
+            .tool("upgrade_cluster", parent_constraints)
             .ttl(Duration::from_secs(600))
-            .authorized_holder(parent_keypair.public_key())
+            .holder(parent_keypair.public_key())
             .build(&parent_keypair)
             .unwrap();
 
@@ -3190,7 +3205,7 @@ mod tests {
         child_constraints.insert("cluster", Exact::new("staging-web"));
         let child = parent
             .attenuate()
-            .capability("upgrade_cluster", child_constraints)
+            .tool("upgrade_cluster", child_constraints)
             .build(&parent_keypair) // parent_keypair is parent's holder
             .unwrap();
 
@@ -3211,9 +3226,9 @@ mod tests {
         let mut parent_constraints = ConstraintSet::new();
         parent_constraints.insert("cluster", Pattern::new("staging-*").unwrap());
         let parent = Warrant::builder()
-            .capability("upgrade_cluster", parent_constraints)
+            .tool("upgrade_cluster", parent_constraints)
             .ttl(Duration::from_secs(600))
-            .authorized_holder(parent_keypair.public_key())
+            .holder(parent_keypair.public_key())
             .build(&parent_keypair)
             .unwrap();
 
@@ -3222,7 +3237,7 @@ mod tests {
         child_constraints.insert("cluster", Pattern::new("*").unwrap());
         let result = parent
             .attenuate()
-            .capability("upgrade_cluster", child_constraints)
+            .tool("upgrade_cluster", child_constraints)
             .build(&parent_keypair); // parent_keypair is parent's holder
 
         assert!(result.is_err());
@@ -3244,9 +3259,9 @@ mod tests {
         let _child_keypair = create_test_keypair(); // Unused with new delegation API
 
         let parent = Warrant::builder()
-            .capability("test", ConstraintSet::new())
+            .tool("test", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
-            .authorized_holder(parent_keypair.public_key())
+            .holder(parent_keypair.public_key())
             .build(&parent_keypair)
             .unwrap();
 
@@ -3267,10 +3282,10 @@ mod tests {
 
         // Create warrant with explicit max_depth
         let warrant = Warrant::builder()
-            .capability("test", ConstraintSet::new())
+            .tool("test", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
             .max_depth(5)
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -3310,10 +3325,10 @@ mod tests {
 
         // Create warrant with explicit max_depth of 3 (smaller than chain length limit)
         let mut warrant = Warrant::builder()
-            .capability("test", ConstraintSet::new())
+            .tool("test", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
             .max_depth(3)
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -3339,9 +3354,9 @@ mod tests {
         let mut parent_constraints = ConstraintSet::new();
         parent_constraints.insert("amount", Range::max(10000.0).unwrap());
         let parent = Warrant::builder()
-            .capability("transfer_funds", parent_constraints)
+            .tool("transfer_funds", parent_constraints)
             .ttl(Duration::from_secs(600))
-            .authorized_holder(parent_keypair.public_key())
+            .holder(parent_keypair.public_key())
             .build(&parent_keypair)
             .unwrap();
 
@@ -3350,7 +3365,7 @@ mod tests {
         child_constraints.insert("amount", Range::max(5000.0).unwrap());
         let child = parent
             .attenuate()
-            .capability("transfer_funds", child_constraints)
+            .tool("transfer_funds", child_constraints)
             .build(&parent_keypair); // parent_keypair is parent's holder
         assert!(child.is_ok());
 
@@ -3359,7 +3374,7 @@ mod tests {
         invalid_constraints.insert("amount", Range::max(20000.0).unwrap());
         let invalid = parent
             .attenuate()
-            .capability("transfer_funds", invalid_constraints)
+            .tool("transfer_funds", invalid_constraints)
             .build(&parent_keypair); // parent_keypair is parent's holder
         assert!(invalid.is_err());
     }
@@ -3369,10 +3384,10 @@ mod tests {
         let keypair = create_test_keypair();
 
         let warrant = Warrant::builder()
-            .capability("test", ConstraintSet::new())
+            .tool("test", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
             .session_id("session_123")
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -3393,9 +3408,9 @@ mod tests {
         let wrong_keypair = create_test_keypair();
 
         let warrant = Warrant::builder()
-            .capability("test", ConstraintSet::new())
+            .tool("test", ConstraintSet::new())
             .ttl(Duration::from_secs(600))
-            .authorized_holder(correct_keypair.public_key())
+            .holder(correct_keypair.public_key())
             .build(&correct_keypair)
             .unwrap();
 
@@ -3406,9 +3421,7 @@ mod tests {
         );
 
         // Create PoP signature with WRONG keypair
-        let wrong_pop_sig = warrant
-            .create_pop_signature(&wrong_keypair, "test", &args)
-            .unwrap();
+        let wrong_pop_sig = warrant.sign(&wrong_keypair, "test", &args).unwrap();
 
         // Authorization should fail - wrong keypair
         assert!(warrant
@@ -3421,9 +3434,9 @@ mod tests {
         let keypair = create_test_keypair();
 
         let warrant = Warrant::builder()
-            .capability("test_tool", ConstraintSet::new())
+            .tool("test_tool", ConstraintSet::new())
             .ttl(Duration::from_secs(600))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -3434,9 +3447,7 @@ mod tests {
         );
 
         // Create PoP signature for WRONG tool
-        let pop_sig = warrant
-            .create_pop_signature(&keypair, "wrong_tool", &args)
-            .unwrap();
+        let pop_sig = warrant.sign(&keypair, "wrong_tool", &args).unwrap();
 
         // Authorization should fail - tool mismatch
         assert!(warrant
@@ -3451,9 +3462,9 @@ mod tests {
         let mut constraints = ConstraintSet::new();
         constraints.insert("cluster", Pattern::new("staging-*").unwrap());
         let warrant = Warrant::builder()
-            .capability("test", constraints)
+            .tool("test", constraints)
             .ttl(Duration::from_secs(600))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -3470,9 +3481,7 @@ mod tests {
         );
 
         // Create PoP signature with WRONG args
-        let pop_sig = warrant
-            .create_pop_signature(&keypair, "test", &wrong_args)
-            .unwrap();
+        let pop_sig = warrant.sign(&keypair, "test", &wrong_args).unwrap();
 
         // Authorization with correct args but wrong PoP signature should fail
         // (PoP signature is bound to specific args)
@@ -3487,16 +3496,14 @@ mod tests {
 
         // Create warrant with very short TTL
         let warrant = Warrant::builder()
-            .capability("test", ConstraintSet::new())
+            .tool("test", ConstraintSet::new())
             .ttl(Duration::from_secs(1)) // 1 second TTL
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
         let args = HashMap::new();
-        let pop_sig = warrant
-            .create_pop_signature(&keypair, "test", &args)
-            .unwrap();
+        let pop_sig = warrant.sign(&keypair, "test", &args).unwrap();
 
         // Wait for expiration
         std::thread::sleep(Duration::from_secs(2));
@@ -3510,9 +3517,9 @@ mod tests {
         let keypair = create_test_keypair();
 
         let warrant = Warrant::builder()
-            .capability("test", ConstraintSet::new())
+            .tool("test", ConstraintSet::new())
             .ttl(Duration::from_secs(600))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -3549,10 +3556,10 @@ mod tests {
 
         // Create warrant with policy limit of 3
         let root = Warrant::builder()
-            .capability("test", ConstraintSet::new())
+            .tool("test", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
             .max_depth(3)
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -3584,10 +3591,10 @@ mod tests {
         let keypair = create_test_keypair();
 
         let root = Warrant::builder()
-            .capability("test", ConstraintSet::new())
+            .tool("test", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
             .max_depth(5)
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -3619,10 +3626,10 @@ mod tests {
 
         // Cannot set max_depth above protocol cap
         let result = Warrant::builder()
-            .capability("test", ConstraintSet::new())
+            .tool("test", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
             .max_depth(100) // Above MAX_DELEGATION_DEPTH (16)
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair);
 
         assert!(result.is_err());
@@ -3637,9 +3644,9 @@ mod tests {
         let keypair = create_test_keypair();
 
         let root = Warrant::builder()
-            .capability("test", ConstraintSet::new())
+            .tool("test", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -3660,11 +3667,11 @@ mod tests {
         let approver2 = create_test_keypair();
 
         let warrant = Warrant::builder()
-            .capability("sensitive_action", ConstraintSet::new())
+            .tool("sensitive_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .min_approvals(2)
-            .authorized_holder(issuer.public_key())
+            .holder(issuer.public_key())
             .build(&issuer)
             .unwrap();
 
@@ -3681,10 +3688,10 @@ mod tests {
 
         // Set approvers but NOT min_approvals - should require all
         let warrant = Warrant::builder()
-            .capability("sensitive_action", ConstraintSet::new())
+            .tool("sensitive_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
-            .authorized_holder(issuer.public_key())
+            .holder(issuer.public_key())
             // min_approvals NOT set
             .build(&issuer)
             .unwrap();
@@ -3700,11 +3707,11 @@ mod tests {
 
         // Try to require 3 approvals with only 1 approver
         let result = Warrant::builder()
-            .capability("sensitive_action", ConstraintSet::new())
+            .tool("sensitive_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key()])
             .min_approvals(3)
-            .authorized_holder(issuer.public_key())
+            .holder(issuer.public_key())
             .build(&issuer);
 
         assert!(result.is_err());
@@ -3719,11 +3726,11 @@ mod tests {
 
         // Root with 1 approver
         let root = Warrant::builder()
-            .capability("sensitive_action", ConstraintSet::new())
+            .tool("sensitive_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key()])
             .min_approvals(1)
-            .authorized_holder(issuer.public_key())
+            .holder(issuer.public_key())
             .build(&issuer)
             .unwrap();
 
@@ -3734,7 +3741,7 @@ mod tests {
             .inherit_all()
             .add_approvers(vec![approver2.public_key()])
             .raise_min_approvals(2)
-            .authorized_holder(delegator.public_key())
+            .holder(delegator.public_key())
             .build(&issuer) // issuer signs (they hold root)
             .unwrap();
 
@@ -3751,11 +3758,11 @@ mod tests {
 
         // Root with 2 approvers
         let root = Warrant::builder()
-            .capability("sensitive_action", ConstraintSet::new())
+            .tool("sensitive_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .min_approvals(1)
-            .authorized_holder(issuer.public_key())
+            .holder(issuer.public_key())
             .build(&issuer)
             .unwrap();
 
@@ -3763,7 +3770,7 @@ mod tests {
         let child = root
             .attenuate()
             .inherit_all()
-            .authorized_holder(delegatee.public_key())
+            .holder(delegatee.public_key())
             .build(&issuer) // issuer signs (they hold root)
             .unwrap();
 
@@ -3780,11 +3787,11 @@ mod tests {
 
         // Root with threshold of 2
         let root = Warrant::builder()
-            .capability("sensitive_action", ConstraintSet::new())
+            .tool("sensitive_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
             .required_approvers(vec![approver1.public_key(), approver2.public_key()])
             .min_approvals(2)
-            .authorized_holder(issuer.public_key())
+            .holder(issuer.public_key())
             .build(&issuer)
             .unwrap();
 
@@ -3793,7 +3800,7 @@ mod tests {
             .attenuate()
             .inherit_all()
             .raise_min_approvals(1) // Tries to set 1, but max(current, 1) = 2
-            .authorized_holder(delegatee.public_key())
+            .holder(delegatee.public_key())
             .build(&issuer) // issuer signs (they hold root)
             .unwrap();
 
@@ -3806,9 +3813,9 @@ mod tests {
         let keypair = create_test_keypair();
 
         let warrant = Warrant::builder()
-            .capability("regular_action", ConstraintSet::new())
+            .tool("regular_action", ConstraintSet::new())
             .ttl(Duration::from_secs(300))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -3830,7 +3837,7 @@ mod tests {
             .max_issue_depth(2)
             .constraint_bound("path", Pattern::new("/data/*").unwrap())
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(issuer_kp.public_key())
+            .holder(issuer_kp.public_key())
             .build(&issuer_kp)
             .unwrap();
 
@@ -3841,10 +3848,10 @@ mod tests {
         let execution_warrant = issuer_warrant
             .issue_execution_warrant()
             .unwrap()
-            .capability("read_file", constraints)
+            .tool("read_file", constraints)
             .clearance(Clearance::EXTERNAL)
             .ttl(Duration::from_secs(60))
-            .authorized_holder(holder_kp.public_key())
+            .holder(holder_kp.public_key())
             .build(&issuer_kp) // issuer_kp is both holder and issuer
             .unwrap();
 
@@ -3873,7 +3880,7 @@ mod tests {
             .issuable_tools(vec!["read_file".to_string()])
             .clearance(Clearance::INTERNAL)
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(issuer_kp.public_key())
+            .holder(issuer_kp.public_key())
             .build(&issuer_kp)
             .unwrap();
 
@@ -3882,9 +3889,9 @@ mod tests {
         let result = issuer_warrant
             .issue_execution_warrant()
             .unwrap()
-            .capability("read_file", ConstraintSet::new())
+            .tool("read_file", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
-            .authorized_holder(issuer_kp.public_key()) // Same as issuer warrant holder!
+            .holder(issuer_kp.public_key()) // Same as issuer warrant holder!
             .build(&issuer_kp);
 
         assert!(result.is_err());
@@ -3909,7 +3916,7 @@ mod tests {
             .issuable_tools(vec!["read_file".to_string()])
             .clearance(Clearance::INTERNAL)
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(holder_kp.public_key())
+            .holder(holder_kp.public_key())
             .build(&issuer_kp)
             .unwrap();
 
@@ -3918,9 +3925,9 @@ mod tests {
         let result = issuer_warrant
             .issue_execution_warrant()
             .unwrap()
-            .capability("read_file", ConstraintSet::new())
+            .tool("read_file", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
-            .authorized_holder(issuer_kp.public_key()) // Same as issuer warrant's issuer!
+            .holder(issuer_kp.public_key()) // Same as issuer warrant's issuer!
             .build(&holder_kp); // holder_kp signs (they hold issuer_warrant)
 
         assert!(result.is_err());
@@ -3945,9 +3952,9 @@ mod tests {
         let mut root_constraints = ConstraintSet::new();
         root_constraints.insert("env", Pattern::new("*").unwrap());
         let root = Warrant::builder()
-            .capability("test", root_constraints)
+            .tool("test", root_constraints)
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(keypair_a.public_key())
+            .holder(keypair_a.public_key())
             .build(&keypair_a)
             .unwrap();
 
@@ -3956,8 +3963,8 @@ mod tests {
         child_b_constraints.insert("env", Pattern::new("staging-*").unwrap());
         let child_b = root
             .attenuate()
-            .capability("test", child_b_constraints)
-            .authorized_holder(keypair_b.public_key())
+            .tool("test", child_b_constraints)
+            .holder(keypair_b.public_key())
             .build(&keypair_a) // keypair_a is parent's holder
             .unwrap();
 
@@ -3968,7 +3975,7 @@ mod tests {
         let result = child_b
             .attenuate()
             .inherit_all()
-            .authorized_holder(keypair_a.public_key())
+            .holder(keypair_a.public_key())
             .build(&keypair_b); // keypair_b is parent's holder
 
         // Should succeed - A now has a warrant limited to staging-*, not the original *
@@ -3988,7 +3995,7 @@ mod tests {
             .issuable_tools(vec!["read_file".to_string()])
             .clearance(Clearance::INTERNAL)
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(issuer_kp.public_key())
+            .holder(issuer_kp.public_key())
             .build(&issuer_kp)
             .unwrap();
 
@@ -3996,9 +4003,9 @@ mod tests {
         let result = issuer_warrant
             .issue_execution_warrant()
             .unwrap()
-            .capability("send_email", ConstraintSet::new()) // Not in issuable_tools
+            .tool("send_email", ConstraintSet::new()) // Not in issuable_tools
             .ttl(Duration::from_secs(60))
-            .authorized_holder(holder_kp.public_key())
+            .holder(holder_kp.public_key())
             .build(&issuer_kp);
 
         let err = result.expect_err("expected unauthorized tool issuance error");
@@ -4020,7 +4027,7 @@ mod tests {
             .issuable_tools(vec!["read_file".to_string()])
             .clearance(Clearance::EXTERNAL)
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(issuer_kp.public_key())
+            .holder(issuer_kp.public_key())
             .build(&issuer_kp)
             .unwrap();
 
@@ -4028,10 +4035,10 @@ mod tests {
         let result = issuer_warrant
             .issue_execution_warrant()
             .unwrap()
-            .capability("read_file", ConstraintSet::new())
+            .tool("read_file", ConstraintSet::new())
             .clearance(Clearance::INTERNAL) // Exceeds External ceiling
             .ttl(Duration::from_secs(60))
-            .authorized_holder(holder_kp.public_key())
+            .holder(holder_kp.public_key())
             .build(&issuer_kp);
 
         assert!(result.is_err());
@@ -4052,7 +4059,7 @@ mod tests {
             .clearance(Clearance::INTERNAL)
             .constraint_bound("path", Pattern::new("/data/*").unwrap())
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(issuer_kp.public_key())
+            .holder(issuer_kp.public_key())
             .build(&issuer_kp)
             .unwrap();
 
@@ -4062,9 +4069,9 @@ mod tests {
         let result = issuer_warrant
             .issue_execution_warrant()
             .unwrap()
-            .capability("read_file", constraints)
+            .tool("read_file", constraints)
             .ttl(Duration::from_secs(60))
-            .authorized_holder(holder_kp.public_key())
+            .holder(holder_kp.public_key())
             .build(&issuer_kp);
 
         match result {
@@ -4088,7 +4095,7 @@ mod tests {
             .clearance(Clearance::INTERNAL)
             .max_issue_depth(1) // Only allow depth 1
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(issuer_kp.public_key())
+            .holder(issuer_kp.public_key())
             .build(&issuer_kp)
             .unwrap();
 
@@ -4096,9 +4103,9 @@ mod tests {
         let exec1 = issuer_warrant
             .issue_execution_warrant()
             .unwrap()
-            .capability("read_file", ConstraintSet::new())
+            .tool("read_file", ConstraintSet::new())
             .ttl(Duration::from_secs(60))
-            .authorized_holder(holder_kp.public_key())
+            .holder(holder_kp.public_key())
             .build(&issuer_kp)
             .unwrap();
 
@@ -4115,9 +4122,9 @@ mod tests {
 
         let execution_warrant = Warrant::builder()
             .r#type(WarrantType::Execution)
-            .capability("read_file", ConstraintSet::new())
+            .tool("read_file", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(issuer_kp.public_key())
+            .holder(issuer_kp.public_key())
             .build(&issuer_kp)
             .unwrap();
 
@@ -4153,10 +4160,10 @@ mod tests {
         // 1. Root warrant (None/Unlimited)
         let root_kp = create_test_keypair();
         let root = Warrant::builder()
-            .capability("test", ConstraintSet::new())
+            .tool("test", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
             // max_depth: None (defaults to MAX_DELEGATION_DEPTH=16)
-            .authorized_holder(root_kp.public_key())
+            .holder(root_kp.public_key())
             .build(&root_kp)
             .unwrap();
 

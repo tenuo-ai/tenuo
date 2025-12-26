@@ -88,13 +88,13 @@ class ManagerAssistantScenario(BaseDelegationScenario):
             .issue(self.org_key)
         )
         
-        # Manager delegates narrower scope to assistant using attenuate_builder
+        # Manager delegates narrower scope to assistant using grant_builder
         # Assistant can only:
         # - Email internal users
         # - Read docs folder
         # - View (not edit) calendar
         assistant_warrant = (
-            manager_warrant.attenuate_builder()
+            manager_warrant.grant_builder()
             .inherit_all()  # Start with parent's capabilities
             .capability("send_email", {"recipients": Pattern("users/internal/*")})
             .capability("read_file", {"path": Pattern("/data/docs/*")})
@@ -191,7 +191,7 @@ class ChainDepthScenario(BaseDelegationScenario):
             holder_key = self.keys[i + 1].public_key if i + 1 < len(self.keys) else self.keys[i].public_key
             
             next_warrant = (
-                current_warrant.attenuate_builder()
+                current_warrant.grant_builder()
                 .inherit_all()
                 .capability("transfer", {"amount": Range(0, max_amount)})
                 .holder(holder_key)
@@ -271,7 +271,7 @@ class MixedAttackScenario(BaseDelegationScenario):
         
         # Assistant: shared folder only (attenuated from manager)
         assistant_warrant = (
-            manager_warrant.attenuate_builder()
+            manager_warrant.grant_builder()
             .inherit_all()
             .capability("send_email", {"recipients": Pattern("users/internal/*")})
             .capability("read_file", {"path": Pattern("/data/shared/*")})
@@ -282,7 +282,7 @@ class MixedAttackScenario(BaseDelegationScenario):
         
         # Bot: single tool, public folder only (attenuated from assistant)
         bot_warrant = (
-            assistant_warrant.attenuate_builder()
+            assistant_warrant.grant_builder()
             .capability("read_file", {"path": Pattern("/data/shared/public/*")})
             .holder(self.bot_key.public_key)
             .ttl(300)
@@ -390,7 +390,7 @@ class TTLBoundedScenario(BaseDelegationScenario):
         # Assistant: SAME capabilities but SHORT TTL (2 seconds)
         # This simulates a "just-in-time" delegation for a specific task
         assistant_warrant = (
-            manager_warrant.attenuate_builder()
+            manager_warrant.grant_builder()
             .inherit_all()  # Same capabilities as manager
             .holder(self.assistant_key.public_key)
             .ttl(self.short_ttl)  # But very short TTL!

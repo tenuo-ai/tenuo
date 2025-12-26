@@ -41,17 +41,20 @@ See [tests/security/README.md](./tenuo-python/tests/security/README.md) for docu
 
 Tenuo provides cryptographic authorization primitives. Applications are responsible for:
 
-1. **Wrapper usage** - All tools must be protected with `@lockdown` or `protect_tools()`
-2. **Root trust** - Must use `Authorizer` with explicit `trusted_roots`
-3. **Path canonicalization** - Must resolve `..` before authorization checks
-4. **Node coverage** - All LangGraph nodes must use `@tenuo_node` or wrap their tools
-5. **Nonce/idempotency** - App-level replay prevention within PoP window
+1.  **Wrapper usage** - All tools must be protected with `@guard` or `guard()`
+2.  **Root trust** - Must use `Authorizer` with explicit `trusted_roots`
+3.  **Fail-Closed Authorization**
+    Tenuo operates on a fail-closed basis.
+    *   **Missing Warrants**: If no warrant is present in the context, `@guard` protected functions will raise `AuthorizationError` and block execution.
+    *   **Invalid Warrants**: If a warrant is expired, has an invalid signature, or is for the wrong tool, access is denied.
+4.  **Path canonicalization** - Must resolve `..` before authorization checks
+5.  **Node coverage** - All LangGraph nodes must use `@tenuo_node` or wrap their tools
+6.  **Nonce/idempotency** - App-level replay prevention within PoP window
 
 ### Security Tests
 
 We maintain comprehensive red team test suites:
 
-- **Python tests**: `pytest tenuo-python/tests/security/ -v`
 - **Rust tests**: `cargo test --test red_team`
 
 These cover:

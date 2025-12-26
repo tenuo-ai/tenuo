@@ -232,35 +232,17 @@ export function check_access_with_pop(warrant_b64, tool, args_json, trusted_root
  * @param {string} tool
  * @param {any} args_json
  * @param {string} trusted_root_hex
+ * @param {boolean} dry_run
  * @returns {any}
  */
-export function check_chain_access(warrant_b64_list, tool, args_json, trusted_root_hex) {
+export function check_chain_access(warrant_b64_list, tool, args_json, trusted_root_hex, dry_run) {
     const ptr0 = passArrayJsValueToWasm0(warrant_b64_list, wasm.__wbindgen_malloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
     const ptr2 = passStringToWasm0(trusted_root_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.check_chain_access(ptr0, len0, ptr1, len1, args_json, ptr2, len2);
-    return ret;
-}
-
-/**
- * Create a Proof-of-Possession signature for a warrant
- * @param {string} private_key_hex
- * @param {string} warrant_b64
- * @param {string} tool
- * @param {any} args_json
- * @returns {any}
- */
-export function create_pop_signature(private_key_hex, warrant_b64, tool, args_json) {
-    const ptr0 = passStringToWasm0(private_key_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(warrant_b64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.create_pop_signature(ptr0, len0, ptr1, len1, ptr2, len2, args_json);
+    const ret = wasm.check_chain_access(ptr0, len0, ptr1, len1, args_json, ptr2, len2, dry_run);
     return ret;
 }
 
@@ -281,6 +263,17 @@ export function create_sample_warrant(tool, constraint_field, constraint_pattern
     const ptr2 = passStringToWasm0(constraint_pattern, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len2 = WASM_VECTOR_LEN;
     const ret = wasm.create_sample_warrant(ptr0, len0, ptr1, len1, ptr2, len2, ttl_seconds);
+    return ret;
+}
+
+/**
+ * Create a warrant from the full builder config (multiple tools, multiple constraints)
+ * This is more flexible than create_sample_warrant
+ * @param {any} config_json
+ * @returns {any}
+ */
+export function create_warrant_from_config(config_json) {
+    const ret = wasm.create_warrant_from_config(config_json);
     return ret;
 }
 
@@ -306,6 +299,25 @@ export function generate_keypair() {
 
 export function init_panic_hook() {
     wasm.init_panic_hook();
+}
+
+/**
+ * Create a Proof-of-Possession signature for a warrant
+ * @param {string} private_key_hex
+ * @param {string} warrant_b64
+ * @param {string} tool
+ * @param {any} args_json
+ * @returns {any}
+ */
+export function sign(private_key_hex, warrant_b64, tool, args_json) {
+    const ptr0 = passStringToWasm0(private_key_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(warrant_b64, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(tool, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.sign(ptr0, len0, ptr1, len1, ptr2, len2, args_json);
+    return ret;
 }
 
 const EXPECTED_RESPONSE_TYPES = new Set(['basic', 'cors', 'default']);
@@ -345,6 +357,10 @@ function __wbg_get_imports() {
     imports.wbg = {};
     imports.wbg.__wbg_Error_52673b7de5a0ca89 = function(arg0, arg1) {
         const ret = Error(getStringFromWasm0(arg0, arg1));
+        return ret;
+    };
+    imports.wbg.__wbg_Number_2d1dcfcf4ec51736 = function(arg0) {
+        const ret = Number(arg0);
         return ret;
     };
     imports.wbg.__wbg_String_8f0eb39a4a4c2f66 = function(arg0, arg1) {
@@ -453,10 +469,6 @@ function __wbg_get_imports() {
             wasm.__wbindgen_free(deferred0_0, deferred0_1, 1);
         }
     };
-    imports.wbg.__wbg_from_29a8414a7a7cd19d = function(arg0) {
-        const ret = Array.from(arg0);
-        return ret;
-    };
     imports.wbg.__wbg_getRandomValues_9b655bdd369112f2 = function() { return handleError(function (arg0, arg1) {
         globalThis.crypto.getRandomValues(getArrayU8FromWasm0(arg0, arg1));
     }, arguments) };
@@ -475,6 +487,10 @@ function __wbg_get_imports() {
         const ret = Reflect.get(arg0, arg1);
         return ret;
     }, arguments) };
+    imports.wbg.__wbg_get_with_ref_key_1dc361bd10053bfe = function(arg0, arg1) {
+        const ret = arg0[arg1];
+        return ret;
+    };
     imports.wbg.__wbg_instanceof_ArrayBuffer_f3320d2419cd0355 = function(arg0) {
         let result;
         try {

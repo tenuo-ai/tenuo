@@ -14,8 +14,10 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from tenuo import (
-    Warrant, SignatureInvalid, ExpiredError, Constraints
+    Warrant,
 )
+from tenuo.constraints import Constraints
+from tenuo.exceptions import ExpiredError, SignatureInvalid
 
 
 @dataclass
@@ -50,7 +52,7 @@ class TestSignatureTrust:
         print("\n--- Attack 1: State Tampering ---")
         
         # Setup: Valid initial state with a weak warrant
-        weak_warrant = Warrant.issue(
+        weak_warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("read_public", {}),
             ttl_seconds=60
@@ -58,7 +60,7 @@ class TestSignatureTrust:
         state = NodeState(messages=[], warrant=weak_warrant.to_base64())
         
         # Attack: Malicious node swaps in a stronger warrant (self-signed by attacker)
-        fake_root = Warrant.issue(
+        fake_root = Warrant.mint(
             keypair=attacker_keypair,
             capabilities=Constraints.for_tool("admin_access", {}),
             ttl_seconds=3600
@@ -101,7 +103,7 @@ class TestSignatureTrust:
         print("\n--- Attack 1b: Replay Old Warrant ---")
         
         # Attacker has an expired admin warrant
-        old_admin_warrant = Warrant.issue(
+        old_admin_warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("admin_access", {}),
             ttl_seconds=1
@@ -109,7 +111,7 @@ class TestSignatureTrust:
         time.sleep(1.1)  # Wait for expiry
         
         # Current state has a weak warrant
-        current_warrant = Warrant.issue(
+        current_warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("read_only", {}),
             ttl_seconds=60
@@ -147,15 +149,15 @@ class TestSignatureTrust:
         print("\n--- Attack 4: Verifier Confusion ---")
         
         # Attacker creates a valid-looking chain with their own key
-        attacker_root = Warrant.issue(
+        attacker_root = Warrant.mint(
             keypair=attacker_keypair,
             capabilities=Constraints.for_tool("admin_access", {}),
             ttl_seconds=3600
         )
         
-        builder = attacker_root.attenuate_builder()
+        builder = attacker_root.grant_builder()
         builder.inherit_all()  # POLA: explicit inheritance
-        attacker_child = builder.delegate(attacker_keypair)
+        attacker_child = builder.grant(attacker_keypair)
         
         # Verify against TRUSTED root (should fail)
         print("  [Attack 4A] Verifying against TRUSTED root...")
@@ -177,7 +179,7 @@ class TestSignatureTrust:
         """
         print("\n--- Attack 33: Self-Signed Root Trust ---")
         
-        attacker_warrant = Warrant.issue(
+        attacker_warrant = Warrant.mint(
             keypair=attacker_keypair,
             capabilities=Constraints.for_tool("admin", {}),
             ttl_seconds=3600
@@ -207,7 +209,7 @@ class TestSignatureTrust:
         print("\n--- Attack 36: Session ID Reuse ---")
         
         # Privileged warrant with session
-        _admin_warrant = Warrant.issue(
+        _admin_warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("admin", {}),
             ttl_seconds=3600,
@@ -215,7 +217,7 @@ class TestSignatureTrust:
         )
         
         # Low-privilege warrant with SAME session_id
-        low_warrant = Warrant.issue(
+        low_warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("read", {}),
             ttl_seconds=3600,

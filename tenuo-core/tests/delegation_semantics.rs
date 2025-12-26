@@ -17,7 +17,7 @@ fn test_delegation_semantics_issuer_equals_parent_holder() {
     let parent = Warrant::builder()
         .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(parent_kp.public_key())
+        .holder(parent_kp.public_key())
         .build(&parent_kp)
         .unwrap();
 
@@ -25,7 +25,7 @@ fn test_delegation_semantics_issuer_equals_parent_holder() {
     let child = parent
         .attenuate()
         .inherit_all()
-        .authorized_holder(child_kp.public_key())
+        .holder(child_kp.public_key())
         .build(&parent_kp) // Parent signs (is the delegator)
         .unwrap();
 
@@ -73,7 +73,7 @@ fn test_delegation_authority_enforcement() {
     let parent = Warrant::builder()
         .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(parent_kp.public_key())
+        .holder(parent_kp.public_key())
         .build(&parent_kp)
         .unwrap();
 
@@ -81,7 +81,7 @@ fn test_delegation_authority_enforcement() {
     let result = parent
         .attenuate()
         .inherit_all()
-        .authorized_holder(child_kp.public_key())
+        .holder(child_kp.public_key())
         .build(&wrong_kp); // Wrong signer!
 
     match result {
@@ -112,7 +112,7 @@ fn test_multi_level_delegation_chain_semantics() {
     let root = Warrant::builder()
         .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(root_kp.public_key())
+        .holder(root_kp.public_key())
         .build(&root_kp)
         .unwrap();
 
@@ -120,7 +120,7 @@ fn test_multi_level_delegation_chain_semantics() {
     let middle = root
         .attenuate()
         .inherit_all()
-        .authorized_holder(middle_kp.public_key())
+        .holder(middle_kp.public_key())
         .build(&root_kp) // Root holder signs
         .unwrap();
 
@@ -128,7 +128,7 @@ fn test_multi_level_delegation_chain_semantics() {
     let leaf = middle
         .attenuate()
         .inherit_all()
-        .authorized_holder(leaf_kp.public_key())
+        .holder(leaf_kp.public_key())
         .build(&middle_kp) // Middle holder signs
         .unwrap();
 

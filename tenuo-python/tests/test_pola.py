@@ -26,19 +26,19 @@ class TestPOLADefaultBehavior:
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=kp,
             capabilities={"read_file": {"path": Pattern("/data/*")}},
             ttl_seconds=3600
         )
 
         # Attempt to attenuate without specifying any capabilities
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         builder.holder(worker_kp.public_key)
 
         # Should fail: "execution warrant must have at least one tool"
         with pytest.raises(ValidationError) as exc_info:
-            builder.delegate(kp)
+            builder.grant(kp)
 
         assert "at least one tool" in str(exc_info.value).lower()
 
@@ -47,7 +47,7 @@ class TestPOLADefaultBehavior:
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=kp,
             capabilities={
                 "read_file": {"path": Pattern("/data/*")},
@@ -57,10 +57,10 @@ class TestPOLADefaultBehavior:
         )
 
         # With inherit_all(), child gets all parent capabilities
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         builder.inherit_all()
         builder.holder(worker_kp.public_key)
-        child = builder.delegate(kp)
+        child = builder.grant(kp)
 
         assert sorted(child.tools) == ["read_file", "write_file"]
 
@@ -69,7 +69,7 @@ class TestPOLADefaultBehavior:
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=kp,
             capabilities={
                 "read_file": {"path": Pattern("/data/*")},
@@ -80,10 +80,10 @@ class TestPOLADefaultBehavior:
         )
 
         # Only grant read_file
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         builder.capability("read_file", {"path": Exact("/data/report.txt")})
         builder.holder(worker_kp.public_key)
-        child = builder.delegate(kp)
+        child = builder.grant(kp)
 
         # Child should ONLY have read_file
         assert child.tools == ["read_file"]
@@ -99,7 +99,7 @@ class TestPOLAWithInheritAll:
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=kp,
             capabilities={
                 "read_file": {},
@@ -110,11 +110,11 @@ class TestPOLAWithInheritAll:
         )
 
         # Inherit all, then narrow to just read_file
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         builder.inherit_all()
         builder.tools(["read_file"])
         builder.holder(worker_kp.public_key)
-        child = builder.delegate(kp)
+        child = builder.grant(kp)
 
         assert child.tools == ["read_file"]
 
@@ -123,18 +123,18 @@ class TestPOLAWithInheritAll:
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=kp,
             capabilities={"query": {"max_rows": Range.max_value(1000)}},
             ttl_seconds=3600
         )
 
         # Inherit all, then narrow max_rows
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         builder.inherit_all()
         builder.capability("query", {"max_rows": Range.max_value(100)})
         builder.holder(worker_kp.public_key)
-        child = builder.delegate(kp)
+        child = builder.grant(kp)
 
         assert child.tools == ["query"]
         # Constraint should be narrowed
@@ -150,7 +150,7 @@ class TestPOLADelegateMethod:
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=kp,
             capabilities={
                 "read_file": {"path": Pattern("/data/*")},
@@ -160,7 +160,7 @@ class TestPOLADelegateMethod:
         )
 
         # delegate() requires explicit allow= list
-        child = parent.delegate(
+        child = parent.grant(
             to=worker_kp.public_key,
             allow=["read_file", "write_file"],  # Must specify tools
             ttl=300,
@@ -175,7 +175,7 @@ class TestPOLADelegateMethod:
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=kp,
             capabilities={
                 "read_file": {},
@@ -185,7 +185,7 @@ class TestPOLADelegateMethod:
             ttl_seconds=3600
         )
 
-        child = parent.delegate(
+        child = parent.grant(
             to=worker_kp.public_key,
             allow=["read_file"],  # Narrow to just read_file
             ttl=300,
@@ -203,7 +203,7 @@ class TestPOLASecurityGuarantees:
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=kp,
             capabilities={
                 "read_file": {},
@@ -214,10 +214,10 @@ class TestPOLASecurityGuarantees:
 
         # Developer only adds read_file, forgets about delete_file
         # With POLA, this is SAFE - delete_file is NOT granted
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         builder.capability("read_file", {})
         builder.holder(worker_kp.public_key)
-        child = builder.delegate(kp)
+        child = builder.grant(kp)
 
         assert child.tools == ["read_file"]
         assert "delete_file" not in child.tools  # Safe!
@@ -227,7 +227,7 @@ class TestPOLASecurityGuarantees:
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=kp,
             capabilities={
                 "read_file": {},
@@ -237,10 +237,10 @@ class TestPOLASecurityGuarantees:
         )
 
         # Explicit inherit_all = deliberate choice to grant all
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         builder.inherit_all()  # Developer explicitly chose this
         builder.holder(worker_kp.public_key)
-        child = builder.delegate(kp)
+        child = builder.grant(kp)
 
         # Both capabilities granted - this was intentional
         assert sorted(child.tools) == ["admin_action", "read_file"]

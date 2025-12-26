@@ -5,19 +5,20 @@ These tests verify the TenuoToolNode that uses KeyRegistry pattern.
 """
 
 import pytest
+import tenuo.testing  # noqa: F401
 from dataclasses import dataclass
 from typing import Dict, Any, List
 
 from tenuo import (
     SigningKey,
     Warrant,
-    KeyRegistry,
     Pattern,
     Range,
     AuthorizationDenied,
-    ConstraintResult,
     LANGCHAIN_AVAILABLE,
 )
+from tenuo.exceptions import ConstraintResult
+from tenuo.keys import KeyRegistry
 from tenuo.langgraph import TenuoToolNode, LANGGRAPH_AVAILABLE
 
 
@@ -41,7 +42,7 @@ def registry():
 @pytest.fixture
 def warrant_and_key(registry):
     """Create a test warrant and register the key it was issued with."""
-    warrant, key = Warrant.quick_issue(tools=["search", "calculator"], ttl=3600)
+    warrant, key = Warrant.quick_mint(tools=["search", "calculator"], ttl=3600)
     registry.register("test-key", key)
     return warrant, "test-key"
 
@@ -327,17 +328,17 @@ class TestConstraintTypes:
 
 
 # =============================================================================
-# Test: secure_agent (LangChain)
+# Test: guard_tools (LangChain)
 # =============================================================================
 
 @pytest.mark.skipif(not LANGCHAIN_AVAILABLE, reason="LangChain not installed")
 class TestSecureAgent:
-    """Tests for the secure_agent() one-liner."""
+    """Tests for the guard_tools() one-liner."""
 
-    def test_secure_agent_basic(self, keypair):
-        """Test basic secure_agent usage."""
+    def test_guard_tools_basic(self, keypair):
+        """Test basic guard_tools usage."""
         from tenuo import reset_config
-        from tenuo.langchain import secure_agent, TenuoTool
+        from tenuo.langchain import guard_tools, TenuoTool
         
         reset_config()
         
@@ -350,7 +351,7 @@ class TestSecureAgent:
         tools = [Tool()]
         
         # One-liner to secure tools
-        protected = secure_agent(tools, issuer_keypair=keypair)
+        protected = guard_tools(tools, issuer_key=keypair)
         
         # Should return wrapped tools
         assert len(protected) == 1

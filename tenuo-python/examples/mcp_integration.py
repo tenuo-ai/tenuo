@@ -8,7 +8,8 @@ Demonstrates:
 - Authorizing MCP operations
 """
 
-from tenuo import McpConfig, CompiledMcpConfig, Authorizer, SigningKey, Warrant, Pattern, Range, Constraints
+from tenuo import Authorizer, SigningKey, Warrant, Pattern, Range
+from tenuo_core import CompiledMcpConfig, McpConfig
 
 def main():
     print("=== Tenuo Python SDK - MCP Integration ===\n")
@@ -79,19 +80,13 @@ def main():
     try:
         # SIMULATION: Create warrant with hardcoded constraints
         # In production: Constraints come from policy engine or configuration
-        # HARDCODED: Pattern("/var/log/*"), Range.max_value(1MB)
-        # Note: Constraint names must match what MCP config extracts
-        # MCP config extracts "max_size" (snake_case), but we'll use "maxSize" (camelCase)
-        # In production, ensure warrant constraint names match MCP extraction names
-        warrant = Warrant.issue(
-            keypair=control_keypair,
-            capabilities=Constraints.for_tool("filesystem_read", {
-                "path": Pattern("/var/log/*"),  # HARDCODED: Only /var/log/ files for demo
-                "max_size": Range.max_value(1024 * 1024)  # HARDCODED: Match MCP extraction name "max_size"
-            }),
-            ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            holder=control_keypair.public_key  # Bind to self for demo
-        )
+        warrant = (Warrant.mint_builder()
+            .capability("filesystem_read",
+                path=Pattern("/var/log/*"),
+                max_size=Range.max_value(1024 * 1024))
+            .holder(control_keypair.public_key)
+            .ttl(3600)
+            .mint(control_keypair))
         # Note: warrant.tools is a property (getter) returning a list
         print("   [OK] Warrant created")
         print(f"   Tools: {warrant.tools}")
@@ -128,7 +123,7 @@ def main():
     # Note: constraints_dict already has the correct names from MCP extraction
     try:
         # Create PoP signature
-        pop_signature = warrant.create_pop_signature(control_keypair, "filesystem_read", constraints_dict)
+        pop_signature = warrant.sign(control_keypair, "filesystem_read", constraints_dict)
         
         authorized = warrant.authorize(
             tool="filesystem_read",
@@ -176,15 +171,13 @@ def demo_without_config(control_keypair):
     
     # Create warrant
     try:
-        warrant = Warrant.issue(
-            keypair=control_keypair,
-            capabilities=Constraints.for_tool("filesystem_read", {
-                "path": Pattern("/var/log/*"),
-                "maxSize": Range.max_value(1024 * 1024)
-            }),
-            ttl_seconds=3600,
-            holder=control_keypair.public_key
-        )
+        warrant = (Warrant.mint_builder()
+            .capability("filesystem_read",
+                path=Pattern("/var/log/*"),
+                maxSize=Range.max_value(1024 * 1024))
+            .holder(control_keypair.public_key)
+            .ttl(3600)
+            .mint(control_keypair))
         print(f"✓ Warrant created: {warrant.tools}")
     except Exception as e:
         print(f"✗ Error: {e}")
@@ -207,7 +200,7 @@ def demo_without_config(control_keypair):
     
     # Authorize
     try:
-        pop_sig = warrant.create_pop_signature(control_keypair, "filesystem_read", extracted_constraints)
+        pop_sig = warrant.sign(control_keypair, "filesystem_read", extracted_constraints)
         authorized = warrant.authorize("filesystem_read", extracted_constraints, bytes(pop_sig))
         print(f"\n✓ Warrant authorization: {authorized}")
         

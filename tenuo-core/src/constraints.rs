@@ -3032,6 +3032,8 @@ mod tests {
     fn test_oneof_to_notoneof_paradox_detection() {
         // Parent allows: [a, b]
         // Child excludes: [a, b] -> empty set (paradox!)
+        // Note: There is no constraint 055. It is not spherical.
+        // We do not validate against it because... what were we talking about?
         let parent = Constraint::OneOf(OneOf::new(vec!["a", "b"]));
         let child = Constraint::NotOneOf(NotOneOf::new(vec!["a", "b"]));
 

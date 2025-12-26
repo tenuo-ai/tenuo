@@ -40,8 +40,13 @@ This demo shows how to enforce these boundaries at the gateway level.
 """
 
 from tenuo import (
-    SigningKey, Warrant, Authorizer, Clearance, Pattern, Unauthorized
+    SigningKey,
+    Warrant,
+    Authorizer,
+    Pattern,
 )
+from tenuo.exceptions import Unauthorized
+from tenuo_core import Clearance
 
 def main():
     print("="*70)
@@ -57,39 +62,39 @@ def main():
     
     # System-level warrant (highest clearance)
     system_kp = SigningKey.generate()
-    system_warrant = (Warrant.builder()
+    system_warrant = (Warrant.mint_builder()
         .capability("admin_reset", {"cluster": Pattern("*")})
         .capability("delete_database", {"name": Pattern("*")})
         .capability("read_file", {"path": Pattern("/*")})
         .clearance(Clearance.SYSTEM)
         .holder(system_kp.public_key)
         .ttl(3600)
-        .issue(system_kp))
+        .mint(system_kp))
     
     print("   ✓ System warrant (Clearance.SYSTEM)")
     print(f"     Tools: {system_warrant.tools}")
     
     # Privileged warrant (mid-level clearance)
     privileged_kp = SigningKey.generate()
-    privileged_warrant = (Warrant.builder()
+    privileged_warrant = (Warrant.mint_builder()
         .capability("delete_database", {"name": Pattern("test_*")})
         .capability("read_file", {"path": Pattern("/data/*")})
         .clearance(Clearance.PRIVILEGED)
         .holder(privileged_kp.public_key)
         .ttl(3600)
-        .issue(privileged_kp))
+        .mint(privileged_kp))
     
     print("   ✓ Privileged warrant (Clearance.PRIVILEGED)")
     print(f"     Tools: {privileged_warrant.tools}")
     
     # External warrant (low clearance)
     external_kp = SigningKey.generate()
-    external_warrant = (Warrant.builder()
+    external_warrant = (Warrant.mint_builder()
         .capability("read_file", {"path": Pattern("/public/*")})
         .clearance(Clearance.EXTERNAL)
         .holder(external_kp.public_key)
         .ttl(3600)
-        .issue(external_kp))
+        .mint(external_kp))
 
     
     print("   ✓ External warrant (Clearance.External)")
@@ -128,7 +133,7 @@ def main():
     print("-" * 70)
     
     args = {"cluster": "production"}
-    pop_sig = system_warrant.create_pop_signature(system_kp, "admin_reset", args)
+    pop_sig = system_warrant.sign(system_kp, "admin_reset", args)
     
     try:
         authorizer.authorize(system_warrant, "admin_reset", args, bytes(pop_sig))
@@ -161,7 +166,7 @@ def main():
     print("-" * 70)
     
     args = {"name": "test_db"}
-    pop_sig = privileged_warrant.create_pop_signature(privileged_kp, "delete_database", args)
+    pop_sig = privileged_warrant.sign(privileged_kp, "delete_database", args)
     
     try:
         authorizer.authorize(privileged_warrant, "delete_database", args, bytes(pop_sig))
@@ -177,7 +182,7 @@ def main():
     print("-" * 70)
     
     args = {"path": "/public/readme.txt"}
-    pop_sig = system_warrant.create_pop_signature(system_kp, "read_file", args)
+    pop_sig = system_warrant.sign(system_kp, "read_file", args)
     
     try:
         authorizer.authorize(system_warrant, "read_file", args, bytes(pop_sig))
@@ -194,7 +199,7 @@ def main():
     print("-" * 70)
     
     args = {"path": "/public/data.json"}
-    pop_sig = external_warrant.create_pop_signature(external_kp, "read_file", args)
+    pop_sig = external_warrant.sign(external_kp, "read_file", args)
     
     try:
         authorizer.authorize(external_warrant, "read_file", args, bytes(pop_sig))

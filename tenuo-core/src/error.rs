@@ -10,7 +10,7 @@ use thiserror::Error;
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Errors that can occur in Tenuo operations.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum Error {
     // =========================================================================
     // Signature & Cryptographic Errors
@@ -303,6 +303,10 @@ pub enum Error {
     /// Validation error.
     #[error("validation error: {0}")]
     Validation(String),
+
+    /// Configuration error.
+    #[error("configuration error: {0}")]
+    ConfigurationError(String),
 }
 
 impl From<ciborium::ser::Error<std::io::Error>> for Error {

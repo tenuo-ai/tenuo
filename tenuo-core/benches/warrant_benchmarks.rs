@@ -18,7 +18,7 @@ fn benchmark_warrant_creation(c: &mut Criterion) {
             Warrant::builder()
                 .capability("test", ConstraintSet::new())
                 .ttl(Duration::from_secs(60))
-                .authorized_holder(keypair.public_key())
+                .holder(keypair.public_key())
                 .build(black_box(&keypair))
                 .unwrap()
         })
@@ -44,7 +44,7 @@ fn benchmark_warrant_creation(c: &mut Criterion) {
             Warrant::builder()
                 .capability("upgrade_cluster", constraints_template.clone())
                 .ttl(Duration::from_secs(600))
-                .authorized_holder(keypair.public_key())
+                .holder(keypair.public_key())
                 .build(black_box(&keypair))
                 .unwrap()
         })
@@ -59,7 +59,7 @@ fn benchmark_warrant_creation(c: &mut Criterion) {
         b.iter(|| {
             let mut builder = Warrant::builder()
                 .ttl(Duration::from_secs(600))
-                .authorized_holder(keypair.public_key());
+                .holder(keypair.public_key());
 
             for i in 0..10 {
                 builder = builder.capability(format!("tool_{}", i), constraints_template.clone());
@@ -81,7 +81,7 @@ fn benchmark_warrant_verification(c: &mut Criterion) {
             )]),
         )
         .ttl(Duration::from_secs(600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -108,7 +108,7 @@ fn benchmark_warrant_authorization(c: &mut Criterion) {
     let warrant = Warrant::builder()
         .capability("upgrade_cluster", constraints)
         .ttl(Duration::from_secs(600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -123,9 +123,7 @@ fn benchmark_warrant_authorization(c: &mut Criterion) {
     );
 
     // Create PoP signature for the benchmark
-    let pop_sig = warrant
-        .create_pop_signature(&keypair, "upgrade_cluster", &args)
-        .unwrap();
+    let pop_sig = warrant.sign(&keypair, "upgrade_cluster", &args).unwrap();
 
     c.bench_function("warrant_authorize", |b| {
         b.iter(|| {
@@ -152,7 +150,7 @@ fn benchmark_warrant_attenuation(c: &mut Criterion) {
     let parent = Warrant::builder()
         .capability("upgrade_cluster", parent_constraints)
         .ttl(Duration::from_secs(600))
-        .authorized_holder(parent_keypair.public_key())
+        .holder(parent_keypair.public_key())
         .build(&parent_keypair)
         .unwrap();
 
@@ -213,7 +211,7 @@ fn benchmark_wire_encoding(c: &mut Criterion) {
     let warrant = Warrant::builder()
         .capability("upgrade_cluster", constraints)
         .ttl(Duration::from_secs(600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -246,7 +244,7 @@ fn benchmark_deep_delegation_chain(c: &mut Criterion) {
             let mut warrant = Warrant::builder()
                 .capability("test", ConstraintSet::new())
                 .ttl(Duration::from_secs(3600))
-                .authorized_holder(keypair.public_key())
+                .holder(keypair.public_key())
                 .build(&keypair)
                 .unwrap();
 
@@ -271,7 +269,7 @@ fn benchmark_authorization_denials(c: &mut Criterion) {
     let warrant = Warrant::builder()
         .capability("read_file", constraints)
         .ttl(Duration::from_secs(600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -280,9 +278,7 @@ fn benchmark_authorization_denials(c: &mut Criterion) {
         "path".to_string(),
         ConstraintValue::String("/data/report.txt".to_string()),
     )]);
-    let pop_sig = warrant
-        .create_pop_signature(&keypair, "read_file", &valid_args)
-        .unwrap();
+    let pop_sig = warrant.sign(&keypair, "read_file", &valid_args).unwrap();
 
     c.bench_function("authorize_deny_wrong_tool", |b| {
         b.iter(|| {
@@ -300,9 +296,7 @@ fn benchmark_authorization_denials(c: &mut Criterion) {
         "path".to_string(),
         ConstraintValue::String("/etc/passwd".to_string()),
     )]);
-    let invalid_pop = warrant
-        .create_pop_signature(&keypair, "read_file", &invalid_args)
-        .unwrap();
+    let invalid_pop = warrant.sign(&keypair, "read_file", &invalid_args).unwrap();
 
     c.bench_function("authorize_deny_constraint_violation", |b| {
         b.iter(|| {
@@ -317,7 +311,7 @@ fn benchmark_authorization_denials(c: &mut Criterion) {
 
     // Benchmark 3: Invalid PoP signature (crypto path - signature verification fails)
     let wrong_pop = warrant
-        .create_pop_signature(&wrong_keypair, "read_file", &valid_args)
+        .sign(&wrong_keypair, "read_file", &valid_args)
         .unwrap();
 
     c.bench_function("authorize_deny_invalid_pop", |b| {

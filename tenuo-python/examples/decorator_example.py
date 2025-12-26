@@ -1,58 +1,58 @@
 #!/usr/bin/env python3
 """
-Example demonstrating the @lockdown decorator with explicit warrant.
+Example demonstrating the @guard decorator with explicit warrant.
 
 For LangChain/FastAPI integration using ContextVar, see examples/context_pattern.py
 """
 
-from tenuo import SigningKey, Warrant, Pattern, Range, Constraints, lockdown, AuthorizationError
+from tenuo import SigningKey, Pattern, Range, guard, configure, mint_sync, Capability
 
 def main():
-    print("=== Tenuo @lockdown Decorator Example ===\n")
+    print("=== Tenuo @guard Decorator Example ===\n")
     
-    # Create a warrant
-    keypair = SigningKey.generate()
-    warrant = Warrant.issue(
-        keypair=keypair,
-        capabilities=Constraints.for_tool("scale_cluster", {
-            "cluster": Pattern("staging-*"),
-            "replicas": Range.max_value(15)
-        }),
-        ttl_seconds=3600,
-        holder=keypair.public_key  # Bind to self
-    )
+    # Configure Tenuo
+    key = SigningKey.generate()
+    configure(issuer_key=key, dev_mode=True, audit_log=False)
     
-    # Define a function protected by the warrant
-    # Note: We must pass keypair for Proof-of-Possession signing
-    @lockdown(warrant, tool="scale_cluster", keypair=keypair)
+    # Define a function with @guard decorator
+    @guard(tool="scale_cluster")
     def scale_cluster(cluster: str, replicas: int):
-        """This function can only be called if the warrant authorizes it."""
-        print(f"[OK] Scaling cluster {cluster} to {replicas} replicas")
-        # ... actual scaling logic here
-    
-    # Test authorized call
+        print(f"  [OK] Scaling cluster {cluster} to {replicas} replicas")
+        
+    print("  Decorated 'scale_cluster' function created with @guard\n")
+
+    # Test 1: Authorized call (within constraints)
     print("1. Testing authorized call...")
-    try:
-        scale_cluster(cluster="staging-web", replicas=5)
-        print("   ✓ Function executed successfully\n")
-    except AuthorizationError as e:
-        print(f"   ✗ Authorization failed: {e}\n")
+    with mint_sync(Capability("scale_cluster", 
+                              cluster=Pattern("staging-*"), 
+                              replicas=Range.max_value(15))):
+        try:
+            scale_cluster(cluster="staging-web", replicas=3)
+            print("  Function executed successfully.\n")
+        except Exception as e:
+            print(f"   ✗ Unexpected error: {e}\n")
     
-    # Test unauthorized call (replicas too high)
+    # Test 2: Unauthorized call (replicas too high)
     print("2. Testing unauthorized call (replicas exceeds limit)...")
-    try:
-        scale_cluster(cluster="staging-web", replicas=20)
-        print("   [ERR] Function should not have executed!\n")
-    except AuthorizationError as e:
-        print(f"   [OK] Authorization correctly blocked: {e}\n")
+    with mint_sync(Capability("scale_cluster", 
+                              cluster=Pattern("staging-*"), 
+                              replicas=Range.max_value(15))):
+        try:
+            scale_cluster(cluster="staging-web", replicas=20)
+            print("   [ERR] Function should not have executed!\n")
+        except Exception as e:
+            print(f"   [OK] Authorization correctly blocked: {type(e).__name__}\n")
     
-    # Test unauthorized call (wrong cluster)
+    # Test 3: Unauthorized call (wrong cluster pattern)
     print("3. Testing unauthorized call (wrong cluster)...")
-    try:
-        scale_cluster(cluster="production-web", replicas=5)
-        print("   [ERR] Function should not have executed!\n")
-    except AuthorizationError as e:
-        print(f"   [OK] Authorization correctly blocked: {e}\n")
+    with mint_sync(Capability("scale_cluster", 
+                              cluster=Pattern("staging-*"), 
+                              replicas=Range.max_value(15))):
+        try:
+            scale_cluster(cluster="production-web", replicas=5)
+            print("   [ERR] Function should not have executed!\n")
+        except Exception as e:
+            print(f"   [OK] Authorization correctly blocked: {type(e).__name__}\n")
     
     print("=== Example completed! ===")
 

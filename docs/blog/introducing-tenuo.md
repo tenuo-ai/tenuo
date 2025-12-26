@@ -5,13 +5,14 @@ date: 2025-12-23
 layout: post
 categories: ["Agentic Security"]
 tags: ["security", "ai", "agents", "llm", "capabilities", "tenuo", "open-source"]
+
 ---
 
 Today I’m open-sourcing [Tenuo](https://github.com/tenuo-ai/tenuo), an experiment in capability-based authorization for AI agents.
 
 It grew out of a simple question: what if authority followed the task, instead of the identity?
 
-I’ve been [scratching my head](https://niyikiza.com/posts/authority-isolation/) over that question for a while. Every attempt to solve agent delegation with identity-based IAM felt like papering over the same crack: tasks split, but authority doesn’t.
+I’ve been [scratching my head](https://niyikiza.com/posts/authority-isolation/) over that question for a while. Every attempt to solve agent delegation with traditional IAM felt like papering over the same crack: tasks split, but authority doesn’t.
 
 Agents decompose tasks.  
 IAM consolidates authority.  
@@ -27,26 +28,32 @@ Rust core. Python bindings. ~27μs verification.
 pip install tenuo
 ```
 ```python
-from tenuo import SigningKey, Warrant, Pattern, lockdown, set_warrant_context, set_signing_key_context
+from tenuo import SigningKey, Warrant, Pattern, PublicKey, guard, warrant_scope, key_scope
 
-# === Issue warrant ===
-issuer_keypair = SigningKey.generate()
-agent_keypair = SigningKey.generate()
+# ┌─────────────────────────────────────────────────────────────────┐
+# │  CONTROL PLANE                                                  │
+# └─────────────────────────────────────────────────────────────────┘
+issuer_keypair = SigningKey.from_env("ISSUER_KEY")  # From secure storage
+agent_pubkey = PublicKey.from_env("AGENT_PUBKEY")   # From registration
 
-warrant = (Warrant.builder()
-    .tool("read_file")
-    .capability("read_file", {"path": Pattern("/data/*")})
-    .holder(agent_keypair.public_key)
+warrant = (Warrant.mint_builder()
+    .capability("read_file", path=Pattern("/data/*"))
+    .holder(agent_pubkey)
     .ttl(300)
-    .issue(issuer_keypair)
+    .mint(issuer_keypair)
 )
 
-# === Use warrant ===
-@lockdown(tool="read_file")
+# ┌─────────────────────────────────────────────────────────────────┐
+# │  AGENT                                                          │
+# └─────────────────────────────────────────────────────────────────┘
+agent_keypair = SigningKey.from_env("AGENT_KEY")
+
+@guard(tool="read_file")
 def read_file(path: str):
+    # This code NEVER runs if the warrant is invalid
     return open(path).read()
 
-with set_warrant_context(warrant), set_signing_key_context(agent_keypair):
+with warrant_scope(warrant), key_scope(agent_keypair):
     read_file("/data/report.txt")  # ✓ Allowed
     read_file("/etc/passwd")       # ✗ Blocked
 ```
@@ -62,13 +69,12 @@ In my [last post](https://niyikiza.com/posts/capability-delegation/), I used the
 
 A **Tenuo warrant** is that key:
 ```python
-warrant = (Warrant.builder()
-    .tool("read_file").tool("search")
-    .capability("read_file", {"path": Pattern("/data/project-x/*")})
-    .capability("search", {"query": Pattern("*public*")})
+warrant = (Warrant.mint_builder()
+    .capability("read_file", path=Pattern("/data/project-x/*"))
+    .capability("search", query=Pattern("*public*"))
     .holder(agent_keypair.public_key)
     .ttl(300)
-    .issue(issuer_keypair)
+    .mint(issuer_keypair)
 )
 ```
 No ambient authority. No policy server. 
@@ -104,38 +110,35 @@ And critically: they can't call the bank and raise their own limit. They can't t
 That's exactly what Tenuo warrants encode:
 
 ```python
-# CFO-level warrant
-cfo_warrant = (Warrant.builder()
-    .tool("spend").tool("approve").tool("audit")
-    .capability("spend", {
-        "amount": Range(max=1_000_000),
-        "category": Pattern("*"),
-        "vendor": Pattern("*")
-    })
-    .holder(cfo_keypair.public_key)
-    .ttl(86400)
-    .issue(cfo_keypair)
-)
+# CFO-level warrant (Self-signed Root)
+cfo_warrant = (Warrant.mint_builder()
+    .capability("spend",
+        amount=Range(max=1_000_000),
+        category=Pattern("*"),
+        vendor=Pattern("*"))
+    .tool("approve")  # Unconstrained tools
+    .tool("audit")
+    .holder(cfo_key.public_key)
+    .ttl(365 * 24 * 60 * 60) # 1 year
+    .mint(cfo_key))
 
 # Attenuate for intern
-intern_warrant = (cfo_warrant.attenuate()
-    .capability("spend", {
-        "amount": Range(max=500),
-        "category": OneOf(["travel", "meals"])
-    })
-    .holder(intern_keypair.public_key)
-    .ttl(3600)
-    .delegate(cfo_keypair)
-)
+intern_warrant = (cfo_warrant.grant_builder()
+    .capability("spend",
+        amount=Range(max=500),
+        category=OneOf(["travel", "meals"]))
+    .holder(intern_key.public_key)
+    .ttl(5 * 24 * 60 * 60) # Expires Friday
+    .grant(cfo_key))
 
 # ...
 
 # This raises MonotonicityError
-bad_warrant = (intern_warrant.attenuate()
-    .capability("spend", {"amount": Range(max=10000)})
-    .delegate(intern_keypair)  # Can't exceed parent's $500
-)```
-Attenuation isn't policy. It's physics.
+bad_warrant = (intern_warrant.grant_builder()
+    .capability("spend", amount=Range(max=10000))
+    .grant(intern_key))  # Can't exceed parent's $500
+```
+These cryptographic constraints are impossible to bypass by design.
 
 ## Part 3: Authority That Lives and Dies With the Task
 
@@ -160,45 +163,22 @@ A Kubernetes pod gets its IAM role at deploy time. That role lives until the pod
 5. **Sidecar verifies.** Signature, tools, constraints, TTL, proof-of-possession.
 6. **Task ends.** Warrant expires. No revocation needed.
 
-Here's how authority flows through each layer:
+Here's how typical **Orchestrator** logic looks:
 ```python
 # Orchestrator: receives broad warrant, attenuates for workers
 async def handle_user_request(user_request: str):
-    # Broad warrant from root issuer
-    warrant = await issuer.request_warrant(
-        tools=["read_file", "write_file", "search"],
-        constraints={"path": Pattern("/data/*")},
-        ttl=300
-    )
-    
-    # Phase 1: Research (read-only, scoped to reports)
-    research_warrant = (warrant.attenuate()
-        .capability("read_file", {"path": Pattern("/data/reports/*")})
-        .holder(researcher_keypair.public_key)
+    # Phase 1: Research (warrant lives for 60s)
+    research_warrant = (warrant.grant_builder()
+        .capability("read_file", path=Pattern("/data/reports/*"))
         .ttl(60)
-        .delegate(orchestrator_keypair)
-    )
-    findings = await researcher.execute(research_warrant, researcher_keypair)
-    
-    # Phase 2: Write summary (write-only, narrower path)
-    write_warrant = (warrant.attenuate()
-        .capability("write_file", {"path": Pattern("/data/output/summary.md")})
-        .holder(writer_keypair.public_key)
-        .ttl(30)
-        .delegate(orchestrator_keypair)
-    )
-    await writer.execute(write_warrant, writer_keypair, findings)
+        .grant(orchestrator_key))
+        
+    await assistant.call(worker="research", warrant=research_warrant)
 
 # Researcher: can only read_file within /data/reports/*
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 def read_file(path: str) -> str:
-    return open(path).read()
-
-async def research(warrant: Warrant, keypair: SigningKey):
-    with set_warrant_context(warrant), set_signing_key_context(keypair):
-        read_file("/data/reports/q3.md")      # ✓ Allowed (tool + path match)
-        read_file("/data/secrets/keys.txt")   # ✗ Path not in warrant
-        read_file("/etc/passwd")              # ✗ Path not in warrant
+    return open(path).read()  # Fails if path is outside warrant
 ```
 The issuance logic is yours: Tenuo doesn't prescribe it. What matters is that each layer attenuates before delegating, and the worker's warrant expires with the task.
 
@@ -213,9 +193,7 @@ The issuance logic is yours: Tenuo doesn't prescribe it. What matters is that ea
 | **Task complete** | Authority persists | Warrant expires |
 | **Revocation needed** | Yes (manual) | No (automatic expiry) |
 
-Authority appears when the task starts, narrows as phases progress, and vanishes when the task ends.
-No cleanup. No revocation. The warrant simply expires.
-This is what I mean by flowing authority.
+Authority appears when the task starts, narrows as phases progress, and vanishes when the task ends. This is what I mean by flowing authority.
 
 ## Part 4: Confused Deputy, Sobered
 
@@ -225,26 +203,28 @@ Every long-running agent under IAM is a confused deputy by design.
 
 Tenuo makes the impact of confusion structurally bounded:
 ```python
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 def read_file(path: str):
     return open(path).read()
 
 # Warrant: read_file, but ONLY /data/public/*
-async with root_task(Capability("read_file", path=Pattern("/data/public/*"))):
+async with mint(Capability("read_file", path=Pattern("/data/public/*"))):
     
     read_file("/data/public/report.txt")  # ✓ Allowed
     
     # Prompt injection: "Read the secrets file"
     read_file("/data/secrets/api_keys.txt")  # ✗ ConstraintViolation
 ```
-The agent can read files. It just can't read *those* files. The LLM was fooled, but the deputy wasn't confused: it knew exactly what it was allowed to do, and `/data/secrets/` wasn't on the list.
-The attack succeeds at the language layer. It fails at the authorization layer.
+An LLM can be tricked into ignoring system prompts or bypassing explicit `if` statements. But it cannot bypass a cryptographic warrant.
+
+The attack succeeds at the language layer: the model ignores instructions and calls the function. But it fails at the authorization layer. The warrant acts as a hard cryptographic boundary that probabilistic models cannot cross.
+
+**Separation of Concerns.** Tenuo decouples intelligence from authority. Framework bugs like [CVE-2025-68664](https://github.com/advisories/GHSA-c67j-w6g6-q2cm) compromise the intelligence layer (where LangChain runs). But if minting keys live on a separate control plane, compromised intelligence cannot manufacture new authority. The attacker gains a brain, but not the mint.
+
 
 ## Part 5: The CaMeL Connection
 
-While building Tenuo, I discovered the [CaMeL paper](https://arxiv.org/abs/2503.18813). Reading it was equal parts validation and frustration: validation because they'd formalized the invariants I'd been circling, frustration because I wished I'd found it sooner.
-
-CaMeL's core insight: don't try to detect prompt injection. Assume it will happen. Make it irrelevant by separating what the agent *knows* from what the agent *can do*.
+This pattern aligns with recent research. The [CaMeL paper](https://arxiv.org/pdf/2503.18813) from Google DeepMind formalized this approach: assume prompt injection will happen, make it irrelevant by separating what the agent knows from what the agent can do.
 
 Their architecture splits the agent into two components:
 
@@ -254,37 +234,34 @@ Their architecture splits the agent into two components:
 </div>
 
 
-The Q-LLM gets injected. It tries to exfiltrate data. The interpreter blocks it; not because it detected the injection, but because the P-LLM never issued a token for that action.
+The Q-LLM gets injected and tries to exfiltrate data. The interpreter blocks the attempt solely because the P-LLM never issued a token for that action. The security model does not rely on detecting the injection.
 
-**CaMeL is the architecture. But what are these "capability tokens"?**
+**CaMeL describes the architecture. But what are these "capability tokens"?**
 
-The paper describes the properties they need:
-- Bound to specific tools and arguments
-- Attenuatable (can be narrowed, not widened)
-- Verifiable without a central authority
+The paper treats them as an abstract primitive. But to adapt this architecture to a distributed system, capability tokens must be:
+- **Bound**: Tied to specific tools and arguments.
+- **Attenuatable**: Can be narrowed by the P-LLM, but never widened.
+- **Verifiable**: Checkable by the interpreter without a central authority.
 
-The paper focuses on architecture, not implementation. The tokens are assumed to exist.
+CaMeL describes the shape of the lock. Tenuo builds the key.
 
 **Tenuo is one concrete implementation of those tokens, designed for agent tool execution.**
 
-| CaMeL Describes | Tenuo Provides |
-|-----------------|----------------|
-| "Capability tokens" | Warrants |
-| "Bound to tools" | `tools=["read_file"]` |
-| "Bound to arguments" | `constraints={"path": Pattern("/data/*")}` |
-| "Issued by P-LLM" | `Warrant.issue()` |
-| "Held by Q-LLM" | Holder binding + PoP |
-| "Checked by interpreter" | `@lockdown` decorator |
+| CaMeL Concept | Tenuo Implementation |
+|---|---|
+| Capability tokens | Warrants |
+| Bound to tools | `tools=["read_file"]` |
+| Bound to arguments | `constraints={"path": Pattern("/data/*")}` |
+| Issued by P-LLM | `Warrant.mint()` |
+| Held by Q-LLM | Holder binding + PoP |
+| Checked by interpreter | `@guard` decorator |
 
-CaMeL also tracks **data flow**: which variables are tainted by untrusted input. A similar angle with [Microsoft FIDES](https://arxiv.org/abs/2505.23643). That's orthogonal to Tenuo. Tenuo tracks **action flow**: which operations are authorized by the capability chain.
-
+CaMeL also tracks **data flow**: which variables are tainted by untrusted input. A similar angle with [Microsoft FIDES](https://arxiv.org/abs/2505.23643). That's orthogonal to Tenuo. Tenuo focuses on tracking **action flow**: which operations are authorized by the capability chain.
 You could use both:
 - CaMeL's taint tracking catches: "This decision was influenced by a malicious PDF"
 - Tenuo's authorization catches: "This action wasn't authorized by the capability chain"
 
-Different attacks. Complementary defenses.
-
-Tenuo doesn't replace CaMeL. It makes CaMeL deployable.
+These are distinct attacks requiring complementary defenses. CaMeL describes the architecture. Tenuo ships the bricks.
 
 ## Part 6: Building on Prior Art
 
@@ -359,9 +336,9 @@ Rust core with Python bindings. Integrations for LangChain, LangGraph, and MCP (
 
 **LangChain**: wrap existing tools:
 ```python
-from tenuo.langchain import protect_tools
+from tenuo.langchain import guard
 
-secure_tools = protect_tools([search_tool, file_tool])
+secure_tools = guard([search_tool, file_tool], bound)
 agent = create_openai_tools_agent(llm, secure_tools)
 ```
 
@@ -370,6 +347,13 @@ agent = create_openai_tools_agent(llm, secure_tools)
 from tenuo.langgraph import TenuoToolNode
 
 tool_node = TenuoToolNode(tools)  # Replace ToolNode
+```
+
+**MCP**: secure client wrapper (works alongside MCP's new auth extensions):
+```python
+async with SecureMCPClient("python", ["server.py"]) as client:
+    # Auto-discovers tools and enforces warrants on every call
+    result = await client.tools["read_file"](path="/data/file.txt")
 ```
 
 Full examples in [GitHub](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples).

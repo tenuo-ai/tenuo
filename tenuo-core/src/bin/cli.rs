@@ -396,7 +396,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             let mut warrants = Vec::new();
             for w_str in &warrant {
-                warrants.push(read_warrant(w_str)?);
+                let stack = read_warrant(w_str)?;
+                warrants.extend(stack.0);
             }
             handle_inspect(warrants, json, verify)?;
         }
@@ -801,17 +802,30 @@ fn json_to_constraint(v: &serde_json::Value) -> Result<Constraint, Box<dyn std::
 /// - File paths containing warrant data (for CLI convenience)
 ///
 /// If the input is a valid file path, the file contents are read.
-/// Otherwise, the input is treated as a base64-encoded warrant string.
-fn read_warrant(input: &str) -> Result<Warrant, Box<dyn std::error::Error>> {
+/// Otherwise, the input is treated as a base64-encoded warrant string (or stack).
+fn read_warrant(input: &str) -> Result<wire::WarrantStack, Box<dyn std::error::Error>> {
     let path = Path::new(input);
-    let exists = path.exists();
-    let content = if exists {
+    let exists = path.exists(); // Check if file exists (basic check, avoids lengthy string/path logic)
+
+    let content = if exists && input.len() < 1024 && !input.contains("BEGIN") {
+        // Heuristic: if it's a short string that exists on disk, read it.
+        // If it looks like PEM (contains "BEGIN"), specific logic below handles it whether file or string.
+        // If file exists and doesn't look like PEM, read it.
+        match fs::read_to_string(input) {
+            Ok(s) => s,
+            Err(_) => input.trim().to_string(), // Fallback (unlikely)
+        }
+    } else if exists {
+        // File exists (maybe PEM or long base64 file)
         fs::read_to_string(input)?
     } else {
         input.trim().to_string()
     };
 
-    wire::decode_base64(&content).map_err(|e| e.into())
+    let trimmed = content.trim();
+
+    // Use wire::decode_pem_chain which handles explicit stack, implicit stack, and raw base64
+    wire::decode_pem_chain(trimmed).map_err(|e| e.into())
 }
 
 // ============================================================================
@@ -922,7 +936,7 @@ fn handle_issue(
     let mut builder = Warrant::builder()
         .r#type(warrant_type_enum)
         .ttl(ttl_duration)
-        .authorized_holder(holder_pubkey.clone());
+        .holder(holder_pubkey.clone());
 
     // Set clearance if provided
     if let Some(clearance_str) = clearance {
@@ -1031,7 +1045,9 @@ fn handle_attenuate(
     diff: bool,
     preview: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let parent_warrant = read_warrant(&warrant)?;
+    let stack = read_warrant(&warrant)?;
+    // For attenuation, we typically operate on the leaf warrant
+    let parent_warrant = stack.leaf().ok_or("Warrant stack is empty")?;
     let current_kp = load_private_key(&signing_key)?;
 
     // Note: parent_key is now unused - the signing key is the parent's holder
@@ -1045,7 +1061,7 @@ fn handle_attenuate(
 
     if let Some(holder_str) = &holder {
         let holder_pubkey = load_public_key(holder_str)?;
-        builder = builder.authorized_holder(holder_pubkey);
+        builder = builder.holder(holder_pubkey);
     }
 
     // Note: Tool handling depends on warrant type
@@ -1123,7 +1139,7 @@ fn handle_attenuate(
     // Handle preview mode - show what would change without creating warrant
     if preview {
         print_attenuation_diff(
-            &parent_warrant,
+            parent_warrant,
             tool.as_deref(),
             &child_constraints,
             child_ttl_duration,
@@ -1169,7 +1185,7 @@ fn handle_attenuate(
     // Handle diff mode - show what changed along with the warrant
     if diff {
         print_attenuation_diff(
-            &parent_warrant,
+            parent_warrant,
             tool.as_deref(),
             &child_constraints,
             child_ttl_duration,
@@ -1468,7 +1484,8 @@ fn handle_sign(
     quiet: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let keypair = load_private_key(&key)?;
-    let warrant_obj = read_warrant(&warrant)?;
+    let stack = read_warrant(&warrant)?;
+    let warrant_obj = stack.leaf().ok_or("Warrant stack is empty")?;
 
     // Verify keypair matches warrant's holder
     let holder = warrant_obj.authorized_holder();
@@ -1501,7 +1518,7 @@ fn handle_sign(
     }
 
     // Create PoP signature using warrant's method
-    let signature = warrant_obj.create_pop_signature(&keypair, &tool, &args)?;
+    let signature = warrant_obj.sign(&keypair, &tool, &args)?;
 
     let sig_b64 = base64::Engine::encode(
         &base64::engine::general_purpose::STANDARD,
@@ -1564,10 +1581,11 @@ fn handle_verify(
     json: bool,
     quiet: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Parse all warrants
+    // Parse all warrants (building full chain)
     let mut warrants = Vec::new();
     for w_str in &warrant {
-        warrants.push(read_warrant(w_str)?);
+        let stack = read_warrant(w_str)?;
+        warrants.extend(stack.0);
     }
 
     if warrants.is_empty() {

@@ -30,6 +30,38 @@ pip install tenuo[langchain]
 | No audit trail | Cryptographic proof of who authorized each action |
 | Ambient authority | Task-scoped, time-limited permissions |
 
+### Where Tenuo Fits in MCP
+
+MCP's native auth (OAuth) answers: **WHO is calling?**  
+Tenuo answers: **WHAT can they do right now?**
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                         MCP STACK                                 │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│   Host App ──► MCP Client ──► [Tenuo Guard] ──► MCP Server       │
+│                                     │                             │
+│                              ┌──────┴──────┐                      │
+│                              │   Warrant   │                      │
+│                              │ • tools     │                      │
+│                              │ • constraints│                     │
+│                              │ • TTL       │                      │
+│                              └─────────────┘                      │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**OAuth vs Warrants Comparison:**
+
+| Aspect | OAuth Token | Tenuo Warrant |
+|--------|-------------|---------------|
+| **Scope granularity** | Coarse (`files:read`) | Fine (`read_file(path=/data/x/*)`) |
+| **Proof-of-Possession** | Optional (DPoP) | Mandatory |
+| **Delegation** | No native chaining | Cryptographic attenuation chains |
+| **Verification** | Requires introspection/JWKS | Stateless, self-contained |
+
+OAuth tells you *who* is authenticated. Warrants constrain *what* they can do *with which arguments*. Even if an LLM is prompt-injected mid-task, it can only use what the warrant allows.
+
 ---
 
 ## Quick Start
@@ -45,36 +77,34 @@ Tenuo supports two integration patterns for MCP:
 
 ```python
 from tenuo.mcp import SecureMCPClient
-from tenuo import configure, root_task, Capability, Pattern, SigningKey
+from tenuo import configure, mint, Capability, Pattern, SigningKey
 
 # 1. Configure Tenuo
-keypair = SigningKey.generate()
-configure(issuer_key=keypair)
+key = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
+configure(issuer_key=key)
 
 # 2. Connect to MCP server
 # Automatically discovers tools and wraps them with authorization
 async with SecureMCPClient("python", ["server.py"], register_config=True) as client:
-    protected_tools = await client.get_protected_tools()
-    
     # 3. Call tool with authorization
-    async with root_task(Capability("read_file", path=Pattern("/data/*"))):
-        result = await protected_tools["read_file"](path="/data/file.txt")
+    async with mint(Capability("read_file", path=Pattern("/data/*"))):
+        result = await client.tools["read_file"](path="/data/file.txt")
 ```
 
 ### Pattern 2: Securing LangChain Adapters
 
-If you are already using `langchain-mcp-adapters`, you can protect its tools using `protect_tools`:
+If you are already using `langchain-mcp-adapters`, you can protect its tools using `guard()`:
 
 ```python
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from tenuo.langchain import protect_tools
+from tenuo.langchain import guard_tools
 
 # 1. Connect via official client
 client = MultiServerMCPClient({...})
 mcp_tools = await client.get_tools()
 
 # 2. Wrap with Tenuo protection
-secure_tools = protect_tools(mcp_tools)
+secure_tools = guard(mcp_tools, bound)
 
 # ... use secure_tools in your agent
 ```
@@ -118,16 +148,14 @@ config = McpConfig.from_file("mcp-config.yaml")
 compiled = CompiledMcpConfig.compile(config)
 
 # 2. Create warrant (usually done by control plane)
-control_keypair = SigningKey.generate()
-warrant = Warrant.issue(
-    tools={"filesystem_read": Constraints.for_tool("filesystem_read", {
-        "path": Pattern("/var/log/*"),
-        "max_size": Range.max_value(1024 * 1024)
-    })},
-    ttl_seconds=3600,
-    keypair=control_keypair,
-    holder=control_keypair.public_key
-)
+control_key = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
+warrant = (Warrant.mint_builder()
+    .capability("filesystem_read",
+        path=Pattern("/var/log/*"),
+        max_size=Range.max_value(1024 * 1024))
+    .holder(control_key.public_key)
+    .ttl(3600)
+    .mint(control_key))
 
 # 3. Handle MCP tool call
 # (Simulated MCP arguments)
@@ -140,8 +168,8 @@ mcp_arguments = {
 result = compiled.extract_constraints("filesystem_read", mcp_arguments)
 
 # 5. Authorize with PoP signature
-pop_sig = warrant.create_pop_signature(control_keypair, "filesystem_read", dict(result.constraints))
-authorizer = Authorizer(trusted_roots=[control_keypair.public_key])
+pop_sig = warrant.sign(control_key, "filesystem_read", dict(result.constraints))
+authorizer = Authorizer(trusted_roots=[control_key.public_key])
 authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop_sig))
 
 # ✓ Authorized - proceed to execute tool
@@ -181,18 +209,18 @@ tools = await client.get_tools()
 
 ```python
 from tenuo import McpConfig, CompiledMcpConfig, Authorizer, SigningKey, Warrant, Pattern, Capability
-from tenuo import lockdown, configure, root_task_sync
+from tenuo import guard, configure, mint_sync
 
 # 1. Configure Tenuo
-control_keypair = SigningKey.generate()
-configure(issuer_key=control_keypair)
+control_key = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
+configure(issuer_key=control_key)
 
 # 2. Load MCP configuration
 config = McpConfig.from_file("mcp-config.yaml")
 compiled = CompiledMcpConfig.compile(config)
 
 # 3. Define MCP tool wrapper
-@lockdown(tool="filesystem_read")
+@guard(tool="filesystem_read")
 def filesystem_read(path: str, maxSize: int = 1048576):
     """Read file from filesystem (MCP tool)"""
     # In production: Call actual MCP server
@@ -201,7 +229,7 @@ def filesystem_read(path: str, maxSize: int = 1048576):
     return content
 
 # 4. Use with task scoping
-with root_task_sync(Capability("filesystem_read", path="/var/log/*")):
+with mint_sync(Capability("filesystem_read", path="/var/log/*")):
     # Agent calls MCP tool - Tenuo authorizes
     content = filesystem_read("/var/log/app.log", maxSize=512 * 1024)
     print(content)
@@ -311,9 +339,8 @@ To enable end-to-end authorization where the server verifies the warrant, set `i
 
 ```python
 async with SecureMCPClient(..., inject_warrant=True) as client:
-    tools = await client.get_protected_tools()
     # Warrants now travel in arguments._tenuo
-    await tools["read_file"](path="/tmp/test.txt")
+    await client.tools["read_file"](path="/tmp/test.txt")
 ```
 
 ### ⚠️ Interoperability Risk: Strict Schemas
@@ -381,14 +408,14 @@ constraints:
 ### Pattern 1: Decorator-Based
 
 ```python
-from tenuo import lockdown, root_task_sync
+from tenuo import guard, mint_sync
 
-@lockdown(tool="filesystem_read")
+@guard(tool="filesystem_read")
 def filesystem_read(path: str, maxSize: int):
     # MCP server call
     return read_file_from_mcp_server(path, maxSize)
 
-with root_task_sync(Capability("filesystem_read", path="/var/log/*")):
+with mint_sync(Capability("filesystem_read", path="/var/log/*")):
     content = filesystem_read("/var/log/app.log", 1024)
 ```
 
@@ -398,18 +425,18 @@ with root_task_sync(Capability("filesystem_read", path="/var/log/*")):
 from tenuo import Authorizer, Warrant
 
 # Create warrant
-warrant = Warrant.issue(
-    tools={"filesystem_read": Constraints.for_tool("filesystem_read", {"path": Pattern("/var/log/*")})},
-    ttl_seconds=3600,
-    keypair=keypair,
-    holder=keypair.public_key
+warrant = (Warrant.mint_builder()
+    .capability("filesystem_read", path=Pattern("/var/log/*"))
+    .holder(key.public_key)
+    .ttl(3600)
+    .mint(key)
 )
 
 # Extract constraints from MCP call
 result = compiled.extract_constraints("filesystem_read", arguments)
 
 # Authorize
-pop_sig = warrant.create_pop_signature(keypair, "filesystem_read", dict(result.constraints))
+pop_sig = warrant.sign(key, "filesystem_read", dict(result.constraints))
 authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop_sig))
 ```
 
@@ -417,21 +444,18 @@ authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop
 
 ```python
 # Control plane issues root warrant
-root_warrant = Warrant.issue(
-    tools={
-        "filesystem_read": Constraints.for_tool("filesystem_read", {"path": Pattern("/data/*")}),
-        "database_query": Constraints.for_tool("database_query", {"path": Pattern("/data/*")})
-    },
-    ttl_seconds=3600,
-    keypair=control_keypair,
-    holder=orchestrator_keypair.public_key
-)
+root_warrant = (Warrant.mint_builder()
+    .capability("filesystem_read", path=Pattern("/data/*"))
+    .capability("database_query", path=Pattern("/data/*"))
+    .holder(orchestrator_key.public_key)
+    .ttl(3600)
+    .mint(control_key))
 
 # Orchestrator attenuates for worker
-worker_warrant = root_warrant.attenuate() \
-    .capability("filesystem_read", {"path": Pattern("/data/reports/*")}) \
-    .holder(worker_keypair.public_key) \
-    .delegate(orchestrator_keypair)  # Orchestrator signs (they hold the parent)
+worker_warrant = (root_warrant.grant_builder()
+    .capability("filesystem_read", path=Pattern("/data/reports/*"))
+    .holder(worker_key.public_key)
+    .grant(orchestrator_key))  # Orchestrator signs (they hold the parent)
 
 # Worker uses attenuated warrant
 # (narrower permissions, cryptographic proof of delegation)
@@ -470,7 +494,7 @@ Always require PoP signatures for MCP tool calls:
 
 ```python
 # Create PoP signature
-pop_sig = warrant.create_pop_signature(keypair, tool, args)
+pop_sig = warrant.sign(keypair, tool, args)
 
 # Authorize with signature
 authorizer.check(warrant, tool, args, bytes(pop_sig))
@@ -495,10 +519,11 @@ constraints = {"path": Pattern("/var/log/*")}
 MCP tools are often high-risk (filesystem, database). Use short TTLs:
 
 ```python
-warrant = Warrant.issue(
-    tools={"filesystem_write": Constraints.for_tool("filesystem_write", {})},
-    ttl_seconds=300,  # 5 minutes
-    ...
+warrant = (Warrant.mint_builder()
+    .tool("filesystem_write")
+    .holder(key.public_key)
+    .ttl(300)  # 5 minutes
+    .mint(key)
 )
 ```
 
@@ -655,7 +680,7 @@ max_size:
 
 ### Tenuo Provides
 - Secure Client: A wrapper around the official MCP SDK that adds authorization.
-- Tool discovery: Automatic wrapping of discovered tools with `@lockdown`.
+- Tool discovery: Automatic wrapping of discovered tools with `@guard`.
 - Warrant propagation: Injecting warrants into `_tenuo` field for server-side verification.
 - Constraint extraction: Config-driven extraction from MCP arguments.
 

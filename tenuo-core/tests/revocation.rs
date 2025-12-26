@@ -27,7 +27,7 @@ fn test_single_warrant_revocation() {
     let warrant = Warrant::builder()
         .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(600))
-        .authorized_holder(kp.public_key())
+        .holder(kp.public_key())
         .build(&kp)
         .unwrap();
 
@@ -68,7 +68,7 @@ fn test_chain_revocation_child() {
     let root = Warrant::builder()
         .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(600))
-        .authorized_holder(child_kp.public_key())
+        .holder(child_kp.public_key())
         .build(&root_kp)
         .unwrap();
 
@@ -77,7 +77,7 @@ fn test_chain_revocation_child() {
     let child = root
         .attenuate()
         .inherit_all()
-        .authorized_holder(grandchild_kp.public_key())
+        .holder(grandchild_kp.public_key())
         .build(&child_kp) // child_kp is root's holder
         .unwrap();
 
@@ -116,7 +116,7 @@ fn test_chain_revocation_parent_cascades() {
     let root = Warrant::builder()
         .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(600))
-        .authorized_holder(child_kp.public_key())
+        .holder(child_kp.public_key())
         .build(&root_kp)
         .unwrap();
 
@@ -125,7 +125,7 @@ fn test_chain_revocation_parent_cascades() {
     let child = root
         .attenuate()
         .inherit_all()
-        .authorized_holder(grandchild_kp.public_key())
+        .holder(grandchild_kp.public_key())
         .build(&child_kp) // child_kp is root's holder
         .unwrap();
 
@@ -162,14 +162,14 @@ fn test_cascading_revocation_multiple_warrants() {
     let warrant1 = Warrant::builder()
         .capability("test_tool_1", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(issuer_keypair.public_key())
+        .holder(issuer_keypair.public_key())
         .build(&issuer_keypair)
         .unwrap();
 
     let warrant2 = Warrant::builder()
         .capability("test_tool_2", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(issuer_keypair.public_key())
+        .holder(issuer_keypair.public_key())
         .build(&issuer_keypair)
         .unwrap();
 

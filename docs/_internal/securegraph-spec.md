@@ -2,7 +2,7 @@
 
 > ⚠️ **Status: Conceptual Exploration — Not Planned**
 > 
-> This document explores a declarative attenuation layer for LangGraph. The core concepts (warrant flow through state, automatic attenuation at transitions) are valid, but the current Tenuo API (`@tenuo_node`, `scoped_task`, `protect_tools`) already covers most use cases with less complexity. Preserved for reference.
+> This document explores a declarative attenuation layer for LangGraph. The core concepts (warrant flow through state, automatic attenuation at transitions) are valid, but the current Tenuo API (`@tenuo_node`, `grant`, `guard_tools`) already covers most use cases with less complexity. Preserved for reference.
 
 **Version**: 0.2  
 **Status**: Conceptual (not planned)
@@ -68,7 +68,9 @@ Instead of writing this in every node:
 ```python
 async def researcher(state):
     parent = get_warrant()
-    child = parent.attenuate().capability("search", {"path": Pattern("/data/*")}).delegate(keypair)
+    child = (parent.grant_builder()
+        .capability("search", path=Pattern("/data/*"))
+        .grant(key))
     with warrant_context(child):
         return await do_research(state)
 ```
@@ -112,9 +114,9 @@ def attenuate_for_node(incoming: Warrant, policy: NodePolicy) -> Warrant:
             f"warrant has {actual_tools}"
         )
     
-    return incoming.attenuate() \
-        .capability(granted_tools[0] if granted_tools else None, policy.constraints) \
-        .delegate(keypair)
+    return (incoming.grant_builder()
+        .capability(granted_tools[0] if granted_tools else None, **policy.constraints)
+        .grant(key))
 ```
 
 **Test case for philosophical consistency:**
@@ -229,7 +231,7 @@ Signature chain proves the warrant is valid. PoP proves the caller is authorized
 ├───────┴──────────────┴────────────┴─────┤
 │            Tool Execution Layer         │
 │                                         │
-│   protect_tools() enforces PoP here     │
+│   guard_tools() enforces PoP here       │
 │                                         │
 │   ┌─────────┐  ┌─────────┐  ┌─────────┐ │
 │   │ search  │  │read_file│  │write_db │ │
@@ -240,7 +242,7 @@ Signature chain proves the warrant is valid. PoP proves the caller is authorized
 Within the graph, nodes are a single trust domain. PoP is enforced at the boundary where tools actually execute.
 
 ```python
-# In protect_tools
+# In guard_tools
 def _protect_tool(tool: Tool, warrant: Warrant):
     async def protected(*args, **kwargs):
         # 1. Check warrant allows this tool
@@ -450,7 +452,7 @@ invoke(state + root_warrant)
   │     │
   │     └─► SecureGraph intercepts transition
   │           │ parent = deserialize(state.tenuo_warrant)
-  │           │ child = parent.attenuate(researcher_policy)
+  │           │ child = parent.grant_builder().apply(researcher_policy).grant(key)
   │           │ state.tenuo_warrant = serialize(child)
   │           │
   │           └─► researcher
@@ -1081,7 +1083,7 @@ def _attenuate(
             # INTERSECT mode: silent, just use granted_tools
     
     # Build attenuated warrant
-    builder = parent.attenuate()
+    builder = parent.grant_builder()
     
     if granted_tools:
         builder = builder.tools(list(granted_tools))

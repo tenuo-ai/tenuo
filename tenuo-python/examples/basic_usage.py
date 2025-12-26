@@ -9,7 +9,7 @@ Demonstrates:
 - Authorization checks with Proof-of-Possession
 """
 
-from tenuo import SigningKey, Warrant, Pattern, Exact, Range, Constraints
+from tenuo import SigningKey, Warrant, Pattern, Exact, Range
 
 def main():
     print("=== Tenuo Python SDK - Basic Usage ===\n")
@@ -24,15 +24,13 @@ def main():
     
     # 2. Create a root warrant with constraints
     print("2. Creating root warrant...")
-    root_warrant = Warrant.issue(
-        keypair=control_key,
-        capabilities=Constraints.for_tool("manage_infrastructure", {
-            "cluster": Pattern("staging-*"),
-            "replicas": Range.max_value(15)
-        }),
-        ttl_seconds=3600,
-        holder=control_key.public_key  # Bind to control plane initially
-    )
+    root_warrant = (Warrant.mint_builder()
+        .capability("manage_infrastructure",
+            cluster=Pattern("staging-*"),
+            replicas=Range.max_value(15))
+        .holder(control_key.public_key)
+        .ttl(3600)
+        .mint(control_key))
     print(f"   Tools: {root_warrant.tools}")
     print(f"   Depth: {root_warrant.depth}")
     print()
@@ -41,14 +39,13 @@ def main():
     # POLA (Principle of Least Authority): Explicit capabilities only
     print("3. Attenuating warrant for worker (POLA - explicit capabilities)...")
     worker_warrant = (
-        root_warrant.attenuate()
+        root_warrant.grant_builder()
         # ✓ POLA: Explicitly grant only what's needed
-        .capability("manage_infrastructure", {
-            "cluster": Exact("staging-web"),     # Narrowed from staging-*
-            "replicas": Range.max_value(10)      # Reduced from 15
-        })
+        .capability("manage_infrastructure",
+            cluster=Exact("staging-web"),     # Narrowed from staging-*
+            replicas=Range.max_value(10))     # Reduced from 15
         .holder(worker_key.public_key)
-        .delegate(control_key)
+        .grant(control_key)
     )
     print(f"   Worker tools: {worker_warrant.tools}")
     print(f"   Worker depth: {worker_warrant.depth} (attenuated)")
@@ -62,7 +59,7 @@ def main():
     # Helper to authorize with PoP
     def check_auth(warrant, tool, args, signing_key):
         # Create Proof-of-Possession signature
-        signature = warrant.create_pop_signature(signing_key, tool, args)
+        signature = warrant.sign(signing_key, tool, args)
         # Authorize returns True/False based on constraint check
         return warrant.authorize(tool, args, bytes(signature))
 

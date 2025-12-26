@@ -235,7 +235,7 @@ class TenuoToolWrapper:
             
             # Create PoP signature for this specific call (includes Ed25519 signing)
             try:
-                pop_signature = self.warrant.create_pop_signature(
+                pop_signature = self.warrant.sign(
                     self.holder_key,
                     self.tool_name,
                     filtered_args

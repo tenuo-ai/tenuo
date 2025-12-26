@@ -52,7 +52,7 @@ manager_warrant = (
 
 # Manager delegates to assistant with narrower scope
 assistant_warrant = (
-    manager_warrant.attenuate_builder()
+    manager_warrant.grant_builder()
     .capability("send_email", {"recipients": Pattern("*@company.com")})
     .capability("read_file", {"path": Pattern("docs/*")})
     .issue(manager_key)
@@ -107,7 +107,7 @@ manager_warrant = (
 
 # Assistant: SAME capabilities but 5 minute TTL
 assistant_warrant = (
-    manager_warrant.attenuate_builder()
+    manager_warrant.grant_builder()
     .inherit_all()  # Same capabilities as parent
     .ttl(300)       # But only 5 minutes!
     .issue(manager_key)

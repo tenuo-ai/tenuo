@@ -1,20 +1,20 @@
 """
 Scoped task context managers for Tenuo Tier 1 API.
 
-Provides root_task() and scoped_task() for easy warrant management.
+Provides mint() and grant() for easy warrant management.
 
 Usage:
-    from tenuo import configure, root_task, scoped_task, Capability, Pattern
+    from tenuo import configure, mint, grant, Capability, Pattern
     
     # Configure once at startup
     configure(issuer_key=my_keypair, dev_mode=True)
     
     # Use explicit capabilities
-    async with root_task(
+    async with mint(
         Capability("read_file", path=Pattern("/data/*")),
         Capability("send_email", to=Pattern("*@company.com")),
     ):
-        async with scoped_task(
+        async with grant(
             Capability("read_file", path=Pattern("/data/reports/*"))
         ):
             result = await agent.run(...)
@@ -36,8 +36,8 @@ from .decorators import (
     _warrant_context,
     _keypair_context,
     _allowed_tools_context,
-    get_warrant_context,
-    get_signing_key_context,
+    warrant_scope,
+    key_scope,
 )
 from .exceptions import (
     ScopeViolation,
@@ -61,7 +61,7 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     """
     Check if child constraint is contained within parent.
     
-    IMPORTANT: This is a "fast-fail" optimization for the Tier 1 API (scoped_task).
+    IMPORTANT: This is a "fast-fail" optimization for the Tier 1 API (grant()).
     The authoritative validation is performed by Rust core during warrant creation.
     This Python-side check provides immediate feedback to developers but may be
     slightly more conservative than Rust in edge cases.
@@ -340,8 +340,8 @@ class ScopePreview:
             print(f"  Depth: {self.depth}")
 
 
-class ScopedTaskBuilder:
-    """Builder for scoped_task with preview support."""
+class GrantScope:
+    """Context manager for grant() with preview support."""
     
     def __init__(
         self,
@@ -356,10 +356,10 @@ class ScopedTaskBuilder:
     
     def preview(self) -> ScopePreview:
         """Preview the derived scope without executing."""
-        parent = get_warrant_context()
+        parent = warrant_scope()
         
         if parent is None:
-            return ScopePreview(error="No parent warrant. Use root_task() first.")
+            return ScopePreview(error="No parent warrant. Use mint() first.")
         
         try:
             parent_tools = parent.tools if parent.tools else []
@@ -428,8 +428,8 @@ class ScopedTaskBuilder:
         try:
             asyncio.get_running_loop()
             raise RuntimeError(
-                "Cannot use sync 'with scoped_task()' in async context. "
-                "Use 'async with scoped_task()' instead."
+                "Cannot use sync 'with grant()' in async context. "
+                "Use 'async with grant()' instead."
             )
         except RuntimeError:
             pass
@@ -441,13 +441,13 @@ class ScopedTaskBuilder:
     
     def _enter(self) -> Warrant:
         """Enter scoped task context."""
-        parent = get_warrant_context()
-        keypair = get_signing_key_context()
+        parent = warrant_scope()
+        keypair = key_scope()
         
         if parent is None:
             raise ScopeViolation(
-                "scoped_task() requires a parent warrant. "
-                "Use root_task() to create initial authority, then scoped_task() to narrow it."
+                "grant() requires a parent warrant. "
+                "Use mint() to create initial authority, then grant() to narrow it."
             )
         
         if keypair is None:
@@ -455,12 +455,12 @@ class ScopedTaskBuilder:
         
         if not self.capabilities_args:
             raise ConfigurationError(
-                "scoped_task requires at least one Capability. "
-                "Example: scoped_task(Capability('read_file', path=Pattern('/data/reports/*')))"
+                "grant requires at least one Capability. "
+                "Example: grant(Capability('read_file', path=Pattern('/data/reports/*')))"
             )
         
         # Build attenuated warrant
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         
         parent_caps = parent.capabilities if hasattr(parent, 'capabilities') else {}
         parent_tools = parent.tools if parent.tools else list(parent_caps.keys())
@@ -503,7 +503,7 @@ class ScopedTaskBuilder:
         
         # Build child warrant
         try:
-            child = builder.delegate(keypair)
+            child = builder.grant(keypair)
         except Exception as e:
             raise MonotonicityError(f"Failed to attenuate warrant: {e}") from e
         
@@ -527,14 +527,14 @@ class ScopedTaskBuilder:
 
 
 
-def scoped_task(
+def grant(
     *capabilities: Capability,
     ttl: Optional[int] = None,
-) -> ScopedTaskBuilder:
+) -> GrantScope:
     """
     Create a scoped task that attenuates the current warrant.
     
-    MUST be called within a root_task() or another scoped_task().
+    MUST be called within a mint() or another grant().
     Cannot mint new authority - only narrow existing authority.
     
     Args:
@@ -542,22 +542,22 @@ def scoped_task(
         ttl: Shorter TTL in seconds (None = inherit remaining)
     
     Returns:
-        ScopedTaskBuilder that can be used as context manager or previewed
+        GrantScope that can be used as context manager or previewed
     
     Raises:
         ScopeViolation: If no parent warrant in context or tool not in parent
         MonotonicityError: If constraints aren't contained within parent's
     
     Example:
-        async with root_task(Capability("read_file", path=Pattern("/data/*"))):
-            async with scoped_task(Capability("read_file", path=Pattern("/data/reports/*"))):
+        async with mint(Capability("read_file", path=Pattern("/data/*"))):
+            async with grant(Capability("read_file", path=Pattern("/data/reports/*"))):
                 result = await agent.run(...)
     """
-    return ScopedTaskBuilder(capabilities, ttl)
+    return GrantScope(capabilities, ttl)
 
 
 @asynccontextmanager
-async def root_task(
+async def mint(
     *capabilities: Capability,
     ttl: Optional[int] = None,
     holder_key: Optional[SigningKey] = None,
@@ -566,7 +566,7 @@ async def root_task(
     Create a root warrant (explicit authority minting).
     
     This is the ONLY way to mint new authority in Tier 1.
-    Use scoped_task() to attenuate within a root_task block.
+    Use grant() to attenuate within a mint block.
     
     Args:
         *capabilities: Capability objects defining tool + constraints
@@ -577,18 +577,18 @@ async def root_task(
         ConfigurationError: If no issuer key configured or no capabilities
     
     Example:
-        async with root_task(
+        async with mint(
             Capability("read_file", path=Pattern("/data/*")),
             Capability("send_email", to=Pattern("*@company.com")),
         ):
-            async with scoped_task(
+            async with grant(
                 Capability("read_file", path=Pattern("/data/reports/*"))
             ):
                 result = await agent.run(...)
     """
     config = get_config()
     
-    if config.issuer_keypair is None:
+    if config.issuer_key is None:
         raise ConfigurationError(
             "Cannot create root warrant: no issuer key configured. "
             "Call configure(issuer_key=...) first."
@@ -596,11 +596,11 @@ async def root_task(
     
     if not capabilities:
         raise ConfigurationError(
-            "root_task requires at least one Capability. "
-            "Example: root_task(Capability('read_file', path=Pattern('/data/*')))"
+            "mint requires at least one Capability. "
+            "Example: mint(Capability('read_file', path=Pattern('/data/*')))"
         )
     
-    issuer = config.issuer_keypair
+    issuer = config.issuer_key
     holder = holder_key or issuer
     effective_ttl = ttl or config.default_ttl
     
@@ -608,7 +608,7 @@ async def root_task(
     capabilities_dict = Capability.merge(*capabilities)
 
     # Issue the warrant
-    warrant = Warrant.issue(
+    warrant = Warrant.mint(
         keypair=issuer,
         capabilities=capabilities_dict,
         ttl_seconds=effective_ttl,
@@ -627,25 +627,25 @@ async def root_task(
 
 
 @contextmanager
-def root_task_sync(
+def mint_sync(
     *capabilities: Capability,
     ttl: Optional[int] = None,
     holder_key: Optional[SigningKey] = None,
 ) -> Iterator[Warrant]:
     """
-    Synchronous version of root_task().
+    Synchronous version of mint().
     
     Use this when not in an async context.
     
     Example:
-        with root_task_sync(
+        with mint_sync(
             Capability("read_file", path=Pattern("/data/*")),
         ):
             result = protected_read_file(path="/data/report.csv")
     """
     config = get_config()
     
-    if config.issuer_keypair is None:
+    if config.issuer_key is None:
         raise ConfigurationError(
             "Cannot create root warrant: no issuer key configured. "
             "Call configure(issuer_key=...) first."
@@ -653,18 +653,18 @@ def root_task_sync(
     
     if not capabilities:
         raise ConfigurationError(
-            "root_task_sync requires at least one Capability. "
-            "Example: root_task_sync(Capability('read_file', path=Pattern('/data/*')))"
+            "mint_sync requires at least one Capability. "
+            "Example: mint_sync(Capability('read_file', path=Pattern('/data/*')))"
         )
     
-    issuer = config.issuer_keypair
+    issuer = config.issuer_key
     holder = holder_key or issuer
     effective_ttl = ttl or config.default_ttl
     
     # Build capabilities dict from Capability objects
     capabilities_dict = Capability.merge(*capabilities)
     
-    warrant = Warrant.issue(
+    warrant = Warrant.mint(
         keypair=issuer,
         capabilities=capabilities_dict,
         ttl_seconds=effective_ttl,
@@ -682,10 +682,10 @@ def root_task_sync(
 
 
 __all__ = [
-    "root_task",
-    "root_task_sync",
-    "scoped_task",
-    "ScopedTaskBuilder",
+    "mint",
+    "mint_sync",
+    "grant",
+    "GrantScope",
     "ScopePreview",
     "Capability",
 ]

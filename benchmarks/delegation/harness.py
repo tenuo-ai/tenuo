@@ -207,7 +207,7 @@ class DelegationHarness:
         start = time.perf_counter()
         try:
             # Create PoP signature for the tool call
-            pop = warrant.create_pop_signature(holder_key, tool, args)
+            pop = warrant.sign(holder_key, tool, args)
             
             # authorize() returns True/False, not exceptions
             result = warrant.authorize(tool, args, signature=bytes(pop))

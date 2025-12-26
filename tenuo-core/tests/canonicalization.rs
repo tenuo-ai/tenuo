@@ -75,7 +75,7 @@ fn test_required_approvers_canonicalization() {
     // Order 1: [pk1, pk2] (already sorted)
     let w1 = Warrant::builder()
         .r#type(WarrantType::Execution)
-        .tool("test", tenuo::constraints::ConstraintSet::new())
+        .capability("test", tenuo::constraints::ConstraintSet::new())
         .required_approvers(vec![pk1.clone(), pk2.clone()])
         .build(&kp) // build consumes builder, keys moved into warrant
         .unwrap();
@@ -83,7 +83,7 @@ fn test_required_approvers_canonicalization() {
     // Order 2: [pk2, pk1] (unsorted)
     let w2 = Warrant::builder()
         .r#type(WarrantType::Execution)
-        .tool("test", tenuo::constraints::ConstraintSet::new())
+        .capability("test", tenuo::constraints::ConstraintSet::new())
         .required_approvers(vec![pk2.clone(), pk1.clone()])
         .build(&kp)
         .unwrap();

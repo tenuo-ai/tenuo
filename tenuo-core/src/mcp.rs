@@ -127,7 +127,11 @@ use crate::extraction::{
 use crate::gateway_config::{ExtractionResult, ToolConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
+
+const MAX_TOOLS_COUNT: usize = 200;
+const MAX_CONSTRAINT_COUNT_PER_TOOL: usize = 100;
 
 /// MCP Gateway Configuration.
 ///
@@ -179,10 +183,27 @@ impl McpConfig {
 
 impl CompiledMcpConfig {
     /// Compile the configuration.
-    pub fn compile(config: McpConfig) -> Self {
+    pub fn compile(config: McpConfig) -> crate::error::Result<Self> {
+        if config.tools.len() > MAX_TOOLS_COUNT {
+            return Err(crate::error::Error::ConfigurationError(format!(
+                "Too many tools: {} (maximum {})",
+                config.tools.len(),
+                MAX_TOOLS_COUNT
+            )));
+        }
+
         let mut tools = HashMap::new();
 
         for (name, tool_config) in config.tools {
+            if tool_config.constraints.len() > MAX_CONSTRAINT_COUNT_PER_TOOL {
+                return Err(crate::error::Error::ConfigurationError(format!(
+                    "Too many constraints for tool '{}': {} (maximum {})",
+                    name,
+                    tool_config.constraints.len(),
+                    MAX_CONSTRAINT_COUNT_PER_TOOL
+                )));
+            }
+
             let rules = CompiledExtractionRules::compile(tool_config.constraints.clone());
             tools.insert(
                 name,
@@ -193,10 +214,10 @@ impl CompiledMcpConfig {
             );
         }
 
-        Self {
+        Ok(Self {
             settings: config.settings,
             tools,
-        }
+        })
     }
 
     /// Validate that extraction rules are compatible with MCP (body-only).
@@ -492,7 +513,7 @@ tools:
             tools,
         };
 
-        let compiled = CompiledMcpConfig::compile(config);
+        let compiled = CompiledMcpConfig::compile(config).unwrap();
         assert!(compiled.tools.contains_key("read_file"));
         assert_eq!(compiled.settings.trusted_issuers.len(), 0);
     }
@@ -532,7 +553,7 @@ tools:
             tools,
         };
 
-        let compiled = CompiledMcpConfig::compile(config);
+        let compiled = CompiledMcpConfig::compile(config).unwrap();
         let warnings = compiled.validate();
         assert_eq!(warnings.len(), 0); // No warnings for valid config
     }
@@ -572,7 +593,7 @@ tools:
             tools,
         };
 
-        let compiled = CompiledMcpConfig::compile(config);
+        let compiled = CompiledMcpConfig::compile(config).unwrap();
         let warnings = compiled.validate();
         assert!(!warnings.is_empty()); // Should warn about incompatible source
         assert!(warnings[0].contains("path") || warnings[0].contains("Path"));

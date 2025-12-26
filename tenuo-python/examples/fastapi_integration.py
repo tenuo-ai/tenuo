@@ -13,7 +13,7 @@ Key Patterns:
 1. Warrant extracted from X-Tenuo-Warrant header
 2. SigningKey loaded from file (K8s secret mount)
 3. Context set per-request in middleware
-4. Protected endpoints use @lockdown decorator
+4. Protected endpoints use @guard decorator
 5. Proper error handling with HTTP status codes
 
 Run with: uvicorn fastapi_integration:app --reload
@@ -22,10 +22,16 @@ Run with: uvicorn fastapi_integration:app --reload
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from tenuo import (
-    SigningKey, Warrant, Pattern, Range, Constraints,
-    lockdown, set_warrant_context, set_signing_key_context,
-    AuthorizationError, WarrantError
+    SigningKey,
+    Warrant,
+    Pattern,
+    Range,
+    guard,
+    warrant_scope,
+    key_scope,
+    WarrantError,
 )
+from tenuo.exceptions import AuthorizationError
 import os
 import logging
 
@@ -106,7 +112,7 @@ async def get_warrant(request: Request) -> Warrant:
     
     try:
         warrant = Warrant.from_base64(warrant_b64)
-        # Note: Expiration is checked by @lockdown decorator during authorization
+        # Note: Expiration is checked by @guard decorator during authorization
         # No need to check here - let the decorator handle it with proper error messages
         return warrant
     except ValueError as e:
@@ -125,7 +131,7 @@ async def get_warrant(request: Request) -> Warrant:
 # Protected Tool Functions
 # ============================================================================
 
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 def read_file(file_path: str) -> str:
     """
     Protected file reading function.
@@ -140,7 +146,7 @@ def read_file(file_path: str) -> str:
         raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
 
 
-@lockdown(tool="write_file")
+@guard(tool="write_file")
 def write_file(file_path: str, content: str) -> None:
     """
     Protected file writing function.
@@ -153,7 +159,7 @@ def write_file(file_path: str, content: str) -> None:
         raise HTTPException(status_code=500, detail=f"Error writing file: {str(e)}")
 
 
-@lockdown(tool="manage_cluster")
+@guard(tool="manage_cluster")
 def manage_cluster(cluster: str, action: str, replicas: int) -> dict:
     """
     Protected cluster management function.
@@ -201,11 +207,12 @@ async def read_file_endpoint(file_path: str, warrant: Warrant = Depends(get_warr
     - X-Tenuo-Warrant header with warrant authorizing "read_file"
     - Warrant constraints must allow the requested file_path
     
-    Note: Warrant expiration and authorization are handled by @lockdown decorator.
+    Note: Warrant expiration and authorization are handled by @guard decorator.
+    The middleware sets the context, and @guard uses it.
     """
     # Set warrant and signing_key in context for this request
     # This ensures contextvars propagate correctly through async boundaries
-    with set_warrant_context(warrant), set_signing_key_context(AGENT_KEYPAIR):
+    with warrant_scope(warrant), key_scope(AGENT_KEYPAIR):
         try:
             content = read_file(file_path)
             return {
@@ -234,7 +241,7 @@ async def write_file_endpoint(file_path: str, content: dict, warrant: Warrant = 
     - X-Tenuo-Warrant header with warrant authorizing "write_file"
     - Warrant constraints must allow the requested file_path
     """
-    with set_warrant_context(warrant), set_signing_key_context(AGENT_KEYPAIR):
+    with warrant_scope(warrant), key_scope(AGENT_KEYPAIR):
         try:
             write_file(file_path, content.get("content", ""))
             return {
@@ -266,7 +273,7 @@ async def manage_cluster_endpoint(cluster: str, request: dict, warrant: Warrant 
     action = request.get("action", "status")
     replicas = request.get("replicas", 1)
     
-    with set_warrant_context(warrant), set_signing_key_context(AGENT_KEYPAIR):
+    with warrant_scope(warrant), key_scope(AGENT_KEYPAIR):
         try:
             result = manage_cluster(cluster, action, replicas)
             return result
@@ -325,33 +332,25 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
     Note: Each tool gets its own warrant. This is the recommended pattern
     for fine-grained authorization control.
     """
-    read_warrant = Warrant.issue(
-        keypair=AGENT_KEYPAIR,
-        capabilities=Constraints.for_tool("read_file", {
-            "file_path": Pattern("/tmp/*")
-        }),
-        holder=AGENT_KEYPAIR.public_key,
-        ttl_seconds=3600
-    )
+    read_warrant = (Warrant.mint_builder()
+        .capability("read_file", file_path=Pattern("/tmp/*"))
+        .holder(AGENT_KEYPAIR.public_key)
+        .ttl(3600)
+        .mint(AGENT_KEYPAIR))
     
-    write_warrant = Warrant.issue(
-        keypair=AGENT_KEYPAIR,
-        capabilities=Constraints.for_tool("write_file", {
-            "file_path": Pattern("/tmp/*")
-        }),
-        holder=AGENT_KEYPAIR.public_key,
-        ttl_seconds=3600
-    )
+    write_warrant = (Warrant.mint_builder()
+        .capability("write_file", file_path=Pattern("/tmp/*"))
+        .holder(AGENT_KEYPAIR.public_key)
+        .ttl(3600)
+        .mint(AGENT_KEYPAIR))
     
-    cluster_warrant = Warrant.issue(
-        keypair=AGENT_KEYPAIR,
-        capabilities=Constraints.for_tool("manage_cluster", {
-            "cluster": Pattern("staging-*"),
-            "replicas": Range.max_value(15)
-        }),
-        holder=AGENT_KEYPAIR.public_key,
-        ttl_seconds=3600
-    )
+    cluster_warrant = (Warrant.mint_builder()
+        .capability("manage_cluster",
+            cluster=Pattern("staging-*"),
+            replicas=Range.max_value(15))
+        .holder(AGENT_KEYPAIR.public_key)
+        .ttl(3600)
+        .mint(AGENT_KEYPAIR))
     
     return {
         "read_file": (read_warrant, read_warrant.to_base64()),

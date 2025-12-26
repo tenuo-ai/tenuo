@@ -122,7 +122,7 @@ def _json_schema_to_python_type(schema: Dict[str, Any]) -> type:
     return type_mapping.get(schema_type, Any)
 
 
-def protect_langchain_mcp_client(client: Any) -> List[Any]:
+def guard_mcp_client(client: Any) -> List[Any]:
     """
     Wrap all tools from a LangChain MultiServerMCPClient with Tenuo protection.
     
@@ -183,7 +183,7 @@ class MCPToolAdapter:
             List of LangChain StructuredTool objects with Tenuo protection
         """
         mcp_tools = await self.client.get_tools()
-        protected_funcs = await self.client.get_protected_tools()
+        protected_funcs = self.client.tools
         
         langchain_tools = []
         for mcp_tool in mcp_tools:

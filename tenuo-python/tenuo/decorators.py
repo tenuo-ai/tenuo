@@ -4,19 +4,19 @@ Decorators for Tenuo authorization.
 Supports both explicit warrant passing and ContextVar-based context (for LangChain/FastAPI).
 
 Example with explicit warrant:
-    @lockdown(warrant, tool="manage_infrastructure")
+    @guard(warrant, tool="manage_infrastructure")
     def scale_cluster(cluster: str, replicas: int):
         # This function can only be called if the warrant authorizes it
         ...
 
 Example with ContextVar (LangChain/FastAPI pattern):
-    from tenuo import set_warrant_context, set_signing_key_context
+    from tenuo import warrant_scope, key_scope
     
     # Set warrant and keypair in context (e.g., in FastAPI middleware)
-    with set_warrant_context(warrant), set_signing_key_context(keypair):
+    with warrant_scope(warrant), key_scope(keypair):
         scale_cluster(cluster="staging-web", replicas=5)
     
-    @lockdown(tool="manage_infrastructure")
+    @guard(tool="manage_infrastructure")
     def scale_cluster(cluster: str, replicas: int):
         # Warrant and keypair are automatically retrieved from context
         # PoP signature is created automatically if warrant.requires_pop
@@ -42,15 +42,18 @@ the helper `tenuo.spawn()` when available.
 """
 
 from functools import wraps
-from typing import Callable, List, Optional, Union
+from typing import Callable, List, Optional, Union, overload, get_type_hints, get_origin, get_args, Any
+from typing_extensions import Annotated
 from contextvars import ContextVar
 import traceback
 import warnings
 from .exceptions import (
     ScopeViolation,
-    ConstraintViolation,
     ExpiredError,
     MissingSigningKey,
+    AuthorizationDenied,
+    ConstraintResult,
+    ToolNotAuthorized,
 )
 from .audit import audit_logger, AuditEvent, AuditEventType
 
@@ -108,11 +111,11 @@ def _make_actionable_error(
     if error_code == AuthErrorCode.MISSING_CONTEXT:
         base += "\n\nTo fix:"
         base += "\n  1. Wrap the call with: async with root_task(Capability(\"<tool>\", ...)):"
-        base += "\n  2. Or use: with set_warrant_context(warrant), set_signing_key_context(keypair):"
-        base += f"\n  3. Or pass warrant explicitly: @lockdown(warrant, tool='{tool_name}')"
+        base += "\n  2. Or use: with warrant_scope(warrant), key_scope(keypair):"
+        base += f"\n  3. Or pass warrant explicitly: @guard(warrant, tool='{tool_name}')"
     elif error_code == AuthErrorCode.POP_MISSING:
         base += "\n\nTo fix:"
-        base += "\n  1. Add keypair to context: with set_signing_key_context(keypair):"
+        base += "\n  1. Add keypair to context: with key_scope(keypair):"
         base += "\n  2. Or use root_task() which handles this automatically"
     elif error_code == AuthErrorCode.EXPIRED:
         base += "\n\nTo fix:"
@@ -132,6 +135,51 @@ def _make_actionable_error(
 # Runtime imports (after class definitions above)
 from tenuo_core import Warrant, SigningKey  # type: ignore[import-untyped]  # noqa: E402
 
+
+# =============================================================================
+# Annotated Type Hint Extraction
+# =============================================================================
+
+def _is_tenuo_constraint(obj: Any) -> bool:
+    """Check if an object is a Tenuo constraint (Pattern, Exact, Range, etc.)."""
+    # Check by class name since we can't import all constraint types here
+    constraint_types = {'Pattern', 'Exact', 'Range', 'OneOf', 'NotOneOf', 'Contains', 
+                        'Subset', 'Regex', 'Cidr', 'UrlPattern', 'CEL', 'All', 'AnyOf', 'Not'}
+    return type(obj).__name__ in constraint_types
+
+
+def _extract_annotated_constraints(func: Callable) -> dict[str, Any]:
+    """
+    Extract Tenuo constraints from Annotated type hints.
+    
+    Example:
+        def read_file(path: Annotated[str, Pattern("/data/*")]) -> str: ...
+        
+    Returns:
+        {"path": Pattern("/data/*")}
+    """
+    constraints: dict[str, Any] = {}
+    
+    try:
+        hints = get_type_hints(func, include_extras=True)
+    except Exception:
+        return constraints
+    
+    for param_name, hint in hints.items():
+        if param_name == 'return':
+            continue
+            
+        # Check if it's Annotated[T, ...]
+        if get_origin(hint) is Annotated:
+            args = get_args(hint)
+            # args[0] is the base type, args[1:] are the annotations
+            for annotation in args[1:]:
+                if _is_tenuo_constraint(annotation):
+                    constraints[param_name] = annotation
+                    break
+    
+    return constraints
+
 # Context variable for warrant storage (works with both threads and asyncio)
 # This allows warrants to be passed through async call stacks without explicit threading
 _warrant_context: ContextVar[Optional[Warrant]] = ContextVar('_warrant_context', default=None)
@@ -144,7 +192,7 @@ _keypair_context: ContextVar[Optional[SigningKey]] = ContextVar('_keypair_contex
 _allowed_tools_context: ContextVar[Optional[List[str]]] = ContextVar('_allowed_tools_context', default=None)
 
 # Context variable for test bypass mode (set by allow_all())
-# When True, @lockdown skips authorization entirely
+# When True, @guard skips authorization entirely
 # SECURITY: Only works when TENUO_ENV=test to prevent accidental production bypass
 _bypass_context: ContextVar[bool] = ContextVar('_bypass_context', default=False)
 
@@ -225,46 +273,46 @@ def get_allowed_tools_context() -> Optional[List[str]]:
     return _allowed_tools_context.get()
 
 
-def set_warrant_context(warrant: Warrant) -> 'WarrantContext':
+@overload
+def warrant_scope() -> Optional[Warrant]: ...
+@overload
+def warrant_scope(warrant: Warrant) -> 'WarrantContext': ...
+
+def warrant_scope(warrant: Optional[Warrant] = None) -> Union[Optional[Warrant], 'WarrantContext']:
     """
-    Create a context manager to set a warrant in the current context.
+    Get or set the warrant context.
     
-    This is useful for LangChain/FastAPI where you want to set the warrant
-    at the request/message level and have it available throughout the call stack.
+    Usage as getter (no args):
+        warrant = warrant_scope()
     
-    Args:
-        warrant: The warrant to set in context
-    
-    Returns:
-        A context manager that sets the warrant
-    
-    Example:
-        with set_warrant_context(warrant):
-            # All functions decorated with @lockdown will use this warrant
-            process_request()
+    Usage as setter (context manager):
+        with warrant_scope(warrant):
+            process_request()  # @guard uses this warrant
     """
+    if warrant is None:
+        return _warrant_context.get()
     return WarrantContext(warrant)
 
 
-def set_signing_key_context(keypair: SigningKey) -> 'SigningKeyContext':
+
+@overload
+def key_scope() -> Optional[SigningKey]: ...
+@overload
+def key_scope(keypair: SigningKey) -> 'SigningKeyContext': ...
+
+def key_scope(keypair: Optional[SigningKey] = None) -> Union[Optional[SigningKey], 'SigningKeyContext']:
     """
-    Create a context manager to set a keypair in the current context.
+    Get or set the signing key context.
     
-    This is needed for PoP (Proof-of-Possession) when the warrant has
-    an authorized_holder set. The keypair will be used to automatically
-    create PoP signatures in @lockdown decorated functions.
+    Usage as getter (no args):
+        key = key_scope()
     
-    Args:
-        keypair: The keypair to set in context (must match warrant's authorized_holder)
-    
-    Returns:
-        A context manager that sets the keypair
-    
-    Example:
-        with set_warrant_context(warrant), set_signing_key_context(keypair):
-            # @lockdown will automatically create PoP signatures
-            process_request()
+    Usage as setter (context manager):
+        with key_scope(keypair):
+            process_request()  # @guard uses this key for PoP
     """
+    if keypair is None:
+        return _keypair_context.get()
     return SigningKeyContext(keypair)
 
 
@@ -302,7 +350,7 @@ class SigningKeyContext:
         return False
 
 
-def lockdown(
+def guard(
     warrant_or_tool: Optional[Union[Warrant, str]] = None,
     tool: Optional[str] = None,
     keypair: Optional[SigningKey] = None,
@@ -318,27 +366,29 @@ def lockdown(
     Proof-of-Possession is mandatory. This ensures leaked warrants are useless
     without the corresponding private key.
     
-    Supports two usage patterns:
+    Supports multiple usage patterns:
     
-    1. Explicit warrant (simple case):
-        @lockdown(warrant, tool="manage_infrastructure", keypair=keypair)
-        def scale_cluster(cluster: str, replicas: int):
-            ...
+    1. Minimal (tool name inferred from function name):
+        @guard
+        def search(query: str): ...  # tool="search"
     
-    2. ContextVar-based (LangChain/FastAPI pattern):
-        @lockdown(tool="manage_infrastructure")
-        def scale_cluster(cluster: str, replicas: int):
-            ...
-        
-        # Warrant AND keypair are set in context (BOTH required)
-        with set_warrant_context(warrant), set_signing_key_context(keypair):
-            scale_cluster(cluster="staging-web", replicas=5)
+    2. With Annotated constraints (auto-extracted):
+        @guard
+        def read_file(path: Annotated[str, Pattern("/data/*")]) -> str: ...
+    
+    3. Explicit tool name:
+        @guard(tool="manage_infrastructure")
+        def scale_cluster(cluster: str, replicas: int): ...
+    
+    4. Explicit warrant (for non-context usage):
+        @guard(warrant, tool="manage_infrastructure", keypair=keypair)
+        def scale_cluster(cluster: str, replicas: int): ...
     
     Args:
         warrant_or_tool: If Warrant instance, use it explicitly. If str, treat as tool name.
-                        If None, tool must be provided as keyword arg.
-        tool: The tool name to authorize (required if warrant_or_tool is not a string)
-        keypair: SigningKey for PoP signature (required - or use set_signing_key_context)
+                        If None, tool is inferred from function name.
+        tool: The tool name to authorize (optional - inferred from function name if not provided)
+        keypair: SigningKey for PoP signature (required - or use key_scope)
         extract_args: Optional function to extract args from function arguments.
                      If None, uses the function's kwargs as args.
         mapping: Optional dictionary mapping function argument names to constraint names.
@@ -346,7 +396,6 @@ def lockdown(
     
     Raises:
         AuthorizationError: If no warrant/keypair is available, or authorization fails.
-        ValueError: If tool is not provided.
     """
     # Determine warrant and tool
     active_warrant: Optional[Warrant] = None
@@ -354,23 +403,34 @@ def lockdown(
     tool_name: Optional[str] = None
     
     if isinstance(warrant_or_tool, Warrant):
-        # Pattern 1: @lockdown(warrant, tool="...")
+        # Pattern: @guard(warrant, tool="...")
         active_warrant = warrant_or_tool
         tool_name = tool
     elif isinstance(warrant_or_tool, str):
-        # Pattern 2: @lockdown(tool="...") - tool passed as first positional arg
+        # Pattern: @guard("tool_name") or @guard(tool="tool_name")
         tool_name = warrant_or_tool
+    elif callable(warrant_or_tool):
+        # Pattern: @guard (no parentheses) - warrant_or_tool is actually the function
+        # Infer tool name from function name
+        func = warrant_or_tool
+        inferred_tool = func.__name__
+        # Apply decorator and return immediately
+        inner_decorator = guard(tool=inferred_tool, keypair=keypair, extract_args=extract_args, mapping=mapping)
+        return inner_decorator(func)
     else:
-        # Pattern 2: @lockdown(tool="...") - tool passed as keyword arg
+        # Pattern: @guard(tool="...") - tool passed as keyword arg
         tool_name = tool
     
-    if tool_name is None:
-        raise ValueError(
-            "tool parameter is required. Use @lockdown(warrant, tool='...') "
-            "or @lockdown(tool='...')"
-        )
-    
     def decorator(func: Callable) -> Callable:
+        # Infer tool name from function name if not provided
+        nonlocal tool_name
+        if tool_name is None:
+            tool_name = func.__name__
+            
+        # Extract annotated constraints for defense-in-depth enforcement
+        # This allows the code to define strict boundaries that even a broad warrant cannot violate
+        annotated_constraints = _extract_annotated_constraints(func)
+        
         @wraps(func)
         def wrapper(*args, **kwargs):
             # Check for test bypass mode (set by allow_all())
@@ -430,7 +490,7 @@ def lockdown(
                         f"[{error_code}] Tool '{tool_name}' called without warrant context.\n"
                         f"  Function: {func_name}\n"
                         f"  Location: {callsite}\n"
-                        "  This would fail in strict_mode. Add root_task() or set_warrant_context()."
+                        "  This would fail in strict_mode. Add root_task() or warrant_scope()."
                     )
                     warnings.warn(warning_msg, SecurityWarning, stacklevel=2)
                     # Passthrough allowed - continue without authorization
@@ -541,19 +601,111 @@ def lockdown(
                         mapped_args[constraint_name] = value
                     auth_args = mapped_args
             
-            pop_signature = warrant_to_use.create_pop_signature(
+            # Defense in Depth: Enforce code-level constraints from Annotated hints
+            # These are checked BEFORE the warrant, preventing unsafe values even if authorized
+            if annotated_constraints:
+                for param, constraint in annotated_constraints.items():
+                    if param in auth_args:
+                        val = auth_args[param]
+                        # Check constraint match (supports .matches() or equality)
+                        is_valid = False
+                        if hasattr(constraint, 'matches'):
+                            is_valid = constraint.matches(val)
+                        elif hasattr(constraint, 'check'): # Some libs use check
+                             is_valid = constraint.check(val) 
+                        else:
+                            # Fallback to equality for Exact values
+                            is_valid = (constraint == val)
+                            
+                        if not is_valid:
+                            # Use AuthorizatonDenied for rich error
+                            details = f"Value '{val}' violates code-defined constraint for '{param}'"
+                            hint = f"Function signature requires: {constraint}"
+                            
+                            # Log the enforcement block
+                            audit_logger.log(AuditEvent(
+                                event_type=AuditEventType.AUTHORIZATION_FAILURE,
+                                tool=tool_name,
+                                action="denied",
+                                error_code="CODE_CONSTRAINT_VIOLATION",
+                                details=details,
+                                metadata={"param": param, "value": str(val), "constraint": str(constraint)}
+                            ))
+                            
+                            raise AuthorizationDenied(
+                                tool=tool_name,
+                                reason=details,
+                                hint=hint,
+                                constraint_results=[
+                                    ConstraintResult(
+                                        name=param,
+                                        passed=False,
+                                        constraint_repr=str(constraint),
+                                        value=val,
+                                        explanation="Violated type hint constraint"
+                                    )
+                                ]
+                            )
+            
+            pop_signature = warrant_to_use.sign(
                 keypair_to_use, tool_name, auth_args
             )
             
             # pop_signature is list[int], convert to bytes
             if not warrant_to_use.authorize(tool_name, auth_args, signature=bytes(pop_signature)):
                 warrant_tools = warrant_to_use.tools if hasattr(warrant_to_use, 'tools') else []
+                
+                # Tool not in warrant
                 if tool_name not in (warrant_tools or []):
                     error_code = AuthErrorCode.SCOPE_VIOLATION
-                    details = f"Tool '{tool_name}' not in warrant.tools: {warrant_tools}"
+                    
+                    audit_logger.log(AuditEvent(
+                        event_type=AuditEventType.AUTHORIZATION_FAILURE,
+                        warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else None,
+                        tool=tool_name,
+                        action="denied",
+                        error_code=error_code,
+                        details=f"Tool '{tool_name}' not in warrant.tools",
+                        metadata={
+                            "callsite": callsite,
+                            "function": func_name,
+                            "warrant_tools": warrant_tools,
+                        },
+                    ))
+                    
+                    raise ToolNotAuthorized(
+                        tool=tool_name,
+                        authorized_tools=warrant_tools,
+                        hint=f"Add Capability('{tool_name}', ...) to your mint() call"
+                    )
+                
+                # Tool is in warrant but constraint violation
+                error_code = AuthErrorCode.CONSTRAINT_VIOLATION
+                
+                # Get structured denial reason
+                why = warrant_to_use.why_denied(tool_name, auth_args)
+                
+                # Build constraint results for rich error
+                constraint_results = []
+                if hasattr(why, 'constraint_failures') and why.constraint_failures:
+                    for field, info in why.constraint_failures.items():
+                        constraint_results.append(ConstraintResult(
+                            name=field,
+                            passed=False,
+                            constraint_repr=str(info.get('expected', '?')),
+                            value=auth_args.get(field, '<not provided>'),
+                            explanation=info.get('reason', 'Constraint not satisfied'),
+                        ))
                 else:
-                    error_code = AuthErrorCode.CONSTRAINT_VIOLATION
-                    details = f"Arguments do not satisfy warrant constraints for '{tool_name}'"
+                    # Fallback: build from args
+                    for arg_name, arg_value in auth_args.items():
+                        constraint_results.append(ConstraintResult(
+                            name=arg_name,
+                            passed=False,
+                            constraint_repr="<see warrant>",
+                            value=arg_value,
+                            explanation="Value does not satisfy constraint",
+                        ))
                 
                 audit_logger.log(AuditEvent(
                     event_type=AuditEventType.AUTHORIZATION_FAILURE,
@@ -563,26 +715,29 @@ def lockdown(
                     constraints=auth_args,
                     trace_id=warrant_to_use.session_id if hasattr(warrant_to_use, 'session_id') else None,
                     error_code=error_code,
-                    details=details,
+                    details=f"Constraint violation for '{tool_name}'",
                     metadata={
                         "callsite": callsite,
                         "function": func_name,
                         "warrant_tools": warrant_tools,
-                        "provided_args": {k: str(v)[:100] for k, v in auth_args.items()},  # Truncate for safety
+                        "provided_args": {k: str(v)[:100] for k, v in auth_args.items()},
+                        "suggestion": why.suggestion if hasattr(why, 'suggestion') else None,
                     },
                 ))
                 
-                error_msg = _make_actionable_error(
-                    error_code=error_code,
-                    tool_name=tool_name,
-                    func_name=func_name,
-                    callsite=callsite,
-                    details=details,
-                )
-                raise ConstraintViolation(
-                    field="authorization",
-                    reason=error_msg,
-                    value=auth_args
+                # Build explorer URL for debugging
+                warrant_b64 = warrant_to_use.to_base64() if hasattr(warrant_to_use, 'to_base64') else ""
+                explorer_url = f"https://tenuo.dev/explorer/#warrant={warrant_b64[:50]}..." if warrant_b64 else None
+                
+                hint = why.suggestion if hasattr(why, 'suggestion') else None
+                if explorer_url:
+                    hint = f"{hint}\n\n🔗 Debug: {explorer_url}" if hint else f"🔗 Debug: {explorer_url}"
+                
+                raise AuthorizationDenied(
+                    tool=tool_name,
+                    constraint_results=constraint_results,
+                    reason="Arguments do not satisfy warrant constraints",
+                    hint=hint,
                 )
             
             audit_logger.log(AuditEvent(
@@ -603,4 +758,3 @@ def lockdown(
         
         return wrapper
     return decorator
-

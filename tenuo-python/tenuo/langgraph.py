@@ -8,14 +8,14 @@ Recommended Pattern:
     1. Auto-load keys from env vars OR register manually
     2. Pass warrant in state (it attenuates dynamically)
     3. Pass key_id via LangGraph config (infrastructure concern)
-    4. Use secure() wrapper OR @tenuo_node decorator
+    4. Use guard_node() wrapper OR @tenuo_node decorator
 
 Usage:
     from tenuo import KeyRegistry, SigningKey
-    from tenuo.langgraph import secure, TenuoToolNode, auto_load_keys
+    from tenuo.langgraph import guard_node, TenuoToolNode, load_tenuo_keys
     
     # Option 1: Auto-load keys from TENUO_KEY_* env vars
-    auto_load_keys()  # Loads TENUO_KEY_DEFAULT, TENUO_KEY_WORKER_1, etc.
+    load_tenuo_keys()  # Loads TENUO_KEY_DEFAULT, TENUO_KEY_WORKER_1, etc.
     
     # Option 2: Manual registration
     KeyRegistry.get_instance().register("worker", SigningKey.generate())
@@ -25,16 +25,16 @@ Usage:
         messages: List[BaseMessage]
         warrant: Warrant
     
-    # Option A: secure() wrapper (keeps node pure)
+    # Option A: guard_node() wrapper (keeps node pure)
     def my_agent(state: State) -> dict:
         return {"messages": [...]}
     
-    graph.add_node("agent", secure(my_agent))
+    graph.add_node("agent", guard(my_agent))
     
     # Option B: @tenuo_node decorator (explicit access to bound_warrant)
     @tenuo_node
     def my_agent(state: State, bound_warrant: BoundWarrant) -> dict:
-        if bound_warrant.preview_can("search"):
+        if bound_warrant.allows("search"):
         ...
         return {"messages": [...]}
         
@@ -59,7 +59,8 @@ try:
     from langchain_core.tools import BaseTool
     from langchain_core.runnables import RunnableConfig
     LANGGRAPH_AVAILABLE = True
-except ImportError:
+except (ImportError, TypeError):
+    # TypeError can happen on Python 3.9 with old typing/Pydantic interactions in langchain
     LANGGRAPH_AVAILABLE = False
     ToolNode = object  # type: ignore
     BaseTool = object  # type: ignore
@@ -74,7 +75,7 @@ F = TypeVar('F', bound=Callable)
 # Key Auto-Loading (Convention over Configuration)
 # =============================================================================
 
-def auto_load_keys(prefix: str = "TENUO_KEY_") -> int:
+def load_tenuo_keys(prefix: str = "TENUO_KEY_") -> int:
     """
     Auto-load signing keys from environment variables.
     
@@ -96,7 +97,7 @@ def auto_load_keys(prefix: str = "TENUO_KEY_") -> int:
         # TENUO_KEY_DEFAULT=base64...
         # TENUO_KEY_WORKER=base64...
         
-        count = auto_load_keys()
+        count = load_tenuo_keys()
         print(f"Loaded {count} keys")
     """
     registry = KeyRegistry.get_instance()
@@ -187,24 +188,24 @@ def _get_bound_warrant(
     except KeyError:
         raise ConfigurationError(
             f"Key '{resolved_key_id}' not found in KeyRegistry. "
-            f"Either register it manually or use auto_load_keys() to load from env vars."
+            f"Either register it manually or use load_tenuo_keys() to load from env vars."
         )
         
     # Bind key to warrant
-    if hasattr(warrant, 'bind_key'):
-        return warrant.bind_key(key)
-    elif isinstance(warrant, BoundWarrant):
+    if isinstance(warrant, BoundWarrant):
         # Already bound - use as-is (rare in state)
         return warrant
+    elif hasattr(warrant, 'bind'):
+        return warrant.bind(key)
         
     raise ConfigurationError(f"Invalid warrant type in state: {type(warrant)}")
 
 
 # =============================================================================
-# secure() - Wrapper for Pure Nodes
+# guard_node() - Wrapper for Pure Nodes
 # =============================================================================
 
-def secure(
+def guard_node(
     node: Callable,
     *,
     key_id: Optional[str] = None,
@@ -230,8 +231,8 @@ def secure(
             return {"messages": [...]}
         
         # Wrap at graph construction:
-        graph.add_node("agent", secure(my_agent))
-        graph.add_node("worker", secure(worker_node, key_id="worker"))
+        graph.add_node("agent", guard_node(my_agent))
+        graph.add_node("worker", guard_node(worker_node, key_id="worker"))
     """
     @wraps(node)
     def wrapper(
@@ -256,7 +257,7 @@ def secure(
             kwargs['bound_warrant'] = bw
         
         # For now, we just validate the warrant exists and is bound
-        # The actual tool authorization happens in TenuoTool or protect()
+        # The actual tool authorization happens in TenuoTool or guard()
         # This wrapper primarily ensures the key binding works
         
         # Check if wrapped function accepts config parameter
@@ -286,7 +287,7 @@ def tenuo_node(func: F) -> F:
     to check permissions, delegate, or attenuate within the node.
     
     For simple authorization (just ensuring the warrant is valid), prefer
-    the `secure()` wrapper which keeps nodes pure.
+    the `guard()` wrapper which keeps nodes pure.
     
     Args:
         func: Node function with signature (state, bound_warrant=...) -> dict
@@ -298,11 +299,11 @@ def tenuo_node(func: F) -> F:
         @tenuo_node
         def my_agent(state: State, bound_warrant: BoundWarrant) -> dict:
             # Check permissions before expensive operation
-            if not bound_warrant.preview_can("search"):
+            if not bound_warrant.allows("search"):
                 return {"messages": ["Not authorized for search"]}
             
             # Delegate to sub-agent
-            child_warrant = bound_warrant.delegate(
+            child_warrant = bound_warrant.grant(
                 to=worker_pubkey,
                 allow=["search"],
                 ttl=60
@@ -487,9 +488,9 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
 
 __all__ = [
     # Key loading
-    "auto_load_keys",
+    "load_tenuo_keys",
     # Wrappers
-    "secure",
+    "guard_node",
     "tenuo_node",
     "require_warrant",
     # ToolNode

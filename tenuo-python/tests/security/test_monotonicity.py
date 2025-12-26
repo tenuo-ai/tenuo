@@ -12,11 +12,16 @@ Tests verifying:
 import pytest
 
 from tenuo import (
-    Warrant, Pattern, Range, Wildcard, OneOf, NotOneOf,
-    Contains, Subset, CEL, Constraints,
-    PatternExpanded, WildcardExpansion,
-    MonotonicityError, EmptyResultSet
+    Warrant,
+    Pattern,
+    Range,
+    OneOf,
+    Contains,
+    MonotonicityError,
 )
+from tenuo.constraints import Constraints
+from tenuo.exceptions import EmptyResultSet, PatternExpanded, WildcardExpansion
+from tenuo_core import CEL, NotOneOf, Subset, Wildcard
 
 
 @pytest.mark.security
@@ -32,7 +37,7 @@ class TestMonotonicity:
         """
         print("\n--- Attack 3A: Constraint Widening ---")
         
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}),
             ttl_seconds=60
@@ -40,9 +45,9 @@ class TestMonotonicity:
         
         print("  [Attack 3A] Attempting to widen constraints...")
         with pytest.raises(PatternExpanded):
-            builder = parent.attenuate_builder()
+            builder = parent.grant_builder()
             builder.capability("search", {"query": Pattern("*")})
-            builder.delegate(keypair)
+            builder.grant(keypair)
             
         print("  [Result] Attack 3A blocked (Monotonicity enforced)")
 
@@ -54,7 +59,7 @@ class TestMonotonicity:
         """
         print("\n--- Attack 3B: Add Unauthorized Tool ---")
         
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}),
             ttl_seconds=60
@@ -62,10 +67,10 @@ class TestMonotonicity:
         
         print("  [Attack 3B] Attempting to add unauthorized tool via capability...")
         with pytest.raises(MonotonicityError):
-            builder = parent.attenuate_builder()
+            builder = parent.grant_builder()
             # Try to add a capability for a tool not in the parent
             builder.capability("delete", {})
-            builder.delegate(keypair)
+            builder.grant(keypair)
              
         print("  [Result] Attack 3B blocked (Cannot add tools not in parent)")
 
@@ -77,16 +82,16 @@ class TestMonotonicity:
         """
         print("\n--- Attack 12: Constraint Removal ---")
         
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
             ttl_seconds=3600
         )
         
         # Attenuate inheriting all constraints (POLA)
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         builder.inherit_all()  # POLA: constraints inherited
-        child = builder.delegate(keypair)
+        child = builder.grant(keypair)
         
         print(f"  [Check] Parent capabilities: {parent.capabilities}")
         print(f"  [Check] Child capabilities: {child.capabilities}")
@@ -106,7 +111,7 @@ class TestMonotonicity:
         """
         print("\n--- Attack 23: CEL Injection ---")
         
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("spend", {"budget_check": CEL("budget < 10000")}),
             ttl_seconds=3600
@@ -115,18 +120,18 @@ class TestMonotonicity:
         # Attack A: Replace with always-true
         print("  [Attack 23A] Attempting to replace with 'true' expression...")
         with pytest.raises(MonotonicityError):
-            builder = parent.attenuate_builder()
+            builder = parent.grant_builder()
             builder.capability("spend", {"budget_check": CEL("true")})
-            builder.delegate(keypair)
+            builder.grant(keypair)
         
         print("  [Result] Attack 23A blocked (CEL attenuation enforces conjunction)")
         
         # Attack B: OR to widen
         print("  [Attack 23B] Attempting to OR with broader condition...")
         with pytest.raises(MonotonicityError):
-            builder = parent.attenuate_builder()
+            builder = parent.grant_builder()
             builder.capability("spend", {"budget_check": CEL("budget < 10000 || true")})
-            builder.delegate(keypair)
+            builder.grant(keypair)
         
         print("  [Result] Attack 23B blocked (Must be (parent) && X format)")
 
@@ -138,7 +143,7 @@ class TestMonotonicity:
         """
         print("\n--- Attack 26: Constraint Type Substitution ---")
         
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
             ttl_seconds=3600
@@ -146,9 +151,9 @@ class TestMonotonicity:
         
         print("  [Attack 26] Attempting to change Pattern to Range...")
         with pytest.raises(MonotonicityError):
-            builder = parent.attenuate_builder()
+            builder = parent.grant_builder()
             builder.capability("read_file", {"path": Range(max=100)})
-            builder.delegate(keypair)
+            builder.grant(keypair)
         
         print("  [Result] Attack 26 blocked (Incompatible types rejected)")
 
@@ -160,7 +165,7 @@ class TestMonotonicity:
         """
         print("\n--- Attack 27: Wildcard Re-widening ---")
         
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}),
             ttl_seconds=3600
@@ -168,9 +173,9 @@ class TestMonotonicity:
         
         print("  [Attack 27] Attempting to attenuate Pattern to Wildcard...")
         with pytest.raises(WildcardExpansion):
-            builder = parent.attenuate_builder()
+            builder = parent.grant_builder()
             builder.capability("search", {"query": Wildcard()})
-            builder.delegate(keypair)
+            builder.grant(keypair)
         
         print("  [Result] Attack 27 blocked (Cannot attenuate to Wildcard)")
 
@@ -182,7 +187,7 @@ class TestMonotonicity:
         """
         print("\n--- Attack 28: TTL Extension ---")
         
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("search", {}),
             ttl_seconds=600
@@ -190,10 +195,10 @@ class TestMonotonicity:
         
         print("  [Attack 28] Attempting to extend TTL from 600s to 3600s...")
         
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         builder.inherit_all()  # POLA: explicit inheritance
         builder.ttl(3600)  # Try to extend
-        child = builder.delegate(keypair)
+        child = builder.grant(keypair)
         
         # Child's expiration should not be later than parent's
         parent_exp = parent.expires_at()
@@ -215,7 +220,7 @@ class TestMonotonicity:
         """
         print("\n--- Attack 34: OneOf/NotOneOf Paradox ---")
         
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("action", {"type": OneOf(["read", "write"])}),
             ttl_seconds=3600
@@ -223,9 +228,9 @@ class TestMonotonicity:
         
         print("  [Attack 34] Attempting to exclude all parent values...")
         with pytest.raises(EmptyResultSet):
-            builder = parent.attenuate_builder()
+            builder = parent.grant_builder()
             builder.capability("action", {"type": NotOneOf(["read", "write"])})
-            builder.delegate(keypair)
+            builder.grant(keypair)
         
         print("  [Result] Attack 34 blocked (Empty result set detected)")
 
@@ -239,7 +244,7 @@ class TestMonotonicity:
         
         print("  [Attack 37] Creating warrant with only NotOneOf constraint...")
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("query", {"env": NotOneOf(["prod"])}),
             ttl_seconds=3600
@@ -265,7 +270,7 @@ class TestMonotonicity:
         """
         print("\n--- Attack 38: Contains/Subset Confusion ---")
         
-        parent = Warrant.issue(
+        parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("access", {"permissions": Contains(["read"])}),
             ttl_seconds=3600
@@ -273,17 +278,17 @@ class TestMonotonicity:
         
         print("  [Attack 38A] Attempting to attenuate Contains to Subset...")
         with pytest.raises(MonotonicityError):
-            builder = parent.attenuate_builder()
+            builder = parent.grant_builder()
             builder.capability("access", {"permissions": Subset(["read", "write"])})
-            builder.delegate(keypair)
+            builder.grant(keypair)
         
         print("  [Result] Attack 38A blocked (Incompatible types)")
         
         # Valid Contains attenuation (adding more required values)
         print("  [Attack 38B] Attenuating Contains to require more values...")
-        builder = parent.attenuate_builder()
+        builder = parent.grant_builder()
         builder.capability("access", {"permissions": Contains(["read", "write"])})
-        _child = builder.delegate(keypair)
+        _child = builder.grant(keypair)
         
         print("  [Result] Attack 38B: Valid attenuation (Contains can add requirements)")
 
@@ -295,7 +300,7 @@ class TestMonotonicity:
         """
         print("\n--- Attack 11: Tool Wildcard Exploitation ---")
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities={
                 "search": {},
@@ -306,10 +311,10 @@ class TestMonotonicity:
         )
         
         # Attenuation should narrow tools (POLA: inherit_all first, then narrow)
-        builder = warrant.attenuate_builder()
+        builder = warrant.grant_builder()
         builder.inherit_all()
         builder.tools(["search"])
-        child = builder.delegate(keypair)
+        child = builder.grant(keypair)
 
         assert child.tools == ["search"]
         print("  [Result] Attack 11 N/A (Tenuo doesn't support wildcard tools syntax)")

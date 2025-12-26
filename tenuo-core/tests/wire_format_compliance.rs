@@ -7,16 +7,24 @@ use tenuo::*;
 /// Test: Reserved tool namespace rejection (Spec §9)
 /// Requirement: Tools starting with "tenuo:" MUST be rejected
 #[test]
-#[should_panic(expected = "Reserved tool namespace")]
 fn test_reserved_tool_namespace_rejection() {
     let keypair = SigningKey::generate();
 
     // Attempt to create warrant with reserved tool name
-    let _warrant = Warrant::builder()
+    let result = Warrant::builder()
         .capability("tenuo:revoke", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair);
+
+    // Should return an error, not succeed
+    assert!(result.is_err(), "Expected error for reserved namespace");
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("Reserved tool namespace"),
+        "Error message should mention reserved namespace: {}",
+        err
+    );
 }
 
 /// Test: Extension preservation through serialization (Spec §8)
@@ -31,7 +39,7 @@ fn test_extension_preservation() {
         .ttl(Duration::from_secs(3600))
         .extension("com.example.trace_id", b"abc123".to_vec())
         .extension("com.example.billing_tag", b"team-ml".to_vec())
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -66,7 +74,7 @@ fn test_clock_tolerance() {
     let warrant = Warrant::builder()
         .capability("test_tool", ConstraintSet::new())
         .ttl(Duration::from_secs(60))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -90,7 +98,7 @@ fn test_warrant_size_limit() {
     let keypair = SigningKey::generate();
     let mut builder = Warrant::builder()
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key());
+        .holder(keypair.public_key());
 
     // Add 100 tools with moderate constraints
     for i in 0..100 {

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["MAX_WARRANT_SIZE","WARRANT_HEADER","WARRANT_ID_HEADER"],"fn":["decode","decode_base64","encode","encode_base64"],"struct":["WireEnvelope"]};

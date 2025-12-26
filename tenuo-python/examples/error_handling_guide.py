@@ -17,14 +17,38 @@ Key Patterns:
 6. Graceful degradation
 """
 
-from tenuo import (
-    SigningKey, Warrant, Pattern, Range, Constraints,
-    lockdown, set_warrant_context, set_signing_key_context,
-    AuthorizationError, WarrantError, TenuoError
-)
 import time
 from typing import Optional, Callable, Any
 from enum import Enum
+
+from tenuo import (
+    Warrant,
+    SigningKey,
+    WarrantViolation,
+    warrant_scope,
+    key_scope,
+    guard,
+    Pattern,
+    Range,
+    TenuoError,
+)
+from tenuo.exceptions import AuthorizationError
+
+# Alias for backwards compatibility
+WarrantError = WarrantViolation
+
+
+# Placeholder functions for examples
+@guard(tool="read_file")
+def read_file(path: str) -> str:
+    """Simulated file read for examples."""
+    return f"Contents of {path}"
+
+
+@guard(tool="process_payment")
+def process_payment(amount: float, currency: str) -> str:
+    """Simulated payment processing for examples."""
+    return f"Processed payment of {amount} {currency}"
 
 # ============================================================================
 # Error Types
@@ -120,22 +144,6 @@ class TenuoErrorClassifier:
 # Protected Functions
 # ============================================================================
 
-@lockdown(tool="read_file")
-def read_file(file_path: str) -> str:
-    """Protected file reading."""
-    with open(file_path, 'r') as f:
-        return f.read()
-
-
-@lockdown(tool="process_payment")
-def process_payment(amount: float, currency: str) -> dict:
-    """Protected payment processing."""
-    return {
-        "status": "success",
-        "amount": amount,
-        "currency": currency,
-        "transaction_id": f"txn_{int(time.time())}"
-    }
 
 # ============================================================================
 # Error Handlers
@@ -280,19 +288,16 @@ def main():
     print("\n1. Warrant Expired Error")
     print("-" * 60)
     
-    expired_warrant = Warrant.issue(
-        keypair=signing_key,
-        capabilities=Constraints.for_tool("read_file", {
-            "file_path": Pattern("/tmp/*")
-        }),
-        holder=signing_key.public_key,
-        ttl_seconds=1  # Very short TTL
-    )
+    expired_warrant = (Warrant.mint_builder()
+        .capability("read_file", file_path=Pattern("/tmp/*"))
+        .holder(signing_key.public_key)
+        .ttl(1)  # Very short TTL
+        .mint(signing_key))
     
     time.sleep(2)  # Wait for expiration
     
     def try_read():
-        with set_warrant_context(expired_warrant), set_signing_key_context(signing_key):
+        with warrant_scope(expired_warrant), key_scope(signing_key):
             return read_file("/tmp/test.txt")
     
     result, error_info = safe_execute(try_read, handler, {"warrant_id": expired_warrant.id})
@@ -307,18 +312,16 @@ def main():
     print("\n2. Constraint Violation Error")
     print("-" * 60)
     
-    restricted_warrant = Warrant.issue(
-        keypair=signing_key,
-        capabilities=Constraints.for_tool("process_payment", {
-            "amount": Range.max_value(1000.0),
-            "currency": Pattern("USD|EUR")
-        }),
-        holder=signing_key.public_key,
-        ttl_seconds=3600
-    )
+    restricted_warrant = (Warrant.mint_builder()
+        .capability("process_payment",
+            amount=Range.max_value(1000.0),
+            currency=Pattern("USD|EUR"))
+        .holder(signing_key.public_key)
+        .ttl(3600)
+        .mint(signing_key))
     
     def try_payment():
-        with set_warrant_context(restricted_warrant), set_signing_key_context(signing_key):
+        with warrant_scope(restricted_warrant), key_scope(signing_key):
             return process_payment(amount=2000.0, currency="USD")  # Exceeds max
     
     result, error_info = safe_execute(try_payment, handler, {"warrant_id": restricted_warrant.id})
@@ -349,17 +352,14 @@ def main():
     print("-" * 60)
     
     wrong_signing_key = SigningKey.generate()  # Different signing_key
-    warrant = Warrant.issue(
-        keypair=signing_key,
-        capabilities=Constraints.for_tool("read_file", {
-            "file_path": Pattern("/tmp/*")
-        }),
-        holder=signing_key.public_key,  # Bound to original signing_key
-        ttl_seconds=3600
-    )
+    warrant = (Warrant.mint_builder()
+        .capability("read_file", file_path=Pattern("/tmp/*"))
+        .holder(signing_key.public_key)  # Bound to original signing_key
+        .ttl(3600)
+        .mint(signing_key))
     
     def try_with_wrong_signing_key():
-        with set_warrant_context(warrant), set_signing_key_context(wrong_signing_key):
+        with warrant_scope(warrant), key_scope(wrong_signing_key):
             return read_file("/tmp/test.txt")
     
     result, error_info = safe_execute(try_with_wrong_signing_key, handler)

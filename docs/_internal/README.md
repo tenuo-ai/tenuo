@@ -12,14 +12,14 @@
 | Document | Description | Status |
 |----------|-------------|--------|
 | [full-spec.md](./full-spec.md) | Complete internal specification - warrant model, constraints, wire format | ✅ Reference |
-| [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | DX improvements - convenience methods, BoundWarrant, testing utilities | 🚧 In Progress (v0.2) |
+| [wire-format-spec.md](./wire-format-spec.md) | Wire format details for interoperability | ✅ Reference |
 | [thi-spec.md](./thi-spec.md) | Tenuo Host Interface - stateful features (nonces, rate limits) | ⚠️ Conceptual |
 | [securegraph-spec.md](./securegraph-spec.md) | SecureGraph - declarative attenuation for LangGraph | ⚠️ Conceptual |
 | [environment-constraints.md](./environment-constraints.md) | Environment/Context constraints (IP, Time) via extensions | ⚠️ Conceptual |
 
 ---
 
-## Implementation Status (v0.1.0-alpha.7)
+## Implementation Status (v0.1.0-alpha.12)
 
 ### Core ✅
 - Warrant model (execution + issuer warrants)
@@ -31,9 +31,9 @@
 - Clearance levels (optional, enforcement opt-in)
 
 ### Python SDK ✅
-- Tiered API (`Capability` objects, `root_task`, `scoped_task`, `configure`)
-- `@lockdown` decorator
-- `protect_tools()` for LangChain
+- Tiered API (`Capability` objects, `mint`, `grant`, `configure`)
+- `@guard` decorator
+- `guard_tools()` for LangChain
 - `@tenuo_node` for LangGraph
 - `Clearance` with `custom()`, `level`, `meets()` API
 
@@ -43,21 +43,22 @@
 - See `tenuo-python/examples/mcp_integration.py`
 
 ### CLI ✅
-- `tenuo keygen`, `issue`, `attenuate`, `verify`, `inspect`
-- `--diff` and `--preview` flags
-- `--clearance` flag for clearance levels
+- `tenuo init`, `decode`, `mint`, `validate`
+- Development helpers for key/warrant generation
 
 ---
 
-## Completed (v0.1.0-alpha.9)
+## Completed (v0.1.0-alpha.12)
  
- | Feature | Spec | Status |
- |---------|------|--------|
- | Warrant convenience methods | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | ✅ Phase 1 |
- | `BoundWarrant` with serialization guards | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | ✅ Phase 2 |
- | `delegate()` with optional key | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | ✅ Phase 1 |
- | Framework Integrations (FastAPI, LangChain, LangGraph) | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | ✅ Phase 3 |
- | Testing utilities (`quick_issue`, `allow_all`) | [dx-convenience-api-spec.md](./dx-convenience-api-spec.md) | ✅ Phase 1 |
+ | Feature | Status |
+ |---------|--------|
+ | Warrant convenience methods (`explain()`, `why_denied()`) | ✅ |
+ | `BoundWarrant` with serialization guards | ✅ |
+ | `grant_builder()` / `delegate()` API | ✅ |
+ | Framework Integrations (FastAPI, LangChain, LangGraph) | ✅ |
+ | `@guard` decorator | ✅ |
+ | `KeyRegistry` for LangGraph | ✅ |
+ | Testing utilities (`quick_mint`, assertions) | ✅ |
 
 ---
 
@@ -82,12 +83,8 @@ Complete internal specification covering:
 - Clearance levels (optional)
 - Delegation receipts
 
-### dx-convenience-api-spec.md (In Progress)
-Developer experience improvements:
-- **Phase 1**: Warrant convenience methods (`explain()`, `why_denied()`, `delegate()`)
-- **Phase 2**: Key management and `configure()` with strict mode
-- **Phase 3-5**: Framework integrations (FastAPI, LangChain, LangGraph)
-- **Security**: BoundWarrant serialization protection, KeyRegistry thread safety
+### wire-format-spec.md (Reference)
+Wire format details for cross-language interoperability.
 
 ### thi-spec.md (Conceptual)
 Stateful host interface features (not planned for implementation):

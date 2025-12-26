@@ -353,6 +353,9 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                     )],
                 ),
             ),
+            crate::error::Error::ConfigurationError(m) => {
+                ("ConfigurationError", PyTuple::new(py, [m.as_str()]))
+            }
         };
 
         // Unwrap the args Result (PyTuple::new can fail on conversion)
@@ -1948,7 +1951,7 @@ impl PyAttenuationBuilder {
 
     /// Set the authorized holder for the child warrant.
     fn with_holder(&mut self, holder: &PyPublicKey) {
-        self.inner.set_authorized_holder(holder.inner.clone());
+        self.inner.set_holder(holder.inner.clone());
     }
 
     /// Set the trust level for the child warrant.
@@ -2164,7 +2167,7 @@ impl PyIssuanceBuilder {
 
     /// Set the authorized holder for the execution warrant.
     fn with_holder(&mut self, holder: &PyPublicKey) {
-        self.inner.set_authorized_holder(holder.inner.clone());
+        self.inner.set_holder(holder.inner.clone());
     }
 
     /// Set required approvers.
@@ -2282,6 +2285,28 @@ pub struct PyWarrant {
 
 #[pymethods]
 impl PyWarrant {
+    /// Create a Warrant from a base64 string.
+    ///
+    /// To issue a new warrant, use `Warrant.issue()`.
+    /// Create a Warrant from a base64 string or PEM.
+    ///
+    /// To issue a new warrant, use `Warrant.issue()`.
+    #[new]
+    fn new(token: String) -> PyResult<Self> {
+        // wire::decode_base64 now handles PEM armor and whitespace stripping
+        let inner = crate::wire::decode_base64(&token).map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    fn __str__(&self) -> PyResult<String> {
+        crate::wire::encode_base64(&self.inner).map_err(to_py_err)
+    }
+
+    /// Convert to PEM format string.
+    fn to_pem(&self) -> PyResult<String> {
+        crate::wire::encode_pem(&self.inner).map_err(to_py_err)
+    }
+
     /// Issue a new warrant.
     #[staticmethod]
     #[pyo3(signature = (keypair, capabilities=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None))]
@@ -2321,9 +2346,9 @@ impl PyWarrant {
 
         // If holder is provided, use it. Otherwise, default to the issuer (self-signed).
         if let Some(h) = holder {
-            builder = builder.authorized_holder(h.inner.clone());
+            builder = builder.holder(h.inner.clone());
         } else {
-            builder = builder.authorized_holder(keypair.inner.public_key());
+            builder = builder.holder(keypair.inner.public_key());
         }
 
         if let Some(sid) = session_id {
@@ -2366,9 +2391,9 @@ impl PyWarrant {
 
         // If holder is provided, use it. Otherwise, default to the issuer (self-signed).
         if let Some(h) = holder {
-            builder = builder.authorized_holder(h.inner.clone());
+            builder = builder.holder(h.inner.clone());
         } else {
-            builder = builder.authorized_holder(keypair.inner.public_key());
+            builder = builder.holder(keypair.inner.public_key());
         }
 
         if let Some(sid) = session_id {
@@ -2602,7 +2627,7 @@ impl PyWarrant {
         }
 
         if let Some(h) = holder {
-            builder = builder.authorized_holder(h.inner.clone());
+            builder = builder.holder(h.inner.clone());
         }
 
         // Capabilities: dict[tool_name, dict[field, constraint]]
@@ -2629,6 +2654,25 @@ impl PyWarrant {
 
         let warrant = builder.build(&signing_key.inner).map_err(to_py_err)?;
         Ok(PyWarrant { inner: warrant })
+    }
+
+    /// Check if constraints match without performing other authorization checks.
+    ///
+    /// Returns None if satisfied, or a failure reason string if not.
+    /// Useful for diagnostics to distinguish constraint failures from other errors.
+    #[pyo3(signature = (tool, args))]
+    fn check_constraints(&self, tool: &str, args: &Bound<'_, PyDict>) -> PyResult<Option<String>> {
+        let mut rust_args = HashMap::new();
+        for (key, value) in args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_args.insert(field, cv);
+        }
+
+        match self.inner.check_constraints(tool, &rust_args) {
+            Ok(()) => Ok(None),
+            Err(e) => Ok(Some(e.to_string())),
+        }
     }
 
     /// Authorize an action against this warrant.
@@ -2699,7 +2743,7 @@ impl PyWarrant {
     ///
     /// Returns:
     ///     64-byte signature as bytes
-    fn create_pop_signature(
+    fn sign(
         &self,
         keypair: &PySigningKey,
         tool: &str,
@@ -2714,7 +2758,7 @@ impl PyWarrant {
 
         let sig = self
             .inner
-            .create_pop_signature(&keypair.inner, tool, &rust_args)
+            .sign(&keypair.inner, tool, &rust_args)
             .map_err(to_py_err)?;
         Ok(sig.to_bytes().to_vec())
     }
@@ -2800,11 +2844,11 @@ pub struct PyCompiledMcpConfig {
 #[pymethods]
 impl PyCompiledMcpConfig {
     #[staticmethod]
-    fn compile(config: &PyMcpConfig) -> Self {
-        let compiled = CompiledMcpConfig::compile(config.inner.clone());
-        Self {
+    fn compile(config: &PyMcpConfig) -> PyResult<Self> {
+        let compiled = CompiledMcpConfig::compile(config.inner.clone()).map_err(to_py_err)?;
+        Ok(Self {
             inner: Arc::new(compiled),
-        }
+        })
     }
 
     /// Validate the configuration.
@@ -3435,8 +3479,39 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Functions
     m.add_function(wrap_pyfunction!(py_compute_diff, m)?)?;
+    m.add_function(wrap_pyfunction!(py_decode_warrant_stack, m)?)?;
+    m.add_function(wrap_pyfunction!(py_decode_warrant_stack_base64, m)?)?;
 
     Ok(())
+}
+
+/// Decode a warrant stack from binary CBOR data.
+#[pyfunction(name = "decode_warrant_stack")]
+fn py_decode_warrant_stack(data: &[u8]) -> PyResult<Vec<PyWarrant>> {
+    let stack = wire::decode_stack(data)
+        .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(e.to_string()))?;
+
+    // WarrantStack is a tuple struct: WarrantStack(Vec<Warrant>)
+    // Access the inner Vec directly via .0
+    Ok(stack
+        .0
+        .iter()
+        .map(|w| PyWarrant { inner: w.clone() })
+        .collect())
+}
+
+/// Decode a warrant stack from base64-encoded string.
+#[pyfunction(name = "decode_warrant_stack_base64")]
+fn py_decode_warrant_stack_base64(encoded: &str) -> PyResult<Vec<PyWarrant>> {
+    use base64::Engine; // Import the trait
+
+    // Decode base64 to bytes
+    let data = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Invalid base64: {}", e))
+        })?;
+    py_decode_warrant_stack(&data)
 }
 
 /// Compute diff between two warrants.

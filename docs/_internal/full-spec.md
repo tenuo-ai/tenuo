@@ -125,7 +125,7 @@ For container compromise, Tenuo limits damage to current warrant's scope and TTL
 result = worker.invoke(task)
 
 # After: worker can only read this file
-with scoped_task(Capability("read_file", path=task.file)):
+with grant(Capability("read_file", path=task.file)):
     result = worker.invoke(task)
 ```
 
@@ -136,14 +136,14 @@ Tenuo provides three levels of API, from simple to full control:
 **Tier 1: Scope a Task (80% of use cases)**
 
 ```python
-from tenuo import scoped_task, Capability, Pattern
+from tenuo import grant, Capability, Pattern
 
 # Scope authority for a block of code
-with scoped_task(Capability("read_file", path=file_path)):
+with grant(Capability("read_file", path=file_path)):
     content = read_file(file_path)
 
 # Multiple tools
-with scoped_task(
+with grant(
     Capability("read_file", path=Pattern("/data/*")),
     Capability("search", max_results=10),
 ):
@@ -165,7 +165,7 @@ child = parent.delegate(worker, tool="read_file", path=file_path)
 cs = ConstraintSet()
 cs.insert("path", Exact(file_path))
 
-child = (parent.attenuate()
+child = (parent.grant_builder()
     .capability("read_file", cs)
     .terminal()
     .holder(worker.public_key)
@@ -184,7 +184,7 @@ cs = ConstraintSet()
 cs.insert("path", Pattern("/data/project-*/*.pdf"))
 cs.insert("max_results", Range(max=100))
 
-child = (parent.attenuate()
+child = (parent.grant_builder()
     .capability("read_file", cs)
     .capability("search", cs)
     .clearance(Clearance.EXTERNAL)
@@ -204,9 +204,9 @@ Full builder API when you need visibility and control.
 
 | Scenario                  | API                    | Example                         |
 |---------------------------|------------------------|---------------------------------|
-| Simple tool call          | `scoped_task()`        | Reading a file, making a search |
-| Worker delegation         | `.delegate()`          | Orchestrator -> worker          |
-| Multi-level orchestration | `.attenuate()` builder | Complex agent graphs            |
+| Simple tool call          | `grant()`              | Reading a file, making a search |
+| Worker delegation         | `.grant_builder()`     | Orchestrator -> worker          |
+| Multi-level orchestration | `.grant_builder()`     | Complex agent graphs            |
 | Auditing/debugging        | `.diff()`              | Understanding delegation chains |
 
 ---
@@ -399,11 +399,18 @@ Most delegations should be terminal (cannot delegate further). This naturally li
 
 ```python
 # Default: terminal
-child = parent.attenuate().tool("read_file").holder(worker.public_key).delegate(parent_kp)
+child = (parent.grant_builder()
+    .tool("read_file")
+    .holder(worker.public_key)
+    .grant(parent_key))
 # child.max_depth = 0 (terminal)
 
 # Explicit: allow one more delegation
-child = parent.attenuate().tool("read_file").max_depth(1).holder(worker.public_key).delegate(parent_kp)
+child = (parent.grant_builder()
+    .tool("read_file")
+    .max_depth(1)
+    .holder(worker.public_key)
+    .grant(parent_key))
 # child.max_depth = 1
 ```
 
@@ -538,50 +545,44 @@ def verify_common_monotonicity(issuer_link: ChainLink, child: Warrant):
 
 #### Protocol Contract
 
-Tenuo uses two serialization strategies depending on context:
+Tenuo uses CBOR (RFC 8949) for warrant serialization and an envelope pattern for signatures:
 
 | Context               | Strategy              | Rationale                                           |
 |-----------------------|-----------------------|-----------------------------------------------------|
-| **Warrant signing**   | Canonical JSON        | Warrant is constructed once, signed, then immutable |
-| **PoP verification**  | Raw bytes passthrough | Avoids cross-language JSON disagreements            |
+| **Warrant payload**   | CBOR                  | Compact, deterministic, cross-language compatible   |
+| **Warrant signing**   | Raw bytes passthrough | Sign CBOR bytes directly, no re-serialization       |
+| **PoP verification**  | Raw bytes passthrough | Verify against exact bytes that were signed         |
 | **Wire transport**    | Base64                | Header-safe encoding                                |
 
-#### Canonical JSON (Warrant Signing Only)
+#### CBOR Envelope (Warrant Signing)
 
-When a warrant is **created**, it is serialized to canonical JSON for signing:
+Warrants use an envelope structure that separates signed payload from signature:
 
-```python
-def serialize_for_signing(warrant: Warrant) -> bytes:
-    """
-    Canonical JSON for warrant signing.
-    
-    Rules:
-    - Keys sorted alphabetically (recursive)
-    - No whitespace
-    - Numbers: integers as-is, no floats in Tenuo schema
-    - Strings: UTF-8, minimal escaping (\n, \r, \t, \\, \", \uXXXX for control chars)
-    - Null fields omitted
-    """
-    return json.dumps(
-        warrant.to_signable_dict(),
-        sort_keys=True,
-        separators=(',', ':'),
-        ensure_ascii=False,
-    ).encode('utf-8')
+```rust
+/// Outer envelope (what goes on the wire)
+pub struct SignedWarrant {
+    pub envelope_version: u8,       // Currently 1
+    pub payload: Vec<u8>,           // Raw CBOR bytes of WarrantPayload
+    pub signature: Signature,       // Signature over domain-separated preimage
+}
 ```
 
-**Important**: Warrants contain no floats (timestamps are integers, clearance levels are integers). This avoids the most common cross-language JSON disagreements.
+**Signature preimage**: `b"tenuo-warrant-v1" || envelope_version || payload_bytes`
+
+The verifier checks the signature against the **exact bytes** that were signed. No re-serialization. No canonicalization dependency.
+
+See `docs/wire-format-spec.md` for complete envelope specification.
 
 #### Raw Bytes Passthrough (PoP, Chain Links)
 
-For **PoP signatures** and **chain link signatures**, the signer sends the **exact bytes** they signed. The verifier hashes those bytes directly, never reconstructing JSON.
+For **PoP signatures** and **chain link signatures**, the signer sends the **exact bytes** they signed. The verifier hashes those bytes directly, never re-serializing.
 
 ```
-Signer: object -> serialize -> bytes -> sign(bytes) -> send(bytes, signature)
-Verifier: receive(bytes, signature) -> verify(signature, bytes) -> deserialize(bytes)
+Signer: object -> cbor_serialize -> bytes -> sign(bytes) -> send(bytes, signature)
+Verifier: receive(bytes, signature) -> verify(signature, bytes) -> cbor_deserialize(bytes)
 ```
 
-This ensures Python/Rust/Go implementations agree on verification regardless of JSON library differences.
+This ensures Python/Rust/Go implementations agree on verification regardless of CBOR library differences.
 
 #### Base64 Encoding
 
@@ -626,8 +627,8 @@ Ed25519 keys (32 bytes) and signatures (64 bytes) as URL-safe Base64:
 
 All Tenuo implementations MUST:
 
-1. **Warrant signing**: Use canonical JSON with sorted keys, no whitespace
-2. **PoP/Chain verification**: Use raw bytes passthrough (never reconstruct JSON)
+1. **Warrant signing**: Use CBOR envelope with raw bytes passthrough
+2. **PoP/Chain verification**: Hash exact bytes received (never re-serialize)
 3. **Avoid floats**: All numeric fields are integers
 4. **Test vectors**: Validate against reference test vectors (see Appendix)
 
@@ -635,19 +636,18 @@ All Tenuo implementations MUST:
 
 ```python
 # Issue (at gateway/control plane)
-warrant = Warrant.issue(
-    tool="search,read_file",
-    keypair=issuer_keypair,
-    holder=agent_public_key,
+warrant = (Warrant.mint_builder()
+    .tool("search")
+    .tool("read_file")
+    .holder(agent_public_key)
     constraints={"path": Pattern("/data/*")},
     ttl_seconds=300,
     session_id="sess_xyz789",
 )
 
-# Attenuate (local, execution warrants)
-child = warrant.attenuate(
-    tool="read_file",
-    constraints={"path": Exact("/data/report.pdf")},
+# Grant (local, execution warrants)
+child = (warrant.grant_builder()
+    .capability("read_file", path=Exact("/data/report.pdf"))
     keypair=agent_keypair,
     holder=worker_public_key,
 )
@@ -661,7 +661,7 @@ exec_warrant = issuer_warrant.issue_execution(
 )
 
 # Authorize (local)
-pop_sig = warrant.create_pop_signature(keypair, tool, args)
+pop_sig = warrant.sign(keypair, tool, args)
 authorized = authorizer.check(warrant, tool, args, signature=pop_sig)
 ```
 
@@ -976,10 +976,10 @@ Fluent API for creating narrower child warrants.
 ### Entry Point
 
 ```python
-builder = parent_warrant.attenuate()  # Returns Attenuator
+builder = parent_warrant.grant_builder()  # Returns GrantBuilder
 
 # Alias for discoverability
-builder = parent_warrant.narrow()     # Same thing
+builder = parent_warrant.grant_builder()  # Same thing
 ```
 
 ### Tool Restriction
@@ -1029,10 +1029,10 @@ builder = parent_warrant.narrow()     # Same thing
 
 ```python
 # Delegate to another holder (signing key = parent's holder)
-child_warrant = builder.delegate(parent_kp)
+child_warrant = builder.grant(parent_key)
 
 # Self-attenuation (same holder, narrower scope)
-narrow_warrant = builder.self_scoped()
+narrow_warrant = builder.grant(parent_key)
 ```
 
 ### Required Narrowing
@@ -1041,18 +1041,18 @@ Every delegation must narrow at least one dimension (tools, constraints, TTL, de
 
 ```python
 # Fails - no narrowing
-parent.attenuate().delegate(parent_kp)  # NarrowingRequired
+parent.grant_builder().grant(parent_key)  # NarrowingRequired
 
 # Succeeds
-parent.attenuate().tool("read_file").delegate(parent_kp)
-parent.attenuate().ttl(seconds=60).delegate(parent_kp)
-parent.attenuate().terminal().delegate(parent_kp)
+parent.grant_builder().tool("read_file").grant(parent_key)
+parent.grant_builder().ttl(60).grant(parent_key)
+parent.grant_builder().terminal().grant(parent_key)
 ```
 
 Escape hatch:
 
 ```python
-parent.attenuate().pass_through(reason="Sub-orchestrator needs full scope").delegate(parent_kp)
+parent.grant_builder().pass_through(reason="Sub-orchestrator needs full scope").grant(parent_key)
 ```
 
 ### Pass-Through Controls
@@ -1124,9 +1124,8 @@ For P-LLM/planner components that decide capabilities without executing tools.
 ### Issuer Warrant Structure
 
 ```python
-issuer_warrant = Warrant.issue_issuer(
-    keypair=control_plane_keypair,
-    holder=planner_pubkey,
+issuer_warrant = (Warrant.mint_builder()
+    .holder(planner_pubkey)
     
     # What tools can this issuer grant?
     issuable_tools=["read_file", "send_email", "query_db"],
@@ -1354,8 +1353,8 @@ def create_pop(
         nonce=os.urandom(16),
     )
     
-    # Serialize to canonical JSON (MANDATORY for cross-language compatibility)
-    signed_bytes = canonical_json(payload.to_dict()).encode('utf-8')
+    # Serialize to CBOR (deterministic ordering)
+    signed_bytes = cbor_serialize(payload)
     
     # Sign the bytes
     signature = keypair.sign(signed_bytes)
@@ -1363,28 +1362,26 @@ def create_pop(
     return PopToken(signed_bytes=signed_bytes, signature=signature)
 ```
 
-### PoP Canonical JSON (Mandatory)
+### PoP Serialization (CBOR)
 
-Cross-language ecosystems (Gateway in Go, Agent in Python, Tool Server in Rust) require identical serialization. **All PoP payloads MUST use canonical JSON:**
+Cross-language ecosystems (Gateway in Go, Agent in Python, Tool Server in Rust) require identical serialization. **All PoP payloads use CBOR with deterministic ordering:**
 
 ```python
-def canonical_json(obj: dict) -> str:
+def serialize_pop(payload: PopPayload) -> bytes:
     """
-    Canonical JSON for PoP payloads.
+    CBOR serialization for PoP payloads.
     
-    Rules (same as warrant signing):
-    - Keys sorted alphabetically (recursive)
-    - No whitespace: separators=(',', ':')
-    - No floats: all numbers are integers
-    - UTF-8 encoding
-    - Null values omitted
+    Uses deterministic CBOR (RFC 8949 §4.2):
+    - Map keys in lexicographic order
+    - Shortest integer encoding
+    - No indefinite-length items
     """
-    return json.dumps(obj, sort_keys=True, separators=(',', ':'))
+    return cbor2.dumps(payload.to_dict(), canonical=True)
 ```
 
-**Why mandatory:** Without this, Python might produce `{"args": ..., "tool": ...}` while Go produces `{"tool": ..., "args": ...}`. Different bytes -> signature fails -> developers blame Tenuo.
+**Why deterministic:** Without this, different CBOR libraries might encode the same data differently. Different bytes → signature fails.
 
-The raw bytes passthrough for **verification** remains (hash what you receive). But **creation** must use canonical JSON.
+The raw bytes passthrough for **verification** remains (hash what you receive). Creation uses deterministic CBOR.
 
 ### Verifying PoP Signature
 
@@ -1578,7 +1575,7 @@ Gateway                          Agent
 
 ```python
 from tenuo import Warrant, SigningKey
-from tenuo.context import set_warrant_context, set_signing_key_context
+from tenuo.context import warrant_scope, key_scope
 
 KEYPAIR = SigningKey.from_file("/var/run/secrets/tenuo/keypair")
 
@@ -1593,7 +1590,7 @@ async def tenuo_middleware(request: Request, call_next):
     if warrant.is_expired():
         raise HTTPException(403, "Warrant expired")
     
-    with set_warrant_context(warrant), set_signing_key_context(KEYPAIR):
+    with warrant_scope(warrant), key_scope(KEYPAIR):
         return await call_next(request)
 ```
 
@@ -1608,7 +1605,7 @@ async def process_message(message: QueueMessage):
     if warrant.is_expired():
         raise AuthorizationError("Warrant expired")
     
-    with set_warrant_context(warrant), set_signing_key_context(KEYPAIR):
+    with warrant_scope(warrant), key_scope(KEYPAIR):
         return await handler(message.body)
 ```
 
@@ -1616,11 +1613,11 @@ async def process_message(message: QueueMessage):
 
 ```python
 from tenuo.context import (
-    set_warrant_context,
-    set_signing_key_context,
+    warrant_scope,
+    key_scope,
     get_warrant_context,
     get_signing_key_context,
-    scoped_task,
+    grant,
 )
 
 # Get current context
@@ -1628,7 +1625,7 @@ warrant = get_warrant_context()
 keypair = get_signing_key_context()
 
 # Scoped task (attenuate + set context)
-with scoped_task(tool="read_file", path="/data/q3.pdf"):
+with grant(tool="read_file", path="/data/q3.pdf"):
     content = read_file("/data/q3.pdf")
 ```
 
@@ -1670,8 +1667,8 @@ TOOL_SCHEMAS = {
     },
 }
 
-# protect_tools() warns or fails
-secure_tools = protect_tools(
+# guard_tools() warns or fails
+secure_tools = guard_tools(
     tools=[search, read_file],
     warrant=warrant,
     keypair=keypair,
@@ -1688,29 +1685,29 @@ secure_tools = protect_tools(
 **Escape hatch:** For legitimately unconstrained tools, use explicit acknowledgment:
 
 ```python
-warrant = (parent.attenuate()
+warrant = (parent.grant_builder()
     .tool("search")
     .unconstrained(reason="Internal search, trusted corpus only")
-    .delegate(parent_kp))
+    .grant(parent_key))
 ```
 
 ### LangChain Integration
 
 ```python
-from tenuo.langchain import protect_tools
+from tenuo.langchain import guard_tools
 from tenuo import SigningKey, Warrant, Pattern
 
-keypair = SigningKey.generate()
-warrant = Warrant.issue(
-    tool="search,read_file",
-    keypair=keypair,
-    holder=keypair.public_key(),
+key = SigningKey.generate()
+warrant = (Warrant.mint_builder()
+    .tool("search")
+    .tool("read_file")
+    .holder(key.public_key)
     constraints={"path": Pattern("/data/*")},
     ttl_seconds=3600
 )
 
 # Wrap tools
-secure_tools = protect_tools(
+secure_tools = guard_tools(
     tools=[search, read_file],
     warrant=warrant,
     keypair=keypair,
@@ -1732,7 +1729,7 @@ def protected_read_file(path: str) -> str:
     if not warrant:
         raise AuthorizationError("No warrant available")
     
-    pop_sig = warrant.create_pop_signature(keypair, "read_file", {"path": path})
+    pop_sig = warrant.sign(keypair, "read_file", {"path": path})
     
     result = authorizer.check(
         warrant=warrant,
@@ -1750,9 +1747,9 @@ def protected_read_file(path: str) -> str:
 ### Decorator (Future)
 
 ```python
-from tenuo import lockdown
+from tenuo import guard
 
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 def read_file(path: str) -> str:
     return open(path).read()
 ```
@@ -1792,7 +1789,7 @@ Every delegation produces a **diff** showing exactly what changed. First-class a
 
 ```python
 # Human-readable diff (preview before delegation)
-builder = parent.attenuate().tool("read_file").constraint("path", "/data/q3.pdf")
+builder = parent.grant_builder().tool("read_file").constraint("path", "/data/q3.pdf")
 print(builder.diff())
 
 # Machine-readable diff
@@ -1800,7 +1797,7 @@ diff = builder.diff_structured()
 print(diff.to_json())
 
 # After delegation, receipt is attached
-child = builder.delegate(parent_kp)
+child = builder.grant(parent_key)
 receipt = child.delegation_receipt  # Same structure as diff_structured()
 ```
 
@@ -2203,24 +2200,23 @@ DelegationReceipt, DelegationDiff
 
 ```python
 # Tier 1: Scope a task
-scoped_task(tool, **constraints) -> ContextManager
+grant(tool, **constraints) -> ContextManager
 
 # Tier 2: One-line delegation (terminal by default)
 Warrant.delegate(holder, tool=, **constraints) -> Warrant
 
 # Tier 3: Full control
-Warrant.attenuate() -> Attenuator
-Warrant.narrow() -> Attenuator  # Alias
+Warrant.grant_builder() -> GrantBuilder
 ```
 
 ### Context (`tenuo.context`)
 
 ```python
-set_warrant_context(warrant) -> ContextManager
-set_signing_key_context(keypair) -> ContextManager
+warrant_scope(warrant) -> ContextManager
+key_scope(keypair) -> ContextManager
 get_warrant_context() -> Optional[Warrant]
 get_signing_key_context() -> Optional[SigningKey]
-scoped_task(tool, **constraints) -> ContextManager
+grant(tool, **constraints) -> ContextManager
 ```
 
 ### Builder (`tenuo.builder`)
@@ -2247,7 +2243,7 @@ Attenuator  # Also aliased as NarrowBuilder
 ### LangChain (`tenuo.langchain`)
 
 ```python
-protect_tools(tools, warrant, keypair, strict=False) -> list[Callable]
+guard_tools(tools, warrant, keypair, strict=False) -> list[Callable]
 protect_tool(tool, name=None) -> Callable
 TOOL_SCHEMAS  # Recommended constraints per tool
 ```
@@ -2284,15 +2280,15 @@ compiled.validate()  # Check for incompatible extraction sources
 |-------------------------------------------------------------------------|-----------|
 | **Tiered API**                                                          |           |
 | `configure()` global config                                             | [SHIPPED] |
-| `root_task()` / `root_task_sync()`                                      | [SHIPPED] |
-| `scoped_task()`                                                         | [SHIPPED] |
-| `.attenuate()` builder                                                  | [SHIPPED] |
+| `mint()` / `mint_sync()`                                      | [SHIPPED] |
+| `grant()`                                                         | [SHIPPED] |
+| `.grant_builder()` builder                                              | [SHIPPED] |
 | **Warrant Model**                                                       |           |
 | Warrant (execution + issuer types)                                      | [SHIPPED] |
 | Constraints (Exact, Pattern, Range, OneOf, NotOneOf, Regex, Wildcard)   | [SHIPPED] |
 | Cryptographic chain verification                                        | [SHIPPED] |
 | Self-contained verification (embedded issuer scope)                     | [SHIPPED] |
-| Canonical JSON serialization                                            | [SHIPPED] |
+| CBOR envelope serialization                                             | [SHIPPED] |
 | **Security**                                                            |           |
 | Mandatory PoP (with max_age enforcement)                                | [SHIPPED] |
 | Required narrowing                                                      | [SHIPPED] |
@@ -2307,8 +2303,8 @@ compiled.validate()  # Check for incompatible extraction sources
 | DelegationDiff / DelegationReceipt                                      | [SHIPPED] |
 | Middleware patterns                                                     | [SHIPPED] |
 | **Python SDK**                                                          |           |
-| `@lockdown` decorator                                                   | [SHIPPED] |
-| `protect_tools()` (LangChain)                                           | [SHIPPED] |
+| `@guard` decorator                                                   | [SHIPPED] |
+| `guard_tools()` (LangChain)                                           | [SHIPPED] |
 | `@tenuo_node` (LangGraph)                                               | [SHIPPED] |
 | Tool constraint schemas                                                 | [SHIPPED] |
 | Audit logging                                                           | [SHIPPED] |

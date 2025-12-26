@@ -4,7 +4,7 @@ LangGraph Tenuo Integration Example.
 Demonstrates:
 1. Secure Agent with NO private keys in state (Checkpointing safe).
 2. TenuoToolNode for authorized tool execution.
-3. secure() wrapper for pure nodes.
+3. guard() wrapper for pure nodes.
 4. BoundWarrant dynamic injection.
 
 Run with:
@@ -16,13 +16,10 @@ from typing import Annotated, TypedDict, List, Dict, Any
 from uuid import uuid4
 
 # Tenuo Imports
-from tenuo import (
-    Warrant, 
-    SigningKey, 
-    KeyRegistry, 
-)
+from tenuo import Warrant, SigningKey
+from tenuo.keys import KeyRegistry
 from tenuo.langgraph import (
-    secure, 
+    guard, 
     TenuoToolNode, 
     require_warrant,
 )
@@ -45,7 +42,7 @@ except ImportError:
 # =============================================================================
 
 # In production, keys come from env vars (e.g., K8s secrets)
-# We simulate this by setting env vars and using auto_load_keys()
+# We simulate this by setting env vars and using load_tenuo_keys()
 worker_key = SigningKey.generate()
 # Export as hex/base64 (Tenuo keys have .to_hex() or similar?) 
 # SigningKey string repr is usually redacted. 
@@ -59,10 +56,10 @@ registry.register("worker-1", worker_key)
 # Creates an ISSUER warrant (usually done by an authority service)
 # Here we just self-issue for the demo
 print("📜 issuing warrant...")
-root_warrant = Warrant.builder()\
+root_warrant = Warrant.mint_builder()\
     .tool("echo")\
     .tool("search")\
-    .issue(worker_key)
+    .mint(worker_key)
 
 print(f"   Warrant ID: {root_warrant.id}")
 
@@ -123,9 +120,9 @@ def agent_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
         
         # Simulating LLM decision
         if "delete" in content:
-            # Check permission explicitly (Preview)
-            if not bw.preview_can("delete_database"):
-                return {"messages": [AIMessage(content="I cannot do that. I lack the 'delete_database' permission.")]}
+            # Check permission explicitly (Logic check)
+            if not bw.allows("delete_database"):
+                return {"messages": [HumanMessage(content="I cannot delete the database (unauthorized warrant).")]}
             
             return {"messages": [AIMessage(content="Deleting...", tool_calls=[
                 {"name": "delete_database", "args": {}, "id": str(uuid4())}
@@ -146,7 +143,7 @@ def agent_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
 
 # Wrap agent node if we wanted automatic injection, but here we used require_warrant manually.
 # Let's wrap it securely anyway to ensure key binding is possible.
-secure_agent = secure(agent_node)
+secure_agent = guard(agent_node)
 
 
 # =============================================================================
@@ -211,7 +208,7 @@ if __name__ == "__main__":
                     print(f"🛠️  Tool Output: {value['messages'][0].content}")
 
     print("\n--- TURN 2: Denied Action (Delete) ---")
-    # Agent should refuse because it checks preview_can
+    # Agent should refuse because it checks allows
     # OR if it tried, TenuoToolNode would block it.
     
     next_input = {"messages": [HumanMessage(content="Please delete the database")]}

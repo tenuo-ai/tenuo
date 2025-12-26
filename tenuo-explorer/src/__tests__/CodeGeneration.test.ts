@@ -30,7 +30,7 @@ ${constraintEntries.length > 0 ? constraintEntries.map(([k, v]) => `        "${k
 
 # Test authorization with Proof-of-Possession
 args = ${JSON.stringify(args, null, 4)}
-pop_signature = warrant.create_pop_signature(holder_key, "${tool}", args)
+pop_signature = warrant.sign(holder_key, "${tool}", args)
 result = warrant.authorize("${tool}", args, bytes(pop_signature))
 print(f"Authorized: {result}")
 
@@ -106,9 +106,9 @@ print(f"Warrant: {warrant_b64[:60]}...")`;
     });
 
     describe('Authorization Flow', () => {
-        it('creates PoP signature using create_pop_signature', () => {
+        it('creates PoP signature using sign', () => {
             const code = generatePythonCode('read_file', { path: '/data/test.txt' });
-            expect(code).toContain('warrant.create_pop_signature(holder_key,');
+            expect(code).toContain('warrant.sign(holder_key,');
         });
 
         it('calls warrant.authorize with tool, args, and signature', () => {

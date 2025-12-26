@@ -16,6 +16,7 @@ def diagnose(warrant: Warrant) -> str:
     - Delegation depth
     - Tools authorized
     - Clearance level
+    - Link to Tenuo Explorer for interactive debugging
     
     Args:
         warrant: The warrant to diagnose
@@ -76,8 +77,22 @@ def diagnose(warrant: Warrant) -> str:
     lines.append(f"[OK] Type: {warrant.warrant_type}")
     
     # Add playground link
+    # Add playground link
     lines.append("")
-    lines.append("Debug interactively: https://tenuo.dev/explorer/")
+    
+    import json
+    import base64
+    playground_url = "https://tenuo.dev/explorer/"
+    try:
+        # Construct state object matching App.tsx expectation (warrant only)
+        state = {
+            "warrant": warrant.to_base64() if hasattr(warrant, 'to_base64') else str(warrant),
+        }
+        state_json = json.dumps(state)
+        state_b64 = base64.b64encode(state_json.encode('utf-8')).decode('ascii')
+        lines.append(f"Debug interactively: {playground_url}?s={state_b64}")
+    except Exception:
+        lines.append(f"Debug interactively: {playground_url}")
     
     return "\n".join(lines)
 

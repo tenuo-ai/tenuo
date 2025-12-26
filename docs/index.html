@@ -561,7 +561,7 @@
                 <a href="quickstart">Quick Start</a>
                 <a href="concepts">Concepts</a>
                 <a href="api-reference">API</a>
-                <a href="/explorer/">Explorer</a>
+                <a href="/explorer">Explorer</a>
                 <a href="https://github.com/tenuo-ai/tenuo">GitHub</a>
             </div>
         </nav>
@@ -607,7 +607,7 @@
         <!-- Code Example -->
         <section class="section">
             <div class="section-header">
-                <h2>3 lines to protect your tools</h2>
+                <h2>Protect your tools in 3 steps</h2>
                 <p>Works with LangChain, LangGraph, and any Python agent</p>
             </div>
             <div class="code-example">
@@ -616,19 +616,16 @@
                     <div class="code-dot"></div>
                     <div class="code-dot"></div>
                 </div>
-                <pre class="code-content"><span class="keyword">from</span> tenuo <span class="keyword">import</span> <span class="function">configure</span>, <span class="function">root_task</span>, <span class="function">scoped_task</span>, <span class="function">protect_tools</span>
-<span class="keyword">from</span> tenuo <span class="keyword">import</span> <span class="function">Capability</span>, <span class="function">Pattern</span>, <span class="function">SigningKey</span>
+                <pre class="code-content"><span class="keyword">from</span> tenuo <span class="keyword">import</span> <span class="function">configure</span>, <span class="function">mint</span>, <span class="function">guard_tools</span>, <span class="function">Capability</span>, <span class="function">Pattern</span>
 
-<span class="comment"># 1. Configure once at startup</span>
-<span class="function">configure</span>(issuer_key=<span class="function">SigningKey</span>.generate(), dev_mode=<span class="keyword">True</span>)
+<span class="comment"># 1. Start safely (dev mode auto-generates keys)</span>
+<span class="function">configure</span>(dev_mode=<span class="keyword">True</span>)
+<span class="function">guard_tools</span>([read_file, send_email, query_db])
 
-<span class="comment"># 2. Wrap your tools</span>
-<span class="function">protect_tools</span>([read_file, send_email, query_db])
-
-<span class="comment"># 3. Scope authority to tasks — damage is contained</span>
-<span class="keyword">async with</span> <span class="function">root_task</span>(<span class="function">Capability</span>(<span class="string">"read_file"</span>, path=<span class="function">Pattern</span>(<span class="string">"/data/*"</span>))):
-    <span class="keyword">async with</span> <span class="function">scoped_task</span>(<span class="function">Capability</span>(<span class="string">"read_file"</span>, path=<span class="function">Pattern</span>(<span class="string">"/data/reports/*"</span>))):
-        result = <span class="keyword">await</span> agent.run(<span class="string">"Summarize Q3 reports"</span>)</pre>
+<span class="comment"># 2. Scope authority. The agent can ONLY read data.</span>
+<span class="comment"># send_email and query_db are strictly BLOCKED.</span>
+<span class="keyword">async with</span> <span class="function">mint</span>(<span class="function">Capability</span>(<span class="string">"read_file"</span>, path=<span class="function">Pattern</span>(<span class="string">"/data/*"</span>))):
+    <span class="keyword">await</span> agent.run(<span class="string">"Summarize Q3 reports"</span>)</pre>
             </div>
         </section>
 

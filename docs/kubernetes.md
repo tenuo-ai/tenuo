@@ -116,7 +116,7 @@ async def handle_task(user_request: str):
         ttl=60
     )
     
-    with set_warrant_context(warrant), set_signing_key_context(keypair):
+    with warrant_scope(warrant), key_scope(keypair):
         result = await agent.invoke(user_request)
     
     # Warrant expires — no cleanup
@@ -136,7 +136,7 @@ Warrant passed per-request via `X-Tenuo-Warrant` header. Your ingress or mesh in
 @app.middleware("http")
 async def tenuo_middleware(request: Request, call_next):
     warrant = Warrant.from_base64(request.headers["X-Tenuo-Warrant"])
-    with set_warrant_context(warrant), set_signing_key_context(keypair):
+    with warrant_scope(warrant), key_scope(keypair):
         return await call_next(request)
 ```
 
@@ -317,11 +317,10 @@ X-Tenuo-Deny-Reason: constraint_violation: path=/etc/passwd not in Pattern(/data
 ### CLI Debugging
 
 ```bash
-# Inspect warrant contents
-echo $WARRANT | tenuo inspect
+# Decode and inspect warrant contents
+tenuo decode $WARRANT
 
-# Verify against trusted key
-echo $WARRANT | tenuo verify --issuer $TRUSTED_KEY
+# Output shows: ID, issuer, holder, tools, TTL, constraints
 ```
 
 ---

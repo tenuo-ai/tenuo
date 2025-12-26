@@ -4,7 +4,7 @@ LangChain Integration Example with Tenuo
 
 This example shows how to integrate Tenuo with LangChain agents and tools.
 The warrant is set in context using LangChain callbacks, and all tool
-functions are protected with @lockdown decorators.
+functions are protected with @guard decorators.
 
 Requirements:
     pip install langchain langchain-openai tenuo
@@ -13,9 +13,14 @@ Note: This example uses OpenAI, but the pattern works with any LLM provider.
 """
 
 from tenuo import (
-    SigningKey, Warrant, Pattern,
-    lockdown, set_warrant_context, set_signing_key_context, AuthorizationError
+    Warrant,
+    SigningKey,
+    Pattern,
+    guard,
+    warrant_scope,
+    key_scope,
 )
+from tenuo.exceptions import AuthorizationError
 from typing import Dict, Any, Optional
 import os
 from contextvars import Token
@@ -39,13 +44,13 @@ except ImportError:
 # Protected Tool Functions (using ContextVar pattern)
 # ============================================================================
 
-@lockdown(tool="read_file", extract_args=lambda file_path, **kwargs: {"file_path": file_path})
+@guard(tool="read_file", extract_args=lambda file_path, **kwargs: {"file_path": file_path})
 def read_file_tool(file_path: str) -> str:
     """
     Read a file from the filesystem.
     Protected by Tenuo: only files matching the warrant's path constraint can be read.
     
-    Note: Authorization happens automatically via @lockdown decorator.
+    Note: Authorization happens automatically via @guard decorator.
     This function will raise AuthorizationError if the warrant doesn't allow access.
     """
     try:
@@ -62,13 +67,13 @@ def read_file_tool(file_path: str) -> str:
         return f"Error: {str(e)}"
 
 
-@lockdown(tool="write_file", extract_args=lambda file_path, content, **kwargs: {"file_path": file_path, "content": content})
+@guard(tool="write_file", extract_args=lambda file_path, content, **kwargs: {"file_path": file_path, "content": content})
 def write_file_tool(file_path: str, content: str) -> str:
     """
     Write content to a file.
     Protected by Tenuo: only files matching the warrant's path constraint can be written.
     
-    Note: Authorization happens automatically via @lockdown decorator.
+    Note: Authorization happens automatically via @guard decorator.
     This function will raise AuthorizationError if the warrant doesn't allow access.
     """
     try:
@@ -86,7 +91,7 @@ def write_file_tool(file_path: str, content: str) -> str:
         return f"Error: {str(e)}"
 
 
-@lockdown(tool="execute_command", extract_args=lambda command, **kwargs: {"command": command})
+@guard(tool="execute_command", extract_args=lambda command, **kwargs: {"command": command})
 def execute_command_tool(command: str) -> str:
     """
     Execute a shell command.
@@ -95,7 +100,7 @@ def execute_command_tool(command: str) -> str:
     WARNING: This is a demo function. In production, use more secure command execution
     (e.g., whitelist of allowed commands, no shell=True, proper sanitization).
     
-    Note: Authorization happens automatically via @lockdown decorator.
+    Note: Authorization happens automatically via @guard decorator.
     This function will raise AuthorizationError if the warrant doesn't allow the command.
     """
     import subprocess
@@ -126,7 +131,7 @@ class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else objec
     """
     LangChain callback that sets the warrant in context before tool execution.
     
-    This ensures all @lockdown-decorated functions have access to the warrant
+    This ensures all @guard-decorated functions have access to the warrant
     via ContextVar, even when called from within LangChain's execution flow.
     
     Usage:
@@ -182,7 +187,7 @@ def create_langchain_tools():
     """
     Create LangChain Tool objects from our protected functions.
     
-    Note: The actual authorization happens inside the functions via @lockdown.
+    Note: The actual authorization happens inside the functions via @guard.
     LangChain just calls the functions - Tenuo enforces authorization automatically.
     """
     tools = [
@@ -224,13 +229,13 @@ def main():
         # SIMULATION: Create warrant with hardcoded constraints
         # In production: Constraints come from policy engine, user request, or configuration
         # HARDCODED PATH: /tmp/* is used for demo safety. In production, use env vars or config.
-        agent_warrant = (Warrant.builder()
+        agent_warrant = (Warrant.mint_builder()
             .capability("read_file", {
                 "file_path": Pattern("/tmp/*"),  # HARDCODED: Only files in /tmp/ for demo safety
             })
             .holder(control_keypair.public_key)  # Bind to self for demo
             .ttl(3600)  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            .issue(control_keypair))
+            .mint(control_keypair))
         
         print("   ✓ Warrant created with constraints:")
         print("     - file_path: Pattern('/tmp/*')")
@@ -267,7 +272,7 @@ def main():
             print("   Continuing with authorization test...\n")
         
         # Test authorized access
-        with set_warrant_context(agent_warrant), set_signing_key_context(control_keypair):
+        with warrant_scope(agent_warrant), key_scope(control_keypair):
             try:
                 read_file_tool(test_file)
                 print(f"   ✓ read_file('{test_file}'): Allowed (matches Pattern('/tmp/*'))")
@@ -278,7 +283,7 @@ def main():
         
         # Test blocked access
         try:
-            with set_warrant_context(agent_warrant), set_signing_key_context(control_keypair):
+            with warrant_scope(agent_warrant), key_scope(control_keypair):
                 read_file_tool("/etc/passwd")  # HARDCODED: Protected system file for demo
             print("   ✗ Should have been blocked!")
         except AuthorizationError as e:
@@ -301,7 +306,7 @@ def main():
         print("2. Demonstrating protection...")
         test_file = "/tmp/test.txt"  # HARDCODED: Demo test file
         try:
-            with set_warrant_context(agent_warrant), set_signing_key_context(control_keypair):
+            with warrant_scope(agent_warrant), key_scope(control_keypair):
                 read_file_tool(test_file)
                 print(f"   ✓ read_file('{test_file}') authorized")
         except AuthorizationError as e:
@@ -310,7 +315,7 @@ def main():
             print(f"   ✗ Error: {e}")
         
         try:
-            with set_warrant_context(agent_warrant), set_signing_key_context(control_keypair):
+            with warrant_scope(agent_warrant), key_scope(control_keypair):
                 read_file_tool("/etc/passwd")  # HARDCODED: Protected file for demo
         except AuthorizationError as e:
             print(f"   ✓ read_file('/etc/passwd') correctly blocked: {str(e)[:60]}...")
@@ -415,7 +420,7 @@ def main():
     print("=== Integration example completed! ===")
     print("\nKey points:")
     print("  - Warrant is set in context via LangChain callback")
-    print("  - All tool functions are protected with @lockdown decorators")
+    print("  - All tool functions are protected with @guard decorators")
     print("  - Authorization happens automatically - no manual checks needed")
     print("  - Agent can only perform actions allowed by the warrant")
 

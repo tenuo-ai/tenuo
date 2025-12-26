@@ -89,7 +89,7 @@
 //! use tenuo::{Warrant, CelConstraint};
 //!
 //! let warrant = Warrant::builder()
-//!     .tool("api_call")
+//!     .capability("api_call")
 //!     .constraint("ip", CelConstraint::new(
 //!         "net_in_cidr(value, '10.0.0.0/8')"
 //!     ))

@@ -19,6 +19,7 @@ Complete API documentation for the Tenuo Python SDK. For wire format details, se
   - [BoundWarrant](#boundwarrant)
   - [Authorizer](#authorizer)
 - [Constraints](#constraints)
+- [Warrant Templates](#warrant-templates)
 - [Task Scoping](#task-scoping)
 - [Tool Protection](#tool-protection)
 - [MCP Integration](#mcp)
@@ -26,6 +27,7 @@ Complete API documentation for the Tenuo Python SDK. For wire format details, se
 - [LangChain Integration](#langchain-integration)
 - [LangGraph Integration](#langgraph-integration)
 - [Testing Utilities](#testing-utilities)
+- [CLI](#cli)
 - [Exceptions](#exceptions)
 - [Audit Logging](#audit-logging)
 - [Type Protocols](#type-protocols)
@@ -45,7 +47,8 @@ from tenuo import MAX_DELEGATION_DEPTH, MAX_WARRANT_SIZE, MAX_WARRANT_TTL_SECS, 
 | `MAX_DELEGATION_DEPTH` | 16 | Maximum warrant delegation depth |
 | `MAX_WARRANT_TTL_SECS` | 7,776,000 | Maximum TTL in seconds (90 days) |
 | `DEFAULT_WARRANT_TTL_SECS` | 300 | Default TTL if not specified (5 minutes) |
-| `MAX_WARRANT_SIZE` | 65,536 | Maximum serialized warrant size in bytes (64 KB) |
+| `MAX_WARRANT_SIZE` | 65,536 | Maximum single warrant serialized size (64 KB) |
+| `MAX_STACK_SIZE` | 262,144 | Maximum warrant stack/chain size (256 KB) |
 
 **Notes**:
 - 16 levels of delegation is sufficient for even complex hierarchies (typical chains are 3-5 levels)
@@ -58,13 +61,13 @@ from tenuo import MAX_DELEGATION_DEPTH, MAX_WARRANT_SIZE, MAX_WARRANT_TTL_SECS, 
 
 ### `configure()`
 
-Initialize Tenuo globally. **Call once at application startup** before using `root_task()` or `scoped_task()`.
+Initialize Tenuo globally. **Call once at application startup** before using `mint()` or `grant()`.
 
 ```python
 from tenuo import configure, SigningKey
 
 # Development (self-signed warrants)
-kp = SigningKey.generate()
+kp = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
 configure(
     issuer_key=kp,
     dev_mode=True,
@@ -82,7 +85,7 @@ configure(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `issuer_key` | `SigningKey` | None | SigningKey for signing warrants (required for `root_task`) |
+| `issuer_key` | `SigningKey` | None | SigningKey for signing warrants (required for `mint`) |
 | `trusted_roots` | `List[PublicKey]` | None | Public keys to trust as warrant issuers (**required in production**) |
 | `default_ttl` | `int` | 300 | Default warrant TTL in seconds |
 | `clock_tolerance` | `int` | 30 | Clock tolerance for expiration checks |
@@ -130,6 +133,31 @@ See [Integration Safety](./security#integration-safety) for detailed guide.
 | `ConfigurationError: allow_passthrough requires dev_mode` | Passthrough without dev mode |
 | `ConfigurationError: allow_self_signed requires dev_mode` | Self-signed without dev mode |
 
+### `auto_configure()`
+
+Automatic configuration from environment variables. **Zero-code setup for 12-factor apps.**
+
+```python
+from tenuo import auto_configure
+
+# Reads TENUO_* environment variables automatically
+auto_configure()
+```
+
+**Environment Variables:**
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `TENUO_ISSUER_KEY` | Base64-encoded signing key | `SGVsbG8...` |
+| `TENUO_MODE` | Enforcement mode | `enforce`, `audit`, `permissive` |
+| `TENUO_TRUSTED_ROOTS` | Comma-separated public keys | `key1,key2` |
+| `TENUO_DEV_MODE` | Enable development mode | `1` or `true` |
+| `TENUO_DEFAULT_TTL` | Default warrant TTL (seconds) | `300` |
+
+**Returns:** `None`
+
+**Raises:** `ConfigurationError` if required variables missing.
+
 ### `get_config()`
 
 Get the current configuration.
@@ -140,7 +168,38 @@ from tenuo import get_config
 config = get_config()
 print(f"TTL: {config.default_ttl}")
 print(f"Dev mode: {config.dev_mode}")
+print(f"Mode: {config.mode}")  # EnforcementMode enum
 ```
+
+### `EnforcementMode`
+
+Enum controlling how authorization violations are handled:
+
+```python
+from tenuo import EnforcementMode, is_audit_mode, is_enforce_mode, should_block_violation
+
+# Check current mode
+if is_audit_mode():
+    print("Violations are logged but not blocked")
+
+if should_block_violation():
+    raise AuthorizationDenied(...)
+```
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `EnforcementMode.ENFORCE` | Block unauthorized requests | Production (default) |
+| `EnforcementMode.AUDIT` | Log violations but allow execution | Gradual adoption |
+| `EnforcementMode.PERMISSIVE` | Log + warn header, allow execution | Development |
+
+**Helper Functions:**
+
+| Function | Returns |
+|----------|---------|
+| `is_enforce_mode()` | `True` if mode is ENFORCE |
+| `is_audit_mode()` | `True` if mode is AUDIT |
+| `is_permissive_mode()` | `True` if mode is PERMISSIVE |
+| `should_block_violation()` | `True` if violations should be blocked |
 
 ---
 
@@ -236,51 +295,39 @@ from tenuo import Warrant
 | Method | Description |
 |--------|-------------|
 | `Warrant.from_base64(s: str)` | Deserialize from base64 |
-| `Warrant.issue(...)` | Issue a new execution warrant |
-| `Warrant.issue_issuer(...)` | Issue a new issuer warrant |
+| `Warrant.mint_builder()` | Create a fluent builder for new warrants |
+| `warrant.grant_builder()` | Create a fluent builder for delegation |
 
-#### `Warrant.issue()` Parameters (Execution Warrants)
+#### `Warrant.mint_builder()` — Creating New Warrants
 
 ```python
-from tenuo import Warrant, Constraints, Pattern
+from tenuo import Warrant, Pattern
 
-Warrant.issue(
-    capabilities: dict,  # Constraints.for_tool("name", {...}) or {tool: constraints}
-    keypair: SigningKey,
-    holder: PublicKey,
-    ttl_seconds: int = 3600,
-    session_id: Optional[str] = None
-)
-
-# Example
-warrant = Warrant.issue(
-    tools={"read_file": Constraints.for_tool("read_file", {"path": Pattern("/data/*")})},
-    keypair=my_keypair,
-    holder=my_keypair.public_key,
-    ttl_seconds=3600,
-)
+# Fluent builder pattern
+warrant = (Warrant.mint_builder()
+    .capability("read_file", path=Pattern("/data/*"))
+    .holder(worker_key.public_key)
+    .ttl(3600)
+    .mint(issuer_key))
 ```
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `tools` | `dict` | Tool→constraint mapping (use `Constraints.for_tool()` helper) |
-| `keypair` | `SigningKey` | Issuer's keypair |
-| `holder` | `PublicKey` | Holder's public key |
-| `ttl_seconds` | `int` | Time-to-live in seconds |
-| `session_id` | `str` | Optional session ID |
+| Method | Description |
+|--------|-------------|
+| `.tool(name)` | Add tool with no constraints |
+| `.capability(tool, **constraints)` | Add tool with constraints |
+| `.holder(pubkey)` | Set authorized holder |
+| `.ttl(seconds)` | Set time-to-live |
+| `.mint(key)` | Sign and create the warrant |
 
-#### `Warrant.issue_issuer()` Parameters (Issuer Warrants)
+#### `warrant.grant_builder()` — Delegation
 
 ```python
-Warrant.issue_issuer(
-    issuable_tools: List[str],
-    keypair: SigningKey,
-    constraint_bounds: Optional[dict] = None,
-    max_issue_depth: Optional[int] = None,
-    ttl_seconds: int = 3600,
-    holder: Optional[PublicKey] = None,
-    session_id: Optional[str] = None,
-)
+# Delegate with narrower scope
+child = (parent.grant_builder()
+    .capability("read_file", path=Pattern("/data/reports/*"))
+    .holder(worker_key.public_key)
+    .ttl(300)
+    .grant(parent_key))  # Parent holder signs
 ```
 
 | Parameter | Type | Description |
@@ -292,7 +339,7 @@ Warrant.issue_issuer(
 | `ttl_seconds` | `int` | Time-to-live in seconds |
 | `holder` | `PublicKey` | Optional holder (defaults to issuer) |
 
-#### `Warrant.builder()` - Fluent API
+#### `Warrant.mint_builder()` - Fluent API
 
 For improved DX, use the fluent builder pattern:
 
@@ -300,23 +347,22 @@ For improved DX, use the fluent builder pattern:
 from tenuo import Warrant, Pattern, Range, Clearance
 
 # Execution warrant with builder
-warrant = (Warrant.builder()
-    .capability("read_file", {
-        "path": Pattern("/data/*"),
-        "max_size": Range(0, 1000000),
-    })
+warrant = (Warrant.mint_builder()
+    .capability("read_file",
+        path=Pattern("/data/*"),
+        max_size=Range(0, 1000000))
     .ttl(3600)
     .holder(keypair.public_key)
-    .issue(keypair))
+    .mint(keypair))
 
 # Issuer warrant with builder
-issuer = (Warrant.builder()
+issuer = (Warrant.mint_builder()
     .issuer()  # Switch to issuer mode
     .issuable_tools(["read_file", "write_file"])
     .clearance(Clearance.INTERNAL)  # Optional
     .constraint_bound("path", Pattern("/data/*"))
     .max_issue_depth(3)
-    .issue(keypair))
+    .mint(keypair))
 ```
 
 | Method | Description |
@@ -333,7 +379,7 @@ issuer = (Warrant.builder()
 | `.constraint_bound(field, value)` | Add constraint bound |
 | `.max_issue_depth(n)` | Max delegation depth |
 | `.preview()` | Preview configuration before building |
-| `.issue(keypair)` | Issue and sign the warrant |
+| `.mint(keypair)` | Sign and mint the warrant |
 
 #### Instance Properties
 
@@ -369,25 +415,27 @@ warrant.capabilities        # {'tools': ['read_file'], 'path': '/data/*', 'max_s
 | `attenuate()` | `AttenuationBuilder` | Create builder for attenuation with diff preview |
 | `issue()` | `IssuanceBuilder` | Create execution warrant from issuer warrant |
 | `delegate(holder, tools=None, **constraints)` | `Warrant` | Convenience method to delegate (requires context) |
-| `authorize(tool, args, signature?)` | `bool` | Check if action is authorized |
-| `verify(public_key)` | `bool` | Verify signature against issuer |
-| `create_pop_signature(keypair, tool, args)` | `list[int]` | Create PoP signature |
-| `to_base64()` | `str` | Serialize to base64 |
-| `preview_can(tool, **args)` | `PreviewResult` | Check if action would be allowed (UX only) |
-| `why_denied(tool, **args)` | `WhyDenied` | Get structured denial reason |
-| `auth_headers(keypair, tool, args)` | `dict` | Generate HTTP authorization headers |
 
-#### Preview & Debugging Methods
+| `verify(public_key)` | `bool` | Verify signature against issuer |
+| `sign(keypair, tool, args)` | `bytes` | Sign action (Proof-of-Possession) |
+| `to_base64()` | `str` | Serialize to base64 |
+| `allows(tool, args=None)` | `bool` | Check if action would be allowed (Logic check) |
+| `check_constraints(tool, args)` | `str \| None` | Validate constraints (Logic check) |
+| `dedup_key(tool, args)` | `str` | Get deterministic cache key |
+| `why_denied(tool, **args)` | `WhyDenied` | Get structured denial reason |
+| `headers(keypair, tool, args)` | `dict` | Generate HTTP authorization headers |
+
+#### Logic Checks & Debugging Methods
 
 ```python
-from tenuo import Warrant, PreviewResult, WhyDenied, DenyCode
+from tenuo import Warrant, WhyDenied, DenyCode
 
-# Preview (UX-only, not security-enforced)
-result = warrant.preview_can("read_file", path="/data/report.txt")
-if result.allowed:
-    print("Would be allowed")
+# Logic Check (UX-only, no crypto)
+# "Does the warrant allow this?"
+if warrant.allows("read_file", args={"path": "/data/report.txt"}):
+    print("Allowed by logic")
 else:
-    print(f"Would be denied: {result.reason}")
+    print(f"Would be denied")
 
 # Why denied (for debugging)
 reason = warrant.why_denied("write_file", path="/etc/passwd")
@@ -397,7 +445,7 @@ if reason.deny_code == DenyCode.TOOL_NOT_ALLOWED:
     print("Tool not in warrant")
 
 # Generate HTTP headers
-headers = warrant.auth_headers(keypair, "read_file", {"path": "/data/x.txt"})
+headers = warrant.headers(keypair, "read_file", {"path": "/data/x.txt"})
 # {'Authorization': 'TenuoWarrant ...', 'X-Tenuo-Pop': '...'}
 ```
 
@@ -435,10 +483,10 @@ Tenuo follows **POLA**: when you attenuate a warrant, the child starts with **NO
 
 ```python
 # Child only gets what you explicitly grant
-builder = parent.attenuate()
-builder.capability("read_file", {"path": Exact("/data/report.txt")})
-builder.holder(worker_kp.public_key)
-child = builder.delegate(kp)
+builder = parent.grant_builder()
+builder.capability("read_file", path=Exact("/data/report.txt"))
+builder.holder(worker_key.public_key)
+child = builder.grant(parent_key)
 # child.tools == ["read_file"] (only!)
 ```
 
@@ -446,11 +494,11 @@ child = builder.delegate(kp)
 
 ```python
 # Start with all parent capabilities, then narrow
-builder = parent.attenuate()
+builder = parent.grant_builder()
 builder.inherit_all()                    # Explicit opt-in
 builder.tools(["read_file"])             # Keep only this tool
-builder.holder(worker_kp.public_key)
-child = builder.delegate(kp)
+builder.holder(worker_key.public_key)
+child = builder.grant(parent_key)
 ```
 
 **Pattern 3: Via delegate() (convenience)**
@@ -458,8 +506,8 @@ child = builder.delegate(kp)
 The `delegate()` method automatically calls `inherit_all()` internally, making it easier for simple cases:
 
 ```python
-with set_signing_key_context(my_keypair):
-    child = parent.delegate(
+with key_scope(my_keypair):
+    child = parent.grant(
         holder=worker.public_key,
         tools=["read_file"],  # Narrow tools
         path=Exact("/data/q3.pdf"),  # Narrow constraints
@@ -469,18 +517,20 @@ with set_signing_key_context(my_keypair):
 **Via Issuer warrant (alternative):**
 
 ```python
-# Create issuer warrant, then issue execution with specific tools
-issuer_warrant = Warrant.issue_issuer(
-    issuable_tools=["read_file", "send_email"],
-    keypair=control_plane_kp,
-    ttl_seconds=3600,
-)
+# Create parent warrant, then delegate with specific tools
+parent_warrant = (Warrant.mint_builder()
+    .tool("read_file")
+    .tool("send_email")
+    .holder(control_plane_key.public_key)
+    .ttl(3600)
+    .mint(control_plane_key))
 
-builder = issuer_warrant.issue()
-builder.tool("read_file")
-builder.holder(worker_kp.public_key)
+# Delegate to worker with narrower scope
+builder = parent_warrant.grant_builder()
+builder.tool("read_file")  # Only read, not send_email
+builder.holder(worker_key.public_key)
 builder.ttl(300)
-exec_warrant = builder.build(issuer_kp)
+exec_warrant = builder.grant(control_plane_key)
 ```
 
 #### Terminal Warrants
@@ -488,15 +538,15 @@ exec_warrant = builder.build(issuer_kp)
 A warrant is **terminal** when it cannot delegate further (`depth >= max_depth`).
 
 ```python
-# Create terminal warrant
-builder = parent.attenuate()
-builder.inherit_all()     # POLA: inherit parent capabilities
+# Create terminal warrant (cannot be delegated further)
+builder = parent.grant_builder()
+builder.inherit_all()     # Inherit parent capabilities
 builder.terminal()        # Mark as terminal
-builder.holder(worker_kp.public_key)
-terminal = builder.delegate(kp)
+builder.holder(worker_key.public_key)
+terminal = builder.grant(parent_key)
 
 assert terminal.is_terminal()  # True
-# terminal.attenuate().delegate(...) will fail
+# terminal.grant_builder().grant(...) will fail
 ```
 
 ---
@@ -539,18 +589,19 @@ bound = warrant.bind(keypair)
 
 | Method | Returns | Description |
 |--------|---------|-------------|
+| `validate(tool, args)` | `ValidationResult` | Full security check (PoP + constraints) |
+| `allows(tool, args=None)` | `bool` | Logic check (no PoP) |
 | `delegate(holder, tools=None, **constraints)` | `BoundWarrant` | Delegate (uses bound key) |
-| `auth_headers(tool, args)` | `dict` | HTTP headers (uses bound key) |
+| `headers(tool, args)` | `dict` | HTTP headers (uses bound key) |
 | `unbind()` | `tuple[Warrant, SigningKey]` | Extract warrant and key |
-| `preview_can(tool, **args)` | `PreviewResult` | Check if allowed |
 | `why_denied(tool, **args)` | `WhyDenied` | Get denial reason |
 
 ```python
 # Delegation with bound key (no keypair arg needed)
-child = bound.delegate(worker.public_key, tools=["read_file"])
+child = bound.grant(to=worker.public_key, allow="read_file", ttl=300)
 
 # Generate headers
-headers = bound.auth_headers("read_file", {"path": "/data/x.txt"})
+headers = bound.headers("read_file", {"path": "/data/x.txt"})
 
 # Serialization blocked
 import pickle
@@ -568,10 +619,10 @@ print(repr(bound))
 
 ### IssuanceBuilder
 
-Builder for issuing execution warrants from issuer warrants.
+Builder for delegating (granting) from parent warrants.
 
 ```python
-builder = issuer_warrant.issue()
+builder = parent_warrant.grant_builder()
 ```
 
 #### Setter Methods (Chainable)
@@ -609,7 +660,7 @@ Note: `with_*` methods are available as aliases for backward compatibility.
 Builder for attenuating (narrowing) existing warrants.
 
 ```python
-builder = warrant.attenuate()
+builder = warrant.grant_builder()
 ```
 
 #### Methods
@@ -638,20 +689,20 @@ All setter methods are **dual-purpose**: call with argument to set (returns self
 
 ```python
 # Pattern 1: Grant specific capability (POLA default)
-child = (parent.attenuate()
-    .capability("read_file", {"path": Exact("/data/q3.pdf")})
-    .holder(worker_kp.public_key)
-    .delegate(parent_kp))
+child = (parent.grant_builder()
+    .capability("read_file", path=Exact("/data/q3.pdf"))
+    .holder(worker_key.public_key)
+    .grant(parent_key))
 
 # Pattern 2: Inherit all, then narrow
-child = (parent.attenuate()
+child = (parent.grant_builder()
     .inherit_all()                    # Explicit opt-in
     .tools(["read_file"])             # Keep only this tool
-    .holder(worker_kp.public_key)
-    .delegate(parent_kp))
+    .holder(worker_key.public_key)
+    .grant(parent_key))
 
 # Reading builder state
-assert builder.holder() == worker_kp.public_key
+assert builder.holder() == worker_key.public_key
 assert builder.ttl() == 300
 ```
 
@@ -858,18 +909,105 @@ See [Constraints → CEL](./constraints#cel-common-expression-language) for full
 
 ---
 
+## Warrant Templates
+
+Pre-built capability patterns for common AI agent scenarios. Use directly or as starting points.
+
+```python
+from tenuo.templates import FileReader, FileWriter, DatabaseReader, WebSearcher, CommonAgents
+```
+
+### File Access Templates
+
+```python
+from tenuo import mint
+from tenuo.templates import FileReader, FileWriter
+
+# Read-only access to a directory
+async with mint(FileReader.in_directory("/data/reports")) as w:
+    content = read_file("/data/reports/q4.txt")  # ✓ allowed
+    content = read_file("/etc/passwd")  # ✗ denied
+
+# Read a specific file only
+async with mint(FileReader.exact_file("/config/app.json")) as w:
+    content = read_file("/config/app.json")  # ✓ allowed
+
+# Read files with specific extensions
+async with mint(FileReader.extensions("/docs", [".md", ".txt"])) as w:
+    read_file("/docs/readme.md")  # ✓ allowed
+    read_file("/docs/data.json")  # ✗ denied
+
+# Write access (use with caution)
+async with mint(FileWriter.in_directory("/tmp/agent-output")) as w:
+    write_file("/tmp/agent-output/report.txt", data)  # ✓ allowed
+```
+
+### Database Templates
+
+```python
+from tenuo.templates import DatabaseReader, DatabaseWriter
+
+# Read from specific tables
+async with mint(DatabaseReader.tables(["users", "products"])) as w:
+    query("SELECT * FROM users")  # ✓ allowed
+    query("SELECT * FROM transactions")  # ✗ denied
+
+# Read with row limit (prevent data exfiltration)
+async with mint(DatabaseReader.with_row_limit(["users"], max_rows=10)) as w:
+    query("SELECT * FROM users LIMIT 10")  # ✓ allowed
+
+# Full-table access within a schema
+async with mint(DatabaseReader.schema("public")) as w:
+    query("SELECT * FROM public.users")  # ✓ allowed
+```
+
+### Web Access Templates
+
+```python
+from tenuo.templates import WebSearcher, ApiClient
+
+# Web search with domain restrictions
+async with mint(WebSearcher.domains(["api.openai.com", "*.google.com"])) as w:
+    search("openai docs", domain="api.openai.com")  # ✓ allowed
+
+# API client with method restrictions
+async with mint(ApiClient.readonly("api.example.com")) as w:
+    get("/users")  # ✓ allowed
+    post("/users", {...})  # ✗ denied
+```
+
+### Agent Templates
+
+```python
+from tenuo.templates import CommonAgents
+
+# Research agent: read-only web search + file reading
+async with mint(*CommonAgents.research_agent("/data/docs")) as w:
+    ...
+
+# Writer agent: file writing to specific directory
+async with mint(*CommonAgents.writer_agent("/output")) as w:
+    ...
+
+# Analyst agent: database read + search
+async with mint(*CommonAgents.analyst_agent(tables=["metrics", "reports"])) as w:
+    ...
+```
+
+---
+
 ## Task Scoping
 
 Context managers for scoping authority to tasks.
 
-### `root_task`
+### `mint`
 
 Create root authority for a task. **Async version.**
 
 ```python
-from tenuo import root_task, Capability, Pattern
+from tenuo import mint, Capability, Pattern
 
-async with root_task(Capability("read_file", path=Pattern("/data/*"))) as warrant:
+async with mint(Capability("read_file", path=Pattern("/data/*"))) as warrant:
     result = await agent.invoke(prompt)
 ```
 
@@ -886,31 +1024,31 @@ async with root_task(Capability("read_file", path=Pattern("/data/*"))) as warran
 - Must call `configure(issuer_key=...)` first
 - At least one tool required
 
-### `root_task_sync`
+### `mint_sync`
 
-Synchronous version of `root_task`.
+Synchronous version of `mint`.
 
 ```python
-from tenuo import root_task_sync
+from tenuo import mint_sync
 
-with root_task_sync(Capability("read_file", path="/data/*")) as warrant:
+with mint_sync(Capability("read_file", path="/data/*")) as warrant:
     result = protected_read_file(path="/data/report.csv")
 ```
 
-Same parameters as `root_task`.
+Same parameters as `mint`.
 
-### `scoped_task`
+### `grant`
 
 Attenuate within an existing task scope.
 
 ```python
-from tenuo import scoped_task
+from tenuo import grant
 
-async with root_task(
+async with mint(
     Capability("read_file", path="/data/*"), 
     Capability("write_file", path="/data/*")
 ):
-    async with scoped_task(Capability("read_file", path="/data/reports/*")):
+    async with grant(Capability("read_file", path="/data/reports/*")):
         # Narrower scope here
         result = await agent.invoke(prompt)
 ```
@@ -924,13 +1062,13 @@ async with root_task(
 
 #### Requirements
 
-- **Must be called within `root_task` or another `scoped_task`**
+- **Must be called within `mint` or another `grant`**
 - Constraints must be monotonically attenuated (tighter than parent)
 
 #### Preview Changes
 
 ```python
-scope = scoped_task(Capability("read_file", path="/data/reports/*"))
+scope = grant(Capability("read_file", path="/data/reports/*"))
 scope.preview().print()  # See diff before entering
 async with scope:
     ...
@@ -940,18 +1078,20 @@ async with scope:
 
 ## Tool Protection
 
-### `protect_tools`
+### `guard_tools` (Context-Based)
 
-Wrap tools to enforce warrant authorization.
+Wrap tools to enforce warrant authorization using context (for non-LangChain use).
+
+> For LangChain integration, use [`guard()`](#guard-recommended) from `tenuo.langchain` instead.
 
 ```python
-from tenuo import protect_tools
+from tenuo import guard_tools
 ```
 
 #### Signature
 
 ```python
-protect_tools(
+guard_tools(
     tools: List[Any],
     *,
     inplace: bool = True,
@@ -972,16 +1112,16 @@ protect_tools(
 #### Example
 
 ```python
-from tenuo import protect_tools, root_task
+from tenuo import guard_tools, mint
 
 # Define your tools
 tools = [read_file, send_email, query_db]
 
 # Wrap them (mutates in place by default)
-protect_tools(tools)
+guard_tools(tools)
 
 # Use with scoped authority
-async with root_task(Capability("read_file", path="/data/*")):
+async with mint(Capability("read_file", path="/data/*")):
     result = await tools[0](path="/data/report.csv")
 ```
 
@@ -989,7 +1129,7 @@ async with root_task(Capability("read_file", path="/data/*")):
 
 ```python
 original = [read_file, send_email]
-protected = protect_tools(original, inplace=False)
+protected = guard_tools(original, inplace=False)
 # original unchanged, protected has wrapped tools
 ```
 
@@ -1026,18 +1166,18 @@ See `examples/mcp_integration.py` for a complete example.
 
 ## Decorators & Context
 
-### `@lockdown`
+### `@guard`
 
 Decorator for function-level authorization with automatic argument extraction.
 
 ```python
-from tenuo import lockdown
+    from tenuo import guard
 ```
 
 #### Signature
 
 ```python
-@lockdown(
+@guard(
     warrant_or_tool=None,  # Warrant instance OR tool name string
     tool=None,             # Tool name (if not passed as first arg)
     keypair=None,          # SigningKey for PoP (or use context)
@@ -1049,19 +1189,29 @@ from tenuo import lockdown
 #### Parameters
 
 | Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `warrant_or_tool` | `Warrant \| str` | No | Warrant instance or tool name as first positional arg |
-| `tool` | `str` | Yes* | Tool name for authorization (*not needed if tool passed as first arg) |
-| `keypair` | `SigningKey` | No | SigningKey for PoP (or use context) |
-| `extract_args` | `Callable` | No | Custom argument extractor. If None, uses automatic extraction. |
-| `mapping` | `dict[str, str]` | No | Rename parameters: `{"param": "constraint_key"}` |
+### `guard`
+decorator: `@guard(warrant=None, tool=None, keypair=None)`
+
+Enforce warrant authorization on a function.
+
+**Parameters:**
+- `warrant` (Warrant, optional): Explicit warrant. If None, uses context.
+- `tool` (str, required): Name of the tool being protected.
+- `keypair` (SigningKey, optional): Key for PoP. If None, uses context.
+
+**Example:**
+```python
+@guard(tool="search")
+def search_db(query: str):
+    ...
+```
 
 #### Argument Extraction
 
-`@lockdown` automatically extracts all function arguments **including defaults** using Python's `inspect.signature()`:
+`@guard` automatically extracts all function arguments **including defaults** using Python's `inspect.signature()`:
 
 ```python
-@lockdown(tool="query")
+@guard(tool="query")
 def query_db(query: str, table: str = "users", limit: int = 100):
     ...
 
@@ -1075,7 +1225,7 @@ query_db("SELECT *")
 
 **Custom extraction:**
 ```python
-@lockdown(
+@guard(
     tool="transfer",
     extract_args=lambda from_account, to_account, amount, **kw: {
         "source": from_account,
@@ -1089,7 +1239,7 @@ def transfer(from_account: str, to_account: str, amount: float):
 
 **Parameter mapping (simpler):**
 ```python
-@lockdown(
+@guard(
     tool="read_file",
     mapping={"file_path": "path"}  # Rename after extraction
 )
@@ -1105,19 +1255,19 @@ See [Argument Extraction](./argument-extraction) for comprehensive documentation
 **Context-based (recommended):**
 
 ```python
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 def read_file(path: str) -> str:
     return open(path).read()
 
 # Use with task scoping
-async with root_task(Capability("read_file", path=Pattern("/data/*"))):
+async with mint(Capability("read_file", path=Pattern("/data/*"))):
     read_file("/data/test.txt")
 ```
 
 **Explicit warrant:**
 
 ```python
-@lockdown(warrant, tool="read_file", keypair=agent_kp)
+@guard(warrant, tool="read_file", keypair=agent_key)
 def read_file(path: str) -> str:
     return open(path).read()
 ```
@@ -1125,7 +1275,7 @@ def read_file(path: str) -> str:
 **Tool as first arg:**
 
 ```python
-@lockdown("read_file")  # Shorthand: tool name as positional arg
+@guard("read_file")  # Shorthand: tool name as positional arg
 def read_file(path: str) -> str:
     return open(path).read()
 ```
@@ -1134,17 +1284,17 @@ def read_file(path: str) -> str:
 
 ```python
 from tenuo import (
-    set_warrant_context,
+    warrant_scope,
     get_warrant_context,
-    set_signing_key_context,
+    key_scope,
     get_signing_key_context,
 )
 ```
 
 | Function | Returns | Description |
 |----------|---------|-------------|
-| `set_warrant_context(warrant)` | Context manager | Set warrant in async-safe context |
-| `set_signing_key_context(keypair)` | Context manager | Set keypair in async-safe context |
+| `warrant_scope(warrant)` | Context manager | Set warrant in async-safe context |
+| `key_scope(keypair)` | Context manager | Set keypair in async-safe context |
 | `get_warrant_context()` | `Warrant \| None` | Get current warrant |
 | `get_signing_key_context()` | `SigningKey \| None` | Get current keypair |
 
@@ -1156,21 +1306,21 @@ from tenuo import (
 
 See [LangChain Integration Guide](./langchain) for full documentation.
 
-### `protect()` (Recommended)
+### `guard()` (Recommended)
 
 Unified API for protecting LangChain tools:
 
 ```python
 from tenuo import SigningKey, Warrant
-from tenuo.langchain import protect
+from tenuo.langchain import guard
 
 # Create warrant and bind key
-keypair = SigningKey.generate()
-warrant = Warrant.builder().tool("search").tool("calculator").issue(keypair)
-bound = warrant.bind_key(keypair)
+keypair = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
+warrant = Warrant.mint_builder().tool("search").tool("calculator").mint(keypair)
+bound = warrant.bind(keypair)
 
 # Protect tools
-protected_tools = protect([search, calculator], bound_warrant=bound)
+protected_tools = guard([search, calculator], bound)
 
 # Use in your agent
 agent = create_openai_tools_agent(llm, protected_tools, prompt)
@@ -1181,15 +1331,15 @@ agent = create_openai_tools_agent(llm, protected_tools, prompt)
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `tools` | `List[Any]` | *required* | LangChain `BaseTool` or callable |
-| `bound_warrant` | `BoundWarrant` | `None` | Explicit warrant+key (or use context) |
-| `config` | `LangChainConfig` | `None` | Per-tool constraints |
+| `bound` | `BoundWarrant` | `None` | Bound warrant (positional, or use context) |
 | `strict` | `bool` | `False` | Require constraints on critical tools |
+| `config` | `LangChainConfig` | `None` | Per-tool constraints |
 
 **Returns:** `List[TenuoTool]` for `BaseTool` inputs, `List[Callable]` for callables.
 
-### `protect_tools()` (Alias)
+### `guard_tools()` 
 
-`protect_tools()` is an alias for `protect()` for backward compatibility.
+Wraps multiple tools with Tenuo authorization. See above for full signature.
 
 
 ---
@@ -1203,7 +1353,7 @@ See [LangGraph Integration Guide](./langgraph) for full documentation.
 | Layer | Decorator | Purpose |
 |-------|-----------|---------|
 | **Scoping** | `@tenuo_node` | Narrows what's allowed in this node |
-| **Enforcement** | `@lockdown` | Checks warrant at tool invocation |
+| **Enforcement** | `@guard` | Checks warrant at tool invocation |
 
 **Both layers are required for security.**
 
@@ -1218,7 +1368,7 @@ from tenuo import Capability, Pattern
 @tenuo_node
 async def researcher(state, bound_warrant):
     # bound_warrant is injected automatically
-    if bound_warrant.preview_can("search"):
+    if bound_warrant.allows("search"):
         results = await search_tool(query=state["query"])
         return {"results": results}
     return {"messages": ["Not authorized"]}
@@ -1249,7 +1399,7 @@ Drop-in replacement for LangGraph's `ToolNode` with automatic Tenuo protection.
 
 ```python
 from tenuo.langgraph import TenuoToolNode
-from tenuo import root_task_sync
+from tenuo import mint_sync
 
 # Before (manual protection):
 # tools = [search, calculator]
@@ -1262,7 +1412,7 @@ tool_node = TenuoToolNode([search, calculator])
 graph.add_node("tools", tool_node)
 
 # Run with authorization
-with root_task_sync(Capability("search"), Capability("calculator")):
+with mint_sync(Capability("search"), Capability("calculator")):
     result = graph.invoke(...)
 ```
 
@@ -1274,22 +1424,43 @@ with root_task_sync(Capability("search"), Capability("calculator")):
 | `strict` | `bool` | `False` | Require constraints for high-risk tools |
 | `**kwargs` | `Any` | — | Additional arguments passed to ToolNode |
  
- ### `KeyRegistry`
- 
- Registry for binding private keys to warrant holders at runtime. Essential for safe checkpointing (prevents keys in state).
- 
- ```python
- from tenuo import KeyRegistry, SigningKey
- 
- # Register key at startup
- key = SigningKey.generate()
- KeyRegistry.get_instance().register("worker-key", key)
- 
- # In LangGraph config:
- config = {"configurable": {"tenuo_key_id": "worker-key"}}
- ```
- 
- > **Mechanism**: `_get_bound_warrant` checks `config["configurable"]["tenuo_key_id"]` and looks up the key in the registry to re-bind warrants inflated from state.
+### `KeyRegistry`
+
+Thread-safe singleton for managing multiple signing keys by ID. Useful for multi-agent, multi-tenant, and service-to-service scenarios.
+
+```python
+from tenuo import KeyRegistry, SigningKey
+
+registry = KeyRegistry.get_instance()
+
+# Register keys
+registry.register("worker", SigningKey.from_env("WORKER_KEY"))
+registry.register("orchestrator", SigningKey.from_env("ORCH_KEY"))
+
+# Retrieve
+key = registry.get("worker")
+
+# Multi-tenant: namespace keys per tenant
+registry.register("api", tenant_key, namespace="tenant-123")
+key = registry.get("api", namespace="tenant-123")
+```
+
+**Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `get_instance()` | Get the singleton (class method) |
+| `register(key_id, key, namespace="default")` | Register a key |
+| `get(key_id, namespace="default")` | Retrieve a key (raises `KeyError` if missing) |
+| `reset_instance()` | Clear the singleton (for testing) |
+
+**Use cases:**
+- **LangGraph**: Keep keys out of state (checkpointing-safe)
+- **Multi-tenant**: Isolate keys per tenant via namespace
+- **Service mesh**: Different keys per downstream service
+- **Key rotation**: Register `current` and `previous` keys
+
+> **LangGraph integration**: `TenuoToolNode` and `guard()` automatically look up keys from the registry using `config["configurable"]["tenuo_key_id"]`.
 
 ---
 
@@ -1354,17 +1525,25 @@ with root_task_sync(Capability("search"), Capability("calculator")):
 Utilities for testing code that uses Tenuo authorization.
 
 ```python
-from tenuo import allow_all, for_testing, quick_issue, deterministic_headers
+from tenuo.testing import (
+    allow_all,
+    assert_authorized,
+    assert_denied,
+    assert_can_grant,
+    assert_cannot_grant,
+    deterministic_headers,
+)
 ```
 
 ### `allow_all()`
 
-Context manager that bypasses all `@lockdown` authorization checks. **Only works in test environments.**
+Context manager that bypasses all `@guard` authorization checks. **Only works in test environments.**
 
 ```python
-from tenuo import allow_all, lockdown
+from tenuo import guard
+from tenuo.testing import allow_all
 
-@lockdown(tool="dangerous_action")
+@guard(tool="dangerous_action")
 def dangerous_action():
     return "executed"
 
@@ -1380,9 +1559,84 @@ def test_dangerous_action():
 - Manually enable with `TENUO_TEST_MODE=1`
 - Raises `RuntimeError` if called outside test environments
 
+### `assert_authorized()` / `assert_denied()`
+
+Assert authorization outcomes with detailed error messages.
+
+```python
+from tenuo import guard
+from tenuo.testing import assert_authorized, assert_denied
+
+@guard(tool="read_file")
+def read_file(path: str):
+    return f"Content of {path}"
+
+def test_authorization():
+    # Assert code succeeds
+    with assert_authorized():
+        read_file("/data/report.txt")
+    
+    # Assert code is denied (with optional code/reason check)
+    with assert_denied(code="ConstraintViolation"):
+        read_file("/etc/passwd")
+    
+    # Assert with custom message
+    with assert_denied(message="Should block access to system files"):
+        read_file("/etc/shadow")
+```
+
+**Parameters for `assert_denied`:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `code` | `str` | Expected error code (e.g., `"ConstraintViolation"`) |
+| `expected_reason` | `str` | Substring expected in error message |
+| `message` | `str` | Custom assertion failure message |
+
+### `assert_can_grant()` / `assert_cannot_grant()`
+
+Assert delegation (attenuation) rules are enforced correctly.
+
+```python
+from tenuo import Warrant
+from tenuo.testing import assert_can_grant, assert_cannot_grant
+
+def test_delegation_chain():
+    # Create a root warrant
+    root, root_key = Warrant.quick_mint(["search", "read_file"], ttl=3600)
+    
+    # Assert we CAN grant a subset of tools
+    child, child_key = assert_can_grant(
+        root, root_key,
+        child_tools=["read_file"],  # Subset of parent
+    )
+    
+    # Assert we CANNOT grant tools not in parent
+    assert_cannot_grant(
+        root, root_key,
+        child_tools=["delete_file"],  # Not in parent!
+        expected_reason="ToolNotAuthorized",
+    )
+```
+
+### `Warrant.quick_mint()`
+
+Quickly create a warrant with auto-generated keys (for development/testing).
+
+```python
+from tenuo import Warrant
+
+# Returns (warrant, signing_key)
+warrant, key = Warrant.quick_mint(["read_file", "search"], ttl=300)
+
+# Use the warrant
+bound = warrant.bind(key)
+headers = bound.headers("search", {"query": "test"})
+```
+
 ### `Warrant.for_testing()`
 
-Create test warrants without real cryptographic setup.
+Create test warrants without key management. **Only works in test environments.**
 
 ```python
 from tenuo import Warrant
@@ -1392,26 +1646,103 @@ def test_my_function():
     # Use for testing without real key management
 ```
 
-### `Warrant.quick_issue()`
-
-Quickly issue a warrant with auto-generated keys (for development/testing).
-
-```python
-from tenuo import Warrant
-
-# Returns (warrant, keypair)
-warrant, keypair = Warrant.quick_issue(["read_file"], ttl=300)
-```
-
 ### `deterministic_headers()`
 
 Generate deterministic HTTP headers for snapshot testing.
 
 ```python
-from tenuo import deterministic_headers
+from tenuo.testing import deterministic_headers
 
-headers = deterministic_headers(["read_file"])
-# Always produces the same headers for the same tools
+headers = deterministic_headers(warrant, key, "read_file", {"path": "/data/x"})
+# Headers are deterministic for the same inputs
+```
+
+---
+
+## CLI
+
+Command-line tools for Tenuo operations.
+
+### `tenuo discover`
+
+Analyze audit logs and generate capability definitions. **Essential for gradual adoption.**
+
+```bash
+# Analyze logs and generate YAML capabilities
+tenuo discover --input audit.log --output capabilities.yaml
+
+# Generate Python code instead
+tenuo discover --input audit.log --format python
+```
+
+**How it works:**
+
+1. Deploy your app with `mode="audit"` (logs tool calls but doesn't block)
+2. Run the app normally for a period
+3. Use `discover` to analyze logs and generate minimal capabilities
+4. Review and refine the generated capabilities
+5. Switch to `mode="enforce"`
+
+**Example Output (YAML):**
+
+```yaml
+capabilities:
+  search:
+    query: Pattern("*")
+  read_file:
+    path: OneOf(["/data/reports/*", "/data/docs/*"])
+  query:
+    table: OneOf(["users", "products"])
+    operation: Exact("SELECT")
+```
+
+**Example Output (Python):**
+
+```python
+from tenuo import Capability, Pattern, OneOf, Exact
+
+capabilities = [
+    Capability("search", query=Pattern("*")),
+    Capability("read_file", path=OneOf(["/data/reports/*", "/data/docs/*"])),
+    Capability("query", table=OneOf(["users", "products"]), operation=Exact("SELECT")),
+]
+```
+
+### `tenuo decode`
+
+Decode and inspect a warrant (warrants contain no secrets, safe to share).
+
+```bash
+tenuo decode eyJ3YXJyYW50IjoiLi4uIn0=
+
+# Output:
+# Warrant ID: wrt_abc123
+# Issuer: pk_xyz...
+# Holder: pk_abc...
+# Tools: ["search", "read_file"]
+# TTL: 3600s (59m remaining)
+# Constraints:
+#   read_file.path: Pattern("/data/*")
+```
+
+### `tenuo validate`
+
+Validate a warrant against specific tool and arguments.
+
+```bash
+tenuo validate --warrant eyJ3... --tool read_file --args '{"path": "/data/report.txt"}'
+
+# Output:
+# ✅ Authorization would succeed
+#   Tool: read_file
+#   Path: /data/report.txt matches Pattern("/data/*")
+
+tenuo validate --warrant eyJ3... --tool read_file --args '{"path": "/etc/passwd"}'
+
+# Output:
+# ❌ Authorization would fail
+#   Tool: read_file
+#   Path: /etc/passwd does NOT match Pattern("/data/*")
 ```
 
 ---
@@ -1525,7 +1856,7 @@ Protocol for objects that can sign (delegate, create PoP):
 ```python
 class SignableWarrant(Protocol):
     def delegate(self, holder: PublicKey, ...) -> "Warrant": ...
-    def auth_headers(self, tool: str, args: dict) -> dict: ...
+    def headers(self, tool: str, args: dict) -> dict: ...
 ```
 
 ### `AnyWarrant`

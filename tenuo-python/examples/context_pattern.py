@@ -3,24 +3,30 @@
 Example demonstrating the ContextVar pattern for LangChain/FastAPI integration.
 
 This pattern allows warrants to be set at the request/message level and
-automatically used by all @lockdown-decorated functions in the call stack.
+automatically used by all @guard-decorated functions in the call stack.
 """
 
 from tenuo import (
-    SigningKey, Warrant, Pattern, Range, Constraints,
-    lockdown, set_warrant_context, set_signing_key_context, AuthorizationError
+    SigningKey,
+    Warrant,
+    Pattern,
+    Range,
+    guard,
+    warrant_scope,
+    key_scope,
 )
+from tenuo.exceptions import AuthorizationError
 
 
 # Functions decorated without explicit warrant - they'll use context
-@lockdown(tool="scale_cluster")
+@guard(tool="scale_cluster")
 def scale_cluster(cluster: str, replicas: int):
-    """This function uses the warrant from context."""
-    print(f"[OK] Scaling cluster {cluster} to {replicas} replicas")
+    # This logic only runs if authorization passes in context
+    print(f"Scaling cluster {cluster} to {replicas} replicas")
     # ... actual scaling logic here
 
 
-@lockdown(tool="manage_infrastructure")
+@guard(tool="manage_infrastructure")
 def manage_infrastructure(cluster: str, action: str):
     """Another function that uses context warrant."""
     print(f"[OK] Managing {cluster}: {action}")
@@ -48,22 +54,20 @@ def main():
     # STEP 1: Create Warrant (SIMULATION - In production, from control plane)
     # ========================================================================
     try:
-        # SIMULATION: Generate keypair for demo
-        # In production: Control plane keypair is loaded from secure storage
-        keypair = SigningKey.generate()
+        # SIMULATION: Generate key for demo
+        # In production: Control plane key is loaded from secure storage
+        key = SigningKey.generate()
         
         # SIMULATION: Create warrant with hardcoded constraints
-        # HARDCODED: Pattern("staging-*"), Range.max_value(10000.0), ttl_seconds=3600
+        # HARDCODED: Pattern("staging-*"), Range.max_value(15), ttl=3600
         # In production: Constraints come from policy engine or configuration
-        warrant = Warrant.issue(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("upgrade_cluster", {
-                "cluster": Pattern("staging-*"),  # HARDCODED: Only staging clusters for demo
-                "replicas": Range.max_value(15)   # HARDCODED: Max 15 replicas for demo
-            }),
-            ttl_seconds=3600,  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            holder=keypair.public_key  # Bind to self
-        )
+        warrant = (Warrant.mint_builder()
+            .capability("upgrade_cluster",
+                cluster=Pattern("staging-*"),  # HARDCODED: Only staging clusters for demo
+                replicas=Range.max_value(15))  # HARDCODED: Max 15 replicas for demo
+            .holder(key.public_key)
+            .ttl(3600)  # HARDCODED: 1 hour TTL.
+            .mint(key))
     except Exception as e:
         print(f"[ERR] Error creating warrant: {e}")
         return
@@ -73,15 +77,21 @@ def main():
     # ========================================================================
     print("1. Setting warrant in context and processing request...")
     try:
-        with set_warrant_context(warrant), set_signing_key_context(keypair):
-            # All @lockdown functions in this context will use the warrant
-            # HARDCODED VALUES: cluster="staging-web", replicas=5, action="restart"
-            # In production: These come from request parameters
-            process_request(
-                cluster="staging-web",
-                replicas=5,
-                action="restart"
-            )
+        with warrant_scope(warrant), key_scope(key):
+            print("  Context set.")
+            try:
+                # All @guard functions in this context will use the warrant
+                # HARDCODED VALUES: cluster="staging-web", replicas=5, action="restart"
+                # In production: These come from request parameters
+                process_request(
+                    cluster="staging-web",
+                    replicas=5,
+                    action="restart"
+                )
+            except AuthorizationError as e:
+                print(f"   [ERR] Authorization failed: {e}\n")
+            except Exception as e:
+                print(f"   [ERR] Unexpected error: {e}\n")
     except AuthorizationError as e:
         print(f"   [ERR] Authorization failed: {e}\n")
     except Exception as e:
@@ -99,12 +109,12 @@ def main():
             @app.middleware("http")
             async def tenuo_middleware(request: Request, call_next):
                 warrant = load_warrant_from_header(request.headers)
-                with set_warrant_context(warrant):
+                with warrant_scope(warrant):
                     return await call_next(request)
         """
         try:
             # In production, keypair would also be loaded (e.g. agent identity)
-            with set_warrant_context(request_warrant), set_signing_key_context(keypair):
+            with warrant_scope(request_warrant), key_scope(key):
                 # Process the request - all protected functions use context warrant
                 # HARDCODED VALUES: cluster="staging-web", replicas=3
                 scale_cluster(cluster="staging-web", replicas=3)
@@ -135,24 +145,22 @@ def main():
     
     # Pattern 4: Nested contexts (context inheritance)
     print("4. Testing nested contexts...")
-    warrant1 = Warrant.issue(
-        keypair=keypair,
-        capabilities=Constraints.for_tool("scale_cluster", {"cluster": Pattern("staging-*")}),
-        ttl_seconds=3600,
-        holder=keypair.public_key
-    )
-    warrant2 = Warrant.issue(
-        keypair=keypair,
-        capabilities=Constraints.for_tool("scale_cluster", {"cluster": Pattern("production-*")}),
-        ttl_seconds=3600,
-        holder=keypair.public_key
-    )
+    warrant1 = (Warrant.mint_builder()
+        .capability("scale_cluster", cluster=Pattern("staging-*"))
+        .holder(key.public_key)
+        .ttl(3600)
+        .mint(key))
+    warrant2 = (Warrant.mint_builder()
+        .capability("scale_cluster", cluster=Pattern("production-*"))
+        .holder(key.public_key)
+        .ttl(3600)
+        .mint(key))
     
-    with set_warrant_context(warrant1), set_signing_key_context(keypair):
+    with warrant_scope(warrant1), key_scope(key):
         print("   Outer context: staging-*")
         scale_cluster(cluster="staging-web", replicas=5)
         
-        with set_warrant_context(warrant2):
+        with warrant_scope(warrant2):
             print("   Inner context: production-*")
             try:
                 scale_cluster(cluster="production-web", replicas=5)

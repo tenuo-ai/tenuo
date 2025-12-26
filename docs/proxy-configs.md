@@ -5,7 +5,13 @@ description: Reference configurations for Envoy, Istio, nginx, and direct SDK
 
 # Proxy Configurations
 
-Copy-paste configurations for integrating Tenuo with your infrastructure.
+Copy-paste- **Application Layer**: Python SDK (`@guard` decorator)
+- **Network Layer**: Envoy Proxy (Sidecar)
+- **Infrastructure Layer**: Kubernetes Network Policies
+
+### Application Layer (`@guard`)
+
+The `@guard` decorator validates requests at the application layer.
 
 For guidance on which pattern to use, see [Kubernetes Integration](./kubernetes.md).
 
@@ -264,7 +270,7 @@ Full implementation for fetching warrants per-task.
 ```python
 import os
 import httpx
-from tenuo import Warrant, SigningKey, set_warrant_context, set_signing_key_context
+from tenuo import Warrant, SigningKey, warrant_scope, key_scope
 
 # Load keypair once at startup
 keypair = SigningKey.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
@@ -305,7 +311,7 @@ async def handle_task(user_request: str):
         ttl=60
     )
     
-    with set_warrant_context(warrant), set_signing_key_context(keypair):
+    with warrant_scope(warrant), key_scope(keypair):
         result = await agent.invoke({"input": user_request})
     
     # Warrant expires automatically — no cleanup needed
@@ -345,6 +351,10 @@ spec:
             secretKeyRef:
               name: agent-keypair
               key: KEYPAIR_PEM
+
+> [!CAUTION]
+> **Production Safety**: Do NOT set `TENUO_ENV="test"` in your production manifests.
+> This variable enables development-only bypass modes that disable authorization checks.
 ```
 
 ---
@@ -355,7 +365,7 @@ Warrant passed via HTTP header, validated in middleware.
 
 ```python
 from fastapi import FastAPI, Request, HTTPException
-from tenuo import Warrant, SigningKey, set_warrant_context, set_signing_key_context
+from tenuo import Warrant, SigningKey, warrant_scope, key_scope
 import os
 
 app = FastAPI()
@@ -382,7 +392,7 @@ async def tenuo_middleware(request: Request, call_next):
     if warrant.is_expired():
         raise HTTPException(401, "Warrant expired")
     
-    with set_warrant_context(warrant), set_signing_key_context(keypair):
+    with warrant_scope(warrant), key_scope(keypair):
         return await call_next(request)
 ```
 
@@ -437,14 +447,14 @@ spec:
 
 ```python
 import os
-from tenuo import Warrant, SigningKey, set_warrant_context, set_signing_key_context
+from tenuo import Warrant, SigningKey, warrant_scope, key_scope
 
 # Load once at startup
 warrant = Warrant.from_base64(os.getenv("TENUO_WARRANT_BASE64"))
 keypair = SigningKey.from_pem(os.getenv("TENUO_KEYPAIR_PEM"))
 
 def run_agent(prompt: str):
-    with set_warrant_context(warrant), set_signing_key_context(keypair):
+    with warrant_scope(warrant), key_scope(keypair):
         return agent.invoke({"input": prompt})
 ```
 
@@ -510,7 +520,7 @@ For simple deployments without a sidecar or gateway.
 from fastapi import FastAPI, Request, HTTPException
 from tenuo import (
     Authorizer, Warrant, SigningKey, PublicKey,
-    set_warrant_context, set_signing_key_context, lockdown
+    warrant_scope, key_scope, guard
 )
 import os
 
@@ -536,19 +546,19 @@ async def tenuo_middleware(request: Request, call_next):
     except Exception as e:
         raise HTTPException(403, f"Authorization failed: {e}")
     
-    with set_warrant_context(warrant), set_signing_key_context(keypair):
+    with warrant_scope(warrant), key_scope(keypair):
         return await call_next(request)
 
 
 @app.post("/api/files/read")
-@lockdown(tool="read_file")
+@guard(tool="read_file")
 async def read_file(path: str):
-    # @lockdown checks: tool in warrant, path matches constraints
+    # @guard checks: tool in warrant, path matches constraints
     return {"content": open(path).read()}
 
 
 @app.post("/api/files/write")
-@lockdown(tool="write_file")
+@guard(tool="write_file")
 async def write_file(path: str, content: str):
     open(path, "w").write(content)
     return {"status": "ok"}

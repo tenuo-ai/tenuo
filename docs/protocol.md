@@ -13,7 +13,7 @@ description: How Tenuo works - warrant model, constraints, verification
 
 ### Warrant Structure
 
-On the wire, warrants use the CBOR envelope defined in `docs/wire-format-spec.md`:
+On the wire, single warrants use the CBOR envelope defined in `docs/wire-format-spec.md` (§1). A `WarrantStack` (chain) is a CBOR array of these signed warrants (§10).
 
 - Envelope: CBOR array `[envelope_version, payload_bytes, signature]`
 - Payload: CBOR map (integer keys) with `version`, `id`, `warrant_type`, `tools`, `holder`, `issuer`, `issued_at`, `expires_at`, `max_depth`, `parent`, `extensions`
@@ -67,16 +67,13 @@ Warrant {
 Authority to invoke specific tools with specific constraints:
 
 ```python
-from tenuo import Warrant, Constraints, Exact
+from tenuo import Warrant, Exact
 
-execution_warrant = Warrant.issue(
-    tools={"read_file": Constraints.for_tool("read_file", {
-        "path": Exact("/data/q3.pdf")
-    })},
-    keypair=issuer_keypair,
-    holder=worker_public_key,
-    ttl_seconds=60,
-)
+execution_warrant = (Warrant.mint_builder()
+    .capability("read_file", path=Exact("/data/q3.pdf"))
+    .holder(worker_public_key)
+    .ttl(60)
+    .mint(issuer_key))
 ```
 
 ### Issuer Warrant
@@ -84,13 +81,15 @@ execution_warrant = Warrant.issue(
 Authority to issue execution warrants (cannot execute tools directly):
 
 ```python
-issuer_warrant = Warrant.issue_issuer(
-    keypair=control_plane_keypair,
-    holder=planner_pubkey,
-    issuable_tools=["read_file", "send_email", "query_db"],
-    max_issue_depth=1,
-    ttl_seconds=3600,
-)
+# Issuer warrants are authority to grant tools.
+# Use grant_builder() to delegate authority.
+parent_warrant = (Warrant.mint_builder()
+    .tool("read_file")
+    .tool("send_email")
+    .tool("query_db")
+    .holder(planner_pubkey)
+    .ttl(3600)
+    .mint(control_plane_key))
 ```
 
 ---
@@ -152,7 +151,7 @@ Wildcard(16): [16, {}]
 
 See `docs/wire-format-spec.md` §6 for complete type ID assignments (1-16).
 
-For debugging, use `tenuo inspect` to view constraints as JSON.
+For debugging, use `tenuo decode` to view constraints as JSON.
 
 ---
 
@@ -165,9 +164,9 @@ When attenuating a warrant (delegating to another entity):
 **The parent's holder signs the child warrant:**
 ```rust
 // Parent's holder signs the child warrant
-let child = parent.attenuate()
-    .holder(child_kp.public_key())
-    .build(&parent_kp)?;  // parent_kp is parent's holder keypair
+let child = parent.grant_builder()
+    .authorized_holder(child_key.public_key())
+    .build(&parent_key)?;  // parent_key is parent's holder key
 
 // Result:
 // child.issuer == parent.holder ✅  (delegation authority)
@@ -222,12 +221,12 @@ Every delegation **must narrow at least one dimension**:
 # POLA: Child starts with NO capabilities, must explicitly grant them
 
 # Explicit capability (recommended)
-parent.attenuate().capability("read_file", {}).delegate(parent_kp)
+parent.grant_builder().capability("read_file").grant(parent_key)
 
 # Or inherit all, then narrow
-parent.attenuate().inherit_all().tools(["read_file"]).delegate(parent_kp)
-parent.attenuate().inherit_all().ttl(60).delegate(parent_kp)
-parent.attenuate().inherit_all().terminal().delegate(parent_kp)
+parent.grant_builder().inherit_all().tools(["read_file"]).grant(parent_key)
+parent.grant_builder().inherit_all().ttl(60).grant(parent_key)
+parent.grant_builder().inherit_all().terminal().grant(parent_key)
 ```
 
 ---
@@ -239,10 +238,8 @@ parent.attenuate().inherit_all().terminal().delegate(parent_kp)
 Delegation chains are verified using a **WarrantStack** - an ordered array of warrants from root to leaf. Each warrant links to its parent via `parent_hash` (SHA256 of parent's payload bytes).
 
 ```
-WarrantStack {
-    ancestors: Warrant[]  # [root, ..., parent]
-    target: Warrant       # The leaf warrant being verified
-}
+WarrantStack = [SignedWarrant, SignedWarrant, ...]  # Ordered: Root -> Parent -> ... -> Leaf
+
 ```
 
 ### Chain Verification
@@ -481,8 +478,8 @@ Hard limits prevent abuse and ensure verification terminates:
 |-------|-------|---------|
 | `MAX_DELEGATION_DEPTH` | 16 | Max warrant depth (typical chains are 3-5 levels) |
 | `MAX_WARRANT_TTL_SECS` | 90 days | Protocol ceiling for warrant lifetime |
-| `MAX_WARRANT_SIZE` | 64 KB | Prevents memory exhaustion |
-| `MAX_STACK_SIZE` | 64 KB | Max WarrantStack encoded size |
+| `MAX_WARRANT_SIZE` | 64 KB | Prevents memory exhaustion (single warrant) |
+| `MAX_STACK_SIZE` | 256 KB | Max WarrantStack encoded size (chain) |
 | `MAX_CONSTRAINT_DEPTH` | 16 | Prevents stack overflow in nested constraints |
 | PoP Timestamp Window | 30s | Replay protection (~2 min with 4 windows) |
 
@@ -508,11 +505,11 @@ Tool names starting with `tenuo:` are **reserved for framework use** and will be
 
 ```python
 # ❌ This will fail
-warrant = Warrant.builder().tool("tenuo:revoke", {}).build(kp)
+warrant = Warrant.mint_builder().tool("tenuo:revoke").mint(key)
 # Error: Reserved tool namespace
 
 # ✅ Use your own namespace
-warrant = Warrant.builder().tool("my_app:revoke", {}).build(kp)
+warrant = Warrant.mint_builder().tool("my_app:revoke").mint(key)
 ```
 
 **Rationale**: Prevents collision between user-defined tools and future framework features.
@@ -531,29 +528,20 @@ extensions = {
     "tenuo.session_id": cbor.encode("session-123"),
     "tenuo.agent_id": cbor.encode("agent-worker-1"),
 }
+
+# ✅ Use reverse domain notation for your extensions
+warrant.extension("com.example.trace_id", b"abc123")
 ```
 
 **Extension value encoding:** All extension values MUST be CBOR-encoded. See `wire-format-spec.md` §10 for encoding rules.
 
 **Fail-closed behavior:** Verifiers SHOULD reject warrants with unknown `tenuo.*` extensions to fail closed. This prevents forward compatibility issues where newer warrant features are silently ignored by older verifiers.
 
-**User-defined extensions:** Use reverse domain notation (e.g., `com.example.trace_id`, `org.acme.workflow_id`).
-- `tenuo:require_mfa` — Enforcement flag
-- `tenuo:audit` — Force audit log entry
+**Recommended format for user extensions**: Reverse domain notation (`com.example.key_name`)
 
-### Extension Key Prefix: `tenuo.`
-
-Extension keys starting with `tenuo.` are reserved for Tenuo metadata:
-
-```python
-# Reserved for framework
-warrant.extension("tenuo.session_id", b"sess_123")  # Framework use only
-
-# ✅ Use reverse domain notation for your extensions
-warrant.extension("com.example.trace_id", b"abc123")
-```
-
-**Recommended format**: Reverse domain notation (`com.example.key_name`)
+**Potential future uses**:
+- `tenuo.require_mfa` — Enforcement flag
+- `tenuo.audit` — Force audit log entry
 
 ---
 

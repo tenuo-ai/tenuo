@@ -9,14 +9,22 @@ Security:
     - BoundWarrant cannot be serialized (raises TypeError)
     - BoundWarrant should never be stored in state/cache
     - Use for short-lived operations only (e.g., loops, API calls)
+
+Context Manager:
+    BoundWarrant can be used as a context manager to set both warrant and key scope:
+    
+        with bound:
+            @guard(tool="search")
+            def my_func(): ...
 """
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Union, List, Dict
 from tenuo_core import Warrant, SigningKey, PublicKey  # type: ignore[import-untyped]
 from datetime import timedelta
+from .validation import ValidationResult
 
 if TYPE_CHECKING:
-    from typing import Union, List
+    pass
 
 
 class BoundWarrant:
@@ -33,17 +41,22 @@ class BoundWarrant:
     
     Example:
         # Bind once, use multiple times
-        bound = warrant.bind_key(key)
+        bound = warrant.bind(key)
         for item in items:
-            headers = bound.auth_headers("process", {"item": item})
+            headers = bound.headers("process", {"item": item})
             # ... make API call
         
+        # As context manager (sets both warrant and key scope)
+        with bound:
+            @guard(tool="search")
+            def my_func(): ...
+        
         # DON'T do this:
-        state.warrant = warrant.bind_key(key)  # Type error! (good)
+        state.warrant = warrant.bind(key)  # Type error! (good)
     """
     
     # Use __slots__ to prevent __dict__ access (security: key not exposed via vars())
-    __slots__ = ('_warrant', '_key')
+    __slots__ = ('_warrant', '_key', '_warrant_token', '_key_token')
     
     def __init__(self, warrant: Warrant, key: SigningKey):
         """
@@ -55,6 +68,45 @@ class BoundWarrant:
         """
         self._warrant = warrant
         self._key = key
+        self._warrant_token = None
+        self._key_token = None
+    
+    @staticmethod
+    def bind_warrant(warrant: Warrant, key: SigningKey) -> "BoundWarrant":
+        """
+        Bind a warrant to a signing key.
+        
+        Usage:
+            bound = warrant.bind(key)
+        """
+        return BoundWarrant(warrant, key)
+
+    # ========================================================================
+    # Context Manager (sets both warrant and key scope)
+    # ========================================================================
+    
+    def __enter__(self):
+        """
+        Enter context: set both warrant and key scope.
+        
+        Allows using BoundWarrant as a context manager:
+            with bound:
+                @guard(tool="search")
+                def my_func(): ...
+        """
+        from .decorators import _warrant_context, _keypair_context
+        self._warrant_token = _warrant_context.set(self._warrant)
+        self._key_token = _keypair_context.set(self._key)
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit context: reset warrant and key scope."""
+        from .decorators import _warrant_context, _keypair_context
+        if self._warrant_token is not None:
+            _warrant_context.reset(self._warrant_token)
+        if self._key_token is not None:
+            _keypair_context.reset(self._key_token)
+        return False
     
     # ========================================================================
     # Forward ReadableWarrant properties
@@ -132,7 +184,7 @@ class BoundWarrant:
         """Return the inner warrant without the key."""
         return self._warrant
     
-    def bind_key(self, key: SigningKey) -> "BoundWarrant":
+    def bind(self, key: SigningKey) -> "BoundWarrant":
         """Return a new BoundWarrant with a different key."""
         return BoundWarrant(self._warrant, key)
     
@@ -140,7 +192,7 @@ class BoundWarrant:
     # Convenience methods (use bound key)
     # ========================================================================
     
-    def delegate(
+    def grant(
         self,
         *,
         to: PublicKey,
@@ -148,19 +200,18 @@ class BoundWarrant:
         ttl: int,
         **constraints
     ) -> Warrant:
-        """
-        Delegate using the bound key.
+        """Grant using the bound key.
         
         Args:
             to: Public key of new holder
-            allow: Tool(s) to delegate
+            allow: Tool(s) to grant
             ttl: Time-to-live in seconds
             **constraints: Additional constraints
             
         Returns:
             New child warrant (plain Warrant, not BoundWarrant)
         """
-        return self._warrant.delegate(
+        return self._warrant.grant(
             to=to,
             allow=allow,
             ttl=ttl,
@@ -168,11 +219,9 @@ class BoundWarrant:
             **constraints
         )
     
-    async def auth_headers_async(
-        self,
-        tool: str,
-        args: Optional[dict] = None
-    ) -> dict:
+
+    
+    def headers(self, tool: str, args: dict) -> Dict[str, str]:
         """
         Generate HTTP authorization headers using the bound key.
         
@@ -184,66 +233,82 @@ class BoundWarrant:
             Dictionary with X-Tenuo-Warrant and X-Tenuo-PoP headers
         """
         import base64
-        pop_sig = await self._warrant.create_pop_signature_async(self._key, tool, args)
-        # create_pop_signature returns bytes, encode to base64
-        pop_b64 = base64.b64encode(pop_sig).decode('ascii')
-        return {
-            "X-Tenuo-Warrant": self._warrant.to_base64(),
-            "X-Tenuo-PoP": pop_b64
-        }
-    
-    def auth_headers(self, tool: str, args: dict) -> dict:
-        """
-        Generate HTTP authorization headers using the bound key.
-        
-        Args:
-            tool: Tool name
-            args: Tool arguments
+        # Validate before signing for better error messages
+        validation = self.validate(tool, args)
+        if not validation:
+            raise RuntimeError(f"Authorization failed: {validation.reason}")
             
-        Returns:
-            Dictionary with X-Tenuo-Warrant and X-Tenuo-PoP headers
-        """
-        import base64
-        pop_sig = self._warrant.create_pop_signature(self._key, tool, args)
-        # create_pop_signature returns bytes, encode to base64
+        pop_sig = self._warrant.sign(self._key, tool, args)
+        # sign returns bytes, encode to base64
         pop_b64 = base64.b64encode(pop_sig).decode('ascii')
         return {
             "X-Tenuo-Warrant": self._warrant.to_base64(),
             "X-Tenuo-PoP": pop_b64
         }
     
-    def authorize(self, tool: str, args: dict) -> bool:
+    def validate(self, tool: str, args: dict) -> ValidationResult:
         """
-        Authorize a tool call with automatic Proof-of-Possession signing.
+        Pre-check if this action would be authorized.
+        
+        Use before making the actual API call to verify locally that
+        the warrant allows the action and the PoP signature is valid.
         
         Args:
             tool: Tool name
             args: Tool arguments (constraints)
             
         Returns:
-            True if authorized and PoP is valid
+            ValidationResult (True if authorized and PoP is valid, with feedback on failure)
+            
+        Example:
+            result = bound.validate("search", {"query": "test"})
+            if result:
+                headers = bound.headers("search", {"query": "test"})
+                # ...
+            else:
+                print(f"Validation failed: {result.reason}")
         """
         # 1. Sign
-        pop_signature = self._warrant.create_pop_signature(self._key, tool, args)
+        pop_signature = self._warrant.sign(self._key, tool, args)
         
         # 2. Verify (calls Rust authorize)
-        return self._warrant.authorize(
+        success = self._warrant.authorize(
             tool=tool,
             args=args,
             signature=bytes(pop_signature)
+        )
+        
+        if success:
+            return ValidationResult.ok()
+        
+        # 3. If failed, get rich feedback via why_denied
+        why = self.why_denied(tool, args)
+        return ValidationResult.fail(
+            reason=why.suggestion or f"Authorization failed ({why.deny_code})",
+            suggestions=[why.suggestion] if why.suggestion else []
         )
     
     # ========================================================================
     # Forward preview/debugging methods
     # ========================================================================
     
-    def preview_can(self, tool: str):
-        """Check if tool is in warrant (UX only)."""
-        return self._warrant.preview_can(tool)
-    
-    def preview_would_allow(self, tool: str, args: dict):
-        """Check if args would satisfy constraints (UX only)."""
-        return self._warrant.preview_would_allow(tool, args)
+    def allows(self, tool: str, args: Optional[dict] = None) -> bool:
+        """
+        Check if the warrant allows the given tool and arguments.
+        
+        This is a pure logic check (math only) and does not perform
+        cryptographic verification or Proof-of-Possession.
+        
+        Args:
+            tool: The tool name to check.
+            args: Optional arguments to check against constraints.
+                  If None, only checks if tool is in the allowlist.
+                  
+        Returns:
+            True if allowed, False otherwise.
+        """
+        # Use the newly injected allowed method on warrant
+        return self._warrant.allows(tool, args)
     
     def why_denied(self, tool: str, args: Optional[dict] = None):
         """Get structured explanation for why a request would be denied."""
@@ -293,10 +358,10 @@ class BoundWarrant:
 
 
 # ============================================================================
-# Add bind_key method to Warrant class
+# Add bind method to Warrant class
 # ============================================================================
 
-def _warrant_bind_key(self: Warrant, key: SigningKey) -> BoundWarrant:
+def _warrant_bind(self: Warrant, key: SigningKey) -> BoundWarrant:
     """
     Bind this warrant to a signing key for convenience.
     
@@ -311,19 +376,24 @@ def _warrant_bind_key(self: Warrant, key: SigningKey) -> BoundWarrant:
         
     Example:
         # Bind once, use multiple times
-        bound = warrant.bind_key(key)
+        bound = warrant.bind(key)
         
         # Make multiple API calls
-        headers1 = bound.auth_headers("search", {"query": "test"})
-        headers2 = bound.auth_headers("read", {"path": "/data/file.txt"})
+        headers1 = bound.headers("search", {"query": "test"})
+        headers2 = bound.headers("read", {"path": "/data/file.txt"})
         
-        # Delegate to workers
-        worker1 = bound.delegate(to=w1_key, allow="search", ttl=300)
-        worker2 = bound.delegate(to=w2_key, allow="read", ttl=300)
+        worker1 = bound.grant(to=w1_key, allow="search", ttl=300)
+        worker2 = bound.grant(to=w2_key, allow="read", ttl=300)
+
+    Security Note:
+        This method performs **lazy validation**. It does not check if the key matches
+        the warrant's authorized holder immediately. Validation happens strictly at
+        usage time (when `authorize()` is called), which verifies the Proof-of-Possession
+        signature. If the wrong key is bound, `authorize()` will fail securely.
     """
     return BoundWarrant(self, key)
 
 
 # Attach to Warrant class
-if not hasattr(Warrant, 'bind_key'):
-    Warrant.bind_key = _warrant_bind_key  # type: ignore[attr-defined]
+if not hasattr(Warrant, 'bind'):
+    Warrant.bind = _warrant_bind  # type: ignore[attr-defined]

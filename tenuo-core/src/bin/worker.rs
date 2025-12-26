@@ -273,7 +273,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .collect();
 
         // Sign the request (Proof-of-Possession)
-        let signature = leaf_warrant.create_pop_signature(&worker_keypair, tool, &args)?;
+        let signature = leaf_warrant.sign(&worker_keypair, tool, &args)?;
 
         let start = Instant::now();
         let result = leaf_warrant.authorize(tool, &args, Some(&signature));
@@ -373,7 +373,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .attenuate()
         .capability("cluster_manager", sub_constraints) // Further restrict
         .ttl(Duration::from_secs(300)) // 5 minutes
-        .authorized_holder(sub_agent_keypair.public_key())
+        .holder(sub_agent_keypair.public_key())
         .agent_id("sub-agent-tool-handler")
         .build(&worker_keypair)  // Worker is leaf_warrant's holder
     {
@@ -507,11 +507,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         args_no_approval.insert("replicas".to_string(), ConstraintValue::Float(3.0));
 
-        let holder_sig = sensitive_warrant.create_pop_signature(
-            &worker_keypair,
-            "manage_infrastructure",
-            &args_no_approval,
-        )?;
+        let holder_sig =
+            sensitive_warrant.sign(&worker_keypair, "manage_infrastructure", &args_no_approval)?;
 
         // Try authorization with NO approvals
         let start = Instant::now();

@@ -49,7 +49,7 @@ fn test_parent_hash_linkage() {
     let parent = Warrant::builder()
         .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(parent_kp.public_key())
+        .holder(parent_kp.public_key())
         .build(&parent_kp)
         .unwrap();
 
@@ -57,7 +57,7 @@ fn test_parent_hash_linkage() {
     let child = parent
         .attenuate()
         .inherit_all()
-        .authorized_holder(child_kp.public_key())
+        .holder(child_kp.public_key())
         .build(&parent_kp)
         .unwrap();
 
@@ -95,7 +95,7 @@ fn test_cbor_payload_canonical_binding() {
     let warrant = Warrant::builder()
         .capability("read", constraints)
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -141,7 +141,7 @@ fn test_payload_bytes_mismatch_detection() {
     let warrant = Warrant::builder()
         .capability("read", constraints)
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -180,14 +180,14 @@ fn test_signature_reuse_across_warrants() {
     let warrant_a = Warrant::builder()
         .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
     let warrant_b = Warrant::builder()
         .capability("write", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -236,7 +236,7 @@ fn test_parent_child_relationship_integrity() {
     let parent = Warrant::builder()
         .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -279,7 +279,7 @@ fn test_clearance_level_escalation() {
         .issuable_tools(vec!["read".to_string()])
         .clearance(Clearance::INTERNAL)
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(issuer_kp.public_key())
+        .holder(issuer_kp.public_key())
         .build(&issuer_kp)
         .unwrap();
 
@@ -289,7 +289,7 @@ fn test_clearance_level_escalation() {
             .capability("read", ConstraintSet::new())
             .ttl(Duration::from_secs(3600)) // Add required ttl
             .clearance(Clearance::SYSTEM) // Exceeds ceiling
-            .authorized_holder(worker_kp.public_key())
+            .holder(worker_kp.public_key())
             .build(&issuer_kp)
     });
 
@@ -317,7 +317,7 @@ fn test_pop_future_timestamp() {
     let warrant = Warrant::builder()
         .capability("transfer", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -368,7 +368,7 @@ fn test_pop_old_timestamp_replay() {
     let warrant = Warrant::builder()
         .capability("transfer", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -431,7 +431,7 @@ fn test_pop_concurrent_window_boundary() {
         Warrant::builder()
             .capability("transfer", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap(),
     );
@@ -445,9 +445,7 @@ fn test_pop_concurrent_window_boundary() {
     let authorizer = Arc::new(Authorizer::new().with_trusted_root(keypair.public_key()));
 
     // Create PoP signature (at current window)
-    let sig = warrant
-        .create_pop_signature(&keypair, "transfer", &args)
-        .unwrap();
+    let sig = warrant.sign(&keypair, "transfer", &args).unwrap();
     let sig = Arc::new(sig);
 
     // Spawn multiple threads to verify concurrently
@@ -498,7 +496,7 @@ fn test_delegation_depth_limit() {
     let mut current = Warrant::builder()
         .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(36000)) // Long TTL for many delegations
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -556,7 +554,7 @@ fn test_execution_warrant_tool_addition() {
     let parent = Warrant::builder()
         .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -610,9 +608,7 @@ fn test_execution_warrant_tool_addition() {
 
     // If child tries to authorize "write", it should fail
     let args: HashMap<String, ConstraintValue> = HashMap::new();
-    let sig = child
-        .create_pop_signature(&keypair, "write", &args)
-        .unwrap();
+    let sig = child.sign(&keypair, "write", &args).unwrap();
 
     let authorizer = Authorizer::new().with_trusted_root(keypair.public_key());
     let result = authorizer.authorize(&child, "write", &args, Some(&sig), &[]);
@@ -641,7 +637,7 @@ fn test_issuer_warrant_tool_addition() {
         .issuable_tools(vec!["read".to_string()])
         .clearance(Clearance::INTERNAL)
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -704,7 +700,7 @@ fn test_empty_capabilities_semantics() {
     let warrant = Warrant::builder()
         .capability("ping", ConstraintSet::new()) // Empty constraints = "allowed with any args"
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -721,9 +717,7 @@ fn test_empty_capabilities_semantics() {
     .into_iter()
     .collect();
 
-    let sig = warrant
-        .create_pop_signature(&keypair, "ping", &random_args)
-        .unwrap();
+    let sig = warrant.sign(&keypair, "ping", &random_args).unwrap();
 
     let result = authorizer.authorize(&warrant, "ping", &random_args, Some(&sig), &[]);
     assert!(
@@ -735,9 +729,7 @@ fn test_empty_capabilities_semantics() {
 
     // Test 2: Should also work with truly empty args
     let empty_args: HashMap<String, ConstraintValue> = HashMap::new();
-    let sig2 = warrant
-        .create_pop_signature(&keypair, "ping", &empty_args)
-        .unwrap();
+    let sig2 = warrant.sign(&keypair, "ping", &empty_args).unwrap();
 
     let result2 = authorizer.authorize(&warrant, "ping", &empty_args, Some(&sig2), &[]);
     assert!(
@@ -748,9 +740,7 @@ fn test_empty_capabilities_semantics() {
     println!("✅ Empty constraints ({{}}) = ALLOWED for empty args");
 
     // Test 3: Other tools should be DENIED (not present in capabilities)
-    let pong_sig = warrant
-        .create_pop_signature(&keypair, "pong", &empty_args)
-        .unwrap();
+    let pong_sig = warrant.sign(&keypair, "pong", &empty_args).unwrap();
 
     let result3 = authorizer.authorize(&warrant, "pong", &empty_args, Some(&pong_sig), &[]);
     assert!(result3.is_err(), "Missing tool should be DENIED");
@@ -792,7 +782,7 @@ fn test_holder_mismatch_pop_fails() {
     let warrant = Warrant::builder()
         .capability("transfer", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(holder_kp.public_key())
+        .holder(holder_kp.public_key())
         .build(&issuer_kp)
         .unwrap();
 
@@ -802,9 +792,7 @@ fn test_holder_mismatch_pop_fails() {
             .into_iter()
             .collect();
 
-    let attacker_sig = warrant
-        .create_pop_signature(&attacker_kp, "transfer", &args)
-        .unwrap();
+    let attacker_sig = warrant.sign(&attacker_kp, "transfer", &args).unwrap();
 
     let authorizer = Authorizer::new().with_trusted_root(issuer_kp.public_key());
 
@@ -866,7 +854,7 @@ fn test_constraint_depth_dos() {
     let result = Warrant::builder()
         .capability("test", constraints)
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair);
 
     assert!(
@@ -907,7 +895,7 @@ fn test_constraint_depth_deserialization_limit() {
     let result = Warrant::builder()
         .capability("test", constraints)
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair);
 
     assert!(
@@ -961,9 +949,7 @@ fn test_warrant_size_limit() {
     for t in tools {
         builder = builder.capability(t, ConstraintSet::new());
     }
-    let result = builder
-        .authorized_holder(keypair.public_key())
-        .build(&keypair);
+    let result = builder.holder(keypair.public_key()).build(&keypair);
 
     match result {
         Ok(warrant) => {
@@ -1017,7 +1003,7 @@ fn test_child_warrant_with_parent_hash() {
     let parent = Warrant::builder()
         .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(parent_kp.public_key())
+        .holder(parent_kp.public_key())
         .build(&parent_kp)
         .unwrap();
 
@@ -1025,7 +1011,7 @@ fn test_child_warrant_with_parent_hash() {
     let child = parent
         .attenuate()
         .inherit_all()
-        .authorized_holder(child_kp.public_key())
+        .holder(child_kp.public_key())
         .build(&parent_kp)
         .unwrap();
 
@@ -1049,9 +1035,7 @@ fn test_child_warrant_with_parent_hash() {
 
     // Also verify authorization on the leaf warrant
     let args: HashMap<String, ConstraintValue> = HashMap::new();
-    let sig = child
-        .create_pop_signature(&child_kp, "read", &args)
-        .unwrap();
+    let sig = child.sign(&child_kp, "read", &args).unwrap();
 
     let auth_result = authorizer.authorize(&child, "read", &args, Some(&sig), &[]);
 
@@ -1076,7 +1060,7 @@ fn test_chain_wrong_order() {
     let parent = Warrant::builder()
         .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(parent_kp.public_key())
+        .holder(parent_kp.public_key())
         .build(&parent_kp)
         .unwrap();
 
@@ -1084,7 +1068,7 @@ fn test_chain_wrong_order() {
     let child = parent
         .attenuate()
         .inherit_all()
-        .authorized_holder(child_kp.public_key())
+        .holder(child_kp.public_key())
         .build(&parent_kp)
         .unwrap();
 
@@ -1115,7 +1099,7 @@ fn test_pop_args_binding() {
     let warrant = Warrant::builder()
         .capability("read_file", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -1129,9 +1113,7 @@ fn test_pop_args_binding() {
     .into_iter()
     .collect();
 
-    let safe_sig = warrant
-        .create_pop_signature(&keypair, "read_file", &safe_args)
-        .unwrap();
+    let safe_sig = warrant.sign(&keypair, "read_file", &safe_args).unwrap();
 
     // ATTACK: Use that signature with different args
     let malicious_args: HashMap<String, ConstraintValue> = [(
@@ -1163,7 +1145,7 @@ fn test_pop_tool_binding() {
         .capability("read", ConstraintSet::new())
         .capability("write", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -1177,9 +1159,7 @@ fn test_pop_tool_binding() {
     .collect();
 
     // Create PoP for "read"
-    let read_sig = warrant
-        .create_pop_signature(&keypair, "read", &args)
-        .unwrap();
+    let read_sig = warrant.sign(&keypair, "read", &args).unwrap();
 
     // ATTACK: Use that signature for "write"
     let result = authorizer.authorize(&warrant, "write", &args, Some(&read_sig), &[]);
@@ -1208,7 +1188,7 @@ fn test_clearance_amplification() {
         .capability("query", ConstraintSet::new())
         .clearance(Clearance::INTERNAL)
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -1242,7 +1222,7 @@ fn test_terminal_warrant_delegation() {
         .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
         .max_depth(1)
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -1285,7 +1265,7 @@ fn test_non_deterministic_cbor() {
     let warrant = Warrant::builder()
         .capability("read", constraints)
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -1318,14 +1298,14 @@ fn test_mixed_chain_attack() {
     let chain1_parent = Warrant::builder()
         .capability("read", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(root1_kp.public_key())
+        .holder(root1_kp.public_key())
         .build(&root1_kp)
         .unwrap();
 
     let chain2_parent = Warrant::builder()
         .capability("write", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(root2_kp.public_key())
+        .holder(root2_kp.public_key())
         .build(&root2_kp)
         .unwrap();
 
@@ -1333,7 +1313,7 @@ fn test_mixed_chain_attack() {
     let chain1_child = chain1_parent
         .attenuate()
         .inherit_all()
-        .authorized_holder(child_kp.public_key())
+        .holder(child_kp.public_key())
         .build(&root1_kp)
         .unwrap();
 
@@ -1369,7 +1349,7 @@ fn test_cbor_canonical_map_key_ordering() {
     let warrant = Warrant::builder()
         .capability("test", constraints)
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -1429,7 +1409,7 @@ fn test_cbor_canonical_nested_map_ordering() {
         .capability("a_tool", a_constraints) // Added second but should serialize first
         .capability("m_tool", m_constraints) // Added third, should serialize middle
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -1492,7 +1472,7 @@ fn test_untrusted_root_rejection() {
     let attacker_warrant = Warrant::builder()
         .capability("admin", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(attacker_kp.public_key())
+        .holder(attacker_kp.public_key())
         .build(&attacker_kp)
         .unwrap();
 
@@ -1503,9 +1483,7 @@ fn test_untrusted_root_rejection() {
     let authorizer = Authorizer::new().with_trusted_root(trusted_kp.public_key());
 
     let args: HashMap<String, ConstraintValue> = HashMap::new();
-    let sig = attacker_warrant
-        .create_pop_signature(&attacker_kp, "admin", &args)
-        .unwrap();
+    let sig = attacker_warrant.sign(&attacker_kp, "admin", &args).unwrap();
 
     let result = authorizer.authorize(&attacker_warrant, "admin", &args, Some(&sig), &[]);
 
@@ -1541,14 +1519,12 @@ fn test_dynamic_trusted_root_addition() {
     let warrant = Warrant::builder()
         .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(new_root_kp.public_key())
+        .holder(new_root_kp.public_key())
         .build(&new_root_kp)
         .unwrap();
 
     let args: HashMap<String, ConstraintValue> = HashMap::new();
-    let sig = warrant
-        .create_pop_signature(&new_root_kp, "test", &args)
-        .unwrap();
+    let sig = warrant.sign(&new_root_kp, "test", &args).unwrap();
 
     // Try to authorize before root is trusted
     let before_result = authorizer.authorize(&warrant, "test", &args, Some(&sig), &[]);
@@ -1597,7 +1573,7 @@ fn test_unicode_lookalike_bypass() {
     let warrant = Warrant::builder()
         .capability("read", constraints)
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -1611,9 +1587,7 @@ fn test_unicode_lookalike_bypass() {
     .into_iter()
     .collect();
 
-    let sig = warrant
-        .create_pop_signature(&keypair, "read", &args)
-        .unwrap();
+    let sig = warrant.sign(&keypair, "read", &args).unwrap();
     let result = authorizer.authorize(&warrant, "read", &args, Some(&sig), &[]);
 
     assert!(
@@ -1637,7 +1611,7 @@ fn test_case_sensitivity_bypass() {
     let warrant = Warrant::builder()
         .capability("deploy", constraints)
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -1651,9 +1625,7 @@ fn test_case_sensitivity_bypass() {
     .into_iter()
     .collect();
 
-    let sig = warrant
-        .create_pop_signature(&keypair, "deploy", &args)
-        .unwrap();
+    let sig = warrant.sign(&keypair, "deploy", &args).unwrap();
     let result = authorizer.authorize(&warrant, "deploy", &args, Some(&sig), &[]);
 
     assert!(result.is_err(), "Case variation should not match pattern");
@@ -1827,7 +1799,7 @@ fn test_attack_ttl_time_traveler() {
     let result = Warrant::builder()
         .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(excessive_ttl))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair);
 
     match result {
@@ -1846,7 +1818,7 @@ fn test_attack_ttl_time_traveler() {
     let valid_result = Warrant::builder()
         .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(MAX_WARRANT_TTL_SECS))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair);
 
     assert!(valid_result.is_ok(), "90-day TTL should be accepted");
@@ -1878,7 +1850,7 @@ fn test_attack_redos_resistance() {
     let warrant = Warrant::builder()
         .capability("process", constraints)
         .ttl(Duration::from_secs(300))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -1894,9 +1866,7 @@ fn test_attack_redos_resistance() {
         ConstraintValue::String(evil_input.to_string()),
     );
 
-    let sig = warrant
-        .create_pop_signature(&keypair, "process", &args)
-        .unwrap();
+    let sig = warrant.sign(&keypair, "process", &args).unwrap();
     let _ = authorizer.authorize(&warrant, "process", &args, Some(&sig), &[]);
     let elapsed = start.elapsed();
 
@@ -1925,7 +1895,7 @@ fn test_attack_type_confusion_range_string() {
     let warrant = Warrant::builder()
         .capability("transfer", constraints)
         .ttl(Duration::from_secs(300))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -1938,9 +1908,7 @@ fn test_attack_type_confusion_range_string() {
         ConstraintValue::String("not a number".to_string()),
     );
 
-    let sig = warrant
-        .create_pop_signature(&keypair, "transfer", &args)
-        .unwrap();
+    let sig = warrant.sign(&keypair, "transfer", &args).unwrap();
     let result = authorizer.authorize(&warrant, "transfer", &args, Some(&sig), &[]);
 
     match result {
@@ -1966,7 +1934,7 @@ fn test_attack_type_confusion_nan() {
     let warrant = Warrant::builder()
         .capability("process", constraints)
         .ttl(Duration::from_secs(300))
-        .authorized_holder(keypair.public_key())
+        .holder(keypair.public_key())
         .build(&keypair)
         .unwrap();
 
@@ -1975,9 +1943,7 @@ fn test_attack_type_confusion_nan() {
     let mut args = HashMap::new();
     args.insert("value".to_string(), ConstraintValue::Float(f64::NAN));
 
-    let sig = warrant
-        .create_pop_signature(&keypair, "process", &args)
-        .unwrap();
+    let sig = warrant.sign(&keypair, "process", &args).unwrap();
     let result = authorizer.authorize(&warrant, "process", &args, Some(&sig), &[]);
 
     match result {
@@ -2008,21 +1974,21 @@ fn test_attack_chain_missing_link() {
     let root = Warrant::builder()
         .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(root_kp.public_key())
+        .holder(root_kp.public_key())
         .build(&root_kp)
         .unwrap();
 
     let middle = root
         .attenuate()
         .capability("test", ConstraintSet::new())
-        .authorized_holder(middle_kp.public_key())
+        .holder(middle_kp.public_key())
         .build(&root_kp) // root_kp is parent's holder
         .unwrap();
 
     let leaf = middle
         .attenuate()
         .capability("test", ConstraintSet::new())
-        .authorized_holder(leaf_kp.public_key())
+        .holder(leaf_kp.public_key())
         .build(&middle_kp) // middle_kp is parent's holder
         .unwrap();
 
@@ -2055,14 +2021,14 @@ fn test_attack_chain_shuffled_order() {
     let root = Warrant::builder()
         .capability("test", ConstraintSet::new())
         .ttl(Duration::from_secs(3600))
-        .authorized_holder(root_kp.public_key())
+        .holder(root_kp.public_key())
         .build(&root_kp)
         .unwrap();
 
     let child = root
         .attenuate()
         .capability("test", ConstraintSet::new())
-        .authorized_holder(child_kp.public_key())
+        .holder(child_kp.public_key())
         .build(&root_kp) // root_kp is parent's holder
         .unwrap();
 

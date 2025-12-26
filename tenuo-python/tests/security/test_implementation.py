@@ -15,9 +15,16 @@ import base64
 import json
 
 from tenuo import (
-    Warrant, Pattern, Range, Exact, Constraints, lockdown, set_warrant_context, set_signing_key_context,
-    Unauthorized
+    Warrant,
+    guard,
+    warrant_scope,
+    key_scope,
+    Pattern,
+    Range,
+    Exact,
 )
+from tenuo.constraints import Constraints
+from tenuo.exceptions import Unauthorized
 
 
 @pytest.mark.security
@@ -48,7 +55,7 @@ class TestImplementation:
                 raise Unauthorized("Constraint violation")
             return f"Searching for {arg}"
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}),
             ttl_seconds=60
@@ -73,7 +80,7 @@ class TestImplementation:
         """
         print("\n--- Attack 15: Constraint Type Coercion ---")
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("query", {"limit": Range(max=100)}),
             ttl_seconds=60
@@ -99,7 +106,7 @@ class TestImplementation:
         """
         print("\n--- Attack 16: Serialization Injection ---")
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("search", {}),
             ttl_seconds=60
@@ -138,7 +145,7 @@ class TestImplementation:
         """
         print("\n--- Attack 22: TOCTOU payload_bytes vs payload ---")
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("read", {}),
             ttl_seconds=3600
@@ -162,7 +169,7 @@ class TestImplementation:
         """
         print("\n--- Attack 24: Path Traversal in Constraints ---")
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
             ttl_seconds=3600
@@ -185,19 +192,19 @@ class TestImplementation:
         """
         print("\n--- Attack 32: Default Value Bypass ---")
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("query", {"limit": Range(max=100)}),
             ttl_seconds=3600
         )
         
-        @lockdown(tool="query")
+        @guard(tool="query")
         def query_db(query: str, limit: int = 999999):
             return f"Query with limit={limit}"
         
         print("  [Attack 32] Calling query_db without limit parameter...")
         
-        with set_warrant_context(warrant), set_signing_key_context(keypair):
+        with warrant_scope(warrant), key_scope(keypair):
             try:
                 result = query_db("SELECT *")
                 print(f"  [CRITICAL] Attack 32 SUCCEEDED: {result}")
@@ -216,7 +223,7 @@ class TestImplementation:
         injected_key = "path/../admin"
         
         try:
-            warrant = Warrant.issue(
+            warrant = Warrant.mint(
                 keypair=keypair,
                 capabilities=Constraints.for_tool("read_file", {injected_key: Pattern("secret")}),
                 ttl_seconds=60
@@ -244,7 +251,7 @@ class TestImplementation:
         """
         print("\n--- Attack: Null Byte Injection ---")
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("read", {"path": Exact("/safe/path")}),
             ttl_seconds=60
@@ -272,7 +279,7 @@ class TestImplementation:
         """
         print("\n--- Attack: Null Byte in Tool Name ---")
         
-        warrant = Warrant.issue(
+        warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("safe_tool", {}),
             ttl_seconds=60

@@ -125,20 +125,20 @@ print(f"TTL remaining: {warrant.ttl_remaining}")
 
 **Error:** `No warrant in context`
 
-**Cause:** `@lockdown` decorator expects a warrant in context, but none was set.
+**Cause:** `@guard` decorator expects a warrant in context, but none was set.
 
 **Fix:**
 ```python
-from tenuo import set_warrant_context, set_signing_key_context
+from tenuo import warrant_scope, key_scope
 
 # Wrap your call
-with set_warrant_context(warrant), set_signing_key_context(keypair):
+with warrant_scope(warrant), key_scope(keypair):
     protected_function()
 ```
 
 Or use explicit `BoundWarrant`:
 ```python
-protected = protect(tools, bound_warrant=warrant.bind_key(key))
+protected = guard(tools, warrant.bind(key))
 ```
 
 ---
@@ -183,29 +183,28 @@ warrant.expires_at      # "2025-12-22T15:00:00Z"
 
 ---
 
-## Preview Methods (UX Only)
+## Logic Checks (UX Only)
 
 ⚠️ **These are NOT security checks** - use for UI hints only:
 
 ```python
 # Check if tool is in warrant
-if warrant.preview_can("search"):
+if warrant.allows("search"):
     show_search_button()
 
 # Check if args would pass constraints
-result = warrant.preview_would_allow("read_file", {"path": "/data/file.txt"})
-if result.allowed:
+if warrant.allows("read_file", args={"path": "/data/file.txt"}):
     show_file_picker()
 ```
 
 **Never use for authorization decisions:**
 ```python
 # ❌ WRONG
-if warrant.preview_can("delete"):
+if warrant.allows("delete"):
     delete_database()  # No PoP verification!
 
 # ✅ CORRECT
-if bound.authorize("delete", {"id": "123"}):
+if bound.validate("delete", {"id": "123"}):
     delete_database()
 ```
 
@@ -218,10 +217,10 @@ if bound.authorize("delete", {"id": "123"}):
 | `Tool 'X' not authorized` | Tool not in warrant | Add tool to warrant |
 | `Constraint 'X' violated` | Arg doesn't match constraint | Use allowed values |
 | `Warrant expired` | TTL exceeded | Get fresh warrant |
-| `No warrant in context` | Missing context | Use `set_warrant_context()` |
+| `No warrant in context` | Missing context | Use `warrant_scope()` |
 | `PoP signature invalid` | Wrong key | Use holder's keypair |
 | `MonotonicityViolation` | Tried to expand scope | Scopes only shrink |
-| `Key 'X' not found` | Key not in registry | Register key or `auto_load_keys()` |
+| `Key 'X' not found` | Key not in registry | Register key or `load_tenuo_keys()` |
 
 ---
 
@@ -251,6 +250,11 @@ Authorization errors include a request ID for log correlation:
 # Logs show:
 # [abc123] Tool 'search' denied: query=/etc/passwd, expected=Pattern(/data/*)
 ```
+```python
+@guard(tool="search")
+def search(query: str):
+    ...
+```
 
 Use this ID to find detailed logs on the server side.
 
@@ -264,7 +268,7 @@ Use this ID to find detailed logs on the server side.
 - See the delegation chain
 - Generate code snippets
 
-Warrants contain only signed claims, not secrets—safe to paste and share.
+Warrants contain only signed claims, not secrets. They safe to paste and share.
 
 ---
 

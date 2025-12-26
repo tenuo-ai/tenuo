@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import init, { decode_warrant, check_access, check_access_with_pop, generate_keypair, create_pop_signature, create_sample_warrant, init_panic_hook } from './wasm/tenuo_wasm'
+import init, { decode_warrant, check_access, check_chain_access, create_sample_warrant, create_warrant_from_config, init_panic_hook } from './wasm/tenuo_wasm'
+import { cleanInput, truncate, generateId } from './utils';
 
 // Types
 interface AuthResult {
@@ -75,6 +76,16 @@ const SAMPLE_TEMPLATES: Record<string, {
     args: JSON.stringify({ path: "docs/api/reference.md" }, null, 2),
     ttl: 3600
   },
+  expiring_soon: {
+    name: "⏰ Expiring (10s)",
+    description: "Watch this warrant expire! Valid for 10 seconds only.",
+    wasmTool: "read_file",
+    wasmField: "path",
+    wasmPattern: "docs/*",
+    testTool: "read_file",
+    args: JSON.stringify({ path: "docs/readme.md" }, null, 2),
+    ttl: 10
+  },
   denied_path: {
     name: "❌ Wrong Path",
     description: "Denied: /etc/passwd is outside docs/* scope",
@@ -148,12 +159,6 @@ function generateFreshSamples(): Record<string, SampleDef> {
   return samples;
 }
 
-// Utility functions
-const truncate = (str: string, len: number = 12) =>
-  str.length > len ? `${str.slice(0, 6)}...${str.slice(-4)}` : str;
-
-const generateId = () => Math.random().toString(36).substring(2, 9);
-
 // Components
 const CopyBtn = ({ text, label }: { text: string; label?: string }) => {
   const [copied, setCopied] = useState(false);
@@ -215,12 +220,12 @@ const ExpirationDisplay = ({ issuedAt, expiresAt }: { issuedAt: number; expiresA
 
   const remaining = expiresAt - now;
   const isExpired = remaining <= 0;
+  const expiredAgo = Math.abs(remaining);
   const total = expiresAt - issuedAt;
   const elapsed = now - issuedAt;
   const percent = Math.min(100, Math.max(0, (elapsed / total) * 100));
 
   const formatTime = (seconds: number) => {
-    if (seconds <= 0) return 'Expired';
     const d = Math.floor(seconds / 86400);
     const h = Math.floor((seconds % 86400) / 3600);
     const m = Math.floor((seconds % 3600) / 60);
@@ -234,151 +239,35 @@ const ExpirationDisplay = ({ issuedAt, expiresAt }: { issuedAt: number; expiresA
   return (
     <div className="panel" style={{ padding: '16px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-        <span style={{ fontSize: '12px', color: 'var(--muted)' }}>⏱ Time Remaining</span>
-        <span style={{ fontSize: '14px', fontWeight: 600, fontFamily: "'JetBrains Mono', monospace", color: isExpired ? 'var(--red)' : 'var(--green)' }}>
-          {formatTime(remaining)}
+        <span style={{ fontSize: '12px', color: isExpired ? 'var(--red)' : 'var(--muted)' }}>
+          {isExpired ? '⛔ Expired' : '⏱ Time Remaining'}
+        </span>
+        <span style={{
+          fontSize: '16px',
+          fontWeight: 700,
+          fontFamily: "'JetBrains Mono', monospace",
+          color: isExpired ? 'var(--red)' : (remaining < 30 ? 'var(--yellow)' : 'var(--green)')
+        }}>
+          {isExpired ? `${formatTime(expiredAgo)} ago` : formatTime(remaining)}
         </span>
       </div>
 
-      {/* Timeline Visualization */}
+      {/* Timeline Visualization - simplified, no overlapping labels */}
       <div className="timeline">
         <div className="timeline-track">
           <div className="timeline-fill" style={{ width: `${percent}%`, background: isExpired ? 'var(--red)' : 'linear-gradient(90deg, var(--green), var(--accent))' }} />
-          <div className="timeline-now" style={{ left: `${Math.min(percent, 100)}%` }} />
         </div>
-        <div className="timeline-labels">
-          <div className="timeline-label">
-            <div className="timeline-dot" style={{ background: 'var(--green)' }} />
-            <span>Issued</span>
-            <span className="timeline-time">{new Date(issuedAt * 1000).toLocaleTimeString()}</span>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '11px' }}>
+          <div style={{ color: 'var(--green)' }}>
+            <span style={{ marginRight: '4px' }}>●</span>
+            Issued {new Date(issuedAt * 1000).toLocaleTimeString()}
           </div>
-          <div className="timeline-label" style={{ position: 'absolute', left: `${Math.min(percent, 95)}%`, transform: 'translateX(-50%)' }}>
-            <div className="timeline-dot pulse" style={{ background: isExpired ? 'var(--red)' : 'var(--accent)' }} />
-            <span>Now</span>
-          </div>
-          <div className="timeline-label" style={{ marginLeft: 'auto' }}>
-            <div className="timeline-dot" style={{ background: 'var(--red)' }} />
-            <span>Expires</span>
-            <span className="timeline-time">{new Date(expiresAt * 1000).toLocaleTimeString()}</span>
+          <div style={{ color: isExpired ? 'var(--red)' : 'var(--muted)', fontWeight: isExpired ? 600 : 400 }}>
+            {isExpired ? 'Expired' : 'Expires'} {new Date(expiresAt * 1000).toLocaleTimeString()}
+            <span style={{ marginLeft: '4px', color: 'var(--red)' }}>●</span>
           </div>
         </div>
       </div>
-    </div>
-  );
-};
-
-// PoP Signature Simulator
-const PopSimulator = ({ warrant, tool, args, onPopGenerated }: {
-  warrant: string;
-  tool: string;
-  args: string;
-  onPopGenerated: (pop: string, publicKey: string) => void;
-}) => {
-  const [privateKey, setPrivateKey] = useState('');
-  const [publicKey, setPublicKey] = useState('');
-  const [popSignature, setPopSignature] = useState('');
-  const [error, setError] = useState('');
-
-  const handleGenerateKeypair = () => {
-    try {
-      const result = generate_keypair();
-      setPrivateKey(result.private_key_hex);
-      setPublicKey(result.public_key_hex);
-      setPopSignature('');
-      setError('');
-    } catch (e) {
-      setError(`Keypair generation failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
-    }
-  };
-
-  const handleCreatePop = () => {
-    if (!privateKey || !warrant || !tool) {
-      setError('Need keypair, warrant, and tool name');
-      return;
-    }
-
-    try {
-      let parsedArgs: Record<string, unknown>;
-      try {
-        parsedArgs = JSON.parse(args);
-      } catch {
-        parsedArgs = {};
-      }
-
-      const result = create_pop_signature(privateKey, warrant, tool, parsedArgs);
-      if (result.error) {
-        setError(result.error);
-      } else {
-        setPopSignature(result.signature_hex);
-        onPopGenerated(result.signature_hex, publicKey);
-        setError('');
-      }
-    } catch (e) {
-      setError(`PoP creation failed: ${e instanceof Error ? e.message : 'Unknown error'}`);
-    }
-  };
-
-  return (
-    <div className="panel" style={{ padding: '16px', border: '1px solid rgba(34, 197, 94, 0.3)', background: 'rgba(34, 197, 94, 0.05)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-        <span style={{ fontSize: '16px' }}>🔐</span>
-        <h3 style={{ fontSize: '14px', fontWeight: 600 }}>PoP Signature Generator</h3>
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <button onClick={handleGenerateKeypair} className="btn btn-secondary" style={{ fontSize: '12px' }}>
-          🔑 Generate Test Keypair
-        </button>
-
-        {privateKey && (
-          <>
-            <div>
-              <label className="label">Public Key (Holder)</label>
-              <div className="input" style={{ fontSize: '10px', wordBreak: 'break-all', background: 'var(--bg)' }}>
-                {truncate(publicKey, 24)}
-                <CopyBtn text={publicKey} />
-              </div>
-            </div>
-
-            <div>
-              <label className="label">Private Key (Secret - for signing)</label>
-              <div className="input" style={{ fontSize: '10px', wordBreak: 'break-all', background: 'var(--bg)', color: 'var(--red)' }}>
-                {truncate(privateKey, 24)} 🔒
-              </div>
-            </div>
-
-            <button onClick={handleCreatePop} className="btn btn-primary" style={{ fontSize: '12px' }} disabled={!tool}>
-              ✍️ Create PoP Signature
-            </button>
-          </>
-        )}
-
-        {popSignature && (
-          <div>
-            <label className="label">PoP Signature</label>
-            <div className="input" style={{ fontSize: '10px', wordBreak: 'break-all', background: 'rgba(34, 197, 94, 0.1)', borderColor: 'var(--green)' }}>
-              {truncate(popSignature, 32)}
-              <CopyBtn text={popSignature} />
-            </div>
-          </div>
-        )}
-
-        {error && (
-          <div style={{ fontSize: '11px', color: 'var(--yellow)', padding: '8px', background: 'rgba(234, 179, 8, 0.1)', borderRadius: '6px' }}>
-            {error}
-          </div>
-        )}
-      </div>
-
-      <Explainer title="How Proof-of-Possession works" docLink="https://tenuo.dev/security">
-        <p style={{ marginBottom: '8px' }}><strong>Why PoP?</strong> Without it, anyone who intercepts a warrant can use it. PoP ensures only the legitimate holder can authorize actions.</p>
-        <p style={{ marginBottom: '6px' }}><strong>The flow:</strong></p>
-        <p>1. <strong>Keypair</strong> → Holder has a private key; warrant binds to their public key</p>
-        <p>2. <strong>Challenge</strong> → Tool name + args are hashed into a unique challenge</p>
-        <p>3. <strong>Sign</strong> → Holder signs the challenge with their private key</p>
-        <p>4. <strong>Verify</strong> → Authorization checks signature matches warrant's <code>authorized_holder</code></p>
-        <p style={{ marginTop: '8px', fontSize: '11px', opacity: 0.8 }}>💡 This is cryptographic proof that the request comes from the intended recipient, not an attacker.</p>
-      </Explainer>
     </div>
   );
 };
@@ -390,20 +279,17 @@ interface Preset {
   warrant: string;
   tool: string;
   args: string;
-  rootKey: string;
 }
 
 const PresetsManager = ({
   currentWarrant,
   currentTool,
   currentArgs,
-  currentRootKey,
   onLoad
 }: {
   currentWarrant: string;
   currentTool: string;
   currentArgs: string;
-  currentRootKey: string;
   onLoad: (preset: Preset) => void;
 }) => {
   const [presets, setPresets] = useState<Preset[]>([]);
@@ -431,7 +317,6 @@ const PresetsManager = ({
       warrant: currentWarrant,
       tool: currentTool,
       args: currentArgs,
-      rootKey: currentRootKey,
     };
     setPresets([...presets, newPreset]);
     setPresetName('');
@@ -460,7 +345,21 @@ const PresetsManager = ({
       try {
         const imported = JSON.parse(event.target?.result as string);
         if (Array.isArray(imported)) {
-          setPresets([...presets, ...imported]);
+          // Validate each preset has required fields and proper types
+          const validPresets = imported.filter((p): p is Preset =>
+            p && typeof p === 'object' &&
+            typeof p.id === 'string' && p.id.length > 0 &&
+            typeof p.name === 'string' && p.name.length > 0 &&
+            typeof p.warrant === 'string' && p.warrant.length > 0 &&
+            (typeof p.tool === 'string' || p.tool === undefined) &&
+            (typeof p.args === 'string' || p.args === undefined)
+          );
+          if (validPresets.length > 0) {
+            setPresets([...presets, ...validPresets]);
+            console.log(`[Tenuo Explorer] Imported ${validPresets.length}/${imported.length} valid presets`);
+          } else {
+            console.warn('[Tenuo Explorer] No valid presets found in import file');
+          }
         }
       } catch { }
     };
@@ -531,7 +430,7 @@ const PresetsManager = ({
 };
 
 // Verification Steps Component
-const VerificationSteps = ({ decoded, tool, args, authResult }: {
+const VerificationSteps = ({ decoded, tool, args: _args, authResult }: {
   decoded: DecodedWarrant | null;
   tool: string;
   args: string;
@@ -543,7 +442,7 @@ const VerificationSteps = ({ decoded, tool, args, authResult }: {
   const isExpired = decoded.expires_at < now;
   const toolMatch = decoded.tools.includes(tool) || decoded.tools.includes('*');
 
-  try { JSON.parse(args); } catch { }
+
 
   const steps = [
     { name: 'Signature Chain', status: 'pass', detail: 'Cryptographic signatures verified (dry run mode)' },
@@ -588,10 +487,10 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
     warning?: string;
   };
 
-  const parseConstraint = (key: string, value: unknown): ParsedConstraint => {
+  const parseConstraint = (_key: string, value: unknown): ParsedConstraint => {
     if (typeof value === 'object' && value !== null) {
       const v = value as Record<string, unknown>;
-      
+
       // Pattern constraint: { pattern: "docs/*" }
       if (v.pattern && typeof v.pattern === 'string') {
         const pattern = v.pattern;
@@ -602,7 +501,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
           exampleValue: pattern.replace(/\*/g, 'example').replace(/\?/g, 'x')
         };
       }
-      
+
       // Exact constraint: { exact: "value" }
       if (v.exact !== undefined) {
         const exact = String(v.exact);
@@ -613,22 +512,38 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
           exampleValue: exact
         };
       }
-      
-      // Range constraint: { min: 0, max: 100 } or { max: 100 }
-      if (v.min !== undefined || v.max !== undefined) {
-        const min = v.min as number | undefined;
-        const max = v.max as number | undefined;
+
+      // Range constraint: { min: 0, max: 100 } or { max: 100 } or { range: "0-1000" }
+      if (v.min !== undefined || v.max !== undefined || v.range !== undefined) {
+        let min: number | undefined;
+        let max: number | undefined;
+
+        // Parse string range format: "0-1000"
+        if (typeof v.range === 'string') {
+          const match = v.range.match(/^(\d+)-(\d+)$/);
+          if (match) {
+            min = parseInt(match[1], 10);
+            max = parseInt(match[2], 10);
+          }
+        } else {
+          min = v.min as number | undefined;
+          max = v.max as number | undefined;
+        }
+
         let pythonCode: string;
         let rustCode: string;
         if (min !== undefined && max !== undefined) {
-          pythonCode = `Range(min_value=${min}, max_value=${max})`;
-          rustCode = `Constraint::Range(Range::new(Some(${min}), Some(${max})))`;
+          pythonCode = `Range(${min}, ${max})`;
+          rustCode = `Constraint::Range(Range::new(${min}, ${max}))`;
         } else if (max !== undefined) {
-          pythonCode = `Range.max_value(${max})`;
+          pythonCode = `Range(max=${max})`;
           rustCode = `Constraint::Range(Range::max(${max}))`;
-        } else {
-          pythonCode = `Range.min_value(${min})`;
+        } else if (min !== undefined) {
+          pythonCode = `Range(min=${min})`;
           rustCode = `Constraint::Range(Range::min(${min}))`;
+        } else {
+          pythonCode = `Range()`;
+          rustCode = `Constraint::Range(Range::default())`;
         }
         return {
           type: 'range',
@@ -637,7 +552,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
           exampleValue: max !== undefined ? Math.floor(max / 2) : (min !== undefined ? min + 10 : 50)
         };
       }
-      
+
       // OneOf constraint: { oneof: ["a", "b"] } or { values: ["a", "b"] }
       // Can also be comma-separated string: { oneof: "a,b,c" }
       if (v.oneof || v.values) {
@@ -659,7 +574,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
           exampleValue: values[0] || 'value'
         };
       }
-      
+
       // AnyOf constraint: { anyof: ["a", "b"] }
       if (v.anyof) {
         const rawVal = v.anyof;
@@ -679,7 +594,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
           exampleValue: values[0].replace('*', 'example') || 'value'
         };
       }
-      
+
       // NotOneOf constraint: { notoneof: ["a", "b"] }
       if (v.notoneof) {
         const rawVal = v.notoneof;
@@ -699,8 +614,63 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
           exampleValue: 'allowed_value'
         };
       }
+
+      // Regex constraint: { regex: "^[a-z]+$" }
+      if (v.regex && typeof v.regex === 'string') {
+        const regex = v.regex;
+        return {
+          type: 'regex',
+          pythonCode: `Regex("${regex}")`,
+          rustCode: `Constraint::Regex(Regex::new("${regex}")?)`,
+          exampleValue: 'match'
+        };
+      }
+
+      // Contains constraint: { contains: "substring" }
+      if (v.contains && typeof v.contains === 'string') {
+        const substr = v.contains;
+        return {
+          type: 'contains',
+          pythonCode: `Contains("${substr}")`,
+          rustCode: `Constraint::Contains(Contains::new("${substr}"))`,
+          exampleValue: `text_with_${substr}_in_it`
+        };
+      }
+
+      // Cidr constraint: { cidr: "10.0.0.0/8" }
+      if (v.cidr && typeof v.cidr === 'string') {
+        const cidr = v.cidr;
+        return {
+          type: 'cidr',
+          pythonCode: `Cidr("${cidr}")`,
+          rustCode: `Constraint::Cidr(Cidr::new("${cidr}")?)`,
+          exampleValue: cidr.split('/')[0] || '10.0.0.1'
+        };
+      }
+
+      // Wildcard constraint: { wildcard: "user_*" }
+      if (v.wildcard && typeof v.wildcard === 'string') {
+        const wildcard = v.wildcard;
+        return {
+          type: 'wildcard',
+          pythonCode: `Wildcard("${wildcard}")`,
+          rustCode: `Constraint::Wildcard(Wildcard::new("${wildcard}")?)`,
+          exampleValue: wildcard.replace(/\*/g, 'example')
+        };
+      }
+
+      // UrlPattern constraint: { url_pattern: "https://*.example.com/*" }
+      if ((v.url_pattern || v.urlPattern) && typeof (v.url_pattern || v.urlPattern) === 'string') {
+        const urlPattern = (v.url_pattern || v.urlPattern) as string;
+        return {
+          type: 'url_pattern',
+          pythonCode: `UrlPattern("${urlPattern}")`,
+          rustCode: `Constraint::UrlPattern(UrlPattern::new("${urlPattern}")?)`,
+          exampleValue: urlPattern.replace(/\*/g, 'example')
+        };
+      }
     }
-    
+
     // String value - assume it's a pattern
     if (typeof value === 'string') {
       // Check if it looks like a glob pattern
@@ -720,7 +690,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
         exampleValue: value
       };
     }
-    
+
     // Number - assume range max
     if (typeof value === 'number') {
       return {
@@ -730,116 +700,151 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
         exampleValue: Math.floor(value / 2)
       };
     }
-    
-    // Unknown - treat as raw value (best effort)
+
+    // Unknown - show as comment, don't generate invalid code
     const strVal = typeof value === 'object' ? JSON.stringify(value) : String(value);
     return {
       type: 'unknown',
-      pythonCode: `Pattern("*")  # TODO: Unknown constraint type - ${strVal.slice(0, 50)}`,
-      rustCode: `Constraint::Pattern(Pattern::new("*")?)  // TODO: Unknown constraint - ${strVal.slice(0, 50)}`,
+      pythonCode: `# ${strVal.slice(0, 60)}`,
+      rustCode: `// ${strVal.slice(0, 60)}`,
       exampleValue: 'value',
-      warning: `Unrecognized constraint format: ${strVal.slice(0, 100)}`
+      warning: `Unknown constraint format: ${strVal.slice(0, 50)}`
     };
   };
 
   const code = useMemo(() => {
     try {
       const argsObj = (() => { try { return JSON.parse(args); } catch { return {}; } })();
-      
-      // Get constraints from decoded warrant's capabilities for the selected tool
-      const toolCapabilities = decoded.capabilities[tool] as Record<string, unknown> | undefined;
-      const constraints: { key: string; parsed: ParsedConstraint }[] = [];
-      
-      if (toolCapabilities && typeof toolCapabilities === 'object') {
-        Object.entries(toolCapabilities).forEach(([key, value]) => {
-          try {
-            constraints.push({ key, parsed: parseConstraint(key, value) });
-          } catch {
-            constraints.push({ key, parsed: { type: 'unknown', pythonCode: `Pattern("*")  # Error parsing`, rustCode: `// Error parsing`, exampleValue: 'value', warning: 'Failed to parse constraint' } });
-          }
-        });
-      }
-      
-      // Fallback to args if no constraints found
-      if (constraints.length === 0 && Object.keys(argsObj).length > 0) {
-        Object.entries(argsObj).forEach(([k, v]) => {
-          try {
-            constraints.push({ key: k, parsed: parseConstraint(k, v) });
-          } catch {
-            constraints.push({ key: k, parsed: { type: 'unknown', pythonCode: `Pattern("*")  # Error parsing`, rustCode: `// Error parsing`, exampleValue: 'value', warning: 'Failed to parse constraint' } });
-          }
+
+      // Build capabilities for ALL tools in the warrant
+      const allToolConstraints: { toolName: string; constraints: { key: string; parsed: ParsedConstraint }[] }[] = [];
+      const allWarnings: string[] = [];
+
+      // Iterate over all capabilities in the decoded warrant
+      Object.entries(decoded.capabilities).forEach(([toolName, toolCaps]) => {
+        const constraints: { key: string; parsed: ParsedConstraint }[] = [];
+        if (toolCaps && typeof toolCaps === 'object') {
+          Object.entries(toolCaps as Record<string, unknown>).forEach(([key, value]) => {
+            try {
+              const parsed = parseConstraint(key, value);
+              constraints.push({ key, parsed });
+              if (parsed.warning) {
+                allWarnings.push(`# ⚠️ ${toolName}.${key}: ${parsed.warning}`);
+              }
+            } catch {
+              constraints.push({ key, parsed: { type: 'unknown', pythonCode: `Pattern("*")  # Error parsing`, rustCode: `// Error parsing`, exampleValue: 'value', warning: 'Failed to parse constraint' } });
+            }
+          });
+        }
+        allToolConstraints.push({ toolName, constraints });
+      });
+
+      // If no capabilities found, add tools from the tools list
+      if (allToolConstraints.length === 0 && decoded.tools.length > 0) {
+        decoded.tools.forEach(t => {
+          allToolConstraints.push({ toolName: t, constraints: [] });
         });
       }
 
-    // Collect warnings
-    const warnings = constraints
-      .filter(({ parsed }) => parsed.warning)
-      .map(({ key, parsed }) => `# ⚠️ ${key}: ${parsed.warning}`);
-    
-    const warningBlock = warnings.length > 0 
-      ? `# ⚠️ WARNINGS - Review these constraints:\n${warnings.join('\n')}\n\n` 
-      : '';
+      const warningBlock = allWarnings.length > 0
+        ? `# ⚠️ WARNINGS - Review these constraints:\n${allWarnings.join('\n')}\n\n`
+        : '';
 
-    if (lang === 'python') {
-      const constraintLines = constraints.length > 0 
-        ? constraints.map(({ key, parsed }) => `        "${key}": ${parsed.pythonCode}`).join(',\n')
-        : '        # No constraints - allows any value';
-      
-      const argsLines = Object.entries(argsObj).length > 0
-        ? JSON.stringify(argsObj, null, 4)
-        : constraints.length > 0
-          ? JSON.stringify(Object.fromEntries(constraints.map(({ key, parsed }) => [key, parsed.exampleValue])), null, 4)
-          : '{}';
-      
-      return `${warningBlock}from tenuo import SigningKey, Warrant, Pattern, Exact, Range, OneOf
+      // Use selected tool for the test example, or first tool
+      const testTool = tool || allToolConstraints[0]?.toolName || 'example_tool';
+      const testToolCaps = allToolConstraints.find(t => t.toolName === testTool)?.constraints || [];
+
+      // Calculate actual TTL from the warrant
+      const actualTtl = Math.max(1, Math.floor(decoded.expires_at - decoded.issued_at));
+      const formatTtlComment = (secs: number) => {
+        if (secs < 60) return `${secs} seconds`;
+        if (secs < 3600) return `${Math.floor(secs / 60)} minutes`;
+        if (secs < 86400) return `${Math.floor(secs / 3600)} hour${secs >= 7200 ? 's' : ''}`;
+        return `${Math.floor(secs / 86400)} day${secs >= 172800 ? 's' : ''}`;
+      };
+
+      if (lang === 'python') {
+        // Generate capability lines for ALL tools
+        const capabilityBlocks = allToolConstraints.map(({ toolName, constraints }) => {
+          if (constraints.length === 0) {
+            return `    .tool("${toolName}")  # No constraints`;
+          }
+          const constraintLines = constraints.map(({ key, parsed }) => `        "${key}": ${parsed.pythonCode}`).join(',\n');
+          return `    .capability("${toolName}", {\n${constraintLines}\n    })`;
+        }).join('\n');
+
+        const argsLines = Object.entries(argsObj).length > 0
+          ? JSON.stringify(argsObj, null, 4)
+          : testToolCaps.length > 0
+            ? JSON.stringify(Object.fromEntries(testToolCaps.map(({ key, parsed }) => [key, parsed.exampleValue])), null, 4)
+            : '{}';
+
+        return `${warningBlock}from tenuo import SigningKey, Warrant, Pattern, Exact, Range, OneOf
 
 # Generate keys
 issuer_key = SigningKey.generate()
 holder_key = SigningKey.generate()
 
 # Issue warrant using builder pattern
-warrant = (Warrant.builder()
-    .capability("${tool}", {
-${constraintLines}
-    })
+# Tools: ${decoded.tools.join(', ')}
+warrant = (Warrant.mint_builder()
+${capabilityBlocks}
     .holder(holder_key.public_key)
-    .ttl(3600)  # 1 hour
-    .issue(issuer_key))
+    .ttl(${actualTtl})  # ${formatTtlComment(actualTtl)}
+    .mint(issuer_key))
 
 # Test authorization with Proof-of-Possession
 args = ${argsLines}
-pop_signature = warrant.create_pop_signature(holder_key, "${tool}", args)
-authorized = warrant.authorize("${tool}", args, bytes(pop_signature))
+pop = warrant.sign(holder_key, "${testTool}", args)
+authorized = warrant.authorize("${testTool}", args, pop)
 print(f"Authorized: {authorized}")
 
-# BoundWarrant for repeated operations
-bound = warrant.bind_key(holder_key)
-if bound.authorize("${tool}", args):
-    print("Also works with BoundWarrant!")
+# BoundWarrant: cleaner API (auto-signs)
+bound = warrant.bind(holder_key)
+result = bound.validate("${testTool}", args)
+if result:
+    print("Valid! Ready to call tool.")
+else:
+    print(f"Denied: {result.reason}")
 
 # Serialize for transmission
 warrant_b64 = warrant.to_base64()
 print(f"Warrant: {warrant_b64[:60]}...")`;
-    } else {
-      const constraintLines = constraints.length > 0 
-        ? constraints.map(({ key, parsed }) => `    constraints.insert("${key}".to_string(), ${parsed.rustCode});`).join('\n')
-        : '    // No constraints - allows any value';
-      
-      const argsLines = constraints.length > 0
-        ? constraints.map(({ key, parsed }) => {
+      } else {
+        // Generate Rust constraint set definitions
+        const constraintDefs = allToolConstraints.map(({ toolName, constraints }) => {
+          const varName = `cs_${toolName.replace(/[^a-z0-9]/gi, '_')}`;
+          if (constraints.length === 0) {
+            return `    let ${varName} = ConstraintSet::new();`;
+          }
+          const insertLines = constraints.map(({ key, parsed }) =>
+            `    ${varName}.insert("${key}", ${parsed.rustCode});`
+          ).join('\n');
+          return `    let mut ${varName} = ConstraintSet::new();
+${insertLines}`;
+        }).join('\n\n');
+
+        // Generate builder capability calls
+        const capabilityLines = allToolConstraints.map(({ toolName }) => {
+          const varName = `cs_${toolName.replace(/[^a-z0-9]/gi, '_')}`;
+          return `        .capability("${toolName}", ${varName})`;
+        }).join('\n');
+
+        const argsLines = testToolCaps.length > 0
+          ? testToolCaps.map(({ key, parsed }) => {
             const val = parsed.exampleValue;
             if (typeof val === 'number') {
               return `    args.insert("${key}".to_string(), ConstraintValue::Integer(${val}));`;
             }
             return `    args.insert("${key}".to_string(), ConstraintValue::String("${val}".to_string()));`;
           }).join('\n')
-        : '    // Add args here';
+          : '    // Add args here';
 
-      const rustWarnings = warnings.length > 0 
-        ? `// ⚠️ WARNINGS - Review these constraints:\n${warnings.map(w => w.replace('# ', '// ')).join('\n')}\n\n` 
-        : '';
+        const rustWarnings = allWarnings.length > 0
+          ? `// ⚠️ WARNINGS - Review these constraints:\n${allWarnings.map(w => w.replace('# ', '// ')).join('\n')}\n\n`
+          : '';
 
-      return `${rustWarnings}use tenuo::{SigningKey, Warrant, Pattern, Constraint, ConstraintSet, ConstraintValue, Range, wire};
+        return `${rustWarnings}use tenuo::{SigningKey, Warrant, ConstraintSet, ConstraintValue, Pattern, Range, wire};
 use std::time::Duration;
 use std::collections::HashMap;
 
@@ -848,28 +853,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let issuer_key = SigningKey::generate();
     let holder_key = SigningKey::generate();
 
-    // Build constraints
-    let mut constraints = ConstraintSet::new();
-${constraintLines}
+    // Define constraints for each tool
+${constraintDefs}
 
-    // Build capabilities map
-    let mut capabilities = HashMap::new();
-    capabilities.insert("${tool}".to_string(), constraints);
-
-    // Issue warrant using builder pattern
+    // Build warrant: ${decoded.tools.join(', ')}
     let warrant = Warrant::builder()
-        .capabilities(capabilities)
+${capabilityLines}
         .holder(holder_key.public_key())
-        .ttl(Duration::from_secs(3600))
-        .issue(&issuer_key)?;
+        .ttl(Duration::from_secs(${actualTtl}))  // ${formatTtlComment(actualTtl)}
+        .build(&issuer_key)?;
 
     // Build args for authorization
     let mut args: HashMap<String, ConstraintValue> = HashMap::new();
 ${argsLines}
 
     // Create Proof-of-Possession and authorize
-    let pop = warrant.create_pop_signature(&holder_key, "${tool}", &args)?;
-    warrant.authorize("${tool}", &args, Some(&pop))?;
+    let pop = warrant.sign(&holder_key, "${testTool}", &args)?;
+    warrant.authorize("${testTool}", &args, Some(&pop))?;
     println!("Authorized!");
 
     // Serialize for transmission
@@ -878,7 +878,7 @@ ${argsLines}
     
     Ok(())
 }`;
-    }
+      }
     } catch (e) {
       // Return error message as code comment
       const errMsg = e instanceof Error ? e.message : 'Unknown error';
@@ -1009,107 +1009,18 @@ const ValidationWarnings = ({ decoded, tool, args }: { decoded: DecodedWarrant |
   );
 };
 
-// Test Case Generator Component
-const TestCaseGenerator = ({ decoded, tool }: { decoded: DecodedWarrant | null; tool: string }) => {
-  const [showTests, setShowTests] = useState(false);
-
-  if (!decoded || !showTests) {
-    return (
-      <button onClick={() => setShowTests(true)} className="btn btn-secondary" style={{ width: '100%', marginTop: '12px' }}>
-        🧪 Generate Test Cases
-      </button>
-    );
-  }
-
-  const testCases = useMemo(() => {
-    const cases: { name: string; args: Record<string, string>; shouldPass: boolean; reason: string }[] = [];
-
-    // Get constraints for the tool
-    const toolConstraints = decoded.capabilities[tool] as Record<string, { pattern?: string; exact?: string }> | undefined;
-
-    if (toolConstraints) {
-      for (const [key, constraint] of Object.entries(toolConstraints)) {
-        if (constraint.pattern) {
-          // Valid case matching pattern
-          const pattern = constraint.pattern;
-          if (pattern.includes('*')) {
-            const prefix = pattern.replace('*', '');
-            cases.push({
-              name: `Valid ${key} matching pattern`,
-              args: { [key]: `${prefix}example.txt` },
-              shouldPass: true,
-              reason: `Matches pattern "${pattern}"`
-            });
-            cases.push({
-              name: `Invalid ${key} outside pattern`,
-              args: { [key]: '/etc/passwd' },
-              shouldPass: false,
-              reason: `Does not match pattern "${pattern}"`
-            });
-          }
-        }
-        if (constraint.exact) {
-          cases.push({
-            name: `Exact match for ${key}`,
-            args: { [key]: constraint.exact },
-            shouldPass: true,
-            reason: `Exactly matches "${constraint.exact}"`
-          });
-          cases.push({
-            name: `Wrong value for ${key}`,
-            args: { [key]: 'wrong_value' },
-            shouldPass: false,
-            reason: `Does not match exact "${constraint.exact}"`
-          });
-        }
-      }
-    }
-
-    // Add tool mismatch test
-    cases.push({
-      name: 'Wrong tool',
-      args: { test: 'value' },
-      shouldPass: false,
-      reason: 'Tool not in warrant'
-    });
-
-    return cases;
-  }, [decoded, tool]);
-
-  return (
-    <div className="panel" style={{ padding: '16px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-        <span style={{ fontSize: '12px', color: 'var(--muted)' }}>🧪 Generated Test Cases</span>
-        <button onClick={() => setShowTests(false)} className="close-btn">✕</button>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        {testCases.map((tc, i) => (
-          <div key={i} className={`test-case ${tc.shouldPass ? 'pass' : 'fail'}`}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: '12px', fontWeight: 500 }}>{tc.name}</span>
-              <span className={`test-badge ${tc.shouldPass ? 'pass' : 'fail'}`}>
-                {tc.shouldPass ? 'PASS' : 'FAIL'}
-              </span>
-            </div>
-            <code style={{ fontSize: '11px', color: 'var(--muted)' }}>{JSON.stringify(tc.args)}</code>
-            <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '4px' }}>{tc.reason}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-};
-
 // Warrant Builder Component
+type ConstraintType = 'pattern' | 'exact' | 'range' | 'oneof' | 'anyof' | 'notoneof' | 'cidr' | 'urlpattern' | 'regex' | 'wildcard' | 'contains';
+
 interface ToolConstraint {
   name: string;
-  constraints: { key: string; type: 'pattern' | 'exact' | 'range' | 'oneof' | 'anyof' | 'notoneof'; value: string }[];
+  constraints: { key: string; type: ConstraintType; value: string }[];
 }
 
 // Validate constraint value based on type
 const validateConstraintValue = (type: string, value: string): { valid: boolean; error?: string; hint?: string } => {
   if (!value.trim()) return { valid: true }; // Empty is ok while typing
-  
+
   switch (type) {
     case 'pattern':
       // Pattern should be a glob string
@@ -1117,11 +1028,11 @@ const validateConstraintValue = (type: string, value: string): { valid: boolean;
         return { valid: false, error: 'Patterns use * and ?, not regex syntax', hint: 'docs/* or *.txt' };
       }
       return { valid: true };
-      
+
     case 'exact':
       // Exact can be any string
       return { valid: true };
-      
+
     case 'range':
       // Range should be "min-max" or just "max"
       if (!/^\d+(-\d+)?$/.test(value.trim())) {
@@ -1132,7 +1043,7 @@ const validateConstraintValue = (type: string, value: string): { valid: boolean;
         return { valid: false, error: 'Min cannot be greater than max' };
       }
       return { valid: true };
-      
+
     case 'oneof':
     case 'anyof':
     case 'notoneof':
@@ -1145,7 +1056,38 @@ const validateConstraintValue = (type: string, value: string): { valid: boolean;
         return { valid: false, error: 'Provide at least one value' };
       }
       return { valid: true };
-      
+
+    case 'cidr':
+      // CIDR notation: IP/prefix
+      if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}$/.test(value.trim())) {
+        return { valid: false, error: 'Use CIDR notation: IP/prefix', hint: '10.0.0.0/8 or 192.168.1.0/24' };
+      }
+      return { valid: true };
+
+    case 'urlpattern':
+      // URL pattern with wildcards
+      if (!value.includes('://')) {
+        return { valid: false, error: 'Include protocol (https://)', hint: 'https://*.example.com/*' };
+      }
+      return { valid: true };
+
+    case 'regex':
+      // Try to compile as regex
+      try {
+        new RegExp(value);
+        return { valid: true };
+      } catch {
+        return { valid: false, error: 'Invalid regex syntax' };
+      }
+
+    case 'wildcard':
+      // Simple wildcard pattern
+      return { valid: true, hint: 'user_* or *_admin' };
+
+    case 'contains':
+      // Substring match
+      return { valid: true, hint: 'substring to match' };
+
     default:
       return { valid: true };
   }
@@ -1174,7 +1116,7 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
     const constraint = { ...updated[toolIdx].constraints[constIdx], [field]: value };
     updated[toolIdx].constraints[constIdx] = constraint;
     setTools(updated);
-    
+
     // Validate on change
     const errorKey = `${toolIdx}-${constIdx}`;
     if (field === 'value' || field === 'type') {
@@ -1192,11 +1134,15 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
     setTools(updated);
   };
 
-  const templates = [
-    { name: '📁 File Read Only', tools: [{ name: 'read_file', constraints: [{ key: 'path', type: 'pattern' as const, value: 'data/*' }] }], ttl: 3600 },
-    { name: '🔧 Multi-Tool', tools: [{ name: 'read_file', constraints: [{ key: 'path', type: 'pattern' as const, value: '*' }] }, { name: 'write_file', constraints: [{ key: 'path', type: 'pattern' as const, value: 'tmp/*' }] }], ttl: 1800 },
-    { name: '🌐 API Access', tools: [{ name: 'http_request', constraints: [{ key: 'url', type: 'pattern' as const, value: 'https://api.example.com/*' }, { key: 'method', type: 'exact' as const, value: 'GET' }] }], ttl: 300 },
-    { name: '💰 Limited Spend', tools: [{ name: 'transfer', constraints: [{ key: 'amount', type: 'range' as const, value: '0-1000' }, { key: 'currency', type: 'exact' as const, value: 'USD' }] }], ttl: 600 },
+  const templates: { name: string; tools: ToolConstraint[]; ttl: number }[] = [
+    { name: '📁 File Read', tools: [{ name: 'read_file', constraints: [{ key: 'path', type: 'pattern', value: 'data/*' }] }], ttl: 3600 },
+    { name: '🔧 Multi-Tool', tools: [{ name: 'read_file', constraints: [{ key: 'path', type: 'pattern', value: '*' }] }, { name: 'write_file', constraints: [{ key: 'path', type: 'pattern', value: 'tmp/*' }] }], ttl: 1800 },
+    { name: '🌐 API Gateway', tools: [{ name: 'http_request', constraints: [{ key: 'url', type: 'urlpattern', value: 'https://*.example.com/api/*' }, { key: 'method', type: 'oneof', value: 'GET,POST' }] }], ttl: 300 },
+    { name: '💰 Limited Spend', tools: [{ name: 'transfer', constraints: [{ key: 'amount', type: 'range', value: '0-1000' }, { key: 'currency', type: 'exact', value: 'USD' }] }], ttl: 600 },
+    { name: '🔒 Internal Network', tools: [{ name: 'connect', constraints: [{ key: 'ip', type: 'cidr', value: '10.0.0.0/8' }, { key: 'port', type: 'range', value: '80-443' }] }], ttl: 1800 },
+    { name: '🤖 AI Agent', tools: [{ name: 'llm_call', constraints: [{ key: 'model', type: 'oneof', value: 'gpt-4,claude-3' }, { key: 'tokens', type: 'range', value: '0-4000' }] }, { name: 'search', constraints: [{ key: 'query', type: 'contains', value: 'safe' }] }], ttl: 900 },
+    { name: '📧 Email Send', tools: [{ name: 'send_email', constraints: [{ key: 'to', type: 'regex', value: '^[a-z]+@company\\.com$' }, { key: 'subject', type: 'notoneof', value: 'URGENT,SPAM' }] }], ttl: 3600 },
+    { name: '🗄️ Database', tools: [{ name: 'query', constraints: [{ key: 'table', type: 'oneof', value: 'users,orders,products' }, { key: 'operation', type: 'exact', value: 'SELECT' }] }], ttl: 600 },
   ];
 
   const applyTemplate = (template: typeof templates[0]) => {
@@ -1274,20 +1220,33 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
                 <div key={ci} style={{ marginBottom: '8px', marginLeft: '12px' }}>
                   <div style={{ display: 'flex', gap: '6px' }}>
                     <input className="input" placeholder="key" value={con.key} onChange={e => updateConstraint(ti, ci, 'key', e.target.value)} style={{ width: '70px' }} />
-                    <select className="input" value={con.type} onChange={e => updateConstraint(ti, ci, 'type', e.target.value)} style={{ width: '110px' }}>
-                      <option value="pattern">Pattern</option>
-                      <option value="exact">Exact</option>
-                      <option value="range">Range</option>
-                      <option value="oneof">OneOf</option>
-                      <option value="anyof">AnyOf</option>
-                      <option value="notoneof">NotOneOf</option>
+                    <select className="input" value={con.type} onChange={e => updateConstraint(ti, ci, 'type', e.target.value)} style={{ width: '120px' }}>
+                      <optgroup label="Basic">
+                        <option value="pattern">Pattern</option>
+                        <option value="exact">Exact</option>
+                        <option value="range">Range</option>
+                      </optgroup>
+                      <optgroup label="Sets">
+                        <option value="oneof">OneOf</option>
+                        <option value="anyof">AnyOf</option>
+                        <option value="notoneof">NotOneOf</option>
+                      </optgroup>
+                      <optgroup label="Network">
+                        <option value="cidr">CIDR</option>
+                        <option value="urlpattern">UrlPattern</option>
+                      </optgroup>
+                      <optgroup label="Text">
+                        <option value="regex">Regex</option>
+                        <option value="wildcard">Wildcard</option>
+                        <option value="contains">Contains</option>
+                      </optgroup>
                     </select>
-                    <input 
-                      className="input" 
-                      placeholder={validation.hint || 'value'} 
-                      value={con.value} 
-                      onChange={e => updateConstraint(ti, ci, 'value', e.target.value)} 
-                      style={{ flex: 1, borderColor: error ? 'var(--red)' : undefined }} 
+                    <input
+                      className="input"
+                      placeholder={validation.hint || 'value'}
+                      value={con.value}
+                      onChange={e => updateConstraint(ti, ci, 'value', e.target.value)}
+                      style={{ flex: 1, borderColor: error ? 'var(--red)' : undefined }}
                     />
                     <button onClick={() => removeConstraint(ti, ci)} className="close-btn" style={{ padding: '4px' }}>✕</button>
                   </div>
@@ -1309,181 +1268,272 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
       </button>
 
       <Explainer title="Constraint Types" docLink="https://tenuo.dev/constraints">
-        <p><strong>Pattern</strong>: Glob-style matching (e.g., <code>docs/*</code>, <code>*.txt</code>)</p>
-        <p><strong>Exact</strong>: Must match exactly (e.g., <code>GET</code>, <code>user123</code>)</p>
-        <p><strong>Range</strong>: Numeric range (e.g., <code>0-1000</code> for amounts)</p>
-        <p><strong>OneOf</strong>: Must match one value (e.g., <code>GET,POST,PUT</code>)</p>
-        <p><strong>AnyOf</strong>: Can match any pattern (e.g., <code>docs/*,data/*</code>)</p>
-        <p><strong>NotOneOf</strong>: Must NOT match any value (e.g., <code>DELETE,admin</code>)</p>
+        <p><strong>Pattern</strong>: Glob-style matching (<code>docs/*</code>, <code>*.txt</code>)</p>
+        <p><strong>Exact</strong>: Must match exactly (<code>GET</code>, <code>user123</code>)</p>
+        <p><strong>Range</strong>: Numeric range (<code>0-1000</code> for amounts)</p>
+        <p><strong>OneOf</strong>: Must match one value (<code>GET,POST,PUT</code>)</p>
+        <p><strong>AnyOf</strong>: Can match any pattern (<code>docs/*,data/*</code>)</p>
+        <p><strong>NotOneOf</strong>: Must NOT match any (<code>DELETE,admin</code>)</p>
+        <p><strong>CIDR</strong>: IP network range (<code>10.0.0.0/8</code>, <code>192.168.1.0/24</code>)</p>
+        <p><strong>UrlPattern</strong>: URL with wildcards (<code>https://*.example.com/*</code>)</p>
+        <p><strong>Regex</strong>: Regular expression (<code>^[a-z]+@company\.com$</code>)</p>
+        <p><strong>Wildcard</strong>: Simple wildcards (<code>user_*</code>, <code>*_admin</code>)</p>
+        <p><strong>Contains</strong>: Substring match (<code>keyword</code>)</p>
       </Explainer>
     </div>
   );
 };
 
-// Chain Tester Component
-interface ChainNode {
+// Chain Verifier Component - verifies real warrant chains
+interface ChainWarrant {
   id: string;
-  name: string;
-  tools: string[];
-  attenuations: string;
-  depth: number;
+  b64: string;
+  decoded: DecodedWarrant | null;
+  error: string | null;
 }
 
 const ChainTester = () => {
-  const [nodes, setNodes] = useState<ChainNode[]>([
-    { id: '1', name: 'Root (Orchestrator)', tools: ['read_file', 'write_file', 'send_email'], attenuations: 'Full access', depth: 0 },
-    { id: '2', name: 'Worker Agent', tools: ['read_file'], attenuations: 'path: docs/*', depth: 1 },
+  const [warrants, setWarrants] = useState<ChainWarrant[]>([
+    { id: generateId(), b64: '', decoded: null, error: null },
+    { id: generateId(), b64: '', decoded: null, error: null },
   ]);
-  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [tool, setTool] = useState('read_file');
+  const [argsJson, setArgsJson] = useState('{"path": "docs/readme.md"}');
+  const [rootKeyHex, setRootKeyHex] = useState('');
+  const [verifyResult, setVerifyResult] = useState<AuthResult | null>(null);
 
-  const addNode = () => {
-    const parent = nodes[nodes.length - 1];
-    const inheritedTool = parent.tools[0] || 'read_file';
-    // Generate a sensible default attenuation based on common patterns
-    const defaultAttenuations: Record<string, string> = {
-      'read_file': 'path: docs/*',
-      'write_file': 'path: tmp/*',
-      'send_email': 'to: *@company.com',
-      'transfer_money': 'amount: max 1000',
-      'search': 'query: *',
-    };
-    setNodes([...nodes, {
-      id: generateId(),
-      name: `Delegate ${nodes.length}`,
-      tools: [inheritedTool],
-      attenuations: defaultAttenuations[inheritedTool] || `${inheritedTool}: narrowed scope`,
-      depth: parent.depth + 1
-    }]);
+  // Decode warrant when b64 changes
+  const updateWarrant = (id: string, input: string) => {
+    let decoded: DecodedWarrant | null = null;
+    let error: string | null = null;
+    let b64 = input;
+
+    if (input.trim()) {
+      const cleaned = cleanInput(input);
+      b64 = cleaned.b64;
+
+      try {
+        const result = decode_warrant(b64);
+        // WASM returns a string on error, not a DecodedWarrant
+        if (typeof result === 'string') {
+          error = result;
+        } else if (result && typeof result === 'object' && 'id' in result && 'issuer' in result) {
+          // Normalize the result to ensure tools is always an array
+          decoded = {
+            id: result.id || '',
+            issuer: result.issuer || '',
+            tools: Array.isArray(result.tools) ? result.tools : [],
+            capabilities: result.capabilities || {},
+            issued_at: result.issued_at || 0,
+            expires_at: result.expires_at || 0,
+            authorized_holder: result.authorized_holder || '',
+            depth: result.depth || 0,
+          };
+          // Auto-fill root key from first warrant's issuer
+          if (warrants.findIndex(w => w.id === id) === 0) {
+            setRootKeyHex(decoded.issuer);
+          }
+        } else {
+          error = 'Invalid warrant format';
+        }
+      } catch (e) {
+        error = e instanceof Error ? e.message : 'Invalid warrant';
+      }
+    }
+
+    setWarrants(warrants.map(w => w.id === id ? { ...w, b64: input, decoded, error } : w));
+    setVerifyResult(null);
   };
 
-  const removeNode = (id: string) => {
-    const idx = nodes.findIndex(n => n.id === id);
-    if (idx > 0) setNodes(nodes.slice(0, idx));
+  const addWarrant = () => {
+    setWarrants([...warrants, { id: generateId(), b64: '', decoded: null, error: null }]);
+    setVerifyResult(null);
   };
 
-  const updateNode = (id: string, field: string, value: string | string[]) => {
-    setNodes(nodes.map(n => n.id === id ? { ...n, [field]: value } : n));
+  const removeWarrant = (id: string) => {
+    if (warrants.length > 2) {
+      setWarrants(warrants.filter(w => w.id !== id));
+      setVerifyResult(null);
+    }
   };
+
+  const verifyChain = () => {
+    const validWarrants = warrants.filter(w => w.b64.trim());
+    if (validWarrants.length < 1) {
+      setVerifyResult({ authorized: false, reason: 'Need at least one warrant' });
+      return;
+    }
+
+    if (!rootKeyHex.trim()) {
+      setVerifyResult({ authorized: false, reason: 'Root key (issuer public key) is required' });
+      return;
+    }
+
+    try {
+      const args = JSON.parse(argsJson || '{}');
+      const warrantList = validWarrants.map(w => w.b64.trim());
+      // Always dry_run in explorer (we don't have holder private keys to sign PoP)
+      const result = check_chain_access(warrantList, tool, args, rootKeyHex.trim(), true);
+      setVerifyResult(result);
+    } catch (e) {
+      setVerifyResult({ authorized: false, reason: `Error: ${e instanceof Error ? e.message : 'Unknown'}` });
+    }
+  };
+
+  const validCount = warrants.filter(w => w.decoded).length;
 
   return (
     <div className="panel">
       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
         <span style={{ fontSize: '18px' }}>🔗</span>
-        <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Delegation Chain Tester</h2>
+        <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Chain Verifier</h2>
+        <span style={{ fontSize: '11px', color: 'var(--muted)', marginLeft: 'auto' }}>
+          {validCount}/{warrants.length} warrants decoded
+        </span>
       </div>
 
       {/* Chain Visualization */}
       <div className="chain-tester">
-        {nodes.map((node, i) => (
-          <div key={node.id}>
-            <div
-              className={`chain-tester-node ${selectedNode === node.id ? 'selected' : ''} ${i === 0 ? 'root' : ''}`}
-              onClick={() => setSelectedNode(selectedNode === node.id ? null : node.id)}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontWeight: 600, fontSize: '13px' }}>{node.name}</span>
-                <span className="depth-badge">depth {node.depth}</span>
-              </div>
-              <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '6px' }}>
-                Tools: {node.tools.join(', ') || 'None'}
-              </div>
-              <div style={{ fontSize: '10px', color: 'var(--accent)', marginTop: '4px' }}>
-                {node.attenuations}
-              </div>
-            </div>
-
-            {/* Editor for selected node */}
-            {selectedNode === node.id && (
-              <div className="chain-node-editor">
-                <div style={{ marginBottom: '8px' }}>
-                  <label className="label">Name</label>
-                  <input className="input" value={node.name} onChange={e => updateNode(node.id, 'name', e.target.value)} />
-                </div>
-                <div style={{ marginBottom: '8px' }}>
-                  <label className="label">Tools (comma-separated)</label>
-                  <input
-                    className="input"
-                    value={node.tools.join(', ')}
-                    onChange={e => {
-                      // Keep trailing comma visible while typing
-                      const raw = e.target.value;
-                      const tools = raw.split(',').map(s => s.trim());
-                      // Only filter empty strings if not ending with comma
-                      const filtered = raw.endsWith(',') || raw.endsWith(', ')
-                        ? tools
-                        : tools.filter(Boolean);
-                      updateNode(node.id, 'tools', filtered);
-                    }}
-                    onBlur={e => {
-                      // Clean up on blur
-                      const tools = e.target.value.split(',').map(s => s.trim()).filter(Boolean);
-                      updateNode(node.id, 'tools', tools);
-                    }}
-                  />
-                </div>
-                <div style={{ marginBottom: '8px' }}>
-                  <label className="label">Attenuations</label>
-                  <input className="input" value={node.attenuations} onChange={e => updateNode(node.id, 'attenuations', e.target.value)} />
-                </div>
-                {i > 0 && (
-                  <button onClick={() => removeNode(node.id)} className="btn btn-secondary" style={{ width: '100%', fontSize: '11px' }}>
-                    Remove & Truncate Chain
-                  </button>
+        {warrants.map((warrant, i) => (
+          <div key={warrant.id}>
+            <div className={`chain-tester-node ${warrant.decoded ? '' : 'empty'} ${i === 0 ? 'root' : ''}`}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <span style={{ fontWeight: 600, fontSize: '13px' }}>
+                  {i === 0 ? '🔐 Root Warrant' : `📋 Warrant ${i + 1}`}
+                </span>
+                {warrant.decoded && (
+                  <span className="depth-badge">depth {warrant.decoded.depth}</span>
+                )}
+                {i > 1 && (
+                  <button
+                    onClick={() => removeWarrant(warrant.id)}
+                    className="close-btn"
+                    style={{ marginLeft: '8px' }}
+                  >✕</button>
                 )}
               </div>
-            )}
+
+              <textarea
+                className="input"
+                style={{ height: '60px', fontSize: '10px', fontFamily: 'monospace' }}
+                placeholder={i === 0 ? 'Paste root warrant (base64)...' : 'Paste delegated warrant...'}
+                value={warrant.b64}
+                onChange={e => updateWarrant(warrant.id, e.target.value)}
+              />
+
+              {warrant.error && (
+                <div style={{ fontSize: '11px', color: 'var(--red)', marginTop: '6px' }}>
+                  ❌ {warrant.error}
+                </div>
+              )}
+
+              {warrant.decoded && (
+                <div style={{ fontSize: '11px', marginTop: '8px', padding: '8px', background: 'var(--surface-2)', borderRadius: '6px' }}>
+                  <div style={{ color: 'var(--green)', marginBottom: '4px' }}>✓ Valid warrant</div>
+                  <div style={{ color: 'var(--muted)' }}>
+                    Tools: <span style={{ color: 'var(--text)' }}>{(warrant.decoded.tools || []).join(', ') || 'None'}</span>
+                  </div>
+                  <div style={{ color: 'var(--muted)' }}>
+                    Holder: <span style={{ color: 'var(--text)', fontFamily: 'monospace', fontSize: '10px' }}>
+                      {truncate(warrant.decoded.authorized_holder || '', 16)}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Connector arrow */}
-            {i < nodes.length - 1 && (
+            {i < warrants.length - 1 && (
               <div className="chain-arrow">
                 <div className="chain-arrow-line" />
                 <div className="chain-arrow-head">▼</div>
-                <div className="chain-arrow-label">delegates to</div>
+                <div className="chain-arrow-label">
+                  {warrant.decoded && warrants[i + 1]?.decoded
+                    ? (warrant.decoded.authorized_holder === warrants[i + 1].decoded?.issuer
+                      ? '✓ delegates to'
+                      : '⚠️ holder mismatch!')
+                    : 'delegates to'}
+                </div>
               </div>
             )}
           </div>
         ))}
       </div>
 
-      <button onClick={addNode} className="btn btn-secondary" style={{ width: '100%', marginTop: '16px' }}>
-        + Add Delegate
+      <button onClick={addWarrant} className="btn btn-secondary" style={{ width: '100%', marginTop: '16px' }}>
+        + Add Warrant to Chain
       </button>
 
-      {/* Attenuation Warnings */}
-      {nodes.length > 1 && (
-        <div className="chain-analysis">
-          <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '8px' }}>📊 Chain Analysis</div>
-          {nodes.slice(1).map((node, i) => {
-            const parent = nodes[i];
-            const toolsRemoved = parent.tools.filter(t => !node.tools.includes(t));
-            return (
-              <div key={node.id} className="attenuation-item">
-                <span style={{ color: 'var(--green)' }}>✓</span>
-                <span>
-                  {parent.name} → {node.name}:
-                  {toolsRemoved.length > 0 && <span style={{ color: 'var(--red)' }}> -{toolsRemoved.join(', ')}</span>}
-                  {toolsRemoved.length === 0 && <span style={{ color: 'var(--muted)' }}> (same tools)</span>}
-                </span>
-              </div>
-            );
-          })}
-          {nodes.length > 4 && (
-            <div className="attenuation-item" style={{ color: 'var(--yellow)' }}>
-              <span>⚠️</span>
-              <span>Deep chain ({nodes.length} levels) - consider flattening</span>
-            </div>
-          )}
-        </div>
-      )}
+      {/* Authorization Test */}
+      <div style={{ marginTop: '20px', padding: '16px', background: 'var(--surface-2)', borderRadius: '8px' }}>
+        <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>🛡️ Test Authorization</div>
 
-      <Explainer title="Monotonic Delegation" docLink="https://tenuo.dev/concepts#monotonic-attenuation">
-        <p>In Tenuo, capabilities can only <strong>shrink</strong> as they delegate:</p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+          <div>
+            <label className="label">Tool</label>
+            <input className="input" value={tool} onChange={e => setTool(e.target.value)} placeholder="read_file" />
+          </div>
+          <div>
+            <label className="label">Root Key (hex)</label>
+            <input
+              className="input"
+              value={rootKeyHex}
+              onChange={e => setRootKeyHex(e.target.value)}
+              placeholder="Issuer's public key (auto-filled from root)"
+              style={{ fontFamily: 'monospace', fontSize: '10px' }}
+            />
+          </div>
+        </div>
+
+        <div style={{ marginBottom: '12px' }}>
+          <label className="label">Arguments (JSON)</label>
+          <textarea
+            className="input"
+            style={{ height: '50px' }}
+            value={argsJson}
+            onChange={e => setArgsJson(e.target.value)}
+            placeholder='{"path": "docs/readme.md"}'
+          />
+        </div>
+
+        <button onClick={verifyChain} className="btn btn-primary" style={{ width: '100%' }} disabled={validCount < 1}>
+          Verify Chain Authorization
+        </button>
+
+        {verifyResult && (
+          <div style={{
+            marginTop: '12px',
+            padding: '12px',
+            borderRadius: '8px',
+            background: verifyResult.authorized ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+            border: `1px solid ${verifyResult.authorized ? 'var(--green)' : 'var(--red)'}`,
+          }}>
+            <div style={{
+              fontSize: '14px',
+              fontWeight: 600,
+              color: verifyResult.authorized ? 'var(--green)' : 'var(--red)',
+              marginBottom: '4px'
+            }}>
+              {verifyResult.authorized ? '✓ Chain Authorized' : '✗ Chain Denied'}
+            </div>
+            {verifyResult.reason && (
+              <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                {verifyResult.reason}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <Explainer title="How Chain Verification Works" docLink="https://tenuo.dev/concepts#delegation-chains">
+        <p>A valid delegation chain requires:</p>
         <ul style={{ marginTop: '8px', paddingLeft: '20px' }}>
-          <li>Tools can be removed, never added</li>
-          <li>Constraints can be tightened, never loosened</li>
-          <li>TTL can be shortened, never extended</li>
+          <li><strong>Holder → Issuer</strong>: Each warrant's holder must be the next warrant's issuer</li>
+          <li><strong>Monotonic attenuation</strong>: Tools/constraints can only shrink, never grow</li>
+          <li><strong>Signature chain</strong>: Each delegation must be signed by the parent's holder</li>
+          <li><strong>TTL cascade</strong>: Child TTL ≤ parent TTL</li>
         </ul>
-        <p style={{ marginTop: '8px' }}>This ensures that a compromised agent can never exceed its granted authority.</p>
+        <p style={{ marginTop: '8px' }}>The root key must match the first warrant's issuer.</p>
       </Explainer>
     </div>
   );
@@ -1551,13 +1601,24 @@ const DiffViewer = ({ samples }: { samples: Record<string, SampleDef> }) => {
 
   const getDiff = (a: unknown, b: unknown, path: string = ''): { path: string; a: unknown; b: unknown }[] => {
     const diffs: { path: string; a: unknown; b: unknown }[] = [];
-    if (typeof a !== typeof b || JSON.stringify(a) !== JSON.stringify(b)) {
-      diffs.push({ path: path || 'root', a, b });
-    }
-    if (typeof a === 'object' && a && typeof b === 'object' && b) {
-      const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+
+    const isObjA = typeof a === 'object' && a !== null;
+    const isObjB = typeof b === 'object' && b !== null;
+
+    if (isObjA && isObjB) {
+      // Both are objects -> recurse only
+      const keys = new Set([...Object.keys(a as object), ...Object.keys(b as object)]);
       for (const key of keys) {
         diffs.push(...getDiff((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key], path ? `${path}.${key}` : key));
+      }
+    } else if (a !== b) {
+      // One is primitive, or types differ (e.g. null vs object), or primitives differ
+      // Note: This simple check might miss deep equality for non-object types if passed by reference, 
+      // but here we deal with JSON decoded values.
+      // We use JSON.stringify for safe comparison of value types that might be visually identical but different references?
+      // Actually standard !== is fine for primitives.
+      if (JSON.stringify(a) !== JSON.stringify(b)) {
+        diffs.push({ path: path || 'root', a, b });
       }
     }
     return diffs;
@@ -1658,13 +1719,19 @@ const HistorySidebar = ({
   onLoad: (item: HistoryItem) => void;
   onClear: () => void;
 }) => {
+  const handleClear = () => {
+    onClear();
+  };
+
   if (history.length === 0) return null;
 
   return (
     <div className="history-sidebar">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
         <span style={{ fontSize: '12px', color: 'var(--muted)' }}>📜 History</span>
-        <button onClick={onClear} className="close-btn" title="Clear history">🗑</button>
+        <button onClick={handleClear} className="btn btn-secondary" style={{ padding: '4px 8px', fontSize: '10px' }} title="Clear all history">
+          🗑 Clear
+        </button>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
         {history.slice(0, 10).map(item => (
@@ -1689,8 +1756,6 @@ function App() {
   const [warrantB64, setWarrantB64] = useState("");
   const [tool, setTool] = useState("");
   const [argsJson, setArgsJson] = useState("{}");
-  const [rootKeyHex, setRootKeyHex] = useState("");
-  const [dryRun, setDryRun] = useState(true);
   const [decoded, setDecoded] = useState<DecodedWarrant | string | null>(null);
   const [authResult, setAuthResult] = useState<AuthResult | null>(null);
   const [shareUrl, setShareUrl] = useState("");
@@ -1699,21 +1764,26 @@ function App() {
   const [activeTab, setActiveTab] = useState<'decode' | 'debug' | 'code'>('decode');
   const [mode, setMode] = useState<'decoder' | 'builder' | 'chain' | 'diff'>('decoder');
   const [builderPreview, setBuilderPreview] = useState<unknown>(null);
-  const [popSignature, setPopSignature] = useState('');
-  const [, setPopPublicKey] = useState('');
   const [showShortcuts, setShowShortcuts] = useState(true);
   const [samples, setSamples] = useState<Record<string, SampleDef>>({});
+  const [pemDetected, setPemDetected] = useState(false);
 
   // Initialize WASM and generate fresh samples
   useEffect(() => {
-    init().then(() => {
-      init_panic_hook();
-      setWasmReady(true);
-      // Generate fresh samples with 1-hour TTL
-      const freshSamples = generateFreshSamples();
-      setSamples(freshSamples);
-      console.log(`Generated ${Object.keys(freshSamples).length} fresh sample warrants`);
-    }).catch(err => console.error("WASM init failed:", err));
+    const initWasm = async () => {
+      try {
+        await init();  // Must call init() first to load WASM!
+        init_panic_hook();
+        setWasmReady(true);
+        // Generate fresh samples with 1-hour TTL
+        const freshSamples = generateFreshSamples();
+        setSamples(freshSamples);
+      } catch (err) {
+        console.error("[Tenuo Explorer] WASM init failed:", err);
+        console.error("[Tenuo Explorer] Try running: npm run wasm");
+      }
+    };
+    initWasm();
   }, []);
 
   // Load history from localStorage
@@ -1739,7 +1809,6 @@ function App() {
         if (parsed.warrant) setWarrantB64(parsed.warrant);
         if (parsed.tool) setTool(parsed.tool);
         if (parsed.args) setArgsJson(parsed.args);
-        if (parsed.root) setRootKeyHex(parsed.root);
       } catch { }
     }
   }, []);
@@ -1769,10 +1838,10 @@ function App() {
           setMode('builder');
         } else if (e.key === '3') {
           e.preventDefault();
-          setMode('chain');
+          setMode('diff');
         } else if (e.key === '4') {
           e.preventDefault();
-          setMode('diff');
+          setMode('chain');
         } else if (e.key === '/' && e.shiftKey) {
           // ⌘? to toggle shortcuts
           e.preventDefault();
@@ -1785,9 +1854,9 @@ function App() {
   }, [warrantB64, tool, argsJson, wasmReady, mode]);
 
   const generateShareUrl = useCallback(() => {
-    const state = { warrant: warrantB64, tool, args: argsJson, root: rootKeyHex };
+    const state = { warrant: warrantB64, tool, args: argsJson };
     return `${window.location.origin}${window.location.pathname}?s=${btoa(JSON.stringify(state))}`;
-  }, [warrantB64, tool, argsJson, rootKeyHex]);
+  }, [warrantB64, tool, argsJson]);
 
   const handleLoadSample = (key: string) => {
     const sample = samples[key];
@@ -1795,7 +1864,6 @@ function App() {
       setWarrantB64(sample.warrant);
       setTool(sample.tool);
       setArgsJson(sample.args);
-      setRootKeyHex(sample.rootKey);
       setDecoded(null);
       setAuthResult(null);
       setShowSamples(false);
@@ -1807,26 +1875,27 @@ function App() {
     warrant?: string;
     tool?: string;
     args?: string;
-    rootKey?: string;
   }>({});
 
   const validateInputs = (forAuth: boolean = false): boolean => {
     const errors: typeof validationErrors = {};
-    
+
     // Validate warrant (required for both decode and auth)
     if (!warrantB64.trim()) {
       errors.warrant = 'Warrant is required';
     } else {
-      // Check if it looks like base64
-      const base64Regex = /^[A-Za-z0-9+/]+=*$/;
-      const cleanWarrant = warrantB64.trim().replace(/\s/g, '');
-      if (!base64Regex.test(cleanWarrant)) {
+      const { b64 } = cleanInput(warrantB64);
+
+      // Check if it looks like base64 or base64url
+      const base64Regex = /^[A-Za-z0-9+/\-_]+=*$/;
+
+      if (!base64Regex.test(b64)) {
         errors.warrant = 'Invalid base64 format. Warrants should be base64-encoded.';
-      } else if (cleanWarrant.length < 50) {
+      } else if (b64.length < 50) {
         errors.warrant = 'Warrant seems too short. Did you paste the full warrant?';
       }
     }
-    
+
     if (forAuth) {
       // Validate tool (required for auth)
       if (!tool.trim()) {
@@ -1834,7 +1903,7 @@ function App() {
       } else if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tool.trim())) {
         errors.tool = 'Tool name should be alphanumeric (e.g., read_file, send_email)';
       }
-      
+
       // Validate args JSON
       if (argsJson.trim()) {
         try {
@@ -1846,29 +1915,30 @@ function App() {
           errors.args = 'Invalid JSON. Check for missing quotes or commas.';
         }
       }
-      
-      // Validate root key hex (optional but must be valid if provided)
-      if (rootKeyHex.trim()) {
-        const cleanHex = rootKeyHex.trim().toLowerCase();
-        if (!/^[a-f0-9]+$/.test(cleanHex)) {
-          errors.rootKey = 'Root key must be hexadecimal (0-9, a-f)';
-        } else if (cleanHex.length !== 64) {
-          errors.rootKey = `Root key should be 64 hex characters (got ${cleanHex.length})`;
-        }
-      }
+
     }
-    
+
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
   };
 
   const handleDecode = () => {
-    if (!wasmReady) return;
-    if (!validateInputs(false)) return;
-    
+    if (!wasmReady) {
+      console.warn('[Tenuo Explorer] Decode blocked: WASM not ready');
+      return;
+    }
+    if (!validateInputs(false)) {
+      console.warn('[Tenuo Explorer] Decode blocked: validation failed', validationErrors);
+      return;
+    }
+
     try {
-      const result = decode_warrant(warrantB64.trim());
+      console.log('[Tenuo Explorer] Decoding warrant...');
+      const { b64, isPem } = cleanInput(warrantB64);
+      const result = decode_warrant(b64);
+      console.log('[Tenuo Explorer] Decode successful:', result);
       setDecoded(result);
+      setPemDetected(isPem);
       setAuthResult(null);
       setValidationErrors({});
 
@@ -1884,15 +1954,17 @@ function App() {
       setHistory(prev => [newItem, ...prev.slice(0, 19)]);
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : 'Unknown error';
+      console.error('[Tenuo Explorer] Decode failed:', e);
       setValidationErrors({ warrant: `Decode failed: ${errMsg}` });
       setDecoded(null);
+      setPemDetected(false);
     }
   };
 
   const handleAuthorize = () => {
     if (!wasmReady) return;
     if (!validateInputs(true)) return;
-    
+
     try {
       const args = JSON.parse(argsJson || '{}');
 
@@ -1909,14 +1981,11 @@ function App() {
         }
       }
 
-      // Use real PoP if available and not in dry run mode
-      if (!dryRun && popSignature) {
-        const result = check_access_with_pop(warrantB64.trim(), tool.trim(), args, rootKeyHex.trim(), popSignature);
-        setAuthResult(result);
-      } else {
-        const result = check_access(warrantB64.trim(), tool.trim(), args, rootKeyHex.trim(), dryRun);
-        setAuthResult(result);
-      }
+      // For single-warrant auth, the trusted root is the warrant's own issuer
+      // Decode inline if not already decoded
+      const issuer = decodedWarrant?.issuer || decode_warrant(warrantB64.trim()).issuer;
+      const result = check_access(warrantB64.trim(), tool.trim(), args, issuer, true);
+      setAuthResult(result);
       setValidationErrors({});
     } catch (e) {
       setAuthResult({ authorized: false, reason: `Error: ${e instanceof Error ? e.message : 'Invalid input'}` });
@@ -2013,11 +2082,11 @@ function App() {
             <button onClick={() => setMode('builder')} className={`mode-btn ${mode === 'builder' ? 'active' : ''}`}>
               🏗️ Builder
             </button>
-            <button onClick={() => setMode('chain')} className={`mode-btn ${mode === 'chain' ? 'active' : ''}`}>
-              🔗 Chain
-            </button>
             <button onClick={() => setMode('diff')} className={`mode-btn ${mode === 'diff' ? 'active' : ''}`}>
               📊 Diff
+            </button>
+            <button onClick={() => setMode('chain')} className={`mode-btn ${mode === 'chain' ? 'active' : ''}`}>
+              📚 Delegation
             </button>
           </div>
 
@@ -2028,25 +2097,105 @@ function App() {
           {/* Builder Mode */}
           {mode === 'builder' && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
-              <WarrantBuilder onGenerate={setBuilderPreview} />
+              <WarrantBuilder onGenerate={(config) => {
+                // Generate real warrant from config using WASM
+                const result = create_warrant_from_config(config);
+                // Store both the WASM result and the original config for code generation
+                setBuilderPreview({ ...result, config });
+              }} />
               <div className="panel">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
                   <span style={{ fontSize: '18px' }}>👁️</span>
-                  <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Preview</h2>
+                  <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Generated Warrant</h2>
                 </div>
                 {builderPreview ? (
                   <div>
-                    <pre className="code-block" style={{ maxHeight: '300px' }}>
-                      {JSON.stringify(builderPreview, null, 2)}
-                    </pre>
-                    <div style={{ marginTop: '12px' }}>
-                      <CodeGenerator decoded={{ id: '', issuer: '', tools: Object.keys((builderPreview as { tools: Record<string, unknown> }).tools || {}), capabilities: (builderPreview as { tools: Record<string, unknown> }).tools || {}, issued_at: 0, expires_at: 0, authorized_holder: '', depth: 0 }} tool={Object.keys((builderPreview as { tools: Record<string, unknown> }).tools || {})[0] || ''} args="{}" />
-                    </div>
+                    {(builderPreview as { error?: string }).error ? (
+                      <div className="result-box error" style={{ padding: '16px' }}>
+                        <span style={{ fontSize: '24px' }}>⚠️</span>
+                        <p style={{ color: 'var(--red)', fontWeight: 600 }}>{(builderPreview as { error: string }).error}</p>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Warrant Base64 */}
+                        <div style={{ marginBottom: '16px' }}>
+                          <label className="label">Warrant (base64)</label>
+                          <div style={{ position: 'relative' }}>
+                            <textarea
+                              className="input"
+                              readOnly
+                              value={(builderPreview as { warrant_b64: string }).warrant_b64}
+                              style={{ height: '80px', fontSize: '10px', fontFamily: 'monospace' }}
+                            />
+                            <div style={{ position: 'absolute', top: '8px', right: '8px', display: 'flex', gap: '6px' }}>
+                              <button
+                                onClick={() => navigator.clipboard.writeText((builderPreview as { warrant_b64: string }).warrant_b64)}
+                                className="btn btn-secondary"
+                                style={{ fontSize: '11px', padding: '4px 8px' }}
+                              >
+                                📋 Copy
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setMode('chain');
+                                  // Small delay to let mode change render
+                                  setTimeout(() => {
+                                    const chainInput = document.querySelector('.chain-tester textarea') as HTMLTextAreaElement;
+                                    if (chainInput) {
+                                      chainInput.value = (builderPreview as { warrant_b64: string }).warrant_b64;
+                                      chainInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                    }
+                                  }, 100);
+                                }}
+                                className="btn btn-secondary"
+                                style={{ fontSize: '11px', padding: '4px 8px' }}
+                              >
+                                📚 Use in Delegation
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Keys */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                          <div>
+                            <label className="label">Issuer Public Key</label>
+                            <input className="input" readOnly value={(builderPreview as { issuer_public_key_hex: string }).issuer_public_key_hex} style={{ fontSize: '9px', fontFamily: 'monospace' }} />
+                          </div>
+                          <div>
+                            <label className="label">Holder Public Key</label>
+                            <input className="input" readOnly value={(builderPreview as { holder_public_key_hex: string }).holder_public_key_hex} style={{ fontSize: '9px', fontFamily: 'monospace' }} />
+                          </div>
+                        </div>
+
+                        {/* Tools */}
+                        <div style={{ marginBottom: '16px' }}>
+                          <label className="label">Tools: {((builderPreview as { tools: string[] }).tools || []).join(', ')}</label>
+                        </div>
+
+                        {/* Code Generator */}
+                        <CodeGenerator
+                          decoded={{
+                            id: '',
+                            issuer: (builderPreview as { issuer_public_key_hex: string }).issuer_public_key_hex,
+                            tools: (builderPreview as { tools: string[] }).tools || [],
+                            // Use the config tools as capabilities for code generation
+                            capabilities: (builderPreview as { config?: { tools?: Record<string, unknown> } }).config?.tools || {},
+                            issued_at: Math.floor(Date.now() / 1000),
+                            expires_at: Math.floor(Date.now() / 1000) + ((builderPreview as { config?: { ttl?: number } }).config?.ttl || 3600),
+                            authorized_holder: (builderPreview as { holder_public_key_hex: string }).holder_public_key_hex,
+                            depth: 0
+                          }}
+                          tool={(builderPreview as { tools: string[] }).tools?.[0] || ''}
+                          args="{}"
+                        />
+                      </>
+                    )}
                   </div>
                 ) : (
                   <div className="empty-state">
                     <div style={{ fontSize: '40px', marginBottom: '12px', opacity: 0.2 }}>👁️</div>
-                    <p>Click "Generate Preview" to see the warrant structure</p>
+                    <p>Click "Generate Preview" to create a real warrant</p>
                   </div>
                 )}
               </div>
@@ -2097,7 +2246,7 @@ function App() {
                         {showSamples && (
                           <div className="samples-dropdown" style={{ right: 0, left: 'auto', transform: 'none', minWidth: '280px' }}>
                             <div style={{ padding: '8px 12px', fontSize: '10px', color: 'var(--muted)', borderBottom: '1px solid var(--border)', marginBottom: '4px' }}>
-                              🔄 Fresh warrants (1h TTL) - generated on page load
+                              🔄 Fresh warrants generated on page load. Try ⏰ Expiring to watch TTL countdown!
                             </div>
                             {Object.keys(samples).length === 0 ? (
                               <div style={{ padding: '12px', fontSize: '12px', color: 'var(--muted)' }}>Loading samples...</div>
@@ -2129,20 +2278,6 @@ function App() {
                         />
                       </div>
 
-                      <div>
-                        <label className="label">
-                          <Tooltip content="The public key of the root issuer for signature verification">
-                            Trusted Root Key (Hex)
-                          </Tooltip>
-                        </label>
-                        <input
-                          className="input"
-                          placeholder="64-character hex string..."
-                          value={rootKeyHex}
-                          onChange={(e) => setRootKeyHex(e.target.value)}
-                        />
-                      </div>
-
                       <button onClick={handleDecode} disabled={!wasmReady || !warrantB64} className="btn btn-secondary">
                         {wasmReady ? 'Decode Warrant' : 'Loading WASM...'}
                       </button>
@@ -2152,12 +2287,10 @@ function App() {
                         currentWarrant={warrantB64}
                         currentTool={tool}
                         currentArgs={argsJson}
-                        currentRootKey={rootKeyHex}
                         onLoad={(preset) => {
                           setWarrantB64(preset.warrant);
                           setTool(preset.tool);
                           setArgsJson(preset.args);
-                          setRootKeyHex(preset.rootKey);
                         }}
                       />
                     </div>
@@ -2196,39 +2329,17 @@ function App() {
                         <textarea className="input" style={{ height: '80px', minHeight: '50px', maxHeight: '200px', resize: 'vertical' }} value={argsJson} onChange={(e) => setArgsJson(e.target.value)} />
                       </div>
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        <div className={`toggle ${dryRun ? 'active' : ''}`} onClick={() => setDryRun(!dryRun)}>
-                          <div className="toggle-knob" />
-                        </div>
-                        <Tooltip content="Skip Proof-of-Possession signature verification for testing">
-                          <span style={{ fontSize: '13px', color: 'var(--muted)' }}>Dry run (skip PoP)</span>
-                        </Tooltip>
-                      </div>
-
-                      <Explainer title="What is Proof-of-Possession (PoP)?" docLink="https://tenuo.dev/security">
+                      <Explainer title="About Proof-of-Possession (PoP)" docLink="https://tenuo.dev/security">
                         <p><strong>Proof-of-Possession</strong> prevents stolen warrants from being used by attackers.</p>
-                        <p style={{ marginTop: '8px' }}>When authorizing, the holder must sign a challenge with their private key, proving they possess the key that matches the warrant's <code>authorized_holder</code> public key.</p>
-                        <p style={{ marginTop: '8px' }}>Without PoP: Anyone who intercepts a warrant can use it.</p>
-                        <p>With PoP: Only the legitimate holder can use the warrant.</p>
-                        <p style={{ marginTop: '8px', color: 'var(--accent)' }}>💡 Dry run skips this check for playground testing.</p>
+                        <p style={{ marginTop: '8px' }}>In production, the holder signs each request with their private key. The signature proves they possess the key matching the warrant's <code>authorized_holder</code>.</p>
+                        <p style={{ marginTop: '8px' }}><strong>Why this matters:</strong></p>
+                        <p>• Without PoP: Intercepted warrant = full access</p>
+                        <p>• With PoP: Intercepted warrant = useless (no private key)</p>
+                        <p style={{ marginTop: '8px', color: 'var(--accent)' }}>💡 This explorer runs in <strong>dry run mode</strong> (policy-only check). Real PoP requires the holder's private key, which we don't have.</p>
                       </Explainer>
-
-                      {/* PoP Signature Simulator */}
-                      {!dryRun && (
-                        <PopSimulator
-                          warrant={warrantB64}
-                          tool={tool}
-                          args={argsJson}
-                          onPopGenerated={(pop, pubKey) => {
-                            setPopSignature(pop);
-                            setPopPublicKey(pubKey);
-                          }}
-                        />
-                      )}
 
                       <button onClick={handleAuthorize} disabled={!wasmReady || !warrantB64 || !tool} className="btn btn-primary">
                         Check Authorization
-                        {popSignature && !dryRun && <span style={{ marginLeft: '6px', fontSize: '10px' }}>+ PoP</span>}
                       </button>
                     </div>
                   </div>
@@ -2262,6 +2373,11 @@ function App() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                           <span style={{ fontSize: '18px' }}>🔍</span>
                           <h2 style={{ fontSize: '15px', fontWeight: 600 }}>Decoded Warrant</h2>
+                          {pemDetected && (
+                            <span style={{ background: 'rgba(34, 197, 94, 0.1)', color: 'var(--green)', fontSize: '10px', padding: '2px 6px', borderRadius: '4px', border: '1px solid var(--green)' }}>
+                              ✓ PEM armor stripped
+                            </span>
+                          )}
                         </div>
                         {decodedWarrant && warrantB64 && (
                           <button onClick={handleShare} className="btn btn-secondary" style={{ padding: '6px 10px', fontSize: '11px' }}>
@@ -2330,10 +2446,7 @@ function App() {
 
                   {/* Debug Panel */}
                   {activeTab === 'debug' && decodedWarrant && (
-                    <>
-                      <VerificationSteps decoded={decodedWarrant} tool={tool} args={argsJson} authResult={authResult} />
-                      <TestCaseGenerator decoded={decodedWarrant} tool={tool} />
-                    </>
+                    <VerificationSteps decoded={decodedWarrant} tool={tool} args={argsJson} authResult={authResult} />
                   )}
 
                   {/* Code Panel */}
@@ -2365,7 +2478,7 @@ function App() {
                         </p>
                         {authResult.authorized ? (
                           <p style={{ fontSize: '13px', color: 'var(--muted)' }}>
-                            Access permitted{dryRun && <span style={{ opacity: 0.6 }}> · PoP skipped</span>}
+                            Policy check passed <span style={{ opacity: 0.6 }}>(dry run)</span>
                           </p>
                         ) : (
                           <>
@@ -2392,22 +2505,16 @@ function App() {
           <div className="shortcuts-help">
             <button
               onClick={() => setShowShortcuts(false)}
+              className="close-btn"
               style={{
                 position: 'absolute',
-                right: '8px',
+                right: '6px',
                 top: '50%',
                 transform: 'translateY(-50%)',
-                background: 'none',
-                border: 'none',
-                color: 'var(--muted)',
-                cursor: 'pointer',
-                fontSize: '14px',
-                padding: '4px',
-                lineHeight: 1,
               }}
               title="Hide shortcuts (⌘?)"
             >
-              ×
+              ✕
             </button>
             <div className="shortcut"><kbd>⌘</kbd><kbd>↵</kbd><span>Decode</span></div>
             <div className="shortcut"><kbd>⌘</kbd><kbd>⇧</kbd><kbd>↵</kbd><span>Auth</span></div>
@@ -2422,16 +2529,16 @@ function App() {
         {/* Footer */}
         <footer style={{ borderTop: '1px solid var(--border)', padding: '32px 24px' }}>
           <div style={{ maxWidth: '1200px', margin: '0 auto', textAlign: 'center' }}>
-            <div style={{ display: 'flex', justifyContent: 'center', gap: '24px', marginBottom: '12px', fontSize: '13px' }}>
-              <a href="https://crates.io/crates/tenuo" className="nav-link">🦀 Rust Core</a>
-              <a href="https://pypi.org/project/tenuo/" className="nav-link">🐍 Python SDK</a>
-              <span style={{ color: 'var(--muted)' }}>⚡ ~27μs verification</span>
-              <span style={{ color: 'var(--muted)' }}>🔐 WASM · 100% client-side</span>
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '24px', marginBottom: '12px', fontSize: '13px' }}>
+              <a href="https://crates.io/crates/tenuo" className="nav-link">🦀 Rust</a>
+              <a href="https://pypi.org/project/tenuo/" className="nav-link">🐍 Python</a>
+              <span style={{ color: 'var(--muted)' }}>🔐 100% client-side WASM</span>
             </div>
-            <div style={{ display: 'flex', justifyContent: 'center', gap: '16px', fontSize: '12px', color: 'var(--muted)' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '16px', fontSize: '12px', color: 'var(--muted)' }}>
               <a href="https://github.com/tenuo-ai/tenuo" style={{ color: 'var(--muted)', textDecoration: 'none' }}>GitHub</a>
-              <a href="https://tenuo.dev/quickstart" style={{ color: 'var(--muted)', textDecoration: 'none' }}>Quick Start</a>
-              <a href="https://tenuo.dev/api-reference" style={{ color: 'var(--muted)', textDecoration: 'none' }}>API Reference</a>
+              <span>·</span>
+              <a href="https://tenuo.dev/quickstart" style={{ color: 'var(--muted)', textDecoration: 'none' }}>Docs</a>
+              <span>·</span>
               <span>MIT / Apache-2.0</span>
             </div>
           </div>

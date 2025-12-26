@@ -1,4 +1,5 @@
 import pytest
+import tenuo.testing  # noqa: F401
 import pickle
 import json
 import re
@@ -45,8 +46,8 @@ class TestKeyLeaks:
     def test_bound_warrant_repr_redacts_key(self):
         """BoundWarrant repr should show it has a key, but not THE key."""
         key = SigningKey.generate()
-        warrant, _ = Warrant.quick_issue(["search"], ttl=300)
-        bound = warrant.bind_key(key)
+        warrant, _ = Warrant.quick_mint(["search"], ttl=300)
+        bound = warrant.bind(key)
         
         repr_str = repr(bound)
         assert "KEY_BOUND=True" in repr_str
@@ -57,8 +58,8 @@ class TestKeyLeaks:
     def test_bound_warrant_pickle_fails(self):
         """BoundWarrant MUST raise TypeError on pickle."""
         key = SigningKey.generate()
-        warrant, _ = Warrant.quick_issue(["search"], ttl=300)
-        bound = warrant.bind_key(key)
+        warrant, _ = Warrant.quick_mint(["search"], ttl=300)
+        bound = warrant.bind(key)
         
         with pytest.raises(TypeError, match="BoundWarrant cannot be (serialized|pickled)"):
             pickle.dumps(bound)
@@ -66,8 +67,8 @@ class TestKeyLeaks:
     def test_bound_warrant_json_fails(self):
         """BoundWarrant should not be JSON serializable (default behavior)."""
         key = SigningKey.generate()
-        warrant, _ = Warrant.quick_issue(["search"], ttl=300)
-        bound = warrant.bind_key(key)
+        warrant, _ = Warrant.quick_mint(["search"], ttl=300)
+        bound = warrant.bind(key)
         
         # Standard json dumps raises TypeError for custom objects
         with pytest.raises(TypeError):
@@ -76,8 +77,8 @@ class TestKeyLeaks:
     def test_bound_warrant_attributes_safe(self):
         """Ensure underlying key is not easily exposed via public attributes."""
         key = SigningKey.generate()
-        warrant, _ = Warrant.quick_issue(["search"], ttl=300)
-        bound = warrant.bind_key(key)
+        warrant, _ = Warrant.quick_mint(["search"], ttl=300)
+        bound = warrant.bind(key)
         
         # We know it has _key, but it shouldn't be in the public dir
         assert "key" not in dir(bound)

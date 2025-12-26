@@ -25,7 +25,7 @@
 //!
 //! // Issue a warrant for cluster upgrades
 //! let warrant = Warrant::builder()
-//!     .tool("upgrade_cluster")
+//!     .capability("upgrade_cluster")
 //!     .constraint("cluster", Pattern::new("staging-*"))
 //!     .ttl(Duration::from_secs(600))
 //!     .build(&keypair)?;
@@ -156,7 +156,7 @@ mod tests {
         let warrant = Warrant::builder()
             .capability("upgrade_cluster", constraints)
             .ttl(Duration::from_secs(600))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 
@@ -176,7 +176,7 @@ mod tests {
         let parent = Warrant::builder()
             .capability("upgrade_cluster", p_constraints)
             .ttl(Duration::from_secs(600))
-            .authorized_holder(keypair.public_key())
+            .holder(keypair.public_key())
             .build(&keypair)
             .unwrap();
 

@@ -1,19 +1,20 @@
 """
-Example: Protecting Third-Party Tools with protect_tools
+Example: Protecting Third-Party Tools with guard()
 
-This example demonstrates how to use `protect_tools` to secure tools that you
-don't own (e.g., from langchain_community) and therefore cannot decorate with @lockdown.
-
+This example demonstrates how to use `guard()` to secure tools that you
+don't own (e.g., from langchain_community) and therefore cannot decorate with @guard.
+Solution: Use `tenuo.langchain.guard()` to wrap them at runtime.
 Scenario:
     We have a "third-party" search tool that we want to use in our agent.
-    We wrap it with `protect_tools` to enforce warrant authorization.
+    We wrap it with `guard()` to enforce warrant authorization.
 """
 
 from typing import Type
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
-from tenuo import SigningKey, Warrant, Pattern, set_warrant_context, set_signing_key_context, AuthorizationError
-from tenuo.langchain import protect_tools
+from tenuo import SigningKey, Warrant, Pattern
+from tenuo.exceptions import AuthorizationError
+from tenuo.langchain import guard
 
 # -----------------------------------------------------------------------------
 # 1. Simulate a Third-Party Tool (e.g., from langchain_community)
@@ -43,13 +44,13 @@ class ThirdPartySearchTool(BaseTool):
 keypair = SigningKey.generate()
 
 # Create a warrant that authorizes "search" but only for queries starting with "safe"
-warrant = (Warrant.builder()
+warrant = (Warrant.mint_builder()
     .capability("search", {
         "query": Pattern("safe*")  # Only allow safe queries
     })
     .holder(keypair.public_key)
     .ttl(3600)
-    .issue(keypair))
+    .mint(keypair))
 
 # -----------------------------------------------------------------------------
 # 3. Protect the Tool
@@ -58,12 +59,9 @@ warrant = (Warrant.builder()
 # Instantiate the "third-party" tool
 original_tool = ThirdPartySearchTool()
 
-# Wrap it with Tenuo protection
-# This applies @lockdown(tool="search") dynamically
-protected_tools = protect_tools(
-    tools=[original_tool],
-    bound_warrant=warrant.bind_key(keypair)
-)
+# Wrap it with Tenuo protection using guard()
+bound = warrant.bind(keypair)
+protected_tools = guard([original_tool], bound)
 protected_search = protected_tools[0]
 
 # -----------------------------------------------------------------------------
@@ -71,26 +69,23 @@ protected_search = protected_tools[0]
 # -----------------------------------------------------------------------------
 
 print(f"Original tool name: {original_tool.name}")
-print(f"Protected tool name: {protected_search.name}")  # type: ignore
+print(f"Protected tool name: {protected_search.name}")
 print("-" * 40)
 
-# Set the warrant context
-with set_warrant_context(warrant), set_signing_key_context(keypair):
-    try:
-        # Allowed query
-        print("Attempting: 'safe query'...")
-        # protect_tools returns a callable function, not a BaseTool, so we call it directly
-        result = protected_search(query="safe query")
-        print(f"✅ Success: {result}")
-    except AuthorizationError as e:
-        print(f"❌ Failed: {e}")
+try:
+    # Allowed query
+    print("Attempting: 'safe query'...")
+    result = protected_search.invoke({"query": "safe query"})
+    print(f"✅ Success: {result}")
+except AuthorizationError as e:
+    print(f"❌ Failed: {e}")
 
-    print("-" * 40)
+print("-" * 40)
 
-    try:
-        # Blocked query
-        print("Attempting: 'unsafe query'...")
-        result = protected_search(query="unsafe query")
-        print(f"✅ Success: {result}")
-    except AuthorizationError as e:
-        print(f"❌ Blocked: {e}")
+try:
+    # Blocked query
+    print("Attempting: 'unsafe query'...")
+    result = protected_search.invoke({"query": "unsafe query"})
+    print(f"✅ Success: {result}")
+except AuthorizationError as e:
+    print(f"❌ Blocked: {e}")

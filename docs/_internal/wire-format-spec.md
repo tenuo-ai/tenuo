@@ -252,16 +252,16 @@ Implementations MUST verify ALL invariants. Missing checks create security vulne
 **❌ Error 1: Child signs own warrant**
 ```rust
 // WRONG - violates I1
-let child = parent.attenuate()
-    .holder(child_kp.public_key())
-    .build(&child_kp);  // Child signs - WRONG!
+let child = parent.grant_builder()
+    .authorized_holder(child_key.public_key())
+    .build(&child_key);  // Child signs - WRONG!
 ```
 
 **✅ Correct:**
 ```rust
-let child = parent.attenuate()
-    .holder(child_kp.public_key())
-    .build(&parent_kp);  // Parent's holder signs - CORRECT
+let child = parent.grant_builder()
+    .authorized_holder(child_key.public_key())
+    .build(&parent_key);  // Parent's holder signs - CORRECT
 ```
 
 **❌ Error 2: Missing issuer check in verifier**
@@ -431,7 +431,27 @@ pub struct WarrantPayload {
 
 **PoP replay window:** 120 seconds (30s window × 4 max windows) - see Proof-of-Possession section.
 
----
+### Integer Value Limits
+
+All integer values in warrants (timestamps, constraint bounds, depth, counts, etc.) MUST fit within the **signed 64-bit range**: −2^63 to 2^63−1.
+
+**Rules:**
+
+| Scenario | Behavior |
+|----------|----------|
+| Integer within i64 range | ✓ Valid |
+| Integer outside i64 range | ✗ Reject warrant |
+| CBOR bignum (tag 2/3) | ✗ Reject warrant |
+
+**Rationale:**
+
+- **JavaScript safety**: JS `Number` only has safe integers up to 2^53; WASM bindings use BigInt for i64
+- **Cross-language consistency**: Rust uses `i64`, Python has arbitrary precision, Go uses `int64`
+- **CBOR allows arbitrary precision**: Without this limit, a malicious warrant could contain 128-bit integers that break some implementations
+
+**Large value escape hatch**: Integers outside i64 range (e.g., snowflake IDs, UUIDs as integers) MUST be encoded as bytes (big-endian) or string. Verifiers will treat these as opaque values for `Exact`/`OneOf` matching.
+
+**Note on Range constraints**: Range bounds use `f64` internally, which loses precision for integers > 2^53. For snowflake IDs or other large integers, use `Exact` or `OneOf` constraints instead.
 
 ## 6. Constraint Types
 
@@ -444,7 +464,7 @@ pub enum ConstraintType {
     Range = 3,
     OneOf = 4,
     Regex = 5,
-    FloatRange = 6,
+    // 6 is reserved for future IntRange with i64 bounds
     NotOneOf = 7,
     Cidr = 8,
     UrlPattern = 9,
@@ -468,16 +488,12 @@ pub enum Constraint {
     /// Glob pattern (*, **, ?)
     Pattern(String),
     
-    /// Numeric range (inclusive)
+    /// Numeric range (uses f64; see precision note below)
     Range {
-        min: Option<i64>,
-        max: Option<i64>,
-    },
-
-    /// Floating-point range (inclusive), finite only
-    FloatRange {
         min: Option<f64>,
         max: Option<f64>,
+        min_inclusive: bool,
+        max_inclusive: bool,
     },
     
     /// Value must be in list
@@ -547,7 +563,7 @@ pub enum Constraint {
 
 **Range precision note:** `Range` (ID 3) uses `f64` bounds. Converting `i64` values larger than 2^53 (9,007,199,254,740,992) to `f64` loses precision. For practical use cases (monetary amounts, counts, file sizes), this is not a concern. For very large integer constraints (e.g., snowflake IDs), use `Exact` or `OneOf` instead.
 
-**Reserved ID 6:** Originally reserved for `FloatRange`, ID 6 is now reserved for a future `IntRange` type with `i64` bounds if precise large-integer range comparisons are needed. Currently, `Range` handles both integer and float values with `f64` precision.
+**Reserved ID 6:** Reserved for a future `IntRange` type with `i64` bounds if precise large-integer range comparisons are needed. Currently, `Range` (ID 3) handles both integer and float values with `f64` precision.
 
 **Attenuation semantics:** For containment/attenuation rules (what “stricter” means), see `docs/constraints.md` (Attenuation Compatibility Matrix). Minimal reminders for some types:
 - `NotOneOf`: child must exclude >= parent’s exclusions (never remove exclusions).
@@ -588,10 +604,10 @@ impl Constraint {
         match self {
             Self::Exact(expected) => value.as_str() == Some(expected),
             Self::Pattern(pattern) => glob_match(pattern, value),
-            Self::Range { min, max } => check_range(value, *min, *max),
-            Self::FloatRange { min, max } => check_float_range(value, *min, *max),
+            Self::Range { min, max, .. } => check_range(value, *min, *max),
             Self::OneOf(allowed) => allowed.contains(&value.to_string()),
             Self::Regex(pattern) => regex_match(pattern, value),
+            // ... other constraint types ...
             
             // Unknown constraints ALWAYS fail (fail closed)
             Self::Unknown { .. } => false,
@@ -611,9 +627,9 @@ impl Constraint {
 
 ### Numeric constraint domains
 
-- `Range` uses signed integers (`i64`), inclusive bounds.  
-- `FloatRange` uses finite `f64`, inclusive bounds. NaN and infinite values are invalid.  
-- Use `FloatRange` for non-integer domains; avoid mixing integers into `FloatRange` to prevent rounding ambiguity.
+- `Range` uses `f64` bounds with configurable inclusivity (`min_inclusive`, `max_inclusive`).
+- NaN and infinite values are invalid and must be rejected.
+- For integers larger than 2^53, use `Exact` or `OneOf` to avoid precision loss.
 
 **Deployment scenario (example):**
 
@@ -703,7 +719,7 @@ pub struct WarrantPayload {
 
 | Prefix | Owner |
 |--------|-------|
-| `tenuo.` | Reserved for future Tenuo use |
+| `tenuo:*` | Reserved for future Tenuo use |
 | Other | Application-defined |
 
 **Recommended key format:** Reverse domain notation (`com.example.trace_id`)
@@ -822,7 +838,6 @@ CBOR Map {
 
     // Auth-critical additional fields (validated like core fields)
     11: issuable_tools (array<string>, optional),
-    // 12: removed (was trust_ceiling)
     13: max_issue_depth (u32, optional),
     14: constraint_bounds (constraint_set, optional),
     15: required_approvers (array<public_key>, optional),
@@ -885,37 +900,40 @@ Verifiers SHOULD reject warrants with unknown `tenuo.*` extensions to fail close
 
 ## 11. Warrant Stack (Transport)
 
-For transport/storage of a warrant and its ancestry, use a `WarrantStack`:
+For transport/storage of a warrant chain, use a `WarrantStack`:
 
-```
-CBOR Array [
-    0: target (SignedWarrant),
-    1: ancestors (array<SignedWarrant>), // ordered parent → root (immediate parent first)
-]
+```rust
+type WarrantStack = Vec<SignedWarrant>; // CBOR Array of Warrants
 ```
 
-**Ancestor ordering:** `ancestors[0]` MUST be the immediate parent of `target`; `ancestors[N-1]` MUST be the root (or closest trusted root).
+- **Order**: Root → Leaf (Root at index 0, Leaf at index N-1).
+- **Semantics**: Used for "Disconnected Verification" where the verifier does not know the intermediate delegates.
+
+### 11.1 Disambiguation (Array vs. Array)
+Both `SignedWarrant` and `WarrantStack` are represented as CBOR Arrays.
+- `SignedWarrant`: `Array(3)` where element 0 is `envelope_version` (**Integer**).
+- `WarrantStack`: `Array(N)` where element 0 is a `SignedWarrant` (**Array**).
+
+**Parsers MUST inspect the first element** to distinguish them:
+- If index 0 is an **Integer** $\rightarrow$ It is a `SignedWarrant`.
+- If index 0 is an **Array** $\rightarrow$ It is a `WarrantStack`.
 
 ### Verification (stack)
 
-1. **Check limits:** `ancestors.len()` MUST NOT exceed `MAX_CHAIN_DEPTH`; total encoded size of the stack MUST NOT exceed 64 KB.  
-2. **Verify leaf:** verify `target` signature; set `current = target`.  
-3. **Walk ancestors in order (parent → root):**  
-   - If `current.payload.parent_hash` is None → stop (root).  
-   - The next ancestor in the list MUST match `current`’s parent: `SHA256(ancestor.payload_bytes) == current.parent_hash`.  
-   - Verify ancestor signature.  
-   - Verify linkage: `current.payload.issuer == ancestor.payload.holder`.  
-   - Set `current = ancestor`.  
-4. **Root trust:** the final `current` MUST be signed by a trusted root key.  
-5. Unknown, duplicate, missing, or out-of-order ancestors MUST fail verification.
-
-**Hash binding:** The parent pointer is content-addressed. The hash is over the raw payload bytes (the same deterministic CBOR bytes that are signed), not the envelope bytes.
-
-**Trusted roots:** Verification ends when the final ancestor is signed by a configured trusted root public key (exact key bytes/fingerprint; implementation-defined list).
+1.  **Check limits:** `stack.len()` MUST NOT exceed `MAX_CHAIN_DEPTH`; total encoded size MUST NOT exceed 64 KB.
+2.  **Iterate:** Validate each link $i$ against $i-1$.
+    - $i=0$: Must be signed by a trusted root.
+    - $i>0$: 
+        - `stack[i].issuer` == `stack[i-1].holder` (Delegation Authority).
+        - `stack[i].parent_hash` == SHA256(`stack[i-1].payload`).
+        - `stack[i].depth` == `stack[i-1].depth + 1`.
+3.  **Result:** The verified leaf is `stack[N-1]`.
 
 ---
 
-## 12. Base64 Encoding
+## 12. Encoding and Representation
+
+### 12.1 Base64 Encoding (Wire Transport)
 
 When warrants are transmitted in text contexts (HTTP headers, JSON, logs), use:
 
@@ -933,10 +951,78 @@ let signed_warrant: SignedWarrant = cbor::deserialize(&wire_bytes)?;
 ```
 
 **Why URL-safe base64:**
-
 - Safe in URLs, headers, filenames
 - No `+` or `/` characters that need escaping
 - Standard practice for tokens (JWT uses this)
+
+### 12.2 Text Representation (PEM Armor)
+
+For config files, logs, and human sharing, Tenuo supports three formats:
+
+#### 1. Explicit Stack (Production Format)
+Use for transporting full chains in a single PEM block.
+- **Header:** `-----BEGIN TENUO WARRANT CHAIN-----`
+- **Body:** Base64 of CBOR(Array<SignedWarrant>)
+- **Result:** `WarrantStack`
+
+```text
+-----BEGIN TENUO WARRANT CHAIN-----
+(Base64 of CBOR Array of SignedWarrants)
+-----END TENUO WARRANT CHAIN-----
+```
+
+#### 2. Implicit Stack (UNIX Format)
+Use for concatenating individual warrant files (e.g. `cat root.pem leaf.pem > chain.pem`).
+- **Input:** Multiple `-----BEGIN TENUO WARRANT-----` blocks.
+- **Result:** `WarrantStack` (constructed by parsing each block and appending to vector).
+
+#### 3. Single Warrant (Leaf Format)
+Use for individual warrants (e.g. root keys, intermediate tickets).
+- **Header:** `-----BEGIN TENUO WARRANT-----`
+- **Body:** Base64 of CBOR(SignedWarrant)
+- **Result:** `WarrantStack` (containing 1 item).
+
+```text
+-----BEGIN TENUO WARRANT-----
+(Base64 of CBOR SignedWarrant)
+-----END TENUO WARRANT-----
+```
+
+**Key Formats:**
+- Public Keys: Standard SPKI PEM (`-----BEGIN PUBLIC KEY-----`)
+- Private Keys: Standard PKCS#8 PEM (`-----BEGIN PRIVATE KEY-----`)
+
+### 12.3 PEM Transport Summary
+
+### Single Warrant
+```text
+-----BEGIN TENUO WARRANT-----
+<base64url>
+-----END TENUO WARRANT-----
+```
+
+### Chain (SSL-style concatenation)
+Concatenated PEM blocks. Order: Root → Leaf (parser handles either order; verification enforces strict hierarchy).
+
+```text
+-----BEGIN TENUO WARRANT-----
+<root base64url>
+-----END TENUO WARRANT-----
+-----BEGIN TENUO WARRANT-----
+<child base64url>
+-----END TENUO WARRANT-----
+```
+
+### 12.4 File Format
+
+- Extension: `.tenuo`
+- MIMEType: `application/vnd.tenuo+cbor`
+- Magic bytes (binary): `0x54 0x45 0x4E 0x55 0x01` ("TENU" + version)
+
+**Rules:**
+- File content is raw CBOR bytes (WarrantStack)
+- Magic bytes appear at the **start of the file**, immediately followed by the CBOR bytes.
+- Magic bytes are NOT used in PEM-armored text files (headers serve that purpose)
 
 ---
 
@@ -956,7 +1042,7 @@ let signed_warrant: SignedWarrant = cbor::deserialize(&wire_bytes)?;
 
 Verifiers must reject warrants exceeding these limits before full parsing.
 
-**WarrantStack size:** The combined encoded size of a warrant plus its ancestors (see Section 11) MUST NOT exceed 64 KB.
+**WarrantStack size:** The combined encoded size of a warrant plus its ancestors (see Section 11) MUST NOT exceed 256 KB.
 
 ---
 
@@ -997,7 +1083,7 @@ Client                          Server
 | Algorithm agility | `PublicKey { algorithm, bytes }` | Ed25519 (1) |
 | Timestamps | `u64` | Unix seconds |
 | Tool-scoped constraints | `BTreeMap<String, ConstraintSet>` | ✓ |
-| Standard constraints | Type IDs 1–127 (incl. FloatRange) | ✓ |
+| Standard constraints | Type IDs 1–127 | ✓ |
 | Experimental constraints | Type IDs 128–255 | Fail closed |
 | Unknown constraints | `Constraint::Unknown` → fails | ✓ |
 | Extensions | `BTreeMap<String, Vec<u8>>` | `{}` |
@@ -1005,7 +1091,7 @@ Client                          Server
 | Serialization | CBOR | ✓ |
 | Text encoding | Base64 URL-safe, no padding | ✓ |
 | Parent pointer | `parent_hash = SHA256(payload_bytes)` | ✓ |
-| Transport | `WarrantStack` (parent → root) | ✓ |
+| Transport | `WarrantStack` (Root → Leaf) | ✓ |
 
 ---
 

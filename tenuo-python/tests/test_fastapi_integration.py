@@ -1,21 +1,37 @@
 import pytest
 import base64
-from typing import Dict, Any
-from fastapi import FastAPI, Depends, Request
-from fastapi.testclient import TestClient
+from typing import Any, Dict
 
 from tenuo import (
     Warrant,
     SigningKey,
 )
-from tenuo.fastapi import (
-    configure_tenuo,
-    TenuoGuard,
-    SecurityContext,
-    X_TENUO_WARRANT,
-    X_TENUO_POP,
-    FASTAPI_AVAILABLE
-)
+
+# Import FastAPI components with fallback for when not installed
+FASTAPI_AVAILABLE = False
+FastAPI: Any = None
+Depends: Any = None
+Request: Any = None
+TestClient: Any = None
+configure_tenuo: Any = None
+TenuoGuard: Any = None
+SecurityContext: Any = None
+X_TENUO_WARRANT = ""
+X_TENUO_POP = ""
+
+try:
+    from fastapi import FastAPI, Depends, Request  # type: ignore[no-redef]
+    from fastapi.testclient import TestClient  # type: ignore[no-redef]
+    from tenuo.fastapi import (  # type: ignore[no-redef]
+        configure_tenuo,
+        TenuoGuard,
+        SecurityContext,
+        X_TENUO_WARRANT,
+        X_TENUO_POP,
+        FASTAPI_AVAILABLE,
+    )
+except ImportError:
+    pass  # Use fallback values defined above
 
 @pytest.mark.skipif(not FASTAPI_AVAILABLE, reason="FastAPI not installed")
 class TestFastAPIIntegration:
@@ -45,7 +61,7 @@ class TestFastAPIIntegration:
         assert "Missing X-Tenuo-Warrant" in resp.json()["detail"]["message"]
         
         # Missing PoP
-        warrant = Warrant.builder().tool("search").issue(SigningKey.generate())
+        warrant = Warrant.mint_builder().tool("search").mint(SigningKey.generate())
         resp = client.get("/search?query=test", headers={
             X_TENUO_WARRANT: warrant.to_base64()
         })
@@ -57,14 +73,14 @@ class TestFastAPIIntegration:
         def search(ctx: SecurityContext = Depends(TenuoGuard("search"))):
             return {"query": ctx.args.get("query"), "issuer": ctx.issuer}
             
-        warrant = (Warrant.builder()
+        warrant = (Warrant.mint_builder()
             .tool("search")
-            .issue(key))
+            .mint(key))
             
         # Sign PoP
         # Args matched by default logic: query params + path params
         args = {"query": "test"}
-        pop_sig = warrant.create_pop_signature(key, "search", args)
+        pop_sig = warrant.sign(key, "search", args)
         pop_b64 = base64.b64encode(pop_sig).decode('ascii')
         
         headers = {
@@ -81,11 +97,11 @@ class TestFastAPIIntegration:
         def search(ctx: SecurityContext = Depends(TenuoGuard("search"))):
             pass
             
-        warrant = Warrant.builder().tool("search").issue(key)
+        warrant = Warrant.mint_builder().tool("search").mint(key)
         
         # Sign for WRONG args
         args = {"query": "malicious"}
-        pop_sig = warrant.create_pop_signature(key, "search", args)
+        pop_sig = warrant.sign(key, "search", args)
         pop_b64 = base64.b64encode(pop_sig).decode('ascii')
         
         headers = {
@@ -104,10 +120,10 @@ class TestFastAPIIntegration:
             pass
             
         # Warrant only allows "search"
-        warrant = Warrant.builder().tool("search").issue(key)
+        warrant = Warrant.mint_builder().tool("search").mint(key)
         
         args = {}
-        pop_sig = warrant.create_pop_signature(key, "admin", args)
+        pop_sig = warrant.sign(key, "admin", args)
         pop_b64 = base64.b64encode(pop_sig).decode('ascii')
         
         headers = {
@@ -135,11 +151,11 @@ class TestFastAPIIntegration:
         def custom(ctx: SecurityContext = Depends(TenuoGuard("custom", extract_args=extract_custom))):
             return {"ok": True}
             
-        warrant = Warrant.builder().tool("custom").issue(key)
+        warrant = Warrant.mint_builder().tool("custom").mint(key)
         
         # Sign for custom arg
         args = {"query": "secret"}
-        pop_sig = warrant.create_pop_signature(key, "custom", args)
+        pop_sig = warrant.sign(key, "custom", args)
         pop_b64 = base64.b64encode(pop_sig).decode('ascii')
         
         headers = {
@@ -156,34 +172,24 @@ class TestFastAPIIntegration:
         def search(ctx: SecurityContext = Depends(TenuoGuard("search"))): pass
         
         # Expired warrant (TTL=0 is not instantly expired in some impls, using -1 or sleep if needed)
-        # But Warrant.issue(ttl=) usually sets expiry. 
+        # But Warrant.mint(ttl=) usually sets expiry. 
         # Tenuo Core enforces expiry.
         # Let's assume TTL=0 makes it expire immediately or quickly.
-        # However, `create_pop_signature` might fail if expired? No, PoP is signature.
-        
-        # Actually, let's just mock specific expiry behavior if we can't wait.
-        # But we can try issuing with very short TTL.
-        
-        # Note: Rust core might have minimum TTL or clock skew leeway. 
-        # But `warrant.is_expired()` is checked in TenuoGuard.
+        # However, `sign()` might fail if expired? No, PoP is signature.
         
         import time
-        # Issue with 1ms TTL? Or rely on verify checks.
-        # Python binding `is_expired()` checks `expires_at` vs `now()`.
-        
-        # Let's try TTL=0 if allowed.
         try:
-             warrant = Warrant.builder().tool("search").ttl(0).issue(key)
+             warrant = Warrant.mint_builder().tool("search").ttl(0).mint(key)
              # Wait a bit
              time.sleep(0.01)
         except Exception:
              # Fallback if TTL=0 invalid
-             warrant = Warrant.builder().tool("search").ttl(1).issue(key)
+             warrant = Warrant.mint_builder().tool("search").ttl(1).mint(key)
              time.sleep(1.1)
 
         args = {"query": "test"}
         # PoP signing doesn't care about expiry usually
-        pop_sig = warrant.create_pop_signature(key, "search", args)
+        pop_sig = warrant.sign(key, "search", args)
         pop_b64 = base64.b64encode(pop_sig).decode('ascii')
         
         headers = {

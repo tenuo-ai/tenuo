@@ -49,7 +49,7 @@ proptest! {
         let parent = Warrant::builder()
             .capability("test_tool", ConstraintSet::new())
             .ttl(Duration::from_secs(ttl_parent))
-            .authorized_holder(child_kp.public_key())
+            .holder(child_kp.public_key())
             .build(&parent_kp)
             .unwrap();
 
@@ -58,7 +58,7 @@ proptest! {
             .attenuate()
             .inherit_all()
             .ttl(Duration::from_secs(ttl_child))
-            .authorized_holder(child_kp.public_key())
+            .holder(child_kp.public_key())
             .build(&child_kp)
             .unwrap();
 
@@ -75,7 +75,7 @@ proptest! {
         let mut warrant = Warrant::builder()
             .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(kp.public_key())
+            .holder(kp.public_key())
             .build(&kp)
             .unwrap();
 
@@ -83,7 +83,7 @@ proptest! {
 
         for expected_depth in 1..=depth_limit {
             // POLA: inherit_all
-            warrant = warrant.attenuate().inherit_all().authorized_holder(kp.public_key()).build(&kp).unwrap();
+            warrant = warrant.attenuate().inherit_all().holder(kp.public_key()).build(&kp).unwrap();
             prop_assert_eq!(warrant.depth(), expected_depth);
         }
     }
@@ -102,7 +102,7 @@ proptest! {
         let parent = Warrant::builder()
             .capability("test", parent_constraints)
             .ttl(Duration::from_secs(600))
-            .authorized_holder(child_kp.public_key())
+            .holder(child_kp.public_key())
             .build(&parent_kp)
             .unwrap();
 
@@ -112,7 +112,7 @@ proptest! {
         let result = parent
             .attenuate()
             .capability("test", child_constraints)
-            .authorized_holder(child_kp.public_key())
+            .holder(child_kp.public_key())
             .build(&child_kp);
 
         prop_assert!(result.is_err());
@@ -132,7 +132,7 @@ proptest! {
         let parent = Warrant::builder()
             .capability("test", parent_constraints)
             .ttl(Duration::from_secs(600))
-            .authorized_holder(child_kp.public_key())
+            .holder(child_kp.public_key())
             .build(&parent_kp)
             .unwrap();
 
@@ -142,7 +142,7 @@ proptest! {
         let result = parent
             .attenuate()
             .capability("test", bad_constraints)
-            .authorized_holder(child_kp.public_key())
+            .holder(child_kp.public_key())
             .build(&child_kp);
 
         prop_assert!(result.is_err());
@@ -153,7 +153,7 @@ proptest! {
         let narrower = parent
             .attenuate()
             .capability("test", narrow_constraints)
-            .authorized_holder(child_kp.public_key())
+            .holder(child_kp.public_key())
             .build(&child_kp);
 
         prop_assert!(narrower.is_ok());
@@ -177,22 +177,22 @@ proptest! {
         let warrant = Warrant::builder()
             .capability(&tool1, ConstraintSet::new())
             .ttl(Duration::from_secs(600))
-            .authorized_holder(kp.public_key())
+            .holder(kp.public_key())
             .build(&kp)
             .unwrap();
 
         let args = HashMap::new();
 
         // Same tool should succeed
-        let sig = warrant.create_pop_signature(&kp, &tool1, &args).unwrap();
+        let sig = warrant.sign(&kp, &tool1, &args).unwrap();
         let res = warrant.authorize(&tool1, &args, Some(&sig));
         prop_assert!(res.is_ok());
 
         // Different tool should fail
-        // Note: create_pop_signature might fail if tool doesn't match warrant tool,
+        // Note: sign might fail if tool doesn't match warrant tool,
         // but here we are testing authorize. Even if we sign for tool2, authorize should reject.
-        // Actually, create_pop_signature doesn't check warrant tool, it just signs.
-        let sig = warrant.create_pop_signature(&kp, &tool2, &args).unwrap();
+        // Actually, sign doesn't check warrant tool, it just signs.
+        let sig = warrant.sign(&kp, &tool2, &args).unwrap();
         prop_assert!(warrant.authorize(&tool2, &args, Some(&sig)).is_err());
     }
 
@@ -209,7 +209,7 @@ proptest! {
         let warrant = Warrant::builder()
             .capability("test", constraints)
             .ttl(Duration::from_secs(600))
-            .authorized_holder(kp.public_key())
+            .holder(kp.public_key())
             .build(&kp)
             .unwrap();
 
@@ -219,7 +219,7 @@ proptest! {
             "cluster".to_string(),
             ConstraintValue::String(format!("{}-{}", prefix, suffix)),
         );
-        let sig = warrant.create_pop_signature(&kp, "test", &matching_args).unwrap();
+        let sig = warrant.sign(&kp, "test", &matching_args).unwrap();
         prop_assert!(warrant.authorize("test", &matching_args, Some(&sig)).is_ok());
 
         // Non-matching value should fail
@@ -228,7 +228,7 @@ proptest! {
             "cluster".to_string(),
             ConstraintValue::String(format!("other-{}", suffix)),
         );
-        let sig = warrant.create_pop_signature(&kp, "test", &non_matching_args).unwrap();
+        let sig = warrant.sign(&kp, "test", &non_matching_args).unwrap();
         prop_assert!(warrant.authorize("test", &non_matching_args, Some(&sig)).is_err());
     }
 
@@ -245,7 +245,7 @@ proptest! {
         let warrant = Warrant::builder()
             .capability("transfer", constraints)
             .ttl(Duration::from_secs(600))
-            .authorized_holder(kp.public_key())
+            .holder(kp.public_key())
             .build(&kp)
             .unwrap();
 
@@ -255,7 +255,7 @@ proptest! {
             "amount".to_string(),
             ConstraintValue::Float(max_val - delta.min(max_val - 1.0)),
         );
-        let sig = warrant.create_pop_signature(&kp, "transfer", &within_args).unwrap();
+        let sig = warrant.sign(&kp, "transfer", &within_args).unwrap();
         prop_assert!(warrant.authorize("transfer", &within_args, Some(&sig)).is_ok());
 
         // Exceeding range should fail
@@ -264,7 +264,7 @@ proptest! {
             "amount".to_string(),
             ConstraintValue::Float(max_val + delta),
         );
-        let sig = warrant.create_pop_signature(&kp, "transfer", &exceeding_args).unwrap();
+        let sig = warrant.sign(&kp, "transfer", &exceeding_args).unwrap();
         prop_assert!(warrant.authorize("transfer", &exceeding_args, Some(&sig)).is_err());
     }
 }
@@ -286,7 +286,7 @@ proptest! {
         let warrant = Warrant::builder()
             .capability(&tool, ConstraintSet::new())
             .ttl(Duration::from_secs(ttl))
-            .authorized_holder(issuer_kp.public_key())
+            .holder(issuer_kp.public_key())
             .build(&issuer_kp)
             .unwrap();
 
@@ -308,7 +308,7 @@ proptest! {
         let original = Warrant::builder()
             .capability(&tool, ConstraintSet::new())
             .ttl(Duration::from_secs(ttl))
-            .authorized_holder(kp.public_key())
+            .holder(kp.public_key())
             .build(&kp)
             .unwrap();
 
@@ -344,7 +344,7 @@ proptest! {
             .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(36000)) // Long TTL to not expire during test
             .max_depth(initial_max_depth)
-            .authorized_holder(kp.public_key())
+            .holder(kp.public_key())
             .build(&kp)
             .unwrap();
 
@@ -353,7 +353,7 @@ proptest! {
 
         // Delegate until depth reaches max_depth (POLA: inherit_all)
         for expected_depth in 1..=initial_max_depth {
-            let result = warrant.attenuate().inherit_all().authorized_holder(kp.public_key()).build(&kp);
+            let result = warrant.attenuate().inherit_all().holder(kp.public_key()).build(&kp);
             if result.is_err() {
                 // Expected to fail when terminal (depth >= max_depth)
                 break;
@@ -385,7 +385,7 @@ proptest! {
             let warrant = Warrant::builder()
                 .capability("test", ConstraintSet::new())
                 .ttl(Duration::from_secs(60))
-                .authorized_holder(kp.public_key())
+                .holder(kp.public_key())
                 .build(&kp)
                 .unwrap();
 
@@ -410,7 +410,7 @@ proptest! {
         let root = Warrant::builder()
             .capability("test", ConstraintSet::new())
             .ttl(Duration::from_secs(3600))
-            .authorized_holder(kp.public_key())
+            .holder(kp.public_key())
             .build(&kp)
             .unwrap();
 
@@ -419,7 +419,7 @@ proptest! {
         let mut parent = root;
         for _ in 1..chain_length {
             // POLA: inherit_all
-            let child = parent.attenuate().inherit_all().authorized_holder(kp.public_key()).build(&kp).unwrap();
+            let child = parent.attenuate().inherit_all().holder(kp.public_key()).build(&kp).unwrap();
 
             let mut hasher = Sha256::new();
             hasher.update(parent.payload_bytes());

@@ -55,85 +55,239 @@ tenuo = "0.1"
 
 ---
 
+## Core Model
+
+Three things to understand:
+
+| Concept | What it is | Why it matters |
+|---------|-----------|----------------|
+| **Warrant** | Signed token listing allowed tools + constraints | Authority is explicit, not ambient |
+| **Constraints** | Rules on arguments (`path=/data/*`, `amount<100`) | Scopes *what* an action can do, not just *if* it can happen |
+| **PoP** | Proof-of-Possession signature | Stolen warrants are useless without the private key |
+
+**The flow:**
+```
+mint(Capability(...)) → agent calls tool → @guard checks warrant → ✅ or ❌
+```
+
+If the LLM is prompt-injected, it can request anything. But the warrant only allows what you scoped. The injection succeeds at the LLM level; authorization stops the action.
+
+---
+
 ## Python Quick Start
 
-### Option A: The Safe Path (Recommended)
+### Copy-Paste Example (Works Immediately)
 
-The primary API keeps keys separate from warrants:
+This example runs without any setup—just copy and paste:
+
+```python
+from tenuo import configure, mint_sync, Capability, Pattern, SigningKey, guard
+from tenuo.exceptions import AuthorizationDenied
+
+# 1. Configure once at startup
+configure(issuer_key=SigningKey.generate(), dev_mode=True, audit_log=False)
+
+# 2. Protect tools with @guard
+@guard(tool="read_file")
+def read_file(path: str) -> str:
+    return f"Contents of {path}"
+
+# 3. Scope authority to tasks
+with mint_sync(Capability("read_file", path=Pattern("/data/*"))):
+    print(read_file("/data/reports/q3.pdf"))  # ✅ Allowed
+    
+    try:
+        read_file("/etc/passwd")  # ❌ Blocked
+    except AuthorizationDenied as e:
+        print(f"Blocked: {e}")
+```
+
+**What just happened?**
+- `@guard(tool="read_file")` marks the function as requiring authorization
+- `mint_sync(...)` creates a warrant scoped to `/data/*` files
+- The second call fails because `/etc/passwd` doesn't match the pattern
+
+---
+
+### Production Patterns
+
+The examples above use `dev_mode=True` which auto-generates keys. In production, you'll separate concerns:
+
+#### Pattern 1: Keys Separate from Warrants (Recommended)
 
 ```python
 from tenuo import Warrant, SigningKey, Pattern
 
-# Warrant in state/storage - serializable, no secrets
-warrant = receive_warrant_from_orchestrator()
+# Create a warrant (in production: receive from orchestrator)
+key = SigningKey.generate()  # Or SigningKey.from_env("MY_KEY")
+warrant = (Warrant.mint_builder()
+    .tool("search")
+    .holder(key.public_key)
+    .ttl(3600)
+    .mint(key))
 
-# Explicit key at call site - keys never in state
-key = SigningKey.from_env("MY_SERVICE_KEY")
-headers = warrant.auth_headers(key, "search", {"query": "test"})
+# Key stays explicit at call sites - never stored in state
+headers = warrant.headers(key, "search", {"query": "test"})
 
-# Explicit key in delegation
-child = warrant.delegate(
-    to=worker_pubkey,
-    allow={"search": {"query": Pattern("safe*")}},
+# Delegation with attenuation
+worker_key = SigningKey.generate()
+child = warrant.grant(
+    to=worker_key.public_key,
+    allow="search",
     ttl=300,
-    key=key
+    key=key,  # Parent signs
+    query=Pattern("safe*")  # Constraint as kwarg
 )
 ```
 
-### Option B: BoundWarrant (For Repeated Operations)
-
-When you need to make many calls with the same warrant+key:
+#### Pattern 2: BoundWarrant (For Repeated Operations)
 
 ```python
 from tenuo import Warrant, SigningKey
 
-warrant = receive_warrant()
+# warrant = receive_warrant_from_orchestrator()  # In real code
+warrant = (Warrant.mint_builder().tool("process").holder(key.public_key).ttl(3600).mint(key))
 key = SigningKey.from_env("MY_KEY")
 
 # Bind key for repeated use
-bound = warrant.bind_key(key)
+bound = warrant.bind(key)
 
+items = ["a", "b", "c"]
 for item in items:
-    headers = bound.auth_headers("process", {"item": item})
+    headers = bound.headers("process", {"item": item})
     # Make API call with headers...
 
 # ⚠️ BoundWarrant should NOT be stored in state/cache (contains key)
 ```
 
-### Option C: Context-Based (Simple Prototyping)
+#### Pattern 3: Environment-Based Setup
 
-For quick prototyping with `@lockdown` decorators:
+For 12-factor apps, configure via environment variables:
 
 ```python
-from tenuo import configure, root_task, scoped_task, Capability, Pattern, SigningKey
+from tenuo import auto_configure, guard, mint_sync, Capability
 
-# 1. Configure once at startup
-configure(issuer_key=SigningKey.generate(), dev_mode=True)
+auto_configure()  # Reads TENUO_* environment variables
 
-# 2. Protect tools with @lockdown
-from tenuo import lockdown
+@guard(tool="search")
+def search(query: str) -> str:
+    return f"Results for {query}"
 
-@lockdown(tool="read_file")
-def read_file(path: str):
-    return open(path).read()
-
-# 3. Scope authority to tasks
-async with root_task(
-    Capability("read_file", path=Pattern("/data/*")),
-):
-    # Inner scope narrows further
-    async with scoped_task(
-        Capability("read_file", path=Pattern("/data/reports/*"))
-    ):
-        result = read_file("/data/reports/q3.pdf")  # ✅ Allowed
-        result = read_file("/etc/passwd")           # ❌ Blocked
+with mint_sync(Capability("search")):
+    print(search("hello"))  # ✅ Works
 ```
+
+**Environment variables:**
+
+| Variable | Description |
+|----------|-------------|
+| `TENUO_ISSUER_KEY` | Base64-encoded signing key |
+| `TENUO_MODE` | `enforce` (default), `audit`, or `permissive` |
+| `TENUO_TRUSTED_ROOTS` | Comma-separated public keys |
+| `TENUO_DEV_MODE` | `1` for development mode |
+
+---
+
+## Enforcement Modes
+
+Tenuo supports three enforcement modes for gradual adoption:
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `enforce` | Block unauthorized requests | Production (default) |
+| `audit` | Log violations but allow execution | Gradual adoption, discovery |
+| `permissive` | Log + warn header, allow execution | Development, testing |
+
+```python
+from tenuo import configure, SigningKey
+
+# Audit mode - deploy without breaking anything
+configure(
+    issuer_key=SigningKey.generate(),
+    mode="audit",  # Log violations, don't block
+    dev_mode=True,
+)
+
+# After analyzing logs, switch to enforce
+configure(
+    issuer_key=issuer_key,
+    mode="enforce",  # Block violations
+    trusted_roots=[control_plane_pubkey],
+)
+```
+
+Check current mode programmatically:
+```python
+from tenuo import is_audit_mode, is_enforce_mode, should_block_violation
+
+if is_audit_mode():
+    print("Running in audit mode - violations logged but not blocked")
+```
+
+---
+
+## Adopting Gradually
+
+For existing applications, roll out Tenuo without breaking production:
+
+**Step 1: Deploy in audit mode**
+```python
+configure(issuer_key=SigningKey.generate(), mode="audit", dev_mode=True)
+```
+All tool calls are logged but never blocked. Analyze logs to see what would be denied.
+
+**Step 2: Add `@guard` to critical tools**
+```python
+@guard(tool="delete_file")
+def delete_file(path: str): ...
+```
+In audit mode, this still allows execution but logs authorization checks.
+
+**Step 3: Test with scoped warrants**
+```python
+with mint_sync(Capability("delete_file", path=Pattern("/tmp/*"))):
+    delete_file("/tmp/test.txt")  # ✅ Would be allowed
+    delete_file("/etc/passwd")    # ⚠️ Logged as violation
+```
+
+**Step 4: Enable enforce mode**
+```python
+configure(mode="enforce", trusted_roots=[control_plane_pubkey])
+```
+Now violations are blocked. Roll out to a subset of traffic first if needed.
+
+> **Tip:** Use `why_denied(tool, args)` to debug specific failures during rollout.
 
 ---
 
 ## Framework Integrations
 
 ### FastAPI
+
+**Option 1: `SecureAPIRouter` (Drop-in Replacement)**
+
+```python
+from fastapi import FastAPI
+from tenuo.fastapi import SecureAPIRouter, configure_tenuo
+
+app = FastAPI()
+configure_tenuo(app, trusted_issuers=[issuer_pubkey])
+
+# Drop-in replacement for APIRouter - auto-protects routes
+router = SecureAPIRouter(tool_prefix="api")
+
+@router.get("/users/{user_id}")  # Auto-protected as "api_users_read"
+async def get_user(user_id: str):
+    return {"user_id": user_id}
+
+@router.post("/users", tool="create_user")  # Explicit tool name
+async def create_user(name: str):
+    return {"name": name}
+
+app.include_router(router)
+```
+
+**Option 2: `TenuoGuard` Dependency (Fine Control)**
 
 ```python
 from fastapi import FastAPI, Depends
@@ -153,53 +307,101 @@ async def search(
 
 ### LangChain
 
+**Option 1: `auto_protect()` (Zero Config)**
+
+```python
+from tenuo.langchain import auto_protect
+
+# Wrap your executor - defaults to audit mode
+protected_executor = auto_protect(executor)
+
+# Run normally
+result = protected_executor.invoke({"input": "Search for AI news"})
+```
+
+**Option 2: `SecureAgentExecutor` (Drop-in Replacement)**
+
+```python
+from tenuo.langchain import SecureAgentExecutor
+from tenuo import configure, mint, Capability, SigningKey
+
+configure(issuer_key=SigningKey.generate(), dev_mode=True)
+
+# Drop-in replacement for AgentExecutor
+executor = SecureAgentExecutor(agent=agent, tools=tools)
+
+# Run with authorization context
+async with mint(Capability("search"), Capability("calculator")):
+    result = await executor.ainvoke({"input": "Calculate 2+2"})
+```
+
+**Option 3: `guard_tools()` and `guard_agent()` (Fine Control)**
+
+```python
+from tenuo import Warrant, SigningKey, Capability
+from tenuo.langchain import guard_tools, guard_agent
+
+keypair = SigningKey.generate()
+
+# guard_tools: wrap tools, manage context yourself
+protected_tools = guard_tools([search_tool, calculator], issuer_key=keypair)
+
+# guard_agent: wrap entire executor with built-in context
+protected_executor = guard_agent(
+    executor,
+    issuer_key=keypair,
+    capabilities=[Capability("search"), Capability("calculator")],
+)
+
+# Now authorization is automatic
+result = protected_executor.invoke({"input": "Search for AI news"})
+```
+
+**Option 4: Explicit BoundWarrant**
+
 ```python
 from tenuo import Warrant, SigningKey
-from tenuo.langchain import protect
+from tenuo.langchain import guard
 
-# Create warrant and bind key
 keypair = SigningKey.generate()
-warrant = (Warrant.builder()
+warrant = (Warrant.mint_builder()
     .tool("search")
-    .tool("calculator")
-    .issue(keypair))
-bound = warrant.bind_key(keypair)
+    .mint(keypair))
+bound = warrant.bind(keypair)
 
-# Protect your tools
-from langchain_community.tools import DuckDuckGoSearchRun
-protected_tools = protect([DuckDuckGoSearchRun()], bound_warrant=bound)
-
-# Use in your agent
-agent = create_openai_tools_agent(llm, protected_tools, prompt)
+# Pass bound warrant explicitly
+protected_tools = guard([DuckDuckGoSearchRun()], bound)
 ```
 
 ### LangGraph
 
 ```python
 from tenuo import Warrant, SigningKey, KeyRegistry
-from tenuo.langgraph import secure, TenuoToolNode, auto_load_keys
+from tenuo.langgraph import guard_node, TenuoToolNode, load_tenuo_keys
+from langchain_core.tools import tool  # LangChain tool decorator
 
 # 1. Load keys from environment (convention: TENUO_KEY_*)
-auto_load_keys()  # Loads TENUO_KEY_DEFAULT, TENUO_KEY_WORKER, etc.
+load_tenuo_keys()  # Loads TENUO_KEY_DEFAULT, TENUO_KEY_WORKER, etc.
 
 # 2. Define your tools
 @tool
 def search(query: str) -> str:
+    """Search the web."""
     return f"Results for {query}"
 
 # 3. Create secure tool node
 tool_node = TenuoToolNode([search])
 
-# 4. Wrap pure nodes with secure()
+# 4. Wrap pure nodes with guard()
 def my_agent(state):
     # Pure function - no Tenuo imports needed
     return {"messages": [...]}
 
-graph.add_node("agent", secure(my_agent, key_id="worker"))
+graph.add_node("agent", guard_node(my_agent, key_id="worker"))
 graph.add_node("tools", tool_node)
 
-# 5. Run with warrant in state, key_id in config
-state = {"warrant": warrant, "messages": [...]}
+# 5. Run with warrant in state (str() = base64, safe for JSON serialization)
+state = {"warrant": str(warrant), "messages": [...]}
 config = {"configurable": {"tenuo_key_id": "worker"}}
 result = graph.invoke(state, config=config)
 ```
@@ -213,44 +415,51 @@ For production deployments with explicit keypair management.
 ### 1. Create a Warrant
 
 ```python
-from tenuo import SigningKey, Warrant, Pattern, Range
+# ── CONTROL PLANE ──
+from tenuo import SigningKey, Warrant, Pattern, Range, PublicKey
 
-keypair = SigningKey.generate()
+issuer_key = SigningKey.from_env("ISSUER_KEY")       # From secure storage
+orchestrator_pubkey = PublicKey.from_env("ORCH_PUBKEY")  # Orchestrator's public key
 
-warrant = (Warrant.builder()
-    .capability("manage_infrastructure", {
-        "cluster": Pattern("staging-*"),
-        "replicas": Range.max_value(15),
-    })
-    .holder(keypair.public_key)
+warrant = (Warrant.mint_builder()
+    .capability("manage_infrastructure",
+        cluster=Pattern("staging-*"),
+        replicas=Range.max_value(15))
+    .holder(orchestrator_pubkey)
     .ttl(3600)
-    .issue(keypair))
+    .mint(issuer_key))
 ```
 
 ### 2. Delegate with Attenuation
 
 ```python
-worker_keypair = SigningKey.generate()
+# ── ORCHESTRATOR ──
+# Has its own key, only needs worker's PUBLIC key
+from tenuo import PublicKey
+worker_pubkey = PublicKey.from_env("WORKER_PUBKEY")
 
 # Child warrant has narrower scope
-worker_warrant = warrant.delegate(
-    to=worker_keypair.public_key,
-    allow={"manage_infrastructure": {
-        "cluster": Pattern("staging-web"),  # Narrowed
-        "replicas": Range.max_value(10),    # Reduced
-    }},
+worker_warrant = warrant.grant(
+    to=worker_pubkey,
+    allow="manage_infrastructure",
     ttl=300,
-    key=keypair  # Parent signs
+    key=key,  # Parent signs
+    cluster=Pattern("staging-web"),  # Narrowed (constraint as kwarg)
+    replicas=Range.max_value(10),    # Reduced
 )
+
+# Send to worker: send_to_worker(str(worker_warrant))
 ```
 
 ### 3. Authorize an Action
 
 ```python
-# Worker signs Proof-of-Possession
+# ── WORKER ──
+# Worker signs Proof-of-Possession with their private key
+worker_key = SigningKey.from_env("WORKER_KEY")
 args = {"cluster": "staging-web", "replicas": 5}
-pop_sig = worker_warrant.create_pop_signature(
-    worker_keypair, "manage_infrastructure", args
+pop_sig = worker_warrant.sign(
+    worker_key, "manage_infrastructure", args
 )
 
 # Verify authorization
@@ -269,7 +478,7 @@ print(f"Authorized: {authorized}")  # True
 Use `why_denied()` for detailed diagnostics:
 
 ```python
-result = warrant.why_denied("read_file", {"path": "/etc/passwd"})
+result = warrant.why_denied("read_file", path="/etc/passwd")
 if result.denied:
     print(f"Denied: {result.deny_code}")
     print(f"Field: {result.field}")

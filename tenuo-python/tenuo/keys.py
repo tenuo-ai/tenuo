@@ -167,7 +167,7 @@ class Keyring:
         )
         
         # Use current key for signing
-        warrant = Warrant.issue(keypair=keyring.root, ...)
+        warrant = Warrant.mint(keypair=keyring.root, ...)
         
         # Authorizer trusts all keys
         authorizer = Authorizer(trusted_roots=keyring.all_public_keys)
@@ -237,7 +237,7 @@ class KeyRegistry:
         
         # In LangGraph node
         key = registry.get("worker")
-        headers = warrant.auth_headers(key, "search", args)
+        headers = warrant.headers(key, "search", args)
     
     Security:
         - Keys never in graph state (not checkpointed)
@@ -395,6 +395,90 @@ class KeyRegistry:
 
 
 # ============================================================================
+# PublicKey Loading Helpers
+# ============================================================================
+
+def load_public_key_from_env(name: str) -> PublicKey:
+    """
+    Load a PublicKey from an environment variable.
+    
+    Auto-detects format (base64, hex, or PEM).
+    
+    Args:
+        name: Environment variable name
+        
+    Returns:
+        PublicKey
+        
+    Raises:
+        ConfigurationError: If env var missing or invalid format
+        
+    Example:
+        pubkey = load_public_key_from_env("AGENT_PUBKEY")
+    """
+    value = os.environ.get(name)
+    if not value:
+        raise ConfigurationError(
+            f"Environment variable '{name}' not set. "
+            f"Set it to a base64, hex, or PEM-encoded public key."
+        )
+    
+    return _parse_public_key_string(value, source=f"env:{name}")
+
+
+def _parse_public_key_string(value: str, source: str = "unknown") -> PublicKey:
+    """
+    Parse a public key string, auto-detecting format.
+    
+    Supports:
+    - Base64 (43-44 chars for 32 bytes)
+    - Hex (64 chars for 32 bytes)
+    - PEM format
+    """
+    value = value.strip()
+    
+    # Check for PEM format
+    if value.startswith("-----BEGIN"):
+        try:
+            return PublicKey.from_pem(value)
+        except Exception as e:
+            raise ConfigurationError(f"Invalid PEM public key from {source}: {e}")
+    
+    # Try base64 first (most common for compact storage)
+    if len(value) in (43, 44) or value.endswith('='):
+        try:
+            data = base64.b64decode(value)
+            if len(data) == 32:
+                return PublicKey.from_bytes(data)
+        except Exception:
+            pass
+    
+    # Try hex (64 hex chars = 32 bytes)
+    if len(value) == 64:
+        try:
+            data = bytes.fromhex(value)
+            if len(data) == 32:
+                return PublicKey.from_bytes(data)
+        except Exception:
+            pass
+    
+    # Try base64 again with more lenient parsing
+    try:
+        padded = value + '=' * (4 - len(value) % 4) if len(value) % 4 else value
+        data = base64.b64decode(padded)
+        if len(data) == 32:
+            return PublicKey.from_bytes(data)
+    except Exception:
+        pass
+    
+    raise ConfigurationError(
+        f"Invalid public key format from {source}. "
+        f"Expected 32-byte key as base64 (44 chars), hex (64 chars), or PEM. "
+        f"Got {len(value)} characters."
+    )
+
+
+# ============================================================================
 # Convenience: Extend SigningKey with class methods
 # ============================================================================
 
@@ -414,4 +498,18 @@ if not hasattr(SigningKey, 'from_env'):
 
 if not hasattr(SigningKey, 'from_file'):
     SigningKey.from_file = staticmethod(_signing_key_from_file)  # type: ignore[attr-defined]
+
+
+# ============================================================================
+# Convenience: Extend PublicKey with class methods
+# ============================================================================
+
+def _public_key_from_env(name: str) -> PublicKey:
+    """Load a PublicKey from an environment variable."""
+    return load_public_key_from_env(name)
+
+
+# Add class methods to PublicKey
+if not hasattr(PublicKey, 'from_env'):
+    PublicKey.from_env = staticmethod(_public_key_from_env)  # type: ignore[attr-defined]
 

@@ -1,2 +1,0 @@
-createSrcSidebar('[["tenuo",["",[],["cli.rs"]]],["tenuo_authorizer",["",[],["authorizer.rs"]]],["tenuo_core",["",[],["approval.rs","cel.rs","constraints.rs","crypto.rs","error.rs","lib.rs","planes.rs","revocation.rs","warrant.rs","wire.rs"]]],["tenuo_orchestrator",["",[],["orchestrator.rs"]]],["tenuo_worker",["",[],["worker.rs"]]]]');
-//{"start":19,"fragment_lengths":[28,47,148,51,39]}
