@@ -1513,16 +1513,17 @@ const ChainTester = () => {
                 <span style={{ fontWeight: 600, fontSize: '13px' }}>
                   {i === 0 ? '🔐 Root Warrant' : `📋 Warrant ${i + 1}`}
                 </span>
-                {warrant.decoded && (
-                  <span className="depth-badge">depth {warrant.decoded.depth}</span>
-                )}
-                {i > 1 && (
-                  <button
-                    onClick={() => removeWarrant(warrant.id)}
-                    className="close-btn"
-                    style={{ marginLeft: '8px' }}
-                  >✕</button>
-                )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {warrant.decoded && (
+                    <span className="depth-badge">depth {warrant.decoded.depth}</span>
+                  )}
+                  {i > 1 && (
+                    <button
+                      onClick={() => removeWarrant(warrant.id)}
+                      className="close-btn"
+                    >✕</button>
+                  )}
+                </div>
               </div>
 
               <textarea
