@@ -1359,6 +1359,7 @@ const ChainTester = () => {
       ttl: 1800, // Shorter TTL
       max_depth: 2,
       signing_key_hex: (rootResult as any).holder_private_key_hex,
+      parent_warrant_b64: (rootResult as any).warrant_b64, // Link to parent for proper depth
     });
 
     if ((delegatedResult as any).error || !(delegatedResult as any).warrant_b64) {
@@ -1376,6 +1377,7 @@ const ChainTester = () => {
       },
       ttl: 900, // Shortest TTL
       signing_key_hex: (delegatedResult as any).holder_private_key_hex,
+      parent_warrant_b64: (delegatedResult as any).warrant_b64, // Link to parent for proper depth
     });
 
     if ((workerResult as any).error || !(workerResult as any).warrant_b64) {
@@ -1391,7 +1393,7 @@ const ChainTester = () => {
     ];
 
     // Decode each warrant
-    newWarrants.forEach(w => {
+    newWarrants.forEach((w) => {
       try {
         const result = decode_warrant(w.b64);
         if (typeof result === 'object' && result && 'id' in result) {

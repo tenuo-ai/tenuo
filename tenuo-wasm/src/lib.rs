@@ -130,7 +130,7 @@ pub fn decode_warrant(base64_warrant: &str) -> JsValue {
         }
         Err(e) => {
             let error = format!("Failed to decode: {}", e);
-            serde_wasm_bindgen::to_value(&error).unwrap()
+             serde_wasm_bindgen::to_value(&error).unwrap()
         }
     }
 }
@@ -146,14 +146,14 @@ pub struct AuthResult {
 
 #[wasm_bindgen]
 pub fn check_access(
-    warrant_b64: &str,
-    tool: &str,
-    args_json: JsValue,
+    warrant_b64: &str, 
+    tool: &str, 
+    args_json: JsValue, 
     trusted_root_hex: &str,
     dry_run: bool,
 ) -> JsValue {
     init_panic_hook();
-
+    
     // 1. Parse keys
     let root_bytes: [u8; 32] = match hex::decode(trusted_root_hex.trim()) {
         Ok(b) => match b.try_into() {
@@ -181,7 +181,7 @@ pub fn check_access(
 
     // 4. Verification Check
     if let Err(e) = warrant.verify(&root_key) {
-        return to_auth_error(&format!("Chain verification failed: {}", e));
+         return to_auth_error(&format!("Chain verification failed: {}", e));
     }
 
     if dry_run {
@@ -190,34 +190,34 @@ pub fn check_access(
             if let Some(constraints) = caps.get(tool) {
                 match constraints.matches(&args) {
                     Ok(_) => serde_wasm_bindgen::to_value(&AuthResult {
-                        authorized: true,
-                        reason: Some("Dry run: Policy valid (PoP skipped)".to_string()),
-                        deny_code: None,
-                        field: None,
+                            authorized: true,
+                            reason: Some("Dry run: Policy valid (PoP skipped)".to_string()),
+                            deny_code: None,
+                            field: None,
                     })
                     .unwrap(),
                     Err(e) => serde_wasm_bindgen::to_value(&AuthResult {
-                        authorized: false,
-                        reason: Some(format!("Policy violation: {}", e)),
-                        deny_code: Some("POLICY_VIOLATION".to_string()),
-                        field: None,
+                            authorized: false,
+                            reason: Some(format!("Policy violation: {}", e)),
+                            deny_code: Some("POLICY_VIOLATION".to_string()),
+                            field: None,
                     })
                     .unwrap(),
                 }
             } else if let Some(constraints) = caps.get("*") {
                 match constraints.matches(&args) {
                     Ok(_) => serde_wasm_bindgen::to_value(&AuthResult {
-                        authorized: true,
-                        reason: Some("Dry run: Policy valid (PoP skipped)".to_string()),
-                        deny_code: None,
-                        field: None,
+                            authorized: true,
+                            reason: Some("Dry run: Policy valid (PoP skipped)".to_string()),
+                            deny_code: None,
+                            field: None,
                     })
                     .unwrap(),
                     Err(e) => serde_wasm_bindgen::to_value(&AuthResult {
-                        authorized: false,
-                        reason: Some(format!("Policy violation: {}", e)),
-                        deny_code: Some("POLICY_VIOLATION".to_string()),
-                        field: None,
+                            authorized: false,
+                            reason: Some(format!("Policy violation: {}", e)),
+                            deny_code: Some("POLICY_VIOLATION".to_string()),
+                            field: None,
                     })
                     .unwrap(),
                 }
@@ -225,24 +225,24 @@ pub fn check_access(
                 return to_auth_error(&format!("Tool '{}' not authorized by warrant", tool));
             }
         } else {
-            return to_auth_error("Warrant has no capabilities/tools");
+             return to_auth_error("Warrant has no capabilities/tools");
         }
     } else {
         // Full Authorizer check (requires PoP)
         let authorizer = Authorizer::new().with_trusted_root(root_key);
         match authorizer.check(&warrant, tool, &args, None, &[]) {
             Ok(_) => serde_wasm_bindgen::to_value(&AuthResult {
-                authorized: true,
-                reason: None,
-                deny_code: None,
-                field: None,
+                    authorized: true,
+                    reason: None,
+                    deny_code: None,
+                    field: None,
             })
             .unwrap(),
             Err(e) => serde_wasm_bindgen::to_value(&AuthResult {
-                authorized: false,
-                reason: Some(e.to_string()),
-                deny_code: Some("DENIED".to_string()),
-                field: None,
+                    authorized: false,
+                    reason: Some(e.to_string()),
+                    deny_code: Some("DENIED".to_string()),
+                    field: None,
             })
             .unwrap(),
         }
@@ -251,9 +251,9 @@ pub fn check_access(
 
 #[wasm_bindgen]
 pub fn check_chain_access(
-    warrant_b64_list: Vec<String>,
-    tool: &str,
-    args_json: JsValue,
+    warrant_b64_list: Vec<String>, 
+    tool: &str, 
+    args_json: JsValue, 
     trusted_root_hex: &str,
     dry_run: bool,
 ) -> JsValue {
@@ -391,9 +391,9 @@ pub fn check_chain_access(
         }
     } else {
         // Full check with PoP (requires signature)
-        let authorizer = Authorizer::new().with_trusted_root(root_key);
-
-        match authorizer.check_chain(&chain, tool, &args, None, &[]) {
+    let authorizer = Authorizer::new().with_trusted_root(root_key);
+    
+    match authorizer.check_chain(&chain, tool, &args, None, &[]) {
             Ok(_) => serde_wasm_bindgen::to_value(&AuthResult {
                 authorized: true,
                 reason: None,
@@ -451,7 +451,7 @@ pub struct PopSignatureResult {
 #[wasm_bindgen]
 pub fn sign(private_key_hex: &str, warrant_b64: &str, tool: &str, args_json: JsValue) -> JsValue {
     init_panic_hook();
-
+    
     // 1. Parse private key
     let key_bytes: [u8; 32] = match hex::decode(private_key_hex.trim()) {
         Ok(b) => match b.try_into() {
@@ -461,24 +461,24 @@ pub fn sign(private_key_hex: &str, warrant_b64: &str, tool: &str, args_json: JsV
         Err(_) => return to_pop_error("Invalid private key hex"),
     };
     let keypair = SigningKey::from_bytes(&key_bytes);
-
+    
     // 2. Parse warrant
     let warrant = match wire::decode_base64(warrant_b64.trim()) {
         Ok(w) => w,
         Err(e) => return to_pop_error(&format!("Invalid warrant: {}", e)),
     };
-
+    
     // 3. Parse args
     let args: HashMap<String, ConstraintValue> = match serde_wasm_bindgen::from_value(args_json) {
         Ok(a) => a,
         Err(e) => return to_pop_error(&format!("Invalid arguments JSON: {}", e)),
     };
-
+    
     // 4. Create PoP signature
     match warrant.sign(&keypair, tool, &args) {
         Ok(sig) => serde_wasm_bindgen::to_value(&PopSignatureResult {
-            signature_hex: hex::encode(sig.to_bytes()),
-            error: None,
+                signature_hex: hex::encode(sig.to_bytes()),
+                error: None,
         })
         .unwrap(),
         Err(e) => to_pop_error(&format!("Failed to create PoP: {}", e)),
@@ -496,14 +496,14 @@ fn to_pop_error(msg: &str) -> JsValue {
 /// Check authorization with a real PoP signature
 #[wasm_bindgen]
 pub fn check_access_with_pop(
-    warrant_b64: &str,
-    tool: &str,
-    args_json: JsValue,
+    warrant_b64: &str, 
+    tool: &str, 
+    args_json: JsValue, 
     trusted_root_hex: &str,
     pop_signature_hex: &str,
 ) -> JsValue {
     init_panic_hook();
-
+    
     // 1. Parse root key
     let root_bytes: [u8; 32] = match hex::decode(trusted_root_hex.trim()) {
         Ok(b) => match b.try_into() {
@@ -528,7 +528,7 @@ pub fn check_access_with_pop(
         Ok(a) => a,
         Err(e) => return to_auth_error(&format!("Invalid arguments JSON: {}", e)),
     };
-
+    
     // 4. Parse PoP signature (must be exactly 64 bytes)
     let sig_bytes = match hex::decode(pop_signature_hex.trim()) {
         Ok(b) => b,
@@ -547,17 +547,17 @@ pub fn check_access_with_pop(
     let authorizer = Authorizer::new().with_trusted_root(root_key);
     match authorizer.check(&warrant, tool, &args, Some(&signature), &[]) {
         Ok(_) => serde_wasm_bindgen::to_value(&AuthResult {
-            authorized: true,
-            reason: Some("Full authorization with PoP verified".to_string()),
-            deny_code: None,
-            field: None,
+                authorized: true,
+                reason: Some("Full authorization with PoP verified".to_string()),
+                deny_code: None,
+                field: None,
         })
         .unwrap(),
         Err(e) => serde_wasm_bindgen::to_value(&AuthResult {
-            authorized: false,
-            reason: Some(e.to_string()),
-            deny_code: Some("DENIED".to_string()),
-            field: None,
+                authorized: false,
+                reason: Some(e.to_string()),
+                deny_code: Some("DENIED".to_string()),
+                field: None,
         })
         .unwrap(),
     }
@@ -585,11 +585,11 @@ pub fn create_sample_warrant(
     ttl_seconds: u64,
 ) -> JsValue {
     init_panic_hook();
-
+    
     // Generate fresh keypairs
     let issuer_key = SigningKey::generate();
     let holder_key = SigningKey::generate();
-
+    
     // Build constraints
     let mut constraint_set = ConstraintSet::new();
     let pattern = match Pattern::new(constraint_pattern) {
@@ -608,13 +608,13 @@ pub fn create_sample_warrant(
         }
     };
     constraint_set.insert(constraint_field.to_string(), Constraint::Pattern(pattern));
-
+    
     // Build and sign the warrant
     let warrant = match Warrant::builder()
         .capability(tool, constraint_set)
         .ttl(Duration::from_secs(ttl_seconds))
         .holder(holder_key.public_key())
-        .build(&issuer_key)
+        .build(&issuer_key) 
     {
         Ok(w) => w,
         Err(e) => {
@@ -630,7 +630,7 @@ pub fn create_sample_warrant(
             .unwrap();
         }
     };
-
+    
     // Encode to base64
     let warrant_b64 = match wire::encode_base64(&warrant) {
         Ok(b) => b,
@@ -647,7 +647,7 @@ pub fn create_sample_warrant(
             .unwrap();
         }
     };
-
+    
     serde_wasm_bindgen::to_value(&SampleWarrantResult {
         warrant_b64,
         root_key_hex: hex::encode(issuer_key.public_key().to_bytes()),
@@ -688,6 +688,8 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
         max_depth: Option<u32>,
         signing_key_hex: Option<String>,
         holder_key_hex: Option<String>,
+        /// If provided, create a delegated warrant from this parent
+        parent_warrant_b64: Option<String>,
     }
 
     let config: BuilderConfig = match serde_wasm_bindgen::from_value(config_json) {
@@ -734,161 +736,231 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
     // Collect tool names
     let tool_names: Vec<String> = config.tools.keys().cloned().collect();
 
-    // Build warrant with all tools and constraints
-    let mut builder = Warrant::builder()
-        .ttl(Duration::from_secs(config.ttl))
-        .holder(holder_key.public_key());
-
-    for (tool_name, constraints) in &config.tools {
-        let mut constraint_set = ConstraintSet::new();
-        for (field, constraint_value) in constraints {
-            // constraint_value is like {"pattern": "docs/*"} or {"exact": "foo"} etc.
-            if let Some(obj) = constraint_value.as_object() {
-                // Pattern constraint
-                if let Some(pattern_val) = obj.get("pattern").and_then(|v| v.as_str()) {
-                    if let Ok(p) = Pattern::new(pattern_val) {
-                        constraint_set.insert(field.clone(), Constraint::Pattern(p));
+    // Helper to parse constraints from JSON into ConstraintSet
+    let parse_constraints =
+        |constraints: &HashMap<String, serde_json::Value>| -> ConstraintSet {
+            let mut constraint_set = ConstraintSet::new();
+            for (field, constraint_value) in constraints {
+                if let Some(obj) = constraint_value.as_object() {
+                    // Pattern constraint
+                    if let Some(pattern_val) = obj.get("pattern").and_then(|v| v.as_str()) {
+                        if let Ok(p) = Pattern::new(pattern_val) {
+                            constraint_set.insert(field.clone(), Constraint::Pattern(p));
+                        }
                     }
-                }
-                // Exact constraint
-                else if let Some(exact_val) = obj.get("exact").and_then(|v| v.as_str()) {
-                    constraint_set.insert(
-                        field.clone(),
-                        Constraint::Exact(Exact::new(ConstraintValue::String(
-                            exact_val.to_string(),
-                        ))),
-                    );
-                }
-                // Range constraint - parse "min-max", "max", or "min-" format
-                else if let Some(range_val) = obj.get("range").and_then(|v| v.as_str()) {
-                    if range_val.ends_with('-') {
-                        // Format: "min-" (e.g., "100-" means >= 100)
-                        let min_str = &range_val[..range_val.len() - 1];
-                        if let Ok(min) = min_str.parse::<f64>() {
-                            if let Ok(r) = Range::min(min) {
-                                constraint_set.insert(field.clone(), Constraint::Range(r));
+                    // Exact constraint
+                    else if let Some(exact_val) = obj.get("exact").and_then(|v| v.as_str()) {
+                        constraint_set.insert(
+                            field.clone(),
+                            Constraint::Exact(Exact::new(ConstraintValue::String(
+                                exact_val.to_string(),
+                            ))),
+                        );
+                    }
+                    // Range constraint
+                    else if let Some(range_val) = obj.get("range").and_then(|v| v.as_str()) {
+                        if range_val.ends_with('-') {
+                            let min_str = &range_val[..range_val.len() - 1];
+                            if let Ok(min) = min_str.parse::<f64>() {
+                                if let Ok(r) = Range::min(min) {
+                                    constraint_set.insert(field.clone(), Constraint::Range(r));
+                                }
                             }
-                        }
-                    } else if range_val.contains('-') {
-                        // Format: "min-max" (e.g., "10-100" or "-10-5")
-                        // Handle negative numbers by finding the last '-' that's not at position 0
-                        let mut split_pos = None;
-                        for (i, c) in range_val.char_indices().skip(1) {
-                            if c == '-' {
-                                split_pos = Some(i);
-                                break;
+                        } else if range_val.contains('-') {
+                            let mut split_pos = None;
+                            for (i, c) in range_val.char_indices().skip(1) {
+                                if c == '-' {
+                                    split_pos = Some(i);
+                                    break;
+                                }
                             }
-                        }
-
-                        if let Some(pos) = split_pos {
-                            let min_str = &range_val[..pos];
-                            let max_str = &range_val[pos + 1..];
-                            if let (Ok(min), Ok(max)) =
-                                (min_str.parse::<f64>(), max_str.parse::<f64>())
-                            {
-                                if min <= max {
-                                    // Validate min <= max
-                                    if let Ok(r) = Range::new(Some(min), Some(max)) {
-                                        constraint_set.insert(field.clone(), Constraint::Range(r));
+                            if let Some(pos) = split_pos {
+                                let min_str = &range_val[..pos];
+                                let max_str = &range_val[pos + 1..];
+                                if let (Ok(min), Ok(max)) =
+                                    (min_str.parse::<f64>(), max_str.parse::<f64>())
+                                {
+                                    if min <= max {
+                                        if let Ok(r) = Range::new(Some(min), Some(max)) {
+                                            constraint_set
+                                                .insert(field.clone(), Constraint::Range(r));
+                                        }
                                     }
                                 }
                             }
-                        }
-                    } else {
-                        // Format: "max" (e.g., "100" means <= 100)
-                        if let Ok(max) = range_val.parse::<f64>() {
+                        } else if let Ok(max) = range_val.parse::<f64>() {
                             if let Ok(r) = Range::max(max) {
                                 constraint_set.insert(field.clone(), Constraint::Range(r));
                             }
                         }
                     }
-                }
-                // OneOf constraint - parse comma-separated values
-                else if let Some(oneof_val) = obj.get("oneof").and_then(|v| v.as_str()) {
-                    let values: Vec<String> = oneof_val
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                    if !values.is_empty() {
-                        constraint_set.insert(field.clone(), Constraint::OneOf(OneOf::new(values)));
+                    // OneOf constraint
+                    else if let Some(oneof_val) = obj.get("oneof").and_then(|v| v.as_str()) {
+                        let values: Vec<String> = oneof_val
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                        if !values.is_empty() {
+                            constraint_set
+                                .insert(field.clone(), Constraint::OneOf(OneOf::new(values)));
+                        }
                     }
-                }
-                // AnyOf constraint - parse comma-separated patterns
-                else if let Some(anyof_val) = obj.get("anyof").and_then(|v| v.as_str()) {
-                    let patterns: Vec<Pattern> = anyof_val
-                        .split(',')
-                        .filter_map(|s| {
-                            let trimmed = s.trim();
-                            if trimmed.is_empty() {
-                                None
-                            } else {
-                                Pattern::new(trimmed).ok()
-                            }
-                        })
-                        .collect();
-                    if !patterns.is_empty() {
-                        constraint_set.insert(
-                            field.clone(),
-                            Constraint::Any(Any::new(
-                                patterns
-                                    .into_iter()
-                                    .map(Constraint::Pattern)
-                                    .collect::<Vec<_>>(),
-                            )),
-                        );
+                    // AnyOf constraint
+                    else if let Some(anyof_val) = obj.get("anyof").and_then(|v| v.as_str()) {
+                        let patterns: Vec<Pattern> = anyof_val
+                            .split(',')
+                            .filter_map(|s| {
+                                let trimmed = s.trim();
+                                if trimmed.is_empty() {
+                                    None
+                                } else {
+                                    Pattern::new(trimmed).ok()
+                                }
+                            })
+                            .collect();
+                        if !patterns.is_empty() {
+                            constraint_set.insert(
+                                field.clone(),
+                                Constraint::Any(Any::new(
+                                    patterns.into_iter().map(Constraint::Pattern),
+                                )),
+                            );
+                        }
                     }
-                }
-                // NotOneOf constraint - parse comma-separated values
-                else if let Some(notoneof_val) = obj.get("notoneof").and_then(|v| v.as_str()) {
-                    let values: Vec<String> = notoneof_val
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                    if !values.is_empty() {
-                        constraint_set
-                            .insert(field.clone(), Constraint::NotOneOf(NotOneOf::new(values)));
+                    // NotOneOf constraint
+                    else if let Some(notoneof_val) = obj.get("notoneof").and_then(|v| v.as_str()) {
+                        let values: Vec<String> = notoneof_val
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                        if !values.is_empty() {
+                            constraint_set
+                                .insert(field.clone(), Constraint::NotOneOf(NotOneOf::new(values)));
+                        }
                     }
-                }
-                // CIDR constraint
-                else if let Some(cidr_val) = obj.get("cidr").and_then(|v| v.as_str()) {
-                    if let Ok(c) = Cidr::new(cidr_val) {
-                        constraint_set.insert(field.clone(), Constraint::Cidr(c));
+                    // CIDR constraint
+                    else if let Some(cidr_val) = obj.get("cidr").and_then(|v| v.as_str()) {
+                        if let Ok(c) = Cidr::new(cidr_val) {
+                            constraint_set.insert(field.clone(), Constraint::Cidr(c));
+                        }
                     }
-                }
-                // UrlPattern constraint
-                else if let Some(url_val) = obj.get("urlpattern").and_then(|v| v.as_str()) {
-                    if let Ok(u) = UrlPattern::new(url_val) {
-                        constraint_set.insert(field.clone(), Constraint::UrlPattern(u));
+                    // UrlPattern constraint
+                    else if let Some(url_val) = obj.get("urlpattern").and_then(|v| v.as_str()) {
+                        if let Ok(u) = UrlPattern::new(url_val) {
+                            constraint_set.insert(field.clone(), Constraint::UrlPattern(u));
+                        }
                     }
-                }
-                // Regex constraint
-                else if let Some(regex_val) = obj.get("regex").and_then(|v| v.as_str()) {
-                    if let Ok(r) = RegexConstraint::new(regex_val) {
-                        constraint_set.insert(field.clone(), Constraint::Regex(r));
+                    // Regex constraint
+                    else if let Some(regex_val) = obj.get("regex").and_then(|v| v.as_str()) {
+                        if let Ok(r) = RegexConstraint::new(regex_val) {
+                            constraint_set.insert(field.clone(), Constraint::Regex(r));
+                        }
                     }
-                }
-                // Wildcard constraint (simple * patterns)
-                else if let Some(wildcard_val) = obj.get("wildcard").and_then(|v| v.as_str()) {
-                    if let Ok(p) = Pattern::new(wildcard_val) {
-                        constraint_set.insert(field.clone(), Constraint::Pattern(p));
+                    // Wildcard constraint
+                    else if let Some(wildcard_val) = obj.get("wildcard").and_then(|v| v.as_str()) {
+                        if let Ok(p) = Pattern::new(wildcard_val) {
+                            constraint_set.insert(field.clone(), Constraint::Pattern(p));
+                        }
                     }
-                }
-                // Contains constraint - parse comma-separated values
-                else if let Some(contains_val) = obj.get("contains").and_then(|v| v.as_str()) {
-                    let values: Vec<String> = contains_val
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
-                    if !values.is_empty() {
-                        constraint_set
-                            .insert(field.clone(), Constraint::Contains(Contains::new(values)));
+                    // Contains constraint
+                    else if let Some(contains_val) = obj.get("contains").and_then(|v| v.as_str()) {
+                        let values: Vec<String> = contains_val
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                        if !values.is_empty() {
+                            constraint_set
+                                .insert(field.clone(), Constraint::Contains(Contains::new(values)));
+                        }
                     }
                 }
             }
+            constraint_set
+        };
+
+    // Check if we're creating a delegated warrant or a root warrant
+    if let Some(parent_b64) = &config.parent_warrant_b64 {
+        // DELEGATION: Create child warrant from parent
+        let parent: Warrant = match wire::decode_base64(parent_b64) {
+            Ok(p) => p,
+            Err(e) => {
+                return serde_wasm_bindgen::to_value(&BuilderWarrantResult {
+                    warrant_b64: String::new(),
+                    issuer_public_key_hex: String::new(),
+                    issuer_private_key_hex: String::new(),
+                    holder_public_key_hex: String::new(),
+                    holder_private_key_hex: String::new(),
+                    tools: tool_names,
+                    error: Some(format!("Failed to decode parent warrant: {}", e)),
+                })
+                .unwrap();
+            }
+        };
+
+        // Build attenuated warrant
+        let mut att_builder = parent.attenuate().holder(holder_key.public_key());
+
+        for (tool_name, constraints) in &config.tools {
+            let constraint_set = parse_constraints(constraints);
+            att_builder = att_builder.capability(tool_name, constraint_set);
         }
+
+        att_builder = att_builder.ttl(Duration::from_secs(config.ttl));
+
+        let warrant = match att_builder.build(&issuer_key) {
+            Ok(w) => w,
+            Err(e) => {
+                return serde_wasm_bindgen::to_value(&BuilderWarrantResult {
+                    warrant_b64: String::new(),
+                    issuer_public_key_hex: String::new(),
+                    issuer_private_key_hex: String::new(),
+                    holder_public_key_hex: String::new(),
+                    holder_private_key_hex: String::new(),
+                    tools: tool_names,
+                    error: Some(format!("Failed to build delegated warrant: {}", e)),
+                })
+                .unwrap();
+            }
+        };
+
+        let warrant_b64 = match wire::encode_base64(&warrant) {
+            Ok(b) => b,
+            Err(e) => {
+                return serde_wasm_bindgen::to_value(&BuilderWarrantResult {
+                    warrant_b64: String::new(),
+                    issuer_public_key_hex: String::new(),
+                    issuer_private_key_hex: String::new(),
+                    holder_public_key_hex: String::new(),
+                    holder_private_key_hex: String::new(),
+                    tools: tool_names,
+                    error: Some(format!("Failed to encode warrant: {}", e)),
+                })
+                .unwrap();
+            }
+        };
+
+        return serde_wasm_bindgen::to_value(&BuilderWarrantResult {
+            warrant_b64,
+            issuer_public_key_hex: hex::encode(issuer_key.public_key().to_bytes()),
+            issuer_private_key_hex: hex::encode(issuer_key.secret_key_bytes()),
+            holder_public_key_hex: hex::encode(holder_key.public_key().to_bytes()),
+            holder_private_key_hex: hex::encode(holder_key.secret_key_bytes()),
+            tools: tool_names,
+            error: None,
+        })
+        .unwrap();
+    }
+
+    // ROOT WARRANT: Create new warrant from scratch
+    let mut builder = Warrant::builder()
+        .ttl(Duration::from_secs(config.ttl))
+        .holder(holder_key.public_key());
+
+    for (tool_name, constraints) in &config.tools {
+        let constraint_set = parse_constraints(constraints);
         builder = builder.capability(tool_name, constraint_set);
     }
 
