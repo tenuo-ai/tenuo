@@ -1118,6 +1118,52 @@ Cidr("10.0.0.0/8")
 
 ---
 
+## Defense in Depth: File Paths
+
+Tenuo constraints validate the **logical policy** (does the pattern allow this path?). For file operations, you should also validate the **physical path** to prevent symlink attacks and traversal.
+
+### The One-Two Punch
+
+```rust
+use path_jail;
+
+// Step 1: Tenuo validates policy
+if warrant.allows("read_file", &args) {
+    // Step 2: path_jail validates filesystem reality
+    let safe_path = path_jail::join("/data", &args.path)?;
+    std::fs::read_to_string(safe_path)?
+}
+```
+
+### Why Both?
+
+| Layer | What it catches | Example |
+|-------|-----------------|---------|
+| **Tenuo** (Pattern) | Policy violations | `path="/etc/passwd"` blocked by `Pattern("/data/*")` |
+| **path_jail** | Traversal attacks | `path="/data/../etc/passwd"` blocked after normalization |
+| **path_jail** | Symlink escapes | `path="/data/link"` where link → `/etc` |
+
+### Recommended Pattern
+
+```python
+from path_jail import Jail  # pip install path_jail
+
+jail = Jail("/data")
+
+@guard(tool="read_file")
+async def read_file(path: str) -> str:
+    # Tenuo already validated the constraint
+    # Now validate the actual filesystem path
+    safe_path = jail.join(path)
+    return safe_path.read_text()
+```
+
+**Tenuo** defines the rules. **path_jail** enforces them on the filesystem.
+
+See: [path_jail on PyPI](https://pypi.org/project/path-jail/)
+
+---
+
 ## See Also
 
 - [🔬 Explorer Playground](https://tenuo.dev/explorer/) — Test constraints interactively
