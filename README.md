@@ -241,6 +241,15 @@ See [Related Work](https://tenuo.dev/related-work) for detailed comparison.
 
 ---
 
+## Featured In
+
+- [TLDR InfoSec](https://tldr.tech/infosec/2025-12-15) - "Capabilities Are the Only Way to Secure Agent Delegation"
+- [Awesome LangChain](https://github.com/kyrolabs/awesome-langchain)
+- [Awesome LLM Agent Security](https://github.com/wearetyomsmnv/Awesome-LLM-agent-Security)
+- [Awesome LLMSecOps](https://github.com/wearetyomsmnv/Awesome-LLMSecOps)
+
+---
+
 ## Roadmap
 
 | Feature | Status |
