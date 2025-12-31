@@ -90,11 +90,6 @@ jobs:
             python-version: "3.13"
           - os: macos-latest
             python-version: "3.14"
-          # macOS x64 (Intel): min and latest for compatibility
-          - os: macos-13
-            python-version: "3.9"
-          - os: macos-13
-            python-version: "3.14"
           # Windows x64: full range
           - os: windows-latest
             python-version: "3.9"
