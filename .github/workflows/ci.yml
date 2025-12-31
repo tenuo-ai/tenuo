@@ -61,8 +61,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Full Python version testing on Linux, latest only on Mac/Windows
+        # Full Python version testing on Linux x64, key versions on other platforms/archs
         include:
+          # Linux x64: full version matrix
           - os: ubuntu-latest
             python-version: "3.9"
           - os: ubuntu-latest
@@ -71,10 +72,38 @@ jobs:
             python-version: "3.11"
           - os: ubuntu-latest
             python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: ubuntu-latest
+            python-version: "3.14"
+          # Linux ARM64: min and latest
+          - os: ubuntu-24.04-arm
+            python-version: "3.9"
+          - os: ubuntu-24.04-arm
+            python-version: "3.14"
+          # macOS ARM64 (Apple Silicon): full range
+          - os: macos-latest
+            python-version: "3.9"
           - os: macos-latest
             python-version: "3.12"
+          - os: macos-latest
+            python-version: "3.13"
+          - os: macos-latest
+            python-version: "3.14"
+          # macOS x64 (Intel): min and latest for compatibility
+          - os: macos-13
+            python-version: "3.9"
+          - os: macos-13
+            python-version: "3.14"
+          # Windows x64: full range
+          - os: windows-latest
+            python-version: "3.9"
           - os: windows-latest
             python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.13"
+          - os: windows-latest
+            python-version: "3.14"
     defaults:
       run:
         shell: bash
