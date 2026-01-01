@@ -9,7 +9,9 @@ Tenuo Python SDK - Capability tokens for AI agents
         # Protection
         guard, guard_tools,
         # Constraints
-        Pattern, Range, OneOf, Exact,
+        Pattern, Range, OneOf, Exact, Any,  # Any = Wildcard for zero-trust
+        # Composites
+        AnyOf, All, Not,  # AnyOf = OR, All = AND
         # Setup (usually once at startup)
         configure, auto_configure, SigningKey, PublicKey,
     )
@@ -29,13 +31,31 @@ from tenuo_core import (  # type: ignore
     PublicKey,
     Warrant,
     Authorizer,
+    # Multi-sig
+    Approval,
+    compute_approval_hash,
     # Common constraints
     Pattern,
     Exact,
     OneOf,
     Range,
     Contains,
+    Wildcard,
+    # Advanced constraints
+    AnyOf,
+    All,
+    Not,
+    NotOneOf,
+    Subset,
+    Cidr,
+    UrlPattern,
+    Regex,
+    CEL,
 )
+
+# Semantic alias: Any() = Wildcard() for zero-trust constraint sets
+# Use Any() to explicitly allow any value for a field while in closed-world mode
+Any = Wildcard
 
 # =============================================================================
 # 80% API - What most users need
@@ -119,14 +139,18 @@ __all__ = [
     "grant",
     "Capability",
     "Warrant",
-    
+
     # Core types
     "BoundWarrant",
     "Authorizer",
-    
+
+    # Multi-sig
+    "Approval",
+    "compute_approval_hash",
+
     # Setup
     "configure",
-    "auto_configure", 
+    "auto_configure",
     "reset_config",
     "is_configured",
     "is_audit_mode",
@@ -134,43 +158,55 @@ __all__ = [
     "should_block_violation",
     "SigningKey",
     "PublicKey",
-    
+
     # Protection
     "guard",
     "guard_tools",
     "guard_agent",
     "auto_protect",
     "LANGCHAIN_AVAILABLE",
-    
+
     # Context
     "warrant_scope",
     "key_scope",
-    
+
     # Common constraints
     "Pattern",
     "Exact",
     "OneOf",
     "Range",
     "Contains",
-    
+    "Wildcard",
+    "Any",  # Alias for Wildcard - use in zero-trust constraint sets
+    # Advanced constraints
+    "AnyOf",  # OR composite (at least one must match)
+    "All",  # AND composite (all must match)
+    "Not",  # Negation
+    "NotOneOf",  # Exclude values
+    "Subset",  # List must be subset
+    "Cidr",  # IP network range
+    "UrlPattern",  # URL matching
+    "Regex",  # Regular expression
+    "CEL",  # Common Expression Language
+
     # Errors (essential only)
     "TenuoError",
     "ConstraintViolation",
     "MonotonicityError",
     "ConfigurationError",
     "AuthorizationDenied",  # Rich error with diff support
-    
+
     # Error explanation
     "explain",
     "explain_str",
-    
+
     # Diagnostics
     "diagnose",
     "info",
-    
+
     # Result types
     "ValidationResult",
-    
+
     # Key management
     "KeyRegistry",
     "Keyring",

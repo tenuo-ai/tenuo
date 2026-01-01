@@ -51,13 +51,14 @@ When a worker has a warrant for `read_file("/data/q3.pdf")` with 60s TTL, prompt
 
 ## Core Invariants
 
-Tenuo enforces five guarantees:
+Tenuo enforces six guarantees:
 
 1. **Mandatory PoP**: Every warrant is bound to a public key. Usage requires proof-of-possession.
 2. **Warrant per task**: Authority is scoped to the task, not the compute.
 3. **Stateless verification**: Authorization is local. No control plane calls during execution.
 4. **Monotonic attenuation**: Child scope ⊆ parent scope. Always.
 5. **Self-contained**: The warrant carries everything needed for verification.
+6. **Closed-world constraints**: Once any constraint is defined, unknown arguments are rejected. See [Constraints](./constraints#closed-world-mode-trust-cliff).
 
 ## Attack Scenario
 

@@ -47,6 +47,7 @@ This demo shows what Tenuo does that **if-statements CAN'T**:
 
 ### Basics
 - **[basic_usage.py](basic_usage.py)**: The "Hello World" of Tenuo. Shows how to create a keypair, issue a warrant, and authorize a tool call. Demonstrates POLA (Principle of Least Authority) with explicit capabilities.
+- **[trust_cliff_demo.py](trust_cliff_demo.py)**: Demonstrates the "Trust Cliff" - once you add ANY constraint, unknown arguments are rejected. Shows `_allow_unknown`, `Wildcard()`, and non-inheritance during attenuation.
 - **[clearance_demo.py](clearance_demo.py)**: Shows how to assign clearance levels to warrants and configure clearance requirements per tool (gateway policy). Demonstrates clearance hierarchy enforcement and defense in depth.
 - **[issuer_execution_pattern.py](issuer_execution_pattern.py)**: **RECOMMENDED PATTERN** - Shows the production best practice: ISSUER warrants for planners, EXECUTION warrants for workers. Demonstrates clearance levels and separation of concerns. **Start here for production deployments.**
 - **[decorator_example.py](decorator_example.py)**: Demonstrates the `@guard` decorator pattern for protecting functions with minimal boilerplate.
@@ -144,6 +145,7 @@ python kubernetes_integration.py
 2. **Context Propagation**: Warrants are passed via `ContextVar`, making them thread-safe and async-safe. Perfect for web frameworks like FastAPI.
 3. **Fail-Closed**: Missing warrants block execution. If no warrant is in context, authorization fails by default.
 4. **PoP Automation**: Proof-of-Possession signatures are generated automatically by the SDK when using `@guard` or `guard()`.
+5. **Closed-World Constraints (Trust Cliff)**: Once you add ANY constraint, unknown arguments are rejected. Use `_allow_unknown=True` to opt out, or `Wildcard()` to explicitly allow fields. See [trust_cliff_demo.py](trust_cliff_demo.py).
 
 ## Learning Path
 

@@ -515,6 +515,11 @@ diagnose(warrant)  # Prints warrant details, TTL, constraints, etc.
 
 See [Constraints](./constraints) for the full list.
 
+> [!WARNING]
+> **Trust Cliff**: Once you add **any** constraint, unknown arguments are rejected.
+> Use `_allow_unknown=True` to opt out, or use `Wildcard()` to explicitly allow specific fields.
+> See [Closed-World Mode](./constraints#closed-world-mode-trust-cliff) for details.
+
 ---
 
 ## Next Steps

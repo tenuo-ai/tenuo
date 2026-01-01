@@ -49,7 +49,7 @@ def read_file_tool(file_path: str) -> str:
     """
     Read a file from the filesystem.
     Protected by Tenuo: only files matching the warrant's path constraint can be read.
-    
+
     Note: Authorization happens automatically via @guard decorator.
     This function will raise AuthorizationError if the warrant doesn't allow access.
     """
@@ -72,7 +72,7 @@ def write_file_tool(file_path: str, content: str) -> str:
     """
     Write content to a file.
     Protected by Tenuo: only files matching the warrant's path constraint can be written.
-    
+
     Note: Authorization happens automatically via @guard decorator.
     This function will raise AuthorizationError if the warrant doesn't allow access.
     """
@@ -96,10 +96,10 @@ def execute_command_tool(command: str) -> str:
     """
     Execute a shell command.
     Protected by Tenuo: only commands matching the warrant's constraints can be executed.
-    
+
     WARNING: This is a demo function. In production, use more secure command execution
     (e.g., whitelist of allowed commands, no shell=True, proper sanitization).
-    
+
     Note: Authorization happens automatically via @guard decorator.
     This function will raise AuthorizationError if the warrant doesn't allow the command.
     """
@@ -130,16 +130,16 @@ def execute_command_tool(command: str) -> str:
 class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else object):  # type: ignore
     """
     LangChain callback that sets the warrant in context before tool execution.
-    
+
     This ensures all @guard-decorated functions have access to the warrant
     via ContextVar, even when called from within LangChain's execution flow.
-    
+
     Usage:
         warrant = Warrant.issue(...)
         callback = TenuoWarrantCallback(warrant)
         agent_executor.invoke(inputs, {"callbacks": [callback]})
     """
-    
+
     def __init__(self, warrant: Warrant, keypair: SigningKey):
         if LANGCHAIN_AVAILABLE:
             super().__init__()
@@ -147,7 +147,7 @@ class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else objec
         self.keypair = keypair
         self.warrant_token: Optional[Token] = None
         self.keypair_token: Optional[Token] = None
-    
+
     def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs) -> None:
         """Called when a tool starts executing. Set warrant and keypair in context."""
         if LANGCHAIN_AVAILABLE:
@@ -155,7 +155,7 @@ class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else objec
             from tenuo.decorators import _warrant_context, _keypair_context
             self.warrant_token = _warrant_context.set(self.warrant)
             self.keypair_token = _keypair_context.set(self.keypair)
-    
+
     def on_tool_end(self, output: str, **kwargs) -> None:
         """Called when a tool finishes. Clean up context."""
         if LANGCHAIN_AVAILABLE:
@@ -166,7 +166,7 @@ class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else objec
             if self.keypair_token:
                 _keypair_context.reset(self.keypair_token)
                 self.keypair_token = None
-    
+
     def on_tool_error(self, error: Exception, **kwargs) -> None:
         """Called when a tool errors. Clean up context."""
         if LANGCHAIN_AVAILABLE:
@@ -186,7 +186,7 @@ class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else objec
 def create_langchain_tools():
     """
     Create LangChain Tool objects from our protected functions.
-    
+
     Note: The actual authorization happens inside the functions via @guard.
     LangChain just calls the functions - Tenuo enforces authorization automatically.
     """
@@ -216,7 +216,7 @@ def create_langchain_tools():
 
 def main():
     print("=== Tenuo + LangChain Integration Example ===\n")
-    
+
     # ========================================================================
     # STEP 1: Create Warrant (SIMULATION - In production, warrant comes from control plane)
     # ========================================================================
@@ -225,7 +225,7 @@ def main():
         # SIMULATION: Generate keypair for demo
         # In production: Control plane keypair is loaded from secure storage (K8s Secret, HSM, etc.)
         control_keypair = SigningKey.generate()
-        
+
         # SIMULATION: Create warrant with hardcoded constraints
         # In production: Constraints come from policy engine, user request, or configuration
         # HARDCODED PATH: /tmp/* is used for demo safety. In production, use env vars or config.
@@ -236,31 +236,31 @@ def main():
             .holder(control_keypair.public_key)  # Bind to self for demo
             .ttl(3600)  # HARDCODED: 1 hour TTL. In production, use env var or config.
             .mint(control_keypair))
-        
+
         print("   ✓ Warrant created with constraints:")
         print("     - file_path: Pattern('/tmp/*')")
         print("     - TTL: 3600 seconds\n")
     except Exception as e:
         print(f"   ✗ Error creating warrant: {e}")
         return
-    
+
     # ========================================================================
     # STEP 2: Handle Missing LangChain (SIMULATION MODE)
     # ========================================================================
     if not LANGCHAIN_AVAILABLE:
         print("2. [SIMULATION] LangChain not installed - demonstrating pattern...")
         print("   Install with: pip install langchain langchain-openai\n")
-        
+
         # Show how it would work
         print("   With LangChain installed, you would:")
         print("   a. Create tools from protected functions")
         print("   b. Create agent with tools")
         print("   c. Set warrant in callback context")
         print("   d. Execute agent - all tool calls are automatically authorized\n")
-        
+
         # Demonstrate the protection works even without LangChain
         print("3. Demonstrating protection (without LangChain)...")
-        
+
         # HARDCODED PATH: /tmp/langchain_test.txt for demo
         # In production: Use tempfile or env-specified test directory
         test_file = "/tmp/langchain_test.txt"
@@ -270,7 +270,7 @@ def main():
         except (IOError, OSError) as e:
             print(f"   ⚠ Warning: Could not create test file: {e}")
             print("   Continuing with authorization test...\n")
-        
+
         # Test authorized access
         with warrant_scope(agent_warrant), key_scope(control_keypair):
             try:
@@ -280,7 +280,7 @@ def main():
                 print(f"   ✗ Unexpected authorization error: {e}")
             except Exception as e:
                 print(f"   ✗ Unexpected error: {e}")
-        
+
         # Test blocked access
         try:
             with warrant_scope(agent_warrant), key_scope(control_keypair):
@@ -290,9 +290,9 @@ def main():
             print(f"   ✓ Correctly blocked read_file('/etc/passwd'): {str(e)[:60]}...")
         except Exception as e:
             print(f"   ✗ Unexpected error: {e}")
-        
+
         return
-    
+
     # ========================================================================
     # STEP 3: Check for OpenAI API Key (ENV VARIABLE)
     # ========================================================================
@@ -301,7 +301,7 @@ def main():
         print("⚠️  OPENAI_API_KEY not set. Set it to run the full example.")
         print("   export OPENAI_API_KEY='your-key-here'")
         print("\n   For now, demonstrating protection without LLM...\n")
-        
+
         # Show protection works
         print("2. Demonstrating protection...")
         test_file = "/tmp/test.txt"  # HARDCODED: Demo test file
@@ -313,7 +313,7 @@ def main():
             print(f"   ✗ Authorization error: {e}")
         except Exception as e:
             print(f"   ✗ Error: {e}")
-        
+
         try:
             with warrant_scope(agent_warrant), key_scope(control_keypair):
                 read_file_tool("/etc/passwd")  # HARDCODED: Protected file for demo
@@ -321,9 +321,9 @@ def main():
             print(f"   ✓ read_file('/etc/passwd') correctly blocked: {str(e)[:60]}...")
         except Exception as e:
             print(f"   ✗ Unexpected error: {e}")
-        
+
         return
-    
+
     # ========================================================================
     # STEP 4: Create LangChain Tools (REAL CODE - Production-ready)
     # ========================================================================
@@ -334,7 +334,7 @@ def main():
     except Exception as e:
         print(f"   ✗ Error creating tools: {e}")
         return
-    
+
     # ========================================================================
     # STEP 5: Create LangChain Agent (REAL CODE - Production-ready)
     # ========================================================================
@@ -350,7 +350,7 @@ def main():
         print(f"   ✗ Error creating agent: {e}")
         print("   (Check OPENAI_API_KEY and network connectivity)")
         return
-    
+
     # ========================================================================
     # STEP 6: Set Up Warrant Callback (REAL CODE - Production-ready)
     # ========================================================================
@@ -361,17 +361,17 @@ def main():
     except Exception as e:
         print(f"   ✗ Error creating callback: {e}")
         return
-    
+
     # ========================================================================
     # STEP 7: Run Agent with Protection (REAL CODE - Production-ready)
     # ========================================================================
     print("5. Running agent with Tenuo protection...")
     print("   The agent can only access files in /tmp/ due to warrant constraints.\n")
-    
+
     # HARDCODED PATH: /tmp/langchain_test.txt for demo
     # In production: Use tempfile or env-specified test directory
     test_file = "/tmp/langchain_test.txt"
-    
+
     try:
         # Create a test file first
         try:
@@ -380,7 +380,7 @@ def main():
         except (IOError, OSError) as e:
             print(f"   ⚠ Warning: Could not create test file: {e}")
             print("   Continuing with agent execution...\n")
-        
+
         # Run agent - it should be able to read the test file
         try:
             response = agent_executor.invoke(
@@ -396,7 +396,7 @@ def main():
         except Exception as e:
             print(f"   ✗ Error running agent: {e}\n")
             print("   (This might be due to OpenAI API issues or network problems)")
-        
+
         # Try to make agent read a protected file
         print("6. Testing protection - trying to read /etc/passwd...")
         try:
@@ -412,11 +412,11 @@ def main():
             print(f"   ✓ Correctly blocked: {str(e)[:60]}...\n")
         except Exception as e:
             print(f"   ✗ Unexpected error (not AuthorizationError): {e}\n")
-        
+
     except Exception as e:
         print(f"   ✗ Unexpected error: {e}\n")
         print("   (This might be due to missing OpenAI API key or other setup issues)")
-    
+
     print("=== Integration example completed! ===")
     print("\nKey points:")
     print("  - Warrant is set in context via LangChain callback")

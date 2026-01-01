@@ -30,11 +30,11 @@ from tenuo_core import Clearance
 
 def test_guard_requires_keypair_context():
     """Test that @guard enforces keypair context for PoP."""
-    
+
     @guard(tool="test_tool")
     def protected_function(value: str) -> str:
         return f"processed: {value}"
-    
+
     # Create warrant
     kp = SigningKey.generate()
     warrant = Warrant.mint(
@@ -43,13 +43,13 @@ def test_guard_requires_keypair_context():
         holder=kp.public_key,
         ttl_seconds=60
     )
-    
+
     # Should fail without keypair context
     from tenuo.exceptions import MissingSigningKey
     with warrant_scope(warrant):
         with pytest.raises(MissingSigningKey):
             protected_function(value="test")
-    
+
     # Should succeed with keypair context
     with warrant_scope(warrant), key_scope(kp):
         result = protected_function(value="test")
@@ -58,7 +58,7 @@ def test_guard_requires_keypair_context():
 
 def test_guard_with_explicit_keypair():
     """Test that @guard accepts explicit keypair parameter in decorator."""
-    
+
     kp = SigningKey.generate()
     warrant = Warrant.mint(
         keypair=kp,
@@ -66,12 +66,12 @@ def test_guard_with_explicit_keypair():
         holder=kp.public_key,
         ttl_seconds=60
     )
-    
+
     # Keypair passed to decorator explicitly
     @guard(tool="test_tool", keypair=kp)
     def protected_function(value: str) -> str:
         return f"processed: {value}"
-    
+
     # Should work with explicit keypair in decorator
     with warrant_scope(warrant):
         result = protected_function(value="allowed")
@@ -80,11 +80,11 @@ def test_guard_with_explicit_keypair():
 
 def test_context_based_pop_retrieval():
     """Test that keypair context is properly retrieved and used for PoP."""
-    
+
     @guard(tool="read_file")
     def read_file(path: str) -> str:
         return f"content of {path}"
-    
+
     kp = SigningKey.generate()
     warrant = Warrant.mint(
         keypair=kp,
@@ -92,13 +92,13 @@ def test_context_based_pop_retrieval():
         holder=kp.public_key,
         ttl_seconds=60
     )
-    
+
     # Set contexts
     with warrant_scope(warrant), key_scope(kp):
         # Verify contexts are set
         assert warrant_scope() is not None
         assert key_scope() is not None
-        
+
         # Should work with contexts
         result = read_file(path="/data/test.txt")
         assert result == "content of /data/test.txt"
@@ -106,11 +106,11 @@ def test_context_based_pop_retrieval():
 
 def test_pop_prevents_replay_attacks():
     """Test that PoP signatures include timestamps to prevent replay."""
-    
+
     @guard(tool="delete_file")
     def delete_file(path: str) -> str:
         return f"deleted {path}"
-    
+
     kp = SigningKey.generate()
     warrant = Warrant.mint(
         keypair=kp,
@@ -118,12 +118,12 @@ def test_pop_prevents_replay_attacks():
         holder=kp.public_key,
         ttl_seconds=60
     )
-    
+
     # Each call should generate a new PoP signature
     with warrant_scope(warrant), key_scope(kp):
         result1 = delete_file(path="/tmp/test.txt")
         result2 = delete_file(path="/tmp/test.txt")
-        
+
         assert result1 == "deleted /tmp/test.txt"
         assert result2 == "deleted /tmp/test.txt"
         # PoP signatures are different each time (timestamp changes)
@@ -133,15 +133,15 @@ def test_pop_prevents_cross_tenant_misuse():
     """
     Critical security test: Tenant A mints warrant for Tenant B's agent,
     but Tenant A cannot use it because they don't possess Tenant B's private key.
-    
+
     This proves PoP is strictly enforced - stolen or misdirected warrants are useless.
     """
     # Tenant A (control plane / issuer)
     tenant_a_kp = SigningKey.generate()
-    
+
     # Tenant B's agent (intended holder)
     tenant_b_agent_kp = SigningKey.generate()
-    
+
     # Tenant A mints a warrant FOR Tenant B's agent
     # The authorized_holder is set to Tenant B's public key
     warrant = Warrant.mint(
@@ -150,18 +150,18 @@ def test_pop_prevents_cross_tenant_misuse():
         holder=tenant_b_agent_kp.public_key,  # For Tenant B's agent
         ttl_seconds=3600
     )
-    
+
     # Verify the warrant was created correctly
     assert warrant.authorized_holder.to_bytes() == tenant_b_agent_kp.public_key.to_bytes()
     assert warrant.issuer.to_bytes() == tenant_a_kp.public_key.to_bytes()
-    
+
     # ATTACK SCENARIO: Tenant A tries to use the warrant with their OWN keypair
     # This MUST fail - they don't have Tenant B's private key
-    
+
     @guard(tool="sensitive_operation")
     def sensitive_operation(resource: str) -> str:
         return f"accessed {resource}"
-    
+
     # Tenant A tries to use their own keypair (wrong key)
     with warrant_scope(warrant), key_scope(tenant_a_kp):
         try:
@@ -171,7 +171,7 @@ def test_pop_prevents_cross_tenant_misuse():
             # Expected: Authorization denied because PoP signature doesn't match authorized_holder
             # The specific error message may vary, but access MUST be denied
             pass  # Success - access was denied
-    
+
     # SUCCESS SCENARIO: Tenant B's agent uses the warrant with THEIR keypair
     with warrant_scope(warrant), key_scope(tenant_b_agent_kp):
         result = sensitive_operation(resource="secret-data")
@@ -185,26 +185,26 @@ def test_pop_signature_must_match_authorized_holder():
     """
     correct_kp = SigningKey.generate()
     wrong_kp = SigningKey.generate()
-    
+
     warrant = Warrant.mint(
         keypair=correct_kp,
         capabilities=Constraints.for_tool("test_tool", {"action": Exact("test")}),
         holder=correct_kp.public_key,
         ttl_seconds=60
     )
-    
+
     args = {"action": "test"}
-    
+
     # Create PoP with WRONG keypair
     wrong_pop = warrant.sign(wrong_kp, "test_tool", args)
-    
+
     # Try to authorize with wrong signature - MUST fail
     result = warrant.authorize("test_tool", args, signature=bytes(wrong_pop))
     assert result is False, "Wrong keypair should NOT be accepted!"
-    
+
     # Create PoP with CORRECT keypair
     correct_pop = warrant.sign(correct_kp, "test_tool", args)
-    
+
     # Authorize with correct signature - should succeed
     result = warrant.authorize("test_tool", args, signature=bytes(correct_pop))
     assert result is True
@@ -216,9 +216,9 @@ def test_pop_signature_must_match_authorized_holder():
 
 def test_warrant_has_depth_property():
     """Test that warrants expose depth property."""
-    
+
     kp = SigningKey.generate()
-    
+
     # Root warrant has depth 0
     root = Warrant.mint(
         keypair=kp,
@@ -227,7 +227,7 @@ def test_warrant_has_depth_property():
         ttl_seconds=60
     )
     assert root.depth == 0
-    
+
     # Child warrant has depth 1
     child = root.attenuate(
         capabilities=Constraints.for_tool("test_tool", {}),
@@ -240,10 +240,10 @@ def test_warrant_has_depth_property():
 
 def test_warrant_chain_verification():
     """Test that warrant chains are properly verified."""
-    
+
     control_kp = SigningKey.generate()
     worker_kp = SigningKey.generate()
-    
+
     # Root warrant
     root = Warrant.mint(
         keypair=control_kp,
@@ -251,7 +251,7 @@ def test_warrant_chain_verification():
         holder=control_kp.public_key,
         ttl_seconds=3600
     )
-    
+
     # Attenuated warrant
     child = root.attenuate(
         capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/reports/*")}),
@@ -259,21 +259,21 @@ def test_warrant_chain_verification():
         holder=worker_kp.public_key,
         ttl_seconds=60
     )
-    
+
     # Verify chain
     assert child.depth == 1
     assert child.authorized_holder.to_bytes() == worker_kp.public_key.to_bytes()
-    
+
     # Child should have narrower constraints
     @guard(tool="file_ops")
     def access_file(path: str) -> str:
         return f"accessed {path}"
-    
+
     with warrant_scope(child), key_scope(worker_kp):
         # Should work for narrower path
         result = access_file(path="/data/reports/q3.pdf")
         assert result == "accessed /data/reports/q3.pdf"
-        
+
         # Should fail for broader path
         with pytest.raises(ScopeViolation):
             access_file(path="/data/other/file.txt")
@@ -285,9 +285,9 @@ def test_warrant_chain_verification():
 
 def test_clearance_monotonicity():
     """Test that clearance levels can only decrease during delegation."""
-    
+
     kp = SigningKey.generate()
-    
+
     # Create warrant with Internal trust level (value 30)
     root = Warrant.mint(
         keypair=kp,
@@ -296,9 +296,9 @@ def test_clearance_monotonicity():
         ttl_seconds=3600,
         clearance=Clearance.INTERNAL
     )
-    
+
     assert root.clearance.value() == Clearance.INTERNAL.value()
-    
+
     # Attenuate with lower trust level using builder pattern (POLA: inherit_all first)
     builder = root.grant_builder()
     builder.inherit_all()
@@ -306,18 +306,18 @@ def test_clearance_monotonicity():
     builder.holder(kp.public_key)
     builder.clearance(Clearance.EXTERNAL)
     child = builder.grant(kp)
-    
+
     assert child.clearance.value() == Clearance.EXTERNAL.value()
-    
+
     # Trust level decreased (Internal -> External)
     assert child.clearance < root.clearance
 
 
 def test_clearance_enforcement():
     """Test that operations respect clearance boundaries."""
-    
+
     kp = SigningKey.generate()
-    
+
     # Create warrant with External trust level (value 10)
     warrant = Warrant.mint(
         keypair=kp,
@@ -326,11 +326,11 @@ def test_clearance_enforcement():
         ttl_seconds=60,
         clearance=Clearance.EXTERNAL
     )
-    
+
     @guard(tool="read_data")
     def read_data(sensitivity: str) -> str:
         return f"data with sensitivity: {sensitivity}"
-    
+
     with warrant_scope(warrant), key_scope(kp):
         result = read_data(sensitivity="public")
         assert result == "data with sensitivity: public"
@@ -338,7 +338,7 @@ def test_clearance_enforcement():
 
 def test_clearance_hierarchy():
     """Test that clearance levels follow the correct hierarchy."""
-    
+
     # Verify trust level ordering (using string names)
     untrusted = Clearance.UNTRUSTED
     external = Clearance.EXTERNAL
@@ -346,7 +346,7 @@ def test_clearance_hierarchy():
     internal = Clearance.INTERNAL
     privileged = Clearance.PRIVILEGED
     system = Clearance.SYSTEM
-    
+
     # Verify hierarchy
     assert untrusted < external
     assert external < partner
@@ -361,33 +361,33 @@ def test_clearance_hierarchy():
 
 def test_context_isolation():
     """Test that contexts are properly isolated between calls."""
-    
+
     kp1 = SigningKey.generate()
     kp2 = SigningKey.generate()
-    
+
     warrant1 = Warrant.mint(
         keypair=kp1,
         capabilities=Constraints.for_tool("tool1", {}),
         holder=kp1.public_key,
         ttl_seconds=60
     )
-    
+
     warrant2 = Warrant.mint(
         keypair=kp2,
         capabilities=Constraints.for_tool("tool2", {}),
         holder=kp2.public_key,
         ttl_seconds=60
     )
-    
+
     # Set first context
     with warrant_scope(warrant1), key_scope(kp1):
         assert warrant_scope() is not None
         assert key_scope() is not None
-    
+
     # Context should be cleared
     assert warrant_scope() is None
     assert key_scope() is None
-    
+
     # Set second context
     with warrant_scope(warrant2), key_scope(kp2):
         # Should be different contexts
@@ -397,34 +397,34 @@ def test_context_isolation():
 
 def test_nested_contexts():
     """Test that nested contexts work correctly."""
-    
+
     kp = SigningKey.generate()
-    
+
     warrant1 = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("tool1", {}),
         holder=kp.public_key,
         ttl_seconds=60
     )
-    
+
     warrant2 = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("tool2", {}),
         holder=kp.public_key,
         ttl_seconds=60
     )
-    
+
     # Outer context
     with warrant_scope(warrant1):
         outer_warrant = warrant_scope()
         assert outer_warrant is not None
-        
+
         # Inner context
         with warrant_scope(warrant2):
             inner_warrant = warrant_scope()
             assert inner_warrant is not None
             # Inner context takes precedence
-        
+
         # Back to outer context
         restored_warrant = warrant_scope()
         assert restored_warrant is not None
@@ -436,13 +436,13 @@ def test_nested_contexts():
 
 def test_authorization_fails_without_warrant():
     """Test that authorization fails when no warrant is in context."""
-    
+
     @guard(tool="test_tool")
     def protected_function(value: str) -> str:
         return f"processed: {value}"
-    
+
     kp = SigningKey.generate()
-    
+
     # Should fail without warrant context
     with key_scope(kp):
         with pytest.raises(ScopeViolation, match="No warrant"):
@@ -451,13 +451,13 @@ def test_authorization_fails_without_warrant():
 
 def test_authorization_fails_with_wrong_tool():
     """Test that authorization fails when warrant tool doesn't match."""
-    
+
     @guard(tool="correct_tool")
     def protected_function(value: str) -> str:
         return f"processed: {value}"
-    
+
     kp = SigningKey.generate()
-    
+
     # Create warrant for wrong tool
     warrant = Warrant.mint(
         keypair=kp,
@@ -465,7 +465,7 @@ def test_authorization_fails_with_wrong_tool():
         holder=kp.public_key,
         ttl_seconds=60
     )
-    
+
     with warrant_scope(warrant), key_scope(kp):
         with pytest.raises(ScopeViolation):
             protected_function(value="test")
@@ -473,13 +473,13 @@ def test_authorization_fails_with_wrong_tool():
 
 def test_authorization_fails_with_constraint_violation():
     """Test that authorization fails when constraints are violated."""
-    
+
     @guard(tool="read_file")
     def read_file(path: str) -> str:
         return f"content of {path}"
-    
+
     kp = SigningKey.generate()
-    
+
     # Create warrant with specific path constraint
     warrant = Warrant.mint(
         keypair=kp,
@@ -487,12 +487,12 @@ def test_authorization_fails_with_constraint_violation():
         holder=kp.public_key,
         ttl_seconds=60
     )
-    
+
     with warrant_scope(warrant), key_scope(kp):
         # Should work for allowed path
         result = read_file(path="/allowed/file.txt")
         assert result == "content of /allowed/file.txt"
-        
+
         # Should fail for disallowed path
         with pytest.raises(ScopeViolation):
             read_file(path="/forbidden/file.txt")
@@ -500,13 +500,13 @@ def test_authorization_fails_with_constraint_violation():
 
 def test_authorization_fails_with_expired_warrant():
     """Test that authorization fails when warrant has expired."""
-    
+
     @guard(tool="test_tool")
     def protected_function(value: str) -> str:
         return f"processed: {value}"
-    
+
     kp = SigningKey.generate()
-    
+
     # Create warrant with very short TTL
     warrant = Warrant.mint(
         keypair=kp,
@@ -514,10 +514,10 @@ def test_authorization_fails_with_expired_warrant():
         holder=kp.public_key,
         ttl_seconds=0  # Expires immediately
     )
-    
+
     import time
     time.sleep(1)  # Wait for expiration
-    
+
     with warrant_scope(warrant), key_scope(kp):
         with pytest.raises(ScopeViolation):
             protected_function(value="test")

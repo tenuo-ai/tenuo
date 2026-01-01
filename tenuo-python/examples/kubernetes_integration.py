@@ -48,14 +48,14 @@ import os
 def load_warrant_from_env() -> Optional[Warrant]:
     """
     Load warrant from Kubernetes environment variable.
-    
+
     ENV VARIABLE: TENUO_WARRANT_BASE64 (set by K8s Secret/ConfigMap)
-    
+
     In K8s, you would set this via:
     - ConfigMap (for non-sensitive warrants)
     - Secret (for sensitive warrants) - RECOMMENDED
     - Init container that fetches from control plane
-    
+
     Example K8s Secret:
         apiVersion: v1
         kind: Secret
@@ -64,14 +64,14 @@ def load_warrant_from_env() -> Optional[Warrant]:
         type: Opaque
         stringData:
           WARRANT_BASE64: <base64-encoded-warrant>
-    
+
     Returns:
         Warrant if successfully loaded, None if not found or invalid.
     """
     warrant_b64 = os.getenv("TENUO_WARRANT_BASE64")
     if not warrant_b64:
         return None
-    
+
     try:
         return Warrant.from_base64(warrant_b64)
     except ValueError as e:
@@ -87,10 +87,10 @@ def load_warrant_from_env() -> Optional[Warrant]:
 def load_warrant_from_file(path: str = "/etc/tenuo/warrant.b64") -> Optional[Warrant]:
     """
     Load warrant from mounted Kubernetes Secret/ConfigMap.
-    
+
     HARDCODED DEFAULT PATH: /etc/tenuo/warrant.b64
     In production: Use env var TENUO_WARRANT_FILE_PATH or config.
-    
+
     Example K8s Deployment:
         volumes:
         - name: tenuo-warrant
@@ -101,10 +101,10 @@ def load_warrant_from_file(path: str = "/etc/tenuo/warrant.b64") -> Optional[War
           - name: tenuo-warrant
             mountPath: /etc/tenuo
             readOnly: true
-    
+
     Args:
         path: File path to warrant (default: /etc/tenuo/warrant.b64)
-    
+
     Returns:
         Warrant if successfully loaded, None if not found or invalid.
     """
@@ -134,19 +134,19 @@ def load_warrant_from_file(path: str = "/etc/tenuo/warrant.b64") -> Optional[War
 def load_warrant_from_request_header(headers: Dict[str, str]) -> Optional[Warrant]:
     """
     Load warrant from HTTP request header (e.g., from ingress or API gateway).
-    
+
     This is useful when:
     - Ingress validates warrant before forwarding
     - API gateway issues warrants per-request
     - Warrant is passed from upstream service
-    
+
     Example header:
         X-Tenuo-Warrant: <base64-encoded-warrant>
     """
     warrant_header = headers.get("X-Tenuo-Warrant") or headers.get("x-tenuo-warrant")
     if not warrant_header:
         return None
-    
+
     try:
         return Warrant.from_base64(warrant_header)
     except Exception as e:
@@ -161,17 +161,17 @@ def load_warrant_from_request_header(headers: Dict[str, str]) -> Optional[Warran
 class ControlPlane:
     """
     [SIMULATION] Simulates a control plane service that issues warrants.
-    
+
     This is a demo class. In production, the control plane would be:
     - A separate K8s service/deployment
     - Authenticated via service account tokens
     - Issues warrants based on agent registration/policy
     - Stores root keypair in secure storage (K8s Secret, HSM, etc.)
     """
-    
+
     def __init__(self, keypair: SigningKey):
         self.keypair = keypair
-    
+
     def issue_agent_warrant(
         self,
         agent_id: str,
@@ -180,17 +180,17 @@ class ControlPlane:
     ) -> Warrant:
         """
         [SIMULATION] Issue a warrant for a specific agent.
-        
+
         In K8s, this might be called:
         - During agent pod startup (init container)
         - Via admission webhook
         - Via operator that watches agent deployments
-        
+
         Args:
             agent_id: Identifier for the agent (for logging/audit)
             constraints: Constraint dictionary (e.g., {"file_path": Pattern("/tmp/*")})
             ttl_seconds: Time-to-live in seconds (HARDCODED default: 3600)
-        
+
         Returns:
             Warrant object
         """
@@ -199,7 +199,7 @@ class ControlPlane:
             .holder(self.keypair.public_key)  # Bind to self for demo
             .ttl(ttl_seconds)  # HARDCODED default: 3600. In production, use env var or config.
             .mint(self.keypair))
-    
+
     def issue_warrant_for_request(
         self,
         request_metadata: Dict[str, Any],
@@ -207,7 +207,7 @@ class ControlPlane:
     ) -> Warrant:
         """
         Issue a warrant for a specific request (e.g., from API gateway).
-        
+
         This is useful for:
         - Per-request authorization
         - Dynamic constraint injection based on user/tenant
@@ -231,7 +231,7 @@ def read_file(file_path: str):
     """Read a file locally - protected by warrant."""
     if not os.path.exists(file_path):
         return f"Error: File {file_path} not found"
-    
+
     with open(file_path, "r") as f:
         return f.read()[:1000] # Limit size
 
@@ -254,13 +254,13 @@ def write_file(file_path: str, content: str):
 class KubernetesWarrantManager:
     """
     Manages warrants in a Kubernetes environment.
-    
+
     Supports multiple warrant sources:
     1. Environment variable (for pod-level warrants)
     2. Mounted secret/file (for persistent warrants)
     3. Request headers (for per-request warrants)
     """
-    
+
     def __init__(self):
         # Try to load warrant at startup (from env or file)
         self.pod_warrant = (
@@ -268,23 +268,23 @@ class KubernetesWarrantManager:
             load_warrant_from_file() or
             None
         )
-        
+
         if self.pod_warrant:
             print(f"✓ Loaded pod-level warrant (tools: {self.pod_warrant.tools})")
         else:
             print("⚠ No pod-level warrant found - will use request-scoped warrants")
-    
+
     def get_warrant_for_request(
         self,
         headers: Optional[Dict[str, str]] = None
     ) -> Optional[Warrant]:
         """
         Get warrant for current request.
-        
+
         Priority:
         1. Request header (per-request warrant)
         2. Pod-level warrant (from env/file)
-        
+
         Returns None if no warrant available.
         """
         # Try request header first (most specific)
@@ -292,7 +292,7 @@ class KubernetesWarrantManager:
             request_warrant = load_warrant_from_request_header(headers)
             if request_warrant:
                 return request_warrant
-        
+
         # Fall back to pod-level warrant
         return self.pod_warrant
 
@@ -304,7 +304,7 @@ class KubernetesWarrantManager:
 def create_fastapi_middleware_example():
     """
     Example FastAPI middleware for Kubernetes deployment.
-    
+
     This shows how to integrate Tenuo with FastAPI in K8s:
     - Load warrant from request headers or pod-level config
     - Set warrant in context for all request handlers
@@ -325,11 +325,11 @@ async def tenuo_middleware(request: Request, call_next):
     # Get warrant from request headers or pod-level config
     headers = dict(request.headers)
     warrant = warrant_manager.get_warrant_for_request(headers)
-    
+
     if not warrant:
         from fastapi import HTTPException
         raise HTTPException(status_code=403, detail="No warrant available")
-    
+
     # Set warrant in context for this request
     # In production, load agent keypair from secure storage
     # with warrant_scope(warrant), key_scope(agent_keypair):
@@ -345,7 +345,7 @@ async def run_agent(prompt: str, request: Request):
     # Warrant is already in context from middleware
     # All @guard functions are automatically protected
     from langchain_agent import agent_executor
-    
+
     response = agent_executor.invoke({"input": prompt})
     return {"output": response["output"]}
 '''
@@ -360,7 +360,7 @@ def generate_kubernetes_manifests():
     """
     Generate example Kubernetes manifests for Tenuo + LangChain deployment.
     """
-    
+
     deployment_yaml = '''
 apiVersion: apps/v1
 kind: Deployment
@@ -458,7 +458,7 @@ spec:
             port:
               number: 8000
 '''
-    
+
     return deployment_yaml
 
 
@@ -468,7 +468,7 @@ spec:
 
 def main():
     print("=== Tenuo + LangChain Kubernetes Integration ===\n")
-    
+
     # ========================================================================
     # STEP 1: Simulate Control Plane Issuing Warrant (SIMULATION)
     # ========================================================================
@@ -479,7 +479,7 @@ def main():
         control_keypair = SigningKey.generate()
         control_keypair = SigningKey.generate()
         # control_plane = ControlPlane(control_keypair)
-        
+
         # SIMULATION: Create warrant with hardcoded constraints
         # In production: Constraints come from policy engine, agent registration, or configuration
         # HARDCODED: tool="read_file", Pattern("/tmp/*"), ttl_seconds=3600
@@ -494,12 +494,12 @@ def main():
     except Exception as e:
         print(f"   ✗ Error creating warrant: {e}")
         return
-    
+
     # ========================================================================
     # STEP 2: Simulate Loading Warrant in K8s Pod (SIMULATION)
     # ========================================================================
     print("2. [SIMULATION] Agent Pod: Loading warrant...")
-    
+
     # SIMULATION: Set environment variable for demo
     # In production: This is set by K8s Secret/ConfigMap
     try:
@@ -511,7 +511,7 @@ def main():
             print("   ⚠ Loaded from env: Failed (should not happen in this demo)")
     except Exception as e:
         print(f"   ✗ Error loading from env: {e}")
-    
+
     # SIMULATION: Create temp file to simulate mounted K8s Secret
     # In real K8s: This would be mounted at /etc/tenuo/warrant.b64
     # HARDCODED PATH: /tmp/warrant.b64 (temp file for demo)
@@ -520,7 +520,7 @@ def main():
     try:
         with open(temp_warrant_file, 'w') as f:
             f.write(agent_warrant.to_base64())
-        
+
         # Load from the temp file (simulating mounted secret)
         warrant_from_file = load_warrant_from_file(temp_warrant_file)
         if warrant_from_file:
@@ -529,9 +529,9 @@ def main():
             print("   ⚠ Loaded from file: Failed")
     except Exception as e:
         print(f"   ✗ Error creating/loading temp warrant file: {e}\n")
-    
+
     print()  # Blank line
-    
+
     # ========================================================================
     # STEP 3: Initialize Warrant Manager (REAL CODE - Production-ready)
     # ========================================================================
@@ -542,7 +542,7 @@ def main():
     except Exception as e:
         print(f"   ✗ Error initializing warrant manager: {e}")
         return
-    
+
     # ========================================================================
     # STEP 4: Simulate Request with Warrant in Header (SIMULATION)
     # ========================================================================
@@ -561,7 +561,7 @@ def main():
             print("   ⚠ Loaded warrant from request: Failed\n")
     except Exception as e:
         print(f"   ✗ Error loading warrant from request: {e}\n")
-    
+
     # ========================================================================
     # STEP 5: Demonstrate Protection (REAL CODE - Production-ready)
     # ========================================================================
@@ -578,7 +578,7 @@ def main():
                 print(f"   ✗ Unexpected authorization error: {e}")
             except Exception as e:
                 print(f"   ✗ Unexpected error: {e}")
-            
+
             # Test blocked access
             # HARDCODED PATH: /etc/passwd (protected system file for demo)
             try:
@@ -590,7 +590,7 @@ def main():
                 print(f"   ✗ Unexpected error (not AuthorizationError): {e}\n")
     except Exception as e:
         print(f"   ✗ Error in protection test: {e}\n")
-    
+
     # ========================================================================
     # STEP 6: Show Deployment Pattern (DOCUMENTATION)
     # ========================================================================
@@ -599,7 +599,7 @@ def main():
     print("   - Agent pods mount secret → Load warrant at startup")
     print("   - Per-request warrants from headers → Set in context")
     print("   - All @guard functions automatically protected\n")
-    
+
     print("=== Kubernetes Integration Complete ===\n")
     print("Key Points:")
     print("  ✓ Warrants loaded from K8s Secrets/ConfigMaps")
@@ -607,7 +607,7 @@ def main():
     print("  ✓ ContextVar works across async boundaries (FastAPI)")
     print("  ✓ No network calls - 100% offline verification")
     print("  ✓ Works across multiple pods/replicas")
-    
+
     # ========================================================================
     # Cleanup (SIMULATION - Remove temp files)
     # ========================================================================

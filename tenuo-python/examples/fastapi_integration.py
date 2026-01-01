@@ -57,7 +57,7 @@ WARRANT_HEADER = "X-Tenuo-Warrant"
 def load_agent_signing_key() -> SigningKey:
     """
     Load agent signing_key from file (e.g., K8s secret mount).
-    
+
     In production:
     - Load from /var/run/secrets/tenuo/signing_key (K8s Secret)
     - Or from environment variable (for local dev)
@@ -101,18 +101,18 @@ app = FastAPI(
 async def get_warrant(request: Request) -> Warrant:
     """
     FastAPI dependency to extract and validate warrant from request header.
-    
+
     This pattern ensures contextvars propagate correctly through async boundaries.
     The warrant is extracted here and set in context within each endpoint handler.
     """
     warrant_b64 = request.headers.get(WARRANT_HEADER)
-    
+
     if not warrant_b64:
         raise HTTPException(
             status_code=401,
             detail=f"Missing {WARRANT_HEADER} header"
         )
-    
+
     try:
         warrant = Warrant.from_base64(warrant_b64)
         # Note: Expiration is checked by @guard decorator during authorization
@@ -205,11 +205,11 @@ async def health():
 async def read_file_endpoint(file_path: str, warrant: Warrant = Depends(get_warrant)):
     """
     Read file endpoint.
-    
+
     Requires:
     - X-Tenuo-Warrant header with warrant authorizing "read_file"
     - Warrant constraints must allow the requested file_path
-    
+
     Note: Warrant expiration and authorization are handled by @guard decorator.
     The middleware sets the context, and @guard uses it.
     """
@@ -239,7 +239,7 @@ async def read_file_endpoint(file_path: str, warrant: Warrant = Depends(get_warr
 async def write_file_endpoint(file_path: str, content: dict, warrant: Warrant = Depends(get_warrant)):
     """
     Write file endpoint.
-    
+
     Requires:
     - X-Tenuo-Warrant header with warrant authorizing "write_file"
     - Warrant constraints must allow the requested file_path
@@ -268,14 +268,14 @@ async def write_file_endpoint(file_path: str, content: dict, warrant: Warrant = 
 async def manage_cluster_endpoint(cluster: str, request: dict, warrant: Warrant = Depends(get_warrant)):
     """
     Cluster management endpoint.
-    
+
     Requires:
     - X-Tenuo-Warrant header with warrant authorizing "manage_cluster"
     - Warrant constraints must allow the cluster name and replicas
     """
     action = request.get("action", "status")
     replicas = request.get("replicas", 1)
-    
+
     with warrant_scope(warrant), key_scope(AGENT_KEYPAIR):
         try:
             result = manage_cluster(cluster, action, replicas)
@@ -331,7 +331,7 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
     """
     Create demo warrants for testing.
     In production, warrants are issued by the control plane.
-    
+
     Note: Each tool gets its own warrant. This is the recommended pattern
     for fine-grained authorization control.
     """
@@ -340,13 +340,13 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
         .holder(AGENT_KEYPAIR.public_key)
         .ttl(3600)
         .mint(AGENT_KEYPAIR))
-    
+
     write_warrant = (Warrant.mint_builder()
         .capability("write_file", file_path=Pattern("/tmp/*"))
         .holder(AGENT_KEYPAIR.public_key)
         .ttl(3600)
         .mint(AGENT_KEYPAIR))
-    
+
     cluster_warrant = (Warrant.mint_builder()
         .capability("manage_cluster",
             cluster=Pattern("staging-*"),
@@ -354,7 +354,7 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
         .holder(AGENT_KEYPAIR.public_key)
         .ttl(3600)
         .mint(AGENT_KEYPAIR))
-    
+
     return {
         "read_file": (read_warrant, read_warrant.to_base64()),
         "write_file": (write_warrant, write_warrant.to_base64()),
@@ -364,7 +364,7 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     print("=" * 60)
     print("Tenuo FastAPI Integration Example")
     print("=" * 60)
@@ -383,5 +383,5 @@ if __name__ == "__main__":
     print("       http://localhost:8000/api/files/tmp/test.txt")
     print("\nStarting server on http://localhost:8000")
     print("=" * 60)
-    
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

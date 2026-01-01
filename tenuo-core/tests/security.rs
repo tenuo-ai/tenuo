@@ -76,6 +76,222 @@ fn test_duplicate_approvals_rejected() {
     assert!(result.is_err(), "Duplicate approvals should be rejected");
 }
 
+/// Verify that insufficient approvals are rejected.
+///
+/// Attack: Provide 1 approval when 2 are required.
+/// Expected: Rejected.
+#[test]
+fn test_insufficient_approvals_rejected() {
+    let root_key = SigningKey::generate();
+    let approver_1 = SigningKey::generate();
+    let approver_2 = SigningKey::generate();
+
+    // Require 2-of-2
+    let warrant = Warrant::builder()
+        .capability("critical_op", ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .required_approvers(vec![approver_1.public_key(), approver_2.public_key()])
+        .min_approvals(2)
+        .holder(root_key.public_key())
+        .build(&root_key)
+        .unwrap();
+
+    let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+
+    // Create ONE valid approval from approver_1
+    let args = HashMap::new();
+    let request_hash = compute_request_hash(&warrant.id().to_string(), "critical_op", &args, None);
+
+    let now = Utc::now();
+    let expires = now + chrono::Duration::hours(1);
+
+    let mut signable_bytes = Vec::new();
+    signable_bytes.extend_from_slice(&request_hash);
+    signable_bytes.extend_from_slice("approver_1".as_bytes());
+    signable_bytes.extend_from_slice(&now.timestamp().to_le_bytes());
+    signable_bytes.extend_from_slice(&expires.timestamp().to_le_bytes());
+
+    let signature = approver_1.sign(&signable_bytes);
+
+    let approval = Approval {
+        request_hash,
+        approver_key: approver_1.public_key(),
+        external_id: "approver_1".to_string(),
+        provider: "test".to_string(),
+        approved_at: now,
+        expires_at: expires,
+        reason: None,
+        signature,
+    };
+
+    // Submit only 1 approval
+    let sig = warrant.sign(&root_key, "critical_op", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "critical_op", &args, Some(&sig), &[approval]);
+
+    assert!(result.is_err(), "Insufficient approvals should be rejected");
+}
+
+/// Verify that approvals from unauthorized keys are rejected.
+///
+/// Attack: Provide valid approval signed by an unauthorized key.
+/// Expected: Rejected (ignored, count remains 0).
+#[test]
+fn test_unauthorized_approver_rejected() {
+    let root_key = SigningKey::generate();
+    let authorized_approver = SigningKey::generate();
+    let random_attacker = SigningKey::generate();
+
+    // Require 1 specific approver
+    let warrant = Warrant::builder()
+        .capability("critical_op", ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .required_approvers(vec![authorized_approver.public_key()])
+        .min_approvals(1)
+        .holder(root_key.public_key())
+        .build(&root_key)
+        .unwrap();
+
+    let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+
+    // Create approval signed by RANDOM ATTACKER
+    let args = HashMap::new();
+    let request_hash = compute_request_hash(&warrant.id().to_string(), "critical_op", &args, None);
+    let now = Utc::now();
+    let expires = now + chrono::Duration::hours(1);
+
+    let mut signable_bytes = Vec::new();
+    signable_bytes.extend_from_slice(&request_hash);
+    signable_bytes.extend_from_slice("attacker".as_bytes()); // external_id
+    signable_bytes.extend_from_slice(&now.timestamp().to_le_bytes());
+    signable_bytes.extend_from_slice(&expires.timestamp().to_le_bytes());
+
+    let signature = random_attacker.sign(&signable_bytes);
+
+    let approval = Approval {
+        request_hash,
+        approver_key: random_attacker.public_key(), // <-- Unauthorized key
+        external_id: "attacker".to_string(),
+        provider: "test".to_string(),
+        approved_at: now,
+        expires_at: expires,
+        reason: None,
+        signature,
+    };
+
+    let sig = warrant.sign(&root_key, "critical_op", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "critical_op", &args, Some(&sig), &[approval]);
+
+    assert!(result.is_err(), "Unauthorized approver should be rejected");
+}
+
+/// Verify that approvals for a different request are rejected.
+///
+/// Attack: Replay approval from a different tool invocation (hash mismatch).
+/// Expected: Rejected.
+#[test]
+fn test_mismatched_request_hash_rejected() {
+    let root_key = SigningKey::generate();
+    let approver = SigningKey::generate();
+
+    let warrant = Warrant::builder()
+        .capability("critical_op", ConstraintSet::new())
+        .capability("other_op", ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .required_approvers(vec![approver.public_key()])
+        .min_approvals(1)
+        .holder(root_key.public_key())
+        .build(&root_key)
+        .unwrap();
+
+    let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+
+    let args = HashMap::new();
+
+    // Approval is for "other_op"
+    let other_hash = compute_request_hash(&warrant.id().to_string(), "other_op", &args, None);
+    let now = Utc::now();
+    let expires = now + chrono::Duration::hours(1);
+
+    let mut signable = Vec::new();
+    signable.extend_from_slice(&other_hash);
+    signable.extend_from_slice("approver".as_bytes());
+    signable.extend_from_slice(&now.timestamp().to_le_bytes());
+    signable.extend_from_slice(&expires.timestamp().to_le_bytes());
+    let signature = approver.sign(&signable);
+
+    let approval = Approval {
+        request_hash: other_hash, // Mismatched hash vs current request
+        approver_key: approver.public_key(),
+        external_id: "approver".to_string(),
+        provider: "test".to_string(),
+        approved_at: now,
+        expires_at: expires,
+        reason: None,
+        signature,
+    };
+
+    // Request is for "critical_op"
+    let sig = warrant.sign(&root_key, "critical_op", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "critical_op", &args, Some(&sig), &[approval]);
+
+    assert!(
+        result.is_err(),
+        "Mismatched request hash should be rejected"
+    );
+}
+
+/// Verify that expired approvals are rejected.
+///
+/// Attack: Use an old approval that has expired.
+/// Expected: Rejected.
+#[test]
+fn test_expired_approval_rejected() {
+    let root_key = SigningKey::generate();
+    let approver = SigningKey::generate();
+
+    let warrant = Warrant::builder()
+        .capability("critical_op", ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .required_approvers(vec![approver.public_key()])
+        .min_approvals(1)
+        .holder(root_key.public_key())
+        .build(&root_key)
+        .unwrap();
+
+    let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+
+    let args = HashMap::new();
+    let request_hash = compute_request_hash(&warrant.id().to_string(), "critical_op", &args, None);
+
+    // Expired 1 hour ago
+    let now = Utc::now();
+    let expired_time = now - chrono::Duration::hours(1);
+    let approved_at = now - chrono::Duration::hours(2);
+
+    let mut signable = Vec::new();
+    signable.extend_from_slice(&request_hash);
+    signable.extend_from_slice("approver".as_bytes());
+    signable.extend_from_slice(&approved_at.timestamp().to_le_bytes());
+    signable.extend_from_slice(&expired_time.timestamp().to_le_bytes());
+    let signature = approver.sign(&signable);
+
+    let approval = Approval {
+        request_hash,
+        approver_key: approver.public_key(),
+        external_id: "approver".to_string(),
+        provider: "test".to_string(),
+        approved_at,
+        expires_at: expired_time, // EXPIRED
+        reason: None,
+        signature,
+    };
+
+    let sig = warrant.sign(&root_key, "critical_op", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "critical_op", &args, Some(&sig), &[approval]);
+
+    assert!(result.is_err(), "Expired approval should be rejected");
+}
+
 // ============================================================================
 // Pattern Attenuation Security
 // ============================================================================

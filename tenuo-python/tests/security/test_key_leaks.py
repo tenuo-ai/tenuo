@@ -10,10 +10,10 @@ class TestKeyLeaks:
         """Ensure SigningKey.__repr__ does not reveal key bytes."""
         key = SigningKey.generate()
         repr_str = repr(key)
-        
+
         # Should look like <tenuo.SigningKey object at ...> or contain "SigningKey" but NO hex
         assert "SigningKey" in repr_str
-        
+
         # Heuristic: shouldn't contain long hex strings (32 bytes = 64 chars)
         # Allow small memory addresses (0x...)
         # Check for 64-char hex sequence
@@ -31,7 +31,7 @@ class TestKeyLeaks:
         Ideally: explicit failure.
         """
         key = SigningKey.generate()
-        
+
         # Currently, PyO3 might not support pickling by default, which is good.
         # If it raises TypeError, that is PASS.
         # If it succeeds, we flag it for manual review (or decide if we want to block it).
@@ -48,10 +48,10 @@ class TestKeyLeaks:
         key = SigningKey.generate()
         warrant, _ = Warrant.quick_mint(["search"], ttl=300)
         bound = warrant.bind(key)
-        
+
         repr_str = repr(bound)
         assert "KEY_BOUND=True" in repr_str
-        
+
         secret_hex = key.secret_key_bytes().hex()
         assert secret_hex not in repr_str
 
@@ -60,7 +60,7 @@ class TestKeyLeaks:
         key = SigningKey.generate()
         warrant, _ = Warrant.quick_mint(["search"], ttl=300)
         bound = warrant.bind(key)
-        
+
         with pytest.raises(TypeError, match="BoundWarrant cannot be (serialized|pickled)"):
             pickle.dumps(bound)
 
@@ -69,17 +69,17 @@ class TestKeyLeaks:
         key = SigningKey.generate()
         warrant, _ = Warrant.quick_mint(["search"], ttl=300)
         bound = warrant.bind(key)
-        
+
         # Standard json dumps raises TypeError for custom objects
         with pytest.raises(TypeError):
             json.dumps(bound)
-            
+
     def test_bound_warrant_attributes_safe(self):
         """Ensure underlying key is not easily exposed via public attributes."""
         key = SigningKey.generate()
         warrant, _ = Warrant.quick_mint(["search"], ttl=300)
         bound = warrant.bind(key)
-        
+
         # We know it has _key, but it shouldn't be in the public dir
         assert "key" not in dir(bound)
         assert "signing_key" not in dir(bound)

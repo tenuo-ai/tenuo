@@ -30,7 +30,7 @@ async def test_mcp_client_connection(mcp_server_script):
     """Test connecting to MCP server."""
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
-    
+
     async with SecureMCPClient(
         command="python",
         args=[str(mcp_server_script)]
@@ -45,14 +45,14 @@ async def test_mcp_tool_discovery(mcp_server_script):
     """Test discovering MCP tools."""
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
-    
+
     async with SecureMCPClient(
         command="python",
         args=[str(mcp_server_script)]
     ) as client:
         tools = await client.get_tools()
         tool_names = [t.name for t in tools]
-        
+
         assert "read_file" in tool_names
         assert "list_directory" in tool_names
 
@@ -62,17 +62,17 @@ async def test_mcp_tool_call_authorized(mcp_server_script):
     """Test calling MCP tool with authorization."""
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
-    
+
     # Configure Tenuo
     keypair = SigningKey.generate()
     configure(issuer_key=keypair, dev_mode=True)
-    
+
     # Create test file using tempfile for cross-platform support
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
         tf.write("test content")
         test_file_path = tf.name
     test_file = Path(test_file_path)
-    
+
     try:
         async with SecureMCPClient(
             command="python",
@@ -81,7 +81,7 @@ async def test_mcp_tool_call_authorized(mcp_server_script):
             # Get protected tool
             protected_tools = client.tools
             read_file = protected_tools["read_file"]
-            
+
             # Call with authorization
             async with mint(Capability("read_file", path=Pattern("*"))):
                 result = await read_file(path=str(test_file))
@@ -98,20 +98,20 @@ async def test_mcp_tool_call_blocked(mcp_server_script):
     """Test that unauthorized calls are blocked."""
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
-    
+
     from tenuo import ConstraintViolation, AuthorizationDenied
-    
+
     # Configure Tenuo
     keypair = SigningKey.generate()
     configure(issuer_key=keypair, dev_mode=True)
-    
+
     async with SecureMCPClient(
         command="python",
         args=[str(mcp_server_script)]
     ) as client:
         protected_tools = client.tools
         read_file = protected_tools["read_file"]
-        
+
         # Try to read outside allowed path
         async with mint(Capability("read_file", path=Pattern("*.allowed"))):
             with pytest.raises((ConstraintViolation, AuthorizationDenied)):
@@ -124,7 +124,7 @@ async def test_mcp_client_with_config_registration(mcp_server_script):
     """Test that register_config=True works."""
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
-    
+
     # Create a simple config
     config_yaml = """
 version: "1"
@@ -141,12 +141,12 @@ tools:
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
         f.write(config_yaml)
         config_path = f.name
-    
+
     try:
         # Configure Tenuo
         keypair = SigningKey.generate()
         configure(issuer_key=keypair, dev_mode=True)
-        
+
         async with SecureMCPClient(
             command="python",
             args=[str(mcp_server_script)],
@@ -155,14 +155,14 @@ tools:
         ) as client:
             protected_tools = client.tools
             read_file = protected_tools["read_file"]
-            
+
             # This should work and use the default max_size from config
             async with mint(Capability("read_file", path=Pattern("*"), max_size=Range.max_value(2000))):
                 # Test file
                 with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
                     tf.write("small")
                     test_file = tf.name
-                
+
                 try:
                     result = await read_file(path=test_file)
                     assert "small" in result[0].text
@@ -177,11 +177,11 @@ async def test_mcp_warrant_injection(mcp_server_script):
     """Test that warrant injection works."""
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
-    
+
     # Configure Tenuo
     keypair = SigningKey.generate()
     configure(issuer_key=keypair, dev_mode=True)
-    
+
     async with SecureMCPClient(
         command="python",
         args=[str(mcp_server_script)]
@@ -191,7 +191,7 @@ async def test_mcp_warrant_injection(mcp_server_script):
             tf.write("injection test")
             test_file_path = tf.name
         test_file = Path(test_file_path)
-        
+
         try:
             async with mint(Capability("read_file", path=Pattern("*"))):
                 # Call tool with injection
@@ -226,21 +226,21 @@ tools:
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
         f.write(config_yaml)
         config_path = f.name
-    
+
     try:
         config = McpConfig.from_file(config_path)
         compiled = CompiledMcpConfig.compile(config)
-        
+
         args = {
             "query": {
                 "table": "users",
                 "operation": "SELECT"
             }
         }
-        
+
         result = compiled.extract_constraints("db_query", args)
         constraints = dict(result.constraints)
-        
+
         assert constraints["table"] == "users"
         assert constraints["op"] == "SELECT"
     finally:
@@ -252,24 +252,24 @@ async def test_discover_and_protect_usage(mcp_server_script):
     """Test discover_and_protect as context manager."""
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
-    
+
     from tenuo import SigningKey, configure, mint, Pattern, Capability
     from tenuo.mcp.client import discover_and_protect
-    
+
     # Configure Tenuo
     keypair = SigningKey.generate()
     configure(issuer_key=keypair, dev_mode=True)
-    
+
     # Create test file
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
         tf.write("context_manager_test")
         test_file = tf.name
-        
+
     try:
         async with discover_and_protect("python", [str(mcp_server_script)]) as tools:
             assert "read_file" in tools
             read_file = tools["read_file"]
-            
+
             async with mint(Capability("read_file", path=Pattern("*"))):
                 result = await read_file(path=test_file)
                 assert "context_manager_test" in result[0].text
@@ -282,20 +282,20 @@ async def test_config_auto_registration(mcp_server_script):
     """Test that config is automatically registered when config_path is provided."""
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
-        
+
     from tenuo import SigningKey, configure
     from tenuo.config import get_config, reset_config
-    
+
     # Reset config
     reset_config()
-    
+
     # Setup minimal config
     keypair = SigningKey.generate()
     configure(issuer_key=keypair, dev_mode=True)
-    
+
     # Ensure no MCP config initially
     assert get_config().mcp_config is None
-    
+
     # Create MCP config file
     config_yaml = """
 version: "1"
@@ -312,12 +312,12 @@ tools:
     with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
         f.write(config_yaml)
         config_path = f.name
-        
+
     try:
         # Initialize client with config_path (no register_config arg)
         # Should default to registering
         async with SecureMCPClient(
-            command="python", 
+            command="python",
             args=[str(mcp_server_script)],
             config_path=config_path
         ) as _client:  # noqa: F841
@@ -326,6 +326,6 @@ tools:
             assert conf.mcp_config is not None
             # Verify it's the right config by checking compiled output or similar
             # Deep inspection might be hard, but presence is good enough for this test
-            
+
     finally:
         os.unlink(config_path)

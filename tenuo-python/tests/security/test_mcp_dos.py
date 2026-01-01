@@ -15,7 +15,7 @@ import tenuo.mcp.client
 class TestMcpDos(unittest.IsolatedAsyncioTestCase):
     async def test_large_config_loading(self):
         """Test if client handles massively large config file."""
-        
+
         # Patch MCP_AVAILABLE to bypass import check
         with patch.object(tenuo.mcp.client, 'MCP_AVAILABLE', True):
             with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
@@ -24,9 +24,9 @@ class TestMcpDos(unittest.IsolatedAsyncioTestCase):
                 f.write('  vulnerable_tool:\n    description: "A tool to trigger DoS"\n    constraints:\n')
                 for i in range(150):
                     f.write(f'      param_{i}:\n        from: body\n        path: param_{i}\n')
-                
+
                 config_path = f.name
-                
+
             try:
                 print(f"Attempting to load config with 150 constraints from {config_path}...")
                 # We expect a ConfigurationError from Rust limits
@@ -44,7 +44,7 @@ class TestMcpDos(unittest.IsolatedAsyncioTestCase):
                     else:
                         print(f"WARNING: Unexpected error message: {e}")
                         raise e
-                        
+
             finally:
                 if os.path.exists(config_path):
                     os.unlink(config_path)

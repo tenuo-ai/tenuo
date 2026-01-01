@@ -61,10 +61,10 @@ class MockTool:
     """Mock LangChain-like tool for testing."""
     name: str
     description: str = "A mock tool"
-    
+
     def _run(self, **kwargs):
         return f"MockTool({self.name}) called with {kwargs}"
-    
+
     async def _arun(self, **kwargs):
         return self._run(**kwargs)
 
@@ -86,44 +86,44 @@ class MockMessage:
 @pytest.mark.skipif(not LANGGRAPH_AVAILABLE, reason="LangGraph not installed")
 class TestTenuoToolNode:
     """Tests for TenuoToolNode (requires langgraph)."""
-    
+
     def test_tenuo_tool_node_creation(self, keypair):
         """Test creating a TenuoToolNode."""
         from langchain_core.tools import tool
-        
+
         @tool
         def search(query: str) -> str:
             """Search for something."""
             return f"Results for: {query}"
-        
+
         @tool
         def calculator(expression: str) -> str:
             """Calculate expression."""
             return f"Result: {expression}"
-        
+
         tools = [search, calculator]
-        
+
         # Should create successfully
         node = TenuoToolNode(tools)
-        
+
         # Verify tools are registered
         assert "search" in node.tools_by_name
         assert "calculator" in node.tools_by_name
-    
+
     def test_tenuo_tool_node_execution(self, warrant_and_key, registry):
         """Test TenuoToolNode executes tools with authorization."""
         from langchain_core.tools import tool
         from langchain_core.messages import AIMessage
-        
+
         warrant, key_id = warrant_and_key
-        
+
         @tool
         def search(query: str) -> str:
             """Search for something."""
             return f"Results for: {query}"
-        
+
         node = TenuoToolNode([search])
-        
+
         # Create state with warrant (key_id in config)
         state = {
             "warrant": warrant,
@@ -139,9 +139,9 @@ class TestTenuoToolNode:
             ]
         }
         config = make_config(key_id)
-        
+
         result = node(state, config=config)
-        
+
         # Should have executed the tool
         assert "messages" in result
         assert len(result["messages"]) == 1
@@ -153,14 +153,14 @@ class TestTenuoToolNode:
         """TenuoToolNode fails gracefully without warrant in state."""
         from langchain_core.tools import tool
         from langchain_core.messages import AIMessage
-        
+
         @tool
         def search(query: str) -> str:
             """Search."""
             return "results"
-        
+
         node = TenuoToolNode([search])
-        
+
         # State without warrant
         state = {
             "key_id": "test-key",
@@ -171,26 +171,26 @@ class TestTenuoToolNode:
                 )
             ]
         }
-        
+
         result = node(state)
-        
+
         # Should return error message
         assert "Security Error" in result["messages"][0].content or "error" in result["messages"][0].content.lower()
-    
+
     def test_tenuo_tool_node_tool_not_found(self, warrant_and_key, registry):
         """TenuoToolNode handles missing tools gracefully."""
         from langchain_core.tools import tool
         from langchain_core.messages import AIMessage
-        
+
         warrant, key_id = warrant_and_key
-        
+
         @tool
         def search(query: str) -> str:
             """Search."""
             return "results"
-        
+
         node = TenuoToolNode([search])
-        
+
         # Request a tool that doesn't exist
         state = {
             "warrant": warrant,
@@ -202,9 +202,9 @@ class TestTenuoToolNode:
             ]
         }
         config = make_config(key_id)
-        
+
         result = node(state, config=config)
-        
+
         assert "not found" in result["messages"][0].content.lower() or "error" in result["messages"][0].content.lower()
 
 
@@ -221,7 +221,7 @@ class TestAuthorizationDenied:
             tool="read_file",
             reason="Tool not in warrant scope",
         )
-        
+
         assert "read_file" in str(error)
         assert "Tool not in warrant scope" in str(error)
 
@@ -242,13 +242,13 @@ class TestAuthorizationDenied:
                 value=500,
             )
         ]
-        
+
         error = AuthorizationDenied(
             tool="read_file",
             constraint_results=results,
             reason="Constraint violation",
         )
-        
+
         error_str = str(error)
         assert "read_file" in error_str
 
@@ -258,7 +258,7 @@ class TestAuthorizationDenied:
             tool="search",
             reason="Rate limit exceeded",
         )
-        
+
         data = error.to_dict()
         # to_dict returns TenuoError base fields
         assert "error_code" in data
@@ -282,7 +282,7 @@ class TestConstraintResult:
         )
         assert result.passed is True
         assert "OK" in str(result)
-        
+
     def test_constraint_result_failed(self):
         """Test denied constraint check."""
         result = ConstraintResult(
@@ -303,7 +303,7 @@ class TestConstraintResult:
             constraint_repr="Range(0, 100)",
             value=50,
         )
-        
+
         s = str(result)
         assert "size" in s
         assert "✅" in s or "OK" in s
@@ -320,7 +320,7 @@ class TestConstraintTypes:
         """Test Pattern constraint display."""
         p = Pattern("/data/*")
         assert "/data/*" in str(p)
-        
+
     def test_range_display(self):
         """Test Range constraint display."""
         r = Range(min=0, max=100)
@@ -339,20 +339,20 @@ class TestSecureAgent:
         """Test basic guard_tools usage."""
         from tenuo import reset_config
         from tenuo.langchain import guard_tools, TenuoTool
-        
+
         reset_config()
-        
+
         @dataclass
         class Tool:
             name: str = "search"
             description: str = "Search tool"
             def _run(self, **kwargs): return "result"
-        
+
         tools = [Tool()]
-        
+
         # One-liner to secure tools
         protected = guard_tools(tools, issuer_key=keypair)
-        
+
         # Should return wrapped tools
         assert len(protected) == 1
         assert all(isinstance(t, TenuoTool) for t in protected)

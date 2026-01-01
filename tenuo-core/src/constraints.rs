@@ -2360,13 +2360,34 @@ impl From<CelConstraint> for Constraint {
 // Constraint Set
 // ============================================================================
 
+/// Helper for serde skip_serializing_if
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
 /// A set of constraints keyed by field name.
 ///
 /// Uses BTreeMap for deterministic serialization order (canonical CBOR).
 /// This ensures consistent warrant IDs regardless of insertion order.
+///
+/// # Zero-Trust Unknown Fields
+///
+/// When any constraint is defined, the constraint set operates in "closed-world"
+/// mode by default: arguments not explicitly constrained are rejected.
+///
+/// - No constraints (empty set) -> OPEN: any arguments allowed
+/// - Any constraint defined -> CLOSED: unknown fields rejected
+/// - `allow_unknown=true` -> Explicit opt-out from closed-world
+///
+/// Use `Wildcard` constraint to allow any value for a specific field while
+/// still operating in closed-world mode for other fields.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ConstraintSet {
     constraints: BTreeMap<String, Constraint>,
+    /// When true, arguments not listed in constraints are allowed.
+    /// When false (default), unknown arguments are rejected if any constraints exist.
+    #[serde(default, skip_serializing_if = "is_false")]
+    allow_unknown: bool,
 }
 
 impl ConstraintSet {
@@ -2385,6 +2406,22 @@ impl ConstraintSet {
         self.constraints.get(field)
     }
 
+    /// Check if unknown arguments are allowed.
+    ///
+    /// When `false` (default) and constraints exist, unknown arguments are rejected.
+    /// When `true`, unknown arguments pass through even when constraints exist.
+    pub fn allow_unknown(&self) -> bool {
+        self.allow_unknown
+    }
+
+    /// Set whether unknown arguments are allowed.
+    ///
+    /// Use this to explicitly opt-out of zero-trust mode when you want to
+    /// constrain some fields but allow others to pass through unchecked.
+    pub fn set_allow_unknown(&mut self, allow: bool) {
+        self.allow_unknown = allow;
+    }
+
     /// Validate that all constraints in this set have acceptable nesting depth.
     ///
     /// Call this after deserialization to prevent stack overflow attacks
@@ -2397,7 +2434,27 @@ impl ConstraintSet {
     }
 
     /// Check if all constraints are satisfied by the given arguments.
+    ///
+    /// # Zero-Trust Behavior
+    ///
+    /// - If no constraints exist: all arguments are allowed (open-world)
+    /// - If any constraint exists and `allow_unknown=false`: unknown arguments rejected
+    /// - If any constraint exists and `allow_unknown=true`: unknown arguments allowed
     pub fn matches(&self, args: &HashMap<String, ConstraintValue>) -> Result<()> {
+        // Zero-trust: if constraints exist and allow_unknown is false,
+        // reject any arguments not explicitly constrained
+        if !self.constraints.is_empty() && !self.allow_unknown {
+            for key in args.keys() {
+                if !self.constraints.contains_key(key) {
+                    return Err(Error::ConstraintNotSatisfied {
+                        field: key.clone(),
+                        reason: "unknown field not allowed (zero-trust mode)".to_string(),
+                    });
+                }
+            }
+        }
+
+        // Check all defined constraints are satisfied
         for (field, constraint) in &self.constraints {
             let value = args
                 .get(field)
@@ -2417,7 +2474,24 @@ impl ConstraintSet {
     }
 
     /// Validate that `child` is a valid attenuation of this constraint set.
+    ///
+    /// # Monotonicity Rules
+    ///
+    /// - Child must have all constraints that parent has (can be narrower)
+    /// - Child can add new constraints (that's more restrictive)
+    /// - Child cannot enable `allow_unknown` if parent has it disabled
+    ///   (that would expand capabilities)
+    /// - Child can disable `allow_unknown` even if parent enabled it
+    ///   (that's more restrictive)
     pub fn validate_attenuation(&self, child: &ConstraintSet) -> Result<()> {
+        // Monotonicity: child cannot be MORE permissive than parent
+        // If parent has allow_unknown=false, child cannot enable it
+        if !self.allow_unknown && child.allow_unknown {
+            return Err(Error::MonotonicityViolation(
+                "child cannot enable allow_unknown when parent has it disabled".to_string(),
+            ));
+        }
+
         // Check each parent constraint has a valid child constraint
         for (field, parent_constraint) in &self.constraints {
             let child_constraint = child.constraints.get(field).ok_or_else(|| {
@@ -2454,6 +2528,7 @@ impl FromIterator<(String, Constraint)> for ConstraintSet {
     fn from_iter<T: IntoIterator<Item = (String, Constraint)>>(iter: T) -> Self {
         Self {
             constraints: iter.into_iter().collect(),
+            allow_unknown: false,
         }
     }
 }
@@ -3714,5 +3789,206 @@ mod tests {
 
         // Unknown constraints cannot be attenuated (fail closed)
         assert!(unknown.validate_attenuation(&unknown).is_err());
+    }
+
+    // =========================================================================
+    // Zero-Trust Unknown Fields Tests
+    // =========================================================================
+    //
+    // Design:
+    // - No constraints (empty set) → OPEN: allow any arguments
+    // - Any constraint defined → CLOSED: reject unknown fields
+    // - Wildcard constraint on a field → allows any value for that specific field
+    // - allow_unknown=true → explicit opt-out from closed-world
+    // - Attenuation: allow_unknown is NOT inherited (child defaults to closed)
+
+    #[test]
+    fn test_zero_trust_empty_constraint_set_allows_unknown_fields() {
+        // No constraints defined → fully open, any arguments allowed
+        let cs = ConstraintSet::new();
+
+        let mut args = HashMap::new();
+        args.insert(
+            "url".to_string(),
+            ConstraintValue::String("https://example.com".into()),
+        );
+        args.insert("timeout".to_string(), ConstraintValue::Integer(30));
+        args.insert(
+            "anything".to_string(),
+            ConstraintValue::String("whatever".into()),
+        );
+
+        // Should pass - empty constraint set is fully open
+        assert!(cs.matches(&args).is_ok());
+    }
+
+    #[test]
+    fn test_zero_trust_one_constraint_rejects_unknown_fields() {
+        // One constraint defined → closed world, unknown fields rejected
+        let mut cs = ConstraintSet::new();
+        cs.insert("url", Pattern::new("https://*").unwrap());
+
+        // Only url provided - should pass
+        let mut args = HashMap::new();
+        args.insert(
+            "url".to_string(),
+            ConstraintValue::String("https://example.com".into()),
+        );
+        assert!(cs.matches(&args).is_ok());
+
+        // url + unknown field - should FAIL (zero trust)
+        args.insert("timeout".to_string(), ConstraintValue::Integer(30));
+        let result = cs.matches(&args);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("timeout"));
+        assert!(err.to_string().contains("unknown") || err.to_string().contains("not allowed"));
+    }
+
+    #[test]
+    fn test_zero_trust_wildcard_allows_any_value_for_field() {
+        // Wildcard constraint on a field means "any value allowed for this field"
+        // but other unknown fields are still rejected
+        let mut cs = ConstraintSet::new();
+        cs.insert("url", Pattern::new("https://*").unwrap());
+        cs.insert("timeout", Wildcard::new()); // Any value for timeout
+
+        let mut args = HashMap::new();
+        args.insert(
+            "url".to_string(),
+            ConstraintValue::String("https://example.com".into()),
+        );
+        args.insert("timeout".to_string(), ConstraintValue::Integer(9999));
+
+        // Should pass - both fields are constrained (even if timeout is wildcard)
+        assert!(cs.matches(&args).is_ok());
+
+        // But an unknown field is still rejected
+        args.insert("retries".to_string(), ConstraintValue::Integer(3));
+        assert!(cs.matches(&args).is_err());
+    }
+
+    #[test]
+    fn test_zero_trust_allow_unknown_explicit_opt_out() {
+        // allow_unknown=true explicitly opts out of closed-world
+        let mut cs = ConstraintSet::new();
+        cs.insert("url", Pattern::new("https://*").unwrap());
+        cs.set_allow_unknown(true);
+
+        let mut args = HashMap::new();
+        args.insert(
+            "url".to_string(),
+            ConstraintValue::String("https://example.com".into()),
+        );
+        args.insert("timeout".to_string(), ConstraintValue::Integer(30));
+        args.insert(
+            "anything".to_string(),
+            ConstraintValue::String("whatever".into()),
+        );
+
+        // Should pass - allow_unknown=true
+        assert!(cs.matches(&args).is_ok());
+    }
+
+    #[test]
+    fn test_zero_trust_allow_unknown_still_enforces_defined_constraints() {
+        // Even with allow_unknown=true, defined constraints must be satisfied
+        let mut cs = ConstraintSet::new();
+        cs.insert("url", Pattern::new("https://*").unwrap());
+        cs.set_allow_unknown(true);
+
+        let mut args = HashMap::new();
+        args.insert(
+            "url".to_string(),
+            ConstraintValue::String("http://insecure.com".into()),
+        ); // http, not https
+        args.insert(
+            "anything".to_string(),
+            ConstraintValue::String("allowed".into()),
+        );
+
+        // Should FAIL - url doesn't match pattern
+        assert!(cs.matches(&args).is_err());
+    }
+
+    #[test]
+    fn test_zero_trust_attenuation_allow_unknown_not_inherited() {
+        // Parent has allow_unknown=true, child doesn't specify
+        // Child should default to allow_unknown=false (closed world)
+        let mut parent = ConstraintSet::new();
+        parent.insert("url", Pattern::new("https://*").unwrap());
+        parent.set_allow_unknown(true);
+
+        let mut child = ConstraintSet::new();
+        child.insert("url", Pattern::new("https://api.example.com/*").unwrap());
+        // Child does NOT set allow_unknown - defaults to false
+
+        // Attenuation should be valid (child narrows url)
+        assert!(parent.validate_attenuation(&child).is_ok());
+
+        // But child should NOT inherit allow_unknown
+        assert!(!child.allow_unknown());
+
+        // Child should reject unknown fields
+        let mut args = HashMap::new();
+        args.insert(
+            "url".to_string(),
+            ConstraintValue::String("https://api.example.com/v1".into()),
+        );
+        args.insert("timeout".to_string(), ConstraintValue::Integer(30));
+        assert!(child.matches(&args).is_err()); // Rejected!
+    }
+
+    #[test]
+    fn test_zero_trust_attenuation_child_cannot_enable_allow_unknown() {
+        // Parent has allow_unknown=false (or not set)
+        // Child cannot enable allow_unknown (that would expand capabilities)
+        let mut parent = ConstraintSet::new();
+        parent.insert("url", Pattern::new("https://*").unwrap());
+        // parent.allow_unknown defaults to false
+
+        let mut child = ConstraintSet::new();
+        child.insert("url", Pattern::new("https://api.example.com/*").unwrap());
+        child.set_allow_unknown(true); // Child tries to enable
+
+        // Attenuation should FAIL - child is more permissive
+        assert!(parent.validate_attenuation(&child).is_err());
+    }
+
+    #[test]
+    fn test_zero_trust_attenuation_parent_open_child_can_close() {
+        // Parent is fully open (no constraints)
+        // Child can add constraints (that's more restrictive)
+        let parent = ConstraintSet::new(); // No constraints
+
+        let mut child = ConstraintSet::new();
+        child.insert("url", Pattern::new("https://*").unwrap());
+
+        // Should be valid - child is more restrictive
+        assert!(parent.validate_attenuation(&child).is_ok());
+    }
+
+    #[test]
+    fn test_zero_trust_serialization_roundtrip() {
+        // allow_unknown should survive serialization
+        let mut cs = ConstraintSet::new();
+        cs.insert("url", Pattern::new("https://*").unwrap());
+        cs.set_allow_unknown(true);
+
+        let json = serde_json::to_string(&cs).unwrap();
+        let deserialized: ConstraintSet = serde_json::from_str(&json).unwrap();
+
+        assert!(deserialized.allow_unknown());
+        assert!(deserialized.get("url").is_some());
+    }
+
+    #[test]
+    fn test_zero_trust_default_allow_unknown_is_false() {
+        let cs = ConstraintSet::new();
+        assert!(!cs.allow_unknown());
+
+        let mut cs_with_constraint = ConstraintSet::new();
+        cs_with_constraint.insert("url", Pattern::new("https://*").unwrap());
+        assert!(!cs_with_constraint.allow_unknown());
     }
 }

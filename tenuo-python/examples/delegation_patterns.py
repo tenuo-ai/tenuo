@@ -99,14 +99,14 @@ def main():
    • Uses GRANT (narrowing existing issuer warrant)
    • Result: Child can mint new warrants (within narrowed scope)
    • Example: Root admin → Team lead
-  
+
 2. Issuer → Executor (Creating Execution Warrants):
-   • Grants SPECIFIC execution capabilities  
+   • Grants SPECIFIC execution capabilities
    • Code: Warrant.mint_builder().tools([...]).mint(issuer_key)
    • Uses MINT (creating new execution warrant from scratch)
    • Result: Can execute tools but cannot delegate issuance rights
    • Example: Team lead → Deployment bot
-  
+
 3. Executor → Executor (Narrowing Execution):
    • Narrows existing execution capabilities
    • Code: parent_executor.grant_builder().grant(key)

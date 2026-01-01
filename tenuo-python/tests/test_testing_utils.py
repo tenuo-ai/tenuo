@@ -29,21 +29,21 @@ from tenuo.testing import assert_denied, assert_authorized, AuthorizationAsserti
 from tenuo.exceptions import AuthorizationDenied  # noqa: E402
 
 class TestDXTooling(unittest.TestCase):
-    
+
     def test_assert_denied_context(self):
         """Test assert_denied as a context manager."""
-        
+
         # 1. Should catch AuthorizationDenied
         with assert_denied():
             raise AuthorizationDenied("Denied!")
-            
+
         # 2. Should catch with matching code
         with assert_denied(code="ScopeViolation"):
             # Mock error with code
             err = AuthorizationDenied("Scope violation")
             err.error_code = "ScopeViolation"
             raise err
-            
+
         # 3. Should fail if matching code is wrong
         with self.assertRaises(AssertionError):
             with assert_denied(code="ScopeViolation"):
@@ -55,14 +55,14 @@ class TestDXTooling(unittest.TestCase):
         with self.assertRaises(AssertionError):
             with assert_denied():
                 pass
-                
+
     def test_assert_authorized_context(self):
         """Test assert_authorized as a context manager."""
-        
+
         # 1. Should pass if checks succeed
         with assert_authorized():
             pass
-            
+
         # 2. Should fail if AuthorizationDenied is raised
         with self.assertRaises(AssertionError):
             with assert_authorized():
@@ -74,12 +74,12 @@ class TestDXTooling(unittest.TestCase):
         mock_warrant = MagicMock()
         mock_warrant.sign.return_value = b"signature"
         mock_key = MagicMock()
-        
+
         # Case: Authorization succeeds (should fail assertion)
         mock_warrant.authorize.return_value = True
         with self.assertRaises(AuthorizationAssertionError):
             assert_denied(mock_warrant, mock_key, "tool")
-            
+
         # Case: Authorization fails (should pass assertion)
         mock_warrant.authorize.return_value = False
         assert_denied(mock_warrant, mock_key, "tool")

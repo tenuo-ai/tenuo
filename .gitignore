@@ -11,6 +11,8 @@ test_cli_output/
 .venv/
 .venv*/
 venv/
+*_venv/
+*venv/
 .env/
 env/
 verify_cli.sh
@@ -52,6 +54,9 @@ coverage/
 # Test output artifacts
 test_failures.txt
 test_output.txt
+
+# Demo internal docs
+tenuo-python/examples/local_llm_demo/local_llm_demo_spec.md
 
 tenuo-core/check.log
 

@@ -10,7 +10,7 @@ This is a SEPARATE process that the demo connects to via stdio.
 Usage:
     # Run directly (for testing):
     python mcp_research_server.py
-    
+
     # The demo script starts this automatically via SecureMCPClient
 """
 
@@ -90,14 +90,14 @@ async def list_tools():
 @server.call_tool()
 async def call_tool(name: str, arguments: dict):
     """Handle tool calls."""
-    
+
     if name == "web_search":
         query = arguments.get("query", "")
         domain = arguments.get("domain", "")
-        
+
         # Build search query with domain filter
         search_query = f"site:{domain} {query}" if domain else query
-        
+
         if TAVILY_AVAILABLE and os.getenv("TAVILY_API_KEY"):
             try:
                 client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
@@ -106,7 +106,7 @@ async def call_tool(name: str, arguments: dict):
                     search_depth="basic",
                     max_results=3
                 )
-                
+
                 results = []
                 for r in response.get("results", []):
                     results.append(
@@ -114,7 +114,7 @@ async def call_tool(name: str, arguments: dict):
                         f"  URL: {r.get('url', '')}\n"
                         f"  {r.get('content', '')[:200]}..."
                     )
-                
+
                 return [TextContent(
                     type="text",
                     text="\n\n".join(results) if results else "No results found."
@@ -129,12 +129,12 @@ async def call_tool(name: str, arguments: dict):
 
 • AI Agent Security: A Survey (2024)
   URL: https://arxiv.org/abs/2401.12345
-  Recent advances in AI agent security focus on capability control, 
+  Recent advances in AI agent security focus on capability control,
   sandboxing, and authorization frameworks. Key challenges include...
 
 • Securing LLM Tool Use with Cryptographic Warrants
   URL: https://arxiv.org/abs/2402.67890
-  This paper proposes using capability-based security tokens to 
+  This paper proposes using capability-based security tokens to
   constrain AI agent actions at the tool level...
 
 • Multi-Agent Systems: Security Considerations
@@ -142,20 +142,20 @@ async def call_tool(name: str, arguments: dict):
   As AI agents become more autonomous, security becomes paramount.
   We analyze attack vectors including prompt injection..."""
             )]
-    
+
     elif name == "write_file":
         path = arguments.get("path", "")
         content = arguments.get("content", "")
-        
+
         # Security: restrict to /tmp/research/
         base_dir = "/tmp/research"
         os.makedirs(base_dir, exist_ok=True)
-        
+
         # Normalize and validate path
         full_path = os.path.normpath(os.path.join(base_dir, path.lstrip("/")))
         if not full_path.startswith(base_dir):
             return [TextContent(type="text", text=f"Error: Path must be within {base_dir}")]
-        
+
         try:
             os.makedirs(os.path.dirname(full_path) or base_dir, exist_ok=True)
             with open(full_path, "w") as f:
@@ -163,15 +163,15 @@ async def call_tool(name: str, arguments: dict):
             return [TextContent(type="text", text=f"Successfully wrote {len(content)} bytes to {full_path}")]
         except Exception as e:
             return [TextContent(type="text", text=f"Write error: {e}")]
-    
+
     elif name == "read_file":
         path = arguments.get("path", "")
-        
+
         base_dir = "/tmp/research"
         full_path = os.path.normpath(os.path.join(base_dir, path.lstrip("/")))
         if not full_path.startswith(base_dir):
             return [TextContent(type="text", text=f"Error: Path must be within {base_dir}")]
-        
+
         try:
             with open(full_path, "r") as f:
                 content = f.read()
@@ -180,7 +180,7 @@ async def call_tool(name: str, arguments: dict):
             return [TextContent(type="text", text=f"File not found: {full_path}")]
         except Exception as e:
             return [TextContent(type="text", text=f"Read error: {e}")]
-    
+
     else:
         return [TextContent(type="text", text=f"Unknown tool: {name}")]
 

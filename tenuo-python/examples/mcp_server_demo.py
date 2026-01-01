@@ -66,11 +66,11 @@ async def list_tools() -> list[Tool]:
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     """Handle tool calls."""
-    
+
     if name == "read_file":
         path = arguments["path"]
         max_size = arguments.get("max_size", 1048576)
-        
+
         try:
             file_path = Path(path)
             if not file_path.exists():
@@ -78,10 +78,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     type="text",
                     text=f"Error: File not found: {path}"
                 )]
-            
+
             with open(file_path, 'r') as f:
                 content = f.read(max_size)
-            
+
             return [TextContent(
                 type="text",
                 text=content
@@ -91,10 +91,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 type="text",
                 text=f"Error reading file: {e}"
             )]
-    
+
     elif name == "list_directory":
         path = arguments["path"]
-        
+
         try:
             dir_path = Path(path)
             if not dir_path.is_dir():
@@ -102,7 +102,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     type="text",
                     text=f"Error: Not a directory: {path}"
                 )]
-            
+
             files = [f.name for f in dir_path.iterdir()]
             return [TextContent(
                 type="text",
@@ -113,7 +113,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 type="text",
                 text=f"Error listing directory: {e}"
             )]
-    
+
     else:
         return [TextContent(
             type="text",

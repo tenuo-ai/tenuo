@@ -10,23 +10,23 @@ from tenuo_core import Warrant  # type: ignore[import-untyped]
 def diagnose(warrant: Warrant) -> str:
     """
     Troubleshoot warrant issues.
-    
+
     Provides a detailed diagnosis of a warrant's status, including:
     - Expiration status
     - Delegation depth
     - Tools authorized
     - Clearance level
     - Link to Tenuo Explorer for interactive debugging
-    
+
     Args:
         warrant: The warrant to diagnose
-        
+
     Returns:
         Human-readable diagnostic report
-        
+
     Example:
         import tenuo
-        
+
         tenuo.diagnose(warrant)
         # Output:
         # Warrant Diagnosis
@@ -41,13 +41,13 @@ def diagnose(warrant: Warrant) -> str:
         "=" * 50,
         ""
     ]
-    
+
     # Check expiration
     if warrant.is_expired():
         lines.append("[NO] Expired: warrant has expired")
     else:
         lines.append(f"[OK] Valid for: {warrant.ttl_remaining}")
-    
+
     # Check depth
     if warrant.is_terminal():
         lines.append("[WARNING] Terminal: cannot delegate further")
@@ -61,25 +61,25 @@ def diagnose(warrant: Warrant) -> str:
             lines.append(f"[OK] Can delegate: {remaining} levels remaining")
         else:
             lines.append(f"[OK] Depth: {warrant.depth}")
-    
+
     # Check tools
     if warrant.tools:
         tools_str = ", ".join(warrant.tools)
         lines.append(f"[OK] Tools: {tools_str}")
     else:
         lines.append("[WARNING] No tools authorized")
-    
+
     # Check clearance
     if warrant.clearance is not None:
         lines.append(f"[OK] Clearance: {warrant.clearance}")
-    
+
     # Check type
     lines.append(f"[OK] Type: {warrant.warrant_type}")
-    
+
     # Add playground link
     # Add playground link
     lines.append("")
-    
+
     import json
     import base64
     playground_url = "https://tenuo.dev/explorer/"
@@ -93,20 +93,20 @@ def diagnose(warrant: Warrant) -> str:
         lines.append(f"Debug interactively: {playground_url}?s={state_b64}")
     except Exception:
         lines.append(f"Debug interactively: {playground_url}")
-    
+
     return "\n".join(lines)
 
 
 def info() -> str:
     """
     Show current Tenuo configuration.
-    
+
     Returns:
         Human-readable configuration status
-        
+
     Example:
         import tenuo
-        
+
         print(tenuo.info())
         # Output:
         # Tenuo Configuration
@@ -119,21 +119,21 @@ def info() -> str:
         "=" * 50,
         ""
     ]
-    
+
     # SDK version
     try:
         from tenuo import __version__
         lines.append(f"[OK] SDK Version: {__version__}")
     except ImportError:
         lines.append("[WARNING] SDK Version: unknown")
-    
+
     # Rust core status
     try:
         from tenuo_core import WIRE_VERSION  # type: ignore[import-untyped]
         lines.append(f"[OK] Rust Core: loaded (wire version {WIRE_VERSION})")
     except ImportError:
         lines.append("[NO] Rust Core: not loaded")
-    
+
     # Check for configured issuer key
     try:
         from tenuo.config import get_config
@@ -144,5 +144,5 @@ def info() -> str:
             lines.append("[WARNING] Issuer Key: not configured")
     except (ImportError, AttributeError):
         lines.append("[WARNING] Issuer Key: status unknown")
-    
+
     return "\n".join(lines)

@@ -6,10 +6,10 @@ Provides dependencies and utilities for protecting FastAPI routes with Tenuo aut
 Usage:
     from fastapi import FastAPI, Depends
     from tenuo.fastapi import TenuoGuard, SecurityContext, configure_tenuo
-    
+
     app = FastAPI()
     configure_tenuo(app, trusted_issuers=[issuer_pubkey])
-    
+
     @app.get("/search")
     async def search(
         query: str,
@@ -78,7 +78,7 @@ def configure_tenuo(
 ) -> None:
     """
     Configure Tenuo for a FastAPI application.
-    
+
     Args:
         app: FastAPI application instance
         trusted_issuers: List of trusted issuer public keys for chain verification
@@ -86,10 +86,10 @@ def configure_tenuo(
         error_handler: Custom error handler for authorization failures
         expose_error_details: If True, include constraint details in error responses.
                               SECURITY: Keep False in production to prevent information leakage.
-        
+
     Usage:
         from tenuo.fastapi import configure_tenuo
-        
+
         app = FastAPI()
         configure_tenuo(
             app,
@@ -103,7 +103,7 @@ def configure_tenuo(
     _config["strict"] = strict
     _config["error_handler"] = error_handler
     _config["expose_error_details"] = expose_error_details
-    
+
     # Store config in app state for access in dependencies
     app.state.tenuo_config = _config
 
@@ -121,9 +121,9 @@ def get_tenuo_config() -> Dict[str, Any]:
 class SecurityContext:
     """
     Security context returned by TenuoGuard dependency.
-    
+
     Contains the verified warrant and extracted arguments.
-    
+
     Attributes:
         warrant: The verified Warrant object
         args: Dictionary of extracted arguments (path + query params)
@@ -132,17 +132,17 @@ class SecurityContext:
     warrant: Warrant
     args: Dict[str, Any]
     tool: str
-    
+
     @property
     def holder(self) -> str:
         """Get the warrant holder's public key (base64)."""
         return str(self.warrant.authorized_holder)
-    
+
     @property
     def issuer(self) -> str:
         """Get the warrant issuer's public key (base64)."""
         return str(self.warrant.issuer)
-    
+
     @property
     def is_expired(self) -> bool:
         """Check if the warrant has expired."""
@@ -162,7 +162,7 @@ def get_warrant_header(
     """
     if not x_tenuo_warrant:
         return None
-        
+
     try:
         return Warrant.from_base64(x_tenuo_warrant)
     except Exception as e:
@@ -179,10 +179,10 @@ def require_warrant(
 ) -> Warrant:
     """
     FastAPI dependency that REQUIRES a valid warrant and PoP signature.
-    
+
     Note: This is a basic dependency that only validates presence.
     For full tool-specific authorization, use TenuoGuard(tool_name).
-    
+
     Usage:
         @app.get("/items")
         def read_items(warrant: Warrant = Depends(require_warrant)):
@@ -195,14 +195,14 @@ def require_warrant(
             detail="Missing X-Tenuo-Warrant header",
             headers={"WWW-Authenticate": "Tenuo"},
         )
-        
+
     if not x_tenuo_pop:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing X-Tenuo-PoP header",
             headers={"WWW-Authenticate": "Tenuo"},
         )
-    
+
     return warrant
 
 
@@ -213,9 +213,9 @@ def require_warrant(
 class TenuoGuard:
     """
     FastAPI dependency that verifies Tenuo authorization for a specific tool.
-    
+
     Returns a SecurityContext with the verified warrant and extracted args.
-    
+
     Usage:
         @app.get("/search")
         async def search(
@@ -224,12 +224,12 @@ class TenuoGuard:
         ):
             print(f"Authorized by: {ctx.warrant.issuer}")
             return {"query": query}
-    
+
     Args:
         tool: Tool name to authorize
         extract_args: Optional custom arg extraction function
     """
-    
+
     def __init__(
         self,
         tool: str,
@@ -238,7 +238,7 @@ class TenuoGuard:
     ):
         self.tool = tool
         self.extract_args = extract_args
-        
+
     def __call__(
         self,
         request: Request,
@@ -267,7 +267,7 @@ class TenuoGuard:
                 },
                 headers={"WWW-Authenticate": "Tenuo"},
             )
-            
+
         # 2. Check expiry first (distinct error)
         if warrant.is_expired():
             raise HTTPException(
@@ -279,7 +279,7 @@ class TenuoGuard:
                 },
                 headers={"WWW-Authenticate": "Tenuo"},
             )
-            
+
         # 3. Extract Args
         if self.extract_args:
             auth_args = self.extract_args(request)
@@ -287,7 +287,7 @@ class TenuoGuard:
             # Default: combine path params + query params
             query_params = dict(request.query_params)
             auth_args = {**request.path_params, **query_params}
-        
+
         # 4. Decode PoP Signature
         try:
             pop_sig_bytes = base64.b64decode(x_tenuo_pop)
@@ -304,16 +304,16 @@ class TenuoGuard:
         if not warrant.authorize(self.tool, auth_args, pop_sig_bytes):
             # Generate a request ID for log correlation
             request_id = str(uuid.uuid4())[:8]
-            
+
             # Log detailed info for operators (never exposed to clients)
             logger.warning(
                 f"[{request_id}] Authorization denied for tool '{self.tool}' "
                 f"with args {auth_args}. Warrant ID: {warrant.id}"
             )
-            
+
             # Check if detailed errors are allowed (dev mode only)
             expose_details = _config.get("expose_error_details", False)
-            
+
             if self.tool not in (warrant.tools or []):
                 if expose_details:
                     detail = {
@@ -351,7 +351,7 @@ class TenuoGuard:
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=detail,
                 )
-            
+
         return SecurityContext(
             warrant=warrant,
             args=auth_args,
@@ -370,15 +370,15 @@ TenuoSecurity = TenuoGuard
 async def extract_body_args(request: Request) -> Dict[str, Any]:
     """
     Helper to extract args from JSON body.
-    
+
     Use with TenuoGuard's extract_args parameter for body-based authorization.
     Note: Must be called within an async context.
-    
+
     Usage:
         async def custom_extract(request: Request) -> Dict[str, Any]:
             body = await extract_body_args(request)
             return {**dict(request.query_params), **body}
-        
+
         @app.post("/action")
         async def action(ctx: SecurityContext = Depends(TenuoGuard("action", extract_args=custom_extract))):
             ...
@@ -396,32 +396,32 @@ async def extract_body_args(request: Request) -> Dict[str, Any]:
 class SecureAPIRouter:
     """
     Drop-in replacement for FastAPI APIRouter with automatic Tenuo protection.
-    
+
     Routes added to this router are automatically protected by Tenuo.
     The tool name is inferred from the route path or operation name.
-    
+
     Usage:
         router = SecureAPIRouter()
-        
+
         @router.get("/users/{user_id}")  # Auto-protected as "users_read" (or similar)
         def get_user(user_id: str): ...
     """
-    
+
     def __init__(
-        self, 
-        *args: Any, 
+        self,
+        *args: Any,
         tool_prefix: Optional[str] = None,
-        require_pop: bool = True, 
+        require_pop: bool = True,
         **kwargs: Any
     ):
         if not FASTAPI_AVAILABLE:
             raise ImportError("FastAPI is required for SecureAPIRouter")
-            
+
         from fastapi import APIRouter
         self._router = APIRouter(*args, **kwargs)
         self.tool_prefix = tool_prefix
         self.require_pop = require_pop
-        
+
     def _get_tool_name(self, path: str, method: str, name: Optional[str] = None) -> str:
         """Infer tool name from route info."""
         if name:
@@ -431,20 +431,20 @@ class SecureAPIRouter:
         clean_path = path.strip("/").replace("{", "").replace("}", "").replace("/", "_")
         if not clean_path:
             clean_path = "root"
-            
+
         # Add prefix
         prefix = f"{self.tool_prefix}_" if self.tool_prefix else ""
-        
+
         # Method suffix
         method_map = {
             "GET": "read",
-            "POST": "create", 
+            "POST": "create",
             "PUT": "update",
             "DELETE": "delete",
             "PATCH": "update"
         }
         suffix = method_map.get(method.upper(), method.lower())
-        
+
         return f"{prefix}{clean_path}_{suffix}"
 
     def get(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:
@@ -454,11 +454,11 @@ class SecureAPIRouter:
     def post(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:
         kwargs.pop("methods", None)
         return self.api_route(path, methods=["POST"], tool=tool, **kwargs)
-        
+
     def put(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:
         kwargs.pop("methods", None)
         return self.api_route(path, methods=["PUT"], tool=tool, **kwargs)
-        
+
     def delete(self, path: str, tool: Optional[str] = None, **kwargs: Any) -> Callable:
         kwargs.pop("methods", None)
         return self.api_route(path, methods=["DELETE"], tool=tool, **kwargs)
@@ -468,10 +468,10 @@ class SecureAPIRouter:
         return self.api_route(path, methods=["PATCH"], tool=tool, **kwargs)
 
     def api_route(
-        self, 
-        path: str, 
-        methods: List[str], 
-        *args: Any, 
+        self,
+        path: str,
+        methods: List[str],
+        *args: Any,
         tool: Optional[str] = None,
         dependencies: Optional[List[Any]] = None,
         **kwargs: Any
@@ -481,30 +481,30 @@ class SecureAPIRouter:
             # Determine tool name
             primary_method = methods[0] if methods else "GET"
             actual_tool = tool or self._get_tool_name(path, primary_method, kwargs.get("name"))
-            
+
             # Create guard dependency
             guard_dep = TenuoGuard(actual_tool)
-            
+
             # Append to dependencies
             final_deps = list(dependencies) if dependencies else []
             # We add it as a dependency, so it runs before the handler.
             # We don't necessarily inject the SecurityContext unless the user asks for it,
             # but Depends() in the list ensures it executes.
             final_deps.append(Depends(guard_dep))
-            
+
             # Register with underlying router
             return self._router.api_route(
-                path, 
-                methods=methods, 
+                path,
+                methods=methods,
                 dependencies=final_deps,
-                *args, 
+                *args,
                 **kwargs
             )(func)
         return decorator
-        
+
     def include_router(self, router: Any, *args: Any, **kwargs: Any) -> None:
         self._router.include_router(router, *args, **kwargs)
-        
+
     # Delegate other methods to _router
     def __getattr__(self, name: str) -> Any:
         return getattr(self._router, name)
