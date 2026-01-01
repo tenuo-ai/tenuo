@@ -2658,15 +2658,34 @@ impl PyWarrant {
         Ok(PyWarrant { inner: warrant })
     }
 
-    /// Authorize an action against this warrant.
+    // ========================================================================
+    // AUTHORIZATION METHODS
+    // Use these for actual authorization decisions in production code.
+    // ========================================================================
+
+    /// Authorize an action against this warrant (PRODUCTION USE).
+    ///
+    /// This is the primary authorization method. It performs all security checks:
+    /// - Warrant expiration
+    /// - Tool permission
+    /// - Proof-of-Possession signature verification
+    /// - Constraint satisfaction
+    ///
+    /// Use this method when you need to make an actual authorization decision.
+    /// For debugging why authorization failed, use `check_constraints()` or `why_denied()`.
     ///
     /// Args:
     ///     tool: Tool name to authorize
     ///     args: Dictionary of argument name -> value
-    ///     signature: Optional signature bytes for Proof-of-Possession (64 bytes)
+    ///     signature: PoP signature bytes (64 bytes) - REQUIRED for security
     ///
     /// Returns:
-    ///     True if authorized, False if constraint not satisfied
+    ///     True if fully authorized, False otherwise
+    ///
+    /// Note:
+    ///     Returns False for BOTH constraint failures AND missing/invalid PoP.
+    ///     This is intentional - in production, you should not distinguish these.
+    ///     For debugging, use `check_constraints()` instead.
     #[pyo3(signature = (tool, args, signature=None))]
     fn authorize(
         &self,
@@ -2701,7 +2720,133 @@ impl PyWarrant {
         }
     }
 
-    /// Verify the warrant signature.
+    // ========================================================================
+    // DIAGNOSTIC METHODS
+    // Use these for debugging, logging, and understanding authorization failures.
+    // DO NOT use these for authorization decisions - they skip security checks.
+    // ========================================================================
+
+    /// Check if constraints are satisfied (DIAGNOSTIC USE ONLY).
+    ///
+    /// This method checks ONLY constraint satisfaction, skipping:
+    /// - PoP signature verification
+    /// - Expiration checks
+    ///
+    /// Use this to understand WHY a request would be denied due to constraints.
+    /// DO NOT use this for actual authorization - use `authorize()` instead.
+    ///
+    /// Args:
+    ///     tool: Tool name to check
+    ///     args: Dictionary of argument name -> value
+    ///
+    /// Returns:
+    ///     None if constraints are satisfied, or a string describing the failure
+    ///
+    /// Example:
+    ///     ```python
+    ///     result = warrant.check_constraints("read_file", {"path": "/etc/passwd"})
+    ///     if result:
+    ///         print(f"Would be denied: {result}")
+    ///     ```
+    fn check_constraints(
+        &self,
+        tool: &str,
+        args: &Bound<'_, PyDict>,
+    ) -> PyResult<Option<String>> {
+        let mut rust_args = HashMap::new();
+        for (key, value) in args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_args.insert(field, cv);
+        }
+
+        match self.inner.check_constraints(tool, &rust_args) {
+            Ok(()) => Ok(None),
+            Err(crate::error::Error::ConstraintNotSatisfied { field, reason }) => {
+                Ok(Some(format!("Constraint '{}' not satisfied: {}", field, reason)))
+            }
+            Err(e) => Ok(Some(format!("{}", e))),
+        }
+    }
+
+    // ========================================================================
+    // INTROSPECTION METHODS
+    // Use these to inspect warrant metadata. Safe for any use.
+    // ========================================================================
+
+    /// Get the agent ID if set on this warrant.
+    fn agent_id(&self) -> Option<String> {
+        self.inner.agent_id().map(|s| s.to_string())
+    }
+
+    /// Check if this warrant requires multi-signature approval.
+    fn requires_multisig(&self) -> bool {
+        self.inner.requires_multisig()
+    }
+
+    /// Get the required approvers for multi-signature (if any).
+    fn required_approvers(&self) -> Option<Vec<PyPublicKey>> {
+        self.inner.required_approvers().map(|approvers| {
+            approvers
+                .iter()
+                .map(|pk| PyPublicKey { inner: pk.clone() })
+                .collect()
+        })
+    }
+
+    /// Get the minimum number of approvals required (if multisig).
+    fn min_approvals(&self) -> Option<u32> {
+        self.inner.min_approvals()
+    }
+
+    /// Get the effective approval threshold.
+    ///
+    /// Returns min_approvals if set, otherwise the number of required_approvers.
+    fn approval_threshold(&self) -> u32 {
+        self.inner.approval_threshold()
+    }
+
+    /// Get all custom extensions as a dict of name -> bytes.
+    fn extensions<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+        let dict = PyDict::new(py);
+        for (key, value) in self.inner.extensions().iter() {
+            dict.set_item(key, value.as_slice())?;
+        }
+        Ok(dict)
+    }
+
+    /// Get a specific extension by name.
+    fn extension(&self, key: &str) -> Option<Vec<u8>> {
+        self.inner.extension(key).cloned()
+    }
+
+    /// Validate the warrant structure and constraints (DIAGNOSTIC USE).
+    ///
+    /// Checks structural validity of the warrant (not authorization).
+    /// Use this to detect malformed or potentially malicious warrants.
+    ///
+    /// Returns:
+    ///     Empty list if valid, or list of validation error messages.
+    fn validate_warrant(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+        if let Err(e) = self.inner.validate() {
+            errors.push(format!("{}", e));
+        }
+        if let Err(e) = self.inner.validate_constraint_depth() {
+            errors.push(format!("{}", e));
+        }
+        errors
+    }
+
+    // ========================================================================
+    // CRYPTOGRAPHIC METHODS
+    // Use these for signature verification and PoP signing.
+    // ========================================================================
+
+    /// Verify the warrant's issuer signature.
+    ///
+    /// Checks that the warrant was signed by the expected issuer.
+    /// This is part of chain-of-trust verification.
     fn verify(&self, public_key_bytes: &[u8]) -> PyResult<bool> {
         let arr: [u8; 32] = public_key_bytes
             .try_into()

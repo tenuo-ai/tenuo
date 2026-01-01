@@ -9,6 +9,25 @@ This module provides:
 - Delegation receipts and chain reconstruction
 - Diff computation between warrants (delegates to Rust)
 
+## Method Categories
+
+### Authorization Methods (use in production)
+Use `warrant.authorize(tool, args, signature)` for actual authorization decisions.
+This performs ALL security checks including PoP verification.
+
+### Diagnostic Methods (use for debugging only)
+These methods help understand authorization failures but SKIP security checks:
+- `check_constraints(tool, args)` - Check only constraint satisfaction
+- `why_denied(tool, args)` - Detailed failure explanation
+- `explain()` / `inspect()` - Human-readable warrant info
+- `validate()` - Structural validation
+
+DO NOT use diagnostic methods for authorization decisions in production.
+
+### Introspection Methods (safe for any use)
+Properties like `tools`, `clearance`, `agent_id()`, etc. are safe to use
+anywhere as they only read warrant metadata.
+
 Note on memory management:
     Delegation receipts are stored in a module-level cache keyed by warrant ID.
     For long-running processes that create many warrants, call clear_receipts()
@@ -354,40 +373,43 @@ if not hasattr(Warrant, 'headers'):
 
 
 # ============================================================================
-# 2. Preview Methods (UX Only - NOT Authorization)
+# 2. Preview Methods (DIAGNOSTIC USE ONLY - NOT Authorization)
+#
+# These methods check constraints without PoP verification.
+# Use for UI previews, error messages, and debugging.
+# DO NOT use for actual authorization decisions.
 # ============================================================================
-
-# Removed legacy PreviewResult class
-
 
 def _warrant_allows(self: Warrant, tool: str, args: Optional[dict] = None) -> bool:
     """
-    Check if the warrant allows the given tool and arguments (Logic check only).
+    Check if the warrant allows the given tool and arguments (DIAGNOSTIC).
+    
+    WARNING: This checks constraints only, NOT PoP signatures.
+    For actual authorization, use `warrant.authorize(tool, args, signature)`.
+    
+    Use this for:
+    - UI previews showing what's possible
+    - Quick constraint validation before making a request
+    - Debugging constraint configurations
     
     Args:
         tool: Tool name to check
-        args: Optional constraints to check against. If None, checks tool presence only.
+        args: Optional arguments to check against constraints.
+              If None, checks only tool presence.
     
     Returns:
-        True if allowed by logic, False otherwise.
+        True if constraints would allow, False otherwise.
     """
     if args is None:
         return tool in self.tools
     
-    # TODO: Need Rust method to check constraints check logic without PoP
-    # For now, duplicate basic checks or default to True if tool present
     if tool not in self.tools:
         return False
         
-    # If we have constraint checking capability
-    if hasattr(self, 'check_constraints'):
-        try:
-             result = self.check_constraints(tool, args)
-             return result.get('allowed', True)
-        except Exception:
-             pass
-             
-    return True
+    # Use check_constraints to verify args match constraints
+    # check_constraints returns None if OK, or error string if not
+    result = self.check_constraints(tool, args)
+    return result is None
 
 
 # Removed legacy preview methods
@@ -400,14 +422,22 @@ if not hasattr(Warrant, 'allows'):
 
 
 # ============================================================================
-# 2.5 why_denied Method (P0)
+# 2.5 why_denied Method (DIAGNOSTIC USE ONLY)
+#
+# Use for debugging and error messages, NOT for authorization decisions.
 # ============================================================================
 
 def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -> WhyDenied:
     """
-    Get structured explanation for why a request would be denied.
+    Get structured explanation for why a request would be denied (DIAGNOSTIC).
     
-    Use this for debugging authorization failures.
+    WARNING: This is for debugging only. It does NOT verify PoP signatures.
+    For actual authorization, use `warrant.authorize(tool, args, signature)`.
+    
+    Use this to:
+    - Generate helpful error messages for denied requests
+    - Debug constraint configuration issues
+    - Power interactive debugging UIs
     
     The returned object includes a `suggestion` with a link to the Tenuo Explorer,
     pre-filled with the warrant and request details for interactive debugging.
@@ -469,26 +499,27 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
     # Check if warrant is terminal (can't delegate)
     # This isn't really a "denial" for execution, but useful info
     
-    # Try to check constraints via Rust authorize (without PoP)
-    # Note: This will return False for MissingSignature, not constraint failure
-    # For now, we can't distinguish constraint failures without PoP
-    # This is a known limitation - full implementation needs Rust support
-    
-    # Check constraints if we have a method for it
-    if hasattr(self, 'check_constraints'):
-        try:
-            # New API: returns None (success) or failure reason string
-            failure_reason = self.check_constraints(tool, args)
-            if failure_reason:
-                return WhyDenied(
-                    denied=True,
-                    deny_code=DenyCode.CONSTRAINT_MISMATCH,
-                    deny_path="constraints.violation",
-                    tool=tool,
-                    suggestion=f"{failure_reason}.{playground_hint}",
-                )
-        except Exception:
-            pass  # Fall through to allowed
+    # Check constraints via Rust (without requiring PoP)
+    # check_constraints returns None if OK, or a string describing the failure
+    try:
+        failure_reason = self.check_constraints(tool, args or {})
+        if failure_reason:
+            return WhyDenied(
+                denied=True,
+                deny_code=DenyCode.CONSTRAINT_MISMATCH,
+                deny_path="constraints.violation",
+                tool=tool,
+                suggestion=f"{failure_reason}.{playground_hint}",
+            )
+    except Exception as e:
+        # Fallback if check_constraints fails unexpectedly
+        return WhyDenied(
+            denied=True,
+            deny_code=DenyCode.CONSTRAINT_MISMATCH,
+            deny_path="constraints.error",
+            tool=tool,
+            suggestion=f"Could not check constraints: {e}.{playground_hint}",
+        )
     
     # If we got here, authorization would likely succeed
     # (assuming valid PoP signature)
@@ -505,11 +536,14 @@ if not hasattr(Warrant, 'why_denied'):
 
 
 # ============================================================================
-# 3. Debugging Methods
+# 3. Debugging Methods (DIAGNOSTIC USE ONLY)
+#
+# These methods are for understanding warrant structure and diagnosing
+# authorization failures. DO NOT use for authorization decisions.
 # ============================================================================
 
 def _warrant_explain(self: Warrant, include_chain: bool = False) -> str:
-    """Human-readable warrant explanation."""
+    """Human-readable warrant explanation (diagnostic)."""
     lines = [
         f"Warrant {self.id[:12]}...",
         f"  Type: {self.warrant_type}",
