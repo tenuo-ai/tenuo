@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 def _get_hostname(url: str) -> str:
     """Safely extract hostname from URL using proper parsing.
-    
+
     This prevents security issues where substring matching could be bypassed:
     - https://evil.com/python.org/page would NOT match python.org
     - https://python.org.evil.com/ would NOT match python.org
@@ -20,7 +20,7 @@ def _get_hostname(url: str) -> str:
 
 def _hostname_matches(url: str, domain: str) -> bool:
     """Check if URL's hostname matches or is a subdomain of the given domain.
-    
+
     Examples:
         _hostname_matches("https://docs.python.org/path", "python.org") -> True
         _hostname_matches("https://python.org", "python.org") -> True
