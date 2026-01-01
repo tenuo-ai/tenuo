@@ -158,9 +158,11 @@ class ControlPlane:
 
 class SecurityPolicy:
     """
-    Security policy for capability approval.
+    Demo policy for capability approval.
 
-    Defines which tools are allowed and under what conditions.
+    This is placeholder logic - replace with your own policy engine (OPA, Cedar,
+    config files, etc.). Tenuo handles the cryptographic enforcement; you control
+    *what* gets approved.
     """
 
     # Tools that are NEVER allowed for URL summarization tasks

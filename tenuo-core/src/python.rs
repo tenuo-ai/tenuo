@@ -3703,15 +3703,15 @@ impl PyAuthorizer {
     /// Returns:
     ///     None on success, raises exception on failure
     ///
-    /// Example:
-    ///     ```text
+    /// Example (Python):
+    ///
     ///     # Simple authorization (no multi-sig)
     ///     authorizer.authorize(warrant, "search", {"query": "test"}, signature)
-    ///     
+    ///
     ///     # With multi-sig approvals
     ///     approvals = [human_approval, system_approval]
     ///     authorizer.authorize(warrant, "delete", {"id": 123}, signature, approvals)
-    ///     ```
+    ///
     #[pyo3(signature = (warrant, tool, args, signature=None, approvals=None))]
     fn authorize(
         &self,
