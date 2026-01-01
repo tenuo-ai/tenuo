@@ -1438,7 +1438,7 @@ checksum = "7b2093cf4c8eb1e67749a6762251bc9cd836b6fc171623bd0a9d324d37af2417"
 
 [[package]]
 name = "tenuo"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "base64",
  "cel-interpreter",
@@ -1475,7 +1475,7 @@ dependencies = [
 
 [[package]]
 name = "tenuo-wasm"
-version = "0.1.0-beta.1"
+version = "0.1.0-beta.2"
 dependencies = [
  "chrono",
  "console_error_panic_hook",
