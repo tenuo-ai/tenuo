@@ -1181,9 +1181,9 @@ fn py_dict_to_constraint_set(
 
         // Handle special _allow_unknown key
         if field == ALLOW_UNKNOWN_KEY {
-            let allow: bool = constraint_val.extract().map_err(|_| {
-                PyValueError::new_err("_allow_unknown must be a boolean")
-            })?;
+            let allow: bool = constraint_val
+                .extract()
+                .map_err(|_| PyValueError::new_err("_allow_unknown must be a boolean"))?;
             constraint_set.set_allow_unknown(allow);
             continue;
         }

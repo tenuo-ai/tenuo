@@ -5,10 +5,10 @@ Full Model Context Protocol integration with cryptographic authorization.
 
 Example:
     from tenuo import mint, Capability, Pattern
-    
+
     async with SecureMCPClient("python", ["mcp_server.py"]) as client:
         # Access tools via the convenient sync .tools property
-        
+
         async with mint(Capability("read_file", path=Pattern("/data/*"))):
             result = await client.tools["read_file"](path="/data/file.txt")
 """

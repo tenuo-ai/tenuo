@@ -40,13 +40,13 @@ async def delete_file(path: str) -> str:
 
 async def main():
     print("--- Tier 1 API Demo ---")
-    
+
     # 4. Use mint to define initial scope
     print("\n1. Root Task: Allow reading /data/*")
     async with mint(Capability("read_file", path=Pattern("/data/*"))):
         # Authorized call
         await read_file(path="/data/report.txt")
-        
+
         # Unauthorized call (wrong path)
         try:
             print("  [Attempt] Reading /etc/passwd...")
@@ -61,7 +61,7 @@ async def main():
         async with grant(Capability("read_file", path=Pattern("/data/reports/*"))):
             # Authorized in narrow scope
             await read_file(path="/data/reports/q3.pdf")
-            
+
             # Unauthorized in narrow scope (but allowed in parent)
             try:
                 print("  [Attempt] Reading /data/other.txt...")

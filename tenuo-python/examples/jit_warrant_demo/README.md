@@ -10,6 +10,15 @@ This demo showcases production-realistic patterns for AI agent security:
 4. **Workers** receive attenuated (subset) warrants
 5. **Execution** with Proof-of-Possession on every call
 
+## Prerequisites
+
+```bash
+pip install tenuo rich  # rich is optional but recommended for beautiful output
+```
+
+For real LLM mode (optional):
+- [LM Studio](https://lmstudio.ai/) running locally with a model loaded
+
 ## Quick Start
 
 ```bash
@@ -21,6 +30,20 @@ python demo.py --simulate --auto-approve --delegation
 
 # With LM Studio (real LLM reasoning)
 python demo.py --auto-approve --delegation
+```
+
+### What You'll See
+
+```
+┏━━━━━━━━━━━━━ 🔐 APPROVAL REQUIRED ━━━━━━━━━━━━━┓
+┃ Task: Summarize this URL: https://docs.python.org
+┃ Requested Capabilities:
+┃  • fetch_url (url constraint enforced)
+┃  • summarize (no constraints)
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+✅ MULTI-SIG APPROVAL COMPLETE
+✅ AUTHORIZED (PoP Verified + 2 multi-sig approvals)
+⛔ BLOCKED: Tool 'http_request' not in warrant
 ```
 
 ## Security Concepts Demonstrated
@@ -101,15 +124,15 @@ Fetcher cannot summarize. Summarizer cannot fetch.
 What happens when a valid warrant becomes stale due to changing requirements.
 
 ```
-T0 (Earlier): Worker received warrant for v1 API
-              fetch_url(https://api.example.com/v1/data)
+T0 (Earlier): Worker received warrant for Python 3.11 docs
+              fetch_url(https://docs.python.org/3.11/*)
 
-T1 (Now):     Current task requires v2 API
-              https://api.example.com/v2/data
+T1 (Now):     Current task requires Python 3.12 docs
+              https://docs.python.org/3.12/whatsnew
 
 T2 (Problem): Worker's warrant doesn't match!
-              • fetch_url(v2/data) -> ⛔ BLOCKED
-              • fetch_url(v1/data) -> ✅ AUTHORIZED (still valid!)
+              • fetch_url(3.12/whatsnew) -> ⛔ BLOCKED
+              • fetch_url(3.11/whatsnew) -> ✅ AUTHORIZED (still valid!)
 ```
 
 **Solution**: Short TTLs + Just-in-Time minting ensure warrants match current requirements.

@@ -17,20 +17,20 @@ def main():
     root_key = SigningKey.generate()
     # configure uses issuer_key, not root_key
     configure(issuer_key=root_key, dev_mode=True)
-    
+
     manager_key = SigningKey.generate()
     intern_key = SigningKey.generate()
 
     # 2. Mint Root Warrant
     print("\n👑 Minting Root Warrant...")
     from tenuo import mint_sync
-    
+
     with mint_sync(
         Capability("read_file", path=Pattern("/data/*")),
         Capability("search", query=Pattern("*"), max_results=Range(1, 1000)),
         ttl=3600
     ) as root_warrant:
-        
+
         # 3. Delegating to Manager
         print("\n👤 Delegating to Manager (narrowing scope)...")
         # Use grant method with bound warrant
@@ -42,7 +42,7 @@ def main():
             ],
             ttl=1800
         )
-        
+
         # 4. Delegating to Intern
         print("\n👶 Delegating to Intern (narrowing further)...")
         with manager_warrant.bind(manager_key) as mgr:
@@ -53,7 +53,7 @@ def main():
                 ],
                 ttl=300
              )
-        
+
         # 5. Visualize
         print("\n👀 Visualizing Intern's Warrant with Rich Inspector:\n")
         try:

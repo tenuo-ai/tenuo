@@ -435,6 +435,21 @@ Authorization errors are opaque by default:
 # Logs show: "[abc123] Constraint failed: path=/etc/passwd, expected=Pattern(/data/*)"
 ```
 
+### Closed-World Constraints
+
+Once you add **any** constraint, unknown arguments are rejected:
+
+```python
+# ❌ 'timeout' is unknown → blocked
+.capability("api_call", url=Pattern("https://api.example.com/*"))
+
+# ✅ Use Wildcard() for specific fields
+.capability("api_call", url=Pattern("https://api.example.com/*"), timeout=Wildcard())
+
+# ✅ Or opt out entirely
+.capability("api_call", url=Pattern("https://api.example.com/*"), _allow_unknown=True)
+```
+
 ## Examples
 
 ```bash

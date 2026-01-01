@@ -27,21 +27,21 @@ from rich.prompt import Confirm
 class HumanApprover:
     """
     Represents a human approver with their own keypair.
-    
+
     In production, this would be:
     - A hardware security module (HSM)
     - A mobile app with biometric auth
     - A secure key stored in a password manager
     """
-    
+
     def __init__(self, name: str = "Security Reviewer"):
         self.name = name
         self.signing_key = SigningKey.generate()
-    
+
     @property
     def public_key(self) -> PublicKey:
         return self.signing_key.public_key
-    
+
     def review_and_approve(
         self,
         warrant: Warrant,
@@ -54,7 +54,7 @@ class HumanApprover:
     ) -> Optional[Approval]:
         """
         Review a capability proposal and create a cryptographic Approval.
-        
+
         Args:
             warrant: The warrant being approved
             tool: The tool being approved for use
@@ -63,7 +63,7 @@ class HumanApprover:
             proposed_capabilities: Capabilities the LLM wants
             allowed_urls: URLs extracted from the task
             interactive: Whether to prompt for approval
-            
+
         Returns:
             Tenuo Approval object if approved, None if rejected
         """
@@ -73,7 +73,7 @@ class HumanApprover:
             proposed_capabilities,
             allowed_urls
         )
-        
+
         if interactive:
             # In a real system, this would be a secure approval flow
             # (e.g., mobile push notification, hardware token)
@@ -85,11 +85,11 @@ class HumanApprover:
             # Auto-approve for non-interactive demo
             display.console.print(f"[dim]{self.name} auto-approving for demo...[/dim]")
             approved = True
-        
+
         if not approved:
             display.print_human_rejection(self.name)
             return None
-        
+
         # Create a real Tenuo Approval object
         approval = Approval.create(
             warrant=warrant,
@@ -101,24 +101,24 @@ class HumanApprover:
             ttl_secs=300,
             reason=f"Approved for task: {task[:50]}..."
         )
-        
+
         display.print_human_approval_signed(self.name, self.public_key)
-        
+
         return approval
 
 
 class MultiSigApprovalFlow:
     """
     Orchestrates multi-signature approval for warrants.
-    
+
     Requires both:
     1. System (Control Plane) approval
     2. Human approval
-    
+
     Both must create cryptographic Approval objects that are passed to
     Authorizer.authorize() along with the warrant.
     """
-    
+
     def __init__(
         self,
         system_key: SigningKey,
@@ -126,14 +126,14 @@ class MultiSigApprovalFlow:
     ):
         self.system_key = system_key
         self.human_approver = human_approver
-    
+
     def get_required_approvers(self) -> List[PublicKey]:
         """Get the list of required approver public keys."""
         return [
             self.system_key.public_key,
             self.human_approver.public_key,
         ]
-    
+
     def execute_approval_flow(
         self,
         warrant: Warrant,
@@ -146,7 +146,7 @@ class MultiSigApprovalFlow:
     ) -> Optional[List[Approval]]:
         """
         Execute the full approval flow.
-        
+
         Args:
             warrant: The warrant to approve
             tool: Tool name for the first action
@@ -155,19 +155,19 @@ class MultiSigApprovalFlow:
             proposed_capabilities: Capabilities being approved
             allowed_urls: URLs extracted from task
             interactive: Whether to prompt for human approval
-            
+
         Returns:
             List of Approval objects if both approve, None if rejected.
             These approvals should be passed to Authorizer.authorize().
         """
         display.print_step(4, "Multi-Sig Approval Flow",
             "Both system AND human must approve for the warrant to be valid.")
-        
+
         approvals = []
-        
+
         # Step 1: System approval (policy check)
         display.print_system_approval(self.system_key.public_key)
-        
+
         system_approval = Approval.create(
             warrant=warrant,
             tool=tool,
@@ -179,7 +179,7 @@ class MultiSigApprovalFlow:
             reason="Policy check passed"
         )
         approvals.append(system_approval)
-        
+
         # Step 2: Human approval
         human_approval = self.human_approver.review_and_approve(
             warrant=warrant,
@@ -190,12 +190,12 @@ class MultiSigApprovalFlow:
             allowed_urls=allowed_urls,
             interactive=interactive,
         )
-        
+
         if human_approval is None:
             return None
-        
+
         approvals.append(human_approval)
-        
+
         display.print_approval_complete()
         return approvals
 

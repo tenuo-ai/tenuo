@@ -28,11 +28,11 @@ from tenuo_core import Cidr, UrlPattern
 
 def test_pattern_constraint_matching():
     """Test that Pattern constraints match correctly."""
-    
+
     @guard(tool="file_ops")
     def access_file(path: str) -> str:
         return f"accessed {path}"
-    
+
     kp = SigningKey.generate()
     warrant = Warrant.mint(
         keypair=kp,
@@ -40,12 +40,12 @@ def test_pattern_constraint_matching():
         holder=kp.public_key,
         ttl_seconds=60
     )
-    
+
     with warrant_scope(warrant), key_scope(kp):
         # Should match
         assert access_file(path="/data/file.txt") == "accessed /data/file.txt"
         assert access_file(path="/data/subdir/file.txt") == "accessed /data/subdir/file.txt"
-        
+
         # Should not match
         with pytest.raises(ScopeViolation):
             access_file(path="/other/file.txt")
@@ -53,11 +53,11 @@ def test_pattern_constraint_matching():
 
 def test_exact_constraint_matching():
     """Test that Exact constraints match only exact values."""
-    
+
     @guard(tool="delete_db")
     def delete_database(db_name: str) -> str:
         return f"deleted {db_name}"
-    
+
     kp = SigningKey.generate()
     warrant = Warrant.mint(
         keypair=kp,
@@ -65,26 +65,26 @@ def test_exact_constraint_matching():
         holder=kp.public_key,
         ttl_seconds=60
     )
-    
+
     with warrant_scope(warrant), key_scope(kp):
         # Should match exact value
         assert delete_database(db_name="test-db") == "deleted test-db"
-        
+
         # Should not match different values
         with pytest.raises(ScopeViolation):
             delete_database(db_name="prod-db")
-        
+
         with pytest.raises(ScopeViolation):
             delete_database(db_name="test-db-2")
 
 
 def test_multiple_constraints():
     """Test that multiple constraints are all enforced."""
-    
+
     @guard(tool="transfer_money")
     def transfer(account: str, amount: str) -> str:
         return f"transferred ${amount} from {account}"
-    
+
     kp = SigningKey.generate()
     warrant = Warrant.mint(
         keypair=kp,
@@ -95,20 +95,20 @@ def test_multiple_constraints():
         holder=kp.public_key,
         ttl_seconds=60
     )
-    
+
     with warrant_scope(warrant), key_scope(kp):
         # Both constraints satisfied
         result = transfer(account="checking-001", amount="100")
         assert result == "transferred $100 from checking-001"
-        
+
         # First constraint violated
         with pytest.raises(ScopeViolation):
             transfer(account="savings-001", amount="100")
-        
+
         # Second constraint violated
         with pytest.raises(ScopeViolation):
             transfer(account="checking-001", amount="200")
-        
+
         # Both constraints violated
         with pytest.raises(ScopeViolation):
             transfer(account="savings-001", amount="200")
@@ -117,9 +117,9 @@ def test_multiple_constraints():
 
 def test_constraint_attenuation():
     """Test that constraints can only become more restrictive."""
-    
+
     kp = SigningKey.generate()
-    
+
     # Parent with broad constraint
     parent = Warrant.mint(
         keypair=kp,
@@ -127,7 +127,7 @@ def test_constraint_attenuation():
         holder=kp.public_key,
         ttl_seconds=3600
     )
-    
+
     # Child with narrower constraint
     child = parent.attenuate(
         capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/reports/*")}),
@@ -135,29 +135,29 @@ def test_constraint_attenuation():
         holder=kp.public_key,
         ttl_seconds=60
     )
-    
+
     @guard(tool="file_ops")
     def access_file(path: str) -> str:
         return f"accessed {path}"
-    
+
     # Parent can access broader paths
     with warrant_scope(parent), key_scope(kp):
         assert access_file(path="/data/file.txt") == "accessed /data/file.txt"
         assert access_file(path="/data/reports/q3.pdf") == "accessed /data/reports/q3.pdf"
-    
+
     # Child can only access narrower paths
     with warrant_scope(child), key_scope(kp):
         assert access_file(path="/data/reports/q3.pdf") == "accessed /data/reports/q3.pdf"
-        
+
         with pytest.raises(ScopeViolation):
             access_file(path="/data/file.txt")
 
 
 def test_constraint_field_addition():
     """Test that new constraint fields can be added during attenuation."""
-    
+
     kp = SigningKey.generate()
-    
+
     # Parent with one constraint, allows unknown fields (permissive)
     # Child can then add constraints on those fields (restrictive)
     parent = Warrant.mint(
@@ -169,7 +169,7 @@ def test_constraint_field_addition():
         holder=kp.public_key,
         ttl_seconds=3600
     )
-    
+
     # Child adds another constraint
     child = parent.attenuate(
         capabilities=Constraints.for_tool("api_call", {
@@ -180,24 +180,24 @@ def test_constraint_field_addition():
         holder=kp.public_key,
         ttl_seconds=60
     )
-    
+
     @guard(tool="api_call")
     def call_api(endpoint: str, method: str) -> str:
         return f"{method} {endpoint}"
-    
+
     # Parent doesn't require method constraint
     with warrant_scope(parent), key_scope(kp):
         assert call_api(endpoint="/api/data", method="GET") == "GET /api/data"
         assert call_api(endpoint="/api/data", method="POST") == "POST /api/data"
-    
+
     # Child requires both constraints
     with warrant_scope(child), key_scope(kp):
         assert call_api(endpoint="/api/users/123", method="GET") == "GET /api/users/123"
-        
+
         # Wrong method
         with pytest.raises(ScopeViolation):
             call_api(endpoint="/api/users/123", method="POST")
-        
+
         # Wrong endpoint
         with pytest.raises(ScopeViolation):
             call_api(endpoint="/api/data", method="GET")
@@ -205,11 +205,11 @@ def test_constraint_field_addition():
 
 def test_missing_constraint_parameter():
     """Test that missing required constraint parameters fail authorization."""
-    
+
     @guard(tool="test_tool")
     def protected_function(required: str, optional: str = "default") -> str:
         return f"{required}-{optional}"
-    
+
     kp = SigningKey.generate()
     warrant = Warrant.mint(
         keypair=kp,
@@ -220,12 +220,12 @@ def test_missing_constraint_parameter():
         holder=kp.public_key,
         ttl_seconds=60
     )
-    
+
     with warrant_scope(warrant), key_scope(kp):
         # Should work with required parameter
         result = protected_function(required="value")
         assert result == "value-default"
-        
+
         # Should work with both parameters
         result = protected_function(required="value", optional="custom")
         assert result == "value-custom"
@@ -240,7 +240,7 @@ def test_cidr_creation():
     # IPv4
     cidr = Cidr("10.0.0.0/8")
     assert cidr.network == "10.0.0.0/8"
-    
+
     # IPv6
     cidr = Cidr("2001:db8::/32")
     assert cidr.network == "2001:db8::/32"
@@ -249,10 +249,10 @@ def test_cidr_creation():
 def test_cidr_invalid():
     """Test that invalid CIDR raises error."""
     from tenuo.exceptions import ValidationError
-    
+
     with pytest.raises(ValidationError):
         Cidr("not-a-cidr")
-    
+
     with pytest.raises(ValidationError):
         Cidr("10.0.0.0/33")  # Invalid prefix for IPv4
 
@@ -260,11 +260,11 @@ def test_cidr_invalid():
 def test_cidr_contains():
     """Test CIDR contains() method."""
     cidr = Cidr("192.168.0.0/16")
-    
+
     # IPs in range
     assert cidr.contains("192.168.1.1")
     assert cidr.contains("192.168.255.255")
-    
+
     # IPs out of range
     assert not cidr.contains("10.0.0.1")
     assert not cidr.contains("192.169.0.1")
@@ -272,11 +272,11 @@ def test_cidr_contains():
 
 def test_cidr_constraint_matching():
     """Test that CIDR constraints match correctly."""
-    
+
     @guard(tool="network_ops")
     def allow_ip(source_ip: str) -> str:
         return f"allowed {source_ip}"
-    
+
     kp = SigningKey.generate()
     warrant = Warrant.mint(
         keypair=kp,
@@ -284,12 +284,12 @@ def test_cidr_constraint_matching():
         holder=kp.public_key,
         ttl_seconds=60
     )
-    
+
     with warrant_scope(warrant), key_scope(kp):
         # Should match IPs in network
         assert allow_ip(source_ip="10.1.2.3") == "allowed 10.1.2.3"
         assert allow_ip(source_ip="10.255.255.255") == "allowed 10.255.255.255"
-        
+
         # Should not match IPs outside network
         with pytest.raises(ScopeViolation):
             allow_ip(source_ip="192.168.1.1")
@@ -298,7 +298,7 @@ def test_cidr_constraint_matching():
 def test_cidr_attenuation():
     """Test that CIDR constraints can only narrow to subnets."""
     kp = SigningKey.generate()
-    
+
     # Parent with broad network
     parent = Warrant.mint(
         keypair=kp,
@@ -306,7 +306,7 @@ def test_cidr_attenuation():
         holder=kp.public_key,
         ttl_seconds=3600
     )
-    
+
     # Child with narrower subnet - should work
     child = parent.attenuate(
         capabilities=Constraints.for_tool("network_ops", {"source_ip": Cidr("10.1.0.0/16")}),
@@ -314,20 +314,20 @@ def test_cidr_attenuation():
         holder=kp.public_key,
         ttl_seconds=60
     )
-    
+
     @guard(tool="network_ops")
     def allow_ip(source_ip: str) -> str:
         return f"allowed {source_ip}"
-    
+
     # Parent can access broader network
     with warrant_scope(parent), key_scope(kp):
         assert allow_ip(source_ip="10.1.2.3") == "allowed 10.1.2.3"
         assert allow_ip(source_ip="10.2.3.4") == "allowed 10.2.3.4"
-    
+
     # Child can only access narrower subnet
     with warrant_scope(child), key_scope(kp):
         assert allow_ip(source_ip="10.1.2.3") == "allowed 10.1.2.3"
-        
+
         with pytest.raises(ScopeViolation):
             allow_ip(source_ip="10.2.3.4")
 
@@ -335,7 +335,7 @@ def test_cidr_attenuation():
 def test_cidr_ipv6():
     """Test CIDR with IPv6 addresses."""
     cidr = Cidr("2001:db8::/32")
-    
+
     assert cidr.contains("2001:db8::1")
     assert not cidr.contains("2001:db9::1")
 

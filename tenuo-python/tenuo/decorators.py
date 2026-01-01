@@ -11,11 +11,11 @@ Example with explicit warrant:
 
 Example with ContextVar (LangChain/FastAPI pattern):
     from tenuo import warrant_scope, key_scope
-    
+
     # Set warrant and keypair in context (e.g., in FastAPI middleware)
     with warrant_scope(warrant), key_scope(keypair):
         scale_cluster(cluster="staging-web", replicas=5)
-    
+
     @guard(tool="manage_infrastructure")
     def scale_cluster(cluster: str, replicas: int):
         # Warrant and keypair are automatically retrieved from context
@@ -83,7 +83,7 @@ class SecurityWarning(UserWarning):
 def _get_callsite() -> str:
     """
     Get the callsite (filename:line) of the tool invocation.
-    
+
     Walks up the stack to find the first frame outside tenuo internals.
     """
     for frame_info in traceback.extract_stack():
@@ -106,7 +106,7 @@ def _make_actionable_error(
     base += f"\n  Tool: {tool_name}"
     base += f"\n  Function: {func_name}"
     base += f"\n  Location: {callsite}"
-    
+
     # Add specific fix suggestions based on error code
     if error_code == AuthErrorCode.MISSING_CONTEXT:
         base += "\n\nTo fix:"
@@ -129,7 +129,7 @@ def _make_actionable_error(
         base += "\n\nTo fix:"
         base += "\n  1. Check if the function arguments satisfy the warrant constraints"
         base += "\n  2. Or issue a warrant with appropriate constraints"
-    
+
     return base
 
 # Runtime imports (after class definitions above)
@@ -143,7 +143,7 @@ from tenuo_core import Warrant, SigningKey  # type: ignore[import-untyped]  # no
 def _is_tenuo_constraint(obj: Any) -> bool:
     """Check if an object is a Tenuo constraint (Pattern, Exact, Range, etc.)."""
     # Check by class name since we can't import all constraint types here
-    constraint_types = {'Pattern', 'Exact', 'Range', 'OneOf', 'NotOneOf', 'Contains', 
+    constraint_types = {'Pattern', 'Exact', 'Range', 'OneOf', 'NotOneOf', 'Contains',
                         'Subset', 'Regex', 'Cidr', 'UrlPattern', 'CEL', 'All', 'AnyOf', 'Not'}
     return type(obj).__name__ in constraint_types
 
@@ -151,24 +151,24 @@ def _is_tenuo_constraint(obj: Any) -> bool:
 def _extract_annotated_constraints(func: Callable) -> dict[str, Any]:
     """
     Extract Tenuo constraints from Annotated type hints.
-    
+
     Example:
         def read_file(path: Annotated[str, Pattern("/data/*")]) -> str: ...
-        
+
     Returns:
         {"path": Pattern("/data/*")}
     """
     constraints: dict[str, Any] = {}
-    
+
     try:
         hints = get_type_hints(func, include_extras=True)
     except Exception:
         return constraints
-    
+
     for param_name, hint in hints.items():
         if param_name == 'return':
             continue
-            
+
         # Check if it's Annotated[T, ...]
         if get_origin(hint) is Annotated:
             args = get_args(hint)
@@ -177,7 +177,7 @@ def _extract_annotated_constraints(func: Callable) -> dict[str, Any]:
                 if _is_tenuo_constraint(annotation):
                     constraints[param_name] = annotation
                     break
-    
+
     return constraints
 
 # Context variable for warrant storage (works with both threads and asyncio)
@@ -203,18 +203,18 @@ _bypass_call_count: int = 0
 def is_bypass_enabled() -> bool:
     """
     Check if authorization bypass is enabled (for testing).
-    
+
     SECURITY: Bypass only works when TENUO_ENV environment variable is set to 'test'.
     This prevents accidental enablement in production.
-    
+
     Returns:
         True if bypass is enabled AND we're in test mode, False otherwise.
     """
     import os
-    
+
     if not _bypass_context.get():
         return False
-    
+
     # SECURITY GUARD: Only allow bypass in test environment
     env = os.environ.get("TENUO_ENV", "").lower()
     if env != "test":
@@ -227,11 +227,11 @@ def is_bypass_enabled() -> bool:
             stacklevel=2,
         )
         return False
-    
+
     # Audit log bypass usage
     global _bypass_call_count
     _bypass_call_count += 1
-    
+
     return True
 
 
@@ -243,7 +243,7 @@ def get_bypass_call_count() -> int:
 def get_warrant_context() -> Optional[Warrant]:
     """
     Get the current warrant from context.
-    
+
     Returns:
         The warrant in the current context, or None if not set.
     """
@@ -253,7 +253,7 @@ def get_warrant_context() -> Optional[Warrant]:
 def get_signing_key_context() -> Optional[SigningKey]:
     """
     Get the current signing key from context.
-    
+
     Returns:
         The signing key in the current context, or None if not set.
     """
@@ -263,10 +263,10 @@ def get_signing_key_context() -> Optional[SigningKey]:
 def get_allowed_tools_context() -> Optional[List[str]]:
     """
     Get the current allowed tools from context.
-    
+
     This returns the tools restricted by scoped_task, which may be
     narrower than what the warrant.tools field allows.
-    
+
     Returns:
         List of allowed tool names, or None if not restricted.
     """
@@ -281,10 +281,10 @@ def warrant_scope(warrant: Warrant) -> 'WarrantContext': ...
 def warrant_scope(warrant: Optional[Warrant] = None) -> Union[Optional[Warrant], 'WarrantContext']:
     """
     Get or set the warrant context.
-    
+
     Usage as getter (no args):
         warrant = warrant_scope()
-    
+
     Usage as setter (context manager):
         with warrant_scope(warrant):
             process_request()  # @guard uses this warrant
@@ -303,10 +303,10 @@ def key_scope(keypair: SigningKey) -> 'SigningKeyContext': ...
 def key_scope(keypair: Optional[SigningKey] = None) -> Union[Optional[SigningKey], 'SigningKeyContext']:
     """
     Get or set the signing key context.
-    
+
     Usage as getter (no args):
         key = key_scope()
-    
+
     Usage as setter (context manager):
         with key_scope(keypair):
             process_request()  # @guard uses this key for PoP
@@ -318,15 +318,15 @@ def key_scope(keypair: Optional[SigningKey] = None) -> Union[Optional[SigningKey
 
 class WarrantContext:
     """Context manager for setting warrant in ContextVar."""
-    
+
     def __init__(self, warrant: Warrant):
         self.warrant = warrant
         self.token = None
-    
+
     def __enter__(self):
         self.token = _warrant_context.set(self.warrant)
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.token is not None:
             _warrant_context.reset(self.token)
@@ -335,15 +335,15 @@ class WarrantContext:
 
 class SigningKeyContext:
     """Context manager for setting keypair in ContextVar (for PoP)."""
-    
+
     def __init__(self, keypair: SigningKey):
         self.keypair = keypair
         self.token = None
-    
+
     def __enter__(self):
         self.token = _keypair_context.set(self.keypair)
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.token is not None:
             _keypair_context.reset(self.token)
@@ -359,31 +359,31 @@ def guard(
 ):
     """
     Decorator that enforces warrant authorization before function execution.
-    
+
     IMPORTANT: PoP is MANDATORY
     ---------------------------
     Keypair must always be available (either provided or in context) because
     Proof-of-Possession is mandatory. This ensures leaked warrants are useless
     without the corresponding private key.
-    
+
     Supports multiple usage patterns:
-    
+
     1. Minimal (tool name inferred from function name):
         @guard
         def search(query: str): ...  # tool="search"
-    
+
     2. With Annotated constraints (auto-extracted):
         @guard
         def read_file(path: Annotated[str, Pattern("/data/*")]) -> str: ...
-    
+
     3. Explicit tool name:
         @guard(tool="manage_infrastructure")
         def scale_cluster(cluster: str, replicas: int): ...
-    
+
     4. Explicit warrant (for non-context usage):
         @guard(warrant, tool="manage_infrastructure", keypair=keypair)
         def scale_cluster(cluster: str, replicas: int): ...
-    
+
     Args:
         warrant_or_tool: If Warrant instance, use it explicitly. If str, treat as tool name.
                         If None, tool is inferred from function name.
@@ -393,7 +393,7 @@ def guard(
                      If None, uses the function's kwargs as args.
         mapping: Optional dictionary mapping function argument names to constraint names.
                  e.g., {"target_env": "cluster"} maps arg 'target_env' to constraint 'cluster'.
-    
+
     Raises:
         AuthorizationError: If no warrant/keypair is available, or authorization fails.
     """
@@ -401,7 +401,7 @@ def guard(
     active_warrant: Optional[Warrant] = None
     active_keypair: Optional[SigningKey] = keypair
     tool_name: Optional[str] = None
-    
+
     if isinstance(warrant_or_tool, Warrant):
         # Pattern: @guard(warrant, tool="...")
         active_warrant = warrant_or_tool
@@ -420,34 +420,34 @@ def guard(
     else:
         # Pattern: @guard(tool="...") - tool passed as keyword arg
         tool_name = tool
-    
+
     def decorator(func: Callable) -> Callable:
         # Infer tool name from function name if not provided
         nonlocal tool_name
         if tool_name is None:
             tool_name = func.__name__
-            
+
         # Extract annotated constraints for defense-in-depth enforcement
         # This allows the code to define strict boundaries that even a broad warrant cannot violate
         annotated_constraints = _extract_annotated_constraints(func)
-        
+
         @wraps(func)
         def wrapper(*args, **kwargs):
             # Check for test bypass mode (set by allow_all())
             if is_bypass_enabled():
                 return func(*args, **kwargs)
-            
+
             from .config import get_config
-            
+
             config = get_config()
             callsite = _get_callsite()
             func_name = f"{func.__module__}.{func.__qualname__}"
-            
+
             warrant_to_use = active_warrant or get_warrant_context()
-            
+
             if warrant_to_use is None:
                 error_code = AuthErrorCode.MISSING_CONTEXT
-                
+
                 audit_logger.log(AuditEvent(
                     event_type=AuditEventType.AUTHORIZATION_FAILURE,
                     tool=tool_name,
@@ -459,9 +459,9 @@ def guard(
                         "function": func_name,
                     },
                 ))
-                
+
                 should_fail = config.strict_mode
-                
+
                 # Tripwire: auto-flip to strict after threshold is reached
                 if config.max_missing_warrant_warnings > 0:
                     config._missing_warrant_count += 1
@@ -474,7 +474,7 @@ def guard(
                             SecurityWarning,
                             stacklevel=2,
                         )
-                
+
                 if should_fail:
                     error_msg = _make_actionable_error(
                         error_code=error_code,
@@ -484,7 +484,7 @@ def guard(
                         details=f"No warrant context available for tool '{tool_name}'.",
                     )
                     raise RuntimeError(error_msg)
-                
+
                 elif config.warn_on_missing_warrant:
                     warning_msg = (
                         f"[{error_code}] Tool '{tool_name}' called without warrant context.\n"
@@ -495,11 +495,11 @@ def guard(
                     warnings.warn(warning_msg, SecurityWarning, stacklevel=2)
                     # Passthrough allowed - continue without authorization
                     return func(*args, **kwargs)
-                
+
                 elif config.allow_passthrough:
                     # Dev mode passthrough - just execute
                     return func(*args, **kwargs)
-                
+
                 else:
                     error_msg = _make_actionable_error(
                         error_code=error_code,
@@ -509,12 +509,12 @@ def guard(
                         details=f"No warrant context available for tool '{tool_name}'.",
                     )
                     raise ScopeViolation(error_msg)
-            
+
             # Check warrant expiry BEFORE any further processing
             if warrant_to_use.is_expired():
                 expires_at = warrant_to_use.expires_at() if hasattr(warrant_to_use, 'expires_at') else "unknown"
                 error_code = AuthErrorCode.EXPIRED
-                
+
                 audit_logger.log(AuditEvent(
                     event_type=AuditEventType.WARRANT_EXPIRED,
                     warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else None,
@@ -528,7 +528,7 @@ def guard(
                         "expires_at": str(expires_at),
                     },
                 ))
-                
+
                 error_msg = _make_actionable_error(
                     error_code=error_code,
                     tool_name=tool_name,
@@ -540,13 +540,13 @@ def guard(
                     warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else "unknown",
                     expired_at=expires_at
                 )
-            
+
             keypair_to_use = active_keypair or get_signing_key_context()
-            
+
             # PoP is MANDATORY - keypair must always be available
             if keypair_to_use is None:
                 error_code = AuthErrorCode.POP_MISSING
-                
+
                 audit_logger.log(AuditEvent(
                     event_type=AuditEventType.POP_FAILED,
                     warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else None,
@@ -559,7 +559,7 @@ def guard(
                         "function": func_name,
                     },
                 ))
-                
+
                 error_msg = _make_actionable_error(
                     error_code=error_code,
                     tool_name=tool_name,
@@ -568,13 +568,13 @@ def guard(
                     details="Proof-of-Possession is mandatory but no keypair available.",
                 )
                 raise MissingSigningKey(tool=tool_name)
-            
+
             if extract_args:
                 auth_args = extract_args(*args, **kwargs)
             else:
                 import inspect
                 sig = inspect.signature(func)
-                
+
                 try:
                     bound = sig.bind(*args, **kwargs)
                     bound.apply_defaults()
@@ -600,7 +600,7 @@ def guard(
                         constraint_name = mapping.get(arg_name, arg_name)
                         mapped_args[constraint_name] = value
                     auth_args = mapped_args
-            
+
             # Defense in Depth: Enforce code-level constraints from Annotated hints
             # These are checked BEFORE the warrant, preventing unsafe values even if authorized
             if annotated_constraints:
@@ -612,16 +612,16 @@ def guard(
                         if hasattr(constraint, 'matches'):
                             is_valid = constraint.matches(val)
                         elif hasattr(constraint, 'check'): # Some libs use check
-                             is_valid = constraint.check(val) 
+                             is_valid = constraint.check(val)
                         else:
                             # Fallback to equality for Exact values
                             is_valid = (constraint == val)
-                            
+
                         if not is_valid:
                             # Use AuthorizatonDenied for rich error
                             details = f"Value '{val}' violates code-defined constraint for '{param}'"
                             hint = f"Function signature requires: {constraint}"
-                            
+
                             # Log the enforcement block
                             audit_logger.log(AuditEvent(
                                 event_type=AuditEventType.AUTHORIZATION_FAILURE,
@@ -631,7 +631,7 @@ def guard(
                                 details=details,
                                 metadata={"param": param, "value": str(val), "constraint": str(constraint)}
                             ))
-                            
+
                             raise AuthorizationDenied(
                                 tool=tool_name,
                                 reason=details,
@@ -646,19 +646,19 @@ def guard(
                                     )
                                 ]
                             )
-            
+
             pop_signature = warrant_to_use.sign(
                 keypair_to_use, tool_name, auth_args
             )
-            
+
             # pop_signature is list[int], convert to bytes
             if not warrant_to_use.authorize(tool_name, auth_args, signature=bytes(pop_signature)):
                 warrant_tools = warrant_to_use.tools if hasattr(warrant_to_use, 'tools') else []
-                
+
                 # Tool not in warrant
                 if tool_name not in (warrant_tools or []):
                     error_code = AuthErrorCode.SCOPE_VIOLATION
-                    
+
                     audit_logger.log(AuditEvent(
                         event_type=AuditEventType.AUTHORIZATION_FAILURE,
                         warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else None,
@@ -672,19 +672,19 @@ def guard(
                             "warrant_tools": warrant_tools,
                         },
                     ))
-                    
+
                     raise ToolNotAuthorized(
                         tool=tool_name,
                         authorized_tools=warrant_tools,
                         hint=f"Add Capability('{tool_name}', ...) to your mint() call"
                     )
-                
+
                 # Tool is in warrant but constraint violation
                 error_code = AuthErrorCode.CONSTRAINT_VIOLATION
-                
+
                 # Get structured denial reason
                 why = warrant_to_use.why_denied(tool_name, auth_args)
-                
+
                 # Build constraint results for rich error
                 constraint_results = []
                 if hasattr(why, 'constraint_failures') and why.constraint_failures:
@@ -706,7 +706,7 @@ def guard(
                             value=arg_value,
                             explanation="Value does not satisfy constraint",
                         ))
-                
+
                 audit_logger.log(AuditEvent(
                     event_type=AuditEventType.AUTHORIZATION_FAILURE,
                     warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else None,
@@ -724,22 +724,22 @@ def guard(
                         "suggestion": why.suggestion if hasattr(why, 'suggestion') else None,
                     },
                 ))
-                
+
                 # Build explorer URL for debugging
                 warrant_b64 = warrant_to_use.to_base64() if hasattr(warrant_to_use, 'to_base64') else ""
                 explorer_url = f"https://tenuo.dev/explorer/#warrant={warrant_b64[:50]}..." if warrant_b64 else None
-                
+
                 hint = why.suggestion if hasattr(why, 'suggestion') else None
                 if explorer_url:
                     hint = f"{hint}\n\n🔗 Debug: {explorer_url}" if hint else f"🔗 Debug: {explorer_url}"
-                
+
                 raise AuthorizationDenied(
                     tool=tool_name,
                     constraint_results=constraint_results,
                     reason="Arguments do not satisfy warrant constraints",
                     hint=hint,
                 )
-            
+
             audit_logger.log(AuditEvent(
                 event_type=AuditEventType.AUTHORIZATION_SUCCESS,
                 warrant_id=warrant_to_use.id if hasattr(warrant_to_use, 'id') else None,
@@ -753,8 +753,8 @@ def guard(
                     "function": func_name,
                 },
             ))
-            
+
             return func(*args, **kwargs)
-        
+
         return wrapper
     return decorator

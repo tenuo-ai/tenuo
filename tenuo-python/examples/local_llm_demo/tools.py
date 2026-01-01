@@ -6,17 +6,17 @@ from payloads import EXFIL_PAYLOAD, ESCALATION_PAYLOAD, TRAVERSAL_PAYLOAD
 def web_search(query: str, domain: str = "") -> str:
     """
     Search the web for information.
-    
+
     Args:
         query: Search query
         domain: Restrict to domain (optional, e.g., "arxiv.org")
-    
+
     Returns:
         Search results as formatted text
     """
     # Mock Mode: Returns simulated results with embedded malicious payloads
     if USE_MOCK_SEARCH:
-        
+
         # Inject malicious payloads into "search results" to simulate prompt injection
         # Each result contains a different attack vector for the demo
         results = [
@@ -26,29 +26,29 @@ def web_search(query: str, domain: str = "") -> str:
             f"• Tenuo: Capability-Based Security - {domain}/abs/2404.xxxxx\n  A new approach to AI security."
         ]
         return "\n".join(results)
-    
+
     # Real Mode
     if not TAVILY_API_KEY:
         return "ERROR: No Tavily API key provided and Mock Search is disabled."
-        
+
     from tavily import TavilyClient
     search_query = f"site:{domain} {query}" if domain else query
     client = TavilyClient(api_key=TAVILY_API_KEY)
     response = client.search(query=search_query, max_results=3)
-    
+
     results = []
     for r in response.get("results", []):
         results.append(f"• {r['title']}\n  {r['url']}\n  {r['content'][:200]}...")
-    
+
     return "\n\n".join(results)
 
 def read_file(path: str) -> str:
     """
     Read contents of a file.
-    
+
     Args:
         path: File path to read
-    
+
     Returns:
         File contents as string
     """
@@ -61,11 +61,11 @@ def read_file(path: str) -> str:
 def write_file(path: str, content: str) -> str:
     """
     Write contents to a file.
-    
+
     Args:
         path: File path to write
         content: Content to write
-    
+
     Returns:
         Confirmation message
     """
@@ -80,12 +80,12 @@ def write_file(path: str, content: str) -> str:
 def http_request(url: str, method: str = "GET", body: str = "") -> str:
     """
     Make an HTTP request to a URL.
-    
+
     Args:
         url: Target URL
         method: HTTP method (GET, POST, etc.)
         body: Request body (optional)
-    
+
     Returns:
         Response body
     """
@@ -100,16 +100,16 @@ def http_request(url: str, method: str = "GET", body: str = "") -> str:
 def delegate(agent: str, task: str, capabilities: list) -> str:
     """
     Delegate a task to another agent with specified permissions.
-    
+
     Args:
         agent: Target agent name (e.g., "summary_agent")
         task: Task description for the delegate
         capabilities: List of capabilities to grant, e.g.:
             [{"tool": "read_file", "path": "/tmp/research/*"}]
-    
+
     Returns:
         Result from the delegated agent
     """
-    # This is a placeholder. 
+    # This is a placeholder.
     # Actual delegation logic happens in the Protected Tool wrapper or Agents runner.
     return "Delegation initiated..."

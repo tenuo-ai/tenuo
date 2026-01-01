@@ -59,35 +59,35 @@ if TYPE_CHECKING:
 @runtime_checkable
 class ReadableWarrant(Protocol):
     """Protocol for warrant-like objects (read-only operations)."""
-    
+
     @property
     def id(self) -> str: ...
-    
+
     @property
     def tools(self) -> List[str]: ...
-    
+
     @property
     def clearance(self) -> Any: ...
-    
+
     @property
     def depth(self) -> int: ...
-    
+
     @property
     def max_depth(self) -> int: ...
-    
+
     def is_expired(self) -> bool: ...
-    
+
     def is_terminal(self) -> bool: ...
-    
+
     def explain(self, include_chain: bool = False) -> str: ...
 
 
 @runtime_checkable
 class SignableWarrant(Protocol):
     """Protocol for warrant-like objects that can sign requests."""
-    
+
     def headers(self, tool: str, args: dict) -> Dict[str, str]: ...
-    
+
     def delegate(self, *, to: PublicKey, allow: Union[str, List[str]], ttl: int) -> "Warrant": ...
 
 
@@ -118,7 +118,7 @@ class DenyCode:
 class WhyDenied:
     """
     Structured explanation for why a request would be denied.
-    
+
     Use warrant.why_denied(tool, args) to get this.
     """
     denied: bool
@@ -129,7 +129,7 @@ class WhyDenied:
     constraint: Any = None
     value: Any = None
     suggestion: str = ""
-    
+
     def __repr__(self) -> str:
         if not self.denied:
             return f"<WhyDenied ALLOWED tool={self.tool!r}>"
@@ -158,7 +158,7 @@ def _warrant_ttl_remaining(self: Warrant) -> timedelta:
     # This is less precise but works with older Rust builds
     if self.is_expired():
         return timedelta(0)
-    
+
     try:
         # expires_at() returns RFC3339 format like "2025-12-22T12:00:00Z"
         expires_str = self.expires_at()
@@ -215,10 +215,10 @@ if not hasattr(Warrant, 'terminal'):
 def _warrant_capabilities(self: Warrant) -> Dict[str, Dict[str, str]]:
     """
     Human-readable constraints for each tool.
-    
+
     Returns:
         Dict mapping tool names to constraint dicts with string representations.
-        
+
     Example:
         warrant.capabilities
         # {
@@ -227,7 +227,7 @@ def _warrant_capabilities(self: Warrant) -> Dict[str, Dict[str, str]]:
         # }
     """
     result: Dict[str, Dict[str, str]] = {}
-    
+
     # Get constraints for each tool
     for tool in self.tools:
         try:
@@ -243,7 +243,7 @@ def _warrant_capabilities(self: Warrant) -> Dict[str, Dict[str, str]]:
                 result[tool] = {}
         except Exception:
             result[tool] = {}
-    
+
     return result
 
 
@@ -258,7 +258,7 @@ if not hasattr(Warrant, 'capabilities'):
 def _warrant_repr(self: Warrant) -> str:
     """
     Safe string representation that doesn't leak sensitive data.
-    
+
     Shows: id (truncated), tools, TTL remaining
     Hides: signatures, full warrant bytes, session_id
     """
@@ -267,11 +267,11 @@ def _warrant_repr(self: Warrant) -> str:
         ttl_str = str(ttl).split('.')[0]  # Remove microseconds
     except Exception:
         ttl_str = "?"
-    
+
     tools_str = ", ".join(self.tools[:3])
     if len(self.tools) > 3:
         tools_str += f", +{len(self.tools) - 3} more"
-    
+
     return f"<Warrant id={self.id[:16]}... tools=[{tools_str}] ttl={ttl_str}>"
 
 
@@ -291,28 +291,28 @@ def _warrant_validate(
 ) -> ValidationResult:
     """
     Pre-check if this action would be authorized.
-    
+
     Args:
         key: Signing key to check
         tool: Tool name
         args: Tool arguments
-        
+
     Returns:
         ValidationResult
     """
     # 1. Sign
     pop_signature = self.sign(key, tool, args)
-    
+
     # 2. Verify
     success = self.authorize(
         tool=tool,
         args=args,
         signature=bytes(pop_signature)
     )
-    
+
     if success:
         return ValidationResult.ok()
-        
+
     # 3. Rich feedback
     why = self.why_denied(tool, args)
     return ValidationResult.fail(
@@ -337,18 +337,18 @@ def _warrant_headers(
 ) -> Dict[str, str]:
     """
     Generate HTTP authorization headers.
-    
+
     This creates the X-Tenuo-Warrant and X-Tenuo-PoP headers needed
     for authenticated API calls.
-    
+
     Args:
         key: Signing key (must match warrant's authorized_holder)
         tool: Tool name being called
         args: Tool arguments
-        
+
     Returns:
         Dictionary with X-Tenuo-Warrant and X-Tenuo-PoP headers
-        
+
     Example:
         headers = warrant.headers(key, "search", {"query": "test"})
         response = requests.post(url, headers=headers, json=args)
@@ -358,10 +358,10 @@ def _warrant_headers(
     if not validation:
         # Actionable but security-safe error msg
         raise RuntimeError(f"Authorization failed: {validation.reason}")
-        
+
     pop_sig = self.sign(key, tool, args)
     pop_b64 = base64.b64encode(pop_sig).decode('ascii')
-    
+
     return {
         "X-Tenuo-Warrant": self.to_base64(),
         "X-Tenuo-PoP": pop_b64
@@ -383,29 +383,29 @@ if not hasattr(Warrant, 'headers'):
 def _warrant_allows(self: Warrant, tool: str, args: Optional[dict] = None) -> bool:
     """
     Check if the warrant allows the given tool and arguments (DIAGNOSTIC).
-    
+
     WARNING: This checks constraints only, NOT PoP signatures.
     For actual authorization, use `warrant.authorize(tool, args, signature)`.
-    
+
     Use this for:
     - UI previews showing what's possible
     - Quick constraint validation before making a request
     - Debugging constraint configurations
-    
+
     Args:
         tool: Tool name to check
         args: Optional arguments to check against constraints.
               If None, checks only tool presence.
-    
+
     Returns:
         True if constraints would allow, False otherwise.
     """
     if args is None:
         return tool in self.tools
-    
+
     if tool not in self.tools:
         return False
-        
+
     # Use check_constraints to verify args match constraints
     # check_constraints returns None if OK, or error string if not
     result = self.check_constraints(tool, args)
@@ -435,20 +435,20 @@ def _enhance_constraint_suggestion(
 ) -> str:
     """
     Enhance constraint failure messages with actionable suggestions.
-    
+
     Detects common pitfalls and provides helpful guidance:
     - Zero-trust unknown field rejections
     - Multiple fields potentially rejected
     """
     import re
-    
+
     # Detect zero-trust unknown field rejection
     if "unknown field not allowed (zero-trust mode)" in failure_reason:
         # Extract the field name from the error
         # Format: "Constraint 'fieldname' not satisfied: unknown field..."
         field_match = re.search(r"Constraint '([^']+)' not satisfied", failure_reason)
         rejected_field = field_match.group(1) if field_match else "unknown"
-        
+
         # Get constrained fields from warrant.capabilities if available
         constrained_fields: set = set()
         try:
@@ -457,16 +457,16 @@ def _enhance_constraint_suggestion(
                 constrained_fields = set(caps[tool].keys())
         except Exception:
             pass
-        
+
         # Find unknown fields in args (fields not in constraints)
         unknown_fields = [k for k in args.keys() if k not in constrained_fields]
-        
+
         if len(unknown_fields) > 1:
             # Multiple unknown fields - strong hint to review constraints
             fields_str = ", ".join(f"'{f}'" for f in unknown_fields[:5])
             if len(unknown_fields) > 5:
                 fields_str += f", +{len(unknown_fields) - 5} more"
-            
+
             return (
                 f"{failure_reason}.\n\n"
                 f"  Hint: {len(unknown_fields)} fields may be unknown: {fields_str}\n"
@@ -485,7 +485,7 @@ def _enhance_constraint_suggestion(
                 f"  1. Add constraint: {rejected_field}=Any()  (allows any value)\n"
                 f"  2. Or use _allow_unknown=True to allow all unknown fields"
             )
-    
+
     # Default: return original reason
     return failure_reason
 
@@ -493,25 +493,25 @@ def _enhance_constraint_suggestion(
 def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -> WhyDenied:
     """
     Get structured explanation for why a request would be denied (DIAGNOSTIC).
-    
+
     WARNING: This is for debugging only. It does NOT verify PoP signatures.
     For actual authorization, use `warrant.authorize(tool, args, signature)`.
-    
+
     Use this to:
     - Generate helpful error messages for denied requests
     - Debug constraint configuration issues
     - Power interactive debugging UIs
-    
+
     The returned object includes a `suggestion` with a link to the Tenuo Explorer,
     pre-filled with the warrant and request details for interactive debugging.
-    
+
     Args:
         tool: Tool name to check
         args: Tool arguments (optional)
-        
+
     Returns:
         WhyDenied with deny_code, field, suggestion, etc.
-        
+
     Example:
         result = warrant.why_denied("delete_file", {"path": "/etc/passwd"})
         if result.denied:
@@ -521,7 +521,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
     """
     # Create dynamic playground link
     import json
-    
+
     playground_url = "https://tenuo.dev/explorer/"
     try:
         # Construct state object matching App.tsx expectation
@@ -537,7 +537,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
     except Exception:
         # Fallback if encoding fails
         playground_hint = f" Debug at: {playground_url}"
-    
+
     # Check if warrant is expired
     if self.is_expired():
         return WhyDenied(
@@ -547,7 +547,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
             tool=tool,
             suggestion=f"Warrant expired at {self.expires_at()}. Request a fresh warrant.{playground_hint}",
         )
-    
+
     # Check if tool is in warrant
     if tool not in self.tools:
         available = ", ".join(self.tools) if self.tools else "none"
@@ -558,10 +558,10 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
             tool=tool,
             suggestion=f"Tool '{tool}' not in warrant. Available: {available}.{playground_hint}",
         )
-    
+
     # Check if warrant is terminal (can't delegate)
     # This isn't really a "denial" for execution, but useful info
-    
+
     # Check constraints via Rust (without requiring PoP)
     # check_constraints returns None if OK, or a string describing the failure
     try:
@@ -587,7 +587,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
             tool=tool,
             suggestion=f"Could not check constraints: {e}.{playground_hint}",
         )
-    
+
     # If we got here, authorization would likely succeed
     # (assuming valid PoP signature)
     return WhyDenied(
@@ -618,25 +618,25 @@ def _warrant_explain(self: Warrant, include_chain: bool = False) -> str:
         f"  TTL: {self.ttl_remaining}",
         f"  Expires: {self.expires_at()}",  # Rust method returns RFC3339 string
     ]
-    
+
     if self.clearance is not None:
         lines.append(f"  Clearance: {self.clearance}")
-    
+
     # max_depth might be None in older Rust builds or for some warrant types
     max_d = getattr(self, 'max_depth', None)
     if max_d is None and hasattr(self, 'max_issue_depth'):
         max_d = self.max_issue_depth
     lines.append(f"  Depth: {self.depth}/{max_d if max_d is not None else '?'}")
-    
+
     if self.is_terminal():  # Method, not property
         lines.append("  [WARNING] Terminal - cannot delegate further")
-    
+
     if self.is_expired():  # Method, not property
         lines.append("  [WARNING] Expired")
-    
+
     if include_chain and self.parent_hash:
         lines.append(f"  Parent: {self.parent_hash[:12]}...")
-    
+
     return "\n".join(lines)
 
 
@@ -736,22 +736,22 @@ def _warrant_delegate(
 ) -> Warrant:
     """
     Convenience method to delegate a warrant to a new holder.
-    
+
     This creates a new child warrant with narrowed capabilities.
-    
+
     Args:
         to: The public key of the new holder
         allow: Tool(s) to delegate - string for single tool or list for multiple
         ttl: Time-to-live in seconds for the child warrant
         key: Signing key (optional if using context)
         **constraints: Additional constraints to apply
-        
+
     Returns:
         The new child warrant
-        
+
     Raises:
         RuntimeError: If no key provided and no keypair in context
-        
+
     Example:
         # With explicit key
         child = parent.grant(
@@ -760,7 +760,7 @@ def _warrant_delegate(
             ttl=300,
             key=parent_key
         )
-        
+
         # With context key
         with key_scope(parent_key):
             child = parent.grant(
@@ -776,7 +776,7 @@ def _warrant_delegate(
             "No signing key provided. Either pass key= argument or use "
             "inside a task context / key_scope()."
         )
-    
+
     # Auto-wrap single item to list (if not iterable list/tuple/set, but exclude str)
     if isinstance(allow, str):
         items = [allow]
@@ -784,15 +784,15 @@ def _warrant_delegate(
         items = list(allow)
     else:
         items = [allow]
-    
+
     # Build child warrant using attenuation builder
     builder = self.grant_builder()
-    
+
     # POLA: Start by inheriting all parent capabilities, then narrow
     builder.inherit_all()
-    
+
     tool_names_only = []
-    
+
     # Process allow items
     for item in items:
         if isinstance(item, str):
@@ -807,22 +807,22 @@ def _warrant_delegate(
     # Narrow to specified tools (strings)
     if tool_names_only:
         builder.tools(tool_names_only)
-    
+
     # Apply additional constraints if provided (only applies to string tools)
     if constraints and tool_names_only:
         from tenuo.constraints import ensure_constraint
-        
+
         # Apply constraints to each tool specified by name
         for tool in tool_names_only:
             tool_constraints = {}
             for field, value in constraints.items():
                 tool_constraints[field] = ensure_constraint(value)
             builder.capability(tool, tool_constraints)
-    
+
     # Set new holder and TTL
     builder.holder(to)
     builder.ttl(ttl)
-    
+
     # Sign and return
     return builder.grant(signing_key)
 
@@ -837,7 +837,7 @@ _original_issue_execution = Warrant.issue_execution if hasattr(Warrant, 'issue_e
 
 def _wrapped_issue_execution(self):
     """Wrap issue_execution() to return Python IssuanceBuilder.
-    
+
     Returns:
         IssuanceBuilder (Python wrapper) with dual-purpose methods
     """
@@ -861,29 +861,29 @@ def get_chain_with_diffs(
 ) -> List[Union[DelegationDiff, Dict[str, Any]]]:
     """
     Reconstruct full delegation chain with diffs.
-    
+
     NOTE: This is for AUDIT purposes only. Runtime verification
     uses embedded ChainLink data and requires no external fetches.
-    
+
     Args:
         warrant: The leaf warrant to trace back from
         warrant_store: Optional storage for fetching parent warrants
             Must have a .get(warrant_id) method
-        
+
     Returns:
         List of DelegationDiff objects (or fallback dicts) from root to leaf
     """
     chain: List[Union[DelegationDiff, Dict[str, Any]]] = []
     current = warrant
-    
+
     # Without a store, we can only return minimal info
     if warrant_store is None:
         return [_create_minimal_diff(current)]
-    
+
     # Trace back using parent_hash
     while current.parent_hash is not None:
         parent_hash = current.parent_hash
-        
+
         # Try to fetch parent from store
         parent: Optional[Warrant] = None
         try:
@@ -894,14 +894,14 @@ def get_chain_with_diffs(
                 parent = warrant_store.get(parent_hash)
         except (AttributeError, KeyError, TypeError):
             break
-        
+
         if parent:
             diff = compute_diff(parent, current)
             chain.append(diff)
             current = parent
         else:
             break
-    
+
     # Reverse to get root-first order
     return list(reversed(chain))
 
@@ -919,7 +919,7 @@ def _create_minimal_diff(child: Warrant) -> Dict[str, Any]:
 
 def compute_diff(parent: Warrant, child: Warrant) -> DelegationDiff:
     """Compute diff between two warrants (parent and child).
-    
+
     Delegates to the Rust implementation for performance and consistency.
     """
     return rust_compute_diff(parent, child)
@@ -932,7 +932,7 @@ def compute_diff(parent: Warrant, child: Warrant) -> DelegationDiff:
 def _warrant_str(self: Warrant) -> str:
     """
     Return base64 representation for easy serialization.
-    
+
     This allows warrants to be passed as strings naturally:
         send_to_agent(str(warrant))
         json.dumps({"warrant": str(warrant)})
@@ -986,7 +986,7 @@ Warrant.grant = _warrant_grant  # type: ignore[attr-defined]
 # Add from_str as alias for from_base64
 def _warrant_from_str(s: str) -> 'Warrant':
     """Parse warrant from string (base64 encoded).
-    
+
     This is an alias for from_base64() that pairs with str(warrant).
     """
     return Warrant.from_base64(s)
@@ -1021,7 +1021,7 @@ Warrant.receipt = property(_receipt_alias)  # type: ignore[attr-defined]
 # Add __bytes__ for bytes(warrant) support
 def _warrant_bytes(self: Warrant) -> bytes:
     """Return CBOR-encoded bytes representation.
-    
+
     This allows warrants to be serialized to bytes:
         warrant_bytes = bytes(warrant)
     """
@@ -1032,7 +1032,7 @@ Warrant.__bytes__ = _warrant_bytes  # type: ignore[attr-defined]
 # Add from_bytes as alias for from_cbor
 def _warrant_from_bytes(data: bytes) -> 'Warrant':
     """Parse warrant from bytes (CBOR encoded).
-    
+
     This is an alias for from_cbor() that pairs with bytes(warrant).
     """
     return Warrant.from_cbor(data)
@@ -1045,31 +1045,31 @@ Warrant.from_bytes = _warrant_from_bytes  # type: ignore[attr-defined]
 
 def _warrant_chain(self: Warrant, store: Optional[Any] = None) -> List[Warrant]:
     """Get the full delegation chain from root to current warrant.
-    
+
     Returns a list of warrants starting from the root (issuer) warrant
     and ending with the current warrant.
-    
+
     Args:
         store: Optional warrant store/cache to look up parents.
                Must have a .get(hash: str) -> Optional[Warrant] method.
-    
+
     Example:
         chain = warrant.chain(my_store)
         for w in chain:
             print(f"{w.type}: {w.tools or w.can_issue}")
-    
+
     Returns:
         List of Warrant objects from root to current
     """
     chain = []
     current = self
-    
+
     # Trace back using parent_hash
     while current is not None:
         chain.append(current)
         if current.parent_hash is None or store is None:
             break
-            
+
         # Try to fetch parent from store
         try:
             parent = store.get(current.parent_hash)
@@ -1078,7 +1078,7 @@ def _warrant_chain(self: Warrant, store: Optional[Any] = None) -> List[Warrant]:
             current = parent
         except Exception:
             break
-    
+
     # Reverse to get root-first order
     return list(reversed(chain))
 

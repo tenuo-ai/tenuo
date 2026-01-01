@@ -39,17 +39,17 @@ def process_request(cluster: str, replicas: int, action: str):
     The warrant is set once at the top level and used by all functions.
     """
     print(f"Processing request for {cluster}...")
-    
+
     # All these calls will use the warrant from context
     scale_cluster(cluster=cluster, replicas=replicas)
     manage_infrastructure(cluster=cluster, action=action)
-    
+
     print("Request processed successfully\n")
 
 
 def main():
     print("=== Tenuo ContextVar Pattern (LangChain/FastAPI) ===\n")
-    
+
     # ========================================================================
     # STEP 1: Create Warrant (SIMULATION - In production, from control plane)
     # ========================================================================
@@ -57,7 +57,7 @@ def main():
         # SIMULATION: Generate key for demo
         # In production: Control plane key is loaded from secure storage
         key = SigningKey.generate()
-        
+
         # SIMULATION: Create warrant with hardcoded constraints
         # HARDCODED: Pattern("staging-*"), Range.max_value(15), ttl=3600
         # In production: Constraints come from policy engine or configuration
@@ -71,7 +71,7 @@ def main():
     except Exception as e:
         print(f"[ERR] Error creating warrant: {e}")
         return
-    
+
     # ========================================================================
     # PATTERN 1: Set Warrant in Context (REAL CODE - Production-ready)
     # ========================================================================
@@ -96,7 +96,7 @@ def main():
         print(f"   [ERR] Authorization failed: {e}\n")
     except Exception as e:
         print(f"   [ERR] Unexpected error: {e}\n")
-    
+
     # ========================================================================
     # PATTERN 2: FastAPI Middleware Example (SIMULATION)
     # ========================================================================
@@ -104,7 +104,7 @@ def main():
     def fastapi_middleware_example(request_warrant: Warrant):
         """
         [SIMULATION] Simulates FastAPI middleware that sets warrant in context.
-        
+
         In production, this would be actual FastAPI middleware:
             @app.middleware("http")
             async def tenuo_middleware(request: Request, call_next):
@@ -123,12 +123,12 @@ def main():
             print(f"   [ERR] Authorization failed: {e}\n")
         except Exception as e:
             print(f"   [ERR] Unexpected error: {e}\n")
-    
+
     try:
         fastapi_middleware_example(warrant)
     except Exception as e:
         print(f"   [ERR] Error in middleware example: {e}\n")
-    
+
     # ========================================================================
     # PATTERN 3: Error When No Warrant in Context (REAL CODE - Production-ready)
     # ========================================================================
@@ -142,7 +142,7 @@ def main():
         print(f"   ✓ Correctly raised: {str(e)[:60]}...\n")
     except Exception as e:
         print(f"   ✗ Unexpected error (not AuthorizationError): {e}\n")
-    
+
     # Pattern 4: Nested contexts (context inheritance)
     print("4. Testing nested contexts...")
     warrant1 = (Warrant.mint_builder()
@@ -155,11 +155,11 @@ def main():
         .holder(key.public_key)
         .ttl(3600)
         .mint(key))
-    
+
     with warrant_scope(warrant1), key_scope(key):
         print("   Outer context: staging-*")
         scale_cluster(cluster="staging-web", replicas=5)
-        
+
         with warrant_scope(warrant2):
             print("   Inner context: production-*")
             try:
@@ -167,11 +167,11 @@ def main():
                 print("   ✓ Inner context works\n")
             except AuthorizationError as e:
                 print(f"   ✗ {e}\n")
-        
+
         # Back to outer context
         print("   Back to outer context: staging-*")
         scale_cluster(cluster="staging-web", replicas=5)
-    
+
     print("=== Context pattern example completed! ===")
     print("\nThis pattern is ideal for:")
     print("  - FastAPI: Set warrant in middleware, use in route handlers")

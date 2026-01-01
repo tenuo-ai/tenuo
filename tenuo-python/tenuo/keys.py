@@ -10,13 +10,13 @@ Usage:
     # Load keys
     key = load_signing_key_from_env("MY_KEY")
     key = load_signing_key_from_file("/path/to/key")
-    
+
     # Keyring for rotation
     keyring = Keyring(
         root=load_signing_key_from_env("ROOT_KEY"),
         previous=[load_signing_key_from_env("ROOT_KEY_V1")]
     )
-    
+
     # Registry for LangGraph
     registry = KeyRegistry.get_instance()
     registry.register("worker", worker_key)
@@ -41,18 +41,18 @@ from .exceptions import ConfigurationError
 def load_signing_key_from_env(name: str) -> SigningKey:
     """
     Load a SigningKey from an environment variable.
-    
+
     Auto-detects format (base64 or hex).
-    
+
     Args:
         name: Environment variable name
-        
+
     Returns:
         SigningKey
-        
+
     Raises:
         ConfigurationError: If env var missing or invalid format
-        
+
     Example:
         key = load_signing_key_from_env("TENUO_ROOT_KEY")
     """
@@ -62,44 +62,44 @@ def load_signing_key_from_env(name: str) -> SigningKey:
             f"Environment variable '{name}' not set. "
             f"Set it to a base64 or hex-encoded signing key."
         )
-    
+
     return _parse_key_string(value, source=f"env:{name}")
 
 
 def load_signing_key_from_file(path: str) -> SigningKey:
     """
     Load a SigningKey from a file.
-    
+
     Auto-detects format (raw bytes, base64, or hex).
-    
+
     Args:
         path: Path to key file
-        
+
     Returns:
         SigningKey
-        
+
     Raises:
         ConfigurationError: If file missing or invalid format
-        
+
     Example:
         key = load_signing_key_from_file("/run/secrets/tenuo-key")
     """
     p = Path(path)
     if not p.exists():
         raise ConfigurationError(f"Key file not found: {path}")
-    
+
     try:
         # Try reading as binary first (raw 32-byte key)
         data = p.read_bytes()
-        
+
         # If exactly 32 bytes, treat as raw key
         if len(data) == 32:
             return SigningKey.from_bytes(data)
-        
+
         # Otherwise, try to decode as text (base64 or hex)
         text = data.decode('utf-8').strip()
         return _parse_key_string(text, source=f"file:{path}")
-        
+
     except Exception as e:
         raise ConfigurationError(f"Failed to load key from {path}: {e}")
 
@@ -107,13 +107,13 @@ def load_signing_key_from_file(path: str) -> SigningKey:
 def _parse_key_string(value: str, source: str = "unknown") -> SigningKey:
     """
     Parse a key string, auto-detecting format.
-    
+
     Supports:
     - Base64 (43-44 chars, may have padding)
     - Hex (64 chars)
     """
     value = value.strip()
-    
+
     # Try base64 first (most common)
     if len(value) in (43, 44) or value.endswith('='):
         try:
@@ -122,7 +122,7 @@ def _parse_key_string(value: str, source: str = "unknown") -> SigningKey:
                 return SigningKey.from_bytes(data)
         except Exception:
             pass
-    
+
     # Try hex (64 hex chars = 32 bytes)
     if len(value) == 64:
         try:
@@ -131,7 +131,7 @@ def _parse_key_string(value: str, source: str = "unknown") -> SigningKey:
                 return SigningKey.from_bytes(data)
         except Exception:
             pass
-    
+
     # Try base64 again with more lenient parsing
     try:
         # Add padding if missing
@@ -141,7 +141,7 @@ def _parse_key_string(value: str, source: str = "unknown") -> SigningKey:
             return SigningKey.from_bytes(data)
     except Exception:
         pass
-    
+
     raise ConfigurationError(
         f"Invalid key format from {source}. "
         f"Expected 32-byte key as base64 (44 chars) or hex (64 chars). "
@@ -156,25 +156,25 @@ def _parse_key_string(value: str, source: str = "unknown") -> SigningKey:
 class Keyring:
     """
     Manages signing keys with rotation support.
-    
+
     Holds a current root key and optional previous keys for verification
     of old signatures during key rotation.
-    
+
     Example:
         keyring = Keyring(
             root=load_signing_key_from_env("ROOT_KEY_V2"),
             previous=[load_signing_key_from_env("ROOT_KEY_V1")]
         )
-        
+
         # Use current key for signing
         warrant = Warrant.mint(keypair=keyring.root, ...)
-        
+
         # Authorizer trusts all keys
         authorizer = Authorizer(trusted_roots=keyring.all_public_keys)
     """
-    
+
     __slots__ = ('_root', '_previous')
-    
+
     def __init__(
         self,
         root: SigningKey,
@@ -182,39 +182,39 @@ class Keyring:
     ):
         """
         Create a Keyring.
-        
+
         Args:
             root: Current active signing key
             previous: Previous keys still valid for verification
         """
         self._root = root
         self._previous = previous or []
-    
+
     @property
     def root(self) -> SigningKey:
         """Current active signing key."""
         return self._root
-    
+
     @property
     def previous(self) -> List[SigningKey]:
         """Previous keys (read-only copy)."""
         return list(self._previous)
-    
+
     @property
     def all_keys(self) -> List[SigningKey]:
         """All keys (root + previous)."""
         return [self._root] + self._previous
-    
+
     @property
     def all_public_keys(self) -> List[PublicKey]:
         """All public keys (for Authorizer trusted_roots)."""
         return [k.public_key for k in self.all_keys]
-    
+
     @property
     def root_public_key(self) -> PublicKey:
         """Root key's public key."""
         return self._root.public_key
-    
+
     def __repr__(self) -> str:
         return f"<Keyring root={self._root.public_key} previous_count={len(self._previous)}>"
 
@@ -226,45 +226,45 @@ class Keyring:
 class KeyRegistry:
     """
     Thread-safe singleton registry for signing keys.
-    
+
     Used by LangGraph integration to store keys outside of graph state.
     Keys are accessed by string ID, never passed through state.
-    
+
     Example:
         registry = KeyRegistry.get_instance()
         registry.register("orchestrator", orchestrator_key)
         registry.register("worker", worker_key)
-        
+
         # In LangGraph node
         key = registry.get("worker")
         headers = warrant.headers(key, "search", args)
-    
+
     Security:
         - Keys never in graph state (not checkpointed)
         - Thread-safe (uses Lock)
         - Namespace support for multi-tenant apps
     """
-    
+
     _instance: Optional["KeyRegistry"] = None
     _lock: threading.Lock = threading.Lock()
-    
+
     __slots__ = ('_keys', '_instance_lock')
-    
+
     def __init__(self) -> None:
         """
         Create a KeyRegistry.
-        
+
         Note: Use get_instance() for the singleton.
         Direct instantiation is allowed for testing.
         """
         self._keys: Dict[str, SigningKey] = {}
         self._instance_lock = threading.Lock()
-    
+
     @classmethod
     def get_instance(cls) -> "KeyRegistry":
         """
         Get the global KeyRegistry singleton.
-        
+
         Thread-safe with double-checked locking.
         """
         if cls._instance is None:
@@ -272,7 +272,7 @@ class KeyRegistry:
                 if cls._instance is None:
                     cls._instance = cls()
         return cls._instance
-    
+
     @classmethod
     def reset_instance(cls) -> None:
         """
@@ -280,7 +280,7 @@ class KeyRegistry:
         """
         with cls._lock:
             cls._instance = None
-    
+
     def register(
         self,
         key_id: str,
@@ -290,7 +290,7 @@ class KeyRegistry:
     ) -> None:
         """
         Register a key with an ID.
-        
+
         Args:
             key_id: Identifier for the key
             key: The SigningKey to register
@@ -299,7 +299,7 @@ class KeyRegistry:
         full_id = f"{namespace}:{key_id}"
         with self._instance_lock:
             self._keys[full_id] = key
-    
+
     def get(
         self,
         key_id: str,
@@ -308,14 +308,14 @@ class KeyRegistry:
     ) -> SigningKey:
         """
         Get a key by ID.
-        
+
         Args:
             key_id: Identifier for the key
             namespace: Optional namespace
-            
+
         Returns:
             SigningKey
-            
+
         Raises:
             KeyError: If key not found
         """
@@ -327,7 +327,7 @@ class KeyRegistry:
                     f"Register it first with registry.register('{key_id}', key)"
                 )
             return self._keys[full_id]
-    
+
     def get_public(
         self,
         key_id: str,
@@ -338,7 +338,7 @@ class KeyRegistry:
         Get only the public key (safe to pass around).
         """
         return self.get(key_id, namespace=namespace).public_key
-    
+
     def has(
         self,
         key_id: str,
@@ -349,7 +349,7 @@ class KeyRegistry:
         full_id = f"{namespace}:{key_id}"
         with self._instance_lock:
             return full_id in self._keys
-    
+
     def unregister(
         self,
         key_id: str,
@@ -360,11 +360,11 @@ class KeyRegistry:
         full_id = f"{namespace}:{key_id}"
         with self._instance_lock:
             self._keys.pop(full_id, None)
-    
+
     def clear(self, *, namespace: Optional[str] = None) -> None:
         """
         Clear keys.
-        
+
         Args:
             namespace: If provided, only clear keys in that namespace.
                       If None, clear all keys.
@@ -378,7 +378,7 @@ class KeyRegistry:
                     k: v for k, v in self._keys.items()
                     if not k.startswith(prefix)
                 }
-    
+
     def list_keys(self, *, namespace: str = "default") -> List[str]:
         """List key IDs in a namespace."""
         prefix = f"{namespace}:"
@@ -387,7 +387,7 @@ class KeyRegistry:
                 k[len(prefix):] for k in self._keys.keys()
                 if k.startswith(prefix)
             ]
-    
+
     def __repr__(self) -> str:
         with self._instance_lock:
             count = len(self._keys)
@@ -401,18 +401,18 @@ class KeyRegistry:
 def load_public_key_from_env(name: str) -> PublicKey:
     """
     Load a PublicKey from an environment variable.
-    
+
     Auto-detects format (base64, hex, or PEM).
-    
+
     Args:
         name: Environment variable name
-        
+
     Returns:
         PublicKey
-        
+
     Raises:
         ConfigurationError: If env var missing or invalid format
-        
+
     Example:
         pubkey = load_public_key_from_env("AGENT_PUBKEY")
     """
@@ -422,28 +422,28 @@ def load_public_key_from_env(name: str) -> PublicKey:
             f"Environment variable '{name}' not set. "
             f"Set it to a base64, hex, or PEM-encoded public key."
         )
-    
+
     return _parse_public_key_string(value, source=f"env:{name}")
 
 
 def _parse_public_key_string(value: str, source: str = "unknown") -> PublicKey:
     """
     Parse a public key string, auto-detecting format.
-    
+
     Supports:
     - Base64 (43-44 chars for 32 bytes)
     - Hex (64 chars for 32 bytes)
     - PEM format
     """
     value = value.strip()
-    
+
     # Check for PEM format
     if value.startswith("-----BEGIN"):
         try:
             return PublicKey.from_pem(value)
         except Exception as e:
             raise ConfigurationError(f"Invalid PEM public key from {source}: {e}")
-    
+
     # Try base64 first (most common for compact storage)
     if len(value) in (43, 44) or value.endswith('='):
         try:
@@ -452,7 +452,7 @@ def _parse_public_key_string(value: str, source: str = "unknown") -> PublicKey:
                 return PublicKey.from_bytes(data)
         except Exception:
             pass
-    
+
     # Try hex (64 hex chars = 32 bytes)
     if len(value) == 64:
         try:
@@ -461,7 +461,7 @@ def _parse_public_key_string(value: str, source: str = "unknown") -> PublicKey:
                 return PublicKey.from_bytes(data)
         except Exception:
             pass
-    
+
     # Try base64 again with more lenient parsing
     try:
         padded = value + '=' * (4 - len(value) % 4) if len(value) % 4 else value
@@ -470,7 +470,7 @@ def _parse_public_key_string(value: str, source: str = "unknown") -> PublicKey:
             return PublicKey.from_bytes(data)
     except Exception:
         pass
-    
+
     raise ConfigurationError(
         f"Invalid public key format from {source}. "
         f"Expected 32-byte key as base64 (44 chars), hex (64 chars), or PEM. "

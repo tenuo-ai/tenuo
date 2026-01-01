@@ -58,35 +58,35 @@ async def main():
     # 4. Connect to MCP Server and discover tools
     async with SecureMCPClient("python", [str(SERVER_SCRIPT)], register_config=True) as mcp_client:
         print("   ✓ Connected to MCP server and registered config")
-        
+
         # Get protected tools via sync property
         protected_tools = mcp_client.tools
         print(f"   ✓ Discovered {len(protected_tools)} MCP tools")
 
         # 5. Define Graph Nodes
-        
+
         @tenuo_node(Capability("read_file", path=Pattern("/tmp/*")))
         async def researcher_node(state: AgentState):
             """Researcher node with limited authority."""
             print("\n   [Node: Researcher] Executing with restricted warrant...")
-            
+
             query = state["query"]
             # Simulate choosing a file based on query
             # In a real app, the LLM would decide which tool to call
             target_file = "/tmp/research_data.txt"
             Path(target_file).write_text(f"Research data for: {query}")
-            
+
             print(f"   Calling read_file(path='{target_file}')...")
-            
+
             # Call the MCP tool
             # Authorization is checked LOCALLY by @guard
             # If authorized, the tool is called
             # If denied, AuthorizationError is raised (caught by LangGraph)
             result = await protected_tools["read_file"](path=target_file)
-            
+
             content = result[0].text if result else "No content"
             print(f"   ✓ Tool result received: {content}")
-            
+
             return {"research_results": content}
 
         async def answer_node(state: AgentState):
@@ -98,17 +98,17 @@ async def main():
         workflow = StateGraph(AgentState)
         workflow.add_node("researcher", researcher_node)
         workflow.add_node("answer", answer_node)
-        
+
         workflow.add_edge(START, "researcher")
         workflow.add_edge("researcher", "answer")
         workflow.add_edge("answer", END)
-        
+
         app = workflow.compile()
         print("   ✓ LangGraph application built")
 
         # 7. Run with Task Scoping
         print("\n7. Running graph with root task authority...")
-        
+
         # We grant broad authority at the root, which the researcher node narrows
         async with mint(
             Capability("read_file", path=Pattern("/tmp/*")),
@@ -116,7 +116,7 @@ async def main():
         ):
             input_state = {"query": "Tenuo Security"}
             final_state = await app.ainvoke(input_state)
-            
+
             print("\n=== Final Graph Output ===")
             print(f"Query: {final_state['query']}")
             print(f"Answer: {final_state['final_answer']}")

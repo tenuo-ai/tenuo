@@ -19,8 +19,8 @@ from uuid import uuid4
 from tenuo import Warrant, SigningKey
 from tenuo.keys import KeyRegistry
 from tenuo.langgraph import (
-    guard_node, 
-    TenuoToolNode, 
+    guard_node,
+    TenuoToolNode,
     require_warrant,
 )
 
@@ -44,9 +44,9 @@ except ImportError:
 # In production, keys come from env vars (e.g., K8s secrets)
 # We simulate this by setting env vars and using load_tenuo_keys()
 worker_key = SigningKey.generate()
-# Export as hex/base64 (Tenuo keys have .to_hex() or similar?) 
-# SigningKey string repr is usually redacted. 
-# For this example, we manually register to keep it simple, 
+# Export as hex/base64 (Tenuo keys have .to_hex() or similar?)
+# SigningKey string repr is usually redacted.
+# For this example, we manually register to keep it simple,
 # but we show the pattern.
 
 print("🔒 Registering keys...")
@@ -105,39 +105,39 @@ class AgentState(TypedDict):
 def agent_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     """
     Simulates an agent decision.
-    
+
     We use `require_warrant` manually here to check permissions BEFORE
     calling tools (acting as a policy layer).
     """
     messages = state["messages"]
     last_msg = messages[-1]
-    
+
     # Get secure context
     bw = require_warrant(state, config)
-    
+
     if isinstance(last_msg, HumanMessage):
         content = last_msg.content.lower()
-        
+
         # Simulating LLM decision
         if "delete" in content:
             # Check permission explicitly (Logic check)
             if not bw.allows("delete_database"):
                 return {"messages": [HumanMessage(content="I cannot delete the database (unauthorized warrant).")]}
-            
+
             return {"messages": [AIMessage(content="Deleting...", tool_calls=[
                 {"name": "delete_database", "args": {}, "id": str(uuid4())}
             ])]}
-            
+
         elif "search" in content:
             return {"messages": [AIMessage(content="Searching...", tool_calls=[
                 {"name": "search", "args": {"query": "something"}, "id": str(uuid4())}
             ])]}
-            
+
         else:
              return {"messages": [AIMessage(content="Echoing...", tool_calls=[
                 {"name": "echo", "args": {"msg": content}, "id": str(uuid4())}
             ])]}
-            
+
     return {"messages": []}
 
 
@@ -178,7 +178,7 @@ app = workflow.compile(checkpointer=checkpointer)
 
 if __name__ == "__main__":
     print("\n🚀 Starting Secure Agent...")
-    
+
     # Session ID for checkpointing
     thread_id = "thread-1"
     config = {
@@ -187,13 +187,13 @@ if __name__ == "__main__":
             "tenuo_key_id": "worker-1" # Pass infrastructure key ID here
         }
     }
-    
+
     # Initial input
     initial_state = {
         "messages": [HumanMessage(content="Hello world")],
         "warrant": root_warrant.to_base64()
     }
-    
+
     print("\n--- TURN 1: Allowed Action (Echo) ---")
     for event in app.stream(initial_state, config=config):
         for key, value in event.items():
@@ -210,9 +210,9 @@ if __name__ == "__main__":
     print("\n--- TURN 2: Denied Action (Delete) ---")
     # Agent should refuse because it checks allows
     # OR if it tried, TenuoToolNode would block it.
-    
+
     next_input = {"messages": [HumanMessage(content="Please delete the database")]}
-    
+
     for event in app.stream(next_input, config=config):
         for key, value in event.items():
             print(f"[{key}] {value}")

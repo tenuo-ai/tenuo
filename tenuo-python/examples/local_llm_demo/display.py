@@ -27,7 +27,7 @@ def print_warrant_details(warrant, role: str):
     content += f"[bold]Holder:[/bold] {role} ({warrant.authorized_holder})\n"
     content += f"[bold]TTL:[/bold] {warrant.ttl_remaining}\n\n"
     content += "[bold]Capabilities (what this agent CAN do):[/bold]\n"
-    
+
     if hasattr(warrant, 'capabilities'):
         caps = warrant.capabilities
         for tool, constraints in caps.items():
@@ -37,7 +37,7 @@ def print_warrant_details(warrant, role: str):
             content += "\n"
     else:
         content += f" {warrant.tools}"
-    
+
     content += "\n[bold red]NOT in warrant (will be BLOCKED):[/bold red]\n"
     content += " [red]✗[/red] http_request (no network access)\n"
     content += " [red]✗[/red] Files outside allowed paths"
@@ -67,15 +67,15 @@ def print_verdict(allowed: bool, reason: str, details: str = ""):
     else:
         style = "bold red"
         title = "⛔ TENUO: BLOCKED"
-    
+
     content = f"[bold]{reason}[/bold]"
     if details:
         content += f"\n\n{details}"
-    
+
     # Add educational context for blocks
     if not allowed:
         content += "\n\n[dim italic]The warrant doesn't allow this action.[/dim italic]"
-        
+
     console.print(Panel(
         content,
         title=title,

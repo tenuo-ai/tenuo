@@ -36,6 +36,103 @@ def read_file(path: str):
 
 ---
 
+## Closed-World Mode (Trust Cliff)
+
+When you define **any** constraint on a tool, Tenuo activates **closed-world mode** for that capability: arguments not explicitly constrained are **rejected by default**.
+
+This is a security feature—once you start defining what's allowed, Tenuo assumes you want strict enforcement.
+
+### The Trust Cliff
+
+| Constraint State | Behavior |
+|------------------|----------|
+| **No constraints** (empty) | OPEN: Any arguments allowed |
+| **≥1 constraint defined** | CLOSED: Unknown arguments rejected |
+| **`_allow_unknown=True`** | Explicit opt-out from closed-world |
+
+### Example
+
+```python
+from tenuo import Warrant, Pattern
+
+# ❌ One constraint → unknown fields rejected
+warrant = (Warrant.mint_builder()
+    .capability("api_call", url=Pattern("https://api.example.com/*"))
+    .holder(key.public_key)
+    .ttl(3600)
+    .mint(key))
+
+# This FAILS - 'timeout' is not in the constraint set
+api_call(url="https://api.example.com/v1", timeout=30)
+# Error: "unknown field not allowed (zero-trust mode)"
+```
+
+### Opt-Out with `_allow_unknown`
+
+Use `_allow_unknown=True` to explicitly allow unconstrained fields:
+
+```python
+# ✅ Opt-out: allow unknown fields
+warrant = (Warrant.mint_builder()
+    .capability("api_call",
+        url=Pattern("https://api.example.com/*"),
+        _allow_unknown=True)
+    .holder(key.public_key)
+    .ttl(3600)
+    .mint(key))
+
+# This SUCCEEDS - 'timeout' is allowed through
+api_call(url="https://api.example.com/v1", timeout=30)
+```
+
+### Explicitly Allow Specific Fields
+
+Use `Wildcard()` to allow any value for a specific field while keeping closed-world mode:
+
+```python
+from tenuo import Warrant, Pattern, Wildcard
+
+# Constrain 'url', allow any 'timeout', reject other unknown fields
+warrant = (Warrant.mint_builder()
+    .capability("api_call",
+        url=Pattern("https://api.example.com/*"),
+        timeout=Wildcard())  # Any value OK
+    .holder(key.public_key)
+    .ttl(3600)
+    .mint(key))
+
+# ✅ ALLOWED - both fields are constrained
+api_call(url="https://api.example.com/v1", timeout=30)
+
+# ❌ BLOCKED - 'retries' is unknown
+api_call(url="https://api.example.com/v1", timeout=30, retries=3)
+```
+
+> [!IMPORTANT]
+> **`_allow_unknown` is NOT inherited during attenuation.**
+>
+> When you delegate (attenuate) a warrant, the child defaults to closed-world mode even if the parent had `_allow_unknown=True`. This prevents privilege escalation through delegation.
+>
+> ```python
+> # Parent: open to unknown fields
+> parent = (Warrant.mint_builder()
+>     .capability("api_call",
+>         url=Pattern("https://*"),
+>         _allow_unknown=True)
+>     .mint(key))
+>
+> # Child: defaults to closed (even though parent was open)
+> child = (parent.grant_builder()
+>     .capability("api_call",
+>         url=Pattern("https://api.example.com/*"))
+>     .grant(key))
+>
+> # Child CANNOT enable _allow_unknown if parent had it disabled
+> # This would fail: child cannot be more permissive than parent
+> ```
+
+---
+
 ## Constraint Types
 
 ### Wildcard
@@ -498,19 +595,24 @@ All([
 
 ---
 
-### Any (OR)
+### AnyOf (OR)
 
 At least one nested constraint must match.
 
 ```python
-from tenuo import Any, Pattern
+from tenuo import AnyOf, Pattern
 
 # Path must match at least one pattern
-Any([
+AnyOf([
     Pattern("/data/reports/*"),
     Pattern("/data/analytics/*")
 ])
 ```
+
+> [!NOTE]
+> **`Any` vs `AnyOf`**: These are different!
+> - `AnyOf([...])` - OR composite: at least one constraint must match
+> - `Any()` - Alias for `Wildcard()`: allows any value for a specific field in zero-trust mode
 
 ---
 
@@ -762,7 +864,7 @@ When attenuating a warrant, child constraints must be **contained** within paren
 | `Contains()` | Contains (more required values) |
 | `Subset()` | Subset (fewer allowed values) |
 | `All()` | All (more constraints) |
-| `Any()` | Any (fewer alternatives) |
+| `AnyOf()` | AnyOf (fewer alternatives) |
 | `CEL()` | CEL (conjunction with parent) |
 
 **Key Limitations**:
@@ -1070,8 +1172,8 @@ Pattern("weather *|news *")  # Treats | as literal character
 # ✅ CORRECT: Use curly braces for alternation
 Pattern("{weather,news} *")
 
-# ✅ CORRECT: Or use Any() for complex cases
-Any([Pattern("weather *"), Pattern("news *")])
+# ✅ CORRECT: Or use AnyOf() for complex cases
+AnyOf([Pattern("weather *"), Pattern("news *")])
 ```
 
 ### Prefer Explicit Over Permissive

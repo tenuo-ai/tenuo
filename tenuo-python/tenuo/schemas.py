@@ -8,11 +8,11 @@ This module provides a registry of tool schemas that inform:
 
 Usage:
     from tenuo import ToolSchema, register_schema, get_schema
-    
+
     # Get schema for a built-in tool
     schema = get_schema("read_file")
     print(schema.risk_level)  # "medium"
-    
+
     # Register a custom tool schema
     register_schema("my_tool", ToolSchema(
         recommended_constraints=["resource_id", "action"],
@@ -29,7 +29,7 @@ from typing import Dict, List, Optional
 class ToolSchema:
     """
     Schema defining constraints and risk level for a tool.
-    
+
     Attributes:
         recommended_constraints: List of constraint keys recommended for this tool
         require_at_least_one: If True, tool must have at least one constraint
@@ -40,7 +40,7 @@ class ToolSchema:
     require_at_least_one: bool = False
     risk_level: str = "medium"  # critical, high, medium, low
     description: Optional[str] = None
-    
+
     def __post_init__(self) -> None:
         valid_levels = {"critical", "high", "medium", "low"}
         if self.risk_level not in valid_levels:
@@ -77,7 +77,7 @@ TOOL_SCHEMAS: Dict[str, ToolSchema] = {
         risk_level="low",
         description="List directory contents",
     ),
-    
+
     # Network tools
     "http_request": ToolSchema(
         recommended_constraints=["url", "domain", "method"],
@@ -91,7 +91,7 @@ TOOL_SCHEMAS: Dict[str, ToolSchema] = {
         risk_level="high",
         description="Fetch content from URLs",
     ),
-    
+
     # Communication tools
     "send_email": ToolSchema(
         recommended_constraints=["to", "domain"],
@@ -105,7 +105,7 @@ TOOL_SCHEMAS: Dict[str, ToolSchema] = {
         risk_level="high",
         description="Send messages to users or channels",
     ),
-    
+
     # Database tools
     "query_db": ToolSchema(
         recommended_constraints=["table", "query_type"],
@@ -119,7 +119,7 @@ TOOL_SCHEMAS: Dict[str, ToolSchema] = {
         risk_level="critical",
         description="Execute raw SQL queries",
     ),
-    
+
     # Code execution tools
     "run_code": ToolSchema(
         recommended_constraints=["language", "timeout"],
@@ -133,7 +133,7 @@ TOOL_SCHEMAS: Dict[str, ToolSchema] = {
         risk_level="critical",
         description="Execute shell commands",
     ),
-    
+
     # Search tools
     "web_search": ToolSchema(
         recommended_constraints=["query", "domain"],
@@ -153,11 +153,11 @@ TOOL_SCHEMAS: Dict[str, ToolSchema] = {
 def register_schema(tool_name: str, schema: ToolSchema) -> None:
     """
     Register a custom tool schema.
-    
+
     Args:
         tool_name: Name of the tool
         schema: ToolSchema defining constraints and risk level
-    
+
     Example:
         register_schema("my_api_call", ToolSchema(
             recommended_constraints=["endpoint", "method"],
@@ -171,10 +171,10 @@ def register_schema(tool_name: str, schema: ToolSchema) -> None:
 def get_schema(tool_name: str) -> Optional[ToolSchema]:
     """
     Get the schema for a tool.
-    
+
     Args:
         tool_name: Name of the tool
-    
+
     Returns:
         ToolSchema if registered, None otherwise
     """
@@ -184,14 +184,14 @@ def get_schema(tool_name: str) -> Optional[ToolSchema]:
 def recommended_constraints(tools: list) -> None:
     """
     Print recommended constraints for tools based on risk level.
-    
+
     Args:
         tools: List of tools (LangChain tools or callables)
-    
+
     Example:
         tools = [read_file, send_email, http_request]
         recommended_constraints(tools)
-        
+
         # Output:
         # Recommended constraints:
         #   http_request: ⚠️  REQUIRED (critical) - url, domain, method
@@ -199,19 +199,19 @@ def recommended_constraints(tools: list) -> None:
         #   read_file: recommended (medium) - path
     """
     print("Recommended constraints:\n")
-    
+
     # Sort by risk level (critical first)
     risk_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-    
+
     items = []
     for tool in tools:
         name = _get_tool_name(tool)
         schema = TOOL_SCHEMAS.get(name)
         if schema and schema.recommended_constraints:
             items.append((name, schema))
-    
+
     items.sort(key=lambda x: risk_order.get(x[1].risk_level, 99))
-    
+
     for name, schema in items:
         if schema.risk_level == "critical":
             level_str = "⚠️  REQUIRED (critical)"
@@ -219,10 +219,10 @@ def recommended_constraints(tools: list) -> None:
             level_str = "⚠️  recommended (high)"
         else:
             level_str = f"recommended ({schema.risk_level})"
-        
+
         constraints_str = ", ".join(schema.recommended_constraints)
         print(f"  {name}: {level_str} - {constraints_str}")
-    
+
     if not items:
         print("  (no schemas registered for these tools)")
 
@@ -230,26 +230,26 @@ def recommended_constraints(tools: list) -> None:
 def check_constraints(tools: list, constraints: dict) -> List[str]:
     """
     Check which tools are missing recommended constraints.
-    
+
     Args:
         tools: List of tools to check
         constraints: Dict of constraints from the warrant
-    
+
     Returns:
         List of warning messages for tools missing constraints
     """
     warnings = []
-    
+
     for tool in tools:
         name = _get_tool_name(tool)
         schema = TOOL_SCHEMAS.get(name)
-        
+
         if schema and schema.recommended_constraints:
             # Check if any recommended constraint is present
             has_constraint = any(
                 c in constraints for c in schema.recommended_constraints
             )
-            
+
             if not has_constraint:
                 if schema.risk_level == "critical":
                     warnings.append(
@@ -261,7 +261,7 @@ def check_constraints(tools: list, constraints: dict) -> List[str]:
                         f"WARNING: '{name}' has no constraints. "
                         f"Recommended: {schema.recommended_constraints}"
                     )
-    
+
     return warnings
 
 

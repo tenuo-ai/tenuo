@@ -19,6 +19,6 @@ def setup_workspace():
         shutil.rmtree(RESEARCH_DIR)
     if os.path.exists(SUMMARY_DIR):
         shutil.rmtree(SUMMARY_DIR)
-        
+
     os.makedirs(RESEARCH_DIR, exist_ok=True)
     os.makedirs(SUMMARY_DIR, exist_ok=True)

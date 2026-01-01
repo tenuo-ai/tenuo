@@ -55,13 +55,13 @@ def print_capability_proposal(capabilities: list):
     table = Table(title="Proposed Capabilities", box=box.ROUNDED)
     table.add_column("Tool", style="cyan")
     table.add_column("Constraints", style="yellow")
-    
+
     for cap in capabilities:
         tool = cap.get("tool", "unknown")
         constraints = cap.get("constraints", {})
         constraint_str = ", ".join(f"{k}={v}" for k, v in constraints.items())
         table.add_row(tool, constraint_str or "(none)")
-    
+
     console.print(Panel(
         table,
         title="🤖 LLM Capability Proposal",
@@ -90,7 +90,7 @@ def print_warrant_minted(capabilities: list, ttl: int):
         if constraints:
             content += "\n    " + ", ".join(f"[yellow]{k}[/yellow]: {v}" for k, v in constraints.items())
         content += "\n"
-    
+
     console.print(Panel(
         content,
         title="📋 Warrant Minted",
@@ -128,26 +128,26 @@ def print_verdict(allowed: bool, reason: str, details: str = "", explorer_link: 
     else:
         style = "bold red"
         title = "⛔ BLOCKED"
-    
+
     content = f"[bold]{reason}[/bold]"
     if details:
         content += f"\n\n{details}"
-    
+
     if not allowed:
         content += "\n\n[dim italic]The warrant doesn't allow this action.[/dim italic]"
-        
+
     console.print(Panel(
         content,
         title=title,
         border_style=style,
         expand=False
     ))
-    
+
     # Print explorer link on a single line (copyable, no wrapping)
     if explorer_link:
         # Use print() directly to avoid Rich's wrapping
         print(f"\033[2mDebug: {explorer_link}\033[0m")
-    
+
     pause()
 
 def print_injection_detected():
@@ -195,7 +195,7 @@ def print_llm_reasoning(response: str):
     # Try to extract just the reasoning part if it's JSON
     import json
     import re
-    
+
     reasoning = response
     try:
         json_match = re.search(r'\{[\s\S]*\}', response)
@@ -205,7 +205,7 @@ def print_llm_reasoning(response: str):
                 reasoning = data["reasoning"]
     except (json.JSONDecodeError, KeyError):
         pass
-    
+
     console.print(Panel(
         f"[italic]{reasoning}[/italic]",
         title="🧠 LLM Reasoning",
@@ -227,10 +227,10 @@ def print_human_approval_request(approver_name: str, task: str, capabilities: li
         else:
             cap_lines.append(f" [cyan]•[/cyan] [bold]{tool}[/bold] [dim](no constraints)[/dim]")
     tools_list = "\n".join(cap_lines)
-    
+
     # URL constraints that will be applied
     urls_list = "\n".join(f" [yellow]•[/yellow] {url}" for url in urls)
-    
+
     console.print(Panel(
         f"[bold]Task:[/bold] {task}\n\n"
         f"[bold]Requested Capabilities:[/bold]\n{tools_list}\n\n"
@@ -316,7 +316,7 @@ def print_delegation(
         constraint_str = "\n[bold]Constraints:[/bold]\n"
         for tool, cons in constraints.items():
             constraint_str += f" [yellow]{tool}[/yellow]: {cons}\n"
-    
+
     console.print(Panel(
         f"[bold]From:[/bold] Orchestrator ({str(from_key)[:16]}...)\n"
         f"[bold]To:[/bold] {worker_name} ({str(to_key)[:16]}...)\n"

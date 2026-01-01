@@ -10,23 +10,23 @@ This module provides a singleton configuration that controls:
 
 Usage:
     from tenuo import configure, auto_configure
-    
+
     # Production setup
     configure(
         issuer_key=my_keypair,
         trusted_roots=[control_plane_key],
         default_ttl=300,
     )
-    
+
     # Development mode (relaxed security for testing)
     configure(
         issuer_key=my_keypair,
         dev_mode=True,
     )
-    
+
     # Environment-based configuration (12-factor apps)
     auto_configure()  # Reads TENUO_* environment variables
-    
+
     # Gradual adoption with audit mode
     configure(
         issuer_key=my_keypair,
@@ -58,7 +58,7 @@ DEFAULT_POP_MAX_WINDOWS = 4
 
 class EnforcementMode(str, Enum):
     """Enforcement mode for authorization checks.
-    
+
     - ENFORCE: Block unauthorized requests (production default)
     - AUDIT: Log violations but allow execution (for gradual adoption)
     - PERMISSIVE: Log violations and add warning header, but allow execution
@@ -71,50 +71,50 @@ class EnforcementMode(str, Enum):
 @dataclass
 class TenuoConfig:
     """Global Tenuo configuration."""
-    
+
     # Issuer key for minting warrants
     issuer_key: Optional[SigningKey] = None
-    
+
     # Trusted root public keys for verification
     trusted_roots: List[PublicKey] = field(default_factory=list)
-    
+
     # Default TTL for warrants (seconds)
     default_ttl: int = DEFAULT_TTL_SECONDS
-    
+
     # Clock tolerance for expiration checks (seconds)
     clock_tolerance: int = DEFAULT_CLOCK_TOLERANCE_SECS
-    
+
     # MCP configuration (for tool discovery and constraint extraction)
     mcp_config: Optional[Any] = None  # CompiledMcpConfig
-    
+
     # PoP window configuration
     pop_window_secs: int = DEFAULT_POP_WINDOW_SECS
     pop_max_windows: int = DEFAULT_POP_MAX_WINDOWS
-    
+
     # Enforcement mode: enforce (block), audit (log only), permissive (log + warn header)
     mode: EnforcementMode = EnforcementMode.ENFORCE
-    
+
     # Development mode flags
     dev_mode: bool = False
     allow_passthrough: bool = False
     allow_self_signed: bool = False
-    
+
     # Integration safety flags
     strict_mode: bool = False  # Panic on missing warrant (fail-closed enforcement)
     warn_on_missing_warrant: bool = False  # Warn loudly if tool called without warrant
-    
+
     # Tripwire: flip to hard-fail after N warnings (0 = disabled)
     max_missing_warrant_warnings: int = 0
-    
+
     # Error detail exposure (SECURITY: keep False in production)
     # If True, detailed constraint info is returned in error responses.
     # If False (default), errors are opaque with request_id for log correlation.
     expose_error_details: bool = False
     _missing_warrant_count: int = field(default=0, repr=False)
-    
+
     # Cached authorizer (lazily created)
     _authorizer: Optional[Authorizer] = field(default=None, repr=False)
-    
+
     def get_authorizer(self) -> Authorizer:
         """Get or create the authorizer with current config."""
         if self._authorizer is None:
@@ -123,22 +123,22 @@ class TenuoConfig:
                     "No trusted roots configured. "
                     "Call configure(trusted_roots=[...]) or enable dev_mode=True."
                 )
-            
+
             auth = Authorizer(
                 trusted_roots=self.trusted_roots if self.trusted_roots else None,
                 clock_tolerance_secs=self.clock_tolerance,
                 pop_window_secs=self.pop_window_secs,
                 pop_max_windows=self.pop_max_windows,
             )
-            
+
             # In dev mode with self-signed, add issuer as trusted root
             if self.dev_mode and self.allow_self_signed and self.issuer_key:
                 auth.add_trusted_root(self.issuer_key.public_key)
-            
+
             self._authorizer = auth
-        
+
         return self._authorizer
-    
+
     def reset_authorizer(self) -> None:
         """Reset cached authorizer (call after config changes)."""
         self._authorizer = None
@@ -172,9 +172,9 @@ def configure(
 ) -> None:
     """
     Configure Tenuo globally.
-    
+
     Call this once at application startup before using mint() or grant().
-    
+
     Args:
         issuer_key: SigningKey for signing warrants (required for mint)
         trusted_roots: Public keys to trust as warrant issuers
@@ -192,24 +192,24 @@ def configure(
         max_missing_warrant_warnings: Tripwire - auto-flip to strict after N warnings (0=disabled)
         expose_error_details: Include constraint details in error responses (SECURITY: keep False in production)
         audit_log: Enable audit logging (default: True). Set False for clean demo output.
-    
+
     Raises:
         ConfigurationError: If invalid configuration
-    
+
     Example:
         # Production
         configure(
             issuer_key=my_keypair,
             trusted_roots=[control_plane_key],
         )
-        
+
         # Development
         configure(
             issuer_key=SigningKey.generate(),
             dev_mode=True,
             allow_self_signed=True,
         )
-        
+
         # Gradual adoption (audit mode)
         configure(
             issuer_key=my_keypair,
@@ -218,37 +218,37 @@ def configure(
         )
     """
     global _config
-    
+
     # Validate dev_mode requirements
     if allow_passthrough and not dev_mode:
         raise ConfigurationError(
             "allow_passthrough=True requires dev_mode=True. "
             "Pass-through is dangerous and should only be used in development."
         )
-    
+
     if allow_self_signed and not dev_mode:
         raise ConfigurationError(
             "allow_self_signed=True requires dev_mode=True. "
             "Self-signed warrants bypass the trust chain."
         )
-    
+
     # Validate production requirements
     if not dev_mode and not trusted_roots:
         raise ConfigurationError(
             "trusted_roots required in production mode. "
             "Provide trusted_roots=[...] or enable dev_mode=True for development."
         )
-    
+
     # Validate strict_mode
     if strict_mode and allow_passthrough:
         raise ConfigurationError(
             "strict_mode=True is incompatible with allow_passthrough=True. "
             "Strict mode enforces warrant presence; passthrough allows missing warrants."
         )
-    
+
     # Parse mode
     enforcement_mode = EnforcementMode(mode)
-    
+
     # Update global config
     _config = TenuoConfig(
         issuer_key=issuer_key,
@@ -267,14 +267,14 @@ def configure(
         max_missing_warrant_warnings=max_missing_warrant_warnings,
         expose_error_details=expose_error_details,
     )
-    
+
     if enforcement_mode != EnforcementMode.ENFORCE:
         logger.warning(
             f"Tenuo configured in {enforcement_mode.value} mode. "
             "Authorization violations will be logged but NOT blocked. "
             "Set mode='enforce' for production."
         )
-    
+
     # Configure audit logging
     from .audit import audit_logger
     audit_logger.configure(enabled=audit_log)
@@ -336,7 +336,7 @@ def auto_configure(
 ) -> bool:
     """
     Configure Tenuo from environment variables.
-    
+
     Environment variables (with default TENUO_ prefix):
         TENUO_ISSUER_KEY: Base64-encoded signing key (or hex)
         TENUO_TRUSTED_ROOTS: Comma-separated base64 public keys
@@ -344,26 +344,26 @@ def auto_configure(
         TENUO_MODE: Enforcement mode - enforce, audit, permissive (default: enforce)
         TENUO_DEV_MODE: Enable dev mode if "1" or "true"
         TENUO_CLOCK_TOLERANCE: Clock tolerance in seconds (default: 30)
-    
+
     Args:
         prefix: Environment variable prefix (default: "TENUO_")
         require_issuer: If True, raise ConfigurationError if no issuer key
-        
+
     Returns:
         True if configuration was applied, False if no config found
-        
+
     Raises:
         ConfigurationError: If require_issuer=True and no issuer key found
-        
+
     Example:
         # In your app startup
         from tenuo import auto_configure
-        
+
         auto_configure()  # Reads TENUO_* environment variables
-        
+
         # With custom prefix (multi-tenant)
         auto_configure(prefix="AGENT_A_TENUO_")  # Reads AGENT_A_TENUO_*
-        
+
         # Require issuer key
         auto_configure(require_issuer=True)  # Raises if TENUO_ISSUER_KEY not set
     """
@@ -373,9 +373,9 @@ def auto_configure(
     mode = "enforce"
     dev_mode = False
     clock_tolerance = DEFAULT_CLOCK_TOLERANCE_SECS
-    
+
     found_any = False
-    
+
     # Parse issuer key
     issuer_key_str = os.getenv(f"{prefix}ISSUER_KEY")
     if issuer_key_str:
@@ -397,7 +397,7 @@ def auto_configure(
         raise ConfigurationError(
             f"{prefix}ISSUER_KEY environment variable is required but not set."
         )
-    
+
     # Parse trusted roots
     trusted_roots_str = os.getenv(f"{prefix}TRUSTED_ROOTS")
     if trusted_roots_str:
@@ -419,7 +419,7 @@ def auto_configure(
                 raise ConfigurationError(
                     f"Invalid public key in {prefix}TRUSTED_ROOTS: {e}"
                 )
-    
+
     # Parse TTL
     ttl_str = os.getenv(f"{prefix}DEFAULT_TTL")
     if ttl_str:
@@ -430,7 +430,7 @@ def auto_configure(
             raise ConfigurationError(
                 f"Invalid {prefix}DEFAULT_TTL: expected integer, got '{ttl_str}'"
             )
-    
+
     # Parse mode
     mode_str = os.getenv(f"{prefix}MODE")
     if mode_str:
@@ -441,13 +441,13 @@ def auto_configure(
                 f"Invalid {prefix}MODE: expected 'enforce', 'audit', or 'permissive', "
                 f"got '{mode_str}'"
             )
-    
+
     # Parse dev mode
     dev_mode_str = os.getenv(f"{prefix}DEV_MODE", "").lower()
     if dev_mode_str in ("1", "true", "yes"):
         found_any = True
         dev_mode = True
-    
+
     # Parse clock tolerance
     tolerance_str = os.getenv(f"{prefix}CLOCK_TOLERANCE")
     if tolerance_str:
@@ -458,11 +458,11 @@ def auto_configure(
             raise ConfigurationError(
                 f"Invalid {prefix}CLOCK_TOLERANCE: expected integer, got '{tolerance_str}'"
             )
-    
+
     if not found_any:
         logger.debug(f"No {prefix}* environment variables found, skipping auto_configure")
         return False
-    
+
     # Apply configuration
     configure(
         issuer_key=issuer_key,
@@ -473,14 +473,14 @@ def auto_configure(
         allow_self_signed=dev_mode,  # Auto-enable if dev_mode
         clock_tolerance=clock_tolerance,
     )
-    
+
     logger.info(
         f"Tenuo auto-configured from environment: "
         f"mode={mode}, dev_mode={dev_mode}, "
         f"issuer={'set' if issuer_key else 'not set'}, "
         f"trusted_roots={len(trusted_roots or [])}"
     )
-    
+
     return True
 
 

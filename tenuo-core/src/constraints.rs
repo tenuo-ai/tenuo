@@ -3808,9 +3808,15 @@ mod tests {
         let cs = ConstraintSet::new();
 
         let mut args = HashMap::new();
-        args.insert("url".to_string(), ConstraintValue::String("https://example.com".into()));
+        args.insert(
+            "url".to_string(),
+            ConstraintValue::String("https://example.com".into()),
+        );
         args.insert("timeout".to_string(), ConstraintValue::Integer(30));
-        args.insert("anything".to_string(), ConstraintValue::String("whatever".into()));
+        args.insert(
+            "anything".to_string(),
+            ConstraintValue::String("whatever".into()),
+        );
 
         // Should pass - empty constraint set is fully open
         assert!(cs.matches(&args).is_ok());
@@ -3824,7 +3830,10 @@ mod tests {
 
         // Only url provided - should pass
         let mut args = HashMap::new();
-        args.insert("url".to_string(), ConstraintValue::String("https://example.com".into()));
+        args.insert(
+            "url".to_string(),
+            ConstraintValue::String("https://example.com".into()),
+        );
         assert!(cs.matches(&args).is_ok());
 
         // url + unknown field - should FAIL (zero trust)
@@ -3845,7 +3854,10 @@ mod tests {
         cs.insert("timeout", Wildcard::new()); // Any value for timeout
 
         let mut args = HashMap::new();
-        args.insert("url".to_string(), ConstraintValue::String("https://example.com".into()));
+        args.insert(
+            "url".to_string(),
+            ConstraintValue::String("https://example.com".into()),
+        );
         args.insert("timeout".to_string(), ConstraintValue::Integer(9999));
 
         // Should pass - both fields are constrained (even if timeout is wildcard)
@@ -3864,9 +3876,15 @@ mod tests {
         cs.set_allow_unknown(true);
 
         let mut args = HashMap::new();
-        args.insert("url".to_string(), ConstraintValue::String("https://example.com".into()));
+        args.insert(
+            "url".to_string(),
+            ConstraintValue::String("https://example.com".into()),
+        );
         args.insert("timeout".to_string(), ConstraintValue::Integer(30));
-        args.insert("anything".to_string(), ConstraintValue::String("whatever".into()));
+        args.insert(
+            "anything".to_string(),
+            ConstraintValue::String("whatever".into()),
+        );
 
         // Should pass - allow_unknown=true
         assert!(cs.matches(&args).is_ok());
@@ -3880,8 +3898,14 @@ mod tests {
         cs.set_allow_unknown(true);
 
         let mut args = HashMap::new();
-        args.insert("url".to_string(), ConstraintValue::String("http://insecure.com".into())); // http, not https
-        args.insert("anything".to_string(), ConstraintValue::String("allowed".into()));
+        args.insert(
+            "url".to_string(),
+            ConstraintValue::String("http://insecure.com".into()),
+        ); // http, not https
+        args.insert(
+            "anything".to_string(),
+            ConstraintValue::String("allowed".into()),
+        );
 
         // Should FAIL - url doesn't match pattern
         assert!(cs.matches(&args).is_err());
@@ -3907,7 +3931,10 @@ mod tests {
 
         // Child should reject unknown fields
         let mut args = HashMap::new();
-        args.insert("url".to_string(), ConstraintValue::String("https://api.example.com/v1".into()));
+        args.insert(
+            "url".to_string(),
+            ConstraintValue::String("https://api.example.com/v1".into()),
+        );
         args.insert("timeout".to_string(), ConstraintValue::Integer(30));
         assert!(child.matches(&args).is_err()); // Rejected!
     }

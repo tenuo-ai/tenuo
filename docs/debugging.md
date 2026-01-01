@@ -220,6 +220,28 @@ Value: /etc/passwd
 
 ---
 
+### Unknown Field Rejected
+
+**Error:** `unknown field not allowed (zero-trust mode)`
+
+**Cause:** You defined at least one constraint, which activates **closed-world mode**. All arguments must be explicitly constrained.
+
+**Debug:**
+```python
+result = warrant.why_denied("api_call", {"url": "...", "timeout": 30})
+print(f"Field: {result.field}")
+# Field: timeout (unknown)
+```
+
+**Fix options:**
+1. Add a constraint for the field: `timeout=Range.max_value(60)`
+2. Use `Wildcard()` to allow any value: `timeout=Wildcard()`
+3. Opt out of closed-world: `_allow_unknown=True`
+
+See [Closed-World Mode](./constraints#closed-world-mode-trust-cliff) for details.
+
+---
+
 ### Warrant Expired
 
 **Error:** `Warrant has expired`
@@ -330,6 +352,7 @@ if bound.validate("delete", {"id": "123"}):
 |-------|---------|------------|
 | `Tool 'X' not authorized` | Tool not in warrant | Add tool to warrant |
 | `Constraint 'X' violated` | Arg doesn't match constraint | Use allowed values |
+| `unknown field not allowed` | Closed-world mode active | Add constraint or `_allow_unknown` |
 | `Warrant expired` | TTL exceeded | Get fresh warrant |
 | `No warrant in context` | Missing context | Use `warrant_scope()` |
 | `PoP signature invalid` | Wrong key | Use holder's keypair |

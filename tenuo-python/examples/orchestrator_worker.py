@@ -65,23 +65,23 @@ def write(path: str, content: str):
 def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: SigningKey):
     """
     Orchestrator: Receives broad authority, delegates narrow slices to workers.
-    
+
     This is the key pattern:
     - Orchestrator holds authority for the full task
     - Each phase gets only what it needs
     - Authority is reissued (attenuated) as intent changes
-    
+
     Returns:
         Tuple of (research_warrant, write_warrant) for chain verification
     """
     print("\n[Orchestrator] Starting task: 'Research Q3 competitors'")
     print(f"[Orchestrator] My warrant allows: {warrant.tools}")
-    
+
     # Phase 1: Research (delegate search + fetch only)
     # Note: Attenuation inherits tools from parent. We use constraints to restrict usage.
     # The warrant still has all tools, but constraints make search/fetch the only usable ones.
     print("\n[Orchestrator] Phase 1: Delegating research to Worker")
-    
+
     # Use builder pattern with diff preview
     research_builder = warrant.grant_builder()
     research_builder.capability("search",
@@ -91,23 +91,23 @@ def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: Sig
     research_builder.ttl(60)  # Short-lived
     research_builder.holder(worker_keypair.public_key)
     research_builder.intent("Research Q3 competitors")
-    
+
     # Optional: Preview diff before delegation
     # print("\nDelegation Diff Preview:")
     # print(research_builder.diff())
-    
+
     research_warrant = research_builder.grant(keypair)
     print(f"  Attenuated: tools={research_warrant.tools} (inherited)")
     print("  Constraints: query=*competitor*, max_results<=5, url=https://public.*, ttl=60s")
-    
+
     # Access receipt if needed for audit
     if hasattr(research_warrant, 'delegation_receipt') and research_warrant.delegation_receipt:
         receipt = research_warrant.delegation_receipt
         print(f"  Receipt: {receipt.child_warrant_id} (intent: {receipt.intent})")
-    
+
     # Worker executes research phase
     worker_research(research_warrant, worker_keypair)
-    
+
     # Phase 2: Write (delegate write only, no search/fetch)
     # For write-only phase, we issue a new warrant with only write tool
     # This is the cleanest pattern when you want to completely change the tool set
@@ -119,12 +119,12 @@ def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: Sig
         .mint(keypair))
     print("  New warrant: tools=write, path=/output/reports/*, ttl=30s")
     print("  Note: This is a new warrant (not attenuated) to change tool set")
-    
+
     # Worker executes write phase
     worker_write(write_warrant, worker_keypair)
-    
+
     print("\n[Orchestrator] Task complete")
-    
+
     return research_warrant, write_warrant
 
 
@@ -132,7 +132,7 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
     """Worker: Executes research with attenuated authority."""
     print("\n  [Worker/Research] Received research warrant")
     print(f"  [Worker/Research] Warrant allows: {warrant.tools}")
-    
+
     with warrant_scope(warrant), key_scope(keypair):
         print("\n  [Worker/Research] Demonstrating explicit warrant.authorize calls with signatures:")
 
@@ -148,7 +148,7 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
                 print("    [Blocked] Search denied (unexpected)")
         except Exception as e:
             print(f"    [Error] {e}")
-            
+
         # 2. Search (Blocked - wrong query)
         try:
             print("  > Attempting: search(query='internal salary data', max_results=3)")
@@ -203,7 +203,7 @@ def worker_write(warrant: Warrant, keypair: SigningKey):
     """Worker: Executes write with attenuated authority."""
     print("\n  [Worker/Write] Received write warrant")
     print(f"  [Worker/Write] Warrant allows: {warrant.tools}")
-    
+
     with warrant_scope(warrant), key_scope(keypair):
         print("\n  [Worker/Write] Demonstrating explicit warrant.authorize calls with signatures:")
 
@@ -219,7 +219,7 @@ def worker_write(warrant: Warrant, keypair: SigningKey):
                 print("    [Blocked] Write denied (unexpected)")
         except Exception as e:
             print(f"    [Error] {e}")
-            
+
         # 2. Write (Blocked - wrong path)
         try:
             print("  > Attempting: write(path='/etc/passwd', content='malicious')")
@@ -253,16 +253,16 @@ def main():
     print("=" * 60)
     print("Orchestrator-Worker Delegation Example")
     print("=" * 60)
-    
+
     # Setup: Control Plane, Orchestrator, Worker identities
     control_plane_keypair = SigningKey.generate()
     orchestrator_keypair = SigningKey.generate()
     worker_keypair = SigningKey.generate()
-    
+
     print(f"\nControl Plane: {control_plane_keypair.public_key.to_bytes()[:8].hex()}...")
     print(f"Orchestrator:  {orchestrator_keypair.public_key.to_bytes()[:8].hex()}...")
     print(f"Worker:        {worker_keypair.public_key.to_bytes()[:8].hex()}...")
-    
+
     # Control Plane issues root warrant to Orchestrator
     print("\n[Control Plane] Issuing root warrant to Orchestrator")
     root_warrant = (Warrant.mint_builder()
@@ -273,21 +273,21 @@ def main():
         .ttl(3600)
         .mint(control_plane_keypair))
     print("  Root warrant: tools=[search, fetch, write], ttl=1h")
-    
+
     # Create Authorizer to verify delegation chain
     authorizer = Authorizer(trusted_roots=[control_plane_keypair.public_key])
     print(f"\n[Authorizer] Created with trusted root: {control_plane_keypair.public_key.to_bytes()[:8].hex()}...")
-    
+
     # Orchestrator executes task, delegating to Worker
     research_warrant, write_warrant = orchestrator_task(root_warrant, orchestrator_keypair, worker_keypair)
-    
+
     # ============================================================================
     # Chain Verification
     # ============================================================================
     print("\n" + "=" * 60)
     print("Chain Verification")
     print("=" * 60)
-    
+
     # Verify Phase 1 chain: root -> research (attenuated)
     print("\n[Chain Verification] Phase 1: Root -> Research (attenuated)")
     try:
@@ -302,7 +302,7 @@ def main():
             print(f"    [{i}] ID={step.warrant_id[:16]}..., depth={step.depth}, issuer={step.issuer[:8].hex()}...")
     except Exception as e:
         print(f"[ERR] Chain verification failed: {e}")
-    
+
     # Verify Phase 2 chain: root -> write (new warrant)
     print("\n[Chain Verification] Phase 2: Root -> Write (new warrant)")
     try:
@@ -317,7 +317,7 @@ def main():
             print(f"    [{i}] ID={step.warrant_id[:16]}..., depth={step.depth}, issuer={step.issuer[:8].hex()}...")
     except Exception as e:
         print(f"[ERR] Chain verification failed: {e}")
-    
+
     # Demonstrate check_chain: verify chain AND authorize action
     print("\n[Chain Verification] Using check_chain (verify + authorize)")
     try:
@@ -333,7 +333,7 @@ def main():
         print(f"  Chain length: {result.chain_length}, leaf depth: {result.leaf_depth}")
     except Exception as e:
         print(f"[ERR] Chain verification or authorization failed: {e}")
-    
+
     print("\n" + "=" * 60)
     print("Key Takeaways:")
     print("=" * 60)

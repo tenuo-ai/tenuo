@@ -87,6 +87,18 @@ python-packages = ["tenuo"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]  # Line too long - handled by formatter
+# E402: Module level import not at top of file
+# Ignored in __init__.py where we intentionally structure imports
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["E402"]
+
 [[tool.maturin.sdist]]
 include = ["README.md", "LICENSE*", "examples/**/*", "tenuo/**/*.py"]
 

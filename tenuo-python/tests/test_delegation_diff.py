@@ -17,7 +17,7 @@ def test_builder_basic():
     """Test basic builder functionality."""
     control_kp = SigningKey.generate()
     worker_kp = SigningKey.generate()
-    
+
     # Create root warrant
     root = Warrant.mint(
         keypair=control_kp,
@@ -25,14 +25,14 @@ def test_builder_basic():
         holder=control_kp.public_key,
         ttl_seconds=3600
     )
-    
+
     # Use builder
     builder = GrantBuilder(root)
     builder.capability("file_operations", {"path": Exact("/data/reports/q3.pdf")})
     builder.ttl(60)
     builder.holder(worker_kp.public_key)
     builder.intent("Q3 report access for worker")
-    
+
     # Check builder state (use method calls for getters)
     assert "file_operations" in builder.capabilities
     assert builder.ttl() == 60
@@ -45,22 +45,22 @@ def test_builder_diff_computation():
     """Test diff computation before delegation."""
     control_kp = SigningKey.generate()
     worker_kp = SigningKey.generate()
-    
+
     root = Warrant.mint(
         keypair=control_kp,
         capabilities=Constraints.for_tool("file_operations", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
         ttl_seconds=3600
     )
-    
+
     builder = GrantBuilder(root)
     builder.capability("file_operations", {"path": Exact("/data/reports/q3.pdf")})
     builder.ttl(60)
     builder.holder(worker_kp.public_key)
-    
+
     # Get structured diff
     diff = builder.diff_structured()
-    
+
     assert isinstance(diff, DelegationDiff)
     assert diff.parent_warrant_id == root.id
     assert diff.child_warrant_id is None  # Not yet delegated
@@ -73,23 +73,23 @@ def test_builder_human_readable_diff():
     """Test human-readable diff output."""
     control_kp = SigningKey.generate()
     worker_kp = SigningKey.generate()
-    
+
     root = Warrant.mint(
         keypair=control_kp,
         capabilities=Constraints.for_tool("file_operations", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
         ttl_seconds=3600
     )
-    
+
     builder = GrantBuilder(root)
     builder.capability("file_operations", {"path": Exact("/data/reports/q3.pdf")})
     builder.ttl(60)
     builder.holder(worker_kp.public_key)
     builder.intent("Q3 report access")
-    
+
     # Get human-readable diff
     diff_str = builder.diff()
-    
+
     assert isinstance(diff_str, str)
     assert "DELEGATION DIFF" in diff_str
     assert "TOOLS" in diff_str or "CAPABILITIES" in diff_str
@@ -100,27 +100,27 @@ def test_builder_delegation():
     """Test actual delegation via builder."""
     control_kp = SigningKey.generate()
     worker_kp = SigningKey.generate()
-    
+
     root = Warrant.mint(
         keypair=control_kp,
         capabilities=Constraints.for_tool("file_operations", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
         ttl_seconds=3600
     )
-    
+
     builder = GrantBuilder(root)
     builder.capability("file_operations", {"path": Exact("/data/reports/q3.pdf")})
     builder.ttl(60)
     builder.holder(worker_kp.public_key)
     builder.intent("Q3 report access")
-    
+
     # Delegate
     child = builder.grant(control_kp)
-    
+
     assert child.tools == ["file_operations"]
     assert child.depth == 1
     assert child.authorized_holder.to_bytes() == worker_kp.public_key.to_bytes()  # Compare bytes
-    
+
     # Check receipt was attached
     receipt = child.delegation_receipt
     assert isinstance(receipt, DelegationReceipt)
@@ -132,17 +132,17 @@ def test_builder_delegation():
 def test_warrant_grant_builder_method():
     """Test attenuate_builder method on Warrant."""
     control_kp = SigningKey.generate()
-    
+
     root = Warrant.mint(
         keypair=control_kp,
         capabilities=Constraints.for_tool("file_operations", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
         ttl_seconds=3600
     )
-    
+
     # Use grant_builder method
     builder = root.grant_builder()
-    
+
     assert isinstance(builder, GrantBuilder)
     assert builder.parent() == root
 
@@ -151,23 +151,23 @@ def test_delegation_receipt_to_dict():
     """Test receipt serialization using actual delegation."""
     control_kp = SigningKey.generate()
     worker_kp = SigningKey.generate()
-    
+
     root = Warrant.mint(
         keypair=control_kp,
         capabilities=Constraints.for_tool("file_operations", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
         ttl_seconds=3600
     )
-    
+
     builder = GrantBuilder(root)
     builder.capability("file_operations", {"path": Exact("/data/q3.pdf")})
     builder.ttl(60)
     builder.holder(worker_kp.public_key)
     builder.intent("Test delegation")
-    
+
     child = builder.grant(control_kp)
     receipt = child.delegation_receipt
-    
+
     # Check receipt exists and has expected structure
     assert receipt is not None
     assert receipt.parent_warrant_id == root.id
@@ -184,26 +184,26 @@ def test_delegation_receipt_siem_json():
     import json
     control_kp = SigningKey.generate()
     worker_kp = SigningKey.generate()
-    
+
     root = Warrant.mint(
         keypair=control_kp,
         capabilities=Constraints.for_tool("file_operations", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
         ttl_seconds=3600
     )
-    
+
     builder = GrantBuilder(root)
     builder.capability("file_operations", {"path": Exact("/data/q3.pdf")})
     builder.ttl(60)
     builder.holder(worker_kp.public_key)
-    
+
     child = builder.grant(control_kp)
     receipt = child.delegation_receipt
-    
+
     # Convert to SIEM JSON
     siem_str = receipt.to_siem_json()
     siem = json.loads(siem_str)
-    
+
     assert siem["event_type"] == "tenuo.delegation.complete"
     assert siem["parent_warrant_id"] == root.id
     assert siem["child_warrant_id"] == child.id

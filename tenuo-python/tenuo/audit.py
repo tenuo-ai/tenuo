@@ -48,25 +48,25 @@ import logging
 
 class AuditEventType(str, Enum):
     """Types of auditable security events."""
-    
+
     # Authorization events
     AUTHORIZATION_SUCCESS = "authorization_success"
     AUTHORIZATION_FAILURE = "authorization_failure"
-    
+
     # Warrant events
     WARRANT_CREATED = "warrant_created"
     WARRANT_ATTENUATED = "warrant_attenuated"
     WARRANT_VERIFIED = "warrant_verified"
     WARRANT_EXPIRED = "warrant_expired"
-    
+
     # Context events
     CONTEXT_SET = "context_set"
     CONTEXT_CLEARED = "context_cleared"
-    
+
     # PoP events
     POP_VERIFIED = "pop_verified"
     POP_FAILED = "pop_failed"
-    
+
     # Enrollment events
     ENROLLMENT_SUCCESS = "enrollment_success"
     ENROLLMENT_FAILURE = "enrollment_failure"
@@ -84,48 +84,48 @@ class AuditSeverity(str, Enum):
 class AuditEvent:
     """
     A structured audit event for SIEM integration.
-    
+
     All security-critical operations should emit an AuditEvent.
     Events are serialized as JSON with consistent field names.
     """
-    
+
     event_type: AuditEventType
-    
+
     # Unique event ID (auto-generated)
     id: str = field(default_factory=lambda: f"evt_{uuid.uuid4().hex[:16]}")
-    
+
     # Severity (auto-inferred from event_type if not provided)
     severity: Optional[AuditSeverity] = None
-    
+
     # Timestamp (ISO8601, auto-generated)
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    
+
     # Service name
     service: str = "tenuo-python"
-    
+
     # Correlation/trace ID (session_id, request_id)
     trace_id: Optional[str] = None
-    
+
     # Warrant context
     warrant_id: Optional[str] = None
     tool: Optional[str] = None
     action: Optional[str] = None
-    
+
     # Constraints that were checked
     constraints: Optional[Dict[str, Any]] = None
-    
+
     # Actor information
     actor: Optional[str] = None
     client_ip: Optional[str] = None
-    
+
     # Additional context
     details: Optional[str] = None
     error_code: Optional[str] = None
     related_ids: Optional[list] = None
-    
+
     # Structured metadata (callsite, function name, etc.)
     metadata: Optional[Dict[str, Any]] = None
-    
+
     def __post_init__(self):
         """Auto-infer severity from event type if not provided."""
         if self.severity is None:
@@ -149,7 +149,7 @@ class AuditEvent:
                 self.severity = AuditSeverity.WARNING
             else:
                 self.severity = AuditSeverity.INFO
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         result = {
@@ -159,7 +159,7 @@ class AuditEvent:
             "@timestamp": self.timestamp,
             "service": self.service,
         }
-        
+
         # Add optional fields (skip None values)
         optional_fields = [
             "trace_id", "warrant_id", "tool", "action", "constraints",
@@ -169,9 +169,9 @@ class AuditEvent:
             value = getattr(self, field_name)
             if value is not None:
                 result[field_name] = value
-        
+
         return result
-    
+
     def to_json(self) -> str:
         """Serialize to JSON string."""
         return json.dumps(self.to_dict(), default=str)
@@ -180,17 +180,17 @@ class AuditEvent:
 class AuditLogger:
     """
     Global audit logger for Tenuo security events.
-    
+
     Outputs JSON to stdout by default (suitable for K8s/container environments).
     Can be configured with custom handlers for other destinations.
     """
-    
+
     def __init__(self):
         self._enabled = True
         self._service_name = "tenuo-python"
         self._handler: Callable[[AuditEvent], None] = self._default_handler
         self._python_logger: Optional[logging.Logger] = None
-    
+
     def configure(
         self,
         enabled: bool = True,
@@ -201,7 +201,7 @@ class AuditLogger:
     ):
         """
         Configure the audit logger.
-        
+
         Args:
             enabled: Whether to emit audit logs
             service_name: Service name to include in events
@@ -211,7 +211,7 @@ class AuditLogger:
         """
         self._enabled = enabled
         self._service_name = service_name
-        
+
         if handler:
             self._handler = handler
         elif use_python_logging:
@@ -219,11 +219,11 @@ class AuditLogger:
             self._handler = self._python_logging_handler
         else:
             self._handler = self._default_handler
-    
+
     def _default_handler(self, event: AuditEvent):
         """Default handler: JSON to stdout."""
         print(event.to_json(), file=sys.stdout, flush=True)
-    
+
     def _python_logging_handler(self, event: AuditEvent):
         """Handler that uses Python's logging module."""
         if self._python_logger:
@@ -234,21 +234,21 @@ class AuditLogger:
                 AuditSeverity.CRITICAL: logging.CRITICAL,
             }.get(event.severity or AuditSeverity.INFO, logging.INFO)
             self._python_logger.log(level, event.to_json())
-    
+
     def log(self, event: AuditEvent):
         """Log an audit event."""
         if not self._enabled:
             return
-        
+
         # Ensure service name is set
         event.service = self._service_name
-        
+
         try:
             self._handler(event)
         except Exception:
             # Never fail on audit logging
             pass
-    
+
     def authorization_success(
         self,
         warrant_id: str,
@@ -268,7 +268,7 @@ class AuditLogger:
             trace_id=trace_id,
             details=f"Authorization successful for {tool}",
         ))
-    
+
     def authorization_failure(
         self,
         warrant_id: Optional[str],
