@@ -9,7 +9,7 @@ Tenuo Python SDK - Capability tokens for AI agents
         # Protection
         guard, guard_tools,
         # Constraints
-        Pattern, Range, OneOf, Exact,
+        Pattern, Range, OneOf, Exact, Any,
         # Setup (usually once at startup)
         configure, auto_configure, SigningKey, PublicKey,
     )
@@ -38,7 +38,12 @@ from tenuo_core import (  # type: ignore
     OneOf,
     Range,
     Contains,
+    Wildcard,
 )
+
+# Semantic alias: Any() = Wildcard() for zero-trust constraint sets
+# Use Any() to explicitly allow any value for a field while in closed-world mode
+Any = Wildcard
 
 # =============================================================================
 # 80% API - What most users need
@@ -159,6 +164,8 @@ __all__ = [
     "OneOf",
     "Range",
     "Contains",
+    "Wildcard",
+    "Any",  # Alias for Wildcard - use in zero-trust constraint sets
     
     # Errors (essential only)
     "TenuoError",

@@ -158,10 +158,14 @@ def test_constraint_field_addition():
     
     kp = SigningKey.generate()
     
-    # Parent with one constraint
+    # Parent with one constraint, allows unknown fields (permissive)
+    # Child can then add constraints on those fields (restrictive)
     parent = Warrant.mint(
         keypair=kp,
-        capabilities=Constraints.for_tool("api_call", {"endpoint": Pattern("/api/*")}),
+        capabilities=Constraints.for_tool("api_call", {
+            "endpoint": Pattern("/api/*"),
+            "_allow_unknown": True,  # Allow other fields like 'method'
+        }),
         holder=kp.public_key,
         ttl_seconds=3600
     )
@@ -209,7 +213,10 @@ def test_missing_constraint_parameter():
     kp = SigningKey.generate()
     warrant = Warrant.mint(
         keypair=kp,
-        capabilities=Constraints.for_tool("test_tool", {"required": Exact("value")}),
+        capabilities=Constraints.for_tool("test_tool", {
+            "required": Exact("value"),
+            "_allow_unknown": True,  # Allow optional parameter
+        }),
         holder=kp.public_key,
         ttl_seconds=60
     )

@@ -1165,6 +1165,36 @@ fn py_to_constraint(obj: &Bound<'_, PyAny>) -> PyResult<Constraint> {
     }
 }
 
+/// Reserved key for allow_unknown in constraint dicts.
+const ALLOW_UNKNOWN_KEY: &str = "_allow_unknown";
+
+/// Build a ConstraintSet from a Python dict.
+///
+/// Handles the special `_allow_unknown` key to set zero-trust mode.
+fn py_dict_to_constraint_set(
+    constraints: &Bound<'_, PyDict>,
+) -> PyResult<crate::constraints::ConstraintSet> {
+    let mut constraint_set = crate::constraints::ConstraintSet::new();
+
+    for (field_key, constraint_val) in constraints.iter() {
+        let field: String = field_key.extract()?;
+
+        // Handle special _allow_unknown key
+        if field == ALLOW_UNKNOWN_KEY {
+            let allow: bool = constraint_val.extract().map_err(|_| {
+                PyValueError::new_err("_allow_unknown must be a boolean")
+            })?;
+            constraint_set.set_allow_unknown(allow);
+            continue;
+        }
+
+        let constraint = py_to_constraint(&constraint_val)?;
+        constraint_set.insert(field, constraint);
+    }
+
+    Ok(constraint_set)
+}
+
 /// Convert a Python value to a ConstraintValue.
 fn py_to_constraint_value(obj: &Bound<'_, PyAny>) -> PyResult<ConstraintValue> {
     if let Ok(s) = obj.extract::<String>() {
@@ -1934,13 +1964,18 @@ impl PyAttenuationBuilder {
     ///
     /// **POLA**: You must explicitly add each capability you want. Only tools
     /// specified via this method will be in the child warrant.
+    ///
+    /// **Zero-Trust Mode**: If any constraint is defined, unknown fields are
+    /// rejected by default. Use `_allow_unknown=True` to opt out:
+    ///
+    /// ```python
+    /// builder.with_capability("fetch", {
+    ///     "url": Pattern("https://*"),
+    ///     "_allow_unknown": True,  # Allow other fields
+    /// })
+    /// ```
     fn with_capability(&mut self, tool: &str, constraints: &Bound<'_, PyDict>) -> PyResult<()> {
-        let mut constraint_set = crate::constraints::ConstraintSet::new();
-        for (field_key, constraint_val) in constraints.iter() {
-            let field: String = field_key.extract()?;
-            let constraint = py_to_constraint(&constraint_val)?;
-            constraint_set.insert(field, constraint);
-        }
+        let constraint_set = py_dict_to_constraint_set(constraints)?;
         self.inner.set_capability(tool, constraint_set);
         Ok(())
     }
@@ -2141,13 +2176,11 @@ pub struct PyIssuanceBuilder {
 #[pymethods]
 impl PyIssuanceBuilder {
     /// Add a capability (tool + constraints) to the execution warrant.
+    ///
+    /// **Zero-Trust Mode**: If any constraint is defined, unknown fields are
+    /// rejected by default. Use `_allow_unknown=True` to opt out.
     fn with_capability(&mut self, tool: &str, constraints: &Bound<'_, PyDict>) -> PyResult<()> {
-        let mut constraint_set = crate::constraints::ConstraintSet::new();
-        for (field_key, constraint_val) in constraints.iter() {
-            let field: String = field_key.extract()?;
-            let constraint = py_to_constraint(&constraint_val)?;
-            constraint_set.insert(field, constraint);
-        }
+        let constraint_set = py_dict_to_constraint_set(constraints)?;
         self.inner.set_capability(tool, constraint_set);
         Ok(())
     }
@@ -2324,20 +2357,16 @@ impl PyWarrant {
         let mut builder = RustWarrant::builder().ttl(Duration::from_secs(ttl_seconds));
 
         // Capabilities: dict[tool_name, dict[field, constraint]]
+        // Supports _allow_unknown key for zero-trust mode opt-out
         if let Some(caps_dict) = capabilities {
             for (tool_key, constraints_val) in caps_dict.iter() {
                 let tool_name: String = tool_key.extract()?;
-                let mut constraint_set = crate::constraints::ConstraintSet::new();
 
                 let constraints_dict: &Bound<'_, PyDict> = constraints_val
                     .downcast()
                     .map_err(|_| PyValueError::new_err("capabilities values must be dicts"))?;
 
-                for (field_key, constraint_val) in constraints_dict.iter() {
-                    let field: String = field_key.extract()?;
-                    let constraint = py_to_constraint(&constraint_val)?;
-                    constraint_set.insert(field, constraint);
-                }
+                let constraint_set = py_dict_to_constraint_set(constraints_dict)?;
                 builder = builder.capability(tool_name, constraint_set);
             }
         }
@@ -2634,19 +2663,15 @@ impl PyWarrant {
         }
 
         // Capabilities: dict[tool_name, dict[field, constraint]]
+        // Supports _allow_unknown key for zero-trust mode opt-out
         for (tool_key, constraints_val) in capabilities.iter() {
             let tool_name: String = tool_key.extract()?;
-            let mut constraint_set = crate::constraints::ConstraintSet::new();
 
             let constraints_dict: &Bound<'_, PyDict> = constraints_val
                 .downcast()
                 .map_err(|_| PyValueError::new_err("capabilities values must be dicts"))?;
 
-            for (field_key, constraint_val) in constraints_dict.iter() {
-                let field: String = field_key.extract()?;
-                let constraint = py_to_constraint(&constraint_val)?;
-                constraint_set.insert(field, constraint);
-            }
+            let constraint_set = py_dict_to_constraint_set(constraints_dict)?;
             builder = builder.capability(tool_name, constraint_set);
         }
 
