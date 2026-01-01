@@ -5,6 +5,7 @@
 // PyO3 macros generate code that triggers false positive clippy warnings
 #![allow(clippy::useless_conversion)]
 
+use crate::approval::{compute_request_hash, Approval as RustApproval};
 use crate::constraints::{
     All, Any, CelConstraint, Cidr, Constraint, ConstraintValue, Contains, Exact, Not, NotOneOf,
     OneOf, Pattern, Range, RegexConstraint, Subset, UrlPattern, Wildcard,
@@ -2748,11 +2749,7 @@ impl PyWarrant {
     ///     if result:
     ///         print(f"Would be denied: {result}")
     ///     ```
-    fn check_constraints(
-        &self,
-        tool: &str,
-        args: &Bound<'_, PyDict>,
-    ) -> PyResult<Option<String>> {
+    fn check_constraints(&self, tool: &str, args: &Bound<'_, PyDict>) -> PyResult<Option<String>> {
         let mut rust_args = HashMap::new();
         for (key, value) in args.iter() {
             let field: String = key.extract()?;
@@ -2762,9 +2759,9 @@ impl PyWarrant {
 
         match self.inner.check_constraints(tool, &rust_args) {
             Ok(()) => Ok(None),
-            Err(crate::error::Error::ConstraintNotSatisfied { field, reason }) => {
-                Ok(Some(format!("Constraint '{}' not satisfied: {}", field, reason)))
-            }
+            Err(crate::error::Error::ConstraintNotSatisfied { field, reason }) => Ok(Some(
+                format!("Constraint '{}' not satisfied: {}", field, reason),
+            )),
             Err(e) => Ok(Some(format!("{}", e))),
         }
     }
@@ -3227,6 +3224,284 @@ impl PyChainVerificationResult {
     }
 }
 
+// ============================================================================
+// Approval (Multi-Sig Support)
+// ============================================================================
+
+/// A cryptographically signed approval from a human or external system.
+///
+/// Approvals are used for multi-sig authorization where warrants require
+/// multiple parties to approve an action before it can be executed.
+///
+/// Example:
+/// ```python
+///     # Create an approval for a specific action
+///     approval = Approval.create(
+///         warrant=warrant,
+///         tool="delete_database",
+///         args={"database": "production"},
+///         keypair=approver_key,
+///         external_id="admin@company.com",
+///         provider="okta",
+///         ttl_secs=300,
+///     )
+///     
+///     # Use the approval with authorize
+///     authorizer.authorize(warrant, tool, args, signature, approvals=[approval])
+/// ```
+#[pyclass(name = "Approval")]
+pub struct PyApproval {
+    inner: RustApproval,
+}
+
+#[pymethods]
+impl PyApproval {
+    /// Create a new approval.
+    ///
+    /// Args:
+    ///     warrant: The warrant being approved for
+    ///     tool: Tool name
+    ///     args: Arguments dictionary
+    ///     keypair: The approver's signing key
+    ///     external_id: External identity (e.g., "admin@company.com")
+    ///     provider: Identity provider (e.g., "okta", "aws-iam")
+    ///     ttl_secs: Time-to-live in seconds (default: 300)
+    ///     reason: Optional approval reason/justification
+    ///
+    /// Returns:
+    ///     A signed Approval object
+    #[staticmethod]
+    #[pyo3(signature = (warrant, tool, args, keypair, external_id, provider, ttl_secs=300, reason=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn create(
+        warrant: &PyWarrant,
+        tool: &str,
+        args: &Bound<'_, PyDict>,
+        keypair: &PySigningKey,
+        external_id: &str,
+        provider: &str,
+        ttl_secs: i64,
+        reason: Option<String>,
+    ) -> PyResult<Self> {
+        use chrono::{Duration, Utc};
+
+        // Convert args
+        let mut rust_args = HashMap::new();
+        for (key, value) in args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_args.insert(field, cv);
+        }
+
+        // Compute request hash (binds approval to specific request)
+        let warrant_id = warrant.inner.id().to_string();
+        let request_hash = compute_request_hash(
+            &warrant_id,
+            tool,
+            &rust_args,
+            Some(warrant.inner.authorized_holder()),
+        );
+
+        // Create timestamps
+        let approved_at = Utc::now();
+        let expires_at = approved_at + Duration::seconds(ttl_secs);
+
+        // Create signable payload
+        let mut signable = Vec::new();
+        signable.extend_from_slice(&request_hash);
+        signable.extend_from_slice(external_id.as_bytes());
+        signable.extend_from_slice(&approved_at.timestamp().to_le_bytes());
+        signable.extend_from_slice(&expires_at.timestamp().to_le_bytes());
+
+        // Sign
+        let signature = keypair.inner.sign(&signable);
+
+        Ok(PyApproval {
+            inner: RustApproval {
+                request_hash,
+                approver_key: keypair.inner.public_key(),
+                external_id: external_id.to_string(),
+                provider: provider.to_string(),
+                approved_at,
+                expires_at,
+                reason,
+                signature,
+            },
+        })
+    }
+
+    /// Verify the approval signature and check expiration.
+    ///
+    /// Returns:
+    ///     None on success, raises exception on failure
+    fn verify(&self) -> PyResult<()> {
+        self.inner.verify().map_err(to_py_err)
+    }
+
+    /// Get the approver's public key.
+    #[getter]
+    fn approver_key(&self) -> PyPublicKey {
+        PyPublicKey {
+            inner: self.inner.approver_key.clone(),
+        }
+    }
+
+    /// Get the external identity.
+    #[getter]
+    fn external_id(&self) -> &str {
+        &self.inner.external_id
+    }
+
+    /// Get the provider name.
+    #[getter]
+    fn provider(&self) -> &str {
+        &self.inner.provider
+    }
+
+    /// Get the approval reason (if any).
+    #[getter]
+    fn reason(&self) -> Option<&str> {
+        self.inner.reason.as_deref()
+    }
+
+    /// Get when the approval was created (ISO format).
+    #[getter]
+    fn approved_at(&self) -> String {
+        self.inner.approved_at.to_rfc3339()
+    }
+
+    /// Get when the approval expires (ISO format).
+    #[getter]
+    fn expires_at(&self) -> String {
+        self.inner.expires_at.to_rfc3339()
+    }
+
+    /// Check if the approval has expired.
+    fn is_expired(&self) -> bool {
+        chrono::Utc::now() > self.inner.expires_at
+    }
+
+    // =========================================================================
+    // Serialization Methods
+    // =========================================================================
+
+    /// Serialize the approval to bytes (CBOR format).
+    ///
+    /// Returns:
+    ///     bytes: The serialized approval
+    fn to_bytes(&self) -> PyResult<Vec<u8>> {
+        let mut buf = Vec::new();
+        ciborium::into_writer(&self.inner, &mut buf)
+            .map_err(|e| PyValueError::new_err(format!("Serialization failed: {}", e)))?;
+        Ok(buf)
+    }
+
+    /// Deserialize an approval from bytes (CBOR format).
+    ///
+    /// Args:
+    ///     data: The serialized approval bytes
+    ///
+    /// Returns:
+    ///     Approval: The deserialized approval
+    #[staticmethod]
+    fn from_bytes(data: &[u8]) -> PyResult<Self> {
+        let inner: RustApproval = ciborium::from_reader(data)
+            .map_err(|e| PyValueError::new_err(format!("Deserialization failed: {}", e)))?;
+        Ok(Self { inner })
+    }
+
+    /// Serialize the approval to JSON string.
+    ///
+    /// Returns:
+    ///     str: The JSON representation
+    fn to_json(&self) -> PyResult<String> {
+        serde_json::to_string(&self.inner)
+            .map_err(|e| PyValueError::new_err(format!("JSON serialization failed: {}", e)))
+    }
+
+    /// Serialize the approval to pretty JSON string.
+    ///
+    /// Returns:
+    ///     str: The pretty-printed JSON representation
+    fn to_json_pretty(&self) -> PyResult<String> {
+        serde_json::to_string_pretty(&self.inner)
+            .map_err(|e| PyValueError::new_err(format!("JSON serialization failed: {}", e)))
+    }
+
+    /// Deserialize an approval from JSON string.
+    ///
+    /// Args:
+    ///     json_str: The JSON string
+    ///
+    /// Returns:
+    ///     Approval: The deserialized approval
+    #[staticmethod]
+    fn from_json(json_str: &str) -> PyResult<Self> {
+        let inner: RustApproval = serde_json::from_str(json_str)
+            .map_err(|e| PyValueError::new_err(format!("JSON deserialization failed: {}", e)))?;
+        Ok(Self { inner })
+    }
+
+    /// Get the request hash this approval is bound to (hex string).
+    #[getter]
+    fn request_hash_hex(&self) -> String {
+        hex::encode(self.inner.request_hash)
+    }
+
+    /// Get the request hash this approval is bound to (raw bytes).
+    #[getter]
+    fn request_hash(&self) -> [u8; 32] {
+        self.inner.request_hash
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Approval(approver={}, provider={}, external_id={})",
+            self.inner.approver_key.fingerprint(),
+            self.inner.provider,
+            self.inner.external_id
+        )
+    }
+}
+
+/// Compute the request hash for an approval.
+///
+/// This is a helper function to compute the hash that binds an approval
+/// to a specific (warrant, tool, args) tuple.
+///
+/// Args:
+///     warrant: The warrant
+///     tool: Tool name
+///     args: Arguments dictionary
+///
+/// Returns:
+///     32-byte hash as bytes
+#[pyfunction(name = "compute_approval_hash")]
+fn py_compute_approval_hash(
+    warrant: &PyWarrant,
+    tool: &str,
+    args: &Bound<'_, PyDict>,
+) -> PyResult<[u8; 32]> {
+    let mut rust_args = HashMap::new();
+    for (key, value) in args.iter() {
+        let field: String = key.extract()?;
+        let cv = py_to_constraint_value(&value)?;
+        rust_args.insert(field, cv);
+    }
+
+    let warrant_id = warrant.inner.id().to_string();
+    Ok(compute_request_hash(
+        &warrant_id,
+        tool,
+        &rust_args,
+        Some(warrant.inner.authorized_holder()),
+    ))
+}
+
+// ============================================================================
+// Authorizer
+// ============================================================================
+
 /// Python wrapper for Authorizer.
 ///
 /// Example:
@@ -3398,16 +3673,28 @@ impl PyAuthorizer {
     ///     tool: Tool name being invoked
     ///     args: Dictionary of argument name -> value
     ///     signature: Optional PoP signature bytes (64 bytes)
+    ///     approvals: Optional list of Approval objects (for multi-sig warrants)
     ///
     /// Returns:
     ///     None on success, raises exception on failure
-    #[pyo3(signature = (warrant, tool, args, signature=None))]
+    ///
+    /// Example:
+    ///     ```python
+    ///     # Simple authorization (no multi-sig)
+    ///     authorizer.authorize(warrant, "search", {"query": "test"}, signature)
+    ///     
+    ///     # With multi-sig approvals
+    ///     approvals = [human_approval, system_approval]
+    ///     authorizer.authorize(warrant, "delete", {"id": 123}, signature, approvals)
+    ///     ```
+    #[pyo3(signature = (warrant, tool, args, signature=None, approvals=None))]
     fn authorize(
         &self,
         warrant: &PyWarrant,
         tool: &str,
         args: &Bound<'_, PyDict>,
         signature: Option<&[u8]>,
+        approvals: Option<Vec<PyRef<PyApproval>>>,
     ) -> PyResult<()> {
         let mut rust_args = HashMap::new();
         for (key, value) in args.iter() {
@@ -3426,19 +3713,40 @@ impl PyAuthorizer {
             None => None,
         };
 
+        // Convert approvals
+        let rust_approvals: Vec<RustApproval> = approvals
+            .unwrap_or_default()
+            .iter()
+            .map(|a| a.inner.clone())
+            .collect();
+
         self.inner
-            .authorize(&warrant.inner, tool, &rust_args, sig.as_ref(), &[])
+            .authorize(
+                &warrant.inner,
+                tool,
+                &rust_args,
+                sig.as_ref(),
+                &rust_approvals,
+            )
             .map_err(to_py_err)
     }
 
     /// Convenience: verify warrant and authorize in one call.
-    #[pyo3(signature = (warrant, tool, args, signature=None))]
+    ///
+    /// Args:
+    ///     warrant: The warrant to check
+    ///     tool: Tool name being invoked
+    ///     args: Dictionary of argument name -> value
+    ///     signature: Optional PoP signature bytes (64 bytes)
+    ///     approvals: Optional list of Approval objects (for multi-sig warrants)
+    #[pyo3(signature = (warrant, tool, args, signature=None, approvals=None))]
     fn check(
         &self,
         warrant: &PyWarrant,
         tool: &str,
         args: &Bound<'_, PyDict>,
         signature: Option<&[u8]>,
+        approvals: Option<Vec<PyRef<PyApproval>>>,
     ) -> PyResult<()> {
         let mut rust_args = HashMap::new();
         for (key, value) in args.iter() {
@@ -3457,8 +3765,21 @@ impl PyAuthorizer {
             None => None,
         };
 
+        // Convert approvals
+        let rust_approvals: Vec<RustApproval> = approvals
+            .unwrap_or_default()
+            .iter()
+            .map(|a| a.inner.clone())
+            .collect();
+
         self.inner
-            .check(&warrant.inner, tool, &rust_args, sig.as_ref(), &[])
+            .check(
+                &warrant.inner,
+                tool,
+                &rust_args,
+                sig.as_ref(),
+                &rust_approvals,
+            )
             .map_err(to_py_err)
     }
 
@@ -3601,6 +3922,8 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyChainStep>()?;
     m.add_class::<PyChainVerificationResult>()?;
     m.add_class::<PyExtractionResult>()?;
+    // Multi-sig
+    m.add_class::<PyApproval>()?;
 
     // Constants
     m.add("MAX_DELEGATION_DEPTH", crate::MAX_DELEGATION_DEPTH)?;
@@ -3613,6 +3936,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Functions
     m.add_function(wrap_pyfunction!(py_compute_diff, m)?)?;
     m.add_function(wrap_pyfunction!(py_decode_warrant_stack_base64, m)?)?;
+    m.add_function(wrap_pyfunction!(py_compute_approval_hash, m)?)?;
 
     Ok(())
 }

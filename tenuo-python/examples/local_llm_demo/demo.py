@@ -114,7 +114,7 @@ async def main():
             display.print_step(5, "Run Summary Agent (delegated)",
                 "Research Agent delegated a task with a child warrant (reduced permissions).")
             
-            await run_summary_agent(model, child_warrant, summary_task)
+            await run_summary_agent(model, child_warrant, summary_agent_key, summary_task)
         else:
             display.print_learning("Delegation", 
                 "The Research Agent did not delegate. In a full demo, it would\n"
@@ -151,7 +151,8 @@ def simulate_attacks():
     
     display.print_warrant_details(warrant, "Research Agent")
     
-    protector = ProtectedToolWrapper(warrant)
+    # ProtectedToolWrapper now requires BOTH warrant AND signing key (PoP)
+    protector = ProtectedToolWrapper(warrant, agent_key)
     safe_read = protector._wrap(read_file)
     safe_write = protector._wrap(write_file)
     safe_http = protector._wrap(http_request)

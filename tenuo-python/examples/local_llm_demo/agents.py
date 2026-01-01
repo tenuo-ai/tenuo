@@ -27,8 +27,8 @@ async def run_research_agent(
     display.print_header("RESEARCH AGENT")
     display.print_warrant_details(warrant, "Research Agent")
 
-    # Wrap tools
-    protector = ProtectedToolWrapper(warrant)
+    # Wrap tools with cryptographic authorization (PoP)
+    protector = ProtectedToolWrapper(warrant, signing_key)
     
     # We need to intercept 'delegate' manually to handle the warrant minting logic
     # because delegate needs access to the *parent* warrant (current warrant) to mint the child.
@@ -130,9 +130,15 @@ async def run_research_agent(
     return delegation_result["task"], delegation_result["child_warrant"]
 
 
-async def run_summary_agent(model, warrant: Warrant, task: str):
+async def run_summary_agent(model, warrant: Warrant, signing_key: SigningKey, task: str):
     """
     Runs the Summary Agent loop with a delegated (attenuated) warrant.
+    
+    Args:
+        model: LM Studio model
+        warrant: Summary Agent's (delegated) warrant
+        signing_key: Summary Agent's signing key (must match warrant holder)
+        task: The delegated task to perform
     """
     display.print_header("SUMMARY AGENT (DELEGATED)")
     
@@ -142,7 +148,8 @@ async def run_summary_agent(model, warrant: Warrant, task: str):
     
     display.print_warrant_details(warrant, "Summary Agent")
     
-    protector = ProtectedToolWrapper(warrant)
+    # Wrap tools with cryptographic authorization (PoP)
+    protector = ProtectedToolWrapper(warrant, signing_key)
     safe_tools = protector.guard([
         read_file,
         write_file,

@@ -29,6 +29,9 @@ from tenuo_core import (  # type: ignore
     PublicKey,
     Warrant,
     Authorizer,
+    # Multi-sig
+    Approval,
+    compute_approval_hash,
     # Common constraints
     Pattern,
     Exact,
@@ -123,6 +126,10 @@ __all__ = [
     # Core types
     "BoundWarrant",
     "Authorizer",
+    
+    # Multi-sig
+    "Approval",
+    "compute_approval_hash",
     
     # Setup
     "configure",

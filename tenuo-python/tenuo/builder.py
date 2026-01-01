@@ -70,6 +70,10 @@ class MintBuilder:
         self._issuable_tools: Optional[List[str]] = None
         self._constraint_bounds: Dict[str, Any] = {}
         self._max_issue_depth: Optional[int] = None
+        
+        # Multi-sig fields
+        self._required_approvers: Optional[List[PublicKey]] = None
+        self._min_approvals: Optional[int] = None
     
     def issuer(self) -> 'MintBuilder':
         """Switch to issuer warrant mode.
@@ -222,6 +226,33 @@ class MintBuilder:
             depth: Maximum depth of delegation chain
         """
         self._max_issue_depth = depth
+        return self
+    
+    # =========================================================================
+    # Multi-sig methods
+    # =========================================================================
+    
+    def required_approvers(self, approvers: List[PublicKey]) -> 'MintBuilder':
+        """Set required approvers for multi-sig warrants.
+        
+        When set, this warrant requires cryptographic approvals from the
+        specified keys before authorization succeeds.
+        
+        Args:
+            approvers: List of approver public keys
+        """
+        self._required_approvers = approvers
+        return self
+    
+    def min_approvals(self, count: int) -> 'MintBuilder':
+        """Set minimum number of approvals required.
+        
+        If not set but required_approvers is set, defaults to len(required_approvers).
+        
+        Args:
+            count: Minimum number of approvals needed
+        """
+        self._min_approvals = count
         return self
     
     # =========================================================================
