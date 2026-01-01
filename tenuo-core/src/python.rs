@@ -1968,7 +1968,7 @@ impl PyAttenuationBuilder {
     /// **Zero-Trust Mode**: If any constraint is defined, unknown fields are
     /// rejected by default. Use `_allow_unknown=True` to opt out:
     ///
-    /// ```python
+    /// ```text
     /// builder.with_capability("fetch", {
     ///     "url": Pattern("https://*"),
     ///     "_allow_unknown": True,  # Allow other fields
@@ -2626,7 +2626,7 @@ impl PyWarrant {
     ///
     /// # Example
     ///
-    /// ```python
+    /// ```text
     /// builder = parent.grant_builder()
     /// builder.with_constraint("path", Exact("/data/q3.pdf"))
     /// builder.with_ttl(60)
@@ -2769,7 +2769,7 @@ impl PyWarrant {
     ///     None if constraints are satisfied, or a string describing the failure
     ///
     /// Example:
-    ///     ```python
+    ///     ```text
     ///     result = warrant.check_constraints("read_file", {"path": "/etc/passwd"})
     ///     if result:
     ///         print(f"Would be denied: {result}")
@@ -3259,7 +3259,7 @@ impl PyChainVerificationResult {
 /// multiple parties to approve an action before it can be executed.
 ///
 /// Example:
-/// ```python
+/// ```text
 ///     # Create an approval for a specific action
 ///     approval = Approval.create(
 ///         warrant=warrant,
@@ -3530,7 +3530,7 @@ fn py_compute_approval_hash(
 /// Python wrapper for Authorizer.
 ///
 /// Example:
-/// ```python
+/// ```text
 ///     # Create with explicit trusted roots
 ///     authorizer = Authorizer(trusted_roots=[key1, key2])
 ///     
@@ -3558,7 +3558,7 @@ impl PyAuthorizer {
     ///     pop_max_windows: Number of PoP windows to accept (default: 4)
     ///
     /// Example:
-    /// ```python
+    /// ```text
     ///     authorizer = Authorizer(trusted_roots=[control_plane_key])
     ///     
     ///     # With custom settings
@@ -3637,7 +3637,7 @@ impl PyAuthorizer {
     ///     ValueError: If the pattern is invalid (e.g., "**", "*admin*")
     ///
     /// Example:
-    ///     ```python
+    ///     ```text
     ///     authorizer = Authorizer(trusted_roots=[root_key])
     ///     authorizer.require_clearance("*", Clearance.EXTERNAL)  # Default baseline
     ///     authorizer.require_clearance("delete_*", Clearance.PRIVILEGED)
@@ -3704,7 +3704,7 @@ impl PyAuthorizer {
     ///     None on success, raises exception on failure
     ///
     /// Example:
-    ///     ```python
+    ///     ```text
     ///     # Simple authorization (no multi-sig)
     ///     authorizer.authorize(warrant, "search", {"query": "test"}, signature)
     ///     
