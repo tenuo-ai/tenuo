@@ -427,6 +427,69 @@ if not hasattr(Warrant, 'allows'):
 # Use for debugging and error messages, NOT for authorization decisions.
 # ============================================================================
 
+def _enhance_constraint_suggestion(
+    failure_reason: str,
+    tool: str,
+    args: dict,
+    warrant: Warrant,
+) -> str:
+    """
+    Enhance constraint failure messages with actionable suggestions.
+    
+    Detects common pitfalls and provides helpful guidance:
+    - Zero-trust unknown field rejections
+    - Multiple fields potentially rejected
+    """
+    import re
+    
+    # Detect zero-trust unknown field rejection
+    if "unknown field not allowed (zero-trust mode)" in failure_reason:
+        # Extract the field name from the error
+        # Format: "Constraint 'fieldname' not satisfied: unknown field..."
+        field_match = re.search(r"Constraint '([^']+)' not satisfied", failure_reason)
+        rejected_field = field_match.group(1) if field_match else "unknown"
+        
+        # Get constrained fields from warrant.capabilities if available
+        constrained_fields: set = set()
+        try:
+            caps = warrant.capabilities
+            if tool in caps:
+                constrained_fields = set(caps[tool].keys())
+        except Exception:
+            pass
+        
+        # Find unknown fields in args (fields not in constraints)
+        unknown_fields = [k for k in args.keys() if k not in constrained_fields]
+        
+        if len(unknown_fields) > 1:
+            # Multiple unknown fields - strong hint to review constraints
+            fields_str = ", ".join(f"'{f}'" for f in unknown_fields[:5])
+            if len(unknown_fields) > 5:
+                fields_str += f", +{len(unknown_fields) - 5} more"
+            
+            return (
+                f"{failure_reason}.\n\n"
+                f"  Hint: {len(unknown_fields)} fields may be unknown: {fields_str}\n"
+                f"  This warrant uses zero-trust mode (constraints defined = closed world).\n\n"
+                f"  To fix, either:\n"
+                f"  1. Add constraints for needed fields: {', '.join(f'{f}=Any()' for f in unknown_fields[:3])}{'...' if len(unknown_fields) > 3 else ''}\n"
+                f"  2. Or use _allow_unknown=True to opt out of zero-trust"
+            )
+        else:
+            # Single unknown field (or couldn't determine)
+            return (
+                f"{failure_reason}.\n\n"
+                f"  Hint: Field '{rejected_field}' not in warrant's constraints.\n"
+                f"  This capability uses zero-trust mode (unknown fields rejected).\n\n"
+                f"  To fix, either:\n"
+                f"  1. Add constraint: {rejected_field}=Any()  (allows any value)\n"
+                f"  2. Or use _allow_unknown=True to allow all unknown fields"
+            )
+    
+    # Default: return original reason
+    return failure_reason
+
+
 def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -> WhyDenied:
     """
     Get structured explanation for why a request would be denied (DIAGNOSTIC).
@@ -504,12 +567,16 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
     try:
         failure_reason = self.check_constraints(tool, args or {})
         if failure_reason:
+            # Enhance suggestions for zero-trust related failures
+            enhanced_suggestion = _enhance_constraint_suggestion(
+                failure_reason, tool, args or {}, self
+            )
             return WhyDenied(
                 denied=True,
                 deny_code=DenyCode.CONSTRAINT_MISMATCH,
                 deny_path="constraints.violation",
                 tool=tool,
-                suggestion=f"{failure_reason}.{playground_hint}",
+                suggestion=f"{enhanced_suggestion}{playground_hint}",
             )
     except Exception as e:
         # Fallback if check_constraints fails unexpectedly
