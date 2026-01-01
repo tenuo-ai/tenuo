@@ -1,0 +1,5 @@
+tenuo>=0.1.0b1
+lmstudio
+tavily-python
+rich
+requests
