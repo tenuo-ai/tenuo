@@ -105,7 +105,7 @@ Tenuo implements **Subtractive Delegation**.
 
 | Component | Supported |
 |-----------|-----------|
-| **Python** | 3.9, 3.10, 3.11, 3.12 |
+| **Python** | 3.9 – 3.14 |
 | **Node.js** | *Coming v0.2* |
 | **OS** | Linux, macOS, Windows |
 | **Rust** | Not required (binary wheels for macOS, Linux, Windows) |

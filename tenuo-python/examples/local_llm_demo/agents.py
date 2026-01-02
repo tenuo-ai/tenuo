@@ -1,4 +1,9 @@
-import lmstudio as lms
+# lmstudio is optional - only needed when running with LLM
+try:
+    import lmstudio as lms
+except ImportError:
+    lms = None
+
 import display
 from protected_tools import ProtectedToolWrapper
 from tools import web_search, read_file, write_file, http_request, delegate

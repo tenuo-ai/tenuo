@@ -1,8 +1,13 @@
 import asyncio
 import sys
 import requests
-import lmstudio as lms
 from rich.prompt import Confirm
+
+# lmstudio is optional - only needed for full LLM mode
+try:
+    import lmstudio as lms
+except ImportError:
+    lms = None
 
 import config
 import display
@@ -75,13 +80,13 @@ async def main():
     root_warrant = (Warrant.mint_builder()
         .holder(research_agent_key.public_key)
         .ttl(600)
-        # Web Search: Restricted to arxiv.org
-        .capability("web_search", domain=Pattern("arxiv.org"))
-        # File Access: /tmp/research/* only
+        # Web Search: Restricted to arxiv.org, allow unknown args (query, etc)
+        .capability("web_search", domain=Pattern("arxiv.org"), _allow_unknown=True)
+        # File Access: /tmp/research/* only, allow content arg
         .capability("read_file", path=Pattern(f"{config.RESEARCH_DIR}/*"))
-        .capability("write_file", path=Pattern(f"{config.RESEARCH_DIR}/*"))
+        .capability("write_file", path=Pattern(f"{config.RESEARCH_DIR}/*"), _allow_unknown=True)
         # Delegate: Allowed (presence of capability is enough)
-        .capability("delegate")
+        .capability("delegate", _allow_unknown=True)
         # Note: http_request is NOT included (intentionally, to demo blocking)
         .mint(control_plane_key)
     )
@@ -143,9 +148,9 @@ def simulate_attacks():
     warrant = (Warrant.mint_builder()
         .holder(agent_key.public_key)
         .ttl(600)
-        .capability("web_search", domain=Pattern("arxiv.org"))
+        .capability("web_search", domain=Pattern("arxiv.org"), _allow_unknown=True)
         .capability("read_file", path=Pattern(f"{config.RESEARCH_DIR}/*"))
-        .capability("write_file", path=Pattern(f"{config.RESEARCH_DIR}/*"))
+        .capability("write_file", path=Pattern(f"{config.RESEARCH_DIR}/*"), _allow_unknown=True)
         .capability("delegate")
         .mint(control_key))
 

@@ -52,25 +52,36 @@ class ProtectedToolWrapper:
             if not result:
                 self.blocked_count += 1
 
+                # Extract clean error message and explorer link from reason
+                reason = result.reason or "Authorization failed"
+                clean_msg = reason
+                debug_link = None
+                if "Debug at:" in reason:
+                    parts = reason.split("Debug at:")
+                    clean_msg = parts[0].strip()
+                    # Extract the URL (remove whitespace/newlines)
+                    debug_link = "".join(parts[1].split())
+
                 # Determine if it's a tool issue or constraint issue
                 if tool_name not in self.warrant.tools:
                     display.print_verdict(False, f"Tool '{tool_name}' not in warrant",
-                        "This tool was never granted to this agent.")
+                        "This tool was never granted to this agent.",
+                        debug_link=debug_link)
                     if not self._shown_tool_insight:
                         display.print_learning("Principle of Least Authority",
                             "Agents only have access to explicitly granted capabilities.\n"
                             "Even if tricked by prompt injection, they cannot use unauthorized tools.")
                         self._shown_tool_insight = True
                 else:
-                    display.print_verdict(False, "Authorization Failed",
-                        result.reason or "Constraint violation")
+                    display.print_verdict(False, "Authorization Failed", clean_msg,
+                        debug_link=debug_link)
                     if not self._shown_constraint_insight:
                         display.print_learning("Constraint Enforcement",
                             "Even for allowed tools, arguments must satisfy constraints.\n"
                             "The agent tried to access something outside its permitted scope.")
                         self._shown_constraint_insight = True
 
-                return f"AUTHORIZATION ERROR: {result.reason or 'Not authorized'}"
+                return f"AUTHORIZATION ERROR: {clean_msg}"
 
             # Authorized - PoP signature verified
             self.allowed_count += 1

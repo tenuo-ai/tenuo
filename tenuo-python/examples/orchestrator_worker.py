@@ -113,7 +113,7 @@ def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: Sig
     # This is the cleanest pattern when you want to completely change the tool set
     print("\n[Orchestrator] Phase 2: Delegating write to Worker")
     write_warrant = (Warrant.mint_builder()
-        .capability("write", path=Pattern("/output/reports/*"))  # Restricted path
+        .capability("write", path=Pattern("/output/reports/*"), _allow_unknown=True)  # Restricted path
         .holder(worker_keypair.public_key)
         .ttl(30)
         .mint(keypair))
@@ -268,7 +268,7 @@ def main():
     root_warrant = (Warrant.mint_builder()
         .capability("search", query=Wildcard())
         .capability("fetch", url=Pattern("https://*"))
-        .capability("write", path=Pattern("/output/*"))
+        .capability("write", path=Pattern("/output/*"), _allow_unknown=True)
         .holder(orchestrator_keypair.public_key)
         .ttl(3600)
         .mint(control_plane_keypair))

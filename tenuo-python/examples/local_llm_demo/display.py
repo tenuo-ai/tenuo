@@ -59,7 +59,7 @@ def print_llm_intent(tool: str, args: dict):
         expand=False
     ))
 
-def print_verdict(allowed: bool, reason: str, details: str = ""):
+def print_verdict(allowed: bool, reason: str, details: str = "", debug_link: str = None):
     """Show Tenuo's decision with educational context"""
     if allowed:
         style = "bold green"
@@ -82,6 +82,10 @@ def print_verdict(allowed: bool, reason: str, details: str = ""):
         border_style=style,
         expand=False
     ))
+
+    # Print debug link on its own line for easy copying
+    if debug_link:
+        console.print(f"[dim]Debug: {debug_link}[/dim]")
 
 def print_injection_warning():
     """Alert that malicious content was injected"""
