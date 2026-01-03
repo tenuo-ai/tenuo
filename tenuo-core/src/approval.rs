@@ -126,10 +126,16 @@ use serde::{Deserialize, Serialize};
 /// The approval is bound to a specific request (via `request_hash`) and
 /// signed by an approver's keypair. The approver's identity is tracked
 /// via `external_id` for audit purposes.
+///
+/// Each approval includes a random nonce to ensure uniqueness and prevent
+/// replay attacks even for identical requests within the TTL window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Approval {
-    /// Hash of what was approved: H(warrant_id || tool || sorted(args))
+    /// Hash of what was approved: H(warrant_id || tool || sorted(args) || holder)
     pub request_hash: [u8; 32],
+
+    /// Random nonce for replay protection (128 bits)
+    pub nonce: [u8; 16],
 
     /// The approver's public key
     pub approver_key: PublicKey,
@@ -177,8 +183,14 @@ impl Approval {
 
     /// Get the bytes that were signed.
     fn signable_bytes(&self) -> Vec<u8> {
-        // Canonical format: request_hash || external_id || approved_at || expires_at
+        // Domain-separated format: context || nonce || request_hash || external_id || approved_at || expires_at
+        // - Context prefix prevents cross-protocol signature reuse attacks
+        // - Nonce ensures each approval is unique (prevents replay attacks)
+        const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
+
         let mut bytes = Vec::new();
+        bytes.extend_from_slice(APPROVAL_CONTEXT);
+        bytes.extend_from_slice(&self.nonce);
         bytes.extend_from_slice(&self.request_hash);
         bytes.extend_from_slice(self.external_id.as_bytes());
         bytes.extend_from_slice(&self.approved_at.timestamp().to_le_bytes());

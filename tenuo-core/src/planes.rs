@@ -2781,8 +2781,14 @@ mod tests {
         let now = Utc::now();
         let expires = now + ChronoDuration::seconds(300);
 
-        // Create signable bytes for approval
+        // Generate nonce for replay protection
+        let nonce: [u8; 16] = rand::random();
+
+        // Create signable bytes for approval (with domain separation + nonce)
+        const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
         let mut signable = Vec::new();
+        signable.extend_from_slice(APPROVAL_CONTEXT);
+        signable.extend_from_slice(&nonce);
         signable.extend_from_slice(&request_hash);
         signable.extend_from_slice("admin@test.com".as_bytes());
         signable.extend_from_slice(&now.timestamp().to_le_bytes());
@@ -2790,6 +2796,7 @@ mod tests {
 
         let approval = Approval {
             request_hash,
+            nonce,
             approver_key: admin_keypair.public_key(),
             external_id: "admin@test.com".to_string(),
             provider: "test".to_string(),
@@ -2842,7 +2849,14 @@ mod tests {
             Some(warrant.authorized_holder()),
         );
 
+        // Generate nonce for replay protection
+        let nonce: [u8; 16] = rand::random();
+
+        // Create signable bytes with domain separation + nonce
+        const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
         let mut signable = Vec::new();
+        signable.extend_from_slice(APPROVAL_CONTEXT);
+        signable.extend_from_slice(&nonce);
         signable.extend_from_slice(&request_hash);
         signable.extend_from_slice("other@test.com".as_bytes());
         signable.extend_from_slice(&now.timestamp().to_le_bytes());
@@ -2852,6 +2866,7 @@ mod tests {
 
         let approval = Approval {
             request_hash,
+            nonce,
             approver_key: other_keypair.public_key(), // Wrong approver!
             external_id: "other@test.com".to_string(),
             provider: "test".to_string(),
@@ -2913,9 +2928,15 @@ mod tests {
             Some(warrant.authorized_holder()),
         );
 
-        // Helper to create approval
+        // Helper to create approval (with domain separation + nonce)
+        const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
         let make_approval = |kp: &SigningKey, id: &str| {
+            // Each approval gets a unique nonce
+            let nonce: [u8; 16] = rand::random();
+
             let mut signable = Vec::new();
+            signable.extend_from_slice(APPROVAL_CONTEXT);
+            signable.extend_from_slice(&nonce);
             signable.extend_from_slice(&request_hash);
             signable.extend_from_slice(id.as_bytes());
             signable.extend_from_slice(&now.timestamp().to_le_bytes());
@@ -2923,6 +2944,7 @@ mod tests {
 
             Approval {
                 request_hash,
+                nonce,
                 approver_key: kp.public_key(),
                 external_id: id.to_string(),
                 provider: "test".to_string(),

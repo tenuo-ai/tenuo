@@ -432,6 +432,70 @@ class TestComputeApprovalHash:
         assert hash1 != hash2
 
 
+class TestApprovalNonce:
+    """Test approval nonce for replay protection."""
+
+    def test_nonce_is_present(self):
+        """Test that approvals have a nonce field."""
+        issuer = SigningKey.generate()
+        agent = SigningKey.generate()
+        approver = SigningKey.generate()
+
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent.public_key)
+            .ttl(300)
+            .capability("action", param=Exact("value"))
+            .mint(issuer)
+        )
+
+        approval = Approval.create(
+            warrant=warrant,
+            tool="action",
+            args={"param": "value"},
+            keypair=approver,
+            external_id="test@example.com",
+            provider="test-provider",
+            ttl_secs=300,
+        )
+
+        # Nonce should be 16 bytes (128 bits)
+        assert len(approval.nonce) == 16
+        assert isinstance(approval.nonce, (bytes, list))
+
+    def test_nonce_is_unique(self):
+        """Test that each approval has a unique nonce (replay protection)."""
+        issuer = SigningKey.generate()
+        agent = SigningKey.generate()
+        approver = SigningKey.generate()
+
+        warrant = (
+            Warrant.mint_builder()
+            .holder(agent.public_key)
+            .ttl(300)
+            .capability("action", param=Exact("value"))
+            .mint(issuer)
+        )
+
+        # Create multiple approvals for the SAME request
+        approvals = [
+            Approval.create(
+                warrant=warrant,
+                tool="action",
+                args={"param": "value"},
+                keypair=approver,
+                external_id="test@example.com",
+                provider="test-provider",
+                ttl_secs=300,
+            )
+            for _ in range(5)
+        ]
+
+        # All nonces should be different
+        nonces = [bytes(a.nonce) for a in approvals]
+        assert len(set(nonces)) == 5, "Each approval should have a unique nonce"
+
+
 class TestApprovalRepr:
     """Test approval string representation."""
 

@@ -48,7 +48,13 @@ fn test_duplicate_approvals_rejected() {
     let now = Utc::now();
     let expires = now + chrono::Duration::hours(1);
 
+    // Generate nonce for replay protection
+    const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
+    let nonce: [u8; 16] = rand::random();
+
     let mut signable_bytes = Vec::new();
+    signable_bytes.extend_from_slice(APPROVAL_CONTEXT);
+    signable_bytes.extend_from_slice(&nonce);
     signable_bytes.extend_from_slice(&request_hash);
     signable_bytes.extend_from_slice("approver_1".as_bytes());
     signable_bytes.extend_from_slice(&now.timestamp().to_le_bytes());
@@ -58,6 +64,7 @@ fn test_duplicate_approvals_rejected() {
 
     let approval = Approval {
         request_hash,
+        nonce,
         approver_key: approver_1.public_key(),
         external_id: "approver_1".to_string(),
         provider: "test".to_string(),
@@ -105,7 +112,13 @@ fn test_insufficient_approvals_rejected() {
     let now = Utc::now();
     let expires = now + chrono::Duration::hours(1);
 
+    // Generate nonce for replay protection
+    const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
+    let nonce: [u8; 16] = rand::random();
+
     let mut signable_bytes = Vec::new();
+    signable_bytes.extend_from_slice(APPROVAL_CONTEXT);
+    signable_bytes.extend_from_slice(&nonce);
     signable_bytes.extend_from_slice(&request_hash);
     signable_bytes.extend_from_slice("approver_1".as_bytes());
     signable_bytes.extend_from_slice(&now.timestamp().to_le_bytes());
@@ -115,6 +128,7 @@ fn test_insufficient_approvals_rejected() {
 
     let approval = Approval {
         request_hash,
+        nonce,
         approver_key: approver_1.public_key(),
         external_id: "approver_1".to_string(),
         provider: "test".to_string(),
@@ -159,7 +173,13 @@ fn test_unauthorized_approver_rejected() {
     let now = Utc::now();
     let expires = now + chrono::Duration::hours(1);
 
+    // Generate nonce for replay protection
+    const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
+    let nonce: [u8; 16] = rand::random();
+
     let mut signable_bytes = Vec::new();
+    signable_bytes.extend_from_slice(APPROVAL_CONTEXT);
+    signable_bytes.extend_from_slice(&nonce);
     signable_bytes.extend_from_slice(&request_hash);
     signable_bytes.extend_from_slice("attacker".as_bytes()); // external_id
     signable_bytes.extend_from_slice(&now.timestamp().to_le_bytes());
@@ -169,6 +189,7 @@ fn test_unauthorized_approver_rejected() {
 
     let approval = Approval {
         request_hash,
+        nonce,
         approver_key: random_attacker.public_key(), // <-- Unauthorized key
         external_id: "attacker".to_string(),
         provider: "test".to_string(),
@@ -212,7 +233,13 @@ fn test_mismatched_request_hash_rejected() {
     let now = Utc::now();
     let expires = now + chrono::Duration::hours(1);
 
+    // Generate nonce for replay protection
+    const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
+    let nonce: [u8; 16] = rand::random();
+
     let mut signable = Vec::new();
+    signable.extend_from_slice(APPROVAL_CONTEXT);
+    signable.extend_from_slice(&nonce);
     signable.extend_from_slice(&other_hash);
     signable.extend_from_slice("approver".as_bytes());
     signable.extend_from_slice(&now.timestamp().to_le_bytes());
@@ -221,6 +248,7 @@ fn test_mismatched_request_hash_rejected() {
 
     let approval = Approval {
         request_hash: other_hash, // Mismatched hash vs current request
+        nonce,
         approver_key: approver.public_key(),
         external_id: "approver".to_string(),
         provider: "test".to_string(),
@@ -268,7 +296,13 @@ fn test_expired_approval_rejected() {
     let expired_time = now - chrono::Duration::hours(1);
     let approved_at = now - chrono::Duration::hours(2);
 
+    // Generate nonce for replay protection
+    const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
+    let nonce: [u8; 16] = rand::random();
+
     let mut signable = Vec::new();
+    signable.extend_from_slice(APPROVAL_CONTEXT);
+    signable.extend_from_slice(&nonce);
     signable.extend_from_slice(&request_hash);
     signable.extend_from_slice("approver".as_bytes());
     signable.extend_from_slice(&approved_at.timestamp().to_le_bytes());
@@ -277,6 +311,7 @@ fn test_expired_approval_rejected() {
 
     let approval = Approval {
         request_hash,
+        nonce,
         approver_key: approver.public_key(),
         external_id: "approver".to_string(),
         provider: "test".to_string(),

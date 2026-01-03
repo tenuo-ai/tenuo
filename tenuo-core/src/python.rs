@@ -3331,8 +3331,15 @@ impl PyApproval {
         let approved_at = Utc::now();
         let expires_at = approved_at + Duration::seconds(ttl_secs);
 
-        // Create signable payload
+        // Generate random nonce for replay protection
+        let nonce: [u8; 16] = rand::random();
+
+        // Create signable payload with domain separation
+        // Must match Approval::signable_bytes() in approval.rs
+        const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
         let mut signable = Vec::new();
+        signable.extend_from_slice(APPROVAL_CONTEXT);
+        signable.extend_from_slice(&nonce);
         signable.extend_from_slice(&request_hash);
         signable.extend_from_slice(external_id.as_bytes());
         signable.extend_from_slice(&approved_at.timestamp().to_le_bytes());
@@ -3344,6 +3351,7 @@ impl PyApproval {
         Ok(PyApproval {
             inner: RustApproval {
                 request_hash,
+                nonce,
                 approver_key: keypair.inner.public_key(),
                 external_id: external_id.to_string(),
                 provider: provider.to_string(),
@@ -3369,6 +3377,12 @@ impl PyApproval {
         PyPublicKey {
             inner: self.inner.approver_key.clone(),
         }
+    }
+
+    /// Get the nonce (for replay protection).
+    #[getter]
+    fn nonce(&self) -> Vec<u8> {
+        self.inner.nonce.to_vec()
     }
 
     /// Get the external identity.
