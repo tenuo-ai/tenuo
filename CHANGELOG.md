@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-beta.3] - 2026-01-03
+
+### Added
+
+#### Approval Security Hardening
+- **Domain separation**: Approval signatures now include `tenuo-approval-v1` context prefix, preventing cross-protocol signature reuse attacks
+- **Nonce for replay protection**: Each approval includes a 128-bit random nonce for cryptographic uniqueness
+- **Stateless by design**: Nonces are not tracked server-side (intentional); applications can opt into tracking if needed
+
+#### Documentation
+- New "Stateless Design & Replay Protection" section in approval module docs
+- Documented 6 layers of replay protection
+
+---
+
 ## [0.1.0-beta.2] - 2026-01-01
 
 ### Added

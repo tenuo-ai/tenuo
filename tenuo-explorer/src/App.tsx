@@ -2801,7 +2801,7 @@ function App() {
               <a href="https://crates.io/crates/tenuo" className="nav-link">🦀 Rust</a>
               <a href="https://pypi.org/project/tenuo/" className="nav-link">🐍 Python</a>
               <span style={{ color: 'var(--muted)' }}>🔐 100% client-side WASM</span>
-              <span style={{ color: 'var(--accent)', fontSize: '11px', border: '1px solid var(--border)', padding: '2px 6px', borderRadius: '4px' }}>v0.1.0-beta.2</span>
+              <span style={{ color: 'var(--accent)', fontSize: '11px', border: '1px solid var(--border)', padding: '2px 6px', borderRadius: '4px' }}>v0.1.0-beta.3</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '16px', fontSize: '12px', color: 'var(--muted)' }}>
               <a href="https://github.com/tenuo-ai/tenuo" style={{ color: 'var(--muted)', textDecoration: 'none' }}>GitHub</a>
