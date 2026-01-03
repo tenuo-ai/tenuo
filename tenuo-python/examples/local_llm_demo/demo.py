@@ -95,9 +95,9 @@ async def main():
 
     # Step 3: Connect to LLM
     display.print_step(3, "Connect to Local LLM",
-        f"Connecting to {model_id} via LM Studio...")
+        f"Connecting to {model_id} via LM Studio at {config.LM_STUDIO_URL}...")
 
-    async with lms.AsyncClient() as client:
+    async with lms.AsyncClient(config.LM_STUDIO_URL) as client:
         model = await client.llm.model(model_id)
         print(f"  Connected to: {model_id}")
 

@@ -10,8 +10,8 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 USE_MOCK_SEARCH = not TAVILY_API_KEY
 
 # Demo settings
-RESEARCH_DIR = "/tmp/tenuo_demo/research"
-SUMMARY_DIR = "/tmp/tenuo_demo/summary"
+RESEARCH_DIR = os.getenv("RESEARCH_DIR", "/tmp/tenuo_demo/research")
+SUMMARY_DIR = os.getenv("SUMMARY_DIR", "/tmp/tenuo_demo/summary")
 
 def setup_workspace():
     """Clean and recreate workspace directories."""
