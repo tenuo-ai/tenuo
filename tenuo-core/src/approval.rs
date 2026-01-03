@@ -104,15 +104,53 @@
 //! | `rotate_key` | Self-rotation (old key signs) |
 //! | `revoke_key` | Notary signs (for compromised keys) |
 //!
+//! ## Stateless Design & Replay Protection
+//!
+//! Tenuo is designed for **stateless verification** - a warrant and signature
+//! can be verified anywhere, offline, without database lookups. This is a core
+//! design principle that enables edge deployment and air-gapped environments.
+//!
+//! Approvals include a 128-bit random **nonce** for cryptographic uniqueness,
+//! but Tenuo does NOT track used nonces server-side. This is intentional:
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────────────┐
+//! │  REPLAY PROTECTION LAYERS                                          │
+//! ├─────────────────────────────────────────────────────────────────────┤
+//! │  1. Domain Separation    "tenuo-approval-v1" context prefix        │
+//! │  2. Nonce                128-bit random, makes each approval unique│
+//! │  3. TTL                  Short expiration window (default 5 min)   │
+//! │  4. Request Binding      H(warrant_id || tool || args || holder)   │
+//! │  5. Holder Binding       Approval bound to specific agent's key    │
+//! │  6. PoP Required         Attacker also needs holder's private key  │
+//! └─────────────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! **Why no server-side nonce tracking?**
+//!
+//! For replay to succeed, an attacker needs BOTH:
+//! - The intercepted approval
+//! - The holder's private key (to sign the Proof-of-Possession)
+//!
+//! If they have the holder's key, they don't need the approval at all.
+//! The attack window is extremely narrow (requires tricking the legitimate
+//! holder into signing a PoP for a replayed approval within TTL).
+//!
+//! **Application-layer opt-in:**
+//!
+//! Applications requiring stricter guarantees can implement nonce tracking
+//! at their layer. The nonce field enables this without forcing statefulness
+//! on all deployments.
+//!
 //! ## Implementation Status
 //!
-//! - [x] Approval struct (data model)
+//! - [x] Approval struct (data model with nonce + domain separation)
 //! - [x] NotaryRegistry (key lifecycle management)
 //! - [x] RegistrationProof (PoP for registration)
 //! - [x] Notary struct (registry administrator)
 //! - [x] KeyBinding (identity → key mapping)
 //! - [x] AuditEvent (key lifecycle auditing)
-//! - [ ] Multi-sig verification in Authorizer
+//! - [x] Multi-sig verification in Authorizer
 //! - [ ] Python SDK: ApprovalProvider ABC
 //! - [ ] Provider implementations (AWS IAM, Okta, YubiKey)
 
