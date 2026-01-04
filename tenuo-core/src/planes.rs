@@ -4007,7 +4007,7 @@ mod tests {
 
     /// SECURITY: Authorizer MUST reject warrants from untrusted issuers.
     /// This test prevents regression of the trust verification bug.
-    /// 
+    ///
     /// Note: Trust check happens BEFORE PoP check, so we don't need to
     /// provide a valid PoP - the untrusted issuer is rejected first.
     #[test]
@@ -4020,8 +4020,7 @@ mod tests {
         let attacker_key = SigningKey::generate();
 
         // Authorizer trusts only one key
-        let authorizer = Authorizer::new()
-            .with_trusted_root(trusted_key.public_key());
+        let authorizer = Authorizer::new().with_trusted_root(trusted_key.public_key());
 
         // Attacker issues a warrant with their own key
         let attacker_warrant = crate::Warrant::builder()
@@ -4040,7 +4039,10 @@ mod tests {
             &[],
         );
 
-        assert!(result.is_err(), "SECURITY BUG: Authorizer accepted untrusted issuer!");
+        assert!(
+            result.is_err(),
+            "SECURITY BUG: Authorizer accepted untrusted issuer!"
+        );
         let err = result.unwrap_err();
         assert!(
             format!("{}", err).contains("not in trusted roots"),
@@ -4060,8 +4062,7 @@ mod tests {
         let holder_key = SigningKey::generate();
 
         // Authorizer trusts this issuer
-        let authorizer = Authorizer::new()
-            .with_trusted_root(trusted_key.public_key());
+        let authorizer = Authorizer::new().with_trusted_root(trusted_key.public_key());
 
         // Warrant issued by trusted key with holder binding
         let warrant = crate::Warrant::builder()
@@ -4076,15 +4077,13 @@ mod tests {
         let pop_sig = warrant.sign(&holder_key, "read_file", &args).unwrap();
 
         // Authorization should succeed (trust check passes, PoP valid)
-        let result = authorizer.authorize(
-            &warrant,
-            "read_file",
-            &args,
-            Some(&pop_sig),
-            &[],
-        );
+        let result = authorizer.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
 
-        assert!(result.is_ok(), "Authorizer rejected trusted issuer: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Authorizer rejected trusted issuer: {:?}",
+            result.err()
+        );
     }
 
     /// SECURITY: Empty trusted_keys means no trust check (backwards compatibility).
@@ -4114,13 +4113,7 @@ mod tests {
         let pop_sig = warrant.sign(&holder_key, "read_file", &args).unwrap();
 
         // Should be allowed (no trust check performed when no roots configured)
-        let result = authorizer.authorize(
-            &warrant,
-            "read_file",
-            &args,
-            Some(&pop_sig),
-            &[],
-        );
+        let result = authorizer.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
 
         assert!(
             result.is_ok(),
@@ -4157,7 +4150,9 @@ mod tests {
             .build(&key1)
             .unwrap();
         let pop1 = warrant1.sign(&holder_key, "tool", &args).unwrap();
-        assert!(authorizer.authorize(&warrant1, "tool", &args, Some(&pop1), &[]).is_ok());
+        assert!(authorizer
+            .authorize(&warrant1, "tool", &args, Some(&pop1), &[])
+            .is_ok());
 
         // Warrant from key2 should work
         let warrant2 = crate::Warrant::builder()
@@ -4167,7 +4162,9 @@ mod tests {
             .build(&key2)
             .unwrap();
         let pop2 = warrant2.sign(&holder_key, "tool", &args).unwrap();
-        assert!(authorizer.authorize(&warrant2, "tool", &args, Some(&pop2), &[]).is_ok());
+        assert!(authorizer
+            .authorize(&warrant2, "tool", &args, Some(&pop2), &[])
+            .is_ok());
 
         // Warrant from untrusted key should fail (at trust check, before PoP)
         let warrant3 = crate::Warrant::builder()
@@ -4177,6 +4174,8 @@ mod tests {
             .build(&untrusted_key)
             .unwrap();
         // Don't need PoP since trust check fails first
-        assert!(authorizer.authorize(&warrant3, "tool", &args, None, &[]).is_err());
+        assert!(authorizer
+            .authorize(&warrant3, "tool", &args, None, &[])
+            .is_err());
     }
 }
