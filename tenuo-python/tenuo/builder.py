@@ -301,6 +301,8 @@ class MintBuilder:
             holder=self._holder,
             session_id=self._session_id,
             clearance=self._clearance,
+            required_approvers=self._required_approvers,
+            min_approvals=self._min_approvals,
         )
 
     def _issue_issuer(self, key: SigningKey) -> Warrant:

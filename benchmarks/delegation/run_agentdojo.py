@@ -3,7 +3,7 @@
 Run delegation benchmark with AgentDojo's scenarios.
 
 Compares attack success rates between:
-- Manager with full suite constraints  
+- Manager with full suite constraints
 - Assistant with delegated (narrower) constraints
 
 Usage:
@@ -12,8 +12,6 @@ Usage:
 """
 
 import argparse
-from pathlib import Path
-from datetime import datetime
 
 from .agentdojo_delegated import run_delegation_comparison
 
@@ -39,15 +37,15 @@ def main():
         default=3,
         help="Limit number of tasks (default: 3)",
     )
-    
+
     args = parser.parse_args()
-    
+
     results = run_delegation_comparison(
         suite=args.suite,
         model=args.model,
         limit=args.limit,
     )
-    
+
     print("\n" + "=" * 60)
     print("KEY INSIGHT")
     print("=" * 60)
@@ -63,4 +61,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -104,6 +104,7 @@ from .exceptions import (
     MonotonicityError,
     ConfigurationError,
     AuthorizationDenied,  # Rich error with diff support
+    ScopeViolation,  # Authorization scope exceeded
 )
 
 # Error explanation

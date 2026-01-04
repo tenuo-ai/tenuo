@@ -24,7 +24,7 @@ OPENAI_API_KEY=$OPENAI_API_KEY python -m benchmarks.agentdojo.evaluate \
 Use the provided batch script:
 
 ```bash
-cd /Users/aimable/Development/tenuo
+cd /path/to/tenuo  # or wherever you cloned the repo
 
 # Run all tasks with 30s delay between each
 ./benchmarks/agentdojo/run_batch.sh workspace 30
@@ -38,7 +38,7 @@ cd /Users/aimable/Development/tenuo
 Use the Python batch runner for better error handling:
 
 ```bash
-cd /Users/aimable/Development/tenuo
+cd /path/to/tenuo  # or wherever you cloned the repo
 
 # Run all tasks with default settings (30s delay)
 python benchmarks/agentdojo/run_batch.py --suite workspace

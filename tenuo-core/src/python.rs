@@ -2345,7 +2345,7 @@ impl PyWarrant {
 
     /// Issue a new warrant.
     #[staticmethod]
-    #[pyo3(signature = (keypair, capabilities=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None))]
+    #[pyo3(signature = (keypair, capabilities=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None, required_approvers=None, min_approvals=None))]
     fn issue(
         keypair: &PySigningKey,
         capabilities: Option<&Bound<'_, PyDict>>,
@@ -2353,6 +2353,8 @@ impl PyWarrant {
         holder: Option<&PyPublicKey>,
         session_id: Option<&str>,
         clearance: Option<&PyClearance>,
+        required_approvers: Option<Vec<PyPublicKey>>,
+        min_approvals: Option<u32>,
     ) -> PyResult<Self> {
         let mut builder = RustWarrant::builder().ttl(Duration::from_secs(ttl_seconds));
 
@@ -2385,6 +2387,20 @@ impl PyWarrant {
 
         if let Some(sid) = session_id {
             builder = builder.session_id(sid);
+        }
+
+        // Multi-sig: set required approvers if provided
+        if let Some(approvers) = required_approvers {
+            let rust_approvers: Vec<crate::crypto::PublicKey> = approvers
+                .into_iter()
+                .map(|pk| pk.inner)
+                .collect();
+            builder = builder.required_approvers(rust_approvers);
+        }
+
+        // Multi-sig: set minimum approvals if provided
+        if let Some(min) = min_approvals {
+            builder = builder.min_approvals(min);
         }
 
         let warrant = builder.build(&keypair.inner).map_err(to_py_err)?;

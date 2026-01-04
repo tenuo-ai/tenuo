@@ -5,7 +5,7 @@ Measures Tenuo's effectiveness at preventing prompt injection attacks
 using the AgentDojo framework.
 """
 
-from .harness import TenuoAgentDojoHarness
+# Core modules that don't require openai/agentdojo
 from .tool_wrapper import TenuoToolWrapper, wrap_tools, AuthorizationMetrics
 from .warrant_templates import (
     BANKING_CONSTRAINTS,
@@ -15,6 +15,12 @@ from .warrant_templates import (
     get_constraints_for_suite,
     get_constraints_for_tool,
 )
+
+# Harness requires openai/agentdojo - import lazily
+try:
+    from .harness import TenuoAgentDojoHarness
+except ImportError:
+    TenuoAgentDojoHarness = None  # type: ignore
 
 __all__ = [
     "TenuoAgentDojoHarness",

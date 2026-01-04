@@ -1794,11 +1794,12 @@ impl Authorizer {
     /// Authorize an action against a warrant.
     ///
     /// This is the main authorization entry point. It checks:
-    /// 1. Trust level requirements (if configured)
-    /// 2. Tool name matches
-    /// 3. All constraints are satisfied
-    /// 4. Holder signature (if warrant has `authorized_holder`)
-    /// 5. Multi-sig approvals (if warrant has `required_approvers`)
+    /// 1. **Issuer trust** - warrant must be from a trusted root
+    /// 2. Trust level requirements (if configured)
+    /// 3. Tool name matches
+    /// 4. All constraints are satisfied
+    /// 5. Holder signature (if warrant has `authorized_holder`)
+    /// 6. Multi-sig approvals (if warrant has `required_approvers`)
     ///
     /// This is an **offline operation** - no network calls.
     ///
@@ -1817,7 +1818,19 @@ impl Authorizer {
         holder_signature: Option<&crate::crypto::Signature>,
         approvals: &[crate::approval::Approval],
     ) -> Result<()> {
-        // 1. Check trust level requirements first (fast fail)
+        // 0. CRITICAL: Verify warrant issuer is trusted (fast fail)
+        // If trusted_keys is configured, warrant must be signed by one of them.
+        // This check must come FIRST to prevent accepting warrants from untrusted sources.
+        if !self.trusted_keys.is_empty() {
+            let issuer = warrant.issuer();
+            if !self.trusted_keys.iter().any(|k| k == issuer) {
+                return Err(Error::SignatureInvalid(
+                    "warrant issuer not in trusted roots".to_string(),
+                ));
+            }
+        }
+
+        // 1. Check trust level requirements (fast fail)
         if let Some(required_trust) = self.get_required_clearance(tool) {
             let warrant_trust = warrant.clearance().unwrap_or(Clearance::UNTRUSTED);
             if warrant_trust < required_trust {
@@ -3984,5 +3997,186 @@ mod tests {
             .trusted_root(kp.public_key())
             .try_clearance_requirement("*admin*", Clearance::SYSTEM);
         assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // SECURITY REGRESSION TESTS
+    // These tests ensure the Authorizer correctly rejects untrusted issuers.
+    // Added after discovering that trust verification was missing.
+    // =========================================================================
+
+    /// SECURITY: Authorizer MUST reject warrants from untrusted issuers.
+    /// This test prevents regression of the trust verification bug.
+    /// 
+    /// Note: Trust check happens BEFORE PoP check, so we don't need to
+    /// provide a valid PoP - the untrusted issuer is rejected first.
+    #[test]
+    fn test_authorizer_rejects_untrusted_issuer() {
+        use crate::crypto::SigningKey;
+        use std::time::Duration;
+
+        // Two different keys
+        let trusted_key = SigningKey::generate();
+        let attacker_key = SigningKey::generate();
+
+        // Authorizer trusts only one key
+        let authorizer = Authorizer::new()
+            .with_trusted_root(trusted_key.public_key());
+
+        // Attacker issues a warrant with their own key
+        let attacker_warrant = crate::Warrant::builder()
+            .capability("read_file", crate::ConstraintSet::new())
+            .ttl(Duration::from_secs(3600))
+            .holder(attacker_key.public_key()) // Has holder, but not from trusted issuer
+            .build(&attacker_key)
+            .expect("warrant creation should work");
+
+        // Authorization MUST fail at trust check (before PoP)
+        let result = authorizer.authorize(
+            &attacker_warrant,
+            "read_file",
+            &Default::default(),
+            None, // No PoP needed - trust check fails first
+            &[],
+        );
+
+        assert!(result.is_err(), "SECURITY BUG: Authorizer accepted untrusted issuer!");
+        let err = result.unwrap_err();
+        assert!(
+            format!("{}", err).contains("not in trusted roots"),
+            "Error should mention untrusted issuer: {}",
+            err
+        );
+    }
+
+    /// SECURITY: Authorizer MUST allow warrants from trusted issuers.
+    /// Uses holder binding with PoP to fully test the authorization path.
+    #[test]
+    fn test_authorizer_allows_trusted_issuer() {
+        use crate::crypto::SigningKey;
+        use std::time::Duration;
+
+        let trusted_key = SigningKey::generate();
+        let holder_key = SigningKey::generate();
+
+        // Authorizer trusts this issuer
+        let authorizer = Authorizer::new()
+            .with_trusted_root(trusted_key.public_key());
+
+        // Warrant issued by trusted key with holder binding
+        let warrant = crate::Warrant::builder()
+            .capability("read_file", crate::ConstraintSet::new())
+            .ttl(Duration::from_secs(3600))
+            .holder(holder_key.public_key())
+            .build(&trusted_key)
+            .expect("warrant creation should work");
+
+        // Create PoP signature for the holder
+        let args = std::collections::HashMap::new();
+        let pop_sig = warrant.sign(&holder_key, "read_file", &args).unwrap();
+
+        // Authorization should succeed (trust check passes, PoP valid)
+        let result = authorizer.authorize(
+            &warrant,
+            "read_file",
+            &args,
+            Some(&pop_sig),
+            &[],
+        );
+
+        assert!(result.is_ok(), "Authorizer rejected trusted issuer: {:?}", result.err());
+    }
+
+    /// SECURITY: Empty trusted_keys means no trust check (backwards compatibility).
+    /// This allows gradual adoption - users can start without trusted roots.
+    #[test]
+    fn test_authorizer_no_trusted_roots_allows_any() {
+        use crate::crypto::SigningKey;
+        use std::time::Duration;
+
+        let any_key = SigningKey::generate();
+        let holder_key = SigningKey::generate();
+
+        // Authorizer with NO trusted roots (empty)
+        let authorizer = Authorizer::new();
+        assert!(!authorizer.has_trusted_roots());
+
+        // Warrant from any issuer with holder binding
+        let warrant = crate::Warrant::builder()
+            .capability("read_file", crate::ConstraintSet::new())
+            .ttl(Duration::from_secs(3600))
+            .holder(holder_key.public_key())
+            .build(&any_key)
+            .expect("warrant creation should work");
+
+        // Create PoP signature
+        let args = std::collections::HashMap::new();
+        let pop_sig = warrant.sign(&holder_key, "read_file", &args).unwrap();
+
+        // Should be allowed (no trust check performed when no roots configured)
+        let result = authorizer.authorize(
+            &warrant,
+            "read_file",
+            &args,
+            Some(&pop_sig),
+            &[],
+        );
+
+        assert!(
+            result.is_ok(),
+            "Empty trusted_keys should allow any issuer for backwards compatibility: {:?}",
+            result.err()
+        );
+    }
+
+    /// SECURITY: Multiple trusted roots should all be accepted.
+    #[test]
+    fn test_authorizer_multiple_trusted_roots() {
+        use crate::crypto::SigningKey;
+        use std::time::Duration;
+
+        let key1 = SigningKey::generate();
+        let key2 = SigningKey::generate();
+        let untrusted_key = SigningKey::generate();
+        let holder_key = SigningKey::generate();
+
+        // Trust both key1 and key2
+        let authorizer = Authorizer::new()
+            .with_trusted_root(key1.public_key())
+            .with_trusted_root(key2.public_key());
+
+        assert_eq!(authorizer.trusted_root_count(), 2);
+
+        let args = std::collections::HashMap::new();
+
+        // Warrant from key1 should work
+        let warrant1 = crate::Warrant::builder()
+            .capability("tool", crate::ConstraintSet::new())
+            .ttl(Duration::from_secs(3600))
+            .holder(holder_key.public_key())
+            .build(&key1)
+            .unwrap();
+        let pop1 = warrant1.sign(&holder_key, "tool", &args).unwrap();
+        assert!(authorizer.authorize(&warrant1, "tool", &args, Some(&pop1), &[]).is_ok());
+
+        // Warrant from key2 should work
+        let warrant2 = crate::Warrant::builder()
+            .capability("tool", crate::ConstraintSet::new())
+            .ttl(Duration::from_secs(3600))
+            .holder(holder_key.public_key())
+            .build(&key2)
+            .unwrap();
+        let pop2 = warrant2.sign(&holder_key, "tool", &args).unwrap();
+        assert!(authorizer.authorize(&warrant2, "tool", &args, Some(&pop2), &[]).is_ok());
+
+        // Warrant from untrusted key should fail (at trust check, before PoP)
+        let warrant3 = crate::Warrant::builder()
+            .capability("tool", crate::ConstraintSet::new())
+            .ttl(Duration::from_secs(3600))
+            .holder(holder_key.public_key())
+            .build(&untrusted_key)
+            .unwrap();
+        // Don't need PoP since trust check fails first
+        assert!(authorizer.authorize(&warrant3, "tool", &args, None, &[]).is_err());
     }
 }

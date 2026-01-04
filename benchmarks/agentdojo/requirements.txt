@@ -1,12 +1,14 @@
 # Core dependencies
-tenuo>=0.1.0b1
+tenuo>=0.1.0b3
 
 # AgentDojo - install separately for full benchmarks
 # pip install agentdojo  # Optional - required for real benchmarks
 # Use --dry-run flag to test without AgentDojo installed
+agentdojo>=0.1.0
+openai>=1.0.0
 
 # Analysis dependencies
-numpy>=1.24.0
-pandas>=2.0.0
-matplotlib>=3.7.0
-seaborn>=0.12.0
+numpy>=1.24.0,<3.0.0
+pandas>=2.0.0,<3.0.0
+matplotlib>=3.7.0,<4.0.0
+seaborn>=0.12.0,<1.0.0

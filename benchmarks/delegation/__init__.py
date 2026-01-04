@@ -1,24 +1,21 @@
 """
 Delegation benchmark for Tenuo.
 
-Tests warrant chains and attenuation, Tenuo's core differentiator.
+Tests warrant constraint enforcement scenarios.
 """
 
 from .scenarios import (
-    ManagerAssistantScenario,
-    ChainDepthScenario,
-    MixedAttackScenario,
-    TTLBoundedScenario,
     TemporalScopingScenario,
+    RangeLimitScenario,
+    PatternMatchScenario,
+    ToolScopingScenario,
 )
 from .harness import DelegationHarness
 
 __all__ = [
-    "ManagerAssistantScenario",
-    "ChainDepthScenario",
-    "MixedAttackScenario",
-    "TTLBoundedScenario",
     "TemporalScopingScenario",
+    "RangeLimitScenario",
+    "PatternMatchScenario",
+    "ToolScopingScenario",
     "DelegationHarness",
 ]
-

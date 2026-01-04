@@ -19,7 +19,7 @@ for task in "${TASKS[@]}"; do
     echo "========================================="
     
     OPENAI_API_KEY=$OPENAI_API_KEY \
-    /opt/homebrew/Caskroom/miniconda/base/envs/agentdojo/bin/python \
+    python \
       -m benchmarks.agentdojo.evaluate \
       --suite "$SUITE" \
       --compare \
