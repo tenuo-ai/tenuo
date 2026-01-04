@@ -100,11 +100,17 @@ agent.run(warrant=admin_warrant)  # external@partner.com -> allowed
 ## Quick Start
 
 ```bash
+# Install dependencies (AgentDojo pinned to 0.1.35)
+pip install -r benchmarks/agentdojo/requirements.txt
+
 # Dry run (no API calls)
 python -m benchmarks.agentdojo.evaluate --suite workspace --dry-run
 
 # Real benchmark
 python -m benchmarks.agentdojo.evaluate --suite workspace --model gpt-4o-mini
+
+# Smaller run for iteration speed
+python -m benchmarks.agentdojo.evaluate --suite workspace --model gpt-4o-mini --user-tasks 3 --injection-tasks 2
 
 # Analyze results
 python -m benchmarks.agentdojo.analyze results/workspace/<timestamp>/

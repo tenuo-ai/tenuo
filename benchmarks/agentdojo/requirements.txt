@@ -1,10 +1,5 @@
-# Core dependencies
-tenuo>=0.1.0b3
-
-# AgentDojo - install separately for full benchmarks
-# pip install agentdojo  # Optional - required for real benchmarks
-# Use --dry-run flag to test without AgentDojo installed
-agentdojo>=0.1.0
+# AgentDojo + OpenAI SDK
+agentdojo==0.1.35
 openai>=1.0.0
 
 # Analysis dependencies

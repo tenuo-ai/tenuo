@@ -540,7 +540,7 @@ jobs:
 
       - name: Install benchmark dependencies
         run: |
-          pip install numpy pandas matplotlib seaborn openai agentdojo
+          pip install -r benchmarks/agentdojo/requirements.txt
 
       - name: Validate benchmark imports
         run: |
