@@ -35,9 +35,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Generate our OWN keypair (Orchestrator Identity)
     let orchestrator_keypair = SigningKey::generate();
-    // Public keys are not secret, but avoid printing them by default in logs.
-    // We still need the hex to enroll with the control plane.
     let pubkey_hex = hex::encode(orchestrator_keypair.public_key().to_bytes());
+    println!("  Orchestrator Public Key: {}", pubkey_hex);
 
     // 2. Get Enrollment Token from Env
     let enrollment_token = env::var("TENUO_ENROLLMENT_TOKEN")

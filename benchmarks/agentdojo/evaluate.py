@@ -108,6 +108,18 @@ def parse_args():
         help="Comma-separated task IDs or 'all' (default: all)",
     )
     parser.add_argument(
+        "--user-tasks",
+        type=int,
+        default=None,
+        help="Limit number of user tasks to run (example: --user-tasks 3)",
+    )
+    parser.add_argument(
+        "--injection-tasks",
+        type=int,
+        default=None,
+        help="Limit number of injection tasks to run (example: --injection-tasks 2)",
+    )
+    parser.add_argument(
         "--model",
         type=str,
         default="gpt-4o-mini",
@@ -191,6 +203,22 @@ def main():
         api_key=args.api_key,
     )
 
+    def take_first_task_ids(task_map: dict, limit: int) -> list:
+        # AgentDojo task maps are dict-like. Sort keys for stable ordering.
+        keys = sorted(task_map.keys(), key=lambda k: str(k))
+        return list(keys[:limit])
+
+    if args.user_tasks is not None:
+        if task_ids is not None:
+            raise SystemExit("Use either --tasks or --user-tasks, not both")
+        task_ids = take_first_task_ids(harness.suite.user_tasks, args.user_tasks)
+
+    injection_task_ids = None
+    if args.injection_tasks is not None:
+        injection_task_ids = take_first_task_ids(
+            harness.suite.injection_tasks, args.injection_tasks
+        )
+
     baseline_results = None
     tenuo_results = None
 
@@ -201,6 +229,7 @@ def main():
             with_tenuo=False,
             with_attacks=not args.no_attacks,
             user_tasks=task_ids,
+            injection_tasks=injection_task_ids,
             logdir=suite_dir / "baseline",
         )
 
@@ -218,6 +247,7 @@ def main():
             with_tenuo=True,
             with_attacks=not args.no_attacks,
             user_tasks=task_ids,
+            injection_tasks=injection_task_ids,
             logdir=suite_dir / "with_tenuo",
         )
 

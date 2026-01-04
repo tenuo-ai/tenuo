@@ -1,6 +1,9 @@
 # AgentDojo Benchmark Integration
 
+
 Empirical validation of Tenuo's constraint enforcement using [AgentDojo](https://github.com/ethz-spylab/agentdojo).
+
+⚠️ **Work in Progress**: This benchmark is under active development. Results may vary based on model, attack type, and constraint configuration.
 
 ## What This Tests
 

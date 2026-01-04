@@ -67,6 +67,8 @@ class TenuoProtectedPipeline(BasePipelineElement):
         self.issuer_key = issuer_key
         self.holder_key = holder_key
         self.metrics = metrics or AuthorizationMetrics()
+        # AgentDojo logging expects a pipeline name. Keep this stable.
+        self.name = getattr(base_pipeline, "name", "tenuo-pipeline")
         logger.debug(f"Pipeline metrics initialized, id={id(self.metrics)}")
 
         # Get constraints for this suite
@@ -262,6 +264,7 @@ class TenuoAgentDojoHarness:
 
         # Create pipeline
         pipeline = self._create_pipeline(with_tenuo=with_tenuo)
+        pipeline_name = getattr(pipeline, "name", "tenuo-pipeline" if with_tenuo else "baseline")
 
         # Run benchmarks within logger context
         with adlog.OutputLogger(logdir=str(logdir)):
@@ -279,6 +282,7 @@ class TenuoAgentDojoHarness:
                     suite=self.suite,
                     attack=attack,
                     logdir=logdir,
+                    pipeline_name=pipeline_name,
                     force_rerun=True,
                     user_tasks=user_tasks,
                     injection_tasks=injection_tasks,
@@ -289,6 +293,7 @@ class TenuoAgentDojoHarness:
                     agent_pipeline=pipeline,
                     suite=self.suite,
                     logdir=logdir,
+                    pipeline_name=pipeline_name,
                     force_rerun=True,
                     user_tasks=user_tasks,
                 )
