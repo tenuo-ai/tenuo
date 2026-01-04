@@ -139,14 +139,23 @@ def read_file(file_path: str) -> str:
     """
     Protected file reading function.
     Only authorized paths (per warrant constraints) are allowed.
+
+    Security: Path is validated by Tenuo constraints AND sanitized here.
     """
+    # Sanitize path to prevent directory traversal
+    # Note: Tenuo constraints provide the primary authorization layer
+    safe_path = os.path.normpath(file_path)
+    if ".." in safe_path or safe_path.startswith("/"):
+        # Additional defense-in-depth check
+        raise HTTPException(status_code=403, detail="Invalid path")
+
     try:
-        with open(file_path, 'r') as f:
+        with open(safe_path, "r") as f:
             return f.read()
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error reading file: {str(e)}")
+        raise HTTPException(status_code=404, detail="File not found")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Error reading file")
 
 
 @guard(tool="write_file")
@@ -154,12 +163,21 @@ def write_file(file_path: str, content: str) -> None:
     """
     Protected file writing function.
     Only authorized paths (per warrant constraints) are allowed.
+
+    Security: Path is validated by Tenuo constraints AND sanitized here.
     """
+    # Sanitize path to prevent directory traversal
+    # Note: Tenuo constraints provide the primary authorization layer
+    safe_path = os.path.normpath(file_path)
+    if ".." in safe_path or safe_path.startswith("/"):
+        # Additional defense-in-depth check
+        raise HTTPException(status_code=403, detail="Invalid path")
+
     try:
-        with open(file_path, 'w') as f:
+        with open(safe_path, "w") as f:
             f.write(content)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error writing file: {str(e)}")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Error writing file")
 
 
 @guard(tool="manage_cluster")

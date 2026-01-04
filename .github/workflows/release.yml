@@ -4,6 +4,12 @@ on:
   release:
     types: [published]
 
+# Permissions for release workflow
+permissions:
+  contents: read
+  packages: write
+  id-token: write  # For trusted publishing
+
 env:
   CARGO_TERM_COLOR: always
 

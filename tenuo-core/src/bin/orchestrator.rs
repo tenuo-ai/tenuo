@@ -22,8 +22,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("╚══════════════════════════════════════════════════════════════════╝\n");
 
     // Generate a session ID for this workflow (for traceability)
+    // Note: Session IDs are not sensitive. They're for correlation only.
     let session_id = format!("sess_{}", Uuid::now_v7().simple());
-    println!("  Session ID: {}\n", session_id);
+    println!("  Session ID: {}\n", session_id); // Safe: not a secret
 
     // =========================================================================
     // Step 1: Enrollment - Request Root Warrant from Control Plane

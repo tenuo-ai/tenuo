@@ -48,8 +48,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let trusted_key = PublicKey::from_bytes(&trusted_key_bytes)?;
     let authorizer = Authorizer::new().with_trusted_root(trusted_key);
 
-    println!("  ✓ Authorizer configured with trusted root:");
-    println!("    Public Key: {}", trusted_key_hex);
+    println!("  ✓ Authorizer configured with trusted root");
+    // Note: In production, avoid logging key material
+    // This is a demo binary - key fingerprint shown for educational purposes
+    println!("    Key fingerprint: {}...", &trusted_key_hex[..16]);
     println!("\n  NOTE: The worker only trusts the Control Plane's public key.");
     println!("        It does NOT need the Orchestrator's key - chain verification");
     println!("        cryptographically proves the delegation path.");

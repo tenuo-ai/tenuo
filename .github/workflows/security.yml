@@ -9,6 +9,10 @@ on:
     # Run security tests weekly on Sunday at 3am UTC
     - cron: '0 3 * * 0'
 
+# Restrict permissions to minimum required
+permissions:
+  contents: read
+
 jobs:
   python-security:
     runs-on: ubuntu-latest

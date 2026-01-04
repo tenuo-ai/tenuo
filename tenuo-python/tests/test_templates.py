@@ -151,7 +151,9 @@ class TestWebSearcher:
 
         assert cap.tool == "http_request"
         assert isinstance(cap.constraints["domain"], OneOf)
-        assert "api.example.com" in cap.constraints["domain"].values
+        # Test assertion: verify domain is in the constraint's allowed values
+        # Note: This is not URL sanitization. The OneOf constraint handles validation.
+        assert "api.example.com" in cap.constraints["domain"].values  # noqa: S105
 
     def test_url_pattern(self):
         """WebSearcher.url_pattern uses Pattern."""
