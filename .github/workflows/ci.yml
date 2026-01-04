@@ -546,9 +546,9 @@ jobs:
 
       - name: Validate constraint templates
         run: |
-          python -c "
-from benchmarks.agentdojo.warrant_templates import get_constraints_for_suite
-for suite in ['workspace', 'banking', 'slack', 'travel']:
-    constraints = get_constraints_for_suite(suite)
-    print(f'✅ {suite}: {len(constraints)} tool constraints defined')
-"
+          python << 'EOF'
+          from benchmarks.agentdojo.warrant_templates import get_constraints_for_suite
+          for suite in ['workspace', 'banking', 'slack', 'travel']:
+              constraints = get_constraints_for_suite(suite)
+              print(f'✅ {suite}: {len(constraints)} tool constraints defined')
+          EOF
