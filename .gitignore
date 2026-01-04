@@ -60,8 +60,9 @@ tenuo-python/examples/local_llm_demo/local_llm_demo_spec.md
 
 tenuo-core/check.log
 
-# Benchmark results
+# Benchmark results (run locally, not committed until validated)
 results/
+security_report.md
 *.log
 tenuo-core/benchmark_results.txt
 
