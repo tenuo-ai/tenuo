@@ -95,17 +95,17 @@ Core cryptographic operations are benchmarked in Rust using Criterion:
 cd tenuo-core && cargo bench
 ```
 
-Typical results (Apple M1):
+Typical results:
 
 | Operation | Latency |
 |-----------|---------|
-| Warrant creation | ~50μs |
-| Signature verification | ~15μs |
-| Constraint evaluation | ~100ns |
+| Full verification (PoP + constraints) | ~27μs |
+| Constraint evaluation only | ~100ns |
+| Denial (wrong tool) | ~150ns |
 | Wire encode/decode | ~5μs |
-| Delegation (8-deep chain) | ~400μs |
 
-Python SDK adds ~5-10μs PyO3 overhead per call.
+The ~27μs verification time is the end-to-end cost including signature verification,
+constraint matching, and TTL checks. Denials are faster because they short-circuit.
 
 Quick Python timing:
 
@@ -114,11 +114,14 @@ import time
 from tenuo import SigningKey, Warrant, Range
 
 key = SigningKey.generate()
+w = Warrant.mint_builder().capability("test", x=Range(0, 100)).ttl(60).mint(key)
+sig = w.sign(key, "test", {"x": 50})
+
 start = time.perf_counter()
 for _ in range(1000):
-    w = Warrant.mint_builder().capability("test", x=Range(0, 100)).ttl(60).mint(key)
-elapsed = (time.perf_counter() - start) / 1000 * 1000
-print(f"Warrant creation: {elapsed:.2f}ms")
+    w.authorize("test", {"x": 50}, bytes(sig))
+elapsed = (time.perf_counter() - start) / 1000 * 1_000_000
+print(f"Verification: {elapsed:.1f}μs")
 ```
 
 ## When to Use Tenuo
