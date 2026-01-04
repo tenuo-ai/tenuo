@@ -2391,10 +2391,8 @@ impl PyWarrant {
 
         // Multi-sig: set required approvers if provided
         if let Some(approvers) = required_approvers {
-            let rust_approvers: Vec<crate::crypto::PublicKey> = approvers
-                .into_iter()
-                .map(|pk| pk.inner)
-                .collect();
+            let rust_approvers: Vec<crate::crypto::PublicKey> =
+                approvers.into_iter().map(|pk| pk.inner).collect();
             builder = builder.required_approvers(rust_approvers);
         }
 

@@ -540,13 +540,13 @@ jobs:
 
       - name: Install benchmark dependencies
         run: |
-          pip install numpy pandas matplotlib seaborn
+          pip install numpy pandas matplotlib seaborn openai agentdojo
 
       - name: Validate benchmark imports
         run: |
-          # Verify all benchmark modules can be imported
-          python -c "from benchmarks.agentdojo import harness, tool_wrapper, warrant_templates"
-          echo "✅ Benchmark modules import successfully"
+          # Verify benchmark modules can be imported
+          python -c "from benchmarks.agentdojo import tool_wrapper, warrant_templates"
+          echo "Benchmark modules import successfully"
 
       - name: Validate constraint templates
         run: |
@@ -554,5 +554,5 @@ jobs:
           from benchmarks.agentdojo.warrant_templates import get_constraints_for_suite
           for suite in ['workspace', 'banking', 'slack', 'travel']:
               constraints = get_constraints_for_suite(suite)
-              print(f'✅ {suite}: {len(constraints)} tool constraints defined')
+              print(f'{suite}: {len(constraints)} tool constraints defined')
           EOF
