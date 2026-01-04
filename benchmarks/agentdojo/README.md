@@ -116,6 +116,9 @@ python -m benchmarks.agentdojo.evaluate --suite workspace --model gpt-4o-mini --
 python -m benchmarks.agentdojo.analyze results/workspace/<timestamp>/
 ```
 
+Note: AgentDojo 0.1.35 may emit a warning about `pipeline_name` not being known.
+This is a logging-only warning and does not affect benchmark correctness.
+
 ## Configuration
 
 ### Models

@@ -283,7 +283,6 @@ class TenuoAgentDojoHarness:
                     suite=self.suite,
                     attack=attack,
                     logdir=logdir,
-                    pipeline_name=pipeline_name,
                     force_rerun=True,
                     user_tasks=user_tasks,
                     injection_tasks=injection_tasks,
@@ -294,7 +293,6 @@ class TenuoAgentDojoHarness:
                     agent_pipeline=pipeline,
                     suite=self.suite,
                     logdir=logdir,
-                    pipeline_name=pipeline_name,
                     force_rerun=True,
                     user_tasks=user_tasks,
                 )
