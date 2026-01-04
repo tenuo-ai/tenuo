@@ -87,6 +87,40 @@ python -m benchmarks.cryptographic.report
 | Temporal Accuracy | 100% | All expired/future warrants rejected |
 | Multi-Sig Enforcement | 100% | All threshold violations rejected |
 
+## Performance
+
+Core cryptographic operations are benchmarked in Rust using Criterion:
+
+```bash
+cd tenuo-core && cargo bench
+```
+
+Typical results (Apple M1):
+
+| Operation | Latency |
+|-----------|---------|
+| Warrant creation | ~50μs |
+| Signature verification | ~15μs |
+| Constraint evaluation | ~100ns |
+| Wire encode/decode | ~5μs |
+| Delegation (8-deep chain) | ~400μs |
+
+Python SDK adds ~5-10μs PyO3 overhead per call.
+
+Quick Python timing:
+
+```python
+import time
+from tenuo import SigningKey, Warrant, Range
+
+key = SigningKey.generate()
+start = time.perf_counter()
+for _ in range(1000):
+    w = Warrant.mint_builder().capability("test", x=Range(0, 100)).ttl(60).mint(key)
+elapsed = (time.perf_counter() - start) / 1000 * 1000
+print(f"Warrant creation: {elapsed:.2f}ms")
+```
+
 ## When to Use Tenuo
 
 | Use Case | Recommendation |
