@@ -23,8 +23,8 @@ from agentdojo.agent_pipeline import (
     ToolsExecutor,
     ToolsExecutionLoop,
     SystemMessage,
-    EmptyEnv,
 )
+from agentdojo.functions_runtime import EmptyEnv
 from agentdojo.attacks import FixedJailbreakAttack
 import agentdojo.logging as adlog
 
