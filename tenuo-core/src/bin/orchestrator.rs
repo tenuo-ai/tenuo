@@ -21,10 +21,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("║          Demonstrating Capability Delegation in Tenuo            ║");
     println!("╚══════════════════════════════════════════════════════════════════╝\n");
 
-    // Generate a session ID for this workflow (for traceability)
-    // Note: Session IDs are not sensitive. They're for correlation only.
+    // Generate a session ID for this workflow (for traceability).
+    // Session IDs are not secrets. Printing them helps correlate logs.
     let session_id = format!("sess_{}", Uuid::now_v7().simple());
-    println!("  Session ID: {}\n", session_id); // Safe: not a secret
+    println!("  Session ID: {}\n", session_id);
 
     // =========================================================================
     // Step 1: Enrollment - Request Root Warrant from Control Plane
@@ -35,8 +35,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Generate our OWN keypair (Orchestrator Identity)
     let orchestrator_keypair = SigningKey::generate();
+    // Public keys are not secret, but avoid printing them by default in logs.
+    // We still need the hex to enroll with the control plane.
     let pubkey_hex = hex::encode(orchestrator_keypair.public_key().to_bytes());
-    println!("  Orchestrator Public Key: {}", pubkey_hex);
 
     // 2. Get Enrollment Token from Env
     let enrollment_token = env::var("TENUO_ENROLLMENT_TOKEN")
