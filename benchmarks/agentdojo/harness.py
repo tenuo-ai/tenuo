@@ -8,6 +8,7 @@ benchmark framework to measure security effectiveness against prompt injection a
 import logging
 from typing import Optional, Sequence
 from pathlib import Path
+import inspect
 
 from openai import OpenAI
 from agentdojo.benchmark import (
@@ -35,6 +36,21 @@ from .tool_wrapper import wrap_tools, AuthorizationMetrics
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+
+def _maybe_with_pipeline_name(fn, *, pipeline_name: str) -> dict:
+    """
+    Some AgentDojo versions accept `pipeline_name=...` for logging.
+    Others do not. Pass it only when supported.
+    """
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):  # pragma: no cover
+        params = {}
+
+    if "pipeline_name" in params:
+        return {"pipeline_name": pipeline_name}
+    return {}
 
 
 class TenuoProtectedPipeline(BasePipelineElement):
@@ -265,6 +281,10 @@ class TenuoAgentDojoHarness:
         # Create pipeline
         pipeline = self._create_pipeline(with_tenuo=with_tenuo)
         pipeline_name = getattr(pipeline, "name", "tenuo-pipeline" if with_tenuo else "baseline")
+        extra_kwargs = _maybe_with_pipeline_name(
+            benchmark_suite_with_injections if with_attacks else benchmark_suite_without_injections,
+            pipeline_name=pipeline_name,
+        )
 
         # Run benchmarks within logger context
         with adlog.OutputLogger(logdir=str(logdir)):
@@ -282,10 +302,10 @@ class TenuoAgentDojoHarness:
                     suite=self.suite,
                     attack=attack,
                     logdir=logdir,
-                    pipeline_name=pipeline_name,
                     force_rerun=True,
                     user_tasks=user_tasks,
                     injection_tasks=injection_tasks,
+                    **extra_kwargs,
                 )
             else:
                 # Run without attacks (benign only)
@@ -293,9 +313,9 @@ class TenuoAgentDojoHarness:
                     agent_pipeline=pipeline,
                     suite=self.suite,
                     logdir=logdir,
-                    pipeline_name=pipeline_name,
                     force_rerun=True,
                     user_tasks=user_tasks,
+                    **extra_kwargs,
                 )
 
         # Extract summary statistics from results
