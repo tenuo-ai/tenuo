@@ -9,15 +9,16 @@ __all__ = []
 
 # AgentDojo integration (requires agentdojo package)
 try:
-    from .agentdojo import TenuoAgentDojoHarness
+    from .agentdojo import TenuoAgentDojoHarness  # noqa: F401
+
     __all__.append("TenuoAgentDojoHarness")
 except ImportError:
     pass
 
 # Delegation benchmark (standalone, no external deps)
 try:
-    from .delegation import DelegationHarness
+    from .delegation import DelegationHarness  # noqa: F401
+
     __all__.append("DelegationHarness")
 except ImportError:
     pass
-

@@ -368,4 +368,4 @@ if __name__ == "__main__":
 
     assert metrics["escalation_block_rate"] == 1.0
 
-    print("\n✅ All escalation attempts blocked (100% enforcement)")
+    print("\nAll escalation attempts blocked (100% enforcement)")

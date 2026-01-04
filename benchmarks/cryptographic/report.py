@@ -106,18 +106,19 @@ def generate_report(metrics: SecurityMetrics) -> str:
     )
 
     status = "PASS" if all_100 else "FAIL"
-    status_emoji = "✅" if all_100 else "❌"
+
+    def status_mark(val: float) -> str:
+        return "PASS" if val == 1.0 else "FAIL"
 
     return f"""# Tenuo Cryptographic Security Report
 
-**Status**: {status_emoji} {status}
+**Status**: {status}
 **Generated**: {time.strftime("%Y-%m-%d %H:%M:%S")}
 
 ## Executive Summary
 
-This report validates that Tenuo's cryptographic enforcement provides security
-guarantees that simple input validation cannot match. All tests measure the
-detection/enforcement rate of security properties.
+This report validates Tenuo's cryptographic enforcement properties.
+All tests measure detection/enforcement rate of security properties.
 
 **Target**: 100% enforcement for all properties
 
@@ -125,79 +126,75 @@ detection/enforcement rate of security properties.
 
 ### 1. Forgery Resistance
 
-These properties ensure that warrants cannot be tampered with or misused.
+Warrants cannot be tampered with or misused.
 
 | Property | Rate | Status |
 |----------|------|--------|
-| Wrong Key Detection | {metrics.wrong_key_detection:.1%} | {"✅" if metrics.wrong_key_detection == 1.0 else "❌"} |
-| Replay Detection | {metrics.replay_detection:.1%} | {"✅" if metrics.replay_detection == 1.0 else "❌"} |
-| Escalation Detection | {metrics.escalation_detection:.1%} | {"✅" if metrics.escalation_detection == 1.0 else "❌"} |
+| Wrong Key Detection | {metrics.wrong_key_detection:.1%} | {status_mark(metrics.wrong_key_detection)} |
+| Replay Detection | {metrics.replay_detection:.1%} | {status_mark(metrics.replay_detection)} |
+| Escalation Detection | {metrics.escalation_detection:.1%} | {status_mark(metrics.escalation_detection)} |
 
-**Why if-statements can't do this**: Signature verification is mathematically
-bound to the original data. Tampering is always detected.
+Any party can verify warrant authenticity without calling the issuer's API.
 
 ### 2. Delegation Monotonicity
 
-These properties ensure delegated warrants never exceed their parent's authority.
+Delegated warrants never exceed their parent's authority.
 
 | Property | Rate | Status |
 |----------|------|--------|
-| Escalation Prevention | {metrics.delegation_enforcement:.1%} | {"✅" if metrics.delegation_enforcement == 1.0 else "❌"} |
+| Escalation Prevention | {metrics.delegation_enforcement:.1%} | {status_mark(metrics.delegation_enforcement)} |
 
-**Why if-statements can't do this**: Parent constraints are cryptographically
-embedded in the child's signature chain. Escalation is mathematically impossible.
+Parent constraints are cryptographically embedded. Child warrants
+mathematically cannot exceed parent's authority.
 
 ### 3. Key Separation
 
-These properties ensure the separation between issuers, holders, and verifiers.
+Separation between issuers, holders, and verifiers is enforced.
 
 | Property | Rate | Status |
 |----------|------|--------|
-| Wrong Key Rejection | {metrics.key_separation:.1%} | {"✅" if metrics.key_separation == 1.0 else "❌"} |
-| Stolen Warrant Protection | {metrics.stolen_warrant_protection:.1%} | {"✅" if metrics.stolen_warrant_protection == 1.0 else "❌"} |
+| Wrong Key Rejection | {metrics.key_separation:.1%} | {status_mark(metrics.key_separation)} |
+| Stolen Warrant Protection | {metrics.stolen_warrant_protection:.1%} | {status_mark(metrics.stolen_warrant_protection)} |
 
-**Why if-statements can't do this**: Warrants are useless without the holder's
-private key. Intercepted warrants cannot be used.
+Warrants intercepted in transit are useless without the holder's private key.
 
 ### 4. Temporal Enforcement
 
-These properties ensure time-based access control.
+Time-based access control is enforced.
 
 | Property | Rate | Status |
 |----------|------|--------|
-| Fresh Warrant Acceptance | {metrics.fresh_acceptance:.1%} | {"✅" if metrics.fresh_acceptance == 1.0 else "❌"} |
-| Expired Warrant Rejection | {metrics.expired_rejection:.1%} | {"✅" if metrics.expired_rejection == 1.0 else "❌"} |
+| Fresh Warrant Acceptance | {metrics.fresh_acceptance:.1%} | {status_mark(metrics.fresh_acceptance)} |
+| Expired Warrant Rejection | {metrics.expired_rejection:.1%} | {status_mark(metrics.expired_rejection)} |
 
-**Why if-statements can't do this**: Expiration time is part of the signed
-payload. Tampering with it invalidates the signature.
+Expiration is cryptographically enforced. Verifier checks signature locally.
 
 ### 5. Multi-Signature Enforcement
 
-These properties ensure M-of-N approval requirements are met.
+M-of-N approval requirements are met.
 
 | Property | Rate | Status |
 |----------|------|--------|
-| Insufficient Approval Rejection | {metrics.insufficient_approval_rejection:.1%} | {"✅" if metrics.insufficient_approval_rejection == 1.0 else "❌"} |
-| Sufficient Approval Acceptance | {metrics.sufficient_approval_acceptance:.1%} | {"✅" if metrics.sufficient_approval_acceptance == 1.0 else "❌"} |
-| Forged Approval Rejection | {metrics.forged_approval_rejection:.1%} | {"✅" if metrics.forged_approval_rejection == 1.0 else "❌"} |
+| Insufficient Approval Rejection | {metrics.insufficient_approval_rejection:.1%} | {status_mark(metrics.insufficient_approval_rejection)} |
+| Sufficient Approval Acceptance | {metrics.sufficient_approval_acceptance:.1%} | {status_mark(metrics.sufficient_approval_acceptance)} |
+| Forged Approval Rejection | {metrics.forged_approval_rejection:.1%} | {status_mark(metrics.forged_approval_rejection)} |
 
-**Why if-statements can't do this**: Each approval is cryptographically signed.
-Forging an approval requires the approver's private key.
+Approvals are cryptographically signed. Separation of duties without shared
+database or consensus protocol.
 
-## Comparison: If-Statements vs Tenuo
+## When Tenuo Adds Value
 
-| Property | If-Statements | Tenuo |
-|----------|---------------|-------|
-| Tamper-proof constraints | ❌ Code can be modified | ✅ Cryptographic |
-| Verifiable without secrets | ❌ Often needs DB/service | ✅ Self-contained |
-| Delegation safety | ❌ Manual enforcement | ✅ Mathematically bound |
-| Key compromise impact | ❌ Full access | ✅ Limited by warrant |
-| Replay protection | ❌ Needs state | ✅ Signature-bound |
-| Approval verification | ❌ Trust the sender | ✅ Cryptographic proof |
+| Scenario | Tenuo Value |
+|----------|-------------|
+| Cross-service calls (same org) | Audit trail, reduced coupling |
+| Cross-organization trust | Essential - no shared database |
+| Offline/disconnected agents | Required - cannot call issuer |
+| Compliance (non-repudiation) | Cryptographic proof of authorization |
+| Single service, single trust domain | Input validation may suffice |
 
 ## Conclusion
 
-{"All cryptographic security properties are enforced at 100%. Tenuo provides strong security guarantees that input validation alone cannot achieve." if all_100 else "Some security properties did not reach 100% enforcement. Investigation required."}
+{"All cryptographic security properties enforced at 100%." if all_100 else "Some security properties did not reach 100% enforcement. Investigation required."}
 """
 
 

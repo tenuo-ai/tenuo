@@ -202,14 +202,10 @@ class DelegationHarness:
             self.metrics.failed += 1
             if expected == "denied" and actual == "allowed":
                 self.metrics.false_negatives += 1
-                print(
-                    f"[Delegation] ❌ FALSE NEGATIVE: {attack_point} -> {tool}({args})"
-                )
+                print(f"[Delegation] FALSE NEGATIVE: {attack_point} -> {tool}({args})")
             elif expected == "allowed" and actual == "denied":
                 self.metrics.false_positives += 1
-                print(
-                    f"[Delegation] ❌ FALSE POSITIVE: {attack_point} -> {tool}({args})"
-                )
+                print(f"[Delegation] FALSE POSITIVE: {attack_point} -> {tool}({args})")
 
         status = "✓" if result.passed else "✗"
         print(

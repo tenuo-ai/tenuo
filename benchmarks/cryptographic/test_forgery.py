@@ -1,11 +1,17 @@
 """
 Benchmark: Warrant Forgery Resistance
 
-Demonstrates that Tenuo warrants cannot be tampered with - a property that
-simple input validation cannot provide.
+Demonstrates that Tenuo warrants are cryptographically protected against
+tampering - essential for distributed systems where warrants cross trust
+boundaries.
 
-Key insight: Even if an attacker can intercept and modify a warrant in transit,
-the cryptographic signature will fail verification.
+Key insight: When Service A receives a warrant claiming to be from Service B,
+A can verify it locally without calling B's API. The warrant is self-proving.
+
+This enables:
+- Offline verification (issuer may be unreachable)
+- Reduced coupling (no runtime dependency on issuer)
+- Portable trust (any party with issuer's public key can verify)
 """
 
 import pytest
@@ -16,8 +22,8 @@ class TestWarrantForgeryResistance:
     """
     These tests demonstrate that warrants are cryptographically protected.
 
-    Unlike if-statement validation which can be bypassed by modifying code,
-    Tenuo warrants are self-verifying - tampering is always detected.
+    The key property: warrants are self-verifying. Any party can verify
+    a warrant's authenticity without contacting the issuer.
     """
 
     @pytest.fixture
@@ -57,9 +63,11 @@ class TestWarrantForgeryResistance:
         """
         Even with the warrant, attacker can't use it without holder's key.
 
-        This is THE key differentiator from if-statements:
-        - If-statement: attacker who controls the code can bypass
-        - Tenuo: attacker needs the private key, which never leaves the holder
+        Scenario: Attacker intercepts a warrant in transit (e.g., from a
+        message queue or HTTP proxy). They have the full warrant but not
+        the holder's private key.
+
+        Result: The warrant is useless. PoP signature requires the key.
         """
         # Attacker tries to sign with their own key
         sig = valid_warrant.sign(attacker_key, "send_money", {"amount": 500})
@@ -155,72 +163,121 @@ class TestWarrantForgeryResistance:
         )
 
 
-class TestComparisonWithIfStatements:
+class TestCrossBoundaryVerification:
     """
-    Demonstrates the security gap between if-statements and Tenuo.
+    Tests the core distributed systems value: cross-boundary verification.
+
+    The question isn't "can if-statements be bypassed?" - production systems
+    have plenty of controls for that.
+
+    The question is: "When Agent A receives a warrant from Agent B, how does
+    A verify B's authority WITHOUT calling B's backend?"
+
+    Traditional approaches:
+    - API call to B's auth service (adds latency, single point of failure)
+    - Shared database (coupling, consistency issues)
+    - Trust headers blindly (insecure)
+
+    Tenuo approach:
+    - Self-contained cryptographic proof
+    - Verify locally, no network calls
+    - Works even if issuer is offline
     """
 
-    def test_if_statement_baseline(self):
+    def test_offline_verification(self):
         """
-        This shows what traditional validation looks like.
+        Verifier can validate warrant without contacting issuer.
 
-        Problem: This code can be modified, bypassed, or inconsistently
-        implemented across services.
-        """
-
-        def validate_transfer(amount, recipient):
-            # Traditional if-statement validation
-            if amount > 1000:
-                return False, "Amount exceeds limit"
-            if not recipient.endswith("@company.com"):
-                return False, "External transfers not allowed"
-            return True, None
-
-        # Works correctly in normal operation
-        assert validate_transfer(500, "alice@company.com") == (True, None)
-        assert validate_transfer(5000, "alice@company.com") == (
-            False,
-            "Amount exceeds limit",
-        )
-
-        # BUT: If attacker can modify the code, they can bypass everything
-        # There's no cryptographic binding - it's just logic
-
-    def test_tenuo_cannot_be_bypassed_by_code_modification(self):
-        """
-        Even if attacker controls the executor code, they still need:
-        1. A valid warrant (signed by trusted issuer)
-        2. The holder's private key (for PoP)
-
-        They cannot forge either without the cryptographic keys.
+        Scenario: Service A receives a warrant from Service B.
+        Service B is temporarily down or in a different network.
+        A can still verify the warrant cryptographically.
         """
         issuer_key = SigningKey.generate()
         holder_key = SigningKey.generate()
-        attacker_key = SigningKey.generate()
 
-        # Issuer creates a restricted warrant
+        # Issuer creates warrant (could be hours ago, in different datacenter)
         warrant = (
             Warrant.mint_builder()
-            .capability("send_money", amount=Range(0, 1000))
+            .capability("read_data", scope=Pattern("/shared/*"))
             .holder(holder_key.public_key)
             .ttl(3600)
             .mint(issuer_key)
         )
 
-        # Even if attacker "modifies" the validation code to always return True,
-        # they still can't produce a valid PoP signature without holder's key
+        # Verifier only needs the issuer's PUBLIC key (shared via config/PKI)
+        # No API call to issuer required
+        authorizer = Authorizer(trusted_roots=[issuer_key.public_key])
 
-        # Attacker tries with their own key
-        attacker_sig = warrant.sign(attacker_key, "send_money", {"amount": 5000})
+        # Holder signs the request
+        sig = warrant.sign(holder_key, "read_data", {"scope": "/shared/file.txt"})
 
-        # Verification still fails - cryptography can't be "modified"
-        assert not warrant.authorize(
-            "send_money", {"amount": 5000}, bytes(attacker_sig)
+        # Verification succeeds locally - no network call
+        authorizer.authorize(
+            warrant, "read_data", {"scope": "/shared/file.txt"}, signature=bytes(sig)
         )
 
-        # Only the legitimate holder can authorize
-        holder_sig = warrant.sign(holder_key, "send_money", {"amount": 500})
-        assert warrant.authorize("send_money", {"amount": 500}, bytes(holder_sig))
+    def test_portable_trust(self):
+        """
+        Same warrant can be verified by multiple independent parties.
+
+        Scenario: A warrant is issued by Org HQ, used by Agent in Region A,
+        verified by Service in Region B. No shared database needed.
+        """
+        hq_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+
+        # HQ issues warrant
+        warrant = (
+            Warrant.mint_builder()
+            .capability("deploy", env=Pattern("staging-*"))
+            .holder(agent_key.public_key)
+            .ttl(3600)
+            .mint(hq_key)
+        )
+
+        # Region A and Region B both trust HQ (via PKI/config)
+        region_a = Authorizer(trusted_roots=[hq_key.public_key])
+        region_b = Authorizer(trusted_roots=[hq_key.public_key])
+
+        sig = warrant.sign(agent_key, "deploy", {"env": "staging-us"})
+
+        # Both regions can verify independently
+        region_a.authorize(
+            warrant, "deploy", {"env": "staging-us"}, signature=bytes(sig)
+        )
+        region_b.authorize(
+            warrant, "deploy", {"env": "staging-us"}, signature=bytes(sig)
+        )
+
+    def test_non_repudiation(self):
+        """
+        Cryptographic signatures provide audit trail that can't be forged.
+
+        Unlike log entries (which can be modified), a valid signature proves
+        the holder authorized the action with their private key.
+        """
+        issuer_key = SigningKey.generate()
+        holder_key = SigningKey.generate()
+
+        warrant = (
+            Warrant.mint_builder()
+            .capability("approve_expense", amount=Range(0, 10000))
+            .holder(holder_key.public_key)
+            .ttl(3600)
+            .mint(issuer_key)
+        )
+
+        # Holder signs approval
+        sig = warrant.sign(holder_key, "approve_expense", {"amount": 5000})
+
+        # This signature is proof:
+        # 1. The warrant was valid (signed by trusted issuer)
+        # 2. The holder authorized this specific action
+        # 3. The action had these specific parameters
+
+        # The signature can be stored as an audit record
+        # It's self-proving - no need to trust the log system
+        assert warrant.authorize("approve_expense", {"amount": 5000}, bytes(sig))
 
 
 class BenchmarkMetrics:
@@ -307,4 +364,4 @@ if __name__ == "__main__":
     assert metrics["replay_detection_rate"] == 1.0
     assert metrics["escalation_detection_rate"] == 1.0
 
-    print("\n✅ All forgery attempts detected (100% rate)")
+    print("\nAll forgery attempts detected (100% rate)")

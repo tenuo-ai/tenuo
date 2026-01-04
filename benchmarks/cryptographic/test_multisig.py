@@ -558,4 +558,4 @@ if __name__ == "__main__":
     assert metrics["sufficient_accept_rate"] == 1.0
     assert metrics["forged_block_rate"] == 1.0
 
-    print("\n✅ Multi-sig enforcement working correctly (100% accuracy)")
+    print("\nMulti-sig enforcement working correctly (100% accuracy)")

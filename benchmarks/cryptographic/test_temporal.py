@@ -273,4 +273,4 @@ if __name__ == "__main__":
     assert metrics["fresh_acceptance_rate"] == 1.0
     assert metrics["expired_rejection_rate"] == 1.0
 
-    print("\n✅ Temporal enforcement working correctly (100% accuracy)")
+    print("\nTemporal enforcement working correctly (100% accuracy)")

@@ -2,14 +2,15 @@
 
 Empirical validation of Tenuo's constraint enforcement using [AgentDojo](https://github.com/ethz-spylab/agentdojo).
 
-## What This Proves
+## What This Tests
 
-**Tenuo is a deterministic constraint engine.** If you constrain recipients to `*@company.com`, emails to `attacker@evil.com` will be blocked. This is mechanical enforcement, not detection.
+Tenuo is a deterministic constraint engine. If you constrain recipients to
+`*@company.com`, emails to `attacker@evil.com` are blocked.
 
-This benchmark proves:
-- Constraints are enforced correctly under adversarial conditions
+This benchmark validates:
+- Constraints are enforced under adversarial conditions
 - Compromised LLMs cannot exceed their granted capabilities
-- The overhead is acceptable for real workloads
+- Overhead is acceptable for real workloads
 
 ## Results
 

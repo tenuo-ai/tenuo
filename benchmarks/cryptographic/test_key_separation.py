@@ -309,4 +309,4 @@ if __name__ == "__main__":
     assert metrics["wrong_key_block_rate"] == 1.0
     assert metrics["stolen_warrant_block_rate"] == 1.0
 
-    print("\n✅ All unauthorized access blocked (100% key separation)")
+    print("\nAll unauthorized access blocked (100% key separation)")

@@ -1,65 +1,68 @@
 # Cryptographic Security Benchmark
 
-This benchmark suite demonstrates Tenuo's **cryptographic value proposition** - 
-properties that input validation alone cannot provide.
+This benchmark suite validates Tenuo's cryptographic properties - essential
+for distributed systems where trust must cross boundaries.
 
-## Why This Matters
+## Core Question
 
-Traditional "if statement" validation can be:
-- Bypassed if the validation code is compromised
-- Tampered with at runtime
-- Inconsistent across distributed systems
-- Subject to race conditions with mutable state
+**In a distributed system, how do you verify authority without calling the
+issuer's API?**
 
-Tenuo's cryptographic approach provides:
-- **Unforgeable constraints** - tampered warrants fail signature verification
-- **Key separation** - different principals, different keys
-- **Monotonic delegation** - child warrants can't exceed parent
-- **Stateless verification** - no database, no race conditions
-- **Portable trust** - any party can verify independently
+| Approach | Tradeoff |
+|----------|----------|
+| API call to issuer | Latency, availability dependency, coupling |
+| Shared database | Consistency issues, tight coupling |
+| Trust headers blindly | Insecure |
+| **Tenuo warrants** | Self-contained, offline-verifiable, cryptographically bound |
+
+## What Cryptography Provides
+
+### 1. Cross-Boundary Verification
+When Service A receives a warrant from Service B, A can verify it without
+calling B's backend. The warrant is self-proving.
+
+### 2. Portable Trust
+The same warrant can be verified by any party that trusts the issuer's
+public key. No shared database, no API calls, works across regions/clouds.
+
+### 3. Holder Binding
+Stolen warrants are useless. Even if an attacker intercepts a warrant in
+transit, they cannot use it without the holder's private key.
+
+### 4. Non-Repudiation
+Signatures prove intent. A valid PoP signature proves the holder authorized
+that specific action with those specific parameters.
+
+### 5. Monotonic Delegation
+When a warrant is delegated, the child mathematically cannot exceed the
+parent's authority. Cryptographically enforced.
 
 ## Benchmark Scenarios
 
 ### 1. Warrant Forgery Resistance (`test_forgery.py`)
-Attacker attempts to:
-- Modify constraints in a valid warrant
-- Create warrants with unauthorized keys
-- Replay warrants with altered capabilities
-
-Expected: 100% detection rate
+- Tampered warrants fail signature verification
+- Stolen warrants are useless without holder key
+- Cross-boundary verification works offline
 
 ### 2. Delegation Monotonicity (`test_delegation.py`)
-Tests that delegated warrants:
-- Cannot exceed parent's constraints
-- Cannot add new capabilities
-- Cannot extend TTL beyond parent
-- Cannot change holder without re-signing
-
-Expected: 100% enforcement
+- Child warrants cannot exceed parent's constraints
+- Cannot add capabilities parent doesn't have
+- Cannot extend TTL beyond parent's expiry
 
 ### 3. Key Separation (`test_key_separation.py`)
-Tests that:
 - Holder key cannot issue new warrants
-- Wrong key PoP signatures are rejected
-- Stolen warrants are useless without holder key
-
-Expected: 100% rejection of invalid keys
+- Issuer key cannot use warrants as holder
+- Verifier needs no secrets (only public keys)
 
 ### 4. Temporal Enforcement (`test_temporal.py`)
-Tests that:
 - Expired warrants are rejected
-- Future-dated warrants are rejected
 - TTL cannot be extended by tampering
-
-Expected: 100% temporal enforcement
+- Just-in-time warrants for sensitive operations
 
 ### 5. Multi-Sig Requirements (`test_multisig.py`)
-Tests that:
-- M-of-N approval requirements are enforced
-- Partial approvals are rejected
-- Approval signatures are verified
-
-Expected: 100% threshold enforcement
+- M-of-N approval thresholds are cryptographically enforced
+- Each approval is signed, cannot be forged
+- Supports separation of duties patterns
 
 ## Running the Benchmarks
 
@@ -83,18 +86,16 @@ python -m benchmarks.cryptographic.report
 | Key Separation | 100% | All wrong-key operations rejected |
 | Temporal Accuracy | 100% | All expired/future warrants rejected |
 | Multi-Sig Enforcement | 100% | All threshold violations rejected |
-| Verification Latency | <1ms | P99 verification time |
 
-## Comparison with Input Validation
+## When to Use Tenuo
 
-This benchmark includes a "baseline" that uses Python if-statements for the same
-checks. The key difference:
+| Use Case | Recommendation |
+|----------|----------------|
+| Single service, single trust domain | Input validation sufficient |
+| Cross-service calls within same org | Tenuo for audit trail |
+| Cross-organization trust | Tenuo recommended |
+| Offline/disconnected agents | Tenuo required |
+| Compliance requiring non-repudiation | Tenuo provides cryptographic proof |
 
-| Property | If-Statements | Tenuo |
-|----------|---------------|-------|
-| Tamper-proof | ❌ Code can be modified | ✅ Cryptographic |
-| Portable | ❌ Each service reimplements | ✅ Verify anywhere |
-| Auditable | ❌ Logs can be forged | ✅ Signatures prove intent |
-| Stateless | ❌ Often needs DB lookup | ✅ Self-contained |
-| Delegation | ❌ Trust hierarchy unclear | ✅ Monotonic by design |
-
+Tenuo and input validation are **complementary**: input validation for local
+checks, Tenuo for distributed trust and audit trails.

@@ -159,7 +159,7 @@ class MultiAgentDelegationScenario:
 
         # Assistant gets narrowed scope via delegation
         assistant_warrant = (
-            manager_warrant.attenuate_builder()
+            manager_warrant.grant_builder()
             .inherit_all()
             .capability(
                 "send_email", {"to": Pattern("users/internal/*")}
@@ -288,9 +288,7 @@ You have limited permissions - only perform actions within your authorized scope
             )
             results.append(result)
 
-            status = (
-                "❌ ATTACK SUCCEEDED" if result.attack_succeeded else "✓ Attack blocked"
-            )
+            status = "ATTACK SUCCEEDED" if result.attack_succeeded else "Attack blocked"
             print(f"  Tool calls: {len(result.tool_calls)}")
             print(f"  Blocked: {len(result.blocked_calls)}")
             print(f"  Allowed: {len(result.allowed_calls)}")
@@ -333,7 +331,7 @@ class DelegationChainScenario:
 
         # Assistant: team scope
         assistant_warrant = (
-            manager_warrant.attenuate_builder()
+            manager_warrant.grant_builder()
             .inherit_all()
             .capability("transfer_money", {"amount": Range(0, 1000)})
             .holder(self.assistant_key.public_key)
@@ -343,8 +341,8 @@ class DelegationChainScenario:
 
         # Bot: minimal scope
         bot_warrant = (
-            assistant_warrant.attenuate_builder()
-            .capability("transfer_money", {"amount": Range(min=0, max=50)})
+            assistant_warrant.grant_builder()
+            .capability("transfer_money", {"amount": Range(0, 50)})
             .holder(self.bot_key.public_key)
             .ttl(300)
             .delegate(self.assistant_key)
@@ -415,7 +413,7 @@ class DelegationChainScenario:
             result = self.attack_at_level(level, warrant, key, amount)
             results.append(result)
 
-            status = "✓ BLOCKED" if result["blocked"] else "❌ ALLOWED"
+            status = "BLOCKED" if result["blocked"] else "ALLOWED"
             print(f"[{level}] Transfer ${amount}: {status}")
 
         return results
