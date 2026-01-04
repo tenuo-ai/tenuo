@@ -2346,6 +2346,7 @@ impl PyWarrant {
     /// Issue a new warrant.
     #[staticmethod]
     #[pyo3(signature = (keypair, capabilities=None, ttl_seconds=3600, holder=None, session_id=None, clearance=None, required_approvers=None, min_approvals=None))]
+    #[allow(clippy::too_many_arguments)]
     fn issue(
         keypair: &PySigningKey,
         capabilities: Option<&Bound<'_, PyDict>>,
