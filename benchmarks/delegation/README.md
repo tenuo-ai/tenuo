@@ -1,6 +1,6 @@
 # Delegation Benchmark
 
-Benchmark for Tenuo's constraint enforcement across different warrant scopes.
+Benchmarks for Tenuo's constraint enforcement and multi-agent delegation scenarios.
 
 ## Overview
 
@@ -8,7 +8,13 @@ This benchmark validates that warrant constraints are correctly enforced by test
 
 **Core Insight**: The agent code remains constant. The warrant determines what's allowed.
 
-## Scenarios
+For cryptographic property tests (forgery resistance, key separation, etc.), see `benchmarks/cryptographic/`.
+
+## Test Suites
+
+### 1. Constraint Scenarios (`scenarios.py`)
+
+Unit tests for constraint enforcement:
 
 | Scenario | Description | Tests |
 |----------|-------------|-------|
@@ -17,12 +23,36 @@ This benchmark validates that warrant constraints are correctly enforced by test
 | `pattern_match` | Glob pattern constraint enforcement | 5 |
 | `tool_scoping` | Tool authorization verification | 5 |
 
-### Temporal Scoping
+### 2. LLM Multi-Agent Scenarios (`llm_scenarios.py`)
 
-Demonstrates that capabilities are determined by the warrant, not the agent code:
+Real LLM multi-agent scenarios with prompt injection attacks:
+
+| Scenario | Description |
+|----------|-------------|
+| `MultiAgentDelegationScenario` | Manager delegates to assistant, injection targets assistant |
+| `DelegationChainScenario` | Org -> Manager -> Assistant -> Bot with escalation attempts |
+
+## Running the Benchmarks
+
+```bash
+# Constraint scenario tests
+python -m benchmarks.delegation.evaluate --all
+
+# Single scenario
+python -m benchmarks.delegation.evaluate --scenario temporal_scoping
+
+# LLM delegation scenarios (requires OpenAI API key)
+python -m benchmarks.delegation.run_llm --model gpt-4o-mini
+
+# Save results
+python -m benchmarks.delegation.evaluate --all --output results/delegation/
+```
+
+## Example: Temporal Scoping
+
+Same agent, different outcomes based on warrant:
 
 ```python
-# Same agent, different outcomes based on warrant
 agent = create_agent()
 
 # Task 1: Internal email warrant
@@ -41,37 +71,13 @@ agent.run(warrant=external_warrant)
 # partner@external.com -> Allowed
 ```
 
-### Same Action, Different Outcome
+## Example: Same Action, Different Outcome
 
-| Tool Call | Small Limit Warrant | Large Limit Warrant |
-|-----------|---------------------|---------------------|
+| Tool Call | Small Limit ($100) | Large Limit ($10k) |
+|-----------|--------------------|--------------------|
 | `transfer(amount=50)` | Allowed | Allowed |
 | `transfer(amount=500)` | Blocked | Allowed |
 | `transfer(amount=50000)` | Blocked | Blocked |
-
-## Running the Benchmark
-
-```bash
-# Run single scenario
-python -m benchmarks.delegation.evaluate --scenario temporal_scoping
-
-# Run all scenarios
-python -m benchmarks.delegation.evaluate --all
-
-# Save results
-python -m benchmarks.delegation.evaluate --all --output results/delegation/
-```
-
-## Results
-
-| Metric | Value |
-|--------|-------|
-| Total Tests | 23 |
-| Pass Rate | 100% |
-| Attacks Blocked | 11 |
-| False Positives | 0 |
-| False Negatives | 0 |
-| Avg Auth Time | 0.04 ms |
 
 ## Metrics
 
@@ -82,27 +88,20 @@ python -m benchmarks.delegation.evaluate --all --output results/delegation/
 | False Positives | Legitimate actions incorrectly denied |
 | False Negatives | Attack actions incorrectly allowed |
 
-## Design Notes
-
-These scenarios test single-warrant constraint enforcement. Each scenario creates independent warrants with different constraint configurations and verifies that:
-
-1. Actions within scope are allowed
-2. Actions exceeding scope are blocked
-3. Wrong tools are rejected
-4. Pattern matching works correctly
-5. Range boundaries are enforced
-
 ## Files
 
 ```
 benchmarks/delegation/
-├── evaluate.py      # CLI entrypoint
-├── harness.py       # Test harness
-├── scenarios.py     # Scenario definitions
-└── __init__.py      # Package exports
+├── scenarios.py             # Constraint enforcement scenarios
+├── llm_scenarios.py         # LLM multi-agent scenarios
+├── harness.py               # Test harness
+├── evaluate.py              # CLI entrypoint
+├── run_llm.py               # LLM scenario runner
+├── agentdojo_integration.py # AgentDojo integration
+└── README.md                # This file
 ```
 
-## Further Reading
+## Related
 
-- [Tenuo Concepts](https://tenuo.dev/concepts) - Capability token fundamentals
-- [Constraints Reference](https://tenuo.dev/constraints) - Pattern, Range, AnyOf constraints
+- `benchmarks/cryptographic/` - Forgery resistance, key separation, delegation monotonicity
+- `benchmarks/agentdojo/` - AgentDojo prompt injection benchmark with Tenuo

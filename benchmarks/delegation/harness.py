@@ -4,12 +4,15 @@ Delegation benchmark harness.
 Runs delegation scenarios and collects metrics.
 """
 
+import logging
 from dataclasses import dataclass, field
 import time
 import json
 from pathlib import Path
 
 from tenuo import Warrant, Authorizer, ScopeViolation
+
+logger = logging.getLogger(__name__)
 
 from .scenarios import (
     BaseDelegationScenario,
@@ -113,8 +116,8 @@ class DelegationHarness:
     def setup(self) -> None:
         """Initialize warrants for the scenario."""
         self.warrants = self.scenario.setup()
-        print(
-            f"[Delegation] Created {len(self.warrants)} warrants: {list(self.warrants.keys())}"
+        logger.info(
+            "Created %d warrants: %s", len(self.warrants), list(self.warrants.keys())
         )
 
     def run(self) -> DelegationMetrics:
@@ -128,7 +131,7 @@ class DelegationHarness:
             self.setup()
 
         attacks = self.scenario.get_attacks()
-        print(f"[Delegation] Running {len(attacks)} attack vectors...")
+        logger.info("Running %d attack vectors...", len(attacks))
 
         for attack in attacks:
             self._run_attack(attack)
@@ -144,7 +147,7 @@ class DelegationHarness:
         # Get the warrant for the attack point
         warrant = self.warrants.get(attack_point)
         if warrant is None:
-            print(f"[Delegation] Warning: No warrant for {attack_point}, skipping")
+            logger.warning("No warrant for %s, skipping", attack_point)
             return
 
         # Get the corresponding key for PoP
@@ -202,14 +205,15 @@ class DelegationHarness:
             self.metrics.failed += 1
             if expected == "denied" and actual == "allowed":
                 self.metrics.false_negatives += 1
-                print(f"[Delegation] FALSE NEGATIVE: {attack_point} -> {tool}({args})")
+                logger.error("FALSE NEGATIVE: %s -> %s(%s)", attack_point, tool, args)
             elif expected == "allowed" and actual == "denied":
                 self.metrics.false_positives += 1
-                print(f"[Delegation] FALSE POSITIVE: {attack_point} -> {tool}({args})")
+                logger.error("FALSE POSITIVE: %s -> %s(%s)", attack_point, tool, args)
 
-        status = "✓" if result.passed else "✗"
-        print(
-            f"[Delegation] {status} {attack_point}: {tool}({args}) = {actual} (expected {expected})"
+        status = "PASS" if result.passed else "FAIL"
+        logger.debug(
+            "%s %s: %s(%s) = %s (expected %s)",
+            status, attack_point, tool, args, actual, expected
         )
 
     def save_results(self, path: Path) -> None:
@@ -217,7 +221,7 @@ class DelegationHarness:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             json.dump(self.metrics.to_dict(), f, indent=2)
-        print(f"[Delegation] Results saved to {path}")
+        logger.info("Results saved to %s", path)
 
     def print_summary(self) -> None:
         """Print human-readable summary."""

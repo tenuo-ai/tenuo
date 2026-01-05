@@ -785,6 +785,28 @@ class ConfigurationError(TenuoError):
     rust_variant = ""  # ConfigError is separate in Rust
 
 
+class FeatureNotEnabled(TenuoError):
+    """Optional feature is not enabled."""
+    error_code = "feature_not_enabled"
+    rust_variant = "FeatureNotEnabled"
+
+    def __init__(self, feature: str = "unknown", hint: Optional[str] = None):
+        super().__init__(
+            f"Feature '{feature}' is not enabled. Enable it in Cargo.toml: tenuo = {{ features = [\"{feature}\"] }}",
+            {"feature": feature},
+            hint=hint
+        )
+
+
+class RuntimeError(TenuoError):
+    """Generic runtime error from Rust."""
+    error_code = "runtime_error"
+    rust_variant = "RuntimeError"
+
+    def __init__(self, message: str = "", hint: Optional[str] = None):
+        super().__init__(message or "Runtime error", {"message": message}, hint=hint)
+
+
 # =============================================================================
 # Diff-Style Authorization Error (DX improvement)
 # =============================================================================
@@ -1004,6 +1026,9 @@ RUST_ERROR_MAP: dict[str, type[TenuoError]] = {
     "Validation": ValidationError,
     "ClearanceLevelExceeded": ClearanceLevelExceeded,
     "InsufficientClearance": ClearanceViolation,  # Map InsufficientClearance to ClearanceViolation
+    # Runtime errors
+    "RuntimeError": RuntimeError,
+    "FeatureNotEnabled": FeatureNotEnabled,
 }
 
 # All Rust Error variants that must have Python equivalents
@@ -1017,6 +1042,14 @@ def categorize_rust_error(error_message: str) -> TenuoError:
     This is used when Rust errors cross the FFI boundary.
     """
     msg = error_message.lower()
+
+    # Feature not enabled (check very early - messages may contain other keywords like "cel")
+    if "feature" in msg and ("not enabled" in msg or "enable" in msg):
+        # Try to extract feature name from message like "Feature 'cel' is not enabled"
+        import re
+        match = re.search(r"feature\s+['\"]?(\w+)['\"]?", msg, re.IGNORECASE)
+        feature = match.group(1) if match else "unknown"
+        return FeatureNotEnabled(feature)
 
     # Revocation
     if "revoked" in msg:

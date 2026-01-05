@@ -41,17 +41,22 @@ python -m benchmarks.agentdojo.evaluate \
 
 ### Full Suite Comparison
 ```bash
-# Email suite (high-risk exfiltration)
+# Workspace suite (email, files, calendar)
 python -m benchmarks.agentdojo.evaluate \
-    --suite email \
+    --suite workspace \
     --compare
 
-# Banking suite (high-risk transfers)
+# Banking suite (money transfers)
 python -m benchmarks.agentdojo.evaluate \
     --suite banking \
     --compare
 
-# Travel suite (premium upgrades)
+# Slack suite (messaging)
+python -m benchmarks.agentdojo.evaluate \
+    --suite slack \
+    --compare
+
+# Travel suite (bookings)
 python -m benchmarks.agentdojo.evaluate \
     --suite travel \
     --compare
@@ -169,7 +174,7 @@ python -m benchmarks.agentdojo.evaluate \
 ### Run Overnight
 ```bash
 # Run all suites (takes ~30 minutes)
-for suite in email banking travel slack workspace; do
+for suite in workspace banking slack travel; do
     python -m benchmarks.agentdojo.evaluate \
         --suite $suite \
         --compare

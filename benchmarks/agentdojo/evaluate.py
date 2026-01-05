@@ -156,6 +156,11 @@ def parse_args():
         action="store_true",
         help="Validate setup without making API calls (no cost)",
     )
+    parser.add_argument(
+        "--jit",
+        action="store_true",
+        help="Enable JIT (Just-in-Time) warrants - task-specific constraints",
+    )
     return parser.parse_args()
 
 
@@ -201,6 +206,7 @@ def main():
         suite_name=args.suite,
         model=args.model,
         api_key=args.api_key,
+        jit_warrants=args.jit,
     )
 
     def take_first_task_ids(task_map: dict, limit: int) -> list:

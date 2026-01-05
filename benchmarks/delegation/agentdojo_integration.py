@@ -5,11 +5,14 @@ Combines AgentDojo's battle-tested prompt injections with Tenuo's
 delegation chains to test that attenuated warrants bound damage.
 """
 
+import logging
 from typing import Optional, Sequence
 from pathlib import Path
 from dataclasses import dataclass, field
 
 from openai import OpenAI
+
+logger = logging.getLogger(__name__)
 from agentdojo.benchmark import get_suite, benchmark_suite_with_injections
 from agentdojo.agent_pipeline import (
     AgentPipeline,
@@ -82,9 +85,9 @@ class DelegatedPipeline(BasePipelineElement):
         # Create warrant chain
         self.manager_warrant, self.assistant_warrant = self._create_warrant_chain()
 
-        print(f"[Delegation] Created warrant chain for suite: {suite_name}")
-        print(
-            f"[Delegation] Manager capabilities: {list(self.manager_warrant.capabilities.keys())}"
+        logger.info("Created warrant chain for suite: %s", suite_name)
+        logger.debug(
+            "Manager capabilities: %s", list(self.manager_warrant.capabilities.keys())
         )
 
     def _create_warrant_chain(self) -> tuple[Warrant, Warrant]:

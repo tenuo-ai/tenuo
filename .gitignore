@@ -62,9 +62,14 @@ tenuo-core/check.log
 
 # Benchmark results (run locally, not committed until validated)
 results/
+**/results/
+benchmarks/**/results/
 security_report.md
 *.log
 tenuo-core/benchmark_results.txt
+
+# Benchmark virtual environments
+benchmarks/**/venv/
 
 # Generated docs (built in CI)
 docs/reference/

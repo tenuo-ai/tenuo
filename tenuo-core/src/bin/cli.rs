@@ -1640,9 +1640,8 @@ fn handle_verify(
                 trusted_any = true;
             }
             Err(e) => {
-                // Security: avoid logging key material or detailed parsing errors.
-                let _ = e;
-                eprintln!("Warning: Could not load trusted issuer");
+                // Security: Only log error type, not the key material
+                eprintln!("Warning: Could not load trusted issuer: {}", e);
             }
         }
     }

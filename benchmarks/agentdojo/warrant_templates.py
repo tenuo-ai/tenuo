@@ -18,7 +18,7 @@ AgentDojo Environments:
 Total: 97 user tasks, 629 security cases
 """
 
-from tenuo import Pattern, Exact, Range, OneOf, AnyOf, NotOneOf
+from tenuo import Pattern, Exact, Range, OneOf, AnyOf, NotOneOf, CEL
 
 
 # =============================================================================
@@ -208,27 +208,30 @@ TRAVEL_CONSTRAINTS = {
 # - share_file uses `email`, not `recipient`
 # - file ops use `file_id` or `filename`, not `path`
 # - calendar uses `participants` (list), not `participant`
+#
+# NOTE: For list arguments (recipients, participants), we use CEL expressions
+# with .all() macro to validate each element matches the pattern.
 # =============================================================================
 WORKSPACE_CONSTRAINTS = {
     # === HIGH-RISK: Outbound data (exfiltration vectors) ===
     # AgentDojo: send_email(recipients: list[str], subject, body, ...)
+    # CEL .all() validates each recipient ends with internal domain
+    # NOTE: In CEL constraints, the field value is available as `value`
     "send_email": {
-        "recipients": Pattern(
-            "*@company.com"
-        ),  # BLOCKS external emails like @gmail.com
+        "recipients": CEL("value.all(r, r.endsWith('@company.com'))"),
         "_allow_unknown": True,
     },
     "reply_to_email": {
-        "recipients": Pattern("*@company.com"),
+        "recipients": CEL("value.all(r, r.endsWith('@company.com'))"),
         "_allow_unknown": True,
     },
     "forward_email": {
-        "recipients": Pattern("*@company.com"),  # Critical: no external forwarding
+        "recipients": CEL("value.all(r, r.endsWith('@company.com'))"),
         "_allow_unknown": True,
     },
     # AgentDojo: share_file(file_id, email: str, permission)
     "share_file": {
-        "email": Pattern("*@company.com"),  # Only internal sharing
+        "email": Pattern("*@company.com"),  # Only internal sharing (scalar, not list)
         "_allow_unknown": True,
     },
     # === HIGH-RISK: File write operations ===
@@ -260,8 +263,9 @@ WORKSPACE_CONSTRAINTS = {
     },
     # === MEDIUM-RISK: Calendar with external participants ===
     # AgentDojo: add_calendar_event_participants(event_id, participants: list[str])
+    # CEL .all() validates each participant ends with internal domain
     "add_calendar_event_participants": {
-        "participants": Pattern("*@company.com"),  # BLOCKS external participants
+        "participants": CEL("value.all(p, p.endsWith('@company.com'))"),
         "_allow_unknown": True,
     },
     # === LOW-RISK: Read-only file operations ===

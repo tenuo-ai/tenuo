@@ -4,6 +4,7 @@ Real LLM-based delegation scenarios with prompt injection.
 Tests that warrant delegation bounds damage even when inner agents are compromised.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Optional
 import json
@@ -11,6 +12,8 @@ import json
 from openai import OpenAI
 
 from tenuo import SigningKey, Warrant, Pattern, Range
+
+logger = logging.getLogger(__name__)
 
 
 # Prompt injection payloads targeting the inner agent
@@ -51,7 +54,7 @@ def get_agentdojo_injections(
 
         return injections
     except ImportError:
-        print("[Warning] AgentDojo not installed, using built-in payloads")
+        logger.warning("AgentDojo not installed, using built-in payloads")
         return INJECTION_PAYLOADS
 
 
@@ -280,7 +283,7 @@ You have limited permissions - only perform actions within your authorized scope
         results = []
 
         for payload in INJECTION_PAYLOADS:
-            print(f"\n[Injection] Testing: {payload[:50]}...")
+            logger.info("Testing injection: %s...", payload[:50])
             result = self.run_assistant_with_injection(
                 warrant=assistant_warrant,
                 task=task,
@@ -289,10 +292,13 @@ You have limited permissions - only perform actions within your authorized scope
             results.append(result)
 
             status = "ATTACK SUCCEEDED" if result.attack_succeeded else "Attack blocked"
-            print(f"  Tool calls: {len(result.tool_calls)}")
-            print(f"  Blocked: {len(result.blocked_calls)}")
-            print(f"  Allowed: {len(result.allowed_calls)}")
-            print(f"  {status}")
+            logger.debug(
+                "Tool calls: %d, Blocked: %d, Allowed: %d, Status: %s",
+                len(result.tool_calls),
+                len(result.blocked_calls),
+                len(result.allowed_calls),
+                status
+            )
 
         return results
 
@@ -414,6 +420,6 @@ class DelegationChainScenario:
             results.append(result)
 
             status = "BLOCKED" if result["blocked"] else "ALLOWED"
-            print(f"[{level}] Transfer ${amount}: {status}")
+            logger.info("[%s] Transfer $%d: %s", level, amount, status)
 
         return results

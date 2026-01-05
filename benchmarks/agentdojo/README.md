@@ -1,6 +1,5 @@
 # AgentDojo Benchmark Integration
 
-
 Empirical validation of Tenuo's constraint enforcement using [AgentDojo](https://github.com/ethz-spylab/agentdojo).
 
 ⚠️ **Work in Progress**: This benchmark is under active development. Results may vary based on model, attack type, and constraint configuration.
@@ -157,6 +156,7 @@ benchmarks/agentdojo/
 ├── evaluate.py          # CLI entrypoint
 ├── harness.py           # AgentDojo integration
 ├── warrant_templates.py # Constraint definitions
+├── task_policies.py     # JIT task-aware constraint selection
 ├── tool_wrapper.py      # Authorization layer
 ├── analyze.py           # Results analysis
 └── requirements.txt     # Dependencies

@@ -31,6 +31,7 @@ from tenuo import SigningKey, Warrant
 
 from .warrant_templates import get_constraints_for_suite
 from .tool_wrapper import wrap_tools, AuthorizationMetrics
+from .task_policies import select_constraints_for_query
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class TenuoProtectedPipeline(BasePipelineElement):
         issuer_key: SigningKey,
         holder_key: SigningKey,
         metrics: Optional[AuthorizationMetrics] = None,
+        jit_warrants: bool = False,
     ):
         """
         Args:
@@ -59,6 +61,7 @@ class TenuoProtectedPipeline(BasePipelineElement):
             issuer_key: Key to issue warrants
             holder_key: Key for PoP signatures
             metrics: Optional metrics tracker
+            jit_warrants: If True, create task-specific warrants per query (JIT mode)
         """
         super().__init__()
         self.base_pipeline = base_pipeline
@@ -66,21 +69,26 @@ class TenuoProtectedPipeline(BasePipelineElement):
         self.issuer_key = issuer_key
         self.holder_key = holder_key
         self.metrics = metrics or AuthorizationMetrics()
+        self.jit_warrants = jit_warrants
         # AgentDojo logging expects a pipeline name. Keep this stable.
         self.name = getattr(base_pipeline, "name", "tenuo-pipeline")
         logger.debug(f"Pipeline metrics initialized, id={id(self.metrics)}")
 
-        # Get constraints for this suite
-        self.constraints = get_constraints_for_suite(suite_name)
+        # Get base constraints for this suite
+        self.base_constraints = get_constraints_for_suite(suite_name)
 
-        # Create warrants for each tool
-        self.warrants = self._create_warrants()
+        # Create warrants (static mode) or defer to query time (JIT mode)
+        if not jit_warrants:
+            self.warrants = self._create_warrants(self.base_constraints)
+        else:
+            self.warrants = {}
+            logger.info("JIT warrant mode enabled - warrants created per query")
 
-    def _create_warrants(self) -> dict[str, Warrant]:
-        """Create warrants for all tools in the suite."""
+    def _create_warrants(self, constraints: dict) -> dict[str, Warrant]:
+        """Create warrants for all tools based on given constraints."""
         warrants = {}
 
-        for tool_name, tool_constraints in self.constraints.items():
+        for tool_name, tool_constraints in constraints.items():
             # Normalize tool name to snake_case (lowercase) to match runtime functions
             normalized_name = tool_name.lower()
 
@@ -121,6 +129,16 @@ class TenuoProtectedPipeline(BasePipelineElement):
         if extra_args is None:
             extra_args = {}
 
+        # JIT warrant mode: create task-specific warrants based on query
+        if self.jit_warrants:
+            task_constraints = select_constraints_for_query(
+                self.suite_name, query, self.base_constraints
+            )
+            warrants = self._create_warrants(task_constraints)
+            logger.debug(f"JIT warrants created for query: {query[:50]}...")
+        else:
+            warrants = self.warrants
+
         # Wrap runtime tools with Tenuo authorization
         logger.debug(f"Runtime type: {type(runtime).__name__}")
         if hasattr(runtime, "functions"):
@@ -130,7 +148,7 @@ class TenuoProtectedPipeline(BasePipelineElement):
             original_functions = runtime.functions
             protected_tools, _ = wrap_tools(
                 tools=original_functions,
-                warrants=self.warrants,
+                warrants=warrants,
                 holder_key=self.holder_key,
                 metrics=self.metrics,
             )
@@ -166,6 +184,7 @@ class TenuoAgentDojoHarness:
         model: str = "gpt-4o-mini",
         benchmark_version: str = "v1",
         api_key: Optional[str] = None,
+        jit_warrants: bool = False,
     ):
         """
         Args:
@@ -173,11 +192,13 @@ class TenuoAgentDojoHarness:
             model: LLM model to use
             benchmark_version: AgentDojo benchmark version
             api_key: OpenAI API key (if None, uses OPENAI_API_KEY env var)
+            jit_warrants: If True, create task-specific warrants (JIT mode)
         """
         self.suite_name = suite_name
         self.model = model
         self.benchmark_version = benchmark_version
         self.api_key = api_key
+        self.jit_warrants = jit_warrants
 
         # Generate keys for this benchmark run
         self.issuer_key = SigningKey.generate()
@@ -189,6 +210,8 @@ class TenuoAgentDojoHarness:
         # Shared metrics tracker
         self.metrics = AuthorizationMetrics()
         logger.debug(f"Harness metrics created, id={id(self.metrics)}")
+        if jit_warrants:
+            logger.info("JIT warrant mode enabled")
 
     def _create_pipeline(self, with_tenuo: bool = True) -> BasePipelineElement:
         """Create agent pipeline with or without Tenuo protection."""
@@ -231,6 +254,7 @@ class TenuoAgentDojoHarness:
                 issuer_key=self.issuer_key,
                 holder_key=self.holder_key,
                 metrics=self.metrics,
+                jit_warrants=self.jit_warrants,
             )
         else:
             return base_pipeline

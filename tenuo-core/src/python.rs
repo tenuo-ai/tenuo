@@ -2806,6 +2806,33 @@ impl PyWarrant {
         }
     }
 
+    /// Check constraints with structured result (DIAGNOSTIC USE ONLY).
+    ///
+    /// Like check_constraints, but returns structured data instead of a string.
+    ///
+    /// Returns:
+    ///     None if constraints are satisfied, or a tuple (field, reason) on failure
+    fn check_constraints_detailed(
+        &self,
+        tool: &str,
+        args: &Bound<'_, PyDict>,
+    ) -> PyResult<Option<(String, String)>> {
+        let mut rust_args = HashMap::new();
+        for (key, value) in args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_args.insert(field, cv);
+        }
+
+        match self.inner.check_constraints(tool, &rust_args) {
+            Ok(()) => Ok(None),
+            Err(crate::error::Error::ConstraintNotSatisfied { field, reason }) => {
+                Ok(Some((field, reason)))
+            }
+            Err(e) => Ok(Some(("_error".to_string(), format!("{}", e)))),
+        }
+    }
+
     // ========================================================================
     // INTROSPECTION METHODS
     // Use these to inspect warrant metadata. Safe for any use.

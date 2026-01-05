@@ -563,9 +563,24 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
     # This isn't really a "denial" for execution, but useful info
 
     # Check constraints via Rust (without requiring PoP)
-    # check_constraints returns None if OK, or a string describing the failure
+    # check_constraints_detailed returns None if OK, or (field, reason) tuple on failure
     try:
-        failure_reason = self.check_constraints(tool, args or {})
+        # Use structured method if available, fall back to string parsing
+        if hasattr(self, 'check_constraints_detailed'):
+            result = self.check_constraints_detailed(tool, args or {})
+            if result:
+                failed_field, reason = result
+                # Handle internal errors (field="_error")
+                if failed_field == "_error":
+                    failed_field = None
+                failure_reason = f"Constraint '{failed_field}' not satisfied: {reason}" if failed_field else reason
+            else:
+                failure_reason = None
+        else:
+            # Fallback for older Rust builds
+            failure_reason = self.check_constraints(tool, args or {})
+            failed_field = None
+
         if failure_reason:
             # Enhance suggestions for zero-trust related failures
             enhanced_suggestion = _enhance_constraint_suggestion(
@@ -576,6 +591,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
                 deny_code=DenyCode.CONSTRAINT_MISMATCH,
                 deny_path="constraints.violation",
                 tool=tool,
+                field=failed_field,
                 suggestion=f"{enhanced_suggestion}{playground_hint}",
             )
     except Exception as e:
