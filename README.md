@@ -27,9 +27,9 @@ pip install tenuo
 ```
 
 <a href="https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
-<a href="https://tenuo.dev/explorer/"><img src="https://img.shields.io/badge/🔬_Explorer-decode_warrants-00d4ff" alt="Explorer"></a>
-<a href="https://tenuo.dev/demo.html"><img src="https://img.shields.io/badge/🐳_Docker_Demo-delegation_chain-a855f7" alt="Docker Demo"></a>
-<a href="https://niyikiza.com/posts/tenuo-launch/"><img src="https://img.shields.io/badge/📖_Blog-Why_Tenuo%3F-ff6b6b" alt="Blog"></a>
+<a href="https://tenuo.dev/explorer/"><img src="https://img.shields.io/badge/Explorer-decode_warrants-00d4ff" alt="Explorer"></a>
+<a href="https://tenuo.dev/demo.html"><img src="https://img.shields.io/badge/Docker_Demo-delegation_chain-a855f7" alt="Docker Demo"></a>
+<a href="https://niyikiza.com/posts/tenuo-launch/"><img src="https://img.shields.io/badge/Blog-Why_Tenuo%3F-ff6b6b" alt="Blog"></a>
 
 ## Quick Start
 
@@ -44,8 +44,8 @@ def search(query: str) -> str:
 
 # Sync API (shown here for simplicity)
 with mint_sync(Capability("search", query=Pattern("weather *"))):
-    print(search(query="weather NYC"))   # ✅ "Results for: weather NYC"
-    print(search(query="stock prices"))  # ❌ AuthorizationDenied
+    print(search(query="weather NYC"))   # OK: "Results for: weather NYC"
+    print(search(query="stock prices"))  # DENIED: AuthorizationDenied
 
 # Async API: async with mint(...) for LangChain/FastAPI/async workflows
 ```
@@ -152,8 +152,8 @@ executor = AgentExecutor(agent=agent, tools=protected_tools)
 
 # Mint scoped authority (async context manager for LangChain)
 async with mint(Capability("search", query=Pattern("weather *"))):
-    await executor.ainvoke({"input": "What's the weather in NYC?"})  # ✅
-    await executor.ainvoke({"input": "Read /etc/passwd"})            # ❌
+    await executor.ainvoke({"input": "What's the weather in NYC?"})  # OK
+    await executor.ainvoke({"input": "Read /etc/passwd"})            # DENIED
 
 # Prompt injection → search("hack commands") → denied (not "weather *")
 ```
@@ -176,7 +176,7 @@ result = graph.invoke({
         Capability("process_refund", amount=Range(min=0, max=50)),  # Max $50
     ],
 })
-# process_refund(amount=75) → ❌ Range(min=0, max=50) violated
+# process_refund(amount=75) -> DENIED: Range(min=0, max=50) violated
 ```
 
 **MCP (Model Context Protocol)** _(Python 3.10+)_
