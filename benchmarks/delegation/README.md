@@ -92,13 +92,12 @@ agent.run(warrant=external_warrant)
 
 ```
 benchmarks/delegation/
-├── scenarios.py             # Constraint enforcement scenarios
-├── llm_scenarios.py         # LLM multi-agent scenarios
-├── harness.py               # Test harness
-├── evaluate.py              # CLI entrypoint
-├── run_llm.py               # LLM scenario runner
-├── agentdojo_integration.py # AgentDojo integration
-└── README.md                # This file
+├── scenarios.py      # Constraint enforcement scenarios
+├── llm_scenarios.py  # LLM multi-agent scenarios
+├── harness.py        # Test harness
+├── evaluate.py       # CLI entrypoint
+├── run_llm.py        # LLM scenario runner
+└── README.md         # This file
 ```
 
 ## Related
