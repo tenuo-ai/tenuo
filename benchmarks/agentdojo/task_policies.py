@@ -1,204 +1,131 @@
 """
-Task-aware constraint policies for AgentDojo benchmarks.
+Baseline Policy for AgentDojo Benchmarks.
 
-This module defines per-task warrant policies that balance security with utility.
-Instead of one-size-fits-all constraints, each task gets appropriate permissions.
+This module defines a SINGLE, STATIC policy that represents reasonable
+enterprise constraints. The benchmark tests one thing:
 
-PHILOSOPHY:
-- Legitimate tasks get permissions they need
-- Attack vectors are still blocked by constraint specificity
-- JIT (Just-in-Time) warrants scoped to task requirements
+    Given this policy, did Tenuo enforce it correctly?
+
+The answer should always be: Yes, 100%.
+
+ARCHITECTURE:
+  ┌─────────────────┐     ┌─────────────┐     ┌─────────────┐
+  │ Your Policy     │ ──▶ │   Warrant   │ ──▶ │   Tenuo     │
+  │ Engine          │     │  (carries   │     │ (enforces)  │
+  │ (decides what)  │     │   policy)   │     │             │
+  └─────────────────┘     └─────────────┘     └─────────────┘
+        ↑                                           ↑
+    Not Tenuo's job                            Tenuo's job
+    (simulated here)                           (tested here)
 """
 
-from typing import Optional
-from tenuo import Pattern, Exact, Range, CEL, AnyOf, NotOneOf
-
-# =============================================================================
-# Task Context Detection
-# =============================================================================
-
-def detect_task_context(query: str, task_id: Optional[str] = None) -> str:
-    """
-    Detect the context/intent of a task from its query.
-    
-    Returns a context string used to select appropriate constraints.
-    """
-    query_lower = query.lower()
-    
-    # Email-related tasks
-    if any(word in query_lower for word in ["email", "send", "reply", "forward"]):
-        # Check if it's internal communication
-        if any(word in query_lower for word in ["team", "colleague", "coworker", "manager"]):
-            return "email_internal"
-        # Check if it's customer-facing
-        if any(word in query_lower for word in ["customer", "client", "support", "external"]):
-            return "email_external"
-        return "email_general"
-    
-    # Calendar tasks
-    if any(word in query_lower for word in ["calendar", "meeting", "event", "schedule", "appointment"]):
-        return "calendar"
-    
-    # File operations
-    if any(word in query_lower for word in ["file", "document", "read", "write", "save"]):
-        return "files"
-    
-    # Search/lookup
-    if any(word in query_lower for word in ["search", "find", "look up", "who"]):
-        return "search"
-    
-    return "general"
+from tenuo import Pattern, NotOneOf, CEL
 
 
 # =============================================================================
-# Context-Specific Constraints
+# Baseline Policy
 # =============================================================================
+# Reasonable enterprise constraints for an internal agent.
+# These are NOT designed to "catch attacks" - they represent normal policy.
 
-# Workspace suite task-aware policies
-WORKSPACE_TASK_POLICIES = {
-    # Internal email: Only to company domain
-    "email_internal": {
-        "send_email": {
-            "recipients": CEL("value.all(r, r.endsWith('@company.com') || r.endsWith('@bluesparrowtech.com'))"),
-            "_allow_unknown": True,
-        },
-        "reply_to_email": {
-            "recipients": CEL("value.all(r, r.endsWith('@company.com') || r.endsWith('@bluesparrowtech.com'))"),
-            "_allow_unknown": True,
-        },
-        "forward_email": {
-            "recipients": CEL("value.all(r, r.endsWith('@company.com') || r.endsWith('@bluesparrowtech.com'))"),
-            "_allow_unknown": True,
-        },
+BASELINE_POLICY = {
+    # Email: Internal domains only
+    # Rationale: Standard data-loss-prevention policy
+    "send_email": {
+        "recipients": CEL(
+            "value.all(r, r.endsWith('@company.com') || r.endsWith('@bluesparrowtech.com'))"
+        ),
+        "_allow_unknown": True,
     },
-    
-    # External email: Allow known external domains (customers, partners)
-    "email_external": {
-        "send_email": {
-            # Allow internal + known external, but block suspicious free email
-            "recipients": CEL("""
-                value.all(r, 
-                    r.endsWith('@company.com') || 
-                    r.endsWith('@bluesparrowtech.com') ||
-                    r.endsWith('@mainsail-tech.com') ||
-                    r.endsWith('@industry-network.com') ||
-                    !(r.endsWith('@gmail.com') || r.endsWith('@yahoo.com') || r.endsWith('@hotmail.com'))
-                )
-            """.strip().replace("\n", " ")),
-            "_allow_unknown": True,
-        },
-        "reply_to_email": {"_allow_unknown": True},  # Replies are contextual
-        "forward_email": {
-            "recipients": CEL("value.all(r, !r.endsWith('@gmail.com'))"),
-            "_allow_unknown": True,
-        },
+    "reply_to_email": {
+        "recipients": CEL(
+            "value.all(r, r.endsWith('@company.com') || r.endsWith('@bluesparrowtech.com'))"
+        ),
+        "_allow_unknown": True,
     },
-    
-    # General email: Moderate restrictions
-    "email_general": {
-        "send_email": {
-            # Block obvious attack targets (free email services for exfiltration)
-            "recipients": CEL("""
-                value.all(r, 
-                    !(r.contains('attacker') || r.contains('evil') || r.contains('hack'))
-                )
-            """.strip().replace("\n", " ")),
-            "_allow_unknown": True,
-        },
-        "reply_to_email": {"_allow_unknown": True},
-        "forward_email": {"_allow_unknown": True},
+    "forward_email": {
+        "recipients": CEL(
+            "value.all(r, r.endsWith('@company.com') || r.endsWith('@bluesparrowtech.com'))"
+        ),
+        "_allow_unknown": True,
     },
-    
-    # Calendar: Standard access
-    "calendar": {
-        "search_calendar_events": {"_allow_unknown": True},
-        "get_day_calendar_events": {"_allow_unknown": True},
-        "create_calendar_event": {"_allow_unknown": True},
-        "add_calendar_event_participants": {
-            # Block adding external participants to internal meetings
-            "participants": CEL("""
-                value.all(p, 
-                    p.endsWith('@company.com') || 
-                    p.endsWith('@bluesparrowtech.com') ||
-                    p.endsWith('@mainsail-tech.com')
-                )
-            """.strip().replace("\n", " ")),
-            "_allow_unknown": True,
-        },
+    # File sharing: Internal only
+    "share_file": {
+        "email": Pattern("*@company.com"),
+        "_allow_unknown": True,
     },
-    
-    # File operations: Protect sensitive files
-    "files": {
-        "read_file": {"_allow_unknown": True},
-        "write_file": {"_allow_unknown": True},
-        "create_file": {"_allow_unknown": True},
-        "delete_file": {
-            # Protect specific sensitive file IDs
-            "file_id": NotOneOf(["13", "14", "15", "1", "2", "3"]),
-            "_allow_unknown": True,
-        },
-        "share_file": {
-            "email": Pattern("*@company.com"),
-            "_allow_unknown": True,
-        },
+    # File deletion: Protect certain file IDs
+    # Rationale: Sensitive documents require approval workflow
+    "delete_file": {
+        "file_id": NotOneOf(["13", "14", "15"]),
+        "_allow_unknown": True,
     },
-    
-    # Search: Open access
-    "search": {
-        "search_files": {"_allow_unknown": True},
-        "search_emails": {"_allow_unknown": True},
-        "search_contacts_by_name": {"_allow_unknown": True},
-        "search_contacts_by_email": {"_allow_unknown": True},
+    # Calendar: Internal participants
+    "add_calendar_event_participants": {
+        "participants": CEL(
+            "value.all(p, p.endsWith('@company.com') || p.endsWith('@bluesparrowtech.com'))"
+        ),
+        "_allow_unknown": True,
     },
-    
-    # General: Baseline restrictions
-    "general": {
-        # Inherit from base constraints
-    },
+    # Read operations: No constraints (allowed)
+    "read_file": {"_allow_unknown": True},
+    "get_file_by_id": {"_allow_unknown": True},
+    "list_files": {"_allow_unknown": True},
+    "search_files": {"_allow_unknown": True},
+    "search_files_by_filename": {"_allow_unknown": True},
+    "get_unread_emails": {"_allow_unknown": True},
+    "get_sent_emails": {"_allow_unknown": True},
+    "get_received_emails": {"_allow_unknown": True},
+    "search_emails": {"_allow_unknown": True},
+    "get_email_by_id": {"_allow_unknown": True},
+    "search_contacts_by_name": {"_allow_unknown": True},
+    "search_contacts_by_email": {"_allow_unknown": True},
+    "get_contact_info": {"_allow_unknown": True},
+    "search_calendar_events": {"_allow_unknown": True},
+    "get_day_calendar_events": {"_allow_unknown": True},
+    "get_current_day": {"_allow_unknown": True},
+    "get_current_time": {"_allow_unknown": True},
+    # Write operations: Allowed (no special constraints)
+    "write_file": {"_allow_unknown": True},
+    "create_file": {"_allow_unknown": True},
+    "append_to_file": {"_allow_unknown": True},
+    "create_calendar_event": {"_allow_unknown": True},
+    "add_contact": {"_allow_unknown": True},
+    "delete_email": {"_allow_unknown": True},
+    "cancel_calendar_event": {"_allow_unknown": True},
+    "reschedule_calendar_event": {"_allow_unknown": True},
+    "remove_calendar_event_participants": {"_allow_unknown": True},
+    "get_draft_emails": {"_allow_unknown": True},
 }
 
 
-def get_task_constraints(
-    suite_name: str, 
-    context: str, 
-    base_constraints: dict
-) -> dict:
+def get_baseline_policy() -> dict:
     """
-    Get constraints for a specific task context.
-    
-    Merges task-specific policies with base constraints.
-    Task-specific policies override base constraints for specified tools.
+    Get the baseline policy for benchmarks.
+
+    Returns:
+        Dictionary of tool_name -> constraints
     """
-    if suite_name != "workspace":
-        return base_constraints
-    
-    task_policy = WORKSPACE_TASK_POLICIES.get(context, {})
-    
-    # Start with base constraints
-    merged = dict(base_constraints)
-    
-    # Override with task-specific constraints
-    for tool, constraints in task_policy.items():
-        merged[tool] = constraints
-    
-    return merged
+    return BASELINE_POLICY.copy()
 
 
 # =============================================================================
-# Constraint Selection Logic
+# Backward Compatibility
 # =============================================================================
+
+
+def get_role_constraints(role: str = "internal_agent") -> dict:
+    """Backward-compatible API. Always returns baseline policy."""
+    return get_baseline_policy()
+
 
 def select_constraints_for_query(
     suite_name: str,
     query: str,
     base_constraints: dict,
-    task_id: Optional[str] = None,
+    task_id: str | None = None,
 ) -> dict:
-    """
-    Select appropriate constraints based on the task query.
-    
-    This is the main entry point for JIT constraint selection.
-    """
-    context = detect_task_context(query, task_id)
-    return get_task_constraints(suite_name, context, base_constraints)
-
+    """Backward-compatible API. Merges baseline with base constraints."""
+    merged = dict(base_constraints)
+    merged.update(get_baseline_policy())
+    return merged
