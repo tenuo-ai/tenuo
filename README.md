@@ -120,8 +120,6 @@ pip install "tenuo[langgraph]"     # + LangGraph (includes LangChain)
 pip install "tenuo[mcp]"           # + MCP client (Python ≥3.10 required)
 ```
 
-> Quotes required in zsh (default macOS shell) since `[]` are glob characters.
-
 ---
 
 ## Integrations

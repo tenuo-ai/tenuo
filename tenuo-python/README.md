@@ -153,8 +153,6 @@ pip install "tenuo[mcp]"           # + MCP client (Python ≥3.10)
 pip install "tenuo[dev]"           # Development tools
 ```
 
-> Quotes required in zsh (default macOS shell) since `[]` are glob characters.
-
 ## Key Management
 
 ### Loading Keys
