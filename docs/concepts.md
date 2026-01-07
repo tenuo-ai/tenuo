@@ -373,7 +373,7 @@ Tenuo provides three levels of abstraction. Start at the top and drop down when 
 | Control plane | Optional; can run fully embedded |
 | Revocation service | Basic revocation via Authorizer; distributed revocation in v0.3 |
 | Context-aware constraints | Spec under development |
-| Multi-sig approvals | Planned for v0.3 |
+| Multi-sig with identity binding | Primitive available; notary in v0.2 |
 | Google A2A integration | Planned for v0.2 |
 | TypeScript/Node SDK | Planned for v0.2 |
 

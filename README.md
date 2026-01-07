@@ -255,7 +255,7 @@ See [Related Work](https://tenuo.dev/related-work) for detailed comparison.
 
 | Feature | Status |
 |---------|--------|
-| Multi-sig approvals | Available in v0.1.0-beta.3 |
+| Multi-sig approvals | Primitive available; full support with notary in v0.2 |
 | TypeScript/Node SDK | Planned for v0.2 |
 | Google A2A integration | Planned for v0.2 |
 | Context-aware constraints | Spec under development |

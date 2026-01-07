@@ -70,7 +70,7 @@
 |---------|--------|-------|
 | TypeScript/Node SDK | v0.2 | Help wanted! |
 | Google A2A integration | v0.2 | Agent-to-Agent protocol |
-| Multi-sig approvals | v0.3 | M-of-N for sensitive actions |
+| Multi-sig approvals | v0.2 | Primitive available now; notary integration in v0.2 |
 | Distributed revocation | v0.3 | Cascading revocation service |
 | Context-aware constraints | TBD | Spec under development |
 

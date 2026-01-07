@@ -2328,7 +2328,7 @@ compiled.validate()  # Check for incompatible extraction sources
 | SecureGraph (declarative LangGraph attenuation) | [PLANNED] Design  |
 | Trust enforcement (opt-in)                      | [PLANNED] Design  |
 | `tenuo-mcp` standalone package                  | [PLANNED] Planned |
-| Multi-sig approvals                             | [PLANNED] Planned |
+| Multi-sig approvals                             | [PARTIAL] Primitive now, full in v0.2 |
 | Cascading revocation                            | [PLANNED] Planned |
 | Google A2A integration                          | [PLANNED] Planned |
 
