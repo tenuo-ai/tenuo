@@ -35,22 +35,24 @@ pip install tenuo
 
 ```python
 from tenuo import configure, SigningKey, mint_sync, guard, Capability, Pattern
+from tenuo.exceptions import AuthorizationDenied
 
 configure(issuer_key=SigningKey.generate(), dev_mode=True, audit_log=False)
 
-@guard(tool="search")
-def search(query: str) -> str:
-    return f"Results for: {query}"
+@guard(tool="send_email")
+def send_email(to: str) -> str:
+    return f"Sent to {to}"
 
-# Sync API (shown here for simplicity)
-with mint_sync(Capability("search", query=Pattern("weather *"))):
-    print(search(query="weather NYC"))   # OK: "Results for: weather NYC"
-    print(search(query="stock prices"))  # DENIED: AuthorizationDenied
-
-# Async API: async with mint(...) for LangChain/FastAPI/async workflows
+with mint_sync(Capability("send_email", to=Pattern("*@company.com"))):
+    print(send_email(to="alice@company.com"))  # -> "Sent to alice@company.com"
+    
+    try:
+        send_email(to="attacker@evil.com")
+    except AuthorizationDenied:
+        print("Blocked: attacker@evil.com")  # -> "Blocked: attacker@evil.com"
 ```
 
-The agent can be prompt-injected. The authorization layer doesn't care. The warrant says `weather *`. The request says `stock prices`. **Denied.**
+The agent can be prompt-injected. The authorization layer doesn't care. The warrant says `*@company.com`. The request says `attacker@evil.com`. **Denied.**
 
 ---
 
@@ -66,7 +68,6 @@ IAM answers "who are you?" Tenuo answers "what can you do right now?"
 | Central policy servers add latency | Offline verification in ~27μs |
 
 ---
-
 
 ## How It Works
 
@@ -94,7 +95,7 @@ Tenuo implements **Subtractive Delegation**.
 | Feature | Description |
 |---------|-------------|
 | **Offline verification** | No network calls, ~27μs |
-| **Holder binding (PoP)** | Stolen tokens are useless without the key |
+| **Holder binding** | Stolen tokens are useless without the key |
 | **Constraint types** | `Exact`, `Pattern`, `Range`, `OneOf`, `Regex`, `Cidr`, `UrlPattern`, `CEL` |
 | **Monotonic attenuation** | Capabilities only shrink, never expand |
 | **Framework integrations** | FastAPI, LangChain, LangGraph, MCP |
@@ -145,36 +146,34 @@ from tenuo.langchain import guard_tools
 configure(issuer_key=SigningKey.generate(), dev_mode=True)
 
 # Wrap tools with Tenuo authorization
-protected_tools = guard_tools([search_tool, file_tool])
+protected_tools = guard_tools([send_email_tool, calendar_tool])
 executor = AgentExecutor(agent=agent, tools=protected_tools)
 
 # Mint scoped authority (async context manager for LangChain)
-async with mint(Capability("search", query=Pattern("weather *"))):
-    await executor.ainvoke({"input": "What's the weather in NYC?"})  # OK
-    await executor.ainvoke({"input": "Read /etc/passwd"})            # DENIED
-
-# Prompt injection → search("hack commands") → denied (not "weather *")
+async with mint(Capability("send_email", to=Pattern("*@company.com"))):
+    await executor.ainvoke({"input": "Email alice@company.com about the meeting"})  # OK
+    await executor.ainvoke({"input": "Send report to external@gmail.com"})          # DENIED
 ```
 
 **LangGraph** - Authority that survives checkpoints
 ```python
-from tenuo import configure, SigningKey, Capability, Range
+from tenuo import configure, SigningKey, Capability, Pattern
 from tenuo.langgraph import TenuoToolNode
 
 configure(issuer_key=SigningKey.generate(), dev_mode=True)
 
 # TenuoToolNode enforces constraints on every tool call
-graph.add_node("tools", TenuoToolNode([lookup_order, process_refund]))
+graph.add_node("tools", TenuoToolNode([send_email_tool, calendar_tool]))
 
-# Warrant with spending limit travels in graph state
+# Capabilities travel in graph state across checkpoints
 result = graph.invoke({
-    "messages": [HumanMessage("Refund $75 for order #123")],
+    "messages": [HumanMessage("Email the team about tomorrow's standup")],
     "capabilities": [
-        Capability("lookup_order"),
-        Capability("process_refund", amount=Range(min=0, max=50)),  # Max $50
+        Capability("send_email", to=Pattern("*@company.com")),
+        Capability("create_event"),
     ],
 })
-# process_refund(amount=75) -> DENIED: Range(min=0, max=50) violated
+# Prompt injection → send_email(to="attacker@evil.com") → DENIED
 ```
 
 **MCP (Model Context Protocol)** _(Python 3.10+)_
