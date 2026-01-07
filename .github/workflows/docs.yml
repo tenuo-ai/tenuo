@@ -29,6 +29,11 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Only run if triggered manually, by docs changes, or if CI completed successfully
+    if: >
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,6 +47,24 @@ jobs:
           cargo doc --no-deps
           mkdir -p ../docs/reference
           cp -r target/doc/* ../docs/reference/
+
+      - name: Download explorer from CI
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: explorer-build
+          path: docs/explorer/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Check for existing explorer
+        if: github.event_name != 'workflow_run'
+        run: |
+          if [ ! -d "docs/explorer" ]; then
+            echo "Warning: docs/explorer not found. Explorer will be missing from this build."
+            mkdir -p docs/explorer
+            echo "<html><body>Explorer not built in this run</body></html>" > docs/explorer/index.html
+          fi
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

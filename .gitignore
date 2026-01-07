@@ -75,3 +75,4 @@ benchmarks/**/venv/
 # Generated docs (built in CI)
 docs/reference/
 docs/vendor/
+docs/explorer/
