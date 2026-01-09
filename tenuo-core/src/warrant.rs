@@ -179,9 +179,7 @@ impl std::fmt::Display for Clearance {
 /// rejections in distributed systems.
 pub const POP_TIMESTAMP_WINDOW_SECS: i64 = 30;
 
-/// Domain separation context for Proof-of-Possession signatures.
-/// Prevents cross-protocol signature reuse attacks.
-const POP_CONTEXT: &[u8] = b"tenuo-pop-v1";
+use crate::domain::POP_CONTEXT;
 
 /// A unique identifier for a warrant.
 ///
@@ -908,17 +906,12 @@ impl Warrant {
             if ciborium::ser::into_writer(&challenge_data, &mut challenge_bytes).is_err() {
                 continue;
             }
-            
+
             // Prepend domain separation context
             let mut preimage = POP_CONTEXT.to_vec();
             preimage.extend_from_slice(&challenge_bytes);
-            
-            if self
-                .payload
-                .holder
-                .verify(&preimage, signature)
-                .is_ok()
-            {
+
+            if self.payload.holder.verify(&preimage, signature).is_ok() {
                 verified = true;
                 break;
             }

@@ -224,7 +224,7 @@ impl Approval {
         // Domain-separated format: context || nonce || request_hash || external_id || approved_at || expires_at
         // - Context prefix prevents cross-protocol signature reuse attacks
         // - Nonce ensures each approval is unique (prevents replay attacks)
-        const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
+        use crate::domain::APPROVAL_CONTEXT;
 
         let mut bytes = Vec::new();
         bytes.extend_from_slice(APPROVAL_CONTEXT);
@@ -276,11 +276,7 @@ pub fn compute_request_hash(
 // Notary Proofs (PoP for Registration and Rotation)
 // ============================================================================
 
-/// Context string for registration proof signatures.
-const REGISTRATION_PROOF_CONTEXT: &[u8] = b"tenuo-key-registration-v1";
-
-/// Context string for rotation proof signatures.
-const ROTATION_PROOF_CONTEXT: &[u8] = b"tenuo-key-rotation-v1";
+use crate::domain::{REGISTRATION_PROOF_CONTEXT, ROTATION_PROOF_CONTEXT};
 
 /// Proof of Possession for key registration.
 ///

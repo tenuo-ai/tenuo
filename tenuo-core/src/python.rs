@@ -3377,8 +3377,8 @@ impl PyApproval {
         let nonce: [u8; 16] = rand::random();
 
         // Create signable payload with domain separation
-        // Must match Approval::signable_bytes() in approval.rs
-        const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
+        // Uses centralized constant from domain.rs
+        use crate::domain::APPROVAL_CONTEXT;
         let mut signable = Vec::new();
         signable.extend_from_slice(APPROVAL_CONTEXT);
         signable.extend_from_slice(&nonce);

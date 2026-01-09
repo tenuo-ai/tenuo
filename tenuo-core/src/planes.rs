@@ -2798,7 +2798,7 @@ mod tests {
         let nonce: [u8; 16] = rand::random();
 
         // Create signable bytes for approval (with domain separation + nonce)
-        const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
+        use crate::domain::APPROVAL_CONTEXT;
         let mut signable = Vec::new();
         signable.extend_from_slice(APPROVAL_CONTEXT);
         signable.extend_from_slice(&nonce);
@@ -2866,7 +2866,7 @@ mod tests {
         let nonce: [u8; 16] = rand::random();
 
         // Create signable bytes with domain separation + nonce
-        const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
+        use crate::domain::APPROVAL_CONTEXT;
         let mut signable = Vec::new();
         signable.extend_from_slice(APPROVAL_CONTEXT);
         signable.extend_from_slice(&nonce);
@@ -2942,7 +2942,7 @@ mod tests {
         );
 
         // Helper to create approval (with domain separation + nonce)
-        const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
+        use crate::domain::APPROVAL_CONTEXT;
         let make_approval = |kp: &SigningKey, id: &str| {
             // Each approval gets a unique nonce
             let nonce: [u8; 16] = rand::random();
