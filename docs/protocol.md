@@ -44,6 +44,8 @@ Warrant {
     expires_at: timestamp
     max_depth: int
     depth: int (current delegation depth, 0 = root)
+    # Note: max_depth is an absolute ceiling, not remaining count.
+    # A warrant is terminal when depth >= max_depth (cannot delegate further).
     session_id: string (in extensions, audit only)
     
     # Linkage (for chain verification via WarrantStack)
@@ -153,6 +155,35 @@ See `docs/wire-format-spec.md` §6 for complete type ID assignments (1-16).
 
 For debugging, use `tenuo decode` to view constraints as JSON.
 
+### Unknown Handling Rules
+
+Tenuo follows a **fail-closed** policy for unknown data:
+
+| Location | Unknown Data | Behavior |
+|----------|--------------|----------|
+| **Payload fields** | Unknown CBOR map keys | **REJECT** (unless under `extensions`) |
+| **Constraint type IDs** | Unrecognized type ID (e.g., 200) | Deserialize to `Constraint::Unknown`, **FAIL** at authorization |
+| **Nested maps** | Unknown keys inside Range, constraints | **REJECT** |
+| **Extension keys** | Any key under `extensions` | **PRESERVE** (passthrough, not validated) |
+
+**Why fail closed:**
+- Unknown fields may have security implications the verifier doesn't understand
+- Stripping unknowns breaks signatures (payload was signed with them)
+- Forward compatibility via `extensions` only, not arbitrary unknowns
+
+**Example:**
+```python
+# Valid: custom data in extensions
+extensions = {"com.example.trace_id": b"abc123"}  # OK
+
+# Invalid: unknown field in payload root
+payload = {
+    "version": 1,
+    "id": "...",
+    "unknown_new_field": 42,  # REJECT: not in extensions
+}
+```
+
 ---
 
 ## Attenuation Rules
@@ -244,13 +275,21 @@ WarrantStack = [SignedWarrant, SignedWarrant, ...]  # Ordered: Root -> Parent ->
 
 ### Chain Verification
 
-Verification walks the stack, checking each link:
+Verification walks the stack, checking each link.
+
+> **Critical: Verify-before-deserialize.** For every `SignedWarrant` in the chain:
+> 1. Extract `(envelope_version, payload_bytes, signature)` from the envelope
+> 2. Verify signature against raw `payload_bytes` BEFORE deserializing
+> 3. Only after signature verification, parse payload fields for invariant checks
+>
+> The pseudocode below is written at the object level for clarity, but implementations MUST verify signatures on raw bytes before trusting any parsed fields.
 
 ```python
 def verify_chain(stack: list[Warrant], trusted_roots: set[PublicKey]) -> bool:
     """Verify a complete delegation chain.
     
     Checks all invariants from wire-format-spec.md (I1-I6).
+    Note: Each Warrant was already signature-verified during deserialization.
     """
     if not stack:
         raise ChainVerificationFailed("Empty stack")
@@ -319,6 +358,41 @@ def verify_chain(stack: list[Warrant], trusted_roots: set[PublicKey]) -> bool:
 ### Chain Must End at Trusted Root
 
 The verification **must fail** if the root warrant's issuer is not in the configured `trusted_roots` set.
+
+### Trust Anchors
+
+**Root warrants are NOT required to be self-signed.** The trust model works as follows:
+
+| Question | Answer |
+|----------|--------|
+| What makes a root trusted? | Root's **issuer** public key is in the verifier's `trusted_roots` set |
+| Must issuer == holder? | No. Self-signing is common but not required |
+| Who manages trusted_roots? | The deployment operator (via config, env, or code) |
+| How do you rotate? | Add new key to trusted_roots, issue new warrants, remove old key |
+
+**Acceptance rule:**
+
+```python
+# Root warrant acceptance:
+if chain[0].issuer() not in authorizer.trusted_roots:
+    raise ChainNotAnchored("root issuer not trusted")
+```
+
+**Example configurations:**
+
+```python
+# Single trusted root (typical)
+authorizer = Authorizer(trusted_roots=[control_plane_key])
+
+# Multiple roots (key rotation, multi-tenant)
+authorizer = Authorizer(trusted_roots=[
+    old_control_plane_key,  # Still valid during rotation
+    new_control_plane_key,
+])
+
+# No roots configured (dev mode only, accepts any chain)
+authorizer = Authorizer()  # WARNING: Insecure
+```
 
 ### Cryptographic Proof of Delegation
 
@@ -407,6 +481,7 @@ PoP ensures stolen warrants are useless without the holder's private key.
 
 ```
 PopChallenge = (warrant_id, tool, sorted_args, timestamp_window)
+Preimage = b"tenuo-pop-v1" || CBOR(PopChallenge)
 ```
 
 | Field | Type | Description |
@@ -416,9 +491,13 @@ PopChallenge = (warrant_id, tool, sorted_args, timestamp_window)
 | `sorted_args` | array of (key, value) | Arguments sorted by key |
 | `timestamp_window` | int | Time window (floor division by 30s) |
 
+**Domain separation:** The `tenuo-pop-v1` context prefix prevents cross-protocol signature reuse attacks.
+
 ### Creating PoP
 
 ```python
+POP_CONTEXT = b"tenuo-pop-v1"
+
 def create_pop(warrant, keypair, tool, args) -> Signature:
     # Sort args by key for deterministic serialization
     sorted_args = sorted(args.items(), key=lambda x: x[0])
@@ -433,8 +512,11 @@ def create_pop(warrant, keypair, tool, args) -> Signature:
     # Serialize with Deterministic CBOR
     challenge_bytes = cbor_serialize(challenge)
     
+    # Prepend domain separation context
+    preimage = POP_CONTEXT + challenge_bytes
+    
     # Sign
-    return keypair.sign(challenge_bytes)
+    return keypair.sign(preimage)
 ```
 
 ### Verifying PoP
@@ -450,7 +532,10 @@ def verify_pop(warrant, signature, tool, args, max_windows=4) -> bool:
         challenge = (warrant.id, tool, sorted_args, timestamp_window)
         challenge_bytes = cbor_serialize(challenge)
         
-        if warrant.holder.verify(challenge_bytes, signature):
+        # Prepend domain separation context
+        preimage = POP_CONTEXT + challenge_bytes
+        
+        if warrant.holder.verify(preimage, signature):
             return True
     
     return False
@@ -466,7 +551,47 @@ def verify_pop(warrant, signature, tool, args, max_windows=4) -> bool:
 
 **Trade-off**: Larger windows allow more clock skew but increase replay risk. Within the ~2 minute window, a captured PoP can be replayed for the **same** (warrant, tool, args) tuple.
 
-**Replay Mitigation**: The `Authorizer` is stateless by design. For sensitive operations, use `warrant.dedup_key(tool, args)` to implement application-level deduplication. See [Security: Replay Protection](./security#replay-protection--statelessness) for implementation guidance.
+### Replay Protection Philosophy
+
+**Tenuo is stateless by design.** The Authorizer does not track used PoP signatures or nonces. This enables:
+
+- Edge deployment without database connectivity
+- Air-gapped and offline verification
+- Horizontal scaling without shared state
+- ~27μs verification latency
+
+**Why this is acceptable:**
+
+For replay to succeed, an attacker needs BOTH:
+1. The intercepted PoP signature
+2. The holder's private key (to bind the warrant to execution)
+
+If they have the holder's key, they don't need the PoP at all. The attack surface is extremely narrow.
+
+**Defense layers:**
+
+| Layer | Protection |
+|-------|------------|
+| Short TTL | Warrants expire in minutes, not days |
+| PoP binding | Signature covers (warrant, tool, args, time_window) |
+| Holder key | Attacker needs private key to use stolen PoP |
+| Time windows | ~2 minute validity, then PoP is rejected |
+
+**For sensitive operations:**
+
+Use `warrant.dedup_key(tool, args)` to implement application-level deduplication:
+
+```python
+dedup_key = warrant.dedup_key("transfer", {"amount": 1000})
+if redis.setnx(dedup_key, "1", ex=120):
+    # First execution
+    execute_transfer()
+else:
+    # Duplicate within window
+    raise ReplayDetected()
+```
+
+See [Security: Replay Protection](./security#replay-protection--statelessness) for detailed guidance.
 
 ---
 
@@ -691,16 +816,30 @@ Event types:
 
 ## Revocation (Optional)
 
+Warrants are short-lived by design, but sometimes you need to cancel them before expiration (key compromise, policy change, etc.).
+
 ### Signed Revocation List (SRL)
 
-For emergency warrant cancellation:
+The Control Plane maintains a cryptographically signed list of revoked warrant IDs:
+
+| Who Can Revoke | What They Can Revoke |
+|----------------|----------------------|
+| Control Plane | Any warrant |
+| Issuer | Warrants they issued (cascades to children) |
+| Holder | Their own warrant (voluntary surrender) |
+
+**Revocation is optional.** Most deployments use short TTLs (5-15 minutes) instead.
 
 ```python
 async def srl_sync_loop():
     while True:
         response = await http.get(SRL_URL)
         srl = SignedRevocationList.from_bytes(response.content)
-        atomic_write("/var/run/tenuo/srl", srl.to_bytes())
+        
+        # Anti-rollback: reject older versions
+        if srl.version() >= current_version:
+            atomic_write("/var/run/tenuo/srl", srl.to_bytes())
+        
         await asyncio.sleep(30)
 ```
 
@@ -711,6 +850,44 @@ authorizer = Authorizer(
     srl_path="/var/run/tenuo/srl",
 )
 ```
+
+See [wire-format-spec.md §16-17](_internal/wire-format-spec.md#16-signed-revocation-list-srl-wire-format) for SRL and RevocationRequest wire formats.
+
+---
+
+## Approvals (Multi-Sig)
+
+For high-risk operations, warrants can require human approval before execution.
+
+### When to Use
+
+- Financial transactions above a threshold
+- Production deployments
+- Data exports outside organization
+- Any action with significant blast radius
+
+### How It Works
+
+1. Warrant is minted with `required_approvers` and `min_approvals`
+2. Agent requests approval from designated approvers
+3. Each approver signs an Approval (bound to request hash + nonce)
+4. Authorizer verifies M-of-N approvals before allowing execution
+
+```python
+# Mint warrant requiring 2-of-3 approval
+warrant = (Warrant.mint_builder()
+    .capability("deploy", env=OneOf(["production"]))
+    .required_approvers([alice_key, bob_key, carol_key])
+    .min_approvals(2)
+    .holder(agent_key)
+    .mint(issuer_key))
+
+# Agent collects approvals before deploying
+approvals = await collect_approvals(warrant, "deploy", args)
+result = authorizer.check(warrant, "deploy", args, pop, approvals=approvals)
+```
+
+See [wire-format-spec.md §15](_internal/wire-format-spec.md#15-approval-wire-format-multi-sig) for Approval wire format.
 
 ---
 
@@ -724,7 +901,7 @@ All Tenuo implementations MUST:
 4. **Use Deterministic CBOR (RFC 8949)** - Sorted keys, minimal integers
 5. **Reconstruct challenge identically** - Same serialization on both sides
 6. **Log all authorization decisions** - Allow and deny
-7. **Prevent self-issuance** - Issuer cannot grant to self
+7. **Prevent self-issuance** - Execution warrant holder ≠ issuer (P/Q separation)
 8. **Enforce monotonicity** - Every dimension checked
 
 ### Cross-Language Compatibility

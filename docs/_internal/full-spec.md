@@ -3,7 +3,8 @@
 > ⚠️ **Internal Design Document**
 > 
 > This is an internal specification for implementers. For user-facing documentation, see [/docs](/docs).
-> Details here may be outdated or differ from the actual implementation.
+> 
+> **Drift warning.** §12 (PoP) diverges from implementation: describes nonce-based design; actual uses time-windowed CBOR tuple. Authoritative sources: `protocol.md`, `tenuo-core/src/warrant.rs`.
 
 **Version:** 2.0 
 **Status:** Reference Implementation Specification
@@ -195,7 +196,7 @@ child = (parent.grant_builder()
     .clearance(Clearance.EXTERNAL)
     .ttl(300)
     .intent("Research task for user query")
-    .max_depth(1)  # Allow one more delegation
+    .max_depth(1)  # Ceiling of 1 (terminal when depth >= 1)
     .holder(worker.public_key)
     .delegate(parent_keypair))
 
@@ -283,7 +284,7 @@ Warrant {
     issuer: PublicKey
     
     # Execution warrants
-    capabilities: Map<string, ConstraintSet>  # tool_name → constraints
+    tools: Map<string, ConstraintSet>  # tool_name → constraints
     
     # Issuer warrants
     issuable_tools: string[]
@@ -317,10 +318,10 @@ Warrant {
 Delegation chains are verified using a **WarrantStack** - an ordered array of warrants from root to leaf:
 
 ```
-WarrantStack {
-    ancestors: Warrant[]  # [root, ..., parent]
-    target: Warrant       # The leaf warrant being verified
-}
+WarrantStack = Vec<SignedWarrant>  # Flat array: [root, ..., parent, leaf]
+
+# Note: Some SDKs provide a logical abstraction with ancestors/target fields,
+# but the wire format is always a flat CBOR array. See wire-format-spec.md §11.
 ```
 
 Each warrant links to its parent via `parent_hash` (SHA256 of parent's `payload_bytes`). Verification walks the stack, checking:
@@ -384,7 +385,7 @@ def verify_chain(stack: list[Warrant], trusted_roots: set[PublicKey]) -> bool:
 |-------|-------|---------|
 | `MAX_DELEGATION_DEPTH` | 64 | Max warrant depth (typical chains are 3-5 levels) |
 | `MAX_WARRANT_SIZE` | 64 KB | Prevents memory exhaustion |
-| `MAX_STACK_SIZE` | 64 KB | Max WarrantStack encoded size |
+| `MAX_STACK_SIZE` | 256 KB | Max WarrantStack encoded size (chain) |
 
 ```python
 # Verification rejects warrants exceeding limits
@@ -1014,7 +1015,7 @@ builder = parent_warrant.grant_builder()  # Same thing
 ### Delegation Depth
 
 ```python
-.max_depth(1)    # Can delegate once more
+.max_depth(1)    # Ceiling of 1 (terminal when depth >= 1)
 .terminal()      # Cannot delegate (depth=0)
 ```
 

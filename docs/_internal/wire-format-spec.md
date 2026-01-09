@@ -186,6 +186,8 @@ child.depth <= parent.max_depth
 
 **Rationale:** Prevents unbounded chains (DoS) and enforces delegation limits.
 
+**Depth semantics:** `max_depth` is an absolute ceiling, not a remaining count. A warrant is terminal (cannot delegate further) when `depth >= max_depth`. The conditions above show validity; the verifier rejects when `child.depth > parent.max_depth`.
+
 **Enforcement points:**
 1. **Builder**: Increment depth, check against limits
 2. **Verifier**: Validate depth increment and limits
@@ -1078,6 +1080,165 @@ Client                          Server
 
 ---
 
+## 14. Proof-of-Possession (PoP) Wire Format
+
+PoP prevents stolen warrants from being used without the holder's private key.
+
+### PoP Challenge Structure
+
+```rust
+const POP_CONTEXT: &[u8] = b"tenuo-pop-v1";
+PopChallenge = (warrant_id: String, tool: String, sorted_args: Vec<(String, Value)>, timestamp_window: i64)
+Preimage = POP_CONTEXT || CBOR(PopChallenge)
+```
+
+**Serialization:**
+- CBOR tuple (4 elements)
+- `sorted_args`: Arguments sorted lexicographically by key
+- `timestamp_window`: Floor division of Unix timestamp by 30 seconds, then multiply by 30
+- **Domain separation:** Preimage is `b"tenuo-pop-v1" || CBOR(challenge)` to prevent cross-protocol reuse
+
+**Creating PoP:**
+```rust
+const POP_CONTEXT: &[u8] = b"tenuo-pop-v1";
+
+let now = Utc::now().timestamp();
+let window_ts = (now / 30) * 30;  // 30-second buckets
+let challenge = (warrant.id.to_hex(), tool, sorted_args, window_ts);
+let challenge_bytes = cbor_serialize(&challenge);
+
+// Prepend domain separation context
+let mut preimage = POP_CONTEXT.to_vec();
+preimage.extend_from_slice(&challenge_bytes);
+
+let signature = holder_keypair.sign(&preimage);
+```
+
+**Verification:**
+```rust
+// Try current and previous windows (handles clock skew)
+for i in 0..4 {  // max_windows = 4
+    let window_ts = ((now / 30) - i) * 30;
+    let challenge = (warrant.id.to_hex(), tool, sorted_args, window_ts);
+    let challenge_bytes = cbor_serialize(&challenge);
+    
+    // Prepend domain separation context
+    let mut preimage = POP_CONTEXT.to_vec();
+    preimage.extend_from_slice(&challenge_bytes);
+    
+    if holder_pubkey.verify(&preimage, &signature).is_ok() {
+        return Ok(());
+    }
+}
+Err("PoP failed or expired")
+```
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| Context | `tenuo-pop-v1` | Domain separation |
+| Window size | 30 seconds | Groups signatures into buckets |
+| Max windows | 4 | ~2 minute total validity |
+| Clock tolerance | ±30 seconds | Handles distributed clock skew |
+
+---
+
+## 15. Approval Wire Format (Multi-Sig)
+
+Approvals are signed statements from external parties (humans, identity providers) authorizing an action.
+
+### Approval Structure
+
+```rust
+pub struct Approval {
+    request_hash: [u8; 32],     // H(warrant_id || tool || sorted(args) || holder)
+    nonce: [u8; 16],            // Random, replay protection
+    approver_key: PublicKey,
+    external_id: String,        // e.g., "arn:aws:iam::123:user/admin"
+    provider: String,           // e.g., "aws-iam"
+    approved_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+    reason: Option<String>,
+    signature: Signature,
+}
+```
+
+### Signable Bytes
+
+```
+context || nonce || request_hash || external_id || approved_at || expires_at
+```
+
+Where:
+- `context` = `b"tenuo-approval-v1"` (domain separation)
+- `approved_at`, `expires_at` = little-endian i64 timestamps
+
+**Serialization:** CBOR map with string keys (via serde).
+
+---
+
+## 16. Signed Revocation List (SRL) Wire Format
+
+The Control Plane signs revocation lists; authorizers verify before use.
+
+### SRL Payload
+
+```rust
+struct SrlPayload {
+    revoked_ids: Vec<String>,   // Warrant IDs to revoke
+    version: u64,               // Monotonic (anti-rollback)
+    issued_at: DateTime<Utc>,
+    issuer: PublicKey,
+}
+```
+
+### Signed Structure
+
+```rust
+pub struct SignedRevocationList {
+    payload: SrlPayload,
+    signature: Signature,       // Over CBOR(payload)
+}
+```
+
+**Serialization:** CBOR.
+
+**Anti-rollback:** Authorizers MUST reject SRLs with `version < current_version`.
+
+---
+
+## 17. Revocation Request Wire Format
+
+Authorized parties submit signed requests to revoke warrants.
+
+### Structure
+
+```rust
+pub struct RevocationRequest {
+    warrant_id: String,
+    reason: String,
+    requestor: PublicKey,
+    requested_at: DateTime<Utc>,
+    signature: Signature,
+}
+```
+
+### Signable Bytes
+
+```
+CBOR((warrant_id, reason, requestor, requested_at.timestamp()))
+```
+
+**Authorization:**
+| Requestor | Can Revoke |
+|-----------|------------|
+| Control Plane | Any warrant |
+| Issuer | Warrants they issued |
+| Holder | Their own warrant (surrender) |
+
+**Replay protection:** Requests older than 5 minutes are rejected.
+
+---
+
 ## Summary
 
 | Feature | Implementation | v0.1 Default |
@@ -1097,9 +1258,14 @@ Client                          Server
 | Text encoding | Base64 URL-safe, no padding | ✓ |
 | Parent pointer | `parent_hash = SHA256(payload_bytes)` | ✓ |
 | Transport | `WarrantStack` (Root → Leaf) | ✓ |
+| PoP challenge | CBOR tuple, 30s windows | ✓ |
+| Approval | CBOR, 16-byte nonce | ✓ |
+| SRL | CBOR, monotonic version | ✓ |
+| RevocationRequest | CBOR tuple | ✓ |
 
 ---
 
 ## Changelog
 
+- **0.1.1** — Added PoP, Approval, SRL, RevocationRequest wire formats
 - **0.1** — Initial specification
