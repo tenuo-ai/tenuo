@@ -766,10 +766,13 @@ impl PyRange {
 ///
 /// Validates that an IP address is within a network range.
 ///
-/// Example:
-///     cidr = Cidr("10.0.0.0/8")
-///     cidr = Cidr("192.168.1.0/24")
-///     cidr = Cidr("2001:db8::/32")  # IPv6
+/// Example (Python):
+///
+/// ```text
+/// cidr = Cidr("10.0.0.0/8")
+/// cidr = Cidr("192.168.1.0/24")
+/// cidr = Cidr("2001:db8::/32")  # IPv6
+/// ```
 #[pyclass(name = "Cidr")]
 #[derive(Clone)]
 pub struct PyCidr {
@@ -823,9 +826,12 @@ impl PyCidr {
 /// Validates URLs against scheme, host, port, and path patterns.
 /// Safer than using Pattern or Regex for URL matching.
 ///
-/// Example:
-///     url_pattern = UrlPattern("https://api.example.com/*")
-///     url_pattern = UrlPattern("*://*.example.com/api/v1/*")
+/// Example (Python):
+///
+/// ```text
+/// url_pattern = UrlPattern("https://api.example.com/*")
+/// url_pattern = UrlPattern("*://*.example.com/api/v1/*")
+/// ```
 #[pyclass(name = "UrlPattern")]
 #[derive(Clone)]
 pub struct PyUrlPattern {
@@ -981,11 +987,14 @@ impl PyWildcard {
 /// preventing path traversal attacks. This is a lexical check only -
 /// it normalizes `.` and `..` components but does NOT access the filesystem.
 ///
-/// Example:
-///     subpath = Subpath("/data")
-///     subpath.contains("/data/file.txt")  # True
-///     subpath.contains("/data/../etc/passwd")  # False (normalized to /etc/passwd)
-///     subpath.contains("/etc/passwd")  # False (not under /data)
+/// Example (Python):
+///
+/// ```text
+/// subpath = Subpath("/data")
+/// subpath.contains("/data/file.txt")  # True
+/// subpath.contains("/data/../etc/passwd")  # False (normalized to /etc/passwd)
+/// subpath.contains("/etc/passwd")  # False (not under /data)
+/// ```
 #[pyclass(name = "Subpath")]
 #[derive(Clone)]
 pub struct PySubpath {
@@ -1104,15 +1113,17 @@ impl PySubpath {
 /// - Dangerous schemes (file://, gopher://, etc.)
 /// - IP encoding bypasses (decimal, hex, octal, IPv6-mapped, URL-encoded)
 ///
-/// Example:
-///     url_safe = UrlSafe()  # Secure defaults
-///     url_safe.is_safe("https://api.github.com/repos")  # True
-///     url_safe.is_safe("http://169.254.169.254/")  # False (metadata)
-///     url_safe.is_safe("http://127.0.0.1/")  # False (loopback)
+/// Example (Python):
 ///
-/// Domain allowlist - only specific domains allowed:
+/// ```text
+/// url_safe = UrlSafe()  # Secure defaults
+/// url_safe.is_safe("https://api.github.com/repos")  # True
+/// url_safe.is_safe("http://169.254.169.254/")  # False (metadata)
+/// url_safe.is_safe("http://127.0.0.1/")  # False (loopback)
 ///
-///     url_safe = UrlSafe(allow_domains=["api.github.com", "*.googleapis.com"])
+/// # Domain allowlist - only specific domains allowed:
+/// url_safe = UrlSafe(allow_domains=["api.github.com", "*.googleapis.com"])
+/// ```
 #[pyclass(name = "UrlSafe")]
 #[derive(Clone)]
 pub struct PyUrlSafe {
