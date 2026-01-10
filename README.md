@@ -96,7 +96,7 @@ Tenuo implements **Subtractive Delegation**.
 |---------|-------------|
 | **Offline verification** | No network calls, ~27μs |
 | **Holder binding** | Stolen tokens are useless without the key |
-| **Constraint types** | `Exact`, `Pattern`, `Range`, `OneOf`, `Regex`, `Cidr`, `UrlPattern`, `Subpath`, `UrlSafe`, `CEL` |
+| **Constraint types** | `Exact`, `Pattern`, `Range`, `OneOf`, `Regex`, `Cidr`, `UrlPattern`, `Subpath`, `UrlSafe`, `Shlex`, `CEL` |
 | **Monotonic attenuation** | Capabilities only shrink, never expand |
 | **Framework integrations** | OpenAI, FastAPI, LangChain, LangGraph, MCP |
 
@@ -127,12 +127,13 @@ pip install "tenuo[mcp]"           # + MCP client (Python ≥3.10 required)
 
 **OpenAI** - Direct API protection with streaming TOCTOU defense
 ```python
-from tenuo.openai import GuardBuilder, Pattern, Subpath, UrlSafe
+from tenuo.openai import GuardBuilder, Pattern, Subpath, UrlSafe, Shlex
 
 client = (GuardBuilder(openai.OpenAI())
     .allow("search_web")
     .allow("read_file", path=Subpath("/data"))        # Path traversal protection
     .allow("fetch_url", url=UrlSafe())                # SSRF protection
+    .allow("run_command", cmd=Shlex(allow=["ls"]))    # Shell injection protection
     .allow("send_email", to=Pattern("*@company.com"))
     .deny("delete_file")
     .build())

@@ -16,22 +16,21 @@ class TestShlexBasic:
         constraint = Shlex(allow=["ls"])
         assert constraint.matches("ls -la /tmp")
 
-    def test_quoted_semicolon_blocked(self):
-        """Quoted semicolon is also blocked for fail-closed safety.
+    def test_quoted_semicolon_allowed(self):
+        """Quoted semicolon is allowed - it's a literal argument.
 
-        Note: A more sophisticated implementation could allow quoted operators,
-        but that would require parsing quotes manually. We block all raw
-        operator characters to prevent parser differential exploits.
+        Using shlex.shlex with punctuation_chars=True correctly distinguishes
+        between unquoted operators (dangerous) and quoted operators (safe).
         """
         constraint = Shlex(allow=["ls"])
-        # Fail-closed: even quoted operators are blocked
-        assert not constraint.matches('ls "foo; bar"')
+        # Quoted operators are safe - the semicolon is just text
+        assert constraint.matches('ls "foo; bar"')
 
-    def test_single_quoted_operators_blocked(self):
-        """Operators in single quotes are also blocked for safety."""
+    def test_single_quoted_operators_allowed(self):
+        """Operators in single quotes are allowed - they're literal text."""
         constraint = Shlex(allow=["ls"])
-        # Fail-closed: even quoted operators are blocked
-        assert not constraint.matches("ls 'foo && bar'")
+        # Single-quoted operators are safe
+        assert constraint.matches("ls 'foo && bar'")
 
     def test_full_path_match(self):
         """Full path should match allowlist."""
@@ -547,11 +546,11 @@ class TestShlexAdversarialEncoding:
     def test_html_entity_semicolon_blocked(self):
         """HTML entity semicolon contains literal semicolon, so blocked.
 
-        &#59; contains the ; character which is blocked in raw string.
-        This is overly conservative but safe (fail-closed).
+        &#59; contains the ; character which gets parsed as a separate token
+        by punctuation_chars=True.
         """
         constraint = Shlex(allow=["ls"])
-        # Contains ; in the raw string
+        # The ; in &#59; becomes a separate token
         assert not constraint.matches("ls &#59;")
 
     def test_octal_escape_newline(self):
@@ -684,10 +683,10 @@ class TestShlexAdversarialEdgeCases:
     def test_special_filenames(self):
         """Special filenames that look like operators."""
         constraint = Shlex(allow=["cat"])
-        # Filename that looks dangerous but is just a filename
-        # These contain operators so will be blocked
-        assert not constraint.matches("cat 'file;name'")
-        assert not constraint.matches("cat 'file|name'")
+        # Quoted filenames with operators are safe - they're just text
+        # punctuation_chars=True respects quotes
+        assert constraint.matches("cat 'file;name'")
+        assert constraint.matches("cat 'file|name'")
 
     def test_dash_dash_help(self):
         """Common --help flag should work."""
@@ -703,7 +702,7 @@ class TestShlexAdversarialEdgeCases:
         """Double dash followed by dangerous-looking argument."""
         constraint = Shlex(allow=["ls"])
         # -- makes -rf; look like a filename
-        # But ; is still blocked in raw string
+        # The ; becomes a separate token, so it's blocked
         assert not constraint.matches("ls -- -rf;")
 
 

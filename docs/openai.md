@@ -114,6 +114,7 @@ Reuses core Tenuo constraint types:
 | `Range(min, max)` | `Range(0, 100)` | Numeric bounds |
 | `Subpath(root)` | `Subpath("/data")` | Secure path containment |
 | `UrlSafe(...)` | `UrlSafe()` | SSRF-safe URL validation |
+| `Shlex(allow)` | `Shlex(allow=["ls", "cat"])` | Safe shell command validation |
 
 ```python
 from tenuo.openai import guard, Pattern, Range, OneOf, Subpath

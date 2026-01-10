@@ -312,6 +312,7 @@ class Shlex:
     """
     
     # Operators that combine commands or redirect I/O
+    # These are checked as TOKENS after punctuation_chars parsing
     DANGEROUS_TOKENS: Set[str] = {
         "|", "||",      # Pipes
         "&", "&&",      # Background / logical AND
@@ -322,13 +323,8 @@ class Shlex:
     }
     
     # Characters that trigger shell expansion (checked in raw string)
-    # These are treated as literals by shlex but executed by shells
+    # These are dangerous even inside double quotes ("$VAR" expands)
     EXPANSION_CHARS: Set[str] = {"$", "`"}
-    
-    # Shell operator characters that should be checked in raw string
-    # shlex treats these as literal characters, but sh treats them as operators
-    # Example: "ls -la; rm" -> shlex sees ['-la;'], sh sees two commands
-    OPERATOR_CHARS: Set[str] = {";", "|", "&", ">", "<", "(", ")"}
     
     # Control characters that could inject commands
     CONTROL_CHARS: Set[str] = {"\n", "\r", "\x00"}
@@ -362,12 +358,17 @@ class Shlex:
     def matches(self, value: Any) -> bool:
         """Check if command string is safe to execute.
         
+        Uses "high-definition" parsing with shlex.shlex(punctuation_chars=True)
+        which correctly splits operators like ; | & into separate tokens
+        UNLESS they are inside quotes.
+        
         Returns True only if:
         - Input is a string
-        - No dangerous characters ($, `, newlines, null bytes)
+        - No dangerous expansion characters ($, `)
+        - No control characters (newlines, null bytes)
         - Parses successfully with shlex
         - First token is in allowlist
-        - No shell operator tokens
+        - No shell operator tokens (outside quotes)
         """
         # R1: Type check
         if not isinstance(value, str):
@@ -379,15 +380,8 @@ class Shlex:
                 return False
         
         # R1: Expansion character check (before parsing)
-        # Shell expands $VAR and `cmd` but shlex treats them as literals
+        # Shell expands $VAR and `cmd` even inside double quotes
         for char in self.EXPANSION_CHARS:
-            if char in value:
-                return False
-        
-        # R1: Operator character check (before parsing)
-        # shlex treats ; | & > < ( ) as literals, but shells execute them
-        # We check the RAW string because shlex would hide the operators
-        for char in self.OPERATOR_CHARS:
             if char in value:
                 return False
         
@@ -397,9 +391,15 @@ class Shlex:
                 if char in value:
                     return False
         
-        # R2: Parse with shlex
+        # R2: "High-definition" parsing with punctuation_chars
+        # This splits unquoted operators into separate tokens:
+        #   "ls -la; rm" -> ['ls', '-la', ';', 'rm']  (';' detected!)
+        # But keeps quoted operators as part of the token:
+        #   'ls "foo; bar"' -> ['ls', 'foo; bar']    (safe)
         try:
-            tokens = shlex.split(value)
+            lex = shlex.shlex(value, posix=True, punctuation_chars=True)
+            lex.whitespace_split = True
+            tokens = list(lex)
         except ValueError:
             # Unbalanced quotes, malformed escapes, etc.
             return False
@@ -421,6 +421,8 @@ class Shlex:
             return False
         
         # R3: Dangerous token check
+        # Because we used punctuation_chars=True, any unquoted operator
+        # is guaranteed to be its own token.
         for token in tokens:
             if token in self.DANGEROUS_TOKENS:
                 return False

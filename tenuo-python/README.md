@@ -283,12 +283,13 @@ with other_warrant.bind(keypair):
 Direct protection for OpenAI's Chat Completions and Responses APIs:
 
 ```python
-from tenuo.openai import GuardBuilder, Pattern, Subpath, UrlSafe
+from tenuo.openai import GuardBuilder, Pattern, Subpath, UrlSafe, Shlex
 
 # Tier 1: Guardrails (quick hardening)
 client = (GuardBuilder(openai.OpenAI())
     .allow("read_file", path=Subpath("/data"))        # Path traversal protection
     .allow("fetch_url", url=UrlSafe())                # SSRF protection
+    .allow("run_command", cmd=Shlex(allow=["ls"]))    # Shell injection protection
     .allow("send_email", to=Pattern("*@company.com"))
     .deny("delete_file")
     .build())
@@ -306,6 +307,7 @@ response = client.chat.completions.create(
 |------------|---------|---------|
 | `Subpath(root)` | Blocks path traversal attacks | `Subpath("/data")` blocks `/data/../etc/passwd` |
 | `UrlSafe()` | Blocks SSRF (private IPs, metadata) | `UrlSafe()` blocks `http://169.254.169.254/` |
+| `Shlex(allow)` | Blocks shell injection | `Shlex(allow=["ls"])` blocks `ls; rm -rf /` |
 | `Pattern(glob)` | Glob pattern matching | `Pattern("*@company.com")` |
 
 For Tier 2 (cryptographic authorization with warrants), see [OpenAI Integration](https://tenuo.dev/openai).

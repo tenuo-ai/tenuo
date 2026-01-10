@@ -318,6 +318,7 @@ Constraints restrict tool arguments:
 | `Pattern` | `Pattern("/tmp/*")` | Glob pattern match |
 | `Subpath` | `Subpath("/data")` | Path containment (blocks traversal) |
 | `UrlSafe` | `UrlSafe(allow_domains=["api.com"])` | SSRF-protected URLs |
+| `Shlex` | `Shlex(allow=["ls", "cat"])` | Shell injection protection |
 | `Regex` | `Regex(r"^prod-.*")` | Regex match |
 | `Range` | `Range(min=0, max=100)` | Numeric range |
 | `OneOf` | `OneOf(["a", "b"])` | One of values |
