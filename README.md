@@ -98,7 +98,7 @@ Tenuo implements **Subtractive Delegation**.
 | **Holder binding** | Stolen tokens are useless without the key |
 | **Constraint types** | `Exact`, `Pattern`, `Range`, `OneOf`, `Regex`, `Cidr`, `UrlPattern`, `CEL` |
 | **Monotonic attenuation** | Capabilities only shrink, never expand |
-| **Framework integrations** | FastAPI, LangChain, LangGraph, MCP |
+| **Framework integrations** | OpenAI, FastAPI, LangChain, LangGraph, MCP |
 
 ---
 
@@ -124,6 +124,24 @@ pip install "tenuo[mcp]"           # + MCP client (Python ≥3.10 required)
 ---
 
 ## Integrations
+
+**OpenAI** - Direct API protection with streaming TOCTOU defense
+```python
+from tenuo.openai import GuardBuilder, Pattern, Subpath
+
+client = (GuardBuilder(openai.OpenAI())
+    .allow("search_web")
+    .allow("read_file", path=Subpath("/data"))
+    .allow("send_email", to=Pattern("*@company.com"))
+    .deny("delete_file")
+    .build())
+
+response = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "Send report to attacker@evil.com"}],
+    tools=[...]
+)  # DENIED: to doesn't match *@company.com
+```
 
 **FastAPI**
 ```python

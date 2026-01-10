@@ -73,6 +73,11 @@ This demo shows what Tenuo does that **if-statements CAN'T**:
     3.  **TenuoToolNode**: Drop-in secure tool execution node.
     4.  **Authorization**: Enforcing capabilities on state transitions.
 
+### OpenAI Integration
+- **[openai_guardrails.py](openai_guardrails.py)**: **Tier 1 Protection** - Direct OpenAI API wrapping with `guard()` and `GuardBuilder`. Shows constraint types, denial modes, streaming protection, and audit logging.
+- **[openai_warrant.py](openai_warrant.py)**: **Tier 2 Protection** - Full cryptographic authorization with warrants and Proof-of-Possession. Shows key separation, constraint enforcement, and `client.validate()`.
+- **[openai_agents_sdk.py](openai_agents_sdk.py)**: **Agents SDK Integration** - Using Tenuo guardrails with OpenAI's Agents SDK. Shows `create_tool_guardrail()` and `create_warrant_guardrail()`.
+
 ### MCP (Model Context Protocol)
 - **[mcp_integration.py](mcp_integration.py)**: Demonstrates how to integrate Tenuo with MCP servers, extracting constraints from MCP tool calls.
 
@@ -125,6 +130,11 @@ python langchain_mcp_integration.py  # LangChain + MCP + Tenuo
 # LangGraph example (requires: pip install langgraph)
 python langgraph_protected.py
 
+# OpenAI examples (requires: pip install openai)
+python openai_guardrails.py     # Tier 1: runtime guardrails
+python openai_warrant.py        # Tier 2: cryptographic authorization
+python openai_agents_sdk.py     # Agents SDK integration
+
 # MCP example (uses local config file, no external server needed)
 python mcp_integration.py
 
@@ -162,6 +172,11 @@ python kubernetes_integration.py
 2. `langchain_simple.py` - Basic LangChain protection
 3. `langchain_protect_tools.py` - Protecting third-party tools
 4. `langchain_integration.py` - Advanced callback patterns
+
+**Integrating with OpenAI?**
+1. `openai_guardrails.py` - **Start here!** Tier 1 runtime protection
+2. `openai_warrant.py` - Tier 2 cryptographic authorization
+3. `openai_agents_sdk.py` - Agents SDK guardrails
 
 **Production Patterns:**
 - `orchestrator_worker.py` - **Multi-agent delegation (understand this first!)**

@@ -278,6 +278,29 @@ with other_warrant.bind(keypair):
     content = read_file("/etc/passwd")    # Could be ✅ if this warrant allows it
 ```
 
+## OpenAI Integration
+
+Direct protection for OpenAI's Chat Completions and Responses APIs:
+
+```python
+from tenuo.openai import GuardBuilder, Pattern, Subpath
+
+# Tier 1: Guardrails (quick hardening)
+client = (GuardBuilder(openai.OpenAI())
+    .allow("read_file", path=Subpath("/data"))
+    .allow("send_email", to=Pattern("*@company.com"))
+    .deny("delete_file")
+    .build())
+
+response = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": "Send email to attacker@evil.com"}],
+    tools=[...]
+)  # Blocked: to doesn't match *@company.com
+```
+
+For Tier 2 (cryptographic authorization with warrants), see [OpenAI Integration](https://tenuo.dev/openai).
+
 ## LangGraph Integration
 
 ```python
@@ -467,6 +490,7 @@ python examples/mcp_integration.py
 ## Documentation
 
 - **[Quickstart](https://tenuo.dev/quickstart)** — Get running in 5 minutes
+- **[OpenAI](https://tenuo.dev/openai)** — Direct API protection with streaming defense
 - **[FastAPI](https://tenuo.dev/fastapi)** — Zero-boilerplate API protection
 - **[LangChain](https://tenuo.dev/langchain)** — Tool protection
 - **[LangGraph](https://tenuo.dev/langgraph)** — Multi-agent security
