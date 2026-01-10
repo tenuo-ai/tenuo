@@ -2523,3 +2523,187 @@ class TestGuardBuilder:
                 deny_tools=client._deny_tools,
                 constraints=client._constraints,
             )
+
+
+# =============================================================================
+# Tool Schema Validation Tests
+# =============================================================================
+
+
+class TestToolSchemaValidation:
+    """Test tool schema validation in GuardBuilder."""
+
+    @pytest.fixture
+    def sample_tools(self):
+        """Sample OpenAI tool definitions."""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "send_email",
+                    "description": "Send an email",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "to": {"type": "string"},
+                            "subject": {"type": "string"},
+                            "body": {"type": "string"},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "encoding": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        ]
+
+    def test_valid_constraints_no_warning(self, sample_tools, caplog):
+        """Valid constraint params should not produce warnings."""
+        from tenuo.openai import GuardBuilder
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .allow("send_email", to=Pattern("*@company.com"))
+            .allow("read_file", path=Pattern("/data/*"))
+            .with_tools(sample_tools)
+            .build())
+
+        assert "Constraint validation" not in caplog.text
+
+    def test_typo_warns(self, sample_tools, caplog):
+        """Typo in param name should produce warning."""
+        from tenuo.openai import GuardBuilder
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .allow("send_email", too=Pattern("*@company.com"))  # Typo: "too"
+            .with_tools(sample_tools)
+            .build())
+
+        assert "Constraint validation" in caplog.text
+        assert "'too' not found" in caplog.text
+        assert "Did you mean 'to'?" in caplog.text
+
+    def test_strict_mode_raises(self, sample_tools):
+        """Strict mode should raise ConfigurationError."""
+        from tenuo.openai import GuardBuilder
+
+        mock_client = Mock()
+        with pytest.raises(ConfigurationError) as exc_info:
+            (GuardBuilder(mock_client)
+                .allow("send_email", recipient=Pattern("*@company.com"))  # Wrong name
+                .with_tools(sample_tools)
+                .validate("strict")
+                .build())
+
+        assert "'recipient' not found" in str(exc_info.value)
+        assert "Available:" in str(exc_info.value)
+
+    def test_validation_disabled(self, sample_tools, caplog):
+        """Validation can be disabled."""
+        from tenuo.openai import GuardBuilder
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .allow("send_email", wrong_param=Pattern("*"))
+            .with_tools(sample_tools)
+            .validate(False)  # Disable validation
+            .build())
+
+        assert "Constraint validation" not in caplog.text
+
+    def test_unknown_tool_not_error(self, sample_tools, caplog):
+        """Constraints for tools not in schema should not warn."""
+        from tenuo.openai import GuardBuilder
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        mock_client = Mock()
+        # "search" is not in sample_tools, should not cause warning
+        client = (GuardBuilder(mock_client)
+            .allow("search", query=Pattern("*"))
+            .with_tools(sample_tools)
+            .build())
+
+        assert "Constraint validation" not in caplog.text
+
+    def test_meta_params_skipped(self, sample_tools, caplog):
+        """Meta params like _allow_unknown should be skipped."""
+        from tenuo.openai import GuardBuilder
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .constrain("send_email", to=Pattern("*@company.com"), _allow_unknown=True)
+            .with_tools(sample_tools)
+            .build())
+
+        # Should not warn about _allow_unknown
+        assert "_allow_unknown" not in caplog.text
+
+    def test_suggest_similar_finds_close_match(self):
+        """Edit distance should find close matches."""
+        from tenuo.openai import GuardBuilder
+
+        # 1 edit: "too" -> "to"
+        assert GuardBuilder._suggest_similar("too", {"to", "subject"}) == "to"
+
+        # 1 edit: "subjet" -> "subject"
+        assert GuardBuilder._suggest_similar("subjet", {"to", "subject"}) == "subject"
+
+        # 2 edits: "bdy" -> "body"
+        assert GuardBuilder._suggest_similar("bdy", {"to", "body"}) == "body"
+
+        # Too different (> 2 edits): no suggestion
+        assert GuardBuilder._suggest_similar("xyz", {"to", "subject"}) is None
+
+    def test_with_tools_parses_schema(self, sample_tools):
+        """with_tools should correctly parse tool schemas."""
+        from tenuo.openai import GuardBuilder
+
+        mock_client = Mock()
+        builder = GuardBuilder(mock_client).with_tools(sample_tools)
+
+        assert "send_email" in builder._tool_schemas
+        assert "read_file" in builder._tool_schemas
+        assert "to" in builder._tool_schemas["send_email"].get("properties", {})
+        assert "path" in builder._tool_schemas["read_file"].get("properties", {})
+
+    def test_multiple_invalid_params(self, sample_tools, caplog):
+        """Multiple invalid params should all be reported."""
+        from tenuo.openai import GuardBuilder
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .allow("send_email", too=Pattern("*"), subjet=Pattern("*"))
+            .with_tools(sample_tools)
+            .build())
+
+        # Both should be warned about
+        assert "'too' not found" in caplog.text
+        assert "'subjet' not found" in caplog.text

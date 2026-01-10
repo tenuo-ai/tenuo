@@ -1703,6 +1703,9 @@ class GuardBuilder:
         self._audit_callback: Optional[AuditCallback] = None
         self._warrant: Optional[Warrant] = None
         self._signing_key: Optional[SigningKey] = None
+        # Tool schema validation
+        self._tool_schemas: Dict[str, Dict[str, Any]] = {}
+        self._validate_mode: Literal["warn", "strict", False] = "warn"
 
     def allow(self, tool: ToolRef, **constraints: Constraint) -> "GuardBuilder":
         """Allow a tool, optionally with constraints.
@@ -1858,6 +1861,132 @@ class GuardBuilder:
         self._signing_key = signing_key
         return self
 
+    def with_tools(self, tools: List[Dict[str, Any]]) -> "GuardBuilder":
+        """Register tool schemas for constraint validation.
+
+        When tools are registered, build() validates that constraint
+        parameter names match the actual tool schemas. This catches
+        typos and schema drift.
+
+        Args:
+            tools: List of OpenAI tool definitions
+
+        Returns:
+            self for chaining
+
+        Example:
+            tools = [{
+                "type": "function",
+                "function": {
+                    "name": "send_email",
+                    "parameters": {
+                        "properties": {"to": {}, "subject": {}, "body": {}}
+                    }
+                }
+            }]
+
+            client = (GuardBuilder(openai.OpenAI())
+                .allow("send_email", to=Pattern("*@company.com"))
+                .with_tools(tools)  # Validates "to" exists
+                .build())
+        """
+        for tool in tools:
+            if tool.get("type") != "function":
+                continue
+            func = tool.get("function", {})
+            name = func.get("name")
+            if name:
+                params = func.get("parameters", {})
+                self._tool_schemas[name] = params
+        return self
+
+    def validate(
+        self, mode: Literal["warn", "strict", False] = "warn"
+    ) -> "GuardBuilder":
+        """Set constraint validation mode.
+
+        Args:
+            mode:
+                - "warn": Log warnings for invalid constraints (default)
+                - "strict": Raise ConfigurationError for invalid constraints
+                - False: Disable validation
+
+        Returns:
+            self for chaining
+        """
+        self._validate_mode = mode
+        return self
+
+    def _validate_constraints(self) -> List[str]:
+        """Validate constraints against tool schemas.
+
+        Returns list of warning messages.
+        """
+        warnings: List[str] = []
+
+        for tool_name, params in self._constraints.items():
+            # Check if tool exists in schemas
+            if tool_name not in self._tool_schemas:
+                # Not an error - tool might not be registered
+                continue
+
+            schema = self._tool_schemas[tool_name]
+            schema_params = set(schema.get("properties", {}).keys())
+
+            for param_name in params:
+                if param_name.startswith("_"):
+                    # Skip meta-params like _allow_unknown
+                    continue
+
+                if param_name not in schema_params:
+                    # Try to suggest similar names
+                    suggestion = self._suggest_similar(param_name, schema_params)
+                    msg = (
+                        f"Constraint parameter '{param_name}' not found in "
+                        f"tool '{tool_name}'. Available: {sorted(schema_params)}"
+                    )
+                    if suggestion:
+                        msg += f". Did you mean '{suggestion}'?"
+                    warnings.append(msg)
+
+        return warnings
+
+    @staticmethod
+    def _suggest_similar(name: str, candidates: set) -> Optional[str]:
+        """Suggest a similar parameter name (simple edit distance)."""
+        if not candidates:
+            return None
+
+        def edit_distance(s1: str, s2: str) -> int:
+            """Simple Levenshtein distance."""
+            if len(s1) < len(s2):
+                s1, s2 = s2, s1  # Swap to ensure s1 is longer
+            if len(s2) == 0:
+                return len(s1)
+
+            prev_row = list(range(len(s2) + 1))
+            for i, c1 in enumerate(s1):
+                curr_row = [i + 1]
+                for j, c2 in enumerate(s2):
+                    insertions = prev_row[j + 1] + 1
+                    deletions = curr_row[j] + 1
+                    substitutions = prev_row[j] + (c1 != c2)
+                    curr_row.append(min(insertions, deletions, substitutions))
+                prev_row = curr_row
+
+            return prev_row[-1]
+
+        # Find closest match
+        best_match = None
+        best_distance = float("inf")
+        for candidate in candidates:
+            dist = edit_distance(name.lower(), candidate.lower())
+            if dist < best_distance and dist <= 2:  # Max 2 edits
+                best_distance = dist
+                best_match = candidate
+
+        return best_match
+
     def build(self) -> GuardedClient:
         """Build the guarded client.
 
@@ -1866,8 +1995,22 @@ class GuardBuilder:
 
         Raises:
             MissingSigningKey: If warrant provided without signing_key
-            ValueError: If configuration is invalid
+            ConfigurationError: If validation is strict and constraints are invalid
         """
+        # Validate constraints against tool schemas
+        if self._tool_schemas and self._validate_mode:
+            warnings = self._validate_constraints()
+            if warnings:
+                if self._validate_mode == "strict":
+                    raise ConfigurationError(
+                        "Constraint validation failed:\n  " +
+                        "\n  ".join(warnings),
+                        code="C1_003"
+                    )
+                else:  # warn mode
+                    for warning in warnings:
+                        logger.warning(f"Constraint validation: {warning}")
+
         return GuardedClient(
             self._client,
             allow_tools=self._allow_tools if self._allow_tools else None,
