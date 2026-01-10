@@ -1943,6 +1943,34 @@ class TestAgentsSDKIntegration:
         assert events[0].warrant_id == warrant.id
         assert events[0].warrant_id.startswith("tnu_wrt_")
 
+    @pytest.mark.asyncio
+    async def test_guardrail_blocks_malformed_json(self):
+        """Test guardrail fails closed on malformed JSON arguments.
+        
+        SECURITY: Malformed JSON must NOT silently pass as empty arguments,
+        as that could bypass constraints.
+        """
+        from tenuo.openai import create_tool_guardrail, GuardrailResult
+
+        guardrail = create_tool_guardrail(
+            constraints={"send_email": {"to": Pattern("*@company.com")}}
+        )
+
+        # Malformed JSON - missing closing brace
+        input_data = [{
+            "function": {
+                "name": "send_email",
+                "arguments": '{"to": "user@company.com"'  # Invalid JSON!
+            }
+        }]
+
+        result = await guardrail(None, None, input_data)
+
+        assert isinstance(result, GuardrailResult)
+        assert result.tripwire_triggered is True  # Should trigger tripwire
+        assert "Blocked" in result.output_info
+        assert "Invalid JSON" in result.output_info or "Malformed" in result.output_info
+
 
 # =============================================================================
 # Subpath Constraint Tests (Path Traversal Protection)

@@ -2289,7 +2289,17 @@ class TenuoToolGuardrail:
             GuardrailFunctionOutput (or compatible dict)
         """
         # Extract tool calls from input
-        tool_calls = self._extract_tool_calls(input_data)
+        # SECURITY: MalformedToolCall can be raised here for invalid JSON
+        try:
+            tool_calls = self._extract_tool_calls(input_data)
+        except MalformedToolCall as e:
+            # Fail closed on malformed input
+            logger.warning(f"Tenuo guardrail blocked malformed input: {e}")
+            self._emit_audit(e.tool_name, {}, "DENY", str(e), tier="tier1")
+            return GuardrailResult(
+                output_info=f"Blocked by Tenuo: {e}",
+                tripwire_triggered=self.tripwire,
+            ).to_agents_sdk()
 
         if not tool_calls:
             # No tool calls to validate
@@ -2309,7 +2319,7 @@ class TenuoToolGuardrail:
                 )
                 # Emit audit event for allowed call
                 self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
-            except (ToolDenied, WarrantDenied, ConstraintViolation) as e:
+            except (ToolDenied, WarrantDenied, ConstraintViolation, MalformedToolCall) as e:
                 violations.append(f"{tool_name}: {e}")
                 logger.warning(f"Tenuo guardrail blocked: {tool_name} - {e}")
                 # Emit audit event for denied call
@@ -2397,7 +2407,11 @@ class TenuoToolGuardrail:
         return tool_calls
 
     def _parse_tool_call_item(self, item: Any) -> Optional[tuple]:
-        """Parse a single tool call item into (name, arguments)."""
+        """Parse a single tool call item into (name, arguments).
+        
+        SECURITY: Malformed JSON raises MalformedToolCall to fail closed.
+        We do NOT silently default to {} as that could bypass constraints.
+        """
         # Dict format
         if isinstance(item, dict):
             if "function" in item:
@@ -2408,32 +2422,39 @@ class TenuoToolGuardrail:
                 name = item.get("name", "")
                 args_str = item.get("arguments", "{}")
 
+            if not name:
+                return None
             try:
                 arguments = json.loads(args_str) if isinstance(args_str, str) else args_str
-            except json.JSONDecodeError:
-                arguments = {}
+            except json.JSONDecodeError as e:
+                # SECURITY: Fail closed on malformed JSON
+                raise MalformedToolCall(name, f"Invalid JSON arguments: {e}")
 
-            return (name, arguments) if name else None
+            return (name, arguments)
 
         # Object format
         if hasattr(item, "function"):
             func = item.function
             name = getattr(func, "name", "")
             args_str = getattr(func, "arguments", "{}")
+            if not name:
+                return None
             try:
                 arguments = json.loads(args_str) if isinstance(args_str, str) else args_str
-            except json.JSONDecodeError:
-                arguments = {}
-            return (name, arguments) if name else None
+            except json.JSONDecodeError as e:
+                raise MalformedToolCall(name, f"Invalid JSON arguments: {e}")
+            return (name, arguments)
 
         if hasattr(item, "name"):
             name = item.name
             args_str = getattr(item, "arguments", "{}")
+            if not name:
+                return None
             try:
                 arguments = json.loads(args_str) if isinstance(args_str, str) else args_str
-            except json.JSONDecodeError:
-                arguments = {}
-            return (name, arguments) if name else None
+            except json.JSONDecodeError as e:
+                raise MalformedToolCall(name, f"Invalid JSON arguments: {e}")
+            return (name, arguments)
 
         return None
 
