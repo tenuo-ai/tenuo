@@ -523,6 +523,76 @@ class TestConstraintContainment:
         assert not _is_constraint_contained(Exact("fifty"), parent)
         assert not _is_constraint_contained(Exact("abc"), parent)
 
+    # -------------------------------------------------------------------------
+    # Subpath Constraints (Path Containment)
+    # -------------------------------------------------------------------------
+    def test_subpath_narrowing(self):
+        """Subpath('/data') -> Subpath('/data/reports') is allowed."""
+        from tenuo import Subpath
+
+        parent = Subpath("/data")
+        assert _is_constraint_contained(Subpath("/data/reports"), parent)
+        assert _is_constraint_contained(Subpath("/data/reports/2024"), parent)
+        assert _is_constraint_contained(Subpath("/data"), parent)  # Equal is allowed
+
+    def test_subpath_widening_blocked(self):
+        """Subpath('/data/reports') -> Subpath('/data') is blocked."""
+        from tenuo import Subpath
+
+        parent = Subpath("/data/reports")
+        assert not _is_constraint_contained(Subpath("/data"), parent)
+        assert not _is_constraint_contained(Subpath("/"), parent)
+
+    def test_subpath_sibling_blocked(self):
+        """Subpath('/data') -> Subpath('/etc') is blocked (not contained)."""
+        from tenuo import Subpath
+
+        parent = Subpath("/data")
+        assert not _is_constraint_contained(Subpath("/etc"), parent)
+        assert not _is_constraint_contained(Subpath("/data2"), parent)  # Not a child
+
+    # -------------------------------------------------------------------------
+    # UrlSafe Constraints (SSRF Protection)
+    # -------------------------------------------------------------------------
+    def test_urlsafe_same_config(self):
+        """UrlSafe() -> UrlSafe() with same config is allowed."""
+        from tenuo import UrlSafe
+
+        parent = UrlSafe()
+        assert _is_constraint_contained(UrlSafe(), parent)
+
+    def test_urlsafe_add_domain_allowlist(self):
+        """UrlSafe() -> UrlSafe(allow_domains=[...]) is allowed (more restrictive)."""
+        from tenuo import UrlSafe
+
+        parent = UrlSafe()
+        child = UrlSafe(allow_domains=["api.github.com"])
+        assert _is_constraint_contained(child, parent)
+
+    def test_urlsafe_remove_domain_allowlist_blocked(self):
+        """UrlSafe(allow_domains=[...]) -> UrlSafe() is blocked (less restrictive)."""
+        from tenuo import UrlSafe
+
+        parent = UrlSafe(allow_domains=["api.github.com"])
+        child = UrlSafe()
+        assert not _is_constraint_contained(child, parent)
+
+    def test_urlsafe_narrow_domain_allowlist(self):
+        """UrlSafe(allow_domains=['a', 'b']) -> UrlSafe(allow_domains=['a']) is allowed."""
+        from tenuo import UrlSafe
+
+        parent = UrlSafe(allow_domains=["api.github.com", "api.openai.com"])
+        child = UrlSafe(allow_domains=["api.github.com"])
+        assert _is_constraint_contained(child, parent)
+
+    def test_urlsafe_widen_domain_allowlist_blocked(self):
+        """UrlSafe(allow_domains=['a']) -> UrlSafe(allow_domains=['a', 'b']) is blocked."""
+        from tenuo import UrlSafe
+
+        parent = UrlSafe(allow_domains=["api.github.com"])
+        child = UrlSafe(allow_domains=["api.github.com", "evil.com"])
+        assert not _is_constraint_contained(child, parent)
+
 
 # =============================================================================
 # Task Context Tests
@@ -658,3 +728,85 @@ def test_critical_tool_requires_constraint(setup_config):
                 await delete_file(path="/data/file.txt")
 
     asyncio.run(_test())
+
+
+class TestGrantWithAllConstraints:
+    """Integration tests for grant() with all constraint types."""
+
+    def test_grant_subpath_narrowing(self, setup_config):
+        """grant() allows narrowing Subpath."""
+        from tenuo import Capability, Subpath
+
+        async def _test():
+            async with mint(Capability("read_file", path=Subpath("/data"))):
+                async with grant(Capability("read_file", path=Subpath("/data/reports"))):
+                    child = warrant_scope()
+                    assert child.capabilities["read_file"]["path"].root == "/data/reports"
+
+        asyncio.run(_test())
+
+    def test_grant_subpath_widening_blocked(self, setup_config):
+        """grant() blocks widening Subpath."""
+        from tenuo import Capability, Subpath
+
+        async def _test():
+            async with mint(Capability("read_file", path=Subpath("/data/reports"))):
+                with pytest.raises(MonotonicityError):
+                    async with grant(Capability("read_file", path=Subpath("/data"))):
+                        pass
+
+        asyncio.run(_test())
+
+    def test_grant_urlsafe_more_restrictive(self, setup_config):
+        """grant() allows adding UrlSafe domain allowlist."""
+        from tenuo import Capability, UrlSafe
+
+        async def _test():
+            async with mint(Capability("fetch_url", url=UrlSafe())):
+                async with grant(Capability("fetch_url", url=UrlSafe(allow_domains=["api.github.com"]))):
+                    child = warrant_scope()
+                    assert child.capabilities["fetch_url"]["url"].allow_domains == ["api.github.com"]
+
+        asyncio.run(_test())
+
+    def test_grant_urlsafe_less_restrictive_blocked(self, setup_config):
+        """grant() blocks removing UrlSafe domain allowlist."""
+        from tenuo import Capability, UrlSafe
+
+        async def _test():
+            async with mint(Capability("fetch_url", url=UrlSafe(allow_domains=["api.github.com"]))):
+                with pytest.raises(MonotonicityError):
+                    async with grant(Capability("fetch_url", url=UrlSafe())):
+                        pass
+
+        asyncio.run(_test())
+
+    def test_grant_range_narrowing(self, setup_config):
+        """grant() allows narrowing Range."""
+        from tenuo_core import Range
+        from tenuo import Capability
+
+        async def _test():
+            async with mint(Capability("scale", replicas=Range(min=1, max=100))):
+                async with grant(Capability("scale", replicas=Range(min=5, max=20))):
+                    child = warrant_scope()
+                    assert child.capabilities["scale"]["replicas"].min == 5
+                    assert child.capabilities["scale"]["replicas"].max == 20
+
+        asyncio.run(_test())
+
+    def test_grant_oneof_subset(self, setup_config):
+        """grant() allows narrowing OneOf to subset."""
+        from tenuo_core import OneOf
+        from tenuo import Capability
+
+        async def _test():
+            async with mint(Capability("deploy", env=OneOf(["dev", "staging", "prod"]))):
+                async with grant(Capability("deploy", env=OneOf(["dev", "staging"]))):
+                    child = warrant_scope()
+                    assert set(child.capabilities["deploy"]["env"].values) == {
+                        "dev",
+                        "staging",
+                    }
+
+        asyncio.run(_test())
