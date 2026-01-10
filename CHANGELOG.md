@@ -16,8 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Streaming TOCTOU protection**: Buffer-verify-emit pattern prevents timing attacks
 - **Responses API support**: `client.responses.create()` with guardrails
 - **OpenAI Agents SDK integration**: `create_tool_guardrail()`, `create_warrant_guardrail()`
-- **Subpath constraint**: Secure path containment that blocks `..` traversal attacks
 - **Tool schema validation**: Warns on typos in constraint parameter names
+
+#### New Constraints
+- **Subpath constraint**: Secure path containment that blocks `..` traversal attacks (normalizes paths lexically, blocks null bytes, requires absolute paths)
+- **UrlSafe constraint**: SSRF protection that blocks dangerous URLs by default (private IPs, loopback, cloud metadata, IP encoding bypasses)
 - **Audit logging**: `AuditEvent` with session_id, constraint_hash, warrant_id
 - **Debug mode**: `enable_debug()` for verbose logging
 - **Pre-flight validation**: `client.validate()` catches misconfigurations early

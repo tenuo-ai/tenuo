@@ -24,31 +24,29 @@ from tenuo.templates import (
     CommonAgents,
 )
 from tenuo.constraints import Capability
-from tenuo_core import Pattern, Exact, OneOf, Range, Regex
+from tenuo_core import Exact, OneOf, Pattern, Range, Regex, Subpath, UrlSafe
 
 
 class TestFileReader:
     """Test FileReader templates."""
 
     def test_in_directory(self):
-        """FileReader.in_directory creates correct capability."""
+        """FileReader.in_directory creates Subpath capability."""
         cap = FileReader.in_directory("/data/reports")
 
         assert isinstance(cap, Capability)
         assert cap.tool == "read_file"
         assert "path" in cap.constraints
-        assert isinstance(cap.constraints["path"], Pattern)
-        assert cap.constraints["path"].pattern == "/data/reports/*"
+        assert isinstance(cap.constraints["path"], Subpath)
 
-    def test_in_directory_already_has_wildcard(self):
-        """Doesn't double-add wildcard."""
-        cap = FileReader.in_directory("/data/reports/*")
-        assert cap.constraints["path"].pattern == "/data/reports/*"
+    def test_in_directory_blocks_traversal(self):
+        """FileReader.in_directory blocks path traversal."""
+        cap = FileReader.in_directory("/data")
+        subpath = cap.constraints["path"]
 
-    def test_in_directory_trailing_slash(self):
-        """Handles trailing slash correctly."""
-        cap = FileReader.in_directory("/data/reports/")
-        assert cap.constraints["path"].pattern == "/data/reports/*"
+        assert subpath.contains("/data/file.txt")
+        assert not subpath.contains("/data/../etc/passwd")
+        assert not subpath.contains("/etc/passwd")
 
     def test_exact_file(self):
         """FileReader.exact_file creates Exact constraint."""
@@ -73,12 +71,19 @@ class TestFileWriter:
     """Test FileWriter templates."""
 
     def test_in_directory(self):
-        """FileWriter.in_directory creates write capability."""
+        """FileWriter.in_directory creates Subpath capability."""
         cap = FileWriter.in_directory("/tmp/output")
 
         assert cap.tool == "write_file"
-        assert isinstance(cap.constraints["path"], Pattern)
-        assert cap.constraints["path"].pattern == "/tmp/output/*"
+        assert isinstance(cap.constraints["path"], Subpath)
+
+    def test_in_directory_blocks_traversal(self):
+        """FileWriter.in_directory blocks path traversal."""
+        cap = FileWriter.in_directory("/tmp/output")
+        subpath = cap.constraints["path"]
+
+        assert subpath.contains("/tmp/output/file.txt")
+        assert not subpath.contains("/tmp/output/../etc/hosts")
 
     def test_append_only(self):
         """FileWriter.append_only creates append capability."""
@@ -146,14 +151,35 @@ class TestWebSearcher:
     """Test WebSearcher templates."""
 
     def test_domains(self):
-        """WebSearcher.domains restricts to domains."""
-        cap = WebSearcher.domains(["api.example.com", "*.google.com"])
+        """WebSearcher.domains uses UrlSafe constraint."""
+        cap = WebSearcher.domains(["api.example.com"])
 
         assert cap.tool == "http_request"
-        assert isinstance(cap.constraints["domain"], OneOf)
-        # Test assertion: verify domain is in the constraint's allowed values
-        # Note: This is not URL sanitization. The OneOf constraint handles validation.
-        assert "api.example.com" in cap.constraints["domain"].values  # noqa: S105
+        assert isinstance(cap.constraints["url"], UrlSafe)
+
+    def test_domains_blocks_ssrf(self):
+        """WebSearcher.domains blocks SSRF attacks."""
+        cap = WebSearcher.domains(["api.example.com"])
+        url_safe = cap.constraints["url"]
+
+        # SSRF vectors should be blocked
+        assert not url_safe.is_safe("http://169.254.169.254/")
+        assert not url_safe.is_safe("http://127.0.0.1/")
+        assert not url_safe.is_safe("http://10.0.0.1/")
+
+    def test_any_public(self):
+        """WebSearcher.any_public allows any public URL."""
+        cap = WebSearcher.any_public()
+
+        assert cap.tool == "http_request"
+        url_safe = cap.constraints["url"]
+        assert isinstance(url_safe, UrlSafe)
+
+        # Public should work
+        assert url_safe.is_safe("https://api.github.com/")
+
+        # SSRF should be blocked
+        assert not url_safe.is_safe("http://169.254.169.254/")
 
     def test_url_pattern(self):
         """WebSearcher.url_pattern uses Pattern."""
@@ -163,10 +189,11 @@ class TestWebSearcher:
         assert isinstance(cap.constraints["url"], Pattern)
 
     def test_read_only(self):
-        """WebSearcher.read_only restricts to GET."""
+        """WebSearcher.read_only combines UrlSafe + GET-only."""
         cap = WebSearcher.read_only(["api.news.com"])
 
         assert cap.tool == "http_request"
+        assert isinstance(cap.constraints["url"], UrlSafe)
         assert cap.constraints["method"].value == "GET"
 
 
@@ -375,6 +402,62 @@ class TestCommonAgents:
         assert "send_email" in tools
 
 
+class TestSecurityConstraints:
+    """Test that all templates use secure constraints by default."""
+
+    def test_file_reader_uses_subpath(self):
+        """FileReader.in_directory uses Subpath (path traversal protection)."""
+        cap = FileReader.in_directory("/data")
+        subpath = cap.constraints["path"]
+
+        assert isinstance(subpath, Subpath)
+        assert subpath.contains("/data/file.txt")
+        assert not subpath.contains("/data/../etc/passwd")
+
+    def test_file_writer_uses_subpath(self):
+        """FileWriter.in_directory uses Subpath (path traversal protection)."""
+        cap = FileWriter.in_directory("/tmp/output")
+        subpath = cap.constraints["path"]
+
+        assert isinstance(subpath, Subpath)
+        assert subpath.contains("/tmp/output/report.txt")
+        assert not subpath.contains("/tmp/output/../etc/hosts")
+
+    def test_web_searcher_uses_url_safe(self):
+        """WebSearcher.domains uses UrlSafe (SSRF protection)."""
+        cap = WebSearcher.domains(["api.github.com"])
+        url_safe = cap.constraints["url"]
+
+        assert isinstance(url_safe, UrlSafe)
+        assert url_safe.is_safe("https://api.github.com/repos")
+        assert not url_safe.is_safe("http://169.254.169.254/")  # SSRF blocked
+
+    def test_common_agents_research_uses_secure(self):
+        """CommonAgents.research_assistant uses secure constraints."""
+        template = CommonAgents.research_assistant(
+            search_domains=["arxiv.org"],
+            output_dir="/tmp/research",
+        )
+
+        caps = list(template)
+        assert isinstance(caps[0].constraints["url"], UrlSafe)
+        assert isinstance(caps[1].constraints["path"], Subpath)
+
+    def test_common_agents_code_uses_secure(self):
+        """CommonAgents.code_assistant uses Subpath."""
+        template = CommonAgents.code_assistant(["/src"], read_only=False)
+
+        for cap in template.capabilities:
+            assert isinstance(cap.constraints["path"], Subpath)
+
+    def test_common_agents_web_uses_secure(self):
+        """CommonAgents.web_agent uses UrlSafe."""
+        template = CommonAgents.web_agent()
+
+        caps = list(template)
+        assert isinstance(caps[0].constraints["url"], UrlSafe)
+
+
 class TestTemplatesWithMint:
     """Integration tests - templates work with mint()."""
 
@@ -409,6 +492,21 @@ class TestTemplatesWithMint:
         )
 
         # Unpack template into mint
+        with mint_sync(*template):
+            pass  # Just verify no errors
+
+    def test_web_agent_template_with_mint_sync(self):
+        """Web agent templates work with mint_sync."""
+        from tenuo import configure, mint_sync, SigningKey
+        from tenuo.config import reset_config
+
+        reset_config()
+        key = SigningKey.generate()
+        configure(issuer_key=key, dev_mode=True, audit_log=False)
+
+        # Use web agent template
+        template = CommonAgents.web_agent()
+
         with mint_sync(*template):
             pass  # Just verify no errors
 

@@ -12,7 +12,7 @@ Tenuo Python SDK - Capability tokens for AI agents
         Pattern, Range, OneOf, Exact, Any,  # Any = Wildcard for zero-trust
         # Composites
         AnyOf, All, Not,  # AnyOf = OR, All = AND
-        # Security (Python-only)
+        # Security (from Rust core - can be embedded in Warrants)
         Subpath, UrlSafe,  # Path traversal and SSRF protection
         # Setup (usually once at startup)
         configure, auto_configure, SigningKey, PublicKey,

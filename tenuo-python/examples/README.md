@@ -74,9 +74,13 @@ This demo shows what Tenuo does that **if-statements CAN'T**:
     4.  **Authorization**: Enforcing capabilities on state transitions.
 
 ### OpenAI Integration
-- **[openai_guardrails.py](openai_guardrails.py)**: **Tier 1 Protection** - Direct OpenAI API wrapping with `guard()` and `GuardBuilder`. Shows constraint types, denial modes, streaming protection, and audit logging.
+- **[openai_guardrails.py](openai_guardrails.py)**: **Tier 1 Protection** - Direct OpenAI API wrapping with `guard()` and `GuardBuilder`. Shows constraint types, denial modes, streaming protection, and audit logging. Demonstrates `Subpath` for path traversal protection.
 - **[openai_warrant.py](openai_warrant.py)**: **Tier 2 Protection** - Full cryptographic authorization with warrants and Proof-of-Possession. Shows key separation, constraint enforcement, and `client.validate()`.
 - **[openai_agents_sdk.py](openai_agents_sdk.py)**: **Agents SDK Integration** - Using Tenuo guardrails with OpenAI's Agents SDK. Shows `create_tool_guardrail()` and `create_warrant_guardrail()`.
+
+**Security Constraints:**
+- `Subpath("/data")` - Blocks path traversal attacks (normalizes `../` before checking containment)
+- `UrlSafe()` - Blocks SSRF attacks (private IPs, metadata endpoints, IP encoding bypasses)
 
 ### MCP (Model Context Protocol)
 - **[mcp_integration.py](mcp_integration.py)**: Demonstrates how to integrate Tenuo with MCP servers, extracting constraints from MCP tool calls.

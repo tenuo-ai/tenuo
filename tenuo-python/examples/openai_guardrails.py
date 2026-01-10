@@ -30,7 +30,8 @@ from tenuo.openai import (
     GuardBuilder,
     Pattern,
     Range,
-    Subpath,  # Secure path containment (prevents traversal)
+    Subpath,   # Secure path containment (prevents traversal)
+    UrlSafe,   # SSRF protection (blocks private IPs, metadata)
     ToolDenied,
     ConstraintViolation,
     AuditEvent,
@@ -201,6 +202,36 @@ def demo_tool_denied():
     except ToolDenied as e:
         print(f"✓ Blocked: {e}")
 
+    print()
+
+
+def demo_url_safe_protection():
+    """Demonstrate UrlSafe for SSRF protection."""
+    print("=" * 60)
+    print("Demo 2c: SSRF Protection (UrlSafe)")
+    print("=" * 60)
+
+    print("\nUrlSafe blocks dangerous URLs by default:")
+    constraint = UrlSafe()
+
+    test_cases = [
+        ("https://api.github.com/repos", True, "Public API"),
+        ("http://169.254.169.254/", False, "AWS metadata"),
+        ("http://127.0.0.1/", False, "Loopback"),
+        ("http://10.0.0.1/", False, "Private IP"),
+        ("http://2130706433/", False, "Decimal IP (127.0.0.1)"),
+    ]
+
+    for url, expected, desc in test_cases:
+        result = constraint.is_safe(url)
+        status = "✓" if result == expected else "✗"
+        print(f"  {status} {url:<35} -> {'SAFE' if result else 'BLOCKED'} ({desc})")
+
+    print("\nWith domain allowlist:")
+    strict = UrlSafe(allow_domains=["api.github.com", "*.googleapis.com"])
+    print("  UrlSafe(allow_domains=['api.github.com', '*.googleapis.com'])")
+    print(f"    api.github.com: {'SAFE' if strict.is_safe('https://api.github.com/') else 'BLOCKED'}")
+    print(f"    evil.com: {'SAFE' if strict.is_safe('https://evil.com/') else 'BLOCKED'}")
     print()
 
 
@@ -446,13 +477,15 @@ def main():
     print("  - Builder pattern (recommended) or dict style")
     print("  - Allowlist/denylist for tools")
     print("  - Argument constraints (Pattern, Range, OneOf, etc.)")
-    print("  - Subpath for secure path containment")
+    print("  - Subpath for secure path containment (blocks traversal)")
+    print("  - UrlSafe for SSRF protection (blocks private IPs, metadata)")
     print("  - Type-strict validation\n")
 
     demo_builder_pattern()  # Recommended approach
     demo_constraint_violation()
     demo_tool_denied()
     demo_subpath_protection()
+    demo_url_safe_protection()
     demo_valid_call()
     demo_audit_callback()
     demo_skip_mode()

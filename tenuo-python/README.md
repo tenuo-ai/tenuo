@@ -283,11 +283,12 @@ with other_warrant.bind(keypair):
 Direct protection for OpenAI's Chat Completions and Responses APIs:
 
 ```python
-from tenuo.openai import GuardBuilder, Pattern, Subpath
+from tenuo.openai import GuardBuilder, Pattern, Subpath, UrlSafe
 
 # Tier 1: Guardrails (quick hardening)
 client = (GuardBuilder(openai.OpenAI())
-    .allow("read_file", path=Subpath("/data"))
+    .allow("read_file", path=Subpath("/data"))        # Path traversal protection
+    .allow("fetch_url", url=UrlSafe())                # SSRF protection
     .allow("send_email", to=Pattern("*@company.com"))
     .deny("delete_file")
     .build())
@@ -298,6 +299,14 @@ response = client.chat.completions.create(
     tools=[...]
 )  # Blocked: to doesn't match *@company.com
 ```
+
+### Security Constraints
+
+| Constraint | Purpose | Example |
+|------------|---------|---------|
+| `Subpath(root)` | Blocks path traversal attacks | `Subpath("/data")` blocks `/data/../etc/passwd` |
+| `UrlSafe()` | Blocks SSRF (private IPs, metadata) | `UrlSafe()` blocks `http://169.254.169.254/` |
+| `Pattern(glob)` | Glob pattern matching | `Pattern("*@company.com")` |
 
 For Tier 2 (cryptographic authorization with warrants), see [OpenAI Integration](https://tenuo.dev/openai).
 
@@ -405,7 +414,7 @@ from tenuo.mcp import SecureMCPClient
 async with SecureMCPClient("python", ["mcp_server.py"]) as client:
     tools = client.tools  # All tools wrapped with Tenuo
     
-    async with mint(Capability("read_file", path=Pattern("/data/*"))):
+    async with mint(Capability("read_file", path=Subpath("/data"))):
         result = await tools["read_file"](path="/data/file.txt")
 ```
 
@@ -462,13 +471,13 @@ Once you add **any** constraint, unknown arguments are rejected:
 
 ```python
 # ❌ 'timeout' is unknown → blocked
-.capability("api_call", url=Pattern("https://api.example.com/*"))
+.capability("api_call", url=UrlSafe(allow_domains=["api.example.com"]))
 
 # ✅ Use Wildcard() for specific fields
-.capability("api_call", url=Pattern("https://api.example.com/*"), timeout=Wildcard())
+.capability("api_call", url=UrlSafe(allow_domains=["api.example.com"]), timeout=Wildcard())
 
 # ✅ Or opt out entirely
-.capability("api_call", url=Pattern("https://api.example.com/*"), _allow_unknown=True)
+.capability("api_call", url=UrlSafe(allow_domains=["api.example.com"]), _allow_unknown=True)
 ```
 
 ## Examples

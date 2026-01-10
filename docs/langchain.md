@@ -316,6 +316,8 @@ Constraints restrict tool arguments:
 |------|---------|-------------|
 | `Exact` | `Exact("prod")` | Must equal exactly |
 | `Pattern` | `Pattern("/tmp/*")` | Glob pattern match |
+| `Subpath` | `Subpath("/data")` | Path containment (blocks traversal) |
+| `UrlSafe` | `UrlSafe(allow_domains=["api.com"])` | SSRF-protected URLs |
 | `Regex` | `Regex(r"^prod-.*")` | Regex match |
 | `Range` | `Range(min=0, max=100)` | Numeric range |
 | `OneOf` | `OneOf(["a", "b"])` | One of values |
@@ -334,7 +336,7 @@ from tenuo.langchain import guard
 key = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
 warrant = (Warrant.mint_builder()
     .tool("search")  # No constraints
-    .capability("read_file", path=Pattern("/tmp/*"))  # With path constraint
+    .capability("read_file", path=Subpath("/tmp"))  # With path constraint
     .holder(key.public_key)
     .ttl(3600)
     .mint(key))
@@ -460,7 +462,7 @@ protected = guard_agent(
     issuer_key=kp,
     capabilities=[
         Capability("search"),
-        Capability("read_file", path=Pattern("/data/*")),
+        Capability("read_file", path=Subpath("/data")),
     ],
 )
 

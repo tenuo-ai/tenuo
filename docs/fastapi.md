@@ -379,7 +379,7 @@ async def read_file(
 async def issue_warrant():
     warrant = (Warrant.mint_builder()
         .tool("search")  # No constraints
-        .capability("read_file", path=Pattern("/data/*"))  # With constraint
+        .capability("read_file", path=Subpath("/data"))  # With constraint
         .holder(issuer_key.public_key)
         .ttl(3600)
         .mint(issuer_key))

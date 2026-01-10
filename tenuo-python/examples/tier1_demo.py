@@ -12,7 +12,7 @@ from tenuo import (
     grant,
     guard,
     SigningKey,
-    Pattern,
+    Subpath,
     Capability,
 )
 from tenuo.schemas import ToolSchema, register_schema
@@ -42,8 +42,8 @@ async def main():
     print("--- Tier 1 API Demo ---")
 
     # 4. Use mint to define initial scope
-    print("\n1. Root Task: Allow reading /data/*")
-    async with mint(Capability("read_file", path=Pattern("/data/*"))):
+    print("\n1. Root Task: Allow reading /data/")
+    async with mint(Capability("read_file", path=Subpath("/data"))):
         # Authorized call
         await read_file(path="/data/report.txt")
 
@@ -55,10 +55,10 @@ async def main():
             print(f"  [Blocked] {e}")
 
     # 5. Scoped Task: Narrowing authority
-    print("\n2. Scoped Task: Narrowing to /data/reports/*")
-    async with mint(Capability("read_file", path=Pattern("/data/*"))):
+    print("\n2. Scoped Task: Narrowing to /data/reports/")
+    async with mint(Capability("read_file", path=Subpath("/data"))):
         # Create a narrower scope
-        async with grant(Capability("read_file", path=Pattern("/data/reports/*"))):
+        async with grant(Capability("read_file", path=Subpath("/data/reports"))):
             # Authorized in narrow scope
             await read_file(path="/data/reports/q3.pdf")
 

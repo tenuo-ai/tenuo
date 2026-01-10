@@ -62,30 +62,30 @@ The builder accepts:
 **Alternative: dict style** (less ergonomic, same functionality):
 
 ```python
-from tenuo.openai import guard, Pattern
+from tenuo.openai import guard, Subpath
 
 client = guard(
     openai.OpenAI(),
     allow_tools=["search_web", "read_file"],
-    constraints={"read_file": {"path": Pattern("/data/*")}}
+    constraints={"read_file": {"path": Subpath("/data")}}
 )
 ```
 
 **What gets blocked?**
 - Tools not in allow list
-- Arguments violating constraints (e.g., `/etc/passwd` blocked by `Pattern("/data/*")`)
+- Arguments violating constraints (e.g., `/etc/passwd` blocked by `Subpath("/data")`)
 - Streaming TOCTOU attacks (buffer-verify-emit)
 
 ### Tier 2: Warrants (when you need crypto)
 
 ```python
 from tenuo.openai import GuardBuilder
-from tenuo import SigningKey, Warrant, Pattern
+from tenuo import SigningKey, Warrant, Subpath
 
 # Agent holds warrant and signing key
 agent_key = SigningKey.generate()
 warrant = (Warrant.mint_builder()
-    .capability("read_file", {"path": Pattern("/data/*")})
+    .capability("read_file", {"path": Subpath("/data")})
     .holder(agent_key.public_key)
     .ttl(3600)
     .mint(control_plane_key))
@@ -113,6 +113,7 @@ Reuses core Tenuo constraint types:
 | `OneOf([...])` | `OneOf(["dev", "staging"])` | Set membership |
 | `Range(min, max)` | `Range(0, 100)` | Numeric bounds |
 | `Subpath(root)` | `Subpath("/data")` | Secure path containment |
+| `UrlSafe(...)` | `UrlSafe()` | SSRF-safe URL validation |
 
 ```python
 from tenuo.openai import guard, Pattern, Range, OneOf, Subpath
@@ -148,6 +149,33 @@ Subpath("/data").matches("/data/../etc/passwd")    # False (SAFE!)
 ```
 
 For maximum security, combine `Subpath` with [path_jail](https://github.com/tenuo-ai/path_jail) at execution time.
+
+### UrlSafe: SSRF Protection
+
+`UrlSafe` blocks Server-Side Request Forgery (SSRF) attacks:
+
+```python
+from tenuo.openai import UrlSafe
+
+# Default: blocks private IPs, loopback, cloud metadata
+constraint = UrlSafe()
+constraint.is_safe("https://api.github.com/")     # True
+constraint.is_safe("http://169.254.169.254/")     # False (AWS metadata)
+constraint.is_safe("http://127.0.0.1/")           # False (loopback)
+constraint.is_safe("http://10.0.0.1/")            # False (private IP)
+
+# Strict: domain allowlist
+constraint = UrlSafe(allow_domains=["api.github.com", "*.googleapis.com"])
+```
+
+**Blocked attack vectors:**
+- Private IPs (10.x, 172.16.x, 192.168.x)
+- Loopback (127.x, ::1, localhost)
+- Cloud metadata (169.254.169.254)
+- IP encoding bypasses (decimal, hex, octal, IPv6-mapped)
+- URL-encoded hostnames
+
+See [Constraints documentation](./constraints.md#urlsafe) for full options.
 
 ---
 
@@ -265,7 +293,7 @@ agent = Agent(
 Track all authorization decisions:
 
 ```python
-from tenuo.openai import guard, AuditEvent
+from tenuo.openai import guard, AuditEvent, Subpath
 
 def audit_callback(event: AuditEvent):
     print(f"{event.decision}: {event.tool_name}")
@@ -274,7 +302,7 @@ def audit_callback(event: AuditEvent):
 
 client = guard(
     openai.OpenAI(),
-    constraints={"read_file": {"path": Pattern("/data/*")}},
+    constraints={"read_file": {"path": Subpath("/data")}},
     audit_callback=audit_callback,
 )
 ```

@@ -8,7 +8,7 @@
 use crate::approval::{compute_request_hash, Approval as RustApproval};
 use crate::constraints::{
     All, Any, CelConstraint, Cidr, Constraint, ConstraintValue, Contains, Exact, Not, NotOneOf,
-    OneOf, Pattern, Range, RegexConstraint, Subset, UrlPattern, Wildcard,
+    OneOf, Pattern, Range, RegexConstraint, Subpath, Subset, UrlPattern, UrlSafe, Wildcard,
 };
 use crate::crypto::{
     PublicKey as RustPublicKey, Signature as RustSignature, SigningKey as RustSigningKey,
@@ -366,6 +366,30 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                         "{} requires the '{}' feature. Enable with: tenuo = {{ features = [\"{}\"] }}",
                         feature, feature, feature
                     )],
+                ),
+            ),
+            crate::error::Error::PathNotContained { path, root } => (
+                "ConstraintViolation",
+                PyTuple::new(
+                    py,
+                    [
+                        "path",
+                        &format!("path '{}' not contained in root '{}'", path, root),
+                    ],
+                ),
+            ),
+            crate::error::Error::InvalidPath { path, reason } => {
+                // Use Python's built-in ValueError directly since it's not in tenuo.exceptions
+                return PyValueError::new_err(format!("invalid path '{}': {}", path, reason));
+            }
+            crate::error::Error::UrlNotSafe { url, reason } => (
+                "ConstraintViolation",
+                PyTuple::new(
+                    py,
+                    [
+                        "url",
+                        &format!("URL '{}' blocked: {}", url, reason),
+                    ],
                 ),
             ),
         };
@@ -951,6 +975,319 @@ impl PyWildcard {
     }
 }
 
+/// Secure path containment constraint.
+///
+/// Validates that paths are safely contained within a root directory,
+/// preventing path traversal attacks. This is a lexical check only -
+/// it normalizes `.` and `..` components but does NOT access the filesystem.
+///
+/// Example:
+///     subpath = Subpath("/data")
+///     subpath.contains("/data/file.txt")  # True
+///     subpath.contains("/data/../etc/passwd")  # False (normalized to /etc/passwd)
+///     subpath.contains("/etc/passwd")  # False (not under /data)
+#[pyclass(name = "Subpath")]
+#[derive(Clone)]
+pub struct PySubpath {
+    inner: Subpath,
+}
+
+#[pymethods]
+impl PySubpath {
+    /// Create a new Subpath constraint.
+    ///
+    /// Args:
+    ///     root: The root directory path (must be absolute).
+    ///     case_sensitive: Whether to match case-sensitively. Default: True.
+    ///         Set to False for Windows paths.
+    ///     allow_equal: Whether to allow path == root. Default: True.
+    ///         Set to False to require strictly under root.
+    ///
+    /// Raises:
+    ///     ValueError: If root is not an absolute path.
+    ///
+    /// Example:
+    ///     >>> from tenuo import Subpath
+    ///     >>> subpath = Subpath("/data")
+    ///     >>> subpath.contains("/data/file.txt")
+    ///     True
+    ///     >>> subpath.contains("/etc/passwd")
+    ///     False
+    #[new]
+    #[pyo3(signature = (root, case_sensitive=true, allow_equal=true))]
+    fn new(root: &str, case_sensitive: bool, allow_equal: bool) -> PyResult<Self> {
+        Ok(Self {
+            inner: Subpath::with_options(root, case_sensitive, allow_equal).map_err(to_py_err)?,
+        })
+    }
+
+    /// Check if a path is safely contained within root.
+    ///
+    /// Args:
+    ///     path: The path to check.
+    ///
+    /// Returns:
+    ///     True if the path is safely contained, False otherwise.
+    ///
+    /// The check:
+    ///     - Rejects null bytes
+    ///     - Rejects relative paths
+    ///     - Normalizes `.` and `..` components
+    ///     - Checks prefix containment after normalization
+    fn contains(&self, path: &str) -> PyResult<bool> {
+        self.inner.contains_path(path).map_err(to_py_err)
+    }
+
+    /// Alias for contains() for consistency with other constraints.
+    ///
+    /// Args:
+    ///     path: The path to check.
+    ///
+    /// Returns:
+    ///     True if the path is safely contained, False otherwise.
+    fn matches(&self, path: &str) -> PyResult<bool> {
+        self.contains(path)
+    }
+
+    fn __repr__(&self) -> String {
+        // Python-style repr with quoted string
+        if self.inner.case_sensitive && self.inner.allow_equal {
+            format!("Subpath('{}')", self.inner.root)
+        } else {
+            format!(
+                "Subpath('{}', case_sensitive={}, allow_equal={})",
+                self.inner.root,
+                if self.inner.case_sensitive {
+                    "True"
+                } else {
+                    "False"
+                },
+                if self.inner.allow_equal {
+                    "True"
+                } else {
+                    "False"
+                }
+            )
+        }
+    }
+
+    fn __str__(&self) -> String {
+        // Include type name for better error messages
+        format!("Subpath('{}')", self.inner.root)
+    }
+
+    /// The root directory path.
+    #[getter]
+    fn root(&self) -> String {
+        self.inner.root.clone()
+    }
+
+    /// Whether matching is case-sensitive.
+    #[getter]
+    fn case_sensitive(&self) -> bool {
+        self.inner.case_sensitive
+    }
+
+    /// Whether path == root is allowed.
+    #[getter]
+    fn allow_equal(&self) -> bool {
+        self.inner.allow_equal
+    }
+}
+
+/// SSRF-safe URL constraint.
+///
+/// Validates URLs to prevent Server-Side Request Forgery attacks by blocking:
+/// - Private IP ranges (RFC1918: 10.x, 172.16.x, 192.168.x)
+/// - Loopback addresses (127.x, ::1, localhost)
+/// - Cloud metadata endpoints (169.254.169.254, etc.)
+/// - Dangerous schemes (file://, gopher://, etc.)
+/// - IP encoding bypasses (decimal, hex, octal, IPv6-mapped, URL-encoded)
+///
+/// Example:
+///     url_safe = UrlSafe()  # Secure defaults
+///     url_safe.is_safe("https://api.github.com/repos")  # True
+///     url_safe.is_safe("http://169.254.169.254/")  # False (metadata)
+///     url_safe.is_safe("http://127.0.0.1/")  # False (loopback)
+///
+///     # Domain allowlist - only specific domains allowed
+///     url_safe = UrlSafe(allow_domains=["api.github.com", "*.googleapis.com"])
+#[pyclass(name = "UrlSafe")]
+#[derive(Clone)]
+pub struct PyUrlSafe {
+    inner: UrlSafe,
+}
+
+#[pymethods]
+impl PyUrlSafe {
+    /// Create a new UrlSafe constraint.
+    ///
+    /// Args:
+    ///     allow_schemes: Allowed URL schemes. Default: ["http", "https"]
+    ///     allow_domains: If set, only these domains are allowed.
+    ///         Supports wildcards: "*.example.com"
+    ///     allow_ports: If set, only these ports are allowed.
+    ///     block_private: Block RFC1918 private IPs. Default: True.
+    ///     block_loopback: Block loopback (127.x, ::1). Default: True.
+    ///     block_metadata: Block cloud metadata endpoints. Default: True.
+    ///     block_reserved: Block reserved IP ranges. Default: True.
+    ///     block_internal_tlds: Block internal TLDs (.internal, .local). Default: False.
+    ///
+    /// Example:
+    ///     >>> from tenuo import UrlSafe
+    ///     >>> url_safe = UrlSafe()  # Secure defaults
+    ///     >>> url_safe.is_safe("https://api.github.com/repos")
+    ///     True
+    ///     >>> url_safe.is_safe("http://169.254.169.254/")
+    ///     False
+    #[new]
+    #[pyo3(signature = (
+        allow_schemes=None,
+        allow_domains=None,
+        allow_ports=None,
+        block_private=true,
+        block_loopback=true,
+        block_metadata=true,
+        block_reserved=true,
+        block_internal_tlds=false
+    ))]
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        allow_schemes: Option<Vec<String>>,
+        allow_domains: Option<Vec<String>>,
+        allow_ports: Option<Vec<u16>>,
+        block_private: bool,
+        block_loopback: bool,
+        block_metadata: bool,
+        block_reserved: bool,
+        block_internal_tlds: bool,
+    ) -> Self {
+        Self {
+            inner: UrlSafe {
+                schemes: allow_schemes.unwrap_or_else(|| vec!["http".into(), "https".into()]),
+                allow_domains,
+                allow_ports,
+                block_private,
+                block_loopback,
+                block_metadata,
+                block_reserved,
+                block_internal_tlds,
+            },
+        }
+    }
+
+    /// Check if a URL is safe to fetch.
+    ///
+    /// Args:
+    ///     url: URL string to check.
+    ///
+    /// Returns:
+    ///     True if the URL passes all SSRF checks, False otherwise.
+    fn is_safe(&self, url: &str) -> PyResult<bool> {
+        self.inner.is_safe(url).map_err(to_py_err)
+    }
+
+    /// Alias for is_safe() for consistency with other constraints.
+    ///
+    /// Args:
+    ///     url: URL string to check.
+    ///
+    /// Returns:
+    ///     True if the URL passes all SSRF checks, False otherwise.
+    fn matches(&self, url: &str) -> PyResult<bool> {
+        self.is_safe(url)
+    }
+
+    fn __repr__(&self) -> String {
+        // Python-style repr
+        let mut opts = Vec::new();
+
+        let default_schemes = vec!["http".to_string(), "https".to_string()];
+        if self.inner.schemes != default_schemes {
+            opts.push(format!("allow_schemes={:?}", self.inner.schemes));
+        }
+        if let Some(ref domains) = self.inner.allow_domains {
+            opts.push(format!("allow_domains={:?}", domains));
+        }
+        if let Some(ref ports) = self.inner.allow_ports {
+            opts.push(format!("allow_ports={:?}", ports));
+        }
+        if !self.inner.block_private {
+            opts.push("block_private=False".to_string());
+        }
+        if !self.inner.block_loopback {
+            opts.push("block_loopback=False".to_string());
+        }
+        if !self.inner.block_metadata {
+            opts.push("block_metadata=False".to_string());
+        }
+        if !self.inner.block_reserved {
+            opts.push("block_reserved=False".to_string());
+        }
+        if self.inner.block_internal_tlds {
+            opts.push("block_internal_tlds=True".to_string());
+        }
+
+        if opts.is_empty() {
+            "UrlSafe()".to_string()
+        } else {
+            format!("UrlSafe({})", opts.join(", "))
+        }
+    }
+
+    fn __str__(&self) -> String {
+        self.__repr__()
+    }
+
+    /// Allowed URL schemes.
+    #[getter]
+    fn schemes(&self) -> Vec<String> {
+        self.inner.schemes.clone()
+    }
+
+    /// Allowed domains (if set).
+    #[getter]
+    fn allow_domains(&self) -> Option<Vec<String>> {
+        self.inner.allow_domains.clone()
+    }
+
+    /// Allowed ports (if set).
+    #[getter]
+    fn allow_ports(&self) -> Option<Vec<u16>> {
+        self.inner.allow_ports.clone()
+    }
+
+    /// Whether private IPs are blocked.
+    #[getter]
+    fn block_private(&self) -> bool {
+        self.inner.block_private
+    }
+
+    /// Whether loopback is blocked.
+    #[getter]
+    fn block_loopback(&self) -> bool {
+        self.inner.block_loopback
+    }
+
+    /// Whether metadata endpoints are blocked.
+    #[getter]
+    fn block_metadata(&self) -> bool {
+        self.inner.block_metadata
+    }
+
+    /// Whether reserved ranges are blocked.
+    #[getter]
+    fn block_reserved(&self) -> bool {
+        self.inner.block_reserved
+    }
+
+    /// Whether internal TLDs are blocked.
+    #[getter]
+    fn block_internal_tlds(&self) -> bool {
+        self.inner.block_internal_tlds
+    }
+}
+
 /// Python wrapper for SigningKey.
 #[pyclass(name = "SigningKey")]
 pub struct PySigningKey {
@@ -1123,6 +1460,16 @@ fn constraint_to_py(py: Python<'_>, constraint: &Constraint) -> PyResult<PyObjec
             #[allow(deprecated)]
             Ok(PyRegex { inner: r.clone() }.into_py(py))
         }
+        Constraint::Subpath(s) =>
+        {
+            #[allow(deprecated)]
+            Ok(PySubpath { inner: s.clone() }.into_py(py))
+        }
+        Constraint::UrlSafe(u) =>
+        {
+            #[allow(deprecated)]
+            Ok(PyUrlSafe { inner: u.clone() }.into_py(py))
+        }
     }
 }
 
@@ -1158,9 +1505,13 @@ fn py_to_constraint(obj: &Bound<'_, PyAny>) -> PyResult<Constraint> {
         Ok(Constraint::Regex(r.inner))
     } else if let Ok(w) = obj.extract::<PyWildcard>() {
         Ok(Constraint::Wildcard(w.inner))
+    } else if let Ok(s) = obj.extract::<PySubpath>() {
+        Ok(Constraint::Subpath(s.inner))
+    } else if let Ok(u) = obj.extract::<PyUrlSafe>() {
+        Ok(Constraint::UrlSafe(u.inner))
     } else {
         Err(PyValueError::new_err(
-            "constraint must be Pattern, Exact, OneOf, NotOneOf, Range, Cidr, UrlPattern, Contains, Subset, All, AnyOf, Not, CEL, Regex, or Wildcard",
+            "constraint must be Pattern, Exact, OneOf, NotOneOf, Range, Cidr, UrlPattern, Contains, Subset, All, AnyOf, Not, CEL, Regex, Wildcard, Subpath, or UrlSafe",
         ))
     }
 }
@@ -4215,6 +4566,8 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyUrlPattern>()?;
     m.add_class::<PyRegex>()?;
     m.add_class::<PyWildcard>()?;
+    m.add_class::<PySubpath>()?;
+    m.add_class::<PyUrlSafe>()?;
     m.add_class::<PyCel>()?;
     m.add_class::<PyNotOneOf>()?;
     m.add_class::<PyContains>()?;
