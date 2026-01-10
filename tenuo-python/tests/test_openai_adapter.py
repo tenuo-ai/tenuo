@@ -1946,7 +1946,7 @@ class TestAgentsSDKIntegration:
     @pytest.mark.asyncio
     async def test_guardrail_blocks_malformed_json(self):
         """Test guardrail fails closed on malformed JSON arguments.
-        
+
         SECURITY: Malformed JSON must NOT silently pass as empty arguments,
         as that could bypass constraints.
         """

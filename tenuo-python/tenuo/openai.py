@@ -2408,7 +2408,7 @@ class TenuoToolGuardrail:
 
     def _parse_tool_call_item(self, item: Any) -> Optional[tuple]:
         """Parse a single tool call item into (name, arguments).
-        
+
         SECURITY: Malformed JSON raises MalformedToolCall to fail closed.
         We do NOT silently default to {} as that could bypass constraints.
         """
