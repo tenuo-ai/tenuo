@@ -248,7 +248,9 @@ class Subpath:
                          If False, path must be strictly under root.
         """
         # Validate root is absolute
-        if not os.path.isabs(root):
+        # Accept both OS-native absolute paths AND Unix-style paths (for cross-platform tools)
+        is_absolute = os.path.isabs(root) or root.startswith("/")
+        if not is_absolute:
             raise ValueError(f"Subpath root must be absolute: {root}")
 
         # Normalize root (resolve . and ..)
@@ -277,8 +279,9 @@ class Subpath:
             logger.debug(f"Subpath rejected null bytes: {value!r}")
             return False
 
-        # Require absolute paths
-        if not os.path.isabs(value):
+        # Require absolute paths (accept Unix-style on all platforms)
+        is_absolute = os.path.isabs(value) or value.startswith("/")
+        if not is_absolute:
             logger.debug(f"Subpath rejected relative path: {value}")
             return False
 
@@ -290,13 +293,15 @@ class Subpath:
             normalized = normalized.lower()
 
         # Check containment
-        # Path must start with root + separator OR equal root (if allowed)
+        # For cross-platform compatibility, check both / and os.sep separators
+        # This handles Unix-style paths on Windows
         root_with_sep = self._root + os.sep
+        root_with_slash = self._root + "/"
 
         if self._allow_equal and normalized == self._root:
             return True
 
-        if normalized.startswith(root_with_sep):
+        if normalized.startswith(root_with_sep) or normalized.startswith(root_with_slash):
             return True
 
         logger.debug(
