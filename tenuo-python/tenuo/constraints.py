@@ -42,9 +42,12 @@ Example:
     url_constraint.is_safe("http://169.254.169.254/")  # False
 """
 
+import logging
 import os
 import shlex
 from typing import Dict, Any, TYPE_CHECKING, List, Set
+
+logger = logging.getLogger("tenuo.constraints")
 
 if TYPE_CHECKING:
     from tenuo_core import Constraint  # type: ignore
@@ -368,8 +371,19 @@ class Shlex:
     # These are dangerous even inside double quotes ("$VAR" expands)
     EXPANSION_CHARS: Set[str] = {"$", "`"}
 
-    # Control characters that could inject commands
-    CONTROL_CHARS: Set[str] = {"\n", "\r", "\x00"}
+    # Control characters that could inject commands or cause parsing issues
+    # Blocked: null, newlines, carriage returns, vertical tab, form feed, bell, backspace, DEL
+    # Allowed: tab (valid whitespace), ANSI escape (not injection vector)
+    CONTROL_CHARS: Set[str] = {
+        "\x00",  # Null - string terminator in C, security risk
+        "\n",    # Newline - command separator in shell
+        "\r",    # Carriage return - newline variant
+        "\x0b",  # Vertical tab - shlex parsing issues
+        "\x0c",  # Form feed - shlex parsing issues
+        "\x07",  # Bell - parsing anomalies
+        "\x08",  # Backspace - terminal manipulation
+        "\x7f",  # DEL - terminal manipulation
+    }
 
     # Glob characters (optional blocking)
     GLOB_CHARS: Set[str] = {"*", "?", "["}
@@ -419,18 +433,21 @@ class Shlex:
         # R1: Control character check (before parsing)
         for char in self.CONTROL_CHARS:
             if char in value:
+                logger.debug(f"Shlex rejected control char {char!r} in: {value!r}")
                 return False
 
         # R1: Expansion character check (before parsing)
         # Shell expands $VAR and `cmd` even inside double quotes
         for char in self.EXPANSION_CHARS:
             if char in value:
+                logger.debug(f"Shlex rejected expansion char '{char}' in: {value!r}")
                 return False
 
         # R6: Optional glob check
         if self.block_globs:
             for char in self.GLOB_CHARS:
                 if char in value:
+                    logger.debug(f"Shlex rejected glob char '{char}' in: {value!r}")
                     return False
 
         # R2: "High-definition" parsing with punctuation_chars
@@ -440,10 +457,10 @@ class Shlex:
         #   'ls "foo; bar"' -> ['ls', 'foo; bar']    (safe)
         try:
             lex = shlex.shlex(value, posix=True, punctuation_chars=True)
-            lex.whitespace_split = True
             tokens = list(lex)
-        except ValueError:
+        except ValueError as e:
             # Unbalanced quotes, malformed escapes, etc.
+            logger.debug(f"Shlex parse error: {e} in: {value!r}")
             return False
 
         # R5: Empty command check
@@ -460,6 +477,7 @@ class Shlex:
         bin_name = os.path.basename(binary)
 
         if binary not in self.allowed_bins and bin_name not in self.allowed_bins:
+            logger.debug(f"Shlex rejected binary '{binary}' not in allowlist: {self.allowed_bins}")
             return False
 
         # R3: Dangerous token check
@@ -467,6 +485,7 @@ class Shlex:
         # is guaranteed to be its own token.
         for token in tokens:
             if token in self.DANGEROUS_TOKENS:
+                logger.debug(f"Shlex rejected operator token '{token}' in: {value!r}")
                 return False
 
         return True
