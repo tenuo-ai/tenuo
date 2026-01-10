@@ -11,12 +11,14 @@ description: Tool protection for OpenAI agents and the Agents SDK
 
 Tenuo integrates with OpenAI's APIs using a **two-tier** protection model:
 
-| Tier | Complexity | Use Case |
-|------|------------|----------|
-| **Tier 1: Guardrails** | 3 lines of code | Single-process agents, quick hardening |
-| **Tier 2: Warrants** | Full crypto | Multi-agent delegation, audit trails |
+| Tier | Setup | Best For |
+|------|-------|----------|
+| **Tier 1: Guardrails** | Inline constraints | Quick hardening, prototyping, single-process agents |
+| **Tier 2: Warrants** | Warrant + signing key | Production systems, multi-agent, audit requirements |
 
-Tier 1 is a stepping stone to Tier 2 - same API, opt-in cryptography.
+**Tier 1** catches LLM mistakes and prompt injection with minimal setup. Constraints are defined inline in your code. Good for getting started, but constraints can drift from tool definitions.
+
+**Tier 2** adds cryptographic proof. Constraints live in the warrant (issued by a control plane), ensuring they're defined once and enforced everywhere. Required when agents run in separate processes or you need audit trails.
 
 ---
 
