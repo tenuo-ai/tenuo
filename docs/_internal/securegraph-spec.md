@@ -150,7 +150,7 @@ SecureGraph enforces cryptographic verification at every node transition. Tamper
 
 Every warrant is signed. At deserialization:
 
-SecureGraph follows the canonical wire format (`docs/wire-format-spec.md`): verify against the exact payload bytes *before* deserializing to avoid canonicalization bugs.
+SecureGraph follows the canonical wire format (`docs/spec/wire-format-v1.md`): verify against the exact payload bytes *before* deserializing to avoid canonicalization bugs.
 
 ```python
 def deserialize(raw: bytes, trusted_roots: List[PublicKey]) -> WarrantPayload:
@@ -185,7 +185,7 @@ def deserialize(raw: bytes, trusted_roots: List[PublicKey]) -> WarrantPayload:
 
 **Why this order?**
 - Signature validation uses the exact bytes that were signed (no canonicalization gaps).
-- Unknown envelope/payload versions or unknown payload keys fail closed (see `docs/wire-format-spec.md` §1–§4, §10).
+- Unknown envelope/payload versions or unknown payload keys fail closed (see `docs/spec/wire-format-v1.md` §1-§4, §10).
 - Constraint types fail closed per `docs/constraints.md` and the wire format's unknown-type handling.
 A malicious node's forged warrant fails before any unsafe parsing or policy evaluation.
 
@@ -577,7 +577,7 @@ result = await app.ainvoke({
 
 ### Wire-Format Warrant Schema (canonical)
 
-SecureGraph assumes warrants are encoded exactly as in `docs/wire-format-spec.md`. The outer envelope separates signature from payload:
+SecureGraph assumes warrants are encoded exactly as in `docs/spec/wire-format-v1.md`. The outer envelope separates signature from payload:
 
 ```python
 @dataclass

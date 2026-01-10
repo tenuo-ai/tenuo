@@ -12,7 +12,7 @@
 | Document | Description | Status |
 |----------|-------------|--------|
 | [full-spec.md](./full-spec.md) | Complete internal specification - warrant model, constraints, wire format | ✅ Reference |
-| [wire-format-spec.md](./wire-format-spec.md) | Wire format details for interoperability | ✅ Reference |
+| [wire-format-v1.md](../spec/wire-format-v1.md) | Wire format details for interoperability | ✅ Reference |
 | [thi-spec.md](./thi-spec.md) | Tenuo Host Interface - stateful features (nonces, rate limits) | ⚠️ Conceptual |
 | [securegraph-spec.md](./securegraph-spec.md) | SecureGraph - declarative attenuation for LangGraph | ⚠️ Conceptual |
 | [environment-constraints.md](./environment-constraints.md) | Environment/Context constraints (IP, Time) via extensions | ⚠️ Conceptual |
@@ -86,7 +86,7 @@ Complete internal specification covering:
 - Clearance levels (optional)
 - Delegation receipts
 
-### wire-format-spec.md (Reference)
+### wire-format-v1.md (Reference)
 Wire format details for cross-language interoperability.
 
 ### thi-spec.md (Conceptual)

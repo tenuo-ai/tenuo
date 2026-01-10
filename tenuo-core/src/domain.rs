@@ -38,4 +38,3 @@ pub const ROTATION_PROOF_CONTEXT: &[u8] = b"tenuo-key-rotation-v1";
 ///
 /// Used when signing warrant payloads during issuance.
 pub const WARRANT_CONTEXT: &[u8] = b"tenuo-warrant-v1";
-

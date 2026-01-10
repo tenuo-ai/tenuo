@@ -4,7 +4,7 @@
 > 
 > This is an internal specification for implementers. For user-facing documentation, see [/docs](/docs).
 > 
-> **Drift warning.** §12 (PoP) diverges from implementation: describes nonce-based design; actual uses time-windowed CBOR tuple. Authoritative sources: `protocol.md`, `tenuo-core/src/warrant.rs`.
+> **Drift warning.** §12 (PoP) diverges from implementation: describes nonce-based design; actual uses time-windowed CBOR tuple. Authoritative sources: `docs/spec/protocol-spec-v1.md`, `tenuo-core/src/warrant.rs`.
 
 **Version:** 2.0 
 **Status:** Reference Implementation Specification
@@ -321,7 +321,7 @@ Delegation chains are verified using a **WarrantStack** - an ordered array of wa
 WarrantStack = Vec<SignedWarrant>  # Flat array: [root, ..., parent, leaf]
 
 # Note: Some SDKs provide a logical abstraction with ancestors/target fields,
-# but the wire format is always a flat CBOR array. See wire-format-spec.md §11.
+# but the wire format is always a flat CBOR array. See spec/wire-format-v1.md §11.
 ```
 
 Each warrant links to its parent via `parent_hash` (SHA256 of parent's `payload_bytes`). Verification walks the stack, checking:
@@ -577,7 +577,7 @@ pub struct SignedWarrant {
 
 The verifier checks the signature against the **exact bytes** that were signed. No re-serialization. No canonicalization dependency.
 
-See `docs/wire-format-spec.md` for complete envelope specification.
+See `docs/spec/wire-format-v1.md` for complete envelope specification.
 
 #### Raw Bytes Passthrough (PoP, Chain Links)
 
@@ -616,7 +616,7 @@ Constraints use integer type IDs in CBOR array format `[type_id, value]`:
 [16, {}]                               # Wildcard (type_id=16)
 ```
 
-See `docs/wire-format-spec.md` §6 for complete type ID assignments.
+See `docs/spec/wire-format-v1.md` §6 for complete type ID assignments.
 
 #### Cryptographic Values
 
@@ -1433,7 +1433,7 @@ def verify_pop(
 
 ### Wire Format
 
-The wire format is defined in `docs/wire-format-spec.md` (authoritative). Summary:
+The wire format is defined in `docs/spec/wire-format-v1.md` (authoritative). Summary:
 
 - Encoding: CBOR envelope (`SignedWarrant` array) containing `envelope_version`, raw `payload` bytes, and `Signature`.
 - Payload: CBOR map with integer keys, `payload version = 1`, deterministic CBOR required (canonical ordering, shortest ints, no indefinite-length items).

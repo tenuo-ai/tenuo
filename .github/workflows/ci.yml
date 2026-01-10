@@ -56,6 +56,19 @@ jobs:
         run: cargo test --all-features
         working-directory: tenuo-core
 
+      - name: Validate test vectors
+        run: |
+          GENERATED=$(cargo run --bin generate_test_vectors 2>/dev/null)
+          COMMITTED=$(cat ../docs/spec/test-vectors.md)
+          if ! diff -b <(echo "$GENERATED") <(echo "$COMMITTED") > /dev/null 2>&1; then
+            echo "ERROR: docs/spec/test-vectors.md is out of sync with generator"
+            echo "Run: cd tenuo-core && cargo run --bin generate_test_vectors > ../docs/spec/test-vectors.md"
+            diff -u <(echo "$COMMITTED") <(echo "$GENERATED") | head -100
+            exit 1
+          fi
+          echo "OK: test-vectors.md is up to date"
+        working-directory: tenuo-core
+
   # ============================================================================
   # PYTHON SDK
   # ============================================================================

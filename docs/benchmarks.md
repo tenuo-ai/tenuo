@@ -182,6 +182,6 @@ Tenuo's Rust core is `no_std` compatible and can run in resource-constrained env
 
 ## See Also
 
-- [Architecture](./protocol.md) — How warrants work
+- [Protocol Specification](./spec/protocol-spec-v1) — How warrants work
 - [Security Model](./security.md) — Why PoP is mandatory
 - [Integration Guide](./quickstart.md) — Getting started

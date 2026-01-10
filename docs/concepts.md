@@ -350,7 +350,7 @@ Tenuo provides three levels of abstraction. Start at the top and drop down when 
 **Graduating between layers:**
 - If `TenuoToolNode` doesn't fit your graph structure → use `guard()` to wrap tools manually
 - If `guard()` is too opinionated → call `Authorizer.check()` directly
-- If you're building a new integration (Go, Rust, etc.) → implement the [wire format](./protocol)
+- If you're building a new integration (Go, Rust, etc.) → implement the [wire format](./spec/wire-format-v1)
 
 ### What v0.1 Provides
 
@@ -424,6 +424,6 @@ Authority is bound to the task (warrant minted per-request). Verification is sta
 
 - [Quick Start](./quickstart) — Get running in 5 minutes
 - [Enforcement Models](./enforcement) — In-process, sidecar, gateway, MCP
-- [Protocol](./protocol) — Wire format and verification rules
+- [Protocol Specification](./spec/protocol-spec-v1) — Wire format and verification rules
 - [Security](./security) — Detailed threat model
 - [Related Work](./related-work) — CaMeL, FIDES, and other approaches

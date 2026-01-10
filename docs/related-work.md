@@ -192,5 +192,5 @@ If you reference Tenuo in academic work:
 ## See Also
 
 - [Concepts](./concepts) — Why Tenuo? Problem/solution overview
-- [Protocol](./protocol) — How warrants work
+- [Protocol Specification](./spec/protocol-spec-v1) — How warrants work
 - [Security](./security) — Detailed threat model
