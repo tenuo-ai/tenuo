@@ -279,6 +279,136 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
         else:
             return False
 
+    # =========================================================================
+    # Subpath - Child root must be under parent root
+    # =========================================================================
+    if parent_type == "Subpath":
+        parent_root = getattr(parent_value, "root", None)
+        if parent_root is None:
+            return False
+
+        if child_type == "Subpath":
+            child_root = getattr(child_value, "root", None)
+            if child_root is None:
+                return False
+            # Child root must be under parent root (or equal)
+            # Normalize paths and check containment
+            parent_normalized = parent_root.rstrip("/")
+            child_normalized = child_root.rstrip("/")
+            # Child is contained if it equals parent or starts with parent + "/"
+            if child_normalized == parent_normalized:
+                return True
+            return child_normalized.startswith(parent_normalized + "/")
+        elif child_type == "Exact":
+            # Exact path must be under parent root
+            return parent_value.matches(child_str)
+        else:
+            return False
+
+    # =========================================================================
+    # UrlSafe - Child must be more restrictive
+    # =========================================================================
+    if parent_type == "UrlSafe":
+        if child_type == "UrlSafe":
+            # UrlSafe -> UrlSafe: child must be at least as restrictive
+            # For now, use conservative check via Rust
+            try:
+                parent_value.validate_attenuation(child_value)
+                return True
+            except Exception:
+                # If validate_attenuation fails or doesn't exist, check manually
+                # Child can add domains to allowlist (more restrictive)
+                # Child cannot remove blocking (private, loopback, etc.)
+                p_block_private = getattr(parent_value, "block_private", True)
+                c_block_private = getattr(child_value, "block_private", True)
+                if p_block_private and not c_block_private:
+                    return False
+
+                p_block_loopback = getattr(parent_value, "block_loopback", True)
+                c_block_loopback = getattr(child_value, "block_loopback", True)
+                if p_block_loopback and not c_block_loopback:
+                    return False
+
+                # If parent has domain allowlist, child must be subset
+                p_domains = getattr(parent_value, "allow_domains", None)
+                c_domains = getattr(child_value, "allow_domains", None)
+                if p_domains is not None:
+                    if c_domains is None:
+                        return False  # Child removes restriction
+                    if not set(c_domains).issubset(set(p_domains)):
+                        return False
+
+                return True
+        elif child_type == "Exact":
+            # Exact URL must pass parent's is_safe check
+            return parent_value.is_safe(child_str)
+        else:
+            return False
+
+    # =========================================================================
+    # Shlex - Child must have subset of allowed binaries
+    # =========================================================================
+    if parent_type == "Shlex":
+        if child_type == "Shlex":
+            # Child allowed_bins must be subset of parent allowed_bins
+            p_bins = getattr(parent_value, "allowed_bins", set())
+            c_bins = getattr(child_value, "allowed_bins", set())
+            if not c_bins.issubset(p_bins):
+                return False
+            # Child cannot relax block_globs
+            p_block_globs = getattr(parent_value, "block_globs", False)
+            c_block_globs = getattr(child_value, "block_globs", False)
+            if p_block_globs and not c_block_globs:
+                return False
+            return True
+        elif child_type == "Exact":
+            # Exact command must pass parent's matches check
+            return parent_value.matches(child_str)
+        else:
+            return False
+
+    # =========================================================================
+    # Cidr - Child must be contained within parent network
+    # =========================================================================
+    if parent_type == "Cidr":
+        if child_type == "Cidr":
+            # Child network must be subnet of parent network
+            # Use Rust's validate_attenuation if available
+            try:
+                parent_value.validate_attenuation(child_value)
+                return True
+            except Exception:
+                # Fallback: check cidr_string containment (conservative)
+                p_cidr = getattr(parent_value, "cidr_string", str(parent_value))
+                c_cidr = getattr(child_value, "cidr_string", str(child_value))
+                # Same network is valid attenuation
+                return p_cidr == c_cidr
+        elif child_type == "Exact":
+            # Exact IP must be within parent network
+            return parent_value.matches(child_str)
+        else:
+            return False
+
+    # =========================================================================
+    # UrlPattern - Child must be more specific pattern
+    # =========================================================================
+    if parent_type == "UrlPattern":
+        if child_type == "UrlPattern":
+            # Child pattern must be more restrictive
+            try:
+                parent_value.validate_attenuation(child_value)
+                return True
+            except Exception:
+                # Fallback: same pattern is valid
+                p_pattern = getattr(parent_value, "pattern", str(parent_value))
+                c_pattern = getattr(child_value, "pattern", str(child_value))
+                return p_pattern == c_pattern
+        elif child_type == "Exact":
+            # Exact URL must match parent pattern
+            return parent_value.matches(child_str)
+        else:
+            return False
+
     # Fallback: string equality
     return child_str == parent_str
 

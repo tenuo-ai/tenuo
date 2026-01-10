@@ -3096,3 +3096,131 @@ class TestGuardedResponses:
         assert len(result.output) == 4
         types = [item.type for item in result.output]
         assert types == ["text", "image", "function_call", "audio"]
+
+
+# =============================================================================
+# UrlSafe Integration Tests with OpenAI Adapter
+# =============================================================================
+
+
+class TestUrlSafeOpenAIIntegration:
+    """Integration tests for UrlSafe with OpenAI guard()."""
+
+    def test_urlsafe_in_constraints_dict(self):
+        """UrlSafe can be used in constraints dict for verify_tool_call()."""
+        from tenuo.openai import verify_tool_call
+        from tenuo import UrlSafe
+
+        # Safe public URL should pass
+        result = verify_tool_call(
+            tool_name="fetch_url",
+            arguments={"url": "https://api.github.com/repos"},
+            allow_tools=["fetch_url"],
+            deny_tools=None,
+            constraints={"fetch_url": {"url": UrlSafe()}},
+        )
+        assert result is None  # None means success
+
+    def test_urlsafe_blocks_metadata(self):
+        """UrlSafe blocks cloud metadata URLs."""
+        from tenuo.openai import verify_tool_call, ConstraintViolation
+        from tenuo import UrlSafe
+
+        with pytest.raises(ConstraintViolation):
+            verify_tool_call(
+                tool_name="fetch_url",
+                arguments={"url": "http://169.254.169.254/latest/meta-data/"},
+                allow_tools=["fetch_url"],
+                deny_tools=None,
+                constraints={"fetch_url": {"url": UrlSafe()}},
+            )
+
+    def test_urlsafe_blocks_localhost(self):
+        """UrlSafe blocks localhost URLs."""
+        from tenuo.openai import verify_tool_call, ConstraintViolation
+        from tenuo import UrlSafe
+
+        with pytest.raises(ConstraintViolation):
+            verify_tool_call(
+                tool_name="fetch_url",
+                arguments={"url": "http://127.0.0.1/admin"},
+                allow_tools=["fetch_url"],
+                deny_tools=None,
+                constraints={"fetch_url": {"url": UrlSafe()}},
+            )
+
+    def test_urlsafe_blocks_private_ips(self):
+        """UrlSafe blocks private IP addresses."""
+        from tenuo.openai import verify_tool_call, ConstraintViolation
+        from tenuo import UrlSafe
+
+        with pytest.raises(ConstraintViolation):
+            verify_tool_call(
+                tool_name="fetch_url",
+                arguments={"url": "http://10.0.0.1/internal"},
+                allow_tools=["fetch_url"],
+                deny_tools=None,
+                constraints={"fetch_url": {"url": UrlSafe()}},
+            )
+
+    def test_urlsafe_with_domain_allowlist(self):
+        """UrlSafe with domain allowlist restricts to specific domains."""
+        from tenuo.openai import verify_tool_call, ConstraintViolation
+        from tenuo import UrlSafe
+
+        safe = UrlSafe(allow_domains=["api.github.com"])
+
+        # Allowed domain passes
+        result = verify_tool_call(
+            tool_name="fetch_url",
+            arguments={"url": "https://api.github.com/repos"},
+            allow_tools=["fetch_url"],
+            deny_tools=None,
+            constraints={"fetch_url": {"url": safe}},
+        )
+        assert result is None
+
+        # Non-allowed domain blocked
+        with pytest.raises(ConstraintViolation):
+            verify_tool_call(
+                tool_name="fetch_url",
+                arguments={"url": "https://evil.com/data"},
+                allow_tools=["fetch_url"],
+                deny_tools=None,
+                constraints={"fetch_url": {"url": safe}},
+            )
+
+    def test_urlsafe_with_guard_builder(self):
+        """UrlSafe works with GuardBuilder."""
+        from tenuo.openai import GuardBuilder
+        from tenuo import UrlSafe
+        from unittest.mock import Mock
+
+        mock_client = Mock()
+        builder = GuardBuilder(mock_client).allow("fetch_url").constrain("fetch_url", url=UrlSafe())
+
+        # Check constraints are stored correctly
+        assert "fetch_url" in builder._constraints
+        assert "url" in builder._constraints["fetch_url"]
+        assert isinstance(builder._constraints["fetch_url"]["url"], UrlSafe)
+
+    def test_urlsafe_ip_encoding_bypasses(self):
+        """UrlSafe blocks IP encoding bypass attempts."""
+        from tenuo.openai import verify_tool_call, ConstraintViolation
+        from tenuo import UrlSafe
+
+        bypass_attempts = [
+            "http://2130706433/",  # Decimal 127.0.0.1
+            "http://0x7f000001/",  # Hex 127.0.0.1
+            "http://[::ffff:127.0.0.1]/",  # IPv6-mapped
+        ]
+
+        for url in bypass_attempts:
+            with pytest.raises(ConstraintViolation):
+                verify_tool_call(
+                    tool_name="fetch_url",
+                    arguments={"url": url},
+                    allow_tools=["fetch_url"],
+                    deny_tools=None,
+                    constraints={"fetch_url": {"url": UrlSafe()}},
+                )
