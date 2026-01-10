@@ -12,9 +12,7 @@ import pytest
 from tenuo import (
     RevocationRequest,
     SignedRevocationList,
-    SrlBuilder,
     SigningKey,
-    PublicKey,
 )
 
 

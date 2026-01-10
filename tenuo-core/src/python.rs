@@ -4052,7 +4052,8 @@ impl PyRevocationRequest {
 ///
 /// A cryptographically signed list of revoked warrant IDs.
 ///
-/// Example:
+/// Example (Python):
+/// ```text
 ///     # Build a new SRL
 ///     srl = SignedRevocationList.builder() \
 ///         .revoke("tnu_wrt_compromised_123") \
@@ -4066,6 +4067,7 @@ impl PyRevocationRequest {
 ///     # Check if a warrant is revoked
 ///     if srl.is_revoked(warrant.id):
 ///         raise WarrantRevokedError()
+/// ```
 #[pyclass(name = "SignedRevocationList")]
 #[derive(Clone)]
 pub struct PySignedRevocationList {
