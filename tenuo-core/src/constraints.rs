@@ -2474,8 +2474,8 @@ const INTERNAL_TLDS: &[&str] = &[
     ".lan",
     ".corp",
     ".home",
-    ".svc",      // Kubernetes service names (e.g., my-service.namespace.svc)
-    ".default",  // Kubernetes default namespace (e.g., kubernetes.default)
+    ".svc",     // Kubernetes service names (e.g., my-service.namespace.svc)
+    ".default", // Kubernetes default namespace (e.g., kubernetes.default)
 ];
 
 impl UrlSafe {

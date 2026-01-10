@@ -51,6 +51,22 @@ from tenuo.openai import (
 # Mock Helpers
 # =============================================================================
 
+# Helper for SDK compatibility - check for either our GuardrailResult or SDK's GuardrailFunctionOutput
+try:
+    from agents.guardrail import GuardrailFunctionOutput
+    _SDK_OUTPUT_TYPE = GuardrailFunctionOutput
+except ImportError:
+    _SDK_OUTPUT_TYPE = None
+
+def is_guardrail_result(obj) -> bool:
+    """Check if obj is a guardrail result (ours or SDK's)."""
+    from tenuo.openai import GuardrailResult
+    if isinstance(obj, GuardrailResult):
+        return True
+    if _SDK_OUTPUT_TYPE is not None and isinstance(obj, _SDK_OUTPUT_TYPE):
+        return True
+    return False
+
 
 @dataclass
 class MockFunction:
@@ -1696,7 +1712,7 @@ class TestAgentsSDKIntegration:
 
         result = await guardrail(None, None, input_data)
 
-        assert isinstance(result, GuardrailResult)
+        assert is_guardrail_result(result)
         assert result.tripwire_triggered is False
         assert "authorized" in result.output_info
 
@@ -1718,7 +1734,7 @@ class TestAgentsSDKIntegration:
 
         result = await guardrail(None, None, input_data)
 
-        assert isinstance(result, GuardrailResult)
+        assert is_guardrail_result(result)
         assert result.tripwire_triggered is True
         assert "Blocked" in result.output_info
 
@@ -1757,7 +1773,7 @@ class TestAgentsSDKIntegration:
 
         result = await guardrail(None, None, input_data)
 
-        assert isinstance(result, GuardrailResult)
+        assert is_guardrail_result(result)
         assert result.tripwire_triggered is False  # Doesn't halt
         assert "Blocked" in result.output_info     # Still logs the block
 
@@ -1771,7 +1787,7 @@ class TestAgentsSDKIntegration:
         # Plain string input
         result = await guardrail(None, None, "Just a message")
 
-        assert isinstance(result, GuardrailResult)
+        assert is_guardrail_result(result)
         assert result.tripwire_triggered is False
         assert "No tool calls" in result.output_info
 
@@ -1845,7 +1861,7 @@ class TestAgentsSDKIntegration:
 
         result = await guardrail(None, None, input_data)
 
-        assert isinstance(result, GuardrailResult)
+        assert is_guardrail_result(result)
         assert result.tripwire_triggered is False
 
     @pytest.mark.asyncio
@@ -1966,7 +1982,7 @@ class TestAgentsSDKIntegration:
 
         result = await guardrail(None, None, input_data)
 
-        assert isinstance(result, GuardrailResult)
+        assert is_guardrail_result(result)
         assert result.tripwire_triggered is True  # Should trigger tripwire
         assert "Blocked" in result.output_info
         assert "Invalid JSON" in result.output_info or "Malformed" in result.output_info
