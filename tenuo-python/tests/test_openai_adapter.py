@@ -3224,3 +3224,137 @@ class TestUrlSafeOpenAIIntegration:
                     deny_tools=None,
                     constraints={"fetch_url": {"url": UrlSafe()}},
                 )
+
+
+# =============================================================================
+# Shlex Integration Tests with OpenAI Adapter
+# =============================================================================
+
+
+class TestShlexOpenAIIntegration:
+    """Integration tests for Shlex with OpenAI guard()."""
+
+    def test_shlex_allows_safe_command(self):
+        """Shlex allows simple commands with allowed binaries."""
+        from tenuo.openai import verify_tool_call
+        from tenuo import Shlex
+
+        result = verify_tool_call(
+            tool_name="run_command",
+            arguments={"cmd": "ls -la /tmp"},
+            allow_tools=["run_command"],
+            deny_tools=None,
+            constraints={"run_command": {"cmd": Shlex(allow=["ls", "cat"])}},
+        )
+        assert result is None  # None means success
+
+    def test_shlex_blocks_shell_injection(self):
+        """Shlex blocks shell injection attempts."""
+        from tenuo.openai import verify_tool_call, ConstraintViolation
+        from tenuo import Shlex
+
+        with pytest.raises(ConstraintViolation):
+            verify_tool_call(
+                tool_name="run_command",
+                arguments={"cmd": "ls -la; rm -rf /"},
+                allow_tools=["run_command"],
+                deny_tools=None,
+                constraints={"run_command": {"cmd": Shlex(allow=["ls"])}},
+            )
+
+    def test_shlex_blocks_pipe(self):
+        """Shlex blocks pipe operators."""
+        from tenuo.openai import verify_tool_call, ConstraintViolation
+        from tenuo import Shlex
+
+        with pytest.raises(ConstraintViolation):
+            verify_tool_call(
+                tool_name="run_command",
+                arguments={"cmd": "cat /etc/passwd | grep root"},
+                allow_tools=["run_command"],
+                deny_tools=None,
+                constraints={"run_command": {"cmd": Shlex(allow=["cat", "grep"])}},
+            )
+
+    def test_shlex_blocks_command_substitution(self):
+        """Shlex blocks command substitution."""
+        from tenuo.openai import verify_tool_call, ConstraintViolation
+        from tenuo import Shlex
+
+        with pytest.raises(ConstraintViolation):
+            verify_tool_call(
+                tool_name="run_command",
+                arguments={"cmd": "echo $(whoami)"},
+                allow_tools=["run_command"],
+                deny_tools=None,
+                constraints={"run_command": {"cmd": Shlex(allow=["echo"])}},
+            )
+
+    def test_shlex_blocks_variable_expansion(self):
+        """Shlex blocks variable expansion."""
+        from tenuo.openai import verify_tool_call, ConstraintViolation
+        from tenuo import Shlex
+
+        with pytest.raises(ConstraintViolation):
+            verify_tool_call(
+                tool_name="run_command",
+                arguments={"cmd": "ls $HOME"},
+                allow_tools=["run_command"],
+                deny_tools=None,
+                constraints={"run_command": {"cmd": Shlex(allow=["ls"])}},
+            )
+
+    def test_shlex_blocks_unlisted_binary(self):
+        """Shlex blocks binaries not in allowlist."""
+        from tenuo.openai import verify_tool_call, ConstraintViolation
+        from tenuo import Shlex
+
+        with pytest.raises(ConstraintViolation):
+            verify_tool_call(
+                tool_name="run_command",
+                arguments={"cmd": "rm -rf /"},
+                allow_tools=["run_command"],
+                deny_tools=None,
+                constraints={"run_command": {"cmd": Shlex(allow=["ls", "cat"])}},
+            )
+
+    def test_shlex_with_guard_builder(self):
+        """Shlex works with GuardBuilder."""
+        from tenuo.openai import GuardBuilder
+        from tenuo import Shlex
+        from unittest.mock import Mock
+
+        mock_client = Mock()
+        builder = GuardBuilder(mock_client).allow("run_command").constrain(
+            "run_command", cmd=Shlex(allow=["ls", "cat"])
+        )
+
+        # Check constraints are stored correctly
+        assert "run_command" in builder._constraints
+        assert "cmd" in builder._constraints["run_command"]
+        assert isinstance(builder._constraints["run_command"]["cmd"], Shlex)
+
+    def test_shlex_with_block_globs(self):
+        """Shlex with block_globs=True rejects glob characters."""
+        from tenuo.openai import verify_tool_call, ConstraintViolation
+        from tenuo import Shlex
+
+        # Without block_globs, globs are allowed
+        result = verify_tool_call(
+            tool_name="run_command",
+            arguments={"cmd": "ls *.txt"},
+            allow_tools=["run_command"],
+            deny_tools=None,
+            constraints={"run_command": {"cmd": Shlex(allow=["ls"], block_globs=False)}},
+        )
+        assert result is None
+
+        # With block_globs, globs are blocked
+        with pytest.raises(ConstraintViolation):
+            verify_tool_call(
+                tool_name="run_command",
+                arguments={"cmd": "ls *.txt"},
+                allow_tools=["run_command"],
+                deny_tools=None,
+                constraints={"run_command": {"cmd": Shlex(allow=["ls"], block_globs=True)}},
+            )
