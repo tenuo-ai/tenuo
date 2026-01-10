@@ -2707,3 +2707,198 @@ class TestToolSchemaValidation:
         # Both should be warned about
         assert "'too' not found" in caplog.text
         assert "'subjet' not found" in caplog.text
+
+
+# =============================================================================
+# GuardedResponses Tests
+# =============================================================================
+
+
+class TestGuardedResponses:
+    """Test Responses API guardrails."""
+
+    def test_skip_mode_filters_denied_function_calls(self):
+        """Skip mode should remove denied function_call items from output."""
+        from tenuo.openai import GuardedResponses
+
+        # Create mock response with multiple function calls
+        class MockFunctionCall:
+            def __init__(self, name, args):
+                self.type = "function_call"
+                self.name = name
+                self.arguments = json.dumps(args)
+
+        class MockTextItem:
+            def __init__(self, text):
+                self.type = "text"
+                self.text = text
+
+        class MockResponse:
+            def __init__(self):
+                self.output = [
+                    MockTextItem("Here's what I found:"),
+                    MockFunctionCall("search", {"query": "weather"}),  # Allowed
+                    MockFunctionCall("delete_file", {"path": "/etc/passwd"}),  # Denied
+                    MockFunctionCall("read_file", {"path": "/data/report.txt"}),  # Allowed
+                ]
+
+        mock_original = Mock()
+        guarded = GuardedResponses(
+            original=mock_original,
+            allow_tools=["search", "read_file"],
+            deny_tools=["delete_file"],
+            constraints=None,
+            on_denial="skip",
+        )
+
+        response = MockResponse()
+        result = guarded._guard_response(response)
+
+        # Should have 3 items: text + 2 allowed function calls
+        assert len(result.output) == 3
+        # Check types
+        assert result.output[0].type == "text"
+        assert result.output[1].type == "function_call"
+        assert result.output[1].name == "search"
+        assert result.output[2].type == "function_call"
+        assert result.output[2].name == "read_file"
+
+    def test_log_mode_filters_denied_function_calls(self, caplog):
+        """Log mode should remove denied function_call items and log."""
+        from tenuo.openai import GuardedResponses
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        class MockFunctionCall:
+            def __init__(self, name, args):
+                self.type = "function_call"
+                self.name = name
+                self.arguments = json.dumps(args)
+
+        class MockResponse:
+            def __init__(self):
+                self.output = [
+                    MockFunctionCall("allowed_tool", {}),
+                    MockFunctionCall("denied_tool", {}),
+                ]
+
+        mock_original = Mock()
+        guarded = GuardedResponses(
+            original=mock_original,
+            allow_tools=["allowed_tool"],
+            deny_tools=["denied_tool"],
+            constraints=None,
+            on_denial="log",
+        )
+
+        response = MockResponse()
+        result = guarded._guard_response(response)
+
+        # Should only have 1 item
+        assert len(result.output) == 1
+        assert result.output[0].name == "allowed_tool"
+        # Should have logged
+        assert "denied_tool" in caplog.text
+
+    def test_raise_mode_keeps_all_items_on_success(self):
+        """Raise mode should keep all items if all pass."""
+        from tenuo.openai import GuardedResponses
+
+        class MockFunctionCall:
+            def __init__(self, name, args):
+                self.type = "function_call"
+                self.name = name
+                self.arguments = json.dumps(args)
+
+        class MockResponse:
+            def __init__(self):
+                self.output = [
+                    MockFunctionCall("search", {"query": "test"}),
+                    MockFunctionCall("read_file", {"path": "/data/file.txt"}),
+                ]
+
+        mock_original = Mock()
+        guarded = GuardedResponses(
+            original=mock_original,
+            allow_tools=["search", "read_file"],
+            deny_tools=None,
+            constraints=None,
+            on_denial="raise",
+        )
+
+        response = MockResponse()
+        result = guarded._guard_response(response)
+
+        # All items should remain
+        assert len(result.output) == 2
+
+    def test_raise_mode_raises_on_denial(self):
+        """Raise mode should raise exception on denied call."""
+        from tenuo.openai import GuardedResponses
+
+        class MockFunctionCall:
+            def __init__(self, name, args):
+                self.type = "function_call"
+                self.name = name
+                self.arguments = json.dumps(args)
+
+        class MockResponse:
+            def __init__(self):
+                self.output = [
+                    MockFunctionCall("denied_tool", {}),
+                ]
+
+        mock_original = Mock()
+        guarded = GuardedResponses(
+            original=mock_original,
+            allow_tools=["allowed_tool"],
+            deny_tools=None,
+            constraints=None,
+            on_denial="raise",
+        )
+
+        response = MockResponse()
+        with pytest.raises(ToolDenied):
+            guarded._guard_response(response)
+
+    def test_non_function_call_items_preserved(self):
+        """Non-function-call items should always be preserved."""
+        from tenuo.openai import GuardedResponses
+
+        class MockFunctionCall:
+            def __init__(self, name, args):
+                self.type = "function_call"
+                self.name = name
+                self.arguments = json.dumps(args)
+
+        class MockOtherItem:
+            def __init__(self, item_type):
+                self.type = item_type
+
+        class MockResponse:
+            def __init__(self):
+                self.output = [
+                    MockOtherItem("text"),
+                    MockFunctionCall("denied_tool", {}),
+                    MockOtherItem("image"),
+                    MockFunctionCall("allowed_tool", {}),
+                    MockOtherItem("audio"),
+                ]
+
+        mock_original = Mock()
+        guarded = GuardedResponses(
+            original=mock_original,
+            allow_tools=["allowed_tool"],
+            deny_tools=["denied_tool"],
+            constraints=None,
+            on_denial="skip",
+        )
+
+        response = MockResponse()
+        result = guarded._guard_response(response)
+
+        # Should have 4 items: text, image, allowed_tool, audio
+        assert len(result.output) == 4
+        types = [item.type for item in result.output]
+        assert types == ["text", "image", "function_call", "audio"]

@@ -1419,15 +1419,25 @@ class GuardedResponses:
         if not output:
             return response
 
-        # Check for tool calls in output items
+        # Build list of verified items, filtering denied ones in skip/log mode
+        verified_items = []
         for item in output:
             if hasattr(item, 'type') and item.type == 'function_call':
                 try:
                     self._verify_function_call(item)
+                    verified_items.append(item)
                 except (ToolDenied, WarrantDenied, ConstraintViolation) as e:
                     self._handle_denial(e)
                     if self._on_denial == "raise":
                         raise
+                    # skip or log: exclude from results (don't append)
+            else:
+                # Non-function-call items pass through unchanged
+                verified_items.append(item)
+
+        # Update output with verified items only (mirrors chat.completions behavior)
+        if self._on_denial != "raise":
+            response.output = verified_items if verified_items else []
 
         return response
 
