@@ -12,6 +12,8 @@ Tenuo Python SDK - Capability tokens for AI agents
         Pattern, Range, OneOf, Exact, Any,  # Any = Wildcard for zero-trust
         # Composites
         AnyOf, All, Not,  # AnyOf = OR, All = AND
+        # Security (Python-only)
+        Subpath, UrlSafe,  # Path traversal and SSRF protection
         # Setup (usually once at startup)
         configure, auto_configure, SigningKey, PublicKey,
     )
@@ -84,7 +86,7 @@ from .scoped import (
 )
 
 # Constraints
-from .constraints import Capability
+from .constraints import Capability, Subpath, UrlSafe
 
 # Protection decorator
 from .decorators import (
@@ -198,6 +200,9 @@ __all__ = [
     "UrlPattern",  # URL matching
     "Regex",  # Regular expression
     "CEL",  # Common Expression Language
+    # Python-only security constraints
+    "Subpath",  # Secure path containment (path traversal protection)
+    "UrlSafe",  # SSRF protection (IP/domain blocking)
 
     # Errors (essential only)
     "TenuoError",

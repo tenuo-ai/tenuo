@@ -134,7 +134,7 @@ class TestUrlSafeIPEncodingBypasses:
 
     def test_blocks_url_encoded_ip(self):
         """Block URL-encoded IP addresses (SSRF bypass attempt).
-        
+
         SECURITY: Python's urlparse does NOT decode hostnames, so an attacker
         could try http://%31%32%37%2e%30%2e%30%2e%31/ to bypass IP blocking.
         """
@@ -392,25 +392,25 @@ class TestUrlSafeSSRFVectorComprehensive:
         ("https://api.github.com/repos", True),
         ("https://example.com/data", True),
         ("http://cdn.example.com/image.png", True),
-        
+
         # AWS/Azure/DO metadata - DENY
         ("http://169.254.169.254/latest/meta-data/", False),
         ("http://169.254.169.254/latest/api/token", False),
-        
+
         # GCP metadata - DENY
         ("http://metadata.google.internal/", False),
         ("http://metadata.goog/", False),
-        
+
         # Private IPs - DENY
         ("http://10.0.0.1/admin", False),
         ("http://172.16.0.1/", False),
         ("http://192.168.1.1/admin", False),
-        
+
         # Loopback - DENY
         ("http://127.0.0.1/", False),
         ("http://localhost/", False),
         ("http://[::1]/", False),
-        
+
         # IP encoding bypasses - DENY
         ("http://2130706433/", False),  # Decimal 127.0.0.1
         ("http://0x7f000001/", False),  # Hex 127.0.0.1
@@ -418,11 +418,11 @@ class TestUrlSafeSSRFVectorComprehensive:
         ("http://[::ffff:127.0.0.1]/", False),  # IPv6-mapped
         ("http://%31%32%37%2e%30%2e%30%2e%31/", False),  # URL-encoded 127.0.0.1
         ("http://%31%36%39%2e%32%35%34%2e%31%36%39%2e%32%35%34/", False),  # URL-encoded metadata
-        
+
         # Dangerous schemes - DENY
         ("file:///etc/passwd", False),
         ("gopher://evil.com/", False),
-        
+
         # Null byte injection - DENY
         ("http://evil.com\x00.trusted.com/", False),
     ])
