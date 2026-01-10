@@ -744,3 +744,33 @@ class TestShlexAllowlistVariations:
         constraint = Shlex(allow=["script.sh"])
         assert constraint.matches("script.sh arg1")
         assert constraint.matches("./script.sh arg1")
+
+
+class TestShlexCrossPlatform:
+    """Tests verifying Unix-style paths work on all platforms (including Windows).
+
+    Shell commands use Unix-style paths (forward slashes) even when the Python
+    code runs on Windows. The Shlex constraint uses posixpath.normpath() to
+    ensure consistent behavior across platforms.
+    """
+
+    def test_unix_path_on_all_platforms(self):
+        """Unix-style paths should work regardless of host OS."""
+        constraint = Shlex(allow=["/usr/bin/ls"])
+        # This would fail on Windows if we used os.path.normpath
+        # because it would convert /usr/bin/ls to \\usr\\bin\\ls
+        assert constraint.matches("/usr/bin/ls -la")
+
+    def test_path_normalization_cross_platform(self):
+        """Path normalization uses posixpath, not os.path."""
+        constraint = Shlex(allow=["/usr/bin/ls"])
+        # posixpath.normpath("/usr/bin/../bin/ls") == "/usr/bin/ls"
+        # os.path.normpath on Windows would give "\\usr\\bin\\ls"
+        assert constraint.matches("/usr/bin/../bin/ls -la")
+
+    def test_basename_extraction_cross_platform(self):
+        """Basename extraction uses posixpath, not os.path."""
+        constraint = Shlex(allow=["ls"])
+        # posixpath.basename("/usr/bin/ls") == "ls"
+        # os.path.basename on Windows with forward slashes returns full path
+        assert constraint.matches("/usr/bin/ls -la")
