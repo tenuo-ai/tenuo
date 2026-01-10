@@ -86,7 +86,7 @@ from .scoped import (
 )
 
 # Constraints
-from .constraints import Capability, Subpath, UrlSafe
+from .constraints import Capability, Subpath, UrlSafe, Shlex
 
 # Protection decorator
 from .decorators import (

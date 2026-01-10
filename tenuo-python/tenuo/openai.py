@@ -127,7 +127,7 @@ from tenuo import (
 )
 
 # Import Python-only security constraints (defined in constraints.py, re-exported here)
-from tenuo.constraints import Subpath, UrlSafe
+from tenuo.constraints import Subpath, UrlSafe, Shlex
 
 logger = logging.getLogger("tenuo.openai")
 

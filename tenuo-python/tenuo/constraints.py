@@ -255,6 +255,187 @@ class Constraints(Dict[str, Any]):
 
 
 # =============================================================================
+# Shlex Constraint (Python-only, Tier 1)
+# =============================================================================
+
+import shlex
+import os
+from typing import Set
+
+
+class Shlex:
+    """Validates that a shell command string is safe and simple.
+    
+    Ensures the command is a single executable with literal arguments,
+    preventing shell injection (pipes, chaining, subshells, variable expansion).
+    
+    Security features:
+        - Blocks shell operators: | || & && ; > >> < <<
+        - Blocks command substitution: $() and backticks
+        - Blocks variable expansion: $VAR, ${VAR}
+        - Blocks newline/null byte injection
+        - Requires explicit binary allowlist
+    
+    Usage:
+        from tenuo.openai import Shlex, guard
+        
+        client = guard(
+            openai.OpenAI(),
+            constraints={
+                "run_command": {"cmd": Shlex(allow=["ls", "cat", "grep"])}
+            }
+        )
+        
+        # Allowed:   ls -la /tmp
+        # Blocked:   ls -la; rm -rf /    (operator)
+        # Blocked:   echo $(whoami)      (command substitution)
+        # Blocked:   ls $HOME            (variable expansion)
+    
+    Warning:
+        This constraint validates SHELL SYNTAX, not TOOL SEMANTICS.
+        Some tools interpret arguments as commands:
+        
+            git --upload-pack='malicious'
+            find -exec rm {} \\;
+            tar --checkpoint-action=exec=cmd
+        
+        For complete protection, use proc_jail which bypasses the shell
+        entirely via execve() and validates arguments per-tool.
+    
+    Limitations:
+        - Parser differential: Python's shlex targets POSIX sh. If the
+          system shell is zsh/fish/etc, parsing may differ slightly.
+        - Does not resolve symlinks or validate binary paths exist.
+        - Does not constrain arguments (only the binary is allowlisted).
+        
+        This is Tier 1 mitigation. Upgrade to proc_jail for Tier 2.
+    """
+    
+    # Operators that combine commands or redirect I/O
+    DANGEROUS_TOKENS: Set[str] = {
+        "|", "||",      # Pipes
+        "&", "&&",      # Background / logical AND
+        ";",            # Command separator
+        ">", ">>",      # Output redirection
+        "<", "<<", "<<<",  # Input redirection
+        "(", ")",       # Subshells
+    }
+    
+    # Characters that trigger shell expansion (checked in raw string)
+    # These are treated as literals by shlex but executed by shells
+    EXPANSION_CHARS: Set[str] = {"$", "`"}
+    
+    # Shell operator characters that should be checked in raw string
+    # shlex treats these as literal characters, but sh treats them as operators
+    # Example: "ls -la; rm" -> shlex sees ['-la;'], sh sees two commands
+    OPERATOR_CHARS: Set[str] = {";", "|", "&", ">", "<", "(", ")"}
+    
+    # Control characters that could inject commands
+    CONTROL_CHARS: Set[str] = {"\n", "\r", "\x00"}
+    
+    # Glob characters (optional blocking)
+    GLOB_CHARS: Set[str] = {"*", "?", "["}
+
+    def __init__(
+        self,
+        allow: List[str],
+        *,
+        block_globs: bool = False,
+    ):
+        """Initialize the Shlex constraint.
+        
+        Args:
+            allow: List of allowed binary names or full paths.
+                   e.g., ["ls", "/usr/bin/git"]
+            block_globs: If True, reject glob characters (*, ?, [).
+                         Default False since globs are often legitimate.
+        
+        Raises:
+            ValueError: If allow list is empty.
+        """
+        if not allow:
+            raise ValueError("Shlex requires at least one allowed binary")
+        
+        self.allowed_bins: Set[str] = set(allow)
+        self.block_globs = block_globs
+
+    def matches(self, value: Any) -> bool:
+        """Check if command string is safe to execute.
+        
+        Returns True only if:
+        - Input is a string
+        - No dangerous characters ($, `, newlines, null bytes)
+        - Parses successfully with shlex
+        - First token is in allowlist
+        - No shell operator tokens
+        """
+        # R1: Type check
+        if not isinstance(value, str):
+            return False
+        
+        # R1: Control character check (before parsing)
+        for char in self.CONTROL_CHARS:
+            if char in value:
+                return False
+        
+        # R1: Expansion character check (before parsing)
+        # Shell expands $VAR and `cmd` but shlex treats them as literals
+        for char in self.EXPANSION_CHARS:
+            if char in value:
+                return False
+        
+        # R1: Operator character check (before parsing)
+        # shlex treats ; | & > < ( ) as literals, but shells execute them
+        # We check the RAW string because shlex would hide the operators
+        for char in self.OPERATOR_CHARS:
+            if char in value:
+                return False
+        
+        # R6: Optional glob check
+        if self.block_globs:
+            for char in self.GLOB_CHARS:
+                if char in value:
+                    return False
+        
+        # R2: Parse with shlex
+        try:
+            tokens = shlex.split(value)
+        except ValueError:
+            # Unbalanced quotes, malformed escapes, etc.
+            return False
+        
+        # R5: Empty command check
+        if not tokens:
+            return False
+        
+        # R4: Binary allowlist check
+        binary = tokens[0]
+        
+        # Normalize path if absolute/relative (prevents /usr/../bin tricks)
+        if "/" in binary:
+            binary = os.path.normpath(binary)
+        
+        bin_name = os.path.basename(binary)
+        
+        if binary not in self.allowed_bins and bin_name not in self.allowed_bins:
+            return False
+        
+        # R3: Dangerous token check
+        for token in tokens:
+            if token in self.DANGEROUS_TOKENS:
+                return False
+        
+        return True
+
+    def __repr__(self) -> str:
+        opts = []
+        if self.block_globs:
+            opts.append("block_globs=True")
+        opts_str = f", {', '.join(opts)}" if opts else ""
+        return f"Shlex(allow={sorted(self.allowed_bins)!r}{opts_str})"
+
+
+# =============================================================================
 # Exports
 # =============================================================================
 
@@ -262,6 +443,8 @@ __all__ = [
     # Security constraints (from Rust)
     "Subpath",
     "UrlSafe",
+    # Security constraints (Python)
+    "Shlex",
     # Helper functions
     "ensure_constraint",
     # Capability API
