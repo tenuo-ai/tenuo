@@ -24,7 +24,6 @@ import os
 from tenuo import SigningKey, Warrant, Pattern, Range
 from tenuo.openai import (
     guard,
-    enable_debug,
     WarrantDenied,
     MissingSigningKey,
     ConfigurationError,
@@ -46,42 +45,42 @@ except ImportError:
 
 class MockOpenAIClient:
     """Mock OpenAI client for demonstration purposes."""
-    
+
     class chat:
         class completions:
             @staticmethod
             def create(**kwargs):
                 """Simulate response - returns tool call for demo."""
                 from dataclasses import dataclass
-                
+
                 @dataclass
                 class Function:
                     name: str
                     arguments: str
-                
+
                 @dataclass
                 class ToolCall:
                     id: str
                     function: Function
-                
+
                 @dataclass
                 class Message:
                     role: str
                     content: str
                     tool_calls: list
-                
+
                 @dataclass
                 class Choice:
                     message: Message
-                
+
                 @dataclass
                 class Response:
                     choices: list
-                
+
                 # Simulate tool calls based on user input
                 messages = kwargs.get("messages", [])
                 user_msg = messages[-1]["content"] if messages else ""
-                
+
                 if "/etc/passwd" in user_msg:
                     tool_name, args = "read_file", '{"path": "/etc/passwd"}'
                 elif "delete" in user_msg.lower():
@@ -90,7 +89,7 @@ class MockOpenAIClient:
                     tool_name, args = "search", '{"query": "test", "max_results": 500}'
                 else:
                     tool_name, args = "read_file", '{"path": "/data/report.txt"}'
-                
+
                 return Response(choices=[Choice(message=Message(
                     role="assistant",
                     content=None,
@@ -115,17 +114,17 @@ def demo_setup():
     print("=" * 60)
     print("Setup: Creating Warrant with PoP")
     print("=" * 60)
-    
+
     # In production: Control plane has its own key
     # Agent has a different key and receives warrant from control plane
     # For demo: We use separate keys to show the pattern
-    
+
     control_plane_key = SigningKey.generate()
     agent_key = SigningKey.generate()
-    
+
     print("  Control Plane Key:", _key_id(control_plane_key.public_key) + "...")
     print("  Agent Key:        ", _key_id(agent_key.public_key) + "...")
-    
+
     # Control plane mints warrant for agent
     warrant = (Warrant.mint_builder()
         .capability("read_file", {"path": Pattern("/data/*")})
@@ -133,12 +132,12 @@ def demo_setup():
         .holder(agent_key.public_key)  # Agent is the authorized holder
         .ttl(3600)
         .mint(control_plane_key))      # Control plane signs
-    
+
     print("  Warrant ID:       ", warrant.id[:16] + "...")
     print("  Holder bound to:   Agent's public key")
     print("  Capabilities:      read_file, search")
     print()
-    
+
     return control_plane_key, agent_key, warrant
 
 
@@ -147,14 +146,14 @@ def demo_missing_signing_key(warrant):
     print("=" * 60)
     print("Demo 1: Missing Signing Key")
     print("=" * 60)
-    
+
     # Common mistake: providing warrant without signing_key
     client = guard(
         MockOpenAIClient(),
         warrant=warrant,
         # signing_key is missing!
     )
-    
+
     try:
         client.chat.completions.create(
             model="gpt-4o",
@@ -164,7 +163,7 @@ def demo_missing_signing_key(warrant):
     except MissingSigningKey as e:
         print(f"  OK Correctly caught: {e.code}")
         print(f"     {e}")
-    
+
     print()
 
 
@@ -173,18 +172,18 @@ def demo_wrong_signing_key(warrant):
     print("=" * 60)
     print("Demo 2: Wrong Signing Key (Not the Holder)")
     print("=" * 60)
-    
+
     # Wrong key - not the warrant holder
     wrong_key = SigningKey.generate()
     print(f"  Warrant holder:  {_key_id(warrant.authorized_holder)}...")
     print(f"  Signing key:     {_key_id(wrong_key.public_key)}... (wrong!)")
-    
+
     client = guard(
         MockOpenAIClient(),
         warrant=warrant,
         signing_key=wrong_key,  # Wrong key!
     )
-    
+
     try:
         client.chat.completions.create(
             model="gpt-4o",
@@ -192,9 +191,9 @@ def demo_wrong_signing_key(warrant):
         )
         print("  X Should have raised WarrantDenied!")
     except WarrantDenied as e:
-        print(f"  OK PoP verification failed (wrong key)")
+        print("  OK PoP verification failed (wrong key)")
         print(f"     Tool: {e.tool_name}")
-    
+
     print()
 
 
@@ -203,13 +202,13 @@ def demo_valid_call(agent_key, warrant):
     print("=" * 60)
     print("Demo 3: Valid Call (Correct Warrant + PoP)")
     print("=" * 60)
-    
+
     client = guard(
         MockOpenAIClient(),
         warrant=warrant,
         signing_key=agent_key,  # Correct key - agent is the holder
     )
-    
+
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
@@ -221,7 +220,7 @@ def demo_valid_call(agent_key, warrant):
         print("     (PoP signature verified)")
     except (WarrantDenied, MissingSigningKey) as e:
         print(f"  X Unexpected error: {e}")
-    
+
     print()
 
 
@@ -230,13 +229,13 @@ def demo_constraint_violation(agent_key, warrant):
     print("=" * 60)
     print("Demo 4: Constraint Violation (Path Not Allowed)")
     print("=" * 60)
-    
+
     client = guard(
         MockOpenAIClient(),
         warrant=warrant,
         signing_key=agent_key,
     )
-    
+
     try:
         client.chat.completions.create(
             model="gpt-4o",
@@ -244,10 +243,10 @@ def demo_constraint_violation(agent_key, warrant):
         )
         print("  X Should have raised WarrantDenied!")
     except WarrantDenied as e:
-        print(f"  OK Constraint violation blocked")
+        print("  OK Constraint violation blocked")
         print(f"     Tool: {e.tool_name}")
         print(f"     Reason: {e.reason}")
-    
+
     print()
 
 
@@ -256,13 +255,13 @@ def demo_unauthorized_tool(agent_key, warrant):
     print("=" * 60)
     print("Demo 5: Unauthorized Tool (Not in Warrant)")
     print("=" * 60)
-    
+
     client = guard(
         MockOpenAIClient(),
         warrant=warrant,
         signing_key=agent_key,
     )
-    
+
     try:
         client.chat.completions.create(
             model="gpt-4o",
@@ -270,9 +269,9 @@ def demo_unauthorized_tool(agent_key, warrant):
         )
         print("  X Should have raised WarrantDenied!")
     except WarrantDenied as e:
-        print(f"  OK Tool not authorized by warrant")
+        print("  OK Tool not authorized by warrant")
         print(f"     Tool: {e.tool_name}")
-    
+
     print()
 
 
@@ -281,7 +280,7 @@ def demo_defense_in_depth(agent_key, warrant):
     print("=" * 60)
     print("Demo 6: Defense in Depth (Tier 1 + Tier 2)")
     print("=" * 60)
-    
+
     # Warrant allows read_file, but Tier 1 denies it
     client = guard(
         MockOpenAIClient(),
@@ -289,21 +288,21 @@ def demo_defense_in_depth(agent_key, warrant):
         signing_key=agent_key,
         deny_tools=["read_file"],  # Tier 1: explicit deny
     )
-    
+
     try:
         client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": "Read the report"}],
         )
         print("  X Should have been blocked!")
-    except ToolDenied as e:
-        print(f"  OK Tier 1 denylist blocked the call")
-        print(f"     (Warrant would allow, but Tier 1 denies)")
+    except ToolDenied:
+        print("  OK Tier 1 denylist blocked the call")
+        print("     (Warrant would allow, but Tier 1 denies)")
     except WarrantDenied:
         # Tier 2 is checked first now, so this path shouldn't happen
         # for a valid warrant call
         print("  OK Blocked (unexpectedly by Tier 2)")
-    
+
     print()
 
 
@@ -312,7 +311,7 @@ def demo_validate(agent_key, warrant):
     print("=" * 60)
     print("Demo 7: Pre-flight Validation")
     print("=" * 60)
-    
+
     # Good config - should pass
     client = guard(MockOpenAIClient(), warrant=warrant, signing_key=agent_key)
     try:
@@ -320,7 +319,7 @@ def demo_validate(agent_key, warrant):
         print("  OK Validation passed for correct config")
     except ConfigurationError as e:
         print(f"  X Unexpected error: {e}")
-    
+
     # Bad config - wrong key
     wrong_key = SigningKey.generate()
     client2 = guard(MockOpenAIClient(), warrant=warrant, signing_key=wrong_key)
@@ -330,7 +329,7 @@ def demo_validate(agent_key, warrant):
     except ConfigurationError as e:
         print(f"  OK validate() caught config error: {e.code}")
         print(f"     {str(e)[:60]}...")
-    
+
     print()
 
 
@@ -339,25 +338,25 @@ def demo_real_openai(agent_key, warrant):
     print("=" * 60)
     print("Demo 8: Real OpenAI Integration")
     print("=" * 60)
-    
+
     if not OPENAI_AVAILABLE:
         print("  OpenAI not installed. Install with: pip install openai\n")
         return
-    
+
     if not os.getenv("OPENAI_API_KEY"):
         print("  OPENAI_API_KEY not set.\n")
         print("  Example:")
         print("    export OPENAI_API_KEY='your-key-here'\n")
         return
-    
+
     # Real OpenAI with full Tier 2 protection
-    real_client = guard(
+    guard(
         openai.OpenAI(),
         warrant=warrant,
         signing_key=agent_key,
         on_denial="raise",
     )
-    
+
     print("  Real OpenAI client created with Tier 2 protection.")
     print("  Every tool call is cryptographically signed.\n")
     print("  Use: real_client.chat.completions.create(...)")
@@ -371,14 +370,14 @@ def main():
     print("  - Agent's signing key proves warrant holder")
     print("  - Every tool call has Proof-of-Possession signature")
     print()
-    
+
     # Enable debug logging to see authorization decisions
     # Uncomment the next line to see detailed logs:
     # enable_debug()
-    
+
     # Setup
     control_plane_key, agent_key, warrant = demo_setup()
-    
+
     # Demos
     demo_missing_signing_key(warrant)
     demo_wrong_signing_key(warrant)
@@ -388,7 +387,7 @@ def main():
     demo_defense_in_depth(agent_key, warrant)
     demo_validate(agent_key, warrant)
     demo_real_openai(agent_key, warrant)
-    
+
     print("=" * 60)
     print("Summary")
     print("=" * 60)
