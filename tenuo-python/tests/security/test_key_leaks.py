@@ -5,6 +5,7 @@ import json
 import re
 from tenuo import SigningKey, Warrant
 
+
 class TestKeyLeaks:
     def test_signing_key_repr_does_not_leak(self):
         """Ensure SigningKey.__repr__ does not reveal key bytes."""
@@ -17,7 +18,7 @@ class TestKeyLeaks:
         # Heuristic: shouldn't contain long hex strings (32 bytes = 64 chars)
         # Allow small memory addresses (0x...)
         # Check for 64-char hex sequence
-        hex_pattern = re.compile(r'[a-f0-9]{64}', re.IGNORECASE)
+        hex_pattern = re.compile(r"[a-f0-9]{64}", re.IGNORECASE)
         assert not hex_pattern.search(repr_str), "Found potential private key bytes in repr"
 
         # Explicitly check for bytes from secret_key_bytes

@@ -75,6 +75,7 @@ from typing import Optional, Any
 # Base Exception
 # =============================================================================
 
+
 class TenuoError(Exception):
     """Base exception for all Tenuo errors."""
 
@@ -109,38 +110,48 @@ class TenuoError(Exception):
 # Cryptographic Errors (Signature & Crypto)
 # =============================================================================
 
+
 class CryptoError(TenuoError):
     """Cryptographic operation failed."""
+
     error_code = "crypto_error"
     rust_variant = "CryptoError"
 
 
 class SignatureInvalid(CryptoError):
     """Warrant signature verification failed."""
+
     error_code = "signature_invalid"
     rust_variant = "SignatureInvalid"
 
     def __init__(self, reason: str = "", hint: Optional[str] = None):
-        super().__init__(f"Signature verification failed: {reason}" if reason else "Signature verification failed", {"reason": reason}, hint=hint)
+        super().__init__(
+            f"Signature verification failed: {reason}" if reason else "Signature verification failed",
+            {"reason": reason},
+            hint=hint,
+        )
 
 
 class MissingSignature(CryptoError):
     """Missing signature for Proof-of-Possession."""
+
     error_code = "missing_signature"
     rust_variant = "MissingSignature"
 
     def __init__(self, reason: str = "", hint: Optional[str] = None):
-        super().__init__(f"Missing signature: {reason}" if reason else "Missing signature", {"reason": reason}, hint=hint)
-
-
+        super().__init__(
+            f"Missing signature: {reason}" if reason else "Missing signature", {"reason": reason}, hint=hint
+        )
 
 
 # =============================================================================
 # Scope Violations (authorization scope exceeded)
 # =============================================================================
 
+
 class ScopeViolation(TenuoError):
     """Authorization scope was exceeded."""
+
     error_code = "scope_violation"
     rust_variant = "Unauthorized"
 
@@ -151,6 +162,7 @@ AuthorizationError = ScopeViolation
 
 class ToolNotAuthorized(ScopeViolation):
     """Tool is not authorized by the warrant."""
+
     error_code = "tool_not_authorized"
     rust_variant = "Unauthorized"
 
@@ -163,6 +175,7 @@ class ToolNotAuthorized(ScopeViolation):
 
 class ToolMismatch(ScopeViolation):
     """Tool name mismatch during attenuation."""
+
     error_code = "tool_mismatch"
     rust_variant = "ToolMismatch"
 
@@ -170,12 +183,13 @@ class ToolMismatch(ScopeViolation):
         super().__init__(
             f"Tool name mismatch: parent has '{parent_tool}', child has '{child_tool}'",
             {"parent_tool": parent_tool, "child_tool": child_tool},
-            hint=hint
+            hint=hint,
         )
 
 
 class ConstraintViolation(ScopeViolation):
     """Constraint was not satisfied."""
+
     error_code = "constraint_violation"
     rust_variant = "ConstraintNotSatisfied"
 
@@ -188,6 +202,7 @@ class ConstraintViolation(ScopeViolation):
 
 class ExpiredError(ScopeViolation):
     """Warrant has expired."""
+
     error_code = "expired"
     rust_variant = "WarrantExpired"
 
@@ -200,6 +215,7 @@ class ExpiredError(ScopeViolation):
 
 class Unauthorized(ScopeViolation):
     """Operation unauthorized."""
+
     error_code = "unauthorized"
     rust_variant = "Unauthorized"
 
@@ -211,8 +227,10 @@ class Unauthorized(ScopeViolation):
 # Monotonicity Errors (Attenuation Violations)
 # =============================================================================
 
+
 class MonotonicityError(TenuoError):
     """Attenuation would expand capabilities (violates monotonicity)."""
+
     error_code = "monotonicity_violation"
     rust_variant = "MonotonicityViolation"
 
@@ -225,20 +243,18 @@ class MonotonicityError(TenuoError):
 
 class IncompatibleConstraintTypes(MonotonicityError):
     """Incompatible constraint types for attenuation."""
+
     error_code = "incompatible_constraint_types"
     rust_variant = "IncompatibleConstraintTypes"
 
     def __init__(self, parent_type: str, child_type: str, hint: Optional[str] = None):
-        super().__init__(
-            f"Cannot attenuate {parent_type} to {child_type}",
-            field=None,
-            hint=hint
-        )
+        super().__init__(f"Cannot attenuate {parent_type} to {child_type}", field=None, hint=hint)
         self.details = {"parent_type": parent_type, "child_type": child_type}
 
 
 class WildcardExpansion(MonotonicityError):
     """Cannot attenuate to Wildcard (would allow everything)."""
+
     error_code = "wildcard_expansion"
     rust_variant = "WildcardExpansion"
 
@@ -249,6 +265,7 @@ class WildcardExpansion(MonotonicityError):
 
 class EmptyResultSet(MonotonicityError):
     """NotOneOf would result in an empty set (paradox)."""
+
     error_code = "empty_result_set"
     rust_variant = "EmptyResultSet"
 
@@ -259,6 +276,7 @@ class EmptyResultSet(MonotonicityError):
 
 class ExclusionRemoved(MonotonicityError):
     """NotOneOf child doesn't exclude all values that parent excludes."""
+
     error_code = "exclusion_removed"
     rust_variant = "ExclusionRemoved"
 
@@ -269,6 +287,7 @@ class ExclusionRemoved(MonotonicityError):
 
 class ValueNotInParentSet(MonotonicityError):
     """OneOf/Subset child contains value not in parent set."""
+
     error_code = "value_not_in_parent_set"
     rust_variant = "ValueNotInParentSet"
 
@@ -279,16 +298,20 @@ class ValueNotInParentSet(MonotonicityError):
 
 class RangeExpanded(MonotonicityError):
     """Range child expands beyond parent bounds."""
+
     error_code = "range_expanded"
     rust_variant = "RangeExpanded"
 
     def __init__(self, bound: str, parent_value: float, child_value: float, hint: Optional[str] = None):
-        super().__init__(f"Child {bound} ({child_value}, hint=hint) exceeds parent {bound} ({parent_value}, hint=hint)", hint=hint)
+        super().__init__(
+            f"Child {bound} ({child_value}, hint=hint) exceeds parent {bound} ({parent_value}, hint=hint)", hint=hint
+        )
         self.details = {"bound": bound, "parent_value": parent_value, "child_value": child_value}
 
 
 class PatternExpanded(MonotonicityError):
     """Pattern child is broader than parent."""
+
     error_code = "pattern_expanded"
     rust_variant = "PatternExpanded"
 
@@ -299,6 +322,7 @@ class PatternExpanded(MonotonicityError):
 
 class RequiredValueRemoved(MonotonicityError):
     """Contains child doesn't require all values that parent requires."""
+
     error_code = "required_value_removed"
     rust_variant = "RequiredValueRemoved"
 
@@ -309,6 +333,7 @@ class RequiredValueRemoved(MonotonicityError):
 
 class ExactValueMismatch(MonotonicityError):
     """Exact value mismatch."""
+
     error_code = "exact_value_mismatch"
     rust_variant = "ExactValueMismatch"
 
@@ -321,14 +346,17 @@ class ExactValueMismatch(MonotonicityError):
 # Clearance Violations
 # =============================================================================
 
+
 class ClearanceViolation(TenuoError):
     """Clearance level constraint was violated."""
+
     error_code = "clearance_violation"
     rust_variant = ""  # No direct Rust equivalent (handled via MonotonicityViolation)
 
 
 class ClearanceLevelExceeded(ClearanceViolation):
     """Requested clearance level exceeds the issuer's clearance limit."""
+
     error_code = "clearance_level_exceeded"
     rust_variant = "ClearanceLevelExceeded"
 
@@ -336,7 +364,7 @@ class ClearanceLevelExceeded(ClearanceViolation):
         super().__init__(
             f"Clearance level exceeded: requested {requested} exceeds limit {limit}",
             {"requested": requested, "limit": limit},
-            hint=hint
+            hint=hint,
         )
 
 
@@ -344,69 +372,69 @@ class ClearanceLevelExceeded(ClearanceViolation):
 # Issuance Errors (Issuer Warrant Operations)
 # =============================================================================
 
+
 class IssuanceError(TenuoError):
     """Error during warrant issuance from an issuer warrant."""
+
     error_code = "issuance_error"
     rust_variant = ""
 
 
 class UnauthorizedToolIssuance(IssuanceError):
     """Tool not authorized for issuance by the issuer warrant."""
+
     error_code = "unauthorized_tool_issuance"
     rust_variant = "UnauthorizedToolIssuance"
 
     def __init__(self, tool: str, allowed: list[str], hint: Optional[str] = None):
         super().__init__(
-            f"Unauthorized tool issuance: '{tool}' not in issuable_tools {allowed}",
-            {"tool": tool, "allowed": allowed}
+            f"Unauthorized tool issuance: '{tool}' not in issuable_tools {allowed}", {"tool": tool, "allowed": allowed}
         )
 
 
 class SelfIssuanceProhibited(IssuanceError):
     """Self-issuance is prohibited (issuer cannot grant execution to themselves)."""
+
     error_code = "self_issuance_prohibited"
     rust_variant = "SelfIssuanceProhibited"
 
     def __init__(self, reason: str, hint: Optional[str] = None):
-        super().__init__(
-            f"Self-issuance prohibited: {reason}",
-            {"reason": reason}
-        )
+        super().__init__(f"Self-issuance prohibited: {reason}", {"reason": reason})
 
 
 class IssueDepthExceeded(IssuanceError):
     """Issued warrant depth exceeds issuer's max_issue_depth."""
+
     error_code = "issue_depth_exceeded"
     rust_variant = "IssueDepthExceeded"
 
     def __init__(self, depth: int, max_depth: int, hint: Optional[str] = None):
         super().__init__(
             f"Issue depth exceeded: depth {depth} exceeds max_issue_depth {max_depth}",
-            {"depth": depth, "max": max_depth}
+            {"depth": depth, "max": max_depth},
         )
 
 
 class InvalidWarrantType(IssuanceError):
     """Invalid warrant type for the operation."""
+
     error_code = "invalid_warrant_type"
     rust_variant = "InvalidWarrantType"
 
     def __init__(self, message: str, hint: Optional[str] = None):
-        super().__init__(
-            f"Invalid warrant type: {message}",
-            {"message": message}
-        )
+        super().__init__(f"Invalid warrant type: {message}", {"message": message})
 
 
 class IssuerChainTooLong(IssuanceError):
     """Issuer chain length would exceed protocol maximum."""
+
     error_code = "issuer_chain_too_long"
     rust_variant = "IssuerChainTooLong"
 
     def __init__(self, length: int, max_length: int, hint: Optional[str] = None):
         super().__init__(
             f"Issuer chain too long: length {length} would exceed maximum {max_length}",
-            {"length": length, "max": max_length}
+            {"length": length, "max": max_length},
         )
 
 
@@ -414,27 +442,27 @@ class IssuerChainTooLong(IssuanceError):
 # Proof-of-Possession Errors
 # =============================================================================
 
+
 class PopError(TenuoError):
     """Proof-of-Possession verification failed."""
+
     error_code = "pop_error"
     rust_variant = "SignatureInvalid"  # PoP failures are signature failures in Rust
 
 
 class MissingSigningKey(PopError):
     """No signing key available for PoP signature."""
+
     error_code = "missing_signing_key"
     rust_variant = "MissingSignature"
 
     def __init__(self, tool: str, hint: Optional[str] = None):
-        super().__init__(
-            f"No signing key available for PoP signature on tool '{tool}'",
-            {"tool": tool},
-            hint=hint
-        )
+        super().__init__(f"No signing key available for PoP signature on tool '{tool}'", {"tool": tool}, hint=hint)
 
 
 class SignatureMismatch(PopError):
     """PoP signature does not match authorized_holder."""
+
     error_code = "signature_mismatch"
     rust_variant = "SignatureInvalid"
 
@@ -442,15 +470,12 @@ class SignatureMismatch(PopError):
         details: dict[str, Any] = {}
         if warrant_id:
             details["warrant_id"] = warrant_id
-        super().__init__(
-            "PoP signature does not match authorized_holder",
-            details,
-            hint=hint
-        )
+        super().__init__("PoP signature does not match authorized_holder", details, hint=hint)
 
 
 class PopExpired(PopError):
     """PoP signature has expired (outside valid time window)."""
+
     error_code = "pop_expired"
     rust_variant = "SignatureInvalid"
 
@@ -462,14 +487,17 @@ class PopExpired(PopError):
 # Chain Verification Errors
 # =============================================================================
 
+
 class ChainError(TenuoError):
     """Delegation chain verification failed."""
+
     error_code = "chain_error"
     rust_variant = "ChainVerificationFailed"
 
 
 class BrokenChain(ChainError):
     """Chain linkage is broken (parent_id mismatch)."""
+
     error_code = "broken_chain"
     rust_variant = "ChainVerificationFailed"
 
@@ -477,12 +505,13 @@ class BrokenChain(ChainError):
         super().__init__(
             f"Chain broken: child references parent_hash '{child_parent_hash}' but parent payload hash is '{expected_hash}'",
             {"child_parent_hash": child_parent_hash, "expected_hash": expected_hash},
-            hint=hint
+            hint=hint,
         )
 
 
 class CycleDetected(ChainError):
     """Delegation chain contains a cycle."""
+
     error_code = "cycle_detected"
     rust_variant = "ChainVerificationFailed"
 
@@ -490,12 +519,13 @@ class CycleDetected(ChainError):
         super().__init__(
             f"Cycle detected: warrant '{warrant_id}' appears multiple times",
             {"duplicate_warrant_id": warrant_id},
-            hint=hint
+            hint=hint,
         )
 
 
 class UntrustedRoot(ChainError):
     """Root warrant is not signed by a trusted issuer."""
+
     error_code = "untrusted_root"
     rust_variant = "SignatureInvalid"
 
@@ -503,15 +533,12 @@ class UntrustedRoot(ChainError):
         details: dict[str, Any] = {}
         if issuer_fingerprint:
             details["issuer_fingerprint"] = issuer_fingerprint
-        super().__init__(
-            "Root warrant issuer is not trusted",
-            details,
-            hint=hint
-        )
+        super().__init__("Root warrant issuer is not trusted", details, hint=hint)
 
 
 class ParentRequired(ChainError):
     """Parent warrant not provided for attenuation."""
+
     error_code = "parent_required"
     rust_variant = "ParentRequired"
 
@@ -521,11 +548,16 @@ class ParentRequired(ChainError):
 
 class DelegationAuthorityError(ChainError):
     """Signing key doesn't match parent warrant's holder."""
+
     error_code = "delegation_authority_error"
     rust_variant = "DelegationAuthorityError"
 
     def __init__(self, expected: str = "", actual: str = "", hint: Optional[str] = None):
-        msg = f"signing key mismatch: expected {expected}, got {actual}" if expected else "signing key doesn't match parent warrant's holder"
+        msg = (
+            f"signing key mismatch: expected {expected}, got {actual}"
+            if expected
+            else "signing key doesn't match parent warrant's holder"
+        )
         super().__init__(msg, hint=hint)
         self.details = {"expected": expected, "actual": actual}
 
@@ -534,40 +566,41 @@ class DelegationAuthorityError(ChainError):
 # Limit Errors (protocol limits)
 # =============================================================================
 
+
 class LimitError(TenuoError):
     """Protocol limit was exceeded."""
+
     error_code = "limit_error"
     rust_variant = ""
 
 
 class DepthExceeded(LimitError):
     """Delegation depth exceeds maximum allowed."""
+
     error_code = "depth_exceeded"
     rust_variant = "DepthExceeded"
 
     def __init__(self, depth: int, max_depth: int, hint: Optional[str] = None):
         super().__init__(
-            f"Delegation depth {depth} exceeds maximum {max_depth}",
-            {"depth": depth, "max_depth": max_depth},
-            hint=hint
+            f"Delegation depth {depth} exceeds maximum {max_depth}", {"depth": depth, "max_depth": max_depth}, hint=hint
         )
 
 
 class ConstraintDepthExceeded(LimitError):
     """Constraint nesting depth exceeds maximum allowed."""
+
     error_code = "constraint_depth_exceeded"
     rust_variant = "ConstraintDepthExceeded"
 
     def __init__(self, depth: int, max_depth: int, hint: Optional[str] = None):
         super().__init__(
-            f"Constraint depth {depth} exceeds maximum {max_depth}",
-            {"depth": depth, "max_depth": max_depth},
-            hint=hint
+            f"Constraint depth {depth} exceeds maximum {max_depth}", {"depth": depth, "max_depth": max_depth}, hint=hint
         )
 
 
 class PayloadTooLarge(LimitError):
     """Warrant payload exceeds size limit."""
+
     error_code = "payload_too_large"
     rust_variant = "PayloadTooLarge"
 
@@ -575,19 +608,18 @@ class PayloadTooLarge(LimitError):
         super().__init__(
             f"Payload size {size} bytes exceeds maximum {max_size} bytes",
             {"size": size, "max_size": max_size},
-            hint=hint
+            hint=hint,
         )
-
-
-
 
 
 # =============================================================================
 # Revocation Errors
 # =============================================================================
 
+
 class RevokedError(TenuoError):
     """Warrant has been revoked."""
+
     error_code = "revoked"
     rust_variant = "WarrantRevoked"
 
@@ -602,8 +634,10 @@ class RevokedError(TenuoError):
 # Validation Errors (field/format validation)
 # =============================================================================
 
+
 class ValidationError(TenuoError):
     """Validation error."""
+
     error_code = "validation_error"
     rust_variant = "Validation"
 
@@ -613,6 +647,7 @@ class ValidationError(TenuoError):
 
 class MissingField(ValidationError):
     """Missing required field."""
+
     error_code = "missing_field"
     rust_variant = "MissingField"
 
@@ -623,6 +658,7 @@ class MissingField(ValidationError):
 
 class InvalidWarrantId(ValidationError):
     """Invalid warrant ID format."""
+
     error_code = "invalid_warrant_id"
     rust_variant = "InvalidWarrantId"
 
@@ -633,6 +669,7 @@ class InvalidWarrantId(ValidationError):
 
 class InvalidTtl(ValidationError):
     """Invalid TTL value."""
+
     error_code = "invalid_ttl"
     rust_variant = "InvalidTtl"
 
@@ -645,14 +682,17 @@ class InvalidTtl(ValidationError):
 # Constraint Syntax Errors
 # =============================================================================
 
+
 class ConstraintSyntaxError(TenuoError):
     """Constraint syntax/definition error."""
+
     error_code = "constraint_syntax_error"
     rust_variant = ""
 
 
 class InvalidPattern(ConstraintSyntaxError):
     """Invalid pattern syntax."""
+
     error_code = "invalid_pattern"
     rust_variant = "InvalidPattern"
 
@@ -663,6 +703,7 @@ class InvalidPattern(ConstraintSyntaxError):
 
 class InvalidRange(ConstraintSyntaxError):
     """Invalid range specification."""
+
     error_code = "invalid_range"
     rust_variant = "InvalidRange"
 
@@ -673,6 +714,7 @@ class InvalidRange(ConstraintSyntaxError):
 
 class InvalidRegex(ConstraintSyntaxError):
     """Invalid regex pattern."""
+
     error_code = "invalid_regex"
     rust_variant = "InvalidRegex"
 
@@ -683,6 +725,7 @@ class InvalidRegex(ConstraintSyntaxError):
 
 class CelError(ConstraintSyntaxError):
     """CEL expression error."""
+
     error_code = "cel_error"
     rust_variant = "CelError"
 
@@ -695,8 +738,10 @@ class CelError(ConstraintSyntaxError):
 # Serialization Errors (wire format)
 # =============================================================================
 
+
 class SerializationError(TenuoError):
     """Serialization error."""
+
     error_code = "serialization_error"
     rust_variant = "SerializationError"
 
@@ -707,6 +752,7 @@ class SerializationError(TenuoError):
 
 class DeserializationError(SerializationError):
     """Deserialization error."""
+
     error_code = "deserialization_error"
     rust_variant = "DeserializationError"
 
@@ -717,6 +763,7 @@ class DeserializationError(SerializationError):
 
 class UnsupportedVersion(SerializationError):
     """Wire format version mismatch."""
+
     error_code = "unsupported_version"
     rust_variant = "UnsupportedVersion"
 
@@ -729,14 +776,17 @@ class UnsupportedVersion(SerializationError):
 # Approval Errors (multi-sig)
 # =============================================================================
 
+
 class ApprovalError(TenuoError):
     """Multi-sig approval error."""
+
     error_code = "approval_error"
     rust_variant = ""
 
 
 class ApprovalExpired(ApprovalError):
     """Approval has expired."""
+
     error_code = "approval_expired"
     rust_variant = "ApprovalExpired"
 
@@ -747,6 +797,7 @@ class ApprovalExpired(ApprovalError):
 
 class InsufficientApprovals(ApprovalError):
     """Insufficient approvals for multi-sig."""
+
     error_code = "insufficient_approvals"
     rust_variant = "InsufficientApprovals"
 
@@ -757,6 +808,7 @@ class InsufficientApprovals(ApprovalError):
 
 class InvalidApproval(ApprovalError):
     """Invalid approval (bad format, DoS attempt, etc.)."""
+
     error_code = "invalid_approval"
     rust_variant = "InvalidApproval"
 
@@ -767,6 +819,7 @@ class InvalidApproval(ApprovalError):
 
 class UnknownProvider(ApprovalError):
     """Unknown approval provider."""
+
     error_code = "unknown_provider"
     rust_variant = "UnknownProvider"
 
@@ -779,14 +832,17 @@ class UnknownProvider(ApprovalError):
 # Configuration Errors
 # =============================================================================
 
+
 class ConfigurationError(TenuoError):
     """Configuration is invalid."""
+
     error_code = "configuration_error"
     rust_variant = ""  # ConfigError is separate in Rust
 
 
 class FeatureNotEnabled(TenuoError):
     """Optional feature is not enabled."""
+
     error_code = "feature_not_enabled"
     rust_variant = "FeatureNotEnabled"
 
@@ -794,12 +850,13 @@ class FeatureNotEnabled(TenuoError):
         super().__init__(
             f"Feature '{feature}' is not enabled. Enable it in Cargo.toml: tenuo = {{ features = [\"{feature}\"] }}",
             {"feature": feature},
-            hint=hint
+            hint=hint,
         )
 
 
 class RuntimeError(TenuoError):
     """Generic runtime error from Rust."""
+
     error_code = "runtime_error"
     rust_variant = "RuntimeError"
 
@@ -810,6 +867,7 @@ class RuntimeError(TenuoError):
 # =============================================================================
 # Diff-Style Authorization Error (DX improvement)
 # =============================================================================
+
 
 class ConstraintResult:
     """Result of checking a single constraint."""
@@ -847,6 +905,7 @@ class AuthorizationDenied(ScopeViolation):
           ❌ path: Pattern("/data/*") does not match "/etc/passwd"
           ✅ size: OK
     """
+
     error_code = "authorization_denied"
     rust_variant = "Unauthorized"
 
@@ -863,19 +922,23 @@ class AuthorizationDenied(ScopeViolation):
 
         # Build the message
         message = self._build_message()
-        super().__init__(message, {
-            "tool": tool,
-            "constraints": [
-                {
-                    "name": r.name,
-                    "passed": r.passed,
-                    "constraint": r.constraint_repr,
-                    "value": str(r.value),
-                    "explanation": r.explanation,
-                }
-                for r in self.constraint_results
-            ],
-        }, hint=hint)
+        super().__init__(
+            message,
+            {
+                "tool": tool,
+                "constraints": [
+                    {
+                        "name": r.name,
+                        "passed": r.passed,
+                        "constraint": r.constraint_repr,
+                        "value": str(r.value),
+                        "explanation": r.explanation,
+                    }
+                    for r in self.constraint_results
+                ],
+            },
+            hint=hint,
+        )
 
     def _build_message(self) -> str:
         """Build the diff-style error message."""
@@ -925,20 +988,24 @@ class AuthorizationDenied(ScopeViolation):
         for name, constraint in constraints.items():
             value = args.get(name, "<not provided>")
             if name == failed_field:
-                results.append(ConstraintResult(
-                    name=name,
-                    passed=False,
-                    constraint_repr=_constraint_repr(constraint),
-                    value=value,
-                    explanation=failed_reason,
-                ))
+                results.append(
+                    ConstraintResult(
+                        name=name,
+                        passed=False,
+                        constraint_repr=_constraint_repr(constraint),
+                        value=value,
+                        explanation=failed_reason,
+                    )
+                )
             else:
-                results.append(ConstraintResult(
-                    name=name,
-                    passed=True,
-                    constraint_repr=_constraint_repr(constraint),
-                    value=value,
-                ))
+                results.append(
+                    ConstraintResult(
+                        name=name,
+                        passed=True,
+                        constraint_repr=_constraint_repr(constraint),
+                        value=value,
+                    )
+                )
 
         return cls(tool=tool, constraint_results=results)
 
@@ -946,29 +1013,27 @@ class AuthorizationDenied(ScopeViolation):
 def _constraint_repr(constraint: Any) -> str:
     """Get a human-readable representation of a constraint."""
     # Try common constraint types
-    if hasattr(constraint, 'pattern'):
+    if hasattr(constraint, "pattern"):
         return f'Pattern("{constraint.pattern}")'
-    if hasattr(constraint, 'value'):
+    if hasattr(constraint, "value"):
         return f'Exact("{constraint.value}")'
-    if hasattr(constraint, 'values'):
-        return f'OneOf({list(constraint.values)})'
-    if hasattr(constraint, 'min') or hasattr(constraint, 'max'):
-        min_val = getattr(constraint, 'min', None)
-        max_val = getattr(constraint, 'max', None)
+    if hasattr(constraint, "values"):
+        return f"OneOf({list(constraint.values)})"
+    if hasattr(constraint, "min") or hasattr(constraint, "max"):
+        min_val = getattr(constraint, "min", None)
+        max_val = getattr(constraint, "max", None)
         if min_val is not None and max_val is not None:
-            return f'Range({min_val}, {max_val})'
+            return f"Range({min_val}, {max_val})"
         elif min_val is not None:
-            return f'Range(min={min_val})'
+            return f"Range(min={min_val})"
         elif max_val is not None:
-            return f'Range(max={max_val})'
-    if hasattr(constraint, 'regex'):
+            return f"Range(max={max_val})"
+    if hasattr(constraint, "regex"):
         return f'Regex("{constraint.regex}")'
-    if hasattr(constraint, 'expression'):
+    if hasattr(constraint, "expression"):
         return f'CEL("{constraint.expression}")'
     # Fallback to repr
     return repr(constraint)
-
-
 
 
 # =============================================================================
@@ -1047,6 +1112,7 @@ def categorize_rust_error(error_message: str) -> TenuoError:
     if "feature" in msg and ("not enabled" in msg or "enable" in msg):
         # Try to extract feature name from message like "Feature 'cel' is not enabled"
         import re
+
         match = re.search(r"feature\s+['\"]?(\w+)['\"]?", msg, re.IGNORECASE)
         feature = match.group(1) if match else "unknown"
         return FeatureNotEnabled(feature)

@@ -82,7 +82,7 @@ class TestSigningKeyFromFile:
         key_bytes = key.secret_key_bytes()
         b64 = base64.b64encode(key_bytes).decode()
 
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.key') as f:
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".key") as f:
             f.write(b64)
             f.flush()
 
@@ -97,7 +97,7 @@ class TestSigningKeyFromFile:
         key_bytes = key.secret_key_bytes()
         hex_str = key_bytes.hex()
 
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.key') as f:
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".key") as f:
             f.write(hex_str)
             f.flush()
 
@@ -164,7 +164,7 @@ class TestKeyring:
         root = SigningKey.generate()
         keyring = Keyring(root=root)
 
-        assert not hasattr(keyring, '__dict__')
+        assert not hasattr(keyring, "__dict__")
 
 
 class TestKeyRegistry:
@@ -290,10 +290,7 @@ class TestKeyRegistry:
             except Exception as e:
                 errors.append(e)
 
-        threads = [
-            threading.Thread(target=register_keys, args=(f"t{i}", 10))
-            for i in range(5)
-        ]
+        threads = [threading.Thread(target=register_keys, args=(f"t{i}", 10)) for i in range(5)]
 
         for t in threads:
             t.start()
@@ -308,7 +305,7 @@ class TestKeyRegistry:
     def test_slots(self):
         """KeyRegistry instance uses __slots__ (no __dict__)."""
         registry = KeyRegistry()  # Direct instantiation for testing
-        assert not hasattr(registry, '__dict__')
+        assert not hasattr(registry, "__dict__")
 
 
 class TestClassMethodExports:
@@ -335,4 +332,3 @@ class TestClassMethodExports:
             assert loaded.public_key == key.public_key
 
         os.unlink(f.name)
-

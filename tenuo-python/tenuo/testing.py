@@ -21,6 +21,7 @@ from .exceptions import AuthorizationDenied
 
 class SecurityError(Exception):
     """Raised when a security-sensitive operation is attempted in production."""
+
     pass
 
 
@@ -43,6 +44,7 @@ def _is_test_environment() -> bool:
 
     # Check if running under unittest
     import sys
+
     main_module = sys.modules.get("__main__")
     if main_module and "unittest" in str(type(main_module)):
         return True
@@ -82,8 +84,7 @@ def allow_all():
     """
     if not _is_test_environment():
         raise RuntimeError(
-            "allow_all() only works in test environments. "
-            "Run under pytest/unittest or set TENUO_TEST_MODE=1."
+            "allow_all() only works in test environments. Run under pytest/unittest or set TENUO_TEST_MODE=1."
         )
 
     # Import here to avoid circular imports
@@ -99,11 +100,7 @@ def allow_all():
 
 
 def deterministic_headers(
-    warrant: Warrant,
-    key: SigningKey,
-    tool: str,
-    args: dict,
-    timestamp: Optional[int] = None
+    warrant: Warrant, key: SigningKey, tool: str, args: dict, timestamp: Optional[int] = None
 ) -> dict:
     """
     Generate deterministic headers for testing.
@@ -135,22 +132,18 @@ def deterministic_headers(
     # Create PoP signature
     pop_sig = warrant.sign(key, tool, args)
     # sign returns bytes, encode to base64
-    pop_b64 = base64.b64encode(pop_sig).decode('ascii')
+    pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
-    return {
-        "X-Tenuo-Warrant": warrant.to_base64(),
-        "X-Tenuo-PoP": pop_b64
-    }
+    return {"X-Tenuo-Warrant": warrant.to_base64(), "X-Tenuo-PoP": pop_b64}
 
 
 # ============================================================================
 # Add quick_issue and for_testing to Warrant class
 # ============================================================================
 
+
 def _warrant_quick_mint(
-    tools: List[str],
-    ttl: int = 3600,
-    clearance: Optional[str] = None
+    tools: List[str], ttl: int = 3600, clearance: Optional[str] = None
 ) -> Tuple[Warrant, SigningKey]:
     """
     Quick warrant issuance for prototyping and testing.
@@ -188,6 +181,7 @@ def _warrant_quick_mint(
     # Set clearance if provided
     if clearance:
         from tenuo_core import Clearance  # type: ignore[import-untyped]
+
         if hasattr(Clearance, clearance.upper()):
             builder.clearance(getattr(Clearance, clearance.upper()))
 
@@ -222,8 +216,7 @@ def _warrant_for_testing(tools: List[str]) -> Warrant:
     """
     if not _is_test_environment():
         raise RuntimeError(
-            "for_testing() only works in test environments. "
-            "Set TENUO_TEST_MODE=1 or run under pytest/unittest."
+            "for_testing() only works in test environments. Set TENUO_TEST_MODE=1 or run under pytest/unittest."
         )
 
     warrant, _ = _warrant_quick_mint(tools, ttl=3600)
@@ -231,10 +224,10 @@ def _warrant_for_testing(tools: List[str]) -> Warrant:
 
 
 # Attach to Warrant class as static methods
-if not hasattr(Warrant, 'quick_issue'):
+if not hasattr(Warrant, "quick_issue"):
     Warrant.quick_mint = staticmethod(_warrant_quick_mint)  # type: ignore[attr-defined]
 
-if not hasattr(Warrant, 'for_testing'):
+if not hasattr(Warrant, "for_testing"):
     Warrant.for_testing = staticmethod(_warrant_for_testing)  # type: ignore[attr-defined]
 
 
@@ -242,10 +235,11 @@ if not hasattr(Warrant, 'for_testing'):
 # Test Assertions - assert_authorized / assert_denied
 # ============================================================================
 
+
 class AuthorizationAssertionError(AssertionError):
     """Raised when an authorization assertion fails."""
-    pass
 
+    pass
 
 
 @contextmanager
@@ -275,7 +269,7 @@ def assert_authorized(
             raise RuntimeError("assert_authorized() only works in test environments.")
 
         if key is None or tool is None:
-             raise ValueError("If warrant is provided, key and tool are required.")
+            raise ValueError("If warrant is provided, key and tool are required.")
 
         args = args or {}
         try:
@@ -331,14 +325,14 @@ def assert_denied(
             raise RuntimeError("assert_denied() only works in test environments.")
 
         if key is None or tool is None:
-             raise ValueError("If warrant is provided, key and tool are required.")
+            raise ValueError("If warrant is provided, key and tool are required.")
 
         args = args or {}
         try:
             pop_sig = warrant.sign(key, tool, args)
             result = warrant.authorize(tool, args, pop_sig)
             if result:
-                 raise AuthorizationAssertionError(
+                raise AuthorizationAssertionError(
                     message or f"Expected authorization to FAIL for tool '{tool}', but it was ALLOWED."
                 )
         except AuthorizationAssertionError:
@@ -348,7 +342,7 @@ def assert_denied(
             error_str = str(e)
             if expected_reason and expected_reason not in error_str:
                 raise AuthorizationAssertionError(
-                     message or f"Authorization denied as expected, but reason mismatch. Got: {error_str}"
+                    message or f"Authorization denied as expected, but reason mismatch. Got: {error_str}"
                 ) from e
         yield
         return
@@ -359,16 +353,15 @@ def assert_denied(
     except AuthorizationDenied as exc:
         # Check code/reason
         if code:
-            if not hasattr(exc, 'error_code') or exc.error_code != code:
-                current_code = getattr(exc, 'error_code', 'None')
+            if not hasattr(exc, "error_code") or exc.error_code != code:
+                current_code = getattr(exc, "error_code", "None")
                 raise AssertionError(
                     f"Caught AuthorizationDenied as expected, but code mismatch. "
                     f"Expected '{code}', got '{current_code}'."
                 )
         if expected_reason and expected_reason not in str(exc):
             raise AssertionError(
-                f"Caught AuthorizationDenied as expected, but reason mismatch. "
-                f"Expected '{expected_reason}' in '{exc}'."
+                f"Caught AuthorizationDenied as expected, but reason mismatch. Expected '{expected_reason}' in '{exc}'."
             )
         # Success - caught expected exception
         return
@@ -423,8 +416,7 @@ def assert_can_grant(
     """
     if not _is_test_environment():
         raise RuntimeError(
-            "assert_can_grant() only works in test environments. "
-            "Set TENUO_TEST_MODE=1 or run under pytest/unittest."
+            "assert_can_grant() only works in test environments. Set TENUO_TEST_MODE=1 or run under pytest/unittest."
         )
 
     try:
@@ -450,9 +442,7 @@ def assert_can_grant(
         return child, child_key
 
     except Exception as e:
-        raise AuthorizationAssertionError(
-            message or f"Expected grant to succeed, but it failed: {e}"
-        ) from e
+        raise AuthorizationAssertionError(message or f"Expected grant to succeed, but it failed: {e}") from e
 
 
 def assert_cannot_grant(
@@ -494,8 +484,7 @@ def assert_cannot_grant(
     """
     if not _is_test_environment():
         raise RuntimeError(
-            "assert_cannot_grant() only works in test environments. "
-            "Set TENUO_TEST_MODE=1 or run under pytest/unittest."
+            "assert_cannot_grant() only works in test environments. Set TENUO_TEST_MODE=1 or run under pytest/unittest."
         )
 
     try:
@@ -503,8 +492,8 @@ def assert_cannot_grant(
 
         # If we get here, grant unexpectedly succeeded
         raise AuthorizationAssertionError(
-            message or f"Expected grant to FAIL for tools {child_tools}, "
-            f"but it succeeded and created warrant {child.id}."
+            message
+            or f"Expected grant to FAIL for tools {child_tools}, but it succeeded and created warrant {child.id}."
         )
 
     except AuthorizationAssertionError as e:
@@ -514,7 +503,8 @@ def assert_cannot_grant(
         error_str = str(e)
         if expected_reason and expected_reason not in error_str:
             raise AuthorizationAssertionError(
-                message or f"Grant failed as expected, but the reason '{error_str}' "
+                message
+                or f"Grant failed as expected, but the reason '{error_str}' "
                 f"does not contain expected substring '{expected_reason}'."
             ) from e
 

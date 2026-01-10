@@ -127,7 +127,7 @@ from tenuo import (
 )
 
 # Import Python-only security constraints (defined in constraints.py, re-exported here)
-from tenuo.constraints import Subpath, UrlSafe, Shlex
+from tenuo.constraints import Subpath, UrlSafe
 
 logger = logging.getLogger("tenuo.openai")
 
@@ -153,17 +153,28 @@ def enable_debug(handler: Optional[logging.Handler] = None) -> None:
     logger.setLevel(logging.DEBUG)
     if handler is None:
         handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter(
-            "%(levelname)s:%(name)s:%(message)s"
-        ))
+        handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
     if not logger.handlers:
         logger.addHandler(handler)
 
 
 # Type alias for constraint types (including Subpath, UrlSafe - imported from tenuo.constraints)
 Constraint = Union[
-    Pattern, Exact, OneOf, Range, Regex, Cidr, UrlPattern,
-    Contains, Subset, Wildcard, AnyOf, All, Not, NotOneOf, CEL,
+    Pattern,
+    Exact,
+    OneOf,
+    Range,
+    Regex,
+    Cidr,
+    UrlPattern,
+    Contains,
+    Subset,
+    Wildcard,
+    AnyOf,
+    All,
+    Not,
+    NotOneOf,
+    CEL,
     Subpath,  # Python-only constraint
     "UrlSafe",  # Python-only SSRF-safe constraint
 ]
@@ -224,7 +235,7 @@ class MissingSigningKey(TenuoOpenAIError):
             "Warrant provided without signing_key. "
             "Tier 2 requires a signing key for Proof-of-Possession. "
             "Either add signing_key=... or remove the warrant for Tier 1 only.",
-            "T2_002"
+            "T2_002",
         )
 
 
@@ -238,6 +249,7 @@ class ConfigurationError(TenuoOpenAIError):
 
     Use client.validate() to catch these errors early.
     """
+
     pass
 
 
@@ -263,6 +275,7 @@ class AuditEvent:
         constraint_hash: Hash of Tier 1 constraints for tamper detection
         warrant_id: Warrant ID if Tier 2 is active (for audit correlation)
     """
+
     session_id: str
     timestamp: float
     tool_name: str
@@ -371,7 +384,6 @@ def _constraint_expected_type(constraint: Constraint) -> str:
         return "compatible type"
 
 
-
 class MalformedToolCall(TenuoOpenAIError):
     """Raised when a tool call has invalid JSON arguments."""
 
@@ -385,10 +397,7 @@ class BufferOverflow(TenuoOpenAIError):
     """Raised when streaming buffer exceeds limit."""
 
     def __init__(self, tool_name: str, size: int, limit: int):
-        super().__init__(
-            f"Tool call '{tool_name}' buffer overflow: {size} bytes exceeds {limit} byte limit",
-            "T1_004"
-        )
+        super().__init__(f"Tool call '{tool_name}' buffer overflow: {size} bytes exceeds {limit} byte limit", "T1_004")
         self.tool_name = tool_name
         self.size = size
         self.limit = limit
@@ -410,12 +419,12 @@ def check_constraint(constraint: Constraint, value: Any) -> bool:
     """
     try:
         # Try Rust-backed constraint checking first (preferred)
-        if hasattr(constraint, 'matches'):
+        if hasattr(constraint, "matches"):
             return constraint.matches(value)
-        elif hasattr(constraint, 'contains_ip'):
+        elif hasattr(constraint, "contains_ip"):
             # CIDR constraint
             return constraint.contains_ip(str(value))
-        elif hasattr(constraint, 'matches_url'):
+        elif hasattr(constraint, "matches_url"):
             # UrlPattern constraint
             return constraint.matches_url(str(value))
         else:
@@ -441,7 +450,7 @@ def _python_constraint_check(constraint: Constraint, value: Any) -> bool:
 
     if constraint_type == "Pattern":
         # Glob pattern matching
-        pattern = _get_attr_safe(constraint, 'pattern')
+        pattern = _get_attr_safe(constraint, "pattern")
         if pattern is None:
             logger.warning("Pattern constraint has no pattern attribute, failing closed")
             return False
@@ -449,12 +458,12 @@ def _python_constraint_check(constraint: Constraint, value: Any) -> bool:
 
     elif constraint_type == "Exact":
         # Exact match
-        expected = _get_attr_safe(constraint, 'value')
+        expected = _get_attr_safe(constraint, "value")
         return value == expected
 
     elif constraint_type == "OneOf":
         # Set membership
-        allowed = _get_attr_safe(constraint, 'values')
+        allowed = _get_attr_safe(constraint, "values")
         if allowed is None:
             return False
         return value in allowed
@@ -464,8 +473,8 @@ def _python_constraint_check(constraint: Constraint, value: Any) -> bool:
         # NOTE: ConstraintValue::as_number() returns None for strings,
         # so "15" as a string would NOT match Range(0,100).
         # Only actual int/float types pass. This matches Tenuo's rigorous semantics.
-        min_val = _get_attr_safe(constraint, 'min')
-        max_val = _get_attr_safe(constraint, 'max')
+        min_val = _get_attr_safe(constraint, "min")
+        max_val = _get_attr_safe(constraint, "max")
 
         # Type-strict: only int/float pass, strings fail (matches Rust behavior)
         if not isinstance(value, (int, float)):
@@ -483,7 +492,7 @@ def _python_constraint_check(constraint: Constraint, value: Any) -> bool:
 
     elif constraint_type == "Regex":
         # Regex matching - uses fullmatch for complete string match (Tenuo spec semantics)
-        pattern = _get_attr_safe(constraint, 'pattern')
+        pattern = _get_attr_safe(constraint, "pattern")
         if pattern is None:
             logger.warning("Regex constraint has no pattern attribute, failing closed")
             return False
@@ -496,14 +505,14 @@ def _python_constraint_check(constraint: Constraint, value: Any) -> bool:
 
     elif constraint_type == "NotOneOf":
         # Exclusion set
-        excluded = _get_attr_safe(constraint, 'excluded')
+        excluded = _get_attr_safe(constraint, "excluded")
         if excluded is None:
             excluded = []
         return value not in excluded
 
     elif constraint_type == "Contains":
         # List must contain required values
-        required = _get_attr_safe(constraint, 'required')
+        required = _get_attr_safe(constraint, "required")
         if required is None:
             required = []
         if not isinstance(value, (list, set, tuple)):
@@ -512,7 +521,7 @@ def _python_constraint_check(constraint: Constraint, value: Any) -> bool:
 
     elif constraint_type == "Subset":
         # Value must be subset of allowed
-        allowed = _get_attr_safe(constraint, 'allowed')
+        allowed = _get_attr_safe(constraint, "allowed")
         if allowed is None:
             return False
         if not isinstance(value, (list, set, tuple)):
@@ -522,7 +531,7 @@ def _python_constraint_check(constraint: Constraint, value: Any) -> bool:
     elif constraint_type == "Cidr":
         # IP address must be within CIDR range
         # Note: Tenuo uses .network attribute, not .cidr
-        network_str = _get_attr_safe(constraint, 'network')
+        network_str = _get_attr_safe(constraint, "network")
         if network_str is None:
             logger.warning("Cidr constraint has no network attribute, failing closed")
             return False
@@ -549,31 +558,28 @@ def _python_constraint_check(constraint: Constraint, value: Any) -> bool:
     # Composite constraints - recursive checking
     elif constraint_type == "AnyOf":
         # OR: at least one constraint must match
-        options = _get_attr_safe(constraint, 'constraints')
+        options = _get_attr_safe(constraint, "constraints")
         if not options:
             return False
         return any(check_constraint(c, value) for c in options)
 
     elif constraint_type == "All":
         # AND: all constraints must match
-        constraints_list = _get_attr_safe(constraint, 'constraints')
+        constraints_list = _get_attr_safe(constraint, "constraints")
         if not constraints_list:
             return True  # Empty AND is vacuously true
         return all(check_constraint(c, value) for c in constraints_list)
 
     elif constraint_type == "Not":
         # NOT: inner constraint must NOT match
-        inner = _get_attr_safe(constraint, 'constraint')
+        inner = _get_attr_safe(constraint, "constraint")
         if inner is None:
             return False
         return not check_constraint(inner, value)
 
     # SECURITY: Unknown constraint type - fail closed
     # This is intentional. Tenuo's philosophy is "when in doubt, deny."
-    logger.error(
-        f"Unknown constraint type '{constraint_type}'. "
-        f"Failing closed per Tenuo security policy."
-    )
+    logger.error(f"Unknown constraint type '{constraint_type}'. Failing closed per Tenuo security policy.")
     return False
 
 
@@ -614,12 +620,12 @@ def _check_url_pattern(constraint: Any, value: Any) -> bool:
         url = urlparse(str(value))
 
         # Get pattern components (Tenuo API)
-        schemes = _get_attr_safe(constraint, 'schemes')  # List of allowed schemes
-        host_pattern = _get_attr_safe(constraint, 'host_pattern')
-        path_pattern = _get_attr_safe(constraint, 'path_pattern')
+        schemes = _get_attr_safe(constraint, "schemes")  # List of allowed schemes
+        host_pattern = _get_attr_safe(constraint, "host_pattern")
+        path_pattern = _get_attr_safe(constraint, "path_pattern")
 
         # Check scheme if specified
-        if schemes and '*' not in schemes:
+        if schemes and "*" not in schemes:
             if url.scheme not in schemes:
                 return False
 
@@ -637,6 +643,7 @@ def _check_url_pattern(constraint: Any, value: Any) -> bool:
         # Check path if specified (glob matching)
         if path_pattern and path_pattern != "*":
             import fnmatch
+
             if not fnmatch.fnmatch(url.path, path_pattern):
                 return False
 
@@ -708,11 +715,11 @@ def verify_tool_call(
             logger.debug(f"Tier 2: Authorization DENIED for '{tool_name}'")
             # Get detailed reason for denial
             why = warrant.why_denied(tool_name, arguments)
-            if why and hasattr(why, 'deny_code'):
+            if why and hasattr(why, "deny_code"):
                 reason = f"{why.deny_code}"
-                if hasattr(why, 'field') and why.field:
+                if hasattr(why, "field") and why.field:
                     reason += f" (field: {why.field})"
-                if hasattr(why, 'suggestion') and why.suggestion:
+                if hasattr(why, "suggestion") and why.suggestion:
                     reason += f" - {why.suggestion}"
             else:
                 reason = str(why) if why else "not authorized by warrant"
@@ -745,19 +752,14 @@ def verify_tool_call(
                 # Check for type mismatches first (provides clearer errors)
                 type_mismatch, reason = _check_type_compatibility(constraint, value)
                 if type_mismatch:
-                    raise ConstraintViolation(
-                        tool_name, param, value, constraint,
-                        type_mismatch=True, reason=reason
-                    )
+                    raise ConstraintViolation(tool_name, param, value, constraint, type_mismatch=True, reason=reason)
 
                 # Check the actual constraint
                 if not check_constraint(constraint, value):
                     raise ConstraintViolation(tool_name, param, value, constraint)
 
 
-def _check_type_compatibility(
-    constraint: Constraint, value: Any
-) -> tuple:
+def _check_type_compatibility(constraint: Constraint, value: Any) -> tuple:
     """Check if value type is compatible with constraint.
 
     Returns:
@@ -816,7 +818,7 @@ class ToolCallBuffer:
             raise MalformedToolCall(self.name, str(e))
 
     def size(self) -> int:
-        return len(self.arguments_buffer.encode('utf-8'))
+        return len(self.arguments_buffer.encode("utf-8"))
 
 
 # =============================================================================
@@ -856,7 +858,7 @@ class GuardedCompletions:
         self._session_id = session_id or str(uuid.uuid4())[:8]
         self._constraint_hash = constraint_hash
         # Freeze warrant_id at init time for consistent audit trail
-        self._warrant_id = warrant.id if warrant and hasattr(warrant, 'id') else None
+        self._warrant_id = warrant.id if warrant and hasattr(warrant, "id") else None
 
     def create(self, *args, **kwargs) -> Any:
         """Wrapped create method with guardrails."""
@@ -873,15 +875,15 @@ class GuardedCompletions:
 
     def _guard_response(self, response: Any) -> Any:
         """Verify tool calls in a non-streaming response."""
-        if not hasattr(response, 'choices') or not response.choices:
+        if not hasattr(response, "choices") or not response.choices:
             return response
 
         for choice in response.choices:
-            if not hasattr(choice, 'message') or not choice.message:
+            if not hasattr(choice, "message") or not choice.message:
                 continue
 
             message = choice.message
-            if not hasattr(message, 'tool_calls') or not message.tool_calls:
+            if not hasattr(message, "tool_calls") or not message.tool_calls:
                 continue
 
             # Filter/verify tool calls
@@ -904,14 +906,14 @@ class GuardedCompletions:
 
     def _verify_single_tool_call(self, tool_call: Any) -> None:
         """Verify a single tool call."""
-        if not hasattr(tool_call, 'function'):
+        if not hasattr(tool_call, "function"):
             return
 
         func = tool_call.function
-        tool_name = func.name if hasattr(func, 'name') else ""
+        tool_name = func.name if hasattr(func, "name") else ""
 
         # Parse arguments
-        args_str = func.arguments if hasattr(func, 'arguments') else "{}"
+        args_str = func.arguments if hasattr(func, "arguments") else "{}"
         try:
             arguments = json.loads(args_str) if args_str else {}
         except json.JSONDecodeError as e:
@@ -1049,55 +1051,51 @@ class GuardedCompletions:
     ) -> None:
         """Accumulate tool call data from a chunk into buffers."""
         for choice in chunk.choices:
-            if not hasattr(choice, 'delta') or not choice.delta:
+            if not hasattr(choice, "delta") or not choice.delta:
                 continue
 
             delta = choice.delta
-            if not hasattr(delta, 'tool_calls') or not delta.tool_calls:
+            if not hasattr(delta, "tool_calls") or not delta.tool_calls:
                 continue
 
             for tc_delta in delta.tool_calls:
-                index = tc_delta.index if hasattr(tc_delta, 'index') else 0
+                index = tc_delta.index if hasattr(tc_delta, "index") else 0
 
                 # Initialize buffer if new tool call
                 if index not in buffers:
-                    tc_id = tc_delta.id if hasattr(tc_delta, 'id') else f"tc_{index}"
+                    tc_id = tc_delta.id if hasattr(tc_delta, "id") else f"tc_{index}"
                     buffers[index] = ToolCallBuffer(id=tc_id)
 
                 buffer = buffers[index]
 
                 # Update name if present
-                if hasattr(tc_delta, 'function') and tc_delta.function:
+                if hasattr(tc_delta, "function") and tc_delta.function:
                     func = tc_delta.function
-                    if hasattr(func, 'name') and func.name:
+                    if hasattr(func, "name") and func.name:
                         buffer.name = func.name
-                    if hasattr(func, 'arguments') and func.arguments:
+                    if hasattr(func, "arguments") and func.arguments:
                         buffer.append_arguments(func.arguments)
 
                         # Check buffer size
                         if buffer.size() > self._stream_buffer_limit:
-                            raise BufferOverflow(
-                                buffer.name,
-                                buffer.size(),
-                                self._stream_buffer_limit
-                            )
+                            raise BufferOverflow(buffer.name, buffer.size(), self._stream_buffer_limit)
 
     def _has_tool_call_delta(self, chunk: Any) -> bool:
         """Check if chunk contains tool call data."""
-        if not hasattr(chunk, 'choices') or not chunk.choices:
+        if not hasattr(chunk, "choices") or not chunk.choices:
             return False
         for choice in chunk.choices:
-            if hasattr(choice, 'delta') and hasattr(choice.delta, 'tool_calls'):
+            if hasattr(choice, "delta") and hasattr(choice.delta, "tool_calls"):
                 if choice.delta.tool_calls:
                     return True
         return False
 
     def _is_stream_end(self, chunk: Any) -> bool:
         """Check if this chunk signals stream end."""
-        if not hasattr(chunk, 'choices') or not chunk.choices:
+        if not hasattr(chunk, "choices") or not chunk.choices:
             return False
         for choice in chunk.choices:
-            if hasattr(choice, 'finish_reason') and choice.finish_reason:
+            if hasattr(choice, "finish_reason") and choice.finish_reason:
                 return True
         return False
 
@@ -1116,13 +1114,13 @@ class GuardedCompletions:
         # For simplicity, if any tool call in chunk is denied, drop the whole chunk
         # A more sophisticated impl would surgically remove just the denied calls
         for choice in chunk.choices:
-            if not hasattr(choice, 'delta') or not choice.delta:
+            if not hasattr(choice, "delta") or not choice.delta:
                 continue
             delta = choice.delta
-            if not hasattr(delta, 'tool_calls') or not delta.tool_calls:
+            if not hasattr(delta, "tool_calls") or not delta.tool_calls:
                 continue
             for tc_delta in delta.tool_calls:
-                index = tc_delta.index if hasattr(tc_delta, 'index') else 0
+                index = tc_delta.index if hasattr(tc_delta, "index") else 0
                 if index in denied_indices:
                     return None
 
@@ -1243,7 +1241,7 @@ class GuardedResponses:
         self._session_id = session_id or str(uuid.uuid4())[:8]
         self._constraint_hash = constraint_hash
         # Freeze warrant_id at init time for consistent audit trail
-        self._warrant_id = warrant.id if warrant and hasattr(warrant, 'id') else None
+        self._warrant_id = warrant.id if warrant and hasattr(warrant, "id") else None
 
     def create(self, *args, **kwargs) -> Any:
         """Wrapped create method with guardrails.
@@ -1257,7 +1255,7 @@ class GuardedResponses:
     def _guard_response(self, response: Any) -> Any:
         """Verify tool calls in a Responses API response."""
         # Responses API uses response.output for tool calls
-        if not hasattr(response, 'output'):
+        if not hasattr(response, "output"):
             return response
 
         output = response.output
@@ -1267,7 +1265,7 @@ class GuardedResponses:
         # Build list of verified items, filtering denied ones in skip/log mode
         verified_items = []
         for item in output:
-            if hasattr(item, 'type') and item.type == 'function_call':
+            if hasattr(item, "type") and item.type == "function_call":
                 try:
                     self._verify_function_call(item)
                     verified_items.append(item)
@@ -1288,8 +1286,8 @@ class GuardedResponses:
 
     def _verify_function_call(self, item: Any) -> None:
         """Verify a function call item from Responses API."""
-        tool_name = getattr(item, 'name', '') or ''
-        args_str = getattr(item, 'arguments', '{}') or '{}'
+        tool_name = getattr(item, "name", "") or ""
+        args_str = getattr(item, "arguments", "{}") or "{}"
 
         try:
             arguments = json.loads(args_str) if args_str else {}
@@ -1386,7 +1384,7 @@ class GuardedClient:
         self.constraint_hash = _compute_constraint_hash(allow_tools, deny_tools, constraints)
 
         # Wrap chat.completions
-        if hasattr(client, 'chat') and hasattr(client.chat, 'completions'):
+        if hasattr(client, "chat") and hasattr(client.chat, "completions"):
             self.chat = GuardedChat(
                 GuardedCompletions(
                     client.chat.completions,
@@ -1404,7 +1402,7 @@ class GuardedClient:
             )
 
         # Wrap responses API (newer OpenAI API)
-        if hasattr(client, 'responses'):
+        if hasattr(client, "responses"):
             self.responses = GuardedResponses(
                 client.responses,
                 allow_tools,
@@ -1421,12 +1419,12 @@ class GuardedClient:
         # Pass through other attributes
         self._passthrough_attrs = set()
         for attr in dir(client):
-            if not attr.startswith('_') and attr not in ('chat', 'responses'):
+            if not attr.startswith("_") and attr not in ("chat", "responses"):
                 self._passthrough_attrs.add(attr)
 
     def __getattr__(self, name: str) -> Any:
         """Pass through non-wrapped attributes to underlying client."""
-        if name.startswith('_'):
+        if name.startswith("_"):
             raise AttributeError(name)
         return getattr(self._client, name)
 
@@ -1456,12 +1454,9 @@ class GuardedClient:
 
             # Check warrant isn't expired
             # Note: 'expired' is a property, 'is_expired()' is a method
-            is_expired = getattr(self._warrant, 'expired', False)
+            is_expired = getattr(self._warrant, "expired", False)
             if is_expired:
-                raise ConfigurationError(
-                    "Warrant is expired. Request a new warrant from the control plane.",
-                    "CFG_002"
-                )
+                raise ConfigurationError("Warrant is expired. Request a new warrant from the control plane.", "CFG_002")
 
             # Check signing_key matches warrant holder
             try:
@@ -1472,7 +1467,7 @@ class GuardedClient:
                         "Signing key does not match warrant holder. "
                         "The signing_key must be the private key corresponding to "
                         "the warrant's authorized_holder public key.",
-                        "CFG_003"
+                        "CFG_003",
                     )
             except AttributeError:
                 # If we can't check, skip (older API)
@@ -1755,9 +1750,7 @@ class GuardBuilder:
                 self._tool_schemas[name] = params
         return self
 
-    def validate(
-        self, mode: Literal["warn", "strict", False] = "warn"
-    ) -> "GuardBuilder":
+    def validate(self, mode: Literal["warn", "strict", False] = "warn") -> "GuardBuilder":
         """Set constraint validation mode.
 
         Args:
@@ -1857,11 +1850,7 @@ class GuardBuilder:
             warnings = self._validate_constraints()
             if warnings:
                 if self._validate_mode == "strict":
-                    raise ConfigurationError(
-                        "Constraint validation failed:\n  " +
-                        "\n  ".join(warnings),
-                        code="C1_003"
-                    )
+                    raise ConfigurationError("Constraint validation failed:\n  " + "\n  ".join(warnings), code="C1_003")
                 else:  # warn mode
                     for warning in warnings:
                         logger.warning(f"Constraint validation: {warning}")
@@ -2027,6 +2016,7 @@ def guard(
 _GuardrailFunctionOutput: Any = None
 try:
     from agents.guardrail import GuardrailFunctionOutput as _GFO  # type: ignore[import-not-found]
+
     _GuardrailFunctionOutput = _GFO
 except ImportError:
     pass
@@ -2042,6 +2032,7 @@ class GuardrailResult:
     If the openai-agents SDK is installed, to_agents_sdk() returns a proper
     GuardrailFunctionOutput instance for full SDK compatibility.
     """
+
     output_info: str
     tripwire_triggered: bool = False
 
@@ -2116,7 +2107,7 @@ class TenuoToolGuardrail:
         # Generate session ID and constraint hash for audit trail
         self._session_id = str(uuid.uuid4())[:8]
         self._constraint_hash = _compute_constraint_hash(allow_tools, deny_tools, constraints)
-        self._warrant_id = warrant.id if warrant and hasattr(warrant, 'id') else None
+        self._warrant_id = warrant.id if warrant and hasattr(warrant, "id") else None
 
         # Validate configuration
         if warrant is not None and signing_key is None:
@@ -2422,17 +2413,14 @@ __all__ = [
     "GuardedClient",
     "GuardedResponses",
     "enable_debug",
-
     # OpenAI Agents SDK Integration
     "TenuoToolGuardrail",
     "GuardrailResult",
     "create_tool_guardrail",
     "create_warrant_guardrail",
-
     # Audit
     "AuditEvent",
     "AuditCallback",
-
     # Exceptions
     "TenuoOpenAIError",
     "ToolDenied",
@@ -2442,7 +2430,6 @@ __all__ = [
     "WarrantDenied",
     "MissingSigningKey",
     "ConfigurationError",
-
     # Re-export constraints for convenience
     "Pattern",
     "Exact",
@@ -2460,7 +2447,6 @@ __all__ = [
     "NotOneOf",
     "CEL",
     "Subpath",  # Python-only secure path containment constraint
-
     # Tier 2: Warrant types (re-exported for convenience)
     "Warrant",
     "SigningKey",

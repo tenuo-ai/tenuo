@@ -56,10 +56,7 @@ registry.register("worker-1", worker_key)
 # Creates an ISSUER warrant (usually done by an authority service)
 # Here we just self-issue for the demo
 print("📜 issuing warrant...")
-root_warrant = Warrant.mint_builder()\
-    .tool("echo")\
-    .tool("search")\
-    .mint(worker_key)
+root_warrant = Warrant.mint_builder().tool("echo").tool("search").mint(worker_key)
 
 print(f"   Warrant ID: {root_warrant.id}")
 
@@ -68,20 +65,24 @@ print(f"   Warrant ID: {root_warrant.id}")
 # 2. Define Tools
 # =============================================================================
 
+
 @tool
 def echo(msg: str) -> str:
     """Echoes the input message."""
     return f"Echo: {msg}"
+
 
 @tool
 def search(query: str) -> str:
     """Searches the database."""
     return f"Results for: {query}"
 
+
 @tool
 def delete_database() -> str:
     """Dangerous tool!"""
     return "Database deleted!"
+
 
 # We only authorize 'echo' and 'search' in the warrant above.
 tools = [echo, search, delete_database]
@@ -90,6 +91,7 @@ tools = [echo, search, delete_database]
 # =============================================================================
 # 3. Define State
 # =============================================================================
+
 
 class AgentState(TypedDict):
     messages: Annotated[List[BaseMessage], operator.add]
@@ -124,19 +126,33 @@ def agent_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
             if not bw.allows("delete_database"):
                 return {"messages": [HumanMessage(content="I cannot delete the database (unauthorized warrant).")]}
 
-            return {"messages": [AIMessage(content="Deleting...", tool_calls=[
-                {"name": "delete_database", "args": {}, "id": str(uuid4())}
-            ])]}
+            return {
+                "messages": [
+                    AIMessage(
+                        content="Deleting...", tool_calls=[{"name": "delete_database", "args": {}, "id": str(uuid4())}]
+                    )
+                ]
+            }
 
         elif "search" in content:
-            return {"messages": [AIMessage(content="Searching...", tool_calls=[
-                {"name": "search", "args": {"query": "something"}, "id": str(uuid4())}
-            ])]}
+            return {
+                "messages": [
+                    AIMessage(
+                        content="Searching...",
+                        tool_calls=[{"name": "search", "args": {"query": "something"}, "id": str(uuid4())}],
+                    )
+                ]
+            }
 
         else:
-             return {"messages": [AIMessage(content="Echoing...", tool_calls=[
-                {"name": "echo", "args": {"msg": content}, "id": str(uuid4())}
-            ])]}
+            return {
+                "messages": [
+                    AIMessage(
+                        content="Echoing...",
+                        tool_calls=[{"name": "echo", "args": {"msg": content}, "id": str(uuid4())}],
+                    )
+                ]
+            }
 
     return {"messages": []}
 
@@ -157,11 +173,13 @@ workflow.add_node("tools", TenuoToolNode(tools))
 
 workflow.set_entry_point("agent")
 
+
 def should_continue(state: AgentState):
     last = state["messages"][-1]
     if isinstance(last, AIMessage) and last.tool_calls:
         return "tools"
     return END
+
 
 workflow.add_conditional_edges("agent", should_continue)
 workflow.add_edge("tools", "agent")
@@ -184,15 +202,12 @@ if __name__ == "__main__":
     config = {
         "configurable": {
             "thread_id": thread_id,
-            "tenuo_key_id": "worker-1" # Pass infrastructure key ID here
+            "tenuo_key_id": "worker-1",  # Pass infrastructure key ID here
         }
     }
 
     # Initial input
-    initial_state = {
-        "messages": [HumanMessage(content="Hello world")],
-        "warrant": root_warrant.to_base64()
-    }
+    initial_state = {"messages": [HumanMessage(content="Hello world")], "warrant": root_warrant.to_base64()}
 
     print("\n--- TURN 1: Allowed Action (Echo) ---")
     for event in app.stream(initial_state, config=config):

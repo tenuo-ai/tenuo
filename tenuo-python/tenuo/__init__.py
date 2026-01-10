@@ -13,7 +13,7 @@ Tenuo Python SDK - Capability tokens for AI agents
         # Composites
         AnyOf, All, Not,  # AnyOf = OR, All = AND
         # Security (from Rust core - can be embedded in Warrants)
-        Subpath, UrlSafe,  # Path traversal and SSRF protection
+        Subpath, UrlSafe, Shlex,  # Path traversal, SSRF, shell injection protection
         # Setup (usually once at startup)
         configure, auto_configure, SigningKey, PublicKey,
     )
@@ -134,6 +134,7 @@ from .keys import KeyRegistry, Keyring
 import tenuo.warrant_ext  # noqa: F401
 import tenuo.builder  # noqa: F401 - Adds Warrant.mint_builder()
 import tenuo.keys  # noqa: F401 - Adds SigningKey.from_env(), PublicKey.from_env()
+
 Warrant.bind = BoundWarrant.bind_warrant
 
 # =============================================================================
@@ -146,20 +147,16 @@ __all__ = [
     "grant",
     "Capability",
     "Warrant",
-
     # Core types
     "BoundWarrant",
     "Authorizer",
-
     # Multi-sig
     "Approval",
     "compute_approval_hash",
-
     # Revocation
     "RevocationRequest",
     "SignedRevocationList",
     "SrlBuilder",
-
     # Setup
     "configure",
     "auto_configure",
@@ -170,18 +167,15 @@ __all__ = [
     "should_block_violation",
     "SigningKey",
     "PublicKey",
-
     # Protection
     "guard",
     "guard_tools",
     "guard_agent",
     "auto_protect",
     "LANGCHAIN_AVAILABLE",
-
     # Context
     "warrant_scope",
     "key_scope",
-
     # Common constraints
     "Pattern",
     "Exact",
@@ -203,7 +197,7 @@ __all__ = [
     # Python-only security constraints
     "Subpath",  # Secure path containment (path traversal protection)
     "UrlSafe",  # SSRF protection (IP/domain blocking)
-
+    "Shlex",  # Shell injection protection (command validation)
     # Errors (essential only)
     "TenuoError",
     "ConstraintViolation",
@@ -211,18 +205,14 @@ __all__ = [
     "ConfigurationError",
     "AuthorizationDenied",  # Rich error with diff support
     "ScopeViolation",  # Authorization scope exceeded
-
     # Error explanation
     "explain",
     "explain_str",
-
     # Diagnostics
     "diagnose",
     "info",
-
     # Result types
     "ValidationResult",
-
     # Key management
     "KeyRegistry",
     "Keyring",

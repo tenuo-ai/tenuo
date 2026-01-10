@@ -281,9 +281,7 @@ class TestApprovalWithAuthorizer:
         authorizer = Authorizer(trusted_roots=[keys["issuer"].public_key])
 
         # Create PoP signature
-        pop_sig = warrant.sign(
-            keys["agent"], "sensitive_action", {"level": "high"}
-        )
+        pop_sig = warrant.sign(keys["agent"], "sensitive_action", {"level": "high"})
 
         # Authorize with approvals
         authorizer.authorize(
@@ -298,9 +296,7 @@ class TestApprovalWithAuthorizer:
         """Test that authorization works without approvals (for non-multisig warrants)."""
         authorizer = Authorizer(trusted_roots=[keys["issuer"].public_key])
 
-        pop_sig = warrant.sign(
-            keys["agent"], "sensitive_action", {"level": "high"}
-        )
+        pop_sig = warrant.sign(keys["agent"], "sensitive_action", {"level": "high"})
 
         # Should work without approvals for non-multisig warrants
         authorizer.authorize(
@@ -528,4 +524,3 @@ class TestApprovalRepr:
         assert "approver=" in repr_str
         assert "provider=test-provider" in repr_str
         assert "external_id=test@example.com" in repr_str
-

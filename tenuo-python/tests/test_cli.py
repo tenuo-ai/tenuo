@@ -18,12 +18,10 @@ from unittest.mock import MagicMock, patch
 
 try:
     from fastapi import HTTPException
+
     FASTAPI_AVAILABLE = True
 except ImportError:
     FASTAPI_AVAILABLE = False
-
-
-
 
 
 class TestCLI:
@@ -78,7 +76,6 @@ class TestCLI:
         assert "tnu_wrt_" in captured.out
 
 
-
 @pytest.mark.skipif(not FASTAPI_AVAILABLE, reason="FastAPI not installed")
 class TestFastAPI:
     """Test FastAPI integration."""
@@ -113,27 +110,28 @@ def test_init_command():
         os.chdir(temp_dir)
         try:
             # Mock SigningKey.generate
-            with patch('tenuo_core.SigningKey') as MockKey:
-                    mock_k = MagicMock()
-                    # to_string returns bytes
-                    mock_k.to_string.return_value = b'test_key_bytes'
-                    MockKey.generate.return_value = mock_k
+            with patch("tenuo_core.SigningKey") as MockKey:
+                mock_k = MagicMock()
+                # to_string returns bytes
+                mock_k.to_string.return_value = b"test_key_bytes"
+                MockKey.generate.return_value = mock_k
 
-                    init_project()
+                init_project()
 
-                    # Check .env
-                    assert os.path.exists(".env")
-                    with open(".env") as f:
-                        content = f.read()
-                        assert "TENUO_ROOT_KEY=" in content
+                # Check .env
+                assert os.path.exists(".env")
+                with open(".env") as f:
+                    content = f.read()
+                    assert "TENUO_ROOT_KEY=" in content
 
-                    # Check tenuo_config.py
-                    assert os.path.exists("tenuo_config.py")
-                    with open("tenuo_config.py") as f:
-                        content = f.read()
-                        assert "configure" in content
+                # Check tenuo_config.py
+                assert os.path.exists("tenuo_config.py")
+                with open("tenuo_config.py") as f:
+                    content = f.read()
+                    assert "configure" in content
         finally:
             os.chdir(current_dir)
+
 
 class TestRichInspector:
     def test_rich_decode_available(self):
@@ -163,5 +161,5 @@ class TestRichInspector:
         """Test decode without rich (fallback)."""
         # Simulate missing rich
         with patch.dict(sys.modules, {"rich": None}):
-                # This simple check relies on the implementation checking ImportError
-                pass
+            # This simple check relies on the implementation checking ImportError
+            pass

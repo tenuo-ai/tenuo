@@ -193,24 +193,24 @@ class TestUrlSafeIPEncodingBypasses:
 
     def test_blocks_ipv4_compatible_ipv6(self):
         """Block IPv4-compatible IPv6 addresses (::x.x.x.x format).
-        
+
         SECURITY: IPv4-compatible addresses are deprecated (RFC 4291) but still
         parsed by many URL libraries. This was a bypass vector fixed in 2026-01.
-        
+
         Format: The first 96 bits are zero, last 32 bits are the IPv4 address.
         Examples: ::127.0.0.1, [0:0:0:0:0:0:127.0.0.1]
         """
         constraint = UrlSafe()
-        
+
         # Loopback via IPv4-compatible format
         assert not constraint.matches("http://[::127.0.0.1]/")
         assert not constraint.matches("http://[0:0:0:0:0:0:127.0.0.1]/")
-        
+
         # Private IPs via IPv4-compatible format
         assert not constraint.matches("http://[::10.0.0.1]/")
         assert not constraint.matches("http://[::172.16.0.1]/")
         assert not constraint.matches("http://[::192.168.1.1]/")
-        
+
         # Metadata IP via IPv4-compatible format
         assert not constraint.matches("http://[::169.254.169.254]/")
 
@@ -268,9 +268,7 @@ class TestUrlSafeDomainAllowlist:
 
     def test_multiple_allowed_domains(self):
         """Multiple domains in allowlist."""
-        constraint = UrlSafe(
-            allow_domains=["api.github.com", "*.googleapis.com", "example.com"]
-        )
+        constraint = UrlSafe(allow_domains=["api.github.com", "*.googleapis.com", "example.com"])
         assert constraint.matches("https://api.github.com/")
         assert constraint.matches("https://storage.googleapis.com/")
         assert constraint.matches("https://example.com/")
@@ -341,10 +339,10 @@ class TestUrlSafeEdgeCases:
         # Note: "https:///path" is parsed by the Rust url crate as "https://path/"
         # where "path" becomes the hostname. This is per WHATWG URL spec.
         # So we don't test that case here.
-        
+
         # This truly has no host
         assert not constraint.matches("http://")
-        
+
         # Invalid URLs
         assert not constraint.matches("not-a-url")
 
@@ -423,45 +421,41 @@ class TestUrlSafeIntegration:
 class TestUrlSafeSSRFVectorComprehensive:
     """Comprehensive SSRF vector tests matching the design document."""
 
-    @pytest.mark.parametrize("url,should_allow", [
-        # Public URLs - ALLOW
-        ("https://api.github.com/repos", True),
-        ("https://example.com/data", True),
-        ("http://cdn.example.com/image.png", True),
-
-        # AWS/Azure/DO metadata - DENY
-        ("http://169.254.169.254/latest/meta-data/", False),
-        ("http://169.254.169.254/latest/api/token", False),
-
-        # GCP metadata - DENY
-        ("http://metadata.google.internal/", False),
-        ("http://metadata.goog/", False),
-
-        # Private IPs - DENY
-        ("http://10.0.0.1/admin", False),
-        ("http://172.16.0.1/", False),
-        ("http://192.168.1.1/admin", False),
-
-        # Loopback - DENY
-        ("http://127.0.0.1/", False),
-        ("http://localhost/", False),
-        ("http://[::1]/", False),
-
-        # IP encoding bypasses - DENY
-        ("http://2130706433/", False),  # Decimal 127.0.0.1
-        ("http://0x7f000001/", False),  # Hex 127.0.0.1
-        ("http://0177.0.0.1/", False),  # Octal 127.0.0.1
-        ("http://[::ffff:127.0.0.1]/", False),  # IPv6-mapped
-        ("http://%31%32%37%2e%30%2e%30%2e%31/", False),  # URL-encoded 127.0.0.1
-        ("http://%31%36%39%2e%32%35%34%2e%31%36%39%2e%32%35%34/", False),  # URL-encoded metadata
-
-        # Dangerous schemes - DENY
-        ("file:///etc/passwd", False),
-        ("gopher://evil.com/", False),
-
-        # Null byte injection - DENY
-        ("http://evil.com\x00.trusted.com/", False),
-    ])
+    @pytest.mark.parametrize(
+        "url,should_allow",
+        [
+            # Public URLs - ALLOW
+            ("https://api.github.com/repos", True),
+            ("https://example.com/data", True),
+            ("http://cdn.example.com/image.png", True),
+            # AWS/Azure/DO metadata - DENY
+            ("http://169.254.169.254/latest/meta-data/", False),
+            ("http://169.254.169.254/latest/api/token", False),
+            # GCP metadata - DENY
+            ("http://metadata.google.internal/", False),
+            ("http://metadata.goog/", False),
+            # Private IPs - DENY
+            ("http://10.0.0.1/admin", False),
+            ("http://172.16.0.1/", False),
+            ("http://192.168.1.1/admin", False),
+            # Loopback - DENY
+            ("http://127.0.0.1/", False),
+            ("http://localhost/", False),
+            ("http://[::1]/", False),
+            # IP encoding bypasses - DENY
+            ("http://2130706433/", False),  # Decimal 127.0.0.1
+            ("http://0x7f000001/", False),  # Hex 127.0.0.1
+            ("http://0177.0.0.1/", False),  # Octal 127.0.0.1
+            ("http://[::ffff:127.0.0.1]/", False),  # IPv6-mapped
+            ("http://%31%32%37%2e%30%2e%30%2e%31/", False),  # URL-encoded 127.0.0.1
+            ("http://%31%36%39%2e%32%35%34%2e%31%36%39%2e%32%35%34/", False),  # URL-encoded metadata
+            # Dangerous schemes - DENY
+            ("file:///etc/passwd", False),
+            ("gopher://evil.com/", False),
+            # Null byte injection - DENY
+            ("http://evil.com\x00.trusted.com/", False),
+        ],
+    )
     def test_ssrf_vectors(self, url, should_allow):
         """Comprehensive SSRF vector coverage."""
         constraint = UrlSafe()
@@ -472,6 +466,7 @@ class TestUrlSafeSSRFVectorComprehensive:
 # =============================================================================
 # Adversarial Tests - IP Encoding Bypasses
 # =============================================================================
+
 
 class TestUrlSafeAdversarialIPEncoding:
     """Adversarial tests for IP encoding bypass attempts."""
@@ -489,27 +484,27 @@ class TestUrlSafeAdversarialIPEncoding:
     def test_decimal_ip_private(self):
         """Decimal encoding of private IPs."""
         us = UrlSafe()
-        assert not us.is_safe("http://167772161/")   # 10.0.0.1
+        assert not us.is_safe("http://167772161/")  # 10.0.0.1
         assert not us.is_safe("http://3232235521/")  # 192.168.0.1
 
     def test_hex_ip_full(self):
         """Full hex IP encoding."""
         us = UrlSafe()
-        assert not us.is_safe("http://0x7f000001/")      # 127.0.0.1
-        assert not us.is_safe("http://0xA9FEA9FE/")      # 169.254.169.254
-        assert not us.is_safe("http://0x0A000001/")      # 10.0.0.1
+        assert not us.is_safe("http://0x7f000001/")  # 127.0.0.1
+        assert not us.is_safe("http://0xA9FEA9FE/")  # 169.254.169.254
+        assert not us.is_safe("http://0x0A000001/")  # 10.0.0.1
 
     def test_hex_ip_dotted(self):
         """Dotted hex IP (may or may not be supported)."""
         us = UrlSafe()
         # Dotted hex like 0x7f.0x0.0x0.0x1 - behavior varies
-        result = us.is_safe("http://0x7f.0x0.0x0.0x1/")
+        us.is_safe("http://0x7f.0x0.0x0.0x1/")
         # Document: may parse as hostname, not IP
 
     def test_octal_ip_variations(self):
         """Various octal IP encodings."""
         us = UrlSafe()
-        assert not us.is_safe("http://0177.0.0.1/")          # 127.0.0.1
+        assert not us.is_safe("http://0177.0.0.1/")  # 127.0.0.1
         assert not us.is_safe("http://0177.0000.0000.0001/")  # With extra zeros
 
     def test_mixed_notation_octal_last(self):
@@ -547,6 +542,7 @@ class TestUrlSafeAdversarialIPEncoding:
 # =============================================================================
 # Adversarial Tests - URL Encoding Bypasses
 # =============================================================================
+
 
 class TestUrlSafeAdversarialURLEncoding:
     """Adversarial tests for URL encoding bypass attempts."""
@@ -587,6 +583,7 @@ class TestUrlSafeAdversarialURLEncoding:
 # Adversarial Tests - Hostname Parsing Attacks
 # =============================================================================
 
+
 class TestUrlSafeAdversarialHostname:
     """Adversarial tests for hostname parsing bypass attempts."""
 
@@ -615,25 +612,27 @@ class TestUrlSafeAdversarialHostname:
         """FQDN with trailing dot."""
         us = UrlSafe()
         # Trailing dot is valid FQDN notation
-        result = us.is_safe("http://localhost./")
+        us.is_safe("http://localhost./")
         # Should still block localhost
 
     def test_subdomain_of_blocked(self):
         """Subdomains should not bypass blocking."""
         us = UrlSafe()
         # subdomain.localhost is different from localhost
-        result = us.is_safe("http://foo.localhost/")
+        us.is_safe("http://foo.localhost/")
         # Document behavior: may or may not be blocked
 
-    @pytest.mark.parametrize("hostname", [
-        "127.0.0.1.evil.com",  # IP as subdomain
-        "evil-127.0.0.1.com",
-        "evil.com.127.0.0.1",  # Shouldn't parse as IP
-    ])
+    @pytest.mark.parametrize(
+        "hostname",
+        [
+            "127.0.0.1.evil.com",  # IP as subdomain
+            "evil-127.0.0.1.com",
+            "evil.com.127.0.0.1",  # Shouldn't parse as IP
+        ],
+    )
     def test_ip_in_hostname(self, hostname):
         """IP embedded in hostname should be parsed correctly."""
-        us = UrlSafe()
-        url = f"http://{hostname}/"
+        UrlSafe()
         # These are hostnames, not IPs - should resolve via DNS
         # Document: allowed because we don't do DNS resolution
 
@@ -641,6 +640,7 @@ class TestUrlSafeAdversarialHostname:
 # =============================================================================
 # Adversarial Tests - Scheme Attacks
 # =============================================================================
+
 
 class TestUrlSafeAdversarialScheme:
     """Adversarial tests for scheme bypass attempts."""
@@ -653,10 +653,9 @@ class TestUrlSafeAdversarialScheme:
         assert us.is_safe("HtTp://example.com/")
         assert us.is_safe("hTtPs://example.com/")
 
-    @pytest.mark.parametrize("scheme", [
-        "file", "gopher", "dict", "ftp", "ldap", "tftp",
-        "ssh", "telnet", "smtp", "imap", "pop3"
-    ])
+    @pytest.mark.parametrize(
+        "scheme", ["file", "gopher", "dict", "ftp", "ldap", "tftp", "ssh", "telnet", "smtp", "imap", "pop3"]
+    )
     def test_dangerous_schemes_blocked(self, scheme):
         """Various dangerous schemes should be blocked."""
         us = UrlSafe()
@@ -678,13 +677,14 @@ class TestUrlSafeAdversarialScheme:
         """Extra slashes in URL."""
         us = UrlSafe()
         # Extra slashes might confuse parsers
-        result = us.is_safe("http:///127.0.0.1/")
+        us.is_safe("http:///127.0.0.1/")
         # Document: url crate parses this as host="127.0.0.1"
 
 
 # =============================================================================
 # Adversarial Tests - Cloud Metadata Variations
 # =============================================================================
+
 
 class TestUrlSafeAdversarialMetadata:
     """Adversarial tests for cloud metadata endpoint bypasses."""
@@ -719,6 +719,7 @@ class TestUrlSafeAdversarialMetadata:
 # Adversarial Tests - Port Attacks
 # =============================================================================
 
+
 class TestUrlSafeAdversarialPort:
     """Adversarial tests for port-based bypasses."""
 
@@ -747,6 +748,7 @@ class TestUrlSafeAdversarialPort:
 # Adversarial Tests - Edge Cases and DoS
 # =============================================================================
 
+
 class TestUrlSafeAdversarialEdgeCases:
     """Adversarial tests for edge cases and potential DoS."""
 
@@ -755,27 +757,27 @@ class TestUrlSafeAdversarialEdgeCases:
         us = UrlSafe()
         long_path = "a" * 100000
         result = us.is_safe(f"https://example.com/{long_path}")
-        assert result == True  # Should complete and allow
+        assert result  # Should complete and allow
 
     def test_many_query_params(self):
         """Many query parameters should not cause DoS."""
         us = UrlSafe()
         params = "&".join([f"p{i}=v{i}" for i in range(1000)])
         result = us.is_safe(f"https://example.com/?{params}")
-        assert result == True
+        assert result
 
     def test_deeply_nested_path(self):
         """Deeply nested paths."""
         us = UrlSafe()
         nested = "/".join(["dir"] * 1000)
         result = us.is_safe(f"https://example.com/{nested}")
-        assert result == True
+        assert result
 
     def test_url_with_all_components(self):
         """URL with all RFC components."""
         us = UrlSafe()
         result = us.is_safe("https://user:pass@example.com:443/path/to/resource?query=value&other=1#fragment")
-        assert result == True
+        assert result
 
     def test_empty_path_components(self):
         """Empty path components (double slashes)."""

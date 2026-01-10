@@ -7,6 +7,7 @@ For LangChain/FastAPI integration using ContextVar, see examples/context_pattern
 
 from tenuo import SigningKey, Pattern, Range, guard, configure, mint_sync, Capability
 
+
 def main():
     print("=== Tenuo @guard Decorator Example ===\n")
 
@@ -23,9 +24,7 @@ def main():
 
     # Test 1: Authorized call (within constraints)
     print("1. Testing authorized call...")
-    with mint_sync(Capability("scale_cluster",
-                              cluster=Pattern("staging-*"),
-                              replicas=Range.max_value(15))):
+    with mint_sync(Capability("scale_cluster", cluster=Pattern("staging-*"), replicas=Range.max_value(15))):
         try:
             scale_cluster(cluster="staging-web", replicas=3)
             print("  Function executed successfully.\n")
@@ -34,9 +33,7 @@ def main():
 
     # Test 2: Unauthorized call (replicas too high)
     print("2. Testing unauthorized call (replicas exceeds limit)...")
-    with mint_sync(Capability("scale_cluster",
-                              cluster=Pattern("staging-*"),
-                              replicas=Range.max_value(15))):
+    with mint_sync(Capability("scale_cluster", cluster=Pattern("staging-*"), replicas=Range.max_value(15))):
         try:
             scale_cluster(cluster="staging-web", replicas=20)
             print("   [ERR] Function should not have executed!\n")
@@ -45,9 +42,7 @@ def main():
 
     # Test 3: Unauthorized call (wrong cluster pattern)
     print("3. Testing unauthorized call (wrong cluster)...")
-    with mint_sync(Capability("scale_cluster",
-                              cluster=Pattern("staging-*"),
-                              replicas=Range.max_value(15))):
+    with mint_sync(Capability("scale_cluster", cluster=Pattern("staging-*"), replicas=Range.max_value(15))):
         try:
             scale_cluster(cluster="production-web", replicas=5)
             print("   [ERR] Function should not have executed!\n")
@@ -56,6 +51,6 @@ def main():
 
     print("=== Example completed! ===")
 
+
 if __name__ == "__main__":
     main()
-

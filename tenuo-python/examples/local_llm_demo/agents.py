@@ -10,11 +10,9 @@ from tools import web_search, read_file, write_file, http_request, delegate
 from prompts import RESEARCH_AGENT_SYSTEM_PROMPT, SUMMARY_AGENT_SYSTEM_PROMPT
 from tenuo import Warrant, Capability, Pattern, Exact, SigningKey
 
+
 async def run_research_agent(
-    model,
-    warrant: Warrant,
-    signing_key: SigningKey,
-    delegate_to_key: SigningKey = None
+    model, warrant: Warrant, signing_key: SigningKey, delegate_to_key: SigningKey = None
 ) -> tuple:
     """
     Runs the Research Agent loop.
@@ -75,7 +73,6 @@ async def run_research_agent(
 
                 requested_caps.append(Capability(name, **constraint_kwargs))
 
-
             # MINT CHILD WARRANT (Attenuation)
             # Research Agent delegates to Summary Agent
             builder = warrant.grant_builder()
@@ -97,19 +94,20 @@ async def run_research_agent(
             return "Delegation successful. Child warrant minted."
 
         except Exception as e:
-             display.print_verdict(False, "Delegation Failed - Escalation Blocked", str(e))
-             return f"DELEGATION ERROR: {str(e)}"
-
+            display.print_verdict(False, "Delegation Failed - Escalation Blocked", str(e))
+            return f"DELEGATION ERROR: {str(e)}"
 
     # Mix standard tools with our custom delegate
     # Note: 'delegate' tool in tools.py is a placeholder. We override it here.
-    safe_tools = protector.guard([
-        web_search,
-        write_file,
-        read_file,
-        http_request, # Protected (likely denied)
-        # delegate is wrapped next
-    ])
+    safe_tools = protector.guard(
+        [
+            web_search,
+            write_file,
+            read_file,
+            http_request,  # Protected (likely denied)
+            # delegate is wrapped next
+        ]
+    )
 
     # Manually wrap our custom delegate so it gets the logging/checking
     # BUT we need to be careful: custom_delegate does the business logic.
@@ -147,20 +145,24 @@ async def run_summary_agent(model, warrant: Warrant, signing_key: SigningKey, ta
     """
     display.print_header("SUMMARY AGENT (DELEGATED)")
 
-    display.print_learning("Monotonic Attenuation",
+    display.print_learning(
+        "Monotonic Attenuation",
         "Child warrants can only have FEWER capabilities than their parent.\n"
-        "The Summary Agent has a subset of the Research Agent's permissions.")
+        "The Summary Agent has a subset of the Research Agent's permissions.",
+    )
 
     display.print_warrant_details(warrant, "Summary Agent")
 
     # Wrap tools with cryptographic authorization (PoP)
     protector = ProtectedToolWrapper(warrant, signing_key)
-    safe_tools = protector.guard([
-        read_file,
-        write_file,
-        http_request,  # Will be blocked - not in child warrant
-        delegate  # Will be blocked - not in child warrant
-    ])
+    safe_tools = protector.guard(
+        [
+            read_file,
+            write_file,
+            http_request,  # Will be blocked - not in child warrant
+            delegate,  # Will be blocked - not in child warrant
+        ]
+    )
 
     display.print_agent_thought(f"Starting delegated task: {task}")
 

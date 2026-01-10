@@ -509,4 +509,3 @@ class TestTemplatesWithMint:
 
         with mint_sync(*template):
             pass  # Just verify no errors
-

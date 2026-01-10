@@ -38,9 +38,7 @@ class TestMonotonicity:
         print("\n--- Attack 3A: Constraint Widening ---")
 
         parent = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}),
-            ttl_seconds=60
+            keypair=keypair, capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}), ttl_seconds=60
         )
 
         print("  [Attack 3A] Attempting to widen constraints...")
@@ -60,9 +58,7 @@ class TestMonotonicity:
         print("\n--- Attack 3B: Add Unauthorized Tool ---")
 
         parent = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}),
-            ttl_seconds=60
+            keypair=keypair, capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}), ttl_seconds=60
         )
 
         print("  [Attack 3B] Attempting to add unauthorized tool via capability...")
@@ -85,7 +81,7 @@ class TestMonotonicity:
         parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         # Attenuate inheriting all constraints (POLA)
@@ -114,7 +110,7 @@ class TestMonotonicity:
         parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("spend", {"budget_check": CEL("budget < 10000")}),
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         # Attack A: Replace with always-true
@@ -146,7 +142,7 @@ class TestMonotonicity:
         parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         print("  [Attack 26] Attempting to change Pattern to Range...")
@@ -168,7 +164,7 @@ class TestMonotonicity:
         parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}),
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         print("  [Attack 27] Attempting to attenuate Pattern to Wildcard...")
@@ -187,11 +183,7 @@ class TestMonotonicity:
         """
         print("\n--- Attack 28: TTL Extension ---")
 
-        parent = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("search", {}),
-            ttl_seconds=600
-        )
+        parent = Warrant.mint(keypair=keypair, capabilities=Constraints.for_tool("search", {}), ttl_seconds=600)
 
         print("  [Attack 28] Attempting to extend TTL from 600s to 3600s...")
 
@@ -223,7 +215,7 @@ class TestMonotonicity:
         parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("action", {"type": OneOf(["read", "write"])}),
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         print("  [Attack 34] Attempting to exclude all parent values...")
@@ -245,9 +237,7 @@ class TestMonotonicity:
         print("  [Attack 37] Creating warrant with only NotOneOf constraint...")
 
         warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("query", {"env": NotOneOf(["prod"])}),
-            ttl_seconds=3600
+            keypair=keypair, capabilities=Constraints.for_tool("query", {"env": NotOneOf(["prod"])}), ttl_seconds=3600
         )
 
         # Allows everything except prod
@@ -273,7 +263,7 @@ class TestMonotonicity:
         parent = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("access", {"permissions": Contains(["read"])}),
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         print("  [Attack 38A] Attempting to attenuate Contains to Subset...")
@@ -300,15 +290,7 @@ class TestMonotonicity:
         """
         print("\n--- Attack 11: Tool Wildcard Exploitation ---")
 
-        warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities={
-                "search": {},
-                "read": {},
-                "write": {}
-            },
-            ttl_seconds=3600
-        )
+        warrant = Warrant.mint(keypair=keypair, capabilities={"search": {}, "read": {}, "write": {}}, ttl_seconds=3600)
 
         # Attenuation should narrow tools (POLA: inherit_all first, then narrow)
         builder = warrant.grant_builder()

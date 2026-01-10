@@ -75,7 +75,7 @@ class MintBuilder:
         self._required_approvers: Optional[List[PublicKey]] = None
         self._min_approvals: Optional[int] = None
 
-    def issuer(self) -> 'MintBuilder':
+    def issuer(self) -> "MintBuilder":
         """Switch to issuer warrant mode.
 
         Issuer warrants can delegate to other warrants but cannot
@@ -84,7 +84,7 @@ class MintBuilder:
         self._is_issuer = True
         return self
 
-    def tools(self, tools: Union[str, List[str]]) -> 'MintBuilder':
+    def tools(self, tools: Union[str, List[str]]) -> "MintBuilder":
         """Set the tools this warrant authorizes (execution warrants).
 
         Args:
@@ -93,7 +93,7 @@ class MintBuilder:
         self._tools = tools
         return self
 
-    def tool(self, tool: str) -> 'MintBuilder':
+    def tool(self, tool: str) -> "MintBuilder":
         """Add a single tool (accumulates).
 
         Args:
@@ -107,7 +107,7 @@ class MintBuilder:
             self._tools.append(tool)
         return self
 
-    def constraint(self, field: str, value: Any) -> 'MintBuilder':
+    def constraint(self, field: str, value: Any) -> "MintBuilder":
         """Add a constraint (execution warrants).
 
         Args:
@@ -117,7 +117,7 @@ class MintBuilder:
         self._constraints[field] = value
         return self
 
-    def constraints(self, constraints: Dict[str, Any]) -> 'MintBuilder':
+    def constraints(self, constraints: Dict[str, Any]) -> "MintBuilder":
         """Set all constraints at once (execution warrants).
 
         Args:
@@ -126,7 +126,7 @@ class MintBuilder:
         self._constraints = constraints
         return self
 
-    def capability(self, tool: str, constraints: Optional[Dict[str, Any]] = None, **kwargs: Any) -> 'MintBuilder':
+    def capability(self, tool: str, constraints: Optional[Dict[str, Any]] = None, **kwargs: Any) -> "MintBuilder":
         """Add a capability (tool + constraints).
 
         Args:
@@ -146,7 +146,7 @@ class MintBuilder:
         self._capabilities[tool] = constraints if constraints is not None else kwargs
         return self
 
-    def ttl(self, seconds: int) -> 'MintBuilder':
+    def ttl(self, seconds: int) -> "MintBuilder":
         """Set time-to-live in seconds.
 
         Args:
@@ -155,7 +155,7 @@ class MintBuilder:
         self._ttl_seconds = seconds
         return self
 
-    def holder(self, public_key: PublicKey) -> 'MintBuilder':
+    def holder(self, public_key: PublicKey) -> "MintBuilder":
         """Set the authorized holder's public key.
 
         If not set, defaults to the issuer (self-signed).
@@ -166,7 +166,7 @@ class MintBuilder:
         self._holder = public_key
         return self
 
-    def session_id(self, session_id: str) -> 'MintBuilder':
+    def session_id(self, session_id: str) -> "MintBuilder":
         """Set an optional session identifier.
 
         Args:
@@ -175,7 +175,7 @@ class MintBuilder:
         self._session_id = session_id
         return self
 
-    def clearance(self, level: Clearance) -> 'MintBuilder':
+    def clearance(self, level: Clearance) -> "MintBuilder":
         """Set the clearance level.
 
         Args:
@@ -188,7 +188,7 @@ class MintBuilder:
     # Issuer-specific methods
     # =========================================================================
 
-    def issuable_tools(self, tools: List[str]) -> 'MintBuilder':
+    def issuable_tools(self, tools: List[str]) -> "MintBuilder":
         """Set tools this issuer can delegate (issuer warrants only).
 
         Args:
@@ -198,7 +198,7 @@ class MintBuilder:
         self._issuable_tools = tools
         return self
 
-    def constraint_bound(self, field: str, value: Any) -> 'MintBuilder':
+    def constraint_bound(self, field: str, value: Any) -> "MintBuilder":
         """Add a constraint bound (issuer warrants only).
 
         Constraint bounds limit what constraints child warrants can have.
@@ -210,7 +210,7 @@ class MintBuilder:
         self._constraint_bounds[field] = value
         return self
 
-    def constraint_bounds(self, bounds: Dict[str, Any]) -> 'MintBuilder':
+    def constraint_bounds(self, bounds: Dict[str, Any]) -> "MintBuilder":
         """Set all constraint bounds at once (issuer warrants only).
 
         Args:
@@ -219,7 +219,7 @@ class MintBuilder:
         self._constraint_bounds = bounds
         return self
 
-    def max_issue_depth(self, depth: int) -> 'MintBuilder':
+    def max_issue_depth(self, depth: int) -> "MintBuilder":
         """Set maximum delegation depth (issuer warrants only).
 
         Args:
@@ -232,7 +232,7 @@ class MintBuilder:
     # Multi-sig methods
     # =========================================================================
 
-    def required_approvers(self, approvers: List[PublicKey]) -> 'MintBuilder':
+    def required_approvers(self, approvers: List[PublicKey]) -> "MintBuilder":
         """Set required approvers for multi-sig warrants.
 
         When set, this warrant requires cryptographic approvals from the
@@ -244,7 +244,7 @@ class MintBuilder:
         self._required_approvers = approvers
         return self
 
-    def min_approvals(self, count: int) -> 'MintBuilder':
+    def min_approvals(self, count: int) -> "MintBuilder":
         """Set minimum number of approvals required.
 
         If not set but required_approvers is set, defaults to len(required_approvers).
@@ -277,7 +277,6 @@ class MintBuilder:
         else:
             return self._issue_execution(key)
 
-
     def _issue_execution(self, key: SigningKey) -> Warrant:
         """Issue an execution warrant."""
         # Convert legacy tools/constraints to capabilities
@@ -292,6 +291,7 @@ class MintBuilder:
 
         if not capabilities:
             from .exceptions import ValidationError
+
             raise ValidationError("capabilities (or tools) are required for execution warrants")
 
         return Warrant.issue(
@@ -309,6 +309,7 @@ class MintBuilder:
         """Issue an issuer warrant."""
         if self._issuable_tools is None:
             from .exceptions import ValidationError
+
             raise ValidationError("issuable_tools are required for issuer warrants")
 
         return Warrant.issue_issuer(
@@ -352,7 +353,7 @@ class MintBuilder:
 
 
 # Add builder() class method to Warrant
-def _mint_builder_impl() -> 'MintBuilder':
+def _mint_builder_impl() -> "MintBuilder":
     """Create a fluent builder for minting new warrants.
 
     Example:
@@ -371,7 +372,7 @@ def _mint_builder_impl() -> 'MintBuilder':
 def _add_builder_to_warrant():
     """Add the mint_builder() class method to Warrant."""
     # Only add if not already present
-    if not hasattr(Warrant, 'mint_builder'):
+    if not hasattr(Warrant, "mint_builder"):
         # Use staticmethod since we don't need cls
         Warrant.mint_builder = staticmethod(_mint_builder_impl)
 
@@ -425,13 +426,14 @@ class GrantBuilder:
         else:
             # Get Rust builder directly from warrant (bypass Python wrapper)
             from .warrant_ext import _original_attenuate_builder
+
             self._rust_builder = _original_attenuate_builder(parent)
 
     def parent(self) -> Warrant:
         """Get the parent warrant."""
         return self._parent
 
-    def ttl(self, seconds: Any = _NOT_SET) -> Union['GrantBuilder', Optional[int]]:
+    def ttl(self, seconds: Any = _NOT_SET) -> Union["GrantBuilder", Optional[int]]:
         """Get or set TTL in seconds.
 
         Args:
@@ -445,7 +447,7 @@ class GrantBuilder:
         self._rust_builder.with_ttl(seconds)
         return self
 
-    def holder(self, public_key: Any = _NOT_SET) -> Union['GrantBuilder', Optional[PublicKey]]:
+    def holder(self, public_key: Any = _NOT_SET) -> Union["GrantBuilder", Optional[PublicKey]]:
         """Get or set the authorized holder.
 
         Args:
@@ -459,7 +461,7 @@ class GrantBuilder:
         self._rust_builder.with_holder(public_key)
         return self
 
-    def clearance(self, level: Any = _NOT_SET) -> Union['GrantBuilder', Optional[Clearance]]:
+    def clearance(self, level: Any = _NOT_SET) -> Union["GrantBuilder", Optional[Clearance]]:
         """Get or set clearance level.
 
         Args:
@@ -473,7 +475,7 @@ class GrantBuilder:
         self._rust_builder.with_clearance(level)
         return self
 
-    def intent(self, text: Any = _NOT_SET) -> Union['GrantBuilder', Optional[str]]:
+    def intent(self, text: Any = _NOT_SET) -> Union["GrantBuilder", Optional[str]]:
         """Get or set human-readable intent for this delegation.
 
         Args:
@@ -492,7 +494,7 @@ class GrantBuilder:
         """Get the configured capabilities as a dict (read-only)."""
         return self._rust_builder.capabilities
 
-    def capability(self, tool: str, constraints: Optional[Dict[str, Any]] = None, **kwargs: Any) -> 'GrantBuilder':
+    def capability(self, tool: str, constraints: Optional[Dict[str, Any]] = None, **kwargs: Any) -> "GrantBuilder":
         """Add a capability (tool + constraints).
 
         **POLA**: You must explicitly add each capability you want. Only tools
@@ -518,7 +520,7 @@ class GrantBuilder:
         self._rust_builder.with_capability(tool, constraints if constraints is not None else kwargs)
         return self
 
-    def inherit_all(self) -> 'GrantBuilder':
+    def inherit_all(self) -> "GrantBuilder":
         """Inherit all capabilities from the parent warrant.
 
         This is an **explicit opt-in** to full inheritance. Use this when you
@@ -537,7 +539,7 @@ class GrantBuilder:
         self._rust_builder.inherit_all()
         return self
 
-    def tool(self, name: str) -> 'GrantBuilder':
+    def tool(self, name: str) -> "GrantBuilder":
         """Narrow to a single tool (for execution warrants).
 
         The specified tool must be in the parent warrant's tools.
@@ -561,7 +563,7 @@ class GrantBuilder:
         self._rust_builder.with_tool(name)
         return self
 
-    def tools(self, names: List[str]) -> 'GrantBuilder':
+    def tools(self, names: List[str]) -> "GrantBuilder":
         """Narrow to a subset of tools (for execution warrants).
 
         The specified tools must all be in the parent warrant's tools.
@@ -578,7 +580,7 @@ class GrantBuilder:
         self._rust_builder.with_tools(names)
         return self
 
-    def issuable_tool(self, name: str) -> 'GrantBuilder':
+    def issuable_tool(self, name: str) -> "GrantBuilder":
         """Set a single issuable tool (for ISSUER warrants only).
 
         For EXECUTION warrants, use tool() instead.
@@ -586,7 +588,7 @@ class GrantBuilder:
         self._rust_builder.with_issuable_tool(name)
         return self
 
-    def issuable_tools(self, names: List[str]) -> 'GrantBuilder':
+    def issuable_tools(self, names: List[str]) -> "GrantBuilder":
         """Set issuable tools (for ISSUER warrants only).
 
         For EXECUTION warrants, use tools() instead.
@@ -594,16 +596,15 @@ class GrantBuilder:
         self._rust_builder.with_issuable_tools(names)
         return self
 
-    def drop_tools(self, names: List[str]) -> 'GrantBuilder':
+    def drop_tools(self, names: List[str]) -> "GrantBuilder":
         """Drop tools from issuable_tools (for issuer warrants only)."""
         self._rust_builder.drop_tools(names)
         return self
 
-    def terminal(self) -> 'GrantBuilder':
+    def terminal(self) -> "GrantBuilder":
         """Make this warrant terminal (cannot be delegated further)."""
         self._rust_builder.terminal()
         return self
-
 
     # =========================================================================
     # Diff and build methods
@@ -646,6 +647,7 @@ class GrantBuilder:
 
         # Store receipt in module-level dict (Rust objects don't allow Python attributes)
         from .warrant_ext import _delegation_receipts
+
         _delegation_receipts[child.id] = receipt
 
         return child
@@ -668,6 +670,7 @@ class GrantBuilder:
 
         # Also store receipt for later access via child.delegation_receipt
         from .warrant_ext import _delegation_receipts
+
         _delegation_receipts[child.id] = receipt
 
         return child, receipt
@@ -727,7 +730,7 @@ class IssuanceBuilder:
         """Get the issuer warrant."""
         return self._rust_builder.issuer
 
-    def ttl(self, seconds: Any = _NOT_SET) -> Union['IssuanceBuilder', Optional[int]]:
+    def ttl(self, seconds: Any = _NOT_SET) -> Union["IssuanceBuilder", Optional[int]]:
         """Get or set TTL in seconds.
 
         Args:
@@ -741,7 +744,7 @@ class IssuanceBuilder:
         self._rust_builder.with_ttl(seconds)
         return self
 
-    def holder(self, public_key: Any = _NOT_SET) -> Union['IssuanceBuilder', Optional[PublicKey]]:
+    def holder(self, public_key: Any = _NOT_SET) -> Union["IssuanceBuilder", Optional[PublicKey]]:
         """Get or set the authorized holder.
 
         Args:
@@ -755,7 +758,7 @@ class IssuanceBuilder:
         self._rust_builder.with_holder(public_key)
         return self
 
-    def clearance(self, level: Any = _NOT_SET) -> Union['IssuanceBuilder', Optional[Clearance]]:
+    def clearance(self, level: Any = _NOT_SET) -> Union["IssuanceBuilder", Optional[Clearance]]:
         """Get or set clearance level.
 
         Args:
@@ -769,7 +772,7 @@ class IssuanceBuilder:
         self._rust_builder.with_clearance(level)
         return self
 
-    def intent(self, value: Any = _NOT_SET) -> Union['IssuanceBuilder', Optional[str]]:
+    def intent(self, value: Any = _NOT_SET) -> Union["IssuanceBuilder", Optional[str]]:
         """Get or set intent/purpose.
 
         Args:
@@ -783,7 +786,7 @@ class IssuanceBuilder:
         self._rust_builder.with_intent(value)
         return self
 
-    def tool(self, name: str) -> 'IssuanceBuilder':
+    def tool(self, name: str) -> "IssuanceBuilder":
         """Add a single tool with empty constraints.
 
         Args:
@@ -795,7 +798,7 @@ class IssuanceBuilder:
         self._rust_builder.with_tool(name)
         return self
 
-    def tools(self, names: List[str]) -> 'IssuanceBuilder':
+    def tools(self, names: List[str]) -> "IssuanceBuilder":
         """Get configured tools or set multiple tools.
 
         When called without arguments, returns list of configured tools.
@@ -816,7 +819,7 @@ class IssuanceBuilder:
         """Get configured tools list."""
         return self._rust_builder.tools
 
-    def capability(self, tool: str, constraints: Optional[Dict[str, Any]] = None, **kwargs: Any) -> 'IssuanceBuilder':
+    def capability(self, tool: str, constraints: Optional[Dict[str, Any]] = None, **kwargs: Any) -> "IssuanceBuilder":
         """Add a capability (tool + constraints).
 
         Args:
@@ -839,7 +842,7 @@ class IssuanceBuilder:
         self._rust_builder.with_capability(tool, constraints if constraints is not None else kwargs)
         return self
 
-    def max_depth(self, depth: int) -> 'IssuanceBuilder':
+    def max_depth(self, depth: int) -> "IssuanceBuilder":
         """Set maximum delegation depth.
 
         Args:
@@ -851,7 +854,7 @@ class IssuanceBuilder:
         self._rust_builder.with_max_depth(depth)
         return self
 
-    def session_id(self, value: str) -> 'IssuanceBuilder':
+    def session_id(self, value: str) -> "IssuanceBuilder":
         """Set session ID.
 
         Args:
@@ -863,7 +866,7 @@ class IssuanceBuilder:
         self._rust_builder.with_session_id(value)
         return self
 
-    def agent_id(self, value: str) -> 'IssuanceBuilder':
+    def agent_id(self, value: str) -> "IssuanceBuilder":
         """Set agent ID.
 
         Args:
@@ -875,7 +878,7 @@ class IssuanceBuilder:
         self._rust_builder.with_agent_id(value)
         return self
 
-    def required_approvers(self, approvers: List[PublicKey]) -> 'IssuanceBuilder':
+    def required_approvers(self, approvers: List[PublicKey]) -> "IssuanceBuilder":
         """Set required approvers.
 
         Args:
@@ -887,7 +890,7 @@ class IssuanceBuilder:
         self._rust_builder.with_required_approvers(approvers)
         return self
 
-    def min_approvals(self, count: int) -> 'IssuanceBuilder':
+    def min_approvals(self, count: int) -> "IssuanceBuilder":
         """Set minimum approvals required.
 
         Args:
@@ -899,7 +902,7 @@ class IssuanceBuilder:
         self._rust_builder.with_min_approvals(count)
         return self
 
-    def terminal(self) -> 'IssuanceBuilder':
+    def terminal(self) -> "IssuanceBuilder":
         """Make warrant terminal (cannot delegate further).
 
         Returns:
@@ -933,7 +936,6 @@ class IssuanceBuilder:
             The newly created execution warrant
         """
         return self.build(key)
-
 
 
 def wrap_rust_issuance_builder(rust_builder) -> IssuanceBuilder:

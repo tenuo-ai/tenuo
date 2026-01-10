@@ -7,17 +7,20 @@ from tenuo import (
 )
 from tenuo.constraints import Constraints
 
+
 @pytest.fixture
 def keypair():
     return SigningKey.generate()
+
 
 @pytest.fixture
 def warrant(keypair):
     return Warrant.mint(
         keypair=keypair,
         capabilities=Constraints.for_tool("test_tool", {"a": Exact("1"), "b": Exact("2")}),
-        ttl_seconds=300
+        ttl_seconds=300,
     )
+
 
 def test_guard_arg_extraction_standard(warrant, keypair):
     """Test standard positional and keyword arguments."""
@@ -32,7 +35,8 @@ def test_guard_arg_extraction_standard(warrant, keypair):
 
     # Mismatch
     with pytest.raises(Exception):
-        func("2") # a="2" != "1"
+        func("2")  # a="2" != "1"
+
 
 def test_guard_arg_extraction_var_args(keypair):
     """Test *args extraction."""
@@ -48,11 +52,14 @@ def test_guard_arg_extraction_var_args(keypair):
 
     w_list = Warrant.mint(
         keypair=keypair,
-        capabilities=Constraints.for_tool("list_tool", {
-            "a": Exact("1"),
-            "_allow_unknown": True,  # Allow *args to pass through
-        }),
-        ttl_seconds=300
+        capabilities=Constraints.for_tool(
+            "list_tool",
+            {
+                "a": Exact("1"),
+                "_allow_unknown": True,  # Allow *args to pass through
+            },
+        ),
+        ttl_seconds=300,
     )
 
     @guard(w_list, tool="list_tool", keypair=keypair)
@@ -63,6 +70,7 @@ def test_guard_arg_extraction_var_args(keypair):
     # "args" is not constrained but _allow_unknown=True allows it
     assert func("1", "2", "3") == "success"
 
+
 def test_guard_arg_extraction_keyword_only(warrant, keypair):
     """Test keyword-only arguments."""
 
@@ -71,6 +79,7 @@ def test_guard_arg_extraction_keyword_only(warrant, keypair):
         return "success"
 
     assert func("1", b="2") == "success"
+
 
 def test_guard_defaults_applied(warrant, keypair):
     """Test that defaults are applied and checked against constraints."""
@@ -89,7 +98,8 @@ def test_guard_defaults_applied(warrant, keypair):
         return "success"
 
     with pytest.raises(Exception):
-        func_bad_default("1") # b="3" != "2"
+        func_bad_default("1")  # b="3" != "2"
+
 
 def test_guard_binding_error(warrant, keypair):
     """Test that binding errors are raised."""
@@ -99,4 +109,4 @@ def test_guard_binding_error(warrant, keypair):
         return "success"
 
     with pytest.raises(TypeError):
-        func("1") # Missing b
+        func("1")  # Missing b

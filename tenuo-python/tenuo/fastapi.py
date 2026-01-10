@@ -34,6 +34,7 @@ logger = logging.getLogger("tenuo.fastapi")
 try:
     from fastapi import FastAPI, Header, HTTPException, Depends, Request, status
     from fastapi.security import APIKeyHeader
+
     FASTAPI_AVAILABLE = True
 except ImportError:
     # Allow import for type checking if needed, but raise at runtime use
@@ -117,6 +118,7 @@ def get_tenuo_config() -> Dict[str, Any]:
 # SecurityContext - returned by TenuoGuard
 # =============================================================================
 
+
 @dataclass
 class SecurityContext:
     """
@@ -129,6 +131,7 @@ class SecurityContext:
         args: Dictionary of extracted arguments (path + query params)
         tool: The tool name this context was verified for
     """
+
     warrant: Warrant
     args: Dict[str, Any]
     tool: str
@@ -153,9 +156,8 @@ class SecurityContext:
 # Dependencies
 # =============================================================================
 
-def get_warrant_header(
-    x_tenuo_warrant: Optional[str] = Header(None, alias=X_TENUO_WARRANT)
-) -> Optional[Warrant]:
+
+def get_warrant_header(x_tenuo_warrant: Optional[str] = Header(None, alias=X_TENUO_WARRANT)) -> Optional[Warrant]:
     """
     FastAPI dependency to extract and parse the X-Tenuo-Warrant header.
     Returns None if missing. Raises HTTPException on invalid format.
@@ -166,10 +168,7 @@ def get_warrant_header(
     try:
         return Warrant.from_base64(x_tenuo_warrant)
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid X-Tenuo-Warrant header: {str(e)}"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid X-Tenuo-Warrant header: {str(e)}")
 
 
 def require_warrant(
@@ -209,6 +208,7 @@ def require_warrant(
 # =============================================================================
 # TenuoGuard - Main authorization dependency
 # =============================================================================
+
 
 class TenuoGuard:
     """
@@ -292,7 +292,7 @@ class TenuoGuard:
         try:
             pop_sig_bytes = base64.b64decode(x_tenuo_pop)
         except Exception:
-             raise HTTPException(
+            raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
                     "error": "invalid_pop",
@@ -367,6 +367,7 @@ TenuoSecurity = TenuoGuard
 # Async body extraction helper
 # =============================================================================
 
+
 async def extract_body_args(request: Request) -> Dict[str, Any]:
     """
     Helper to extract args from JSON body.
@@ -393,6 +394,7 @@ async def extract_body_args(request: Request) -> Dict[str, Any]:
 # SecureAPIRouter: Drop-in replacement for APIRouter
 # =============================================================================
 
+
 class SecureAPIRouter:
     """
     Drop-in replacement for FastAPI APIRouter with automatic Tenuo protection.
@@ -407,17 +409,12 @@ class SecureAPIRouter:
         def get_user(user_id: str): ...
     """
 
-    def __init__(
-        self,
-        *args: Any,
-        tool_prefix: Optional[str] = None,
-        require_pop: bool = True,
-        **kwargs: Any
-    ):
+    def __init__(self, *args: Any, tool_prefix: Optional[str] = None, require_pop: bool = True, **kwargs: Any):
         if not FASTAPI_AVAILABLE:
             raise ImportError("FastAPI is required for SecureAPIRouter")
 
         from fastapi import APIRouter
+
         self._router = APIRouter(*args, **kwargs)
         self.tool_prefix = tool_prefix
         self.require_pop = require_pop
@@ -436,13 +433,7 @@ class SecureAPIRouter:
         prefix = f"{self.tool_prefix}_" if self.tool_prefix else ""
 
         # Method suffix
-        method_map = {
-            "GET": "read",
-            "POST": "create",
-            "PUT": "update",
-            "DELETE": "delete",
-            "PATCH": "update"
-        }
+        method_map = {"GET": "read", "POST": "create", "PUT": "update", "DELETE": "delete", "PATCH": "update"}
         suffix = method_map.get(method.upper(), method.lower())
 
         return f"{prefix}{clean_path}_{suffix}"
@@ -474,9 +465,10 @@ class SecureAPIRouter:
         *args: Any,
         tool: Optional[str] = None,
         dependencies: Optional[List[Any]] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> Callable:
         """Add a route with auto-protection."""
+
         def decorator(func: Callable) -> Callable:
             # Determine tool name
             primary_method = methods[0] if methods else "GET"
@@ -493,13 +485,8 @@ class SecureAPIRouter:
             final_deps.append(Depends(guard_dep))
 
             # Register with underlying router
-            return self._router.api_route(
-                path,
-                methods=methods,
-                dependencies=final_deps,
-                *args,
-                **kwargs
-            )(func)
+            return self._router.api_route(path, methods=methods, dependencies=final_deps, *args, **kwargs)(func)
+
         return decorator
 
     def include_router(self, router: Any, *args: Any, **kwargs: Any) -> None:

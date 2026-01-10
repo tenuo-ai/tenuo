@@ -1,4 +1,3 @@
-
 import unittest
 import os
 import sys
@@ -10,16 +9,20 @@ from unittest.mock import MagicMock
 # Mock external dependencies if missing
 sys.modules.setdefault("typing_extensions", MagicMock())
 if "typing_extensions" in sys.modules and isinstance(sys.modules["typing_extensions"], MagicMock):
+
     class MockAnnotated:
         def __class_getitem__(cls, item):  # type: ignore[misc]
             return item
+
     sys.modules["typing_extensions"].Annotated = MockAnnotated  # type: ignore[attr-defined]
 
 sys.modules.setdefault("fastapi", MagicMock())
 sys.modules.setdefault("pydantic", MagicMock())
 if "pydantic" in sys.modules and isinstance(sys.modules["pydantic"], MagicMock):
+
     class MockBaseModel:
         pass
+
     sys.modules["pydantic"].BaseModel = MockBaseModel  # type: ignore[attr-defined]
 
 # Set test mode
@@ -28,8 +31,8 @@ os.environ["TENUO_TEST_MODE"] = "1"
 from tenuo.testing import assert_denied, assert_authorized, AuthorizationAssertionError  # noqa: E402
 from tenuo.exceptions import AuthorizationDenied  # noqa: E402
 
-class TestDXTooling(unittest.TestCase):
 
+class TestDXTooling(unittest.TestCase):
     def test_assert_denied_context(self):
         """Test assert_denied as a context manager."""
 
@@ -47,9 +50,9 @@ class TestDXTooling(unittest.TestCase):
         # 3. Should fail if matching code is wrong
         with self.assertRaises(AssertionError):
             with assert_denied(code="ScopeViolation"):
-                 err = AuthorizationDenied("Other error")
-                 err.error_code = "OtherError"
-                 raise err
+                err = AuthorizationDenied("Other error")
+                err.error_code = "OtherError"
+                raise err
 
         # 4. Should fail if no exception raised
         with self.assertRaises(AssertionError):
@@ -83,4 +86,3 @@ class TestDXTooling(unittest.TestCase):
         # Case: Authorization fails (should pass assertion)
         mock_warrant.authorize.return_value = False
         assert_denied(mock_warrant, mock_key, "tool")
-

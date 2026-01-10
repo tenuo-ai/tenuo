@@ -2,7 +2,7 @@
 
 **Version:** 1.0  
 **Status:** Normative  
-**Date:** 2026-01-09  
+**Date:** 2026-01-10  
 
 **Related Documents:**
 - [protocol-spec-v1.md](protocol-spec-v1.md) - Protocol Specification (concepts, invariants, algorithms)
@@ -1327,7 +1327,7 @@ CBOR((warrant_id, reason, requestor, requested_at.timestamp()))
 
 ## Changelog
 
-- **1.0** - Promoted to normative specification (2026-01-09)
+- **1.0** - Promoted to normative specification (2026-01-10)
 - **0.1.1** - Added PoP, Approval, SRL, RevocationRequest wire formats
 - **0.1** - Initial specification
 

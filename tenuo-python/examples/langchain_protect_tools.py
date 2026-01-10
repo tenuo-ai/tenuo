@@ -20,11 +20,14 @@ from tenuo.langchain import guard
 # 1. Simulate a Third-Party Tool (e.g., from langchain_community)
 # -----------------------------------------------------------------------------
 
+
 class SearchInput(BaseModel):
     query: str = Field(description="The search query")
 
+
 class ThirdPartySearchTool(BaseTool):
     """A simulated third-party search tool that we don't own."""
+
     name: str = "search"
     description: str = "Useful for searching the internet."
     args_schema: Type[BaseModel] = SearchInput
@@ -36,6 +39,7 @@ class ThirdPartySearchTool(BaseTool):
     async def _arun(self, query: str) -> str:
         return f"Results for: {query}"
 
+
 # -----------------------------------------------------------------------------
 # 2. Setup Security (Keys & Warrants)
 # -----------------------------------------------------------------------------
@@ -44,13 +48,18 @@ class ThirdPartySearchTool(BaseTool):
 keypair = SigningKey.generate()
 
 # Create a warrant that authorizes "search" but only for queries starting with "safe"
-warrant = (Warrant.mint_builder()
-    .capability("search", {
-        "query": Pattern("safe*")  # Only allow safe queries
-    })
+warrant = (
+    Warrant.mint_builder()
+    .capability(
+        "search",
+        {
+            "query": Pattern("safe*")  # Only allow safe queries
+        },
+    )
     .holder(keypair.public_key)
     .ttl(3600)
-    .mint(keypair))
+    .mint(keypair)
+)
 
 # -----------------------------------------------------------------------------
 # 3. Protect the Tool

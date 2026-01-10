@@ -58,10 +58,10 @@ Example for "Summarize https://example.com":
 
 def extract_urls(text: str) -> List[str]:
     """Extract URLs from text."""
-    url_pattern = r'https?://[^\s,\)\]\"\'<>]+'
+    url_pattern = r"https?://[^\s,\)\]\"\'<>]+"
     urls = re.findall(url_pattern, text)
     # Also check for domain-only mentions
-    domain_pattern = r'\b([a-zA-Z0-9-]+\.(?:com|org|net|io|dev))\b'
+    domain_pattern = r"\b([a-zA-Z0-9-]+\.(?:com|org|net|io|dev))\b"
     domains = re.findall(domain_pattern, text)
     for domain in domains:
         if not any(domain in url for url in urls):
@@ -141,8 +141,7 @@ class Orchestrator:
             The delegated warrant, or None if delegation fails
         """
         if self.warrant is None:
-            display.print_verdict(False, "Delegation Failed",
-                "Orchestrator has no warrant to delegate from.")
+            display.print_verdict(False, "Delegation Failed", "Orchestrator has no warrant to delegate from.")
             return None
 
         constraints = constraints or {}
@@ -164,14 +163,7 @@ class Orchestrator:
             child_warrant = builder.grant(self.signing_key)
             worker.warrant = child_warrant
 
-            display.print_delegation(
-                self.public_key,
-                worker.name,
-                worker.public_key,
-                tools,
-                constraints,
-                ttl
-            )
+            display.print_delegation(self.public_key, worker.name, worker.public_key, tools, constraints, ttl)
 
             return child_warrant
 
@@ -213,15 +205,14 @@ async def propose_capabilities_with_llm(
     """
     import lmstudio as lms
 
-    display.print_step(1, "LLM Analyzes Task",
-        "Watch the LLM reason about what capabilities it needs...")
+    display.print_step(1, "LLM Analyzes Task", "Watch the LLM reason about what capabilities it needs...")
 
     chat = lms.Chat(CAPABILITY_ANALYSIS_PROMPT)
     chat.add_user_message(f"Analyze this task: {task}")
 
     # Get the LLM's response
     response = await model.respond(chat)
-    response_text = str(response.content) if hasattr(response, 'content') else str(response)
+    response_text = str(response.content) if hasattr(response, "content") else str(response)
 
     # Show the LLM's reasoning
     display.print_llm_reasoning(response_text)
@@ -229,7 +220,7 @@ async def propose_capabilities_with_llm(
     # Parse the JSON response
     try:
         # Find JSON in response (LLM might include extra text)
-        json_match = re.search(r'\{[\s\S]*\}', response_text)
+        json_match = re.search(r"\{[\s\S]*\}", response_text)
         if json_match:
             result = json.loads(json_match.group())
             return result.get("capabilities", [])
@@ -251,33 +242,26 @@ def propose_capabilities_fallback(task: str) -> List[Dict[str, Any]]:
     urls = extract_urls(task)
 
     if urls:
-        capabilities.append({
-            "tool": "fetch_url",
-            "constraints": {"url": f"one of {urls}"},
-            "reason": "Fetch content from specified URLs"
-        })
+        capabilities.append(
+            {
+                "tool": "fetch_url",
+                "constraints": {"url": f"one of {urls}"},
+                "reason": "Fetch content from specified URLs",
+            }
+        )
 
     if "summar" in task_lower:
-        capabilities.append({
-            "tool": "summarize",
-            "constraints": {},
-            "reason": "Summarize the content"
-        })
+        capabilities.append({"tool": "summarize", "constraints": {}, "reason": "Summarize the content"})
 
     if "save" in task_lower or "write" in task_lower:
         import config
-        capabilities.append({
-            "tool": "write_file",
-            "constraints": {"path": f"{config.OUTPUT_DIR}/*"},
-            "reason": "Save output to file"
-        })
+
+        capabilities.append(
+            {"tool": "write_file", "constraints": {"path": f"{config.OUTPUT_DIR}/*"}, "reason": "Save output to file"}
+        )
 
     if not capabilities:
-        capabilities.append({
-            "tool": "summarize",
-            "constraints": {},
-            "reason": "Default text processing"
-        })
+        capabilities.append({"tool": "summarize", "constraints": {}, "reason": "Default text processing"})
 
     return capabilities
 
@@ -286,8 +270,8 @@ def propose_capabilities_sync(task: str) -> List[Dict[str, Any]]:
     """
     Synchronous capability proposal (no LLM, for --simulate mode).
     """
-    display.print_step(1, "Analyze Task (Simulated)",
-        "In full mode, the LLM would reason about needed capabilities here.")
+    display.print_step(
+        1, "Analyze Task (Simulated)", "In full mode, the LLM would reason about needed capabilities here."
+    )
 
     return propose_capabilities_fallback(task)
-

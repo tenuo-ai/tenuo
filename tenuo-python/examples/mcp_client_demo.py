@@ -82,9 +82,7 @@ async def main():
             test_file.write_text("Hello from Tenuo + MCP!")
             print(f"   ✓ Created test file: {test_file}")
 
-            async with mint(
-                Capability("read_file", path=Pattern("/tmp/*"), max_size=Range.max_value(10000))
-            ):
+            async with mint(Capability("read_file", path=Pattern("/tmp/*"), max_size=Range.max_value(10000))):
                 # Pattern A: Call through protected wrapper (local authorization)
                 print("\n   Pattern A: Local authorization (default)")
                 read_file = protected_tools["read_file"]
@@ -99,7 +97,7 @@ async def main():
                     "read_file",
                     {"path": str(test_file), "max_size": 1000},
                     warrant_context=True,
-                    inject_warrant=True  # ← Injects _tenuo field
+                    inject_warrant=True,  # ← Injects _tenuo field
                 )
                 print("   ✓ Warrant injected into arguments._tenuo")
                 print("   ✓ Warrant injected into arguments._tenuo")
@@ -123,6 +121,7 @@ async def main():
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback
+
         traceback.print_exc()
 
 

@@ -38,7 +38,7 @@ def test_pattern_constraint_matching():
         keypair=kp,
         capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/*")}),
         holder=kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     with warrant_scope(warrant), key_scope(kp):
@@ -63,7 +63,7 @@ def test_exact_constraint_matching():
         keypair=kp,
         capabilities=Constraints.for_tool("delete_db", {"db_name": Exact("test-db")}),
         holder=kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     with warrant_scope(warrant), key_scope(kp):
@@ -88,12 +88,9 @@ def test_multiple_constraints():
     kp = SigningKey.generate()
     warrant = Warrant.mint(
         keypair=kp,
-        capabilities=Constraints.for_tool("transfer_money", {
-            "account": Pattern("checking-*"),
-            "amount": Exact("100")
-        }),
+        capabilities=Constraints.for_tool("transfer_money", {"account": Pattern("checking-*"), "amount": Exact("100")}),
         holder=kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     with warrant_scope(warrant), key_scope(kp):
@@ -114,7 +111,6 @@ def test_multiple_constraints():
             transfer(account="savings-001", amount="200")
 
 
-
 def test_constraint_attenuation():
     """Test that constraints can only become more restrictive."""
 
@@ -125,7 +121,7 @@ def test_constraint_attenuation():
         keypair=kp,
         capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/*")}),
         holder=kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     # Child with narrower constraint
@@ -133,7 +129,7 @@ def test_constraint_attenuation():
         capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/reports/*")}),
         signing_key=kp,  # kp signs (they hold parent)
         holder=kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     @guard(tool="file_ops")
@@ -162,23 +158,23 @@ def test_constraint_field_addition():
     # Child can then add constraints on those fields (restrictive)
     parent = Warrant.mint(
         keypair=kp,
-        capabilities=Constraints.for_tool("api_call", {
-            "endpoint": Pattern("/api/*"),
-            "_allow_unknown": True,  # Allow other fields like 'method'
-        }),
+        capabilities=Constraints.for_tool(
+            "api_call",
+            {
+                "endpoint": Pattern("/api/*"),
+                "_allow_unknown": True,  # Allow other fields like 'method'
+            },
+        ),
         holder=kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     # Child adds another constraint
     child = parent.attenuate(
-        capabilities=Constraints.for_tool("api_call", {
-            "endpoint": Pattern("/api/users/*"),
-            "method": Exact("GET")
-        }),
+        capabilities=Constraints.for_tool("api_call", {"endpoint": Pattern("/api/users/*"), "method": Exact("GET")}),
         signing_key=kp,  # kp signs (they hold parent)
         holder=kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     @guard(tool="api_call")
@@ -213,12 +209,15 @@ def test_missing_constraint_parameter():
     kp = SigningKey.generate()
     warrant = Warrant.mint(
         keypair=kp,
-        capabilities=Constraints.for_tool("test_tool", {
-            "required": Exact("value"),
-            "_allow_unknown": True,  # Allow optional parameter
-        }),
+        capabilities=Constraints.for_tool(
+            "test_tool",
+            {
+                "required": Exact("value"),
+                "_allow_unknown": True,  # Allow optional parameter
+            },
+        ),
         holder=kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     with warrant_scope(warrant), key_scope(kp):
@@ -234,6 +233,7 @@ def test_missing_constraint_parameter():
 # ============================================================================
 # CIDR Constraint Tests
 # ============================================================================
+
 
 def test_cidr_creation():
     """Test CIDR constraint creation."""
@@ -282,7 +282,7 @@ def test_cidr_constraint_matching():
         keypair=kp,
         capabilities=Constraints.for_tool("network_ops", {"source_ip": Cidr("10.0.0.0/8")}),
         holder=kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     with warrant_scope(warrant), key_scope(kp):
@@ -304,7 +304,7 @@ def test_cidr_attenuation():
         keypair=kp,
         capabilities=Constraints.for_tool("network_ops", {"source_ip": Cidr("10.0.0.0/8")}),
         holder=kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     # Child with narrower subnet - should work
@@ -312,7 +312,7 @@ def test_cidr_attenuation():
         capabilities=Constraints.for_tool("network_ops", {"source_ip": Cidr("10.1.0.0/16")}),
         signing_key=kp,  # kp signs (they hold parent)
         holder=kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     @guard(tool="network_ops")
@@ -350,6 +350,7 @@ def test_cidr_repr():
 # ============================================================================
 # URL Pattern Constraint Tests
 # ============================================================================
+
 
 def test_url_pattern_creation():
     """Test URL pattern creation."""
@@ -401,7 +402,7 @@ def test_url_pattern_constraint_matching():
         keypair=kp,
         capabilities=Constraints.for_tool("api_call", {"endpoint": UrlPattern("https://api.example.com/*")}),
         holder=kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     with warrant_scope(warrant), key_scope(kp):
@@ -422,7 +423,7 @@ def test_url_pattern_attenuation():
         keypair=kp,
         capabilities=Constraints.for_tool("api_call", {"endpoint": UrlPattern("https://*.example.com/*")}),
         holder=kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     # Child with narrower pattern - should work
@@ -430,7 +431,7 @@ def test_url_pattern_attenuation():
         capabilities=Constraints.for_tool("api_call", {"endpoint": UrlPattern("https://api.example.com/v1/*")}),
         signing_key=kp,  # kp signs (they hold parent)
         holder=kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     @guard(tool="api_call")

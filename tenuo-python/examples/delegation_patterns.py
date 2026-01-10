@@ -6,6 +6,7 @@ This example demonstrates the key delegation patterns in Tenuo using the new API
 
 from tenuo import SigningKey, Warrant, Pattern, Exact
 
+
 def main():
     print("=" * 70)
     print("Pattern 1: Issuer → Issuer (Delegation of Issuance Rights)")
@@ -118,6 +119,7 @@ Key Insight:
   • mint() = Create NEW warrant (root authority)
   • grant() = Narrow EXISTING warrant (delegation)
     """)
+
 
 if __name__ == "__main__":
     main()

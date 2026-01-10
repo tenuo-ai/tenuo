@@ -26,11 +26,7 @@ class TestPOLADefaultBehavior:
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
-        parent = Warrant.mint(
-            keypair=kp,
-            capabilities={"read_file": {"path": Pattern("/data/*")}},
-            ttl_seconds=3600
-        )
+        parent = Warrant.mint(keypair=kp, capabilities={"read_file": {"path": Pattern("/data/*")}}, ttl_seconds=3600)
 
         # Attempt to attenuate without specifying any capabilities
         builder = parent.grant_builder()
@@ -49,11 +45,8 @@ class TestPOLADefaultBehavior:
 
         parent = Warrant.mint(
             keypair=kp,
-            capabilities={
-                "read_file": {"path": Pattern("/data/*")},
-                "write_file": {"path": Pattern("/data/*")}
-            },
-            ttl_seconds=3600
+            capabilities={"read_file": {"path": Pattern("/data/*")}, "write_file": {"path": Pattern("/data/*")}},
+            ttl_seconds=3600,
         )
 
         # With inherit_all(), child gets all parent capabilities
@@ -74,9 +67,9 @@ class TestPOLADefaultBehavior:
             capabilities={
                 "read_file": {"path": Pattern("/data/*")},
                 "write_file": {"path": Pattern("/data/*")},
-                "delete_file": {"path": Pattern("/data/*")}
+                "delete_file": {"path": Pattern("/data/*")},
             },
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         # Only grant read_file
@@ -100,13 +93,7 @@ class TestPOLAWithInheritAll:
         worker_kp = SigningKey.generate()
 
         parent = Warrant.mint(
-            keypair=kp,
-            capabilities={
-                "read_file": {},
-                "write_file": {},
-                "delete_file": {}
-            },
-            ttl_seconds=3600
+            keypair=kp, capabilities={"read_file": {}, "write_file": {}, "delete_file": {}}, ttl_seconds=3600
         )
 
         # Inherit all, then narrow to just read_file
@@ -123,11 +110,7 @@ class TestPOLAWithInheritAll:
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
 
-        parent = Warrant.mint(
-            keypair=kp,
-            capabilities={"query": {"max_rows": Range.max_value(1000)}},
-            ttl_seconds=3600
-        )
+        parent = Warrant.mint(keypair=kp, capabilities={"query": {"max_rows": Range.max_value(1000)}}, ttl_seconds=3600)
 
         # Inherit all, then narrow max_rows
         builder = parent.grant_builder()
@@ -152,11 +135,8 @@ class TestPOLADelegateMethod:
 
         parent = Warrant.mint(
             keypair=kp,
-            capabilities={
-                "read_file": {"path": Pattern("/data/*")},
-                "write_file": {"path": Pattern("/data/*")}
-            },
-            ttl_seconds=3600
+            capabilities={"read_file": {"path": Pattern("/data/*")}, "write_file": {"path": Pattern("/data/*")}},
+            ttl_seconds=3600,
         )
 
         # delegate() requires explicit allow= list
@@ -164,7 +144,7 @@ class TestPOLADelegateMethod:
             to=worker_kp.public_key,
             allow=["read_file", "write_file"],  # Must specify tools
             ttl=300,
-            key=kp
+            key=kp,
         )
 
         # Child should have specified tools
@@ -176,20 +156,14 @@ class TestPOLADelegateMethod:
         worker_kp = SigningKey.generate()
 
         parent = Warrant.mint(
-            keypair=kp,
-            capabilities={
-                "read_file": {},
-                "write_file": {},
-                "delete_file": {}
-            },
-            ttl_seconds=3600
+            keypair=kp, capabilities={"read_file": {}, "write_file": {}, "delete_file": {}}, ttl_seconds=3600
         )
 
         child = parent.grant(
             to=worker_kp.public_key,
             allow=["read_file"],  # Narrow to just read_file
             ttl=300,
-            key=kp
+            key=kp,
         )
 
         assert child.tools == ["read_file"]
@@ -207,9 +181,9 @@ class TestPOLASecurityGuarantees:
             keypair=kp,
             capabilities={
                 "read_file": {},
-                "delete_file": {}  # Dangerous capability
+                "delete_file": {},  # Dangerous capability
             },
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         # Developer only adds read_file, forgets about delete_file
@@ -231,9 +205,9 @@ class TestPOLASecurityGuarantees:
             keypair=kp,
             capabilities={
                 "read_file": {},
-                "admin_action": {}  # Sensitive capability
+                "admin_action": {},  # Sensitive capability
             },
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         # Explicit inherit_all = deliberate choice to grant all

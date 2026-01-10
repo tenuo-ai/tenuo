@@ -1,4 +1,3 @@
-
 import pytest
 import sys
 from tenuo import (
@@ -10,6 +9,7 @@ from tenuo import (
 )
 from tenuo.constraints import Constraints
 from tenuo.exceptions import DelegationAuthorityError, PatternExpanded, RangeExpanded
+
 
 class TestErrorMapping:
     """
@@ -23,9 +23,7 @@ class TestErrorMapping:
     def test_pattern_expanded(self, keypair):
         """Verify PatternExpanded mapping."""
         parent = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}),
-            ttl_seconds=60
+            keypair=keypair, capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}), ttl_seconds=60
         )
 
         with pytest.raises(PatternExpanded) as excinfo:
@@ -39,9 +37,7 @@ class TestErrorMapping:
     def test_range_expanded(self, keypair):
         """Verify RangeExpanded mapping."""
         parent = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("calc", {"val": Range(min=0, max=100)}),
-            ttl_seconds=60
+            keypair=keypair, capabilities=Constraints.for_tool("calc", {"val": Range(min=0, max=100)}), ttl_seconds=60
         )
 
         with pytest.raises(RangeExpanded) as excinfo:
@@ -60,11 +56,7 @@ class TestErrorMapping:
         """
         wrong_keypair = SigningKey.generate()
 
-        parent = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("test", {}),
-            ttl_seconds=60
-        )
+        parent = Warrant.mint(keypair=keypair, capabilities=Constraints.for_tool("test", {}), ttl_seconds=60)
 
         # Attempt to delegate with wrong key (not parent's holder)
         with pytest.raises(DelegationAuthorityError) as excinfo:
@@ -85,11 +77,7 @@ class TestErrorMapping:
         """Verify delegation succeeds with correct signer (parent's holder)."""
         child_keypair = SigningKey.generate()
 
-        parent = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("test", {}),
-            ttl_seconds=60
-        )
+        parent = Warrant.mint(keypair=keypair, capabilities=Constraints.for_tool("test", {}), ttl_seconds=60)
 
         # Delegate with correct key (parent's holder)
         builder = parent.grant_builder()
@@ -105,9 +93,7 @@ class TestErrorMapping:
     def test_constraint_violation(self, keypair):
         """Verify ConstraintViolation mapping."""
         warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("search", {"query": Exact("foo")}),
-            ttl_seconds=60
+            keypair=keypair, capabilities=Constraints.for_tool("search", {"query": Exact("foo")}), ttl_seconds=60
         )
 
         # authorize returns False on constraint violation, doesn't raise
@@ -135,13 +121,10 @@ class TestErrorMapping:
     def test_expired_error(self, keypair):
         """Verify ExpiredError mapping."""
         # Issue warrant with 0 TTL
-        _warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("test", {}),
-            ttl_seconds=0
-        )
+        _warrant = Warrant.mint(keypair=keypair, capabilities=Constraints.for_tool("test", {}), ttl_seconds=0)
         # Wait a bit to be sure
         import time
+
         time.sleep(0.1)
 
         # Authorize should fail with ExpiredError?
@@ -154,6 +137,7 @@ class TestErrorMapping:
         # No, it checks is_expired() usually.
         # Let's check the code.
         pass
+
 
 if __name__ == "__main__":
     sys.exit(pytest.main(["-v", __file__]))

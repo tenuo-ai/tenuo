@@ -56,7 +56,7 @@ class BoundWarrant:
     """
 
     # Use __slots__ to prevent __dict__ access (security: key not exposed via vars())
-    __slots__ = ('_warrant', '_key', '_warrant_token', '_key_token')
+    __slots__ = ("_warrant", "_key", "_warrant_token", "_key_token")
 
     def __init__(self, warrant: Warrant, key: SigningKey):
         """
@@ -95,6 +95,7 @@ class BoundWarrant:
                 def my_func(): ...
         """
         from .decorators import _warrant_context, _keypair_context
+
         self._warrant_token = _warrant_context.set(self._warrant)
         self._key_token = _keypair_context.set(self._key)
         return self
@@ -102,6 +103,7 @@ class BoundWarrant:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit context: reset warrant and key scope."""
         from .decorators import _warrant_context, _keypair_context
+
         if self._warrant_token is not None:
             _warrant_context.reset(self._warrant_token)
         if self._key_token is not None:
@@ -161,9 +163,9 @@ class BoundWarrant:
     def max_depth(self) -> int:
         """Maximum delegation depth."""
         # Handle both max_depth and max_issue_depth for compatibility
-        max_d = getattr(self._warrant, 'max_depth', None)
+        max_d = getattr(self._warrant, "max_depth", None)
         if max_d is None:
-            max_d = getattr(self._warrant, 'max_issue_depth', None)
+            max_d = getattr(self._warrant, "max_issue_depth", None)
         return max_d if max_d is not None else 0
 
     @property
@@ -192,14 +194,7 @@ class BoundWarrant:
     # Convenience methods (use bound key)
     # ========================================================================
 
-    def grant(
-        self,
-        *,
-        to: PublicKey,
-        allow: "Union[str, List[str]]",
-        ttl: int,
-        **constraints
-    ) -> Warrant:
+    def grant(self, *, to: PublicKey, allow: "Union[str, List[str]]", ttl: int, **constraints) -> Warrant:
         """Grant using the bound key.
 
         Args:
@@ -211,15 +206,7 @@ class BoundWarrant:
         Returns:
             New child warrant (plain Warrant, not BoundWarrant)
         """
-        return self._warrant.grant(
-            to=to,
-            allow=allow,
-            ttl=ttl,
-            key=self._key,
-            **constraints
-        )
-
-
+        return self._warrant.grant(to=to, allow=allow, ttl=ttl, key=self._key, **constraints)
 
     def headers(self, tool: str, args: dict) -> Dict[str, str]:
         """
@@ -233,6 +220,7 @@ class BoundWarrant:
             Dictionary with X-Tenuo-Warrant and X-Tenuo-PoP headers
         """
         import base64
+
         # Validate before signing for better error messages
         validation = self.validate(tool, args)
         if not validation:
@@ -240,11 +228,8 @@ class BoundWarrant:
 
         pop_sig = self._warrant.sign(self._key, tool, args)
         # sign returns bytes, encode to base64
-        pop_b64 = base64.b64encode(pop_sig).decode('ascii')
-        return {
-            "X-Tenuo-Warrant": self._warrant.to_base64(),
-            "X-Tenuo-PoP": pop_b64
-        }
+        pop_b64 = base64.b64encode(pop_sig).decode("ascii")
+        return {"X-Tenuo-Warrant": self._warrant.to_base64(), "X-Tenuo-PoP": pop_b64}
 
     def validate(self, tool: str, args: dict) -> ValidationResult:
         """
@@ -272,11 +257,7 @@ class BoundWarrant:
         pop_signature = self._warrant.sign(self._key, tool, args)
 
         # 2. Verify (calls Rust authorize)
-        success = self._warrant.authorize(
-            tool=tool,
-            args=args,
-            signature=bytes(pop_signature)
-        )
+        success = self._warrant.authorize(tool=tool, args=args, signature=bytes(pop_signature))
 
         if success:
             return ValidationResult.ok()
@@ -285,7 +266,7 @@ class BoundWarrant:
         why = self.why_denied(tool, args)
         return ValidationResult.fail(
             reason=why.suggestion or f"Authorization failed ({why.deny_code})",
-            suggestions=[why.suggestion] if why.suggestion else []
+            suggestions=[why.suggestion] if why.suggestion else [],
         )
 
     # ========================================================================
@@ -376,6 +357,7 @@ class BoundWarrant:
 # Add bind method to Warrant class
 # ============================================================================
 
+
 def _warrant_bind(self: Warrant, key: SigningKey) -> BoundWarrant:
     """
     Bind this warrant to a signing key for convenience.
@@ -410,5 +392,5 @@ def _warrant_bind(self: Warrant, key: SigningKey) -> BoundWarrant:
 
 
 # Attach to Warrant class
-if not hasattr(Warrant, 'bind'):
+if not hasattr(Warrant, "bind"):
     Warrant.bind = _warrant_bind  # type: ignore[attr-defined]

@@ -30,9 +30,9 @@ from tenuo.openai import (
     GuardBuilder,
     Pattern,
     Range,
-    Subpath,   # Secure path containment (prevents traversal)
-    UrlSafe,   # SSRF protection (blocks private IPs, metadata)
-    Shlex,     # Shell injection protection (validates commands)
+    Subpath,  # Secure path containment (prevents traversal)
+    UrlSafe,  # SSRF protection (blocks private IPs, metadata)
+    Shlex,  # Shell injection protection (validates commands)
     ToolDenied,
     ConstraintViolation,
     AuditEvent,
@@ -41,6 +41,7 @@ from tenuo.openai import (
 # Try to import OpenAI
 try:
     import openai
+
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
@@ -50,6 +51,7 @@ except ImportError:
 # ============================================================================
 # Mock Client (for demo without API key)
 # ============================================================================
+
 
 class MockOpenAIClient:
     """Mock OpenAI client for demonstration purposes."""
@@ -97,19 +99,23 @@ class MockOpenAIClient:
                 else:
                     tool_name, args = "read_file", '{"path": "/data/report.txt"}'
 
-                return Response(choices=[Choice(message=Message(
-                    role="assistant",
-                    content=None,
-                    tool_calls=[ToolCall(
-                        id="call_1",
-                        function=Function(name=tool_name, arguments=args)
-                    )]
-                ))])
+                return Response(
+                    choices=[
+                        Choice(
+                            message=Message(
+                                role="assistant",
+                                content=None,
+                                tool_calls=[ToolCall(id="call_1", function=Function(name=tool_name, arguments=args))],
+                            )
+                        )
+                    ]
+                )
 
 
 # ============================================================================
 # Demo Functions
 # ============================================================================
+
 
 def demo_builder_pattern():
     """Demonstrate the recommended builder pattern."""
@@ -118,13 +124,15 @@ def demo_builder_pattern():
     print("=" * 60)
 
     # Builder pattern - fluent, readable API
-    client = (GuardBuilder(MockOpenAIClient())
+    client = (
+        GuardBuilder(MockOpenAIClient())
         .allow("search")
         .allow("read_file", path=Subpath("/data"))
         .allow("send_email", to=Pattern("*@company.com"))
         .deny("delete_file")
         .on_denial("raise")
-        .build())
+        .build()
+    )
 
     print("Created guarded client with:")
     print(f"  Allowed tools: {client._allow_tools}")
@@ -278,6 +286,7 @@ def demo_subpath_protection():
                     class ToolCall:
                         id: str = "call_1"
                         function: Function = None
+
                         def __post_init__(self):
                             self.function = Function()
 
@@ -286,18 +295,21 @@ def demo_subpath_protection():
                         role: str = "assistant"
                         content: str = None
                         tool_calls: list = None
+
                         def __post_init__(self):
                             self.tool_calls = [ToolCall()]
 
                     @dataclass
                     class Choice:
                         message: Message = None
+
                         def __post_init__(self):
                             self.message = Message()
 
                     @dataclass
                     class Response:
                         choices: list = None
+
                         def __post_init__(self):
                             self.choices = [Choice()]
 

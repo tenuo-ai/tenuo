@@ -28,11 +28,13 @@ class TestWarrantBuilderExecution:
         """Basic execution warrant with tools and constraints."""
         kp = SigningKey.generate()
 
-        warrant = (Warrant.mint_builder()
+        warrant = (
+            Warrant.mint_builder()
             .tools(["read_file", "write_file"])
             .constraint("path", Pattern("/data/*"))
             .ttl(3600)
-            .mint(kp))
+            .mint(kp)
+        )
 
         assert warrant.tools == ["read_file", "write_file"]
         assert warrant.depth == 0
@@ -42,9 +44,7 @@ class TestWarrantBuilderExecution:
         """Single tool using tool() method."""
         kp = SigningKey.generate()
 
-        warrant = (Warrant.mint_builder()
-            .tool("read_file")
-            .mint(kp))
+        warrant = Warrant.mint_builder().tool("read_file").mint(kp)
 
         assert warrant.tools == ["read_file"]
 
@@ -52,12 +52,14 @@ class TestWarrantBuilderExecution:
         """Multiple constraints using chained constraint() calls."""
         kp = SigningKey.generate()
 
-        warrant = (Warrant.mint_builder()
+        warrant = (
+            Warrant.mint_builder()
             .tools(["transfer"])
             .constraint("amount", Range(0, 1000))
             .constraint("recipient", Pattern("*@company.com"))
             .constraint("currency", Exact("USD"))
-            .mint(kp))
+            .mint(kp)
+        )
 
         constraints = warrant.capabilities["transfer"]
         assert "amount" in constraints
@@ -68,13 +70,17 @@ class TestWarrantBuilderExecution:
         """Set all constraints at once."""
         kp = SigningKey.generate()
 
-        warrant = (Warrant.mint_builder()
+        warrant = (
+            Warrant.mint_builder()
             .tools(["read"])
-            .constraints({
-                "path": Pattern("/data/*"),
-                "size": Range(0, 1000000),
-            })
-            .mint(kp))
+            .constraints(
+                {
+                    "path": Pattern("/data/*"),
+                    "size": Range(0, 1000000),
+                }
+            )
+            .mint(kp)
+        )
 
         constraints = warrant.capabilities["read"]
         assert len(constraints) == 2
@@ -84,10 +90,7 @@ class TestWarrantBuilderExecution:
         issuer_kp = SigningKey.generate()
         holder_kp = SigningKey.generate()
 
-        warrant = (Warrant.mint_builder()
-            .tools(["read_file"])
-            .holder(holder_kp.public_key)
-            .mint(issuer_kp))
+        warrant = Warrant.mint_builder().tools(["read_file"]).holder(holder_kp.public_key).mint(issuer_kp)
 
         # Warrant should be bound to holder
         assert warrant.authorized_holder.to_bytes() == holder_kp.public_key.to_bytes()
@@ -96,10 +99,7 @@ class TestWarrantBuilderExecution:
         """Warrant with explicit clearance."""
         kp = SigningKey.generate()
 
-        warrant = (Warrant.mint_builder()
-            .tools(["admin_task"])
-            .clearance(Clearance.INTERNAL)
-            .mint(kp))
+        warrant = Warrant.mint_builder().tools(["admin_task"]).clearance(Clearance.INTERNAL).mint(kp)
 
         assert warrant.clearance == Clearance.INTERNAL
 
@@ -107,10 +107,7 @@ class TestWarrantBuilderExecution:
         """Warrant with session ID."""
         kp = SigningKey.generate()
 
-        warrant = (Warrant.mint_builder()
-            .tools(["read_file"])
-            .session_id("session-123")
-            .mint(kp))
+        warrant = Warrant.mint_builder().tools(["read_file"]).session_id("session-123").mint(kp)
 
         assert warrant.session_id == "session-123"
 
@@ -119,9 +116,7 @@ class TestWarrantBuilderExecution:
         kp = SigningKey.generate()
 
         with pytest.raises(ValidationError, match="tools"):
-            (Warrant.mint_builder()
-                .constraint("path", Pattern("/data/*"))
-                .mint(kp))
+            (Warrant.mint_builder().constraint("path", Pattern("/data/*")).mint(kp))
 
 
 class TestWarrantBuilderIssuer:
@@ -131,11 +126,13 @@ class TestWarrantBuilderIssuer:
         """Basic issuer warrant with issuable_tools."""
         kp = SigningKey.generate()
 
-        warrant = (Warrant.mint_builder()
+        warrant = (
+            Warrant.mint_builder()
             .issuer()
             .issuable_tools(["read_file", "write_file"])
             .clearance(Clearance.INTERNAL)
-            .mint(kp))
+            .mint(kp)
+        )
 
         # Issuer warrants have different structure
         assert warrant.warrant_type == WarrantType.Issuer
@@ -145,12 +142,14 @@ class TestWarrantBuilderIssuer:
         """Issuer warrant with constraint bounds."""
         kp = SigningKey.generate()
 
-        warrant = (Warrant.mint_builder()
+        warrant = (
+            Warrant.mint_builder()
             .issuable_tools(["read_file"])  # Implicitly sets issuer mode
             .clearance(Clearance.PRIVILEGED)
             .constraint_bound("path", Pattern("/data/*"))
             .constraint_bound("size", Range(0, 1000000))
-            .mint(kp))
+            .mint(kp)
+        )
 
         assert warrant.warrant_type == WarrantType.Issuer
 
@@ -158,12 +157,14 @@ class TestWarrantBuilderIssuer:
         """Issuer warrant with max issue depth."""
         kp = SigningKey.generate()
 
-        warrant = (Warrant.mint_builder()
+        warrant = (
+            Warrant.mint_builder()
             .issuer()
             .issuable_tools(["read_file"])
             .clearance(Clearance.INTERNAL)
             .max_issue_depth(3)
-            .mint(kp))
+            .mint(kp)
+        )
 
         assert warrant.max_issue_depth == 3
 
@@ -172,10 +173,7 @@ class TestWarrantBuilderIssuer:
         kp = SigningKey.generate()
 
         with pytest.raises(ValidationError, match="issuable_tools"):
-            (Warrant.mint_builder()
-                .issuer()
-                .clearance(Clearance.INTERNAL)
-                .mint(kp))
+            (Warrant.mint_builder().issuer().clearance(Clearance.INTERNAL).mint(kp))
 
 
 class TestWarrantBuilderPreview:
@@ -183,10 +181,7 @@ class TestWarrantBuilderPreview:
 
     def test_execution_preview(self):
         """Preview execution warrant configuration."""
-        builder = (Warrant.mint_builder()
-            .tools(["read_file"])
-            .constraint("path", Pattern("/data/*"))
-            .ttl(7200))
+        builder = Warrant.mint_builder().tools(["read_file"]).constraint("path", Pattern("/data/*")).ttl(7200)
 
         preview = builder.preview()
 
@@ -197,11 +192,13 @@ class TestWarrantBuilderPreview:
 
     def test_issuer_preview(self):
         """Preview issuer warrant configuration."""
-        builder = (Warrant.mint_builder()
+        builder = (
+            Warrant.mint_builder()
             .issuer()
             .issuable_tools(["read_file"])
             .clearance(Clearance.INTERNAL)
-            .max_issue_depth(5))
+            .max_issue_depth(5)
+        )
 
         preview = builder.preview()
 
@@ -246,5 +243,3 @@ class TestWarrantBuilderMethodChaining:
 
         assert w1.tools == ["read"]
         assert w2.tools == ["write"]
-
-

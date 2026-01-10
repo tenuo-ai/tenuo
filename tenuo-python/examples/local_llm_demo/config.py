@@ -13,6 +13,7 @@ USE_MOCK_SEARCH = not TAVILY_API_KEY
 RESEARCH_DIR = os.getenv("RESEARCH_DIR", "/tmp/tenuo_demo/research")
 SUMMARY_DIR = os.getenv("SUMMARY_DIR", "/tmp/tenuo_demo/summary")
 
+
 def setup_workspace():
     """Clean and recreate workspace directories."""
     if os.path.exists(RESEARCH_DIR):

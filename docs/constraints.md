@@ -552,7 +552,7 @@ constraint = UrlSafe(
     block_private=True,                # Block 10.x, 172.16.x, 192.168.x
     block_loopback=True,               # Block 127.x, ::1, localhost
     block_metadata=True,               # Block cloud metadata endpoints
-    block_internal_tlds=True,          # Block .internal, .local, etc.
+    block_internal_tlds=True,          # Block .internal, .local, .svc, .default, etc.
 )
 ```
 

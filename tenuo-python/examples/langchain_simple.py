@@ -29,6 +29,7 @@ try:
     from langchain.agents.agent import AgentExecutor
     from langchain.agents.openai_tools.base import create_openai_tools_agent
     from langchain_openai import ChatOpenAI
+
     LANGCHAIN_AVAILABLE = True
 except ImportError:
     LANGCHAIN_AVAILABLE = False
@@ -39,11 +40,12 @@ except ImportError:
 # Protected Tool Functions
 # ============================================================================
 
+
 @guard(tool="read_file", extract_args=lambda file_path, **kwargs: {"file_path": file_path})
 def read_file(file_path: str) -> str:
     """Read a file. Protected by Tenuo - only authorized paths allowed."""
     try:
-        with open(file_path, 'r') as f:
+        with open(file_path, "r") as f:
             return f.read()
     except FileNotFoundError:
         return f"Error: File not found: {file_path}"
@@ -51,11 +53,13 @@ def read_file(file_path: str) -> str:
         return f"Error: {str(e)}"
 
 
-@guard(tool="write_file", extract_args=lambda file_path, content, **kwargs: {"file_path": file_path, "content": content})
+@guard(
+    tool="write_file", extract_args=lambda file_path, content, **kwargs: {"file_path": file_path, "content": content}
+)
 def write_file(file_path: str, content: str) -> str:
     """Write to a file. Protected by Tenuo - only authorized paths allowed."""
     try:
-        with open(file_path, 'w') as f:
+        with open(file_path, "w") as f:
             f.write(content)
         return f"Successfully wrote {len(content)} bytes to {file_path}"
     except Exception as e:
@@ -65,6 +69,7 @@ def write_file(file_path: str, content: str) -> str:
 # ============================================================================
 # LangChain Integration
 # ============================================================================
+
 
 def main():
     print("=== Simple LangChain + Tenuo Integration ===\n")
@@ -81,13 +86,18 @@ def main():
         # SIMULATION: Create warrant with hardcoded constraints
         # HARDCODED: Pattern("/tmp/*"), ttl_seconds=3600
         # In production: Constraints come from policy engine or configuration
-        warrant = (Warrant.mint_builder()
-            .capability("read_file", {
-                "file_path": Pattern("/tmp/*")  # HARDCODED: Only /tmp/ for demo safety
-            })
+        warrant = (
+            Warrant.mint_builder()
+            .capability(
+                "read_file",
+                {
+                    "file_path": Pattern("/tmp/*")  # HARDCODED: Only /tmp/ for demo safety
+                },
+            )
             .holder(keypair.public_key)  # Bind to self for demo
             .ttl(3600)  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            .mint(keypair))
+            .mint(keypair)
+        )
         print("   [OK] Warrant created: only /tmp/* files allowed\n")
     except Exception as e:
         print(f"   [ERR] Error creating warrant: {e}")
@@ -137,6 +147,7 @@ def main():
     # STEP 2.5: Check for OpenAI API Key
     # ========================================================================
     import os
+
     if not os.getenv("OPENAI_API_KEY"):
         print("⚠ OPENAI_API_KEY not set. Running in simulation mode (no LLM)...\n")
 
@@ -174,7 +185,11 @@ def main():
     try:
         tools = [
             Tool(name="read_file", func=read_file, description="Read a file. Input: file path"),
-            Tool(name="write_file", func=write_file, description="Write to a file. Input: file_path='path', content='text'"),
+            Tool(
+                name="write_file",
+                func=write_file,
+                description="Write to a file. Input: file_path='path', content='text'",
+            ),
         ]
         print(f"   ✓ Created {len(tools)} tools\n")
     except Exception as e:
@@ -207,7 +222,7 @@ def main():
     # In production: Use tempfile or env-specified test directory
     test_file = "/tmp/langchain_demo.txt"
     try:
-        with open(test_file, 'w') as f:
+        with open(test_file, "w") as f:
             f.write("Hello from LangChain + Tenuo!")
     except (IOError, OSError) as e:
         print(f"   ⚠ Warning: Could not create test file: {e}")
@@ -218,10 +233,9 @@ def main():
         with warrant_scope(warrant), key_scope(keypair):
             # This should work - file is in /tmp/
             try:
-                response = executor.invoke({
-                    "input": f"Read the file {test_file} and tell me what it contains",
-                    "chat_history": []
-                })
+                response = executor.invoke(
+                    {"input": f"Read the file {test_file} and tell me what it contains", "chat_history": []}
+                )
                 print(f"   Agent: {response['output']}\n")
             except AuthorizationError as e:
                 print(f"   ✗ Authorization error: {e}\n")
@@ -232,10 +246,7 @@ def main():
             print("5. Testing protection - trying to read /etc/passwd...")
             # HARDCODED PATH: /etc/passwd (protected system file for demo)
             try:
-                response = executor.invoke({
-                    "input": "Read the file /etc/passwd",
-                    "chat_history": []
-                })
+                response = executor.invoke({"input": "Read the file /etc/passwd", "chat_history": []})
                 print("   ✗ Should have been blocked!")
             except AuthorizationError as e:
                 print(f"   ✓ Correctly blocked: {str(e)[:60]}...\n")
@@ -251,4 +262,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

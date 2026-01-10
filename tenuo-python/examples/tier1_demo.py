@@ -22,10 +22,8 @@ issuer_key = SigningKey.generate()
 configure(issuer_key=issuer_key, dev_mode=True)
 
 # 2. Register schema for critical tools (optional but recommended)
-register_schema("delete_file", ToolSchema(
-    recommended_constraints=["path"],
-    risk_level="critical"
-))
+register_schema("delete_file", ToolSchema(recommended_constraints=["path"], risk_level="critical"))
+
 
 # 3. Define protected tools using @guard
 @guard(tool="read_file")
@@ -33,10 +31,12 @@ async def read_file(path: str) -> str:
     print(f"  [Tool] Reading file: {path}")
     return "file content"
 
+
 @guard(tool="delete_file")
 async def delete_file(path: str) -> str:
     print(f"  [Tool] Deleting file: {path}")
     return "deleted"
+
 
 async def main():
     print("--- Tier 1 API Demo ---")
@@ -78,6 +78,7 @@ async def main():
             await delete_file(path="/data/file.txt")
     except Exception as e:
         print(f"  [Blocked] {e}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

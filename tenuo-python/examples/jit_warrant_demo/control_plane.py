@@ -27,9 +27,7 @@ class ControlPlane:
         self.policy = SecurityPolicy()
 
     def review_proposal(
-        self,
-        capabilities: List[Dict[str, Any]],
-        auto_approve: bool = False
+        self, capabilities: List[Dict[str, Any]], auto_approve: bool = False
     ) -> Optional[List[Dict[str, Any]]]:
         """
         Review a capability proposal.
@@ -41,8 +39,9 @@ class ControlPlane:
         Returns:
             Approved capabilities (possibly modified), or None if rejected
         """
-        display.print_step(2, "Control Plane Review",
-            "The control plane validates the proposal against security policy.")
+        display.print_step(
+            2, "Control Plane Review", "The control plane validates the proposal against security policy."
+        )
 
         display.print_capability_proposal(capabilities)
 
@@ -57,13 +56,14 @@ class ControlPlane:
                 approved.append(cap)
             else:
                 rejected.append(cap)
-                display.print_verdict(False, f"Policy rejects: {tool}",
-                    self.policy.get_rejection_reason(tool))
+                display.print_verdict(False, f"Policy rejects: {tool}", self.policy.get_rejection_reason(tool))
 
         if rejected:
-            display.print_learning("Policy Enforcement",
+            display.print_learning(
+                "Policy Enforcement",
                 "The control plane rejected capabilities that violate security policy.\n"
-                "Even if the LLM requests dangerous permissions, they won't be granted.")
+                "Even if the LLM requests dangerous permissions, they won't be granted.",
+            )
 
         if not auto_approve and approved:
             display.print_approval_prompt()
@@ -73,11 +73,7 @@ class ControlPlane:
         return approved if approved else None
 
     def mint_warrant(
-        self,
-        agent_key: SigningKey,
-        capabilities: List[Dict[str, Any]],
-        allowed_urls: List[str],
-        ttl: int = 300
+        self, agent_key: SigningKey, capabilities: List[Dict[str, Any]], allowed_urls: List[str], ttl: int = 300
     ) -> Warrant:
         """
         Mint a task-specific warrant.
@@ -91,12 +87,9 @@ class ControlPlane:
         Returns:
             A warrant scoped to exactly these capabilities
         """
-        display.print_step(3, "Mint Warrant",
-            "Control plane issues a warrant with exactly the approved capabilities.")
+        display.print_step(3, "Mint Warrant", "Control plane issues a warrant with exactly the approved capabilities.")
 
-        builder = (Warrant.mint_builder()
-            .holder(agent_key.public_key)
-            .ttl(ttl))
+        builder = Warrant.mint_builder().holder(agent_key.public_key).ttl(ttl)
 
         for cap in capabilities:
             tool = cap.get("tool", "")
@@ -108,8 +101,7 @@ class ControlPlane:
                 for url in allowed_urls:
                     builder.capability("fetch_url", url=Exact(url))
             elif tool == "write_file":
-                builder.capability("write_file",
-                    path=Pattern(f"{config.OUTPUT_DIR}/*"))
+                builder.capability("write_file", path=Pattern(f"{config.OUTPUT_DIR}/*"))
             elif tool == "summarize":
                 builder.capability("summarize")
             else:
@@ -124,20 +116,14 @@ class ControlPlane:
         return warrant
 
     def mint_warrant_silent(
-        self,
-        agent_key: SigningKey,
-        capabilities: List[Dict[str, Any]],
-        allowed_urls: List[str],
-        ttl: int = 300
+        self, agent_key: SigningKey, capabilities: List[Dict[str, Any]], allowed_urls: List[str], ttl: int = 300
     ) -> Warrant:
         """
         Mint a warrant without display output.
 
         Used for simulating warrants from earlier sessions.
         """
-        builder = (Warrant.mint_builder()
-            .holder(agent_key.public_key)
-            .ttl(ttl))
+        builder = Warrant.mint_builder().holder(agent_key.public_key).ttl(ttl)
 
         for cap in capabilities:
             tool = cap.get("tool", "")
@@ -146,8 +132,7 @@ class ControlPlane:
                 for url in allowed_urls:
                     builder.capability("fetch_url", url=Exact(url))
             elif tool == "write_file":
-                builder.capability("write_file",
-                    path=Pattern(f"{config.OUTPUT_DIR}/*"))
+                builder.capability("write_file", path=Pattern(f"{config.OUTPUT_DIR}/*"))
             elif tool == "summarize":
                 builder.capability("summarize")
             else:
@@ -189,4 +174,3 @@ class SecurityPolicy:
     def get_rejection_reason(self, tool: str) -> str:
         """Get the reason a tool was rejected."""
         return self.BLOCKED_TOOLS.get(tool, "Tool not in allowlist")
-

@@ -9,11 +9,11 @@ Architecture:
     - Cross-language consistency (Go, Node, Python all validate identically)
     - Performance (IP parsing, URL normalization)
     - Serializable constraints that can be embedded in Warrants
-    
+
     Python provides the CONTEXT-GATHERING layer:
     - Symlink resolution before calling Subpath (optional)
     - DNS pinning before calling UrlSafe (optional)
-    
+
     This separation follows "Logic vs I/O":
     - Rust: Pure, deterministic, stateless validation
     - Python: Environment-dependent I/O and policy decisions
@@ -21,28 +21,30 @@ Architecture:
 Usage:
     # Direct import (recommended)
     from tenuo.constraints import Subpath, UrlSafe
-    
+
     # Or via main package
     from tenuo import Subpath, UrlSafe
-    
+
     # Or via adapter (convenience for adapter users)
     from tenuo.openai import Subpath, UrlSafe
 
 Example:
     from tenuo.constraints import Subpath, UrlSafe
-    
+
     # Path containment (blocks traversal attacks)
     path_constraint = Subpath("/data")
     path_constraint.contains("/data/file.txt")      # True
     path_constraint.contains("/data/../etc/passwd") # False
-    
+
     # SSRF protection (blocks internal IPs, metadata endpoints)
     url_constraint = UrlSafe()
     url_constraint.is_safe("https://api.github.com/")  # True
     url_constraint.is_safe("http://169.254.169.254/")  # False
 """
 
-from typing import Dict, Any, TYPE_CHECKING, List
+import os
+import shlex
+from typing import Dict, Any, TYPE_CHECKING, List, Set
 
 if TYPE_CHECKING:
     from tenuo_core import Constraint  # type: ignore
@@ -67,17 +69,19 @@ except ImportError:
     # This should never happen in production
     class Subpath:  # type: ignore[no-redef]
         """Fallback - Rust extension not available."""
+
         def __init__(self, root: str, *, case_sensitive: bool = True, allow_equal: bool = True):
             raise ImportError("tenuo_core not available - rebuild with maturin")
-        
+
         def contains(self, path: str) -> bool:
             raise ImportError("tenuo_core not available")
-    
+
     class UrlSafe:  # type: ignore[no-redef]
         """Fallback - Rust extension not available."""
+
         def __init__(self, **kwargs):
             raise ImportError("tenuo_core not available - rebuild with maturin")
-        
+
         def is_safe(self, url: str) -> bool:
             raise ImportError("tenuo_core not available")
 
@@ -85,6 +89,7 @@ except ImportError:
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
 
 def ensure_constraint(value: Any) -> Any:
     """
@@ -101,27 +106,61 @@ def ensure_constraint(value: Any) -> Any:
     # Check if it's already a constraint (by class name to avoid circular imports of types)
     try:
         from tenuo_core import (
-            Pattern, Exact, OneOf, Range, Regex, Wildcard, NotOneOf,
-            Cidr, UrlPattern, Contains, Subset, All, AnyOf, Not, CEL,
-            Subpath, UrlSafe
+            Pattern,
+            Exact,
+            OneOf,
+            Range,
+            Regex,
+            Wildcard,
+            NotOneOf,
+            Cidr,
+            UrlPattern,
+            Contains,
+            Subset,
+            All,
+            AnyOf,
+            Not,
+            CEL,
+            Subpath,
+            UrlSafe,
         )
-        if isinstance(value, (
-            Pattern, Exact, OneOf, Range, Regex, Wildcard, NotOneOf,
-            Cidr, UrlPattern, Contains, Subset, All, AnyOf, Not, CEL,
-            Subpath, UrlSafe
-        )):
+
+        if isinstance(
+            value,
+            (
+                Pattern,
+                Exact,
+                OneOf,
+                Range,
+                Regex,
+                Wildcard,
+                NotOneOf,
+                Cidr,
+                UrlPattern,
+                Contains,
+                Subset,
+                All,
+                AnyOf,
+                Not,
+                CEL,
+                Subpath,
+                UrlSafe,
+            ),
+        ):
             return value
     except ImportError:
         pass
 
     # Basic types wrapper
     from tenuo_core import Exact
+
     return Exact(value)
 
 
 # =============================================================================
 # Capability Class (for Tier 1 API)
 # =============================================================================
+
 
 class Capability:
     """
@@ -180,7 +219,7 @@ class Capability:
         return f"Capability({self.tool!r})"
 
     @staticmethod
-    def merge(*capabilities: 'Capability') -> Dict[str, Dict[str, Any]]:
+    def merge(*capabilities: "Capability") -> Dict[str, Dict[str, Any]]:
         """Merge multiple capabilities into a single capabilities dict."""
         result: Dict[str, Dict[str, Any]] = {}
         for cap in capabilities:
@@ -195,6 +234,7 @@ class Capability:
 # =============================================================================
 # Constraints Helper Class
 # =============================================================================
+
 
 class Constraints(Dict[str, Any]):
     """
@@ -217,7 +257,7 @@ class Constraints(Dict[str, Any]):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def add(self, field: str, constraint: 'Constraint') -> 'Constraints':
+    def add(self, field: str, constraint: "Constraint") -> "Constraints":
         """Add a constraint for a field."""
         self[field] = constraint
         return self
@@ -258,77 +298,79 @@ class Constraints(Dict[str, Any]):
 # Shlex Constraint (Python-only, Tier 1)
 # =============================================================================
 
-import shlex
-import os
-from typing import Set
-
 
 class Shlex:
     """Validates that a shell command string is safe and simple.
-    
+
     Ensures the command is a single executable with literal arguments,
     preventing shell injection (pipes, chaining, subshells, variable expansion).
-    
+
     Security features:
         - Blocks shell operators: | || & && ; > >> < <<
         - Blocks command substitution: $() and backticks
         - Blocks variable expansion: $VAR, ${VAR}
         - Blocks newline/null byte injection
         - Requires explicit binary allowlist
-    
+
     Usage:
         from tenuo.openai import Shlex, guard
-        
+
         client = guard(
             openai.OpenAI(),
             constraints={
                 "run_command": {"cmd": Shlex(allow=["ls", "cat", "grep"])}
             }
         )
-        
+
         # Allowed:   ls -la /tmp
         # Blocked:   ls -la; rm -rf /    (operator)
         # Blocked:   echo $(whoami)      (command substitution)
         # Blocked:   ls $HOME            (variable expansion)
-    
+
     Warning:
         This constraint validates SHELL SYNTAX, not TOOL SEMANTICS.
         Some tools interpret arguments as commands:
-        
+
             git --upload-pack='malicious'
             find -exec rm {} \\;
             tar --checkpoint-action=exec=cmd
-        
+
         For complete protection, use proc_jail which bypasses the shell
         entirely via execve() and validates arguments per-tool.
-    
+
     Limitations:
         - Parser differential: Python's shlex targets POSIX sh. If the
           system shell is zsh/fish/etc, parsing may differ slightly.
         - Does not resolve symlinks or validate binary paths exist.
         - Does not constrain arguments (only the binary is allowlisted).
-        
+
         This is Tier 1 mitigation. Upgrade to proc_jail for Tier 2.
     """
-    
+
     # Operators that combine commands or redirect I/O
     # These are checked as TOKENS after punctuation_chars parsing
     DANGEROUS_TOKENS: Set[str] = {
-        "|", "||",      # Pipes
-        "&", "&&",      # Background / logical AND
-        ";",            # Command separator
-        ">", ">>",      # Output redirection
-        "<", "<<", "<<<",  # Input redirection
-        "(", ")",       # Subshells
+        "|",
+        "||",  # Pipes
+        "&",
+        "&&",  # Background / logical AND
+        ";",  # Command separator
+        ">",
+        ">>",  # Output redirection
+        "<",
+        "<<",
+        "<<<",  # Input redirection
+        "(",
+        ")",  # Subshells
     }
-    
+
     # Characters that trigger shell expansion (checked in raw string)
     # These are dangerous even inside double quotes ("$VAR" expands)
     EXPANSION_CHARS: Set[str] = {"$", "`"}
-    
+
     # Control characters that could inject commands
     CONTROL_CHARS: Set[str] = {"\n", "\r", "\x00"}
-    
+
     # Glob characters (optional blocking)
     GLOB_CHARS: Set[str] = {"*", "?", "["}
 
@@ -339,29 +381,29 @@ class Shlex:
         block_globs: bool = False,
     ):
         """Initialize the Shlex constraint.
-        
+
         Args:
             allow: List of allowed binary names or full paths.
                    e.g., ["ls", "/usr/bin/git"]
             block_globs: If True, reject glob characters (*, ?, [).
                          Default False since globs are often legitimate.
-        
+
         Raises:
             ValueError: If allow list is empty.
         """
         if not allow:
             raise ValueError("Shlex requires at least one allowed binary")
-        
+
         self.allowed_bins: Set[str] = set(allow)
         self.block_globs = block_globs
 
     def matches(self, value: Any) -> bool:
         """Check if command string is safe to execute.
-        
+
         Uses "high-definition" parsing with shlex.shlex(punctuation_chars=True)
         which correctly splits operators like ; | & into separate tokens
         UNLESS they are inside quotes.
-        
+
         Returns True only if:
         - Input is a string
         - No dangerous expansion characters ($, `)
@@ -373,24 +415,24 @@ class Shlex:
         # R1: Type check
         if not isinstance(value, str):
             return False
-        
+
         # R1: Control character check (before parsing)
         for char in self.CONTROL_CHARS:
             if char in value:
                 return False
-        
+
         # R1: Expansion character check (before parsing)
         # Shell expands $VAR and `cmd` even inside double quotes
         for char in self.EXPANSION_CHARS:
             if char in value:
                 return False
-        
+
         # R6: Optional glob check
         if self.block_globs:
             for char in self.GLOB_CHARS:
                 if char in value:
                     return False
-        
+
         # R2: "High-definition" parsing with punctuation_chars
         # This splits unquoted operators into separate tokens:
         #   "ls -la; rm" -> ['ls', '-la', ';', 'rm']  (';' detected!)
@@ -403,30 +445,30 @@ class Shlex:
         except ValueError:
             # Unbalanced quotes, malformed escapes, etc.
             return False
-        
+
         # R5: Empty command check
         if not tokens:
             return False
-        
+
         # R4: Binary allowlist check
         binary = tokens[0]
-        
+
         # Normalize path if absolute/relative (prevents /usr/../bin tricks)
         if "/" in binary:
             binary = os.path.normpath(binary)
-        
+
         bin_name = os.path.basename(binary)
-        
+
         if binary not in self.allowed_bins and bin_name not in self.allowed_bins:
             return False
-        
+
         # R3: Dangerous token check
         # Because we used punctuation_chars=True, any unquoted operator
         # is guaranteed to be its own token.
         for token in tokens:
             if token in self.DANGEROUS_TOKENS:
                 return False
-        
+
         return True
 
     def __repr__(self) -> str:

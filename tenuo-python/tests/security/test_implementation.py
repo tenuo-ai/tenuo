@@ -56,9 +56,7 @@ class TestImplementation:
             return f"Searching for {arg}"
 
         warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}),
-            ttl_seconds=60
+            keypair=keypair, capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}), ttl_seconds=60
         )
 
         print("  [Attack 10] Using constrained warrant on buggy wrapper...")
@@ -81,9 +79,7 @@ class TestImplementation:
         print("\n--- Attack 15: Constraint Type Coercion ---")
 
         warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("query", {"limit": Range(max=100)}),
-            ttl_seconds=60
+            keypair=keypair, capabilities=Constraints.for_tool("query", {"limit": Range(max=100)}), ttl_seconds=60
         )
 
         print("  [Attack 15A] Testing string '999' against Range(max=100)...")
@@ -106,22 +102,18 @@ class TestImplementation:
         """
         print("\n--- Attack 16: Serialization Injection ---")
 
-        warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("search", {}),
-            ttl_seconds=60
-        )
+        warrant = Warrant.mint(keypair=keypair, capabilities=Constraints.for_tool("search", {}), ttl_seconds=60)
         b64 = warrant.to_base64()
 
         try:
             raw = base64.urlsafe_b64decode(b64)
 
-            if raw.strip().startswith(b'{'):
+            if raw.strip().startswith(b"{"):
                 print("  [Info] Format appears to be JSON.")
                 data = json.loads(raw)
                 data["extra_field"] = "malicious_payload"
-                tampered_json = json.dumps(data).encode('utf-8')
-                tampered_b64 = base64.urlsafe_b64encode(tampered_json).decode('utf-8')
+                tampered_json = json.dumps(data).encode("utf-8")
+                tampered_b64 = base64.urlsafe_b64encode(tampered_json).decode("utf-8")
 
                 try:
                     w = Warrant.from_base64(tampered_b64)
@@ -145,11 +137,7 @@ class TestImplementation:
         """
         print("\n--- Attack 22: TOCTOU payload_bytes vs payload ---")
 
-        warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("read", {}),
-            ttl_seconds=3600
-        )
+        warrant = Warrant.mint(keypair=keypair, capabilities=Constraints.for_tool("read", {}), ttl_seconds=3600)
 
         b64 = warrant.to_base64()
         w2 = Warrant.from_base64(b64)
@@ -172,7 +160,7 @@ class TestImplementation:
         warrant = Warrant.mint(
             keypair=keypair,
             capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         print("  [Attack 24] Attempting path=/data/../etc/passwd...")
@@ -193,9 +181,7 @@ class TestImplementation:
         print("\n--- Attack 32: Default Value Bypass ---")
 
         warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("query", {"limit": Range(max=100)}),
-            ttl_seconds=3600
+            keypair=keypair, capabilities=Constraints.for_tool("query", {"limit": Range(max=100)}), ttl_seconds=3600
         )
 
         @guard(tool="query")
@@ -226,7 +212,7 @@ class TestImplementation:
             warrant = Warrant.mint(
                 keypair=keypair,
                 capabilities=Constraints.for_tool("read_file", {injected_key: Pattern("secret")}),
-                ttl_seconds=60
+                ttl_seconds=60,
             )
             print("  [Info] Warrant issued with injected key.")
 
@@ -252,9 +238,7 @@ class TestImplementation:
         print("\n--- Attack: Null Byte Injection ---")
 
         warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("read", {"path": Exact("/safe/path")}),
-            ttl_seconds=60
+            keypair=keypair, capabilities=Constraints.for_tool("read", {"path": Exact("/safe/path")}), ttl_seconds=60
         )
 
         # Attack: /safe/path\0/../../etc/passwd
@@ -279,11 +263,7 @@ class TestImplementation:
         """
         print("\n--- Attack: Null Byte in Tool Name ---")
 
-        warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("safe_tool", {}),
-            ttl_seconds=60
-        )
+        warrant = Warrant.mint(keypair=keypair, capabilities=Constraints.for_tool("safe_tool", {}), ttl_seconds=60)
 
         # Try to match "safe_tool" by passing "safe_tool\0_evil"
         malicious_tool = "safe_tool\x00_evil_suffix"

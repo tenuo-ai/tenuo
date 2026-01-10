@@ -21,15 +21,13 @@ from tenuo import (
 from tenuo.exceptions import AuthorizationError
 
 
-
-
 # ============================================================================
 # Setup: Three-Tier Architecture
 # ============================================================================
 
-print("="*70)
+print("=" * 70)
 print("Multi-Tier Delegation Pattern - Best Practice")
-print("="*70)
+print("=" * 70)
 
 # Tier 1: Control Plane (highest authority)
 print("\n1. Setting up three-tier architecture:")
@@ -48,16 +46,18 @@ print("   ✓ Worker (execution)")
 # Step 1: Control Plane Issues Root Warrant to Orchestrator
 # ============================================================================
 
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("STEP 1: Control Plane → Orchestrator (Root Warrant)")
-print("="*70)
+print("=" * 70)
 
 # Control plane issues broad warrant to orchestrator
-root_warrant = (Warrant.mint_builder()
+root_warrant = (
+    Warrant.mint_builder()
     .capability("file_operations", path=Pattern("/data/*"))  # Broad path access
     .holder(orchestrator_kp.public_key)
     .ttl(3600)
-    .mint(control_kp))
+    .mint(control_kp)
+)
 
 print("\n✓ Issued root warrant to orchestrator")
 print(f"  Tools: {root_warrant.tools}")
@@ -70,9 +70,9 @@ print("\n  ℹ️  Orchestrator has BROAD authority for planning")
 # Step 2: Orchestrator Attenuates Warrant for Worker
 # ============================================================================
 
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("STEP 2: Orchestrator → Worker (Attenuated Warrant)")
-print("="*70)
+print("=" * 70)
 
 # Orchestrator creates narrow warrant for specific task
 worker_warrant = (
@@ -95,15 +95,17 @@ print("  ✓  Capabilities SHRUNK during delegation")
 # Step 3: Worker Executes with Attenuated Warrant
 # ============================================================================
 
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("STEP 3: Worker Executes Tools")
-print("="*70)
+print("=" * 70)
+
 
 @guard(tool="file_operations")
 def file_operations(path: str, operation: str = "read"):
     """A sensitive tool that requires authorization."""
     print(f"  [EXEC] {operation.capitalize()}ing file: {path}")
     return f"Contents of {path}"
+
 
 print("\nTesting authorization with attenuated warrant:")
 
@@ -138,9 +140,9 @@ except AuthorizationError:
 # Step 4: Demonstrate Orchestrator's Broader Access
 # ============================================================================
 
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("STEP 4: Orchestrator's Broader Access")
-print("="*70)
+print("=" * 70)
 
 print("\nOrchestrator can access paths worker cannot:")
 
@@ -158,9 +160,9 @@ except AuthorizationError as e:
 # Key Takeaways
 # ============================================================================
 
-print("\n" + "="*70)
+print("\n" + "=" * 70)
 print("KEY TAKEAWAYS - Production Best Practices")
-print("="*70)
+print("=" * 70)
 print("""
 1. SEPARATION OF CONCERNS
    - Orchestrator = planning with broad authority
@@ -189,7 +191,6 @@ print("""
    - Offline verification (no phone home)
 """)
 
-print("="*70)
+print("=" * 70)
 print("This is the RECOMMENDED pattern for production deployments!")
-print("="*70)
-
+print("=" * 70)

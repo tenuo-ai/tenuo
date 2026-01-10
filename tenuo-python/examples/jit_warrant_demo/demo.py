@@ -32,8 +32,7 @@ LM_STUDIO_API_URL = config.LM_STUDIO_URL + "/v1/models"
 def pre_flight_check():
     """Check if LM Studio is running and has models."""
     if config.LM_STUDIO_MODEL_ID:
-        display.print_verdict(True, "Using Configured Model",
-            f"Model: {config.LM_STUDIO_MODEL_ID}")
+        display.print_verdict(True, "Using Configured Model", f"Model: {config.LM_STUDIO_MODEL_ID}")
         return config.LM_STUDIO_MODEL_ID
 
     try:
@@ -43,8 +42,7 @@ def pre_flight_check():
             models = data.get("data", [])
             if models:
                 model_id = models[0]["id"]
-                display.print_verdict(True, "LM Studio Connected",
-                    f"Model: {model_id}")
+                display.print_verdict(True, "LM Studio Connected", f"Model: {model_id}")
                 return model_id
     except requests.exceptions.ConnectionError:
         pass
@@ -68,8 +66,7 @@ def run_delegation_demo(orchestrator: Orchestrator, urls: list):
     summarizer = orchestrator.create_worker("Summarizer", "Text summarization")
 
     # Delegate attenuated warrants
-    display.print_step(6, "Delegate to Workers",
-        "Orchestrator gives each worker ONLY what it needs (monotonicity).")
+    display.print_step(6, "Delegate to Workers", "Orchestrator gives each worker ONLY what it needs (monotonicity).")
 
     target_url = urls[0] if urls else "https://docs.python.org"
 
@@ -91,8 +88,7 @@ def run_delegation_demo(orchestrator: Orchestrator, urls: list):
     )
 
     # Show worker execution
-    display.print_step(7, "Worker Execution",
-        "Each worker operates within its attenuated warrant.")
+    display.print_step(7, "Worker Execution", "Each worker operates within its attenuated warrant.")
 
     tools_dict = {
         "fetch_url": tool_module.fetch_url,
@@ -134,10 +130,12 @@ def run_delegation_demo(orchestrator: Orchestrator, urls: list):
         display.console.print("[dim]Summarizer delegation failed, skipping...[/dim]")
 
     # Summary
-    display.print_learning("Monotonicity",
+    display.print_learning(
+        "Monotonicity",
         "Each worker only received the tools it needed. "
         "The Fetcher couldn't summarize, the Summarizer couldn't fetch. "
-        "This is LEAST PRIVILEGE through delegation.")
+        "This is LEAST PRIVILEGE through delegation.",
+    )
 
 
 def run_temporal_mismatch_demo(orchestrator: Orchestrator, urls: list):
@@ -155,8 +153,9 @@ def run_temporal_mismatch_demo(orchestrator: Orchestrator, urls: list):
     display.print_temporal_mismatch_intro()
 
     # Scenario: Worker was given warrant for v1 API, but now we need v2 API
-    display.print_step(8, "Stale Warrant Scenario",
-        "A worker has a warrant from an earlier task. Requirements have changed.")
+    display.print_step(
+        8, "Stale Warrant Scenario", "A worker has a warrant from an earlier task. Requirements have changed."
+    )
 
     # Simulate: Earlier, we issued a warrant for the OLD API
     old_api_url = "https://api.example.com/v1/data"
@@ -171,6 +170,7 @@ def run_temporal_mismatch_demo(orchestrator: Orchestrator, urls: list):
     # Give the worker a warrant for the OLD API (simulating it was issued earlier)
     # We'll mint this directly to simulate it came from a previous session
     from control_plane import ControlPlane
+
     old_control_plane = ControlPlane()
 
     display.console.print("\n[bold yellow]T0 (Earlier):[/bold yellow] Warrant issued for v1 API")
@@ -202,17 +202,20 @@ def run_temporal_mismatch_demo(orchestrator: Orchestrator, urls: list):
     display.console.print(f"\n[dim]Worker CAN still access OLD API: {old_api_url}[/dim]")
     fetch(url=old_api_url)
 
-    display.print_learning("Temporal Mismatch",
+    display.print_learning(
+        "Temporal Mismatch",
         "The warrant was VALID when issued, but requirements changed. "
         "The worker can still access the OLD resource (v1 API), but NOT the new one (v2 API). "
-        "Solution: Short TTLs + JIT minting ensure warrants match current requirements.")
+        "Solution: Short TTLs + JIT minting ensure warrants match current requirements.",
+    )
 
     # Now show monotonicity as a separate concept
     display.print_header("MONOTONICITY ENFORCEMENT")
     display.print_monotonicity_intro()
 
-    display.print_step(9, "Attempted Privilege Escalation",
-        "What if orchestrator tries to delegate BROADER access than it has?")
+    display.print_step(
+        9, "Attempted Privilege Escalation", "What if orchestrator tries to delegate BROADER access than it has?"
+    )
 
     escalation_worker = orchestrator.create_worker("EscalationWorker", "Attempts broader access")
 
@@ -226,19 +229,17 @@ def run_temporal_mismatch_demo(orchestrator: Orchestrator, urls: list):
     )
 
     if not result:
-        display.print_learning("Monotonicity",
+        display.print_learning(
+            "Monotonicity",
             "Delegation FAILED - you cannot grant what you don't have. "
             "The orchestrator only has access to docs.python.org, "
             "so it cannot create a child warrant for admin.internal.corp. "
-            "Authority can only DECREASE through delegation.")
+            "Authority can only DECREASE through delegation.",
+        )
 
 
 async def run_demo_with_llm(
-    task: str,
-    model_id: str,
-    simulate_attack: bool = True,
-    show_delegation: bool = False,
-    interactive: bool = True
+    task: str, model_id: str, simulate_attack: bool = True, show_delegation: bool = False, interactive: bool = True
 ):
     """
     Run the full demo with LLM capability analysis and human approval.
@@ -269,8 +270,7 @@ async def run_demo_with_llm(
         approved_caps = control_plane.review_proposal(proposed_caps, auto_approve=True)
 
         if not approved_caps:
-            display.print_verdict(False, "All capabilities rejected",
-                "The control plane rejected the entire proposal.")
+            display.print_verdict(False, "All capabilities rejected", "The control plane rejected the entire proposal.")
             return
 
         # Phase 3: Mint warrant
@@ -306,13 +306,15 @@ async def run_demo_with_llm(
         )
 
         if approvals is None:
-            display.print_verdict(False, "Approval rejected",
-                "Human reviewer did not approve the warrant.")
+            display.print_verdict(False, "Approval rejected", "Human reviewer did not approve the warrant.")
             return
 
         # Phase 5: Execute with cryptographic authorization
-        display.print_step(5, "Orchestrator Executes",
-            "Orchestrator runs with warrant. Each call is cryptographically signed with PoP.")
+        display.print_step(
+            5,
+            "Orchestrator Executes",
+            "Orchestrator runs with warrant. Each call is cryptographically signed with PoP.",
+        )
 
         # Pass approvals to executor for multi-sig verification
         executor = WarrantExecutor(warrant, orchestrator.signing_key, approvals=approvals)
@@ -350,11 +352,7 @@ async def run_demo_with_llm(
             run_temporal_mismatch_demo(orchestrator, urls)
 
 
-def run_demo_simulate(
-    task: str,
-    show_delegation: bool = False,
-    interactive: bool = True
-):
+def run_demo_simulate(task: str, show_delegation: bool = False, interactive: bool = True):
     """
     Run demo in simulation mode (no LLM required).
     """
@@ -376,8 +374,7 @@ def run_demo_simulate(
     approved_caps = control_plane.review_proposal(proposed_caps, auto_approve=True)
 
     if not approved_caps:
-        display.print_verdict(False, "All capabilities rejected",
-            "The control plane rejected the entire proposal.")
+        display.print_verdict(False, "All capabilities rejected", "The control plane rejected the entire proposal.")
         return
 
     # Phase 3: Mint warrant
@@ -411,13 +408,13 @@ def run_demo_simulate(
     )
 
     if approvals is None:
-        display.print_verdict(False, "Approval rejected",
-            "Human reviewer did not approve the warrant.")
+        display.print_verdict(False, "Approval rejected", "Human reviewer did not approve the warrant.")
         return
 
     # Phase 5: Execute with cryptographic authorization
-    display.print_step(5, "Orchestrator Executes",
-        "Orchestrator runs with warrant. Each call is cryptographically signed with PoP.")
+    display.print_step(
+        5, "Orchestrator Executes", "Orchestrator runs with warrant. Each call is cryptographically signed with PoP."
+    )
 
     executor = WarrantExecutor(warrant, orchestrator.signing_key, approvals=approvals)
 
@@ -457,39 +454,21 @@ Examples:
   python demo.py --auto-approve     # Skip interactive approval prompt
   python demo.py --slow 2           # Add 2-second pauses for presentations
   python demo.py --task "Summarize https://example.com"
-        """
+        """,
     )
     parser.add_argument(
-        "--task", "-t",
-        default="Summarize this URL: https://docs.python.org",
-        help="The task to perform"
+        "--task", "-t", default="Summarize this URL: https://docs.python.org", help="The task to perform"
     )
-    parser.add_argument(
-        "--simulate", "-s",
-        action="store_true",
-        help="Run in simulation mode (no LLM required)"
-    )
-    parser.add_argument(
-        "--delegation", "-d",
-        action="store_true",
-        help="Show delegation and temporal mismatch demos"
-    )
-    parser.add_argument(
-        "--auto-approve",
-        action="store_true",
-        help="Auto-approve without interactive prompt"
-    )
-    parser.add_argument(
-        "--no-attack",
-        action="store_true",
-        help="Skip the attack simulation"
-    )
+    parser.add_argument("--simulate", "-s", action="store_true", help="Run in simulation mode (no LLM required)")
+    parser.add_argument("--delegation", "-d", action="store_true", help="Show delegation and temporal mismatch demos")
+    parser.add_argument("--auto-approve", action="store_true", help="Auto-approve without interactive prompt")
+    parser.add_argument("--no-attack", action="store_true", help="Skip the attack simulation")
     parser.add_argument(
         "--slow",
         type=float,
         default=0,
         metavar="SECONDS",
-        help="Add delay between steps for presentations (e.g., --slow 2)"
+        help="Add delay between steps for presentations (e.g., --slow 2)",
     )
 
     args = parser.parse_args()
@@ -502,28 +481,25 @@ Examples:
     interactive = not args.auto_approve
 
     if args.simulate:
-        run_demo_simulate(
-            args.task,
-            show_delegation=args.delegation,
-            interactive=interactive
-        )
+        run_demo_simulate(args.task, show_delegation=args.delegation, interactive=interactive)
     else:
         # Check for LM Studio
         display.print_header("PRE-FLIGHT CHECK")
         model_id = pre_flight_check()
 
         if not model_id:
-            display.print_verdict(False, "LM Studio not available",
-                "Run with --simulate for demo without LLM")
+            display.print_verdict(False, "LM Studio not available", "Run with --simulate for demo without LLM")
             return
 
-        asyncio.run(run_demo_with_llm(
-            args.task,
-            model_id,
-            simulate_attack=not args.no_attack,
-            show_delegation=args.delegation,
-            interactive=interactive,
-        ))
+        asyncio.run(
+            run_demo_with_llm(
+                args.task,
+                model_id,
+                simulate_attack=not args.no_attack,
+                show_delegation=args.delegation,
+                interactive=interactive,
+            )
+        )
 
 
 if __name__ == "__main__":

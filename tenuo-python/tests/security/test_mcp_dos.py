@@ -12,18 +12,19 @@ from unittest.mock import patch
 from tenuo.mcp.client import SecureMCPClient
 import tenuo.mcp.client
 
+
 class TestMcpDos(unittest.IsolatedAsyncioTestCase):
     async def test_large_config_loading(self):
         """Test if client handles massively large config file."""
 
         # Patch MCP_AVAILABLE to bypass import check
-        with patch.object(tenuo.mcp.client, 'MCP_AVAILABLE', True):
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+        with patch.object(tenuo.mcp.client, "MCP_AVAILABLE", True):
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
                 f.write('version: "1"\ntools:\n')
                 # Create 1 tool with 150 constraints (exceeds 100 limit)
                 f.write('  vulnerable_tool:\n    description: "A tool to trigger DoS"\n    constraints:\n')
                 for i in range(150):
-                    f.write(f'      param_{i}:\n        from: body\n        path: param_{i}\n')
+                    f.write(f"      param_{i}:\n        from: body\n        path: param_{i}\n")
 
                 config_path = f.name
 
@@ -48,6 +49,7 @@ class TestMcpDos(unittest.IsolatedAsyncioTestCase):
             finally:
                 if os.path.exists(config_path):
                     os.unlink(config_path)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,24 +1,20 @@
-
 import unittest
 import json
 from tenuo import Warrant, SigningKey, Pattern
 
 from tenuo.exceptions import DeserializationError
 
+
 class TestImplicitSerialization(unittest.TestCase):
     def test_str_and_constructor(self):
         # 1. Create a warrant
         key = SigningKey.generate()
-        original_warrant = Warrant.mint(
-            keypair=key,
-            capabilities={"search": {"query": Pattern("*")}},
-            ttl_seconds=300
-        )
+        original_warrant = Warrant.mint(keypair=key, capabilities={"search": {"query": Pattern("*")}}, ttl_seconds=300)
 
         # 2. Test implicit serialization (str)
         token = str(original_warrant)
         self.assertTrue(len(token) > 0)  # Should be non-empty
-        self.assertTrue(token.startswith('gw'))  # CBOR base64 prefix
+        self.assertTrue(token.startswith("gw"))  # CBOR base64 prefix
 
         # 3. Test implicit deserialization (constructor)
         reconstituted_warrant = Warrant(token)
@@ -30,11 +26,7 @@ class TestImplicitSerialization(unittest.TestCase):
     def test_json_interop(self):
         # 1. Create warrant
         key = SigningKey.generate()
-        warrant = Warrant.mint(
-            keypair=key,
-            capabilities={"search": {"query": Pattern("*")}},
-            ttl_seconds=60
-        )
+        warrant = Warrant.mint(keypair=key, capabilities={"search": {"query": Pattern("*")}}, ttl_seconds=60)
 
         # 2. Serialize in JSON structure
         data = {"warrant": str(warrant), "user": "alice"}
@@ -53,11 +45,7 @@ class TestImplicitSerialization(unittest.TestCase):
     def test_legacy_methods(self):
         """Ensure old explicit methods still work."""
         key = SigningKey.generate()
-        warrant = Warrant.mint(
-            keypair=key,
-            capabilities={"search": {"query": Pattern("*")}},
-            ttl_seconds=60
-        )
+        warrant = Warrant.mint(keypair=key, capabilities={"search": {"query": Pattern("*")}}, ttl_seconds=60)
 
         # 1. Explicit to_base64()
         token = warrant.to_base64()
@@ -72,11 +60,7 @@ class TestImplicitSerialization(unittest.TestCase):
         key = SigningKey.generate()
 
         # 1. Static factory method (issue)
-        w1 = Warrant.mint(
-            keypair=key,
-            capabilities={"a": {"p": Pattern("*")}},
-            ttl_seconds=60
-        )
+        w1 = Warrant.mint(keypair=key, capabilities={"a": {"p": Pattern("*")}}, ttl_seconds=60)
         self.assertIsInstance(w1, Warrant)
 
         # 2. Constructor (deserialization)
@@ -89,6 +73,5 @@ class TestImplicitSerialization(unittest.TestCase):
         self.assertEqual(w1.id, w2.id)
 
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

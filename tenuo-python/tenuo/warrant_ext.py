@@ -56,6 +56,7 @@ if TYPE_CHECKING:
 # Type Protocols (P1)
 # ============================================================================
 
+
 @runtime_checkable
 class ReadableWarrant(Protocol):
     """Protocol for warrant-like objects (read-only operations)."""
@@ -102,8 +103,10 @@ AnyWarrant = Union[Warrant, "BoundWarrant"]
 # Deny Codes (for why_denied)
 # ============================================================================
 
+
 class DenyCode:
     """Stable deny codes for programmatic handling."""
+
     ALLOWED = "ALLOWED"
     TOOL_NOT_FOUND = "TOOL_NOT_FOUND"
     WARRANT_EXPIRED = "WARRANT_EXPIRED"
@@ -121,6 +124,7 @@ class WhyDenied:
 
     Use warrant.why_denied(tool, args) to get this.
     """
+
     denied: bool
     deny_code: str
     deny_path: Optional[str] = None
@@ -135,6 +139,7 @@ class WhyDenied:
             return f"<WhyDenied ALLOWED tool={self.tool!r}>"
         return f"<WhyDenied {self.deny_code} tool={self.tool!r} field={self.field!r}>"
 
+
 # Store receipts in a dict keyed by warrant ID (string)
 # Rust-exposed objects can't store arbitrary Python attributes.
 # Use clear_receipt() or clear_receipts() to prevent memory leaks in long-running processes.
@@ -148,10 +153,11 @@ _MAX_RECEIPTS = 10000
 # 1. Core Convenience Properties
 # ============================================================================
 
+
 def _warrant_ttl_remaining(self: Warrant) -> timedelta:
     """Time remaining until expiration."""
     # Prefer ttl_seconds() from Rust (accurate, no parsing needed)
-    if hasattr(self, 'ttl_seconds') and callable(getattr(self, 'ttl_seconds', None)):
+    if hasattr(self, "ttl_seconds") and callable(getattr(self, "ttl_seconds", None)):
         return timedelta(seconds=self.ttl_seconds())
 
     # Fallback: calculate from is_expired() and expires_at()
@@ -163,8 +169,8 @@ def _warrant_ttl_remaining(self: Warrant) -> timedelta:
         # expires_at() returns RFC3339 format like "2025-12-22T12:00:00Z"
         expires_str = self.expires_at()
         # Python 3.11+ handles 'Z' directly, older versions need conversion
-        if expires_str.endswith('Z'):
-            expires_str = expires_str[:-1] + '+00:00'
+        if expires_str.endswith("Z"):
+            expires_str = expires_str[:-1] + "+00:00"
         expires = datetime.fromisoformat(expires_str)
         now = datetime.now(timezone.utc)
         remaining = expires - now
@@ -172,10 +178,9 @@ def _warrant_ttl_remaining(self: Warrant) -> timedelta:
     except (ValueError, AttributeError) as e:
         # If parsing fails, warn and return zero (expired)
         import warnings
+
         warnings.warn(
-            f"Could not parse expires_at: {e}. "
-            "Consider rebuilding tenuo_core for ttl_seconds() support.",
-            UserWarning
+            f"Could not parse expires_at: {e}. Consider rebuilding tenuo_core for ttl_seconds() support.", UserWarning
         )
         return timedelta(0)
 
@@ -191,26 +196,27 @@ def _warrant_is_expired_prop(self: Warrant) -> bool:
 
 
 # Add ttl_remaining as a property (wraps ttl_seconds())
-if not hasattr(Warrant, 'ttl_remaining'):
+if not hasattr(Warrant, "ttl_remaining"):
     Warrant.ttl_remaining = property(_warrant_ttl_remaining)  # type: ignore[attr-defined]
 
 # Short alias: ttl → ttl_remaining
-if not hasattr(Warrant, 'ttl'):
+if not hasattr(Warrant, "ttl"):
     Warrant.ttl = property(_warrant_ttl_remaining)  # type: ignore[attr-defined]
 
 # Note: is_expired() and is_terminal() are methods from Rust
 # We expose them also as properties for convenience (spec compliance)
 # The methods still work, but properties are more Pythonic
-if not hasattr(Warrant, 'expired'):
+if not hasattr(Warrant, "expired"):
     Warrant.expired = property(_warrant_is_expired_prop)  # type: ignore[attr-defined]
 
-if not hasattr(Warrant, 'terminal'):
+if not hasattr(Warrant, "terminal"):
     Warrant.terminal = property(_warrant_is_terminal_prop)  # type: ignore[attr-defined]
 
 
 # ============================================================================
 # 1.5 Capabilities Property (P1)
 # ============================================================================
+
 
 def _warrant_capabilities(self: Warrant) -> Dict[str, Dict[str, str]]:
     """
@@ -232,7 +238,7 @@ def _warrant_capabilities(self: Warrant) -> Dict[str, Dict[str, str]]:
     for tool in self.tools:
         try:
             # Try to get constraints from Rust if available
-            if hasattr(self, 'get_constraints'):
+            if hasattr(self, "get_constraints"):
                 constraints = self.get_constraints(tool)
                 if constraints:
                     result[tool] = {k: repr(v) for k, v in constraints.items()}
@@ -247,13 +253,14 @@ def _warrant_capabilities(self: Warrant) -> Dict[str, Dict[str, str]]:
     return result
 
 
-if not hasattr(Warrant, 'capabilities'):
+if not hasattr(Warrant, "capabilities"):
     Warrant.capabilities = property(_warrant_capabilities)  # type: ignore[attr-defined]
 
 
 # ============================================================================
 # 1.5.1 Warrant __repr__ Redaction (Security)
 # ============================================================================
+
 
 def _warrant_repr(self: Warrant) -> str:
     """
@@ -264,7 +271,7 @@ def _warrant_repr(self: Warrant) -> str:
     """
     try:
         ttl = self.ttl_remaining
-        ttl_str = str(ttl).split('.')[0]  # Remove microseconds
+        ttl_str = str(ttl).split(".")[0]  # Remove microseconds
     except Exception:
         ttl_str = "?"
 
@@ -282,6 +289,7 @@ Warrant.__repr__ = _warrant_repr  # type: ignore[method-assign]
 # ============================================================================
 # 1.6 validate on Warrant (P0)
 # ============================================================================
+
 
 def _warrant_validate(
     self: Warrant,
@@ -304,11 +312,7 @@ def _warrant_validate(
     pop_signature = self.sign(key, tool, args)
 
     # 2. Verify
-    success = self.authorize(
-        tool=tool,
-        args=args,
-        signature=bytes(pop_signature)
-    )
+    success = self.authorize(tool=tool, args=args, signature=bytes(pop_signature))
 
     if success:
         return ValidationResult.ok()
@@ -317,17 +321,18 @@ def _warrant_validate(
     why = self.why_denied(tool, args)
     return ValidationResult.fail(
         reason=why.suggestion or f"Authorization failed ({why.deny_code})",
-        suggestions=[why.suggestion] if why.suggestion else []
+        suggestions=[why.suggestion] if why.suggestion else [],
     )
 
 
-if not hasattr(Warrant, 'validate'):
+if not hasattr(Warrant, "validate"):
     Warrant.validate = _warrant_validate  # type: ignore[attr-defined]
 
 
 # ============================================================================
 # 1.6 headers on Warrant (P0)
 # ============================================================================
+
 
 def _warrant_headers(
     self: Warrant,
@@ -360,15 +365,12 @@ def _warrant_headers(
         raise RuntimeError(f"Authorization failed: {validation.reason}")
 
     pop_sig = self.sign(key, tool, args)
-    pop_b64 = base64.b64encode(pop_sig).decode('ascii')
+    pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
-    return {
-        "X-Tenuo-Warrant": self.to_base64(),
-        "X-Tenuo-PoP": pop_b64
-    }
+    return {"X-Tenuo-Warrant": self.to_base64(), "X-Tenuo-PoP": pop_b64}
 
 
-if not hasattr(Warrant, 'headers'):
+if not hasattr(Warrant, "headers"):
     Warrant.headers = _warrant_headers  # type: ignore[attr-defined]
 
 
@@ -379,6 +381,7 @@ if not hasattr(Warrant, 'headers'):
 # Use for UI previews, error messages, and debugging.
 # DO NOT use for actual authorization decisions.
 # ============================================================================
+
 
 def _warrant_allows(self: Warrant, tool: str, args: Optional[dict] = None) -> bool:
     """
@@ -415,7 +418,7 @@ def _warrant_allows(self: Warrant, tool: str, args: Optional[dict] = None) -> bo
 # Removed legacy preview methods
 
 # Attach methods
-if not hasattr(Warrant, 'allows'):
+if not hasattr(Warrant, "allows"):
     Warrant.allows = _warrant_allows  # type: ignore[attr-defined]
 
 # Removed legacy method attachments
@@ -426,6 +429,7 @@ if not hasattr(Warrant, 'allows'):
 #
 # Use for debugging and error messages, NOT for authorization decisions.
 # ============================================================================
+
 
 def _enhance_constraint_suggestion(
     failure_reason: str,
@@ -526,13 +530,13 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
     try:
         # Construct state object matching App.tsx expectation
         state = {
-            "warrant": self.to_base64() if hasattr(self, 'to_base64') else str(self),
+            "warrant": self.to_base64() if hasattr(self, "to_base64") else str(self),
             "tool": tool,
-            "args": json.dumps(args) if args else "{}"
+            "args": json.dumps(args) if args else "{}",
         }
         # Encode state: JSON -> Bytes -> Base64
         state_json = json.dumps(state)
-        state_b64 = base64.b64encode(state_json.encode('utf-8')).decode('ascii')
+        state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("ascii")
         playground_hint = f" Debug at: {playground_url}?s={state_b64}"
     except Exception:
         # Fallback if encoding fails
@@ -566,7 +570,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
     # check_constraints_detailed returns None if OK, or (field, reason) tuple on failure
     try:
         # Use structured method if available, fall back to string parsing
-        if hasattr(self, 'check_constraints_detailed'):
+        if hasattr(self, "check_constraints_detailed"):
             result = self.check_constraints_detailed(tool, args or {})
             if result:
                 failed_field, reason = result
@@ -583,9 +587,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
 
         if failure_reason:
             # Enhance suggestions for zero-trust related failures
-            enhanced_suggestion = _enhance_constraint_suggestion(
-                failure_reason, tool, args or {}, self
-            )
+            enhanced_suggestion = _enhance_constraint_suggestion(failure_reason, tool, args or {}, self)
             return WhyDenied(
                 denied=True,
                 deny_code=DenyCode.CONSTRAINT_MISMATCH,
@@ -614,7 +616,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
     )
 
 
-if not hasattr(Warrant, 'why_denied'):
+if not hasattr(Warrant, "why_denied"):
     Warrant.why_denied = _warrant_why_denied  # type: ignore[attr-defined]
 
 
@@ -624,6 +626,7 @@ if not hasattr(Warrant, 'why_denied'):
 # These methods are for understanding warrant structure and diagnosing
 # authorization failures. DO NOT use for authorization decisions.
 # ============================================================================
+
 
 def _warrant_explain(self: Warrant, include_chain: bool = False) -> str:
     """Human-readable warrant explanation (diagnostic)."""
@@ -639,8 +642,8 @@ def _warrant_explain(self: Warrant, include_chain: bool = False) -> str:
         lines.append(f"  Clearance: {self.clearance}")
 
     # max_depth might be None in older Rust builds or for some warrant types
-    max_d = getattr(self, 'max_depth', None)
-    if max_d is None and hasattr(self, 'max_issue_depth'):
+    max_d = getattr(self, "max_depth", None)
+    if max_d is None and hasattr(self, "max_issue_depth"):
         max_d = self.max_issue_depth
     lines.append(f"  Depth: {self.depth}/{max_d if max_d is not None else '?'}")
 
@@ -662,16 +665,17 @@ def _warrant_inspect(self: Warrant) -> str:
 
 
 # Attach debugging methods
-if not hasattr(Warrant, 'explain'):
+if not hasattr(Warrant, "explain"):
     Warrant.explain = _warrant_explain  # type: ignore[attr-defined]
 
-if not hasattr(Warrant, 'inspect'):
+if not hasattr(Warrant, "inspect"):
     Warrant.inspect = _warrant_inspect  # type: ignore[attr-defined]
 
 
 # ============================================================================
 # 4. Delegation Receipts (Existing Code)
 # ============================================================================
+
 
 def get_delegation_receipt(warrant: Warrant) -> Optional[DelegationReceipt]:
     """Get the delegation receipt if this warrant was created via delegation."""
@@ -710,10 +714,9 @@ def _warrant_set_delegation_receipt(self: Warrant, receipt: DelegationReceipt) -
 
 
 # Add delegation_receipt property to Warrant
-if not hasattr(Warrant, 'delegation_receipt'):
+if not hasattr(Warrant, "delegation_receipt"):
     Warrant.delegation_receipt = property(  # type: ignore[attr-defined]
-        _warrant_get_delegation_receipt,
-        _warrant_set_delegation_receipt
+        _warrant_get_delegation_receipt, _warrant_set_delegation_receipt
     )
 
 
@@ -726,9 +729,10 @@ if not hasattr(Warrant, 'delegation_receipt'):
 _original_attenuate_builder = Warrant.attenuate_builder
 
 
-def _wrapped_grant_builder(self: Warrant) -> 'GrantBuilder':
+def _wrapped_grant_builder(self: Warrant) -> "GrantBuilder":
     """Wrap grant_builder to return Python GrantBuilder with diff support."""
     from .builder import GrantBuilder
+
     rust_builder = _original_attenuate_builder(self)
     return GrantBuilder(self, _rust_builder=rust_builder)
 
@@ -741,6 +745,7 @@ Warrant.grant_builder = _wrapped_grant_builder  # type: ignore[attr-defined]
 # 6. Improved Delegate Method
 # ============================================================================
 
+
 def _warrant_delegate(
     self: Warrant,
     *,
@@ -748,7 +753,7 @@ def _warrant_delegate(
     allow: Union[str, List[str]],
     ttl: int,
     key: Optional[SigningKey] = None,
-    **constraints
+    **constraints,
 ) -> Warrant:
     """
     Convenience method to delegate a warrant to a new holder.
@@ -789,8 +794,7 @@ def _warrant_delegate(
     signing_key = key or key_scope()
     if not signing_key:
         raise RuntimeError(
-            "No signing key provided. Either pass key= argument or use "
-            "inside a task context / key_scope()."
+            "No signing key provided. Either pass key= argument or use inside a task context / key_scope()."
         )
 
     # Auto-wrap single item to list (if not iterable list/tuple/set, but exclude str)
@@ -848,7 +852,7 @@ def _warrant_delegate(
 # ============================================================================
 
 # Store the original issue_execution method
-_original_issue_execution = Warrant.issue_execution if hasattr(Warrant, 'issue_execution') else None
+_original_issue_execution = Warrant.issue_execution if hasattr(Warrant, "issue_execution") else None
 
 
 def _wrapped_issue_execution(self):
@@ -858,6 +862,7 @@ def _wrapped_issue_execution(self):
         IssuanceBuilder (Python wrapper) with dual-purpose methods
     """
     from .builder import wrap_rust_issuance_builder
+
     rust_builder = _original_issue_execution(self)
     return wrap_rust_issuance_builder(rust_builder)
 
@@ -870,6 +875,7 @@ if _original_issue_execution is not None:
 # ============================================================================
 # 8. Chain Reconstruction (Existing Code)
 # ============================================================================
+
 
 def get_chain_with_diffs(
     warrant: Warrant,
@@ -945,6 +951,7 @@ def compute_diff(parent: Warrant, child: Warrant) -> DelegationDiff:
 # 10. Implicit Serialization Support
 # ============================================================================
 
+
 def _warrant_str(self: Warrant) -> str:
     """
     Return base64 representation for easy serialization.
@@ -956,7 +963,7 @@ def _warrant_str(self: Warrant) -> str:
     return self.to_base64()
 
 
-if not hasattr(Warrant, '__str__') or Warrant.__str__ is object.__str__:
+if not hasattr(Warrant, "__str__") or Warrant.__str__ is object.__str__:
     Warrant.__str__ = _warrant_str  # type: ignore[method-assign]
 
 # ============================================================================
@@ -982,6 +989,7 @@ Warrant.mint = _warrant_mint  # type: ignore[attr-defined]
 # 12. Grant Method Alias (New Vocabulary)
 # ============================================================================
 
+
 def _warrant_grant(
     self: Warrant,
     *,
@@ -989,7 +997,7 @@ def _warrant_grant(
     allow: Union[str, List[str]],
     ttl: int,
     key: Optional[SigningKey] = None,
-    **constraints
+    **constraints,
 ) -> Warrant:
     """Convenience method to grant a warrant to a new holder."""
     return _warrant_delegate(self, to=to, allow=allow, ttl=ttl, key=key, **constraints)
@@ -1000,12 +1008,13 @@ Warrant.grant = _warrant_grant  # type: ignore[attr-defined]
 
 
 # Add from_str as alias for from_base64
-def _warrant_from_str(s: str) -> 'Warrant':
+def _warrant_from_str(s: str) -> "Warrant":
     """Parse warrant from string (base64 encoded).
 
     This is an alias for from_base64() that pairs with str(warrant).
     """
     return Warrant.from_base64(s)
+
 
 Warrant.from_str = _warrant_from_str  # type: ignore[attr-defined]
 
@@ -1013,26 +1022,33 @@ Warrant.from_str = _warrant_from_str  # type: ignore[attr-defined]
 # Property Aliases for Brevity
 # ============================================================================
 
+
 # Add 'type' as alias for 'warrant_type'
 def _warrant_type_alias(self: Warrant):
     """Alias for warrant_type property."""
     return self.warrant_type
 
+
 Warrant.type = property(_warrant_type_alias)  # type: ignore[attr-defined]
+
 
 # Add 'can_issue' as alias for 'issuable_tools'
 def _can_issue_alias(self: Warrant):
     """Alias for issuable_tools property."""
     return self.issuable_tools
 
+
 Warrant.can_issue = property(_can_issue_alias)  # type: ignore[attr-defined]
+
 
 # Add 'receipt' as alias for 'delegation_receipt'
 def _receipt_alias(self: Warrant):
     """Alias for delegation_receipt property."""
     return self.delegation_receipt
 
+
 Warrant.receipt = property(_receipt_alias)  # type: ignore[attr-defined]
+
 
 # Add __bytes__ for bytes(warrant) support
 def _warrant_bytes(self: Warrant) -> bytes:
@@ -1043,21 +1059,25 @@ def _warrant_bytes(self: Warrant) -> bytes:
     """
     return self.to_cbor()
 
+
 Warrant.__bytes__ = _warrant_bytes  # type: ignore[attr-defined]
 
+
 # Add from_bytes as alias for from_cbor
-def _warrant_from_bytes(data: bytes) -> 'Warrant':
+def _warrant_from_bytes(data: bytes) -> "Warrant":
     """Parse warrant from bytes (CBOR encoded).
 
     This is an alias for from_cbor() that pairs with bytes(warrant).
     """
     return Warrant.from_cbor(data)
 
+
 Warrant.from_bytes = _warrant_from_bytes  # type: ignore[attr-defined]
 
 # ============================================================================
 # Chain Traversal
 # ============================================================================
+
 
 def _warrant_chain(self: Warrant, store: Optional[Any] = None) -> List[Warrant]:
     """Get the full delegation chain from root to current warrant.
@@ -1098,5 +1118,5 @@ def _warrant_chain(self: Warrant, store: Optional[Any] = None) -> List[Warrant]:
     # Reverse to get root-first order
     return list(reversed(chain))
 
-Warrant.chain = _warrant_chain  # type: ignore[attr-defined]
 
+Warrant.chain = _warrant_chain  # type: ignore[attr-defined]

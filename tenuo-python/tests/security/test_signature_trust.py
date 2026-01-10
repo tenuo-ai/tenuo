@@ -23,12 +23,14 @@ from tenuo.exceptions import ExpiredError, SignatureInvalid
 @dataclass
 class NodeState:
     """Simulated state object passed between nodes."""
+
     messages: list
     warrant: Optional[str] = None
 
 
 class MockNode:
     """A simulated LangGraph node."""
+
     def __init__(self, name: str, behavior: Callable[[NodeState], NodeState]):
         self.name = name
         self.behavior = behavior
@@ -53,17 +55,13 @@ class TestSignatureTrust:
 
         # Setup: Valid initial state with a weak warrant
         weak_warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("read_public", {}),
-            ttl_seconds=60
+            keypair=keypair, capabilities=Constraints.for_tool("read_public", {}), ttl_seconds=60
         )
         state = NodeState(messages=[], warrant=weak_warrant.to_base64())
 
         # Attack: Malicious node swaps in a stronger warrant (self-signed by attacker)
         fake_root = Warrant.mint(
-            keypair=attacker_keypair,
-            capabilities=Constraints.for_tool("admin_access", {}),
-            ttl_seconds=3600
+            keypair=attacker_keypair, capabilities=Constraints.for_tool("admin_access", {}), ttl_seconds=3600
         )
 
         def malicious_behavior(s: NodeState):
@@ -104,17 +102,13 @@ class TestSignatureTrust:
 
         # Attacker has an expired admin warrant
         old_admin_warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("admin_access", {}),
-            ttl_seconds=1
+            keypair=keypair, capabilities=Constraints.for_tool("admin_access", {}), ttl_seconds=1
         )
         time.sleep(1.1)  # Wait for expiry
 
         # Current state has a weak warrant
         current_warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("read_only", {}),
-            ttl_seconds=60
+            keypair=keypair, capabilities=Constraints.for_tool("read_only", {}), ttl_seconds=60
         )
         state = NodeState(messages=[], warrant=current_warrant.to_base64())
 
@@ -150,9 +144,7 @@ class TestSignatureTrust:
 
         # Attacker creates a valid-looking chain with their own key
         attacker_root = Warrant.mint(
-            keypair=attacker_keypair,
-            capabilities=Constraints.for_tool("admin_access", {}),
-            ttl_seconds=3600
+            keypair=attacker_keypair, capabilities=Constraints.for_tool("admin_access", {}), ttl_seconds=3600
         )
 
         builder = attacker_root.grant_builder()
@@ -180,9 +172,7 @@ class TestSignatureTrust:
         print("\n--- Attack 33: Self-Signed Root Trust ---")
 
         attacker_warrant = Warrant.mint(
-            keypair=attacker_keypair,
-            capabilities=Constraints.for_tool("admin", {}),
-            ttl_seconds=3600
+            keypair=attacker_keypair, capabilities=Constraints.for_tool("admin", {}), ttl_seconds=3600
         )
 
         print("  [Attack 33A] Self-verification (signature valid)...")
@@ -191,6 +181,7 @@ class TestSignatureTrust:
 
         print("  [Attack 33B] Verifying against Authorizer with trusted roots...")
         from tenuo import Authorizer
+
         auth = Authorizer(trusted_roots=[keypair.public_key])
 
         try:
@@ -213,7 +204,7 @@ class TestSignatureTrust:
             keypair=keypair,
             capabilities=Constraints.for_tool("admin", {}),
             ttl_seconds=3600,
-            session_id="admin_session_123"
+            session_id="admin_session_123",
         )
 
         # Low-privilege warrant with SAME session_id
@@ -221,7 +212,7 @@ class TestSignatureTrust:
             keypair=keypair,
             capabilities=Constraints.for_tool("read", {}),
             ttl_seconds=3600,
-            session_id="admin_session_123"
+            session_id="admin_session_123",
         )
 
         print("  [Info] Created two warrants with same session_id")

@@ -12,7 +12,14 @@ from tenuo import (
     Pattern,
     Capability,
 )
-from tenuo.schemas import TOOL_SCHEMAS, ToolSchema, check_constraints, get_schema, recommended_constraints, register_schema
+from tenuo.schemas import (
+    TOOL_SCHEMAS,
+    ToolSchema,
+    check_constraints,
+    get_schema,
+    recommended_constraints,
+    register_schema,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -141,11 +148,14 @@ class TestToolSchemas:
 
     def test_register_schema(self):
         """register_schema() adds a custom schema."""
-        register_schema("my_custom_tool", ToolSchema(
-            recommended_constraints=["resource_id", "action"],
-            require_at_least_one=True,
-            risk_level="high",
-        ))
+        register_schema(
+            "my_custom_tool",
+            ToolSchema(
+                recommended_constraints=["resource_id", "action"],
+                require_at_least_one=True,
+                risk_level="high",
+            ),
+        )
 
         schema = get_schema("my_custom_tool")
         assert schema is not None
@@ -232,4 +242,3 @@ class TestGuardDecorator:
         with mint_sync(Capability("my_tool")):
             result = my_tool(5)
             assert result == 10
-

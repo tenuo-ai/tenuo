@@ -665,7 +665,7 @@ class TestShlexAdversarialEdgeCases:
         """Deeply nested quoting that shlex can handle."""
         constraint = Shlex(allow=["echo"])
         # Valid: single quotes inside double quotes
-        assert constraint.matches('echo "a\'b\'c"')
+        assert constraint.matches("echo \"a'b'c\"")
         # Valid: double quotes inside single quotes
         assert constraint.matches("echo 'a\"b\"c'")
 

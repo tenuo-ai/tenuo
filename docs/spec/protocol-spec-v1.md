@@ -2,7 +2,7 @@
 
 **Version:** 1.0  
 **Status:** Normative  
-**Date:** 2026-01-09  
+**Date:** 2026-01-10  
 **Authors:** Niki Aimable Niyikiza  
 
 **Related Documents:**
@@ -823,4 +823,4 @@ Each test vector includes:
 
 ## Changelog
 
-- **1.0 (2026-01-09):** Initial specification
+- **1.0 (2026-01-10):** Initial specification

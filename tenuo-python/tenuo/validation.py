@@ -10,12 +10,7 @@ class ValidationResult:
     including reasons and suggestions for fixing issues.
     """
 
-    def __init__(
-        self,
-        success: bool,
-        reason: Optional[str] = None,
-        suggestions: Optional[List[str]] = None
-    ):
+    def __init__(self, success: bool, reason: Optional[str] = None, suggestions: Optional[List[str]] = None):
         self.success = success
         self.reason = reason or ""
         self.suggestions = suggestions or []
@@ -30,15 +25,11 @@ class ValidationResult:
         return f"ValidationResult(success=False, reason='{self.reason}')"
 
     @classmethod
-    def ok(cls) -> 'ValidationResult':
+    def ok(cls) -> "ValidationResult":
         """Create a successful validation result."""
         return cls(success=True)
 
     @classmethod
-    def fail(
-        cls,
-        reason: str,
-        suggestions: Optional[List[str]] = None
-    ) -> 'ValidationResult':
+    def fail(cls, reason: str, suggestions: Optional[List[str]] = None) -> "ValidationResult":
         """Create a failed validation result with reason and suggestions."""
         return cls(success=False, reason=reason, suggestions=suggestions)

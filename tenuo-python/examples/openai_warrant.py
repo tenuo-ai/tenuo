@@ -33,6 +33,7 @@ from tenuo.openai import (
 # Try to import OpenAI
 try:
     import openai
+
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
@@ -42,6 +43,7 @@ except ImportError:
 # ============================================================================
 # Mock Client (for demo without API key)
 # ============================================================================
+
 
 class MockOpenAIClient:
     """Mock OpenAI client for demonstration purposes."""
@@ -90,19 +92,23 @@ class MockOpenAIClient:
                 else:
                     tool_name, args = "read_file", '{"path": "/data/report.txt"}'
 
-                return Response(choices=[Choice(message=Message(
-                    role="assistant",
-                    content=None,
-                    tool_calls=[ToolCall(
-                        id="call_1",
-                        function=Function(name=tool_name, arguments=args)
-                    )]
-                ))])
+                return Response(
+                    choices=[
+                        Choice(
+                            message=Message(
+                                role="assistant",
+                                content=None,
+                                tool_calls=[ToolCall(id="call_1", function=Function(name=tool_name, arguments=args))],
+                            )
+                        )
+                    ]
+                )
 
 
 # ============================================================================
 # Demo Functions
 # ============================================================================
+
 
 def _key_id(public_key) -> str:
     """Get short identifier for a public key."""
@@ -126,12 +132,14 @@ def demo_setup():
     print("  Agent Key:        ", _key_id(agent_key.public_key) + "...")
 
     # Control plane mints warrant for agent
-    warrant = (Warrant.mint_builder()
+    warrant = (
+        Warrant.mint_builder()
         .capability("read_file", {"path": Pattern("/data/*")})
         .capability("search", {"max_results": Range(1, 100)})
         .holder(agent_key.public_key)  # Agent is the authorized holder
         .ttl(3600)
-        .mint(control_plane_key))      # Control plane signs
+        .mint(control_plane_key)
+    )  # Control plane signs
 
     print("  Warrant ID:       ", warrant.id[:16] + "...")
     print("  Holder bound to:   Agent's public key")
@@ -413,4 +421,3 @@ For simpler single-process scenarios, use Tier 1 guardrails:
 
 if __name__ == "__main__":
     main()
-

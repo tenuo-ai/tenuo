@@ -45,6 +45,7 @@ import os
 # Warrant Loading from Kubernetes Environment
 # ============================================================================
 
+
 def load_warrant_from_env() -> Optional[Warrant]:
     """
     Load warrant from Kubernetes environment variable.
@@ -109,7 +110,7 @@ def load_warrant_from_file(path: str = "/etc/tenuo/warrant.b64") -> Optional[War
         Warrant if successfully loaded, None if not found or invalid.
     """
     try:
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             warrant_b64 = f.read().strip()
         if not warrant_b64:
             print(f"Warning: Warrant file {path} is empty")
@@ -158,6 +159,7 @@ def load_warrant_from_request_header(headers: Dict[str, str]) -> Optional[Warran
 # Control Plane: Warrant Issuance (Simulated)
 # ============================================================================
 
+
 class ControlPlane:
     """
     [SIMULATION] Simulates a control plane service that issues warrants.
@@ -172,12 +174,7 @@ class ControlPlane:
     def __init__(self, keypair: SigningKey):
         self.keypair = keypair
 
-    def issue_agent_warrant(
-        self,
-        agent_id: str,
-        constraints: Dict[str, Any],
-        ttl_seconds: int = 3600
-    ) -> Warrant:
+    def issue_agent_warrant(self, agent_id: str, constraints: Dict[str, Any], ttl_seconds: int = 3600) -> Warrant:
         """
         [SIMULATION] Issue a warrant for a specific agent.
 
@@ -194,16 +191,18 @@ class ControlPlane:
         Returns:
             Warrant object
         """
-        return (Warrant.mint_builder()
+        return (
+            Warrant.mint_builder()
             .capability("agent_tools", **constraints)  # HARDCODED: General tool name.
             .holder(self.keypair.public_key)  # Bind to self for demo
             .ttl(ttl_seconds)  # HARDCODED default: 3600. In production, use env var or config.
-            .mint(self.keypair))
+            .mint(self.keypair)
+        )
 
     def issue_warrant_for_request(
         self,
         request_metadata: Dict[str, Any],
-        ttl_seconds: int = 300  # Short TTL for request-scoped warrants
+        ttl_seconds: int = 300,  # Short TTL for request-scoped warrants
     ) -> Warrant:
         """
         Issue a warrant for a specific request (e.g., from API gateway).
@@ -213,18 +212,23 @@ class ControlPlane:
         - Dynamic constraint injection based on user/tenant
         - Request-scoped capabilities
         """
-        return (Warrant.mint_builder()
-            .capability("agent_tools",
+        return (
+            Warrant.mint_builder()
+            .capability(
+                "agent_tools",
                 user_id=Exact(request_metadata.get("user_id", "anonymous")),
-                tenant=Pattern(request_metadata.get("tenant", "*")))
+                tenant=Pattern(request_metadata.get("tenant", "*")),
+            )
             .holder(self.keypair.public_key)  # Bind to self for demo
             .ttl(ttl_seconds)
-            .mint(self.keypair))
+            .mint(self.keypair)
+        )
 
 
 # ============================================================================
 # Protected Tool Functions
 # ============================================================================
+
 
 @guard(tool="read_file", extract_args=lambda file_path, **kwargs: {"file_path": file_path})
 def read_file(file_path: str):
@@ -233,13 +237,16 @@ def read_file(file_path: str):
         return f"Error: File {file_path} not found"
 
     with open(file_path, "r") as f:
-        return f.read()[:1000] # Limit size
+        return f.read()[:1000]  # Limit size
+
 
 # Alias for example code
 read_file_tool = read_file
 
 
-@guard(tool="write_file", extract_args=lambda file_path, content, **kwargs: {"file_path": file_path, "content": content})
+@guard(
+    tool="write_file", extract_args=lambda file_path, content, **kwargs: {"file_path": file_path, "content": content}
+)
 def write_file(file_path: str, content: str):
     """Write content to file - protected by warrant."""
     with open(file_path, "w") as f:
@@ -250,6 +257,7 @@ def write_file(file_path: str, content: str):
 # ============================================================================
 # Kubernetes-Aware LangChain Integration
 # ============================================================================
+
 
 class KubernetesWarrantManager:
     """
@@ -263,21 +271,14 @@ class KubernetesWarrantManager:
 
     def __init__(self):
         # Try to load warrant at startup (from env or file)
-        self.pod_warrant = (
-            load_warrant_from_env() or
-            load_warrant_from_file() or
-            None
-        )
+        self.pod_warrant = load_warrant_from_env() or load_warrant_from_file() or None
 
         if self.pod_warrant:
             print(f"✓ Loaded pod-level warrant (tools: {self.pod_warrant.tools})")
         else:
             print("⚠ No pod-level warrant found - will use request-scoped warrants")
 
-    def get_warrant_for_request(
-        self,
-        headers: Optional[Dict[str, str]] = None
-    ) -> Optional[Warrant]:
+    def get_warrant_for_request(self, headers: Optional[Dict[str, str]] = None) -> Optional[Warrant]:
         """
         Get warrant for current request.
 
@@ -300,6 +301,7 @@ class KubernetesWarrantManager:
 # ============================================================================
 # FastAPI Integration Example (Common in K8s)
 # ============================================================================
+
 
 def create_fastapi_middleware_example():
     """
@@ -356,12 +358,13 @@ async def run_agent(prompt: str, request: Request):
 # Kubernetes Deployment Examples
 # ============================================================================
 
+
 def generate_kubernetes_manifests():
     """
     Generate example Kubernetes manifests for Tenuo + LangChain deployment.
     """
 
-    deployment_yaml = '''
+    deployment_yaml = """
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -457,7 +460,7 @@ spec:
             name: langchain-agent
             port:
               number: 8000
-'''
+"""
 
     return deployment_yaml
 
@@ -465,6 +468,7 @@ spec:
 # ============================================================================
 # Main Example
 # ============================================================================
+
 
 def main():
     print("=== Tenuo + LangChain Kubernetes Integration ===\n")
@@ -484,11 +488,13 @@ def main():
         # In production: Constraints come from policy engine, agent registration, or configuration
         # HARDCODED: tool="read_file", Pattern("/tmp/*"), ttl_seconds=3600
         # In production: Use env vars or config for these values
-        agent_warrant = (Warrant.mint_builder()
+        agent_warrant = (
+            Warrant.mint_builder()
             .capability("read_file", file_path=Pattern("/tmp/*"))  # HARDCODED: Only /tmp/ files for demo safety
             .holder(control_keypair.public_key)  # Bind to self for demo
             .ttl(3600)  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            .mint(control_keypair))
+            .mint(control_keypair)
+        )
         print(f"   ✓ Warrant issued (ID: {agent_warrant.id[:8]}...)")
         print("   ✓ Constraints: file_path=/tmp/*\n")
     except Exception as e:
@@ -518,7 +524,7 @@ def main():
     # In production: Use /etc/tenuo/warrant.b64 or path from env var
     temp_warrant_file = "/tmp/warrant.b64"
     try:
-        with open(temp_warrant_file, 'w') as f:
+        with open(temp_warrant_file, "w") as f:
             f.write(agent_warrant.to_base64())
 
         # Load from the temp file (simulating mounted secret)
@@ -552,7 +558,7 @@ def main():
         # In production: Headers come from HTTP request (FastAPI, Flask, etc.)
         request_headers = {
             "X-Tenuo-Warrant": agent_warrant.to_base64(),  # HARDCODED: Demo warrant
-            "User-Agent": "langchain-client/1.0"  # HARDCODED: Mock user agent
+            "User-Agent": "langchain-client/1.0",  # HARDCODED: Mock user agent
         }
         request_warrant = warrant_manager.get_warrant_for_request(request_headers)
         if request_warrant:
@@ -620,4 +626,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

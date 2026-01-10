@@ -29,6 +29,7 @@ from tenuo_core import Pattern, Exact, OneOf, Range, Regex, Subpath, UrlSafe  # 
 # File System Templates
 # =============================================================================
 
+
 class FileReader:
     """Read-only file access templates.
 
@@ -118,6 +119,7 @@ class FileWriter:
 # Database Templates
 # =============================================================================
 
+
 class DatabaseReader:
     """Read-only database access templates."""
 
@@ -198,6 +200,7 @@ class DatabaseWriter:
 # =============================================================================
 # HTTP/API Templates
 # =============================================================================
+
 
 class WebSearcher:
     """Web search and API access templates.
@@ -314,6 +317,7 @@ class ApiClient:
 # Code Execution Templates
 # =============================================================================
 
+
 class CodeRunner:
     """Code execution templates."""
 
@@ -324,8 +328,15 @@ class CodeRunner:
         Blocks: os, subprocess, socket, ctypes, etc.
         """
         blocked = [
-            "os", "subprocess", "socket", "ctypes", "multiprocessing",
-            "sys", "importlib", "builtins", "__builtins__",
+            "os",
+            "subprocess",
+            "socket",
+            "ctypes",
+            "multiprocessing",
+            "sys",
+            "importlib",
+            "builtins",
+            "__builtins__",
         ]
         return Capability(
             "execute_code",
@@ -353,6 +364,7 @@ class CodeRunner:
 # Shell/System Templates
 # =============================================================================
 
+
 class ShellExecutor:
     """Shell command execution templates."""
 
@@ -374,8 +386,20 @@ class ShellExecutor:
         Includes: ls, cat, head, tail, grep, find, wc, du, df, pwd, echo
         """
         safe_commands = [
-            "ls", "cat", "head", "tail", "grep", "find", "wc",
-            "du", "df", "pwd", "echo", "date", "hostname", "uname",
+            "ls",
+            "cat",
+            "head",
+            "tail",
+            "grep",
+            "find",
+            "wc",
+            "du",
+            "df",
+            "pwd",
+            "echo",
+            "date",
+            "hostname",
+            "uname",
         ]
         return Capability("shell", command=OneOf(safe_commands))
 
@@ -383,6 +407,7 @@ class ShellExecutor:
 # =============================================================================
 # Email/Messaging Templates
 # =============================================================================
+
 
 class EmailSender:
     """Email sending templates."""
@@ -416,6 +441,7 @@ class EmailSender:
 # =============================================================================
 # Composite Templates (Common Agent Patterns)
 # =============================================================================
+
 
 @dataclass
 class AgentTemplate:
@@ -516,13 +542,9 @@ class CommonAgents:
                 read_only=False,  # Allow edits
             )
         """
-        capabilities = [
-            FileReader.in_directory(d) for d in allowed_dirs
-        ]
+        capabilities = [FileReader.in_directory(d) for d in allowed_dirs]
         if not read_only:
-            capabilities.extend([
-                FileWriter.in_directory(d) for d in allowed_dirs
-            ])
+            capabilities.extend([FileWriter.in_directory(d) for d in allowed_dirs])
 
         return AgentTemplate(
             name="code_assistant",
@@ -614,4 +636,3 @@ __all__ = [
     "AgentTemplate",
     "CommonAgents",
 ]
-

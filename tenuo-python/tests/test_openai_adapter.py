@@ -54,13 +54,16 @@ from tenuo.openai import (
 # Helper for SDK compatibility - check for either our GuardrailResult or SDK's GuardrailFunctionOutput
 try:
     from agents.guardrail import GuardrailFunctionOutput
+
     _SDK_OUTPUT_TYPE = GuardrailFunctionOutput
 except ImportError:
     _SDK_OUTPUT_TYPE = None
 
+
 def is_guardrail_result(obj) -> bool:
     """Check if obj is a guardrail result (ours or SDK's)."""
     from tenuo.openai import GuardrailResult
+
     if isinstance(obj, GuardrailResult):
         return True
     if _SDK_OUTPUT_TYPE is not None and isinstance(obj, _SDK_OUTPUT_TYPE):
@@ -71,6 +74,7 @@ def is_guardrail_result(obj) -> bool:
 @dataclass
 class MockFunction:
     """Mock OpenAI function object."""
+
     name: str
     arguments: str
 
@@ -78,6 +82,7 @@ class MockFunction:
 @dataclass
 class MockToolCall:
     """Mock OpenAI tool call."""
+
     id: str
     type: str
     function: MockFunction
@@ -86,6 +91,7 @@ class MockToolCall:
 @dataclass
 class MockMessage:
     """Mock OpenAI message."""
+
     role: str
     content: Optional[str]
     tool_calls: Optional[List[MockToolCall]]
@@ -94,6 +100,7 @@ class MockMessage:
 @dataclass
 class MockChoice:
     """Mock OpenAI choice."""
+
     index: int
     message: MockMessage
     finish_reason: str
@@ -102,6 +109,7 @@ class MockChoice:
 @dataclass
 class MockResponse:
     """Mock OpenAI response."""
+
     id: str
     choices: List[MockChoice]
     model: str
@@ -114,11 +122,7 @@ def make_response(tool_calls: List[tuple]) -> MockResponse:
         tool_calls: List of (name, arguments_dict) tuples
     """
     tc_objects = [
-        MockToolCall(
-            id=f"call_{i}",
-            type="function",
-            function=MockFunction(name=name, arguments=json.dumps(args))
-        )
+        MockToolCall(id=f"call_{i}", type="function", function=MockFunction(name=name, arguments=json.dumps(args)))
         for i, (name, args) in enumerate(tool_calls)
     ]
 
@@ -127,15 +131,11 @@ def make_response(tool_calls: List[tuple]) -> MockResponse:
         choices=[
             MockChoice(
                 index=0,
-                message=MockMessage(
-                    role="assistant",
-                    content=None,
-                    tool_calls=tc_objects if tc_objects else None
-                ),
-                finish_reason="tool_calls"
+                message=MockMessage(role="assistant", content=None, tool_calls=tc_objects if tc_objects else None),
+                finish_reason="tool_calls",
             )
         ],
-        model="gpt-4o"
+        model="gpt-4o",
     )
 
 
@@ -180,18 +180,16 @@ class TestAllowlist:
 
     def test_multiple_tools_partial_allowed(self):
         """Only allowed tools should pass when using skip mode."""
-        response = make_response([
-            ("search", {"query": "python"}),
-            ("send_email", {"to": "user@example.com"}),
-            ("read_file", {"path": "/data/file.txt"}),
-        ])
+        response = make_response(
+            [
+                ("search", {"query": "python"}),
+                ("send_email", {"to": "user@example.com"}),
+                ("read_file", {"path": "/data/file.txt"}),
+            ]
+        )
         mock_client = make_mock_client(response)
 
-        client = guard(
-            mock_client,
-            allow_tools=["search", "read_file"],
-            on_denial="skip"
-        )
+        client = guard(mock_client, allow_tools=["search", "read_file"], on_denial="skip")
 
         result = client.chat.completions.create(model="gpt-4o", messages=[])
 
@@ -236,10 +234,7 @@ class TestDenylist:
 
         # Tool in both lists - denylist wins
         client = guard(
-            mock_client,
-            allow_tools=["dangerous_tool", "safe_tool"],
-            deny_tools=["dangerous_tool"],
-            on_denial="raise"
+            mock_client, allow_tools=["dangerous_tool", "safe_tool"], deny_tools=["dangerous_tool"], on_denial="raise"
         )
 
         with pytest.raises(ToolDenied):
@@ -259,11 +254,7 @@ class TestConstraints:
         response = make_response([("read_file", {"path": "/data/report.pdf"})])
         mock_client = make_mock_client(response)
 
-        client = guard(
-            mock_client,
-            allow_tools=["read_file"],
-            constraints={"read_file": {"path": Pattern("/data/*")}}
-        )
+        client = guard(mock_client, allow_tools=["read_file"], constraints={"read_file": {"path": Pattern("/data/*")}})
 
         result = client.chat.completions.create(model="gpt-4o", messages=[])
         assert len(result.choices[0].message.tool_calls) == 1
@@ -277,7 +268,7 @@ class TestConstraints:
             mock_client,
             allow_tools=["read_file"],
             constraints={"read_file": {"path": Pattern("/data/*")}},
-            on_denial="raise"
+            on_denial="raise",
         )
 
         with pytest.raises(ConstraintViolation) as exc:
@@ -292,11 +283,7 @@ class TestConstraints:
         response = make_response([("search", {"query": "python", "max_results": 10})])
         mock_client = make_mock_client(response)
 
-        client = guard(
-            mock_client,
-            allow_tools=["search"],
-            constraints={"search": {"max_results": Range(1, 20)}}
-        )
+        client = guard(mock_client, allow_tools=["search"], constraints={"search": {"max_results": Range(1, 20)}})
 
         result = client.chat.completions.create(model="gpt-4o", messages=[])
         assert len(result.choices[0].message.tool_calls) == 1
@@ -310,7 +297,7 @@ class TestConstraints:
             mock_client,
             allow_tools=["search"],
             constraints={"search": {"max_results": Range(1, 20)}},
-            on_denial="raise"
+            on_denial="raise",
         )
 
         with pytest.raises(ConstraintViolation) as exc:
@@ -324,9 +311,7 @@ class TestConstraints:
         mock_client = make_mock_client(response)
 
         client = guard(
-            mock_client,
-            allow_tools=["calculate"],
-            constraints={"calculate": {"operation": OneOf(["add", "subtract"])}}
+            mock_client, allow_tools=["calculate"], constraints={"calculate": {"operation": OneOf(["add", "subtract"])}}
         )
 
         result = client.chat.completions.create(model="gpt-4o", messages=[])
@@ -341,7 +326,7 @@ class TestConstraints:
             mock_client,
             allow_tools=["calculate"],
             constraints={"calculate": {"operation": OneOf(["add", "subtract"])}},
-            on_denial="raise"
+            on_denial="raise",
         )
 
         with pytest.raises(ConstraintViolation):
@@ -360,7 +345,7 @@ class TestConstraints:
                     "max_results": Range(1, 10),
                     # query not constrained
                 }
-            }
+            },
         )
 
         result = client.chat.completions.create(model="gpt-4o", messages=[])
@@ -374,7 +359,7 @@ class TestConstraints:
         client = guard(
             mock_client,
             allow_tools=["search"],
-            constraints={"search": {"query": Wildcard()}}  # Only query constrained (to anything)
+            constraints={"search": {"query": Wildcard()}},  # Only query constrained (to anything)
         )
 
         result = client.chat.completions.create(model="gpt-4o", messages=[])
@@ -401,10 +386,12 @@ class TestDenialModes:
 
     def test_skip_mode_removes_tool_call(self):
         """Skip mode should silently remove blocked tool calls."""
-        response = make_response([
-            ("allowed", {}),
-            ("blocked", {}),
-        ])
+        response = make_response(
+            [
+                ("allowed", {}),
+                ("blocked", {}),
+            ]
+        )
         mock_client = make_mock_client(response)
 
         client = guard(mock_client, allow_tools=["allowed"], on_denial="skip")
@@ -451,17 +438,14 @@ class TestMalformedInputs:
                             MockToolCall(
                                 id="call_0",
                                 type="function",
-                                function=MockFunction(
-                                    name="search",
-                                    arguments="{invalid json"
-                                )
+                                function=MockFunction(name="search", arguments="{invalid json"),
                             )
-                        ]
+                        ],
                     ),
-                    finish_reason="tool_calls"
+                    finish_reason="tool_calls",
                 )
             ],
-            model="gpt-4o"
+            model="gpt-4o",
         )
         mock_client = make_mock_client(mock_response)
 
@@ -484,19 +468,14 @@ class TestMalformedInputs:
                         content=None,
                         tool_calls=[
                             MockToolCall(
-                                id="call_0",
-                                type="function",
-                                function=MockFunction(
-                                    name="simple_tool",
-                                    arguments=""
-                                )
+                                id="call_0", type="function", function=MockFunction(name="simple_tool", arguments="")
                             )
-                        ]
+                        ],
                     ),
-                    finish_reason="tool_calls"
+                    finish_reason="tool_calls",
                 )
             ],
-            model="gpt-4o"
+            model="gpt-4o",
         )
         mock_client = make_mock_client(mock_response)
 
@@ -521,15 +500,11 @@ class TestPassthrough:
             choices=[
                 MockChoice(
                     index=0,
-                    message=MockMessage(
-                        role="assistant",
-                        content="Hello, how can I help?",
-                        tool_calls=None
-                    ),
-                    finish_reason="stop"
+                    message=MockMessage(role="assistant", content="Hello, how can I help?", tool_calls=None),
+                    finish_reason="stop",
                 )
             ],
-            model="gpt-4o"
+            model="gpt-4o",
         )
         mock_client = make_mock_client(mock_response)
 
@@ -726,10 +701,7 @@ class TestCompositeConstraints:
     def test_nested_composite(self):
         """Nested composite constraints should work."""
         # Allow /data/* OR (/tmp/* AND NOT /tmp/secret/*)
-        constraint = AnyOf([
-            Pattern("/data/*"),
-            All([Pattern("/tmp/*"), Not(Pattern("/tmp/secret/*"))])
-        ])
+        constraint = AnyOf([Pattern("/data/*"), All([Pattern("/tmp/*"), Not(Pattern("/tmp/secret/*"))])])
         assert check_constraint(constraint, "/data/anything") is True
         assert check_constraint(constraint, "/tmp/file.txt") is True
         assert check_constraint(constraint, "/tmp/secret/key") is False
@@ -841,16 +813,18 @@ class TestRealWorldScenarios:
         Note: For true path traversal protection, paths should be normalized
         before matching. This test verifies basic pattern matching works.
         """
-        response = make_response([
-            ("read_file", {"path": "/etc/passwd"})  # Clearly not in /data/*
-        ])
+        response = make_response(
+            [
+                ("read_file", {"path": "/etc/passwd"})  # Clearly not in /data/*
+            ]
+        )
         mock_client = make_mock_client(response)
 
         client = guard(
             mock_client,
             allow_tools=["read_file"],
             constraints={"read_file": {"path": Pattern("/data/*")}},
-            on_denial="raise"
+            on_denial="raise",
         )
 
         # Path outside /data should be caught
@@ -859,16 +833,14 @@ class TestRealWorldScenarios:
 
     def test_rate_limit_protection(self):
         """Protect against excessive resource requests."""
-        response = make_response([
-            ("search", {"query": "test", "max_results": 10000})
-        ])
+        response = make_response([("search", {"query": "test", "max_results": 10000})])
         mock_client = make_mock_client(response)
 
         client = guard(
             mock_client,
             allow_tools=["search"],
             constraints={"search": {"max_results": Range(1, 100)}},
-            on_denial="raise"
+            on_denial="raise",
         )
 
         with pytest.raises(ConstraintViolation):
@@ -876,16 +848,10 @@ class TestRealWorldScenarios:
 
     def test_hallucinated_tool_blocked(self):
         """Block tools the LLM hallucinates."""
-        response = make_response([
-            ("send_money", {"amount": 1000000, "to": "attacker"})
-        ])
+        response = make_response([("send_money", {"amount": 1000000, "to": "attacker"})])
         mock_client = make_mock_client(response)
 
-        client = guard(
-            mock_client,
-            allow_tools=["search", "read_file"],
-            on_denial="raise"
-        )
+        client = guard(mock_client, allow_tools=["search", "read_file"], on_denial="raise")
 
         with pytest.raises(ToolDenied) as exc:
             client.chat.completions.create(model="gpt-4o", messages=[])
@@ -901,6 +867,7 @@ class TestRealWorldScenarios:
 @dataclass
 class MockStreamDelta:
     """Mock delta for streaming."""
+
     tool_calls: Optional[List[Any]] = None
     content: Optional[str] = None
 
@@ -908,6 +875,7 @@ class MockStreamDelta:
 @dataclass
 class MockToolCallDelta:
     """Mock tool call delta."""
+
     index: int
     id: Optional[str] = None
     function: Optional[MockFunction] = None
@@ -916,6 +884,7 @@ class MockToolCallDelta:
 @dataclass
 class MockStreamChoice:
     """Mock streaming choice."""
+
     index: int
     delta: MockStreamDelta
     finish_reason: Optional[str] = None
@@ -924,6 +893,7 @@ class MockStreamChoice:
 @dataclass
 class MockStreamChunk:
     """Mock streaming chunk."""
+
     id: str
     choices: List[MockStreamChoice]
 
@@ -942,40 +912,38 @@ class TestStreamingTOCTOUProtection:
             # First chunk: start of tool call
             MockStreamChunk(
                 id="chunk_0",
-                choices=[MockStreamChoice(
-                    index=0,
-                    delta=MockStreamDelta(
-                        tool_calls=[MockToolCallDelta(
-                            index=0,
-                            id="call_0",
-                            function=MockFunction(name="delete_system", arguments='{"path": "/')
-                        )]
-                    ),
-                    finish_reason=None
-                )]
+                choices=[
+                    MockStreamChoice(
+                        index=0,
+                        delta=MockStreamDelta(
+                            tool_calls=[
+                                MockToolCallDelta(
+                                    index=0,
+                                    id="call_0",
+                                    function=MockFunction(name="delete_system", arguments='{"path": "/'),
+                                )
+                            ]
+                        ),
+                        finish_reason=None,
+                    )
+                ],
             ),
             # Second chunk: rest of arguments
             MockStreamChunk(
                 id="chunk_1",
-                choices=[MockStreamChoice(
-                    index=0,
-                    delta=MockStreamDelta(
-                        tool_calls=[MockToolCallDelta(
-                            index=0,
-                            function=MockFunction(name="", arguments='"}')
-                        )]
-                    ),
-                    finish_reason=None
-                )]
+                choices=[
+                    MockStreamChoice(
+                        index=0,
+                        delta=MockStreamDelta(
+                            tool_calls=[MockToolCallDelta(index=0, function=MockFunction(name="", arguments='"}'))]
+                        ),
+                        finish_reason=None,
+                    )
+                ],
             ),
             # Final chunk
             MockStreamChunk(
-                id="chunk_2",
-                choices=[MockStreamChoice(
-                    index=0,
-                    delta=MockStreamDelta(),
-                    finish_reason="tool_calls"
-                )]
+                id="chunk_2", choices=[MockStreamChoice(index=0, delta=MockStreamDelta(), finish_reason="tool_calls")]
             ),
         ]
 
@@ -985,7 +953,7 @@ class TestStreamingTOCTOUProtection:
         client = guard(
             mock_client,
             allow_tools=["safe_tool"],  # delete_system NOT allowed
-            on_denial="raise"
+            on_denial="raise",
         )
 
         # The stream should raise when we try to consume it
@@ -1001,35 +969,30 @@ class TestStreamingTOCTOUProtection:
             # Text content (should pass through)
             MockStreamChunk(
                 id="chunk_0",
-                choices=[MockStreamChoice(
-                    index=0,
-                    delta=MockStreamDelta(content="Let me help..."),
-                    finish_reason=None
-                )]
+                choices=[
+                    MockStreamChoice(index=0, delta=MockStreamDelta(content="Let me help..."), finish_reason=None)
+                ],
             ),
             # Unauthorized tool call
             MockStreamChunk(
                 id="chunk_1",
-                choices=[MockStreamChoice(
-                    index=0,
-                    delta=MockStreamDelta(
-                        tool_calls=[MockToolCallDelta(
-                            index=0,
-                            id="call_0",
-                            function=MockFunction(name="unauthorized", arguments='{}')
-                        )]
-                    ),
-                    finish_reason=None
-                )]
+                choices=[
+                    MockStreamChoice(
+                        index=0,
+                        delta=MockStreamDelta(
+                            tool_calls=[
+                                MockToolCallDelta(
+                                    index=0, id="call_0", function=MockFunction(name="unauthorized", arguments="{}")
+                                )
+                            ]
+                        ),
+                        finish_reason=None,
+                    )
+                ],
             ),
             # Final chunk
             MockStreamChunk(
-                id="chunk_2",
-                choices=[MockStreamChoice(
-                    index=0,
-                    delta=MockStreamDelta(),
-                    finish_reason="tool_calls"
-                )]
+                id="chunk_2", choices=[MockStreamChoice(index=0, delta=MockStreamDelta(), finish_reason="tool_calls")]
             ),
         ]
 
@@ -1039,26 +1002,24 @@ class TestStreamingTOCTOUProtection:
         client = guard(
             mock_client,
             allow_tools=["safe_tool"],
-            on_denial="skip"  # Don't raise, just skip
+            on_denial="skip",  # Don't raise, just skip
         )
 
         # Consume the stream
-        result_chunks = list(client.chat.completions.create(
-            model="gpt-4o", messages=[], stream=True
-        ))
+        result_chunks = list(client.chat.completions.create(model="gpt-4o", messages=[], stream=True))
 
         # First chunk (text only) should pass through
         assert len(result_chunks) >= 1
         # The tool call chunk should be filtered out
         for chunk in result_chunks:
-            if hasattr(chunk, 'choices') and chunk.choices:
+            if hasattr(chunk, "choices") and chunk.choices:
                 for choice in chunk.choices:
-                    if hasattr(choice, 'delta') and choice.delta:
+                    if hasattr(choice, "delta") and choice.delta:
                         delta = choice.delta
-                        if hasattr(delta, 'tool_calls') and delta.tool_calls:
+                        if hasattr(delta, "tool_calls") and delta.tool_calls:
                             # If there are tool calls, they shouldn't be the unauthorized one
                             for tc in delta.tool_calls:
-                                if hasattr(tc, 'function') and tc.function:
+                                if hasattr(tc, "function") and tc.function:
                                     assert tc.function.name != "unauthorized"
 
     def test_verified_chunks_are_emitted(self):
@@ -1066,41 +1027,34 @@ class TestStreamingTOCTOUProtection:
         chunks = [
             MockStreamChunk(
                 id="chunk_0",
-                choices=[MockStreamChoice(
-                    index=0,
-                    delta=MockStreamDelta(
-                        tool_calls=[MockToolCallDelta(
-                            index=0,
-                            id="call_0",
-                            function=MockFunction(name="allowed_tool", arguments='{"x": 1}')
-                        )]
-                    ),
-                    finish_reason=None
-                )]
+                choices=[
+                    MockStreamChoice(
+                        index=0,
+                        delta=MockStreamDelta(
+                            tool_calls=[
+                                MockToolCallDelta(
+                                    index=0,
+                                    id="call_0",
+                                    function=MockFunction(name="allowed_tool", arguments='{"x": 1}'),
+                                )
+                            ]
+                        ),
+                        finish_reason=None,
+                    )
+                ],
             ),
             MockStreamChunk(
-                id="chunk_1",
-                choices=[MockStreamChoice(
-                    index=0,
-                    delta=MockStreamDelta(),
-                    finish_reason="tool_calls"
-                )]
+                id="chunk_1", choices=[MockStreamChoice(index=0, delta=MockStreamDelta(), finish_reason="tool_calls")]
             ),
         ]
 
         mock_client = Mock()
         mock_client.chat.completions.create.return_value = iter(chunks)
 
-        client = guard(
-            mock_client,
-            allow_tools=["allowed_tool"],
-            on_denial="raise"
-        )
+        client = guard(mock_client, allow_tools=["allowed_tool"], on_denial="raise")
 
         # Should NOT raise — tool is allowed
-        result_chunks = list(client.chat.completions.create(
-            model="gpt-4o", messages=[], stream=True
-        ))
+        result_chunks = list(client.chat.completions.create(model="gpt-4o", messages=[], stream=True))
 
         # Both chunks should be emitted (the tool call and the finish)
         assert len(result_chunks) == 2
@@ -1111,28 +1065,24 @@ class TestStreamingTOCTOUProtection:
             # Tool call with path that will fail constraint
             MockStreamChunk(
                 id="chunk_0",
-                choices=[MockStreamChoice(
-                    index=0,
-                    delta=MockStreamDelta(
-                        tool_calls=[MockToolCallDelta(
-                            index=0,
-                            id="call_0",
-                            function=MockFunction(
-                                name="read_file",
-                                arguments='{"path": "/etc/passwd"}'
-                            )
-                        )]
-                    ),
-                    finish_reason=None
-                )]
+                choices=[
+                    MockStreamChoice(
+                        index=0,
+                        delta=MockStreamDelta(
+                            tool_calls=[
+                                MockToolCallDelta(
+                                    index=0,
+                                    id="call_0",
+                                    function=MockFunction(name="read_file", arguments='{"path": "/etc/passwd"}'),
+                                )
+                            ]
+                        ),
+                        finish_reason=None,
+                    )
+                ],
             ),
             MockStreamChunk(
-                id="chunk_1",
-                choices=[MockStreamChoice(
-                    index=0,
-                    delta=MockStreamDelta(),
-                    finish_reason="tool_calls"
-                )]
+                id="chunk_1", choices=[MockStreamChoice(index=0, delta=MockStreamDelta(), finish_reason="tool_calls")]
             ),
         ]
 
@@ -1143,7 +1093,7 @@ class TestStreamingTOCTOUProtection:
             mock_client,
             allow_tools=["read_file"],
             constraints={"read_file": {"path": Pattern("/data/*")}},
-            on_denial="raise"
+            on_denial="raise",
         )
 
         with pytest.raises(ConstraintViolation):
@@ -1173,12 +1123,14 @@ class TestTier2Warrant:
     @pytest.fixture
     def warrant(self, keypair):
         """Create a test warrant (self-signed for simplicity)."""
-        return (Warrant.mint_builder()
+        return (
+            Warrant.mint_builder()
             .capability("read_file", {"path": Pattern("/data/*")})
             .capability("search", {"max_results": Range(1, 100)})
             .holder(keypair.public_key)
             .ttl(3600)
-            .mint(keypair))
+            .mint(keypair)
+        )
 
     def test_warrant_requires_signing_key(self, keypair, warrant):
         """Warrant without signing_key should raise MissingSigningKey."""
@@ -1299,11 +1251,13 @@ class TestTier2Warrant:
         agent_key = SigningKey.generate()
 
         # Control plane mints warrant for agent
-        warrant = (Warrant.mint_builder()
+        warrant = (
+            Warrant.mint_builder()
             .capability("read_file", {"path": Pattern("/data/*")})
             .holder(agent_key.public_key)  # Agent is holder
             .ttl(3600)
-            .mint(control_plane_key))  # Control plane signs
+            .mint(control_plane_key)
+        )  # Control plane signs
 
         response = make_response([("read_file", {"path": "/data/file.txt"})])
         mock_client = make_mock_client(response)
@@ -1317,11 +1271,13 @@ class TestTier2Warrant:
 
     def test_multiple_tool_calls_with_warrant(self, keypair, warrant):
         """Multiple tool calls in same response, some valid, some invalid."""
-        response = make_response([
-            ("read_file", {"path": "/data/file.txt"}),  # Valid
-            ("search", {"max_results": 50}),  # Valid
-            ("delete_file", {"path": "/data/file.txt"}),  # Invalid - not in warrant
-        ])
+        response = make_response(
+            [
+                ("read_file", {"path": "/data/file.txt"}),  # Valid
+                ("search", {"max_results": 50}),  # Valid
+                ("delete_file", {"path": "/data/file.txt"}),  # Invalid - not in warrant
+            ]
+        )
         mock_client = make_mock_client(response)
 
         client = guard(mock_client, warrant=warrant, signing_key=keypair)
@@ -1334,9 +1290,11 @@ class TestTier2Warrant:
 
     def test_warrant_skip_mode(self, keypair, warrant):
         """Skip mode should filter out unauthorized calls silently."""
-        response = make_response([
-            ("read_file", {"path": "/etc/passwd"}),  # Constraint violation
-        ])
+        response = make_response(
+            [
+                ("read_file", {"path": "/etc/passwd"}),  # Constraint violation
+            ]
+        )
         mock_client = make_mock_client(response)
 
         client = guard(
@@ -1421,25 +1379,35 @@ class TestTier2Warrant:
             arguments: str = ""
 
         chunks = [
-            MockChunk(id="c0", choices=[MockChoice(
-                index=0,
-                delta=MockDelta(tool_calls=[MockToolCallDelta(
-                    index=0, id="call_1",
-                    function=MockFunctionDelta(name="read_file", arguments='{"path": "/data/')
-                )])
-            )]),
-            MockChunk(id="c1", choices=[MockChoice(
-                index=0,
-                delta=MockDelta(tool_calls=[MockToolCallDelta(
-                    index=0,
-                    function=MockFunctionDelta(arguments='file.txt"}')
-                )])
-            )]),
-            MockChunk(id="c2", choices=[MockChoice(
-                index=0,
-                delta=MockDelta(),
-                finish_reason="tool_calls"
-            )]),
+            MockChunk(
+                id="c0",
+                choices=[
+                    MockChoice(
+                        index=0,
+                        delta=MockDelta(
+                            tool_calls=[
+                                MockToolCallDelta(
+                                    index=0,
+                                    id="call_1",
+                                    function=MockFunctionDelta(name="read_file", arguments='{"path": "/data/'),
+                                )
+                            ]
+                        ),
+                    )
+                ],
+            ),
+            MockChunk(
+                id="c1",
+                choices=[
+                    MockChoice(
+                        index=0,
+                        delta=MockDelta(
+                            tool_calls=[MockToolCallDelta(index=0, function=MockFunctionDelta(arguments='file.txt"}'))]
+                        ),
+                    )
+                ],
+            ),
+            MockChunk(id="c2", choices=[MockChoice(index=0, delta=MockDelta(), finish_reason="tool_calls")]),
         ]
 
         mock_client = Mock()
@@ -1448,9 +1416,7 @@ class TestTier2Warrant:
         client = guard(mock_client, warrant=warrant, signing_key=keypair)
 
         # Should not raise - valid call
-        result = list(client.chat.completions.create(
-            model="gpt-4o", messages=[], stream=True
-        ))
+        result = list(client.chat.completions.create(model="gpt-4o", messages=[], stream=True))
 
         assert len(result) == 3  # All chunks emitted
 
@@ -1468,11 +1434,7 @@ class TestDeveloperExperience:
         agent_key = SigningKey.generate()
         wrong_key = SigningKey.generate()
 
-        warrant = (Warrant.mint_builder()
-            .capability("test", {})
-            .holder(agent_key.public_key)
-            .ttl(3600)
-            .mint(agent_key))
+        warrant = Warrant.mint_builder().capability("test", {}).holder(agent_key.public_key).ttl(3600).mint(agent_key)
 
         mock_client = make_mock_client(make_response([]))
         client = guard(mock_client, warrant=warrant, signing_key=wrong_key)
@@ -1487,11 +1449,7 @@ class TestDeveloperExperience:
         """validate() should catch warrant without signing_key."""
         keypair = SigningKey.generate()
 
-        warrant = (Warrant.mint_builder()
-            .capability("test", {})
-            .holder(keypair.public_key)
-            .ttl(3600)
-            .mint(keypair))
+        warrant = Warrant.mint_builder().capability("test", {}).holder(keypair.public_key).ttl(3600).mint(keypair)
 
         mock_client = make_mock_client(make_response([]))
         client = guard(mock_client, warrant=warrant)  # No signing_key
@@ -1503,11 +1461,7 @@ class TestDeveloperExperience:
         """validate() should pass for correct configuration."""
         keypair = SigningKey.generate()
 
-        warrant = (Warrant.mint_builder()
-            .capability("test", {})
-            .holder(keypair.public_key)
-            .ttl(3600)
-            .mint(keypair))
+        warrant = Warrant.mint_builder().capability("test", {}).holder(keypair.public_key).ttl(3600).mint(keypair)
 
         mock_client = make_mock_client(make_response([]))
         client = guard(mock_client, warrant=warrant, signing_key=keypair)
@@ -1624,6 +1578,7 @@ class TestAuditSupport:
 
     def test_audit_callback_failure_does_not_break_auth(self):
         """Audit callback failure should not prevent authorization."""
+
         def failing_audit(event: AuditEvent):
             raise RuntimeError("Audit system down")
 
@@ -1668,11 +1623,13 @@ class TestAgentsSDKIntegration:
         from tenuo.openai import create_warrant_guardrail, TenuoToolGuardrail
 
         key = SigningKey.generate()
-        warrant = (Warrant.mint_builder()
+        warrant = (
+            Warrant.mint_builder()
             .capability("send_email", {"to": Pattern("*@company.com")})
             .holder(key.public_key)
             .ttl(3600)
-            .mint(key))
+            .mint(key)
+        )
 
         guardrail = create_warrant_guardrail(warrant=warrant, signing_key=key)
 
@@ -1685,11 +1642,7 @@ class TestAgentsSDKIntegration:
         from tenuo.openai import TenuoToolGuardrail, MissingSigningKey
 
         key = SigningKey.generate()
-        warrant = (Warrant.mint_builder()
-            .capability("send_email", {})
-            .holder(key.public_key)
-            .ttl(3600)
-            .mint(key))
+        warrant = Warrant.mint_builder().capability("send_email", {}).holder(key.public_key).ttl(3600).mint(key)
 
         with pytest.raises(MissingSigningKey):
             TenuoToolGuardrail(warrant=warrant)  # No signing_key
@@ -1697,18 +1650,11 @@ class TestAgentsSDKIntegration:
     @pytest.mark.asyncio
     async def test_guardrail_allows_valid_tool_call(self):
         """Test guardrail allows valid tool calls."""
-        from tenuo.openai import create_tool_guardrail, GuardrailResult
+        from tenuo.openai import create_tool_guardrail
 
-        guardrail = create_tool_guardrail(
-            constraints={"send_email": {"to": Pattern("*@company.com")}}
-        )
+        guardrail = create_tool_guardrail(constraints={"send_email": {"to": Pattern("*@company.com")}})
 
-        input_data = [{
-            "function": {
-                "name": "send_email",
-                "arguments": '{"to": "user@company.com"}'
-            }
-        }]
+        input_data = [{"function": {"name": "send_email", "arguments": '{"to": "user@company.com"}'}}]
 
         result = await guardrail(None, None, input_data)
 
@@ -1719,18 +1665,11 @@ class TestAgentsSDKIntegration:
     @pytest.mark.asyncio
     async def test_guardrail_blocks_invalid_tool_call(self):
         """Test guardrail blocks constraint violations."""
-        from tenuo.openai import create_tool_guardrail, GuardrailResult
+        from tenuo.openai import create_tool_guardrail
 
-        guardrail = create_tool_guardrail(
-            constraints={"send_email": {"to": Pattern("*@company.com")}}
-        )
+        guardrail = create_tool_guardrail(constraints={"send_email": {"to": Pattern("*@company.com")}})
 
-        input_data = [{
-            "function": {
-                "name": "send_email",
-                "arguments": '{"to": "attacker@evil.com"}'
-            }
-        }]
+        input_data = [{"function": {"name": "send_email", "arguments": '{"to": "attacker@evil.com"}'}}]
 
         result = await guardrail(None, None, input_data)
 
@@ -1743,9 +1682,7 @@ class TestAgentsSDKIntegration:
         """Test guardrail blocks tools on deny list."""
         from tenuo.openai import create_tool_guardrail
 
-        guardrail = create_tool_guardrail(
-            deny_tools=["delete_file"]
-        )
+        guardrail = create_tool_guardrail(deny_tools=["delete_file"])
 
         input_data = [{"function": {"name": "delete_file", "arguments": "{}"}}]
 
@@ -1757,30 +1694,25 @@ class TestAgentsSDKIntegration:
     @pytest.mark.asyncio
     async def test_guardrail_no_tripwire_mode(self):
         """Test guardrail with tripwire=False logs but doesn't halt."""
-        from tenuo.openai import create_tool_guardrail, GuardrailResult
+        from tenuo.openai import create_tool_guardrail
 
         guardrail = create_tool_guardrail(
             constraints={"send_email": {"to": Pattern("*@company.com")}},
             tripwire=False,
         )
 
-        input_data = [{
-            "function": {
-                "name": "send_email",
-                "arguments": '{"to": "attacker@evil.com"}'
-            }
-        }]
+        input_data = [{"function": {"name": "send_email", "arguments": '{"to": "attacker@evil.com"}'}}]
 
         result = await guardrail(None, None, input_data)
 
         assert is_guardrail_result(result)
         assert result.tripwire_triggered is False  # Doesn't halt
-        assert "Blocked" in result.output_info     # Still logs the block
+        assert "Blocked" in result.output_info  # Still logs the block
 
     @pytest.mark.asyncio
     async def test_guardrail_handles_no_tool_calls(self):
         """Test guardrail handles input without tool calls."""
-        from tenuo.openai import create_tool_guardrail, GuardrailResult
+        from tenuo.openai import create_tool_guardrail
 
         guardrail = create_tool_guardrail(constraints={})
 
@@ -1814,11 +1746,7 @@ class TestAgentsSDKIntegration:
 
         guardrail = TenuoToolGuardrail(constraints={})
 
-        input_data = {
-            "tool_calls": [
-                {"name": "search", "arguments": '{"q": "hello"}'}
-            ]
-        }
+        input_data = {"tool_calls": [{"name": "search", "arguments": '{"q": "hello"}'}]}
 
         calls = guardrail._extract_tool_calls(input_data)
 
@@ -1841,23 +1769,20 @@ class TestAgentsSDKIntegration:
     @pytest.mark.asyncio
     async def test_warrant_guardrail_authorizes_valid_call(self):
         """Test Tier 2 guardrail with valid warrant authorization."""
-        from tenuo.openai import create_warrant_guardrail, GuardrailResult
+        from tenuo.openai import create_warrant_guardrail
 
         key = SigningKey.generate()
-        warrant = (Warrant.mint_builder()
+        warrant = (
+            Warrant.mint_builder()
             .capability("send_email", {"to": Pattern("*@company.com")})
             .holder(key.public_key)
             .ttl(3600)
-            .mint(key))
+            .mint(key)
+        )
 
         guardrail = create_warrant_guardrail(warrant=warrant, signing_key=key)
 
-        input_data = [{
-            "function": {
-                "name": "send_email",
-                "arguments": '{"to": "user@company.com"}'
-            }
-        }]
+        input_data = [{"function": {"name": "send_email", "arguments": '{"to": "user@company.com"}'}}]
 
         result = await guardrail(None, None, input_data)
 
@@ -1870,20 +1795,24 @@ class TestAgentsSDKIntegration:
         from tenuo.openai import create_warrant_guardrail
 
         key = SigningKey.generate()
-        warrant = (Warrant.mint_builder()
+        warrant = (
+            Warrant.mint_builder()
             .capability("send_email", {})  # Only send_email allowed
             .holder(key.public_key)
             .ttl(3600)
-            .mint(key))
+            .mint(key)
+        )
 
         guardrail = create_warrant_guardrail(warrant=warrant, signing_key=key)
 
-        input_data = [{
-            "function": {
-                "name": "delete_file",  # Not in warrant
-                "arguments": '{"path": "/etc/passwd"}'
+        input_data = [
+            {
+                "function": {
+                    "name": "delete_file",  # Not in warrant
+                    "arguments": '{"path": "/etc/passwd"}',
+                }
             }
-        }]
+        ]
 
         result = await guardrail(None, None, input_data)
 
@@ -1896,6 +1825,7 @@ class TestAgentsSDKIntegration:
         from tenuo.openai import create_tool_guardrail
 
         events = []
+
         def capture_audit(event: AuditEvent):
             events.append(event)
 
@@ -1905,12 +1835,7 @@ class TestAgentsSDKIntegration:
         )
 
         # Valid call - should emit ALLOW
-        input_data = [{
-            "function": {
-                "name": "send_email",
-                "arguments": '{"to": "user@company.com"}'
-            }
-        }]
+        input_data = [{"function": {"name": "send_email", "arguments": '{"to": "user@company.com"}'}}]
         await guardrail(None, None, input_data)
 
         assert len(events) == 1
@@ -1918,12 +1843,7 @@ class TestAgentsSDKIntegration:
         assert events[0].tool_name == "send_email"
 
         # Invalid call - should emit DENY
-        input_data2 = [{
-            "function": {
-                "name": "send_email",
-                "arguments": '{"to": "attacker@evil.com"}'
-            }
-        }]
+        input_data2 = [{"function": {"name": "send_email", "arguments": '{"to": "attacker@evil.com"}'}}]
         await guardrail(None, None, input_data2)
 
         assert len(events) == 2
@@ -1936,15 +1856,12 @@ class TestAgentsSDKIntegration:
         from tenuo.openai import create_warrant_guardrail
 
         events = []
+
         def capture_audit(event: AuditEvent):
             events.append(event)
 
         key = SigningKey.generate()
-        warrant = (Warrant.mint_builder()
-            .capability("send_email", {})
-            .holder(key.public_key)
-            .ttl(3600)
-            .mint(key))
+        warrant = Warrant.mint_builder().capability("send_email", {}).holder(key.public_key).ttl(3600).mint(key)
 
         guardrail = create_warrant_guardrail(
             warrant=warrant,
@@ -1966,19 +1883,19 @@ class TestAgentsSDKIntegration:
         SECURITY: Malformed JSON must NOT silently pass as empty arguments,
         as that could bypass constraints.
         """
-        from tenuo.openai import create_tool_guardrail, GuardrailResult
+        from tenuo.openai import create_tool_guardrail
 
-        guardrail = create_tool_guardrail(
-            constraints={"send_email": {"to": Pattern("*@company.com")}}
-        )
+        guardrail = create_tool_guardrail(constraints={"send_email": {"to": Pattern("*@company.com")}})
 
         # Malformed JSON - missing closing brace
-        input_data = [{
-            "function": {
-                "name": "send_email",
-                "arguments": '{"to": "user@company.com"'  # Invalid JSON!
+        input_data = [
+            {
+                "function": {
+                    "name": "send_email",
+                    "arguments": '{"to": "user@company.com"',  # Invalid JSON!
+                }
             }
-        }]
+        ]
 
         result = await guardrail(None, None, input_data)
 
@@ -2071,7 +1988,7 @@ class TestSubpathConstraint:
 
     def test_non_string_rejected(self):
         """Non-string values should raise TypeError (Rust FFI type enforcement).
-        
+
         SECURITY: This is stricter than returning False - type errors are caught
         at the FFI boundary, preventing any possibility of type confusion.
         """
@@ -2103,7 +2020,7 @@ class TestSubpathConstraint:
 
     def test_repr(self):
         """Repr should show configuration.
-        
+
         Note: Rust implementation uses unquoted paths: Subpath(/data)
         vs Python's quoted: Subpath('/data'). Both are valid Python repr.
         """
@@ -2119,7 +2036,7 @@ class TestSubpathConstraint:
 
     def test_root_must_be_absolute(self):
         """Root must be an absolute path.
-        
+
         Note: Rust raises RuntimeError (wrapped) instead of ValueError.
         Both enforce the same security property: relative roots are rejected.
         """
@@ -2135,10 +2052,7 @@ class TestSubpathConstraint:
         response = make_response([("read_file", {"path": "/data/file.txt"})])
         mock_client = make_mock_client(response)
 
-        client = guard(
-            mock_client,
-            constraints={"read_file": {"path": Subpath("/data")}}
-        )
+        client = guard(mock_client, constraints={"read_file": {"path": Subpath("/data")}})
 
         # Should pass
         result = client.chat.completions.create(model="gpt-4o", messages=[])
@@ -2149,10 +2063,7 @@ class TestSubpathConstraint:
         response = make_response([("read_file", {"path": "/data/../etc/passwd"})])
         mock_client = make_mock_client(response)
 
-        client = guard(
-            mock_client,
-            constraints={"read_file": {"path": Subpath("/data")}}
-        )
+        client = guard(mock_client, constraints={"read_file": {"path": Subpath("/data")}})
 
         with pytest.raises(ConstraintViolation) as exc:
             client.chat.completions.create(model="gpt-4o", messages=[])
@@ -2175,15 +2086,15 @@ class TestSubpathConstraint:
 
     def test_double_slashes_normalized(self):
         """Double slashes should be normalized.
-        
+
         SECURITY NOTE: The Rust implementation normalizes //data to /data,
         which means //data/file.txt matches Subpath("/data"). This is secure
         because path normalization happens BEFORE containment check.
-        
+
         Attack scenario: Could an attacker use // to escape?
         - //data/../etc/passwd -> /etc/passwd (blocked: outside /data)
         - //etc/passwd -> /etc/passwd (blocked: outside /data)
-        
+
         The normalization is consistent and secure.
         """
         c = Subpath("/data")
@@ -2191,7 +2102,7 @@ class TestSubpathConstraint:
         # Double slashes normalized to single
         assert c.matches("/data//file.txt") is True
         assert c.matches("/data///subdir//file.txt") is True
-        
+
         # Rust normalizes //data to /data, so this matches
         # This is secure: the path is still validated against /data
         # Python impl returned False, Rust returns True - both are defensible
@@ -2334,6 +2245,7 @@ class TestSubpathConstraint:
 # Subpath Adversarial Tests
 # =============================================================================
 
+
 class TestSubpathAdversarial:
     """Adversarial tests for Subpath constraint bypass attempts."""
 
@@ -2409,23 +2321,23 @@ class TestSubpathAdversarial:
     def test_unicode_dot_lookalikes(self):
         """Unicode lookalike dots should NOT be treated as traversal."""
         sp = Subpath("/data")
-        
+
         # These are NOT dots - they're different Unicode characters
         # U+2024 ONE DOT LEADER: ․
         # U+2025 TWO DOT LEADER: ‥
         # U+2026 ELLIPSIS: …
-        
+
         # Using these should create literal directories, not traversal
         # ․․/ is NOT ../
         assert sp.contains("/data/\u2024\u2024/file.txt")  # Literal dirname
-        
+
     def test_fullwidth_characters(self):
         """Full-width characters should be literals, not special."""
         sp = Subpath("/data")
-        
+
         # U+FF0E FULLWIDTH FULL STOP: ．
         # U+FF0F FULLWIDTH SOLIDUS: ／
-        
+
         # ．．／ is NOT ../
         # These are different characters and should be literal
         assert sp.contains("/data/\uff0e\uff0e/file.txt")
@@ -2433,10 +2345,10 @@ class TestSubpathAdversarial:
     def test_unicode_slash_lookalikes(self):
         """Unicode slash lookalikes should not act as separators."""
         sp = Subpath("/data")
-        
+
         # U+2044 FRACTION SLASH: ⁄
         # U+2215 DIVISION SLASH: ∕
-        
+
         # ..⁄etc is a literal filename, not traversal
         assert sp.contains("/data/..\u2044etc/passwd")  # Literal, not traversal
 
@@ -2449,7 +2361,7 @@ class TestSubpathAdversarial:
         sp = Subpath("/data")
         assert sp.contains("/data/.../file.txt")
         assert sp.contains("/data/..../file.txt")
-        
+
     def test_dot_only(self):
         """. alone should normalize away."""
         sp = Subpath("/data")
@@ -2482,7 +2394,7 @@ class TestSubpathAdversarial:
     def test_prefix_attack_variations(self):
         """Paths that are prefixes but not children."""
         sp = Subpath("/data")
-        
+
         assert not sp.contains("/datafile.txt")
         assert not sp.contains("/data-backup/file.txt")
         assert not sp.contains("/data_old/file.txt")
@@ -2492,7 +2404,7 @@ class TestSubpathAdversarial:
         """Root path containment with allow_equal."""
         sp_allow = Subpath("/data", allow_equal=True)
         sp_deny = Subpath("/data", allow_equal=False)
-        
+
         assert sp_allow.contains("/data")
         assert sp_allow.contains("/data/")
         assert not sp_deny.contains("/data")
@@ -2505,7 +2417,7 @@ class TestSubpathAdversarial:
     def test_relative_path_rejected(self):
         """Relative paths should be rejected."""
         sp = Subpath("/data")
-        
+
         assert not sp.contains("data/file.txt")
         assert not sp.contains("./data/file.txt")
         assert not sp.contains("../data/file.txt")
@@ -2517,7 +2429,7 @@ class TestSubpathAdversarial:
         # On Unix, C:/ is just a weird directory name
         # On Windows, it's an absolute path
         sp = Subpath("/data")
-        
+
         # These should be rejected (not under /data)
         # Note: Behavior may differ on Windows
         assert not sp.contains("C:/data/file.txt")
@@ -2530,7 +2442,7 @@ class TestSubpathAdversarial:
     def test_extremely_long_path(self):
         """Very long paths should complete without DoS."""
         sp = Subpath("/data")
-        
+
         # 100KB path
         long_name = "a" * 100000
         assert sp.contains(f"/data/{long_name}")
@@ -2538,7 +2450,7 @@ class TestSubpathAdversarial:
     def test_many_components(self):
         """Many path components should complete."""
         sp = Subpath("/data")
-        
+
         # 10000 components
         many = "/data" + "/sub" * 10000 + "/file.txt"
         assert sp.contains(many)
@@ -2546,7 +2458,7 @@ class TestSubpathAdversarial:
     def test_many_dots(self):
         """Many . components should normalize efficiently."""
         sp = Subpath("/data")
-        
+
         # 10000 dots
         many_dots = "/data" + "/." * 10000 + "/file.txt"
         assert sp.contains(many_dots)
@@ -2565,10 +2477,7 @@ class TestGuardBuilder:
         from tenuo.openai import GuardBuilder
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
-            .allow("search")
-            .allow("read_file")
-            .build())
+        client = GuardBuilder(mock_client).allow("search").allow("read_file").build()
 
         assert isinstance(client, GuardedClient)
         assert client._allow_tools == ["search", "read_file"]
@@ -2578,10 +2487,12 @@ class TestGuardBuilder:
         from tenuo.openai import GuardBuilder
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
+        client = (
+            GuardBuilder(mock_client)
             .allow("read_file", path=Subpath("/data"))
             .allow("send_email", to=Pattern("*@company.com"))
-            .build())
+            .build()
+        )
 
         assert "read_file" in client._constraints
         assert "send_email" in client._constraints
@@ -2593,9 +2504,7 @@ class TestGuardBuilder:
         from tenuo.openai import GuardBuilder
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
-            .allow_all("search", "read_file", "list_files")
-            .build())
+        client = GuardBuilder(mock_client).allow_all("search", "read_file", "list_files").build()
 
         assert client._allow_tools == ["search", "read_file", "list_files"]
 
@@ -2604,10 +2513,7 @@ class TestGuardBuilder:
         from tenuo.openai import GuardBuilder
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
-            .deny("delete_file")
-            .deny("drop_table")
-            .build())
+        client = GuardBuilder(mock_client).deny("delete_file").deny("drop_table").build()
 
         assert client._deny_tools == ["delete_file", "drop_table"]
 
@@ -2616,9 +2522,7 @@ class TestGuardBuilder:
         from tenuo.openai import GuardBuilder
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
-            .deny_all("delete_file", "rm", "drop_table")
-            .build())
+        client = GuardBuilder(mock_client).deny_all("delete_file", "rm", "drop_table").build()
 
         assert client._deny_tools == ["delete_file", "rm", "drop_table"]
 
@@ -2627,9 +2531,7 @@ class TestGuardBuilder:
         from tenuo.openai import GuardBuilder
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
-            .constrain("read_file", path=Subpath("/data"))
-            .build())
+        client = GuardBuilder(mock_client).constrain("read_file", path=Subpath("/data")).build()
 
         # Tool is not in allow list
         assert client._allow_tools is None or "read_file" not in (client._allow_tools or [])
@@ -2641,10 +2543,7 @@ class TestGuardBuilder:
         from tenuo.openai import GuardBuilder
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
-            .allow("search")
-            .on_denial("skip")
-            .build())
+        client = GuardBuilder(mock_client).allow("search").on_denial("skip").build()
 
         assert client._on_denial == "skip"
 
@@ -2653,10 +2552,7 @@ class TestGuardBuilder:
         from tenuo.openai import GuardBuilder
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
-            .allow("search")
-            .buffer_limit(1024)
-            .build())
+        client = GuardBuilder(mock_client).allow("search").buffer_limit(1024).build()
 
         assert client._stream_buffer_limit == 1024
 
@@ -2665,14 +2561,12 @@ class TestGuardBuilder:
         from tenuo.openai import GuardBuilder
 
         events = []
+
         def callback(event):
             events.append(event)
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
-            .allow("search")
-            .audit(callback)
-            .build())
+        client = GuardBuilder(mock_client).allow("search").audit(callback).build()
 
         assert client._audit_callback is callback
 
@@ -2684,15 +2578,9 @@ class TestGuardBuilder:
         issuer_key = SigningKey.generate()
         agent_key = SigningKey.generate()
 
-        warrant = (Warrant.mint_builder()
-            .capability("search")
-            .holder(agent_key.public_key)
-            .ttl(3600)
-            .mint(issuer_key))
+        warrant = Warrant.mint_builder().capability("search").holder(agent_key.public_key).ttl(3600).mint(issuer_key)
 
-        client = (GuardBuilder(mock_client)
-            .with_warrant(warrant, agent_key)
-            .build())
+        client = GuardBuilder(mock_client).with_warrant(warrant, agent_key).build()
 
         assert client._warrant is warrant
         assert client._signing_key is agent_key
@@ -2704,7 +2592,8 @@ class TestGuardBuilder:
         events = []
         mock_client = Mock()
 
-        client = (GuardBuilder(mock_client)
+        client = (
+            GuardBuilder(mock_client)
             .on_denial("log")
             .allow("search")
             .deny("delete_file")
@@ -2712,7 +2601,8 @@ class TestGuardBuilder:
             .audit(lambda e: events.append(e))
             .allow("read_file", path=Subpath("/data"))
             .deny("rm")
-            .build())
+            .build()
+        )
 
         assert client._allow_tools == ["search", "read_file"]
         assert client._deny_tools == ["delete_file", "rm"]
@@ -2724,18 +2614,10 @@ class TestGuardBuilder:
         """Builder accepts OpenAI tool dict format."""
         from tenuo.openai import GuardBuilder
 
-        tool_dict = {
-            "type": "function",
-            "function": {
-                "name": "search",
-                "description": "Search for information"
-            }
-        }
+        tool_dict = {"type": "function", "function": {"name": "search", "description": "Search for information"}}
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
-            .allow(tool_dict)
-            .build())
+        client = GuardBuilder(mock_client).allow(tool_dict).build()
 
         assert "search" in client._allow_tools
 
@@ -2747,9 +2629,7 @@ class TestGuardBuilder:
             pass
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
-            .allow(my_search_tool)
-            .build())
+        client = GuardBuilder(mock_client).allow(my_search_tool).build()
 
         assert "my_search_tool" in client._allow_tools
 
@@ -2760,9 +2640,7 @@ class TestGuardBuilder:
         tool_dict = {"name": "search"}
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
-            .allow(tool_dict)
-            .build())
+        client = GuardBuilder(mock_client).allow(tool_dict).build()
 
         assert "search" in client._allow_tools
 
@@ -2785,15 +2663,18 @@ class TestGuardBuilder:
         from tenuo.openai import GuardBuilder
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
+        client = (
+            GuardBuilder(mock_client)
             .allow("search")
             .allow("read_file", path=Subpath("/data"))
             .deny("delete_file")
-            .build())
+            .build()
+        )
 
         # Allowed tool without constraints - returns None on success
         verify_tool_call(
-            "search", {"query": "weather"},
+            "search",
+            {"query": "weather"},
             allow_tools=client._allow_tools,
             deny_tools=client._deny_tools,
             constraints=client._constraints,
@@ -2801,7 +2682,8 @@ class TestGuardBuilder:
 
         # Allowed tool with valid constraint
         verify_tool_call(
-            "read_file", {"path": "/data/file.txt"},
+            "read_file",
+            {"path": "/data/file.txt"},
             allow_tools=client._allow_tools,
             deny_tools=client._deny_tools,
             constraints=client._constraints,
@@ -2810,7 +2692,8 @@ class TestGuardBuilder:
         # Denied tool
         with pytest.raises(ToolDenied):
             verify_tool_call(
-                "delete_file", {"path": "/data/file.txt"},
+                "delete_file",
+                {"path": "/data/file.txt"},
                 allow_tools=client._allow_tools,
                 deny_tools=client._deny_tools,
                 constraints=client._constraints,
@@ -2819,7 +2702,8 @@ class TestGuardBuilder:
         # Constraint violation
         with pytest.raises(ConstraintViolation):
             verify_tool_call(
-                "read_file", {"path": "/etc/passwd"},
+                "read_file",
+                {"path": "/etc/passwd"},
                 allow_tools=client._allow_tools,
                 deny_tools=client._deny_tools,
                 constraints=client._constraints,
@@ -2876,11 +2760,13 @@ class TestToolSchemaValidation:
         caplog.set_level(logging.WARNING)
 
         mock_client = Mock()
-        (GuardBuilder(mock_client)
+        (
+            GuardBuilder(mock_client)
             .allow("send_email", to=Pattern("*@company.com"))
             .allow("read_file", path=Pattern("/data/*"))
             .with_tools(sample_tools)
-            .build())
+            .build()
+        )
 
         assert "Constraint validation" not in caplog.text
 
@@ -2892,10 +2778,12 @@ class TestToolSchemaValidation:
         caplog.set_level(logging.WARNING)
 
         mock_client = Mock()
-        (GuardBuilder(mock_client)
+        (
+            GuardBuilder(mock_client)
             .allow("send_email", too=Pattern("*@company.com"))  # Typo: "too"
             .with_tools(sample_tools)
-            .build())
+            .build()
+        )
 
         assert "Constraint validation" in caplog.text
         assert "'too' not found" in caplog.text
@@ -2907,11 +2795,13 @@ class TestToolSchemaValidation:
 
         mock_client = Mock()
         with pytest.raises(ConfigurationError) as exc_info:
-            (GuardBuilder(mock_client)
+            (
+                GuardBuilder(mock_client)
                 .allow("send_email", recipient=Pattern("*@company.com"))  # Wrong name
                 .with_tools(sample_tools)
                 .validate("strict")
-                .build())
+                .build()
+            )
 
         assert "'recipient' not found" in str(exc_info.value)
         assert "Available:" in str(exc_info.value)
@@ -2924,11 +2814,13 @@ class TestToolSchemaValidation:
         caplog.set_level(logging.WARNING)
 
         mock_client = Mock()
-        (GuardBuilder(mock_client)
+        (
+            GuardBuilder(mock_client)
             .allow("send_email", wrong_param=Pattern("*"))
             .with_tools(sample_tools)
             .validate(False)  # Disable validation
-            .build())
+            .build()
+        )
 
         assert "Constraint validation" not in caplog.text
 
@@ -2941,10 +2833,7 @@ class TestToolSchemaValidation:
 
         mock_client = Mock()
         # "search" is not in sample_tools, should not cause warning
-        (GuardBuilder(mock_client)
-            .allow("search", query=Pattern("*"))
-            .with_tools(sample_tools)
-            .build())
+        (GuardBuilder(mock_client).allow("search", query=Pattern("*")).with_tools(sample_tools).build())
 
         assert "Constraint validation" not in caplog.text
 
@@ -2956,10 +2845,12 @@ class TestToolSchemaValidation:
         caplog.set_level(logging.WARNING)
 
         mock_client = Mock()
-        (GuardBuilder(mock_client)
+        (
+            GuardBuilder(mock_client)
             .constrain("send_email", to=Pattern("*@company.com"), _allow_unknown=True)
             .with_tools(sample_tools)
-            .build())
+            .build()
+        )
 
         # Should not warn about _allow_unknown
         assert "_allow_unknown" not in caplog.text
@@ -3000,10 +2891,12 @@ class TestToolSchemaValidation:
         caplog.set_level(logging.WARNING)
 
         mock_client = Mock()
-        (GuardBuilder(mock_client)
+        (
+            GuardBuilder(mock_client)
             .allow("send_email", too=Pattern("*"), subjet=Pattern("*"))
             .with_tools(sample_tools)
-            .build())
+            .build()
+        )
 
         # Both should be warned about
         assert "'too' not found" in caplog.text

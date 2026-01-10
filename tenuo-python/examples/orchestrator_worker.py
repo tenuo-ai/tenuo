@@ -14,15 +14,13 @@ This is the "temporal mismatch" solution: same agent identity,
 different authority per task phase.
 """
 
-from tenuo import (
-    Warrant, SigningKey, guard, Pattern, Range,
-    Authorizer, warrant_scope, key_scope
-)
+from tenuo import Warrant, SigningKey, guard, Pattern, Range, Authorizer, warrant_scope, key_scope
 from tenuo_core import Wildcard, ChainVerificationResult  # Constraint for "any value"
 
 # ============================================================================
 # Protected Tools
 # ============================================================================
+
 
 @guard(tool="search")
 async def search_tool(query: str, max_results: int = 10) -> list:
@@ -62,6 +60,7 @@ def write(path: str, content: str):
 # Agents (Simulated)
 # ============================================================================
 
+
 def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: SigningKey):
     """
     Orchestrator: Receives broad authority, delegates narrow slices to workers.
@@ -84,9 +83,7 @@ def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: Sig
 
     # Use builder pattern with diff preview
     research_builder = warrant.grant_builder()
-    research_builder.capability("search",
-        query=Pattern("*competitor*"),
-        max_results=Range.max_value(5))
+    research_builder.capability("search", query=Pattern("*competitor*"), max_results=Range.max_value(5))
     research_builder.capability("fetch", url=Pattern("https://public.*"))
     research_builder.ttl(60)  # Short-lived
     research_builder.holder(worker_keypair.public_key)
@@ -101,7 +98,7 @@ def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: Sig
     print("  Constraints: query=*competitor*, max_results<=5, url=https://public.*, ttl=60s")
 
     # Access receipt if needed for audit
-    if hasattr(research_warrant, 'delegation_receipt') and research_warrant.delegation_receipt:
+    if hasattr(research_warrant, "delegation_receipt") and research_warrant.delegation_receipt:
         receipt = research_warrant.delegation_receipt
         print(f"  Receipt: {receipt.child_warrant_id} (intent: {receipt.intent})")
 
@@ -112,11 +109,13 @@ def orchestrator_task(warrant: Warrant, keypair: SigningKey, worker_keypair: Sig
     # For write-only phase, we issue a new warrant with only write tool
     # This is the cleanest pattern when you want to completely change the tool set
     print("\n[Orchestrator] Phase 2: Delegating write to Worker")
-    write_warrant = (Warrant.mint_builder()
+    write_warrant = (
+        Warrant.mint_builder()
         .capability("write", path=Pattern("/output/reports/*"), _allow_unknown=True)  # Restricted path
         .holder(worker_keypair.public_key)
         .ttl(30)
-        .mint(keypair))
+        .mint(keypair)
+    )
     print("  New warrant: tools=write, path=/output/reports/*, ttl=30s")
     print("  Note: This is a new warrant (not attenuated) to change tool set")
 
@@ -143,7 +142,7 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
             sig = warrant.sign(keypair, "search", args)
             if warrant.authorize("search", args, signature=bytes(sig)):
                 print("    [Allowed] Search executed")
-                search(query="competitor analysis", max_results=3) # Execute the actual tool
+                search(query="competitor analysis", max_results=3)  # Execute the actual tool
             else:
                 print("    [Blocked] Search denied (unexpected)")
         except Exception as e:
@@ -168,7 +167,7 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
             sig = warrant.sign(keypair, "fetch", args)
             if warrant.authorize("fetch", args, signature=bytes(sig)):
                 print("    [Allowed] Fetch executed")
-                fetch(url="https://public.example.com/report") # Execute the actual tool
+                fetch(url="https://public.example.com/report")  # Execute the actual tool
             else:
                 print("    [Blocked] Fetch denied (unexpected)")
         except Exception as e:
@@ -214,7 +213,9 @@ def worker_write(warrant: Warrant, keypair: SigningKey):
             sig = warrant.sign(keypair, "write", args)
             if warrant.authorize("write", args, signature=bytes(sig)):
                 print("    [Allowed] Write executed")
-                write(path="/output/reports/q3-analysis.txt", content="Q3 competitor analysis...") # Execute the actual tool
+                write(
+                    path="/output/reports/q3-analysis.txt", content="Q3 competitor analysis..."
+                )  # Execute the actual tool
             else:
                 print("    [Blocked] Write denied (unexpected)")
         except Exception as e:
@@ -249,6 +250,7 @@ def worker_write(warrant: Warrant, keypair: SigningKey):
 # Main
 # ============================================================================
 
+
 def main():
     print("=" * 60)
     print("Orchestrator-Worker Delegation Example")
@@ -265,13 +267,15 @@ def main():
 
     # Control Plane issues root warrant to Orchestrator
     print("\n[Control Plane] Issuing root warrant to Orchestrator")
-    root_warrant = (Warrant.mint_builder()
+    root_warrant = (
+        Warrant.mint_builder()
         .capability("search", query=Wildcard())
         .capability("fetch", url=Pattern("https://*"))
         .capability("write", path=Pattern("/output/*"), _allow_unknown=True)
         .holder(orchestrator_keypair.public_key)
         .ttl(3600)
-        .mint(control_plane_keypair))
+        .mint(control_plane_keypair)
+    )
     print("  Root warrant: tools=[search, fetch, write], ttl=1h")
 
     # Create Authorizer to verify delegation chain
@@ -327,7 +331,7 @@ def main():
             chain=chain1,
             tool="search",
             args={"query": "competitor analysis", "max_results": 3},
-            signature=None  # In production, include PoP signature
+            signature=None,  # In production, include PoP signature
         )
         print("[OK] Chain verified and action authorized!")
         print(f"  Chain length: {result.chain_length}, leaf depth: {result.leaf_depth}")

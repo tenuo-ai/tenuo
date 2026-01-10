@@ -24,6 +24,7 @@ from tenuo.decorators import warrant_scope, _warrant_context
 @dataclass
 class NodeState:
     """Simulated state object."""
+
     messages: list
     warrant: Optional[str] = None
 
@@ -46,11 +47,7 @@ class TestEdgeCases:
                 raise Unauthorized("No active warrant")
             return "Tool executed"
 
-        warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("sensitive_tool", {}),
-            ttl_seconds=60
-        )
+        warrant = Warrant.mint(keypair=keypair, capabilities=Constraints.for_tool("sensitive_tool", {}), ttl_seconds=60)
 
         # Attack A: Call outside context
         with pytest.raises(Unauthorized):
@@ -92,11 +89,7 @@ class TestEdgeCases:
             print("  [Dynamic Node] Executing dangerous tool...")
             return "Dangerous Action Executed"
 
-        warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("search", {}),
-            ttl_seconds=60
-        )
+        warrant = Warrant.mint(keypair=keypair, capabilities=Constraints.for_tool("search", {}), ttl_seconds=60)
         state = NodeState(messages=[], warrant=warrant.to_base64())
 
         print("  [Attack 8] Routing to unlisted dynamic node...")
@@ -116,11 +109,7 @@ class TestEdgeCases:
         """
         print("\n--- Attack 17: Clock Skew Exploitation ---")
 
-        warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("search", {}),
-            ttl_seconds=1
-        )
+        warrant = Warrant.mint(keypair=keypair, capabilities=Constraints.for_tool("search", {}), ttl_seconds=1)
         time.sleep(1.1)  # Expired by 0.1s
 
         print("  [Attack 17A] Using warrant expired by 0.1s...")
@@ -142,13 +131,11 @@ class TestEdgeCases:
         """
         print("\n--- Attack 20: Unicode Normalization ---")
 
-        cafe_nfc = unicodedata.normalize('NFC', 'café')
-        cafe_nfd = unicodedata.normalize('NFD', 'café')
+        cafe_nfc = unicodedata.normalize("NFC", "café")
+        cafe_nfd = unicodedata.normalize("NFD", "café")
 
         warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("search", {"query": Exact(cafe_nfc)}),
-            ttl_seconds=60
+            keypair=keypair, capabilities=Constraints.for_tool("search", {"query": Exact(cafe_nfc)}), ttl_seconds=60
         )
 
         print("  [Attack 20] Testing NFD 'café' against NFC constraint...")
@@ -180,7 +167,7 @@ class TestEdgeCases:
             _warrant = Warrant.mint(
                 keypair=keypair,
                 capabilities=Constraints.for_tool("test", {"limit": Range(max=huge_int)}),
-                ttl_seconds=60
+                ttl_seconds=60,
             )
             print("  [Warning] Huge int constraint accepted (may wrap)")
         except (OverflowError, ValueError, Exception) as e:
@@ -189,11 +176,7 @@ class TestEdgeCases:
 
         # Test 2: Authorize with huge int arg
         print(f"  [Attack] Authorizing with arg val={huge_int}...")
-        warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("test", {}),
-            ttl_seconds=60
-        )
+        warrant = Warrant.mint(keypair=keypair, capabilities=Constraints.for_tool("test", {}), ttl_seconds=60)
         try:
             warrant.authorize("test", {"val": huge_int})
             print("  [Result] Huge int argument handled gracefully")
@@ -221,15 +204,13 @@ class TestEdgeCases:
         from tenuo_core import Clearance
 
         issuer_warrant = Warrant.issue_issuer(
-            issuable_tools=["search", "read"],
-            clearance=Clearance.INTERNAL,
-            ttl_seconds=3600,
-            keypair=keypair
+            issuable_tools=["search", "read"], clearance=Clearance.INTERNAL, ttl_seconds=3600, keypair=keypair
         )
 
         print("  [Attack 5] Attempting to use issuer warrant for execution...")
 
         from tenuo.exceptions import ValidationError
+
         try:
             issuer_warrant.authorize("search", {})
             print("  [CRITICAL] Attack 5 SUCCEEDED: Issuer executed tool!")
