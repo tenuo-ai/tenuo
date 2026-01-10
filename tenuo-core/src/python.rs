@@ -3953,6 +3953,252 @@ impl PyAuthorizer {
         Ok(PyChainVerificationResult { inner: result })
     }
 }
+
+// ============================================================================
+// Revocation System Python Bindings
+// ============================================================================
+
+/// Python wrapper for RevocationRequest.
+///
+/// A signed request to revoke a warrant. Can be submitted to Control Plane.
+///
+/// Example:
+///     request = RevocationRequest.new(
+///         warrant_id="tnu_wrt_...",
+///         reason="Key compromise detected",
+///         requestor_keypair=keypair,
+///     )
+///     # Submit to Control Plane
+///     bytes = request.to_bytes()
+#[pyclass(name = "RevocationRequest")]
+#[derive(Clone)]
+pub struct PyRevocationRequest {
+    inner: crate::revocation::RevocationRequest,
+}
+
+#[pymethods]
+impl PyRevocationRequest {
+    /// Create a new revocation request.
+    ///
+    /// Args:
+    ///     warrant_id: The ID of the warrant to revoke
+    ///     reason: Human-readable reason for revocation
+    ///     requestor_keypair: Keypair to sign the request
+    ///
+    /// Returns:
+    ///     A signed RevocationRequest
+    #[staticmethod]
+    fn new(warrant_id: &str, reason: &str, requestor_keypair: &PySigningKey) -> PyResult<Self> {
+        let inner =
+            crate::revocation::RevocationRequest::new(warrant_id, reason, &requestor_keypair.inner)
+                .map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    /// Verify the request signature.
+    fn verify_signature(&self) -> PyResult<()> {
+        self.inner.verify_signature().map_err(to_py_err)
+    }
+
+    /// The warrant ID being revoked.
+    #[getter]
+    fn warrant_id(&self) -> &str {
+        &self.inner.warrant_id
+    }
+
+    /// The reason for revocation.
+    #[getter]
+    fn reason(&self) -> &str {
+        &self.inner.reason
+    }
+
+    /// The public key of the requestor.
+    #[getter]
+    fn requestor(&self) -> PyPublicKey {
+        PyPublicKey {
+            inner: self.inner.requestor.clone(),
+        }
+    }
+
+    /// When the request was created (ISO 8601).
+    #[getter]
+    fn requested_at(&self) -> String {
+        self.inner.requested_at.to_rfc3339()
+    }
+
+    /// Serialize to bytes (CBOR).
+    fn to_bytes(&self) -> PyResult<Vec<u8>> {
+        self.inner.to_bytes().map_err(to_py_err)
+    }
+
+    /// Deserialize from bytes.
+    #[staticmethod]
+    fn from_bytes(bytes: &[u8]) -> PyResult<Self> {
+        let inner = crate::revocation::RevocationRequest::from_bytes(bytes).map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "RevocationRequest(warrant_id='{}', reason='{}', requestor={})",
+            self.inner.warrant_id,
+            self.inner.reason,
+            hex::encode(self.inner.requestor.to_bytes())
+        )
+    }
+}
+
+/// Python wrapper for SignedRevocationList (SRL).
+///
+/// A cryptographically signed list of revoked warrant IDs.
+///
+/// Example:
+///     # Build a new SRL
+///     srl = SignedRevocationList.builder() \
+///         .revoke("tnu_wrt_compromised_123") \
+///         .revoke("tnu_wrt_expired_456") \
+///         .version(42) \
+///         .build(control_plane_keypair)
+///
+///     # Verify before use
+///     srl.verify(control_plane_pubkey)
+///
+///     # Check if a warrant is revoked
+///     if srl.is_revoked(warrant.id):
+///         raise WarrantRevokedError()
+#[pyclass(name = "SignedRevocationList")]
+#[derive(Clone)]
+pub struct PySignedRevocationList {
+    inner: crate::revocation::SignedRevocationList,
+}
+
+#[pymethods]
+impl PySignedRevocationList {
+    /// Create a builder for constructing an SRL.
+    #[staticmethod]
+    fn builder() -> PySrlBuilder {
+        PySrlBuilder {
+            inner: crate::revocation::SignedRevocationList::builder(),
+        }
+    }
+
+    /// Create an empty SRL (for initialization).
+    #[staticmethod]
+    fn empty(keypair: &PySigningKey) -> PyResult<Self> {
+        let inner =
+            crate::revocation::SignedRevocationList::empty(&keypair.inner).map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    /// Verify this SRL was signed by the expected issuer.
+    fn verify(&self, expected_issuer: &PyPublicKey) -> PyResult<()> {
+        self.inner.verify(&expected_issuer.inner).map_err(to_py_err)
+    }
+
+    /// Check if a warrant ID is in this revocation list.
+    fn is_revoked(&self, warrant_id: &str) -> bool {
+        self.inner.is_revoked(warrant_id)
+    }
+
+    /// Get the version number.
+    #[getter]
+    fn version(&self) -> u64 {
+        self.inner.version()
+    }
+
+    /// When this list was issued (ISO 8601).
+    #[getter]
+    fn issued_at(&self) -> String {
+        self.inner.issued_at().to_rfc3339()
+    }
+
+    /// The issuer's public key.
+    #[getter]
+    fn issuer(&self) -> PyPublicKey {
+        PyPublicKey {
+            inner: self.inner.issuer().clone(),
+        }
+    }
+
+    /// List of revoked warrant IDs.
+    #[getter]
+    fn revoked_ids(&self) -> Vec<String> {
+        self.inner.revoked_ids().to_vec()
+    }
+
+    /// Number of revoked warrants.
+    fn __len__(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Serialize to bytes (CBOR).
+    fn to_bytes(&self) -> PyResult<Vec<u8>> {
+        self.inner.to_bytes().map_err(to_py_err)
+    }
+
+    /// Deserialize from bytes.
+    #[staticmethod]
+    fn from_bytes(bytes: &[u8]) -> PyResult<Self> {
+        let inner =
+            crate::revocation::SignedRevocationList::from_bytes(bytes).map_err(to_py_err)?;
+        Ok(Self { inner })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SignedRevocationList(version={}, count={}, issuer={})",
+            self.inner.version(),
+            self.inner.len(),
+            hex::encode(self.inner.issuer().to_bytes())
+        )
+    }
+}
+
+/// Builder for creating SignedRevocationLists.
+#[pyclass(name = "SrlBuilder")]
+pub struct PySrlBuilder {
+    inner: crate::revocation::SrlBuilder,
+}
+
+#[pymethods]
+impl PySrlBuilder {
+    /// Add a warrant ID to revoke.
+    ///
+    /// Returns self for chaining.
+    fn revoke(&mut self, warrant_id: &str) {
+        self.inner = std::mem::take(&mut self.inner).revoke(warrant_id);
+    }
+
+    /// Add multiple warrant IDs to revoke.
+    ///
+    /// Returns self for chaining.
+    fn revoke_all(&mut self, ids: Vec<String>) {
+        self.inner = std::mem::take(&mut self.inner).revoke_all(ids);
+    }
+
+    /// Set the version number (must be monotonically increasing).
+    ///
+    /// Returns self for chaining.
+    fn version(&mut self, version: u64) {
+        self.inner = std::mem::take(&mut self.inner).version(version);
+    }
+
+    /// Import entries from an existing SRL.
+    ///
+    /// Returns self for chaining.
+    #[allow(clippy::wrong_self_convention)]
+    fn from_existing(&mut self, existing: &PySignedRevocationList) {
+        self.inner = std::mem::take(&mut self.inner).from_existing(&existing.inner);
+    }
+
+    /// Build and sign the revocation list.
+    fn build(&mut self, keypair: &PySigningKey) -> PyResult<PySignedRevocationList> {
+        let builder = std::mem::take(&mut self.inner);
+        let inner = builder.build(&keypair.inner).map_err(to_py_err)?;
+        Ok(PySignedRevocationList { inner })
+    }
+}
+
 /// Tenuo Python module.
 ///
 /// This function is public so it can be called from tenuo-python package.
@@ -3999,6 +4245,10 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyExtractionResult>()?;
     // Multi-sig
     m.add_class::<PyApproval>()?;
+    // Revocation
+    m.add_class::<PyRevocationRequest>()?;
+    m.add_class::<PySignedRevocationList>()?;
+    m.add_class::<PySrlBuilder>()?;
 
     // Constants
     m.add("MAX_DELEGATION_DEPTH", crate::MAX_DELEGATION_DEPTH)?;

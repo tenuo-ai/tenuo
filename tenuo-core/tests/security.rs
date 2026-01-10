@@ -16,7 +16,203 @@ use tenuo::{
 };
 
 // ============================================================================
-// Multi-sig Security
+// Multi-sig Security - Positive Cases
+// ============================================================================
+
+/// Verify that a single valid approval succeeds when 1 is required.
+#[test]
+fn test_single_approval_succeeds() {
+    let root_key = SigningKey::generate();
+    let approver = SigningKey::generate();
+
+    // Require 1 approval
+    let warrant = Warrant::builder()
+        .capability("action", ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .required_approvers(vec![approver.public_key()])
+        .min_approvals(1)
+        .holder(root_key.public_key())
+        .build(&root_key)
+        .unwrap();
+
+    let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+
+    let args = HashMap::new();
+    // Include authorized_holder in request hash (matches what verify_approvals does)
+    let request_hash = compute_request_hash(
+        &warrant.id().to_string(),
+        "action",
+        &args,
+        Some(&root_key.public_key()),
+    );
+
+    let now = Utc::now();
+    let expires = now + chrono::Duration::hours(1);
+
+    // Generate nonce for replay protection
+    const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
+    let nonce: [u8; 16] = rand::random();
+
+    let mut signable = Vec::new();
+    signable.extend_from_slice(APPROVAL_CONTEXT);
+    signable.extend_from_slice(&nonce);
+    signable.extend_from_slice(&request_hash);
+    signable.extend_from_slice("approver@example.com".as_bytes());
+    signable.extend_from_slice(&now.timestamp().to_le_bytes());
+    signable.extend_from_slice(&expires.timestamp().to_le_bytes());
+    let signature = approver.sign(&signable);
+
+    let approval = Approval {
+        request_hash,
+        nonce,
+        approver_key: approver.public_key(),
+        external_id: "approver@example.com".to_string(),
+        provider: "test".to_string(),
+        approved_at: now,
+        expires_at: expires,
+        reason: None,
+        signature,
+    };
+
+    let sig = warrant.sign(&root_key, "action", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "action", &args, Some(&sig), &[approval]);
+
+    assert!(
+        result.is_ok(),
+        "Single valid approval should succeed: {:?}",
+        result.err()
+    );
+}
+
+/// Verify that 2-of-3 multi-sig succeeds with 2 valid approvals.
+#[test]
+fn test_two_of_three_approvals_succeeds() {
+    let root_key = SigningKey::generate();
+    let approver_1 = SigningKey::generate();
+    let approver_2 = SigningKey::generate();
+    let approver_3 = SigningKey::generate();
+
+    // Require 2-of-3 approvals
+    let warrant = Warrant::builder()
+        .capability("critical_action", ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .required_approvers(vec![
+            approver_1.public_key(),
+            approver_2.public_key(),
+            approver_3.public_key(),
+        ])
+        .min_approvals(2)
+        .holder(root_key.public_key())
+        .build(&root_key)
+        .unwrap();
+
+    let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+
+    let args = HashMap::new();
+    // Include authorized_holder in request hash
+    let request_hash = compute_request_hash(
+        &warrant.id().to_string(),
+        "critical_action",
+        &args,
+        Some(&root_key.public_key()),
+    );
+
+    let now = Utc::now();
+    let expires = now + chrono::Duration::hours(1);
+
+    const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
+
+    // Create approval from approver 1
+    let nonce_1: [u8; 16] = rand::random();
+    let mut signable_1 = Vec::new();
+    signable_1.extend_from_slice(APPROVAL_CONTEXT);
+    signable_1.extend_from_slice(&nonce_1);
+    signable_1.extend_from_slice(&request_hash);
+    signable_1.extend_from_slice("approver1@example.com".as_bytes());
+    signable_1.extend_from_slice(&now.timestamp().to_le_bytes());
+    signable_1.extend_from_slice(&expires.timestamp().to_le_bytes());
+    let signature_1 = approver_1.sign(&signable_1);
+
+    let approval_1 = Approval {
+        request_hash,
+        nonce: nonce_1,
+        approver_key: approver_1.public_key(),
+        external_id: "approver1@example.com".to_string(),
+        provider: "test".to_string(),
+        approved_at: now,
+        expires_at: expires,
+        reason: None,
+        signature: signature_1,
+    };
+
+    // Create approval from approver 2
+    let nonce_2: [u8; 16] = rand::random();
+    let mut signable_2 = Vec::new();
+    signable_2.extend_from_slice(APPROVAL_CONTEXT);
+    signable_2.extend_from_slice(&nonce_2);
+    signable_2.extend_from_slice(&request_hash);
+    signable_2.extend_from_slice("approver2@example.com".as_bytes());
+    signable_2.extend_from_slice(&now.timestamp().to_le_bytes());
+    signable_2.extend_from_slice(&expires.timestamp().to_le_bytes());
+    let signature_2 = approver_2.sign(&signable_2);
+
+    let approval_2 = Approval {
+        request_hash,
+        nonce: nonce_2,
+        approver_key: approver_2.public_key(),
+        external_id: "approver2@example.com".to_string(),
+        provider: "test".to_string(),
+        approved_at: now,
+        expires_at: expires,
+        reason: None,
+        signature: signature_2,
+    };
+
+    let sig = warrant.sign(&root_key, "critical_action", &args).unwrap();
+    let result = authorizer.authorize(
+        &warrant,
+        "critical_action",
+        &args,
+        Some(&sig),
+        &[approval_1, approval_2],
+    );
+
+    assert!(
+        result.is_ok(),
+        "2-of-3 with 2 valid approvals should succeed: {:?}",
+        result.err()
+    );
+}
+
+/// Verify that warrants without multi-sig requirements work without approvals.
+#[test]
+fn test_no_multisig_requirement_succeeds_without_approvals() {
+    let root_key = SigningKey::generate();
+
+    // No multi-sig requirement
+    let warrant = Warrant::builder()
+        .capability("simple_action", ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .holder(root_key.public_key())
+        .build(&root_key)
+        .unwrap();
+
+    let authorizer = Authorizer::new().with_trusted_root(root_key.public_key());
+
+    let args = HashMap::new();
+    let sig = warrant.sign(&root_key, "simple_action", &args).unwrap();
+
+    // Should succeed without any approvals
+    let result = authorizer.authorize(&warrant, "simple_action", &args, Some(&sig), &[]);
+
+    assert!(
+        result.is_ok(),
+        "Non-multisig warrant should succeed without approvals"
+    );
+}
+
+// ============================================================================
+// Multi-sig Security - Rejection Cases
 // ============================================================================
 
 /// Verify that duplicate approvals cannot bypass M-of-N requirements.

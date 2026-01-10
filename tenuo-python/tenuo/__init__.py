@@ -34,6 +34,10 @@ from tenuo_core import (  # type: ignore
     # Multi-sig
     Approval,
     compute_approval_hash,
+    # Revocation
+    RevocationRequest,
+    SignedRevocationList,
+    SrlBuilder,
     # Common constraints
     Pattern,
     Exact,
@@ -148,6 +152,11 @@ __all__ = [
     # Multi-sig
     "Approval",
     "compute_approval_hash",
+
+    # Revocation
+    "RevocationRequest",
+    "SignedRevocationList",
+    "SrlBuilder",
 
     # Setup
     "configure",
