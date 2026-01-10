@@ -76,3 +76,4 @@ benchmarks/**/venv/
 docs/reference/
 docs/vendor/
 docs/explorer/
+tenuo-python/tenuo/openai-adapter-spec-v2.2.md
