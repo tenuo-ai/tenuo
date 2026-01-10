@@ -453,9 +453,9 @@ def _compute_constraint_hash(
     return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
-def _serialize_constraints(constraints: Dict[str, Dict[str, Any]]) -> Dict:
+def _serialize_constraints(constraints: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, str]]:
     """Serialize constraints to a hashable format."""
-    result = {}
+    result: Dict[str, Dict[str, str]] = {}
     for tool, params in sorted(constraints.items()):
         result[tool] = {}
         for param, constraint in sorted(params.items()):
@@ -2023,7 +2023,7 @@ def guard(
 # Try to get the SDK base class for proper inheritance
 _GuardrailFunctionOutput: Any = None
 try:
-    from agents.guardrail import GuardrailFunctionOutput as _GFO
+    from agents.guardrail import GuardrailFunctionOutput as _GFO  # type: ignore[import-not-found]
     _GuardrailFunctionOutput = _GFO
 except ImportError:
     pass
