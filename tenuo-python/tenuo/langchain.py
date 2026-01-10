@@ -525,7 +525,7 @@ def _rebuild_executor(
 ) -> Any:
     """Rebuild the executor with protected tools."""
     try:
-        from langchain.agents import AgentExecutor  # type: ignore[attr-defined]
+        from langchain.agents import AgentExecutor  # type: ignore[import-not-found,attr-defined]
     except ImportError:
         # Fallback: just return a simple wrapper
         return _SimpleProtectedAgent(original, protected_tools, capabilities)
@@ -563,7 +563,7 @@ class _TenuoAgentExecutor:
         **kwargs: Any,
     ):
         try:
-            from langchain.agents import AgentExecutor  # type: ignore[attr-defined]
+            from langchain.agents import AgentExecutor  # type: ignore[import-not-found,attr-defined]
         except ImportError:
             raise ImportError("langchain is required for _TenuoAgentExecutor")
 
@@ -746,7 +746,7 @@ class SecureAgentExecutor:
         if not LANGCHAIN_AVAILABLE:
             raise ImportError("LangChain not installed. Run: pip install langchain-core")
 
-        from langchain.agents import AgentExecutor  # type: ignore[attr-defined]
+        from langchain.agents import AgentExecutor  # type: ignore[import-not-found,attr-defined]
 
         # Wrap tools with Tenuo configuration
         protected_tools = guard_tools(

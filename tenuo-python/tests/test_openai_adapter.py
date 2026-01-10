@@ -53,7 +53,7 @@ from tenuo.openai import (
 
 # Helper for SDK compatibility - check for either our GuardrailResult or SDK's GuardrailFunctionOutput
 try:
-    from agents.guardrail import GuardrailFunctionOutput
+    from agents.guardrail import GuardrailFunctionOutput  # type: ignore[import-not-found]
 
     _SDK_OUTPUT_TYPE = GuardrailFunctionOutput
 except ImportError:

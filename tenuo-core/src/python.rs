@@ -1110,7 +1110,8 @@ impl PySubpath {
 ///     url_safe.is_safe("http://169.254.169.254/")  # False (metadata)
 ///     url_safe.is_safe("http://127.0.0.1/")  # False (loopback)
 ///
-///     # Domain allowlist - only specific domains allowed
+/// Domain allowlist - only specific domains allowed:
+///
 ///     url_safe = UrlSafe(allow_domains=["api.github.com", "*.googleapis.com"])
 #[pyclass(name = "UrlSafe")]
 #[derive(Clone)]
