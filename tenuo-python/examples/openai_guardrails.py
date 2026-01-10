@@ -21,8 +21,10 @@ from tenuo.openai import (
     Pattern,
     Range,
     OneOf,
+    Subpath,  # Secure path containment (prevents traversal)
     ToolDenied,
     ConstraintViolation,
+    AuditEvent,
 )
 
 # Try to import OpenAI
@@ -160,6 +162,101 @@ def demo_tool_denied():
     print()
 
 
+def demo_subpath_protection():
+    """Demonstrate Subpath for path traversal protection."""
+    print("=" * 60)
+    print("Demo 2b: Path Traversal Protection (Subpath)")
+    print("=" * 60)
+    
+    print("\nSubpath vs Pattern:")
+    print("  Pattern('/data/*') allows: /data/../etc/passwd ⚠️ UNSAFE")
+    print("  Subpath('/data') BLOCKS:   /data/../etc/passwd ✓ SAFE")
+    print()
+    
+    # Create protected client with Subpath
+    client = guard(
+        MockOpenAIClient(),
+        allow_tools=["read_file"],
+        constraints={
+            "read_file": {
+                # Subpath normalizes paths and prevents traversal
+                "path": Subpath("/data"),
+            },
+        },
+        on_denial="raise",
+    )
+    
+    # Create a mock that returns a traversal attack
+    class TraversalMock(MockOpenAIClient):
+        class chat:
+            class completions:
+                @staticmethod
+                def create(**kwargs):
+                    from dataclasses import dataclass
+                    
+                    @dataclass
+                    class Function:
+                        name: str = "read_file"
+                        # Classic path traversal attack
+                        arguments: str = '{"path": "/data/../etc/passwd"}'
+                    
+                    @dataclass
+                    class ToolCall:
+                        id: str = "call_1"
+                        function: Function = None
+                        def __post_init__(self):
+                            self.function = Function()
+                    
+                    @dataclass
+                    class Message:
+                        role: str = "assistant"
+                        content: str = None
+                        tool_calls: list = None
+                        def __post_init__(self):
+                            self.tool_calls = [ToolCall()]
+                    
+                    @dataclass
+                    class Choice:
+                        message: Message = None
+                        def __post_init__(self):
+                            self.message = Message()
+                    
+                    @dataclass
+                    class Response:
+                        choices: list = None
+                        def __post_init__(self):
+                            self.choices = [Choice()]
+                    
+                    return Response()
+    
+    traversal_client = guard(
+        TraversalMock(),
+        allow_tools=["read_file"],
+        constraints={
+            "read_file": {
+                "path": Subpath("/data"),
+            },
+        },
+        on_denial="raise",
+    )
+    
+    # Attempt path traversal
+    try:
+        response = traversal_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "anything"}],
+        )
+        print("✗ Should have been blocked!")
+    except ConstraintViolation as e:
+        print(f"✓ Path traversal blocked: {e.tool_name}")
+        print(f"  Value: {e.value}")
+        print(f"  Normalized: /etc/passwd (escaped from /data)")
+        print(f"  Constraint: Subpath('/data')")
+    
+    print()
+
+
+
 def demo_valid_call():
     """Demonstrate a valid call that passes all checks."""
     print("=" * 60)
@@ -196,7 +293,7 @@ def demo_valid_call():
 def demo_real_openai():
     """Demonstrate with real OpenAI client (if available)."""
     print("=" * 60)
-    print("Demo 4: Real OpenAI Integration")
+    print("Demo 6: Real OpenAI Integration")
     print("=" * 60)
     
     if not OPENAI_AVAILABLE:
@@ -226,6 +323,44 @@ def demo_real_openai():
     
     print("Real OpenAI client created with guardrails.")
     print("Use: real_client.chat.completions.create(...)")
+    print()
+
+
+def demo_audit_callback():
+    """Demonstrate audit callback for compliance logging."""
+    print("=" * 60)
+    print("Demo 4: Audit Callback (Compliance Logging)")
+    print("=" * 60)
+    
+    # Collect audit events
+    audit_log = []
+    
+    def log_audit(event: AuditEvent):
+        audit_log.append(event)
+        print(f"  AUDIT: {event.decision} {event.tool_name}")
+        print(f"         session={event.session_id}, hash={event.constraint_hash}")
+    
+    client = guard(
+        MockOpenAIClient(),
+        allow_tools=["read_file"],
+        constraints={"read_file": {"path": Pattern("/data/*")}},
+        audit_callback=log_audit,  # Every decision is logged
+    )
+    
+    print(f"\n  Session ID: {client.session_id}")
+    print(f"  Constraint hash: {client.constraint_hash}")
+    print()
+    
+    # Make a valid call
+    try:
+        client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Read the report"}],
+        )
+    except Exception:
+        pass
+    
+    print(f"\n  Events logged: {len(audit_log)}")
     print()
 
 
@@ -268,18 +403,20 @@ def main():
     print("This example shows Tier 1 (no cryptography) protection:")
     print("  - Allowlist/denylist for tools")
     print("  - Argument constraints (Pattern, Range, OneOf, etc.)")
+    print("  - Subpath for secure path containment")
     print("  - Type-strict validation\n")
     
     demo_constraint_violation()
     demo_tool_denied()
+    demo_subpath_protection()  # New: path traversal protection
     demo_valid_call()
+    demo_audit_callback()
     demo_skip_mode()
     demo_real_openai()
     
     print("=" * 60)
-    print("For Tier 2 (cryptographic warrants), see:")
-    print("  - tenuo-python/examples/langchain_simple.py")
-    print("  - tenuo-python/tenuo/openai-adapter-spec-v2.2.md")
+    print("For Tier 2 (cryptographic warrants with PoP), see:")
+    print("  - tenuo-python/examples/openai_warrant.py")
     print("=" * 60)
 
 

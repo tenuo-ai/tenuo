@@ -3587,6 +3587,18 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "URLP-001: Bare wildcard host not yet supported - see UrlPattern::new() for details"]
+    fn test_url_pattern_bare_wildcard_host() {
+        // Bug: `https://*/*` should match any host, but the parser incorrectly
+        // sets host_pattern to "__tenuo_path_wildcard__" due to replacement order.
+        // This test documents the expected behavior once fixed.
+        let pattern = UrlPattern::new("https://*/*").unwrap();
+        assert_eq!(pattern.host_pattern, Some("*".to_string()));
+        assert!(pattern.matches_url("https://example.com/path").unwrap());
+        assert!(pattern.matches_url("https://evil.com/attack").unwrap());
+    }
+
+    #[test]
     fn test_url_pattern_invalid() {
         assert!(UrlPattern::new("not-a-url").is_err());
         assert!(UrlPattern::new("missing-scheme.com").is_err());
