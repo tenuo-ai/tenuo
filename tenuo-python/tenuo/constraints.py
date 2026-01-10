@@ -43,7 +43,7 @@ Example:
 """
 
 import logging
-import os
+import posixpath
 import shlex
 from typing import Dict, Any, TYPE_CHECKING, List, Set
 
@@ -471,10 +471,11 @@ class Shlex:
         binary = tokens[0]
 
         # Normalize path if absolute/relative (prevents /usr/../bin tricks)
+        # Use posixpath for Unix-style paths (shell commands) even on Windows
         if "/" in binary:
-            binary = os.path.normpath(binary)
+            binary = posixpath.normpath(binary)
 
-        bin_name = os.path.basename(binary)
+        bin_name = posixpath.basename(binary)
 
         if binary not in self.allowed_bins and bin_name not in self.allowed_bins:
             logger.debug(f"Shlex rejected binary '{binary}' not in allowlist: {self.allowed_bins}")
