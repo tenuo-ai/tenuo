@@ -2575,7 +2575,7 @@ class TestToolSchemaValidation:
         caplog.set_level(logging.WARNING)
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
+        (GuardBuilder(mock_client)
             .allow("send_email", to=Pattern("*@company.com"))
             .allow("read_file", path=Pattern("/data/*"))
             .with_tools(sample_tools)
@@ -2591,7 +2591,7 @@ class TestToolSchemaValidation:
         caplog.set_level(logging.WARNING)
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
+        (GuardBuilder(mock_client)
             .allow("send_email", too=Pattern("*@company.com"))  # Typo: "too"
             .with_tools(sample_tools)
             .build())
@@ -2623,7 +2623,7 @@ class TestToolSchemaValidation:
         caplog.set_level(logging.WARNING)
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
+        (GuardBuilder(mock_client)
             .allow("send_email", wrong_param=Pattern("*"))
             .with_tools(sample_tools)
             .validate(False)  # Disable validation
@@ -2640,7 +2640,7 @@ class TestToolSchemaValidation:
 
         mock_client = Mock()
         # "search" is not in sample_tools, should not cause warning
-        client = (GuardBuilder(mock_client)
+        (GuardBuilder(mock_client)
             .allow("search", query=Pattern("*"))
             .with_tools(sample_tools)
             .build())
@@ -2655,7 +2655,7 @@ class TestToolSchemaValidation:
         caplog.set_level(logging.WARNING)
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
+        (GuardBuilder(mock_client)
             .constrain("send_email", to=Pattern("*@company.com"), _allow_unknown=True)
             .with_tools(sample_tools)
             .build())
@@ -2699,7 +2699,7 @@ class TestToolSchemaValidation:
         caplog.set_level(logging.WARNING)
 
         mock_client = Mock()
-        client = (GuardBuilder(mock_client)
+        (GuardBuilder(mock_client)
             .allow("send_email", too=Pattern("*"), subjet=Pattern("*"))
             .with_tools(sample_tools)
             .build())
