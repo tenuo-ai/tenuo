@@ -351,8 +351,8 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     if parent_type == "Shlex":
         if child_type == "Shlex":
             # Child allowed_bins must be subset of parent allowed_bins
-            p_bins = getattr(parent_value, "allowed_bins", set())
-            c_bins = getattr(child_value, "allowed_bins", set())
+            p_bins: set = getattr(parent_value, "allowed_bins", set())
+            c_bins: set = getattr(child_value, "allowed_bins", set())
             if not c_bins.issubset(p_bins):
                 return False
             # Child cannot relax block_globs
