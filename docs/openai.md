@@ -34,16 +34,17 @@ pip install tenuo
 
 ### Tier 1: Guardrails (5 minutes)
 
-```python
-from tenuo.openai import guard, Pattern
+Use the **builder pattern** for clean, fluent constraint definition:
 
-client = guard(
-    openai.OpenAI(),
-    allow_tools=["search_web", "read_file"],
-    constraints={
-        "read_file": {"path": Pattern("/data/*")}
-    }
-)
+```python
+from tenuo.openai import GuardBuilder, Pattern, Subpath
+
+client = (GuardBuilder(openai.OpenAI())
+    .allow("search_web")
+    .allow("read_file", path=Subpath("/data"))
+    .allow("send_email", to=Pattern("*@company.com"))
+    .deny("delete_file")
+    .build())
 
 # Use normally - unauthorized tool calls are blocked
 response = client.chat.completions.create(
@@ -53,15 +54,32 @@ response = client.chat.completions.create(
 )
 ```
 
+The builder accepts:
+- **Strings**: `"search"`
+- **OpenAI tool dicts**: `{"type": "function", "function": {"name": "search"}}`
+- **Callables**: `my_search_function` (extracts `__name__`)
+
+**Alternative: dict style** (less ergonomic, same functionality):
+
+```python
+from tenuo.openai import guard, Pattern
+
+client = guard(
+    openai.OpenAI(),
+    allow_tools=["search_web", "read_file"],
+    constraints={"read_file": {"path": Pattern("/data/*")}}
+)
+```
+
 **What gets blocked?**
-- Tools not in `allow_tools`
+- Tools not in allow list
 - Arguments violating constraints (e.g., `/etc/passwd` blocked by `Pattern("/data/*")`)
 - Streaming TOCTOU attacks (buffer-verify-emit)
 
 ### Tier 2: Warrants (when you need crypto)
 
 ```python
-from tenuo.openai import guard
+from tenuo.openai import GuardBuilder
 from tenuo import SigningKey, Warrant, Pattern
 
 # Agent holds warrant and signing key
@@ -72,12 +90,10 @@ warrant = (Warrant.mint_builder()
     .ttl(3600)
     .mint(control_plane_key))
 
-# Same guard() API, add warrant + signing_key
-client = guard(
-    openai.OpenAI(),
-    warrant=warrant,
-    signing_key=agent_key,
-)
+# Builder with warrant
+client = (GuardBuilder(openai.OpenAI())
+    .with_warrant(warrant, agent_key)
+    .build())
 
 # Each tool call is now cryptographically authorized
 response = client.chat.completions.create(...)

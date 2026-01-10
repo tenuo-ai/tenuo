@@ -2254,3 +2254,275 @@ class TestSubpathConstraint:
         # We don't explicitly test backslash behavior here as it's OS-dependent
 
 
+# =============================================================================
+# GuardBuilder Tests
+# =============================================================================
+
+
+class TestGuardBuilder:
+    """Test the fluent builder pattern for creating guarded clients."""
+    
+    def test_basic_allow(self):
+        """Builder.allow() adds tools to allowlist."""
+        from tenuo.openai import GuardBuilder
+        
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .allow("search")
+            .allow("read_file")
+            .build())
+        
+        assert isinstance(client, GuardedClient)
+        assert client._allow_tools == ["search", "read_file"]
+    
+    def test_allow_with_constraints(self):
+        """Builder.allow() accepts constraint kwargs."""
+        from tenuo.openai import GuardBuilder
+        
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .allow("read_file", path=Subpath("/data"))
+            .allow("send_email", to=Pattern("*@company.com"))
+            .build())
+        
+        assert "read_file" in client._constraints
+        assert "send_email" in client._constraints
+        assert isinstance(client._constraints["read_file"]["path"], Subpath)
+        assert isinstance(client._constraints["send_email"]["to"], Pattern)
+    
+    def test_allow_all(self):
+        """Builder.allow_all() adds multiple tools at once."""
+        from tenuo.openai import GuardBuilder
+        
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .allow_all("search", "read_file", "list_files")
+            .build())
+        
+        assert client._allow_tools == ["search", "read_file", "list_files"]
+    
+    def test_deny(self):
+        """Builder.deny() adds tools to denylist."""
+        from tenuo.openai import GuardBuilder
+        
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .deny("delete_file")
+            .deny("drop_table")
+            .build())
+        
+        assert client._deny_tools == ["delete_file", "drop_table"]
+    
+    def test_deny_all(self):
+        """Builder.deny_all() adds multiple tools to denylist."""
+        from tenuo.openai import GuardBuilder
+        
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .deny_all("delete_file", "rm", "drop_table")
+            .build())
+        
+        assert client._deny_tools == ["delete_file", "rm", "drop_table"]
+    
+    def test_constrain_without_allow(self):
+        """Builder.constrain() adds constraints without allowing."""
+        from tenuo.openai import GuardBuilder
+        
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .constrain("read_file", path=Subpath("/data"))
+            .build())
+        
+        # Tool is not in allow list
+        assert client._allow_tools is None or "read_file" not in (client._allow_tools or [])
+        # But has constraints
+        assert "read_file" in client._constraints
+    
+    def test_on_denial(self):
+        """Builder.on_denial() sets denial mode."""
+        from tenuo.openai import GuardBuilder
+        
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .allow("search")
+            .on_denial("skip")
+            .build())
+        
+        assert client._on_denial == "skip"
+    
+    def test_buffer_limit(self):
+        """Builder.buffer_limit() sets stream buffer limit."""
+        from tenuo.openai import GuardBuilder
+        
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .allow("search")
+            .buffer_limit(1024)
+            .build())
+        
+        assert client._stream_buffer_limit == 1024
+    
+    def test_audit_callback(self):
+        """Builder.audit() sets audit callback."""
+        from tenuo.openai import GuardBuilder
+        
+        events = []
+        def callback(event):
+            events.append(event)
+        
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .allow("search")
+            .audit(callback)
+            .build())
+        
+        assert client._audit_callback is callback
+    
+    def test_with_warrant(self):
+        """Builder.with_warrant() configures Tier 2 authorization."""
+        from tenuo.openai import GuardBuilder
+        
+        mock_client = Mock()
+        issuer_key = SigningKey.generate()
+        agent_key = SigningKey.generate()
+        
+        warrant = (Warrant.mint_builder()
+            .capability("search")
+            .holder(agent_key.public_key)
+            .ttl(3600)
+            .mint(issuer_key))
+        
+        client = (GuardBuilder(mock_client)
+            .with_warrant(warrant, agent_key)
+            .build())
+        
+        assert client._warrant is warrant
+        assert client._signing_key is agent_key
+    
+    def test_chaining(self):
+        """Builder methods can be chained in any order."""
+        from tenuo.openai import GuardBuilder
+        
+        events = []
+        mock_client = Mock()
+        
+        client = (GuardBuilder(mock_client)
+            .on_denial("log")
+            .allow("search")
+            .deny("delete_file")
+            .buffer_limit(2048)
+            .audit(lambda e: events.append(e))
+            .allow("read_file", path=Subpath("/data"))
+            .deny("rm")
+            .build())
+        
+        assert client._allow_tools == ["search", "read_file"]
+        assert client._deny_tools == ["delete_file", "rm"]
+        assert client._on_denial == "log"
+        assert client._stream_buffer_limit == 2048
+        assert "read_file" in client._constraints
+    
+    def test_tool_extraction_from_dict(self):
+        """Builder accepts OpenAI tool dict format."""
+        from tenuo.openai import GuardBuilder
+        
+        tool_dict = {
+            "type": "function",
+            "function": {
+                "name": "search",
+                "description": "Search for information"
+            }
+        }
+        
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .allow(tool_dict)
+            .build())
+        
+        assert "search" in client._allow_tools
+    
+    def test_tool_extraction_from_callable(self):
+        """Builder accepts callables and extracts __name__."""
+        from tenuo.openai import GuardBuilder
+        
+        def my_search_tool():
+            pass
+        
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .allow(my_search_tool)
+            .build())
+        
+        assert "my_search_tool" in client._allow_tools
+    
+    def test_tool_extraction_from_simple_dict(self):
+        """Builder accepts simple dict with name key."""
+        from tenuo.openai import GuardBuilder
+        
+        tool_dict = {"name": "search"}
+        
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .allow(tool_dict)
+            .build())
+        
+        assert "search" in client._allow_tools
+    
+    def test_tool_extraction_invalid_dict(self):
+        """Builder raises ValueError for dict without name."""
+        from tenuo.openai import GuardBuilder, _extract_tool_name
+        
+        with pytest.raises(ValueError, match="Cannot extract tool name"):
+            _extract_tool_name({"foo": "bar"})
+    
+    def test_tool_extraction_invalid_type(self):
+        """Builder raises TypeError for unsupported types."""
+        from tenuo.openai import _extract_tool_name
+        
+        with pytest.raises(TypeError, match="Expected str, dict, or callable"):
+            _extract_tool_name(123)
+    
+    def test_integration_with_verify(self):
+        """Builder-created client actually enforces constraints."""
+        from tenuo.openai import GuardBuilder
+        
+        mock_client = Mock()
+        client = (GuardBuilder(mock_client)
+            .allow("search")
+            .allow("read_file", path=Subpath("/data"))
+            .deny("delete_file")
+            .build())
+        
+        # Allowed tool without constraints - returns None on success
+        verify_tool_call(
+            "search", {"query": "weather"},
+            allow_tools=client._allow_tools,
+            deny_tools=client._deny_tools,
+            constraints=client._constraints,
+        )  # Should not raise
+        
+        # Allowed tool with valid constraint
+        verify_tool_call(
+            "read_file", {"path": "/data/file.txt"},
+            allow_tools=client._allow_tools,
+            deny_tools=client._deny_tools,
+            constraints=client._constraints,
+        )  # Should not raise
+        
+        # Denied tool
+        with pytest.raises(ToolDenied):
+            verify_tool_call(
+                "delete_file", {"path": "/data/file.txt"},
+                allow_tools=client._allow_tools,
+                deny_tools=client._deny_tools,
+                constraints=client._constraints,
+            )
+        
+        # Constraint violation
+        with pytest.raises(ConstraintViolation):
+            verify_tool_call(
+                "read_file", {"path": "/etc/passwd"},
+                allow_tools=client._allow_tools,
+                deny_tools=client._deny_tools,
+                constraints=client._constraints,
+            )

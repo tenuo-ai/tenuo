@@ -22,7 +22,19 @@ Security Philosophy (Fail Closed):
     This is intentional. A guardrail that silently passes unknown cases
     is not a guardrail - it's a false sense of security.
 
-Usage (Tier 1 - Guardrails):
+Usage (Tier 1 - Builder Pattern, Recommended):
+    from tenuo.openai import GuardBuilder, Subpath, Pattern
+
+    client = (GuardBuilder(openai.OpenAI())
+        .allow("search")
+        .allow("read_file", path=Subpath("/data"))
+        .allow("send_email", to=Pattern("*@company.com"))
+        .deny("delete_file")
+        .build())
+    
+    response = client.chat.completions.create(...)
+
+Usage (Tier 1 - Dict Style):
     from tenuo.openai import guard, Pattern
 
     client = guard(
@@ -33,18 +45,17 @@ Usage (Tier 1 - Guardrails):
     response = client.chat.completions.create(...)
 
 Usage (Tier 2 - Warrant with PoP):
-    from tenuo.openai import guard
-    from tenuo import SigningKey, Warrant, Pattern
+    from tenuo.openai import GuardBuilder
+    from tenuo import SigningKey, Warrant
 
     # Agent holds the warrant and its signing key
     agent_key = SigningKey.generate()
     warrant = Warrant.mint_builder()...  # From control plane
     
-    client = guard(
-        openai.OpenAI(),
-        warrant=warrant,
-        signing_key=agent_key,  # Agent signs PoP for each call
-    )
+    client = (GuardBuilder(openai.OpenAI())
+        .with_warrant(warrant, agent_key)
+        .build())
+    
     response = client.chat.completions.create(...)
 
 Async Support:
@@ -1615,6 +1626,256 @@ class GuardedClient:
 # =============================================================================
 
 
+# Type alias for tool references
+ToolRef = Union[str, Dict[str, Any], Callable[..., Any]]
+
+
+def _extract_tool_name(tool: ToolRef) -> str:
+    """Extract tool name from various formats.
+    
+    Supports:
+    - String: "search" -> "search"
+    - OpenAI tool dict: {"type": "function", "function": {"name": "search"}} -> "search"
+    - Callable: search_func -> "search_func"
+    """
+    if isinstance(tool, str):
+        return tool
+    elif isinstance(tool, dict):
+        # OpenAI tool format
+        if "function" in tool and "name" in tool["function"]:
+            return tool["function"]["name"]
+        elif "name" in tool:
+            return tool["name"]
+        else:
+            raise ValueError(f"Cannot extract tool name from dict: {tool}")
+    elif callable(tool):
+        name = getattr(tool, "__name__", None)
+        if name:
+            return name
+        raise ValueError(f"Callable has no __name__: {tool}")
+    else:
+        raise TypeError(f"Expected str, dict, or callable, got {type(tool)}")
+
+
+class GuardBuilder:
+    """Fluent builder for creating guarded OpenAI clients.
+    
+    Provides a more ergonomic API for defining tool constraints:
+    
+        client = (GuardBuilder(openai.OpenAI())
+            .allow("search")
+            .allow("read_file", path=Subpath("/data"))
+            .allow("send_email", to=Pattern("*@company.com"))
+            .deny("delete_file")
+            .on_denial("raise")
+            .build())
+    
+    Benefits over dict-based `guard()`:
+    - Fluent, chainable API
+    - Accepts tool objects (not just strings) for IDE autocomplete
+    - Clear separation of allow vs deny
+    - Constraints are kwargs, not nested dicts
+    
+    For Tier 2 (warrant-based), use `.with_warrant()`:
+    
+        client = (GuardBuilder(openai.OpenAI())
+            .with_warrant(warrant, signing_key)
+            .build())
+    """
+    
+    def __init__(self, client: Any) -> None:
+        """Create a new builder for the given OpenAI client.
+        
+        Args:
+            client: OpenAI client instance (sync or async)
+        """
+        self._client = client
+        self._allow_tools: List[str] = []
+        self._deny_tools: List[str] = []
+        self._constraints: Dict[str, Dict[str, Constraint]] = {}
+        self._on_denial: DenialMode = "raise"
+        self._stream_buffer_limit: int = 65536
+        self._audit_callback: Optional[AuditCallback] = None
+        self._warrant: Optional[Warrant] = None
+        self._signing_key: Optional[SigningKey] = None
+    
+    def allow(self, tool: ToolRef, **constraints: Constraint) -> "GuardBuilder":
+        """Allow a tool, optionally with constraints.
+        
+        Args:
+            tool: Tool name, OpenAI tool dict, or callable
+            **constraints: Parameter constraints (e.g., path=Subpath("/data"))
+        
+        Returns:
+            self for chaining
+        
+        Example:
+            builder.allow("read_file", path=Subpath("/data"), encoding=Exact("utf-8"))
+        """
+        name = _extract_tool_name(tool)
+        self._allow_tools.append(name)
+        if constraints:
+            self._constraints[name] = constraints
+        return self
+    
+    def allow_all(self, *tools: ToolRef) -> "GuardBuilder":
+        """Allow multiple tools without constraints.
+        
+        Args:
+            *tools: Tool names, dicts, or callables
+        
+        Returns:
+            self for chaining
+        
+        Example:
+            builder.allow_all("search", "read_file", "list_files")
+        """
+        for tool in tools:
+            self.allow(tool)
+        return self
+    
+    def deny(self, tool: ToolRef) -> "GuardBuilder":
+        """Explicitly deny a tool.
+        
+        Args:
+            tool: Tool name, OpenAI tool dict, or callable
+        
+        Returns:
+            self for chaining
+        
+        Example:
+            builder.deny("delete_file")
+        """
+        name = _extract_tool_name(tool)
+        self._deny_tools.append(name)
+        return self
+    
+    def deny_all(self, *tools: ToolRef) -> "GuardBuilder":
+        """Deny multiple tools.
+        
+        Args:
+            *tools: Tool names, dicts, or callables
+        
+        Returns:
+            self for chaining
+        
+        Example:
+            builder.deny_all("delete_file", "rm", "drop_table")
+        """
+        for tool in tools:
+            self.deny(tool)
+        return self
+    
+    def constrain(self, tool: ToolRef, **constraints: Constraint) -> "GuardBuilder":
+        """Add constraints to a tool (does NOT add to allow list).
+        
+        Use this when you want to constrain a tool without explicitly
+        allowing it (e.g., when using a denylist approach).
+        
+        Args:
+            tool: Tool name, OpenAI tool dict, or callable
+            **constraints: Parameter constraints
+        
+        Returns:
+            self for chaining
+        """
+        name = _extract_tool_name(tool)
+        if name in self._constraints:
+            self._constraints[name].update(constraints)
+        else:
+            self._constraints[name] = constraints
+        return self
+    
+    def on_denial(self, mode: DenialMode) -> "GuardBuilder":
+        """Set behavior when a tool call is denied.
+        
+        Args:
+            mode: "raise" (default), "skip", or "log"
+        
+        Returns:
+            self for chaining
+        """
+        self._on_denial = mode
+        return self
+    
+    def buffer_limit(self, limit: int) -> "GuardBuilder":
+        """Set max buffer size for streaming tool calls.
+        
+        Args:
+            limit: Max bytes per tool call (default 64KB)
+        
+        Returns:
+            self for chaining
+        """
+        self._stream_buffer_limit = limit
+        return self
+    
+    def audit(self, callback: AuditCallback) -> "GuardBuilder":
+        """Set audit callback for all authorization decisions.
+        
+        Args:
+            callback: Function called with AuditEvent for each decision
+        
+        Returns:
+            self for chaining
+        
+        Example:
+            def log_audit(event: AuditEvent):
+                print(f"[{event.decision}] {event.tool}: {event.reason}")
+            
+            builder.audit(log_audit)
+        """
+        self._audit_callback = callback
+        return self
+    
+    def with_warrant(
+        self,
+        warrant: Warrant,
+        signing_key: SigningKey,
+    ) -> "GuardBuilder":
+        """Configure Tier 2 (warrant + PoP) authorization.
+        
+        When a warrant is configured, its constraints take precedence
+        over Tier 1 constraints. The signing key is used to sign
+        Proof-of-Possession for each tool call.
+        
+        Args:
+            warrant: Cryptographic warrant (from control plane)
+            signing_key: Agent's signing key for PoP
+        
+        Returns:
+            self for chaining
+        
+        Example:
+            builder.with_warrant(warrant, agent_key)
+        """
+        self._warrant = warrant
+        self._signing_key = signing_key
+        return self
+    
+    def build(self) -> GuardedClient:
+        """Build the guarded client.
+        
+        Returns:
+            GuardedClient with configured constraints
+        
+        Raises:
+            MissingSigningKey: If warrant provided without signing_key
+            ValueError: If configuration is invalid
+        """
+        return GuardedClient(
+            self._client,
+            allow_tools=self._allow_tools if self._allow_tools else None,
+            deny_tools=self._deny_tools if self._deny_tools else None,
+            constraints=self._constraints if self._constraints else None,
+            on_denial=self._on_denial,
+            stream_buffer_limit=self._stream_buffer_limit,
+            warrant=self._warrant,
+            signing_key=self._signing_key,
+            audit_callback=self._audit_callback,
+        )
+
+
 def guard(
     client: Any,
     *,
@@ -2133,6 +2394,7 @@ def create_warrant_guardrail(
 __all__ = [
     # Main API
     "guard",
+    "GuardBuilder",
     "GuardedClient",
     "GuardedResponses",
     "enable_debug",

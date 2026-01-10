@@ -5,10 +5,19 @@ OpenAI + Tenuo Tier 1 Guardrails Example
 A minimal example showing how to protect OpenAI tool calls with Tenuo guardrails.
 This uses Tier 1 (no cryptography) - runtime constraint checking only.
 
-Key Pattern:
-1. Wrap OpenAI client with guard()
-2. Define allow_tools, deny_tools, and constraints
-3. All tool calls are automatically verified before execution
+Key Pattern (Builder - Recommended):
+    client = (GuardBuilder(openai.OpenAI())
+        .allow("search")
+        .allow("read_file", path=Subpath("/data"))
+        .deny("delete_file")
+        .build())
+
+Alternative (Dict Style):
+    client = guard(
+        openai.OpenAI(),
+        allow_tools=["search", "read_file"],
+        constraints={"read_file": {"path": Pattern("/data/*")}}
+    )
 
 Requirements:
     pip install openai tenuo
@@ -18,6 +27,7 @@ import os
 
 from tenuo.openai import (
     guard,
+    GuardBuilder,
     Pattern,
     Range,
     OneOf,
@@ -100,13 +110,46 @@ class MockOpenAIClient:
 # Demo Functions
 # ============================================================================
 
+def demo_builder_pattern():
+    """Demonstrate the recommended builder pattern."""
+    print("=" * 60)
+    print("Demo 0: Builder Pattern (Recommended)")
+    print("=" * 60)
+    
+    # Builder pattern - fluent, readable API
+    client = (GuardBuilder(MockOpenAIClient())
+        .allow("search")
+        .allow("read_file", path=Subpath("/data"))
+        .allow("send_email", to=Pattern("*@company.com"))
+        .deny("delete_file")
+        .on_denial("raise")
+        .build())
+    
+    print("Created guarded client with:")
+    print(f"  Allowed tools: {client._allow_tools}")
+    print(f"  Denied tools: {client._deny_tools}")
+    print(f"  Constraints: {list(client._constraints.keys())}")
+    
+    # Test a valid call
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": "Read /data/report.txt"}],
+        )
+        print("  Valid call: ALLOWED")
+    except Exception as e:
+        print(f"  Valid call: BLOCKED - {e}")
+    
+    print()
+
+
 def demo_constraint_violation():
     """Demonstrate blocking a constraint violation."""
     print("=" * 60)
     print("Demo 1: Constraint Violation (Path Protection)")
     print("=" * 60)
     
-    # Create protected client
+    # Dict style (alternative to builder)
     client = guard(
         MockOpenAIClient(),
         allow_tools=["read_file", "search"],
@@ -401,14 +444,16 @@ def demo_skip_mode():
 def main():
     print("\n=== OpenAI + Tenuo Tier 1 Guardrails ===\n")
     print("This example shows Tier 1 (no cryptography) protection:")
+    print("  - Builder pattern (recommended) or dict style")
     print("  - Allowlist/denylist for tools")
     print("  - Argument constraints (Pattern, Range, OneOf, etc.)")
     print("  - Subpath for secure path containment")
     print("  - Type-strict validation\n")
     
+    demo_builder_pattern()  # Recommended approach
     demo_constraint_violation()
     demo_tool_denied()
-    demo_subpath_protection()  # New: path traversal protection
+    demo_subpath_protection()
     demo_valid_call()
     demo_audit_callback()
     demo_skip_mode()
