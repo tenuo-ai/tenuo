@@ -6,7 +6,7 @@ use std::time::Duration;
 use tenuo::{
     constraints::{
         Any, Cidr, Constraint, ConstraintSet, ConstraintValue, Contains, Exact, NotOneOf, OneOf,
-        Pattern, Range, RegexConstraint, UrlPattern,
+        Pattern, Range, RegexConstraint, Subpath, UrlPattern, UrlSafe,
     },
     wire, Authorizer, PublicKey, SigningKey, Warrant,
 };
@@ -56,6 +56,46 @@ fn constraint_to_readable(constraint: &Constraint) -> JsonValue {
         }
         Constraint::Not(n) => json!({ "not": constraint_to_readable(&n.constraint) }),
         Constraint::Cel(c) => json!({ "cel": &c.expression }),
+        Constraint::Subpath(s) => {
+            let mut obj = serde_json::Map::new();
+            obj.insert("root".to_string(), json!(&s.root));
+            if !s.case_sensitive {
+                obj.insert("case_sensitive".to_string(), json!(false));
+            }
+            if !s.allow_equal {
+                obj.insert("allow_equal".to_string(), json!(false));
+            }
+            json!({ "subpath": JsonValue::Object(obj) })
+        }
+        Constraint::UrlSafe(u) => {
+            let mut obj = serde_json::Map::new();
+            if !u.schemes.is_empty() && u.schemes != vec!["http", "https"] {
+                obj.insert("schemes".to_string(), json!(&u.schemes));
+            }
+            if let Some(ref domains) = u.allow_domains {
+                obj.insert("allow_domains".to_string(), json!(domains));
+            }
+            if let Some(ref ports) = u.allow_ports {
+                obj.insert("allow_ports".to_string(), json!(ports));
+            }
+            if !u.block_private {
+                obj.insert("block_private".to_string(), json!(false));
+            }
+            if !u.block_loopback {
+                obj.insert("block_loopback".to_string(), json!(false));
+            }
+            if !u.block_metadata {
+                obj.insert("block_metadata".to_string(), json!(false));
+            }
+            if u.block_internal_tlds {
+                obj.insert("block_internal_tlds".to_string(), json!(true));
+            }
+            if obj.is_empty() {
+                json!({ "url_safe": {} })
+            } else {
+                json!({ "url_safe": JsonValue::Object(obj) })
+            }
+        }
         Constraint::Unknown { type_id, .. } => json!({ "unknown": format!("type_id={}", type_id) }),
         _ => json!({ "unknown": "future_variant" }),
     }
@@ -874,6 +914,48 @@ pub fn create_warrant_from_config(config_json: JsValue) -> JsValue {
                         if !values.is_empty() {
                             constraint_set
                                 .insert(field.clone(), Constraint::Contains(Contains::new(values)));
+                        }
+                    }
+                    // Subpath constraint (safe path containment)
+                    else if let Some(subpath_obj) = obj.get("subpath") {
+                        // Handle both { subpath: "/data" } and { subpath: { root: "/data" } }
+                        let root = if let Some(root_str) = subpath_obj.as_str() {
+                            Some(root_str.to_string())
+                        } else if let Some(subpath_inner) = subpath_obj.as_object() {
+                            subpath_inner.get("root").and_then(|v| v.as_str()).map(|s| s.to_string())
+                        } else {
+                            None
+                        };
+                        if let Some(root_path) = root {
+                            if let Ok(s) = Subpath::new(&root_path) {
+                                constraint_set.insert(field.clone(), Constraint::Subpath(s));
+                            }
+                        }
+                    }
+                    // UrlSafe constraint (SSRF protection)
+                    else if obj.contains_key("url_safe") || obj.contains_key("urlsafe") {
+                        let url_safe_obj = obj.get("url_safe").or_else(|| obj.get("urlsafe"));
+                        // Handle { url_safe: {} } or { url_safe: { allow_domains: [...] } }
+                        if let Some(inner) = url_safe_obj.and_then(|v| v.as_object()) {
+                            if let Some(domains_arr) = inner.get("allow_domains").and_then(|v| v.as_array()) {
+                                let domains: Vec<String> = domains_arr
+                                    .iter()
+                                    .filter_map(|d| d.as_str().map(|s| s.to_string()))
+                                    .collect();
+                                if !domains.is_empty() {
+                                    constraint_set.insert(
+                                        field.clone(),
+                                        Constraint::UrlSafe(UrlSafe::with_domains(domains)),
+                                    );
+                                } else {
+                                    constraint_set.insert(field.clone(), Constraint::UrlSafe(UrlSafe::new()));
+                                }
+                            } else {
+                                constraint_set.insert(field.clone(), Constraint::UrlSafe(UrlSafe::new()));
+                            }
+                        } else {
+                            // Simple { url_safe: {} } or { url_safe: true }
+                            constraint_set.insert(field.clone(), Constraint::UrlSafe(UrlSafe::new()));
                         }
                     }
                 }

@@ -507,7 +507,7 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
 
   // Helper to parse constraint and generate code
   type ParsedConstraint = {
-    type: 'pattern' | 'exact' | 'range' | 'oneof' | 'regex' | 'contains' | 'cidr' | 'wildcard' | 'url_pattern' | 'unknown';
+    type: 'pattern' | 'exact' | 'range' | 'oneof' | 'regex' | 'contains' | 'cidr' | 'wildcard' | 'url_pattern' | 'subpath' | 'url_safe' | 'unknown';
     pythonCode: string;
     rustCode: string;
     exampleValue: string | number;
@@ -694,6 +694,43 @@ const CodeGenerator = ({ decoded, tool, args }: { decoded: DecodedWarrant | null
           pythonCode: `UrlPattern("${urlPattern}")`,
           rustCode: `Constraint::UrlPattern(UrlPattern::new("${urlPattern}")?)`,
           exampleValue: urlPattern.replace(/\*/g, 'example')
+        };
+      }
+
+      // Subpath constraint (safe path containment): { subpath: { root: "/data" } } or { subpath: "/data" }
+      if (v.subpath) {
+        const subpathVal = v.subpath;
+        const root = typeof subpathVal === 'string'
+          ? subpathVal
+          : (subpathVal as { root?: string }).root || '/data';
+        return {
+          type: 'subpath' as const,
+          pythonCode: `Subpath("${root}")`,
+          rustCode: `Constraint::Subpath(Subpath::new("${root}")?)`,
+          exampleValue: `${root}/file.txt`
+        };
+      }
+
+      // UrlSafe constraint (SSRF protection): { url_safe: {} } or { url_safe: { allow_domains: [...] } }
+      if (v.url_safe !== undefined || v.urlsafe !== undefined) {
+        const urlSafeVal = v.url_safe || v.urlsafe;
+        if (urlSafeVal && typeof urlSafeVal === 'object') {
+          const inner = urlSafeVal as { allow_domains?: string[] };
+          if (inner.allow_domains && inner.allow_domains.length > 0) {
+            const domains = inner.allow_domains.map(d => `"${d}"`).join(', ');
+            return {
+              type: 'url_safe' as const,
+              pythonCode: `UrlSafe(allow_domains=[${domains}])`,
+              rustCode: `Constraint::UrlSafe(UrlSafe::with_domains(vec![${domains}]))`,
+              exampleValue: `https://${inner.allow_domains[0].replace('*.', 'api.')}/resource`
+            };
+          }
+        }
+        return {
+          type: 'url_safe' as const,
+          pythonCode: `UrlSafe()`,
+          rustCode: `Constraint::UrlSafe(UrlSafe::new())`,
+          exampleValue: 'https://api.example.com/resource'
         };
       }
     }
