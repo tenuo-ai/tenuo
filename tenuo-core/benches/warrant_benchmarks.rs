@@ -4,7 +4,9 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::collections::HashMap;
 use std::time::Duration;
 use tenuo::{
-    constraints::{Cidr, ConstraintSet, ConstraintValue, Exact, Pattern, Range, Subpath, UrlPattern, UrlSafe},
+    constraints::{
+        Cidr, ConstraintSet, ConstraintValue, Exact, Pattern, Range, Subpath, UrlPattern, UrlSafe,
+    },
     crypto::SigningKey,
     warrant::Warrant,
     wire,
@@ -420,9 +422,7 @@ fn benchmark_subpath_operations(c: &mut Criterion) {
 fn benchmark_url_safe_operations(c: &mut Criterion) {
     let mut group = c.benchmark_group("url_safe");
 
-    group.bench_function("create_default", |b| {
-        b.iter(|| UrlSafe::new())
-    });
+    group.bench_function("create_default", |b| b.iter(UrlSafe::new));
 
     group.bench_function("create_with_domains", |b| {
         b.iter(|| UrlSafe::with_domains(vec!["*.example.com", "api.trusted.io"]))
@@ -435,7 +435,7 @@ fn benchmark_url_safe_operations(c: &mut Criterion) {
     let loopback_url = "http://127.0.0.1:3000/internal";
     let localhost_url = "http://localhost:8080/api";
     let ipv6_mapped_url = "http://[::ffff:169.254.169.254]/metadata";
-    let octal_ip_url = "http://0251.0376.0251.0376/metadata";  // Octal encoding of 169.254.169.254
+    let octal_ip_url = "http://0251.0376.0251.0376/metadata"; // Octal encoding of 169.254.169.254
 
     group.bench_function("allows_public_url", |b| {
         b.iter(|| {
@@ -494,14 +494,18 @@ fn benchmark_url_safe_operations(c: &mut Criterion) {
 
     group.bench_function("domain_allowlist_allowed", |b| {
         b.iter(|| {
-            let result = url_safe_restricted.is_safe(black_box(allowed_domain)).unwrap();
+            let result = url_safe_restricted
+                .is_safe(black_box(allowed_domain))
+                .unwrap();
             assert!(result);
         })
     });
 
     group.bench_function("domain_allowlist_blocked", |b| {
         b.iter(|| {
-            let result = url_safe_restricted.is_safe(black_box(blocked_domain)).unwrap();
+            let result = url_safe_restricted
+                .is_safe(black_box(blocked_domain))
+                .unwrap();
             assert!(!result);
         })
     });
