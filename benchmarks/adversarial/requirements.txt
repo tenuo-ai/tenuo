@@ -2,7 +2,7 @@
 # Pinned for reproducibility
 
 openai>=1.0.0,<2.0.0
-tenuo>=0.1.0b4
+tenuo>=0.1.0b5
 
 # Optional: For analysis
 # matplotlib>=3.7.0
