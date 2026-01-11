@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 400">
+  <defs>
+    <linearGradient id="mapGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4ade80;stop-opacity:0.2"/>
+      <stop offset="100%" style="stop-color:#22c55e;stop-opacity:0.1"/>
+    </linearGradient>
+    <linearGradient id="territoryGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f87171;stop-opacity:0.2"/>
+      <stop offset="100%" style="stop-color:#ef4444;stop-opacity:0.1"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="800" height="400" fill="#0f172a"/>
+  
+  <!-- Left Panel: The Map -->
+  <rect x="40" y="40" width="340" height="320" rx="12" fill="url(#mapGrad)" stroke="#4ade80" stroke-width="2"/>
+  <text x="210" y="85" text-anchor="middle" fill="#4ade80" font-family="monospace" font-size="18" font-weight="bold">THE MAP</text>
+  <text x="210" y="110" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="12">(what you check)</text>
+  
+  <!-- Map content -->
+  <rect x="70" y="140" width="280" height="50" rx="6" fill="#1e293b" stroke="#334155"/>
+  <text x="210" y="172" text-anchor="middle" fill="#e2e8f0" font-family="monospace" font-size="16">/data/../etc/passwd</text>
+  
+  <!-- Checkmark -->
+  <circle cx="210" cy="260" r="35" fill="#22c55e" opacity="0.2"/>
+  <path d="M190 260 L205 275 L235 245" stroke="#22c55e" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="210" y="320" text-anchor="middle" fill="#4ade80" font-family="sans-serif" font-size="14">Looks safe!</text>
+  
+  <!-- Arrow -->
+  <path d="M400 200 L440 200" stroke="#64748b" stroke-width="3" stroke-dasharray="8,4"/>
+  <polygon points="450,200 440,194 440,206" fill="#64748b"/>
+  
+  <!-- Right Panel: The Territory -->
+  <rect x="420" y="40" width="340" height="320" rx="12" fill="url(#territoryGrad)" stroke="#f87171" stroke-width="2"/>
+  <text x="590" y="85" text-anchor="middle" fill="#f87171" font-family="monospace" font-size="18" font-weight="bold">THE TERRITORY</text>
+  <text x="590" y="110" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="12">(what actually opens)</text>
+  
+  <!-- Territory content -->
+  <rect x="450" y="140" width="280" height="50" rx="6" fill="#1e293b" stroke="#334155"/>
+  <text x="590" y="172" text-anchor="middle" fill="#fca5a5" font-family="monospace" font-size="16">/etc/passwd</text>
+  
+  <!-- Skull/X -->
+  <circle cx="590" cy="260" r="35" fill="#ef4444" opacity="0.2"/>
+  <text x="590" y="272" text-anchor="middle" fill="#ef4444" font-size="40">💀</text>
+  <text x="590" y="320" text-anchor="middle" fill="#f87171" font-family="sans-serif" font-size="14">Secrets leaked</text>
+</svg>
+

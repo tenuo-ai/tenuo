@@ -1074,7 +1074,7 @@ const ValidationWarnings = ({ decoded, tool, args }: { decoded: DecodedWarrant |
 };
 
 // Warrant Builder Component
-type ConstraintType = 'pattern' | 'exact' | 'range' | 'oneof' | 'anyof' | 'notoneof' | 'cidr' | 'urlpattern' | 'regex' | 'wildcard' | 'contains';
+type ConstraintType = 'pattern' | 'exact' | 'range' | 'oneof' | 'anyof' | 'notoneof' | 'cidr' | 'urlpattern' | 'subpath' | 'url_safe' | 'regex' | 'wildcard' | 'contains';
 
 interface ToolConstraint {
   name: string;
@@ -1152,6 +1152,24 @@ const validateConstraintValue = (type: string, value: string): { valid: boolean;
       // Substring match
       return { valid: true, hint: 'substring to match' };
 
+    case 'subpath':
+      // Path containment - must be an absolute path
+      if (!value.startsWith('/')) {
+        return { valid: false, error: 'Root must be an absolute path', hint: '/data or /var/uploads' };
+      }
+      if (value.includes('..')) {
+        return { valid: false, error: 'Root cannot contain ..' };
+      }
+      return { valid: true, hint: '/data or /var/uploads' };
+
+    case 'url_safe':
+      // SSRF protection - empty means default (block private/loopback/metadata)
+      // Or comma-separated domain allowlist
+      if (value.trim() === '') {
+        return { valid: true, hint: 'optional: *.example.com,api.trusted.io' };
+      }
+      return { valid: true, hint: 'domain allowlist (comma-separated)' };
+
     default:
       return { valid: true };
   }
@@ -1220,7 +1238,19 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
         if (t.name) {
           acc[t.name] = t.constraints.reduce((c, con) => {
             if (con.key) {
-              c[con.key] = { [con.type]: con.value };
+              // Handle special constraint types
+              if (con.type === 'subpath') {
+                c[con.key] = { subpath: { root: con.value } };
+              } else if (con.type === 'url_safe') {
+                if (con.value.trim()) {
+                  const domains = con.value.split(',').map(d => d.trim()).filter(Boolean);
+                  c[con.key] = { url_safe: { allow_domains: domains } };
+                } else {
+                  c[con.key] = { url_safe: {} };
+                }
+              } else {
+                c[con.key] = { [con.type]: con.value };
+              }
             }
             return c;
           }, {} as Record<string, unknown>);
@@ -1298,6 +1328,10 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
                       <optgroup label="Network">
                         <option value="cidr">CIDR</option>
                         <option value="urlpattern">UrlPattern</option>
+                      </optgroup>
+                      <optgroup label="Security">
+                        <option value="subpath">Subpath</option>
+                        <option value="url_safe">UrlSafe</option>
                       </optgroup>
                       <optgroup label="Text">
                         <option value="regex">Regex</option>

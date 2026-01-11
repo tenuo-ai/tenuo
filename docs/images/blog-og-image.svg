@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+  <!-- Background -->
+  <rect width="1200" height="630" fill="#0f172a"/>
+  
+  <!-- Title -->
+  <text x="600" y="80" text-anchor="middle" fill="#f1f5f9" font-family="sans-serif" font-size="42" font-weight="bold">LLM Tool Calls Considered Harmful</text>
+  <text x="600" y="130" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="24">The agent-tool boundary is a trust boundary. Most implementations forget.</text>
+  
+  <!-- Left: LLM -->
+  <rect x="150" y="200" width="350" height="300" rx="20" fill="#1e293b" stroke="#3b82f6" stroke-width="3"/>
+  <text x="325" y="260" text-anchor="middle" fill="#3b82f6" font-family="sans-serif" font-size="28" font-weight="bold">🧠 LLM</text>
+  <text x="325" y="310" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="18">Probabilistic</text>
+  <text x="325" y="340" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="18">Prompt-injectable</text>
+  <text x="325" y="370" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="18">Untrusted output</text>
+  
+  <rect x="180" y="410" width="290" height="60" rx="8" fill="#0f172a"/>
+  <text x="325" y="448" text-anchor="middle" fill="#fbbf24" font-family="monospace" font-size="14">{"path": "/data/../etc/passwd"}</text>
+  
+  <!-- Arrow -->
+  <path d="M520 350 L680 350" stroke="#ef4444" stroke-width="4" stroke-dasharray="15,10"/>
+  <polygon points="700,350 680,340 680,360" fill="#ef4444"/>
+  <text x="600" y="320" text-anchor="middle" fill="#ef4444" font-family="sans-serif" font-size="16" font-weight="bold">TRUST BOUNDARY</text>
+  
+  <!-- Right: System -->
+  <rect x="700" y="200" width="350" height="300" rx="20" fill="#1e293b" stroke="#22c55e" stroke-width="3"/>
+  <text x="875" y="260" text-anchor="middle" fill="#22c55e" font-family="sans-serif" font-size="28" font-weight="bold">⚙️ System</text>
+  <text x="875" y="310" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="18">Deterministic</text>
+  <text x="875" y="340" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="18">Privileged access</text>
+  <text x="875" y="370" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="18">Real consequences</text>
+  
+  <rect x="730" y="410" width="290" height="60" rx="8" fill="#0f172a"/>
+  <text x="875" y="448" text-anchor="middle" fill="#ef4444" font-family="monospace" font-size="14">open("/etc/passwd") → 💀</text>
+  
+  <!-- Bottom -->
+  <text x="600" y="570" text-anchor="middle" fill="#64748b" font-family="sans-serif" font-size="18">tenuo.dev</text>
+</svg>
+

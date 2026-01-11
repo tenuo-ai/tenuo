@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 400">
+  <!-- Background -->
+  <rect width="700" height="400" fill="#0f172a"/>
+  
+  <!-- Title -->
+  <text x="350" y="45" text-anchor="middle" fill="#f1f5f9" font-family="sans-serif" font-size="24" font-weight="bold">REGEX WHACK-A-MOLE</text>
+  <text x="350" y="70" text-anchor="middle" fill="#94a3b8" font-family="sans-serif" font-size="14">For every pattern you block, there's a bypass you missed</text>
+  
+  <!-- Ground -->
+  <rect x="0" y="280" width="700" height="120" fill="#1e293b"/>
+  
+  <!-- Holes with bypasses -->
+  <!-- Hole 1 -->
+  <ellipse cx="120" cy="290" rx="60" ry="20" fill="#0f172a"/>
+  <rect x="70" y="180" width="100" height="110" rx="8" fill="#ef4444"/>
+  <text x="120" y="220" text-anchor="middle" fill="#fef2f2" font-family="monospace" font-size="11" font-weight="bold">%2e%2e</text>
+  <text x="120" y="240" text-anchor="middle" fill="#fecaca" font-family="sans-serif" font-size="9">URL encoded</text>
+  <text x="120" y="260" text-anchor="middle" fill="#fecaca" font-family="sans-serif" font-size="9">traversal</text>
+  
+  <!-- Hole 2 -->
+  <ellipse cx="270" cy="290" rx="60" ry="20" fill="#0f172a"/>
+  <rect x="220" y="160" width="100" height="130" rx="8" fill="#ef4444"/>
+  <text x="270" y="200" text-anchor="middle" fill="#fef2f2" font-family="monospace" font-size="11" font-weight="bold">2130706433</text>
+  <text x="270" y="225" text-anchor="middle" fill="#fecaca" font-family="sans-serif" font-size="9">Decimal IP</text>
+  <text x="270" y="245" text-anchor="middle" fill="#fecaca" font-family="sans-serif" font-size="9">= 127.0.0.1</text>
+  
+  <!-- Hole 3 -->
+  <ellipse cx="420" cy="290" rx="60" ry="20" fill="#0f172a"/>
+  <rect x="370" y="170" width="100" height="120" rx="8" fill="#ef4444"/>
+  <text x="420" y="210" text-anchor="middle" fill="#fef2f2" font-family="monospace" font-size="11" font-weight="bold">$'\n'rm</text>
+  <text x="420" y="235" text-anchor="middle" fill="#fecaca" font-family="sans-serif" font-size="9">No semicolon</text>
+  <text x="420" y="255" text-anchor="middle" fill="#fecaca" font-family="sans-serif" font-size="9">still injects</text>
+  
+  <!-- Hole 4 -->
+  <ellipse cx="570" cy="290" rx="60" ry="20" fill="#0f172a"/>
+  <rect x="520" y="150" width="100" height="140" rx="8" fill="#ef4444"/>
+  <text x="570" y="190" text-anchor="middle" fill="#fef2f2" font-family="monospace" font-size="11" font-weight="bold">[::ffff:</text>
+  <text x="570" y="210" text-anchor="middle" fill="#fef2f2" font-family="monospace" font-size="11" font-weight="bold">127.0.0.1]</text>
+  <text x="570" y="235" text-anchor="middle" fill="#fecaca" font-family="sans-serif" font-size="9">IPv6-mapped</text>
+  <text x="570" y="255" text-anchor="middle" fill="#fecaca" font-family="sans-serif" font-size="9">loopback</text>
+  
+  <!-- Mallet missing -->
+  <g transform="rotate(-30, 80, 150)">
+    <rect x="40" y="100" width="20" height="80" fill="#78716c" rx="3"/>
+    <rect x="25" y="70" width="50" height="35" fill="#a8a29e" rx="5"/>
+    <text x="50" y="93" text-anchor="middle" fill="#1c1917" font-family="monospace" font-size="10" font-weight="bold">REGEX</text>
+  </g>
+  
+  <!-- Miss effect -->
+  <text x="50" y="320" fill="#fbbf24" font-family="sans-serif" font-size="16" font-weight="bold">MISS!</text>
+  
+  <!-- Bottom text -->
+  <text x="350" y="370" text-anchor="middle" fill="#f87171" font-family="sans-serif" font-size="16" font-weight="bold">Layer 1.5 catches what regex misses</text>
+</svg>
+

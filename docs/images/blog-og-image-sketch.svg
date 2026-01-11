@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+  <defs>
+    <filter id="rough" x="-5%" y="-5%" width="110%" height="110%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves="4" result="noise"/>
+      <feDisplacementMap in="SourceGraphic" in2="noise" scale="2" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+  </defs>
+  
+  <!-- Background - paper-like -->
+  <rect width="1200" height="630" fill="#fefefe"/>
+  
+  <!-- Subtle grid pattern like graph paper -->
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e5e7eb" stroke-width="0.5"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+  
+  <!-- Title -->
+  <text x="600" y="85" text-anchor="middle" fill="#1f2937" font-family="Comic Sans MS, cursive" font-size="44" font-weight="bold">From Map to Territory</text>
+  <text x="600" y="135" text-anchor="middle" fill="#4b5563" font-family="Comic Sans MS, cursive" font-size="24">Securing Agent Tool Calls</text>
+  
+  <!-- Left: LLM box - blue -->
+  <rect x="150" y="200" width="350" height="300" rx="12" fill="#dbeafe" stroke="#3b82f6" stroke-width="3" filter="url(#rough)"/>
+  <text x="325" y="260" text-anchor="middle" fill="#1e40af" font-family="Comic Sans MS, cursive" font-size="30" font-weight="bold">🧠 LLM</text>
+  <text x="325" y="305" text-anchor="middle" fill="#1e3a8a" font-family="Comic Sans MS, cursive" font-size="18">Probabilistic</text>
+  <text x="325" y="335" text-anchor="middle" fill="#1e3a8a" font-family="Comic Sans MS, cursive" font-size="18">Prompt-injectable</text>
+  <text x="325" y="365" text-anchor="middle" fill="#1e3a8a" font-family="Comic Sans MS, cursive" font-size="18">Untrusted output</text>
+  
+  <!-- Code box in LLM -->
+  <rect x="175" y="395" width="300" height="55" rx="6" fill="#bfdbfe" stroke="#60a5fa" stroke-width="2" filter="url(#rough)"/>
+  <text x="325" y="430" text-anchor="middle" fill="#1e40af" font-family="Courier New, monospace" font-size="13">{"path": "/data/../etc/passwd"}</text>
+  
+  <!-- Arrow - hand drawn wavy -->
+  <path d="M515 350 Q545 345 575 350 Q605 355 635 350 Q655 348 670 350" stroke="#ef4444" stroke-width="4" fill="none" stroke-dasharray="12,8" filter="url(#rough)"/>
+  <path d="M660 338 L690 350 L660 362" stroke="#ef4444" stroke-width="4" fill="none" stroke-linejoin="round" filter="url(#rough)"/>
+  
+  <!-- Trust boundary label -->
+  <rect x="530" y="295" width="150" height="30" rx="4" fill="#fef2f2" stroke="#ef4444" stroke-width="2" filter="url(#rough)"/>
+  <text x="605" y="316" text-anchor="middle" fill="#dc2626" font-family="Comic Sans MS, cursive" font-size="14" font-weight="bold">TRUST BOUNDARY</text>
+  
+  <!-- Right: System box - green -->
+  <rect x="700" y="200" width="350" height="300" rx="12" fill="#d1fae5" stroke="#10b981" stroke-width="3" filter="url(#rough)"/>
+  <text x="875" y="260" text-anchor="middle" fill="#065f46" font-family="Comic Sans MS, cursive" font-size="30" font-weight="bold">⚙️ System</text>
+  <text x="875" y="305" text-anchor="middle" fill="#064e3b" font-family="Comic Sans MS, cursive" font-size="18">Deterministic</text>
+  <text x="875" y="335" text-anchor="middle" fill="#064e3b" font-family="Comic Sans MS, cursive" font-size="18">Privileged access</text>
+  <text x="875" y="365" text-anchor="middle" fill="#064e3b" font-family="Comic Sans MS, cursive" font-size="18">Real consequences</text>
+  
+  <!-- Code box in System -->
+  <rect x="725" y="395" width="300" height="55" rx="6" fill="#a7f3d0" stroke="#34d399" stroke-width="2" filter="url(#rough)"/>
+  <text x="875" y="430" text-anchor="middle" fill="#065f46" font-family="Courier New, monospace" font-size="13">open("/etc/passwd") → 💀</text>
+  
+  <!-- Bottom -->
+  <text x="600" y="570" text-anchor="middle" fill="#6b7280" font-family="Comic Sans MS, cursive" font-size="20">tenuo.dev</text>
+</svg>
+
