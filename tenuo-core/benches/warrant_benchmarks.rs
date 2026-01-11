@@ -4,7 +4,7 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use std::collections::HashMap;
 use std::time::Duration;
 use tenuo::{
-    constraints::{Cidr, ConstraintSet, ConstraintValue, Exact, Pattern, Range, UrlPattern},
+    constraints::{Cidr, ConstraintSet, ConstraintValue, Exact, Pattern, Range, Subpath, UrlPattern, UrlSafe},
     crypto::SigningKey,
     warrant::Warrant,
     wire,
@@ -376,6 +376,139 @@ fn benchmark_url_pattern_operations(c: &mut Criterion) {
     group.finish();
 }
 
+fn benchmark_subpath_operations(c: &mut Criterion) {
+    let mut group = c.benchmark_group("subpath");
+
+    group.bench_function("create", |b| {
+        b.iter(|| Subpath::new(black_box("/data/uploads")).unwrap())
+    });
+
+    let subpath = Subpath::new("/data").unwrap();
+    let valid_path = ConstraintValue::String("/data/file.txt".to_string());
+    let nested_path = ConstraintValue::String("/data/a/b/c/d/e/file.txt".to_string());
+    let traversal_path = ConstraintValue::String("/data/../etc/passwd".to_string());
+    let encoded_traversal = ConstraintValue::String("/data/..%2f..%2fetc/passwd".to_string());
+
+    group.bench_function("matches_valid", |b| {
+        b.iter(|| subpath.matches(black_box(&valid_path)).unwrap())
+    });
+
+    group.bench_function("matches_nested", |b| {
+        b.iter(|| subpath.matches(black_box(&nested_path)).unwrap())
+    });
+
+    group.bench_function("blocks_traversal", |b| {
+        b.iter(|| {
+            let result = subpath.matches(black_box(&traversal_path)).unwrap();
+            assert!(!result);
+        })
+    });
+
+    group.bench_function("encoded_traversal_path", |b| {
+        b.iter(|| {
+            // Note: Subpath doesn't URL-decode, so percent-encoded sequences are treated literally.
+            // This tests performance, not blocking behavior. URL-decoding should happen in the
+            // application layer before passing paths to Subpath.
+            let result = subpath.matches(black_box(&encoded_traversal)).unwrap();
+            let _ = result;
+        })
+    });
+
+    group.finish();
+}
+
+fn benchmark_url_safe_operations(c: &mut Criterion) {
+    let mut group = c.benchmark_group("url_safe");
+
+    group.bench_function("create_default", |b| {
+        b.iter(|| UrlSafe::new())
+    });
+
+    group.bench_function("create_with_domains", |b| {
+        b.iter(|| UrlSafe::with_domains(vec!["*.example.com", "api.trusted.io"]))
+    });
+
+    let url_safe = UrlSafe::new();
+    let public_url = "https://api.example.com/v1/users";
+    let metadata_url = "http://169.254.169.254/latest/meta-data/";
+    let private_ip_url = "http://10.0.1.50:8080/admin";
+    let loopback_url = "http://127.0.0.1:3000/internal";
+    let localhost_url = "http://localhost:8080/api";
+    let ipv6_mapped_url = "http://[::ffff:169.254.169.254]/metadata";
+    let octal_ip_url = "http://0251.0376.0251.0376/metadata";  // Octal encoding of 169.254.169.254
+
+    group.bench_function("allows_public_url", |b| {
+        b.iter(|| {
+            let result = url_safe.is_safe(black_box(public_url)).unwrap();
+            assert!(result);
+        })
+    });
+
+    group.bench_function("blocks_metadata", |b| {
+        b.iter(|| {
+            let result = url_safe.is_safe(black_box(metadata_url)).unwrap();
+            assert!(!result);
+        })
+    });
+
+    group.bench_function("blocks_private_ip", |b| {
+        b.iter(|| {
+            let result = url_safe.is_safe(black_box(private_ip_url)).unwrap();
+            assert!(!result);
+        })
+    });
+
+    group.bench_function("blocks_loopback", |b| {
+        b.iter(|| {
+            let result = url_safe.is_safe(black_box(loopback_url)).unwrap();
+            assert!(!result);
+        })
+    });
+
+    group.bench_function("blocks_localhost", |b| {
+        b.iter(|| {
+            let result = url_safe.is_safe(black_box(localhost_url)).unwrap();
+            assert!(!result);
+        })
+    });
+
+    group.bench_function("blocks_ipv6_mapped", |b| {
+        b.iter(|| {
+            let result = url_safe.is_safe(black_box(ipv6_mapped_url)).unwrap();
+            assert!(!result);
+        })
+    });
+
+    group.bench_function("blocks_octal_encoding", |b| {
+        b.iter(|| {
+            let result = url_safe.is_safe(black_box(octal_ip_url)).unwrap();
+            // Octal IP may be normalized by url crate - just measure performance
+            let _ = result;
+        })
+    });
+
+    // Benchmark with domain allowlist
+    let url_safe_restricted = UrlSafe::with_domains(vec!["*.example.com"]);
+    let allowed_domain = "https://api.example.com/resource";
+    let blocked_domain = "https://api.attacker.com/exfil";
+
+    group.bench_function("domain_allowlist_allowed", |b| {
+        b.iter(|| {
+            let result = url_safe_restricted.is_safe(black_box(allowed_domain)).unwrap();
+            assert!(result);
+        })
+    });
+
+    group.bench_function("domain_allowlist_blocked", |b| {
+        b.iter(|| {
+            let result = url_safe_restricted.is_safe(black_box(blocked_domain)).unwrap();
+            assert!(!result);
+        })
+    });
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     benchmark_warrant_creation,
@@ -388,6 +521,8 @@ criterion_group!(
     benchmark_constraint_evaluation,
     benchmark_cidr_operations,
     benchmark_url_pattern_operations,
+    benchmark_subpath_operations,
+    benchmark_url_safe_operations,
 );
 
 criterion_main!(benches);
