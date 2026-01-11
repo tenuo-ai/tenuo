@@ -111,11 +111,11 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     # Wildcard - Universal superset (must check FIRST)
     # =========================================================================
     # Wildcard parent contains ANYTHING
-    if parent_type == 'Wildcard':
+    if parent_type == "Wildcard":
         return True
 
     # NOTHING can attenuate TO Wildcard (would expand permissions)
-    if child_type == 'Wildcard':
+    if child_type == "Wildcard":
         return False
 
     # Extract actual values from wrappers
@@ -125,14 +125,14 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     # =========================================================================
     # Regex - Must be identical pattern or Exact that matches
     # =========================================================================
-    if parent_type == 'Regex':
-        parent_pattern = getattr(parent_value, 'pattern', None)
+    if parent_type == "Regex":
+        parent_pattern = getattr(parent_value, "pattern", None)
         if parent_pattern is None:
             return False
 
-        if child_type == 'Regex':
+        if child_type == "Regex":
             # Regex -> Regex: must be IDENTICAL (subset is undecidable)
-            child_pattern = getattr(child_value, 'pattern', None)
+            child_pattern = getattr(child_value, "pattern", None)
             return parent_pattern == child_pattern
         else:
             # Regex -> Exact/string: value must match regex
@@ -144,13 +144,13 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     # =========================================================================
     # Pattern/glob containment - use fnmatch for proper glob matching
     # =========================================================================
-    if parent_type == 'Pattern' or '*' in parent_str:
-        if child_type == 'Pattern' or '*' in child_str:
+    if parent_type == "Pattern" or "*" in parent_str:
+        if child_type == "Pattern" or "*" in child_str:
             # Both are patterns - child must be more restrictive
             # A pattern is more restrictive if it has more literal characters
             # or matches a subset of what the parent matches
-            child_literal = child_str.replace('*', '')
-            parent_literal = parent_str.replace('*', '')
+            child_literal = child_str.replace("*", "")
+            parent_literal = parent_str.replace("*", "")
 
             # Child's literal parts must contain parent's literal parts
             # e.g., "*@company.com" contains "@company.com"
@@ -166,13 +166,13 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
             return fnmatch.fnmatch(child_str, parent_str)
 
     # OneOf containment - check BEFORE Exact since Exact can be inside OneOf
-    if parent_type == 'OneOf':
-        parent_values = set(getattr(parent_value, 'values', []))
-        if child_type == 'OneOf':
+    if parent_type == "OneOf":
+        parent_values = set(getattr(parent_value, "values", []))
+        if child_type == "OneOf":
             # Child OneOf must be subset of parent OneOf
-            child_values = set(getattr(child_value, 'values', []))
+            child_values = set(getattr(child_value, "values", []))
             return child_values.issubset(parent_values)
-        elif child_type == 'Exact':
+        elif child_type == "Exact":
             # Exact value must be in the parent's OneOf set
             return child_str in parent_values
         else:
@@ -180,18 +180,18 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
             return child_str in parent_values
 
     # Range containment - check BEFORE Exact since Range can contain Exact
-    if parent_type == 'Range':
-        p_min = getattr(parent_value, 'min', None)
-        p_max = getattr(parent_value, 'max', None)
+    if parent_type == "Range":
+        p_min = getattr(parent_value, "min", None)
+        p_max = getattr(parent_value, "max", None)
 
-        if child_type == 'Range':
-            c_min = getattr(child_value, 'min', None)
-            c_max = getattr(child_value, 'max', None)
+        if child_type == "Range":
+            c_min = getattr(child_value, "min", None)
+            c_max = getattr(child_value, "max", None)
 
             min_ok = p_min is None or (c_min is not None and c_min >= p_min)
             max_ok = p_max is None or (c_max is not None and c_max <= p_max)
             return min_ok and max_ok
-        elif child_type == 'Exact':
+        elif child_type == "Exact":
             # Range -> Exact: value must be within range
             try:
                 value = float(child_str)
@@ -205,17 +205,17 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
             return False
 
     # Exact containment - must be equal (both Exact or one is Exact)
-    if parent_type == 'Exact' or child_type == 'Exact':
+    if parent_type == "Exact" or child_type == "Exact":
         return child_str == parent_str
 
     # =========================================================================
     # NotOneOf - Child must exclude MORE values (superset of exclusions)
     # =========================================================================
-    if parent_type == 'NotOneOf':
-        parent_excluded = set(getattr(parent_value, 'excluded', []))
-        if child_type == 'NotOneOf':
+    if parent_type == "NotOneOf":
+        parent_excluded = set(getattr(parent_value, "excluded", []))
+        if child_type == "NotOneOf":
             # Child must exclude at least everything parent excludes
-            child_excluded = set(getattr(child_value, 'excluded', []))
+            child_excluded = set(getattr(child_value, "excluded", []))
             return parent_excluded.issubset(child_excluded)
         else:
             # Other types cannot attenuate to NotOneOf
@@ -224,11 +224,11 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     # =========================================================================
     # Contains - Child must require MORE values (superset of required)
     # =========================================================================
-    if parent_type == 'Contains':
-        parent_required = set(_extract_list_values(getattr(parent_value, 'required', [])))
-        if child_type == 'Contains':
+    if parent_type == "Contains":
+        parent_required = set(_extract_list_values(getattr(parent_value, "required", [])))
+        if child_type == "Contains":
             # Child must require at least everything parent requires
-            child_required = set(_extract_list_values(getattr(child_value, 'required', [])))
+            child_required = set(_extract_list_values(getattr(child_value, "required", [])))
             return parent_required.issubset(child_required)
         else:
             return False
@@ -236,11 +236,11 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     # =========================================================================
     # Subset - Child must allow FEWER values (subset of allowed)
     # =========================================================================
-    if parent_type == 'Subset':
-        parent_allowed = set(_extract_list_values(getattr(parent_value, 'allowed', [])))
-        if child_type == 'Subset':
+    if parent_type == "Subset":
+        parent_allowed = set(_extract_list_values(getattr(parent_value, "allowed", [])))
+        if child_type == "Subset":
             # Child allowed set must be subset of parent allowed set
-            child_allowed = set(_extract_list_values(getattr(child_value, 'allowed', [])))
+            child_allowed = set(_extract_list_values(getattr(child_value, "allowed", [])))
             return child_allowed.issubset(parent_allowed)
         else:
             return False
@@ -248,10 +248,10 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     # =========================================================================
     # All - Compound constraint (all sub-constraints must match)
     # =========================================================================
-    if parent_type == 'All':
+    if parent_type == "All":
         # All constraints are complex - for now, require same type
         # Full validation would need to check each sub-constraint
-        if child_type == 'All':
+        if child_type == "All":
             # Conservative: same repr means same constraints
             return str(parent_value) == str(child_value) or repr(parent_value) == repr(child_value)
         else:
@@ -260,13 +260,13 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
     # =========================================================================
     # CEL - Child expression must be syntactic extension of parent
     # =========================================================================
-    if parent_type == 'Cel' or parent_type == 'CelConstraint':
-        parent_expr = getattr(parent_value, 'expression', None)
+    if parent_type == "Cel" or parent_type == "CelConstraint":
+        parent_expr = getattr(parent_value, "expression", None)
         if parent_expr is None:
             return False
 
-        if child_type == 'Cel' or child_type == 'CelConstraint':
-            child_expr = getattr(child_value, 'expression', None)
+        if child_type == "Cel" or child_type == "CelConstraint":
+            child_expr = getattr(child_value, "expression", None)
             if child_expr is None:
                 return False
             # CEL monotonicity: child must be (parent) && additional_predicate
@@ -276,6 +276,136 @@ def _is_constraint_contained(child_value: Any, parent_value: Any) -> bool:
             # Check if child is conjunction with parent
             expected_prefix = f"({parent_expr}) &&"
             return child_expr.startswith(expected_prefix)
+        else:
+            return False
+
+    # =========================================================================
+    # Subpath - Child root must be under parent root
+    # =========================================================================
+    if parent_type == "Subpath":
+        parent_root = getattr(parent_value, "root", None)
+        if parent_root is None:
+            return False
+
+        if child_type == "Subpath":
+            child_root = getattr(child_value, "root", None)
+            if child_root is None:
+                return False
+            # Child root must be under parent root (or equal)
+            # Normalize paths and check containment
+            parent_normalized = parent_root.rstrip("/")
+            child_normalized = child_root.rstrip("/")
+            # Child is contained if it equals parent or starts with parent + "/"
+            if child_normalized == parent_normalized:
+                return True
+            return child_normalized.startswith(parent_normalized + "/")
+        elif child_type == "Exact":
+            # Exact path must be under parent root
+            return parent_value.matches(child_str)
+        else:
+            return False
+
+    # =========================================================================
+    # UrlSafe - Child must be more restrictive
+    # =========================================================================
+    if parent_type == "UrlSafe":
+        if child_type == "UrlSafe":
+            # UrlSafe -> UrlSafe: child must be at least as restrictive
+            # For now, use conservative check via Rust
+            try:
+                parent_value.validate_attenuation(child_value)
+                return True
+            except Exception:
+                # If validate_attenuation fails or doesn't exist, check manually
+                # Child can add domains to allowlist (more restrictive)
+                # Child cannot remove blocking (private, loopback, etc.)
+                p_block_private = getattr(parent_value, "block_private", True)
+                c_block_private = getattr(child_value, "block_private", True)
+                if p_block_private and not c_block_private:
+                    return False
+
+                p_block_loopback = getattr(parent_value, "block_loopback", True)
+                c_block_loopback = getattr(child_value, "block_loopback", True)
+                if p_block_loopback and not c_block_loopback:
+                    return False
+
+                # If parent has domain allowlist, child must be subset
+                p_domains = getattr(parent_value, "allow_domains", None)
+                c_domains = getattr(child_value, "allow_domains", None)
+                if p_domains is not None:
+                    if c_domains is None:
+                        return False  # Child removes restriction
+                    if not set(c_domains).issubset(set(p_domains)):
+                        return False
+
+                return True
+        elif child_type == "Exact":
+            # Exact URL must pass parent's is_safe check
+            return parent_value.is_safe(child_str)
+        else:
+            return False
+
+    # =========================================================================
+    # Shlex - Child must have subset of allowed binaries
+    # =========================================================================
+    if parent_type == "Shlex":
+        if child_type == "Shlex":
+            # Child allowed_bins must be subset of parent allowed_bins
+            p_bins: set = getattr(parent_value, "allowed_bins", set())
+            c_bins: set = getattr(child_value, "allowed_bins", set())
+            if not c_bins.issubset(p_bins):
+                return False
+            # Child cannot relax block_globs
+            p_block_globs = getattr(parent_value, "block_globs", False)
+            c_block_globs = getattr(child_value, "block_globs", False)
+            if p_block_globs and not c_block_globs:
+                return False
+            return True
+        elif child_type == "Exact":
+            # Exact command must pass parent's matches check
+            return parent_value.matches(child_str)
+        else:
+            return False
+
+    # =========================================================================
+    # Cidr - Child must be contained within parent network
+    # =========================================================================
+    if parent_type == "Cidr":
+        if child_type == "Cidr":
+            # Child network must be subnet of parent network
+            # Use Rust's validate_attenuation if available
+            try:
+                parent_value.validate_attenuation(child_value)
+                return True
+            except Exception:
+                # Fallback: check cidr_string containment (conservative)
+                p_cidr = getattr(parent_value, "cidr_string", str(parent_value))
+                c_cidr = getattr(child_value, "cidr_string", str(child_value))
+                # Same network is valid attenuation
+                return p_cidr == c_cidr
+        elif child_type == "Exact":
+            # Exact IP must be within parent network
+            return parent_value.matches(child_str)
+        else:
+            return False
+
+    # =========================================================================
+    # UrlPattern - Child must be more specific pattern
+    # =========================================================================
+    if parent_type == "UrlPattern":
+        if child_type == "UrlPattern":
+            # Child pattern must be more restrictive
+            try:
+                parent_value.validate_attenuation(child_value)
+                return True
+            except Exception:
+                # Fallback: same pattern is valid
+                p_pattern = getattr(parent_value, "pattern", str(parent_value))
+                c_pattern = getattr(child_value, "pattern", str(child_value))
+                return p_pattern == c_pattern
+        elif child_type == "Exact":
+            # Exact URL must match parent pattern
+            return parent_value.matches(child_str)
         else:
             return False
 
@@ -289,8 +419,8 @@ def _extract_list_values(values: Any) -> list:
     for v in values:
         if isinstance(v, str):
             result.append(v)
-        elif hasattr(v, 'value'):
-            result.append(str(getattr(v, 'value')))
+        elif hasattr(v, "value"):
+            result.append(str(getattr(v, "value")))
         else:
             result.append(str(v))
     return result
@@ -299,6 +429,7 @@ def _extract_list_values(values: Any) -> list:
 @dataclass
 class ScopePreview:
     """Preview of derived scope before execution."""
+
     tools: Optional[List[str]] = None
     parent_tools: Optional[List[str]] = None
     constraints: Optional[Dict[str, Any]] = None
@@ -353,7 +484,6 @@ class GrantScope:
         self._warrant_token: Optional[Token] = None
         self._allowed_tools_token: Optional[Token] = None
 
-
     def preview(self) -> ScopePreview:
         """Preview the derived scope without executing."""
         parent = warrant_scope()
@@ -363,7 +493,7 @@ class GrantScope:
 
         try:
             parent_tools = parent.tools if parent.tools else []
-            parent_caps = parent.capabilities if hasattr(parent, 'capabilities') else {}
+            parent_caps = parent.capabilities if hasattr(parent, "capabilities") else {}
 
             child_capabilities = Capability.merge(*self.capabilities_args)
             child_tools = list(child_capabilities.keys())
@@ -393,7 +523,7 @@ class GrantScope:
 
             # Compute TTL
             parent_ttl = None
-            if hasattr(parent, 'ttl_remaining'):
+            if hasattr(parent, "ttl_remaining"):
                 parent_ttl = parent.ttl_remaining.total_seconds()
 
             child_ttl = self.ttl
@@ -425,12 +555,10 @@ class GrantScope:
     def __enter__(self) -> Warrant:
         """Enter the scoped context (sync)."""
         import asyncio
+
         try:
             asyncio.get_running_loop()
-            raise RuntimeError(
-                "Cannot use sync 'with grant()' in async context. "
-                "Use 'async with grant()' instead."
-            )
+            raise RuntimeError("Cannot use sync 'with grant()' in async context. Use 'async with grant()' instead.")
         except RuntimeError:
             pass
         return self._enter()
@@ -446,8 +574,7 @@ class GrantScope:
 
         if parent is None:
             raise ScopeViolation(
-                "grant() requires a parent warrant. "
-                "Use mint() to create initial authority, then grant() to narrow it."
+                "grant() requires a parent warrant. Use mint() to create initial authority, then grant() to narrow it."
             )
 
         if keypair is None:
@@ -462,7 +589,7 @@ class GrantScope:
         # Build attenuated warrant
         builder = parent.grant_builder()
 
-        parent_caps = parent.capabilities if hasattr(parent, 'capabilities') else {}
+        parent_caps = parent.capabilities if hasattr(parent, "capabilities") else {}
         parent_tools = parent.tools if parent.tools else list(parent_caps.keys())
 
         child_capabilities = Capability.merge(*self.capabilities_args)
@@ -471,8 +598,7 @@ class GrantScope:
         invalid_tools = set(child_capabilities.keys()) - set(parent_tools)
         if invalid_tools:
             raise ScopeViolation(
-                f"Cannot scope to tools {invalid_tools} - not in parent warrant. "
-                f"Parent has: {parent_tools}"
+                f"Cannot scope to tools {invalid_tools} - not in parent warrant. Parent has: {parent_tools}"
             )
 
         target_tools = list(child_capabilities.keys())
@@ -522,9 +648,6 @@ class GrantScope:
         if self._allowed_tools_token:
             _allowed_tools_context.reset(self._allowed_tools_token)
             self._allowed_tools_token = None
-
-
-
 
 
 def grant(
@@ -590,14 +713,12 @@ async def mint(
 
     if config.issuer_key is None:
         raise ConfigurationError(
-            "Cannot create root warrant: no issuer key configured. "
-            "Call configure(issuer_key=...) first."
+            "Cannot create root warrant: no issuer key configured. Call configure(issuer_key=...) first."
         )
 
     if not capabilities:
         raise ConfigurationError(
-            "mint requires at least one Capability. "
-            "Example: mint(Capability('read_file', path=Pattern('/data/*')))"
+            "mint requires at least one Capability. Example: mint(Capability('read_file', path=Pattern('/data/*')))"
         )
 
     issuer = config.issuer_key
@@ -647,8 +768,7 @@ def mint_sync(
 
     if config.issuer_key is None:
         raise ConfigurationError(
-            "Cannot create root warrant: no issuer key configured. "
-            "Call configure(issuer_key=...) first."
+            "Cannot create root warrant: no issuer key configured. Call configure(issuer_key=...) first."
         )
 
     if not capabilities:

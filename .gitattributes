@@ -1,30 +1,18 @@
-# Linguist overrides for GitHub language statistics
-# The core logic is in Rust; Python files are bindings/wrappers
+# GitHub Linguist configuration
+# Controls language statistics displayed on the repository
 
-# Mark Python SDK as vendored (thin wrappers around Rust core)
-# Python SDK should be counted (it's a major part of the product)
-# tenuo-python/tenuo/*.py linguist-vendored
-# tenuo-python/tenuo/**/*.py linguist-vendored
+# Don't count tests in language stats (they inflate Python percentage)
+tenuo-python/tests/** linguist-vendored
+tenuo-core/tests/** linguist-vendored
 
-# Exclude examples and tests from statistics
-tenuo-python/examples/*.py linguist-documentation
-tenuo-python/tests/*.py linguist-documentation
-tenuo-python/tests/**/*.py linguist-documentation
-tenuo-core/tests/*.rs linguist-documentation
-tenuo-core/benches/*.rs linguist-documentation
+# Don't count examples (documentation, not implementation)
+tenuo-python/examples/** linguist-documentation
 
-# Docs folder contains generated/documentation files
-# Switched to vendored to ensure total exclusion from language bar
-docs/** linguist-vendored
+# Don't count generated files
+tenuo-core/src/bin/generate_test_vectors.rs linguist-generated
 
-# Explorer is a small React app, not the core product
-tenuo-explorer/** linguist-vendored
+# Don't count notebooks (they show as JSON otherwise)
+notebooks/** linguist-documentation
 
-# Exclude virtual environments explicitly (even if ignored by git, good practice)
-**/venv/** linguist-vendored
-**/.venv/** linguist-vendored
-**/.venv-*/** linguist-vendored
-
-# Ensure source files are detectable
-*.rs linguist-detectable=true
-*.ipynb linguist-vendored
+# Don't count benchmarks
+benchmarks/** linguist-vendored

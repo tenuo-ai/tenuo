@@ -148,10 +148,10 @@ Warrants are **bound to keypairs**. To use a warrant, you must prove you hold th
 
 ```python
 # Root Execution Warrant: The first execution warrant in a task chain
-from tenuo import Warrant, Capability, Pattern
+from tenuo import Warrant, Capability, Subpath
 
 root = (Warrant.mint_builder()
-    .capability("read_file", path=Pattern("/data/*"))
+    .capability("read_file", path=Subpath("/data"))
     .holder(agent_key.public_key)
     .ttl(3600)
     .mint(control_plane_key))
@@ -164,15 +164,15 @@ root = (Warrant.mint_builder()
 # Use grant_builder() for delegation:
 
 orchestrator_warrant = (Warrant.mint_builder()
-    .capability("read_file", path=Pattern("/data/*"))
-    .capability("write_file", path=Pattern("/data/*"))
+    .capability("read_file", path=Subpath("/data"))
+    .capability("write_file", path=Subpath("/data"))
     .holder(orchestrator_key.public_key)
     .ttl(3600)
     .mint(control_plane_key))
 
 # Delegate narrower scope to worker
 worker_warrant = (orchestrator_warrant.grant_builder()
-    .capability("read_file", path=Pattern("/data/reports/*"))
+    .capability("read_file", path=Subpath("/data/reports"))
     .holder(worker_key.public_key)
     .ttl(300)
     .grant(orchestrator_key))

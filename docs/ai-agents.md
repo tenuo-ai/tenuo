@@ -80,12 +80,12 @@ User Request --> [P-LLM Planner] -------------> [Q-LLM Executor] --> Tool Server
 **Correct: P-LLM Delegates to Q-LLM**
 
 ```python
-from tenuo import Warrant, Capability, Pattern, SigningKey
+from tenuo import Warrant, Capability, Pattern, Subpath, SigningKey
 
 # P-LLM (Planner) holds a broad warrant from the control plane
 planner_warrant = (Warrant.mint_builder()
     .capability("search", query=Pattern("*"))
-    .capability("read_file", path=Pattern("/data/*"))
+    .capability("read_file", path=Subpath("/data"))
     .holder(planner_key.public_key)
     .ttl(3600)
     .mint(control_plane_key))

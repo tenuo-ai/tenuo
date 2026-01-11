@@ -33,32 +33,20 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "File path to read"
-                    },
-                    "max_size": {
-                        "type": "integer",
-                        "description": "Maximum bytes to read",
-                        "default": 1048576
-                    }
+                    "path": {"type": "string", "description": "File path to read"},
+                    "max_size": {"type": "integer", "description": "Maximum bytes to read", "default": 1048576},
                 },
-                "required": ["path"]
-            }
+                "required": ["path"],
+            },
         ),
         Tool(
             name="list_directory",
             description="List files in a directory",
             inputSchema={
                 "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "Directory path"
-                    }
-                },
-                "required": ["path"]
-            }
+                "properties": {"path": {"type": "string", "description": "Directory path"}},
+                "required": ["path"],
+            },
         ),
     ]
 
@@ -74,23 +62,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         try:
             file_path = Path(path)
             if not file_path.exists():
-                return [TextContent(
-                    type="text",
-                    text=f"Error: File not found: {path}"
-                )]
+                return [TextContent(type="text", text=f"Error: File not found: {path}")]
 
-            with open(file_path, 'r') as f:
+            with open(file_path, "r") as f:
                 content = f.read(max_size)
 
-            return [TextContent(
-                type="text",
-                text=content
-            )]
+            return [TextContent(type="text", text=content)]
         except Exception as e:
-            return [TextContent(
-                type="text",
-                text=f"Error reading file: {e}"
-            )]
+            return [TextContent(type="text", text=f"Error reading file: {e}")]
 
     elif name == "list_directory":
         path = arguments["path"]
@@ -98,37 +77,21 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         try:
             dir_path = Path(path)
             if not dir_path.is_dir():
-                return [TextContent(
-                    type="text",
-                    text=f"Error: Not a directory: {path}"
-                )]
+                return [TextContent(type="text", text=f"Error: Not a directory: {path}")]
 
             files = [f.name for f in dir_path.iterdir()]
-            return [TextContent(
-                type="text",
-                text="\n".join(files)
-            )]
+            return [TextContent(type="text", text="\n".join(files))]
         except Exception as e:
-            return [TextContent(
-                type="text",
-                text=f"Error listing directory: {e}"
-            )]
+            return [TextContent(type="text", text=f"Error listing directory: {e}")]
 
     else:
-        return [TextContent(
-            type="text",
-            text=f"Unknown tool: {name}"
-        )]
+        return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
 
 async def main():
     """Run the MCP server."""
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options()
-        )
+        await server.run(read_stream, write_stream, server.create_initialization_options())
 
 
 if __name__ == "__main__":

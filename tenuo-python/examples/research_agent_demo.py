@@ -40,8 +40,10 @@ from datetime import datetime
 # ANSI Colors for Terminal Output
 # ============================================================================
 
+
 class Colors:
     """ANSI color codes for terminal output."""
+
     RED = "\033[91m"
     GREEN = "\033[92m"
     YELLOW = "\033[93m"
@@ -51,21 +53,27 @@ class Colors:
     BOLD = "\033[1m"
     RESET = "\033[0m"
 
+
 def red(text: str) -> str:
     return f"{Colors.RED}{Colors.BOLD}{text}{Colors.RESET}"
+
 
 def green(text: str) -> str:
     return f"{Colors.GREEN}{text}{Colors.RESET}"
 
+
 def yellow(text: str) -> str:
     return f"{Colors.YELLOW}{text}{Colors.RESET}"
+
 
 def cyan(text: str) -> str:
     return f"{Colors.CYAN}{text}{Colors.RESET}"
 
+
 # ============================================================================
 # Check Dependencies
 # ============================================================================
+
 
 def check_dependencies():
     """Check if required packages are installed."""
@@ -98,6 +106,7 @@ def check_llm_available() -> bool:
     try:
         from langchain_openai import ChatOpenAI  # noqa: F401
         from langchain_core.tools import StructuredTool  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -127,6 +136,7 @@ def check_api_keys() -> tuple[bool, bool]:
 # ============================================================================
 # Main Demo
 # ============================================================================
+
 
 async def main():
     print("""
@@ -201,7 +211,8 @@ async def main():
 
     # Control Plane issues ROOT warrant to Orchestrator
     # Using /data/* so we can show path narrowing to /data/research/* etc.
-    root_warrant = (Warrant.mint_builder()
+    root_warrant = (
+        Warrant.mint_builder()
         .capability("web_search")  # Any search (no constraints)
         .capability("write_file", path=Pattern("/data/*"))
         .capability("read_file", path=Pattern("/data/*"))
@@ -229,7 +240,8 @@ async def main():
     # Orchestrator ATTENUATES and delegates to Research Worker
     # Path narrowing: /data/* → /data/research/* (more specific!)
     try:
-        research_warrant = (root_warrant.grant_builder()
+        research_warrant = (
+            root_warrant.grant_builder()
             .capability("web_search")  # Any search (no constraints)
             .capability("write_file", path=Pattern("/data/research/*"))  # NARROWER path!
             .capability("read_file", path=Pattern("/data/research/*"))
@@ -253,7 +265,8 @@ async def main():
     # Path narrowing: /data/* → /data/logs/* (different subdirectory)
     # NO web_search capability! (tool attenuation)
     try:
-        cleanup_warrant = (root_warrant.grant_builder()
+        cleanup_warrant = (
+            root_warrant.grant_builder()
             .capability("write_file", path=Pattern("/data/logs/*"))  # Different path!
             .capability("read_file", path=Pattern("/data/logs/*"))
             .holder(cleanup_worker_key.public_key)
@@ -317,11 +330,7 @@ async def main():
 
     # Generate PoP (Proof of Possession) for an action
     action_args = {"path": "summary.md", "content": "Research findings..."}
-    pop_signature = research_warrant.sign(
-        research_worker_key,
-        "write_file",
-        action_args
-    )
+    pop_signature = research_warrant.sign(research_worker_key, "write_file", action_args)
 
     print("  🔐 PROOF OF POSSESSION (PoP) for write_file('summary.md'):")
     print(f"     Warrant:   {research_warrant.id[:30]}...")
@@ -366,7 +375,6 @@ async def main():
             [str(server_path)],
             env={"TAVILY_API_KEY": os.getenv("TAVILY_API_KEY", ""), "PATH": os.environ.get("PATH", "")},
         ) as mcp:
-
             # Get MCP tools
             mcp_search = mcp.tools.get("web_search")
             mcp_write = mcp.tools.get("write_file")
@@ -391,8 +399,7 @@ async def main():
                 print(f"    🟢 write_file('{cyan('/data/research/notes.md')}', ...)")
                 try:
                     result = await mcp_write(
-                        path="/data/research/notes.md",
-                        content="# Research Notes\n\nAI security is important."
+                        path="/data/research/notes.md", content="# Research Notes\n\nAI security is important."
                     )
                     print(f"       ✅ ALLOWED - {result}\n")
                 except Exception as e:
@@ -402,10 +409,7 @@ async def main():
                 print(f"    {red('🔴')} write_file('{red('/data/logs/oops.log')}', ...) - {red('OUTSIDE WARRANT')}")
                 print("       Warrant allows /data/research/*, but trying /data/logs/*")
                 try:
-                    result = await mcp_write(
-                        path="/data/logs/oops.log",
-                        content="This should be blocked"
-                    )
+                    result = await mcp_write(path="/data/logs/oops.log", content="This should be blocked")
                     print(f"       ⚠️  ALLOWED (unexpected) - {result}\n")
                 except Exception as e:
                     print(f"       {red('🛡️  BLOCKED')} - {type(e).__name__}\n")
@@ -429,8 +433,7 @@ async def main():
                 print(f"    🟢 write_file('{cyan('/data/logs/cleanup.log')}', ...)")
                 try:
                     result = await mcp_write(
-                        path="/data/logs/cleanup.log",
-                        content="Cleanup started at " + datetime.now().isoformat()
+                        path="/data/logs/cleanup.log", content="Cleanup started at " + datetime.now().isoformat()
                     )
                     print(f"       ✅ ALLOWED - {result}\n")
                 except Exception as e:
@@ -515,7 +518,8 @@ async def main():
     print()
 
     try:
-        _invalid = (root_warrant.grant_builder()
+        _invalid = (
+            root_warrant.grant_builder()
             .capability("write_file", path=Pattern("/etc/*"))  # Outside /data/*!
             .holder(research_worker_key.public_key)
             .grant(orchestrator_key)
@@ -533,7 +537,8 @@ async def main():
     print()
 
     try:
-        _invalid = (root_warrant.grant_builder()
+        _invalid = (
+            root_warrant.grant_builder()
             .capability("delete_file", path=Pattern("/data/*"))  # Parent doesn't have this!
             .holder(research_worker_key.public_key)
             .grant(orchestrator_key)
@@ -551,7 +556,8 @@ async def main():
     print()
 
     try:
-        _invalid = (root_warrant.grant_builder()
+        _invalid = (
+            root_warrant.grant_builder()
             .capability("read_file", path=Pattern("/data/ttl_test/*"))
             .holder(research_worker_key.public_key)
             .ttl(120)  # Longer than parent's 60s!
@@ -608,7 +614,8 @@ async def main():
 
     # Mission A: Research (search + write) - 10 sec TTL
     try:
-        mission_a_warrant = (root_warrant.grant_builder()
+        mission_a_warrant = (
+            root_warrant.grant_builder()
             .capability("web_search")  # Any search
             .capability("write_file", path=Pattern("/data/mission_a/*"))
             .holder(worker_key.public_key)
@@ -621,7 +628,8 @@ async def main():
 
     # Mission B: Reporting (read + write, NO search) - 10 sec TTL
     try:
-        mission_b_warrant = (root_warrant.grant_builder()
+        mission_b_warrant = (
+            root_warrant.grant_builder()
             .capability("read_file", path=Pattern("/data/mission_b/*"))
             .capability("write_file", path=Pattern("/data/mission_b/*"))
             # NO web_search capability!
@@ -678,7 +686,8 @@ async def main():
     print()
 
     try:
-        ephemeral_warrant = (root_warrant.grant_builder()
+        ephemeral_warrant = (
+            root_warrant.grant_builder()
             .capability("write_file", path=Pattern("/data/temp/*"))  # Subset of /data/*
             .holder(worker_key.public_key)
             .ttl(3)  # Only 3 seconds!
@@ -727,7 +736,8 @@ async def main():
 
     # Create a simple warrant for the LLM demo
     llm_worker_key = SigningKey.generate()
-    llm_warrant = (root_warrant.grant_builder()
+    llm_warrant = (
+        root_warrant.grant_builder()
         .capability("web_search")
         .capability("write_file", path=Pattern("/data/llm_output/*"))
         .holder(llm_worker_key.public_key)
@@ -774,7 +784,11 @@ async def main():
             # Simple tool-calling loop
             from langchain_core.messages import HumanMessage
 
-            messages = [HumanMessage(content="Search for 'AI agent security best practices' and write a brief summary to /data/llm_output/notes.md")]
+            messages = [
+                HumanMessage(
+                    content="Search for 'AI agent security best practices' and write a brief summary to /data/llm_output/notes.md"
+                )
+            ]
 
             # Get LLM response with tool calls
             with bound_llm:  # Activate warrant context

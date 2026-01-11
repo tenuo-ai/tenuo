@@ -29,6 +29,7 @@ from tenuo.langgraph import (
 
 class MockState(TypedDict, total=False):
     """Test state with warrant (key_id now in config)."""
+
     messages: list
     warrant: Warrant
     result: str
@@ -186,6 +187,7 @@ class TestTenuoNode:
 
     def test_decorator_preserves_function_metadata(self):
         """@tenuo_node preserves function name and docstring."""
+
         @tenuo_node
         def my_documented_node(state, bound_warrant: BoundWarrant):
             """This is the docstring."""
@@ -225,6 +227,7 @@ class TestAutoLoadKeys:
         key = SigningKey.generate()
         key_bytes = key.secret_key_bytes()
         import base64
+
         key_b64 = base64.b64encode(bytes(key_bytes)).decode()
 
         monkeypatch.setenv("TENUO_KEY_WORKER", key_b64)
@@ -243,6 +246,7 @@ class TestAutoLoadKeys:
 
         key = SigningKey.generate()
         import base64
+
         key_b64 = base64.b64encode(bytes(key.secret_key_bytes())).decode()
 
         monkeypatch.setenv("TENUO_KEY_MY_SERVICE", key_b64)
@@ -324,5 +328,3 @@ class TestKeyRegistry:
 
         with pytest.raises(KeyError):
             registry.get("nonexistent")
-
-

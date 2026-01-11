@@ -63,6 +63,7 @@ class EnforcementMode(str, Enum):
     - AUDIT: Log violations but allow execution (for gradual adoption)
     - PERMISSIVE: Log violations and add warning header, but allow execution
     """
+
     ENFORCE = "enforce"
     AUDIT = "audit"
     PERMISSIVE = "permissive"
@@ -120,8 +121,7 @@ class TenuoConfig:
         if self._authorizer is None:
             if not self.trusted_roots and not self.dev_mode:
                 raise ConfigurationError(
-                    "No trusted roots configured. "
-                    "Call configure(trusted_roots=[...]) or enable dev_mode=True."
+                    "No trusted roots configured. Call configure(trusted_roots=[...]) or enable dev_mode=True."
                 )
 
             auth = Authorizer(
@@ -148,7 +148,7 @@ class TenuoConfig:
 _config: TenuoConfig = TenuoConfig()
 
 # ContextVar for config overrides (advanced usage)
-_config_context: ContextVar[Optional[TenuoConfig]] = ContextVar('tenuo_config', default=None)
+_config_context: ContextVar[Optional[TenuoConfig]] = ContextVar("tenuo_config", default=None)
 
 
 def configure(
@@ -228,8 +228,7 @@ def configure(
 
     if allow_self_signed and not dev_mode:
         raise ConfigurationError(
-            "allow_self_signed=True requires dev_mode=True. "
-            "Self-signed warrants bypass the trust chain."
+            "allow_self_signed=True requires dev_mode=True. Self-signed warrants bypass the trust chain."
         )
 
     # Validate production requirements
@@ -277,6 +276,7 @@ def configure(
 
     # Configure audit logging
     from .audit import audit_logger
+
     audit_logger.configure(enabled=audit_log)
 
 
@@ -389,14 +389,9 @@ def auto_configure(
                 # Try hex
                 issuer_key = SigningKey.from_hex(issuer_key_str)
         except Exception as e:
-            raise ConfigurationError(
-                f"Invalid {prefix}ISSUER_KEY: {e}. "
-                "Expected base64 or hex encoded signing key."
-            )
+            raise ConfigurationError(f"Invalid {prefix}ISSUER_KEY: {e}. Expected base64 or hex encoded signing key.")
     elif require_issuer:
-        raise ConfigurationError(
-            f"{prefix}ISSUER_KEY environment variable is required but not set."
-        )
+        raise ConfigurationError(f"{prefix}ISSUER_KEY environment variable is required but not set.")
 
     # Parse trusted roots
     trusted_roots_str = os.getenv(f"{prefix}TRUSTED_ROOTS")
@@ -416,9 +411,7 @@ def auto_configure(
                     # Try hex
                     trusted_roots.append(PublicKey.from_hex(root_str))
             except Exception as e:
-                raise ConfigurationError(
-                    f"Invalid public key in {prefix}TRUSTED_ROOTS: {e}"
-                )
+                raise ConfigurationError(f"Invalid public key in {prefix}TRUSTED_ROOTS: {e}")
 
     # Parse TTL
     ttl_str = os.getenv(f"{prefix}DEFAULT_TTL")
@@ -427,9 +420,7 @@ def auto_configure(
         try:
             default_ttl = int(ttl_str)
         except ValueError:
-            raise ConfigurationError(
-                f"Invalid {prefix}DEFAULT_TTL: expected integer, got '{ttl_str}'"
-            )
+            raise ConfigurationError(f"Invalid {prefix}DEFAULT_TTL: expected integer, got '{ttl_str}'")
 
     # Parse mode
     mode_str = os.getenv(f"{prefix}MODE")
@@ -438,8 +429,7 @@ def auto_configure(
         mode = mode_str.lower()
         if mode not in ("enforce", "audit", "permissive"):
             raise ConfigurationError(
-                f"Invalid {prefix}MODE: expected 'enforce', 'audit', or 'permissive', "
-                f"got '{mode_str}'"
+                f"Invalid {prefix}MODE: expected 'enforce', 'audit', or 'permissive', got '{mode_str}'"
             )
 
     # Parse dev mode
@@ -455,9 +445,7 @@ def auto_configure(
         try:
             clock_tolerance = int(tolerance_str)
         except ValueError:
-            raise ConfigurationError(
-                f"Invalid {prefix}CLOCK_TOLERANCE: expected integer, got '{tolerance_str}'"
-            )
+            raise ConfigurationError(f"Invalid {prefix}CLOCK_TOLERANCE: expected integer, got '{tolerance_str}'")
 
     if not found_any:
         logger.debug(f"No {prefix}* environment variables found, skipping auto_configure")

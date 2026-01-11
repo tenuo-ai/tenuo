@@ -77,7 +77,7 @@ Tenuo supports two integration patterns for MCP:
 
 ```python
 from tenuo.mcp import SecureMCPClient
-from tenuo import configure, mint, Capability, Pattern, SigningKey
+from tenuo import configure, mint, Capability, Subpath, SigningKey
 
 # 1. Configure Tenuo
 key = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
@@ -87,7 +87,7 @@ configure(issuer_key=key)
 # Automatically discovers tools and wraps them with authorization
 async with SecureMCPClient("python", ["server.py"], register_config=True) as client:
     # 3. Call tool with authorization
-    async with mint(Capability("read_file", path=Pattern("/data/*"))):
+    async with mint(Capability("read_file", path=Subpath("/data"))):
         result = await client.tools["read_file"](path="/data/file.txt")
 ```
 
@@ -151,7 +151,7 @@ compiled = CompiledMcpConfig.compile(config)
 control_key = SigningKey.generate()  # In production: SigningKey.from_env("MY_KEY")
 warrant = (Warrant.mint_builder()
     .capability("filesystem_read",
-        path=Pattern("/var/log/*"),
+        path=Subpath("/var/log"),
         max_size=Range.max_value(1024 * 1024))
     .holder(control_key.public_key)
     .ttl(3600)
@@ -426,7 +426,7 @@ from tenuo import Authorizer, Warrant
 
 # Create warrant
 warrant = (Warrant.mint_builder()
-    .capability("filesystem_read", path=Pattern("/var/log/*"))
+    .capability("filesystem_read", path=Subpath("/var/log"))
     .holder(key.public_key)
     .ttl(3600)
     .mint(key)
@@ -445,15 +445,15 @@ authorizer.check(warrant, "filesystem_read", dict(result.constraints), bytes(pop
 ```python
 # Control plane issues root warrant
 root_warrant = (Warrant.mint_builder()
-    .capability("filesystem_read", path=Pattern("/data/*"))
-    .capability("database_query", path=Pattern("/data/*"))
+    .capability("filesystem_read", path=Subpath("/data"))
+    .capability("database_query", path=Subpath("/data"))
     .holder(orchestrator_key.public_key)
     .ttl(3600)
     .mint(control_key))
 
 # Orchestrator attenuates for worker
 worker_warrant = (root_warrant.grant_builder()
-    .capability("filesystem_read", path=Pattern("/data/reports/*"))
+    .capability("filesystem_read", path=Subpath("/data/reports"))
     .holder(worker_key.public_key)
     .grant(orchestrator_key))  # Orchestrator signs (they hold the parent)
 
@@ -511,7 +511,7 @@ Use specific constraints, not wildcards:
 constraints = {"path": Wildcard()}
 
 # Specific
-constraints = {"path": Pattern("/var/log/*")}
+constraints = {"path": Subpath("/var/log")}
 ```
 
 ### 5. Short TTLs
@@ -647,16 +647,16 @@ arguments = {"path": "/var/log/app.log"}
 
 ### Authorization Denied
 
-**Problem**: `AuthorizationDenied: path does not match pattern`
+**Problem**: `AuthorizationDenied: path is not contained in allowed directory`
 
 **Solution**: Check warrant constraints match extracted values:
 
 ```python
 # Warrant:
-constraints = {"path": Pattern("/var/log/*")}
+constraints = {"path": Subpath("/var/log")}
 
 # MCP call:
-arguments = {"path": "/etc/passwd"}  # ❌ Doesn't match
+arguments = {"path": "/etc/passwd"}  # ❌ Not under /var/log
 
 # Fix: Narrow MCP call or broaden warrant
 ```

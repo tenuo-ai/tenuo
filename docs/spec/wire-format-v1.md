@@ -2,7 +2,7 @@
 
 **Version:** 1.0  
 **Status:** Normative  
-**Date:** 2026-01-09  
+**Date:** 2026-01-10  
 
 **Related Documents:**
 - [protocol-spec-v1.md](protocol-spec-v1.md) - Protocol Specification (concepts, invariants, algorithms)
@@ -535,6 +535,25 @@ pub enum Constraint {
 
     /// Wildcard (matches anything)
     Wildcard,
+
+    /// Secure path containment (prevents path traversal)
+    Subpath {
+        root: String,
+        case_sensitive: bool,  // Default: true
+        allow_equal: bool,     // Default: true
+    },
+
+    /// SSRF-safe URL validation
+    UrlSafe {
+        schemes: Vec<String>,           // Default: ["http", "https"]
+        allow_domains: Option<Vec<String>>,  // Domain allowlist
+        allow_ports: Option<Vec<u16>>,  // Port allowlist
+        block_private: bool,            // Default: true
+        block_loopback: bool,           // Default: true
+        block_metadata: bool,           // Default: true
+        block_reserved: bool,           // Default: true
+        block_internal_tlds: bool,      // Default: false
+    },
     
     /// Unknown constraint type (deserialized but not understood)
     Unknown {
@@ -566,6 +585,8 @@ All constraints serialize as `[type_id, value]` tuples. The `value` is the serde
 | 14 | Not | `{constraint: Constraint}` | Negation |
 | 15 | Cel | `{expr: string}` | CEL expression |
 | 16 | Wildcard | `null` | Matches anything |
+| 17 | Subpath | `{root: string, case_sensitive?: bool, allow_equal?: bool}` | Path containment |
+| 18 | UrlSafe | `{schemes?: [string], allow_domains?: [string], ...}` | SSRF protection |
 
 **Range precision note:** `Range` (ID 3) uses `f64` bounds. Converting `i64` values larger than 2^53 (9,007,199,254,740,992) to `f64` loses precision. For practical use cases (monetary amounts, counts, file sizes), this is not a concern. For very large integer constraints (e.g., snowflake IDs), use `Exact` or `OneOf` instead.
 
@@ -1306,7 +1327,7 @@ CBOR((warrant_id, reason, requestor, requested_at.timestamp()))
 
 ## Changelog
 
-- **1.0** - Promoted to normative specification (2026-01-09)
+- **1.0** - Promoted to normative specification (2026-01-10)
 - **0.1.1** - Added PoP, Approval, SRL, RevocationRequest wire formats
 - **0.1** - Initial specification
 

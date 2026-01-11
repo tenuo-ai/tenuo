@@ -14,6 +14,7 @@ try:
     from tenuo.mcp import SecureMCPClient, MCP_AVAILABLE
     from tenuo import SigningKey, configure, mint, Pattern, Range, Capability
     from tenuo_core import CompiledMcpConfig, McpConfig
+
     pytestmark = pytest.mark.skipif(not MCP_AVAILABLE, reason="MCP SDK not installed")
 except ImportError:
     pytestmark = pytest.mark.skip(reason="MCP integration not available")
@@ -31,10 +32,7 @@ async def test_mcp_client_connection(mcp_server_script):
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
 
-    async with SecureMCPClient(
-        command="python",
-        args=[str(mcp_server_script)]
-    ) as client:
+    async with SecureMCPClient(command="python", args=[str(mcp_server_script)]) as client:
         assert client.session is not None
         tools = await client.get_tools()
         assert len(tools) > 0
@@ -46,10 +44,7 @@ async def test_mcp_tool_discovery(mcp_server_script):
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
 
-    async with SecureMCPClient(
-        command="python",
-        args=[str(mcp_server_script)]
-    ) as client:
+    async with SecureMCPClient(command="python", args=[str(mcp_server_script)]) as client:
         tools = await client.get_tools()
         tool_names = [t.name for t in tools]
 
@@ -68,16 +63,13 @@ async def test_mcp_tool_call_authorized(mcp_server_script):
     configure(issuer_key=keypair, dev_mode=True)
 
     # Create test file using tempfile for cross-platform support
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tf:
         tf.write("test content")
         test_file_path = tf.name
     test_file = Path(test_file_path)
 
     try:
-        async with SecureMCPClient(
-            command="python",
-            args=[str(mcp_server_script)]
-        ) as client:
+        async with SecureMCPClient(command="python", args=[str(mcp_server_script)]) as client:
             # Get protected tool
             protected_tools = client.tools
             read_file = protected_tools["read_file"]
@@ -105,10 +97,7 @@ async def test_mcp_tool_call_blocked(mcp_server_script):
     keypair = SigningKey.generate()
     configure(issuer_key=keypair, dev_mode=True)
 
-    async with SecureMCPClient(
-        command="python",
-        args=[str(mcp_server_script)]
-    ) as client:
+    async with SecureMCPClient(command="python", args=[str(mcp_server_script)]) as client:
         protected_tools = client.tools
         read_file = protected_tools["read_file"]
 
@@ -138,7 +127,7 @@ tools:
         type: integer
         default: 1000
 """
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(config_yaml)
         config_path = f.name
 
@@ -148,10 +137,7 @@ tools:
         configure(issuer_key=keypair, dev_mode=True)
 
         async with SecureMCPClient(
-            command="python",
-            args=[str(mcp_server_script)],
-            config_path=config_path,
-            register_config=True
+            command="python", args=[str(mcp_server_script)], config_path=config_path, register_config=True
         ) as client:
             protected_tools = client.tools
             read_file = protected_tools["read_file"]
@@ -159,7 +145,7 @@ tools:
             # This should work and use the default max_size from config
             async with mint(Capability("read_file", path=Pattern("*"), max_size=Range.max_value(2000))):
                 # Test file
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
+                with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tf:
                     tf.write("small")
                     test_file = tf.name
 
@@ -182,12 +168,9 @@ async def test_mcp_warrant_injection(mcp_server_script):
     keypair = SigningKey.generate()
     configure(issuer_key=keypair, dev_mode=True)
 
-    async with SecureMCPClient(
-        command="python",
-        args=[str(mcp_server_script)]
-    ) as client:
+    async with SecureMCPClient(command="python", args=[str(mcp_server_script)]) as client:
         # Create test file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tf:
             tf.write("injection test")
             test_file_path = tf.name
         test_file = Path(test_file_path)
@@ -195,11 +178,7 @@ async def test_mcp_warrant_injection(mcp_server_script):
         try:
             async with mint(Capability("read_file", path=Pattern("*"))):
                 # Call tool with injection
-                result = await client.call_tool(
-                    "read_file",
-                    {"path": str(test_file)},
-                    inject_warrant=True
-                )
+                result = await client.call_tool("read_file", {"path": str(test_file)}, inject_warrant=True)
                 assert "injection test" in result[0].text
         finally:
             if test_file.exists():
@@ -223,7 +202,7 @@ tools:
         path: "query.operation"
 """
     # Write to temp file since McpConfig only has from_file
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(config_yaml)
         config_path = f.name
 
@@ -231,12 +210,7 @@ tools:
         config = McpConfig.from_file(config_path)
         compiled = CompiledMcpConfig.compile(config)
 
-        args = {
-            "query": {
-                "table": "users",
-                "operation": "SELECT"
-            }
-        }
+        args = {"query": {"table": "users", "operation": "SELECT"}}
 
         result = compiled.extract_constraints("db_query", args)
         constraints = dict(result.constraints)
@@ -261,7 +235,7 @@ async def test_discover_and_protect_usage(mcp_server_script):
     configure(issuer_key=keypair, dev_mode=True)
 
     # Create test file
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as tf:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tf:
         tf.write("context_manager_test")
         test_file = tf.name
 
@@ -309,18 +283,14 @@ tools:
         type: integer
         default: 12345
 """
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(config_yaml)
         config_path = f.name
 
     try:
         # Initialize client with config_path (no register_config arg)
         # Should default to registering
-        async with SecureMCPClient(
-            command="python",
-            args=[str(mcp_server_script)],
-            config_path=config_path
-        ) as _client:  # noqa: F841
+        async with SecureMCPClient(command="python", args=[str(mcp_server_script)], config_path=config_path) as _client:  # noqa: F841
             # Check global config
             conf = get_config()
             assert conf.mcp_config is not None

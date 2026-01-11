@@ -136,18 +136,19 @@ def main():
     print("\n4. Minting root warrant...")
 
     # Mint warrant for filesystem_read only (simpler demo)
-    root_warrant = (Warrant.mint_builder()
-        .capability("filesystem_read",
-            path=Pattern("/var/log/*"),
-            max_size=Range.max_value(1024 * 1024))  # Match MCP extraction name
+    root_warrant = (
+        Warrant.mint_builder()
+        .capability(
+            "filesystem_read", path=Pattern("/var/log/*"), max_size=Range.max_value(1024 * 1024)
+        )  # Match MCP extraction name
         .holder(worker_keypair.public_key)  # Bind to worker
         .ttl(3600)
-        .mint(control_keypair))
+        .mint(control_keypair)
+    )
 
     print("   ✓ Root warrant issued")
     print(f"   Tools: {root_warrant.tools}")
     print("   Constraints: path=/var/log/*, max_size≤1MB")
-
 
     # =========================================================================
     # 5. Execute MCP Tools with Authorization
@@ -156,7 +157,6 @@ def main():
 
     # Set warrant context for authorization
     with warrant_scope(root_warrant), key_scope(worker_keypair):
-
         # =====================================================================
         # Test 1: Authorized filesystem read
         # =====================================================================
@@ -206,9 +206,7 @@ def main():
     print(f"   Extracted constraints: {dict(result.constraints)}")
 
     # Authorize with extracted constraints
-    pop_sig = root_warrant.sign(
-        worker_keypair, "filesystem_read", dict(result.constraints)
-    )
+    pop_sig = root_warrant.sign(worker_keypair, "filesystem_read", dict(result.constraints))
 
     try:
         authorizer.check(
@@ -260,13 +258,15 @@ def demo_without_config():
         return f"[Content of {path}]"
 
     # Mint warrant
-    warrant = (Warrant.mint_builder()
-        .capability("filesystem_read",
-            path=Pattern("/var/log/*"),
-            max_size=Range.max_value(1024 * 1024))  # Match extraction name
+    warrant = (
+        Warrant.mint_builder()
+        .capability(
+            "filesystem_read", path=Pattern("/var/log/*"), max_size=Range.max_value(1024 * 1024)
+        )  # Match extraction name
         .holder(worker_keypair.public_key)
         .ttl(3600)
-        .mint(control_keypair))
+        .mint(control_keypair)
+    )
 
     print("✓ Warrant issued: filesystem_read, path=/var/log/*, max_size≤1MB\n")
 

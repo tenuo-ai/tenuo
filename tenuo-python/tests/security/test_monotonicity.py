@@ -15,13 +15,20 @@ from tenuo import (
     Warrant,
     Pattern,
     Range,
+    Wildcard,
     OneOf,
+    NotOneOf,
     Contains,
+    Subset,
+    CEL,
     MonotonicityError,
+    ConstraintViolation,
+    Subpath,
+    UrlSafe,
 )
 from tenuo.constraints import Constraints
-from tenuo.exceptions import EmptyResultSet, PatternExpanded, WildcardExpansion
-from tenuo_core import CEL, NotOneOf, Subset, Wildcard
+from tenuo.exceptions import PatternExpanded, WildcardExpansion, EmptyResultSet
+from tenuo_core import Cidr, UrlPattern
 
 
 @pytest.mark.security
@@ -37,10 +44,8 @@ class TestMonotonicity:
         """
         print("\n--- Attack 3A: Constraint Widening ---")
 
-        parent = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}),
-            ttl_seconds=60
+        parent = Warrant.issue(
+            keypair=keypair, capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}), ttl_seconds=60
         )
 
         print("  [Attack 3A] Attempting to widen constraints...")
@@ -59,10 +64,8 @@ class TestMonotonicity:
         """
         print("\n--- Attack 3B: Add Unauthorized Tool ---")
 
-        parent = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}),
-            ttl_seconds=60
+        parent = Warrant.issue(
+            keypair=keypair, capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}), ttl_seconds=60
         )
 
         print("  [Attack 3B] Attempting to add unauthorized tool via capability...")
@@ -82,10 +85,10 @@ class TestMonotonicity:
         """
         print("\n--- Attack 12: Constraint Removal ---")
 
-        parent = Warrant.mint(
+        parent = Warrant.issue(
             keypair=keypair,
             capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         # Attenuate inheriting all constraints (POLA)
@@ -111,10 +114,10 @@ class TestMonotonicity:
         """
         print("\n--- Attack 23: CEL Injection ---")
 
-        parent = Warrant.mint(
+        parent = Warrant.issue(
             keypair=keypair,
             capabilities=Constraints.for_tool("spend", {"budget_check": CEL("budget < 10000")}),
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         # Attack A: Replace with always-true
@@ -143,10 +146,10 @@ class TestMonotonicity:
         """
         print("\n--- Attack 26: Constraint Type Substitution ---")
 
-        parent = Warrant.mint(
+        parent = Warrant.issue(
             keypair=keypair,
             capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         print("  [Attack 26] Attempting to change Pattern to Range...")
@@ -165,10 +168,10 @@ class TestMonotonicity:
         """
         print("\n--- Attack 27: Wildcard Re-widening ---")
 
-        parent = Warrant.mint(
+        parent = Warrant.issue(
             keypair=keypair,
             capabilities=Constraints.for_tool("search", {"query": Pattern("allowed*")}),
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         print("  [Attack 27] Attempting to attenuate Pattern to Wildcard...")
@@ -187,11 +190,7 @@ class TestMonotonicity:
         """
         print("\n--- Attack 28: TTL Extension ---")
 
-        parent = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("search", {}),
-            ttl_seconds=600
-        )
+        parent = Warrant.issue(keypair=keypair, capabilities=Constraints.for_tool("search", {}), ttl_seconds=600)
 
         print("  [Attack 28] Attempting to extend TTL from 600s to 3600s...")
 
@@ -220,10 +219,10 @@ class TestMonotonicity:
         """
         print("\n--- Attack 34: OneOf/NotOneOf Paradox ---")
 
-        parent = Warrant.mint(
+        parent = Warrant.issue(
             keypair=keypair,
             capabilities=Constraints.for_tool("action", {"type": OneOf(["read", "write"])}),
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         print("  [Attack 34] Attempting to exclude all parent values...")
@@ -244,10 +243,8 @@ class TestMonotonicity:
 
         print("  [Attack 37] Creating warrant with only NotOneOf constraint...")
 
-        warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("query", {"env": NotOneOf(["prod"])}),
-            ttl_seconds=3600
+        warrant = Warrant.issue(
+            keypair=keypair, capabilities=Constraints.for_tool("query", {"env": NotOneOf(["prod"])}), ttl_seconds=3600
         )
 
         # Allows everything except prod
@@ -270,10 +267,10 @@ class TestMonotonicity:
         """
         print("\n--- Attack 38: Contains/Subset Confusion ---")
 
-        parent = Warrant.mint(
+        parent = Warrant.issue(
             keypair=keypair,
             capabilities=Constraints.for_tool("access", {"permissions": Contains(["read"])}),
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         print("  [Attack 38A] Attempting to attenuate Contains to Subset...")
@@ -300,15 +297,7 @@ class TestMonotonicity:
         """
         print("\n--- Attack 11: Tool Wildcard Exploitation ---")
 
-        warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities={
-                "search": {},
-                "read": {},
-                "write": {}
-            },
-            ttl_seconds=3600
-        )
+        warrant = Warrant.issue(keypair=keypair, capabilities={"search": {}, "read": {}, "write": {}}, ttl_seconds=3600)
 
         # Attenuation should narrow tools (POLA: inherit_all first, then narrow)
         builder = warrant.grant_builder()
@@ -318,3 +307,233 @@ class TestMonotonicity:
 
         assert child.tools == ["search"]
         print("  [Result] Attack 11 N/A (Tenuo doesn't support wildcard tools syntax)")
+
+    # =========================================================================
+    # Subpath Constraint Tests (Path Traversal Protection)
+    # =========================================================================
+
+    def test_subpath_valid_narrowing(self, keypair):
+        """
+        Valid: Subpath('/data') -> Subpath('/data/reports') is allowed.
+        """
+        print("\n--- Subpath: Valid Narrowing ---")
+
+        parent = Warrant.issue(
+            keypair=keypair,
+            capabilities=Constraints.for_tool("read_file", {"path": Subpath("/data")}),
+            ttl_seconds=3600,
+        )
+
+        builder = parent.grant_builder()
+        builder.capability("read_file", {"path": Subpath("/data/reports")})
+        child = builder.grant(keypair)
+
+        print(f"  [Check] Child path constraint: {child.capabilities['read_file']['path']}")
+        # Verify the attenuation was successful
+        assert child is not None
+        assert "read_file" in child.tools
+        print("  [Result] Subpath narrowing works correctly")
+
+    def test_subpath_widening_blocked(self, keypair):
+        """
+        Attack: Subpath('/data/reports') -> Subpath('/data') widens access.
+
+        Defense: ConstraintViolation blocks widening.
+        """
+        print("\n--- Attack: Subpath Widening ---")
+
+        parent = Warrant.issue(
+            keypair=keypair,
+            capabilities=Constraints.for_tool("read_file", {"path": Subpath("/data/reports")}),
+            ttl_seconds=3600,
+        )
+
+        print("  [Attack] Attempting to widen Subpath('/data/reports') to Subpath('/data')...")
+        with pytest.raises((MonotonicityError, ConstraintViolation)):
+            builder = parent.grant_builder()
+            builder.capability("read_file", {"path": Subpath("/data")})
+            builder.grant(keypair)
+
+        print("  [Result] Attack blocked (Subpath widening rejected)")
+
+    def test_subpath_sibling_blocked(self, keypair):
+        """
+        Attack: Subpath('/data') -> Subpath('/etc') is unrelated path.
+
+        Defense: ConstraintViolation blocks sibling paths.
+        """
+        print("\n--- Attack: Subpath Sibling ---")
+
+        parent = Warrant.issue(
+            keypair=keypair,
+            capabilities=Constraints.for_tool("read_file", {"path": Subpath("/data")}),
+            ttl_seconds=3600,
+        )
+
+        print("  [Attack] Attempting to change Subpath('/data') to Subpath('/etc')...")
+        with pytest.raises((MonotonicityError, ConstraintViolation)):
+            builder = parent.grant_builder()
+            builder.capability("read_file", {"path": Subpath("/etc")})
+            builder.grant(keypair)
+
+        print("  [Result] Attack blocked (Sibling path rejected)")
+
+    # =========================================================================
+    # UrlSafe Constraint Tests (SSRF Protection)
+    # =========================================================================
+
+    def test_urlsafe_add_domain_allowlist(self, keypair):
+        """
+        Valid: UrlSafe() -> UrlSafe(allow_domains=[...]) is more restrictive.
+        """
+        print("\n--- UrlSafe: Add Domain Allowlist ---")
+
+        parent = Warrant.issue(
+            keypair=keypair, capabilities=Constraints.for_tool("fetch_url", {"url": UrlSafe()}), ttl_seconds=3600
+        )
+
+        builder = parent.grant_builder()
+        builder.capability("fetch_url", {"url": UrlSafe(allow_domains=["api.github.com"])})
+        child = builder.grant(keypair)
+
+        print(f"  [Check] Child url constraint: {child.capabilities['fetch_url']['url']}")
+        # Verify the attenuation was successful
+        assert child is not None
+        assert "fetch_url" in child.tools
+        print("  [Result] UrlSafe domain allowlist attenuation works correctly")
+
+    def test_urlsafe_remove_domain_allowlist_blocked(self, keypair):
+        """
+        Attack: UrlSafe(allow_domains=[...]) -> UrlSafe() removes restriction.
+
+        Defense: MonotonicityError blocks removal.
+        """
+        print("\n--- Attack: UrlSafe Remove Domain Allowlist ---")
+
+        parent = Warrant.issue(
+            keypair=keypair,
+            capabilities=Constraints.for_tool("fetch_url", {"url": UrlSafe(allow_domains=["api.github.com"])}),
+            ttl_seconds=3600,
+        )
+
+        print("  [Attack] Attempting to remove domain allowlist...")
+        with pytest.raises(MonotonicityError):
+            builder = parent.grant_builder()
+            builder.capability("fetch_url", {"url": UrlSafe()})
+            builder.grant(keypair)
+
+        print("  [Result] Attack blocked (Domain allowlist removal rejected)")
+
+    def test_urlsafe_widen_domain_allowlist_blocked(self, keypair):
+        """
+        Attack: UrlSafe(allow_domains=['a']) -> UrlSafe(allow_domains=['a', 'b']) widens.
+
+        Defense: MonotonicityError blocks widening.
+        """
+        print("\n--- Attack: UrlSafe Widen Domain Allowlist ---")
+
+        parent = Warrant.issue(
+            keypair=keypair,
+            capabilities=Constraints.for_tool("fetch_url", {"url": UrlSafe(allow_domains=["api.github.com"])}),
+            ttl_seconds=3600,
+        )
+
+        print("  [Attack] Attempting to add evil.com to allowed domains...")
+        with pytest.raises(MonotonicityError):
+            builder = parent.grant_builder()
+            builder.capability("fetch_url", {"url": UrlSafe(allow_domains=["api.github.com", "evil.com"])})
+            builder.grant(keypair)
+
+        print("  [Result] Attack blocked (Domain allowlist widening rejected)")
+
+    # =========================================================================
+    # Cidr Constraint Tests (IP Network Containment)
+    # =========================================================================
+
+    def test_cidr_valid_subnet_narrowing(self, keypair):
+        """
+        Valid: Cidr('10.0.0.0/8') -> Cidr('10.1.0.0/16') is a subnet.
+        """
+        print("\n--- Cidr: Valid Subnet Narrowing ---")
+
+        parent = Warrant.issue(
+            keypair=keypair, capabilities=Constraints.for_tool("connect", {"ip": Cidr("10.0.0.0/8")}), ttl_seconds=3600
+        )
+
+        builder = parent.grant_builder()
+        builder.capability("connect", {"ip": Cidr("10.1.0.0/16")})
+        child = builder.grant(keypair)
+
+        print(f"  [Check] Child ip constraint: {child.capabilities['connect']['ip']}")
+        # Verify the attenuation was successful
+        assert child is not None
+        assert "connect" in child.tools
+        print("  [Result] Cidr subnet narrowing attenuation works correctly")
+
+    def test_cidr_widening_blocked(self, keypair):
+        """
+        Attack: Cidr('10.1.0.0/16') -> Cidr('10.0.0.0/8') widens network.
+
+        Defense: MonotonicityError blocks widening.
+        """
+        print("\n--- Attack: Cidr Widening ---")
+
+        parent = Warrant.issue(
+            keypair=keypair, capabilities=Constraints.for_tool("connect", {"ip": Cidr("10.1.0.0/16")}), ttl_seconds=3600
+        )
+
+        print("  [Attack] Attempting to widen Cidr('10.1.0.0/16') to Cidr('10.0.0.0/8')...")
+        with pytest.raises(MonotonicityError):
+            builder = parent.grant_builder()
+            builder.capability("connect", {"ip": Cidr("10.0.0.0/8")})
+            builder.grant(keypair)
+
+        print("  [Result] Attack blocked (Cidr widening rejected)")
+
+    # =========================================================================
+    # UrlPattern Constraint Tests (URL Pattern Matching)
+    # =========================================================================
+
+    def test_urlpattern_valid_narrowing(self, keypair):
+        """
+        Valid: UrlPattern('https://*.example.com/*') -> UrlPattern('https://api.example.com/*')
+        """
+        print("\n--- UrlPattern: Valid Narrowing ---")
+
+        parent = Warrant.issue(
+            keypair=keypair,
+            capabilities=Constraints.for_tool("fetch", {"url": UrlPattern("https://*.example.com/*")}),
+            ttl_seconds=3600,
+        )
+
+        builder = parent.grant_builder()
+        builder.capability("fetch", {"url": UrlPattern("https://api.example.com/*")})
+        child = builder.grant(keypair)
+
+        print(f"  [Check] Child url constraint: {child.capabilities['fetch']['url']}")
+        # Verify the attenuation was successful
+        assert child is not None
+        assert "fetch" in child.tools
+        print("  [Result] UrlPattern narrowing attenuation works correctly")
+
+    def test_urlpattern_widening_blocked(self, keypair):
+        """
+        Attack: UrlPattern('https://api.example.com/*') -> UrlPattern('https://*.example.com/*')
+
+        Defense: MonotonicityError blocks widening.
+        """
+        print("\n--- Attack: UrlPattern Widening ---")
+
+        parent = Warrant.issue(
+            keypair=keypair,
+            capabilities=Constraints.for_tool("fetch", {"url": UrlPattern("https://api.example.com/*")}),
+            ttl_seconds=3600,
+        )
+
+        print("  [Attack] Attempting to widen UrlPattern...")
+        with pytest.raises(MonotonicityError):
+            builder = parent.grant_builder()
+            builder.capability("fetch", {"url": UrlPattern("https://*.example.com/*")})
+            builder.grant(keypair)
+
+        print("  [Result] Attack blocked (UrlPattern widening rejected)")

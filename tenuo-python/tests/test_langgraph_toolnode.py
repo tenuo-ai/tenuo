@@ -26,6 +26,7 @@ from tenuo.langgraph import TenuoToolNode, LANGGRAPH_AVAILABLE
 # Test Fixtures
 # =============================================================================
 
+
 @pytest.fixture
 def keypair():
     """Generate a test keypair."""
@@ -56,9 +57,11 @@ def make_config(key_id: str) -> Dict[str, Any]:
 # Mock LangChain Tools (for testing without actual LangChain)
 # =============================================================================
 
+
 @dataclass
 class MockTool:
     """Mock LangChain-like tool for testing."""
+
     name: str
     description: str = "A mock tool"
 
@@ -75,6 +78,7 @@ class MockTool:
 
 class MockMessage:
     """Mock LangChain message with tool_calls."""
+
     def __init__(self, tool_calls: List[Dict]):
         self.tool_calls = tool_calls
 
@@ -82,6 +86,7 @@ class MockMessage:
 # =============================================================================
 # Test: TenuoToolNode
 # =============================================================================
+
 
 @pytest.mark.skipif(not LANGGRAPH_AVAILABLE, reason="LangGraph not installed")
 class TestTenuoToolNode:
@@ -128,15 +133,8 @@ class TestTenuoToolNode:
         state = {
             "warrant": warrant,
             "messages": [
-                AIMessage(
-                    content="",
-                    tool_calls=[{
-                        "name": "search",
-                        "args": {"query": "test"},
-                        "id": "call_123"
-                    }]
-                )
-            ]
+                AIMessage(content="", tool_calls=[{"name": "search", "args": {"query": "test"}, "id": "call_123"}])
+            ],
         }
         config = make_config(key_id)
 
@@ -147,7 +145,7 @@ class TestTenuoToolNode:
         assert len(result["messages"]) == 1
         # Check the result is a ToolMessage with content
         msg = result["messages"][0]
-        assert hasattr(msg, 'content')
+        assert hasattr(msg, "content")
 
     def test_tenuo_tool_node_missing_warrant(self, registry):
         """TenuoToolNode fails gracefully without warrant in state."""
@@ -164,12 +162,7 @@ class TestTenuoToolNode:
         # State without warrant
         state = {
             "key_id": "test-key",
-            "messages": [
-                AIMessage(
-                    content="",
-                    tool_calls=[{"name": "search", "args": {}, "id": "call_1"}]
-                )
-            ]
+            "messages": [AIMessage(content="", tool_calls=[{"name": "search", "args": {}, "id": "call_1"}])],
         }
 
         result = node(state)
@@ -194,12 +187,7 @@ class TestTenuoToolNode:
         # Request a tool that doesn't exist
         state = {
             "warrant": warrant,
-            "messages": [
-                AIMessage(
-                    content="",
-                    tool_calls=[{"name": "nonexistent", "args": {}, "id": "call_1"}]
-                )
-            ]
+            "messages": [AIMessage(content="", tool_calls=[{"name": "nonexistent", "args": {}, "id": "call_1"}])],
         }
         config = make_config(key_id)
 
@@ -211,6 +199,7 @@ class TestTenuoToolNode:
 # =============================================================================
 # Test: AuthorizationDenied (diff-style errors)
 # =============================================================================
+
 
 class TestAuthorizationDenied:
     """Tests for diff-style error messages."""
@@ -233,14 +222,14 @@ class TestAuthorizationDenied:
                 passed=False,
                 constraint_repr="Pattern('/data/*')",
                 value="/etc/passwd",
-                explanation="Pattern does not match"
+                explanation="Pattern does not match",
             ),
             ConstraintResult(
                 name="size",
                 passed=True,
                 constraint_repr="Range(max=1000)",
                 value=500,
-            )
+            ),
         ]
 
         error = AuthorizationDenied(
@@ -268,6 +257,7 @@ class TestAuthorizationDenied:
 # =============================================================================
 # Test: ConstraintResult
 # =============================================================================
+
 
 class TestConstraintResult:
     """Tests for constraint result types."""
@@ -313,6 +303,7 @@ class TestConstraintResult:
 # Test: Pattern and Range Constraints
 # =============================================================================
 
+
 class TestConstraintTypes:
     """Tests for constraint type display."""
 
@@ -331,6 +322,7 @@ class TestConstraintTypes:
 # Test: guard_tools (LangChain)
 # =============================================================================
 
+
 @pytest.mark.skipif(not LANGCHAIN_AVAILABLE, reason="LangChain not installed")
 class TestSecureAgent:
     """Tests for the guard_tools() one-liner."""
@@ -346,7 +338,9 @@ class TestSecureAgent:
         class Tool:
             name: str = "search"
             description: str = "Search tool"
-            def _run(self, **kwargs): return "result"
+
+            def _run(self, **kwargs):
+                return "result"
 
         tools = [Tool()]
 

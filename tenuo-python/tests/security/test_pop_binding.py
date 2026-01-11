@@ -34,7 +34,7 @@ class TestPopBinding:
             keypair=keypair,
             capabilities=Constraints.for_tool("admin_access", {}),
             holder=keypair.public_key,
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         # Attacker steals warrant and tries with their keypair
@@ -61,13 +61,7 @@ class TestPopBinding:
         print("\n--- Attack 13: PoP Tool Swap ---")
 
         warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities={
-                "search": {},
-                "delete": {}
-            },
-            holder=keypair.public_key,
-            ttl_seconds=3600
+            keypair=keypair, capabilities={"search": {}, "delete": {}}, holder=keypair.public_key, ttl_seconds=3600
         )
 
         # Create valid PoP for "search"
@@ -98,7 +92,7 @@ class TestPopBinding:
             keypair=keypair,
             capabilities=Constraints.for_tool("transfer", {"amount": Range(max=1000)}),
             holder=keypair.public_key,
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         # Create valid PoP for small amount
@@ -129,7 +123,7 @@ class TestPopBinding:
             keypair=keypair,
             capabilities=Constraints.for_tool("payment", {}),
             holder=keypair.public_key,
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         print("  [Info] Attack 6A: Replay within TTL requires app-level nonces.")
@@ -150,7 +144,7 @@ class TestPopBinding:
             keypair=keypair,
             capabilities=Constraints.for_tool("transfer", {}),
             holder=keypair.public_key,
-            ttl_seconds=3600
+            ttl_seconds=3600,
         )
 
         args = {"amount": 100}
@@ -177,11 +171,7 @@ class TestPopBinding:
         """
         print("\n--- Attack: Argument Ordering Non-Determinism ---")
 
-        warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("test", {}),
-            ttl_seconds=60
-        )
+        warrant = Warrant.mint(keypair=keypair, capabilities=Constraints.for_tool("test", {}), ttl_seconds=60)
 
         # Dicts preserve insertion order in modern Python
         args1 = {"a": 1, "b": 2, "c": 3}

@@ -23,7 +23,7 @@ def test_builder_basic():
         keypair=control_kp,
         capabilities=Constraints.for_tool("file_operations", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     # Use builder
@@ -50,7 +50,7 @@ def test_builder_diff_computation():
         keypair=control_kp,
         capabilities=Constraints.for_tool("file_operations", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     builder = GrantBuilder(root)
@@ -78,7 +78,7 @@ def test_builder_human_readable_diff():
         keypair=control_kp,
         capabilities=Constraints.for_tool("file_operations", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     builder = GrantBuilder(root)
@@ -105,7 +105,7 @@ def test_builder_delegation():
         keypair=control_kp,
         capabilities=Constraints.for_tool("file_operations", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     builder = GrantBuilder(root)
@@ -137,7 +137,7 @@ def test_warrant_grant_builder_method():
         keypair=control_kp,
         capabilities=Constraints.for_tool("file_operations", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     # Use grant_builder method
@@ -156,7 +156,7 @@ def test_delegation_receipt_to_dict():
         keypair=control_kp,
         capabilities=Constraints.for_tool("file_operations", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     builder = GrantBuilder(root)
@@ -182,6 +182,7 @@ def test_delegation_receipt_to_dict():
 def test_delegation_receipt_siem_json():
     """Test SIEM JSON format using actual delegation."""
     import json
+
     control_kp = SigningKey.generate()
     worker_kp = SigningKey.generate()
 
@@ -189,7 +190,7 @@ def test_delegation_receipt_siem_json():
         keypair=control_kp,
         capabilities=Constraints.for_tool("file_operations", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     builder = GrantBuilder(root)

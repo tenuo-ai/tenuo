@@ -127,7 +127,6 @@ class TestDebuggingMethods:
         assert "Warrant" in inspection
 
 
-
 class TestBoundWarrant:
     """Test BoundWarrant class."""
 
@@ -165,11 +164,7 @@ class TestBoundWarrant:
         bound = parent.bind(parent_key)
 
         child_key = SigningKey.generate()
-        child = bound.grant(
-            to=child_key.public_key,
-            allow="search",
-            ttl=300
-        )
+        child = bound.grant(to=child_key.public_key, allow="search", ttl=300)
 
         assert "search" in child.tools
 

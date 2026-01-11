@@ -12,7 +12,7 @@ USE_MOCK_FETCH = True  # Set to False to actually fetch URLs
 # Output directory for summaries
 OUTPUT_DIR = "/tmp/jit_demo"
 
+
 def setup_workspace():
     """Create workspace directory."""
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-

@@ -74,6 +74,7 @@ class AuditEventType(str, Enum):
 
 class AuditSeverity(str, Enum):
     """Severity levels for audit events (SIEM compatible)."""
+
     INFO = "info"
     WARNING = "warning"
     ERROR = "error"
@@ -162,8 +163,16 @@ class AuditEvent:
 
         # Add optional fields (skip None values)
         optional_fields = [
-            "trace_id", "warrant_id", "tool", "action", "constraints",
-            "actor", "client_ip", "details", "error_code", "related_ids"
+            "trace_id",
+            "warrant_id",
+            "tool",
+            "action",
+            "constraints",
+            "actor",
+            "client_ip",
+            "details",
+            "error_code",
+            "related_ids",
         ]
         for field_name in optional_fields:
             value = getattr(self, field_name)
@@ -258,16 +267,18 @@ class AuditLogger:
         trace_id: Optional[str] = None,
     ):
         """Log a successful authorization."""
-        self.log(AuditEvent(
-            event_type=AuditEventType.AUTHORIZATION_SUCCESS,
-            warrant_id=warrant_id,
-            tool=tool,
-            action="authorized",
-            constraints=constraints,
-            actor=actor,
-            trace_id=trace_id,
-            details=f"Authorization successful for {tool}",
-        ))
+        self.log(
+            AuditEvent(
+                event_type=AuditEventType.AUTHORIZATION_SUCCESS,
+                warrant_id=warrant_id,
+                tool=tool,
+                action="authorized",
+                constraints=constraints,
+                actor=actor,
+                trace_id=trace_id,
+                details=f"Authorization successful for {tool}",
+            )
+        )
 
     def authorization_failure(
         self,
@@ -279,17 +290,19 @@ class AuditLogger:
         trace_id: Optional[str] = None,
     ):
         """Log a failed authorization."""
-        self.log(AuditEvent(
-            event_type=AuditEventType.AUTHORIZATION_FAILURE,
-            warrant_id=warrant_id,
-            tool=tool,
-            action="denied",
-            constraints=constraints,
-            actor=actor,
-            trace_id=trace_id,
-            error_code="authorization_failed",
-            details=f"Authorization denied: {reason}",
-        ))
+        self.log(
+            AuditEvent(
+                event_type=AuditEventType.AUTHORIZATION_FAILURE,
+                warrant_id=warrant_id,
+                tool=tool,
+                action="denied",
+                constraints=constraints,
+                actor=actor,
+                trace_id=trace_id,
+                error_code="authorization_failed",
+                details=f"Authorization denied: {reason}",
+            )
+        )
 
 
 # Global audit logger instance
@@ -297,22 +310,11 @@ audit_logger = AuditLogger()
 
 
 # Convenience functions
-def log_authorization_success(
-    warrant_id: str,
-    tool: str,
-    constraints: Dict[str, Any],
-    **kwargs
-):
+def log_authorization_success(warrant_id: str, tool: str, constraints: Dict[str, Any], **kwargs):
     """Log a successful authorization event."""
     audit_logger.authorization_success(warrant_id, tool, constraints, **kwargs)
 
 
-def log_authorization_failure(
-    warrant_id: Optional[str],
-    tool: str,
-    constraints: Dict[str, Any],
-    reason: str,
-    **kwargs
-):
+def log_authorization_failure(warrant_id: Optional[str], tool: str, constraints: Dict[str, Any], reason: str, **kwargs):
     """Log a failed authorization event."""
     audit_logger.authorization_failure(warrant_id, tool, constraints, reason, **kwargs)

@@ -50,12 +50,15 @@ def process_payment(amount: float, currency: str) -> str:
     """Simulated payment processing for examples."""
     return f"Processed payment of {amount} {currency}"
 
+
 # ============================================================================
 # Error Types
 # ============================================================================
 
+
 class ErrorSeverity(Enum):
     """Error severity levels."""
+
     FATAL = "fatal"  # Cannot recover, must abort
     RETRYABLE = "retryable"  # May succeed on retry
     WARNING = "warning"  # Non-fatal, can continue
@@ -63,6 +66,7 @@ class ErrorSeverity(Enum):
 
 class ErrorCategory(Enum):
     """Error categories for handling."""
+
     WARRANT_EXPIRED = "warrant_expired"
     POP_FAILED = "pop_failed"
     CONSTRAINT_VIOLATION = "constraint_violation"
@@ -70,9 +74,11 @@ class ErrorCategory(Enum):
     INVALID_WARRANT = "invalid_warrant"
     UNKNOWN = "unknown"
 
+
 # ============================================================================
 # Error Classifier
 # ============================================================================
+
 
 class TenuoErrorClassifier:
     """Classifies Tenuo errors for appropriate handling."""
@@ -91,20 +97,16 @@ class TenuoErrorClassifier:
                 return (
                     ErrorCategory.WARRANT_EXPIRED,
                     ErrorSeverity.FATAL,
-                    "Warrant expired. Task must be resubmitted to gateway for fresh warrant. Do not retry locally."
+                    "Warrant expired. Task must be resubmitted to gateway for fresh warrant. Do not retry locally.",
                 )
             elif "invalid" in error_msg or "format" in error_msg:
                 return (
                     ErrorCategory.INVALID_WARRANT,
                     ErrorSeverity.FATAL,
-                    "Invalid warrant format. Check warrant serialization/deserialization."
+                    "Invalid warrant format. Check warrant serialization/deserialization.",
                 )
             else:
-                return (
-                    ErrorCategory.INVALID_WARRANT,
-                    ErrorSeverity.FATAL,
-                    "Warrant error. Check warrant validity."
-                )
+                return (ErrorCategory.INVALID_WARRANT, ErrorSeverity.FATAL, "Warrant error. Check warrant validity.")
 
         elif isinstance(error, AuthorizationError):
             error_msg = str(error).lower()
@@ -112,33 +114,34 @@ class TenuoErrorClassifier:
                 return (
                     ErrorCategory.POP_FAILED,
                     ErrorSeverity.FATAL,
-                    "PoP signature failed. SigningKey does not match warrant holder. Check signing_key configuration."
+                    "PoP signature failed. SigningKey does not match warrant holder. Check signing_key configuration.",
                 )
             elif "no warrant" in error_msg or "missing" in error_msg:
                 return (
                     ErrorCategory.MISSING_WARRANT,
                     ErrorSeverity.FATAL,
-                    "No warrant available. Ensure warrant is passed explicitly or set in context."
+                    "No warrant available. Ensure warrant is passed explicitly or set in context.",
                 )
             elif "does not authorize" in error_msg or "constraint" in error_msg:
                 return (
                     ErrorCategory.CONSTRAINT_VIOLATION,
                     ErrorSeverity.FATAL,
-                    "Agent is attempting unauthorized action. Log security event and abort task."
+                    "Agent is attempting unauthorized action. Log security event and abort task.",
                 )
             else:
                 return (
                     ErrorCategory.CONSTRAINT_VIOLATION,
                     ErrorSeverity.FATAL,
-                    "Authorization failed. Check warrant constraints and action parameters."
+                    "Authorization failed. Check warrant constraints and action parameters.",
                 )
 
         else:
             return (
                 ErrorCategory.UNKNOWN,
                 ErrorSeverity.RETRYABLE,
-                "Unknown error. May be transient. Consider retry with exponential backoff."
+                "Unknown error. May be transient. Consider retry with exponential backoff.",
             )
+
 
 # ============================================================================
 # Protected Functions
@@ -148,6 +151,7 @@ class TenuoErrorClassifier:
 # ============================================================================
 # Error Handlers
 # ============================================================================
+
 
 class TenuoErrorHandler:
     """Handles Tenuo errors with appropriate strategies."""
@@ -175,7 +179,7 @@ class TenuoErrorHandler:
             "category": category.value,
             "severity": severity.value,
             "recommendation": recommendation,
-            "context": context or {}
+            "context": context or {},
         }
 
         # Log based on severity
@@ -199,16 +203,18 @@ class TenuoErrorHandler:
         _, severity, _ = self.classifier.classify(error)
         return severity == ErrorSeverity.FATAL
 
+
 # ============================================================================
 # Retry Strategies
 # ============================================================================
+
 
 def retry_with_backoff(
     func: Callable,
     max_retries: int = 3,
     initial_delay: float = 1.0,
     backoff_factor: float = 2.0,
-    error_handler: Optional[TenuoErrorHandler] = None
+    error_handler: Optional[TenuoErrorHandler] = None,
 ) -> Any:
     """
     Retry a function with exponential backoff.
@@ -236,14 +242,14 @@ def retry_with_backoff(
 
     raise RuntimeError("Should not reach here")
 
+
 # ============================================================================
 # Safe Execution Wrapper
 # ============================================================================
 
+
 def safe_execute(
-    func: Callable,
-    error_handler: Optional[TenuoErrorHandler] = None,
-    context: Optional[dict] = None
+    func: Callable, error_handler: Optional[TenuoErrorHandler] = None, context: Optional[dict] = None
 ) -> tuple[Optional[Any], Optional[dict]]:
     """
     Safely execute a function with Tenuo error handling.
@@ -266,13 +272,15 @@ def safe_execute(
             "error_message": str(e),
             "category": "non_tenuo_error",
             "severity": "unknown",
-            "recommendation": "Handle according to application logic"
+            "recommendation": "Handle according to application logic",
         }
         return None, error_info
+
 
 # ============================================================================
 # Examples
 # ============================================================================
+
 
 def main():
     print("=" * 60)
@@ -288,11 +296,13 @@ def main():
     print("\n1. Warrant Expired Error")
     print("-" * 60)
 
-    expired_warrant = (Warrant.mint_builder()
+    expired_warrant = (
+        Warrant.mint_builder()
         .capability("read_file", file_path=Pattern("/tmp/*"))
         .holder(signing_key.public_key)
         .ttl(1)  # Very short TTL
-        .mint(signing_key))
+        .mint(signing_key)
+    )
 
     time.sleep(2)  # Wait for expiration
 
@@ -312,13 +322,13 @@ def main():
     print("\n2. Constraint Violation Error")
     print("-" * 60)
 
-    restricted_warrant = (Warrant.mint_builder()
-        .capability("process_payment",
-            amount=Range.max_value(1000.0),
-            currency=Pattern("USD|EUR"))
+    restricted_warrant = (
+        Warrant.mint_builder()
+        .capability("process_payment", amount=Range.max_value(1000.0), currency=Pattern("USD|EUR"))
         .holder(signing_key.public_key)
         .ttl(3600)
-        .mint(signing_key))
+        .mint(signing_key)
+    )
 
     def try_payment():
         with warrant_scope(restricted_warrant), key_scope(signing_key):
@@ -352,11 +362,13 @@ def main():
     print("-" * 60)
 
     wrong_signing_key = SigningKey.generate()  # Different signing_key
-    warrant = (Warrant.mint_builder()
+    warrant = (
+        Warrant.mint_builder()
         .capability("read_file", file_path=Pattern("/tmp/*"))
         .holder(signing_key.public_key)  # Bound to original signing_key
         .ttl(3600)
-        .mint(signing_key))
+        .mint(signing_key)
+    )
 
     def try_with_wrong_signing_key():
         with warrant_scope(warrant), key_scope(wrong_signing_key):
@@ -397,11 +409,13 @@ def main():
     print("-" * 60)
 
     # Warrant constrains only 'path', but tool call includes 'encoding'
-    partial_warrant = (Warrant.mint_builder()
+    partial_warrant = (
+        Warrant.mint_builder()
         .capability("read_file", file_path=Pattern("/tmp/*"))  # Only path constrained
         .holder(signing_key.public_key)
         .ttl(3600)
-        .mint(signing_key))
+        .mint(signing_key)
+    )
 
     @guard(tool="read_file_with_encoding")
     def read_file_encoded(file_path: str, encoding: str = "utf-8") -> str:
@@ -462,6 +476,7 @@ def main():
    - Never retry Tenuo security errors
     """)
     print("=" * 60)
+
 
 if __name__ == "__main__":
     main()

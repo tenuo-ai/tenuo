@@ -78,7 +78,7 @@ If the LLM is prompt-injected, it can request anything. But the warrant only all
 This example runs without any setup—just copy and paste:
 
 ```python
-from tenuo import configure, mint_sync, Capability, Pattern, SigningKey, guard
+from tenuo import configure, mint_sync, Capability, Subpath, SigningKey, guard
 from tenuo.exceptions import AuthorizationDenied
 
 # 1. Configure once at startup
@@ -90,7 +90,7 @@ def read_file(path: str) -> str:
     return f"Contents of {path}"
 
 # 3. Scope authority to tasks
-with mint_sync(Capability("read_file", path=Pattern("/data/*"))):
+with mint_sync(Capability("read_file", path=Subpath("/data"))):
     print(read_file("/data/reports/q3.pdf"))  # ✅ Allowed
     
     try:
@@ -101,8 +101,8 @@ with mint_sync(Capability("read_file", path=Pattern("/data/*"))):
 
 **What just happened?**
 - `@guard(tool="read_file")` marks the function as requiring authorization
-- `mint_sync(...)` creates a warrant scoped to `/data/*` files
-- The second call fails because `/etc/passwd` doesn't match the pattern
+- `mint_sync(...)` creates a warrant scoped to `/data/` directory (using `Subpath` for path traversal protection)
+- The second call fails because `/etc/passwd` is not under `/data/`
 
 ---
 
@@ -242,7 +242,7 @@ In audit mode, this still allows execution but logs authorization checks.
 
 **Step 3: Test with scoped warrants**
 ```python
-with mint_sync(Capability("delete_file", path=Pattern("/tmp/*"))):
+with mint_sync(Capability("delete_file", path=Subpath("/tmp"))):
     delete_file("/tmp/test.txt")  # ✅ Would be allowed
     delete_file("/etc/passwd")    # ⚠️ Logged as violation
 ```

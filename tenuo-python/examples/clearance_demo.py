@@ -48,10 +48,11 @@ from tenuo import (
 from tenuo.exceptions import Unauthorized
 from tenuo_core import Clearance
 
+
 def main():
-    print("="*70)
+    print("=" * 70)
     print("Clearance Levels and Tool Requirements Demo")
-    print("="*70)
+    print("=" * 70)
 
     # ========================================================================
     # Setup: Create warrants with different clearance levels
@@ -62,40 +63,45 @@ def main():
 
     # System-level warrant (highest clearance)
     system_kp = SigningKey.generate()
-    system_warrant = (Warrant.mint_builder()
+    system_warrant = (
+        Warrant.mint_builder()
         .capability("admin_reset", {"cluster": Pattern("*")})
         .capability("delete_database", {"name": Pattern("*")})
         .capability("read_file", {"path": Pattern("/*")})
         .clearance(Clearance.SYSTEM)
         .holder(system_kp.public_key)
         .ttl(3600)
-        .mint(system_kp))
+        .mint(system_kp)
+    )
 
     print("   ✓ System warrant (Clearance.SYSTEM)")
     print(f"     Tools: {system_warrant.tools}")
 
     # Privileged warrant (mid-level clearance)
     privileged_kp = SigningKey.generate()
-    privileged_warrant = (Warrant.mint_builder()
+    privileged_warrant = (
+        Warrant.mint_builder()
         .capability("delete_database", {"name": Pattern("test_*")})
         .capability("read_file", {"path": Pattern("/data/*")})
         .clearance(Clearance.PRIVILEGED)
         .holder(privileged_kp.public_key)
         .ttl(3600)
-        .mint(privileged_kp))
+        .mint(privileged_kp)
+    )
 
     print("   ✓ Privileged warrant (Clearance.PRIVILEGED)")
     print(f"     Tools: {privileged_warrant.tools}")
 
     # External warrant (low clearance)
     external_kp = SigningKey.generate()
-    external_warrant = (Warrant.mint_builder()
+    external_warrant = (
+        Warrant.mint_builder()
         .capability("read_file", {"path": Pattern("/public/*")})
         .clearance(Clearance.EXTERNAL)
         .holder(external_kp.public_key)
         .ttl(3600)
-        .mint(external_kp))
-
+        .mint(external_kp)
+    )
 
     print("   ✓ External warrant (Clearance.External)")
     print(f"     Tools: {external_warrant.tools}")
@@ -108,17 +114,12 @@ def main():
     print("-" * 70)
 
     # Create authorizer with trusted roots
-    authorizer = Authorizer(trusted_roots=[
-        system_kp.public_key,
-        privileged_kp.public_key,
-        external_kp.public_key
-    ])
+    authorizer = Authorizer(trusted_roots=[system_kp.public_key, privileged_kp.public_key, external_kp.public_key])
 
     # Configure clearance requirements (gateway policy)
-    authorizer.require_clearance("admin_*", Clearance.SYSTEM)       # Admin tools need System
+    authorizer.require_clearance("admin_*", Clearance.SYSTEM)  # Admin tools need System
     authorizer.require_clearance("delete_*", Clearance.PRIVILEGED)  # Delete tools need Privileged
-    authorizer.require_clearance("read_*", Clearance.EXTERNAL)      # Read tools need External
-
+    authorizer.require_clearance("read_*", Clearance.EXTERNAL)  # Read tools need External
 
     print("   ✓ Configured clearance requirements:")
     print("     admin_*  → Clearance.SYSTEM")
@@ -227,9 +228,9 @@ def main():
     # Summary
     # ========================================================================
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("Key Takeaways:")
-    print("="*70)
+    print("=" * 70)
     print("1. Clearance levels are assigned to warrants at creation time")
     print("2. Clearance requirements are gateway policy (not in warrant)")
     print("3. Clearance hierarchy: System > Privileged > Internal > External > Untrusted")
@@ -237,14 +238,15 @@ def main():
     print("5. Lower clearance CANNOT access higher-clearance tools")
     print("6. Clearance check happens BEFORE PoP verification (fail fast)")
     print("7. Use glob patterns for tool families (admin_*, delete_*, etc.)")
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("Real-World Scenarios:")
-    print("="*70)
+    print("=" * 70)
     print("• SaaS Platform: External (customer agents) vs System (admin agents)")
     print("• Healthcare: External (public chatbot) vs Privileged (clinical AI)")
     print("• Finance: Internal (fraud detection) vs System (compliance agents)")
     print("• DevOps: Internal (auto-scaling) vs System (production deploys)")
     print("\nClearance levels provide defense in depth for sensitive operations!")
+
 
 if __name__ == "__main__":
     main()

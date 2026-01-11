@@ -97,7 +97,13 @@ pub mod constraint_type_id {
     pub const NOT: u8 = 14;
     pub const CEL: u8 = 15;
     pub const WILDCARD: u8 = 16;
-    // 17-127: Future standard types
+    /// Secure path containment (prevents path traversal attacks).
+    /// Wire format: `[17, { "root": string, "case_sensitive": bool }]`
+    pub const SUBPATH: u8 = 17;
+    /// SSRF-safe URL validation (blocks private IPs, metadata endpoints, etc.).
+    /// Wire format: `[18, { "schemes": [string], "block_private": bool, ... }]`
+    pub const URL_SAFE: u8 = 18;
+    // 19-127: Future standard types
     // 128-255: Experimental / private use
 }
 
@@ -178,6 +184,16 @@ pub enum Constraint {
     /// Wire type ID: 15
     Cel(CelConstraint),
 
+    /// Secure path containment constraint.
+    /// Validates that paths are safely contained within a root directory.
+    /// Wire type ID: 17
+    Subpath(Subpath),
+
+    /// SSRF-safe URL constraint.
+    /// Validates URLs to prevent Server-Side Request Forgery attacks.
+    /// Wire type ID: 18
+    UrlSafe(UrlSafe),
+
     /// Unknown constraint type (deserialized but not understood).
     /// Used for forward compatibility. Always fails authorization.
     Unknown { type_id: u8, payload: Vec<u8> },
@@ -253,6 +269,14 @@ impl Serialize for Constraint {
             }
             Constraint::Wildcard(v) => {
                 tup.serialize_element(&WILDCARD)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::Subpath(v) => {
+                tup.serialize_element(&SUBPATH)?;
+                tup.serialize_element(v)?;
+            }
+            Constraint::UrlSafe(v) => {
+                tup.serialize_element(&URL_SAFE)?;
                 tup.serialize_element(v)?;
             }
             Constraint::Unknown { type_id, payload } => {
@@ -384,6 +408,18 @@ impl<'de> serde::Deserialize<'de> for Constraint {
                             .ok_or_else(|| A::Error::invalid_length(1, &self))?;
                         Constraint::Wildcard(v)
                     }
+                    SUBPATH => {
+                        let v: Subpath = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::Subpath(v)
+                    }
+                    URL_SAFE => {
+                        let v: UrlSafe = seq
+                            .next_element()?
+                            .ok_or_else(|| A::Error::invalid_length(1, &self))?;
+                        Constraint::UrlSafe(v)
+                    }
                     // Unknown type ID (ID 6 reserved for future IntRange with i64 bounds)
                     _ => {
                         // Try to read value as raw bytes for preservation
@@ -433,6 +469,8 @@ impl Constraint {
             | Constraint::Contains(_)
             | Constraint::Subset(_)
             | Constraint::Cel(_)
+            | Constraint::Subpath(_)
+            | Constraint::UrlSafe(_)
             | Constraint::Unknown { .. } => 0,
 
             // Recursive types: 1 + max child depth
@@ -485,6 +523,8 @@ impl Constraint {
             Constraint::Any(a) => a.matches(value),
             Constraint::Not(n) => n.matches(value),
             Constraint::Cel(c) => c.matches(value),
+            Constraint::Subpath(s) => s.matches(value),
+            Constraint::UrlSafe(u) => u.matches(value),
             Constraint::Unknown { type_id, .. } => Err(Error::ConstraintNotSatisfied {
                 field: "constraint".to_string(),
                 reason: format!("unknown constraint type ID {}", type_id),
@@ -667,6 +707,52 @@ impl Constraint {
             // CEL follows conjunction rule
             (Constraint::Cel(parent), Constraint::Cel(child)) => parent.validate_attenuation(child),
 
+            // Subpath can narrow to Subpath (narrower root) or Exact
+            (Constraint::Subpath(parent), Constraint::Subpath(child)) => {
+                parent.validate_attenuation(child)
+            }
+            (Constraint::Subpath(parent), Constraint::Exact(child_exact)) => {
+                match child_exact.value.as_str() {
+                    Some(path_str) => {
+                        if parent.contains_path(path_str)? {
+                            Ok(())
+                        } else {
+                            Err(Error::PathNotContained {
+                                path: path_str.to_string(),
+                                root: parent.root.clone(),
+                            })
+                        }
+                    }
+                    None => Err(Error::IncompatibleConstraintTypes {
+                        parent_type: "Subpath".to_string(),
+                        child_type: "Exact (non-string)".to_string(),
+                    }),
+                }
+            }
+
+            // UrlSafe can narrow to UrlSafe (more restrictive) or Exact
+            (Constraint::UrlSafe(parent), Constraint::UrlSafe(child)) => {
+                parent.validate_attenuation(child)
+            }
+            (Constraint::UrlSafe(parent), Constraint::Exact(child_exact)) => {
+                match child_exact.value.as_str() {
+                    Some(url_str) => {
+                        if parent.is_safe(url_str)? {
+                            Ok(())
+                        } else {
+                            Err(Error::UrlNotSafe {
+                                url: url_str.to_string(),
+                                reason: "URL blocked by UrlSafe constraint".to_string(),
+                            })
+                        }
+                    }
+                    None => Err(Error::IncompatibleConstraintTypes {
+                        parent_type: "UrlSafe".to_string(),
+                        child_type: "Exact (non-string)".to_string(),
+                    }),
+                }
+            }
+
             // Any other combination is invalid
             _ => Err(Error::IncompatibleConstraintTypes {
                 parent_type: self.type_name().to_string(),
@@ -693,6 +779,8 @@ impl Constraint {
             Constraint::Any(_) => "Any",
             Constraint::Not(_) => "Not",
             Constraint::Cel(_) => "Cel",
+            Constraint::Subpath(_) => "Subpath",
+            Constraint::UrlSafe(_) => "UrlSafe",
             Constraint::Unknown { .. } => "Unknown",
         }
     }
@@ -1998,6 +2086,947 @@ impl From<UrlPattern> for Constraint {
     fn from(u: UrlPattern) -> Self {
         Constraint::UrlPattern(u)
     }
+}
+
+// ============================================================================
+// Subpath Constraint (Secure Path Containment)
+// ============================================================================
+
+/// Secure path containment constraint.
+///
+/// Validates that paths are safely contained within a root directory,
+/// preventing path traversal attacks. This is a **lexical** check only -
+/// it normalizes `.` and `..` components but does NOT access the filesystem.
+///
+/// # Security Features
+///
+/// - Normalizes `.` and `..` components (lexically, not via filesystem)
+/// - Rejects null bytes (C string terminator attack)
+/// - Requires absolute paths
+/// - Optional case-sensitive matching (Windows compatibility)
+/// - Does NOT follow symlinks (stateless validation)
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use tenuo::Subpath;
+///
+/// let constraint = Subpath::new("/data")?;
+///
+/// // These are allowed:
+/// assert!(constraint.contains_path("/data/file.txt")?);
+/// assert!(constraint.contains_path("/data/subdir/file.txt")?);
+///
+/// // These are BLOCKED:
+/// assert!(!constraint.contains_path("/data/../etc/passwd")?);  // Normalized to /etc/passwd
+/// assert!(!constraint.contains_path("/etc/passwd")?);          // Not under /data
+/// ```
+///
+/// # Design Rationale: Stateless Validation
+///
+/// This constraint does NOT resolve symlinks or access the filesystem.
+/// This is intentional for distributed systems where:
+///
+/// 1. The file may be on a different machine than the validator
+/// 2. The filesystem state may change between validation and access
+/// 3. Stateless validation enables caching and parallelization
+///
+/// For symlink-aware validation, use `path_jail` at the execution layer.
+///
+/// # Wire Format
+///
+/// ```text
+/// [17, { "root": "/data", "case_sensitive": true }]
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Subpath {
+    /// Root directory path (must be absolute).
+    pub root: String,
+    /// Whether to match case-sensitively. Default: true.
+    /// Set to false for Windows paths.
+    #[serde(default = "default_true")]
+    pub case_sensitive: bool,
+    /// Whether to allow path == root. Default: true.
+    /// Set to false to require strictly under root.
+    #[serde(default = "default_true")]
+    pub allow_equal: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Subpath {
+    /// Create a new Subpath constraint.
+    ///
+    /// # Arguments
+    ///
+    /// * `root` - The root directory path (must be absolute)
+    ///
+    /// # Errors
+    ///
+    /// Returns error if `root` is not an absolute path.
+    pub fn new(root: impl Into<String>) -> Result<Self> {
+        let root = root.into();
+        if !Self::is_absolute(&root) {
+            return Err(Error::InvalidPath {
+                path: root,
+                reason: "root must be an absolute path".to_string(),
+            });
+        }
+        Ok(Self {
+            root: Self::normalize_path(&root),
+            case_sensitive: true,
+            allow_equal: true,
+        })
+    }
+
+    /// Create a new Subpath constraint with options.
+    pub fn with_options(
+        root: impl Into<String>,
+        case_sensitive: bool,
+        allow_equal: bool,
+    ) -> Result<Self> {
+        let root = root.into();
+        if !Self::is_absolute(&root) {
+            return Err(Error::InvalidPath {
+                path: root,
+                reason: "root must be an absolute path".to_string(),
+            });
+        }
+        let mut normalized = Self::normalize_path(&root);
+        if !case_sensitive {
+            normalized = normalized.to_lowercase();
+        }
+        Ok(Self {
+            root: normalized,
+            case_sensitive,
+            allow_equal,
+        })
+    }
+
+    /// Check if a path is absolute.
+    ///
+    /// Accepts both Unix-style (`/foo`) and Windows-style (`C:\foo`) paths.
+    fn is_absolute(path: &str) -> bool {
+        // Unix-style absolute
+        if path.starts_with('/') {
+            return true;
+        }
+        // Windows-style absolute (e.g., C:\)
+        if path.len() >= 3 {
+            let bytes = path.as_bytes();
+            if bytes[0].is_ascii_alphabetic()
+                && bytes[1] == b':'
+                && (bytes[2] == b'\\' || bytes[2] == b'/')
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Normalize a path lexically (resolve . and ..).
+    ///
+    /// This is a pure string operation - no filesystem access.
+    fn normalize_path(path: &str) -> String {
+        let mut components: Vec<&str> = Vec::new();
+
+        // Preserve leading slash or drive letter
+        let (prefix, rest) = if let Some(stripped) = path.strip_prefix('/') {
+            ("/", stripped)
+        } else if path.len() >= 2 && path.as_bytes()[1] == b':' {
+            // Windows drive letter (e.g., "C:")
+            let sep_pos =
+                if path.len() > 2 && (path.as_bytes()[2] == b'\\' || path.as_bytes()[2] == b'/') {
+                    3
+                } else {
+                    2
+                };
+            (&path[..sep_pos], &path[sep_pos..])
+        } else {
+            ("", path)
+        };
+
+        // Process path components
+        for component in rest.split(['/', '\\']) {
+            match component {
+                "" | "." => continue, // Skip empty and current dir
+                ".." => {
+                    // Go up one level (but don't go above root)
+                    components.pop();
+                }
+                _ => components.push(component),
+            }
+        }
+
+        // Reconstruct path
+        let mut result = prefix.to_string();
+        for (i, component) in components.iter().enumerate() {
+            if (i > 0 || !prefix.is_empty()) && !result.ends_with('/') && !result.ends_with('\\') {
+                result.push('/');
+            }
+            result.push_str(component);
+        }
+
+        // Ensure root paths end correctly
+        if result.is_empty() {
+            result = prefix.to_string();
+        }
+
+        result
+    }
+
+    /// Check if a path is safely contained within root.
+    ///
+    /// # Security
+    ///
+    /// - Rejects null bytes
+    /// - Rejects relative paths
+    /// - Normalizes `.` and `..` components
+    /// - Checks prefix containment after normalization
+    pub fn contains_path(&self, path: &str) -> Result<bool> {
+        // Reject null bytes (C string terminator attack)
+        if path.contains('\0') {
+            return Ok(false);
+        }
+
+        // Require absolute paths
+        if !Self::is_absolute(path) {
+            return Ok(false);
+        }
+
+        // Normalize the path
+        let mut normalized = Self::normalize_path(path);
+        if !self.case_sensitive {
+            normalized = normalized.to_lowercase();
+        }
+
+        // Check containment
+        if self.allow_equal && normalized == self.root {
+            return Ok(true);
+        }
+
+        // Check if normalized starts with root + separator
+        let root_with_sep = format!("{}/", self.root.trim_end_matches('/'));
+        Ok(normalized.starts_with(&root_with_sep))
+    }
+
+    /// Check if a value satisfies the Subpath constraint.
+    ///
+    /// The value must be a string containing an absolute path.
+    pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
+        match value.as_str() {
+            Some(path_str) => self.contains_path(path_str),
+            None => Ok(false),
+        }
+    }
+
+    /// Validate that `child` is a valid attenuation (child root is under parent root).
+    ///
+    /// A child Subpath is valid if its root is contained within the parent's root.
+    pub fn validate_attenuation(&self, child: &Subpath) -> Result<()> {
+        // Child root must be under parent root
+        if !self.contains_path(&child.root)? {
+            return Err(Error::PathNotContained {
+                path: child.root.clone(),
+                root: self.root.clone(),
+            });
+        }
+
+        // Child cannot be less restrictive on case sensitivity
+        // (case-insensitive parent can narrow to case-sensitive child, but not vice versa)
+        if !self.case_sensitive && child.case_sensitive {
+            return Err(Error::MonotonicityViolation(
+                "cannot attenuate case-insensitive to case-sensitive".to_string(),
+            ));
+        }
+
+        // Child cannot allow_equal if parent doesn't
+        if !self.allow_equal && child.allow_equal {
+            return Err(Error::MonotonicityViolation(
+                "cannot attenuate allow_equal=false to allow_equal=true".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+impl std::fmt::Display for Subpath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.case_sensitive && self.allow_equal {
+            write!(f, "Subpath({})", self.root)
+        } else {
+            write!(
+                f,
+                "Subpath({}, case_sensitive={}, allow_equal={})",
+                self.root, self.case_sensitive, self.allow_equal
+            )
+        }
+    }
+}
+
+impl From<Subpath> for Constraint {
+    fn from(s: Subpath) -> Self {
+        Constraint::Subpath(s)
+    }
+}
+
+// ============================================================================
+// UrlSafe Constraint (SSRF Protection)
+// ============================================================================
+
+/// SSRF-safe URL constraint.
+///
+/// Validates URLs to prevent Server-Side Request Forgery attacks by blocking:
+/// - Private IP ranges (RFC1918: 10.x, 172.16.x, 192.168.x)
+/// - Loopback addresses (127.x, ::1, localhost)
+/// - Cloud metadata endpoints (169.254.169.254, etc.)
+/// - Dangerous schemes (file://, gopher://, etc.)
+/// - IP encoding bypasses (decimal, hex, octal, IPv6-mapped, URL-encoded)
+///
+/// # Security Features
+///
+/// - Validates URL scheme (default: only http, https)
+/// - Blocks private IPs (RFC1918) by default
+/// - Blocks loopback (127.x, ::1) by default
+/// - Blocks cloud metadata endpoints by default
+/// - Normalizes IP representations (catches 0x7f000001, etc.)
+/// - Decodes URL-encoded hostnames
+/// - Optional domain allowlist for maximum restriction
+///
+/// # Design Rationale: Stateless Validation
+///
+/// This constraint does NOT perform DNS resolution. This is intentional:
+///
+/// 1. DNS resolution is I/O (blocks, can fail, changes over time)
+/// 2. Attacker-controlled domains can resolve to internal IPs (DNS rebinding)
+/// 3. Stateless validation enables caching and cross-language compatibility
+///
+/// For DNS-aware validation, use `url_jail` at the execution layer.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use tenuo::UrlSafe;
+///
+/// // Secure defaults - blocks known SSRF vectors
+/// let constraint = UrlSafe::new();
+/// assert!(constraint.is_safe("https://api.github.com/repos")?);
+/// assert!(!constraint.is_safe("http://169.254.169.254/")?);  // Metadata
+/// assert!(!constraint.is_safe("http://127.0.0.1/")?);         // Loopback
+///
+/// // Domain allowlist - only specific domains allowed
+/// let constraint = UrlSafe::with_domains(vec!["api.github.com", "*.googleapis.com"]);
+/// ```
+///
+/// # Wire Format
+///
+/// ```text
+/// [18, { "schemes": ["http", "https"], "block_private": true, ... }]
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UrlSafe {
+    /// Allowed URL schemes. Default: ["http", "https"]
+    #[serde(default = "default_schemes")]
+    pub schemes: Vec<String>,
+    /// If set, only these domains are allowed (supports *.example.com)
+    #[serde(default)]
+    pub allow_domains: Option<Vec<String>>,
+    /// If set, only these ports are allowed
+    #[serde(default)]
+    pub allow_ports: Option<Vec<u16>>,
+    /// Block RFC1918 private IPs (10.x, 172.16.x, 192.168.x). Default: true
+    #[serde(default = "default_true")]
+    pub block_private: bool,
+    /// Block loopback (127.x, ::1, localhost). Default: true
+    #[serde(default = "default_true")]
+    pub block_loopback: bool,
+    /// Block cloud metadata endpoints (169.254.169.254, etc.). Default: true
+    #[serde(default = "default_true")]
+    pub block_metadata: bool,
+    /// Block reserved IP ranges (multicast, broadcast). Default: true
+    #[serde(default = "default_true")]
+    pub block_reserved: bool,
+    /// Block internal TLDs (.internal, .local, .localhost). Default: false
+    #[serde(default)]
+    pub block_internal_tlds: bool,
+}
+
+fn default_schemes() -> Vec<String> {
+    vec!["http".to_string(), "https".to_string()]
+}
+
+/// Cloud metadata endpoint hostnames.
+const METADATA_HOSTS: &[&str] = &[
+    "169.254.169.254",          // AWS, Azure, DigitalOcean
+    "metadata.google.internal", // GCP
+    "metadata.goog",            // GCP alternate
+    "100.100.100.200",          // Alibaba Cloud
+];
+
+/// Internal TLDs that may indicate private infrastructure.
+const INTERNAL_TLDS: &[&str] = &[
+    ".internal",
+    ".local",
+    ".localhost",
+    ".lan",
+    ".corp",
+    ".home",
+    ".svc",     // Kubernetes service names (e.g., my-service.namespace.svc)
+    ".default", // Kubernetes default namespace (e.g., kubernetes.default)
+];
+
+impl UrlSafe {
+    /// Create a new UrlSafe constraint with secure defaults.
+    ///
+    /// Blocks private IPs, loopback, metadata endpoints, and dangerous schemes.
+    pub fn new() -> Self {
+        Self {
+            schemes: default_schemes(),
+            allow_domains: None,
+            allow_ports: None,
+            block_private: true,
+            block_loopback: true,
+            block_metadata: true,
+            block_reserved: true,
+            block_internal_tlds: false,
+        }
+    }
+
+    /// Create a UrlSafe constraint with domain allowlist.
+    ///
+    /// Only URLs to these domains will be allowed.
+    /// Supports wildcard subdomains: `*.example.com`
+    pub fn with_domains(domains: Vec<impl Into<String>>) -> Self {
+        Self {
+            schemes: default_schemes(),
+            allow_domains: Some(domains.into_iter().map(Into::into).collect()),
+            allow_ports: None,
+            block_private: true,
+            block_loopback: true,
+            block_metadata: true,
+            block_reserved: true,
+            block_internal_tlds: false,
+        }
+    }
+
+    /// Check if a URL is safe to fetch.
+    ///
+    /// Returns `Ok(true)` if the URL passes all SSRF checks.
+    /// Returns `Ok(false)` for any security violation or malformed URL.
+    pub fn is_safe(&self, url: &str) -> Result<bool> {
+        use url::Url;
+
+        // Reject null bytes
+        if url.contains('\0') {
+            return Ok(false);
+        }
+
+        // Parse URL
+        let parsed = match Url::parse(url) {
+            Ok(u) => u,
+            Err(_) => return Ok(false),
+        };
+
+        // Check scheme
+        let scheme = parsed.scheme().to_lowercase();
+        if !self.schemes.iter().any(|s| s.to_lowercase() == scheme) {
+            return Ok(false);
+        }
+
+        // Extract host
+        let host = match parsed.host_str() {
+            Some(h) if !h.is_empty() => h,
+            _ => return Ok(false), // No host or empty host
+        };
+
+        // Decode percent-encoded hostname (SSRF bypass prevention)
+        let host = urlencoding_decode(host).to_lowercase();
+
+        // Check port
+        // Note: url::Url::port() returns None for default ports (80 for http, 443 for https)
+        // Use port_or_known_default() to get the actual port
+        if let Some(ref allowed_ports) = self.allow_ports {
+            if let Some(port) = parsed.port_or_known_default() {
+                if !allowed_ports.contains(&port) {
+                    return Ok(false);
+                }
+            }
+        }
+
+        // Check for localhost names
+        if self.block_loopback && (host == "localhost" || host == "localhost.localdomain") {
+            return Ok(false);
+        }
+
+        // Check internal TLDs
+        if self.block_internal_tlds {
+            for tld in INTERNAL_TLDS {
+                if host.ends_with(tld) || host == tld[1..] {
+                    return Ok(false);
+                }
+            }
+        }
+
+        // Check metadata hosts
+        if self.block_metadata && METADATA_HOSTS.contains(&host.as_str()) {
+            return Ok(false);
+        }
+
+        // Try to parse as IP address
+        if let Some(ip) = self.parse_ip(&host) {
+            if !self.check_ip_safe(&ip) {
+                return Ok(false);
+            }
+        } else {
+            // It's a hostname - additional security checks
+
+            // SECURITY: Block ambiguous IP-like hostnames with leading zeros.
+            // Different parsers interpret these inconsistently:
+            // - WHATWG (url crate): "010.0.0.1" treated as hostname (needs DNS)
+            // - POSIX libc: "010.0.0.1" parsed as octal IP = 8.0.0.1
+            // - Some browsers: "010.0.0.1" parsed as decimal IP = 10.0.0.1
+            //
+            // This inconsistency creates SSRF bypass risk. Fail closed.
+            if self.looks_like_ambiguous_ip(&host) {
+                return Ok(false);
+            }
+
+            // Check domain allowlist
+            if let Some(ref domains) = self.allow_domains {
+                if !self.check_domain_allowed(&host, domains) {
+                    return Ok(false);
+                }
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Parse host as IP address, handling various representations.
+    fn parse_ip(&self, host: &str) -> Option<IpAddr> {
+        // Strip brackets from IPv6
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+
+        // Try standard parsing first
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            return Some(ip);
+        }
+
+        // Try decimal notation (e.g., 2130706433 = 127.0.0.1)
+        if host.chars().all(|c| c.is_ascii_digit()) {
+            if let Ok(int_val) = host.parse::<u32>() {
+                return Some(IpAddr::V4(std::net::Ipv4Addr::from(int_val)));
+            }
+        }
+
+        // Try hex notation (e.g., 0x7f000001 = 127.0.0.1)
+        if host.to_lowercase().starts_with("0x") {
+            if let Ok(int_val) = u32::from_str_radix(&host[2..], 16) {
+                return Some(IpAddr::V4(std::net::Ipv4Addr::from(int_val)));
+            }
+        }
+
+        // SECURITY: Handle ambiguous IP notation with leading zeros.
+        // Different parsers interpret "010.0.0.1" inconsistently:
+        // - POSIX libc: octal, so 010.0.0.1 = 8.0.0.1
+        // - WHATWG (browsers): decimal with leading zeros, so 010.0.0.1 = 10.0.0.1
+        // - Some libraries: reject as invalid
+        //
+        // OLD BEHAVIOR: We used to parse as octal (POSIX style).
+        // NEW BEHAVIOR: We return None for ambiguous IPs, causing them to be
+        // rejected by the looks_like_ambiguous_ip check in the hostname path.
+        //
+        // Exception: 0177.0.0.1 is clearly octal notation (digits > 7 would fail),
+        // so we handle that case specifically.
+        if host.starts_with('0') && host.contains('.') {
+            let parts: Vec<&str> = host.split('.').collect();
+            if parts.len() == 4 {
+                let all_numeric = parts
+                    .iter()
+                    .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+
+                if all_numeric {
+                    // Check if any part has leading zeros (ambiguous)
+                    let has_leading_zeros = parts.iter().any(|p| p.len() > 1 && p.starts_with('0'));
+
+                    if has_leading_zeros {
+                        // Check if it's clearly octal (contains only 0-7)
+                        let is_clear_octal = parts
+                            .iter()
+                            .all(|p| p.chars().all(|c| ('0'..='7').contains(&c)));
+
+                        // Even for clear octals (0177.0.0.1), check if the octal result
+                        // is different from decimal - that's a bypass risk
+                        if is_clear_octal {
+                            let mut octets = [0u8; 4];
+                            let mut octal_valid = true;
+                            let mut decimal_same = true;
+
+                            for (i, part) in parts.iter().enumerate() {
+                                let octal_val = if part.starts_with('0') && part.len() > 1 {
+                                    u8::from_str_radix(part, 8).ok()
+                                } else {
+                                    part.parse::<u8>().ok()
+                                };
+
+                                let decimal_val = part.parse::<u8>().ok();
+
+                                if let Some(ov) = octal_val {
+                                    octets[i] = ov;
+                                    // Check if octal and decimal give different results
+                                    if decimal_val != Some(ov) {
+                                        decimal_same = false;
+                                    }
+                                } else {
+                                    octal_valid = false;
+                                    break;
+                                }
+                            }
+
+                            if octal_valid {
+                                if !decimal_same {
+                                    // Results differ - this is ambiguous!
+                                    // Example: 010.0.0.1 -> octal 8.0.0.1, decimal 10.0.0.1
+                                    // We can't know which interpretation the HTTP client will use.
+                                    // Return None to block via ambiguous check.
+                                    return None;
+                                }
+                                // Results are same - safe to return the IP
+                                return Some(IpAddr::V4(std::net::Ipv4Addr::from(octets)));
+                            }
+                        }
+
+                        // Has leading zeros but not valid octal (e.g., 08, 09)
+                        // or different interpretations - return None to block via ambiguous check
+                        return None;
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Check if IP address is safe to connect to.
+    fn check_ip_safe(&self, ip: &IpAddr) -> bool {
+        // Handle IPv6 addresses that embed IPv4
+        let ip = match ip {
+            IpAddr::V6(v6) => {
+                // 1. IPv6-mapped IPv4: ::ffff:x.x.x.x
+                if let Some(mapped) = v6.to_ipv4_mapped() {
+                    IpAddr::V4(mapped)
+                }
+                // 2. IPv4-compatible IPv6: ::x.x.x.x (deprecated RFC 4291 but still parsed)
+                // These have the first 96 bits as zero and last 32 bits as IPv4
+                // Example: ::127.0.0.1, ::10.0.0.1, [0:0:0:0:0:0:127.0.0.1]
+                else {
+                    let segments = v6.segments();
+                    // Check if first 6 segments are all zero (IPv4-compatible format)
+                    if segments[0..6].iter().all(|&s| s == 0) {
+                        // Extract the IPv4 address from the last 32 bits
+                        let octets = v6.octets();
+                        let ipv4 =
+                            std::net::Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]);
+                        // Don't convert ::0 or ::1 since those are valid IPv6 addresses
+                        // (unspecified and loopback respectively)
+                        if ipv4.octets() != [0, 0, 0, 0] && ipv4.octets() != [0, 0, 0, 1] {
+                            IpAddr::V4(ipv4)
+                        } else {
+                            *ip
+                        }
+                    } else {
+                        *ip
+                    }
+                }
+            }
+            _ => *ip,
+        };
+
+        // Check loopback
+        if self.block_loopback && ip.is_loopback() {
+            return false;
+        }
+
+        // Check private ranges (requires manual check for IPv4)
+        if self.block_private {
+            if let IpAddr::V4(v4) = ip {
+                let octets = v4.octets();
+                // 10.0.0.0/8
+                if octets[0] == 10 {
+                    return false;
+                }
+                // 172.16.0.0/12
+                if octets[0] == 172 && (16..=31).contains(&octets[1]) {
+                    return false;
+                }
+                // 192.168.0.0/16
+                if octets[0] == 192 && octets[1] == 168 {
+                    return false;
+                }
+            }
+            // IPv6 private ranges
+            if let IpAddr::V6(v6) = ip {
+                let segments = v6.segments();
+                // fc00::/7 (unique local)
+                if (segments[0] & 0xfe00) == 0xfc00 {
+                    return false;
+                }
+                // fe80::/10 (link-local)
+                if (segments[0] & 0xffc0) == 0xfe80 {
+                    return false;
+                }
+            }
+        }
+
+        // Check reserved ranges
+        if self.block_reserved {
+            if let IpAddr::V4(v4) = ip {
+                let octets = v4.octets();
+                // 0.0.0.0/8 ("This" network)
+                if octets[0] == 0 {
+                    return false;
+                }
+                // 224.0.0.0/4 (Multicast)
+                if (224..=239).contains(&octets[0]) {
+                    return false;
+                }
+                // 255.255.255.255 (Broadcast)
+                if octets == [255, 255, 255, 255] {
+                    return false;
+                }
+            }
+        }
+
+        // Check metadata range (169.254.0.0/16 link-local)
+        if self.block_metadata {
+            if let IpAddr::V4(v4) = ip {
+                let octets = v4.octets();
+                if octets[0] == 169 && octets[1] == 254 {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+
+    /// Check if hostname matches domain allowlist.
+    fn check_domain_allowed(&self, host: &str, domains: &[String]) -> bool {
+        for pattern in domains {
+            let pattern = pattern.to_lowercase();
+            if pattern.starts_with("*.") {
+                // Wildcard subdomain: *.example.com matches sub.example.com
+                let suffix = &pattern[1..]; // .example.com
+                if host.ends_with(suffix) || host == &pattern[2..] {
+                    return true;
+                }
+            } else if host == pattern {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Check if hostname looks like an ambiguous IP address.
+    ///
+    /// Some hostnames look like IP addresses but have leading zeros that
+    /// different parsers interpret inconsistently:
+    /// - "010.0.0.1": WHATWG sees hostname, POSIX sees octal 8.0.0.1, browsers see 10.0.0.1
+    /// - "00000010.0.0.1": Similar ambiguity
+    ///
+    /// This function returns true if the hostname looks like an IP with
+    /// leading zeros, which we block to fail closed against parser confusion.
+    fn looks_like_ambiguous_ip(&self, host: &str) -> bool {
+        // Check if it looks like a dotted-decimal IPv4 with leading zeros
+        let parts: Vec<&str> = host.split('.').collect();
+
+        // Must have exactly 4 parts to look like IPv4
+        if parts.len() != 4 {
+            return false;
+        }
+
+        // Check if all parts are numeric (could be ambiguous IP)
+        let all_numeric = parts
+            .iter()
+            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+
+        if !all_numeric {
+            return false;
+        }
+
+        // Check for leading zeros in any octet (ambiguous notation)
+        for part in &parts {
+            if part.len() > 1 && part.starts_with('0') {
+                // This is ambiguous: "010" could be octal 8 or decimal 10
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Check if a value satisfies the UrlSafe constraint.
+    ///
+    /// The value must be a string containing a URL.
+    pub fn matches(&self, value: &ConstraintValue) -> Result<bool> {
+        match value.as_str() {
+            Some(url_str) => self.is_safe(url_str),
+            None => Ok(false),
+        }
+    }
+
+    /// Validate that `child` is a valid attenuation (child is more restrictive).
+    ///
+    /// A child UrlSafe is valid if it is at least as restrictive as the parent.
+    pub fn validate_attenuation(&self, child: &UrlSafe) -> Result<()> {
+        // Child schemes must be subset of parent
+        for scheme in &child.schemes {
+            if !self
+                .schemes
+                .iter()
+                .any(|s| s.to_lowercase() == scheme.to_lowercase())
+            {
+                return Err(Error::MonotonicityViolation(format!(
+                    "child scheme '{}' not in parent schemes",
+                    scheme
+                )));
+            }
+        }
+
+        // Child cannot disable blocking if parent enables it
+        if self.block_private && !child.block_private {
+            return Err(Error::MonotonicityViolation(
+                "cannot disable block_private".to_string(),
+            ));
+        }
+        if self.block_loopback && !child.block_loopback {
+            return Err(Error::MonotonicityViolation(
+                "cannot disable block_loopback".to_string(),
+            ));
+        }
+        if self.block_metadata && !child.block_metadata {
+            return Err(Error::MonotonicityViolation(
+                "cannot disable block_metadata".to_string(),
+            ));
+        }
+        if self.block_reserved && !child.block_reserved {
+            return Err(Error::MonotonicityViolation(
+                "cannot disable block_reserved".to_string(),
+            ));
+        }
+        if self.block_internal_tlds && !child.block_internal_tlds {
+            return Err(Error::MonotonicityViolation(
+                "cannot disable block_internal_tlds".to_string(),
+            ));
+        }
+
+        // If parent has domain allowlist, child must have it too (and be subset)
+        if let Some(ref parent_domains) = self.allow_domains {
+            match &child.allow_domains {
+                None => {
+                    return Err(Error::MonotonicityViolation(
+                        "child must have domain allowlist if parent does".to_string(),
+                    ));
+                }
+                Some(child_domains) => {
+                    // Each child domain must be covered by a parent domain pattern
+                    for cd in child_domains {
+                        if !parent_domains.iter().any(|pd| {
+                            let pd = pd.to_lowercase();
+                            let cd = cd.to_lowercase();
+                            // Exact match
+                            if pd == cd {
+                                return true;
+                            }
+                            // Parent wildcard covers child exact
+                            if pd.starts_with("*.") && cd.ends_with(&pd[1..]) {
+                                return true;
+                            }
+                            false
+                        }) {
+                            return Err(Error::MonotonicityViolation(format!(
+                                "child domain '{}' not covered by parent allowlist",
+                                cd
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for UrlSafe {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Display for UrlSafe {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut opts = Vec::new();
+        if self.schemes != default_schemes() {
+            opts.push(format!("schemes={:?}", self.schemes));
+        }
+        if let Some(ref domains) = self.allow_domains {
+            opts.push(format!("allow_domains={:?}", domains));
+        }
+        if !self.block_private {
+            opts.push("block_private=false".to_string());
+        }
+        if !self.block_loopback {
+            opts.push("block_loopback=false".to_string());
+        }
+        if !self.block_metadata {
+            opts.push("block_metadata=false".to_string());
+        }
+        if self.block_internal_tlds {
+            opts.push("block_internal_tlds=true".to_string());
+        }
+
+        if opts.is_empty() {
+            write!(f, "UrlSafe()")
+        } else {
+            write!(f, "UrlSafe({})", opts.join(", "))
+        }
+    }
+}
+
+impl From<UrlSafe> for Constraint {
+    fn from(u: UrlSafe) -> Self {
+        Constraint::UrlSafe(u)
+    }
+}
+
+/// Simple URL decoding (handles percent-encoded characters).
+fn urlencoding_decode(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '%' {
+            // Try to read two hex digits
+            let hex: String = chars.by_ref().take(2).collect();
+            if hex.len() == 2 {
+                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                    result.push(byte as char);
+                    continue;
+                }
+            }
+            // Invalid encoding, keep as-is
+            result.push('%');
+            result.push_str(&hex);
+        } else {
+            result.push(c);
+        }
+    }
+
+    result
 }
 
 // ============================================================================
@@ -3587,6 +4616,18 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "URLP-001: Bare wildcard host not yet supported - see UrlPattern::new() for details"]
+    fn test_url_pattern_bare_wildcard_host() {
+        // Bug: `https://*/*` should match any host, but the parser incorrectly
+        // sets host_pattern to "__tenuo_path_wildcard__" due to replacement order.
+        // This test documents the expected behavior once fixed.
+        let pattern = UrlPattern::new("https://*/*").unwrap();
+        assert_eq!(pattern.host_pattern, Some("*".to_string()));
+        assert!(pattern.matches_url("https://example.com/path").unwrap());
+        assert!(pattern.matches_url("https://evil.com/attack").unwrap());
+    }
+
+    #[test]
     fn test_url_pattern_invalid() {
         assert!(UrlPattern::new("not-a-url").is_err());
         assert!(UrlPattern::new("missing-scheme.com").is_err());
@@ -3990,5 +5031,227 @@ mod tests {
         let mut cs_with_constraint = ConstraintSet::new();
         cs_with_constraint.insert("url", Pattern::new("https://*").unwrap());
         assert!(!cs_with_constraint.allow_unknown());
+    }
+
+    // -------------------------------------------------------------------------
+    // Subpath Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_subpath_basic_containment() {
+        let sp = Subpath::new("/data").unwrap();
+        assert!(sp.contains_path("/data/file.txt").unwrap());
+        assert!(sp.contains_path("/data/subdir/file.txt").unwrap());
+        assert!(sp.contains_path("/data").unwrap()); // allow_equal = true by default
+        assert!(!sp.contains_path("/etc/passwd").unwrap());
+        assert!(!sp.contains_path("/data2/file.txt").unwrap());
+    }
+
+    #[test]
+    fn test_subpath_traversal_blocking() {
+        let sp = Subpath::new("/data").unwrap();
+        assert!(!sp.contains_path("/data/../etc/passwd").unwrap());
+        assert!(!sp.contains_path("/data/subdir/../../etc/passwd").unwrap());
+        assert!(sp.contains_path("/data/subdir/../file.txt").unwrap()); // resolves to /data/file.txt
+    }
+
+    #[test]
+    fn test_subpath_null_bytes() {
+        let sp = Subpath::new("/data").unwrap();
+        assert!(!sp.contains_path("/data/file\x00.txt").unwrap());
+    }
+
+    #[test]
+    fn test_subpath_relative_path_rejected() {
+        let sp = Subpath::new("/data").unwrap();
+        assert!(!sp.contains_path("data/file.txt").unwrap());
+        assert!(!sp.contains_path("./file.txt").unwrap());
+    }
+
+    #[test]
+    fn test_subpath_matches() {
+        let sp = Subpath::new("/data").unwrap();
+        assert!(sp.matches(&"/data/file.txt".into()).unwrap());
+        assert!(!sp.matches(&"/etc/passwd".into()).unwrap());
+        assert!(!sp.matches(&123.into()).unwrap()); // Non-string returns false
+    }
+
+    // -------------------------------------------------------------------------
+    // UrlSafe Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_url_safe_basic() {
+        let us = UrlSafe::new();
+        assert!(us.is_safe("https://api.github.com/repos").unwrap());
+        assert!(us.is_safe("http://example.com/path").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_blocks_loopback() {
+        let us = UrlSafe::new();
+        assert!(!us.is_safe("http://127.0.0.1/").unwrap());
+        assert!(!us.is_safe("http://localhost/").unwrap());
+        assert!(!us.is_safe("http://[::1]/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_blocks_private_ips() {
+        let us = UrlSafe::new();
+        assert!(!us.is_safe("http://10.0.0.1/admin").unwrap());
+        assert!(!us.is_safe("http://172.16.0.1/").unwrap());
+        assert!(!us.is_safe("http://192.168.1.1/admin").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_blocks_metadata() {
+        let us = UrlSafe::new();
+        assert!(!us
+            .is_safe("http://169.254.169.254/latest/meta-data/")
+            .unwrap());
+        assert!(!us.is_safe("http://metadata.google.internal/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_blocks_decimal_ip() {
+        let us = UrlSafe::new();
+        // 2130706433 = 127.0.0.1 in decimal
+        assert!(!us.is_safe("http://2130706433/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_blocks_hex_ip() {
+        let us = UrlSafe::new();
+        // 0x7f000001 = 127.0.0.1 in hex
+        assert!(!us.is_safe("http://0x7f000001/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_empty_host() {
+        let us = UrlSafe::new();
+
+        // Note: The Rust `url` crate (WHATWG spec) parses "https:///path" as "https://path/"
+        // where "path" becomes the hostname. This is technically correct per spec.
+        // So "https:///path" is valid (host = "path"), but "http://" is invalid (no host).
+
+        // This is actually valid - parsed as https://path/
+        assert!(us.is_safe("https:///path").unwrap());
+
+        // But "http://" with no path truly has no host
+        assert!(!us.is_safe("http://").unwrap());
+
+        // Invalid URL (parse error)
+        assert!(!us.is_safe("not-a-url").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_null_bytes() {
+        let us = UrlSafe::new();
+        assert!(!us.is_safe("https://evil.com\x00.trusted.com/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_scheme_blocking() {
+        let us = UrlSafe::new();
+        assert!(!us.is_safe("file:///etc/passwd").unwrap());
+        assert!(!us.is_safe("gopher://evil.com/").unwrap());
+        assert!(!us.is_safe("ftp://example.com/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_domain_allowlist() {
+        let us = UrlSafe::with_domains(vec!["api.github.com", "*.example.com"]);
+        assert!(us.is_safe("https://api.github.com/repos").unwrap());
+        assert!(us.is_safe("https://sub.example.com/path").unwrap());
+        assert!(!us.is_safe("https://other.com/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_port_restriction() {
+        let us = UrlSafe {
+            allow_ports: Some(vec![443, 8443]),
+            ..UrlSafe::new()
+        };
+        assert!(us.is_safe("https://example.com:443/").unwrap());
+        assert!(us.is_safe("https://example.com:8443/").unwrap());
+        assert!(!us.is_safe("http://example.com:80/").unwrap());
+        assert!(!us.is_safe("https://example.com:8080/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_matches() {
+        let us = UrlSafe::new();
+        assert!(us.matches(&"https://api.github.com/".into()).unwrap());
+        assert!(!us.matches(&"http://127.0.0.1/".into()).unwrap());
+        assert!(!us.matches(&123.into()).unwrap()); // Non-string returns false
+    }
+
+    #[test]
+    fn test_url_safe_blocks_ipv4_compatible_ipv6() {
+        // IPv4-compatible IPv6 addresses (::x.x.x.x) are deprecated (RFC 4291)
+        // but still parsed by many URL libraries. Must block these to prevent bypass.
+        let us = UrlSafe::new();
+
+        // Loopback via IPv4-compatible format
+        assert!(!us.is_safe("http://[::127.0.0.1]/").unwrap());
+        assert!(!us.is_safe("http://[0:0:0:0:0:0:127.0.0.1]/").unwrap());
+
+        // Private IPs via IPv4-compatible format
+        assert!(!us.is_safe("http://[::10.0.0.1]/").unwrap());
+        assert!(!us.is_safe("http://[::172.16.0.1]/").unwrap());
+        assert!(!us.is_safe("http://[::192.168.1.1]/").unwrap());
+
+        // Metadata IP via IPv4-compatible format
+        assert!(!us.is_safe("http://[::169.254.169.254]/").unwrap());
+
+        // Verify IPv6-mapped still works too
+        assert!(!us.is_safe("http://[::ffff:127.0.0.1]/").unwrap());
+        assert!(!us.is_safe("http://[::ffff:10.0.0.1]/").unwrap());
+
+        // But ::1 (IPv6 loopback) is still handled correctly
+        assert!(!us.is_safe("http://[::1]/").unwrap());
+    }
+
+    #[test]
+    fn test_url_safe_octal_ip_normalization() {
+        // NOTE: The Rust `url` crate (WHATWG URL Standard) automatically normalizes
+        // octal-notation IPs when parsing the URL. By the time we see the host,
+        // it's already been converted:
+        //
+        // - "http://010.0.0.1/" → host_str = "8.0.0.1" (octal 010 = decimal 8)
+        // - "http://0177.0.0.1/" → host_str = "127.0.0.1" (octal 0177 = decimal 127)
+        //
+        // This is consistent with POSIX libc interpretation but may differ from
+        // some browsers that treat leading zeros as decimal.
+        //
+        // SECURITY IMPLICATION:
+        // - If an attacker uses "010.0.0.1" hoping to access 10.0.0.1 (private),
+        //   the url crate converts it to 8.0.0.1 (public), so the attack fails.
+        // - If they use "0177.0.0.1" (127.0.0.1 in octal), it correctly maps to
+        //   loopback and is blocked.
+        //
+        // This is not perfect (relies on url crate behavior), but provides
+        // defense in depth. For stricter control, use domain allowlists.
+
+        let us = UrlSafe::new();
+
+        // Octal notation is converted by url crate:
+        // 010.0.0.1 → 8.0.0.1 (public, allowed)
+        // This is NOT ideal but is the url crate's behavior
+        assert!(us.is_safe("http://010.0.0.1/").unwrap()); // → 8.0.0.1 (public)
+
+        // 0177.0.0.1 → 127.0.0.1 (loopback, blocked)
+        assert!(!us.is_safe("http://0177.0.0.1/").unwrap()); // → 127.0.0.1 (loopback)
+
+        // 012.0.0.1 → 10.0.0.1 (private, blocked)
+        assert!(!us.is_safe("http://012.0.0.1/").unwrap()); // → 10.0.0.1 (private)
+
+        // Valid IPs without leading zeros
+        assert!(!us.is_safe("http://10.0.0.1/").unwrap()); // Private IP (blocked)
+        assert!(us.is_safe("http://8.0.0.1/").unwrap()); // Public IP (allowed)
+
+        // Regular hostnames still work
+        assert!(us.is_safe("https://example.com/").unwrap());
+        assert!(us.is_safe("https://10example.com/").unwrap()); // Not an IP pattern
     }
 }

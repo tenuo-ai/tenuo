@@ -32,11 +32,7 @@ class TestDelegationLimits:
         print("\n--- Attack 9: Delegate-to-Self Amplification ---")
         print(f"  [Info] MAX_DELEGATION_DEPTH = {MAX_DELEGATION_DEPTH}")
 
-        current = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("search", {}),
-            ttl_seconds=3600
-        )
+        current = Warrant.mint(keypair=keypair, capabilities=Constraints.for_tool("search", {}), ttl_seconds=3600)
 
         try:
             for i in range(MAX_DELEGATION_DEPTH + 10):
@@ -62,11 +58,7 @@ class TestDelegationLimits:
         """
         print("\n--- Attack 18: Chain Length DoS ---")
 
-        current = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("search", {}),
-            ttl_seconds=3600
-        )
+        current = Warrant.mint(keypair=keypair, capabilities=Constraints.for_tool("search", {}), ttl_seconds=3600)
         depth = 0
         max_attempts = 50
 
@@ -96,10 +88,7 @@ class TestDelegationLimits:
 
         # Test issuer warrant depth limit
         current = Warrant.issue_issuer(
-            issuable_tools=["search"],
-            clearance=Clearance.INTERNAL,
-            ttl_seconds=3600,
-            keypair=keypair
+            issuable_tools=["search"], clearance=Clearance.INTERNAL, ttl_seconds=3600, keypair=keypair
         )
 
         # Use a smaller limit for testing (max_depth policy)
@@ -128,11 +117,7 @@ class TestDelegationLimits:
         """
         print("\n--- Attack 29: Execution Warrant Issuing ---")
 
-        exec_warrant = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("search", {}),
-            ttl_seconds=3600
-        )
+        exec_warrant = Warrant.mint(keypair=keypair, capabilities=Constraints.for_tool("search", {}), ttl_seconds=3600)
 
         print("  [Attack 29] Attempting to call issue_execution() on execution warrant...")
 
@@ -150,10 +135,7 @@ class TestDelegationLimits:
         print("\n--- Attack 30: Issuer Warrant Executing Tools ---")
 
         issuer = Warrant.issue_issuer(
-            issuable_tools=["delete"],
-            clearance=Clearance.INTERNAL,
-            ttl_seconds=3600,
-            keypair=keypair
+            issuable_tools=["delete"], clearance=Clearance.INTERNAL, ttl_seconds=3600, keypair=keypair
         )
 
         print("  [Attack 30] Attempting to authorize tool execution with issuer warrant...")
@@ -176,11 +158,7 @@ class TestDelegationLimits:
         """
         print("\n--- Attack 31: Terminal Warrant Delegation ---")
 
-        parent = Warrant.mint(
-            keypair=keypair,
-            capabilities=Constraints.for_tool("search", {}),
-            ttl_seconds=3600
-        )
+        parent = Warrant.mint(keypair=keypair, capabilities=Constraints.for_tool("search", {}), ttl_seconds=3600)
 
         # Create terminal warrant (POLA: inherit_all first)
         builder = parent.grant_builder()

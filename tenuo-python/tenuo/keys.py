@@ -38,6 +38,7 @@ from .exceptions import ConfigurationError
 # Key Loading Helpers
 # ============================================================================
 
+
 def load_signing_key_from_env(name: str) -> SigningKey:
     """
     Load a SigningKey from an environment variable.
@@ -59,8 +60,7 @@ def load_signing_key_from_env(name: str) -> SigningKey:
     value = os.environ.get(name)
     if not value:
         raise ConfigurationError(
-            f"Environment variable '{name}' not set. "
-            f"Set it to a base64 or hex-encoded signing key."
+            f"Environment variable '{name}' not set. Set it to a base64 or hex-encoded signing key."
         )
 
     return _parse_key_string(value, source=f"env:{name}")
@@ -97,7 +97,7 @@ def load_signing_key_from_file(path: str) -> SigningKey:
             return SigningKey.from_bytes(data)
 
         # Otherwise, try to decode as text (base64 or hex)
-        text = data.decode('utf-8').strip()
+        text = data.decode("utf-8").strip()
         return _parse_key_string(text, source=f"file:{path}")
 
     except Exception as e:
@@ -115,7 +115,7 @@ def _parse_key_string(value: str, source: str = "unknown") -> SigningKey:
     value = value.strip()
 
     # Try base64 first (most common)
-    if len(value) in (43, 44) or value.endswith('='):
+    if len(value) in (43, 44) or value.endswith("="):
         try:
             data = base64.b64decode(value)
             if len(data) == 32:
@@ -135,7 +135,7 @@ def _parse_key_string(value: str, source: str = "unknown") -> SigningKey:
     # Try base64 again with more lenient parsing
     try:
         # Add padding if missing
-        padded = value + '=' * (4 - len(value) % 4) if len(value) % 4 else value
+        padded = value + "=" * (4 - len(value) % 4) if len(value) % 4 else value
         data = base64.b64decode(padded)
         if len(data) == 32:
             return SigningKey.from_bytes(data)
@@ -152,6 +152,7 @@ def _parse_key_string(value: str, source: str = "unknown") -> SigningKey:
 # ============================================================================
 # Keyring (Multi-Key Management)
 # ============================================================================
+
 
 class Keyring:
     """
@@ -173,13 +174,9 @@ class Keyring:
         authorizer = Authorizer(trusted_roots=keyring.all_public_keys)
     """
 
-    __slots__ = ('_root', '_previous')
+    __slots__ = ("_root", "_previous")
 
-    def __init__(
-        self,
-        root: SigningKey,
-        previous: Optional[List[SigningKey]] = None
-    ):
+    def __init__(self, root: SigningKey, previous: Optional[List[SigningKey]] = None):
         """
         Create a Keyring.
 
@@ -223,6 +220,7 @@ class Keyring:
 # KeyRegistry (Thread-Safe Singleton)
 # ============================================================================
 
+
 class KeyRegistry:
     """
     Thread-safe singleton registry for signing keys.
@@ -248,7 +246,7 @@ class KeyRegistry:
     _instance: Optional["KeyRegistry"] = None
     _lock: threading.Lock = threading.Lock()
 
-    __slots__ = ('_keys', '_instance_lock')
+    __slots__ = ("_keys", "_instance_lock")
 
     def __init__(self) -> None:
         """
@@ -281,13 +279,7 @@ class KeyRegistry:
         with cls._lock:
             cls._instance = None
 
-    def register(
-        self,
-        key_id: str,
-        key: SigningKey,
-        *,
-        namespace: str = "default"
-    ) -> None:
+    def register(self, key_id: str, key: SigningKey, *, namespace: str = "default") -> None:
         """
         Register a key with an ID.
 
@@ -300,12 +292,7 @@ class KeyRegistry:
         with self._instance_lock:
             self._keys[full_id] = key
 
-    def get(
-        self,
-        key_id: str,
-        *,
-        namespace: str = "default"
-    ) -> SigningKey:
+    def get(self, key_id: str, *, namespace: str = "default") -> SigningKey:
         """
         Get a key by ID.
 
@@ -328,34 +315,19 @@ class KeyRegistry:
                 )
             return self._keys[full_id]
 
-    def get_public(
-        self,
-        key_id: str,
-        *,
-        namespace: str = "default"
-    ) -> PublicKey:
+    def get_public(self, key_id: str, *, namespace: str = "default") -> PublicKey:
         """
         Get only the public key (safe to pass around).
         """
         return self.get(key_id, namespace=namespace).public_key
 
-    def has(
-        self,
-        key_id: str,
-        *,
-        namespace: str = "default"
-    ) -> bool:
+    def has(self, key_id: str, *, namespace: str = "default") -> bool:
         """Check if a key is registered."""
         full_id = f"{namespace}:{key_id}"
         with self._instance_lock:
             return full_id in self._keys
 
-    def unregister(
-        self,
-        key_id: str,
-        *,
-        namespace: str = "default"
-    ) -> None:
+    def unregister(self, key_id: str, *, namespace: str = "default") -> None:
         """Remove a key from the registry."""
         full_id = f"{namespace}:{key_id}"
         with self._instance_lock:
@@ -374,19 +346,13 @@ class KeyRegistry:
                 self._keys.clear()
             else:
                 prefix = f"{namespace}:"
-                self._keys = {
-                    k: v for k, v in self._keys.items()
-                    if not k.startswith(prefix)
-                }
+                self._keys = {k: v for k, v in self._keys.items() if not k.startswith(prefix)}
 
     def list_keys(self, *, namespace: str = "default") -> List[str]:
         """List key IDs in a namespace."""
         prefix = f"{namespace}:"
         with self._instance_lock:
-            return [
-                k[len(prefix):] for k in self._keys.keys()
-                if k.startswith(prefix)
-            ]
+            return [k[len(prefix) :] for k in self._keys.keys() if k.startswith(prefix)]
 
     def __repr__(self) -> str:
         with self._instance_lock:
@@ -397,6 +363,7 @@ class KeyRegistry:
 # ============================================================================
 # PublicKey Loading Helpers
 # ============================================================================
+
 
 def load_public_key_from_env(name: str) -> PublicKey:
     """
@@ -419,8 +386,7 @@ def load_public_key_from_env(name: str) -> PublicKey:
     value = os.environ.get(name)
     if not value:
         raise ConfigurationError(
-            f"Environment variable '{name}' not set. "
-            f"Set it to a base64, hex, or PEM-encoded public key."
+            f"Environment variable '{name}' not set. Set it to a base64, hex, or PEM-encoded public key."
         )
 
     return _parse_public_key_string(value, source=f"env:{name}")
@@ -445,7 +411,7 @@ def _parse_public_key_string(value: str, source: str = "unknown") -> PublicKey:
             raise ConfigurationError(f"Invalid PEM public key from {source}: {e}")
 
     # Try base64 first (most common for compact storage)
-    if len(value) in (43, 44) or value.endswith('='):
+    if len(value) in (43, 44) or value.endswith("="):
         try:
             data = base64.b64decode(value)
             if len(data) == 32:
@@ -464,7 +430,7 @@ def _parse_public_key_string(value: str, source: str = "unknown") -> PublicKey:
 
     # Try base64 again with more lenient parsing
     try:
-        padded = value + '=' * (4 - len(value) % 4) if len(value) % 4 else value
+        padded = value + "=" * (4 - len(value) % 4) if len(value) % 4 else value
         data = base64.b64decode(padded)
         if len(data) == 32:
             return PublicKey.from_bytes(data)
@@ -482,6 +448,7 @@ def _parse_public_key_string(value: str, source: str = "unknown") -> PublicKey:
 # Convenience: Extend SigningKey with class methods
 # ============================================================================
 
+
 def _signing_key_from_env(name: str) -> SigningKey:
     """Load a SigningKey from an environment variable."""
     return load_signing_key_from_env(name)
@@ -493,10 +460,10 @@ def _signing_key_from_file(path: str) -> SigningKey:
 
 
 # Add class methods to SigningKey
-if not hasattr(SigningKey, 'from_env'):
+if not hasattr(SigningKey, "from_env"):
     SigningKey.from_env = staticmethod(_signing_key_from_env)  # type: ignore[attr-defined]
 
-if not hasattr(SigningKey, 'from_file'):
+if not hasattr(SigningKey, "from_file"):
     SigningKey.from_file = staticmethod(_signing_key_from_file)  # type: ignore[attr-defined]
 
 
@@ -504,12 +471,12 @@ if not hasattr(SigningKey, 'from_file'):
 # Convenience: Extend PublicKey with class methods
 # ============================================================================
 
+
 def _public_key_from_env(name: str) -> PublicKey:
     """Load a PublicKey from an environment variable."""
     return load_public_key_from_env(name)
 
 
 # Add class methods to PublicKey
-if not hasattr(PublicKey, 'from_env'):
+if not hasattr(PublicKey, "from_env"):
     PublicKey.from_env = staticmethod(_public_key_from_env)  # type: ignore[attr-defined]
-

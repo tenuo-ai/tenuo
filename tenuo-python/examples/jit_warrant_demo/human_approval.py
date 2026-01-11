@@ -67,19 +67,13 @@ class HumanApprover:
         Returns:
             Tenuo Approval object if approved, None if rejected
         """
-        display.print_human_approval_request(
-            self.name,
-            task,
-            proposed_capabilities,
-            allowed_urls
-        )
+        display.print_human_approval_request(self.name, task, proposed_capabilities, allowed_urls)
 
         if interactive:
             # In a real system, this would be a secure approval flow
             # (e.g., mobile push notification, hardware token)
             approved = Confirm.ask(
-                f"[bold yellow]{self.name}[/bold yellow]: Do you approve this warrant?",
-                default=True
+                f"[bold yellow]{self.name}[/bold yellow]: Do you approve this warrant?", default=True
             )
         else:
             # Auto-approve for non-interactive demo
@@ -99,7 +93,7 @@ class HumanApprover:
             external_id=f"{self.name.lower().replace(' ', '_')}@company.com",
             provider="human-review",
             ttl_secs=300,
-            reason=f"Approved for task: {task[:50]}..."
+            reason=f"Approved for task: {task[:50]}...",
         )
 
         display.print_human_approval_signed(self.name, self.public_key)
@@ -160,8 +154,9 @@ class MultiSigApprovalFlow:
             List of Approval objects if both approve, None if rejected.
             These approvals should be passed to Authorizer.authorize().
         """
-        display.print_step(4, "Multi-Sig Approval Flow",
-            "Both system AND human must approve for the warrant to be valid.")
+        display.print_step(
+            4, "Multi-Sig Approval Flow", "Both system AND human must approve for the warrant to be valid."
+        )
 
         approvals = []
 
@@ -176,7 +171,7 @@ class MultiSigApprovalFlow:
             external_id="control_plane@system",
             provider="policy-engine",
             ttl_secs=300,
-            reason="Policy check passed"
+            reason="Policy check passed",
         )
         approvals.append(system_approval)
 
@@ -198,4 +193,3 @@ class MultiSigApprovalFlow:
 
         display.print_approval_complete()
         return approvals
-

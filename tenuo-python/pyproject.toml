@@ -38,6 +38,10 @@ dependencies = [
 
 [project.optional-dependencies]
 # Feature flags for users
+openai = [
+    "openai>=1.0",
+    "openai-agents>=0.1; python_version >= '3.10'",
+]
 langchain = [
     "langchain-core>=0.2",
 ]
@@ -66,7 +70,7 @@ dev = [
     "langchain",       # Full langchain for testing
     "langchain-openai",
     # Include optional groups in dev
-    "tenuo[langchain,langgraph]",
+    "tenuo[openai,langchain,langgraph]",
 ]
 
 [project.scripts]

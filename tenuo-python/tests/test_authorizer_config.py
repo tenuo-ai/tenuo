@@ -8,6 +8,7 @@ from tenuo import (
 from tenuo.constraints import Constraints
 from tenuo.exceptions import ExpiredError, ValidationError
 
+
 def test_set_clock_tolerance_preserves_roots():
     """
     Verify that set_clock_tolerance does NOT clear trusted roots.
@@ -26,14 +27,11 @@ def test_set_clock_tolerance_preserves_roots():
     assert auth.trusted_root_count() == 1
 
     # 4. Verify it actually works (functional test)
-    warrant = Warrant.mint(
-        keypair=kp,
-        capabilities=Constraints.for_tool("test", {}),
-        ttl_seconds=300
-    )
+    warrant = Warrant.mint(keypair=kp, capabilities=Constraints.for_tool("test", {}), ttl_seconds=300)
 
     # Should verify successfully
     auth.verify(warrant)
+
 
 def test_error_mapping_signature_invalid():
     """Verify that Rust SignatureInvalid maps to Python SignatureInvalid."""
@@ -50,7 +48,7 @@ def test_error_mapping_signature_invalid():
     warrant = Warrant.mint(
         keypair=wrong_kp,  # Not trusted
         capabilities=Constraints.for_tool("test", {}),
-        ttl_seconds=300
+        ttl_seconds=300,
     )
 
     # Should raise ValidationError (issuer not trusted) or SignatureInvalid depending on check order
@@ -61,6 +59,7 @@ def test_error_mapping_signature_invalid():
         auth.verify(warrant)
     assert "issuer is not trusted" in str(excinfo.value)
 
+
 def test_error_mapping_expired():
     """Verify that Rust WarrantExpired maps to Python ExpiredError."""
     kp = SigningKey.generate()
@@ -70,7 +69,7 @@ def test_error_mapping_expired():
     warrant = Warrant.mint(
         keypair=kp,
         capabilities=Constraints.for_tool("test", {}),
-        ttl_seconds=0 # Expires immediately
+        ttl_seconds=0,  # Expires immediately
     )
 
     # Set tolerance to 0 to ensure immediate expiration

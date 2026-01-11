@@ -103,38 +103,36 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         """
         # Get tool name and description
         tool_name = _get_tool_name(wrapped)
-        tool_desc = getattr(wrapped, 'description', f"Protected tool: {tool_name}")
+        tool_desc = getattr(wrapped, "description", f"Protected tool: {tool_name}")
 
         # Initialize with name and description
         super().__init__(name=tool_name, description=tool_desc, **kwargs)
 
         # Store wrapped tool and settings
-        object.__setattr__(self, 'wrapped', wrapped)
-        object.__setattr__(self, 'strict', strict)
-        object.__setattr__(self, '_schemas', schemas or TOOL_SCHEMAS)
-        object.__setattr__(self, '_bound_warrant', bound_warrant)
+        object.__setattr__(self, "wrapped", wrapped)
+        object.__setattr__(self, "strict", strict)
+        object.__setattr__(self, "_schemas", schemas or TOOL_SCHEMAS)
+        object.__setattr__(self, "_bound_warrant", bound_warrant)
 
         # Copy args_schema if present
-        if hasattr(wrapped, 'args_schema'):
-            object.__setattr__(self, 'args_schema', wrapped.args_schema)
+        if hasattr(wrapped, "args_schema"):
+            object.__setattr__(self, "args_schema", wrapped.args_schema)
 
     def _check_authorization(self, tool_input: Dict[str, Any]) -> None:
         """Check authorization before tool execution."""
         # Use explicit bound_warrant if provided, else context
-        bound_warrant = getattr(self, '_bound_warrant', None)
+        bound_warrant = getattr(self, "_bound_warrant", None)
 
         if bound_warrant:
-             warrant = bound_warrant
+            warrant = bound_warrant
         else:
-             warrant = warrant_scope()
+            warrant = warrant_scope()
 
         schema = self._schemas.get(self.name)
 
         if warrant is None:
             if allow_passthrough():
-                logger.warning(
-                    f"PASSTHROUGH: Tool '{self.name}' executed without warrant"
-                )
+                logger.warning(f"PASSTHROUGH: Tool '{self.name}' executed without warrant")
                 return
             raise ToolNotAuthorized(tool=self.name)
 
@@ -155,9 +153,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
 
         if schema and schema.risk_level == "critical":
             constraints = _get_constraints_dict(warrant)
-            has_relevant = any(
-                c in constraints for c in schema.recommended_constraints
-            )
+            has_relevant = any(c in constraints for c in schema.recommended_constraints)
             if not has_relevant and not constraints:
                 raise ConfigurationError(
                     f"Critical tool '{self.name}' requires at least one constraint. "
@@ -167,9 +163,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         if self.strict and schema and schema.require_at_least_one:
             constraints = _get_constraints_dict(warrant)
             if not constraints:
-                raise ConfigurationError(
-                    f"Strict mode: tool '{self.name}' requires at least one constraint."
-                )
+                raise ConfigurationError(f"Strict mode: tool '{self.name}' requires at least one constraint.")
 
         # Build args dict for authorization
         constraint_args = {k: v for k, v in tool_input.items()}
@@ -177,7 +171,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         try:
             # Detect if we have a BoundWarrant (has .authorize without signature param)
             # or a plain Warrant (requires explicit signature)
-            is_bound = hasattr(warrant, 'warrant') and hasattr(warrant, '_key')
+            is_bound = hasattr(warrant, "warrant") and hasattr(warrant, "_key")
 
             if is_bound:
                 # BoundWarrant - handles PoP signing internally
@@ -186,12 +180,8 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                 # Plain Warrant - need to sign with key from context
                 signing_key = key_scope()
                 if signing_key:
-                    pop_signature = bytes(warrant.sign(
-                        signing_key, self.name, constraint_args
-                    ))
-                    authorized = warrant.authorize(
-                        self.name, constraint_args, pop_signature
-                    )
+                    pop_signature = bytes(warrant.sign(signing_key, self.name, constraint_args))
+                    authorized = warrant.authorize(self.name, constraint_args, pop_signature)
                 else:
                     # No key context - cannot authorize
                     # Rust core expects pop_signature, so we can't authorize without a key
@@ -205,11 +195,11 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         except (ToolNotAuthorized, ConstraintViolation, ConfigurationError):
             raise
         except Exception as e:
-             raise ConstraintViolation(
-                    field="unknown",
-                    reason=f"Authorization error: {str(e)}",
-                    value=None,
-                ) from e
+            raise ConstraintViolation(
+                field="unknown",
+                reason=f"Authorization error: {str(e)}",
+                value=None,
+            ) from e
 
     def _run(self, *args: Any, **kwargs: Any) -> Any:
         """Synchronous tool execution with authorization."""
@@ -217,9 +207,9 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         self._check_authorization(tool_input)
 
         # Prefer func over _run for @tool decorated functions
-        if hasattr(self.wrapped, 'func') and self.wrapped.func is not None:
+        if hasattr(self.wrapped, "func") and self.wrapped.func is not None:
             return self.wrapped.func(*args, **kwargs)
-        elif hasattr(self.wrapped, '_run'):
+        elif hasattr(self.wrapped, "_run"):
             # Pass through config if present in kwargs
             return self.wrapped._run(*args, **kwargs)
         else:
@@ -230,16 +220,16 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         tool_input = self._build_tool_input(args, kwargs)
         self._check_authorization(tool_input)
 
-        if hasattr(self.wrapped, 'coroutine') and self.wrapped.coroutine is not None:
+        if hasattr(self.wrapped, "coroutine") and self.wrapped.coroutine is not None:
             return await self.wrapped.coroutine(*args, **kwargs)
-        elif hasattr(self.wrapped, 'func') and self.wrapped.func is not None:
+        elif hasattr(self.wrapped, "func") and self.wrapped.func is not None:
             result = self.wrapped.func(*args, **kwargs)
             if asyncio.iscoroutine(result):
                 return await result
             return result
-        elif hasattr(self.wrapped, '_arun'):
+        elif hasattr(self.wrapped, "_arun"):
             return await self.wrapped._arun(*args, **kwargs)
-        elif hasattr(self.wrapped, '_run'):
+        elif hasattr(self.wrapped, "_run"):
             return self.wrapped._run(*args, **kwargs)
         else:
             result = self.wrapped(*args, **kwargs)
@@ -252,9 +242,9 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         tool_input = dict(kwargs)
 
         # Try to get parameter names from wrapped tool
-        if hasattr(self.wrapped, 'func'):
+        if hasattr(self.wrapped, "func"):
             func = self.wrapped.func
-        elif hasattr(self.wrapped, '_run'):
+        elif hasattr(self.wrapped, "_run"):
             func = self.wrapped._run
         elif callable(self.wrapped):
             func = self.wrapped
@@ -265,7 +255,7 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
             sig = inspect.signature(func)
             params = list(sig.parameters.keys())
             # Skip 'self' if present
-            if params and params[0] == 'self':
+            if params and params[0] == "self":
                 params = params[1:]
             for i, arg in enumerate(args):
                 if i < len(params):
@@ -284,7 +274,7 @@ def _get_constraints_dict(warrant: Any) -> Dict[str, Any]:
     """
     # Try extracting from capabilities (works for both Warrant and BoundWarrant)
     # capabilities returns {tool: {field: constraint, ...}, ...}
-    if hasattr(warrant, 'capabilities'):
+    if hasattr(warrant, "capabilities"):
         try:
             caps = warrant.capabilities
             if caps:
@@ -301,11 +291,10 @@ def _get_constraints_dict(warrant: Any) -> Dict[str, Any]:
     return {}
 
 
-
-
 # =============================================================================
 # DX: guard_tools() - Wrap tools with authorization
 # =============================================================================
+
 
 def guard_tools(
     tools: List[Any],
@@ -352,13 +341,11 @@ def guard_tools(
         guard_agent: Wraps entire executor with built-in authorization
     """
     if not LANGCHAIN_AVAILABLE:
-        raise ImportError(
-            "LangChain is required for guard_tools(). "
-            "Install with: pip install langchain-core"
-        )
+        raise ImportError("LangChain is required for guard_tools(). Install with: pip install langchain-core")
 
     if issuer_key is not None:
         from .config import configure, is_configured
+
         if not is_configured():
             configure(
                 issuer_key=issuer_key,
@@ -368,20 +355,20 @@ def guard_tools(
             )
         else:
             from .config import get_config
+
             config = get_config()
             if config:
-                object.__setattr__(config, 'strict_mode', strict)
-                object.__setattr__(config, 'warn_on_missing_warrant', warn_on_missing_warrant)
+                object.__setattr__(config, "strict_mode", strict)
+                object.__setattr__(config, "warn_on_missing_warrant", warn_on_missing_warrant)
 
     merged_schemas = {**TOOL_SCHEMAS, **(schemas or {})}
     return [TenuoTool(t, strict=strict, schemas=merged_schemas) for t in tools]
 
 
-
-
 # =============================================================================
 # Unified guard() - Smart Type Detection
 # =============================================================================
+
 
 def guard(
     tools: List[Any],
@@ -419,12 +406,10 @@ def guard(
     return [TenuoTool(t, strict=strict, bound_warrant=bound) for t in tools]
 
 
-
-
-
 # =============================================================================
 # DX: guard_agent() - Wrap entire agent with authorization
 # =============================================================================
+
 
 def guard_agent(
     agent_or_executor: Any,
@@ -488,14 +473,12 @@ def guard_agent(
         For LangGraph StateGraph agents, use tenuo.langgraph.TenuoToolNode instead.
     """
     if not LANGCHAIN_AVAILABLE:
-        raise ImportError(
-            "LangChain is required for guard_agent(). "
-            "Install with: pip install langchain-core"
-        )
+        raise ImportError("LangChain is required for guard_agent(). Install with: pip install langchain-core")
 
     # Configure if key provided
     if issuer_key is not None:
         from .config import configure, is_configured
+
         if not is_configured():
             configure(
                 issuer_key=issuer_key,
@@ -508,10 +491,7 @@ def guard_agent(
     # Extract tools from agent
     tools = _extract_tools(agent_or_executor)
     if not tools:
-        logger.warning(
-            "guard_agent: No tools found in agent. "
-            "Make sure agent has 'tools' attribute."
-        )
+        logger.warning("guard_agent: No tools found in agent. Make sure agent has 'tools' attribute.")
         return agent_or_executor
 
     # Wrap tools
@@ -524,11 +504,11 @@ def guard_agent(
 def _extract_tools(agent_or_executor: Any) -> List[Any]:
     """Extract tools from various agent types."""
     # AgentExecutor
-    if hasattr(agent_or_executor, 'tools'):
+    if hasattr(agent_or_executor, "tools"):
         return list(agent_or_executor.tools)
 
     # RunnableAgent or similar
-    if hasattr(agent_or_executor, 'agent') and hasattr(agent_or_executor.agent, 'tools'):
+    if hasattr(agent_or_executor, "agent") and hasattr(agent_or_executor.agent, "tools"):
         return list(agent_or_executor.agent.tools)
 
     # Tool list directly
@@ -545,7 +525,7 @@ def _rebuild_executor(
 ) -> Any:
     """Rebuild the executor with protected tools."""
     try:
-        from langchain.agents import AgentExecutor  # type: ignore[attr-defined]
+        from langchain.agents import AgentExecutor  # type: ignore[import-not-found,attr-defined]
     except ImportError:
         # Fallback: just return a simple wrapper
         return _SimpleProtectedAgent(original, protected_tools, capabilities)
@@ -558,15 +538,13 @@ def _rebuild_executor(
             tools=protected_tools,
             capabilities=capabilities,
             # Copy settings from original
-            verbose=getattr(original, 'verbose', False),
-            max_iterations=getattr(original, 'max_iterations', 15),
-            handle_parsing_errors=getattr(original, 'handle_parsing_errors', True),
+            verbose=getattr(original, "verbose", False),
+            max_iterations=getattr(original, "max_iterations", 15),
+            handle_parsing_errors=getattr(original, "handle_parsing_errors", True),
         )
 
     # For other types, return a simple wrapper
     return _SimpleProtectedAgent(original, protected_tools, capabilities)
-
-
 
 
 class _TenuoAgentExecutor:
@@ -585,7 +563,7 @@ class _TenuoAgentExecutor:
         **kwargs: Any,
     ):
         try:
-            from langchain.agents import AgentExecutor  # type: ignore[attr-defined]
+            from langchain.agents import AgentExecutor  # type: ignore[import-not-found,attr-defined]
         except ImportError:
             raise ImportError("langchain is required for _TenuoAgentExecutor")
 
@@ -601,6 +579,7 @@ class _TenuoAgentExecutor:
         """Invoke with Tenuo context."""
         if self._capabilities:
             from .scoped import mint_sync
+
             with mint_sync(*self._capabilities):
                 return self._inner.invoke(input_data, **kwargs)
         else:
@@ -610,6 +589,7 @@ class _TenuoAgentExecutor:
         """Async invoke with Tenuo context."""
         if self._capabilities:
             from .scoped import mint
+
             async with mint(*self._capabilities):
                 return await self._inner.ainvoke(input_data, **kwargs)
         else:
@@ -640,6 +620,7 @@ class _SimpleProtectedAgent:
     def invoke(self, input_data: Any, **kwargs: Any) -> Any:
         if self._capabilities:
             from .scoped import mint_sync
+
             with mint_sync(*self._capabilities):
                 return self._original.invoke(input_data, **kwargs)
         else:
@@ -648,6 +629,7 @@ class _SimpleProtectedAgent:
     async def ainvoke(self, input_data: Any, **kwargs: Any) -> Any:
         if self._capabilities:
             from .scoped import mint
+
             async with mint(*self._capabilities):
                 return await self._original.ainvoke(input_data, **kwargs)
         else:
@@ -660,6 +642,7 @@ class _SimpleProtectedAgent:
 # =============================================================================
 # auto_protect: Zero-config protection with audit mode default
 # =============================================================================
+
 
 def auto_protect(
     agent_or_tools: Any,
@@ -702,6 +685,7 @@ def auto_protect(
     # Auto-configure if not already configured
     if not is_configured():
         from tenuo_core import SigningKey
+
         configure(
             issuer_key=SigningKey.generate(),
             mode=enforcement_mode.value,  # type: ignore[arg-type]
@@ -714,25 +698,25 @@ def auto_protect(
         config.mode = enforcement_mode
 
     # Detect type and protect
-    if hasattr(agent_or_tools, 'invoke') and hasattr(agent_or_tools, 'tools'):
+    if hasattr(agent_or_tools, "invoke") and hasattr(agent_or_tools, "tools"):
         # AgentExecutor-like
         return guard_agent(agent_or_tools)
     elif isinstance(agent_or_tools, list):
         # List of tools
         return guard_tools(agent_or_tools)
-    elif hasattr(agent_or_tools, 'name') and hasattr(agent_or_tools, 'invoke'):
+    elif hasattr(agent_or_tools, "name") and hasattr(agent_or_tools, "invoke"):
         # Single tool
         return guard_tools([agent_or_tools])[0]
     else:
         raise TypeError(
-            f"auto_protect expects AgentExecutor, list of tools, or single tool. "
-            f"Got: {type(agent_or_tools).__name__}"
+            f"auto_protect expects AgentExecutor, list of tools, or single tool. Got: {type(agent_or_tools).__name__}"
         )
 
 
 # =============================================================================
 # SecureAgentExecutor: Drop-in replacement for AgentExecutor
 # =============================================================================
+
 
 class SecureAgentExecutor:
     """
@@ -762,14 +746,11 @@ class SecureAgentExecutor:
         if not LANGCHAIN_AVAILABLE:
             raise ImportError("LangChain not installed. Run: pip install langchain-core")
 
-        from langchain.agents import AgentExecutor  # type: ignore[attr-defined]
+        from langchain.agents import AgentExecutor  # type: ignore[import-not-found,attr-defined]
 
         # Wrap tools with Tenuo configuration
         protected_tools = guard_tools(
-            tools,
-            strict=strict,
-            warn_on_missing_warrant=warn_on_missing_warrant,
-            schemas=schemas
+            tools, strict=strict, warn_on_missing_warrant=warn_on_missing_warrant, schemas=schemas
         )
 
         # Create underlying executor
@@ -787,12 +768,12 @@ class SecureAgentExecutor:
 
 __all__ = [
     # Primary API
-    "guard",              # Unified smart wrapper
-    "guard_tools",        # Wrap tools (you manage context)
-    "guard_agent",        # Wrap executor (built-in context)
-    "auto_protect",       # Zero-config with audit mode default
-    "SecureAgentExecutor", # Drop-in AgentExecutor replacement
-    "TenuoTool",          # LangChain BaseTool wrapper
+    "guard",  # Unified smart wrapper
+    "guard_tools",  # Wrap tools (you manage context)
+    "guard_agent",  # Wrap executor (built-in context)
+    "auto_protect",  # Zero-config with audit mode default
+    "SecureAgentExecutor",  # Drop-in AgentExecutor replacement
+    "TenuoTool",  # LangChain BaseTool wrapper
     # Feature flag
     "LANGCHAIN_AVAILABLE",
 ]

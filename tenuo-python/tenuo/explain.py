@@ -110,7 +110,7 @@ def explain(
         _explain_generic(error, out)
 
     # Show context if available and requested
-    if show_context and hasattr(error, 'details') and error.details:
+    if show_context and hasattr(error, "details") and error.details:
         print("\nContext:", file=out)
         print(f"  {json.dumps(error.details, indent=2, default=str)}", file=out)
 
@@ -239,7 +239,7 @@ def _explain_generic(error: TenuoError, out: TextIO) -> None:
     print(f"Error: {error.message}", file=out)
     print(f"Type: {type(error).__name__}", file=out)
 
-    if hasattr(error, 'error_code'):
+    if hasattr(error, "error_code"):
         print(f"Code: {error.error_code}", file=out)
 
 
@@ -255,6 +255,7 @@ def explain_str(error: TenuoError, show_context: bool = True) -> str:
         Human-readable explanation string
     """
     import io
+
     buffer = io.StringIO()
     explain(error, file=buffer, show_context=show_context)
     return buffer.getvalue()

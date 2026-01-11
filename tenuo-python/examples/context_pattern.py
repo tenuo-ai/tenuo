@@ -61,13 +61,17 @@ def main():
         # SIMULATION: Create warrant with hardcoded constraints
         # HARDCODED: Pattern("staging-*"), Range.max_value(15), ttl=3600
         # In production: Constraints come from policy engine or configuration
-        warrant = (Warrant.mint_builder()
-            .capability("upgrade_cluster",
+        warrant = (
+            Warrant.mint_builder()
+            .capability(
+                "upgrade_cluster",
                 cluster=Pattern("staging-*"),  # HARDCODED: Only staging clusters for demo
-                replicas=Range.max_value(15))  # HARDCODED: Max 15 replicas for demo
+                replicas=Range.max_value(15),
+            )  # HARDCODED: Max 15 replicas for demo
             .holder(key.public_key)
             .ttl(3600)  # HARDCODED: 1 hour TTL.
-            .mint(key))
+            .mint(key)
+        )
     except Exception as e:
         print(f"[ERR] Error creating warrant: {e}")
         return
@@ -83,11 +87,7 @@ def main():
                 # All @guard functions in this context will use the warrant
                 # HARDCODED VALUES: cluster="staging-web", replicas=5, action="restart"
                 # In production: These come from request parameters
-                process_request(
-                    cluster="staging-web",
-                    replicas=5,
-                    action="restart"
-                )
+                process_request(cluster="staging-web", replicas=5, action="restart")
             except AuthorizationError as e:
                 print(f"   [ERR] Authorization failed: {e}\n")
             except Exception as e:
@@ -101,6 +101,7 @@ def main():
     # PATTERN 2: FastAPI Middleware Example (SIMULATION)
     # ========================================================================
     print("2. [SIMULATION] Simulating FastAPI middleware pattern...")
+
     def fastapi_middleware_example(request_warrant: Warrant):
         """
         [SIMULATION] Simulates FastAPI middleware that sets warrant in context.
@@ -145,16 +146,20 @@ def main():
 
     # Pattern 4: Nested contexts (context inheritance)
     print("4. Testing nested contexts...")
-    warrant1 = (Warrant.mint_builder()
+    warrant1 = (
+        Warrant.mint_builder()
         .capability("scale_cluster", cluster=Pattern("staging-*"))
         .holder(key.public_key)
         .ttl(3600)
-        .mint(key))
-    warrant2 = (Warrant.mint_builder()
+        .mint(key)
+    )
+    warrant2 = (
+        Warrant.mint_builder()
         .capability("scale_cluster", cluster=Pattern("production-*"))
         .holder(key.public_key)
         .ttl(3600)
-        .mint(key))
+        .mint(key)
+    )
 
     with warrant_scope(warrant1), key_scope(key):
         print("   Outer context: staging-*")
@@ -181,4 +186,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

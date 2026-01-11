@@ -35,11 +35,13 @@ def main():
     print("\n1. NO CONSTRAINTS → OPEN")
     print("-" * 70)
 
-    open_warrant = (Warrant.mint_builder()
+    open_warrant = (
+        Warrant.mint_builder()
         .tool("api_call")  # No constraints - fully open
         .holder(key.public_key)
         .ttl(3600)
-        .mint(key))
+        .mint(key)
+    )
 
     # Create PoP and authorize
     args = {"url": "https://any.com", "timeout": 999, "retries": 100}
@@ -57,11 +59,13 @@ def main():
     print("\n2. ONE CONSTRAINT → CLOSED (Trust Cliff)")
     print("-" * 70)
 
-    closed_warrant = (Warrant.mint_builder()
+    closed_warrant = (
+        Warrant.mint_builder()
         .capability("api_call", url=Pattern("https://api.example.com/*"))
         .holder(key.public_key)
         .ttl(3600)
-        .mint(key))
+        .mint(key)
+    )
 
     # Try with unknown field 'timeout' - should be BLOCKED
     args = {"url": "https://api.example.com/v1", "timeout": 30}
@@ -82,14 +86,19 @@ def main():
     print("-" * 70)
 
     # Use dict syntax for _allow_unknown
-    permissive_warrant = (Warrant.mint_builder()
-        .capability("api_call", {
-            "url": Pattern("https://api.example.com/*"),
-            "_allow_unknown": True,
-        })
+    permissive_warrant = (
+        Warrant.mint_builder()
+        .capability(
+            "api_call",
+            {
+                "url": Pattern("https://api.example.com/*"),
+                "_allow_unknown": True,
+            },
+        )
         .holder(key.public_key)
         .ttl(3600)
-        .mint(key))
+        .mint(key)
+    )
 
     args = {"url": "https://api.example.com/v1", "timeout": 30, "retries": 5}
     pop = permissive_warrant.sign(key, "api_call", args)
@@ -106,14 +115,18 @@ def main():
     print("\n4. Wildcard() → ALLOW SPECIFIC FIELD (stay closed)")
     print("-" * 70)
 
-    selective_warrant = (Warrant.mint_builder()
-        .capability("api_call",
+    selective_warrant = (
+        Warrant.mint_builder()
+        .capability(
+            "api_call",
             url=Pattern("https://api.example.com/*"),
             timeout=Wildcard(),  # Any value allowed
-            retries=Range.max_value(3))
+            retries=Range.max_value(3),
+        )
         .holder(key.public_key)
         .ttl(3600)
-        .mint(key))
+        .mint(key)
+    )
 
     # All fields constrained (even if Wildcard) → allowed
     args = {"url": "https://api.example.com/v1", "timeout": 9999, "retries": 2}
@@ -152,23 +165,29 @@ def main():
     print("\n5. _allow_unknown is NOT INHERITED")
     print("-" * 70)
 
-    parent = (Warrant.mint_builder()
-        .capability("api_call", {
-            "url": Pattern("https://*"),
-            "_allow_unknown": True,
-        })
+    parent = (
+        Warrant.mint_builder()
+        .capability(
+            "api_call",
+            {
+                "url": Pattern("https://*"),
+                "_allow_unknown": True,
+            },
+        )
         .holder(key.public_key)
         .ttl(3600)
-        .mint(key))
+        .mint(key)
+    )
 
     # Child doesn't set _allow_unknown → defaults to False (closed)
-    child = (parent.grant_builder()
-        .capability("api_call",
-            url=Pattern("https://api.example.com/*"))
+    child = (
+        parent.grant_builder()
+        .capability("api_call", url=Pattern("https://api.example.com/*"))
         # Note: no _allow_unknown here → defaults to closed
         .holder(key.public_key)
         .ttl(300)
-        .grant(key))
+        .grant(key)
+    )
 
     print("   Parent: _allow_unknown=True (permissive)")
     print("   Child:  _allow_unknown not set → defaults to False (closed)")

@@ -22,29 +22,35 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from .constraints import Capability
-from tenuo_core import Pattern, Exact, OneOf, Range, Regex  # type: ignore
+from tenuo_core import Pattern, Exact, OneOf, Range, Regex, Subpath, UrlSafe  # type: ignore
 
 
 # =============================================================================
 # File System Templates
 # =============================================================================
 
+
 class FileReader:
-    """Read-only file access templates."""
+    """Read-only file access templates.
+
+    All methods use secure Subpath constraint which blocks path traversal
+    attacks like "/data/../etc/passwd".
+    """
 
     @staticmethod
     def in_directory(path: str) -> Capability:
         """Read files in a directory (and subdirectories).
 
+        Uses Subpath constraint which normalizes paths before checking,
+        blocking path traversal attacks.
+
         Example:
-            async with mint(FileReader.in_directory("/data/reports")) as w:
-                content = read_file("/data/reports/q4.txt")  # ✓ allowed
-                content = read_file("/etc/passwd")  # ✗ denied
+            async with mint(FileReader.in_directory("/data")) as w:
+                read_file("/data/reports/q4.txt")      # ✓ allowed
+                read_file("/data/../etc/passwd")       # ✗ BLOCKED (traversal)
+                read_file("/etc/passwd")               # ✗ denied
         """
-        # Ensure path ends with /* for subdirectory matching
-        if not path.endswith("/*"):
-            path = path.rstrip("/") + "/*"
-        return Capability("read_file", path=Pattern(path))
+        return Capability("read_file", path=Subpath(path))
 
     @staticmethod
     def exact_file(path: str) -> Capability:
@@ -61,6 +67,9 @@ class FileReader:
     def extensions(directory: str, exts: List[str]) -> Capability:
         """Read files with specific extensions in a directory.
 
+        Note: Uses Pattern for glob matching. For maximum security,
+        combine with application-level extension validation.
+
         Example:
             async with mint(FileReader.extensions("/docs", [".md", ".txt"])) as w:
                 read_file("/docs/readme.md")  # ✓ allowed
@@ -72,22 +81,28 @@ class FileReader:
 
 
 class FileWriter:
-    """Write access templates (use with caution)."""
+    """Write access templates (use with caution).
+
+    All methods use secure Subpath constraint which blocks path traversal
+    attacks like "/tmp/../etc/hosts".
+    """
 
     @staticmethod
     def in_directory(path: str) -> Capability:
         """Write files in a directory (and subdirectories).
 
+        Uses Subpath constraint which normalizes paths before checking,
+        blocking path traversal attacks.
+
         ⚠️ Warning: Write access is sensitive. Prefer narrow paths.
 
         Example:
-            async with mint(FileWriter.in_directory("/tmp/agent-output")) as w:
-                write_file("/tmp/agent-output/report.txt", data)  # ✓ allowed
-                write_file("/etc/hosts", data)  # ✗ denied
+            async with mint(FileWriter.in_directory("/tmp/output")) as w:
+                write_file("/tmp/output/report.txt", data)  # ✓ allowed
+                write_file("/tmp/output/../etc/hosts", d)   # ✗ BLOCKED (traversal)
+                write_file("/etc/hosts", data)              # ✗ denied
         """
-        if not path.endswith("/*"):
-            path = path.rstrip("/") + "/*"
-        return Capability("write_file", path=Pattern(path))
+        return Capability("write_file", path=Subpath(path))
 
     @staticmethod
     def append_only(path: str) -> Capability:
@@ -103,6 +118,7 @@ class FileWriter:
 # =============================================================================
 # Database Templates
 # =============================================================================
+
 
 class DatabaseReader:
     """Read-only database access templates."""
@@ -185,25 +201,51 @@ class DatabaseWriter:
 # HTTP/API Templates
 # =============================================================================
 
+
 class WebSearcher:
-    """Web search and API access templates."""
+    """Web search and API access templates.
+
+    All methods use UrlSafe constraint which provides SSRF protection:
+    - Blocks private IPs (10.x, 172.16.x, 192.168.x)
+    - Blocks loopback (127.x, ::1, localhost)
+    - Blocks cloud metadata (169.254.169.254)
+    - Blocks IP encoding bypasses (decimal, hex, octal, IPv6-mapped)
+    """
 
     @staticmethod
     def domains(allowed: List[str]) -> Capability:
-        """Access specific domains only.
+        """Access specific domains only with SSRF protection.
 
         Supports wildcards: "*.example.com" matches "api.example.com"
 
         Example:
             async with mint(WebSearcher.domains(["api.openai.com"])) as w:
-                fetch("https://api.openai.com/v1/...")  # ✓ allowed
-                fetch("https://malicious.com/...")  # ✗ denied
+                fetch("https://api.openai.com/v1/...")   # ✓ allowed
+                fetch("https://malicious.com/...")       # ✗ denied
+                fetch("http://169.254.169.254/")         # ✗ BLOCKED (SSRF)
         """
-        return Capability("http_request", domain=OneOf(allowed))
+        return Capability("http_request", url=UrlSafe(allow_domains=allowed))
+
+    @staticmethod
+    def any_public() -> Capability:
+        """Access any public URL with SSRF protection.
+
+        Allows any public internet URL but blocks internal/dangerous URLs.
+
+        Example:
+            async with mint(WebSearcher.any_public()) as w:
+                fetch("https://api.github.com/...")     # ✓ allowed
+                fetch("http://169.254.169.254/")        # ✗ BLOCKED (metadata)
+                fetch("http://127.0.0.1/")              # ✗ BLOCKED (loopback)
+        """
+        return Capability("http_request", url=UrlSafe())
 
     @staticmethod
     def url_pattern(pattern: str) -> Capability:
         """Access URLs matching a pattern.
+
+        Note: Uses Pattern for glob matching. Does not provide SSRF
+        protection - use domains() for security-critical applications.
 
         Example:
             async with mint(WebSearcher.url_pattern("https://api.example.com/v1/*")) as w:
@@ -214,16 +256,19 @@ class WebSearcher:
 
     @staticmethod
     def read_only(domains: List[str]) -> Capability:
-        """GET requests only to specific domains.
+        """GET requests only to specific domains with SSRF protection.
+
+        Combines domain allowlist + GET-only + SSRF protection.
 
         Example:
             async with mint(WebSearcher.read_only(["api.news.com"])) as w:
-                fetch("GET https://api.news.com/...")  # ✓ allowed
+                fetch("GET https://api.news.com/...")   # ✓ allowed
                 fetch("POST https://api.news.com/...")  # ✗ denied
+                fetch("GET http://169.254.169.254/")    # ✗ BLOCKED (SSRF)
         """
         return Capability(
             "http_request",
-            domain=OneOf(domains),
+            url=UrlSafe(allow_domains=domains),
             method=Exact("GET"),
         )
 
@@ -272,6 +317,7 @@ class ApiClient:
 # Code Execution Templates
 # =============================================================================
 
+
 class CodeRunner:
     """Code execution templates."""
 
@@ -282,8 +328,15 @@ class CodeRunner:
         Blocks: os, subprocess, socket, ctypes, etc.
         """
         blocked = [
-            "os", "subprocess", "socket", "ctypes", "multiprocessing",
-            "sys", "importlib", "builtins", "__builtins__",
+            "os",
+            "subprocess",
+            "socket",
+            "ctypes",
+            "multiprocessing",
+            "sys",
+            "importlib",
+            "builtins",
+            "__builtins__",
         ]
         return Capability(
             "execute_code",
@@ -311,6 +364,7 @@ class CodeRunner:
 # Shell/System Templates
 # =============================================================================
 
+
 class ShellExecutor:
     """Shell command execution templates."""
 
@@ -332,8 +386,20 @@ class ShellExecutor:
         Includes: ls, cat, head, tail, grep, find, wc, du, df, pwd, echo
         """
         safe_commands = [
-            "ls", "cat", "head", "tail", "grep", "find", "wc",
-            "du", "df", "pwd", "echo", "date", "hostname", "uname",
+            "ls",
+            "cat",
+            "head",
+            "tail",
+            "grep",
+            "find",
+            "wc",
+            "du",
+            "df",
+            "pwd",
+            "echo",
+            "date",
+            "hostname",
+            "uname",
         ]
         return Capability("shell", command=OneOf(safe_commands))
 
@@ -341,6 +407,7 @@ class ShellExecutor:
 # =============================================================================
 # Email/Messaging Templates
 # =============================================================================
+
 
 class EmailSender:
     """Email sending templates."""
@@ -375,6 +442,7 @@ class EmailSender:
 # Composite Templates (Common Agent Patterns)
 # =============================================================================
 
+
 @dataclass
 class AgentTemplate:
     """Composite template combining multiple capabilities."""
@@ -389,7 +457,12 @@ class AgentTemplate:
 
 
 class CommonAgents:
-    """Pre-built templates for common agent patterns."""
+    """Pre-built templates for common agent patterns.
+
+    All templates use secure constraints:
+    - FileReader/FileWriter use Subpath (path traversal protection)
+    - WebSearcher uses UrlSafe (SSRF protection)
+    """
 
     @staticmethod
     def research_assistant(
@@ -397,6 +470,10 @@ class CommonAgents:
         output_dir: str,
     ) -> AgentTemplate:
         """Research assistant that can search web and save findings.
+
+        Args:
+            search_domains: Allowed domains for web search
+            output_dir: Directory for saving output files
 
         Example:
             template = CommonAgents.research_assistant(
@@ -424,6 +501,11 @@ class CommonAgents:
     ) -> AgentTemplate:
         """Data analyst that can query DB and write reports.
 
+        Args:
+            tables: Allowed database tables
+            output_dir: Directory for reports
+            max_rows: Maximum rows per query (default: 1000)
+
         Example:
             template = CommonAgents.data_analyst(
                 tables=["sales", "products"],
@@ -450,19 +532,19 @@ class CommonAgents:
     ) -> AgentTemplate:
         """Code assistant for reading/editing source code.
 
+        Args:
+            allowed_dirs: Directories the agent can access
+            read_only: If False, allow writes (default: True)
+
         Example:
             template = CommonAgents.code_assistant(
                 allowed_dirs=["/src", "/tests"],
                 read_only=False,  # Allow edits
             )
         """
-        capabilities = [
-            FileReader.in_directory(d) for d in allowed_dirs
-        ]
+        capabilities = [FileReader.in_directory(d) for d in allowed_dirs]
         if not read_only:
-            capabilities.extend([
-                FileWriter.in_directory(d) for d in allowed_dirs
-            ])
+            capabilities.extend([FileWriter.in_directory(d) for d in allowed_dirs])
 
         return AgentTemplate(
             name="code_assistant",
@@ -492,6 +574,44 @@ class CommonAgents:
             ],
         )
 
+    @staticmethod
+    def web_agent(
+        allowed_domains: Optional[List[str]] = None,
+        output_dir: Optional[str] = None,
+    ) -> AgentTemplate:
+        """Web browsing agent with SSRF protection.
+
+        Args:
+            allowed_domains: If set, restrict to these domains.
+                             If None, allow any public URL.
+            output_dir: If set, allow saving files here.
+
+        Example:
+            # Public web access (SSRF-protected)
+            template = CommonAgents.web_agent()
+
+            # Restricted to specific domains
+            template = CommonAgents.web_agent(
+                allowed_domains=["api.github.com"],
+                output_dir="/tmp/downloads"
+            )
+        """
+        capabilities: List[Capability] = []
+
+        if allowed_domains:
+            capabilities.append(WebSearcher.domains(allowed_domains))
+        else:
+            capabilities.append(WebSearcher.any_public())
+
+        if output_dir:
+            capabilities.append(FileWriter.in_directory(output_dir))
+
+        return AgentTemplate(
+            name="web_agent",
+            description="Web browsing (SSRF-protected)",
+            capabilities=capabilities,
+        )
+
 
 # =============================================================================
 # Export
@@ -516,4 +636,3 @@ __all__ = [
     "AgentTemplate",
     "CommonAgents",
 ]
-

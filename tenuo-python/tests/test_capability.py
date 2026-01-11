@@ -98,12 +98,7 @@ class TestCapabilityMerge:
         """
         print("\n--- Capability Merge: Type Preservation ---")
 
-        cap = Capability(
-            "transfer",
-            amount=Range(max=1000),
-            recipient=Pattern("user-*"),
-            status=Exact("approved")
-        )
+        cap = Capability("transfer", amount=Range(max=1000), recipient=Pattern("user-*"), status=Exact("approved"))
 
         merged = Capability.merge(cap)
 
@@ -303,4 +298,3 @@ class TestCapabilityImmutability:
         assert dict2["read_file"]["path"].pattern == "/data/*"
 
         print("  [Result] to_dict() returns isolated copy")
-

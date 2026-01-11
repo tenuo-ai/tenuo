@@ -91,6 +91,7 @@ Visit python.org for tutorials and documentation.
 
     # Real fetch (if enabled)
     import requests
+
     try:
         resp = requests.get(url, timeout=10)
         return resp.text[:2000]  # Limit content size
@@ -110,9 +111,9 @@ def summarize(content: str, max_length: int = 200) -> str:
         Summary text
     """
     # Simple mock summarization
-    lines = content.strip().split('\n')
-    summary_lines = [line for line in lines if line.strip() and not line.startswith('#') and not line.startswith('<')]
-    summary = ' '.join(summary_lines)[:max_length]
+    lines = content.strip().split("\n")
+    summary_lines = [line for line in lines if line.strip() and not line.startswith("#") and not line.startswith("<")]
+    summary = " ".join(summary_lines)[:max_length]
     return summary + "..." if len(summary) >= max_length else summary
 
 
@@ -128,6 +129,7 @@ def write_file(path: str, content: str) -> str:
         Confirmation message
     """
     import os
+
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w") as f:
@@ -167,4 +169,3 @@ def http_request(url: str, method: str = "GET", body: str = "") -> str:
     """
     # This is a dangerous tool - should be blocked or heavily constrained
     return f"HTTP {method} to {url}"
-

@@ -305,7 +305,7 @@ from tenuo import Warrant, Pattern
 
 # Fluent builder pattern
 warrant = (Warrant.mint_builder()
-    .capability("read_file", path=Pattern("/data/*"))
+    .capability("read_file", path=Subpath("/data"))
     .holder(worker_key.public_key)
     .ttl(3600)
     .mint(issuer_key))
@@ -324,7 +324,7 @@ warrant = (Warrant.mint_builder()
 ```python
 # Delegate with narrower scope
 child = (parent.grant_builder()
-    .capability("read_file", path=Pattern("/data/reports/*"))
+    .capability("read_file", path=Subpath("/data/reports"))
     .holder(worker_key.public_key)
     .ttl(300)
     .grant(parent_key))  # Parent holder signs
@@ -349,7 +349,7 @@ from tenuo import Warrant, Pattern, Range, Clearance
 # Execution warrant with builder
 warrant = (Warrant.mint_builder()
     .capability("read_file",
-        path=Pattern("/data/*"),
+        path=Subpath("/data"),
         max_size=Range(max=1000000))
     .ttl(3600)
     .holder(keypair.public_key)
@@ -360,7 +360,7 @@ issuer = (Warrant.mint_builder()
     .issuer()  # Switch to issuer mode
     .issuable_tools(["read_file", "write_file"])
     .clearance(Clearance.INTERNAL)  # Optional
-    .constraint_bound("path", Pattern("/data/*"))
+    .constraint_bound("path", Subpath("/data"))
     .max_issue_depth(3)
     .mint(keypair))
 ```
@@ -1027,9 +1027,9 @@ Context managers for scoping authority to tasks.
 Create root authority for a task. **Async version.**
 
 ```python
-from tenuo import mint, Capability, Pattern
+from tenuo import mint, Capability, Subpath
 
-async with mint(Capability("read_file", path=Pattern("/data/*"))) as warrant:
+async with mint(Capability("read_file", path=Subpath("/data"))) as warrant:
     result = await agent.invoke(prompt)
 ```
 
@@ -1308,7 +1308,7 @@ def read_file(path: str) -> str:
     return open(path).read()
 
 # Use with task scoping
-async with mint(Capability("read_file", path=Pattern("/data/*"))):
+async with mint(Capability("read_file", path=Subpath("/data"))):
     read_file("/data/test.txt")
 ```
 

@@ -33,9 +33,9 @@ try:
 except ImportError:
     pass  # Use fallback values defined above
 
+
 @pytest.mark.skipif(not FASTAPI_AVAILABLE, reason="FastAPI not installed")
 class TestFastAPIIntegration:
-
     @pytest.fixture
     def app(self):
         app = FastAPI()
@@ -62,9 +62,7 @@ class TestFastAPIIntegration:
 
         # Missing PoP
         warrant = Warrant.mint_builder().tool("search").mint(SigningKey.generate())
-        resp = client.get("/search?query=test", headers={
-            X_TENUO_WARRANT: warrant.to_base64()
-        })
+        resp = client.get("/search?query=test", headers={X_TENUO_WARRANT: warrant.to_base64()})
         assert resp.status_code == 401
         assert "Missing X-Tenuo-PoP" in resp.json()["detail"]["message"]
 
@@ -73,20 +71,15 @@ class TestFastAPIIntegration:
         def search(ctx: SecurityContext = Depends(TenuoGuard("search"))):
             return {"query": ctx.args.get("query"), "issuer": ctx.issuer}
 
-        warrant = (Warrant.mint_builder()
-            .tool("search")
-            .mint(key))
+        warrant = Warrant.mint_builder().tool("search").mint(key)
 
         # Sign PoP
         # Args matched by default logic: query params + path params
         args = {"query": "test"}
         pop_sig = warrant.sign(key, "search", args)
-        pop_b64 = base64.b64encode(pop_sig).decode('ascii')
+        pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
-        headers = {
-            X_TENUO_WARRANT: warrant.to_base64(),
-            X_TENUO_POP: pop_b64
-        }
+        headers = {X_TENUO_WARRANT: warrant.to_base64(), X_TENUO_POP: pop_b64}
 
         resp = client.get("/search?query=test", headers=headers)
         assert resp.status_code == 200
@@ -102,12 +95,9 @@ class TestFastAPIIntegration:
         # Sign for WRONG args
         args = {"query": "malicious"}
         pop_sig = warrant.sign(key, "search", args)
-        pop_b64 = base64.b64encode(pop_sig).decode('ascii')
+        pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
-        headers = {
-            X_TENUO_WARRANT: warrant.to_base64(),
-            X_TENUO_POP: pop_b64
-        }
+        headers = {X_TENUO_WARRANT: warrant.to_base64(), X_TENUO_POP: pop_b64}
 
         # Request for "test" but signed "malicious"
         resp = client.get("/search?query=test", headers=headers)
@@ -124,12 +114,9 @@ class TestFastAPIIntegration:
 
         args = {}
         pop_sig = warrant.sign(key, "admin", args)
-        pop_b64 = base64.b64encode(pop_sig).decode('ascii')
+        pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
-        headers = {
-            X_TENUO_WARRANT: warrant.to_base64(),
-            X_TENUO_POP: pop_b64
-        }
+        headers = {X_TENUO_WARRANT: warrant.to_base64(), X_TENUO_POP: pop_b64}
 
         resp = client.get("/admin", headers=headers)
         assert resp.status_code == 403
@@ -156,20 +143,17 @@ class TestFastAPIIntegration:
         # Sign for custom arg
         args = {"query": "secret"}
         pop_sig = warrant.sign(key, "custom", args)
-        pop_b64 = base64.b64encode(pop_sig).decode('ascii')
+        pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
-        headers = {
-            X_TENUO_WARRANT: warrant.to_base64(),
-            X_TENUO_POP: pop_b64,
-            "X-Query": "secret"
-        }
+        headers = {X_TENUO_WARRANT: warrant.to_base64(), X_TENUO_POP: pop_b64, "X-Query": "secret"}
 
         resp = client.get("/custom", headers=headers)
         assert resp.status_code == 200
 
     def test_expired_warrant_returns_401(self, app, client, key):
         @app.get("/search")
-        def search(ctx: SecurityContext = Depends(TenuoGuard("search"))): pass
+        def search(ctx: SecurityContext = Depends(TenuoGuard("search"))):
+            pass
 
         # Expired warrant (TTL=0 is not instantly expired in some impls, using -1 or sleep if needed)
         # But Warrant.mint(ttl=) usually sets expiry.
@@ -178,24 +162,22 @@ class TestFastAPIIntegration:
         # However, `sign()` might fail if expired? No, PoP is signature.
 
         import time
+
         try:
-             warrant = Warrant.mint_builder().tool("search").ttl(0).mint(key)
-             # Wait a bit
-             time.sleep(0.01)
+            warrant = Warrant.mint_builder().tool("search").ttl(0).mint(key)
+            # Wait a bit
+            time.sleep(0.01)
         except Exception:
-             # Fallback if TTL=0 invalid
-             warrant = Warrant.mint_builder().tool("search").ttl(1).mint(key)
-             time.sleep(1.1)
+            # Fallback if TTL=0 invalid
+            warrant = Warrant.mint_builder().tool("search").ttl(1).mint(key)
+            time.sleep(1.1)
 
         args = {"query": "test"}
         # PoP signing doesn't care about expiry usually
         pop_sig = warrant.sign(key, "search", args)
-        pop_b64 = base64.b64encode(pop_sig).decode('ascii')
+        pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
-        headers = {
-            X_TENUO_WARRANT: warrant.to_base64(),
-            X_TENUO_POP: pop_b64
-        }
+        headers = {X_TENUO_WARRANT: warrant.to_base64(), X_TENUO_POP: pop_b64}
 
         resp = client.get("/search?query=test", headers=headers)
         assert resp.status_code == 401

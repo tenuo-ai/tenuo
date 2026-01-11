@@ -55,6 +55,7 @@ WARRANT_HEADER = "X-Tenuo-Warrant"
 # SigningKey Loading (Agent Identity)
 # ============================================================================
 
+
 def load_agent_signing_key() -> SigningKey:
     """
     Load agent signing_key from file (e.g., K8s secret mount).
@@ -86,9 +87,7 @@ logger.info(f"Agent signing_key loaded (public key: {AGENT_KEYPAIR.public_key.to
 # ============================================================================
 
 app = FastAPI(
-    title="Tenuo FastAPI Example",
-    description="Complete FastAPI integration with Tenuo authorization",
-    version="1.0.0"
+    title="Tenuo FastAPI Example", description="Complete FastAPI integration with Tenuo authorization", version="1.0.0"
 )
 
 # ============================================================================
@@ -98,6 +97,7 @@ app = FastAPI(
 # ============================================================================
 # Dependency Injection: Warrant Extraction
 # ============================================================================
+
 
 async def get_warrant(request: Request) -> Warrant:
     """
@@ -109,10 +109,7 @@ async def get_warrant(request: Request) -> Warrant:
     warrant_b64 = request.headers.get(WARRANT_HEADER)
 
     if not warrant_b64:
-        raise HTTPException(
-            status_code=401,
-            detail=f"Missing {WARRANT_HEADER} header"
-        )
+        raise HTTPException(status_code=401, detail=f"Missing {WARRANT_HEADER} header")
 
     try:
         warrant = Warrant.from_base64(warrant_b64)
@@ -120,16 +117,11 @@ async def get_warrant(request: Request) -> Warrant:
         # No need to check here - let the decorator handle it with proper error messages
         return warrant
     except ValueError as e:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "Invalid warrant format", "details": str(e)}
-        )
+        raise HTTPException(status_code=400, detail={"error": "Invalid warrant format", "details": str(e)})
     except Exception as e:
         logger.error(f"Warrant processing error: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "Internal server error", "details": str(e)}
-        )
+        raise HTTPException(status_code=500, detail={"error": "Internal server error", "details": str(e)})
+
 
 # ============================================================================
 # Protected Tool Functions
@@ -208,12 +200,14 @@ def manage_cluster(cluster: str, action: str, replicas: int) -> dict:
         "cluster": cluster,
         "action": action,
         "replicas": replicas,
-        "message": f"Executed {action} on {cluster} with {replicas} replicas"
+        "message": f"Executed {action} on {cluster} with {replicas} replicas",
     }
+
 
 # ============================================================================
 # API Endpoints
 # ============================================================================
+
 
 @app.get("/")
 async def root():
@@ -224,8 +218,8 @@ async def root():
             "read_file": "/api/files/{file_path}",
             "write_file": "/api/files/{file_path}",
             "manage_cluster": "/api/cluster/{cluster}",
-            "health": "/health"
-        }
+            "health": "/health",
+        },
     }
 
 
@@ -255,17 +249,12 @@ async def read_file_endpoint(file_path: str, warrant: Warrant = Depends(get_warr
             return {
                 "status": "success",
                 "file_path": file_path,
-                "content": content[:100] + "..." if len(content) > 100 else content
+                "content": content[:100] + "..." if len(content) > 100 else content,
             }
         except AuthorizationError as e:
             logger.warning(f"Authorization failed for {file_path}: {e}")
             raise HTTPException(
-                status_code=403,
-                detail={
-                    "error": "Authorization failed",
-                    "message": str(e),
-                    "file_path": file_path
-                }
+                status_code=403, detail={"error": "Authorization failed", "message": str(e), "file_path": file_path}
             )
 
 
@@ -281,20 +270,11 @@ async def write_file_endpoint(file_path: str, content: dict, warrant: Warrant = 
     with warrant_scope(warrant), key_scope(AGENT_KEYPAIR):
         try:
             write_file(file_path, content.get("content", ""))
-            return {
-                "status": "success",
-                "file_path": file_path,
-                "message": "File written successfully"
-            }
+            return {"status": "success", "file_path": file_path, "message": "File written successfully"}
         except AuthorizationError as e:
             logger.warning(f"Authorization failed for {file_path}: {e}")
             raise HTTPException(
-                status_code=403,
-                detail={
-                    "error": "Authorization failed",
-                    "message": str(e),
-                    "file_path": file_path
-                }
+                status_code=403, detail={"error": "Authorization failed", "message": str(e), "file_path": file_path}
             )
 
 
@@ -318,29 +298,21 @@ async def manage_cluster_endpoint(cluster: str, request: dict, warrant: Warrant 
             logger.warning(f"Authorization failed for cluster {cluster}: {e}")
             raise HTTPException(
                 status_code=403,
-                detail={
-                    "error": "Authorization failed",
-                    "message": str(e),
-                    "cluster": cluster,
-                    "action": action
-                }
+                detail={"error": "Authorization failed", "message": str(e), "cluster": cluster, "action": action},
             )
+
 
 # ============================================================================
 # Error Handlers
 # ============================================================================
+
 
 @app.exception_handler(AuthorizationError)
 async def authorization_error_handler(request: Request, exc: AuthorizationError):
     """Handle Tenuo authorization errors."""
     logger.warning(f"Authorization error on {request.url.path}: {exc}")
     return JSONResponse(
-        status_code=403,
-        content={
-            "error": "Authorization failed",
-            "message": str(exc),
-            "path": request.url.path
-        }
+        status_code=403, content={"error": "Authorization failed", "message": str(exc), "path": request.url.path}
     )
 
 
@@ -349,17 +321,14 @@ async def warrant_error_handler(request: Request, exc: WarrantError):
     """Handle Tenuo warrant errors."""
     logger.error(f"Warrant error on {request.url.path}: {exc}")
     return JSONResponse(
-        status_code=400,
-        content={
-            "error": "Warrant error",
-            "message": str(exc),
-            "path": request.url.path
-        }
+        status_code=400, content={"error": "Warrant error", "message": str(exc), "path": request.url.path}
     )
+
 
 # ============================================================================
 # Demo/Testing Functions
 # ============================================================================
+
 
 def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
     """
@@ -369,30 +338,34 @@ def create_demo_warrants() -> dict[str, tuple[Warrant, str]]:
     Note: Each tool gets its own warrant. This is the recommended pattern
     for fine-grained authorization control.
     """
-    read_warrant = (Warrant.mint_builder()
+    read_warrant = (
+        Warrant.mint_builder()
         .capability("read_file", file_path=Pattern("/tmp/*"))
         .holder(AGENT_KEYPAIR.public_key)
         .ttl(3600)
-        .mint(AGENT_KEYPAIR))
+        .mint(AGENT_KEYPAIR)
+    )
 
-    write_warrant = (Warrant.mint_builder()
+    write_warrant = (
+        Warrant.mint_builder()
         .capability("write_file", file_path=Pattern("/tmp/*"))
         .holder(AGENT_KEYPAIR.public_key)
         .ttl(3600)
-        .mint(AGENT_KEYPAIR))
+        .mint(AGENT_KEYPAIR)
+    )
 
-    cluster_warrant = (Warrant.mint_builder()
-        .capability("manage_cluster",
-            cluster=Pattern("staging-*"),
-            replicas=Range.max_value(15))
+    cluster_warrant = (
+        Warrant.mint_builder()
+        .capability("manage_cluster", cluster=Pattern("staging-*"), replicas=Range.max_value(15))
         .holder(AGENT_KEYPAIR.public_key)
         .ttl(3600)
-        .mint(AGENT_KEYPAIR))
+        .mint(AGENT_KEYPAIR)
+    )
 
     return {
         "read_file": (read_warrant, read_warrant.to_base64()),
         "write_file": (write_warrant, write_warrant.to_base64()),
-        "manage_cluster": (cluster_warrant, cluster_warrant.to_base64())
+        "manage_cluster": (cluster_warrant, cluster_warrant.to_base64()),
     }
 
 
@@ -413,7 +386,7 @@ if __name__ == "__main__":
     write_warrant, write_b64 = warrants["write_file"]
     print(f"  curl -X POST -H 'X-Tenuo-Warrant: {write_b64[:50]}...' \\")
     print("       -H 'Content-Type: application/json' \\")
-    print("       -d '{\"content\":\"test\"}' \\")
+    print('       -d \'{"content":"test"}\' \\')
     print("       http://localhost:8000/api/files/tmp/test.txt")
     print("\nStarting server on http://localhost:8000")
     print("=" * 60)

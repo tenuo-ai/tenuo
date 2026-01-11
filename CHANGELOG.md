@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+#### OpenAI Integration
+- **Direct API wrapping**: `guard()` function wraps `openai.OpenAI()` client with guardrails
+- **GuardBuilder fluent API**: `.allow()`, `.deny()`, `.constrain()` for clean constraint definition
+- **Two-tier protection**: Tier 1 (runtime guardrails) and Tier 2 (warrant + PoP)
+- **Streaming TOCTOU protection**: Buffer-verify-emit pattern prevents timing attacks
+- **Responses API support**: `client.responses.create()` with guardrails
+- **OpenAI Agents SDK integration**: `create_tool_guardrail()`, `create_warrant_guardrail()`
+- **Tool schema validation**: Warns on typos in constraint parameter names
+
+#### New Constraints
+- **Subpath constraint**: Secure path containment that blocks `..` traversal attacks (normalizes paths lexically, blocks null bytes, requires absolute paths)
+- **UrlSafe constraint**: SSRF protection that blocks dangerous URLs by default (private IPs, loopback, cloud metadata, IP encoding bypasses)
+- **Shlex constraint**: Shell injection protection that validates command strings (blocks operators, substitution, expansion; requires binary allowlist)
+- **Audit logging**: `AuditEvent` with session_id, constraint_hash, warrant_id
+- **Debug mode**: `enable_debug()` for verbose logging
+- **Pre-flight validation**: `client.validate()` catches misconfigurations early
+
+### Security
+
+- **Fail-closed on malformed JSON**: Agents SDK guardrail now raises `MalformedToolCall` instead of silently defaulting to `{}`
+- **Skip/log mode filtering**: Responses API now filters denied function_calls from output (matching Chat Completions behavior)
+
+---
+
 ## [0.1.0-beta.4] - 2026-01-05
 
 ### Added

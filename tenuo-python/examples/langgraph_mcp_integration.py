@@ -24,6 +24,7 @@ try:
 except ImportError:
     print('❌ Prerequisites not met. Install with: pip install "tenuo[langgraph,mcp]"')
     import sys
+
     sys.exit(1)
 
 

@@ -26,7 +26,7 @@ Warrants are **bound to keys**. To use a warrant, you must prove you hold the pr
 ```python
 # Attenuate with explicit capability (POLA)
 warrant = (root_warrant.grant_builder()
-    .capability("protected_tool", path=Pattern("/data/*"))
+    .capability("protected_tool", path=Subpath("/data"))
     .holder(worker_key.public_key)
     .grant(root_key))  # Root key signs (they hold the parent warrant)
 
@@ -87,16 +87,16 @@ Authority can only **shrink**, never expand:
 ```python
 # Parent has broad capabilities
 parent = (Warrant.mint_builder()
-    .capability("read", path=Pattern("/*"))
-    .capability("write", path=Pattern("/*"))
-    .capability("delete", path=Pattern("/*"))
+    .capability("read", path=Subpath("/"))
+    .capability("write", path=Subpath("/"))
+    .capability("delete", path=Subpath("/"))
     .holder(key.public_key)
     .ttl(3600)
     .mint(key))
 
 # Child can only narrow
 child = (parent.grant_builder()
-    .capability("read", path=Pattern("/data/*"))
+    .capability("read", path=Subpath("/data"))
     .grant(key))  # Key signs (they hold the parent warrant)
 
 # This would FAIL:

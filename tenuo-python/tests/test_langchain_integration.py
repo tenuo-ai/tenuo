@@ -17,10 +17,7 @@ from tenuo import (
 from tenuo.exceptions import ToolNotAuthorized
 
 # Skip all tests if LangChain is not installed
-pytestmark = pytest.mark.skipif(
-    not LANGCHAIN_AVAILABLE,
-    reason="LangChain not installed"
-)
+pytestmark = pytest.mark.skipif(not LANGCHAIN_AVAILABLE, reason="LangChain not installed")
 
 
 @pytest.fixture(autouse=True)
@@ -226,11 +223,14 @@ class TestStrictMode:
         from tenuo.schemas import ToolSchema, register_schema
 
         # Register a schema that requires constraints
-        register_schema("search", ToolSchema(
-            recommended_constraints=["query"],
-            require_at_least_one=True,
-            risk_level="medium",
-        ))
+        register_schema(
+            "search",
+            ToolSchema(
+                recommended_constraints=["query"],
+                require_at_least_one=True,
+                risk_level="medium",
+            ),
+        )
 
         tools = guard_tools([search], strict=True)
 

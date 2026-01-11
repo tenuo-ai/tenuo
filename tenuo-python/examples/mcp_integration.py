@@ -11,6 +11,7 @@ Demonstrates:
 from tenuo import Authorizer, SigningKey, Warrant, Pattern, Range
 from tenuo_core import CompiledMcpConfig, McpConfig
 
+
 def main():
     print("=== Tenuo Python SDK - MCP Integration ===\n")
 
@@ -20,8 +21,8 @@ def main():
     # In production: Use env var or config to specify path
     config_paths = [
         "../../examples/mcp-config.yaml",  # From tenuo-python/examples/
-        "../examples/mcp-config.yaml",    # Alternative path
-        "examples/mcp-config.yaml",        # From repo root
+        "../examples/mcp-config.yaml",  # Alternative path
+        "examples/mcp-config.yaml",  # From repo root
     ]
 
     config = None
@@ -80,13 +81,13 @@ def main():
     try:
         # SIMULATION: Create warrant with hardcoded constraints
         # In production: Constraints come from policy engine or configuration
-        warrant = (Warrant.mint_builder()
-            .capability("filesystem_read",
-                path=Pattern("/var/log/*"),
-                max_size=Range.max_value(1024 * 1024))
+        warrant = (
+            Warrant.mint_builder()
+            .capability("filesystem_read", path=Pattern("/var/log/*"), max_size=Range.max_value(1024 * 1024))
             .holder(control_keypair.public_key)
             .ttl(3600)
-            .mint(control_keypair))
+            .mint(control_keypair)
+        )
         # Note: warrant.tools is a property (getter) returning a list
         print("   [OK] Warrant created")
         print(f"   Tools: {warrant.tools}")
@@ -99,7 +100,7 @@ def main():
     print("\n4. Simulating MCP tool call...")
     mcp_arguments = {
         "path": "/var/log/app.log",
-        "maxSize": 512 * 1024  # 512KB
+        "maxSize": 512 * 1024,  # 512KB
     }
     print(f"   MCP arguments: {mcp_arguments}")
 
@@ -128,7 +129,7 @@ def main():
         authorized = warrant.authorize(
             tool="filesystem_read",
             args=constraints_dict,  # Use extracted constraints directly (names match warrant)
-            signature=bytes(pop_signature)
+            signature=bytes(pop_signature),
         )
         if authorized:
             print("   [OK] Warrant authorization: Allowed")
@@ -171,31 +172,25 @@ def demo_without_config(control_keypair):
 
     # Create warrant
     try:
-        warrant = (Warrant.mint_builder()
-            .capability("filesystem_read",
-                path=Pattern("/var/log/*"),
-                maxSize=Range.max_value(1024 * 1024))
+        warrant = (
+            Warrant.mint_builder()
+            .capability("filesystem_read", path=Pattern("/var/log/*"), maxSize=Range.max_value(1024 * 1024))
             .holder(control_keypair.public_key)
             .ttl(3600)
-            .mint(control_keypair))
+            .mint(control_keypair)
+        )
         print(f"✓ Warrant created: {warrant.tools}")
     except Exception as e:
         print(f"✗ Error: {e}")
         return
 
     # Simulate MCP tool call
-    mcp_arguments = {
-        "path": "/var/log/app.log",
-        "maxSize": 512 * 1024
-    }
+    mcp_arguments = {"path": "/var/log/app.log", "maxSize": 512 * 1024}
     print(f"\nSimulated MCP arguments: {mcp_arguments}")
 
     # In real usage, CompiledMcpConfig would extract these
     # For demo, we'll manually create the constraint dict
-    extracted_constraints = {
-        "path": "/var/log/app.log",
-        "maxSize": 512 * 1024
-    }
+    extracted_constraints = {"path": "/var/log/app.log", "maxSize": 512 * 1024}
     print(f"Extracted constraints: {extracted_constraints}")
 
     # Authorize
@@ -214,6 +209,7 @@ def demo_without_config(control_keypair):
             print(f"✗ Authorizer.check failed: {e}")
     except Exception as e:
         print(f"\n✗ Authorization failed: {e}")
+
+
 if __name__ == "__main__":
     main()
-

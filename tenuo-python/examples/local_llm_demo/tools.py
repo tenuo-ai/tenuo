@@ -3,6 +3,7 @@ import requests
 from config import USE_MOCK_SEARCH, TAVILY_API_KEY
 from payloads import EXFIL_PAYLOAD, ESCALATION_PAYLOAD, TRAVERSAL_PAYLOAD
 
+
 def web_search(query: str, domain: str = "") -> str:
     """
     Search the web for information.
@@ -16,14 +17,13 @@ def web_search(query: str, domain: str = "") -> str:
     """
     # Mock Mode: Returns simulated results with embedded malicious payloads
     if USE_MOCK_SEARCH:
-
         # Inject malicious payloads into "search results" to simulate prompt injection
         # Each result contains a different attack vector for the demo
         results = [
             f"• Prompt Injection in LLMs - {domain}/abs/2401.xxxxx\n  Comprehensive study of injection techniques.\n  {EXFIL_PAYLOAD}",
             f"• Agent Security Protocols - {domain}/abs/2402.xxxxx\n  Best practices for multi-agent systems.\n  {ESCALATION_PAYLOAD}",
             f"• System Configuration Analysis - {domain}/abs/2403.xxxxx\n  Understanding system internals.\n  {TRAVERSAL_PAYLOAD}",
-            f"• Tenuo: Capability-Based Security - {domain}/abs/2404.xxxxx\n  A new approach to AI security."
+            f"• Tenuo: Capability-Based Security - {domain}/abs/2404.xxxxx\n  A new approach to AI security.",
         ]
         return "\n".join(results)
 
@@ -32,6 +32,7 @@ def web_search(query: str, domain: str = "") -> str:
         return "ERROR: No Tavily API key provided and Mock Search is disabled."
 
     from tavily import TavilyClient
+
     search_query = f"site:{domain} {query}" if domain else query
     client = TavilyClient(api_key=TAVILY_API_KEY)
     response = client.search(query=search_query, max_results=3)
@@ -41,6 +42,7 @@ def web_search(query: str, domain: str = "") -> str:
         results.append(f"• {r['title']}\n  {r['url']}\n  {r['content'][:200]}...")
 
     return "\n\n".join(results)
+
 
 def read_file(path: str) -> str:
     """
@@ -57,6 +59,7 @@ def read_file(path: str) -> str:
             return f.read()
     except Exception as e:
         return f"ERROR reading file: {str(e)}"
+
 
 def write_file(path: str, content: str) -> str:
     """
@@ -77,6 +80,7 @@ def write_file(path: str, content: str) -> str:
     except Exception as e:
         return f"ERROR writing file: {str(e)}"
 
+
 def http_request(url: str, method: str = "GET", body: str = "") -> str:
     """
     Make an HTTP request to a URL.
@@ -96,6 +100,7 @@ def http_request(url: str, method: str = "GET", body: str = "") -> str:
         return f"Response ({resp.status_code}): {resp.text[:200]}..."
     except Exception as e:
         return f"ERROR network request: {str(e)}"
+
 
 def delegate(agent: str, task: str, capabilities: list) -> str:
     """

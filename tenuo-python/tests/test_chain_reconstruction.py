@@ -24,7 +24,7 @@ def test_compute_diff_basic():
         keypair=control_kp,
         capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     # Create child via builder
@@ -58,7 +58,7 @@ def test_chain_reconstruction_simple():
         keypair=control_kp,
         capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         holder=orchestrator_kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     # First delegation
@@ -81,12 +81,15 @@ def test_chain_reconstruction_simple():
     class SimpleStore:
         def __init__(self):
             self.warrants = {}
+
         def get(self, key: str):
             return self.warrants.get(key)
+
         def put(self, warrant: Warrant):
             self.warrants[warrant.id] = warrant
             # Also index by payload hash for chain reconstruction
             import hashlib
+
             h = hashlib.sha256(warrant.payload_bytes).hexdigest()
             self.warrants[h] = warrant
 
@@ -121,7 +124,7 @@ def test_chain_reconstruction_with_store():
         keypair=control_kp,
         capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         holder=orchestrator_kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     # First delegation
@@ -142,6 +145,7 @@ def test_chain_reconstruction_with_store():
         def put(self, warrant: Warrant):
             self.warrants[warrant.id] = warrant
             import hashlib
+
             h = hashlib.sha256(warrant.payload_bytes).hexdigest()
             self.warrants[h] = warrant
 
@@ -165,19 +169,25 @@ def test_multiple_constraint_changes():
 
     parent = Warrant.mint(
         keypair=control_kp,
-        capabilities=Constraints.for_tool("file_ops", {
-            "path": Pattern("/data/*"),
-            "max_size": Range.max_value(1000000),
-        }),
+        capabilities=Constraints.for_tool(
+            "file_ops",
+            {
+                "path": Pattern("/data/*"),
+                "max_size": Range.max_value(1000000),
+            },
+        ),
         holder=control_kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     builder = parent.grant_builder()
-    builder.capability("file_ops", {
-        "path": Exact("/data/q3.pdf"),
-        "max_size": Range.max_value(500000),
-    })
+    builder.capability(
+        "file_ops",
+        {
+            "path": Exact("/data/q3.pdf"),
+            "max_size": Range.max_value(500000),
+        },
+    )
     builder.ttl(60)
 
     diff = builder.diff_structured()
@@ -197,7 +207,7 @@ def test_clearance_change():
         keypair=control_kp,
         capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     builder = parent.grant_builder()
@@ -221,7 +231,7 @@ def test_tool_dropping():
         keypair=control_kp,
         capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     # Note: Tool narrowing in execution warrants is done via capabilities
@@ -249,7 +259,7 @@ def test_receipt_serialization_roundtrip():
         keypair=control_kp,
         capabilities=Constraints.for_tool("file_operations", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     builder = GrantBuilder(parent)
@@ -292,7 +302,7 @@ def test_diff_with_no_changes():
         keypair=control_kp,
         capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     # Create builder but don't make any changes
@@ -316,7 +326,7 @@ def test_receipt_after_delegation():
         keypair=control_kp,
         capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     builder = parent.grant_builder()

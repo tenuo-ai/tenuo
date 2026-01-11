@@ -24,7 +24,7 @@ class TestIssuerWarrantExists:
 
     def test_issue_issuer_exists(self):
         """Warrant.issue_issuer should be a callable static method."""
-        assert hasattr(Warrant, 'issue_issuer'), "Warrant.issue_issuer() is missing"
+        assert hasattr(Warrant, "issue_issuer"), "Warrant.issue_issuer() is missing"
         assert callable(Warrant.issue_issuer), "Warrant.issue_issuer should be callable"
 
     def test_issue_issuer_creates_issuer_warrant(self):
@@ -75,7 +75,7 @@ class TestIssueExecutionExists:
             ttl_seconds=3600,
         )
 
-        assert hasattr(issuer_warrant, 'issue_execution'), "warrant.issue_execution() is missing"
+        assert hasattr(issuer_warrant, "issue_execution"), "warrant.issue_execution() is missing"
         assert callable(issuer_warrant.issue_execution), "warrant.issue_execution should be callable"
 
     def test_issue_execution_returns_builder(self):
@@ -93,11 +93,11 @@ class TestIssueExecutionExists:
 
         # Should be a builder with fluent API methods
         assert builder is not None
-        assert hasattr(builder, 'tool'), "IssuanceBuilder should have tool()"
-        assert hasattr(builder, 'capability'), "IssuanceBuilder should have capability()"
-        assert hasattr(builder, 'holder'), "IssuanceBuilder should have holder()"
-        assert hasattr(builder, 'ttl'), "IssuanceBuilder should have ttl()"
-        assert hasattr(builder, 'build'), "IssuanceBuilder should have build()"
+        assert hasattr(builder, "tool"), "IssuanceBuilder should have tool()"
+        assert hasattr(builder, "capability"), "IssuanceBuilder should have capability()"
+        assert hasattr(builder, "holder"), "IssuanceBuilder should have holder()"
+        assert hasattr(builder, "ttl"), "IssuanceBuilder should have ttl()"
+        assert hasattr(builder, "build"), "IssuanceBuilder should have build()"
 
     def test_issue_execution_only_on_issuer_warrants(self):
         """issue_execution() should fail on execution warrants."""
@@ -156,7 +156,7 @@ class TestGrantMethod:
             ttl_seconds=3600,
         )
 
-        assert hasattr(warrant, 'grant'), "warrant.grant() is missing"
+        assert hasattr(warrant, "grant"), "warrant.grant() is missing"
 
     def test_grant_narrows_constraints(self):
         """grant() should narrow constraints."""
@@ -241,9 +241,7 @@ class TestGrantBuilderToolSelection:
         child = builder.grant(kp)
 
         # Child has ONLY the narrowed tools
-        assert child.tools == ["read_file"], (
-            f"Expected ['read_file'], got {child.tools}"
-        )
+        assert child.tools == ["read_file"], f"Expected ['read_file'], got {child.tools}"
         assert "send_email" not in child.tools
         assert "query_db" not in child.tools
 
@@ -269,7 +267,6 @@ class TestGrantBuilderToolSelection:
 
     def test_grant_builder_rejects_tool_not_in_parent(self):
         """Cannot add tools that weren't in parent."""
-
 
         kp = SigningKey.generate()
         worker_kp = SigningKey.generate()
@@ -332,7 +329,7 @@ class TestTerminalWarrants:
         )
 
         # Should not be terminal (depth=0, no max_depth limit)
-        assert hasattr(warrant, 'is_terminal'), "Warrant should have is_terminal method"
+        assert hasattr(warrant, "is_terminal"), "Warrant should have is_terminal method"
         assert not warrant.is_terminal(), "Root warrant with no max_depth should not be terminal"
 
     def test_terminal_warrant_via_builder(self):

@@ -28,6 +28,7 @@ from tenuo_core import Clearance
 # PoP Enforcement Tests
 # ============================================================================
 
+
 def test_guard_requires_keypair_context():
     """Test that @guard enforces keypair context for PoP."""
 
@@ -41,11 +42,12 @@ def test_guard_requires_keypair_context():
         keypair=kp,
         capabilities=Constraints.for_tool("test_tool", {"value": Pattern("*")}),
         holder=kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     # Should fail without keypair context
     from tenuo.exceptions import MissingSigningKey
+
     with warrant_scope(warrant):
         with pytest.raises(MissingSigningKey):
             protected_function(value="test")
@@ -64,7 +66,7 @@ def test_guard_with_explicit_keypair():
         keypair=kp,
         capabilities=Constraints.for_tool("test_tool", {"value": Exact("allowed")}),
         holder=kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     # Keypair passed to decorator explicitly
@@ -90,7 +92,7 @@ def test_context_based_pop_retrieval():
         keypair=kp,
         capabilities=Constraints.for_tool("read_file", {"path": Pattern("/data/*")}),
         holder=kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     # Set contexts
@@ -116,7 +118,7 @@ def test_pop_prevents_replay_attacks():
         keypair=kp,
         capabilities=Constraints.for_tool("delete_file", {"path": Exact("/tmp/test.txt")}),
         holder=kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     # Each call should generate a new PoP signature
@@ -148,7 +150,7 @@ def test_pop_prevents_cross_tenant_misuse():
         keypair=tenant_a_kp,  # Signed by Tenant A
         capabilities=Constraints.for_tool("sensitive_operation", {"resource": Exact("secret-data")}),
         holder=tenant_b_agent_kp.public_key,  # For Tenant B's agent
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     # Verify the warrant was created correctly
@@ -190,7 +192,7 @@ def test_pop_signature_must_match_authorized_holder():
         keypair=correct_kp,
         capabilities=Constraints.for_tool("test_tool", {"action": Exact("test")}),
         holder=correct_kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     args = {"action": "test"}
@@ -214,6 +216,7 @@ def test_pop_signature_must_match_authorized_holder():
 # Warrant Type Tests
 # ============================================================================
 
+
 def test_warrant_has_depth_property():
     """Test that warrants expose depth property."""
 
@@ -221,10 +224,7 @@ def test_warrant_has_depth_property():
 
     # Root warrant has depth 0
     root = Warrant.mint(
-        keypair=kp,
-        capabilities=Constraints.for_tool("test_tool", {}),
-        holder=kp.public_key,
-        ttl_seconds=60
+        keypair=kp, capabilities=Constraints.for_tool("test_tool", {}), holder=kp.public_key, ttl_seconds=60
     )
     assert root.depth == 0
 
@@ -233,7 +233,7 @@ def test_warrant_has_depth_property():
         capabilities=Constraints.for_tool("test_tool", {}),
         signing_key=kp,  # kp signs (they hold root)
         holder=kp.public_key,
-        ttl_seconds=30
+        ttl_seconds=30,
     )
     assert child.depth == 1
 
@@ -249,7 +249,7 @@ def test_warrant_chain_verification():
         keypair=control_kp,
         capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/*")}),
         holder=control_kp.public_key,
-        ttl_seconds=3600
+        ttl_seconds=3600,
     )
 
     # Attenuated warrant
@@ -257,7 +257,7 @@ def test_warrant_chain_verification():
         capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/reports/*")}),
         signing_key=control_kp,  # control_kp signs (they hold root)
         holder=worker_kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     # Verify chain
@@ -283,6 +283,7 @@ def test_warrant_chain_verification():
 # Trust Level Tests
 # ============================================================================
 
+
 def test_clearance_monotonicity():
     """Test that clearance levels can only decrease during delegation."""
 
@@ -294,7 +295,7 @@ def test_clearance_monotonicity():
         capabilities=Constraints.for_tool("test_tool", {}),
         holder=kp.public_key,
         ttl_seconds=3600,
-        clearance=Clearance.INTERNAL
+        clearance=Clearance.INTERNAL,
     )
 
     assert root.clearance.value() == Clearance.INTERNAL.value()
@@ -324,7 +325,7 @@ def test_clearance_enforcement():
         capabilities=Constraints.for_tool("read_data", {"sensitivity": Exact("public")}),
         holder=kp.public_key,
         ttl_seconds=60,
-        clearance=Clearance.EXTERNAL
+        clearance=Clearance.EXTERNAL,
     )
 
     @guard(tool="read_data")
@@ -359,6 +360,7 @@ def test_clearance_hierarchy():
 # Context Management Tests
 # ============================================================================
 
+
 def test_context_isolation():
     """Test that contexts are properly isolated between calls."""
 
@@ -366,17 +368,11 @@ def test_context_isolation():
     kp2 = SigningKey.generate()
 
     warrant1 = Warrant.mint(
-        keypair=kp1,
-        capabilities=Constraints.for_tool("tool1", {}),
-        holder=kp1.public_key,
-        ttl_seconds=60
+        keypair=kp1, capabilities=Constraints.for_tool("tool1", {}), holder=kp1.public_key, ttl_seconds=60
     )
 
     warrant2 = Warrant.mint(
-        keypair=kp2,
-        capabilities=Constraints.for_tool("tool2", {}),
-        holder=kp2.public_key,
-        ttl_seconds=60
+        keypair=kp2, capabilities=Constraints.for_tool("tool2", {}), holder=kp2.public_key, ttl_seconds=60
     )
 
     # Set first context
@@ -401,17 +397,11 @@ def test_nested_contexts():
     kp = SigningKey.generate()
 
     warrant1 = Warrant.mint(
-        keypair=kp,
-        capabilities=Constraints.for_tool("tool1", {}),
-        holder=kp.public_key,
-        ttl_seconds=60
+        keypair=kp, capabilities=Constraints.for_tool("tool1", {}), holder=kp.public_key, ttl_seconds=60
     )
 
     warrant2 = Warrant.mint(
-        keypair=kp,
-        capabilities=Constraints.for_tool("tool2", {}),
-        holder=kp.public_key,
-        ttl_seconds=60
+        keypair=kp, capabilities=Constraints.for_tool("tool2", {}), holder=kp.public_key, ttl_seconds=60
     )
 
     # Outer context
@@ -433,6 +423,7 @@ def test_nested_contexts():
 # ============================================================================
 # Authorization Failure Tests
 # ============================================================================
+
 
 def test_authorization_fails_without_warrant():
     """Test that authorization fails when no warrant is in context."""
@@ -463,7 +454,7 @@ def test_authorization_fails_with_wrong_tool():
         keypair=kp,
         capabilities=Constraints.for_tool("wrong_tool", {"value": Pattern("*")}),
         holder=kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     with warrant_scope(warrant), key_scope(kp):
@@ -485,7 +476,7 @@ def test_authorization_fails_with_constraint_violation():
         keypair=kp,
         capabilities=Constraints.for_tool("read_file", {"path": Pattern("/allowed/*")}),
         holder=kp.public_key,
-        ttl_seconds=60
+        ttl_seconds=60,
     )
 
     with warrant_scope(warrant), key_scope(kp):
@@ -512,10 +503,11 @@ def test_authorization_fails_with_expired_warrant():
         keypair=kp,
         capabilities=Constraints.for_tool("test_tool", {"value": Pattern("*")}),
         holder=kp.public_key,
-        ttl_seconds=0  # Expires immediately
+        ttl_seconds=0,  # Expires immediately
     )
 
     import time
+
     time.sleep(1)  # Wait for expiration
 
     with warrant_scope(warrant), key_scope(kp):

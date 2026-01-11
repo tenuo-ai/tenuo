@@ -17,6 +17,7 @@ from agents import run_research_agent, run_summary_agent
 # Constants
 LM_STUDIO_API_URL = config.LM_STUDIO_URL + "/v1/models"
 
+
 def pre_flight_check():
     """Check if LM Studio is running and has models."""
     # Use configured model ID if available
@@ -30,8 +31,11 @@ def pre_flight_check():
             data = resp.json()
             models = data.get("data", [])
             if not models:
-                display.print_verdict(False, "LM Studio running but NO MODELS loaded",
-                                      "Please load a model (e.g. qwen2.5-7b) in LM Studio.")
+                display.print_verdict(
+                    False,
+                    "LM Studio running but NO MODELS loaded",
+                    "Please load a model (e.g. qwen2.5-7b) in LM Studio.",
+                )
                 return False
 
             model_id = models[0]["id"]
@@ -39,12 +43,16 @@ def pre_flight_check():
             return model_id
 
     except requests.exceptions.ConnectionError:
-        display.print_verdict(False, "LM Studio NOT DETECTED",
-                              f"Could not connect to {config.LM_STUDIO_URL}.\n"
-                              "Please start LM Studio and enable the Local Server (port 1234).")
+        display.print_verdict(
+            False,
+            "LM Studio NOT DETECTED",
+            f"Could not connect to {config.LM_STUDIO_URL}.\n"
+            "Please start LM Studio and enable the Local Server (port 1234).",
+        )
         return False
 
     return False
+
 
 async def main():
     # Introduction
@@ -62,8 +70,9 @@ async def main():
     config.setup_workspace()
 
     # Step 1: Key Management
-    display.print_step(1, "Generate Cryptographic Keys",
-        "Each agent gets a unique key pair. Keys bind warrants to specific agents.")
+    display.print_step(
+        1, "Generate Cryptographic Keys", "Each agent gets a unique key pair. Keys bind warrants to specific agents."
+    )
 
     control_plane_key = SigningKey.generate()
     research_agent_key = SigningKey.generate()
@@ -74,10 +83,12 @@ async def main():
     print(f"  Summary Agent: {str(summary_agent_key.public_key)[:20]}...")
 
     # Step 2: Mint Root Warrant
-    display.print_step(2, "Mint Root Warrant",
-        "The Control Plane issues a warrant defining what the Research Agent can do.")
+    display.print_step(
+        2, "Mint Root Warrant", "The Control Plane issues a warrant defining what the Research Agent can do."
+    )
 
-    root_warrant = (Warrant.mint_builder()
+    root_warrant = (
+        Warrant.mint_builder()
         .holder(research_agent_key.public_key)
         .ttl(600)
         # Web Search: Restricted to arxiv.org, allow unknown args (query, etc)
@@ -94,36 +105,43 @@ async def main():
     display.print_warrant_details(root_warrant, "Research Agent")
 
     # Step 3: Connect to LLM
-    display.print_step(3, "Connect to Local LLM",
-        f"Connecting to {model_id} via LM Studio at {config.LM_STUDIO_URL}...")
+    display.print_step(
+        3, "Connect to Local LLM", f"Connecting to {model_id} via LM Studio at {config.LM_STUDIO_URL}..."
+    )
 
     async with lms.AsyncClient(config.LM_STUDIO_URL) as client:
         model = await client.llm.model(model_id)
         print(f"  Connected to: {model_id}")
 
         # Step 4: Run Research Agent
-        display.print_step(4, "Run Research Agent (with prompt injection attack)",
-            "The agent will search for papers. Search results contain hidden malicious instructions.")
+        display.print_step(
+            4,
+            "Run Research Agent (with prompt injection attack)",
+            "The agent will search for papers. Search results contain hidden malicious instructions.",
+        )
 
         display.print_injection_warning()
 
         summary_task, child_warrant = await run_research_agent(
-            model,
-            root_warrant,
-            research_agent_key,
-            delegate_to_key=summary_agent_key
+            model, root_warrant, research_agent_key, delegate_to_key=summary_agent_key
         )
 
         if summary_task and child_warrant:
             # Step 5: Run Summary Agent
-            display.print_step(5, "Run Summary Agent (delegated)",
-                "Research Agent delegated a task with a child warrant (reduced permissions).")
+            display.print_step(
+                5,
+                "Run Summary Agent (delegated)",
+                "Research Agent delegated a task with a child warrant (reduced permissions).",
+            )
 
             await run_summary_agent(model, child_warrant, summary_agent_key, summary_task)
         else:
-            display.print_learning("Delegation",
+            display.print_learning(
+                "Delegation",
                 "The Research Agent did not delegate. In a full demo, it would\n"
-                "create a child warrant with reduced permissions for the Summary Agent.")
+                "create a child warrant with reduced permissions for the Summary Agent.",
+            )
+
 
 def simulate_attacks():
     """
@@ -139,20 +157,23 @@ def simulate_attacks():
     display.console.print("This mode directly tests Tenuo's blocking without an LLM.\n")
 
     # Step 1: Setup
-    display.print_step(1, "Create Agent with Limited Warrant",
-        "The agent can only access arxiv.org and files in /tmp/research/")
+    display.print_step(
+        1, "Create Agent with Limited Warrant", "The agent can only access arxiv.org and files in /tmp/research/"
+    )
 
     control_key = SigningKey.generate()
     agent_key = SigningKey.generate()
 
-    warrant = (Warrant.mint_builder()
+    warrant = (
+        Warrant.mint_builder()
         .holder(agent_key.public_key)
         .ttl(600)
         .capability("web_search", domain=Pattern("arxiv.org"), _allow_unknown=True)
         .capability("read_file", path=Pattern(f"{config.RESEARCH_DIR}/*"))
         .capability("write_file", path=Pattern(f"{config.RESEARCH_DIR}/*"), _allow_unknown=True)
         .capability("delegate")
-        .mint(control_key))
+        .mint(control_key)
+    )
 
     display.print_warrant_details(warrant, "Research Agent")
 
@@ -163,8 +184,9 @@ def simulate_attacks():
     safe_http = protector._wrap(http_request)
 
     # Step 2: Simulate Attacks
-    display.print_step(2, "Simulate Prompt Injection Attacks",
-        "These are the malicious actions a compromised LLM might attempt.")
+    display.print_step(
+        2, "Simulate Prompt Injection Attacks", "These are the malicious actions a compromised LLM might attempt."
+    )
 
     display.console.print("\n[bold red]ATTACK 1: Data Exfiltration[/bold red]")
     display.console.print("Attacker tries to send stolen data to their server via http_request")
@@ -183,8 +205,9 @@ def simulate_attacks():
     safe_write(path="/etc/malicious.conf", content="pwned")
 
     # Step 3: Show what IS allowed
-    display.print_step(3, "Legitimate Actions (these succeed)",
-        "The warrant allows these actions, so they pass through.")
+    display.print_step(
+        3, "Legitimate Actions (these succeed)", "The warrant allows these actions, so they pass through."
+    )
 
     display.console.print("\n[bold green]ALLOWED: Write to authorized path[/bold green]")
     config.setup_workspace()  # Ensure directory exists
@@ -194,8 +217,10 @@ def simulate_attacks():
     blocked, allowed = protector.get_stats()
     display.print_demo_summary(blocked, allowed)
 
+
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) > 1 and sys.argv[1] == "--simulate":
         simulate_attacks()
     else:

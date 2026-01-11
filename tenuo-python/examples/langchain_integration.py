@@ -32,6 +32,7 @@ try:
     from langchain.agents.openai_tools.base import create_openai_tools_agent
     from langchain_openai import ChatOpenAI
     from langchain_core.callbacks import BaseCallbackHandler
+
     # from langchain.schema import AgentAction, AgentFinish, LLMResult
     LANGCHAIN_AVAILABLE = True
 except ImportError:
@@ -44,6 +45,7 @@ except ImportError:
 # Protected Tool Functions (using ContextVar pattern)
 # ============================================================================
 
+
 @guard(tool="read_file", extract_args=lambda file_path, **kwargs: {"file_path": file_path})
 def read_file_tool(file_path: str) -> str:
     """
@@ -54,7 +56,7 @@ def read_file_tool(file_path: str) -> str:
     This function will raise AuthorizationError if the warrant doesn't allow access.
     """
     try:
-        with open(file_path, 'r') as f:
+        with open(file_path, "r") as f:
             return f.read()
     except FileNotFoundError:
         # File doesn't exist - return error message (not an exception)
@@ -67,7 +69,9 @@ def read_file_tool(file_path: str) -> str:
         return f"Error: {str(e)}"
 
 
-@guard(tool="write_file", extract_args=lambda file_path, content, **kwargs: {"file_path": file_path, "content": content})
+@guard(
+    tool="write_file", extract_args=lambda file_path, content, **kwargs: {"file_path": file_path, "content": content}
+)
 def write_file_tool(file_path: str, content: str) -> str:
     """
     Write content to a file.
@@ -77,7 +81,7 @@ def write_file_tool(file_path: str, content: str) -> str:
     This function will raise AuthorizationError if the warrant doesn't allow access.
     """
     try:
-        with open(file_path, 'w') as f:
+        with open(file_path, "w") as f:
             f.write(content)
         return f"Successfully wrote {len(content)} bytes to {file_path}"
     except PermissionError:
@@ -104,6 +108,7 @@ def execute_command_tool(command: str) -> str:
     This function will raise AuthorizationError if the warrant doesn't allow the command.
     """
     import subprocess
+
     try:
         # HARDCODED: timeout=10 seconds. In production, use config or env var.
         result = subprocess.run(
@@ -111,7 +116,7 @@ def execute_command_tool(command: str) -> str:
             shell=True,  # WARNING: shell=True is insecure. Use shell=False with explicit args in production.
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=10,
         )
         if result.returncode == 0:
             return result.stdout
@@ -126,6 +131,7 @@ def execute_command_tool(command: str) -> str:
 # ============================================================================
 # LangChain Callback to Set Warrant Context
 # ============================================================================
+
 
 class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else object):  # type: ignore
     """
@@ -153,6 +159,7 @@ class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else objec
         if LANGCHAIN_AVAILABLE:
             # Set warrant and keypair in context for this tool execution
             from tenuo.decorators import _warrant_context, _keypair_context
+
             self.warrant_token = _warrant_context.set(self.warrant)
             self.keypair_token = _keypair_context.set(self.keypair)
 
@@ -160,6 +167,7 @@ class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else objec
         """Called when a tool finishes. Clean up context."""
         if LANGCHAIN_AVAILABLE:
             from tenuo.decorators import _warrant_context, _keypair_context
+
             if self.warrant_token:
                 _warrant_context.reset(self.warrant_token)
                 self.warrant_token = None
@@ -171,6 +179,7 @@ class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else objec
         """Called when a tool errors. Clean up context."""
         if LANGCHAIN_AVAILABLE:
             from tenuo.decorators import _warrant_context, _keypair_context
+
             if self.warrant_token:
                 _warrant_context.reset(self.warrant_token)
                 self.warrant_token = None
@@ -183,6 +192,7 @@ class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else objec
 # LangChain Tools Setup
 # ============================================================================
 
+
 def create_langchain_tools():
     """
     Create LangChain Tool objects from our protected functions.
@@ -194,17 +204,17 @@ def create_langchain_tools():
         Tool(
             name="read_file",
             func=read_file_tool,
-            description="Read a file from the filesystem. Input should be the file path as a string."
+            description="Read a file from the filesystem. Input should be the file path as a string.",
         ),
         Tool(
             name="write_file",
             func=lambda x: write_file_tool(**eval(f"dict({x})")),  # Simple parser for demo
-            description="Write content to a file. Input format: file_path='path', content='text'"
+            description="Write content to a file. Input format: file_path='path', content='text'",
         ),
         Tool(
             name="execute_command",
             func=execute_command_tool,
-            description="Execute a shell command. Use with caution. Input should be the command to run as a string."
+            description="Execute a shell command. Use with caution. Input should be the command to run as a string.",
         ),
     ]
     return tools
@@ -213,6 +223,7 @@ def create_langchain_tools():
 # ============================================================================
 # Main Integration Example
 # ============================================================================
+
 
 def main():
     print("=== Tenuo + LangChain Integration Example ===\n")
@@ -229,13 +240,18 @@ def main():
         # SIMULATION: Create warrant with hardcoded constraints
         # In production: Constraints come from policy engine, user request, or configuration
         # HARDCODED PATH: /tmp/* is used for demo safety. In production, use env vars or config.
-        agent_warrant = (Warrant.mint_builder()
-            .capability("read_file", {
-                "file_path": Pattern("/tmp/*"),  # HARDCODED: Only files in /tmp/ for demo safety
-            })
+        agent_warrant = (
+            Warrant.mint_builder()
+            .capability(
+                "read_file",
+                {
+                    "file_path": Pattern("/tmp/*"),  # HARDCODED: Only files in /tmp/ for demo safety
+                },
+            )
             .holder(control_keypair.public_key)  # Bind to self for demo
             .ttl(3600)  # HARDCODED: 1 hour TTL. In production, use env var or config.
-            .mint(control_keypair))
+            .mint(control_keypair)
+        )
 
         print("   ✓ Warrant created with constraints:")
         print("     - file_path: Pattern('/tmp/*')")
@@ -265,7 +281,7 @@ def main():
         # In production: Use tempfile or env-specified test directory
         test_file = "/tmp/langchain_test.txt"
         try:
-            with open(test_file, 'w') as f:
+            with open(test_file, "w") as f:
                 f.write("Hello from Tenuo + LangChain!")
         except (IOError, OSError) as e:
             print(f"   ⚠ Warning: Could not create test file: {e}")
@@ -375,7 +391,7 @@ def main():
     try:
         # Create a test file first
         try:
-            with open(test_file, 'w') as f:
+            with open(test_file, "w") as f:
                 f.write("Hello from LangChain + Tenuo!")
         except (IOError, OSError) as e:
             print(f"   ⚠ Warning: Could not create test file: {e}")
@@ -384,11 +400,8 @@ def main():
         # Run agent - it should be able to read the test file
         try:
             response = agent_executor.invoke(
-                {
-                    "input": f"Read the file {test_file} and tell me what it says",
-                    "chat_history": []
-                },
-                {"callbacks": [warrant_callback]}
+                {"input": f"Read the file {test_file} and tell me what it says", "chat_history": []},
+                {"callbacks": [warrant_callback]},
             )
             print(f"\n   Agent response: {response['output']}\n")
         except AuthorizationError as e:
@@ -403,9 +416,9 @@ def main():
             response = agent_executor.invoke(
                 {
                     "input": "Read the file /etc/passwd",  # HARDCODED: Protected file for demo
-                    "chat_history": []
+                    "chat_history": [],
                 },
-                {"callbacks": [warrant_callback]}
+                {"callbacks": [warrant_callback]},
             )
             print("   ✗ Should have been blocked!")
         except AuthorizationError as e:
@@ -427,4 +440,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

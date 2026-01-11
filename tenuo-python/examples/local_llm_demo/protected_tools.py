@@ -23,6 +23,7 @@ class ProtectedToolWrapper:
     2. Verifies the signature against the warrant
     3. Checks all constraints are satisfied
     """
+
     def __init__(self, warrant: Warrant, signing_key: SigningKey):
         self.warrant = warrant
         self.signing_key = signing_key
@@ -64,29 +65,38 @@ class ProtectedToolWrapper:
 
                 # Determine if it's a tool issue or constraint issue
                 if tool_name not in self.warrant.tools:
-                    display.print_verdict(False, f"Tool '{tool_name}' not in warrant",
+                    display.print_verdict(
+                        False,
+                        f"Tool '{tool_name}' not in warrant",
                         "This tool was never granted to this agent.",
-                        debug_link=debug_link)
+                        debug_link=debug_link,
+                    )
                     if not self._shown_tool_insight:
-                        display.print_learning("Principle of Least Authority",
+                        display.print_learning(
+                            "Principle of Least Authority",
                             "Agents only have access to explicitly granted capabilities.\n"
-                            "Even if tricked by prompt injection, they cannot use unauthorized tools.")
+                            "Even if tricked by prompt injection, they cannot use unauthorized tools.",
+                        )
                         self._shown_tool_insight = True
                 else:
-                    display.print_verdict(False, "Authorization Failed", clean_msg,
-                        debug_link=debug_link)
+                    display.print_verdict(False, "Authorization Failed", clean_msg, debug_link=debug_link)
                     if not self._shown_constraint_insight:
-                        display.print_learning("Constraint Enforcement",
+                        display.print_learning(
+                            "Constraint Enforcement",
                             "Even for allowed tools, arguments must satisfy constraints.\n"
-                            "The agent tried to access something outside its permitted scope.")
+                            "The agent tried to access something outside its permitted scope.",
+                        )
                         self._shown_constraint_insight = True
 
                 return f"AUTHORIZATION ERROR: {clean_msg}"
 
             # Authorized - PoP signature verified
             self.allowed_count += 1
-            display.print_verdict(True, "Authorized (PoP Verified)",
-                "Cryptographic proof: agent holds the key and arguments satisfy constraints.")
+            display.print_verdict(
+                True,
+                "Authorized (PoP Verified)",
+                "Cryptographic proof: agent holds the key and arguments satisfy constraints.",
+            )
 
             # Execute
             return tool(**kwargs)

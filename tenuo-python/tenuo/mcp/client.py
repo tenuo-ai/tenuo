@@ -17,6 +17,7 @@ try:
     from mcp import ClientSession, StdioServerParameters  # type: ignore[import-not-found]
     from mcp.client.stdio import stdio_client  # type: ignore[import-not-found]
     from mcp.types import Tool as MCPTool  # type: ignore[import-not-found]
+
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
@@ -25,6 +26,7 @@ except ImportError:
     MCPTool = object  # type: ignore
 
 import sys
+
 if sys.version_info < (3, 10) and MCP_AVAILABLE:
     # Should not happen if installed correctly, but guard anyway
     MCP_AVAILABLE = False
@@ -75,9 +77,7 @@ class SecureMCPClient:
             fine-grained control.
         """
         if not MCP_AVAILABLE:
-            raise ImportError(
-                "MCP SDK not installed. Install with: pip install \"tenuo[mcp]\""
-            )
+            raise ImportError('MCP SDK not installed. Install with: pip install "tenuo[mcp]"')
 
         self.command = command
         self.args = args
@@ -114,7 +114,7 @@ class SecureMCPClient:
                         "Overwriting existing MCP config in global configuration. "
                         "Consider calling configure(mcp_config=...) explicitly.",
                         UserWarning,
-                        stacklevel=2
+                        stacklevel=2,
                     )
 
                 if existing_config:
@@ -149,22 +149,14 @@ class SecureMCPClient:
 
     async def connect(self):
         """Connect to the MCP server."""
-        server_params = StdioServerParameters(
-            command=self.command,
-            args=self.args,
-            env=self.env
-        )
+        server_params = StdioServerParameters(command=self.command, args=self.args, env=self.env)
 
         # Connect via stdio
-        stdio_transport = await self.exit_stack.enter_async_context(
-            stdio_client(server_params)
-        )
+        stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
         stdio, write = stdio_transport
 
         # Create session
-        self.session = await self.exit_stack.enter_async_context(
-            ClientSession(stdio, write)
-        )
+        self.session = await self.exit_stack.enter_async_context(ClientSession(stdio, write))
 
         # Initialize protocol
         await self.session.initialize()
@@ -225,7 +217,7 @@ class SecureMCPClient:
         self,
         tool_name: str,
         arguments: Dict[str, Any],
-    ) -> 'ValidationResult':
+    ) -> "ValidationResult":
         """
         Check if a tool call would be authorized under the current warrant.
 
@@ -237,19 +229,18 @@ class SecureMCPClient:
             ValidationResult
         """
         from ..validation import ValidationResult
+
         warrant = warrant_scope()
         keypair = key_scope()
 
         if warrant is None:
             return ValidationResult.fail(
-                "No active warrant in context",
-                suggestions=["Wrap your call in 'async with mint(...):'"]
+                "No active warrant in context", suggestions=["Wrap your call in 'async with mint(...):'"]
             )
 
         if keypair is None:
             return ValidationResult.fail(
-                "No signing key in context",
-                suggestions=["Call configure(issuer_key=...) or use key_scope()"]
+                "No signing key in context", suggestions=["Call configure(issuer_key=...) or use key_scope()"]
             )
 
         # Re-map arguments if we have a config
@@ -312,12 +303,9 @@ class SecureMCPClient:
                     warrant_base64 = warrant.to_base64()
                     # Create PoP signature for this specific call
                     pop_sig = warrant.sign(keypair, tool_name, args)
-                    signature_base64 = base64.b64encode(bytes(pop_sig)).decode('utf-8')
+                    signature_base64 = base64.b64encode(bytes(pop_sig)).decode("utf-8")
 
-                    call_args["_tenuo"] = {
-                        "warrant": warrant_base64,
-                        "signature": signature_base64
-                    }
+                    call_args["_tenuo"] = {"warrant": warrant_base64, "signature": signature_base64}
 
             if self.session is None:
                 raise RuntimeError("Not connected to MCP server. Call connect() first.")
@@ -328,9 +316,7 @@ class SecureMCPClient:
         # Authorize locally if warrant context is enabled
         if warrant_context:
             if not is_configured():
-                raise ConfigurationError(
-                    "Tenuo not configured. Call configure() first or use warrant_context=False"
-                )
+                raise ConfigurationError("Tenuo not configured. Call configure() first or use warrant_context=False")
 
             # Create protected wrapper for local authorization
             @guard(tool=tool_name, extract_args=lambda **kwargs: kwargs)
@@ -357,8 +343,8 @@ class SecureMCPClient:
 
         # Extract allowed keys from JSON Schema to prevent "Shadow Parameter" attacks
         # We fail-closed: if it's not in the schema, it doesn't get sent to the server.
-        input_schema = getattr(mcp_tool, 'inputSchema', {}) or {}
-        properties = input_schema.get('properties', {})
+        input_schema = getattr(mcp_tool, "inputSchema", {}) or {}
+        properties = input_schema.get("properties", {})
         allowed_keys = set(properties.keys())
 
         def _extract_auth_args(**kwargs):
@@ -378,18 +364,12 @@ class SecureMCPClient:
         async def protected_tool(**kwargs):
             """Protected MCP tool wrapper."""
             # Filter arguments against schema (Schema-Based Argument Stripping)
-            filtered_args = {
-                k: v for k, v in kwargs.items()
-                if k in allowed_keys
-            }
+            filtered_args = {k: v for k, v in kwargs.items() if k in allowed_keys}
 
             # Note: We could log dropped arguments here if needed
 
             return await self.call_tool(
-                tool_name,
-                filtered_args,
-                warrant_context=False,
-                inject_warrant=self.inject_warrant
+                tool_name, filtered_args, warrant_context=False, inject_warrant=self.inject_warrant
             )
 
         # Set function metadata

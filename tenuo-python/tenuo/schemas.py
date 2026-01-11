@@ -36,6 +36,7 @@ class ToolSchema:
         risk_level: One of "critical", "high", "medium", "low"
         description: Optional description of the tool's security implications
     """
+
     recommended_constraints: List[str] = field(default_factory=list)
     require_at_least_one: bool = False
     risk_level: str = "medium"  # critical, high, medium, low
@@ -44,10 +45,7 @@ class ToolSchema:
     def __post_init__(self) -> None:
         valid_levels = {"critical", "high", "medium", "low"}
         if self.risk_level not in valid_levels:
-            raise ValueError(
-                f"Invalid risk_level '{self.risk_level}'. "
-                f"Must be one of: {valid_levels}"
-            )
+            raise ValueError(f"Invalid risk_level '{self.risk_level}'. Must be one of: {valid_levels}")
 
 
 # Built-in schemas for common tools
@@ -77,7 +75,6 @@ TOOL_SCHEMAS: Dict[str, ToolSchema] = {
         risk_level="low",
         description="List directory contents",
     ),
-
     # Network tools
     "http_request": ToolSchema(
         recommended_constraints=["url", "domain", "method"],
@@ -91,7 +88,6 @@ TOOL_SCHEMAS: Dict[str, ToolSchema] = {
         risk_level="high",
         description="Fetch content from URLs",
     ),
-
     # Communication tools
     "send_email": ToolSchema(
         recommended_constraints=["to", "domain"],
@@ -105,7 +101,6 @@ TOOL_SCHEMAS: Dict[str, ToolSchema] = {
         risk_level="high",
         description="Send messages to users or channels",
     ),
-
     # Database tools
     "query_db": ToolSchema(
         recommended_constraints=["table", "query_type"],
@@ -119,7 +114,6 @@ TOOL_SCHEMAS: Dict[str, ToolSchema] = {
         risk_level="critical",
         description="Execute raw SQL queries",
     ),
-
     # Code execution tools
     "run_code": ToolSchema(
         recommended_constraints=["language", "timeout"],
@@ -133,7 +127,6 @@ TOOL_SCHEMAS: Dict[str, ToolSchema] = {
         risk_level="critical",
         description="Execute shell commands",
     ),
-
     # Search tools
     "web_search": ToolSchema(
         recommended_constraints=["query", "domain"],
@@ -246,20 +239,16 @@ def check_constraints(tools: list, constraints: dict) -> List[str]:
 
         if schema and schema.recommended_constraints:
             # Check if any recommended constraint is present
-            has_constraint = any(
-                c in constraints for c in schema.recommended_constraints
-            )
+            has_constraint = any(c in constraints for c in schema.recommended_constraints)
 
             if not has_constraint:
                 if schema.risk_level == "critical":
                     warnings.append(
-                        f"CRITICAL: '{name}' has no constraints. "
-                        f"Required: {schema.recommended_constraints}"
+                        f"CRITICAL: '{name}' has no constraints. Required: {schema.recommended_constraints}"
                     )
                 elif schema.risk_level == "high":
                     warnings.append(
-                        f"WARNING: '{name}' has no constraints. "
-                        f"Recommended: {schema.recommended_constraints}"
+                        f"WARNING: '{name}' has no constraints. Recommended: {schema.recommended_constraints}"
                     )
 
     return warnings
@@ -268,10 +257,10 @@ def check_constraints(tools: list, constraints: dict) -> List[str]:
 def _get_tool_name(tool) -> str:
     """Extract tool name from various tool types."""
     # LangChain Tool
-    if hasattr(tool, 'name'):
+    if hasattr(tool, "name"):
         return tool.name
     # Callable with __name__
-    if hasattr(tool, '__name__'):
+    if hasattr(tool, "__name__"):
         return tool.__name__
     # Fallback
     return str(tool)

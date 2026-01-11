@@ -176,6 +176,18 @@ pub enum Error {
     #[error("URL does not match: {reason}")]
     UrlMismatch { reason: String },
 
+    /// Path not contained within root directory.
+    #[error("path '{path}' is not contained within root '{root}'")]
+    PathNotContained { path: String, root: String },
+
+    /// Invalid path format.
+    #[error("invalid path '{path}': {reason}")]
+    InvalidPath { path: String, reason: String },
+
+    /// URL not safe (SSRF protection).
+    #[error("URL '{url}' blocked: {reason}")]
+    UrlNotSafe { url: String, reason: String },
+
     /// Contains child doesn't require all values that parent requires.
     #[error("required value removed: child must still require '{value}'")]
     RequiredValueRemoved { value: String },

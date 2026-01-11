@@ -30,11 +30,13 @@ class TestTrustCliffBasics:
 
     def test_no_constraints_allows_any_arguments(self, keypair):
         """Rule 1: Empty constraint set allows any arguments."""
-        warrant = (Warrant.mint_builder()
+        warrant = (
+            Warrant.mint_builder()
             .tool("api_call")  # No constraints
             .holder(keypair.public_key)
             .ttl(3600)
-            .mint(keypair))
+            .mint(keypair)
+        )
 
         # Any arguments should pass
         args = {"url": "https://any.com", "timeout": 999, "random_field": "anything"}
@@ -43,11 +45,13 @@ class TestTrustCliffBasics:
 
     def test_one_constraint_blocks_unknown_fields(self, keypair):
         """Rule 2: Once any constraint is defined, unknown fields are rejected."""
-        warrant = (Warrant.mint_builder()
+        warrant = (
+            Warrant.mint_builder()
             .capability("api_call", url=Pattern("https://api.example.com/*"))
             .holder(keypair.public_key)
             .ttl(3600)
-            .mint(keypair))
+            .mint(keypair)
+        )
 
         # Unknown field 'timeout' should be blocked
         args = {"url": "https://api.example.com/v1", "timeout": 30}
@@ -61,11 +65,13 @@ class TestTrustCliffBasics:
 
     def test_known_fields_still_pass(self, keypair):
         """Verify constrained fields still work when satisfied."""
-        warrant = (Warrant.mint_builder()
+        warrant = (
+            Warrant.mint_builder()
             .capability("api_call", url=Pattern("https://api.example.com/*"))
             .holder(keypair.public_key)
             .ttl(3600)
-            .mint(keypair))
+            .mint(keypair)
+        )
 
         # Only the constrained field - should pass
         args = {"url": "https://api.example.com/v1"}
@@ -78,14 +84,19 @@ class TestAllowUnknownOptOut:
 
     def test_allow_unknown_permits_unconstrained_fields(self, keypair):
         """Rule 3: _allow_unknown: True explicitly opts out of closed-world."""
-        warrant = (Warrant.mint_builder()
-            .capability("api_call", {
-                "url": Pattern("https://api.example.com/*"),
-                "_allow_unknown": True,
-            })
+        warrant = (
+            Warrant.mint_builder()
+            .capability(
+                "api_call",
+                {
+                    "url": Pattern("https://api.example.com/*"),
+                    "_allow_unknown": True,
+                },
+            )
             .holder(keypair.public_key)
             .ttl(3600)
-            .mint(keypair))
+            .mint(keypair)
+        )
 
         # Unknown fields should now pass
         args = {"url": "https://api.example.com/v1", "timeout": 30, "retries": 5}
@@ -94,14 +105,19 @@ class TestAllowUnknownOptOut:
 
     def test_allow_unknown_still_enforces_defined_constraints(self, keypair):
         """_allow_unknown doesn't skip validation of defined constraints."""
-        warrant = (Warrant.mint_builder()
-            .capability("api_call", {
-                "url": Pattern("https://api.example.com/*"),
-                "_allow_unknown": True,
-            })
+        warrant = (
+            Warrant.mint_builder()
+            .capability(
+                "api_call",
+                {
+                    "url": Pattern("https://api.example.com/*"),
+                    "_allow_unknown": True,
+                },
+            )
             .holder(keypair.public_key)
             .ttl(3600)
-            .mint(keypair))
+            .mint(keypair)
+        )
 
         # Unknown field OK, but defined constraint must still be satisfied
         args = {"url": "https://evil.com/attack", "timeout": 30}
@@ -114,13 +130,13 @@ class TestWildcardVsAllowUnknown:
 
     def test_wildcard_allows_any_value_for_specific_field(self, keypair):
         """Rule 4: Wildcard() allows any value for a specific field."""
-        warrant = (Warrant.mint_builder()
-            .capability("api_call",
-                url=Pattern("https://api.example.com/*"),
-                timeout=Wildcard())
+        warrant = (
+            Warrant.mint_builder()
+            .capability("api_call", url=Pattern("https://api.example.com/*"), timeout=Wildcard())
             .holder(keypair.public_key)
             .ttl(3600)
-            .mint(keypair))
+            .mint(keypair)
+        )
 
         # timeout can be any value
         args = {"url": "https://api.example.com/v1", "timeout": 999999}
@@ -129,13 +145,13 @@ class TestWildcardVsAllowUnknown:
 
     def test_wildcard_does_not_allow_other_unknown_fields(self, keypair):
         """Wildcard() for one field doesn't open others."""
-        warrant = (Warrant.mint_builder()
-            .capability("api_call",
-                url=Pattern("https://api.example.com/*"),
-                timeout=Wildcard())
+        warrant = (
+            Warrant.mint_builder()
+            .capability("api_call", url=Pattern("https://api.example.com/*"), timeout=Wildcard())
             .holder(keypair.public_key)
             .ttl(3600)
-            .mint(keypair))
+            .mint(keypair)
+        )
 
         # 'retries' is still unknown and should be blocked
         args = {"url": "https://api.example.com/v1", "timeout": 30, "retries": 5}
@@ -144,14 +160,15 @@ class TestWildcardVsAllowUnknown:
 
     def test_wildcard_with_other_constraints(self, keypair):
         """Wildcard() works alongside other constraint types."""
-        warrant = (Warrant.mint_builder()
-            .capability("api_call",
-                url=Pattern("https://api.example.com/*"),
-                timeout=Wildcard(),
-                retries=Range.max_value(3))
+        warrant = (
+            Warrant.mint_builder()
+            .capability(
+                "api_call", url=Pattern("https://api.example.com/*"), timeout=Wildcard(), retries=Range.max_value(3)
+            )
             .holder(keypair.public_key)
             .ttl(3600)
-            .mint(keypair))
+            .mint(keypair)
+        )
 
         # All fields constrained - should pass
         args = {"url": "https://api.example.com/v1", "timeout": 9999, "retries": 2}
@@ -169,22 +186,28 @@ class TestAllowUnknownInheritance:
 
     def test_allow_unknown_not_inherited(self, keypair):
         """Rule 5: _allow_unknown is NOT inherited during attenuation."""
-        parent = (Warrant.mint_builder()
-            .capability("api_call", {
-                "url": Pattern("https://*"),
-                "_allow_unknown": True,
-            })
+        parent = (
+            Warrant.mint_builder()
+            .capability(
+                "api_call",
+                {
+                    "url": Pattern("https://*"),
+                    "_allow_unknown": True,
+                },
+            )
             .holder(keypair.public_key)
             .ttl(3600)
-            .mint(keypair))
+            .mint(keypair)
+        )
 
         # Child doesn't set _allow_unknown → defaults to closed
-        child = (parent.grant_builder()
-            .capability("api_call",
-                url=Pattern("https://api.example.com/*"))
+        child = (
+            parent.grant_builder()
+            .capability("api_call", url=Pattern("https://api.example.com/*"))
             .holder(keypair.public_key)
             .ttl(300)
-            .grant(keypair))
+            .grant(keypair)
+        )
 
         # Parent allows unknown fields
         parent_args = {"url": "https://any.com/path", "unknown_field": True}
@@ -198,24 +221,34 @@ class TestAllowUnknownInheritance:
 
     def test_child_can_explicitly_set_allow_unknown(self, keypair):
         """Child can explicitly set _allow_unknown: True if parent also has it."""
-        parent = (Warrant.mint_builder()
-            .capability("api_call", {
-                "url": Pattern("https://*"),
-                "_allow_unknown": True,
-            })
+        parent = (
+            Warrant.mint_builder()
+            .capability(
+                "api_call",
+                {
+                    "url": Pattern("https://*"),
+                    "_allow_unknown": True,
+                },
+            )
             .holder(keypair.public_key)
             .ttl(3600)
-            .mint(keypair))
+            .mint(keypair)
+        )
 
         # Child explicitly sets _allow_unknown
-        child = (parent.grant_builder()
-            .capability("api_call", {
-                "url": Pattern("https://api.example.com/*"),
-                "_allow_unknown": True,
-            })
+        child = (
+            parent.grant_builder()
+            .capability(
+                "api_call",
+                {
+                    "url": Pattern("https://api.example.com/*"),
+                    "_allow_unknown": True,
+                },
+            )
             .holder(keypair.public_key)
             .ttl(300)
-            .grant(keypair))
+            .grant(keypair)
+        )
 
         # Child should allow unknown fields
         args = {"url": "https://api.example.com/v1", "unknown_field": True}
@@ -228,15 +261,20 @@ class TestEdgeCases:
 
     def test_multiple_tools_independent_constraints(self, keypair):
         """Each tool has its own constraint set."""
-        warrant = (Warrant.mint_builder()
+        warrant = (
+            Warrant.mint_builder()
             .capability("read_file", path=Pattern("/data/*"))
-            .capability("write_file", {
-                "path": Pattern("/output/*"),
-                "_allow_unknown": True,
-            })
+            .capability(
+                "write_file",
+                {
+                    "path": Pattern("/output/*"),
+                    "_allow_unknown": True,
+                },
+            )
             .holder(keypair.public_key)
             .ttl(3600)
-            .mint(keypair))
+            .mint(keypair)
+        )
 
         # read_file is closed (no _allow_unknown)
         read_args = {"path": "/data/file.txt", "encoding": "utf-8"}
@@ -250,11 +288,13 @@ class TestEdgeCases:
 
     def test_empty_args_with_constraints(self, keypair):
         """Empty args should fail if constraints require fields."""
-        warrant = (Warrant.mint_builder()
+        warrant = (
+            Warrant.mint_builder()
             .capability("api_call", url=Pattern("https://api.example.com/*"))
             .holder(keypair.public_key)
             .ttl(3600)
-            .mint(keypair))
+            .mint(keypair)
+        )
 
         # Empty args - missing required 'url'
         args = {}
@@ -266,11 +306,13 @@ class TestEdgeCases:
 
     def test_constraint_value_type_mismatch(self, keypair):
         """Test handling of type mismatch (string pattern vs number)."""
-        warrant = (Warrant.mint_builder()
+        warrant = (
+            Warrant.mint_builder()
             .capability("api_call", count=Range.max_value(10))
             .holder(keypair.public_key)
             .ttl(3600)
-            .mint(keypair))
+            .mint(keypair)
+        )
 
         # String value for Range constraint - should fail
         args = {"count": "five"}

@@ -48,7 +48,7 @@ def discover_capabilities(
 
     lines = log_lines or []
     if log_file:
-        with open(log_file, 'r') as f:
+        with open(log_file, "r") as f:
             lines = f.readlines()
 
     for line in lines:
@@ -62,11 +62,11 @@ def discover_capabilities(
             continue
 
         # Look for authorization events
-        tool = entry.get('tool')
-        constraints = entry.get('constraints', {})
-        event_type = entry.get('event_type', '')
+        tool = entry.get("tool")
+        constraints = entry.get("constraints", {})
+        event_type = entry.get("event_type", "")
 
-        if tool and 'authorization' in event_type.lower():
+        if tool and "authorization" in event_type.lower():
             tool_calls[tool].append(constraints)
 
     # Analyze and generate capabilities
@@ -138,7 +138,7 @@ def _infer_constraint(field: str, values: Set[Any]) -> Optional[str]:
         val = values_list[0]
         if isinstance(val, str):
             return f'Exact("{val}")'
-        return f'Exact({val})'
+        return f"Exact({val})"
 
     # All strings
     if all(isinstance(v, str) for v in values_list):
@@ -150,7 +150,7 @@ def _infer_constraint(field: str, values: Set[Any]) -> Optional[str]:
         # Small set -> OneOf
         if len(values_list) <= 10:
             quoted = [f'"{v}"' for v in sorted(values_list)]
-            return f'OneOf([{", ".join(quoted)}])'
+            return f"OneOf([{', '.join(quoted)}])"
 
         # Default to wildcard
         return 'Pattern("*")'
@@ -159,7 +159,7 @@ def _infer_constraint(field: str, values: Set[Any]) -> Optional[str]:
     if all(isinstance(v, (int, float)) for v in values_list):
         min_val = min(values_list)
         max_val = max(values_list)
-        return f'Range({min_val}, {max_val})'
+        return f"Range({min_val}, {max_val})"
 
     # Mixed types - use wildcard
     return 'Pattern("*")'
@@ -178,11 +178,11 @@ def _find_common_prefix(strings: List[str]) -> str:
                 return ""
 
     # Don't return partial words - find last separator
-    for sep in ['/', '_', '-', '.']:
+    for sep in ["/", "_", "-", "."]:
         if sep in prefix:
             idx = prefix.rfind(sep)
             if idx > 0:
-                return prefix[:idx + 1]
+                return prefix[: idx + 1]
 
     return prefix
 
@@ -237,14 +237,14 @@ def parse_kv_args(args: List[str]) -> Dict[str, Any]:
     result: Dict[str, Any] = {}
 
     for arg in args:
-        if '=' not in arg:
+        if "=" not in arg:
             continue
-        key, value = arg.split('=', 1)
+        key, value = arg.split("=", 1)
 
         # Auto-type conversion
-        if value.lower() == 'true':
+        if value.lower() == "true":
             result[key] = True
-        elif value.lower() == 'false':
+        elif value.lower() == "false":
             result[key] = False
         elif value.isdigit():
             result[key] = int(value)
@@ -291,12 +291,12 @@ def verify_warrant(warrant_str: str, tool: str, args: Dict[str, Any]) -> bool:
             return False
 
         # Check allows
-        if hasattr(warrant, 'allows'):
+        if hasattr(warrant, "allows"):
             if not warrant.allows(tool, args):
                 print("  ❌ DENIED: Arguments do not satisfy constraints")
-                if hasattr(warrant, 'why_denied'):
+                if hasattr(warrant, "why_denied"):
                     why = warrant.why_denied(tool, args)
-                    if hasattr(why, 'suggestion'):
+                    if hasattr(why, "suggestion"):
                         print(f"  Suggestion: {why.suggestion}")
                 return False
 
@@ -306,7 +306,6 @@ def verify_warrant(warrant_str: str, tool: str, args: Dict[str, Any]) -> bool:
     except Exception as e:
         print(f"  ❌ ERROR: {e}")
         return False
-
 
 
 def print_rich_warrant(warrant) -> bool:
@@ -329,7 +328,9 @@ def print_rich_warrant(warrant) -> bool:
     status_icon = "❌" if warrant.is_expired() else "✅"
     term_icon = "🛑" if warrant.is_terminal() else "➡️"  # noqa: F841
 
-    root_text = Text(f"{status_icon} Warrant {warrant.id[:8]}... ", style="bold green" if not warrant.is_expired() else "bold red")
+    root_text = Text(
+        f"{status_icon} Warrant {warrant.id[:8]}... ", style="bold green" if not warrant.is_expired() else "bold red"
+    )
     root_text.append(f"({warrant.warrant_type}) ", style="yellow")
     if warrant.is_expired():
         root_text.append("[EXPIRED] ", style="red reverse")
@@ -344,11 +345,11 @@ def print_rich_warrant(warrant) -> bool:
     table.add_column("Constraints", style="green")
 
     # Try to get capabilities if available (property or manual)
-    capabilities = getattr(warrant, 'capabilities', {})
+    capabilities = getattr(warrant, "capabilities", {})
     if not capabilities and warrant.tools:
         # Fallback if capabilities property not ready/populated
         for tool in warrant.tools:
-             table.add_row(tool, "All allowed (or unknown)")
+            table.add_row(tool, "All allowed (or unknown)")
     else:
         for tool, constraints in capabilities.items():
             const_str = ", ".join([f"{k}={v}" for k, v in constraints.items()]) if constraints else "*"
@@ -358,8 +359,8 @@ def print_rich_warrant(warrant) -> bool:
 
     # Metadata
     meta = tree.add("Metadata")
-    if hasattr(warrant, 'ttl_remaining'):
-         meta.add(f"TTL: {warrant.ttl_remaining}")
+    if hasattr(warrant, "ttl_remaining"):
+        meta.add(f"TTL: {warrant.ttl_remaining}")
     meta.add(f"Expires: {warrant.expires_at()}")
     if warrant.parent_hash:
         meta.add(f"Parent: {warrant.parent_hash[:16]}...")
@@ -413,8 +414,10 @@ def print_rich_warrant_stack(warrants) -> bool:
     # Build tree from root to leaf
     root_warrant = warrants[0]
     root_status = "❌" if root_warrant.is_expired() else "✅"
-    root_text = Text(f"{root_status} ROOT: {root_warrant.id[:8]}...",
-                     style="bold green" if not root_warrant.is_expired() else "bold red")
+    root_text = Text(
+        f"{root_status} ROOT: {root_warrant.id[:8]}...",
+        style="bold green" if not root_warrant.is_expired() else "bold red",
+    )
     root_text.append(f" ({root_warrant.warrant_type})", style="yellow")
 
     tree = Tree(root_text)
@@ -422,18 +425,16 @@ def print_rich_warrant_stack(warrants) -> bool:
 
     for i, warrant in enumerate(warrants[1:], 1):
         status = "❌ EXPIRED" if warrant.is_expired() else "✅ VALID"
-        is_leaf = (i == len(warrants) - 1)
+        is_leaf = i == len(warrants) - 1
         prefix = "🍃 LEAF" if is_leaf else f"Level {i}"
 
-        node_text = Text(f"{prefix}: {warrant.id[:8]}... ",
-                        style="bold cyan" if is_leaf else "cyan")
+        node_text = Text(f"{prefix}: {warrant.id[:8]}... ", style="bold cyan" if is_leaf else "cyan")
         node_text.append(status, style="green" if not warrant.is_expired() else "red")
         node_text.append(f" ({warrant.warrant_type})", style="yellow")
 
         current = current.add(node_text)
 
-    console.print(Panel(tree, title=f"Warrant Chain ({len(warrants)} warrants)",
-                       border_style="green"))
+    console.print(Panel(tree, title=f"Warrant Chain ({len(warrants)} warrants)", border_style="green"))
     return True
 
 
@@ -476,10 +477,10 @@ def inspect_warrant(warrant_str: str) -> None:
         print(f"Expired: {warrant.is_expired()}")
         print(f"Terminal: {warrant.is_terminal()}")
 
-        if hasattr(warrant, 'ttl_remaining'):
+        if hasattr(warrant, "ttl_remaining"):
             print(f"TTL Remaining: {warrant.ttl_remaining}")
 
-        if hasattr(warrant, 'explain'):
+        if hasattr(warrant, "explain"):
             print("")
             print("Explanation:")
             print(warrant.explain(include_chain=True))
@@ -551,11 +552,11 @@ def _parse_ttl(ttl: str) -> int:
     """Parse TTL string like '1h', '30m', '300s' to seconds."""
     ttl = ttl.strip().lower()
 
-    if ttl.endswith('h'):
+    if ttl.endswith("h"):
         return int(ttl[:-1]) * 3600
-    elif ttl.endswith('m'):
+    elif ttl.endswith("m"):
         return int(ttl[:-1]) * 60
-    elif ttl.endswith('s'):
+    elif ttl.endswith("s"):
         return int(ttl[:-1])
     else:
         # Assume seconds if no suffix
@@ -577,16 +578,19 @@ def main():
         help="Analyze audit logs and generate capability definitions",
     )
     discover_parser.add_argument(
-        "--input", "-i",
+        "--input",
+        "-i",
         help="Path to audit log file (JSON lines format)",
         required=True,
     )
     discover_parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         help="Output file (default: stdout)",
     )
     discover_parser.add_argument(
-        "--format", "-f",
+        "--format",
+        "-f",
         choices=["yaml", "python"],
         default="yaml",
         help="Output format (default: yaml)",
@@ -608,7 +612,8 @@ def main():
         help="Create a test warrant (uses TENUO_ROOT_KEY from env)",
     )
     mint_parser.add_argument(
-        "--tool", "-t",
+        "--tool",
+        "-t",
         action="append",
         dest="tools",
         required=True,
@@ -630,12 +635,14 @@ def main():
         help="Base64-encoded warrant string",
     )
     validate_parser.add_argument(
-        "--tool", "-t",
+        "--tool",
+        "-t",
         required=True,
         help="Tool name to check",
     )
     validate_parser.add_argument(
-        "--args", "-a",
+        "--args",
+        "-a",
         default="{}",
         help="Tool arguments as JSON (default: {})",
     )
@@ -698,14 +705,14 @@ def init_project() -> None:
 
     # 1. Generate Root Key
     key = SigningKey.generate()
-    key_b64 = base64.b64encode(key.to_string()).decode('ascii')
+    key_b64 = base64.b64encode(key.to_string()).decode("ascii")
 
     # 2. Create .env
     env_content = f"TENUO_ROOT_KEY={key_b64}\nTENUO_ENV=dev\n"
     if Path(".env").exists():
         print("ℹ️  .env already exists, skipping.")
     else:
-        Path(".env").write_text(env_content, encoding='utf-8')
+        Path(".env").write_text(env_content, encoding="utf-8")
         print("✅ Received root_key (ed25519) -> .env")
 
     # 3. Create tenuo_config.py
@@ -737,7 +744,7 @@ if __name__ == "__main__":
     if Path("tenuo_config.py").exists():
         print("ℹ️  tenuo_config.py already exists, skipping.")
     else:
-        Path("tenuo_config.py").write_text(config_content, encoding='utf-8')
+        Path("tenuo_config.py").write_text(config_content, encoding="utf-8")
         print("✅ Created tenuo_config.py with sensible defaults")
 
     print("\n🎉 Ready! Next steps:")

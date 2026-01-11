@@ -36,11 +36,7 @@ def diagnose(warrant: Warrant) -> str:
         # [OK] Tools: search, read_file
         # [OK] Clearance: INTERNAL
     """
-    lines = [
-        "Warrant Diagnosis",
-        "=" * 50,
-        ""
-    ]
+    lines = ["Warrant Diagnosis", "=" * 50, ""]
 
     # Check expiration
     if warrant.is_expired():
@@ -53,9 +49,9 @@ def diagnose(warrant: Warrant) -> str:
         lines.append("[WARNING] Terminal: cannot delegate further")
     else:
         # Handle both max_depth and max_issue_depth for compatibility
-        max_d = getattr(warrant, 'max_depth', None)
+        max_d = getattr(warrant, "max_depth", None)
         if max_d is None:
-            max_d = getattr(warrant, 'max_issue_depth', None)
+            max_d = getattr(warrant, "max_issue_depth", None)
         if max_d is not None:
             remaining = max_d - warrant.depth
             lines.append(f"[OK] Can delegate: {remaining} levels remaining")
@@ -82,14 +78,15 @@ def diagnose(warrant: Warrant) -> str:
 
     import json
     import base64
+
     playground_url = "https://tenuo.dev/explorer/"
     try:
         # Construct state object matching App.tsx expectation (warrant only)
         state = {
-            "warrant": warrant.to_base64() if hasattr(warrant, 'to_base64') else str(warrant),
+            "warrant": warrant.to_base64() if hasattr(warrant, "to_base64") else str(warrant),
         }
         state_json = json.dumps(state)
-        state_b64 = base64.b64encode(state_json.encode('utf-8')).decode('ascii')
+        state_b64 = base64.b64encode(state_json.encode("utf-8")).decode("ascii")
         lines.append(f"Debug interactively: {playground_url}?s={state_b64}")
     except Exception:
         lines.append(f"Debug interactively: {playground_url}")
@@ -114,15 +111,12 @@ def info() -> str:
         # [OK] SDK Version: 0.1.0a7
         # [OK] Rust Core: loaded
     """
-    lines = [
-        "Tenuo Configuration",
-        "=" * 50,
-        ""
-    ]
+    lines = ["Tenuo Configuration", "=" * 50, ""]
 
     # SDK version
     try:
         from tenuo import __version__
+
         lines.append(f"[OK] SDK Version: {__version__}")
     except ImportError:
         lines.append("[WARNING] SDK Version: unknown")
@@ -130,6 +124,7 @@ def info() -> str:
     # Rust core status
     try:
         from tenuo_core import WIRE_VERSION  # type: ignore[import-untyped]
+
         lines.append(f"[OK] Rust Core: loaded (wire version {WIRE_VERSION})")
     except ImportError:
         lines.append("[NO] Rust Core: not loaded")
@@ -137,8 +132,9 @@ def info() -> str:
     # Check for configured issuer key
     try:
         from tenuo.config import get_config
+
         config = get_config()
-        if config and hasattr(config, 'issuer_key') and config.issuer_key:
+        if config and hasattr(config, "issuer_key") and config.issuer_key:
             lines.append("[OK] Issuer Key: configured")
         else:
             lines.append("[WARNING] Issuer Key: not configured")
