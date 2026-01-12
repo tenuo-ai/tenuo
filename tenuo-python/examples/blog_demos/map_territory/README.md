@@ -17,6 +17,9 @@ python map_vs_territory.py
 pip install openai tenuo
 export OPENAI_API_KEY=sk-...
 python map_vs_territory.py --openai
+
+# Prompt injection demo (most impactful!)
+python map_vs_territory.py --inject
 ```
 
 ## Demos
@@ -64,9 +67,15 @@ The demo degrades gracefully — shows what it can with what's installed.
 2. **Unprotected:** Executes the tool call → shows actual file contents 😱
 3. **With Tenuo:** `Subpath("/data")` blocks the tool call → attack prevented
 
+**`--inject` mode:** Path traversal demo (shows Tenuo's real value!):
+1. Attack path: `/data/../etc/passwd`
+2. **Naive check:** `startswith('/data/')` → passes! 💀
+3. **Tenuo Subpath:** normalizes first → `/etc/passwd` → BLOCKED 🛡️
+
+This demo proves why you need semantic validation, not if-statements.
+
 ```bash
-export OPENAI_API_KEY=sk-...
-python map_vs_territory.py --openai
+python map_vs_territory.py --inject  # No API key needed for core demo
 ```
 
 ### 2. `streaming_toctou.py` — TOCTOU Vulnerability

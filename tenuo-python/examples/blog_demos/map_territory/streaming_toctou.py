@@ -31,6 +31,7 @@ except ImportError:
 #  DISPLAY HELPERS
 # ============================================================================
 
+
 class Colors:
     GRAY = "\033[90m"
     RED = "\033[31m"
@@ -81,6 +82,7 @@ BUFFER_STATES = [
 #  VULNERABLE IMPLEMENTATION
 # ============================================================================
 
+
 def demo_vulnerable():
     """Show the vulnerable validate-as-you-go approach."""
     subheader("VULNERABLE: Validate-As-You-Go")
@@ -91,7 +93,6 @@ def demo_vulnerable():
     executed = False
 
     for i, (buffer, looks_complete, extracted_path) in enumerate(BUFFER_STATES):
-
         # Show buffer state
         print(f"  {Colors.GRAY}[Buffer  ]{Colors.RESET} {buffer}")
         time.sleep(0.25)
@@ -99,14 +100,14 @@ def demo_vulnerable():
         # Vulnerable: validate as soon as JSON looks complete
         if looks_complete and not executed:
             print()
-            print(f"  {Colors.YELLOW}[VALIDATE]{Colors.RESET} JSON complete! Checking: \"{extracted_path}\"")
+            print(f'  {Colors.YELLOW}[VALIDATE]{Colors.RESET} JSON complete! Checking: "{extracted_path}"')
             time.sleep(0.15)
 
             # Naive prefix check
             if extracted_path.startswith("/data/"):
                 print(f"  {Colors.GREEN}[VALIDATE]{Colors.RESET} ✅ PASS — starts with /data/")
                 print()
-                print(f"  {Colors.RED}[EXECUTE ]{Colors.RESET} 🚀 read_file(\"{extracted_path}\") — TRIGGERED")
+                print(f'  {Colors.RED}[EXECUTE ]{Colors.RESET} 🚀 read_file("{extracted_path}") — TRIGGERED')
                 executed = True
                 time.sleep(0.4)
                 print()
@@ -119,9 +120,9 @@ def demo_vulnerable():
     print(f"  {Colors.RED}{'─' * 61}{Colors.RESET}")
     print(f"  {Colors.RED}[RESULT  ] 💀 ATTACK SUCCEEDED{Colors.RESET}")
     print()
-    print("            Validated: \"/data/report.txt\"")
-    print("            Executed:  \"/data/report.txt/../../../etc/passwd\"")
-    print("            Opened:    \"/etc/passwd\"")
+    print('            Validated: "/data/report.txt"')
+    print('            Executed:  "/data/report.txt/../../../etc/passwd"')
+    print('            Opened:    "/etc/passwd"')
     print(f"  {Colors.RED}{'─' * 61}{Colors.RESET}")
     print()
     print(f"  {Colors.YELLOW}Check ran on PARTIAL value. Execution got COMPLETE value.{Colors.RESET}")
@@ -131,6 +132,7 @@ def demo_vulnerable():
 #  SAFE IMPLEMENTATION
 # ============================================================================
 
+
 def demo_safe():
     """Show the safe buffer-verify-emit approach."""
     subheader("SAFE: Buffer-Verify-Emit (Tenuo)")
@@ -139,7 +141,6 @@ def demo_safe():
     print()
 
     for i, (buffer, looks_complete, extracted_path) in enumerate(BUFFER_STATES):
-
         # Show buffer state
         print(f"  {Colors.GRAY}[Buffer  ]{Colors.RESET} {buffer}")
         time.sleep(0.25)
@@ -156,20 +157,20 @@ def demo_safe():
 
     final_path = "/data/report.txt/../../../etc/passwd"
     print(f"  {Colors.YELLOW}[TENUO   ]{Colors.RESET} Now checking COMPLETE value:")
-    print(f"            \"{final_path}\"")
+    print(f'            "{final_path}"')
     time.sleep(0.3)
 
     # Normalize
     normalized = os.path.normpath(final_path)
     print()
-    print(f"  {Colors.YELLOW}[TENUO   ]{Colors.RESET} Subpath(\"/data\").contains() normalizes path:")
-    print(f"            \"{final_path}\"")
-    print(f"            → \"{normalized}\"")
+    print(f'  {Colors.YELLOW}[TENUO   ]{Colors.RESET} Subpath("/data").contains() normalizes path:')
+    print(f'            "{final_path}"')
+    print(f'            → "{normalized}"')
     time.sleep(0.3)
 
     # Check containment
     print()
-    print(f"  {Colors.YELLOW}[TENUO   ]{Colors.RESET} Check: \"{normalized}\" starts with \"/data/\"?")
+    print(f'  {Colors.YELLOW}[TENUO   ]{Colors.RESET} Check: "{normalized}" starts with "/data/"?')
     time.sleep(0.2)
     print(f"  {Colors.RED}[TENUO   ]{Colors.RESET} ❌ NO — escapes jail")
 
@@ -184,6 +185,7 @@ def demo_safe():
 # ============================================================================
 #  COMPARISON
 # ============================================================================
+
 
 def demo_comparison():
     """Side-by-side comparison."""
@@ -216,12 +218,13 @@ def demo_comparison():
 #  CODE FIX
 # ============================================================================
 
+
 def show_code():
     """Show the code fix and Tenuo's actual implementation."""
     subheader("THE FIX: Buffer-Verify-Emit Pattern")
 
     print(f"  {Colors.BOLD}Concept:{Colors.RESET}")
-    code = f'''
+    code = f"""
   {Colors.GRAY}# Buffer tool arguments. Verify complete JSON. Then execute.{Colors.RESET}
 
   tool_args_buffer = []
@@ -238,12 +241,12 @@ def show_code():
               tool_args_buffer = []
       else:
           yield chunk  {Colors.GRAY}# Text streams immediately{Colors.RESET}
-'''
+"""
     print(code)
 
     print(f"  {Colors.BOLD}Tenuo's actual implementation:{Colors.RESET}")
     print()
-    tenuo_code = f'''
+    tenuo_code = f"""
   {Colors.CYAN}from tenuo.openai import GuardBuilder, Subpath{Colors.RESET}
 
   {Colors.GRAY}# Tenuo wraps the client — buffer-verify-emit is automatic{Colors.RESET}
@@ -263,7 +266,7 @@ def show_code():
       {Colors.GRAY}# Only verified tool calls reach here{Colors.RESET}
       {Colors.GRAY}# Malicious trailing tokens were already blocked{Colors.RESET}
       print(chunk)
-'''
+"""
     print(tenuo_code)
     print()
     print(f"  {Colors.BOLD}See:{Colors.RESET} tenuo/openai.py → GuardedCompletions._guard_stream()")
@@ -284,15 +287,10 @@ READ_FILE_TOOL = {
         "description": "Read contents of a file from the filesystem",
         "parameters": {
             "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Path to the file to read"
-                }
-            },
-            "required": ["path"]
-        }
-    }
+            "properties": {"path": {"type": "string", "description": "Path to the file to read"}},
+            "required": ["path"],
+        },
+    },
 }
 
 
@@ -348,9 +346,9 @@ def demo_race():
 
     print(f"  {Colors.BOLD}The Race Window:{Colors.RESET}")
     print()
-    print(f"  {Colors.YELLOW}[T=0ms]{Colors.RESET}  Tool call complete: read_file(\"{PATH}\")")
+    print(f'  {Colors.YELLOW}[T=0ms]{Colors.RESET}  Tool call complete: read_file("{PATH}")')
     time.sleep(0.4)
-    print(f"  {Colors.GREEN}[T=1ms]{Colors.RESET}  Layer 1.5 validates: \"{PATH}\" is inside /data/ ✓")
+    print(f'  {Colors.GREEN}[T=1ms]{Colors.RESET}  Layer 1.5 validates: "{PATH}" is inside /data/ ✓')
     time.sleep(0.4)
     print()
     print(f"  {Colors.RED}[T=2ms]{Colors.RESET}  ══════════ RACE WINDOW ══════════")
@@ -362,7 +360,7 @@ def demo_race():
     print(f"  {Colors.RED}[T=3ms]{Colors.RESET}  ═══════════════════════════════════")
     print()
     time.sleep(0.3)
-    print(f"  {Colors.YELLOW}[T=4ms]{Colors.RESET}  Execution: open(\"{PATH}\")")
+    print(f'  {Colors.YELLOW}[T=4ms]{Colors.RESET}  Execution: open("{PATH}")')
     time.sleep(0.3)
     print(f"  {Colors.YELLOW}[T=5ms]{Colors.RESET}  Kernel resolves symlink...")
     time.sleep(0.3)
@@ -372,7 +370,7 @@ def demo_race():
     print(f"  {Colors.RED}{'─' * 59}{Colors.RESET}")
     print(f"  {Colors.RED}💀 TOCTOU EXPLOIT (CVE-2018-15664 class){Colors.RESET}")
     print()
-    print(f"  {Colors.GRAY}What Layer 1.5 validated:{Colors.RESET} \"{PATH}\" (the string)")
+    print(f'  {Colors.GRAY}What Layer 1.5 validated:{Colors.RESET} "{PATH}" (the string)')
     print(f"  {Colors.GRAY}What kernel opened:{Colors.RESET}       /etc/passwd (the inode)")
     print()
     print(f"  {Colors.GRAY}The Map (string) was valid. The Territory (filesystem) changed.{Colors.RESET}")
@@ -401,10 +399,10 @@ def demo_race():
     print(f"  {Colors.CYAN}from tenuo import Subpath{Colors.RESET}")
     print()
     print(f"  {Colors.GRAY}# Layer 1.5: Validate the string (catches encoding tricks){Colors.RESET}")
-    print(f"  {Colors.GRAY}if Subpath(\"/data\").contains(path):{Colors.RESET}")
+    print(f'  {Colors.GRAY}if Subpath("/data").contains(path):{Colors.RESET}')
     print()
     print(f"  {Colors.GRAY}    # Layer 2: Validate at execution (catches symlink races){Colors.RESET}")
-    print(f"  {Colors.GRAY}    with safe_open(path, root=\"/data\") as f:{Colors.RESET}")
+    print(f'  {Colors.GRAY}    with safe_open(path, root="/data") as f:{Colors.RESET}')
     print(f"  {Colors.GRAY}        # safe_open() calls realpath() BEFORE open(){Colors.RESET}")
     print(f"  {Colors.GRAY}        # If symlink escapes /data, raises SecurityError{Colors.RESET}")
     print(f"  {Colors.GRAY}        return f.read(){Colors.RESET}")
@@ -414,13 +412,13 @@ def demo_race():
 
     print(f"  {Colors.BOLD}With path_jail, the attack fails:{Colors.RESET}")
     print()
-    print(f"  {Colors.YELLOW}[T=0ms]{Colors.RESET}  Tool call: read_file(\"{PATH}\")")
+    print(f'  {Colors.YELLOW}[T=0ms]{Colors.RESET}  Tool call: read_file("{PATH}")')
     time.sleep(0.2)
-    print(f"  {Colors.GREEN}[T=1ms]{Colors.RESET}  Layer 1.5 (Subpath): \"{PATH}\" ✓")
+    print(f'  {Colors.GREEN}[T=1ms]{Colors.RESET}  Layer 1.5 (Subpath): "{PATH}" ✓')
     time.sleep(0.2)
     print(f"  {Colors.RED}[T=2ms]{Colors.RESET}  Attacker: ln -sf /etc/passwd {PATH}")
     time.sleep(0.2)
-    print(f"  {Colors.YELLOW}[T=3ms]{Colors.RESET}  Layer 2 (path_jail): safe_open(\"{PATH}\")")
+    print(f'  {Colors.YELLOW}[T=3ms]{Colors.RESET}  Layer 2 (path_jail): safe_open("{PATH}")')
     time.sleep(0.2)
     print(f"  {Colors.YELLOW}[T=4ms]{Colors.RESET}  → realpath() resolves symlink")
     time.sleep(0.2)
@@ -428,7 +426,9 @@ def demo_race():
     time.sleep(0.2)
     print(f"  {Colors.YELLOW}[T=6ms]{Colors.RESET}  → /etc/passwd inside /data? {Colors.RED}NO{Colors.RESET}")
     time.sleep(0.2)
-    print(f"  {Colors.GREEN}[T=7ms]{Colors.RESET}  → {Colors.GREEN}SecurityError raised. File NOT opened.{Colors.RESET}")
+    print(
+        f"  {Colors.GREEN}[T=7ms]{Colors.RESET}  → {Colors.GREEN}SecurityError raised. File NOT opened.{Colors.RESET}"
+    )
 
     print()
     print(f"  {Colors.GREEN}{'─' * 59}{Colors.RESET}")
@@ -458,15 +458,10 @@ def demo_race():
 #  MAIN
 # ============================================================================
 
+
 def main():
-    parser = argparse.ArgumentParser(
-        description="Streaming TOCTOU Demo - Shows vulnerability and Tenuo's fix"
-    )
-    parser.add_argument(
-        "--race",
-        action="store_true",
-        help="Show filesystem race window (symlink attack)"
-    )
+    parser = argparse.ArgumentParser(description="Streaming TOCTOU Demo - Shows vulnerability and Tenuo's fix")
+    parser.add_argument("--race", action="store_true", help="Show filesystem race window (symlink attack)")
     args = parser.parse_args()
 
     if args.race:
