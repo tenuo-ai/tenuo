@@ -82,8 +82,11 @@ The demo degrades gracefully — shows what it can with what's installed.
 This demo proves why you need semantic validation, not if-statements.
 
 ```bash
-python map_vs_territory.py --inject  # No API key needed for core demo
+python map_vs_territory.py --inject        # Interactive
+python map_vs_territory.py --inject --auto # Non-interactive (for GIF recording)
 ```
+
+**Recording a GIF?** Use `--inject --auto` — it auto-advances through steps with pauses, perfect for screen recording.
 
 ### 2. `streaming_toctou.py` — TOCTOU Vulnerability
 

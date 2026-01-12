@@ -9,8 +9,10 @@ Demonstrates how attacks exploit the gap between what security checks
 validate (the Map) and what actually executes (the Territory).
 
 Run:
-    python map_vs_territory.py            # Simulated attacks (interactive)
-    python map_vs_territory.py --openai   # Real LLM demo (requires API key)
+    python map_vs_territory.py              # Simulated attacks (interactive menu)
+    python map_vs_territory.py --inject     # Path traversal demo (best for GIF)
+    python map_vs_territory.py --inject --auto  # Non-interactive (for recording)
+    python map_vs_territory.py --openai     # Real LLM demo (requires API key)
 
 Requires: pip install tenuo path-jail url-jail proc-jail
 For --openai: pip install openai tenuo
@@ -821,8 +823,12 @@ Outlook for Q4:
 ATTACK_PATH = "/data/../etc/passwd"
 
 
-def demo_prompt_injection():
+def demo_prompt_injection(wait=None):
     """Demo showing why semantic validation beats if-statements."""
+
+    if wait is None:
+        # Default to blocking input() if not provided
+        wait = lambda msg="": input(msg)  # noqa: E731
 
     header("PATH TRAVERSAL: Why If-Statements Fail")
 
@@ -838,7 +844,7 @@ def demo_prompt_injection():
     print(f"  {Colors.YELLOW}A simple if-statement would PASS this attack.{Colors.RESET}")
     print()
 
-    input("  Press Enter to see the naive check fail...")
+    wait("  Press Enter to see the naive check fail...")
     print()
 
     # =========================================================================
@@ -872,7 +878,7 @@ def demo_prompt_injection():
     print(f"  {Colors.RED}{'─' * 59}{Colors.RESET}")
 
     print()
-    input("  Press Enter to see Tenuo's semantic check...")
+    wait("  Press Enter to see Tenuo's semantic check...")
     print()
 
     # =========================================================================
@@ -915,7 +921,7 @@ def demo_prompt_injection():
     # =========================================================================
 
     print()
-    input("  Press Enter to see side-by-side comparison...")
+    wait("  Press Enter to see side-by-side comparison...")
     print()
 
     subheader("COMPARISON: String vs Semantic")
@@ -944,7 +950,7 @@ def demo_prompt_injection():
 
     if HAS_OPENAI and os.environ.get("OPENAI_API_KEY"):
         print()
-        input("  Press Enter to see this with a real LLM...")
+        wait("  Press Enter to see this with a real LLM...")
         print()
 
         subheader("REAL LLM: Prompt Injection + Path Traversal")
@@ -1114,12 +1120,28 @@ def main():
     parser.add_argument(
         "--inject",
         action="store_true",
-        help="Run prompt injection demo (requires OPENAI_API_KEY)",
+        help="Run prompt injection demo (path traversal)",
+    )
+    parser.add_argument(
+        "--auto",
+        action="store_true",
+        help="Non-interactive mode (auto-advance, for recording/piped usage)",
     )
     args = parser.parse_args()
 
+    # Auto-detect if we're being piped (no tty)
+    import sys
+
+    interactive = sys.stdin.isatty() and not args.auto
+
+    def wait(msg: str = ""):
+        if interactive:
+            input(msg)
+        else:
+            time.sleep(0.8)  # Brief pause for readability
+
     if args.inject:
-        demo_prompt_injection()
+        demo_prompt_injection(wait)
         return
 
     if args.openai:
