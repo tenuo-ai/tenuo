@@ -260,6 +260,7 @@ See [Related Work](https://tenuo.dev/related-work) for detailed comparison.
 
 ## Featured In
 
+- [TLDR InfoSec](https://tldr.tech/infosec/2026-01-13) - "The Map is not the Territory: The Agent-Tool Trust Boundary"
 - [TLDR InfoSec](https://tldr.tech/infosec/2025-12-15) - "Capabilities Are the Only Way to Secure Agent Delegation"
 - [Awesome Object Capabilities](https://github.com/dckc/awesome-ocap) - Curated list of capability-based security resources
 - [Awesome LangChain](https://github.com/kyrolabs/awesome-langchain)
