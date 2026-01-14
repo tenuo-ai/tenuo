@@ -822,7 +822,7 @@ def doctor(verbose: bool = False) -> None:
         print("  ⚠️  LangChain: not installed (pip install langchain)")
 
     try:
-        import anthropic
+        import anthropic  # type: ignore[import-not-found]
 
         print(f"  ✅ Anthropic: v{anthropic.__version__}")
     except ImportError:
@@ -1037,14 +1037,15 @@ def constrain_tool(tool: str) -> None:
                     constraints[param] = "UrlSafe()"
 
             elif constraint_type == "Shlex":
+                default_bins = default if isinstance(default, list) else ["ls", "cat", "echo"]
                 try:
-                    bins = input(f"    Allowed binaries [{', '.join(default)}]: ").strip()
+                    bins = input(f"    Allowed binaries [{', '.join(default_bins)}]: ").strip()
                 except (EOFError, KeyboardInterrupt):
                     bins = ""
                 if bins:
                     bin_list = [b.strip() for b in bins.split(",")]
                 else:
-                    bin_list = default
+                    bin_list = default_bins
                 constraints[param] = f"Shlex(allow={bin_list!r})"
         else:
             print("    Select constraint type:")

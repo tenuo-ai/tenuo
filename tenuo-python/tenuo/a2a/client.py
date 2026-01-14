@@ -303,7 +303,7 @@ class A2AClient:
             message = error.get("message", "Unknown error")
             error_data = error.get("data", {})
 
-            raise A2AError(message, error_data)
+            raise A2AError(str(message), error_data)
 
         result_data = data.get("result", {})
         if not isinstance(result_data, dict):

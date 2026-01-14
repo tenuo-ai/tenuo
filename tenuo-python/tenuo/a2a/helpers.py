@@ -20,8 +20,11 @@ Usage:
     result = await server.dry_run(warrant, "read_file", {"path": "/tmp/test"})
 """
 
-from typing import Any, Dict, List, Optional, TextIO
+from typing import Any, Dict, List, Optional, TextIO, TYPE_CHECKING
 import sys
+
+if TYPE_CHECKING:
+    from .server import A2AServer
 
 
 # =============================================================================
@@ -84,7 +87,7 @@ def explain(
         try:
             from tenuo.explain import explain as core_explain
 
-            core_explain(error, file=out, show_context=show_context)
+            core_explain(error, file=out, show_context=show_context)  # type: ignore[arg-type]
         except ImportError:
             out.write(f"❌ Error: {error}\n")
         return
@@ -306,9 +309,9 @@ def visualize_chain(
 
 def _visualize_chain_rich(warrants: List[Any]) -> str:
     """Visualize chain using rich library."""
-    from rich.console import Console
-    from rich.tree import Tree
-    from rich.text import Text
+    from rich.console import Console  # type: ignore[import-not-found]
+    from rich.tree import Tree  # type: ignore[import-not-found]
+    from rich.text import Text  # type: ignore[import-not-found]
     import io
 
     buf = io.StringIO()

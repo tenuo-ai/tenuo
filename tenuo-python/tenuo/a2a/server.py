@@ -302,9 +302,9 @@ class A2AServer:
                     import logging
 
                     logging.warning(f"Failed to open audit log '{env_log}': {e}. Falling back to stderr.")
-                    self.audit_log = sys.stderr
+                    self.audit_log = sys.stderr  # type: ignore[assignment]
             else:
-                self.audit_log = sys.stderr
+                self.audit_log = sys.stderr  # type: ignore[assignment]
         else:
             self.audit_log = audit_log
         self.audit_format = audit_format
@@ -692,7 +692,7 @@ class A2AServer:
 
         if root_issuer_normalized not in self.trusted_issuers:
             raise UntrustedIssuerError(
-                root_issuer_normalized, reason=f"Root warrant issuer '{root_issuer_normalized}' is not trusted"
+                root_issuer_normalized or "unknown", reason=f"Root warrant issuer '{root_issuer_normalized}' is not trusted"
             )
 
         # Validate chain linkage

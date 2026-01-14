@@ -148,7 +148,7 @@ def _guard_openai(
     from .openai import GuardBuilder
     from .constraints import Subpath, UrlSafe, Shlex
 
-    builder = GuardBuilder(client).on_denial(on_denial)
+    builder = GuardBuilder(client).on_denial(on_denial)  # type: ignore[arg-type]
 
     if infer_constraints:
         # Get tools from client if available
@@ -164,18 +164,19 @@ def _guard_openai(
         for tool_name, tool_constraints in constraints.items():
             builder.allow(tool_name, **tool_constraints)
 
-        # If no tools found, set up default constraints for common patterns
+        # If no tools found, set up wildcard tool with default constraints
         if not tools:
             logger.info("No tools detected. Setting up wildcard constraints.")
-            # These will apply to any tool with matching parameter names
-            builder._default_constraints = {
-                "path": Subpath(root),
-                "file": Subpath(root),
-                "filepath": Subpath(root),
-                "url": UrlSafe(allow_domains=allowed_domains),
-                "command": Shlex(allow=allowed_bins or ["ls", "cat", "echo"]),
-                "cmd": Shlex(allow=allowed_bins or ["ls", "cat", "echo"]),
-            }
+            # Allow a wildcard tool that will apply constraints to common parameter names
+            builder.allow(
+                "*",  # Wildcard - applies to any tool
+                path=Subpath(root),
+                file=Subpath(root),
+                filepath=Subpath(root),
+                url=UrlSafe(allow_domains=allowed_domains),
+                command=Shlex(allow=allowed_bins or ["ls", "cat", "echo"]),
+                cmd=Shlex(allow=allowed_bins or ["ls", "cat", "echo"]),
+            )
 
     return builder.build()
 

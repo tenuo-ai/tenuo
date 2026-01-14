@@ -42,14 +42,10 @@ from tenuo.a2a import A2AClient
 client = A2AClient("https://research-agent.example.com")
 
 # Attenuate your warrant for this delegation
-task_warrant = my_warrant.attenuate(
-    grants=[
-        Grant(skill="search_papers", constraints={
-            "sources": UrlSafe(allow_domains=["arxiv.org"])
-        })
-    ],
-    audience="https://research-agent.example.com",  # Bind to target
-    key=my_private_key,
+task_warrant = (my_warrant.grant_builder()
+    .grant("search_papers", sources=UrlSafe(allow_domains=["arxiv.org"]))
+    .audience("https://research-agent.example.com")  # Bind to target
+    .build(my_private_key)
 )
 
 result = await client.send_task(
@@ -531,10 +527,10 @@ Agent A delegates to Agent B, which delegates to Agent C:
 incoming_warrant = current_task_warrant.get()
 
 # B attenuates for C (can only narrow, not expand)
-c_warrant = incoming_warrant.attenuate(
-    grants=[Grant(skill="fetch", constraints={"url": UrlSafe(["api.example.com"])})],
-    audience="https://agent-c.example.com",  # Bind to C
-    key=b_private_key,
+c_warrant = (incoming_warrant.grant_builder()
+    .grant("fetch", url=UrlSafe(allow_domains=["api.example.com"]))
+    .audience("https://agent-c.example.com")  # Bind to C
+    .build(b_private_key)
 )
 
 # Delegate to C
