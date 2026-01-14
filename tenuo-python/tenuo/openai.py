@@ -141,14 +141,15 @@ def enable_debug(handler: Optional[logging.Handler] = None) -> None:
     Args:
         handler: Optional custom handler. If None, logs to stderr.
 
-    Example:
-        >>> from tenuo.openai import enable_debug
-        >>> enable_debug()
-        >>> # Now all authorization decisions are logged
-        >>> client.chat.completions.create(...)
-        DEBUG:tenuo.openai:Verifying tool call: read_file
-        DEBUG:tenuo.openai:Constraint check: path=/data/file.txt against Pattern(/data/*)
-        DEBUG:tenuo.openai:Authorization granted
+    Example::
+
+        from tenuo.openai import enable_debug
+        enable_debug()
+        # Now all authorization decisions are logged
+        client.chat.completions.create(...)
+        # DEBUG:tenuo.openai:Verifying tool call: read_file
+        # DEBUG:tenuo.openai:Constraint check: path=/data/file.txt against Pattern(/data/*)
+        # DEBUG:tenuo.openai:Authorization granted
     """
     logger.setLevel(logging.DEBUG)
     if handler is None:
@@ -1443,9 +1444,10 @@ class GuardedClient:
             ConfigurationError: If signing_key doesn't match warrant holder
             ConfigurationError: If warrant is expired
 
-        Example:
-            >>> client = guard(openai.OpenAI(), warrant=w, signing_key=k)
-            >>> client.validate()  # Fails early if misconfigured
+        Example::
+
+            client = guard(openai.OpenAI(), warrant=w, signing_key=k)
+            client.validate()  # Fails early if misconfigured
         """
         if self._warrant is not None:
             # Check signing_key is provided
@@ -1931,44 +1933,46 @@ def guard(
         2. Implementing a wrapper that automatically sends a tool error response
            for denied calls
 
-    Example (Tier 1 - Guardrails):
-        >>> from tenuo.openai import guard, Pattern
-        >>>
-        >>> client = guard(
-        ...     openai.OpenAI(),
-        ...     allow_tools=["search", "read_file"],
-        ...     constraints={
-        ...         "read_file": {"path": Pattern("/data/*")}
-        ...     }
-        ... )
-        >>>
-        >>> # Use normally - unauthorized tool calls are blocked
-        >>> response = client.chat.completions.create(...)
+    Example (Tier 1 - Guardrails)::
 
-    Example (Tier 2 - Warrant with PoP):
-        >>> from tenuo.openai import guard
-        >>> from tenuo import Warrant, SigningKey, Pattern
-        >>>
-        >>> # Agent's keypair (the agent is the warrant holder)
-        >>> agent_key = SigningKey.generate()
-        >>>
-        >>> # Create a warrant (in production, received from control plane)
-        >>> control_plane_key = SigningKey.generate()
-        >>> warrant = (Warrant.mint_builder()
-        ...     .capability("read_file", {"path": Pattern("/data/*")})
-        ...     .holder(agent_key.public_key)  # Agent is the holder
-        ...     .ttl(3600)
-        ...     .mint(control_plane_key))      # Control plane signs
-        >>>
-        >>> # Guard with both warrant AND signing key
-        >>> client = guard(
-        ...     openai.OpenAI(),
-        ...     warrant=warrant,
-        ...     signing_key=agent_key,  # Agent signs PoP for each tool call
-        ... )
-        >>>
-        >>> # Each tool call is now cryptographically authorized
-        >>> response = client.chat.completions.create(...)
+        from tenuo.openai import guard, Pattern
+
+        client = guard(
+            openai.OpenAI(),
+            allow_tools=["search", "read_file"],
+            constraints={
+                "read_file": {"path": Pattern("/data/*")}
+            }
+        )
+
+        # Use normally - unauthorized tool calls are blocked
+        response = client.chat.completions.create(...)
+
+    Example (Tier 2 - Warrant with PoP)::
+
+        from tenuo.openai import guard
+        from tenuo import Warrant, SigningKey, Pattern
+
+        # Agent's keypair (the agent is the warrant holder)
+        agent_key = SigningKey.generate()
+
+        # Create a warrant (in production, received from control plane)
+        control_plane_key = SigningKey.generate()
+        warrant = (Warrant.mint_builder()
+            .capability("read_file", {"path": Pattern("/data/*")})
+            .holder(agent_key.public_key)  # Agent is the holder
+            .ttl(3600)
+            .mint(control_plane_key))      # Control plane signs
+
+        # Guard with both warrant AND signing key
+        client = guard(
+            openai.OpenAI(),
+            warrant=warrant,
+            signing_key=agent_key,  # Agent signs PoP for each tool call
+        )
+
+        # Each tool call is now cryptographically authorized
+        response = client.chat.completions.create(...)
     """
     return GuardedClient(
         client,
