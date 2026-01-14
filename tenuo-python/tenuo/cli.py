@@ -664,6 +664,11 @@ def main():
         action="store_true",
         help="Show detailed information",
     )
+    doctor_parser.add_argument(
+        "--server",
+        "-s",
+        help="Check a remote A2A agent at the given URL",
+    )
 
     # constrain command (interactive constraint builder)
     constrain_parser = subparsers.add_parser(
@@ -708,7 +713,10 @@ def main():
         init_project()
 
     elif args.command == "doctor":
-        doctor(verbose=args.verbose)
+        if args.server:
+            doctor_server(args.server)
+        else:
+            doctor(verbose=args.verbose)
 
     elif args.command == "constrain":
         constrain_tool(args.tool)
@@ -840,6 +848,128 @@ def doctor(verbose: bool = False) -> None:
     if "Shlex" in constraints_available:
         print("   • Add Shlex constraints to shell-related tools")
     print("   • Run `tenuo audit` to see recent authorization decisions")
+    print()
+
+
+def doctor_server(url: str) -> None:
+    """
+    Check a remote A2A agent's health and configuration.
+
+    Fetches the agent card and validates Tenuo extension.
+    """
+    import httpx
+
+    print(f"\n🔍 Checking A2A agent at {url}...\n")
+
+    # Normalize URL
+    base_url = url.rstrip("/")
+    agent_card_url = f"{base_url}/.well-known/agent.json"
+
+    try:
+        # Fetch agent card
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(agent_card_url)
+
+            if response.status_code == 404:
+                print(f"❌ Agent card not found at {agent_card_url}")
+                print("   This may not be an A2A-compatible agent")
+                return
+
+            if response.status_code != 200:
+                print(f"❌ Failed to fetch agent card: HTTP {response.status_code}")
+                return
+
+            agent_card = response.json()
+
+    except httpx.ConnectError:
+        print(f"❌ Could not connect to {url}")
+        print("   Check that the server is running and accessible")
+        return
+    except httpx.TimeoutException:
+        print(f"❌ Connection timed out to {url}")
+        return
+    except Exception as e:
+        print(f"❌ Error fetching agent card: {e}")
+        return
+
+    # Parse agent card
+    print("✅ Agent card found")
+
+    # Basic info
+    name = agent_card.get("name", "Unknown")
+    version = agent_card.get("version", "unknown")
+    print(f"   Name: {name}")
+    print(f"   Version: {version}")
+
+    # Check for Tenuo extension
+    extensions = agent_card.get("extensions", {})
+    tenuo_ext = extensions.get("tenuo", {})
+
+    if not tenuo_ext:
+        print("\n⚠️  Tenuo extension: NOT PRESENT")
+        print("   This agent may not support warrant-based authorization")
+        return
+
+    print("\n✅ Tenuo extension present")
+
+    # Tenuo extension details
+    tenuo_version = tenuo_ext.get("version", "unknown")
+    print(f"   Version: {tenuo_version}")
+
+    public_key = tenuo_ext.get("public_key")
+    if public_key:
+        key_preview = public_key[:24] + "..." if len(public_key) > 24 else public_key
+        print(f"   Public key: {key_preview}")
+    else:
+        print("   ⚠️  Public key: not set")
+
+    require_warrant = tenuo_ext.get("require_warrant", True)
+    print(f"   Requires warrant: {'yes' if require_warrant else 'no'}")
+
+    require_pop = tenuo_ext.get("require_pop", False)
+    if require_pop:
+        print("   ⚠️  PoP required: yes (need signing_key for requests)")
+    else:
+        print("   PoP required: no")
+
+    # Skills
+    skills = agent_card.get("skills", [])
+    if skills:
+        print(f"\n📋 Skills ({len(skills)}):")
+        for skill in skills[:10]:  # Limit display
+            skill_id = skill.get("id", skill.get("name", "?"))
+            description = skill.get("description", "")
+            desc_preview = description[:40] + "..." if len(description) > 40 else description
+            print(f"   • {skill_id}")
+            if desc_preview:
+                print(f"     {desc_preview}")
+
+            # Show constraints if any
+            constraints = skill.get("constraints", {})
+            if constraints:
+                for param, constraint in list(constraints.items())[:3]:
+                    print(f"     └─ {param}: {constraint}")
+
+        if len(skills) > 10:
+            print(f"   ... and {len(skills) - 10} more")
+    else:
+        print("\n⚠️  No skills defined")
+
+    # Summary
+    print("\n" + "=" * 50)
+    if public_key and skills:
+        print("\n✅ Agent is ready for Tenuo A2A")
+        print("\n💡 To call this agent:")
+        print("   from tenuo.a2a import A2AClient")
+        print(f'   async with A2AClient("{url}") as client:')
+        print("       result = await client.send_task(")
+        print('           message="...",')
+        print("           warrant=my_warrant,")
+        print(f'           skill="{skills[0].get("id", "skill_name")}",')
+        print("           arguments={...}")
+        print("       )")
+    else:
+        print("\n⚠️  Agent may not be fully configured for Tenuo A2A")
     print()
 
 

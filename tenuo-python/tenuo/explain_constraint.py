@@ -128,11 +128,11 @@ def explain_constraint(constraint: Any, value: Any) -> Any:
         >>> jail = Subpath("/data")
         >>> explain_constraint(jail, "/data/../etc/passwd")
         PathAnalysis(
-          input="/data/../etc/passwd",
-          normalized="/etc/passwd",
-          root="/data",
+          input='/data/../etc/passwd',
+          normalized='/etc/passwd',
+          root='/data',
           contained=False,
-          reason="Normalized path escapes root: /etc/passwd is not under /data"
+          reason='Normalized path escapes root: /etc/passwd is not under /data'
         )
     """
     constraint_type = type(constraint).__name__

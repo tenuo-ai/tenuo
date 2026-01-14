@@ -1534,6 +1534,67 @@ See: [path_jail on PyPI](https://pypi.org/project/path-jail/)
 
 ---
 
+## Developer Tools
+
+### Debugging with `explain_constraint()`
+
+When debugging why a value was allowed or denied, use `explain_constraint()` for detailed analysis:
+
+```python
+from tenuo import Subpath, UrlSafe, Shlex
+from tenuo.explain_constraint import explain_constraint
+
+# Detailed path analysis
+jail = Subpath("/data")
+result = explain_constraint(jail, "/data/../etc/passwd")
+
+print(result)
+# PathAnalysis(
+#   input='/data/../etc/passwd',
+#   normalized='/etc/passwd',
+#   root='/data',
+#   contained=False,
+#   reason='Normalized path escapes root: /etc/passwd is not under /data'
+# )
+
+# URL analysis
+url_constraint = UrlSafe(allow_domains=["api.example.com"])
+result = explain_constraint(url_constraint, "http://127.0.0.1/admin")
+# UrlAnalysis(is_safe=False, reason="Host '127.0.0.1' resolves to a private IP address.")
+
+# Shell command analysis  
+cmd_constraint = Shlex(allow=["ls", "cat"])
+result = explain_constraint(cmd_constraint, "ls -la; rm -rf /")
+# CommandAnalysis(safe=False, dangerous_tokens=[';'], reason="Contains dangerous shell operator tokens")
+```
+
+### One-Line Protection with `auto_guard()`
+
+For quick prototyping, `auto_guard()` applies sensible defaults based on parameter names:
+
+```python
+from tenuo import auto_guard
+from openai import OpenAI
+
+# Automatically applies:
+# - Subpath("/data") to params named "path", "file", "directory"
+# - UrlSafe() to params named "url", "endpoint"
+# - Shlex([]) to params named "command", "cmd"
+client = auto_guard(OpenAI())
+
+# With customization
+client = auto_guard(
+    OpenAI(),
+    root="/app/uploads",                    # Custom root for Subpath
+    allowed_domains=["api.github.com"],     # Custom domains for UrlSafe
+    allowed_bins=["ls", "cat", "grep"],     # Custom bins for Shlex
+)
+```
+
+> **Note**: `auto_guard()` is for prototyping. In production, use explicit `GuardBuilder` configuration.
+
+---
+
 ## See Also
 
 - [🔬 Explorer Playground](https://tenuo.dev/explorer/) — Test constraints interactively

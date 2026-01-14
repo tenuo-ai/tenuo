@@ -6,10 +6,12 @@ Provides A2AClient for sending tasks with warrants to A2A agents.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
+import time
 import uuid
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Union
 
 from .types import (
     AgentCard,
@@ -21,6 +23,11 @@ from .errors import A2AError, KeyMismatchError, WarrantExpiredError
 
 if TYPE_CHECKING:
     from .types import Warrant
+
+    try:
+        from tenuo_core import SigningKey
+    except ImportError:
+        SigningKey = Any  # type: ignore
 
 __all__ = [
     "A2AClient",
@@ -163,22 +170,44 @@ class A2AClient:
         skill: Optional[str] = None,
         arguments: Optional[Dict[str, Any]] = None,
         task_id: Optional[str] = None,
+        warrant_chain: Optional[List["Warrant"]] = None,
+        signing_key: Optional["SigningKey"] = None,
     ) -> TaskResult:
         """
         Send a task to the agent with a warrant.
 
         Args:
             message: Task message (string or Message object)
-            warrant: Tenuo warrant for authorization
-            skill: Skill to invoke (inferred from warrant if not provided)
+            warrant: Tenuo warrant for authorization (the leaf warrant)
+            skill: Skill to invoke (required)
             arguments: Arguments for the skill
             task_id: Optional task ID (generated if not provided)
+            warrant_chain: Optional delegation chain (parent-first order, excluding leaf)
+            signing_key: Signing key for Proof-of-Possession (required if agent requires PoP)
 
         Returns:
             TaskResult with output
-        """
-        import uuid
 
+        Example:
+            # Direct invocation with PoP
+            result = await client.send_task(
+                message="Search for papers",
+                warrant=my_warrant,
+                skill="search_papers",
+                arguments={"query": "AI safety"},
+                signing_key=my_key,
+            )
+
+            # With delegation chain and PoP
+            result = await client.send_task(
+                message="Search for papers",
+                warrant=leaf_warrant,
+                skill="search_papers",
+                arguments={"query": "AI safety"},
+                warrant_chain=[root_warrant, intermediate_warrant],
+                signing_key=my_key,
+            )
+        """
         client = await self._get_client()
 
         # Build message content
@@ -200,19 +229,58 @@ class A2AClient:
             raise TypeError(f"warrant must be a Warrant object with to_base64() method, got {type(warrant).__name__}")
         warrant_token = warrant.to_base64()
 
+        # Build headers
+        headers: Dict[str, str] = {"X-Tenuo-Warrant": warrant_token}
+
+        # Add delegation chain if provided (semicolon-separated, parent-first)
+        if warrant_chain:
+            chain_tokens = []
+            for w in warrant_chain:
+                if not hasattr(w, "to_base64"):
+                    raise TypeError(f"warrant_chain items must have to_base64() method, got {type(w).__name__}")
+                chain_tokens.append(w.to_base64())
+            headers["X-Tenuo-Warrant-Chain"] = ";".join(chain_tokens)
+
+        # Generate Proof-of-Possession signature if signing_key provided
+        args = arguments or {}
+        if signing_key is not None:
+            if not hasattr(warrant, "sign"):
+                raise TypeError(
+                    f"warrant must have sign() method for PoP, got {type(warrant).__name__}. "
+                    "Ensure you're using a tenuo_core.Warrant object."
+                )
+            # Convert arguments to ConstraintValue format for PoP signing
+            # SECURITY: Fail-closed if tenuo_core unavailable. PoP requires
+            # proper ConstraintValue types for deterministic signing.
+            try:
+                from tenuo_core import ConstraintValue
+
+                args_cv = {k: ConstraintValue.from_any(v) for k, v in args.items()}
+            except ImportError as e:
+                raise ImportError(
+                    "tenuo_core.ConstraintValue required for PoP signing. Install with: pip install tenuo[a2a]"
+                ) from e
+
+            # Sign the request
+            pop_signature = warrant.sign(signing_key, skill, args_cv)
+            # Encode as base64 URL-safe
+            pop_bytes = bytes(pop_signature)
+            headers["X-Tenuo-PoP"] = base64.urlsafe_b64encode(pop_bytes).decode("ascii")
+            logger.debug(f"Generated PoP signature for skill '{skill}'")
+
         # Build request with known task_id for response validation
         expected_task_id = task_id or str(uuid.uuid4())
         task_data = {
             "id": expected_task_id,
             "message": message_content,
             "skill": skill,
-            "arguments": arguments or {},
+            "arguments": args,
         }
 
         # Send request
         response = await client.post(
             f"{self.url}/a2a",
-            headers={"X-Tenuo-Warrant": warrant_token},
+            headers=headers,
             json={
                 "jsonrpc": "2.0",
                 "method": "task/send",
@@ -259,6 +327,10 @@ class A2AClient:
         skill: Optional[str] = None,
         arguments: Optional[Dict[str, Any]] = None,
         task_id: Optional[str] = None,
+        warrant_chain: Optional[List["Warrant"]] = None,
+        signing_key: Optional["SigningKey"] = None,
+        stream_timeout: Optional[float] = 300.0,
+        strict_task_id: bool = True,
     ) -> AsyncIterator[TaskUpdate]:
         """
         Send a streaming task to the agent.
@@ -268,16 +340,24 @@ class A2AClient:
 
         Args:
             message: Task message (string or Message object)
-            warrant: Tenuo warrant for authorization
+            warrant: Tenuo warrant for authorization (the leaf warrant)
             skill: Skill to invoke (required)
             arguments: Arguments for the skill
             task_id: Optional task ID (generated if not provided)
+            warrant_chain: Optional delegation chain (parent-first order, excluding leaf)
+            signing_key: Signing key for Proof-of-Possession (required if agent requires PoP)
+            stream_timeout: Maximum total time for streaming in seconds (default 5 min).
+                           None disables the timeout. Prevents slow-drip DoS attacks.
+            strict_task_id: If True (default), abort stream if response task_id doesn't
+                           match expected. Prevents response spoofing attacks.
 
         Yields:
             TaskUpdate objects for status, artifacts, messages, and completion
 
         Raises:
             A2AError: If server returns an error (including mid-stream expiry)
+            TimeoutError: If stream_timeout is exceeded
+            ValueError: If strict_task_id=True and response task_id doesn't match
         """
         client = await self._get_client()
 
@@ -299,23 +379,61 @@ class A2AClient:
             raise TypeError(f"warrant must be a Warrant object with to_base64() method, got {type(warrant).__name__}")
         warrant_token = warrant.to_base64()
 
+        # Build headers
+        headers: Dict[str, str] = {
+            "X-Tenuo-Warrant": warrant_token,
+            "Accept": "text/event-stream",
+        }
+
+        # Add delegation chain if provided
+        if warrant_chain:
+            chain_tokens = []
+            for w in warrant_chain:
+                if not hasattr(w, "to_base64"):
+                    raise TypeError(f"warrant_chain items must have to_base64() method, got {type(w).__name__}")
+                chain_tokens.append(w.to_base64())
+            headers["X-Tenuo-Warrant-Chain"] = ";".join(chain_tokens)
+
+        # Generate Proof-of-Possession signature if signing_key provided
+        args = arguments or {}
+        if signing_key is not None:
+            if not hasattr(warrant, "sign"):
+                raise TypeError(
+                    f"warrant must have sign() method for PoP, got {type(warrant).__name__}. "
+                    "Ensure you're using a tenuo_core.Warrant object."
+                )
+            # SECURITY: Fail-closed if tenuo_core unavailable
+            try:
+                from tenuo_core import ConstraintValue
+
+                args_cv = {k: ConstraintValue.from_any(v) for k, v in args.items()}
+            except ImportError as e:
+                raise ImportError(
+                    "tenuo_core.ConstraintValue required for PoP signing. Install with: pip install tenuo[a2a]"
+                ) from e
+
+            pop_signature = warrant.sign(signing_key, skill, args_cv)
+            pop_bytes = bytes(pop_signature)
+            headers["X-Tenuo-PoP"] = base64.urlsafe_b64encode(pop_bytes).decode("ascii")
+            logger.debug(f"Generated PoP signature for streaming skill '{skill}'")
+
         # Build request
         expected_task_id = task_id or str(uuid.uuid4())
         task_data = {
             "id": expected_task_id,
             "message": message_content,
             "skill": skill,
-            "arguments": arguments or {},
+            "arguments": args,
         }
+
+        # Calculate deadline for stream timeout
+        deadline = time.monotonic() + stream_timeout if stream_timeout else None
 
         # Send streaming request
         async with client.stream(
             "POST",
             f"{self.url}/a2a",
-            headers={
-                "X-Tenuo-Warrant": warrant_token,
-                "Accept": "text/event-stream",
-            },
+            headers=headers,
             json={
                 "jsonrpc": "2.0",
                 "method": "task/sendSubscribe",
@@ -335,6 +453,11 @@ class A2AClient:
             # Parse SSE events
             data_buffer = ""
             async for line in response.aiter_lines():
+                # Check stream timeout (prevents slow-drip DoS)
+                if deadline and time.monotonic() > deadline:
+                    raise TimeoutError(
+                        f"Stream timeout exceeded ({stream_timeout}s). This prevents slow-drip DoS attacks."
+                    )
                 line = line.strip()
 
                 if line.startswith("data:"):
@@ -345,13 +468,16 @@ class A2AClient:
                         event_data = json.loads(data_buffer)
                         update = TaskUpdate.from_dict(event_data)
 
-                        # Validate task_id to prevent response spoofing
+                        # SECURITY: Validate task_id to prevent response spoofing
                         response_task_id = event_data.get("task_id")
                         if response_task_id and response_task_id != expected_task_id:
-                            logger.warning(
+                            msg = (
                                 f"Task ID mismatch in stream: expected {expected_task_id!r}, "
                                 f"got {response_task_id!r}. Possible response spoofing."
                             )
+                            if strict_task_id:
+                                raise ValueError(msg)
+                            logger.warning(msg)
 
                         # Check for error events
                         if update.type.value == "error":
@@ -389,25 +515,40 @@ async def delegate(
     skill: str,
     arguments: Optional[Dict[str, Any]] = None,
     pin_key: Optional[str] = None,
+    warrant_chain: Optional[List["Warrant"]] = None,
 ) -> TaskResult:
     """
     Convenience function to delegate a task to another agent.
 
+    NOTE: This expects a pre-attenuated warrant. Attenuation happens BEFORE
+    calling delegate(), not inside it. This keeps the function simple and
+    gives callers full control over attenuation.
+
     Example:
+        # Step 1: Attenuate your warrant for the target
+        attenuated = my_warrant.attenuate(
+            grants=[Grant("search_papers")],
+            audience="https://research-agent.example.com",  # Bind to target
+            ttl=300,
+            key=my_key,
+        )
+
+        # Step 2: Delegate with the attenuated warrant
         result = await delegate(
             to="https://research-agent.example.com",
-            warrant=attenuated_warrant,
+            warrant=attenuated,
             message="Find TOCTOU papers",
             skill="search_papers",
         )
 
     Args:
         to: Target agent URL
-        warrant: Warrant for authorization (should be attenuated for target)
+        warrant: Warrant for authorization (should be pre-attenuated with audience)
         message: Task message
         skill: Skill to invoke (required)
         arguments: Skill arguments
-        pin_key: Expected public key of target
+        pin_key: Expected public key of target (for TOFU protection)
+        warrant_chain: Optional delegation chain (if warrant was delegated)
 
     Returns:
         TaskResult from the target agent
@@ -418,4 +559,5 @@ async def delegate(
             warrant=warrant,
             skill=skill,
             arguments=arguments,
+            warrant_chain=warrant_chain,
         )

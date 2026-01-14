@@ -21,6 +21,9 @@ __all__ = [
     "WarrantExpiredError",
     "AudienceMismatchError",
     "ReplayDetectedError",
+    # PoP errors
+    "PopRequiredError",
+    "PopVerificationError",
     # Authorization errors
     "SkillNotGrantedError",
     "SkillNotFoundError",
@@ -34,6 +37,7 @@ __all__ = [
     "ChainValidationError",
     # Client errors
     "KeyMismatchError",
+    "MissingSigningKeyError",
     # Configuration errors
     "ConstraintBindingError",
 ]
@@ -69,6 +73,8 @@ class A2AErrorCode:
     KEY_MISMATCH = -32012
     SKILL_NOT_FOUND = -32013  # Skill doesn't exist on server (vs not granted in warrant)
     UNKNOWN_CONSTRAINT = -32014  # Constraint type not recognized
+    POP_REQUIRED = -32015  # Proof-of-Possession required but not provided
+    POP_FAILED = -32016  # Proof-of-Possession verification failed
 
 
 # Code to name mapping
@@ -87,6 +93,8 @@ ERROR_MESSAGES = {
     A2AErrorCode.KEY_MISMATCH: "key_mismatch",
     A2AErrorCode.SKILL_NOT_FOUND: "skill_not_found",
     A2AErrorCode.UNKNOWN_CONSTRAINT: "unknown_constraint",
+    A2AErrorCode.POP_REQUIRED: "pop_required",
+    A2AErrorCode.POP_FAILED: "pop_failed",
 }
 
 
@@ -177,40 +185,61 @@ class ReplayDetectedError(A2AError):
 
 
 class SkillNotGrantedError(A2AError):
-    """Requested skill not granted in warrant."""
+    """Requested skill not granted in warrant.
+
+    Note: The list of granted skills is intentionally NOT included in the
+    error response to prevent capability enumeration attacks.
+    """
 
     code = A2AErrorCode.SKILL_NOT_GRANTED
 
     def __init__(self, skill: str, granted_skills: list[str]):
-        super().__init__(f"Skill '{skill}' not granted", {"skill": skill, "granted_skills": granted_skills})
+        # SECURITY: Don't expose granted_skills in error response to prevent enumeration
+        super().__init__(f"Skill '{skill}' not granted in warrant", {"skill": skill})
+        # Store internally for logging/debugging but not in wire format
+        self._granted_skills = granted_skills
 
 
 class SkillNotFoundError(A2AError):
-    """Skill doesn't exist on this server (different from not granted in warrant)."""
+    """Skill doesn't exist on this server (different from not granted in warrant).
+
+    Note: The list of available skills is intentionally NOT included in the
+    error response to prevent capability enumeration attacks. Use the agent
+    card discovery endpoint for legitimate capability discovery.
+    """
 
     code = A2AErrorCode.SKILL_NOT_FOUND
 
     def __init__(self, skill: str, available_skills: list[str]):
-        super().__init__(
-            f"Skill '{skill}' not found on this server", {"skill": skill, "available_skills": available_skills}
-        )
+        # SECURITY: Don't expose available_skills in error response to prevent enumeration
+        super().__init__(f"Skill '{skill}' not found on this server", {"skill": skill})
+        # Store internally for logging/debugging but not in wire format
+        self._available_skills = available_skills
 
 
 class ConstraintViolationError(A2AError):
-    """Argument failed constraint check."""
+    """Argument failed constraint check.
+
+    Note: The actual value that violated the constraint is intentionally NOT
+    included in the error response to prevent information leakage. The value
+    is stored internally for server-side logging.
+    """
 
     code = A2AErrorCode.CONSTRAINT_VIOLATION
 
     def __init__(self, param: str, constraint_type: str, value: Any, reason: str = ""):
+        # SECURITY: Don't expose actual value in error response - could leak
+        # attempted attack payloads (path traversal, SSRF targets, etc.)
         super().__init__(
             f"Constraint violation on '{param}': {reason}",
             {
                 "param": param,
                 "constraint_type": constraint_type,
-                "value": str(value),
                 "reason": reason,
             },
         )
+        # Store internally for server-side logging/debugging
+        self._value = value
 
 
 class UnknownConstraintError(A2AError):
@@ -226,7 +255,13 @@ class UnknownConstraintError(A2AError):
 
 
 class RevokedError(A2AError):
-    """Warrant or issuer has been revoked."""
+    """
+    Warrant or issuer has been revoked.
+
+    NOTE: Reserved for future use. Revocation checking is not currently
+    implemented in A2A - requires integration with revocation service.
+    Error code -32009 is reserved for this purpose.
+    """
 
     code = A2AErrorCode.REVOKED
 
@@ -328,4 +363,47 @@ class ConstraintBindingError(Exception):
         super().__init__(
             f"Constraint '{constraint_key}' does not match any parameter of skill "
             f"'{skill}'. Available: {available_params}"
+        )
+
+
+# =============================================================================
+# Proof-of-Possession Errors
+# =============================================================================
+
+
+class PopRequiredError(A2AError):
+    """Proof-of-Possession signature required but not provided."""
+
+    code = A2AErrorCode.POP_REQUIRED
+
+    def __init__(self, message: str = "Proof-of-Possession required"):
+        super().__init__(message, {"reason": "pop_header_missing"})
+
+
+class PopVerificationError(A2AError):
+    """Proof-of-Possession signature verification failed."""
+
+    code = A2AErrorCode.POP_FAILED
+
+    def __init__(self, reason: str = "signature verification failed"):
+        super().__init__(
+            f"Proof-of-Possession failed: {reason}",
+            {"reason": reason},
+        )
+
+
+class MissingSigningKeyError(A2AError):
+    """Signing key required for PoP but not provided.
+
+    Client-side error when agent requires PoP but no signing_key was provided.
+    """
+
+    code = A2AErrorCode.POP_REQUIRED
+
+    def __init__(self):
+        super().__init__(
+            "Signing key required for Proof-of-Possession. "
+            "The agent requires PoP authentication. "
+            "Pass signing_key parameter to send_task().",
+            {"reason": "signing_key_missing"},
         )

@@ -108,6 +108,28 @@ result = await client.send_task(
 print(f"Found {len(result.output)} papers")
 ```
 
+### Streaming Tasks
+
+For long-running tasks, use streaming to receive incremental updates:
+
+```python
+# Stream results as they arrive
+async for update in client.send_task_streaming(
+    message="Analyze these papers",
+    warrant=task_warrant,
+    skill="analyze_papers",
+    arguments={"paper_ids": ["arxiv:2401.12345"]},
+):
+    if update.type.value == "status":
+        print(f"Status: {update.status}")
+    elif update.type.value == "message":
+        print(f"Chunk: {update.content}")
+    elif update.type.value == "complete":
+        print(f"Done: {update.output}")
+```
+
+The server emits SSE events for status updates, intermediate messages, and final completion.
+
 ---
 
 ## Server Configuration

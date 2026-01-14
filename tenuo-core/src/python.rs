@@ -450,6 +450,21 @@ impl PyPattern {
         Ok(Self { inner })
     }
 
+    /// Validate that another Pattern is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child Pattern is valid if it matches a subset of what parent matches.
+    ///
+    /// Args:
+    ///     child: The child Pattern to validate.
+    ///
+    /// Raises:
+    ///     MonotonicityError: If child would expand capabilities.
+    fn validate_attenuation(&self, child: &PyPattern) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+
     fn __repr__(&self) -> String {
         format!("Pattern('{}')", self.inner.pattern)
     }
@@ -502,6 +517,15 @@ impl PyOneOf {
         }
     }
 
+    /// Validate that another OneOf is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child OneOf is valid if its values are a subset of parent's values.
+    fn validate_attenuation(&self, child: &PyOneOf) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+
     fn __repr__(&self) -> String {
         format!("OneOf({:?})", self.inner.values)
     }
@@ -532,6 +556,15 @@ impl PyNotOneOf {
         Self {
             inner: NotOneOf::new(values),
         }
+    }
+
+    /// Validate that another NotOneOf is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child NotOneOf is valid if it excludes at least everything parent excludes.
+    fn validate_attenuation(&self, child: &PyNotOneOf) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
     }
 
     /// Get the excluded values.
@@ -575,6 +608,15 @@ impl PyContains {
         })
     }
 
+    /// Validate that another Contains is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child Contains is valid if it requires at least everything parent requires.
+    fn validate_attenuation(&self, child: &PyContains) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+
     /// Get the required values.
     #[getter]
     fn required(&self) -> PyResult<Vec<PyObject>> {
@@ -616,6 +658,15 @@ impl PySubset {
         })
     }
 
+    /// Validate that another Subset is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child Subset is valid if its allowed values are a subset of parent's.
+    fn validate_attenuation(&self, child: &PySubset) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+
     /// Get the allowed values.
     #[getter]
     fn allowed(&self) -> PyResult<Vec<PyObject>> {
@@ -655,6 +706,15 @@ impl PyAll {
         Ok(Self {
             inner: All::new(rust_constraints),
         })
+    }
+
+    /// Validate that another All is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child All is valid if it has all parent's constraints plus optionally more.
+    fn validate_attenuation(&self, child: &PyAll) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
     }
 
     fn __repr__(&self) -> String {
@@ -747,6 +807,15 @@ impl PyRange {
         })
     }
 
+    /// Validate that another Range is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child Range is valid if its bounds are within parent's bounds.
+    fn validate_attenuation(&self, child: &PyRange) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+
     fn __repr__(&self) -> String {
         format!("Range(min={:?}, max={:?})", self.inner.min, self.inner.max)
     }
@@ -804,6 +873,15 @@ impl PyCidr {
     ///     True if the IP is within the network, False otherwise.
     fn contains(&self, ip: &str) -> PyResult<bool> {
         self.inner.contains_ip(ip).map_err(to_py_err)
+    }
+
+    /// Validate that another Cidr is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child Cidr is valid if its network is a subnet of parent's network.
+    fn validate_attenuation(&self, child: &PyCidr) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
     }
 
     fn __repr__(&self) -> String {
@@ -877,6 +955,15 @@ impl PyUrlPattern {
         self.inner.matches_url(url).map_err(to_py_err)
     }
 
+    /// Validate that another UrlPattern is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child UrlPattern is valid if it matches a subset of URLs that parent matches.
+    fn validate_attenuation(&self, child: &PyUrlPattern) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+
     fn __repr__(&self) -> String {
         format!("UrlPattern('{}')", self.inner.pattern)
     }
@@ -932,8 +1019,22 @@ impl PyCel {
         }
     }
 
+    /// Validate that another CEL is a valid attenuation (narrowing) of this one.
+    ///
+    /// CEL attenuation is conservative: requires exact match or logical AND extension.
+    fn validate_attenuation(&self, child: &PyCel) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+
     fn __repr__(&self) -> String {
         format!("CEL('{}')", self.inner.expression)
+    }
+
+    #[getter]
+    fn expression(&self) -> String {
+        self.inner.expression.clone()
     }
 }
 
@@ -950,6 +1051,15 @@ impl PyRegex {
     fn new(pattern: &str) -> PyResult<Self> {
         let inner = RegexConstraint::new(pattern).map_err(to_py_err)?;
         Ok(Self { inner })
+    }
+
+    /// Validate that another Regex is a valid attenuation (narrowing) of this one.
+    ///
+    /// Regex attenuation is conservative: requires exact pattern match.
+    fn validate_attenuation(&self, child: &PyRegex) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
     }
 
     fn __repr__(&self) -> String {
@@ -1101,6 +1211,29 @@ impl PySubpath {
     #[getter]
     fn allow_equal(&self) -> bool {
         self.inner.allow_equal
+    }
+
+    /// Validate that another Subpath is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child Subpath is valid if its root is contained within this parent's root.
+    ///
+    /// Args:
+    ///     child: The child Subpath to validate.
+    ///
+    /// Raises:
+    ///     MonotonicityError: If child would expand capabilities.
+    ///
+    /// Example:
+    ///     >>> parent = Subpath("/data")
+    ///     >>> child = Subpath("/data/reports")
+    ///     >>> parent.validate_attenuation(child)  # OK
+    ///     >>> parent = Subpath("/data/reports")
+    ///     >>> child = Subpath("/data")
+    ///     >>> parent.validate_attenuation(child)  # Raises MonotonicityError
+    fn validate_attenuation(&self, child: &PySubpath) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
     }
 }
 
@@ -1297,6 +1430,29 @@ impl PyUrlSafe {
     #[getter]
     fn block_internal_tlds(&self) -> bool {
         self.inner.block_internal_tlds
+    }
+
+    /// Validate that another UrlSafe is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child UrlSafe is valid if it is at least as restrictive as this parent:
+    /// - Child schemes must be subset of parent schemes
+    /// - Child cannot disable blocking flags that parent enables
+    /// - If parent has domain allowlist, child must too (and be subset)
+    ///
+    /// Args:
+    ///     child: The child UrlSafe to validate.
+    ///
+    /// Raises:
+    ///     MonotonicityError: If child would expand capabilities.
+    ///
+    /// Example:
+    ///     >>> parent = UrlSafe(allow_domains=["*.example.com"])
+    ///     >>> child = UrlSafe(allow_domains=["api.example.com"])
+    ///     >>> parent.validate_attenuation(child)  # OK
+    fn validate_attenuation(&self, child: &PyUrlSafe) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
     }
 }
 

@@ -70,6 +70,10 @@ from .errors import (
     ChainMissingError,
     ChainValidationError,
     ChainReason,
+    # PoP (Proof-of-Possession)
+    PopRequiredError,
+    PopVerificationError,
+    MissingSigningKeyError,
     # Client
     KeyMismatchError,
     # Configuration
@@ -78,6 +82,7 @@ from .errors import (
 
 from .server import A2AServer
 from .client import A2AClient, delegate
+from .helpers import explain, explain_str, visualize_chain, dry_run, simulate, SimulationTrace
 
 __all__ = [
     # Server
@@ -85,6 +90,13 @@ __all__ = [
     # Client
     "A2AClient",
     "delegate",
+    # DX Helpers
+    "explain",
+    "explain_str",
+    "visualize_chain",
+    "dry_run",
+    "simulate",
+    "SimulationTrace",
     # Types
     "Grant",
     "AgentCard",
@@ -116,6 +128,9 @@ __all__ = [
     "ChainMissingError",
     "ChainValidationError",
     "ChainReason",
+    "PopRequiredError",
+    "PopVerificationError",
+    "MissingSigningKeyError",
     "KeyMismatchError",
     "ConstraintBindingError",
 ]

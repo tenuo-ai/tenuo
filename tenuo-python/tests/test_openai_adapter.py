@@ -3325,8 +3325,8 @@ class TestShlexOpenAIIntegration:
         from unittest.mock import Mock
 
         mock_client = Mock()
-        builder = GuardBuilder(mock_client).allow("run_command").constrain(
-            "run_command", cmd=Shlex(allow=["ls", "cat"])
+        builder = (
+            GuardBuilder(mock_client).allow("run_command").constrain("run_command", cmd=Shlex(allow=["ls", "cat"]))
         )
 
         # Check constraints are stored correctly

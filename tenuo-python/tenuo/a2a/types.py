@@ -9,8 +9,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from contextvars import ContextVar
+
+if TYPE_CHECKING:
+    from tenuo_core import Warrant as _WarrantType
+else:
+    _WarrantType = Any  # Runtime: Any, since Warrant is lazily imported
 
 __all__ = [
     # Context
@@ -27,8 +32,8 @@ __all__ = [
     # Audit
     "AuditEvent",
     "AuditEventType",
-    # Re-export
-    "Warrant",
+    # Re-export (lazily imported via __getattr__)
+    "Warrant",  # noqa: F822
 ]
 
 
@@ -36,11 +41,11 @@ __all__ = [
 # Context Variable for Current Task Warrant
 # =============================================================================
 
-current_task_warrant: ContextVar[Optional["Warrant"]] = ContextVar("current_task_warrant", default=None)
+current_task_warrant: ContextVar[Optional[_WarrantType]] = ContextVar("current_task_warrant", default=None)
 
 
 # =============================================================================
-# Grant - Skill-level capability
+# Grant - Skill-level capability (A2A wire format)
 # =============================================================================
 
 
@@ -48,6 +53,11 @@ current_task_warrant: ContextVar[Optional["Warrant"]] = ContextVar("current_task
 class Grant:
     """
     A skill-level capability grant with constraints.
+
+    NOTE: This is the A2A wire format representation, distinct from
+    tenuo_core.Capability which is the internal warrant representation.
+    Grant is used for A2A protocol communication (JSON-RPC), while
+    Capability is used for CBOR-encoded warrants.
 
     Example:
         Grant(
@@ -70,16 +80,29 @@ class Grant:
 
 
 def _serialize_constraint(constraint: Any) -> Dict[str, Any]:
-    """Serialize a constraint to wire format."""
-    # Handle Rust constraint types
+    """
+    Serialize a constraint to wire format.
+
+    Prefers constraint.to_dict() if available (canonical method).
+    Falls back to type-specific extraction for known constraints.
+    """
+    # Prefer to_dict() if the constraint defines it
+    if hasattr(constraint, "to_dict") and callable(constraint.to_dict):
+        return constraint.to_dict()
+
+    # Pass through dicts as-is
+    if isinstance(constraint, dict):
+        return constraint
+
+    # Fallback: type-specific extraction for known Rust constraints
     if hasattr(constraint, "__class__"):
         type_name = constraint.__class__.__name__
-        if type_name == "UrlSafe":
+        if type_name in ("UrlSafe", "PyUrlSafe"):
             return {
                 "type": "UrlSafe",
                 "allow_domains": getattr(constraint, "allow_domains", None),
             }
-        elif type_name == "Subpath":
+        elif type_name in ("Subpath", "PySubpath"):
             return {
                 "type": "Subpath",
                 "root": getattr(constraint, "root", None),
@@ -87,12 +110,10 @@ def _serialize_constraint(constraint: Any) -> Dict[str, Any]:
         elif type_name == "Shlex":
             return {
                 "type": "Shlex",
-                "allow": getattr(constraint, "allow", None),
+                "allow": getattr(constraint, "allowed_bins", None),
             }
-    # Pass through dicts as-is
-    if isinstance(constraint, dict):
-        return constraint
-    # Fallback: wrap in type
+
+    # Last resort: wrap in generic format
     return {"type": str(type(constraint).__name__), "value": str(constraint)}
 
 
@@ -315,12 +336,25 @@ class AuditEvent:
 
 
 # =============================================================================
-# Type Aliases
+# Lazy Import for Warrant
 # =============================================================================
 
-# Warrant import - fail loudly if tenuo_core is not installed
-# This is a required dependency for A2A, not optional
-try:
-    from tenuo_core import Warrant
-except ImportError as e:
-    raise ImportError("tenuo_core is required for A2A. Install with: pip install tenuo[a2a]") from e
+# Warrant is lazily imported to avoid forcing tenuo_core on users who only
+# need basic types like Grant or AgentCard.
+
+_warrant_class = None
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy import for Warrant to avoid module-level tenuo_core dependency."""
+    global _warrant_class
+    if name == "Warrant":
+        if _warrant_class is None:
+            try:
+                from tenuo_core import Warrant as _Warrant
+
+                _warrant_class = _Warrant
+            except ImportError as e:
+                raise ImportError("tenuo_core is required for Warrant. Install with: pip install tenuo[a2a]") from e
+        return _warrant_class
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

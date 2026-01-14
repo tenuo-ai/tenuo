@@ -462,6 +462,7 @@ def demo_race(wait=None):
 #  MAIN
 # ============================================================================
 
+
 def main():
     parser = argparse.ArgumentParser(description="TOCTOU Demo - Shows vulnerability and Tenuo's fix")
     parser.add_argument(
@@ -542,4 +543,3 @@ def demo_streaming(interactive: bool, wait):
 
 if __name__ == "__main__":
     main()
-
