@@ -12,7 +12,13 @@ Python bindings for [Tenuo](https://github.com/tenuo-ai/tenuo), providing crypto
 ## Installation
 
 ```bash
-pip install tenuo
+pip install tenuo                  # Core only
+pip install "tenuo[openai]"        # + OpenAI Agents SDK
+pip install "tenuo[google_adk]"    # + Google ADK
+pip install "tenuo[a2a]"           # + Agent-to-Agent (inter-agent delegation)
+pip install "tenuo[langchain]"     # + LangChain / LangGraph
+pip install "tenuo[fastapi]"       # + FastAPI
+pip install "tenuo[mcp]"           # + MCP client (Python ≥3.10)
 ```
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb)
@@ -142,20 +148,6 @@ authorized = warrant.authorize(
 )
 ```
 
-## Installation Options
-
-```bash
-pip install tenuo                  # Core only
-pip install "tenuo[openai]"        # + OpenAI Agents SDK
-pip install "tenuo[google_adk]"    # + Google ADK
-pip install "tenuo[a2a]"           # + Agent-to-Agent (multi-agent)
-pip install "tenuo[fastapi]"       # + FastAPI integration
-pip install "tenuo[langchain]"     # + LangChain
-pip install "tenuo[langgraph]"     # + LangGraph (includes LangChain)
-pip install "tenuo[mcp]"           # + MCP client (Python ≥3.10)
-pip install "tenuo[dev]"           # Development tools
-```
-
 ## Key Management
 
 ### Loading Keys
@@ -177,9 +169,7 @@ key = SigningKey.generate()
 
 #### KeyRegistry (Thread-Safe Singleton)
 
-**Problem**: In LangGraph and similar frameworks, state gets checkpointed to databases. If you put a `SigningKey` in state, your private key gets persisted - a serious security risk.
-
-**Solution**: KeyRegistry keeps keys in memory, outside of state. Only string IDs flow through your graph.
+LangGraph checkpoints state to databases. Private keys in state = private keys in your database. `KeyRegistry` solves this by keeping keys in memory while only string IDs flow through state.
 
 ```python
 from tenuo import KeyRegistry, SigningKey
@@ -315,6 +305,51 @@ response = client.chat.completions.create(
 
 For Tier 2 (cryptographic authorization with warrants), see [OpenAI Integration](https://tenuo.dev/openai).
 
+## Google ADK Integration
+
+Warrant-based tool protection for Google ADK agents:
+
+```python
+from google.adk.agents import Agent
+from tenuo.google_adk import GuardBuilder
+from tenuo.constraints import Subpath, UrlSafe
+
+guard = (GuardBuilder()
+    .allow("read_file", path=Subpath("/data"))
+    .allow("web_search", url=UrlSafe(allow_domains=["*.google.com"]))
+    .build())
+
+agent = Agent(
+    name="assistant",
+    tools=guard.filter_tools([read_file, web_search]),
+    before_tool_callback=guard.before_tool,
+)
+```
+
+For Tier 2 (warrant + PoP) and multi-agent scenarios, see [Google ADK Integration](https://tenuo.dev/google-adk).
+
+## A2A Integration (Multi-Agent)
+
+Warrant-based authorization for agent-to-agent communication:
+
+```python
+from tenuo.a2a import A2AServer, A2AClient
+from tenuo.constraints import Subpath, UrlSafe
+
+server = A2AServer(
+    name="Research Agent",
+    url="https://research-agent.example.com",
+    public_key=my_public_key,
+    trusted_issuers=[orchestrator_key],
+)
+
+@server.skill("search_papers", constraints={"sources": UrlSafe})
+async def search_papers(query: str, sources: list[str]) -> list[dict]:
+    return await do_search(query, sources)
+```
+
+See [A2A Integration](https://tenuo.dev/a2a) for full documentation.
+
 ## LangGraph Integration
 
 ```python
@@ -337,7 +372,9 @@ config = {"configurable": {"tenuo_key_id": "worker"}}
 result = graph.invoke(state, config=config)
 ```
 
-### Nodes That Need Warrant Access
+### Conditional Logic Based on Permissions
+
+Use `@tenuo_node` when your node needs to check what the warrant allows:
 
 ```python
 from tenuo.langgraph import tenuo_node
@@ -345,6 +382,7 @@ from tenuo import BoundWarrant
 
 @tenuo_node
 def smart_router(state, bound_warrant: BoundWarrant):
+    # Route based on what the warrant permits
     if bound_warrant.allows("search"):
         return {"next": "researcher"}
     return {"next": "fallback"}
@@ -408,67 +446,6 @@ warrant.is_terminal    # bool (can't delegate further)
 # Human-readable
 warrant.capabilities   # dict of tool -> constraints
 ```
-
-## Google ADK Integration
-
-Warrant-based tool protection for Google ADK agents:
-
-```python
-from google.adk.agents import Agent
-from tenuo.google_adk import GuardBuilder
-from tenuo.constraints import Subpath, UrlSafe
-
-# Tier 1: Define constraints inline
-guard = (GuardBuilder()
-    .allow("read_file", path=Subpath("/data"))
-    .allow("web_search", url=UrlSafe(allow_domains=["*.google.com"]))
-    .build())
-
-agent = Agent(
-    name="assistant",
-    tools=guard.filter_tools([read_file, web_search]),
-    before_tool_callback=guard.before_tool,
-)
-```
-
-For Tier 2 (warrant + PoP) and multi-agent scenarios, see [Google ADK Integration](https://tenuo.dev/google-adk).
-
-## A2A Integration (Multi-Agent)
-
-Warrant-based authorization for agent-to-agent communication:
-
-```python
-from tenuo.a2a import A2AServer, A2AClient
-from tenuo.constraints import Subpath, UrlSafe
-
-# Server: expose skills with constraints
-server = A2AServer(
-    name="Research Agent",
-    url="https://research-agent.example.com",
-    public_key=my_public_key,
-    trusted_issuers=[orchestrator_key],
-)
-
-@server.skill("search_papers", constraints={"sources": UrlSafe})
-async def search_papers(query: str, sources: list[str]) -> list[dict]:
-    return await do_search(query, sources)
-
-# Client: send tasks with attenuated warrants
-client = A2AClient("https://research-agent.example.com")
-task_warrant = my_warrant.attenuate(
-    capabilities={"search_papers": {"sources": UrlSafe(allow_domains=["arxiv.org"])}},
-    signing_key=my_key,
-    holder=target_agent_pubkey,
-    ttl_seconds=300,
-)
-result = await client.send_task(
-    message="Find papers on security",
-    warrant=task_warrant,
-    skill="search_papers",
-)
-```
-
-See [A2A Integration](https://tenuo.dev/a2a) for full documentation.
 
 ## MCP Integration
 
