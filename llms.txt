@@ -1596,38 +1596,116 @@ COMMON MISTAKES (DON'T DO THIS)
 ✅ RIGHT: warrant.authorize(tool, args, signature=pop_sig)
 
 ================================================================================
-QUICK ANSWERS
+FREQUENTLY ASKED QUESTIONS
 ================================================================================
 
+### CONSTRAINTS ###
+
 Q: How do I allow any value for an argument?
-A: Use Wildcard() constraint, or omit the constraint entirely.
-
-Q: Why is my delegation failing with MonotonicityError?
-A: Child constraint is wider than parent. Make it narrower.
-
-Q: Can I use regex instead of glob patterns?
-A: Yes, use Regex(). But narrowing validation is stricter.
-
-Q: How long should TTLs be?
-A: 5 minutes default, 15 minutes max for most cases. Short and sweet.
-
-Q: My warrant expired mid-operation. What do?
-A: Request a new warrant. Use shorter operations or push-based refresh.
+A: Use Wildcard(). Note: once you add ANY constraint to a capability, unknown
+   arguments are rejected (closed-world). Wildcard() explicitly allows a field.
 
 Q: What's the difference between Pattern("*") and Wildcard()?
-A: Both allow any value. Wildcard() is more explicit and slightly faster.
+A: Pattern("*") validates glob syntax and goes through pattern matching logic.
+   Wildcard() skips validation entirely - faster and shows explicit intent.
+   Use Wildcard() when you consciously want to allow anything.
 
-Q: Do I need trusted_roots in production?
-A: Yes! Without it, anyone can mint warrants. Set trusted_roots.
+Q: Why use Subpath/UrlSafe/Shlex instead of Pattern?
+A: Pattern matches strings. Semantic constraints parse like the system does:
+   - Pattern("/data/*") ALLOWS "/data/../etc/passwd" (looks like it matches!)
+   - Subpath("/data") BLOCKS it (resolves path, checks containment)
+   Same principle: UrlSafe blocks SSRF, Shlex blocks shell injection.
+   See: https://niyikiza.com/posts/cve-2025-66032/
+
+Q: Why are my unknown arguments rejected?
+A: Tenuo uses closed-world semantics. Once you add any constraint to a tool,
+   ALL arguments must be explicitly allowed. Options:
+   1. Add Wildcard() for specific args you want to allow
+   2. Use _allow_unknown=True to opt out (not recommended)
+
+### AUTHORIZATION ###
+
+Q: Should I use authorize() or validate()?
+A: - authorize(tool, args, signature) - Production. PoP comes from wire/header.
+   - validate(tool, args) - Debug/testing only. Auto-signs internally.
+   NEVER use validate() for real authorization decisions.
+
+Q: What's the difference between allows() and authorize()?
+A: - allows() - DEBUG ONLY. Logic check, NO cryptographic verification.
+   - authorize() - PRODUCTION. Full check including PoP signature.
+   An attacker with a stolen warrant passes allows() but fails authorize().
+
+Q: Do I need trusted_issuers in production?
+A: YES! Without it, anyone can forge warrants. Always configure:
+   trusted_issuers=[control_plane_pubkey]
+
+### DELEGATION ###
+
+Q: Why is my delegation failing with MonotonicityError?
+A: Child constraint is wider than parent. Attenuation can only NARROW:
+   - Parent: Subpath("/data") → Child: Subpath("/data/reports") ✓
+   - Parent: Subpath("/data") → Child: Subpath("/") ✗
+   Use warrant.why_denied(tool, args) to see which field failed.
 
 Q: Can I extend a warrant's TTL?
-A: No. Issue a new warrant. This is by design (re-evaluation).
+A: No. Issue a new warrant. This is by design - forces re-evaluation of
+   permissions. Short TTLs + re-issuance = better security than long TTLs.
+
+Q: What's the max delegation depth?
+A: 16 by default (MAX_DELEGATION_DEPTH in config). Protocol max is 64.
+   Deeper chains fail validation.
+
+### TTL & REVOCATION ###
+
+Q: How long should TTLs be?
+A: Short as practical:
+   - 5 minutes: Default, recommended for most operations
+   - 15 minutes: Maximum for standard use cases
+   - 1 hour: Only if necessary, requires caution
+   - >1 hour: Avoid - requires revocation infrastructure
+
+Q: How does revocation work?
+A: Tenuo uses short-lived warrants (TTL) instead of revocation lists:
+   1. Don't re-issue warrants when they expire (natural revocation)
+   2. Use short TTLs (minutes, not days)
+   3. For immediate revocation: update trusted_issuers to reject the issuer
+   This avoids distributed revocation infrastructure complexity.
+
+Q: My warrant expired mid-operation. What do?
+A: Request a new warrant. Design operations to be shorter than TTL, or use
+   push-based refresh where the control plane proactively issues new warrants.
+
+### ZERO TRUST ###
+
+Q: What is Tenuo's zero-trust behavior?
+A: Deny-all by default. Everything must be explicitly allowed:
+   - Tools not in warrant → REJECTED
+   - Arguments without constraints → REJECTED (closed-world)
+   - Unknown issuers → REJECTED
+   - Expired warrants → REJECTED
+   - Invalid/missing PoP signatures → REJECTED
+   Use Wildcard() only when you consciously want to allow any value.
+
+### DEBUGGING ###
 
 Q: How do I debug "tool not in warrant" errors?
-A: Use warrant.why_denied(tool, args) for detailed explanation.
+A: Use warrant.why_denied("tool_name", {"arg": "value"}) for detailed
+   explanation including which field failed and why.
 
-Q: Should I use Warrant.authorize() or BoundWarrant.validate()?
-A: validate() when you have the key. authorize() when PoP comes from HTTP.
+Q: How do I test without real warrants?
+A: Use Warrant.for_testing() or configure(dev_mode=True). These only work
+   when PYTEST_CURRENT_TEST is set (prevents accidental use in production).
+
+### SERIALIZATION ###
+
+Q: Can I serialize BoundWarrant?
+A: NO. BoundWarrant contains the private key. Extract the warrant only:
+   state["warrant"] = str(bound.warrant)  # OK
+   state["bound"] = bound                 # WRONG - contains key!
+
+Q: How do I send warrants over HTTP?
+A: Use headers: {"X-Tenuo-Warrant": warrant.to_base64(), "X-Tenuo-PoP": pop_sig}
+   Or use bound.headers(tool, args) which generates both.
 
 ================================================================================
 VERSION INFO
