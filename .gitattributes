@@ -16,3 +16,13 @@ notebooks/** linguist-documentation
 
 # Don't count benchmarks
 benchmarks/** linguist-vendored
+
+# Don't count node_modules (Explorer dependencies)
+tenuo-explorer/node_modules/** linguist-vendored
+
+# Don't count WASM generated bindings
+tenuo-wasm/pkg/** linguist-generated
+tenuo-explorer/src/wasm/** linguist-generated
+
+# Don't count TypeScript declaration files (generated)
+*.d.ts linguist-generated
