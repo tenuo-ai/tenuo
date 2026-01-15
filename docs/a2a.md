@@ -35,7 +35,7 @@ Warrant says: "Agent B can only search arxiv.org for this task"
 ## Installation
 
 ```bash
-pip install tenuo[a2a]
+pip install "tenuo[a2a]"
 ```
 
 ---

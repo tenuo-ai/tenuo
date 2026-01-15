@@ -1904,6 +1904,25 @@ class GuardBuilder:
         self._validate_mode = mode
         return self
 
+    def _validate_url_pattern(self, constraint: Any) -> Optional[str]:
+        """
+        Validate UrlPattern for security best practices.
+        
+        Returns error message if pattern is too permissive.
+        """
+        # Check if this is a UrlPattern constraint
+        pattern_str = getattr(constraint, "pattern", None)
+        if pattern_str and "://*/" in pattern_str:
+            return (
+                f"UrlPattern with bare wildcard host ('{pattern_str}') is not allowed. "
+                "This would bypass SSRF protection by allowing ANY domain. "
+                "Use explicit domains instead:\n"
+                "  - UrlPattern('https://api.github.com/*')\n"
+                "  - UrlPattern('https://*.example.com/*')\n"
+                "  - UrlSafe(allow_domains=['github.com']) for SSRF protection"
+            )
+        return None
+
     def _validate_constraints(self) -> List[str]:
         """Validate constraints against tool schemas.
 
@@ -1912,6 +1931,14 @@ class GuardBuilder:
         warnings: List[str] = []
 
         for tool_name, params in self._constraints.items():
+            # Security: Check for overly permissive UrlPattern constraints
+            for param_name, constraint in params.items():
+                if param_name.startswith("_"):
+                    continue
+                url_pattern_error = self._validate_url_pattern(constraint)
+                if url_pattern_error:
+                    warnings.append(f"[{tool_name}.{param_name}] {url_pattern_error}")
+
             # Check if tool exists in schemas
             if tool_name not in self._tool_schemas:
                 # Not an error - tool might not be registered

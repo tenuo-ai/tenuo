@@ -1570,6 +1570,11 @@ COMMON MISTAKES (DON'T DO THIS)
 ❌ WRONG: Pattern("/data/*")      # Vulnerable to /data/../etc/passwd
 ✅ RIGHT: Subpath("/data")        # Blocks traversal attacks
 
+### Using UrlPattern with bare wildcard host ###
+❌ WRONG: UrlPattern("https://*/*")  # Would allow ANY domain (SSRF risk)
+✅ RIGHT: UrlPattern("https://*.example.com/*")  # Specific domain only
+✅ RIGHT: UrlSafe(allow_domains=["api.example.com"])  # SSRF-protected
+
 ### Using allows() for authorization ###
 ❌ WRONG: if bound.allows(...): do_thing()  # No PoP check!
 ✅ RIGHT: if bound.validate(...): do_thing()  # Full authorization

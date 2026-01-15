@@ -27,7 +27,7 @@ Tenuo provides first-class support for [Google's Agent Development Kit (ADK)](ht
 ## Installation
 
 ```bash
-pip install tenuo[adk]
+pip install "tenuo[google_adk]"
 ```
 
 ---

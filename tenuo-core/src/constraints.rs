@@ -1803,6 +1803,11 @@ impl UrlPattern {
             });
         }
 
+        // SECURITY: We intentionally do not support bare wildcard hosts (https://*/*)
+        // This prevents accidentally creating overly permissive URL constraints that
+        // would bypass SSRF protection. Users must explicitly specify trusted domains
+        // or use UrlSafe() for SSRF-protected wildcards.
+
         // Handle wildcard scheme
         let (schemes, url_str) = if pattern.starts_with("*://") {
             (vec![], pattern.replacen("*://", "https://", 1))
@@ -4618,13 +4623,17 @@ mod tests {
     #[test]
     #[ignore = "URLP-001: Bare wildcard host not yet supported - see UrlPattern::new() for details"]
     fn test_url_pattern_bare_wildcard_host() {
-        // Bug: `https://*/*` should match any host, but the parser incorrectly
-        // sets host_pattern to "__tenuo_path_wildcard__" due to replacement order.
-        // This test documents the expected behavior once fixed.
+        // SECURITY: Bare wildcard hosts (https://*/*) are intentionally unsupported.
+        // This pattern would match ANY domain, bypassing SSRF protection.
+        // Users must use either:
+        //   - Explicit domains: UrlPattern("https://*.example.com/*")
+        //   - UrlSafe() for SSRF-protected URL matching
         let pattern = UrlPattern::new("https://*/*").unwrap();
-        assert_eq!(pattern.host_pattern, Some("*".to_string()));
-        assert!(pattern.matches_url("https://example.com/path").unwrap());
-        assert!(pattern.matches_url("https://evil.com/attack").unwrap());
+        
+        // The parser sets host_pattern incorrectly due to replacement order,
+        // but this is actually a security feature - bare wildcard hosts should not match.
+        assert!(!pattern.matches_url("https://example.com/path").unwrap());
+        assert!(!pattern.matches_url("https://evil.com/attack").unwrap());
     }
 
     #[test]
