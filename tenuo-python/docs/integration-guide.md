@@ -3,11 +3,56 @@
 **For**: Contributors building new Python framework integrations  
 **Examples**: [OpenAI](../../docs/openai.md), [Google ADK](../../docs/google-adk.md), [A2A](../../docs/a2a.md)
 
-This guide ensures new Python integrations align with Tenuo's security philosophy and provide consistent developer experience.
+> **Disclaimer**: This is an informal guide. The authoritative sources are the [wire format spec](../../docs/spec/wire-format-v1.md), [protocol spec](../../docs/spec/protocol-spec-v1.md), and actual code. Corrections welcome!
 
 ---
 
-## Security Model
+## Getting Started
+
+### Your Development Roadmap
+
+```
+1. STUDY
+   └─ Read an existing integration: tenuo/openai.py or tenuo/google_adk/guard.py
+   └─ Understand the Security Model section below
+
+2. WRITE TESTS FIRST
+   └─ Copy tests from Critical Test Scenarios section
+   └─ Copy the 6 Invariant Tests
+   └─ These define "done" - your implementation passes when tests pass
+
+3. SCAFFOLD
+   └─ Create your module: tenuo/myframework.py
+   └─ Implement GuardBuilder with .allow() and .build()
+   └─ Choose Tier 1 (constraints only) or Tier 2 (warrants + PoP)
+
+4. IMPLEMENT
+   └─ Wire up constraint checking using satisfies()
+   └─ Add framework-specific hooks (callbacks, decorators, etc.)
+   └─ Handle streaming if applicable (buffer args, validate complete)
+   └─ You're done when all tests pass
+
+5. POLISH
+   └─ Add rich error messages with quick fixes
+   └─ Add .validate() for startup checks
+   └─ Add on_denial modes (raise/log/skip)
+
+6. VERIFY & DOCUMENT
+   └─ Final check with Integration Checklist
+   └─ Add docs/myframework.md
+   └─ Add example in examples/
+```
+
+### Start Here
+
+1. **Copy the OpenAI integration** (`tenuo/openai.py`) as your template - it has all the patterns
+2. **Read the Philosophy section** to understand fail-closed, two-tier, and zero-trust
+3. **Jump to API Patterns** to pick your approach
+4. **Use the Checklist** at the end to verify completeness
+
+---
+
+## Security Model (Read First)
 
 ### What Tenuo Protects Against
 
@@ -28,7 +73,9 @@ This guide ensures new Python integrations align with Tenuo's security philosoph
 
 ---
 
-## Philosophy: Fail-Closed, Two-Tier, Zero Trust
+## Philosophy (Internalize These Principles)
+
+Before writing code, internalize these three principles. Every design decision should reflect them.
 
 ### 1. Fail-Closed
 
@@ -61,18 +108,28 @@ client = GuardBuilder(openai.OpenAI()).build()  # What tools are allowed?
 
 ### 2. Two-Tier Model
 
+**Why Tier 1 exists:**
+
+LLMs hallucinate. They call tools that don't exist, pass arguments outside allowed ranges, and attempt path traversal or SSRF. In a single-process application (your code + OpenAI SDK), the LLM output never leaves your process. You don't need cryptographic proof that *you* authorized *yourself* - you just need to validate the LLM's output before executing it.
+
+Tier 1 provides this: fast, in-process constraint checking without cryptographic overhead. It stops prompt injection and hallucinated tool calls at the point where LLM output meets your code.
+
+**Why Tier 2 exists:**
+
+When authorization crosses process boundaries (Agent A calls Agent B over HTTP), you need proof. Agent B can't trust that the request "really came from Agent A with these permissions" without cryptographic verification. Tier 2 adds warrants (signed capability tokens) and Proof-of-Possession (proving the caller holds the private key).
+
 ```
 Which tier should I use?
 │
 ├─ Is the tool caller in the same process as the guard?
-│   └─ Yes: Tier 1 (guardrails) is sufficient
-│   └─ No:  Tier 2 (PoP) required
+│   └─ Yes: Tier 1 is sufficient (no network = no impersonation risk)
+│   └─ No:  Tier 2 required (network = need cryptographic proof)
 │
 ├─ Is the warrant delegated from another agent?
 │   └─ Yes: Tier 2 with chain validation
 │   └─ No:  Tier 2 without chain
 │
-└─ Do I need cryptographic proof of authorization?
+└─ Do I need audit trail with cryptographic proof?
     └─ Yes: Tier 2 always
     └─ No:  Tier 1 for simplicity
 ```
@@ -121,7 +178,9 @@ client = (GuardBuilder(openai.OpenAI())
 
 ---
 
-## API Patterns
+## API Patterns (Pick Your Approach)
+
+Choose the pattern that fits your framework. Most integrations use Pattern 1 (Builder) as the primary API.
 
 ### Pattern 1: Builder (Recommended)
 
@@ -237,7 +296,9 @@ async_client = protect(openai.AsyncOpenAI(), ...)
 
 ---
 
-## Constraint Checking
+## Constraint Checking (Core Implementation)
+
+This is the heart of your integration. Get this right and the rest is straightforward.
 
 ### Use `satisfies()` Method
 
@@ -299,7 +360,7 @@ print(warrant.capabilities)  # View capabilities and constraints
 
 ---
 
-## Wire Format Requirement
+## Wire Format Requirement (Critical: Don't Skip)
 
 **All runtime authorization MUST go through the Rust core.**
 
@@ -353,7 +414,9 @@ def explain_denial(warrant, tool, args):
 
 ---
 
-## Developer Experience Requirements
+## Developer Experience (Make It Delightful)
+
+Users will judge your integration by error messages and startup validation. Invest here.
 
 ### 1. Validation on Startup
 
@@ -439,7 +502,9 @@ client = (GuardBuilder(openai.OpenAI())
 
 ---
 
-## Critical Test Scenarios
+## Critical Test Scenarios (Write These First)
+
+Write these tests before or alongside your implementation. They define what "done" looks like.
 
 ### 1. Constraint Enforcement
 
@@ -521,13 +586,22 @@ def test_signing_key_must_match_holder():
 
 ```python
 def test_expired_warrant_rejected():
-    expired = Warrant.mint_builder().ttl(-1).mint(key)
+    key = SigningKey.generate()
     
-    client = (GuardBuilder(openai.OpenAI())
-        .with_warrant(expired, key)
-        .build())
+    # Create warrant with very short TTL
+    warrant = (Warrant.mint_builder()
+        .capability("read_file", path=Subpath("/data"))
+        .holder(key.public_key)
+        .ttl(1)
+        .mint(key))
     
-    with pytest.raises(WarrantExpired):
+    time.sleep(2)  # Wait for expiry
+    
+    # Build should fail or first call should fail
+    with pytest.raises((WarrantExpired, ConfigurationError)):
+        client = (GuardBuilder(openai.OpenAI())
+            .with_warrant(warrant, key)
+            .build())
         call_tool("read_file", {"path": "/data/file.txt"})
 ```
 
@@ -601,25 +675,31 @@ Authority can only decrease, never increase.
 
 ```python
 def test_monotonic_attenuation():
+    root_key = SigningKey.generate()
+    child_key = SigningKey.generate()
+    
     root = (Warrant.mint_builder()
         .capability("read", path=Subpath("/"))
         .capability("write", path=Subpath("/"))
+        .holder(root_key.public_key)
         .mint(root_key))
     
     child = (root.grant_builder()
         .capability("read", path=Subpath("/data"))
+        .holder(child_key.public_key)
         .grant(root_key))
     
+    # Use allows() for logic tests (no PoP needed)
+    # For production, use authorize() with signature
+    
     # Child can read /data/file.txt
-    assert child.authorize("read", {"path": "/data/file.txt"})
+    assert child.allows("read", {"path": "/data/file.txt"})
     
     # Child cannot read outside /data
-    with pytest.raises(AuthorizationError):
-        child.authorize("read", {"path": "/etc/passwd"})
+    assert not child.allows("read", {"path": "/etc/passwd"})
     
     # Child cannot write (not in child's capabilities)
-    with pytest.raises(AuthorizationError):
-        child.authorize("write", {"path": "/data/file.txt"})
+    assert not child.allows("write", {"path": "/data/file.txt"})
 ```
 
 ### Invariant 2: Fail-Closed on Unknown
@@ -628,13 +708,17 @@ Any unlisted parameter is rejected.
 
 ```python
 def test_fail_closed_unknown():
+    key = SigningKey.generate()
     warrant = (Warrant.mint_builder()
         .capability("read", path=Subpath("/data"))
+        .holder(key.public_key)
         .mint(key))
     
-    # 'mode' not in warrant constraints
-    with pytest.raises(ConstraintViolation):
-        warrant.authorize("read", {"path": "/data/file.txt", "mode": "r"})
+    # 'mode' not in warrant constraints -> rejected
+    assert not warrant.allows("read", {"path": "/data/file.txt", "mode": "r"})
+    
+    # Only constrained args -> allowed
+    assert warrant.allows("read", {"path": "/data/file.txt"})
 ```
 
 ### Invariant 3: Expiry Enforced
@@ -643,12 +727,25 @@ Expired warrants rejected even with valid signature.
 
 ```python
 def test_expiry_enforced():
-    warrant = Warrant.mint_builder().capability("read").ttl(1).mint(key)
+    key = SigningKey.generate()
+    warrant = (Warrant.mint_builder()
+        .capability("read", path=Wildcard())
+        .holder(key.public_key)
+        .ttl(1)  # 1 second TTL
+        .mint(key))
+    
+    # Initially valid
+    assert not warrant.is_expired()
     
     time.sleep(2)
     
-    with pytest.raises(WarrantExpired):
-        warrant.authorize("read", {"path": "/data/file.txt"})
+    # Now expired
+    assert warrant.is_expired()
+    
+    # Binding to expired warrant raises at validation time
+    bound = warrant.bind(key)
+    result = bound.validate("read", {"path": "/data/file.txt"})
+    assert not result  # Validation fails for expired warrant
 ```
 
 ### Invariant 4: PoP Required (Tier 2)
@@ -680,14 +777,22 @@ Modified warrants are rejected.
 
 ```python
 def test_tampered_warrant_rejected():
-    warrant = Warrant.mint_builder().capability("read").mint(key)
+    key = SigningKey.generate()
+    warrant = (Warrant.mint_builder()
+        .capability("read", path=Wildcard())
+        .holder(key.public_key)
+        .mint(key))
     
-    warrant_bytes = warrant.to_bytes()
+    # Serialize to bytes
+    warrant_bytes = bytes(warrant.to_base64(), "utf-8")
+    
+    # Tamper with the payload
     tampered = bytearray(warrant_bytes)
     tampered[10] ^= 0xFF
     
-    with pytest.raises(SignatureError):
-        Warrant.from_bytes(bytes(tampered))
+    # Deserialization fails due to invalid signature
+    with pytest.raises((SignatureError, ValueError)):
+        Warrant.from_base64(bytes(tampered).decode("utf-8"))
 ```
 
 ### Invariant 6: Chain Validation
@@ -696,14 +801,25 @@ Delegation chains must be valid from root to leaf.
 
 ```python
 def test_chain_validation():
-    root = Warrant.mint_builder().capability("read").mint(root_key)
+    root_key = SigningKey.generate()
+    child_key = SigningKey.generate()
+    
+    root = (Warrant.mint_builder()
+        .capability("read", path=Wildcard())
+        .holder(root_key.public_key)
+        .mint(root_key))
     
     child = (root.grant_builder()
-        .capability("read")
+        .capability("read", path=Subpath("/data"))
         .holder(child_key.public_key)
         .grant(root_key))
     
-    assert child.validate_chain()
+    # Chain is valid: root -> child
+    assert child.depth == 1
+    
+    # Child inherits root's authority (narrowed)
+    assert child.allows("read", {"path": "/data/file.txt"})
+    assert not child.allows("read", {"path": "/etc/passwd"})
 ```
 
 ---
@@ -858,10 +974,13 @@ if tool in allowed_tools:
 
 **Right**:
 ```python
-# Use core
-warrant.authorize(tool, args)
-# or
-constraint.satisfies(value)
+# Tier 1: Use core constraint checking
+if constraint.satisfies(value):
+    execute(tool, args)
+
+# Tier 2: Use core authorization with PoP
+pop = warrant.sign(signing_key, tool, args)
+warrant.authorize(tool, args, signature=pop)
 ```
 
 ### 3. Don't allow unlisted arguments by default
