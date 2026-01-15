@@ -163,17 +163,17 @@ class SecurityContext:
 if FASTAPI_AVAILABLE:
 
     def get_warrant_header(x_tenuo_warrant: Optional[str] = Header(None, alias=X_TENUO_WARRANT)) -> Optional[Warrant]:
-    """
-    FastAPI dependency to extract and parse the X-Tenuo-Warrant header.
-    Returns None if missing. Raises HTTPException on invalid format.
-    """
-    if not x_tenuo_warrant:
-        return None
+        """
+        FastAPI dependency to extract and parse the X-Tenuo-Warrant header.
+        Returns None if missing. Raises HTTP Exception on invalid format.
+        """
+        if not x_tenuo_warrant:
+            return None
 
-    try:
-        return Warrant.from_base64(x_tenuo_warrant)
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid X-Tenuo-Warrant header: {str(e)}")
+        try:
+            return Warrant.from_base64(x_tenuo_warrant)
+        except Exception as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid X-Tenuo-Warrant header: {str(e)}")
 
 
     def require_warrant(
@@ -215,7 +215,7 @@ else:
     # Placeholder functions when FastAPI not available
     def get_warrant_header(*args: Any, **kwargs: Any) -> None:
         raise ImportError("FastAPI is not installed. Install with: pip install fastapi")
-    
+
     def require_warrant(*args: Any, **kwargs: Any) -> None:
         raise ImportError("FastAPI is not installed. Install with: pip install fastapi")
 
