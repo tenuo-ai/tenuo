@@ -212,11 +212,13 @@ if FASTAPI_AVAILABLE:
 
 
 else:
-    # Placeholder functions when FastAPI not available
-    def get_warrant_header(*args: Any, **kwargs: Any) -> None:  # type: ignore[misc]
+    # Stub functions when FastAPI not available.
+    # These stubs have different signatures because they only raise ImportError.
+    # This is the standard pattern for optional dependencies.
+    def get_warrant_header(*args: Any, **kwargs: Any) -> Any:  # type: ignore[misc]
         raise ImportError("FastAPI is not installed. Install with: pip install fastapi")
 
-    def require_warrant(*args: Any, **kwargs: Any) -> None:  # type: ignore[misc]
+    def require_warrant(*args: Any, **kwargs: Any) -> Any:  # type: ignore[misc]
         raise ImportError("FastAPI is not installed. Install with: pip install fastapi")
 
 
