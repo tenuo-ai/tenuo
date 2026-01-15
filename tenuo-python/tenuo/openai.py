@@ -1907,7 +1907,7 @@ class GuardBuilder:
     def _validate_url_pattern(self, constraint: Any) -> Optional[str]:
         """
         Validate UrlPattern for security best practices.
-        
+
         Returns error message if pattern is too permissive.
         """
         # Check if this is a UrlPattern constraint
