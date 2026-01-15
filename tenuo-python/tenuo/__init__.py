@@ -88,6 +88,15 @@ from .scoped import (
 # Constraints
 from .constraints import Capability, Subpath, UrlSafe, Shlex
 
+# Constraint aliases (shorter names for common use)
+# Path = Subpath, Url = UrlSafe, Cmd = Shlex
+Path = Subpath
+Url = UrlSafe
+Cmd = Shlex
+
+# One-line guard (auto-inference)
+from .guard import guard as auto_guard
+
 # Protection decorator
 from .decorators import (
     guard,
@@ -198,6 +207,12 @@ __all__ = [
     "Subpath",  # Secure path containment (path traversal protection)
     "UrlSafe",  # SSRF protection (IP/domain blocking)
     "Shlex",  # Shell injection protection (command validation)
+    # Constraint aliases (shorter names)
+    "Path",  # Alias for Subpath
+    "Url",  # Alias for UrlSafe
+    "Cmd",  # Alias for Shlex
+    # One-line guard
+    "auto_guard",  # guard() with auto-inference
     # Errors (essential only)
     "TenuoError",
     "ConstraintViolation",

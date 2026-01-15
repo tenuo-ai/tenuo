@@ -135,11 +135,12 @@ print(info())
 
 **Output:**
 ```
-Tenuo v0.1.0b1
-Python 3.11.4
-Platform: darwin (arm64)
-Configuration: dev_mode=True, enforce=True
-Issuer: ed25519:abc123... (configured)
+Tenuo Configuration
+==================================================
+
+[OK] SDK Version: 0.1.0b5
+[OK] Rust Core: loaded (wire version 1)
+[OK] Issuer Key: configured
 ```
 
 ---

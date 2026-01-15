@@ -1,12 +1,14 @@
 # Tenuo Host Interface (THI) Specification
 
-> ⚠️ **Status: Conceptual Exploration — Not Planned**
+> **Status: Optional Tier — Stateful Extensions**
 > 
-> This document explores stateful extensions that would require infrastructure dependencies (Redis, PostgreSQL). It contradicts Tenuo's core "100% offline verification" philosophy and is preserved for reference only. Most use cases are better served by short TTLs, gateway rate limiting, and PoP timestamp windows.
+> This document specifies the Host Interface for deployments that require stateful features: revocation, rate limiting, and replay protection. These features require infrastructure dependencies (Redis, PostgreSQL, etc.) and add latency. 
+>
+> **Core verification remains 100% offline.** Stateful extensions are opt-in via warrant extensions and are only checked when explicitly requested. Most use cases are well-served by short TTLs and PoP timestamp windows alone.
 
-Version: 0.2
-Status: Conceptual (not planned)
-Last Updated: 2025-12-20
+Version: 0.3.1
+Status: Optional Tier (stateful extensions)
+Last Updated: 2026-01-13
 
 ---
 
@@ -73,6 +75,8 @@ let namespace = SHA256(warrant.id.as_bytes());
 ```
 
 This scopes nonces to individual warrants, preventing cross-warrant collision.
+
+> **Warrant ID requirements:** Warrant IDs MUST contain at least 128 bits of cryptographic randomness (e.g., UUIDv4, `tenuo_core::random_id()`). Sequential or predictable IDs risk namespace collision attacks where an attacker pre-populates nonces for future warrants.
 
 ---
 
@@ -156,6 +160,8 @@ enum RevocationSubject {
     IssuerKey([u8; 32]),     // SHA256(issuer_pubkey)
     /// All warrants to holder
     HolderKey([u8; 32]),     // SHA256(holder_pubkey)
+    /// All warrants delegated BY this key (chain revocation)
+    DelegatorKey([u8; 32]), // SHA256(delegator_pubkey)
 }
 
 enum RevocationResult {
@@ -212,12 +218,21 @@ struct RevocationConfig {
     pub protected_keys: HashSet<PublicKey>,
 }
 
-async fn revoke_key(&self, key: PublicKey, reason: String) -> Result<()> {
+async fn revoke_key(&self, key: PublicKey, reason: String, revoker: PublicKey) -> Result<()> {
     if self.config.protected_keys.contains(&key) {
         return Err(RevocationError::ProtectedKey(
             "Cannot revoke protected root key"
         ));
     }
+    
+    // Audit: log revocation event (symmetric with un-revocation)
+    self.audit_log.record(RevocationEvent {
+        subject: RevocationSubject::from_key(key),
+        action: RevocationAction::Revoke,
+        actor: revoker,
+        reason: reason.clone(),
+        timestamp: now_unix_secs(),
+    }).await?;
     
     // Proceed with revocation
     self.registry.insert(key, reason).await
@@ -233,6 +248,83 @@ async fn revoke_key(&self, key: PublicKey, reason: String) -> Result<()> {
 - Protected keys SHOULD be configured at deployment time
 - Changes to protected key list SHOULD require manual intervention
 - Revocation attempts on protected keys SHOULD trigger alerts
+
+#### Un-Revocation Path
+
+Revocations are not always permanent. A key may be revoked prematurely (false positive) or a compromised key may be rotated and re-secured.
+
+```rust
+async fn un_revoke(
+    &self,
+    subject: RevocationSubject,
+    auth: UnRevocationAuth,
+    reason: String,
+) -> Result<(), HostError>;
+
+struct UnRevocationAuth {
+    /// Signature by authorized un-revoker (e.g., root key or designated recovery key)
+    pub signature: [u8; 64],
+    /// Timestamp of authorization
+    pub authorized_at: u64,
+    /// Optional: require N-of-M signatures for high-value subjects
+    pub additional_signatures: Vec<[u8; 64]>,
+}
+```
+
+**Requirements:**
+
+| Property | Requirement |
+|----------|-------------|
+| Authorization | MUST be signed by designated recovery key(s) |
+| Audit | MUST log: subject, un-revoker identity, timestamp, reason |
+| Propagation | MUST propagate at same speed as revocations |
+| CRL update | MUST be reflected in next CRL generation |
+
+**Operational guidance:**
+- Un-revocation SHOULD require higher authorization than revocation (e.g., N-of-M signatures)
+- Un-revocation SHOULD trigger alerts for manual review
+- Implementations SHOULD rate-limit un-revocation to prevent abuse
+
+> **Security note:** Un-revocation is a high-risk operation. A compromised recovery key could re-enable revoked warrants. Consider requiring multi-signature authorization for production deployments.
+
+#### Offline Revocation Lists (CRL)
+
+For distributed or partially-connected deployments, implementations MAY support signed Certificate Revocation Lists:
+
+```rust
+struct SignedRevocationList {
+    /// List of revoked subjects
+    pub entries: Vec<RevocationEntry>,
+    /// Timestamp of list generation
+    pub issued_at: u64,
+    /// Expiration (verifiers MUST reject lists past this time)
+    pub expires_at: u64,
+    /// Signature by registry authority
+    pub signature: [u8; 64],
+}
+
+struct RevocationEntry {
+    pub subject: RevocationSubject,
+    pub revoked_at: u64,
+    pub reason: Option<String>,
+}
+```
+
+**Distribution methods:**
+- HTTP polling (`GET /revocations/list.cbor`)
+- Push via message queue (Kafka, NATS)
+- Embedded in deployment artifacts (air-gapped systems)
+
+**Verification:** Verifier checks signature against known registry public key, rejects expired lists, and uses entries as a local cache.
+
+> **Known Limitation: CRL Freshness Gap**
+> 
+> CRLs introduce a freshness gap between revocation and propagation. A warrant revoked at T=0 may remain usable until the next CRL is generated and distributed (e.g., T+5min). This is an inherent trade-off of offline-capable revocation.
+>
+> **Mitigations:**
+> - Short CRL validity periods (e.g., 5 minutes) reduce the gap but increase distribution overhead
+> - Critical systems SHOULD use online checks (`tenuo.strict_revocable`) for high-value warrants
+> - CRL expiration MUST be enforced: verifiers reject lists past `expires_at`
 
 ---
 
@@ -316,6 +408,8 @@ CBOR Map {
 | 1 | Per-tool | `SHA256(warrant_id \|\| tool_name)` |
 | 2 | Per-holder | `SHA256(holder_pubkey \|\| tool_name)` |
 
+> **Note on per-holder scope:** A holder's rate limit is shared across *all* warrants they hold for a given tool. This is intentional: it prevents circumvention by requesting multiple warrants. However, it also means a legitimate holder with multiple valid warrants from different issuers shares one quota. Choose scope based on your trust model.
+
 **Verification logic:**
 
 ```rust
@@ -355,6 +449,101 @@ if warrant.extensions.contains_key("tenuo.revocable") {
 ```
 
 > **Note:** Revocation checks MAY also be performed unconditionally by policy, independent of this extension.
+
+### 3.4 `tenuo.strict_revocable`
+
+For high-security warrants where 5-minute staleness is unacceptable. Forces synchronous revocation check with zero cache tolerance.
+
+```
+CBOR null
+```
+
+**Verification logic:**
+
+```rust
+if warrant.extensions.contains_key("tenuo.strict_revocable") {
+    // Force synchronous check, bypass cache
+    match host.is_revoked_sync(RevocationSubject::WarrantId(warrant.id_hash())).await? {
+        RevocationResult::Valid => { /* continue */ }
+        RevocationResult::Revoked { reason, .. } => {
+            return Err(VerifyError::Revoked { reason });
+        }
+        RevocationResult::ValidCached { .. } => {
+            // Strict mode rejects cached results
+            return Err(VerifyError::RevocationCheckFailed {
+                reason: "Strict mode requires fresh revocation check".into()
+            });
+        }
+    }
+}
+```
+
+**Use cases:**
+- Root warrants with broad authority
+- Warrants granting access to sensitive resources
+- Emergency response workflows
+
+**Trade-off:** Higher latency (network round-trip required) and availability risk (registry must be reachable).
+
+### 3.5 `tenuo.chain_revocable`
+
+Check revocation status of all keys in the delegation chain, not just the warrant itself.
+
+```
+CBOR null
+```
+
+**Verification logic:**
+
+```rust
+if warrant.extensions.contains_key("tenuo.chain_revocable") {
+    // Build list of all subjects to check
+    let mut subjects = vec![RevocationSubject::WarrantId(warrant.id_hash())];
+    
+    // Add every delegator in the chain (root to leaf order)
+    for delegator in warrant.chain.delegators() {
+        subjects.push(RevocationSubject::DelegatorKey(delegator.pubkey_hash()));
+    }
+    
+    // Single batch call instead of O(n) sequential calls
+    let results = host.is_revoked_batch(&subjects).await?;
+    
+    // Fail fast on any revocation
+    for (subject, result) in subjects.iter().zip(results) {
+        if let RevocationResult::Revoked { reason, .. } = result {
+            return Err(VerifyError::Revoked { subject: subject.clone(), reason });
+        }
+    }
+}
+```
+
+> **Implementation note:** Use the batch API (§7) to check the entire chain in a single round-trip. This reduces latency from O(n) network calls to O(1) for chains of any depth.
+
+**Chain Traversal Semantics:**
+
+| Term | Definition |
+|------|------------|
+| `delegators()` | All keys that signed a delegation in the chain, excluding the final holder |
+| Traversal order | Root → Leaf (issuer first, most recent delegator last) |
+| Stop on first revocation | Yes (fail fast) |
+
+**Scope clarification:**
+
+- `DelegatorKey(X)` revokes all warrants where X appears **anywhere** in the delegation chain as a delegator
+- This is broader than `IssuerKey(X)`, which only revokes warrants where X is the **original issuer**
+- A single compromised delegator revokes all downstream warrants, regardless of how many hops
+
+**Edge cases:**
+
+| Scenario | Behavior |
+|----------|----------|
+| Root key revoked via `DelegatorKey` | All warrants in the system become invalid |
+| Intermediate delegator revoked | All warrants delegated from that point onward are invalid |
+| Multiple paths to same warrant | Any revoked path invalidates the warrant |
+
+> **Performance note:** Chain revocation requires O(n) revocation checks where n is the chain length. For deep delegation chains (n > 5), consider caching chain validity or using short TTLs instead.
+
+**Use case:** If an orchestrator key is compromised, all warrants it delegated become invalid immediately, even if those specific warrants weren't individually revoked.
 
 ---
 
@@ -563,5 +752,7 @@ Implementations SHOULD emit metrics:
 
 ## Changelog
 
+- **0.3.1** — Added: warrant ID randomness requirement (prevents namespace collision attacks), revocation audit trail (symmetric with un-revocation), batch API integration for chain revocation (O(1) round-trips)
+- **0.3** — Reframed as "Optional Tier" (not "not planned"). Added: `DelegatorKey` for chain revocation, `tenuo.strict_revocable` for zero-staleness checks, `tenuo.chain_revocable` with tightened semantics (traversal order, scope, edge cases), un-revocation path with N-of-M authorization, CRL freshness gap documented as known limitation, per-holder rate limit scope clarification
 - **0.2** — Added bounded staleness for revocation, CBOR extension schemas, batch operations, clock sync guidance, observability hooks
 - **0.1** — Initial draft

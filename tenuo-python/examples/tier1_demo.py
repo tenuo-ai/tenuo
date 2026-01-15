@@ -3,6 +3,10 @@ Tier 1 API Demo (The "3-line API")
 
 This example demonstrates the simplified Tier 1 API for protecting tools
 and managing authority scopes.
+
+⚠️  IMPORTANT: This demo uses Tier 1 guardrails (no cryptography).
+    For production systems, use Tier 2 (Warrant + PoP) to protect against
+    insider threats and container compromise. See examples/openai_warrant.py.
 """
 
 import asyncio

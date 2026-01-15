@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-beta.6] - 2026-01-15
+
+### Added
+
+#### A2A Integration (`tenuo[a2a]`)
+- **A2AServer**: ASGI server for receiving warrant-authorized tasks from other agents
+- **A2AClient**: Client for delegating tasks to remote agents with warrant-based authorization
+- **Streaming support**: Server-Sent Events (SSE) for real-time task updates with `send_task_streaming()`
+- **Stream timeout**: Configurable timeout (default 5 min) prevents slow-drip DoS attacks
+- **Replay protection**: In-memory cache with amortized cleanup (every 1000 requests)
+- **Chain validation**: Verifies delegation chains with monotonic constraint narrowing
+- **Skill constraints**: `@server.skill("name", constraints={"arg": Subpath})` binds warrant constraints to function parameters
+- **Agent discovery**: `/.well-known/agent.json` endpoint with `x-tenuo` extension
+- **Key pinning**: `A2AClient(url, pin_key="z6Mk...")` prevents TOFU attacks
+- **Comprehensive error types**: `MissingWarrantError`, `UntrustedIssuerError`, `SkillNotGrantedError`, etc.
+
+#### Google ADK Integration (`tenuo.google_adk`)
+- **TenuoGuard**: Core class for tool authorization in ADK agents
+- **TenuoPlugin**: Plugin-based integration for `InMemoryRunner`
+- **GuardBuilder**: Fluent API for constraint definition (`.allow()`, `.with_warrant()`, `.map_skill()`)
+- **Two-tier protection**: Tier 1 (inline constraints) and Tier 2 (warrant + PoP)
+- **Tool filtering**: `guard.filter_tools()` removes unauthorized tools before agent creation
+- **ScopedWarrant**: Prevents cross-agent warrant leaks in multi-agent sessions
+- **Decorators**: `@guard_tool(path=Subpath("/data"))` for static constraint definition
+- **Denial handling**: Configurable `on_denial` ("raise", "return", "skip")
+- **Audit callbacks**: Track all authorization decisions
+
+#### Core Improvements
+- **Unified `satisfies()` method**: All constraints now expose `constraint.satisfies(value)` in Python bindings
+- **Explicit `Range` coercion**: String-encoded numbers are coerced to float for Range constraints
+- **Better type annotations**: Fixed mypy errors across google_adk, a2a, fastapi modules
+
+### Security
+
+- **Adversarial test suite**: 15+ tests for A2A security (chain splicing, issuer impersonation, PoP bypass, replay attacks, DoS)
+- **Fail-closed constraint checking**: Unknown constraint types are rejected, not ignored
+- **Wire-level authorization**: A2A server uses `warrant.authorize()` (Rust core) for all skill execution
+
+### Changed
+
+- **warrant_key default**: Google ADK now uses `"__tenuo_warrant__"` (was `"tenuo_warrant"`)
+- **Removed dead code**: `denial_template` and `expiry_policy` parameters removed from TenuoGuard
+
+### Documentation
+
+- Updated `docs/a2a.md` with stream timeout documentation
+- Updated `docs/google-adk.md` with Tier 1/Tier 2 examples
+- Removed outdated internal specs (`google-adk-integration-spec-v4.md`, `tenuo-a2a.md`)
+- Renamed `tenuo-llm.txt` → `llms.txt` (follows llmstxt.org convention)
+
+---
+
 ## [0.1.0-beta.5] - 2026-01-10
 
 ### Added

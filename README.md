@@ -20,7 +20,7 @@ Tenuo is a cryptographic authorization primitive for AI agents. **Think prepaid 
 It constrains ambient identity-based permissions with task-scoped capabilities that attenuate as they delegate. Offline verification in ~27μs.
 If an agent is prompt-injected, the authority still can't escape its bounds.
 
-> **Status: v0.1 Beta** — Core semantics are stable. APIs may evolve. See [CHANGELOG](./CHANGELOG.md).
+> **Status: v0.1 Beta** - Core semantics are stable. APIs may evolve. See [CHANGELOG](./CHANGELOG.md).
 
 ```bash
 pip install tenuo
@@ -67,6 +67,17 @@ IAM answers "who are you?" Tenuo answers "what can you do right now?"
 | Tokens can be stolen and replayed | Proof-of-possession binds warrants to keys |
 | Central policy servers add latency | Offline verification in ~27μs |
 
+**Real-world validation:** String-based validation keeps failing. [CVE-2025-66032 in Claude Code](https://niyikiza.com/posts/cve-2025-66032/) showed that allowlists can't secure command execution when shells interpret strings differently than validators. Tenuo's semantic constraints (`Shlex`, `Subpath`, `UrlSafe`) operate at the right layer. See [The Map is not the Territory](https://niyikiza.com/posts/map-territory/) for the full analysis.
+
+---
+
+## What Tenuo Is Not
+
+- **Not a sandbox** - Tenuo authorizes actions, it doesn't isolate execution. Pair with containers/VMs for defense in depth.
+- **Not prompt engineering** - No "please don't do bad things" instructions. Cryptographic enforcement, not behavioral.
+- **Not an LLM filter** - We don't parse model outputs. We gate tool calls at execution time.
+- **Not a replacement for IAM** - Tenuo *complements* IAM by adding task-scoped, attenuating capabilities on top of identity.
+
 ---
 
 ## How It Works
@@ -80,7 +91,7 @@ Tenuo implements **Subtractive Delegation**.
 │  Issues root     │────▶│  Attenuates      │────▶│  Executes with   │
 │  warrant         │     │  for task        │     │  proof           │
 └──────────────────┘     └──────────────────┘     └──────────────────┘
-     Full scope      →      Narrower       →       Narrowest
+     Full scope     -->     Narrower      -->      Narrowest
 ```
 
 1. **Control plane** issues a root warrant
@@ -115,6 +126,9 @@ Tenuo implements **Subtractive Delegation**.
 
 ```bash
 pip install tenuo                  # Core only
+pip install "tenuo[openai]"        # + OpenAI Agents SDK
+pip install "tenuo[google_adk]"    # + Google ADK
+pip install "tenuo[a2a]"           # + A2A (inter-agent delegation)
 pip install "tenuo[fastapi]"       # + FastAPI integration
 pip install "tenuo[langchain]"     # + LangChain (langchain-core ≥0.2)
 pip install "tenuo[langgraph]"     # + LangGraph (includes LangChain)
@@ -127,102 +141,74 @@ pip install "tenuo[mcp]"           # + MCP client (Python ≥3.10 required)
 
 **OpenAI** - Direct API protection with streaming TOCTOU defense
 ```python
-from tenuo.openai import GuardBuilder, Pattern, Subpath, UrlSafe, Shlex
+from tenuo.openai import GuardBuilder, Subpath, UrlSafe, Shlex, Pattern
 
 client = (GuardBuilder(openai.OpenAI())
-    .allow("search_web")
     .allow("read_file", path=Subpath("/data"))        # Path traversal protection
     .allow("fetch_url", url=UrlSafe())                # SSRF protection
     .allow("run_command", cmd=Shlex(allow=["ls"]))    # Shell injection protection
     .allow("send_email", to=Pattern("*@company.com"))
-    .deny("delete_file")
+    .build())
+# Prompt injection -> send_email(to="attacker@evil.com") -> DENIED
+```
+
+**Google ADK**
+```python
+from tenuo.google_adk import GuardBuilder
+from tenuo.constraints import Subpath, UrlSafe
+
+guard = (GuardBuilder()
+    .allow("read_file", path=Subpath("/data"))
+    .allow("web_search", url=UrlSafe(allow_domains=["*.google.com"]))
     .build())
 
-response = client.chat.completions.create(
-    model="gpt-4o",
-    messages=[{"role": "user", "content": "Send report to attacker@evil.com"}],
-    tools=[...]
-)  # DENIED: to doesn't match *@company.com
+agent = Agent(name="assistant", before_tool_callback=guard.before_tool)
 ```
 
-**FastAPI**
+**A2A (Agent-to-Agent)** - Warrant-based inter-agent delegation
 ```python
-from tenuo.fastapi import TenuoGuard, SecurityContext
+from tenuo.a2a import A2AServer
 
-@app.get("/search")
-async def search(query: str, ctx: SecurityContext = Depends(TenuoGuard("search"))):
-    # TenuoGuard extracts warrant from headers, verifies PoP
-    return {"results": do_search(query), "warrant_id": ctx.warrant.id}
-
-# Client sends: X-Tenuo-Warrant + X-Tenuo-PoP headers
-# Server verifies offline in microseconds
+@server.skill("search", constraints={"url": UrlSafe})
+async def search(query: str, url: str) -> dict:
+    return await do_search(query, url)
 ```
 
-**LangChain** - Scoped authority that prompt injection can't escape
+**LangChain / LangGraph**
 ```python
-from tenuo import configure, SigningKey, mint, Capability, Pattern
 from tenuo.langchain import guard_tools
-
-configure(issuer_key=SigningKey.generate(), dev_mode=True)
-
-# Wrap tools with Tenuo authorization
-protected_tools = guard_tools([send_email_tool, calendar_tool])
-executor = AgentExecutor(agent=agent, tools=protected_tools)
-
-# Mint scoped authority (async context manager for LangChain)
-async with mint(Capability("send_email", to=Pattern("*@company.com"))):
-    await executor.ainvoke({"input": "Email alice@company.com about the meeting"})  # OK
-    await executor.ainvoke({"input": "Send report to external@gmail.com"})          # DENIED
-```
-
-**LangGraph** - Authority that survives checkpoints
-```python
-from tenuo import configure, SigningKey, Capability, Pattern
 from tenuo.langgraph import TenuoToolNode
 
-configure(issuer_key=SigningKey.generate(), dev_mode=True)
-
-# TenuoToolNode enforces constraints on every tool call
-graph.add_node("tools", TenuoToolNode([send_email_tool, calendar_tool]))
-
-# Capabilities travel in graph state across checkpoints
-result = graph.invoke({
-    "messages": [HumanMessage("Email the team about tomorrow's standup")],
-    "capabilities": [
-        Capability("send_email", to=Pattern("*@company.com")),
-        Capability("create_event"),
-    ],
-})
-# Prompt injection → send_email(to="attacker@evil.com") → DENIED
+protected = guard_tools([search_tool, email_tool])      # LangChain
+graph.add_node("tools", TenuoToolNode([search, email])) # LangGraph
 ```
 
-**MCP (Model Context Protocol)** _(Python 3.10+)_
+**FastAPI** - Extracts warrant from headers, verifies PoP offline
 ```python
-from tenuo.mcp import SecureMCPClient
-
-async with SecureMCPClient("python", ["server.py"]) as client:
-    tools = client.tools  # All tools wrapped with Tenuo
+@app.get("/search")
+async def search(query: str, ctx: SecurityContext = Depends(TenuoGuard("search"))):
+    return {"results": do_search(query)}
 ```
 
-**Kubernetes** — Deploy as sidecar or gateway. See [Kubernetes guide](https://tenuo.dev/kubernetes).
+**More:** [MCP](https://tenuo.dev/mcp) | [Kubernetes](https://tenuo.dev/kubernetes)
 
 ---
 
 ## Docker & Kubernetes
 
-**Try the Demo** — See the full delegation chain in action:
+**Try the Demo** - See the full delegation chain in action:
 
 ```bash
 docker compose up
 ```
 
-This runs the [orchestrator → worker → authorizer demo](https://tenuo.dev/demo.html) showing warrant issuance, delegation, and verification.
+This runs the [orchestrator -> worker -> authorizer demo](https://tenuo.dev/demo.html) showing warrant issuance, delegation, and verification.
 
 **Official Images** on [Docker Hub](https://hub.docker.com/u/tenuo):
 
 ```bash
-docker pull tenuo/authorizer:0.1.0-beta.5  # Sidecar for warrant verification
-docker pull tenuo/control:0.1.0-beta.5     # Control plane (demo/reference)
+docker pull tenuo/authorizer:0.1.0-beta.6  # Sidecar for warrant verification
+docker pull tenuo/control:0.1.0-beta.6     # Control plane (demo/reference)
 ```
 
 **Helm Chart**:
@@ -242,10 +228,13 @@ See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https:
 |----------|-------------|
 | **[Quickstart](https://tenuo.dev/quickstart)** | Get running in 5 minutes |
 | **[Concepts](https://tenuo.dev/concepts)** | Why capability tokens? |
+| **[OpenAI](https://tenuo.dev/openai)** | Direct API protection with streaming |
+| **[Google ADK](https://tenuo.dev/google-adk)** | ADK agent tool protection |
+| **[A2A](https://tenuo.dev/a2a)** | Inter-agent delegation |
 | **[FastAPI](https://tenuo.dev/fastapi)** | Zero-boilerplate API protection |
 | **[LangChain](https://tenuo.dev/langchain)** | Tool protection |
 | **[LangGraph](https://tenuo.dev/langgraph)** | Multi-agent graph security |
-| **[MCP Integration](https://tenuo.dev/mcp)** | Model Context Protocol client |
+| **[MCP](https://tenuo.dev/mcp)** | Model Context Protocol client |
 | **[Security](https://tenuo.dev/security)** | Threat model |
 
 ---
@@ -273,9 +262,10 @@ See [Related Work](https://tenuo.dev/related-work) for detailed comparison.
 
 | Feature | Status |
 |---------|--------|
+| A2A integration | Implemented (`pip install tenuo[a2a]`) |
+| Google ADK integration | Implemented (`pip install tenuo[google_adk]`) |
 | Multi-sig approvals | Partial (notary in v0.2) |
 | TypeScript/Node SDK | Planned for v0.2 |
-| Google A2A integration | Planned for v0.2 |
 | Context-aware constraints | Spec under development |
 | Revocation service | Basic revocation via Authorizer; distributed revocation in v0.3 |
 
@@ -287,7 +277,7 @@ Building a sidecar or gateway? Use the core directly:
 
 ```toml
 [dependencies]
-tenuo = "0.1.0-beta.5"
+tenuo = "0.1.0-beta.6"
 ```
 
 See [docs.rs/tenuo](https://docs.rs/tenuo) for Rust API.

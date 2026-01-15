@@ -283,7 +283,8 @@ class TestConstraints:
         response = make_response([("search", {"query": "python", "max_results": 10})])
         mock_client = make_mock_client(response)
 
-        client = guard(mock_client, allow_tools=["search"], constraints={"search": {"max_results": Range(1, 20)}})
+        # Use _allow_unknown=True to permit the "query" arg without constraint
+        client = guard(mock_client, allow_tools=["search"], constraints={"search": {"max_results": Range(1, 20), "_allow_unknown": True}})
 
         result = client.chat.completions.create(model="gpt-4o", messages=[])
         assert len(result.choices[0].message.tool_calls) == 1
@@ -343,7 +344,7 @@ class TestConstraints:
             constraints={
                 "search": {
                     "max_results": Range(1, 10),
-                    # query not constrained
+                    "_allow_unknown": True,  # Allow unconstrained "query" arg
                 }
             },
         )
@@ -351,15 +352,15 @@ class TestConstraints:
         result = client.chat.completions.create(model="gpt-4o", messages=[])
         assert len(result.choices[0].message.tool_calls) == 1
 
-    def test_unconstrained_param_allowed(self):
-        """Parameters without constraints should be allowed."""
+    def test_unconstrained_param_allowed_with_opt_out(self):
+        """Parameters without constraints allowed when _allow_unknown=True."""
         response = make_response([("search", {"query": "anything", "lang": "en"})])
         mock_client = make_mock_client(response)
 
         client = guard(
             mock_client,
             allow_tools=["search"],
-            constraints={"search": {"query": Wildcard()}},  # Only query constrained (to anything)
+            constraints={"search": {"query": Wildcard(), "_allow_unknown": True}},  # Opt out of Zero Trust
         )
 
         result = client.chat.completions.create(model="gpt-4o", messages=[])
@@ -624,22 +625,28 @@ class TestCheckConstraint:
         assert check_constraint(Wildcard(), 12345) is True
         assert check_constraint(Wildcard(), None) is True
 
-    def test_regex_fullmatch(self):
-        """Regex uses fullmatch, not match - prevents partial matches."""
+    def test_regex_matching(self):
+        """Regex constraint uses partial matching (Rust is_match semantics).
+
+        NOTE: Rust regex uses is_match() which is partial matching.
+        For fullmatch semantics, use anchors: ^pattern$
+        """
         # Import Regex for this test
         from tenuo import Regex
 
-        # Full match should pass
+        # Full match with anchors should pass
         assert check_constraint(Regex(r"^[a-z]+$"), "hello") is True
 
-        # Partial match should FAIL (fullmatch semantics)
-        # With match(), "hello123" would pass because "hello" matches at start
-        # With fullmatch(), it should fail because "123" doesn't match
-        assert check_constraint(Regex(r"[a-z]+"), "hello123") is False
+        # Partial match passes (Rust is_match semantics)
+        # "hello" part of "hello123" matches [a-z]+
+        assert check_constraint(Regex(r"[a-z]+"), "hello123") is True
 
-        # Empty pattern edge case
+        # Full match with anchors should fail for mixed content
+        assert check_constraint(Regex(r"^[a-z]+$"), "hello123") is False
+
+        # Empty pattern edge case - partial match on empty finds empty at start
         assert check_constraint(Regex(r""), "") is True
-        assert check_constraint(Regex(r""), "x") is False
+        assert check_constraint(Regex(r""), "x") is True  # Empty regex matches any position
 
 
 class TestCompositeConstraints:
@@ -3325,8 +3332,8 @@ class TestShlexOpenAIIntegration:
         from unittest.mock import Mock
 
         mock_client = Mock()
-        builder = GuardBuilder(mock_client).allow("run_command").constrain(
-            "run_command", cmd=Shlex(allow=["ls", "cat"])
+        builder = (
+            GuardBuilder(mock_client).allow("run_command").constrain("run_command", cmd=Shlex(allow=["ls", "cat"]))
         )
 
         # Check constraints are stored correctly

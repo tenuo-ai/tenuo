@@ -141,14 +141,15 @@ def enable_debug(handler: Optional[logging.Handler] = None) -> None:
     Args:
         handler: Optional custom handler. If None, logs to stderr.
 
-    Example:
-        >>> from tenuo.openai import enable_debug
-        >>> enable_debug()
-        >>> # Now all authorization decisions are logged
-        >>> client.chat.completions.create(...)
-        DEBUG:tenuo.openai:Verifying tool call: read_file
-        DEBUG:tenuo.openai:Constraint check: path=/data/file.txt against Pattern(/data/*)
-        DEBUG:tenuo.openai:Authorization granted
+    Example::
+
+        from tenuo.openai import enable_debug
+        enable_debug()
+        # Now all authorization decisions are logged
+        client.chat.completions.create(...)
+        # DEBUG:tenuo.openai:Verifying tool call: read_file
+        # DEBUG:tenuo.openai:Constraint check: path=/data/file.txt against Pattern(/data/*)
+        # DEBUG:tenuo.openai:Authorization granted
     """
     logger.setLevel(logging.DEBUG)
     if handler is None:
@@ -412,24 +413,79 @@ def check_constraint(constraint: Constraint, value: Any) -> bool:
     """Check if a value satisfies a constraint.
 
     Uses the Tenuo core constraint matching logic via the Rust bindings.
-    Falls back to Python implementation if Rust is unavailable.
+    Falls back to Python implementation only when Rust bindings are not available.
 
     SECURITY: Fails closed (returns False) for unknown constraint types.
     This follows Tenuo's "fail closed" philosophy - when in doubt, deny.
+
+    UNIFIED INTERFACE: All Rust core constraints now support satisfies(value):
+      - constraint.satisfies(value) -> Rust core (handles type conversion)
+
+    The satisfies() method is the preferred interface.
     """
     try:
-        # Try Rust-backed constraint checking first (preferred)
-        if hasattr(constraint, "matches"):
-            return constraint.matches(value)
-        elif hasattr(constraint, "contains_ip"):
-            # CIDR constraint
+        constraint_type = type(constraint).__name__
+
+        # =================================================================
+        # SPECIAL CASES - Type coercion required before satisfies()
+        # =================================================================
+        # Range requires explicit string-to-number coercion
+        if constraint_type == "Range" and hasattr(constraint, "satisfies"):
+            try:
+                return constraint.satisfies(float(value))
+            except (ValueError, TypeError):
+                return False  # Non-numeric value fails Range check
+
+        # =================================================================
+        # UNIFIED INTERFACE - All Rust core constraints support satisfies()
+        # =================================================================
+        if hasattr(constraint, "satisfies"):
+            return constraint.satisfies(value)
+
+        # =================================================================
+        # LEGACY FALLBACKS - For older constraint versions without satisfies()
+        # =================================================================
+
+        # Subpath - filesystem path containment
+        if hasattr(constraint, "contains") and constraint_type == "Subpath":
+            return constraint.contains(str(value))
+
+        # UrlSafe - SSRF protection
+        if hasattr(constraint, "is_safe"):
+            return constraint.is_safe(str(value))
+
+        # Cidr - IP address range
+        if hasattr(constraint, "contains_ip"):
             return constraint.contains_ip(str(value))
-        elif hasattr(constraint, "matches_url"):
-            # UrlPattern constraint
+
+        # Pattern/Shlex - pattern matching
+        if hasattr(constraint, "matches"):
+            return constraint.matches(str(value))
+
+        # UrlPattern - URL pattern matching
+        if hasattr(constraint, "matches_url"):
             return constraint.matches_url(str(value))
-        else:
-            # Fallback to Python implementation
-            return _python_constraint_check(constraint, value)
+
+        # Range - numeric bounds
+        if hasattr(constraint, "contains") and constraint_type == "Range":
+            try:
+                return constraint.contains(float(value))
+            except (ValueError, TypeError):
+                return False
+
+        # OneOf - set membership
+        if hasattr(constraint, "contains") and constraint_type == "OneOf":
+            return constraint.contains(str(value))
+
+        # NotOneOf - exclusion list
+        if hasattr(constraint, "allows"):
+            return constraint.allows(str(value))
+
+        # =================================================================
+        # FALLBACK - Python checks for constraints without Rust bindings
+        # =================================================================
+        return _python_constraint_check(constraint, value)
+
     except Exception as e:
         # If Rust binding fails, try Python fallback
         logger.debug(f"Rust constraint check failed, using Python fallback: {e}")
@@ -745,18 +801,49 @@ def verify_tool_call(
     # Checking both would be redundant and potentially conflicting.
     if warrant is None and constraints and tool_name in constraints:
         tool_constraints = constraints[tool_name]
-        for param, constraint in tool_constraints.items():
-            if param in arguments:
-                value = arguments[param]
+        # Check for _allow_unknown opt-out (default: Zero Trust = reject unknown)
+        allow_unknown = tool_constraints.get("_allow_unknown", False)
 
-                # Check for type mismatches first (provides clearer errors)
-                type_mismatch, reason = _check_type_compatibility(constraint, value)
-                if type_mismatch:
-                    raise ConstraintViolation(tool_name, param, value, constraint, type_mismatch=True, reason=reason)
+        # Iterate over arguments to ensure we catch UNKNOWN arguments (Zero Trust)
+        for arg_name, value in arguments.items():
+            try:
+                if arg_name in tool_constraints:
+                    constraint = tool_constraints[arg_name]
 
-                # Check the actual constraint
-                if not check_constraint(constraint, value):
-                    raise ConstraintViolation(tool_name, param, value, constraint)
+                    # Skip meta-params like _allow_unknown
+                    if arg_name.startswith("_"):
+                        continue
+
+                    # Check compatibility and validity
+                    type_mismatch, reason = _check_type_compatibility(constraint, value)
+                    if type_mismatch:
+                        raise ConstraintViolation(tool_name, arg_name, value, constraint, type_mismatch=True, reason=reason)
+
+                    if not check_constraint(constraint, value):
+                        raise ConstraintViolation(tool_name, arg_name, value, constraint)
+                elif not allow_unknown:
+                    # Arg not in constraints -> UNKNOWN argument.
+                    # Zero Trust (default): Reject it.
+                    raise ConstraintViolation(
+                        tool_name,
+                        arg_name,
+                        value,
+                        constraint=Wildcard(),  # Dummy for error
+                        reason=f"Unknown argument '{arg_name}' - not in constraints (set _allow_unknown=True to permit)"
+                    )
+                # else: allow_unknown=True, so we skip unknown args
+            except ConstraintViolation:
+                raise
+            except Exception as e:
+                # Fail Closed: Internal error during validation = DENY
+                logger.error(f"Internal validation error for {tool_name}.{arg_name}: {e}")
+                raise ConstraintViolation(
+                    tool_name,
+                    arg_name,
+                    value,
+                    constraint=Wildcard(),
+                    reason=f"internal validation error: {e}"
+                )
 
 
 def _check_type_compatibility(constraint: Constraint, value: Any) -> tuple:
@@ -1443,9 +1530,10 @@ class GuardedClient:
             ConfigurationError: If signing_key doesn't match warrant holder
             ConfigurationError: If warrant is expired
 
-        Example:
-            >>> client = guard(openai.OpenAI(), warrant=w, signing_key=k)
-            >>> client.validate()  # Fails early if misconfigured
+        Example::
+
+            client = guard(openai.OpenAI(), warrant=w, signing_key=k)
+            client.validate()  # Fails early if misconfigured
         """
         if self._warrant is not None:
             # Check signing_key is provided
@@ -1931,44 +2019,46 @@ def guard(
         2. Implementing a wrapper that automatically sends a tool error response
            for denied calls
 
-    Example (Tier 1 - Guardrails):
-        >>> from tenuo.openai import guard, Pattern
-        >>>
-        >>> client = guard(
-        ...     openai.OpenAI(),
-        ...     allow_tools=["search", "read_file"],
-        ...     constraints={
-        ...         "read_file": {"path": Pattern("/data/*")}
-        ...     }
-        ... )
-        >>>
-        >>> # Use normally - unauthorized tool calls are blocked
-        >>> response = client.chat.completions.create(...)
+    Example (Tier 1 - Guardrails)::
 
-    Example (Tier 2 - Warrant with PoP):
-        >>> from tenuo.openai import guard
-        >>> from tenuo import Warrant, SigningKey, Pattern
-        >>>
-        >>> # Agent's keypair (the agent is the warrant holder)
-        >>> agent_key = SigningKey.generate()
-        >>>
-        >>> # Create a warrant (in production, received from control plane)
-        >>> control_plane_key = SigningKey.generate()
-        >>> warrant = (Warrant.mint_builder()
-        ...     .capability("read_file", {"path": Pattern("/data/*")})
-        ...     .holder(agent_key.public_key)  # Agent is the holder
-        ...     .ttl(3600)
-        ...     .mint(control_plane_key))      # Control plane signs
-        >>>
-        >>> # Guard with both warrant AND signing key
-        >>> client = guard(
-        ...     openai.OpenAI(),
-        ...     warrant=warrant,
-        ...     signing_key=agent_key,  # Agent signs PoP for each tool call
-        ... )
-        >>>
-        >>> # Each tool call is now cryptographically authorized
-        >>> response = client.chat.completions.create(...)
+        from tenuo.openai import guard, Pattern
+
+        client = guard(
+            openai.OpenAI(),
+            allow_tools=["search", "read_file"],
+            constraints={
+                "read_file": {"path": Pattern("/data/*")}
+            }
+        )
+
+        # Use normally - unauthorized tool calls are blocked
+        response = client.chat.completions.create(...)
+
+    Example (Tier 2 - Warrant with PoP)::
+
+        from tenuo.openai import guard
+        from tenuo import Warrant, SigningKey, Pattern
+
+        # Agent's keypair (the agent is the warrant holder)
+        agent_key = SigningKey.generate()
+
+        # Create a warrant (in production, received from control plane)
+        control_plane_key = SigningKey.generate()
+        warrant = (Warrant.mint_builder()
+            .capability("read_file", {"path": Pattern("/data/*")})
+            .holder(agent_key.public_key)  # Agent is the holder
+            .ttl(3600)
+            .mint(control_plane_key))      # Control plane signs
+
+        # Guard with both warrant AND signing key
+        client = guard(
+            openai.OpenAI(),
+            warrant=warrant,
+            signing_key=agent_key,  # Agent signs PoP for each tool call
+        )
+
+        # Each tool call is now cryptographically authorized
+        response = client.chat.completions.create(...)
     """
     return GuardedClient(
         client,

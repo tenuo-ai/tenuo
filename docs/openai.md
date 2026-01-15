@@ -20,6 +20,9 @@ Tenuo integrates with OpenAI's APIs using a **two-tier** protection model:
 
 **Tier 2** adds cryptographic proof. Constraints live in the warrant (issued by a control plane), ensuring they're defined once and enforced everywhere. Required when agents run in separate processes or you need audit trails.
 
+> [!IMPORTANT]
+> **Production Recommendation**: Use **Tier 2** for production deployments. Tier 1 guardrails can be modified or bypassed by anyone with code access, making them unsuitable for environments where insider threats or container compromise are concerns.
+
 ---
 
 ## Installation
@@ -136,6 +139,25 @@ client = guard(
     }
 )
 ```
+
+### Closed-World Constraints (Zero Trust)
+> [!IMPORTANT]
+> **Tenuo enforces Zero Trust for arguments.**
+> Once you add **any** constraint to a tool, Tenuo switches to a "closed-world" model for that tool.
+>
+> This means **ANY argument not explicitly listed in your constraints will be REJECTED**.
+> Tenuo does not silently ignore extra arguments—it blocks them to prevent "shadow argument" attacks.
+>
+> ```python
+> # ❌ Blocks call with 'timeout' arg because it's unknown
+> constraints={"api_call": {"url": UrlSafe()}}
+>
+> # ✅ Explicitly allow unknown args (less secure)
+> constraints={"api_call": {"url": UrlSafe(), "_allow_unknown": True}}
+>
+> # ✅ Or allow specific field with Wildcard
+> constraints={"api_call": {"url": UrlSafe(), "timeout": Wildcard()}}
+> ```
 
 ### Subpath: Secure Path Containment
 

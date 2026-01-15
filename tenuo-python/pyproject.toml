@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "tenuo"
-version = "0.1.0b5"
+version = "0.1.0b6"
 description = "Capability tokens for AI agents - Python SDK"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -55,22 +55,31 @@ mcp = [
 cli = [
     "rich>=10.0.0",
 ]
+a2a = [
+    "httpx>=0.24",     # Async HTTP client for A2AClient
+    "starlette>=0.27", # ASGI framework for A2AServer
+]
+google_adk = [
+    "google-adk>=0.1",  # Google Agent Development Kit
+]
 
 # Development dependencies (includes features + tools)
 dev = [
+    # Build tools
     "maturin>=1.0",
+    # Testing
     "pytest>=7.0",
     "pytest-asyncio",
+    # Linting & Type checking
     "ruff>=0.1.0",
     "mypy>=1.0",
     "types-PyYAML",
     "types-requests",
-    "fastapi",         # For examples/demos
+    # Examples/Demos
     "uvicorn",
-    "langchain",       # Full langchain for testing
     "langchain-openai",
-    # Include optional groups in dev
-    "tenuo[openai,langchain,langgraph]",
+    # Include ALL optional groups for complete dev environment
+    "tenuo[openai,langchain,langgraph,a2a,google_adk,fastapi,mcp]",
 ]
 
 [project.scripts]

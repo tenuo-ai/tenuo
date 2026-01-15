@@ -56,6 +56,9 @@ from .exceptions import (
     ToolNotAuthorized,
 )
 from .audit import audit_logger, AuditEvent, AuditEventType
+import logging
+
+logger = logging.getLogger("tenuo.decorators")
 
 
 # =============================================================================
@@ -163,8 +166,108 @@ def _is_tenuo_constraint(obj: Any) -> bool:
         "All",
         "AnyOf",
         "Not",
+        "Subpath",
+        "UrlSafe",
+        "Shlex",
+        "Wildcard",
     }
     return type(obj).__name__ in constraint_types
+
+
+def _check_annotated_constraint(constraint: Any, value: Any) -> bool:
+    """
+    Check if a value satisfies an annotated constraint using Rust core bindings.
+
+    SECURITY: Type-aware dispatch to ensure correct Rust method is called.
+    Fails closed (returns False) for unknown constraint types.
+
+    All constraint runtime checks use Rust core bindings:
+      - Subpath.contains()     -> Rust core
+      - UrlSafe.is_safe()      -> Rust core
+      - Cidr.contains_ip()     -> Rust core
+      - Pattern.matches()      -> Rust core
+      - Shlex.matches()        -> Rust core
+      - Range.contains()       -> Rust core
+      - Exact.matches()        -> Rust core
+      - OneOf.contains()       -> Rust core
+      - NotOneOf.allows()      -> Rust core
+      - Wildcard.matches()     -> Rust core
+    """
+    constraint_type = type(constraint).__name__
+
+    try:
+        # Subpath - filesystem path containment (Rust core)
+        if hasattr(constraint, "contains") and constraint_type == "Subpath":
+            return constraint.contains(str(value))
+
+        # UrlSafe - SSRF protection (Rust core)
+        if hasattr(constraint, "is_safe"):
+            return constraint.is_safe(str(value))
+
+        # Cidr - IP address range (Rust core)
+        if hasattr(constraint, "contains_ip"):
+            return constraint.contains_ip(str(value))
+
+        # Pattern - glob matching (Rust core)
+        if hasattr(constraint, "matches") and constraint_type == "Pattern":
+            return constraint.matches(value)
+
+        # Shlex - shell command validation (Rust core via Python shlex)
+        if hasattr(constraint, "matches") and constraint_type == "Shlex":
+            return constraint.matches(str(value))
+
+        # UrlPattern - URL pattern matching (Rust core)
+        if hasattr(constraint, "matches_url"):
+            return constraint.matches_url(str(value))
+
+        # Range - numeric bounds (Rust core)
+        if hasattr(constraint, "contains") and constraint_type == "Range":
+            try:
+                return constraint.contains(float(value))
+            except (ValueError, TypeError):
+                return False
+
+        # Exact - exact value match (Rust core)
+        if hasattr(constraint, "matches") and constraint_type == "Exact":
+            return constraint.matches(str(value))
+
+        # OneOf - set membership (Rust core)
+        if hasattr(constraint, "contains") and constraint_type == "OneOf":
+            return constraint.contains(str(value))
+
+        # NotOneOf - exclusion list (Rust core)
+        if hasattr(constraint, "allows") and constraint_type == "NotOneOf":
+            return constraint.allows(str(value))
+
+        # Wildcard - matches anything (Rust core)
+        if hasattr(constraint, "matches") and constraint_type == "Wildcard":
+            return constraint.matches(str(value))
+
+        # Regex - regex matching (Rust core)
+        if hasattr(constraint, "matches") and constraint_type == "Regex":
+            return constraint.matches(value)
+
+        # Fallback: generic matches() for other constraints
+        if hasattr(constraint, "matches"):
+            return constraint.matches(value)
+
+        # Fallback: check() method (some libraries use this)
+        if hasattr(constraint, "check"):
+            return constraint.check(value)
+
+        # Fallback: equality for Exact values without methods
+        if hasattr(constraint, "value"):
+            return constraint.value == value
+
+        # Unknown constraint type - FAIL CLOSED
+        logger.warning(
+            f"Unknown constraint type '{constraint_type}' in type annotation - failing closed"
+        )
+        return False
+
+    except Exception as e:
+        logger.warning(f"Constraint check failed with exception: {e} - failing closed")
+        return False
 
 
 def _extract_annotated_constraints(func: Callable) -> dict[str, Any]:
@@ -637,15 +740,8 @@ def guard(
                 for param, constraint in annotated_constraints.items():
                     if param in auth_args:
                         val = auth_args[param]
-                        # Check constraint match (supports .matches() or equality)
-                        is_valid = False
-                        if hasattr(constraint, "matches"):
-                            is_valid = constraint.matches(val)
-                        elif hasattr(constraint, "check"):  # Some libs use check
-                            is_valid = constraint.check(val)
-                        else:
-                            # Fallback to equality for Exact values
-                            is_valid = constraint == val
+                        # Check constraint using Rust core bindings (type-aware)
+                        is_valid = _check_annotated_constraint(constraint, val)
 
                         if not is_valid:
                             # Use AuthorizatonDenied for rich error

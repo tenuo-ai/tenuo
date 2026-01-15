@@ -450,6 +450,57 @@ impl PyPattern {
         Ok(Self { inner })
     }
 
+    /// Validate that another Pattern is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child Pattern is valid if it matches a subset of what parent matches.
+    ///
+    /// Args:
+    ///     child: The child Pattern to validate.
+    ///
+    /// Raises:
+    ///     MonotonicityError: If child would expand capabilities.
+    fn validate_attenuation(&self, child: &PyPattern) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+
+    /// Check if a value matches this glob pattern.
+    ///
+    /// This is the runtime check used for Tier 1 authorization.
+    ///
+    /// Args:
+    ///     value: Value to check against the pattern
+    ///
+    /// Returns:
+    ///     True if value matches the glob pattern
+    ///
+    /// Example:
+    ///     >>> p = Pattern("staging-*")
+    ///     >>> p.matches("staging-web")
+    ///     True
+    ///     >>> p.matches("production-web")
+    ///     False
+    fn matches(&self, value: &str) -> PyResult<bool> {
+        let cv = ConstraintValue::String(value.to_string());
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    ///
+    /// This is the preferred method for runtime authorization checks.
+    /// It provides a consistent API across all constraint types.
+    ///
+    /// Args:
+    ///     value: Value to check (will be converted to appropriate type)
+    ///
+    /// Returns:
+    ///     True if value satisfies the constraint
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
     fn __repr__(&self) -> String {
         format!("Pattern('{}')", self.inner.pattern)
     }
@@ -476,6 +527,32 @@ impl PyExact {
         }
     }
 
+    /// Check if a value matches this exact constraint.
+    ///
+    /// This is the runtime check used for Tier 1 authorization.
+    ///
+    /// Args:
+    ///     value: Value to check (will be converted to string for comparison)
+    ///
+    /// Returns:
+    ///     True if value matches exactly, False otherwise
+    ///
+    /// Example:
+    ///     >>> e = Exact("production")
+    ///     >>> e.matches("production")
+    ///     True
+    ///     >>> e.matches("staging")
+    ///     False
+    fn matches(&self, value: &str) -> bool {
+        self.inner.value.as_str() == Some(value)
+    }
+
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
     fn __repr__(&self) -> String {
         format!("Exact('{}')", self.inner.value)
     }
@@ -500,6 +577,42 @@ impl PyOneOf {
         Self {
             inner: OneOf::new(values),
         }
+    }
+
+    /// Validate that another OneOf is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child OneOf is valid if its values are a subset of parent's values.
+    fn validate_attenuation(&self, child: &PyOneOf) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+
+    /// Check if a value is in the allowed set.
+    ///
+    /// This is the runtime check used for Tier 1 authorization.
+    ///
+    /// Args:
+    ///     value: Value to check
+    ///
+    /// Returns:
+    ///     True if value is in the allowed set, False otherwise
+    ///
+    /// Example:
+    ///     >>> o = OneOf(["staging", "production"])
+    ///     >>> o.contains("staging")
+    ///     True
+    ///     >>> o.contains("development")
+    ///     False
+    fn contains(&self, value: &str) -> bool {
+        let cv = ConstraintValue::String(value.to_string());
+        self.inner.contains(&cv)
+    }
+
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
     }
 
     fn __repr__(&self) -> String {
@@ -532,6 +645,42 @@ impl PyNotOneOf {
         Self {
             inner: NotOneOf::new(values),
         }
+    }
+
+    /// Validate that another NotOneOf is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child NotOneOf is valid if it excludes at least everything parent excludes.
+    fn validate_attenuation(&self, child: &PyNotOneOf) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+
+    /// Check if a value is allowed (not in the excluded set).
+    ///
+    /// This is the runtime check used for Tier 1 authorization.
+    ///
+    /// Args:
+    ///     value: Value to check
+    ///
+    /// Returns:
+    ///     True if value is NOT in the excluded set, False if it is excluded
+    ///
+    /// Example:
+    ///     >>> n = NotOneOf(["admin", "root"])
+    ///     >>> n.allows("user")
+    ///     True
+    ///     >>> n.allows("admin")
+    ///     False
+    fn allows(&self, value: &str) -> bool {
+        let cv = ConstraintValue::String(value.to_string());
+        !self.inner.excluded.contains(&cv)
+    }
+
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
     }
 
     /// Get the excluded values.
@@ -575,6 +724,50 @@ impl PyContains {
         })
     }
 
+    /// Validate that another Contains is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child Contains is valid if it requires at least everything parent requires.
+    fn validate_attenuation(&self, child: &PyContains) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+
+    /// Check if a list contains all required values.
+    ///
+    /// This is the runtime check used for Tier 1 authorization.
+    ///
+    /// Args:
+    ///     value: List to check (must contain all required values)
+    ///
+    /// Returns:
+    ///     True if value contains all required values
+    ///
+    /// Example:
+    ///     >>> c = Contains(["admin"])
+    ///     >>> c.matches(["admin", "user"])
+    ///     True
+    ///     >>> c.matches(["user"])
+    ///     False
+    fn matches(&self, value: Vec<PyObject>) -> PyResult<bool> {
+        let rust_values = Python::with_gil(|py| -> PyResult<Vec<ConstraintValue>> {
+            let mut vec = Vec::new();
+            for obj in value {
+                let bound = obj.into_bound(py);
+                vec.push(py_to_constraint_value(&bound)?);
+            }
+            Ok(vec)
+        })?;
+        let cv = ConstraintValue::List(rust_values);
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
     /// Get the required values.
     #[getter]
     fn required(&self) -> PyResult<Vec<PyObject>> {
@@ -614,6 +807,50 @@ impl PySubset {
         Ok(Self {
             inner: Subset::new(rust_values),
         })
+    }
+
+    /// Validate that another Subset is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child Subset is valid if its allowed values are a subset of parent's.
+    fn validate_attenuation(&self, child: &PySubset) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+
+    /// Check if all values in a list are within the allowed set.
+    ///
+    /// This is the runtime check used for Tier 1 authorization.
+    ///
+    /// Args:
+    ///     value: List to check (all elements must be in allowed set)
+    ///
+    /// Returns:
+    ///     True if value is a subset of allowed values
+    ///
+    /// Example:
+    ///     >>> s = Subset(["read", "write", "delete"])
+    ///     >>> s.matches(["read", "write"])
+    ///     True
+    ///     >>> s.matches(["read", "admin"])
+    ///     False
+    fn matches(&self, value: Vec<PyObject>) -> PyResult<bool> {
+        let rust_values = Python::with_gil(|py| -> PyResult<Vec<ConstraintValue>> {
+            let mut vec = Vec::new();
+            for obj in value {
+                let bound = obj.into_bound(py);
+                vec.push(py_to_constraint_value(&bound)?);
+            }
+            Ok(vec)
+        })?;
+        let cv = ConstraintValue::List(rust_values);
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
     }
 
     /// Get the allowed values.
@@ -657,6 +894,35 @@ impl PyAll {
         })
     }
 
+    /// Validate that another All is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child All is valid if it has all parent's constraints plus optionally more.
+    fn validate_attenuation(&self, child: &PyAll) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+
+    /// Check if a value matches ALL constraints in this set.
+    ///
+    /// This is the runtime check used for Tier 1 authorization.
+    ///
+    /// Args:
+    ///     value: Value to check against all constraints
+    ///
+    /// Returns:
+    ///     True if value matches all constraints
+    fn matches(&self, value: &str) -> PyResult<bool> {
+        let cv = ConstraintValue::String(value.to_string());
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
     fn __repr__(&self) -> String {
         "All(...)".to_string()
     }
@@ -686,6 +952,26 @@ impl PyAnyOf {
         })
     }
 
+    /// Check if a value matches ANY constraint in this set.
+    ///
+    /// This is the runtime check used for Tier 1 authorization.
+    ///
+    /// Args:
+    ///     value: Value to check against constraints
+    ///
+    /// Returns:
+    ///     True if value matches at least one constraint
+    fn matches(&self, value: &str) -> PyResult<bool> {
+        let cv = ConstraintValue::String(value.to_string());
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
     fn __repr__(&self) -> String {
         "AnyOf(...)".to_string()
     }
@@ -709,6 +995,26 @@ impl PyNot {
         Ok(Self {
             inner: Not::new(rust_constraint),
         })
+    }
+
+    /// Check if a value does NOT match the inner constraint.
+    ///
+    /// This is the runtime check used for Tier 1 authorization.
+    ///
+    /// Args:
+    ///     value: Value to check
+    ///
+    /// Returns:
+    ///     True if value does NOT match the inner constraint
+    fn matches(&self, value: &str) -> PyResult<bool> {
+        let cv = ConstraintValue::String(value.to_string());
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
     }
 
     fn __repr__(&self) -> String {
@@ -745,6 +1051,41 @@ impl PyRange {
         Ok(Self {
             inner: Range::min(min).map_err(to_py_err)?,
         })
+    }
+
+    /// Validate that another Range is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child Range is valid if its bounds are within parent's bounds.
+    fn validate_attenuation(&self, child: &PyRange) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+
+    /// Check if a value is within this range.
+    ///
+    /// This is the runtime check used for Tier 1 authorization.
+    ///
+    /// Args:
+    ///     value: Numeric value to check
+    ///
+    /// Returns:
+    ///     True if value is within [min, max], False otherwise
+    ///
+    /// Example:
+    ///     >>> r = Range(1, 10)
+    ///     >>> r.contains(5)
+    ///     True
+    ///     >>> r.contains(100)
+    ///     False
+    fn contains(&self, value: f64) -> bool {
+        self.inner.contains_value(value)
+    }
+
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
     }
 
     fn __repr__(&self) -> String {
@@ -804,6 +1145,21 @@ impl PyCidr {
     ///     True if the IP is within the network, False otherwise.
     fn contains(&self, ip: &str) -> PyResult<bool> {
         self.inner.contains_ip(ip).map_err(to_py_err)
+    }
+
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// Validate that another Cidr is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child Cidr is valid if its network is a subnet of parent's network.
+    fn validate_attenuation(&self, child: &PyCidr) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
     }
 
     fn __repr__(&self) -> String {
@@ -877,6 +1233,21 @@ impl PyUrlPattern {
         self.inner.matches_url(url).map_err(to_py_err)
     }
 
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// Validate that another UrlPattern is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child UrlPattern is valid if it matches a subset of URLs that parent matches.
+    fn validate_attenuation(&self, child: &PyUrlPattern) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+
     fn __repr__(&self) -> String {
         format!("UrlPattern('{}')", self.inner.pattern)
     }
@@ -932,8 +1303,47 @@ impl PyCel {
         }
     }
 
+    /// Validate that another CEL is a valid attenuation (narrowing) of this one.
+    ///
+    /// CEL attenuation is conservative: requires exact match or logical AND extension.
+    fn validate_attenuation(&self, child: &PyCel) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+
+    /// Check if a value matches this CEL expression.
+    ///
+    /// Note: CEL evaluation requires a CEL engine. This method evaluates
+    /// the expression with the value bound to the "value" variable.
+    ///
+    /// Args:
+    ///     value: Value to check (bound as "value" in CEL context)
+    ///
+    /// Returns:
+    ///     True if CEL expression evaluates to true
+    ///
+    /// Example:
+    ///     >>> c = CEL("value < 100")
+    ///     >>> c.matches(50)
+    ///     True
+    fn matches(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        self.matches(value)
+    }
+
     fn __repr__(&self) -> String {
         format!("CEL('{}')", self.inner.expression)
+    }
+
+    #[getter]
+    fn expression(&self) -> String {
+        self.inner.expression.clone()
     }
 }
 
@@ -952,6 +1362,43 @@ impl PyRegex {
         Ok(Self { inner })
     }
 
+    /// Validate that another Regex is a valid attenuation (narrowing) of this one.
+    ///
+    /// Regex attenuation is conservative: requires exact pattern match.
+    fn validate_attenuation(&self, child: &PyRegex) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
+    }
+
+    /// Check if a value matches this regex pattern.
+    ///
+    /// This is the runtime check used for Tier 1 authorization.
+    /// Uses fullmatch semantics (entire string must match).
+    ///
+    /// Args:
+    ///     value: Value to check against the regex
+    ///
+    /// Returns:
+    ///     True if value matches the regex pattern
+    ///
+    /// Example:
+    ///     >>> r = Regex("^prod-[a-z]+$")
+    ///     >>> r.matches("prod-web")
+    ///     True
+    ///     >>> r.matches("staging-web")
+    ///     False
+    fn matches(&self, value: &str) -> PyResult<bool> {
+        let cv = ConstraintValue::String(value.to_string());
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
     fn __repr__(&self) -> String {
         format!("Regex('{}')", self.inner.pattern)
     }
@@ -963,6 +1410,24 @@ impl PyRegex {
 }
 
 /// Python wrapper for Wildcard constraint.
+///
+/// Wildcard matches ANY value - it is the universal superset.
+/// Use this in root warrants for fields you want to leave unconstrained
+/// but allow children to restrict.
+///
+/// SECURITY INVARIANTS (enforced by Rust core):
+/// 1. Wildcard can attenuate TO anything (it's the superset)
+/// 2. NOTHING can attenuate TO Wildcard (would expand permissions)
+///    - Attempting this raises WildcardExpansion error
+/// 3. Runtime check always returns True (matches everything)
+///
+/// Example:
+///     >>> from tenuo_core import Wildcard
+///     >>> w = Wildcard()
+///     >>> w.matches("anything")  # Always True
+///     True
+///     >>> w.matches(12345)  # Any type
+///     True
 #[pyclass(name = "Wildcard")]
 #[derive(Clone)]
 pub struct PyWildcard {
@@ -974,6 +1439,58 @@ impl PyWildcard {
     #[new]
     fn new() -> Self {
         Self { inner: Wildcard }
+    }
+
+    /// Check if a value matches this constraint.
+    ///
+    /// Wildcard ALWAYS returns True - it matches any value.
+    /// This is the runtime check used for Tier 1 authorization.
+    ///
+    /// Note: The security is in the ATTENUATION check, not here.
+    /// You cannot attenuate TO a Wildcard from any other constraint.
+    ///
+    /// Args:
+    ///     value: Value to check (ignored - always matches)
+    ///
+    /// Returns:
+    ///     True (always)
+    #[pyo3(signature = (_value=None))]
+    fn matches(&self, _value: Option<&str>) -> bool {
+        // Wildcard matches everything - this is by design.
+        // Security is enforced via validate_attenuation which
+        // prevents any constraint from attenuating TO Wildcard.
+        true
+    }
+
+    /// Validate that a child constraint is a valid narrowing.
+    ///
+    /// Wildcard can attenuate TO any constraint (it's the universal superset).
+    /// This method always succeeds because Wildcard is the top of the lattice.
+    ///
+    /// Args:
+    ///     child: Any constraint (will always be valid)
+    ///
+    /// Returns:
+    ///     None (always succeeds)
+    ///
+    /// Example:
+    ///     >>> from tenuo_core import Wildcard, Exact
+    ///     >>> w = Wildcard()
+    ///     >>> w.validate_attenuation(Exact("specific"))  # OK
+    fn validate_attenuation(&self, child: &Bound<'_, PyAny>) -> PyResult<()> {
+        // Convert Python constraint to Rust
+        let child_constraint = py_to_constraint(child)?;
+
+        // Wildcard can attenuate to anything - the Rust core validates this
+        Constraint::Wildcard(self.inner.clone())
+            .validate_attenuation(&child_constraint)
+            .map_err(to_py_err)
+    }
+
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    /// Wildcard always returns True.
+    fn satisfies(&self, _value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        Ok(true)
     }
 
     fn __repr__(&self) -> String {
@@ -1058,6 +1575,12 @@ impl PySubpath {
         self.contains(path)
     }
 
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
     fn __repr__(&self) -> String {
         // Python-style repr with quoted string
         if self.inner.case_sensitive && self.inner.allow_equal {
@@ -1101,6 +1624,29 @@ impl PySubpath {
     #[getter]
     fn allow_equal(&self) -> bool {
         self.inner.allow_equal
+    }
+
+    /// Validate that another Subpath is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child Subpath is valid if its root is contained within this parent's root.
+    ///
+    /// Args:
+    ///     child: The child Subpath to validate.
+    ///
+    /// Raises:
+    ///     MonotonicityError: If child would expand capabilities.
+    ///
+    /// Example:
+    ///     >>> parent = Subpath("/data")
+    ///     >>> child = Subpath("/data/reports")
+    ///     >>> parent.validate_attenuation(child)  # OK
+    ///     >>> parent = Subpath("/data/reports")
+    ///     >>> child = Subpath("/data")
+    ///     >>> parent.validate_attenuation(child)  # Raises MonotonicityError
+    fn validate_attenuation(&self, child: &PySubpath) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
     }
 }
 
@@ -1210,6 +1756,12 @@ impl PyUrlSafe {
         self.is_safe(url)
     }
 
+    /// Unified constraint check - returns True if value satisfies this constraint.
+    fn satisfies(&self, value: &Bound<'_, PyAny>) -> PyResult<bool> {
+        let cv = py_to_constraint_value(value)?;
+        self.inner.matches(&cv).map_err(to_py_err)
+    }
+
     fn __repr__(&self) -> String {
         // Python-style repr
         let mut opts = Vec::new();
@@ -1297,6 +1849,29 @@ impl PyUrlSafe {
     #[getter]
     fn block_internal_tlds(&self) -> bool {
         self.inner.block_internal_tlds
+    }
+
+    /// Validate that another UrlSafe is a valid attenuation (narrowing) of this one.
+    ///
+    /// A child UrlSafe is valid if it is at least as restrictive as this parent:
+    /// - Child schemes must be subset of parent schemes
+    /// - Child cannot disable blocking flags that parent enables
+    /// - If parent has domain allowlist, child must too (and be subset)
+    ///
+    /// Args:
+    ///     child: The child UrlSafe to validate.
+    ///
+    /// Raises:
+    ///     MonotonicityError: If child would expand capabilities.
+    ///
+    /// Example:
+    ///     >>> parent = UrlSafe(allow_domains=["*.example.com"])
+    ///     >>> child = UrlSafe(allow_domains=["api.example.com"])
+    ///     >>> parent.validate_attenuation(child)  # OK
+    fn validate_attenuation(&self, child: &PyUrlSafe) -> PyResult<()> {
+        self.inner
+            .validate_attenuation(&child.inner)
+            .map_err(to_py_err)
     }
 }
 

@@ -1,0 +1,1492 @@
+# Tenuo LLM Context Document
+# Version: 0.1.0-beta.6
+# Last Updated: 2026-01-14
+#
+# This file provides context for AI assistants helping developers work with Tenuo.
+# Include this file in your AI context when asking questions about Tenuo.
+
+================================================================================
+WHAT IS TENUO?
+================================================================================
+
+Tenuo is a capability-based authorization protocol for AI agent systems. It uses
+cryptographically signed tokens called "warrants" to enforce the principle of
+least authority (POLA) - agents can only perform actions explicitly granted to
+them, and delegated permissions can only shrink, never expand.
+
+Key security properties:
+- Attenuation: Child warrants can ONLY be narrower than parents (never expand)
+- Proof-of-Possession (PoP): Stolen tokens are useless without the holder's key
+- Short TTLs: Warrants expire quickly (minutes, not hours)
+- Cryptographic chain: Every delegation link is signed and hash-chained
+
+================================================================================
+CORE CONCEPTS
+================================================================================
+
+WARRANT
+  A signed capability token containing:
+  - Tools the holder can invoke
+  - Constraints on arguments (e.g., path must match /data/*)
+  - TTL (expiration time)
+  - Holder (who can use it) and Issuer (who signed it)
+  - Depth (0 = root, increments with each delegation)
+
+CONSTRAINT
+  A rule that argument values must satisfy:
+  - Pattern("/data/*")     - Glob pattern matching
+  - Exact("prod")          - Exact value match
+  - Range(0, 100)          - Numeric bounds
+  - OneOf(["a", "b"])      - Set membership
+  - Subpath("/data")       - Secure path containment (blocks traversal)
+  - UrlSafe()              - SSRF protection (blocks internal IPs)
+  - Shlex(allow=["ls"])    - Shell injection protection
+
+CAPABILITY
+  A tool + its constraints:
+  Capability("read_file", path=Subpath("/data"))
+
+SIGNING KEY
+  Ed25519 keypair. The private key signs warrants and PoP signatures.
+  The public key identifies the holder/issuer.
+
+BOUND WARRANT
+  A warrant + signing key pair for convenient repeated use.
+  WARNING: BoundWarrant cannot be serialized (contains private key).
+
+================================================================================
+PYTHON SDK API REFERENCE
+================================================================================
+
+### IMPORTS (80% API) ###
+
+from tenuo import (
+    # Core types
+    Warrant, SigningKey, PublicKey, BoundWarrant,
+    
+    # Creating warrants
+    mint, mint_sync, grant, Capability,
+    
+    # Protecting functions
+    guard, guard_tools,
+    
+    # Common constraints
+    Pattern, Exact, OneOf, Range, Wildcard, Any,
+    
+    # Security constraints (from Rust core)
+    Subpath,    # Path traversal protection
+    UrlSafe,    # SSRF protection
+    Shlex,      # Shell injection protection
+    
+    # Aliases
+    Path,       # = Subpath
+    Url,        # = UrlSafe
+    Cmd,        # = Shlex
+    
+    # Setup
+    configure, SigningKey, PublicKey,
+    
+    # Errors
+    AuthorizationDenied, ConstraintViolation, MonotonicityError,
+)
+
+### CREATING WARRANTS ###
+
+# Method 1: Fluent builder (recommended)
+key = SigningKey.generate()
+warrant = (Warrant.mint_builder()
+    .capability("read_file", path=Subpath("/data"))
+    .capability("search", query=Pattern("weather *"))
+    .holder(key.public_key)
+    .ttl(3600)
+    .mint(key))
+
+# Method 2: Quick mint with context manager
+from tenuo import configure, mint_sync, Capability, Pattern
+
+configure(issuer_key=SigningKey.generate(), dev_mode=True)
+
+with mint_sync(Capability("search", query=Pattern("*"))):
+    # warrant is automatically in scope
+    result = search(query="test")
+
+### DELEGATING (ATTENUATING) WARRANTS ###
+
+# Attenuation: child can only be NARROWER than parent
+child_key = SigningKey.generate()
+child = (parent.grant_builder()
+    .capability("read_file", path=Subpath("/data/reports"))  # Narrower path
+    .holder(child_key.public_key)
+    .ttl(300)  # Shorter TTL
+    .grant(parent_key))  # Parent's holder signs
+
+# WRONG: Cannot widen permissions
+# child = parent.grant_builder()
+#     .capability("read_file", path=Subpath("/"))  # WIDER - will fail
+#     .grant(parent_key)
+
+### PROTECTING FUNCTIONS ###
+
+# Using @guard decorator
+@guard(tool="read_file")
+def read_file(path: str) -> str:
+    return open(path).read()
+
+# With warrant context
+bound = warrant.bind(key)
+with bound:
+    content = read_file("/data/test.txt")  # Authorized
+    # read_file("/etc/passwd")  # Raises AuthorizationDenied
+
+### CONSTRAINTS REFERENCE ###
+
+# Pattern - Glob matching
+Pattern("/data/*.pdf")        # Matches /data/report.pdf
+Pattern("/data/**")           # Matches any depth under /data/
+
+# Exact - Exact value match
+Exact("production")
+
+# OneOf - Set membership
+OneOf(["staging", "dev", "production"])
+
+# Range - Numeric bounds
+Range(0, 100)                 # 0 <= x <= 100
+Range.max_value(1000)         # x <= 1000
+
+# Subpath - Secure path containment (RECOMMENDED for file paths)
+Subpath("/data")              # Blocks /data/../etc/passwd
+# Methods: .contains(path) -> bool
+
+# UrlSafe - SSRF protection (RECOMMENDED for URLs)
+UrlSafe()                     # Blocks private IPs, metadata endpoints
+UrlSafe(allow_domains=["api.github.com"])
+# Methods: .is_safe(url) -> bool
+
+# Shlex - Shell injection protection (RECOMMENDED for commands)
+Shlex(allow=["ls", "cat"])    # Only allows these binaries
+# Methods: .matches(command) -> bool
+
+### PROOF-OF-POSSESSION (PoP) ###
+
+# PoP proves the holder has the private key
+args = {"path": "/data/test.txt"}
+pop_signature = warrant.sign(holder_key, "read_file", args)
+
+# Verification (done by authorizer)
+authorized = warrant.authorize(
+    tool="read_file",
+    args=args,
+    signature=bytes(pop_signature)
+)
+
+### KEY MANAGEMENT ###
+
+# Load from environment
+key = SigningKey.from_env("TENUO_KEY")
+
+# Load from file
+key = SigningKey.from_file("/run/secrets/tenuo-key")
+
+# Generate new
+key = SigningKey.generate()
+
+# KeyRegistry for multi-tenant/LangGraph (keys stay in memory)
+from tenuo import KeyRegistry
+registry = KeyRegistry.get_instance()
+registry.register("worker", SigningKey.from_env("WORKER_KEY"))
+key = registry.get("worker")
+
+### SERIALIZATION ###
+
+# Warrant to string (base64)
+warrant_str = str(warrant)
+
+# String to warrant
+warrant = Warrant(warrant_str)
+
+# BoundWarrant CANNOT be serialized (security)
+# Extract warrant for storage:
+state["warrant"] = str(bound.warrant)
+
+================================================================================
+DETAILED API REFERENCE
+================================================================================
+
+### SigningKey ###
+
+class SigningKey:
+    @staticmethod
+    def generate() -> SigningKey
+        """Generate a new Ed25519 keypair."""
+    
+    @staticmethod
+    def from_bytes(data: bytes) -> SigningKey
+        """Load from 32-byte seed."""
+    
+    @staticmethod
+    def from_env(name: str) -> SigningKey
+        """Load from environment variable (auto-detects base64/hex)."""
+    
+    @staticmethod
+    def from_file(path: str) -> SigningKey
+        """Load from file (auto-detects format)."""
+    
+    @property
+    def public_key(self) -> PublicKey
+        """Get the public key."""
+    
+    def sign(self, message: bytes) -> bytes
+        """Sign a message."""
+
+### PublicKey ###
+
+class PublicKey:
+    @staticmethod
+    def from_bytes(data: bytes) -> PublicKey
+        """Load from 32-byte public key."""
+    
+    @staticmethod
+    def from_env(name: str) -> PublicKey
+        """Load from environment variable."""
+    
+    def verify(self, message: bytes, signature: bytes) -> bool
+        """Verify a signature."""
+    
+    def to_hex(self) -> str
+        """Export as hex string."""
+
+### Warrant ###
+
+class Warrant:
+    @staticmethod
+    def mint_builder() -> MintBuilder
+        """Create a fluent builder for new warrants."""
+    
+    def __init__(self, base64_or_cbor: str | bytes)
+        """Deserialize from base64 string or CBOR bytes."""
+    
+    # Properties
+    @property
+    def id(self) -> str                    # Warrant UUID
+    @property
+    def tools(self) -> List[str]           # Authorized tool names
+    @property
+    def depth(self) -> int                 # Current delegation depth
+    @property
+    def max_depth(self) -> int             # Max allowed depth
+    @property
+    def clearance(self) -> Clearance       # Trust level
+    @property
+    def warrant_type(self) -> WarrantType  # Execution or Issuer
+    @property
+    def ttl_remaining(self) -> timedelta   # Time until expiration
+    
+    # ===== AUTHORIZATION METHODS (use for real security decisions) =====
+    
+    def authorize(self, tool: str, args: dict, signature: bytes) -> bool
+        """
+        REAL AUTHORIZATION - Use this for security decisions.
+        
+        Performs ALL checks:
+        1. Tool is in warrant
+        2. Args satisfy constraints
+        3. Warrant not expired
+        4. PoP signature is valid (proves key possession)
+        
+        Returns True only if ALL checks pass.
+        """
+    
+    def sign(self, key: SigningKey, tool: str, args: dict) -> bytes
+        """Create PoP signature for tool invocation."""
+    
+    # ===== DEBUG/DIAGNOSTIC METHODS (NOT for security decisions) =====
+    # WARNING: These methods skip cryptographic verification!
+    # Use ONLY for debugging, UI hints, and error messages.
+    
+    def allows(self, tool: str, args: dict = None) -> bool
+        """
+        ⚠️  DEBUG ONLY - Logic check without PoP verification.
+        
+        Use for: UI conditionals, routing hints, pre-flight checks.
+        DO NOT use for: Authorization decisions, access control.
+        
+        This method does NOT verify the holder has the private key.
+        An attacker with a stolen warrant passes this check.
+        """
+    
+    def why_denied(self, tool: str, args: dict) -> DenialReason
+        """
+        ⚠️  DEBUG ONLY - Get explanation for denial.
+        
+        Use for: Error messages, debugging, logging.
+        DO NOT use for: Authorization decisions.
+        """
+    
+    def explain(self, include_chain: bool = False) -> str
+        """⚠️  DEBUG ONLY - Human-readable warrant info."""
+    
+    # ===== OTHER METHODS =====
+    
+    def is_expired(self) -> bool
+        """Check if warrant has expired."""
+    
+    def is_terminal(self) -> bool
+        """Check if warrant can be delegated further."""
+    
+    def bind(self, key: SigningKey) -> BoundWarrant
+        """Bind to a signing key for convenience."""
+    
+    def grant_builder(self) -> GrantBuilder
+        """Create builder for attenuation."""
+    
+    def to_base64(self) -> str
+        """Serialize to base64."""
+    
+    def __str__(self) -> str
+        """Same as to_base64()."""
+
+### MintBuilder (Warrant.mint_builder()) ###
+
+class MintBuilder:
+    def tool(self, name: str) -> MintBuilder
+        """Add a single tool."""
+    
+    def tools(self, names: List[str]) -> MintBuilder
+        """Set authorized tools."""
+    
+    def capability(self, tool: str, **constraints) -> MintBuilder
+        """Add tool with constraints."""
+    
+    def constraint(self, field: str, value: Constraint) -> MintBuilder
+        """Add constraint for all tools."""
+    
+    def holder(self, key: PublicKey) -> MintBuilder
+        """Set authorized holder."""
+    
+    def ttl(self, seconds: int) -> MintBuilder
+        """Set time-to-live (default: 3600)."""
+    
+    def clearance(self, level: Clearance) -> MintBuilder
+        """Set clearance level."""
+    
+    def session_id(self, id: str) -> MintBuilder
+        """Set optional session ID."""
+    
+    def required_approvers(self, keys: List[PublicKey]) -> MintBuilder
+        """Set multi-sig approvers."""
+    
+    def min_approvals(self, count: int) -> MintBuilder
+        """Set approval threshold."""
+    
+    # For issuer warrants:
+    def issuer(self) -> MintBuilder
+        """Switch to issuer warrant mode."""
+    
+    def issuable_tools(self, tools: List[str]) -> MintBuilder
+        """Tools this issuer can grant."""
+    
+    def max_issue_depth(self, depth: int) -> MintBuilder
+        """Max depth for issued warrants."""
+    
+    def mint(self, key: SigningKey) -> Warrant
+        """Sign and create the warrant."""
+
+### GrantBuilder (warrant.grant_builder()) ###
+
+class GrantBuilder:
+    def capability(self, tool: str, **constraints) -> GrantBuilder
+        """Add capability (must be subset of parent)."""
+    
+    def inherit_all(self) -> GrantBuilder
+        """Inherit all parent capabilities (explicit opt-in)."""
+    
+    def tool(self, name: str) -> GrantBuilder
+        """Narrow to single tool."""
+    
+    def tools(self, names: List[str]) -> GrantBuilder
+        """Narrow to subset of tools."""
+    
+    def holder(self, key: PublicKey) -> GrantBuilder
+        """Set new holder."""
+    
+    def ttl(self, seconds: int) -> GrantBuilder
+        """Set TTL (must be <= parent TTL)."""
+    
+    def clearance(self, level: Clearance) -> GrantBuilder
+        """Set clearance (must be <= parent)."""
+    
+    def terminal(self) -> GrantBuilder
+        """Make warrant non-delegatable."""
+    
+    def intent(self, text: str) -> GrantBuilder
+        """Set human-readable intent."""
+    
+    def diff(self) -> str
+        """Preview changes vs parent (human-readable)."""
+    
+    def grant(self, key: SigningKey) -> Warrant
+        """Create child warrant (key must be parent's holder)."""
+    
+    def grant_with_receipt(self, key: SigningKey) -> Tuple[Warrant, Receipt]
+        """Create with delegation receipt."""
+
+### BoundWarrant (warrant.bind(key)) ###
+
+class BoundWarrant:
+    # Context manager for automatic scope
+    def __enter__(self) -> BoundWarrant
+    def __exit__(self, *args) -> None
+    
+    # Properties (forwarded from warrant)
+    @property
+    def id(self) -> str
+    @property
+    def tools(self) -> List[str]
+    @property
+    def ttl_remaining(self) -> timedelta
+    @property
+    def is_expired(self) -> bool
+    @property
+    def is_terminal(self) -> bool
+    @property
+    def warrant(self) -> Warrant
+        """Get inner warrant (for serialization)."""
+    
+    # ===== AUTHORIZATION METHODS (use for real security decisions) =====
+    
+    def validate(self, tool: str, args: dict) -> ValidationResult
+        """
+        REAL AUTHORIZATION - Use this for security decisions.
+        
+        Creates PoP signature and verifies it. Returns ValidationResult
+        with success/failure and detailed feedback.
+        
+        Use this BEFORE executing any sensitive operation.
+        """
+    
+    def headers(self, tool: str, args: dict) -> Dict[str, str]
+        """
+        REAL AUTHORIZATION - Generate HTTP headers with PoP.
+        
+        Returns {"X-Tenuo-Warrant": "...", "X-Tenuo-PoP": "..."}
+        
+        Automatically validates before generating headers.
+        Raises RuntimeError if authorization fails.
+        """
+    
+    # ===== DEBUG/DIAGNOSTIC METHODS (NOT for security decisions) =====
+    
+    def allows(self, tool: str, args: dict = None) -> bool
+        """
+        ⚠️  DEBUG ONLY - Logic check without PoP verification.
+        
+        Use for: UI conditionals, routing hints.
+        DO NOT use for: Authorization decisions.
+        """
+    
+    def why_denied(self, tool: str, args: dict) -> DenialReason
+        """⚠️  DEBUG ONLY - Get denial explanation."""
+    
+    # ===== OTHER METHODS =====
+    
+    def grant(self, *, to: PublicKey, allow: str|List[str], ttl: int, **constraints) -> Warrant
+        """Delegate using bound key."""
+    
+    def unbind(self) -> Warrant
+        """Return warrant without key."""
+
+### ValidationResult ###
+
+class ValidationResult:
+    success: bool          # True if authorized
+    reason: str           # Failure reason (if any)
+    suggestions: List[str] # Hints for fixing
+    
+    def __bool__(self) -> bool
+        """Allow: if result: ..."""
+    
+    @classmethod
+    def ok() -> ValidationResult
+    
+    @classmethod
+    def fail(reason: str, suggestions: List[str] = None) -> ValidationResult
+
+### Configuration ###
+
+def configure(
+    issuer_key: SigningKey,
+    *,
+    trusted_roots: List[PublicKey] = None,
+    default_ttl: int = 300,
+    mode: Literal["enforce", "audit", "permissive"] = "enforce",
+    dev_mode: bool = False,
+    audit_log: bool = True,
+) -> None
+    """Configure global Tenuo settings."""
+
+def auto_configure() -> None
+    """Configure from TENUO_* environment variables."""
+
+### KeyRegistry (Thread-Safe Singleton) ###
+
+class KeyRegistry:
+    @staticmethod
+    def get_instance() -> KeyRegistry
+    
+    def register(self, key_id: str, key: SigningKey, namespace: str = None) -> None
+        """Register a key by ID."""
+    
+    def get(self, key_id: str, namespace: str = None) -> SigningKey
+        """Retrieve a key by ID."""
+    
+    def unregister(self, key_id: str, namespace: str = None) -> None
+        """Remove a key."""
+
+### A2AServer ###
+
+class A2AServer:
+    def __init__(
+        self,
+        name: str,                          # Agent display name
+        url: str,                           # Public URL
+        public_key: PublicKey,              # Agent's public key
+        trusted_issuers: List[PublicKey],   # Keys to trust
+        *,
+        trust_delegated: bool = True,       # Accept attenuated warrants
+        require_warrant: bool = True,       # Env: TENUO_A2A_REQUIRE_WARRANT
+        require_audience: bool = True,      # Env: TENUO_A2A_REQUIRE_AUDIENCE
+        require_pop: bool = True,           # Env: TENUO_A2A_REQUIRE_POP
+        check_replay: bool = True,          # Env: TENUO_A2A_CHECK_REPLAY
+        replay_window: int = 3600,          # Env: TENUO_A2A_REPLAY_WINDOW
+        max_chain_depth: int = 10,          # Env: TENUO_A2A_MAX_CHAIN_DEPTH
+        audit_log: TextIO = None,           # Env: TENUO_A2A_AUDIT_LOG
+    )
+    
+    @property
+    def app(self) -> ASGIApp
+        """Get Starlette ASGI app."""
+    
+    def skill(self, name: str, *, constraints: Dict[str, type]) -> Callable
+        """Decorator to register a skill."""
+    
+    async def validate_warrant(
+        self,
+        warrant_token: str,
+        skill_id: str,
+        arguments: Dict[str, Any],
+        *,
+        warrant_chain: str = None,
+        pop_signature: bytes = None,
+    ) -> Warrant
+        """Validate warrant for skill invocation."""
+
+### A2AClient ###
+
+class A2AClient:
+    def __init__(
+        self,
+        url: str,                    # Agent URL
+        *,
+        auth: Any = None,            # Optional auth config
+        pin_key: str = None,         # Expected public key (TOFU protection)
+        timeout: float = 30.0,       # Request timeout
+    )
+    
+    async def discover(self) -> AgentCard
+        """Fetch agent capabilities."""
+    
+    async def send_task(
+        self,
+        message: str,
+        warrant: Warrant,
+        *,
+        skill: str = None,
+        warrant_chain: List[Warrant] = None,
+        pop_signature: bytes = None,
+    ) -> Any
+        """Send task with warrant."""
+    
+    async def send_task_streaming(
+        self,
+        message: str,
+        warrant: Warrant,
+        *,
+        skill: str = None,
+        stream_timeout: float = 300.0,  # DoS protection
+    ) -> AsyncIterator[TaskUpdate]
+        """Stream task updates via SSE."""
+    
+    async def close(self) -> None
+        """Close HTTP client."""
+
+================================================================================
+FRAMEWORK INTEGRATIONS
+================================================================================
+
+### OPENAI ###
+
+from tenuo.openai import GuardBuilder, Subpath, UrlSafe, Shlex
+
+client = (GuardBuilder(openai.OpenAI())
+    .allow("read_file", path=Subpath("/data"))
+    .allow("fetch_url", url=UrlSafe())
+    .allow("run_command", cmd=Shlex(allow=["ls"]))
+    .deny("delete_file")
+    .on_denial("raise")  # or "skip", "log"
+    .build())
+
+response = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[...],
+    tools=[...]
+)
+
+### LANGCHAIN ###
+
+from tenuo.langchain import guard
+
+protected_tools = guard([search_tool, file_tool], bound_warrant)
+agent = create_openai_tools_agent(llm, protected_tools, prompt)
+
+### LANGGRAPH ###
+
+from tenuo.langgraph import guard_node, TenuoToolNode, load_tenuo_keys
+
+load_tenuo_keys()  # Load from TENUO_KEY_* env vars
+
+graph.add_node("agent", guard_node(my_agent, key_id="worker"))
+graph.add_node("tools", TenuoToolNode(tools))
+
+### FASTAPI ###
+
+from tenuo.fastapi import TenuoGuard, configure_tenuo
+
+configure_tenuo(app, trusted_issuers=[issuer_pubkey])
+
+@app.get("/search")
+async def search(ctx: SecurityContext = Depends(TenuoGuard("search"))):
+    # ctx.warrant is verified
+    return {"results": [...]}
+
+### A2A (AGENT-TO-AGENT) ###
+
+from tenuo.a2a import A2AServer, A2AClient
+
+# Server
+server = A2AServer(
+    name="Research Agent",
+    url="https://research.example.com",
+    public_key=my_public_key,
+    trusted_issuers=[orchestrator_key],
+)
+
+@server.skill("search", constraints={"sources": UrlSafe})
+async def search(query: str, sources: list[str]):
+    return await do_search(query, sources)
+
+# Client
+client = A2AClient("https://research.example.com")
+result = await client.send_task(
+    message="Find papers on security",
+    warrant=task_warrant,
+)
+
+================================================================================
+PROTOCOL INVARIANTS (from protocol-spec-v1.md)
+================================================================================
+
+Every warrant chain must satisfy these invariants:
+
+I1: DELEGATION AUTHORITY
+    child.issuer == parent.holder
+    (Only the holder can delegate)
+
+I2: DEPTH MONOTONICITY
+    child.depth == parent.depth + 1
+    child.depth <= MAX_DELEGATION_DEPTH (64)
+    (Depth always increases by exactly 1)
+
+I3: TTL MONOTONICITY
+    child.expires_at <= parent.expires_at
+    (Cannot extend lifetime beyond parent)
+
+I4: CAPABILITY MONOTONICITY
+    child.capabilities ⊆ parent.capabilities
+    (Can only remove tools or narrow constraints)
+
+I5: CRYPTOGRAPHIC LINKAGE
+    child.parent_hash == SHA256(parent.payload_bytes)
+    (Chain is hash-linked)
+
+I6: PROOF-OF-POSSESSION
+    PoP signature verifies under warrant.holder
+    (Proves key possession at use time)
+
+================================================================================
+CONSTRAINT TYPE IDS (from wire-format-v1.md)
+================================================================================
+
+| ID | Type        | Description                    |
+|----|-------------|--------------------------------|
+| 1  | Exact       | Exact value match              |
+| 2  | Pattern     | Glob pattern (*, **, ?)        |
+| 3  | Range       | Numeric bounds                 |
+| 4  | OneOf       | Set membership                 |
+| 5  | Regex       | Regular expression             |
+| 7  | NotOneOf    | Set exclusion                  |
+| 8  | Cidr        | IP/network range               |
+| 9  | UrlPattern  | URL pattern matching           |
+| 10 | Contains    | List must contain values       |
+| 11 | Subset      | Array must be subset           |
+| 12 | All         | AND (all must pass)            |
+| 13 | Any         | OR (one must pass)             |
+| 14 | Not         | Negation                       |
+| 15 | Cel         | CEL expression                 |
+| 16 | Wildcard    | Any value                      |
+
+Note: Subpath (17) and UrlSafe (18) are SDK conveniences, not core protocol types.
+
+================================================================================
+SECURITY CONSTRAINTS IN DETAIL
+================================================================================
+
+### SUBPATH - Path Traversal Protection ###
+
+The Subpath constraint prevents path traversal attacks by normalizing paths
+and checking containment. It's implemented in Rust for consistency.
+
+from tenuo import Subpath
+
+constraint = Subpath("/data")
+
+# Safe paths
+constraint.contains("/data/file.txt")           # True
+constraint.contains("/data/sub/file.txt")       # True
+constraint.contains("/data/./file.txt")         # True (normalized)
+
+# Blocked attacks
+constraint.contains("/data/../etc/passwd")      # False (traversal)
+constraint.contains("/etc/passwd")              # False (outside root)
+constraint.contains("/data/foo/../../etc/x")    # False (traversal)
+
+# Normalized before check:
+# "/data/../etc/passwd" -> "/etc/passwd" -> NOT under /data -> False
+
+### URLSAFE - SSRF Protection ###
+
+The UrlSafe constraint blocks SSRF attacks by checking:
+- Private IP ranges (10.x, 172.16-31.x, 192.168.x)
+- Loopback (127.x, localhost)
+- Metadata endpoints (169.254.169.254)
+- Link-local (169.254.x)
+
+from tenuo import UrlSafe
+
+constraint = UrlSafe()
+
+# Safe URLs
+constraint.is_safe("https://api.github.com/")       # True
+constraint.is_safe("https://example.com/data")      # True
+
+# Blocked attacks
+constraint.is_safe("http://169.254.169.254/meta")   # False (AWS metadata)
+constraint.is_safe("http://127.0.0.1/admin")        # False (loopback)
+constraint.is_safe("http://192.168.1.1/")           # False (private)
+constraint.is_safe("http://2130706433/")            # False (decimal IP = 127.0.0.1)
+
+# With domain allowlist
+constraint = UrlSafe(allow_domains=["api.github.com", "*.googleapis.com"])
+
+### SHLEX - Shell Injection Protection ###
+
+The Shlex constraint validates shell commands by:
+- Parsing with Python's shlex module (shell semantics)
+- Checking binary against allowlist
+- Blocking shell operators (;, |, &, etc.)
+- Blocking command substitution ($(), ``)
+
+from tenuo import Shlex
+
+constraint = Shlex(allow=["ls", "cat", "echo"])
+
+# Safe commands
+constraint.matches("ls -la /data")              # True
+constraint.matches("cat /data/file.txt")        # True
+
+# Blocked attacks
+constraint.matches("ls; rm -rf /")              # False (chained command)
+constraint.matches("cat /etc/passwd | nc x")    # False (pipe)
+constraint.matches("$(whoami)")                 # False (substitution)
+constraint.matches("rm -rf /")                  # False (not in allowlist)
+
+================================================================================
+COMMON PATTERNS
+================================================================================
+
+### Pattern 1: Root warrant -> Worker delegation ###
+
+# Control plane issues root warrant
+root_key = SigningKey.from_env("CONTROL_PLANE_KEY")
+worker_pubkey = PublicKey.from_env("WORKER_PUBKEY")
+
+root = (Warrant.mint_builder()
+    .capability("read_file", path=Subpath("/data"))
+    .capability("search", query=Pattern("*"))
+    .holder(worker_pubkey)
+    .ttl(3600)
+    .mint(root_key))
+
+# Send root warrant to worker...
+
+### Pattern 2: Worker receives and uses warrant ###
+
+worker_key = SigningKey.from_env("WORKER_KEY")
+warrant = Warrant(received_warrant_string)
+
+# Use with bind for repeated operations
+bound = warrant.bind(worker_key)
+with bound:
+    result = read_file("/data/report.txt")
+
+### Pattern 3: Worker delegates to sub-agent ###
+
+sub_agent_key = SigningKey.generate()
+delegated = (warrant.grant_builder()
+    .capability("read_file", path=Subpath("/data/reports"))  # Narrowed
+    .holder(sub_agent_key.public_key)
+    .ttl(300)  # Shorter
+    .grant(worker_key))
+
+### Pattern 4: Validation before execution ###
+
+bound = warrant.bind(key)
+result = bound.validate("read_file", {"path": "/data/test.txt"})
+if result:
+    # Safe to execute
+    content = read_file("/data/test.txt")
+else:
+    print(f"Denied: {result.reason}")
+
+================================================================================
+ERROR HANDLING
+================================================================================
+
+from tenuo import (
+    AuthorizationDenied,
+    ConstraintViolation,
+    MonotonicityError,
+    ScopeViolation,
+)
+
+try:
+    with bound:
+        result = read_file("/etc/passwd")
+except AuthorizationDenied as e:
+    # Rich error with context
+    print(f"Denied: {e}")
+    # For debugging only (not exposed to clients):
+    print(f"Tool: {e.tool}")
+    print(f"Field: {e.field}")
+    print(f"Expected: {e.expected}")
+    print(f"Received: {e.received}")
+
+try:
+    child = parent.grant_builder()
+        .capability("read_file", path=Subpath("/"))  # WIDER
+        .grant(parent_key)
+except MonotonicityError as e:
+    # Child tried to widen parent's permissions
+    print(f"Cannot widen: {e}")
+
+================================================================================
+DEBUGGING
+================================================================================
+
+### Diagnose a warrant ###
+
+from tenuo import diagnose
+
+diagnose(warrant)
+# Prints: ID, TTL, tools, constraints, depth, etc.
+
+### Understand denial ###
+
+result = warrant.why_denied("read_file", {"path": "/etc/passwd"})
+if result.denied:
+    print(f"Code: {result.deny_code}")
+    print(f"Field: {result.field}")
+    print(f"Suggestion: {result.suggestion}")
+
+### Enable debug logging ###
+
+from tenuo.openai import enable_debug
+enable_debug()
+# Now all authorization decisions are logged
+
+================================================================================
+DEPLOYMENT PATTERNS
+================================================================================
+
+### Pattern A: Centralized Control Plane ###
+
+Best for: Enterprise deployments with strict governance
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  CONTROL PLANE (trusted root)                                               │
+│  - Holds root signing key                                                   │
+│  - Issues initial warrants to orchestrators                                 │
+│  - Manages key rotation and revocation                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+                        │
+                        │ Issues warrant with:
+                        │ - tools: ["search", "read_file"]
+                        │ - constraints: {...}
+                        │ - max_depth: 3
+                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  ORCHESTRATOR                                                               │
+│  - Receives warrant from control plane                                      │
+│  - Attenuates and delegates to workers                                      │
+│  - Coordinates task execution                                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+                        │
+                        │ Delegates attenuated warrants
+                        │ (narrower scope, shorter TTL)
+                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  WORKERS / AGENTS                                                           │
+│  - Receive scoped warrants                                                  │
+│  - Execute tools within warrant constraints                                 │
+│  - Cannot escalate privileges                                               │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Code:
+# Control Plane (startup)
+control_key = SigningKey.from_env("CONTROL_PLANE_KEY")
+configure(issuer_key=control_key, trusted_roots=[control_key.public_key])
+
+# Issue to orchestrator
+orchestrator_warrant = (Warrant.mint_builder()
+    .tools(["search", "read_file", "send_email"])
+    .constraint("path", Subpath("/data"))
+    .holder(orchestrator_pubkey)
+    .ttl(3600)
+    .mint(control_key))
+
+# Orchestrator delegates to worker
+worker_warrant = (orchestrator_warrant.grant_builder()
+    .capability("read_file", path=Subpath("/data/reports"))  # Narrowed
+    .ttl(300)
+    .holder(worker_pubkey)
+    .grant(orchestrator_key))
+
+--------------------------------------------------------------------------------
+
+### Pattern B: Peer-to-Peer Agent Network (A2A) ###
+
+Best for: Multi-agent systems with autonomous agents
+
+┌─────────────┐     warrant      ┌─────────────┐     warrant      ┌─────────────┐
+│   Agent A   │ ───────────────► │   Agent B   │ ───────────────► │   Agent C   │
+│ (Researcher)│                  │ (Summarizer)│                  │   (Writer)  │
+└─────────────┘                  └─────────────┘                  └─────────────┘
+      │                                │                                │
+      │ A2A Protocol                   │ A2A Protocol                   │
+      │ JSON-RPC + Warrant             │ JSON-RPC + Warrant             │
+      ▼                                ▼                                ▼
+┌─────────────┐                  ┌─────────────┐                  ┌─────────────┐
+│  Skills:    │                  │  Skills:    │                  │  Skills:    │
+│  - search   │                  │  - summarize│                  │  - write    │
+│  - analyze  │                  │  - extract  │                  │  - format   │
+└─────────────┘                  └─────────────┘                  └─────────────┘
+
+Each agent:
+- Exposes skills via A2AServer
+- Calls other agents via A2AClient
+- Validates incoming warrants
+- Attenuates warrants before passing
+
+Code:
+# Agent B - Summarizer service
+server = A2AServer(
+    name="Summarizer",
+    url="https://summarizer.agents.example.com",
+    public_key=my_key.public_key,
+    trusted_issuers=[trusted_orchestrator_key],
+)
+
+@server.skill("summarize", constraints={"sources": UrlSafe})
+async def summarize(text: str, sources: list[str]) -> str:
+    # Validate sources before fetching
+    return await do_summarize(text, sources)
+
+# Run with uvicorn
+uvicorn.run(server.app, port=8000)
+
+# Agent A calling Agent B
+async with A2AClient("https://summarizer.agents.example.com") as client:
+    result = await client.send_task(
+        message="Summarize this paper",
+        warrant=my_warrant,
+        skill="summarize",
+    )
+
+--------------------------------------------------------------------------------
+
+### Pattern C: Gateway / Sidecar ###
+
+Best for: Adding Tenuo to existing systems without code changes
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  CLIENT                                                                     │
+│  (Sends warrant in X-Tenuo-Warrant header)                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+                        │
+                        │ HTTP with warrant
+                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  TENUO GATEWAY / SIDECAR                                                    │
+│  - Validates warrant                                                        │
+│  - Verifies PoP signature                                                   │
+│  - Checks constraints against request                                       │
+│  - Blocks unauthorized requests                                             │
+│  - Logs audit events                                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+                        │
+                        │ Validated request
+                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  BACKEND SERVICE (unchanged)                                                │
+│  - Receives only validated requests                                         │
+│  - No Tenuo code required                                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+FastAPI Gateway Example:
+from tenuo.fastapi import TenuoGuard, configure_tenuo
+
+app = FastAPI()
+configure_tenuo(app, trusted_issuers=[control_plane_key])
+
+@app.post("/api/search")
+async def search(
+    query: str,
+    ctx: SecurityContext = Depends(TenuoGuard("search"))
+):
+    # ctx.warrant is validated
+    # ctx.args contains extracted arguments
+    return backend.search(query)
+
+--------------------------------------------------------------------------------
+
+### Pattern D: LangGraph Multi-Agent ###
+
+Best for: Complex workflows with checkpointing
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  LangGraph                                                                  │
+│  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐                  │
+│  │  Planner    │ ───► │  Researcher │ ───► │  Writer     │                  │
+│  │             │      │             │      │             │                  │
+│  │ warrant: W1 │      │ warrant: W2 │      │ warrant: W3 │                  │
+│  └─────────────┘      └─────────────┘      └─────────────┘                  │
+│                                                                             │
+│  State (checkpointed):                                                      │
+│  - warrant: str (base64)    # Serializable                                  │
+│  - key_id: str              # Reference to KeyRegistry                      │
+│                                                                             │
+│  Keys (in memory only):                                                     │
+│  - KeyRegistry singleton    # Never checkpointed                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Key insight: Warrants are serializable (str), keys are not. Use KeyRegistry.
+
+Code:
+from tenuo import KeyRegistry
+from tenuo.langgraph import guard_node, TenuoToolNode, load_tenuo_keys
+
+# At startup: load keys into registry (stays in memory)
+load_tenuo_keys()  # Reads TENUO_KEY_PLANNER, TENUO_KEY_RESEARCHER, etc.
+
+# Or manually:
+registry = KeyRegistry.get_instance()
+registry.register("planner", SigningKey.from_env("PLANNER_KEY"))
+registry.register("researcher", SigningKey.from_env("RESEARCHER_KEY"))
+
+# Define graph with warrant-aware nodes
+@guard_node(key_id="researcher")
+def researcher_node(state):
+    # Warrant from state is automatically validated
+    return {"data": research_results}
+
+graph.add_node("researcher", researcher_node)
+graph.add_node("tools", TenuoToolNode(tools))
+
+# Initial state (warrant is str, key_id is str)
+initial_state = {
+    "warrant": str(root_warrant),  # Serializable!
+    "messages": [],
+}
+
+# Run with key context
+config = {"configurable": {"tenuo_key_id": "planner"}}
+result = graph.invoke(initial_state, config=config)
+
+--------------------------------------------------------------------------------
+
+### Pattern E: OpenAI Direct (Tier 1 Guardrails) ###
+
+Best for: Quick hardening of OpenAI tool calls without full PKI
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  YOUR APPLICATION                                                           │
+│                                                                             │
+│  client = (GuardBuilder(openai.OpenAI())                                    │
+│      .allow("read_file", path=Subpath("/data"))                             │
+│      .allow("fetch", url=UrlSafe(allow_domains=["api.github.com"]))         │
+│      .allow("exec", cmd=Shlex(allow=["ls", "cat"]))                         │
+│      .deny("delete_file")                                                   │
+│      .on_denial("raise")  # or "skip", "log"                                │
+│      .build())                                                              │
+│                                                                             │
+│  # All tool calls automatically validated                                   │
+│  response = client.chat.completions.create(...)                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+No PKI required. Constraints are validated locally before tool execution.
+
+--------------------------------------------------------------------------------
+
+### Pattern F: MCP Integration ###
+
+Best for: Model Context Protocol servers
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  MCP CLIENT                                                                 │
+│  ┌─────────────────────────────────────────────────────────────┐            │
+│  │  SecureMCPClient                                            │            │
+│  │  - Wraps all MCP tools with Tenuo guards                    │            │
+│  │  - Validates warrant before each tool call                  │            │
+│  └─────────────────────────────────────────────────────────────┘            │
+│                        │                                                    │
+│                        │ stdio / HTTP                                       │
+│                        ▼                                                    │
+│  ┌─────────────────────────────────────────────────────────────┐            │
+│  │  MCP SERVER                                                 │            │
+│  │  - Standard MCP tools                                       │            │
+│  │  - No Tenuo code required                                   │            │
+│  └─────────────────────────────────────────────────────────────┘            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+Code:
+from tenuo.mcp import SecureMCPClient
+from tenuo import mint, Capability, Subpath
+
+async with SecureMCPClient("python", ["mcp_server.py"]) as client:
+    # All tools wrapped with Tenuo
+    tools = client.tools
+    
+    # Use with warrant scope
+    async with mint(Capability("read_file", path=Subpath("/data"))):
+        result = await tools["read_file"](path="/data/report.txt")
+
+================================================================================
+ENVIRONMENT VARIABLES
+================================================================================
+
+### Configuration ###
+TENUO_KEY                - Default signing key (base64 or hex)
+TENUO_ROOT_KEY           - Control plane root key
+TENUO_TRUSTED_ROOTS      - Comma-separated public keys
+TENUO_MODE               - enforce | audit | permissive
+TENUO_DEFAULT_TTL        - Default TTL in seconds
+
+### LangGraph Integration ###
+TENUO_KEY_<NAME>         - Named keys (e.g., TENUO_KEY_WORKER)
+
+### A2A Configuration ###
+TENUO_A2A_REQUIRE_WARRANT   - true | false (default: true)
+TENUO_A2A_REQUIRE_AUDIENCE  - true | false (default: true)
+TENUO_A2A_REQUIRE_POP       - true | false (default: true)
+TENUO_A2A_CHECK_REPLAY      - true | false (default: true)
+TENUO_A2A_REPLAY_WINDOW     - Seconds to remember JTIs (default: 3600)
+TENUO_A2A_MAX_CHAIN_DEPTH   - Max delegation depth (default: 10)
+TENUO_A2A_AUDIT_LOG         - File path or "stderr"
+
+================================================================================
+HTTP HEADERS
+================================================================================
+
+X-Tenuo-Warrant          - Base64-encoded warrant
+X-Tenuo-PoP              - Base64-encoded Proof-of-Possession signature
+X-Tenuo-Warrant-Chain    - Semicolon-separated chain of warrants (root;...;leaf)
+
+================================================================================
+FILES IN THIS REPOSITORY
+================================================================================
+
+docs/spec/protocol-spec-v1.md   - Protocol specification (invariants, algorithms)
+docs/spec/wire-format-v1.md     - Wire format (CBOR encoding, field IDs)
+docs/spec/test-vectors.md       - Byte-exact test vectors
+tenuo-python/                   - Python SDK
+tenuo-core/                     - Rust core (PyO3 bindings)
+
+================================================================================
+⚠️  CRITICAL SECURITY WARNINGS
+================================================================================
+
+### 1. PoP (Proof-of-Possession) IS REQUIRED ###
+
+A warrant WITHOUT PoP verification is like a bearer token - anyone who
+steals it can use it. PoP proves the presenter has the private key.
+
+WRONG (vulnerable to token theft):
+    # Scenario: Attacker stole warrant from logs/network/state
+    stolen_warrant = Warrant(intercepted_warrant_string)
+    
+    # allows() only checks constraints - NO key verification
+    if stolen_warrant.allows("delete_db", {"target": "users"}):
+        delete_database()  # ❌ Attacker succeeds without private key!
+
+RIGHT (PoP required):
+    # Scenario: Attacker stole warrant but doesn't have private key
+    stolen_warrant = Warrant(intercepted_warrant_string)
+    
+    # Attacker cannot create BoundWarrant without the key
+    # bound = stolen_warrant.bind(???)  # Attacker doesn't have key!
+    
+    # Even if they try to use the warrant directly:
+    # - They cannot call warrant.sign() without the key
+    # - They cannot generate valid PoP signature
+    # - authorize() will fail without valid PoP
+    
+    # Legitimate holder with key:
+    bound = warrant.bind(my_private_key)
+    result = bound.validate("delete_db", {"target": "users"})  # Creates & verifies PoP
+    if result:
+        delete_database()  # ✅ Only works with valid key
+
+### 2. DEBUG METHODS ARE NOT AUTHORIZATION ###
+
+These methods skip PoP verification - use ONLY for debugging:
+    - allows()       ← Logic only, no crypto
+    - why_denied()   ← Explanation only
+    - explain()      ← Human-readable info
+
+These methods perform full authorization with PoP:
+    - authorize()    ← Full check (on Warrant)
+    - validate()     ← Full check (on BoundWarrant)
+    - headers()      ← Creates PoP headers
+
+### 3. ZERO TRUST ENFORCEMENT ###
+
+When a capability has ANY constraint, Tenuo enforces zero-trust on ALL
+arguments - unknown arguments are REJECTED by default.
+
+# This warrant only constrains "url"
+warrant = (Warrant.mint_builder()
+    .capability("api_call", url=UrlSafe())
+    .holder(key.public_key)
+    .ttl(300)
+    .mint(key))
+
+# "timeout" is NOT in the constraint set → REJECTED
+pop_sig = warrant.sign(key, "api_call", {"url": "https://x.com", "timeout": 30})
+warrant.authorize("api_call", {"url": "https://x.com", "timeout": 30}, pop_sig)
+# ❌ Fails: unknown argument "timeout"
+
+# Solution 1: Explicitly allow with Wildcard
+warrant = (Warrant.mint_builder()
+    .capability("api_call", url=UrlSafe(), timeout=Wildcard())
+    .holder(key.public_key)
+    .ttl(300)
+    .mint(key))
+
+# Solution 2: Opt out of zero-trust for this tool (not recommended)
+warrant = (Warrant.mint_builder()
+    .capability("api_call", url=UrlSafe(), _allow_unknown=True)
+    .holder(key.public_key)
+    .ttl(300)
+    .mint(key))
+
+### 4. WARRANTS CAN BE STOLEN - KEYS CANNOT ###
+
+Warrants flow through:
+    - HTTP headers
+    - State stores
+    - Logs
+    - Network traces
+
+Keys should NEVER leave:
+    - Environment variables (at startup)
+    - Secret managers
+    - Memory (KeyRegistry)
+
+If warrant is stolen: Attacker can read it but cannot USE it (needs key).
+If key is stolen: Attacker can create PoP signatures for ANY warrant.
+
+### 5. SHORT TTLs ARE YOUR FRIEND ###
+
+Don't fight revocation - use short TTLs:
+    - 5 minutes: Default, recommended
+    - 15 minutes: Maximum for most operations
+    - 1 hour: Only if necessary, with caution
+    - >1 hour: Requires revocation infrastructure
+
+================================================================================
+ENUMS AND CONSTANTS
+================================================================================
+
+### WarrantType ###
+- Execution   - Can invoke tools directly
+- Issuer      - Can only delegate to other warrants
+
+### Clearance (trust levels) ###
+- None        - No special clearance (default)
+- User        - Standard user level
+- Elevated    - Above normal user
+- Privileged  - High privilege operations
+- System      - System-level operations
+- Custom(u8)  - Custom level (0-255)
+
+### EnforcementMode ###
+- enforce     - Block unauthorized (production default)
+- audit       - Log but allow (gradual adoption)
+- permissive  - Log + warn header (debugging)
+
+### Constants ###
+MAX_DELEGATION_DEPTH = 64    # Protocol maximum
+DEFAULT_TTL = 300            # 5 minutes (recommended)
+MAX_TTL = 7776000            # 90 days (protocol max)
+POP_WINDOW = 30              # PoP bucket size (seconds)
+POP_MAX_WINDOWS = 4          # ~2 minute total validity
+
+================================================================================
+QUICK REFERENCE CHEATSHEET
+================================================================================
+
+### Create a warrant ###
+warrant = (Warrant.mint_builder()
+    .capability("tool_name", arg=Constraint)
+    .holder(pubkey)
+    .ttl(300)
+    .mint(signing_key))
+
+### Delegate (attenuate) ###
+child = (parent.grant_builder()
+    .capability("tool", arg=NarrowerConstraint)  # Must be subset
+    .holder(new_holder)
+    .ttl(60)  # Must be <= parent.ttl
+    .grant(parent_holder_key))
+
+### Use warrant ###
+bound = warrant.bind(my_key)
+with bound:
+    result = protected_function(args)
+
+### Generate headers ###
+headers = bound.headers("tool_name", {"arg": "value"})
+# Returns: {"X-Tenuo-Warrant": "...", "X-Tenuo-PoP": "..."}
+
+### Check permissions (⚠️ DEBUG ONLY - no PoP) ###
+if bound.allows("tool_name", {"arg": "value"}):
+    # Would be allowed by constraints (but NO key verification!)
+    # Use for UI hints, NOT for authorization decisions
+
+### Validate (with PoP) ###
+result = bound.validate("tool_name", {"arg": "value"})
+if result:
+    # Authorized, PoP valid
+
+### Serialize for storage ###
+state["warrant"] = str(warrant)  # OK
+# state["bound"] = bound  # ERROR - contains key
+
+### Deserialize ###
+warrant = Warrant(state["warrant"])
+
+================================================================================
+IMPORTANT NOTES FOR AI ASSISTANTS
+================================================================================
+
+1. NEVER suggest widening permissions in delegation
+   - Child constraints must be NARROWER than parent
+   - Child TTL must be SHORTER than parent
+   - Use grant_builder() + grant(), not raw APIs
+   - If parent has Subpath("/data"), child cannot have Subpath("/")
+
+2. ALWAYS use security constraints for untrusted input
+   - Subpath for file paths (not Pattern) - prevents traversal
+   - UrlSafe for URLs (not Pattern) - prevents SSRF
+   - Shlex for shell commands (not string manipulation) - prevents injection
+
+3. NEVER serialize BoundWarrant
+   - Contains private key - security risk
+   - Extract warrant: str(bound.warrant)
+   - Keys should stay in memory (KeyRegistry)
+
+4. Signing key matters
+   - grant() requires PARENT's holder key (delegation authority)
+   - PoP requires CURRENT warrant's holder key
+   - These are often different keys in a chain
+
+5. Constraint type matters
+   - Pattern is glob matching (*, **, ?) not regex
+   - Regex patterns must be identical for narrowing (subset is undecidable)
+   - Use Exact when you need exact value match
+   - Wildcard/Any allows anything (use sparingly)
+
+6. TTL best practices
+   - Use short TTLs (5-15 minutes) in production
+   - Shorter is better - revocation is complex
+   - Child TTL <= Parent TTL (always)
+
+7. Key storage
+   - Never put SigningKey in checkpointable state
+   - Use KeyRegistry for LangGraph/multi-tenant
+   - Load from env/file at startup, keep in memory
+
+8. DEBUG METHODS vs AUTHORIZATION METHODS (CRITICAL)
+   
+   ⚠️  DEBUG ONLY (no PoP, vulnerable to token theft):
+   - allows()      → Logic check, use for UI hints only
+   - why_denied()  → Debugging, error messages only
+   - explain()     → Human-readable info only
+   
+   ✅ REAL AUTHORIZATION (with PoP verification):
+   - authorize()   → Full check on Warrant
+   - validate()    → Full check on BoundWarrant
+   - headers()     → Generates auth headers with PoP
+   
+   ALWAYS use authorize()/validate() before sensitive operations.
+   NEVER use allows() for access control decisions.
+
+9. Constraint narrowing rules
+   - Pattern: child must be more specific (more literal chars)
+   - Range: child bounds within parent bounds
+   - OneOf: child set ⊆ parent set
+   - Subpath: child root under parent root
+   - UrlSafe: child domains ⊆ parent domains
+
+10. Zero-trust argument handling
+    - Once ANY constraint is set, ALL arguments must be constrained
+    - Unknown arguments → REJECTED (closed-world assumption)
+    - Use Wildcard() to explicitly allow specific unconstrained args
+    - Use _allow_unknown=True to opt out (not recommended)
+
+11. Error handling
+    - AuthorizationDenied - tool call blocked
+    - MonotonicityError - tried to widen permissions
+    - ConstraintViolation - argument failed constraint
+    - Don't expose error details to end users
+
+12. PoP is NOT optional
+    - Without PoP, warrant is a bearer token (anyone can use it)
+    - Always call authorize()/validate() with PoP signature
+    - Never use allows() for authorization decisions
+    - Short TTLs + PoP = defense in depth
+
+================================================================================
+END OF CONTEXT DOCUMENT
+================================================================================
+

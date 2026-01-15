@@ -5,7 +5,7 @@
 [![PyPI](https://img.shields.io/pypi/v/tenuo.svg)](https://pypi.org/project/tenuo/)
 [![Python Versions](https://img.shields.io/pypi/pyversions/tenuo.svg)](https://pypi.org/project/tenuo/)
 
-> **Status: v0.1 Beta** — Core semantics are stable. See [CHANGELOG](../CHANGELOG.md).
+> **Status: v0.1 Beta** - Core semantics are stable. See [CHANGELOG](../CHANGELOG.md).
 
 Python bindings for [Tenuo](https://github.com/tenuo-ai/tenuo), providing cryptographically-enforced capability attenuation for AI agent workflows.
 
@@ -16,7 +16,7 @@ pip install tenuo
 ```
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb)
-[![Explorer](https://img.shields.io/badge/🔬_Explorer-decode_warrants-00d4ff)](https://tenuo.dev/explorer/)
+[![Explorer](https://img.shields.io/badge/Explorer-decode_warrants-00d4ff)](https://tenuo.dev/explorer/)
 
 ## Quick Start
 
@@ -32,8 +32,8 @@ def search(query: str) -> str:
     return f"Results for: {query}"
 
 with mint_sync(Capability("search", query=Pattern("weather *"))):
-    print(search(query="weather NYC"))   # ✅ Results for: weather NYC
-    print(search(query="stock prices"))  # ❌ AuthorizationDenied
+    print(search(query="weather NYC"))   # OK: Results for: weather NYC
+    print(search(query="stock prices"))  # Raises AuthorizationDenied
 ```
 
 ### The Safe Path (Production Pattern)
@@ -96,7 +96,7 @@ result = bound.validate("process", {"item": "test"})
 if result:
     print("Authorized!")
 
-# ⚠️ BoundWarrant is non-serializable (contains key)
+# Note: BoundWarrant is non-serializable (contains key)
 # Use bound.warrant to get the plain Warrant for storage
 ```
 
@@ -146,6 +146,9 @@ authorized = warrant.authorize(
 
 ```bash
 pip install tenuo                  # Core only
+pip install "tenuo[openai]"        # + OpenAI Agents SDK
+pip install "tenuo[google_adk]"    # + Google ADK
+pip install "tenuo[a2a]"           # + Agent-to-Agent (multi-agent)
 pip install "tenuo[fastapi]"       # + FastAPI integration
 pip install "tenuo[langchain]"     # + LangChain
 pip install "tenuo[langgraph]"     # + LangGraph (includes LangChain)
@@ -174,7 +177,7 @@ key = SigningKey.generate()
 
 #### KeyRegistry (Thread-Safe Singleton)
 
-**Problem**: In LangGraph and similar frameworks, state gets checkpointed to databases. If you put a `SigningKey` in state, your private key gets persisted—a serious security risk.
+**Problem**: In LangGraph and similar frameworks, state gets checkpointed to databases. If you put a `SigningKey` in state, your private key gets persisted - a serious security risk.
 
 **Solution**: KeyRegistry keeps keys in memory, outside of state. Only string IDs flow through your graph.
 
@@ -197,7 +200,7 @@ key = registry.get("api", namespace="tenant-a")
 ```
 
 **Use cases:**
-- **LangGraph**: Keys never in state → checkpointing-safe
+- **LangGraph**: Keys never in state, checkpointing-safe
 - **Multi-tenant SaaS**: Isolate keys per tenant with namespaces
 - **Service mesh**: Different keys per downstream service
 - **Key rotation**: Register both `current` and `previous` keys
@@ -270,12 +273,12 @@ def read_file(path: str) -> str:
 # BoundWarrant as context manager - sets both warrant and key
 bound = warrant.bind(keypair)
 with bound:
-    content = read_file("/tmp/test.txt")  # ✅ Authorized
-    content = read_file("/etc/passwd")    # ❌ Blocked
+    content = read_file("/tmp/test.txt")  # Authorized
+    content = read_file("/etc/passwd")    # Blocked
 
 # Different warrant, different permissions
 with other_warrant.bind(keypair):
-    content = read_file("/etc/passwd")    # Could be ✅ if this warrant allows it
+    content = read_file("/etc/passwd")    # Could be allowed if this warrant permits it
 ```
 
 ## OpenAI Integration
@@ -406,6 +409,67 @@ warrant.is_terminal    # bool (can't delegate further)
 warrant.capabilities   # dict of tool -> constraints
 ```
 
+## Google ADK Integration
+
+Warrant-based tool protection for Google ADK agents:
+
+```python
+from google.adk.agents import Agent
+from tenuo.google_adk import GuardBuilder
+from tenuo.constraints import Subpath, UrlSafe
+
+# Tier 1: Define constraints inline
+guard = (GuardBuilder()
+    .allow("read_file", path=Subpath("/data"))
+    .allow("web_search", url=UrlSafe(allow_domains=["*.google.com"]))
+    .build())
+
+agent = Agent(
+    name="assistant",
+    tools=guard.filter_tools([read_file, web_search]),
+    before_tool_callback=guard.before_tool,
+)
+```
+
+For Tier 2 (warrant + PoP) and multi-agent scenarios, see [Google ADK Integration](https://tenuo.dev/google-adk).
+
+## A2A Integration (Multi-Agent)
+
+Warrant-based authorization for agent-to-agent communication:
+
+```python
+from tenuo.a2a import A2AServer, A2AClient
+from tenuo.constraints import Subpath, UrlSafe
+
+# Server: expose skills with constraints
+server = A2AServer(
+    name="Research Agent",
+    url="https://research-agent.example.com",
+    public_key=my_public_key,
+    trusted_issuers=[orchestrator_key],
+)
+
+@server.skill("search_papers", constraints={"sources": UrlSafe})
+async def search_papers(query: str, sources: list[str]) -> list[dict]:
+    return await do_search(query, sources)
+
+# Client: send tasks with attenuated warrants
+client = A2AClient("https://research-agent.example.com")
+task_warrant = my_warrant.attenuate(
+    capabilities={"search_papers": {"sources": UrlSafe(allow_domains=["arxiv.org"])}},
+    signing_key=my_key,
+    holder=target_agent_pubkey,
+    ttl_seconds=300,
+)
+result = await client.send_task(
+    message="Find papers on security",
+    warrant=task_warrant,
+    skill="search_papers",
+)
+```
+
+See [A2A Integration](https://tenuo.dev/a2a) for full documentation.
+
 ## MCP Integration
 
 _(Requires Python ≥3.10)_
@@ -429,11 +493,11 @@ async with SecureMCPClient("python", ["mcp_server.py"]) as client:
 ```python
 bound = warrant.bind(key)
 
-# ❌ This raises TypeError
+# This raises TypeError - BoundWarrant contains private key
 pickle.dumps(bound)
 json.dumps(bound)
 
-# ✅ Extract warrant for storage (str() returns base64)
+# Extract warrant for storage (str() returns base64)
 state["warrant"] = str(bound.warrant)
 # Reconstruct later with Warrant(string)
 ```
@@ -441,7 +505,7 @@ state["warrant"] = str(bound.warrant)
 ### `allows()` vs `validate()`
  
  ```python
- # ✅ allows() = Logic Check (Math only)
+ # allows() = Logic Check (Math only)
  # Good for UI logic, conditional routing, fail-fast
  if bound.allows("delete"):
      show_delete_button()
@@ -449,7 +513,7 @@ state["warrant"] = str(bound.warrant)
  if bound.allows("delete", {"target": "users"}):
      print("Deletion would be permitted by constraints")
  
- # ✅ validate() = Full Security Check (Math + Crypto)
+ # validate() = Full Security Check (Math + Crypto)
  # Proves you hold the key and validates the PoP signature
  result = bound.validate("delete", {"target": "users"})
  if result:
@@ -472,13 +536,13 @@ Authorization errors are opaque by default:
 Once you add **any** constraint, unknown arguments are rejected:
 
 ```python
-# ❌ 'timeout' is unknown → blocked
+# 'timeout' is unknown - blocked by closed-world policy
 .capability("api_call", url=UrlSafe(allow_domains=["api.example.com"]))
 
-# ✅ Use Wildcard() for specific fields
+# Use Wildcard() for specific fields you want to allow
 .capability("api_call", url=UrlSafe(allow_domains=["api.example.com"]), timeout=Wildcard())
 
-# ✅ Or opt out entirely
+# Or opt out of closed-world entirely
 .capability("api_call", url=UrlSafe(allow_domains=["api.example.com"]), _allow_unknown=True)
 ```
 
@@ -500,13 +564,15 @@ python examples/mcp_integration.py
 
 ## Documentation
 
-- **[Quickstart](https://tenuo.dev/quickstart)** — Get running in 5 minutes
-- **[OpenAI](https://tenuo.dev/openai)** — Direct API protection with streaming defense
-- **[FastAPI](https://tenuo.dev/fastapi)** — Zero-boilerplate API protection
-- **[LangChain](https://tenuo.dev/langchain)** — Tool protection
-- **[LangGraph](https://tenuo.dev/langgraph)** — Multi-agent security
-- **[Security](https://tenuo.dev/security)** — Threat model, best practices
-- **[API Reference](https://tenuo.dev/api-reference)** — Full SDK docs
+- **[Quickstart](https://tenuo.dev/quickstart)** - Get running in 5 minutes
+- **[OpenAI](https://tenuo.dev/openai)** - Direct API protection with streaming defense
+- **[Google ADK](https://tenuo.dev/google-adk)** - ADK agent tool protection
+- **[A2A](https://tenuo.dev/a2a)** - Inter-agent delegation with warrants
+- **[FastAPI](https://tenuo.dev/fastapi)** - Zero-boilerplate API protection
+- **[LangChain](https://tenuo.dev/langchain)** - Tool protection
+- **[LangGraph](https://tenuo.dev/langgraph)** - Multi-agent security
+- **[Security](https://tenuo.dev/security)** - Threat model, best practices
+- **[API Reference](https://tenuo.dev/api-reference)** - Full SDK docs
 
 ## License
 

@@ -653,6 +653,33 @@ def main():
         help="Initialize a new Tenuo project",
     )
 
+    # doctor command
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Check Tenuo installation and configuration",
+    )
+    doctor_parser.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Show detailed information",
+    )
+    doctor_parser.add_argument(
+        "--server",
+        "-s",
+        help="Check a remote A2A agent at the given URL",
+    )
+
+    # constrain command (interactive constraint builder)
+    constrain_parser = subparsers.add_parser(
+        "constrain",
+        help="Generate constraints for a tool",
+    )
+    constrain_parser.add_argument(
+        "tool",
+        help="Tool name to generate constraints for",
+    )
+
     args = parser.parse_args()
 
     if args.command == "discover":
@@ -685,9 +712,412 @@ def main():
     elif args.command == "init":
         init_project()
 
+    elif args.command == "doctor":
+        if args.server:
+            doctor_server(args.server)
+        else:
+            doctor(verbose=args.verbose)
+
+    elif args.command == "constrain":
+        constrain_tool(args.tool)
+
     else:
         parser.print_help()
         sys.exit(1)
+
+
+def doctor(verbose: bool = False) -> None:
+    """
+    Check Tenuo installation and configuration.
+
+    Verifies:
+    - Core library loaded
+    - Constraints available
+    - Configuration status
+    - Framework integrations
+    """
+    import os
+
+    print("\n🔍 Checking Tenuo configuration...\n")
+
+    issues = []
+    warnings = []
+
+    # 1. Check tenuo_core
+    try:
+        import tenuo_core
+
+        version = getattr(tenuo_core, "__version__", "unknown")
+        print(f"✅ tenuo_core: v{version} (Rust extension loaded)")
+    except ImportError as e:
+        print("❌ tenuo_core: NOT AVAILABLE")
+        issues.append(f"Rust extension not built: {e}")
+
+    # 2. Check constraints
+    print("\n📦 Constraints:")
+    constraints_available = []
+    constraints_missing = []
+
+    try:
+        from tenuo_core import Subpath  # noqa: F401 (availability check)
+
+        constraints_available.append("Subpath")
+        print("  ✅ Subpath (path traversal protection)")
+    except ImportError:
+        constraints_missing.append("Subpath")
+        print("  ❌ Subpath")
+
+    try:
+        from tenuo_core import UrlSafe  # noqa: F401 (availability check)
+
+        constraints_available.append("UrlSafe")
+        print("  ✅ UrlSafe (SSRF protection)")
+    except ImportError:
+        constraints_missing.append("UrlSafe")
+        print("  ❌ UrlSafe")
+
+    try:
+        from tenuo.constraints import Shlex  # noqa: F401 (availability check)
+
+        constraints_available.append("Shlex")
+        print("  ✅ Shlex (shell injection protection)")
+    except ImportError:
+        constraints_missing.append("Shlex")
+        print("  ❌ Shlex")
+
+    # 3. Check configuration
+    print("\n⚙️  Configuration:")
+
+    signing_key = os.environ.get("TENUO_SIGNING_KEY") or os.environ.get("TENUO_ROOT_KEY")
+    if signing_key:
+        print(f"  ✅ Signing key: {signing_key[:16]}...")
+    else:
+        print("  ⚠️  No signing key (set TENUO_SIGNING_KEY or TENUO_ROOT_KEY)")
+        warnings.append("No signing key configured")
+
+    tenuo_env = os.environ.get("TENUO_ENV", "not set")
+    print(f"  ℹ️  Environment: {tenuo_env}")
+
+    # 4. Check framework integrations
+    print("\n🔌 Framework Integrations:")
+
+    try:
+        import openai  # type: ignore[import-not-found]
+
+        print(f"  ✅ OpenAI: v{openai.__version__}")
+        try:
+            from tenuo.openai import GuardBuilder  # noqa: F401 (availability check)
+
+            print("     └─ GuardBuilder available")
+        except ImportError:
+            print("     └─ GuardBuilder not available")
+    except ImportError:
+        print("  ⚠️  OpenAI: not installed (pip install openai)")
+
+    try:
+        import langchain  # type: ignore[import-not-found]
+
+        print(f"  ✅ LangChain: v{langchain.__version__}")
+    except ImportError:
+        print("  ⚠️  LangChain: not installed (pip install langchain)")
+
+    try:
+        import anthropic  # type: ignore[import-not-found]
+
+        print(f"  ✅ Anthropic: v{anthropic.__version__}")
+    except ImportError:
+        print("  ⚠️  Anthropic: not installed (pip install anthropic)")
+
+    # 5. Summary
+    print("\n" + "=" * 50)
+    if issues:
+        print("\n❌ Issues found:")
+        for issue in issues:
+            print(f"   • {issue}")
+    elif warnings:
+        print("\n⚠️  Warnings:")
+        for warning in warnings:
+            print(f"   • {warning}")
+    else:
+        print("\n✅ All checks passed!")
+
+    # 6. Suggestions
+    print("\n💡 Suggestions:")
+    if not signing_key:
+        print("   • Run `tenuo init` to generate a development key")
+    if "Shlex" in constraints_available:
+        print("   • Add Shlex constraints to shell-related tools")
+    print("   • Run `tenuo audit` to see recent authorization decisions")
+    print()
+
+
+def doctor_server(url: str) -> None:
+    """
+    Check a remote A2A agent's health and configuration.
+
+    Fetches the agent card and validates Tenuo extension.
+    """
+    import httpx
+
+    print(f"\n🔍 Checking A2A agent at {url}...\n")
+
+    # Normalize URL
+    base_url = url.rstrip("/")
+    agent_card_url = f"{base_url}/.well-known/agent.json"
+
+    try:
+        # Fetch agent card
+        with httpx.Client(timeout=10.0) as client:
+            response = client.get(agent_card_url)
+
+            if response.status_code == 404:
+                print(f"❌ Agent card not found at {agent_card_url}")
+                print("   This may not be an A2A-compatible agent")
+                return
+
+            if response.status_code != 200:
+                print(f"❌ Failed to fetch agent card: HTTP {response.status_code}")
+                return
+
+            agent_card = response.json()
+
+    except httpx.ConnectError:
+        print(f"❌ Could not connect to {url}")
+        print("   Check that the server is running and accessible")
+        return
+    except httpx.TimeoutException:
+        print(f"❌ Connection timed out to {url}")
+        return
+    except Exception as e:
+        print(f"❌ Error fetching agent card: {e}")
+        return
+
+    # Parse agent card
+    print("✅ Agent card found")
+
+    # Basic info
+    name = agent_card.get("name", "Unknown")
+    version = agent_card.get("version", "unknown")
+    print(f"   Name: {name}")
+    print(f"   Version: {version}")
+
+    # Check for Tenuo extension
+    extensions = agent_card.get("extensions", {})
+    tenuo_ext = extensions.get("tenuo", {})
+
+    if not tenuo_ext:
+        print("\n⚠️  Tenuo extension: NOT PRESENT")
+        print("   This agent may not support warrant-based authorization")
+        return
+
+    print("\n✅ Tenuo extension present")
+
+    # Tenuo extension details
+    tenuo_version = tenuo_ext.get("version", "unknown")
+    print(f"   Version: {tenuo_version}")
+
+    public_key = tenuo_ext.get("public_key")
+    if public_key:
+        key_preview = public_key[:24] + "..." if len(public_key) > 24 else public_key
+        print(f"   Public key: {key_preview}")
+    else:
+        print("   ⚠️  Public key: not set")
+
+    require_warrant = tenuo_ext.get("require_warrant", True)
+    print(f"   Requires warrant: {'yes' if require_warrant else 'no'}")
+
+    require_pop = tenuo_ext.get("require_pop", False)
+    if require_pop:
+        print("   ⚠️  PoP required: yes (need signing_key for requests)")
+    else:
+        print("   PoP required: no")
+
+    # Skills
+    skills = agent_card.get("skills", [])
+    if skills:
+        print(f"\n📋 Skills ({len(skills)}):")
+        for skill in skills[:10]:  # Limit display
+            skill_id = skill.get("id", skill.get("name", "?"))
+            description = skill.get("description", "")
+            desc_preview = description[:40] + "..." if len(description) > 40 else description
+            print(f"   • {skill_id}")
+            if desc_preview:
+                print(f"     {desc_preview}")
+
+            # Show constraints if any
+            constraints = skill.get("constraints", {})
+            if constraints:
+                for param, constraint in list(constraints.items())[:3]:
+                    print(f"     └─ {param}: {constraint}")
+
+        if len(skills) > 10:
+            print(f"   ... and {len(skills) - 10} more")
+    else:
+        print("\n⚠️  No skills defined")
+
+    # Summary
+    print("\n" + "=" * 50)
+    if public_key and skills:
+        print("\n✅ Agent is ready for Tenuo A2A")
+        print("\n💡 To call this agent:")
+        print("   from tenuo.a2a import A2AClient")
+        print(f'   async with A2AClient("{url}") as client:')
+        print("       result = await client.send_task(")
+        print('           message="...",')
+        print("           warrant=my_warrant,")
+        print(f'           skill="{skills[0].get("id", "skill_name")}",')
+        print("           arguments={...}")
+        print("       )")
+    else:
+        print("\n⚠️  Agent may not be fully configured for Tenuo A2A")
+    print()
+
+
+def constrain_tool(tool: str) -> None:
+    """
+    Interactive constraint builder for a tool.
+
+    Guides the user through building constraints for a tool's parameters.
+    """
+    print(f"\n🔧 Building constraints for: {tool}\n")
+
+    # Common parameter patterns
+    param_suggestions = {
+        "path": ("Subpath", "/data"),
+        "file": ("Subpath", "/data"),
+        "filepath": ("Subpath", "/data"),
+        "url": ("UrlSafe", None),
+        "endpoint": ("UrlSafe", None),
+        "command": ("Shlex", ["ls", "cat", "echo"]),
+        "cmd": ("Shlex", ["ls", "cat", "echo"]),
+    }
+
+    constraints = {}
+
+    print("Enter parameter names (one per line, empty line to finish):")
+    print()
+
+    while True:
+        try:
+            param = input("  Parameter name: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+
+        if not param:
+            break
+
+        # Check for suggestions
+        suggestion = None
+        for pattern, (constraint_type, default) in param_suggestions.items():
+            if pattern in param.lower():
+                suggestion = (constraint_type, default)
+                break
+
+        if suggestion:
+            constraint_type, default = suggestion
+            print(f"    Detected: {constraint_type} constraint")
+
+            if constraint_type == "Subpath":
+                try:
+                    root = input(f"    Root directory [{default}]: ").strip() or default
+                except (EOFError, KeyboardInterrupt):
+                    root = default
+                constraints[param] = f'Subpath("{root}")'
+
+            elif constraint_type == "UrlSafe":
+                try:
+                    domains = input("    Allowed domains (comma-separated, empty for any): ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    domains = ""
+                if domains:
+                    domain_list = [d.strip() for d in domains.split(",")]
+                    constraints[param] = f"UrlSafe(allow_domains={domain_list!r})"
+                else:
+                    constraints[param] = "UrlSafe()"
+
+            elif constraint_type == "Shlex":
+                default_bins = default if isinstance(default, list) else ["ls", "cat", "echo"]
+                try:
+                    bins = input(f"    Allowed binaries [{', '.join(default_bins)}]: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    bins = ""
+                if bins:
+                    bin_list = [b.strip() for b in bins.split(",")]
+                else:
+                    bin_list = default_bins
+                constraints[param] = f"Shlex(allow={bin_list!r})"
+        else:
+            print("    Select constraint type:")
+            print("      [1] Subpath (file path)")
+            print("      [2] UrlSafe (URL)")
+            print("      [3] Shlex (shell command)")
+            print("      [4] Exact (exact value)")
+            print("      [5] Pattern (glob pattern)")
+            print("      [6] Skip (no constraint)")
+
+            try:
+                choice = input("    > ").strip()
+            except (EOFError, KeyboardInterrupt):
+                choice = "6"
+
+            if choice == "1":
+                try:
+                    root = input("    Root directory [/data]: ").strip() or "/data"
+                except (EOFError, KeyboardInterrupt):
+                    root = "/data"
+                constraints[param] = f'Subpath("{root}")'
+            elif choice == "2":
+                constraints[param] = "UrlSafe()"
+            elif choice == "3":
+                try:
+                    bins = input("    Allowed binaries [ls, cat]: ").strip() or "ls, cat"
+                except (EOFError, KeyboardInterrupt):
+                    bins = "ls, cat"
+                bin_list = [b.strip() for b in bins.split(",")]
+                constraints[param] = f"Shlex(allow={bin_list!r})"
+            elif choice == "4":
+                try:
+                    value = input("    Exact value: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    value = ""
+                constraints[param] = f'Exact("{value}")'
+            elif choice == "5":
+                try:
+                    pattern = input("    Pattern (e.g., /data/*): ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    pattern = "*"
+                constraints[param] = f'Pattern("{pattern}")'
+
+        print()
+
+    # Generate output
+    if constraints:
+        print("\n" + "=" * 50)
+        print("Generated constraints:\n")
+        print("```python")
+        print(f'"{tool}": {{')
+        for param, constraint in constraints.items():
+            print(f'    "{param}": {constraint},')
+        print("}")
+        print("```")
+
+        print("\nFull GuardBuilder example:\n")
+        print("```python")
+        print("from tenuo.openai import GuardBuilder")
+        print("from tenuo import Subpath, UrlSafe, Shlex, Exact, Pattern")
+        print()
+        print("client = (")
+        print("    GuardBuilder(OpenAI())")
+        for param, constraint in constraints.items():
+            print(f'    .allow("{tool}", {param}={constraint})')
+        print("    .build()")
+        print(")")
+        print("```")
+    else:
+        print("\nNo constraints defined.")
+
+    print()
 
 
 def init_project() -> None:

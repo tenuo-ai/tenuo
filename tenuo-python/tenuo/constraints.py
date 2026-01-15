@@ -376,8 +376,8 @@ class Shlex:
     # Allowed: tab (valid whitespace), ANSI escape (not injection vector)
     CONTROL_CHARS: Set[str] = {
         "\x00",  # Null - string terminator in C, security risk
-        "\n",    # Newline - command separator in shell
-        "\r",    # Carriage return - newline variant
+        "\n",  # Newline - command separator in shell
+        "\r",  # Carriage return - newline variant
         "\x0b",  # Vertical tab - shlex parsing issues
         "\x0c",  # Form feed - shlex parsing issues
         "\x07",  # Bell - parsing anomalies
