@@ -91,7 +91,7 @@ print(f"Requires warrant: {card.requires_warrant}")
 # Attenuate warrant for this delegation
 task_warrant = (my_warrant
     .grant_builder()
-    .skill("search_papers", sources=UrlSafe(allow_domains=["arxiv.org"]))
+    .capability("search_papers", sources=UrlSafe(allow_domains=["arxiv.org"]))
     .audience(card.public_key)  # Target agent's public key from discovery
     .ttl(300)
     .build(my_signing_key))
@@ -386,7 +386,7 @@ async def delegate_research(topic: str, my_warrant, my_key, target_pubkey):
     # Attenuate warrant for this specific task
     task_warrant = (my_warrant
         .grant_builder()
-        .skill("search_papers", sources=UrlSafe(allow_domains=["arxiv.org"]))
+        .capability("search_papers", sources=UrlSafe(allow_domains=["arxiv.org"]))
         .audience(target_pubkey)
         .ttl(300)
         .build(my_key))
