@@ -52,8 +52,11 @@ except ImportError:
 X_TENUO_WARRANT = "X-Tenuo-Warrant"
 X_TENUO_POP = "X-Tenuo-PoP"
 
-# Reusable security scheme for Swagger UI
-api_key_header = APIKeyHeader(name=X_TENUO_WARRANT, auto_error=False)
+# Reusable security scheme for Swagger UI (only if FastAPI available)
+if FASTAPI_AVAILABLE:
+    api_key_header = APIKeyHeader(name=X_TENUO_WARRANT, auto_error=False)
+else:
+    api_key_header = None  # type: ignore[assignment]
 
 
 # =============================================================================
@@ -156,8 +159,10 @@ class SecurityContext:
 # Dependencies
 # =============================================================================
 
+# Guard all FastAPI-dependent code to prevent import errors when FastAPI not installed
+if FASTAPI_AVAILABLE:
 
-def get_warrant_header(x_tenuo_warrant: Optional[str] = Header(None, alias=X_TENUO_WARRANT)) -> Optional[Warrant]:
+    def get_warrant_header(x_tenuo_warrant: Optional[str] = Header(None, alias=X_TENUO_WARRANT)) -> Optional[Warrant]:
     """
     FastAPI dependency to extract and parse the X-Tenuo-Warrant header.
     Returns None if missing. Raises HTTPException on invalid format.
@@ -171,38 +176,48 @@ def get_warrant_header(x_tenuo_warrant: Optional[str] = Header(None, alias=X_TEN
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid X-Tenuo-Warrant header: {str(e)}")
 
 
-def require_warrant(
-    request: Request,
-    warrant: Optional[Warrant] = Depends(get_warrant_header),
-    x_tenuo_pop: Optional[str] = Header(None, alias=X_TENUO_POP),
-) -> Warrant:
-    """
-    FastAPI dependency that REQUIRES a valid warrant and PoP signature.
+    def require_warrant(
+            request: Request,
+            warrant: Optional[Warrant] = Depends(get_warrant_header),
+            x_tenuo_pop: Optional[str] = Header(None, alias=X_TENUO_POP),
+        ) -> Warrant:
+        """
+        FastAPI dependency that REQUIRES a valid warrant and PoP signature.
 
-    Note: This is a basic dependency that only validates presence.
-    For full tool-specific authorization, use TenuoGuard(tool_name).
+        Note: This is a basic dependency that only validates presence.
+        For full tool-specific authorization, use TenuoGuard(tool_name).
 
-    Usage:
-        @app.get("/items")
-        def read_items(warrant: Warrant = Depends(require_warrant)):
-            # Manual authorization required
-            ...
-    """
-    if not warrant:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing X-Tenuo-Warrant header",
-            headers={"WWW-Authenticate": "Tenuo"},
-        )
+        Usage:
+            @app.get("/items")
+            def read_items(warrant: Warrant = Depends(require_warrant)):
+                # Manual authorization required
+                ...
+        """
+        if not warrant:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing X-Tenuo-Warrant header",
+                headers={"WWW-Authenticate": "Tenuo"},
+            )
 
-    if not x_tenuo_pop:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing X-Tenuo-PoP header",
-            headers={"WWW-Authenticate": "Tenuo"},
-        )
+        if not x_tenuo_pop:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing X-Tenuo-PoP header",
+                headers={"WWW-Authenticate": "Tenuo"},
+            )
 
-    return warrant
+        return warrant
+
+
+
+else:
+    # Placeholder functions when FastAPI not available
+    def get_warrant_header(*args: Any, **kwargs: Any) -> None:
+        raise ImportError("FastAPI is not installed. Install with: pip install fastapi")
+    
+    def require_warrant(*args: Any, **kwargs: Any) -> None:
+        raise ImportError("FastAPI is not installed. Install with: pip install fastapi")
 
 
 # =============================================================================

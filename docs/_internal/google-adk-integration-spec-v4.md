@@ -1085,19 +1085,15 @@ def delegate_to_researcher(query: str, ctx: ToolContext) -> dict:
     # Get coordinator's warrant
     coordinator_warrant = ctx.state["tenuo_warrant"]
     
-    # Attenuate for researcher:
+    # Attenuate for researcher using grant_builder():
     # - Only search skill (not file access, not shell)
     # - Only arxiv.org (not all URLs coordinator can access)
     # - Only 60 seconds (just for this task)
-    researcher_warrant = coordinator_warrant.attenuate(
-        grants=[
-            Grant(
-                skill="search",
-                constraints={"sources": UrlSafe(allow_domains=["arxiv.org"])}
-            )
-        ],
-        ttl=60,  # Ephemeral: 1 minute
-        key=coordinator_key,
+    researcher_warrant = (coordinator_warrant.grant_builder()
+        .capability("search", sources=UrlSafe(allow_domains=["arxiv.org"]))
+        .holder(researcher_key.public_key)
+        .ttl(60)  # Ephemeral: 1 minute
+        .grant(coordinator_key)
     )
     
     # Inject attenuated warrant for sub-agent

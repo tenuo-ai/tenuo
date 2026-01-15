@@ -46,10 +46,10 @@ class MockToolContext:
         self.state = state or {}
 
 
-# Import the code under test
-from tenuo.google_adk import TenuoGuard, ToolAuthorizationError, MissingSigningKeyError
-from tenuo_core import Warrant, SigningKey, Pattern, Range
-from tenuo.constraints import Subpath, UrlSafe
+# Import the code under test (after mocking google.adk)
+from tenuo.google_adk import TenuoGuard, ToolAuthorizationError, MissingSigningKeyError  # noqa: E402
+from tenuo_core import Warrant, SigningKey, Pattern, Range  # noqa: E402
+from tenuo.constraints import Subpath, UrlSafe  # noqa: E402
 
 
 @pytest.fixture
@@ -432,7 +432,7 @@ class TestArgumentRemapping:
 
 # --- Plugin Tests ---
 
-from tenuo.google_adk import TenuoPlugin, ScopedWarrant
+from tenuo.google_adk import TenuoPlugin, ScopedWarrant  # noqa: E402
 
 
 class MockCallbackContext:
@@ -536,7 +536,7 @@ class TestFailClosedUnknownConstraint:
 # DX Features Tests
 # =============================================================================
 
-from tenuo.google_adk import (
+from tenuo.google_adk import (  # noqa: E402
     GuardBuilder,
     chain_callbacks,
     explain_denial,
