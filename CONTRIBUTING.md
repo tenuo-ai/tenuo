@@ -22,6 +22,7 @@ Thank you for your interest in contributing to Tenuo! We welcome contributions f
     ```bash
     python3 -m venv .venv
     source .venv/bin/activate
+    pip install --upgrade pip
     cd tenuo-python
     pip install -e ".[dev]"
     ```
