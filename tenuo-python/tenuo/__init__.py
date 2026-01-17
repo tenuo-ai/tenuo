@@ -33,9 +33,10 @@ from tenuo_core import (  # type: ignore
     PublicKey,
     Warrant,
     Authorizer,
-    # Multi-sig
-    Approval,
-    compute_approval_hash,
+    # Multi-sig (envelope pattern only)
+    ApprovalPayload,
+    SignedApproval,
+    ApprovalMetadata,
     # Revocation
     RevocationRequest,
     SignedRevocationList,
@@ -165,8 +166,9 @@ __all__ = [
     "BoundWarrant",
     "Authorizer",
     # Multi-sig
-    "Approval",
-    "compute_approval_hash",
+    "ApprovalPayload",
+    "SignedApproval",
+    "ApprovalMetadata",
     # Revocation
     "RevocationRequest",
     "SignedRevocationList",

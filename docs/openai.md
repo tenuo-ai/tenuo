@@ -566,15 +566,49 @@ client.validate()  # Raises ConfigurationError if misconfigured
 
 ## Error Reference
 
-| Error | Tier | Meaning |
-|-------|------|---------|
-| `ToolDenied` | 1+ | Tool not in allowlist |
-| `ConstraintViolation` | 1+ | Argument fails constraint |
-| `WarrantDenied` | 2 | Warrant doesn't allow tool/args |
-| `MissingSigningKey` | 2 | Warrant provided without signing_key |
-| `ConfigurationError` | 1+ | Invalid guard() configuration |
-| `MalformedToolCall` | 1+ | Invalid JSON in tool arguments |
-| `BufferOverflow` | 1+ | Streaming buffer limit exceeded |
+The OpenAI integration uses custom exception types for API consistency:
+
+```python
+from tenuo.openai import (
+    TenuoOpenAIError,
+    ToolDenied,
+    ConstraintViolation,
+    ConfigurationError,
+)
+
+try:
+    response = client.chat.completions.create(...)
+except ToolDenied as e:
+    print(f"Tool denied: {e}")
+    print(f"Error code: {e.code}")  # e.g., "T1_001"
+    if e.quick_fix:
+        print(f"Quick fix: {e.quick_fix}")
+except ConstraintViolation as e:
+    print(f"Constraint failed: {e}")
+    print(f"Param: {e.param}")
+    print(f"Value: {e.value}")
+except TenuoOpenAIError as e:
+    # Catch-all for Tenuo OpenAI errors
+    print(f"Error: {e} (code: {e.code})")
+```
+
+### Error Types
+
+| Error | Tier | Code | Meaning |
+|-------|------|------|---------|
+| `ToolDenied` | 1+ | T1_001 | Tool not in allowlist |
+| `ConstraintViolation` | 1+ | T1_002 | Argument fails constraint |
+| `WarrantDenied` | 2 | T2_001 | Warrant doesn't allow tool/args |
+| `MissingSigningKey` | 2 | T2_002 | Warrant provided without signing_key |
+| `ConfigurationError` | 1+ | CONFIG | Invalid guard() configuration |
+| `MalformedToolCall` | 1+ | MALFORMED | Invalid JSON in tool arguments |
+| `BufferOverflow` | 1+ | BUFFER | Streaming buffer limit exceeded |
+
+### Wire Code Support
+
+The OpenAI integration uses its own error codes (T1_001, T2_001, etc.) for API consistency with OpenAI's patterns. However, the underlying authorization logic uses Tenuo's canonical wire codes (1000-2199) internally.
+
+**Note**: For direct access to canonical wire codes, use `tenuo.langchain` or raw `Warrant.authorize()` calls. The OpenAI integration prioritizes OpenAI-style error handling for better developer experience.
 
 ---
 

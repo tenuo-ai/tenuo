@@ -250,45 +250,71 @@ curl -X GET "https://api.example.com/search?query=test" \
 
 ### Error Responses
 
-Tenuo returns opaque errors by default to prevent information leakage:
+Tenuo returns structured errors with canonical wire codes:
 
 ```json
 {
-  "error": "authorization_denied",
-  "message": "Authorization denied",
-  "request_id": "abc123"
+  "error": "constraint-violation",
+  "error_code": 1501,
+  "message": "Constraint violation: field 'amount' exceeded maximum value",
+  "details": {}
 }
 ```
 
-Use the `request_id` to correlate with server logs.
+**Wire Code Support:**
+
+The FastAPI integration automatically includes canonical error codes (1000-2199) that map to HTTP status codes. This enables:
+
+- **Machine-readable errors**: Clients can programmatically handle specific error types
+- **Cross-protocol consistency**: Same error codes used across HTTP, JSON-RPC, and gRPC
+- **Precise debugging**: Error codes pinpoint the exact failure reason
+
+Common error codes:
+
+| Wire Code | Name | HTTP Status | Meaning |
+|-----------|------|-------------|---------|
+| 1100 | `signature-invalid` | 401 | Invalid cryptographic signature |
+| 1300 | `warrant-expired` | 401 | Warrant TTL exceeded |
+| 1500 | `tool-not-authorized` | 403 | Tool not in warrant's allowed list |
+| 1501 | `constraint-violation` | 403 | Argument violates constraint |
+| 1600 | `pop-signature-mismatch` | 401 | PoP verification failed |
+| 1800 | `warrant-revoked` | 401 | Warrant revoked by issuer |
+
+See [wire format specification](/docs/spec/wire-format-v1#appendix-a-error-codes) for the complete list.
 
 ### Status Codes
 
 | Code | Meaning |
 |------|---------|
-| `401 Unauthorized` | Missing or invalid warrant, bad PoP signature |
-| `403 Forbidden` | Valid warrant, but tool/args not authorized |
+| `400 Bad Request` | Malformed request (invalid base64, missing fields) |
+| `401 Unauthorized` | Authentication failed (expired, revoked, bad signature) |
+| `403 Forbidden` | Authorization failed (tool/constraints not satisfied) |
+| `413 Payload Too Large` | Warrant or request exceeds size limits |
 
 ### Custom Error Handling
 
 ```python
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from tenuo.fastapi import TenuoError
+from tenuo.exceptions import TenuoError
 
 app = FastAPI()
 
 @app.exception_handler(TenuoError)
 async def tenuo_error_handler(request: Request, exc: TenuoError):
+    """Custom handler with wire codes."""
     return JSONResponse(
-        status_code=exc.status_code,
+        status_code=exc.get_http_status(),
         content={
-            "error": exc.error_code,
-            "message": exc.message,
-            "request_id": exc.request_id,
+            "error": exc.get_wire_name(),       # kebab-case name
+            "error_code": exc.get_wire_code(),  # numeric wire code
+            "message": str(exc),
+            "details": exc.details if hasattr(exc, 'details') else {},
         }
     )
 ```
+
+**Note**: The FastAPI integration registers a global exception handler automatically when you call `configure_tenuo()`, so custom handlers are optional.
 
 ---
 

@@ -171,13 +171,20 @@ impl std::fmt::Display for Clearance {
 
 /// Size of the timestamp window for PoP signatures in seconds.
 ///
-/// The verifier accepts signatures from 4 consecutive windows (current ± 2),
-/// giving approximately 2 minutes of tolerance for clock skew.
+/// The verifier uses **bidirectional** window checking, accepting signatures from
+/// windows centered on the current time. With default settings (30s windows, 5 total),
+/// tolerance is ±60 seconds to handle clock skew in both directions.
 ///
 /// **Security trade-off**: Larger windows tolerate more clock skew but increase
 /// the replay window. Smaller windows reduce replay risk but may cause false
 /// rejections in distributed systems.
 pub const POP_TIMESTAMP_WINDOW_SECS: i64 = 30;
+
+/// Default number of PoP windows to check (bidirectional).
+///
+/// With 5 windows and 30s window size, the check pattern is:
+/// `[0, -1, +1, -2, +2]` → current time ±60s tolerance.
+pub const POP_MAX_WINDOWS: u32 = 5;
 
 use crate::domain::POP_CONTEXT;
 
@@ -816,7 +823,13 @@ impl Warrant {
         };
 
         // Check Proof-of-Possession (mandatory)
-        self.verify_pop(tool, args, signature, POP_TIMESTAMP_WINDOW_SECS, 4)?;
+        self.verify_pop(
+            tool,
+            args,
+            signature,
+            POP_TIMESTAMP_WINDOW_SECS,
+            POP_MAX_WINDOWS,
+        )?;
 
         // Check constraints
         constraints.matches(args)
@@ -881,6 +894,13 @@ impl Warrant {
     }
 
     /// Verify PoP signature with configurable window.
+    ///
+    /// Uses **bidirectional** window checking to handle clock skew in both directions:
+    /// - If holder's clock is behind verifier's → signature is in a "past" window
+    /// - If holder's clock is ahead of verifier's → signature is in a "future" window
+    ///
+    /// The `max_windows` parameter controls total windows checked (centered on current time).
+    /// With `max_windows = 5` and `window_secs = 30`, we check: -60s, -30s, 0s, +30s, +60s.
     pub fn verify_pop(
         &self,
         tool: &str,
@@ -898,9 +918,32 @@ impl Warrant {
         sorted_args.sort_by_key(|(k, _)| *k);
 
         let mut verified = false;
+
+        // Bidirectional window checking: check current window first, then alternate
+        // between past and future windows. This handles clock skew in both directions.
+        //
+        // With max_windows=5: offsets are [0, -1, +1, -2, +2] → checks ±60s with 30s windows
+        // With max_windows=4: offsets are [0, -1, +1, -2]    → checks -60s to +30s
+        let half = (max_windows / 2) as i64;
         for i in 0..max_windows {
-            // Try current and recent time windows
-            let window_ts = (now / window_secs - i as i64) * window_secs;
+            // Generate offset: 0, -1, +1, -2, +2, -3, +3, ...
+            let offset = if i == 0 {
+                0
+            } else {
+                let abs_offset = i.div_ceil(2) as i64;
+                if i % 2 == 1 {
+                    -abs_offset // Odd indices: past windows
+                } else {
+                    abs_offset // Even indices: future windows
+                }
+            };
+
+            // Skip if offset exceeds our intended range (for asymmetric max_windows)
+            if offset.abs() > half {
+                continue;
+            }
+
+            let window_ts = (now / window_secs + offset) * window_secs;
             let challenge_data = (self.payload.id.to_hex(), tool, &sorted_args, window_ts);
             let mut challenge_bytes = Vec::new();
             if ciborium::ser::into_writer(&challenge_data, &mut challenge_bytes).is_err() {

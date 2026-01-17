@@ -56,7 +56,7 @@ fn verify_approvals_with_tolerance(
     warrant: &Warrant,
     tool: &str,
     args: &HashMap<String, ConstraintValue>,
-    approvals: &[crate::approval::Approval],
+    approvals: &[crate::approval::SignedApproval],
     clock_tolerance: chrono::Duration,
 ) -> Result<()> {
     // Check if multi-sig is required
@@ -91,10 +91,17 @@ fn verify_approvals_with_tolerance(
     // Count valid approvals from required approvers
     let mut valid_count = 0u32;
     let mut seen_approvers = std::collections::HashSet::new();
-    let now = chrono::Utc::now();
+    let now = chrono::Utc::now().timestamp() as u64; // Use u64 timestamp for new payload
+    let tolerance_secs = clock_tolerance.num_seconds() as u64;
 
     for approval in approvals {
-        // Check if approver is in the required set
+        // Enforce "verify before deserialize" pattern
+        let payload = match approval.verify() {
+            Ok(p) => p,
+            Err(_) => continue, // Invalid signature or version
+        };
+
+        // Check if approver is in the required set (using key from envelope)
         if !required_approvers.contains(&approval.approver_key) {
             continue; // Not a required approver, skip
         }
@@ -105,24 +112,22 @@ fn verify_approvals_with_tolerance(
         }
 
         // Check expiration (with clock tolerance)
-        if approval.expires_at + clock_tolerance < now {
+        if payload.expires_at + tolerance_secs < now {
             continue; // Expired approval
         }
 
         // Verify request hash matches
-        if approval.request_hash != request_hash {
+        if payload.request_hash != request_hash {
             continue; // Wrong request
         }
 
-        // Verify signature
-        if approval.verify().is_ok() {
-            valid_count = valid_count.saturating_add(1);
-            seen_approvers.insert(approval.approver_key.clone());
+        // Valid!
+        valid_count = valid_count.saturating_add(1);
+        seen_approvers.insert(approval.approver_key.clone());
 
-            // Early exit: we have enough
-            if valid_count >= threshold {
-                return Ok(());
-            }
+        // Early exit: we have enough
+        if valid_count >= threshold {
+            return Ok(());
         }
     }
 
@@ -1074,7 +1079,7 @@ impl DataPlane {
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
         signature: Option<&crate::crypto::Signature>,
-        approvals: &[crate::approval::Approval],
+        approvals: &[crate::approval::SignedApproval],
     ) -> Result<ChainVerificationResult> {
         let result = self.verify_chain(chain)?;
 
@@ -1099,7 +1104,7 @@ impl DataPlane {
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
         signature: Option<&crate::crypto::Signature>,
-        approvals: &[crate::approval::Approval],
+        approvals: &[crate::approval::SignedApproval],
     ) -> Result<()> {
         // Check clearance requirement
         if let Some(required) = self.get_required_clearance(tool) {
@@ -1159,7 +1164,7 @@ impl DataPlane {
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
         signature: Option<&crate::crypto::Signature>,
-        approvals: &[crate::approval::Approval],
+        approvals: &[crate::approval::SignedApproval],
     ) -> Result<()> {
         self.verify(warrant)?;
         self.authorize(warrant, tool, args, signature, approvals)
@@ -1238,12 +1243,15 @@ impl Default for DataPlane {
 
 /// Default PoP window size in seconds.
 ///
-/// PoP signatures are valid for `pop_window_secs * max_windows` seconds total
-/// (default: 30 * 4 = 120 seconds).
+/// PoP signatures use **bidirectional** window checking centered on current time.
+/// With `window_secs = 30` and `max_windows = 5`, tolerance is ±60 seconds.
 pub const DEFAULT_POP_WINDOW_SECS: i64 = 30;
 
-/// Default number of PoP windows to check (handles clock skew).
-pub const DEFAULT_POP_MAX_WINDOWS: u32 = 4;
+/// Default number of PoP windows to check (handles bidirectional clock skew).
+///
+/// Uses 5 windows for symmetric tolerance: current ± 2 windows = ±60s with 30s windows.
+/// Window check order: [0, -1, +1, -2, +2] to prefer closer matches.
+pub const DEFAULT_POP_MAX_WINDOWS: u32 = 5;
 
 /// Builder for creating an [`Authorizer`] with validated configuration.
 ///
@@ -1816,7 +1824,7 @@ impl Authorizer {
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
         holder_signature: Option<&crate::crypto::Signature>,
-        approvals: &[crate::approval::Approval],
+        approvals: &[crate::approval::SignedApproval],
     ) -> Result<()> {
         // 0. CRITICAL: Verify warrant issuer is trusted (fast fail)
         // If trusted_keys is configured, warrant must be signed by one of them.
@@ -1862,7 +1870,7 @@ impl Authorizer {
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
         holder_signature: Option<&crate::crypto::Signature>,
-        approvals: &[crate::approval::Approval],
+        approvals: &[crate::approval::SignedApproval],
     ) -> Result<()> {
         self.verify(warrant)?;
         self.authorize(warrant, tool, args, holder_signature, approvals)
@@ -1874,7 +1882,7 @@ impl Authorizer {
         warrant: &Warrant,
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
-        approvals: &[crate::approval::Approval],
+        approvals: &[crate::approval::SignedApproval],
     ) -> Result<()> {
         verify_approvals_with_tolerance(warrant, tool, args, approvals, self.clock_tolerance)
     }
@@ -2227,7 +2235,7 @@ impl Authorizer {
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
         signature: Option<&crate::crypto::Signature>,
-        approvals: &[crate::approval::Approval],
+        approvals: &[crate::approval::SignedApproval],
     ) -> Result<ChainVerificationResult> {
         let result = self.verify_chain(chain)?;
 
@@ -2759,7 +2767,7 @@ mod tests {
 
     #[test]
     fn test_authorize_valid_approval() {
-        use crate::approval::{compute_request_hash, Approval};
+        use crate::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
         use chrono::{Duration as ChronoDuration, Utc};
 
         let issuer_keypair = SigningKey::generate();
@@ -2797,27 +2805,18 @@ mod tests {
         // Generate nonce for replay protection
         let nonce: [u8; 16] = rand::random();
 
-        // Create signable bytes for approval (with domain separation + nonce)
-        use crate::domain::APPROVAL_CONTEXT;
-        let mut signable = Vec::new();
-        signable.extend_from_slice(APPROVAL_CONTEXT);
-        signable.extend_from_slice(&nonce);
-        signable.extend_from_slice(&request_hash);
-        signable.extend_from_slice("admin@test.com".as_bytes());
-        signable.extend_from_slice(&now.timestamp().to_le_bytes());
-        signable.extend_from_slice(&expires.timestamp().to_le_bytes());
-
-        let approval = Approval {
+        // Create approval using envelope pattern
+        let payload = ApprovalPayload {
+            version: 1,
             request_hash,
             nonce,
-            approver_key: admin_keypair.public_key(),
             external_id: "admin@test.com".to_string(),
-            provider: "test".to_string(),
-            approved_at: now,
-            expires_at: expires,
-            reason: None,
-            signature: admin_keypair.sign(&signable),
+            approved_at: now.timestamp() as u64,
+            expires_at: expires.timestamp() as u64,
+            extensions: None,
         };
+
+        let approval = SignedApproval::create(payload, &admin_keypair);
 
         // Should SUCCEED with valid approval AND PoP signature
         let result = authorizer.authorize(
@@ -2832,7 +2831,7 @@ mod tests {
 
     #[test]
     fn test_authorize_wrong_approver() {
-        use crate::approval::{compute_request_hash, Approval};
+        use crate::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
         use chrono::{Duration as ChronoDuration, Utc};
 
         let issuer_keypair = SigningKey::generate();
@@ -2865,29 +2864,18 @@ mod tests {
         // Generate nonce for replay protection
         let nonce: [u8; 16] = rand::random();
 
-        // Create signable bytes with domain separation + nonce
-        use crate::domain::APPROVAL_CONTEXT;
-        let mut signable = Vec::new();
-        signable.extend_from_slice(APPROVAL_CONTEXT);
-        signable.extend_from_slice(&nonce);
-        signable.extend_from_slice(&request_hash);
-        signable.extend_from_slice("other@test.com".as_bytes());
-        signable.extend_from_slice(&now.timestamp().to_le_bytes());
-        signable.extend_from_slice(&expires.timestamp().to_le_bytes());
-
-        let sig = other_keypair.sign(&signable);
-
-        let approval = Approval {
+        // Create approval using envelope pattern (wrong approver)
+        let payload = ApprovalPayload {
+            version: 1,
             request_hash,
             nonce,
-            approver_key: other_keypair.public_key(), // Wrong approver!
             external_id: "other@test.com".to_string(),
-            provider: "test".to_string(),
-            approved_at: now,
-            expires_at: expires,
-            reason: None,
-            signature: sig,
+            approved_at: now.timestamp() as u64,
+            expires_at: expires.timestamp() as u64,
+            extensions: None,
         };
+
+        let approval = SignedApproval::create(payload, &other_keypair);
 
         // Create PoP signature
         let pop_sig = warrant
@@ -2907,7 +2895,7 @@ mod tests {
 
     #[test]
     fn test_authorize_2_of_3() {
-        use crate::approval::{compute_request_hash, Approval};
+        use crate::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
         use chrono::{Duration as ChronoDuration, Utc};
 
         let issuer_keypair = SigningKey::generate();
@@ -2942,30 +2930,22 @@ mod tests {
         );
 
         // Helper to create approval (with domain separation + nonce)
-        use crate::domain::APPROVAL_CONTEXT;
         let make_approval = |kp: &SigningKey, id: &str| {
             // Each approval gets a unique nonce
             let nonce: [u8; 16] = rand::random();
 
-            let mut signable = Vec::new();
-            signable.extend_from_slice(APPROVAL_CONTEXT);
-            signable.extend_from_slice(&nonce);
-            signable.extend_from_slice(&request_hash);
-            signable.extend_from_slice(id.as_bytes());
-            signable.extend_from_slice(&now.timestamp().to_le_bytes());
-            signable.extend_from_slice(&expires.timestamp().to_le_bytes());
-
-            Approval {
+            // Create approval using envelope pattern
+            let payload = ApprovalPayload {
+                version: 1,
                 request_hash,
                 nonce,
-                approver_key: kp.public_key(),
                 external_id: id.to_string(),
-                provider: "test".to_string(),
-                approved_at: now,
-                expires_at: expires,
-                reason: None,
-                signature: kp.sign(&signable),
-            }
+                approved_at: now.timestamp() as u64,
+                expires_at: expires.timestamp() as u64,
+                extensions: None,
+            };
+
+            SignedApproval::create(payload, kp)
         };
 
         let approval1 = make_approval(&admin1, "admin1@test.com");

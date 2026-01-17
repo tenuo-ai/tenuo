@@ -11,8 +11,9 @@
 
 | Document | Description | Status |
 |----------|-------------|--------|
-| [full-spec.md](./full-spec.md) | Complete internal specification - warrant model, constraints, wire format | ✅ Reference |
+| [protocol-spec-v1.md](../spec/protocol-spec-v1.md) | Protocol specification - warrant model, semantics, verification | ✅ Reference |
 | [wire-format-v1.md](../spec/wire-format-v1.md) | Wire format details for interoperability | ✅ Reference |
+| [a2a-handshake.md](./a2a-handshake.md) | Unified Control Protocol (Registration & Renewal) | ⚠️ Conceptual |
 | [thi-spec.md](./thi-spec.md) | Tenuo Host Interface - stateful features (nonces, rate limits) | ⚠️ Conceptual |
 | [securegraph-spec.md](./securegraph-spec.md) | SecureGraph - declarative attenuation for LangGraph | ⚠️ Conceptual |
 | [environment-constraints.md](./environment-constraints.md) | Environment/Context constraints (IP, Time) via extensions | ⚠️ Conceptual |
@@ -78,16 +79,28 @@
 
 ## Document Descriptions
 
-### full-spec.md (Reference)
-Complete internal specification covering:
-- Warrant model and wire format
+### protocol-spec-v1.md (Reference)
+Complete protocol specification covering:
+- Warrant model and semantics
 - Constraint types and evaluation
 - Cryptographic verification
 - Clearance levels (optional)
 - Delegation receipts
+- Proof-of-Possession (PoP)
 
 ### wire-format-v1.md (Reference)
-Wire format details for cross-language interoperability.
+Wire format details for cross-language interoperability:
+- CBOR serialization
+- Envelope structure
+- Canonical error codes
+- HTTP/JSON-RPC mappings
+
+### a2a-handshake.md (Experimental)
+Unified Control Protocol for Agent-to-Agent interaction:
+- **Zero-Touch Registration**: Handshake flow for new workers
+- **Warrant Renewal**: Rotation protocol for expiring warrants
+- **HD Key Provisioning**: Deterministic "Zero-Handshake" model (Method C)
+
 
 ### thi-spec.md (Conceptual)
 Stateful host interface features (not planned for implementation):

@@ -72,6 +72,211 @@ from typing import Optional, Any
 
 
 # =============================================================================
+# Canonical Error Codes (Wire Format Spec §Appendix A)
+# =============================================================================
+
+
+class ErrorCode:
+    """Canonical Tenuo error codes from wire format spec.
+    
+    These codes (1000-2199) are the single source of truth for error
+    representation. Protocol-specific formats (HTTP strings, JSON-RPC
+    negative codes) derive from these.
+    
+    Ranges:
+        1000-1099: Envelope errors
+        1100-1199: Signature errors
+        1200-1299: Payload structure errors
+        1300-1399: Temporal validation errors
+        1400-1499: Chain validation errors
+        1500-1599: Capability errors
+        1600-1699: PoP errors
+        1700-1799: Multi-sig errors
+        1800-1899: Revocation errors
+        1900-1999: Size limit errors
+        2000-2099: Extension errors
+        2100-2199: Reserved namespace errors
+    """
+    
+    # Envelope errors (1000-1099)
+    UNSUPPORTED_ENVELOPE_VERSION = 1000
+    INVALID_ENVELOPE_STRUCTURE = 1001
+    
+    # Signature errors (1100-1199)
+    SIGNATURE_INVALID = 1100
+    SIGNATURE_ALGORITHM_MISMATCH = 1101
+    UNSUPPORTED_ALGORITHM = 1102
+    INVALID_KEY_LENGTH = 1103
+    INVALID_SIGNATURE_LENGTH = 1104
+    
+    # Payload structure errors (1200-1299)
+    UNSUPPORTED_PAYLOAD_VERSION = 1200
+    INVALID_PAYLOAD_STRUCTURE = 1201
+    MALFORMED_CBOR = 1202
+    UNKNOWN_PAYLOAD_FIELD = 1203
+    MISSING_REQUIRED_FIELD = 1204
+    
+    # Temporal validation errors (1300-1399)
+    WARRANT_EXPIRED = 1300
+    WARRANT_NOT_YET_VALID = 1301
+    ISSUED_IN_FUTURE = 1302
+    TTL_EXCEEDED = 1303
+    
+    # Chain validation errors (1400-1499)
+    INVALID_ISSUER = 1400
+    PARENT_HASH_MISMATCH = 1401
+    DEPTH_EXCEEDED = 1402
+    DEPTH_VIOLATION = 1403
+    CHAIN_TOO_LONG = 1404
+    CHAIN_BROKEN = 1405
+    UNTRUSTED_ROOT = 1406
+    
+    # Capability errors (1500-1599)
+    TOOL_NOT_AUTHORIZED = 1500
+    CONSTRAINT_VIOLATION = 1501
+    INVALID_ATTENUATION = 1502
+    CAPABILITY_EXPANSION = 1503
+    UNKNOWN_CONSTRAINT_TYPE = 1504
+    
+    # PoP errors (1600-1699)
+    POP_SIGNATURE_INVALID = 1600
+    POP_EXPIRED = 1601
+    POP_CHALLENGE_INVALID = 1602
+    
+    # Multi-sig errors (1700-1799)
+    INSUFFICIENT_APPROVALS = 1700
+    APPROVAL_INVALID = 1701
+    APPROVER_NOT_AUTHORIZED = 1702
+    APPROVAL_EXPIRED = 1703
+    UNSUPPORTED_APPROVAL_VERSION = 1704
+    APPROVAL_PAYLOAD_INVALID = 1705
+    APPROVAL_REQUEST_HASH_MISMATCH = 1706
+    
+    # Revocation errors (1800-1899)
+    WARRANT_REVOKED = 1800
+    SRL_INVALID = 1801
+    SRL_VERSION_ROLLBACK = 1802
+    
+    # Size limit errors (1900-1999)
+    WARRANT_TOO_LARGE = 1900
+    CHAIN_TOO_LARGE = 1901
+    TOO_MANY_TOOLS = 1902
+    TOO_MANY_CONSTRAINTS = 1903
+    EXTENSION_TOO_LARGE = 1904
+    VALUE_TOO_LARGE = 1905
+    
+    # Extension errors (2000-2099)
+    RESERVED_EXTENSION_KEY = 2000
+    INVALID_EXTENSION_VALUE = 2001
+    
+    # Reserved namespace errors (2100-2199)
+    RESERVED_TOOL_NAME = 2100
+    
+    @staticmethod
+    def to_name(code: int) -> str:
+        """Convert numeric code to kebab-case string name."""
+        name_map = {
+            1000: "unsupported-envelope-version",
+            1001: "invalid-envelope-structure",
+            1100: "signature-invalid",
+            1101: "signature-algorithm-mismatch",
+            1102: "unsupported-algorithm",
+            1103: "invalid-key-length",
+            1104: "invalid-signature-length",
+            1200: "unsupported-payload-version",
+            1201: "invalid-payload-structure",
+            1202: "malformed-cbor",
+            1203: "unknown-payload-field",
+            1204: "missing-required-field",
+            1300: "warrant-expired",
+            1301: "warrant-not-yet-valid",
+            1302: "issued-in-future",
+            1303: "ttl-exceeded",
+            1400: "invalid-issuer",
+            1401: "parent-hash-mismatch",
+            1402: "depth-exceeded",
+            1403: "depth-violation",
+            1404: "chain-too-long",
+            1405: "chain-broken",
+            1406: "untrusted-root",
+            1500: "tool-not-authorized",
+            1501: "constraint-violation",
+            1502: "invalid-attenuation",
+            1503: "capability-expansion",
+            1504: "unknown-constraint-type",
+            1600: "pop-signature-invalid",
+            1601: "pop-expired",
+            1602: "pop-challenge-invalid",
+            1700: "insufficient-approvals",
+            1701: "approval-invalid",
+            1702: "approver-not-authorized",
+            1703: "approval-expired",
+            1704: "unsupported-approval-version",
+            1705: "approval-payload-invalid",
+            1706: "approval-request-hash-mismatch",
+            1800: "warrant-revoked",
+            1801: "srl-invalid",
+            1802: "srl-version-rollback",
+            1900: "warrant-too-large",
+            1901: "chain-too-large",
+            1902: "too-many-tools",
+            1903: "too-many-constraints",
+            1904: "extension-too-large",
+            1905: "value-too-large",
+            2000: "reserved-extension-key",
+            2001: "invalid-extension-value",
+            2100: "reserved-tool-name",
+        }
+        return name_map.get(code, "unknown-error")
+    
+    @staticmethod
+    def to_http_status(code: int) -> int:
+        """Get HTTP status code from error code category."""
+        category = code // 100
+        status_map = {
+            10: 400,  # Envelope errors -> Bad Request
+            11: 401,  # Signature errors -> Unauthorized
+            12: 400,  # Payload errors -> Bad Request
+            13: 401,  # Temporal errors -> Unauthorized
+            14: 403,  # Chain errors -> Forbidden
+            15: 403,  # Capability errors -> Forbidden
+            16: 401,  # PoP errors -> Unauthorized
+            17: 403,  # Approval errors -> Forbidden
+            18: 401,  # Revocation -> Unauthorized
+            19: 413,  # Size limits -> Payload Too Large
+            20: 400,  # Extensions -> Bad Request
+            21: 400,  # Reserved namespace -> Bad Request
+        }
+        return status_map.get(category, 500)
+
+
+# =============================================================================
+# Error Code Registry
+# =============================================================================
+
+# Registry mapping exception classes to wire format codes
+# Populated via @wire_code decorator
+ERROR_CODE_REGISTRY: dict[type, int] = {}
+
+
+def wire_code(code: int):
+    """Decorator to assign canonical wire format error code to an exception.
+    
+    Usage:
+        @wire_code(ErrorCode.SIGNATURE_INVALID)
+        class SignatureInvalid(CryptoError):
+            ...
+    
+    The decorator registers the exception class in ERROR_CODE_REGISTRY,
+    allowing dynamic lookup via exception.get_wire_code().
+    """
+    def decorator(cls):
+        ERROR_CODE_REGISTRY[cls] = code
+        return cls
+    return decorator
+
+
+# =============================================================================
 # Base Exception
 # =============================================================================
 
@@ -79,7 +284,7 @@ from typing import Optional, Any
 class TenuoError(Exception):
     """Base exception for all Tenuo errors."""
 
-    error_code: str = "tenuo_error"
+    error_code: str = "tenuo_error"  # Legacy string code
     rust_variant: str = ""  # Corresponding Rust Error variant name
 
     def __init__(self, message: str, details: Optional[dict[str, Any]] = None, hint: Optional[str] = None):
@@ -96,14 +301,37 @@ class TenuoError(Exception):
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for structured logging."""
-        return {
-            "error_code": self.error_code,
+        result = {
+            "error_code": self.error_code,  # Legacy string code
             "rust_variant": self.rust_variant,
             "category": self.__class__.__bases__[0].__name__ if self.__class__.__bases__ else "TenuoError",
             "type": self.__class__.__name__,
             "message": self.message,
             "details": self.details,
         }
+        # Include canonical code if available
+        wire_code = self.get_wire_code()
+        if wire_code > 0:
+            result["wire_code"] = wire_code
+            result["wire_name"] = self.get_wire_name()
+        return result
+    
+    def get_wire_code(self) -> int:
+        """Get canonical wire format code (1000-2199).
+        
+        Returns 0 if no wire code registered for this exception class.
+        """
+        return ERROR_CODE_REGISTRY.get(type(self), 0)
+    
+    def get_wire_name(self) -> str:
+        """Get kebab-case error name derived from wire code."""
+        code = self.get_wire_code()
+        return ErrorCode.to_name(code) if code > 0 else self.error_code
+    
+    def get_http_status(self) -> int:
+        """Get HTTP status code based on error category."""
+        code = self.get_wire_code()
+        return ErrorCode.to_http_status(code) if code > 0 else 500
 
 
 # =============================================================================
@@ -111,6 +339,7 @@ class TenuoError(Exception):
 # =============================================================================
 
 
+@wire_code(ErrorCode.SIGNATURE_INVALID)
 class CryptoError(TenuoError):
     """Cryptographic operation failed."""
 
@@ -118,6 +347,7 @@ class CryptoError(TenuoError):
     rust_variant = "CryptoError"
 
 
+@wire_code(ErrorCode.SIGNATURE_INVALID)
 class SignatureInvalid(CryptoError):
     """Warrant signature verification failed."""
 
@@ -132,6 +362,7 @@ class SignatureInvalid(CryptoError):
         )
 
 
+@wire_code(ErrorCode.SIGNATURE_INVALID)
 class MissingSignature(CryptoError):
     """Missing signature for Proof-of-Possession."""
 
@@ -149,6 +380,7 @@ class MissingSignature(CryptoError):
 # =============================================================================
 
 
+@wire_code(ErrorCode.CONSTRAINT_VIOLATION)
 class ScopeViolation(TenuoError):
     """Authorization scope was exceeded."""
 
@@ -160,6 +392,7 @@ class ScopeViolation(TenuoError):
 AuthorizationError = ScopeViolation
 
 
+@wire_code(ErrorCode.TOOL_NOT_AUTHORIZED)
 class ToolNotAuthorized(ScopeViolation):
     """Tool is not authorized by the warrant."""
 
@@ -173,6 +406,7 @@ class ToolNotAuthorized(ScopeViolation):
         super().__init__(f"Tool '{tool}' is not authorized", details, hint=hint)
 
 
+@wire_code(ErrorCode.INVALID_ATTENUATION)
 class ToolMismatch(ScopeViolation):
     """Tool name mismatch during attenuation."""
 
@@ -187,6 +421,7 @@ class ToolMismatch(ScopeViolation):
         )
 
 
+@wire_code(ErrorCode.CONSTRAINT_VIOLATION)
 class ConstraintViolation(ScopeViolation):
     """Constraint was not satisfied."""
 
@@ -200,6 +435,7 @@ class ConstraintViolation(ScopeViolation):
         super().__init__(f"Constraint '{field}' not satisfied: {reason}", details, hint=hint)
 
 
+@wire_code(ErrorCode.WARRANT_EXPIRED)
 class ExpiredError(ScopeViolation):
     """Warrant has expired."""
 
@@ -213,6 +449,7 @@ class ExpiredError(ScopeViolation):
         super().__init__(f"Warrant '{warrant_id}' has expired", details, hint=hint)
 
 
+@wire_code(ErrorCode.TOOL_NOT_AUTHORIZED)
 class Unauthorized(ScopeViolation):
     """Operation unauthorized."""
 
@@ -228,6 +465,7 @@ class Unauthorized(ScopeViolation):
 # =============================================================================
 
 
+@wire_code(ErrorCode.INVALID_ATTENUATION)
 class MonotonicityError(TenuoError):
     """Attenuation would expand capabilities (violates monotonicity)."""
 
@@ -241,6 +479,7 @@ class MonotonicityError(TenuoError):
         super().__init__(f"Monotonicity violation: {reason}", details, hint=hint)
 
 
+@wire_code(ErrorCode.INVALID_ATTENUATION)
 class IncompatibleConstraintTypes(MonotonicityError):
     """Incompatible constraint types for attenuation."""
 
@@ -252,6 +491,7 @@ class IncompatibleConstraintTypes(MonotonicityError):
         self.details = {"parent_type": parent_type, "child_type": child_type}
 
 
+@wire_code(ErrorCode.CAPABILITY_EXPANSION)
 class WildcardExpansion(MonotonicityError):
     """Cannot attenuate to Wildcard (would allow everything)."""
 
@@ -263,6 +503,7 @@ class WildcardExpansion(MonotonicityError):
         self.details = {"parent_type": parent_type}
 
 
+@wire_code(ErrorCode.INVALID_ATTENUATION)
 class EmptyResultSet(MonotonicityError):
     """NotOneOf would result in an empty set (paradox)."""
 
@@ -274,6 +515,7 @@ class EmptyResultSet(MonotonicityError):
         self.details = {"parent_type": parent_type, "count": count}
 
 
+@wire_code(ErrorCode.CAPABILITY_EXPANSION)
 class ExclusionRemoved(MonotonicityError):
     """NotOneOf child doesn't exclude all values that parent excludes."""
 
@@ -285,6 +527,7 @@ class ExclusionRemoved(MonotonicityError):
         self.details = {"value": value}
 
 
+@wire_code(ErrorCode.CAPABILITY_EXPANSION)
 class ValueNotInParentSet(MonotonicityError):
     """OneOf/Subset child contains value not in parent set."""
 
@@ -296,6 +539,7 @@ class ValueNotInParentSet(MonotonicityError):
         self.details = {"value": value}
 
 
+@wire_code(ErrorCode.CAPABILITY_EXPANSION)
 class RangeExpanded(MonotonicityError):
     """Range child expands beyond parent bounds."""
 
@@ -309,6 +553,7 @@ class RangeExpanded(MonotonicityError):
         self.details = {"bound": bound, "parent_value": parent_value, "child_value": child_value}
 
 
+@wire_code(ErrorCode.CAPABILITY_EXPANSION)
 class PatternExpanded(MonotonicityError):
     """Pattern child is broader than parent."""
 
@@ -320,6 +565,7 @@ class PatternExpanded(MonotonicityError):
         self.details = {"parent_pattern": parent_pattern, "child_pattern": child_pattern}
 
 
+@wire_code(ErrorCode.CAPABILITY_EXPANSION)
 class RequiredValueRemoved(MonotonicityError):
     """Contains child doesn't require all values that parent requires."""
 
@@ -331,6 +577,7 @@ class RequiredValueRemoved(MonotonicityError):
         self.details = {"value": value}
 
 
+@wire_code(ErrorCode.INVALID_ATTENUATION)
 class ExactValueMismatch(MonotonicityError):
     """Exact value mismatch."""
 
@@ -347,6 +594,7 @@ class ExactValueMismatch(MonotonicityError):
 # =============================================================================
 
 
+@wire_code(ErrorCode.TOOL_NOT_AUTHORIZED)
 class ClearanceViolation(TenuoError):
     """Clearance level constraint was violated."""
 
@@ -354,6 +602,7 @@ class ClearanceViolation(TenuoError):
     rust_variant = ""  # No direct Rust equivalent (handled via MonotonicityViolation)
 
 
+@wire_code(ErrorCode.TOOL_NOT_AUTHORIZED)
 class ClearanceLevelExceeded(ClearanceViolation):
     """Requested clearance level exceeds the issuer's clearance limit."""
 
@@ -373,6 +622,7 @@ class ClearanceLevelExceeded(ClearanceViolation):
 # =============================================================================
 
 
+@wire_code(ErrorCode.INVALID_ISSUER)
 class IssuanceError(TenuoError):
     """Error during warrant issuance from an issuer warrant."""
 
@@ -380,6 +630,7 @@ class IssuanceError(TenuoError):
     rust_variant = ""
 
 
+@wire_code(ErrorCode.TOOL_NOT_AUTHORIZED)
 class UnauthorizedToolIssuance(IssuanceError):
     """Tool not authorized for issuance by the issuer warrant."""
 
@@ -392,6 +643,7 @@ class UnauthorizedToolIssuance(IssuanceError):
         )
 
 
+@wire_code(ErrorCode.INVALID_ISSUER)
 class SelfIssuanceProhibited(IssuanceError):
     """Self-issuance is prohibited (issuer cannot grant execution to themselves)."""
 
@@ -402,6 +654,7 @@ class SelfIssuanceProhibited(IssuanceError):
         super().__init__(f"Self-issuance prohibited: {reason}", {"reason": reason})
 
 
+@wire_code(ErrorCode.DEPTH_EXCEEDED)
 class IssueDepthExceeded(IssuanceError):
     """Issued warrant depth exceeds issuer's max_issue_depth."""
 
@@ -415,6 +668,7 @@ class IssueDepthExceeded(IssuanceError):
         )
 
 
+@wire_code(ErrorCode.INVALID_PAYLOAD_STRUCTURE)
 class InvalidWarrantType(IssuanceError):
     """Invalid warrant type for the operation."""
 
@@ -425,6 +679,7 @@ class InvalidWarrantType(IssuanceError):
         super().__init__(f"Invalid warrant type: {message}", {"message": message})
 
 
+@wire_code(ErrorCode.CHAIN_TOO_LONG)
 class IssuerChainTooLong(IssuanceError):
     """Issuer chain length would exceed protocol maximum."""
 
@@ -443,6 +698,7 @@ class IssuerChainTooLong(IssuanceError):
 # =============================================================================
 
 
+@wire_code(ErrorCode.POP_SIGNATURE_INVALID)
 class PopError(TenuoError):
     """Proof-of-Possession verification failed."""
 
@@ -450,6 +706,7 @@ class PopError(TenuoError):
     rust_variant = "SignatureInvalid"  # PoP failures are signature failures in Rust
 
 
+@wire_code(ErrorCode.POP_SIGNATURE_INVALID)
 class MissingSigningKey(PopError):
     """No signing key available for PoP signature."""
 
@@ -460,6 +717,7 @@ class MissingSigningKey(PopError):
         super().__init__(f"No signing key available for PoP signature on tool '{tool}'", {"tool": tool}, hint=hint)
 
 
+@wire_code(ErrorCode.POP_SIGNATURE_INVALID)
 class SignatureMismatch(PopError):
     """PoP signature does not match authorized_holder."""
 
@@ -473,6 +731,7 @@ class SignatureMismatch(PopError):
         super().__init__("PoP signature does not match authorized_holder", details, hint=hint)
 
 
+@wire_code(ErrorCode.POP_EXPIRED)
 class PopExpired(PopError):
     """PoP signature has expired (outside valid time window)."""
 
@@ -488,6 +747,7 @@ class PopExpired(PopError):
 # =============================================================================
 
 
+@wire_code(ErrorCode.CHAIN_BROKEN)
 class ChainError(TenuoError):
     """Delegation chain verification failed."""
 
@@ -495,6 +755,7 @@ class ChainError(TenuoError):
     rust_variant = "ChainVerificationFailed"
 
 
+@wire_code(ErrorCode.CHAIN_BROKEN)
 class BrokenChain(ChainError):
     """Chain linkage is broken (parent_id mismatch)."""
 
@@ -509,6 +770,7 @@ class BrokenChain(ChainError):
         )
 
 
+@wire_code(ErrorCode.CHAIN_BROKEN)
 class CycleDetected(ChainError):
     """Delegation chain contains a cycle."""
 
@@ -523,6 +785,7 @@ class CycleDetected(ChainError):
         )
 
 
+@wire_code(ErrorCode.UNTRUSTED_ROOT)
 class UntrustedRoot(ChainError):
     """Root warrant is not signed by a trusted issuer."""
 
@@ -536,6 +799,7 @@ class UntrustedRoot(ChainError):
         super().__init__("Root warrant issuer is not trusted", details, hint=hint)
 
 
+@wire_code(ErrorCode.MISSING_REQUIRED_FIELD)
 class ParentRequired(ChainError):
     """Parent warrant not provided for attenuation."""
 
@@ -546,6 +810,7 @@ class ParentRequired(ChainError):
         super().__init__("Parent warrant required for attenuation", hint=hint)
 
 
+@wire_code(ErrorCode.INVALID_ISSUER)
 class DelegationAuthorityError(ChainError):
     """Signing key doesn't match parent warrant's holder."""
 
@@ -567,6 +832,7 @@ class DelegationAuthorityError(ChainError):
 # =============================================================================
 
 
+@wire_code(ErrorCode.WARRANT_TOO_LARGE)
 class LimitError(TenuoError):
     """Protocol limit was exceeded."""
 
@@ -574,6 +840,7 @@ class LimitError(TenuoError):
     rust_variant = ""
 
 
+@wire_code(ErrorCode.DEPTH_EXCEEDED)
 class DepthExceeded(LimitError):
     """Delegation depth exceeds maximum allowed."""
 
@@ -586,6 +853,7 @@ class DepthExceeded(LimitError):
         )
 
 
+@wire_code(ErrorCode.TOO_MANY_CONSTRAINTS)
 class ConstraintDepthExceeded(LimitError):
     """Constraint nesting depth exceeds maximum allowed."""
 
@@ -598,6 +866,7 @@ class ConstraintDepthExceeded(LimitError):
         )
 
 
+@wire_code(ErrorCode.WARRANT_TOO_LARGE)
 class PayloadTooLarge(LimitError):
     """Warrant payload exceeds size limit."""
 
@@ -617,6 +886,7 @@ class PayloadTooLarge(LimitError):
 # =============================================================================
 
 
+@wire_code(ErrorCode.WARRANT_REVOKED)
 class RevokedError(TenuoError):
     """Warrant has been revoked."""
 
@@ -635,6 +905,7 @@ class RevokedError(TenuoError):
 # =============================================================================
 
 
+@wire_code(ErrorCode.MISSING_REQUIRED_FIELD)
 class ValidationError(TenuoError):
     """Validation error."""
 
@@ -645,6 +916,7 @@ class ValidationError(TenuoError):
         super().__init__(f"Validation error: {reason}", {"reason": reason}, hint=hint)
 
 
+@wire_code(ErrorCode.MISSING_REQUIRED_FIELD)
 class MissingField(ValidationError):
     """Missing required field."""
 
@@ -656,6 +928,7 @@ class MissingField(ValidationError):
         self.details = {"field": field}
 
 
+@wire_code(ErrorCode.INVALID_PAYLOAD_STRUCTURE)
 class InvalidWarrantId(ValidationError):
     """Invalid warrant ID format."""
 
@@ -667,6 +940,7 @@ class InvalidWarrantId(ValidationError):
         self.details = {"warrant_id": warrant_id}
 
 
+@wire_code(ErrorCode.TTL_EXCEEDED)
 class InvalidTtl(ValidationError):
     """Invalid TTL value."""
 
@@ -683,6 +957,7 @@ class InvalidTtl(ValidationError):
 # =============================================================================
 
 
+@wire_code(ErrorCode.CONSTRAINT_VIOLATION)
 class ConstraintSyntaxError(TenuoError):
     """Constraint syntax/definition error."""
 
@@ -690,6 +965,7 @@ class ConstraintSyntaxError(TenuoError):
     rust_variant = ""
 
 
+@wire_code(ErrorCode.CONSTRAINT_VIOLATION)
 class InvalidPattern(ConstraintSyntaxError):
     """Invalid pattern syntax."""
 
@@ -701,6 +977,7 @@ class InvalidPattern(ConstraintSyntaxError):
         self.details = {"pattern": pattern, "reason": reason}
 
 
+@wire_code(ErrorCode.CONSTRAINT_VIOLATION)
 class InvalidRange(ConstraintSyntaxError):
     """Invalid range specification."""
 
@@ -712,6 +989,7 @@ class InvalidRange(ConstraintSyntaxError):
         self.details = {"reason": reason}
 
 
+@wire_code(ErrorCode.CONSTRAINT_VIOLATION)
 class InvalidRegex(ConstraintSyntaxError):
     """Invalid regex pattern."""
 
@@ -723,6 +1001,7 @@ class InvalidRegex(ConstraintSyntaxError):
         self.details = {"pattern": pattern, "reason": reason}
 
 
+@wire_code(ErrorCode.CONSTRAINT_VIOLATION)
 class CelError(ConstraintSyntaxError):
     """CEL expression error."""
 
@@ -739,6 +1018,7 @@ class CelError(ConstraintSyntaxError):
 # =============================================================================
 
 
+@wire_code(ErrorCode.MALFORMED_CBOR)
 class SerializationError(TenuoError):
     """Serialization error."""
 
@@ -750,6 +1030,7 @@ class SerializationError(TenuoError):
         self.details = {"reason": reason}
 
 
+@wire_code(ErrorCode.MALFORMED_CBOR)
 class DeserializationError(SerializationError):
     """Deserialization error."""
 
@@ -761,6 +1042,7 @@ class DeserializationError(SerializationError):
         self.details = {"reason": reason}
 
 
+@wire_code(ErrorCode.UNSUPPORTED_PAYLOAD_VERSION)
 class UnsupportedVersion(SerializationError):
     """Wire format version mismatch."""
 
@@ -777,6 +1059,7 @@ class UnsupportedVersion(SerializationError):
 # =============================================================================
 
 
+@wire_code(ErrorCode.APPROVAL_INVALID)
 class ApprovalError(TenuoError):
     """Multi-sig approval error."""
 
@@ -784,6 +1067,7 @@ class ApprovalError(TenuoError):
     rust_variant = ""
 
 
+@wire_code(ErrorCode.APPROVAL_EXPIRED)
 class ApprovalExpired(ApprovalError):
     """Approval has expired."""
 
@@ -795,6 +1079,7 @@ class ApprovalExpired(ApprovalError):
         self.details = {"approved_at": approved_at, "expired_at": expired_at}
 
 
+@wire_code(ErrorCode.INSUFFICIENT_APPROVALS)
 class InsufficientApprovals(ApprovalError):
     """Insufficient approvals for multi-sig."""
 
@@ -806,6 +1091,7 @@ class InsufficientApprovals(ApprovalError):
         self.details = {"required": required, "received": received}
 
 
+@wire_code(ErrorCode.APPROVAL_INVALID)
 class InvalidApproval(ApprovalError):
     """Invalid approval (bad format, DoS attempt, etc.)."""
 
@@ -817,6 +1103,7 @@ class InvalidApproval(ApprovalError):
         self.details = {"reason": reason}
 
 
+@wire_code(ErrorCode.APPROVAL_INVALID)
 class UnknownProvider(ApprovalError):
     """Unknown approval provider."""
 
@@ -833,6 +1120,7 @@ class UnknownProvider(ApprovalError):
 # =============================================================================
 
 
+@wire_code(ErrorCode.INVALID_PAYLOAD_STRUCTURE)
 class ConfigurationError(TenuoError):
     """Configuration is invalid."""
 
@@ -840,6 +1128,7 @@ class ConfigurationError(TenuoError):
     rust_variant = ""  # ConfigError is separate in Rust
 
 
+@wire_code(ErrorCode.UNKNOWN_CONSTRAINT_TYPE)
 class FeatureNotEnabled(TenuoError):
     """Optional feature is not enabled."""
 
@@ -854,6 +1143,7 @@ class FeatureNotEnabled(TenuoError):
         )
 
 
+@wire_code(ErrorCode.INVALID_PAYLOAD_STRUCTURE)
 class RuntimeError(TenuoError):
     """Generic runtime error from Rust."""
 
@@ -893,6 +1183,7 @@ class ConstraintResult:
         return f"{icon} {self.name}: {self.explanation}"
 
 
+@wire_code(ErrorCode.TOOL_NOT_AUTHORIZED)
 class AuthorizationDenied(ScopeViolation):
     """
     Authorization denied with diff-style error message.

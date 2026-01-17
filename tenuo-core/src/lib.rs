@@ -90,7 +90,7 @@ pub use revocation::{
 pub use revocation_manager::RevocationManager;
 pub use warrant::{
     Clearance, OwnedAttenuationBuilder, OwnedIssuanceBuilder, Warrant, WarrantBuilder, WarrantId,
-    WarrantType, POP_TIMESTAMP_WINDOW_SECS, WARRANT_ID_PREFIX,
+    WarrantType, POP_MAX_WINDOWS, POP_TIMESTAMP_WINDOW_SECS, WARRANT_ID_PREFIX,
 };
 pub use wire::MAX_WARRANT_SIZE;
 

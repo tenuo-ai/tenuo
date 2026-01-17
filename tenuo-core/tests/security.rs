@@ -8,7 +8,7 @@ use chrono::Utc;
 use std::collections::HashMap;
 use std::time::Duration;
 use tenuo::{
-    approval::{compute_request_hash, Approval},
+    approval::{compute_request_hash, ApprovalPayload, SignedApproval},
     constraints::{ConstraintSet, Pattern},
     crypto::SigningKey,
     planes::Authorizer,
@@ -50,29 +50,20 @@ fn test_single_approval_succeeds() {
     let expires = now + chrono::Duration::hours(1);
 
     // Generate nonce for replay protection
-    const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
     let nonce: [u8; 16] = rand::random();
 
-    let mut signable = Vec::new();
-    signable.extend_from_slice(APPROVAL_CONTEXT);
-    signable.extend_from_slice(&nonce);
-    signable.extend_from_slice(&request_hash);
-    signable.extend_from_slice("approver@example.com".as_bytes());
-    signable.extend_from_slice(&now.timestamp().to_le_bytes());
-    signable.extend_from_slice(&expires.timestamp().to_le_bytes());
-    let signature = approver.sign(&signable);
-
-    let approval = Approval {
+    // Create approval using envelope pattern
+    let payload = ApprovalPayload {
+        version: 1,
         request_hash,
         nonce,
-        approver_key: approver.public_key(),
         external_id: "approver@example.com".to_string(),
-        provider: "test".to_string(),
-        approved_at: now,
-        expires_at: expires,
-        reason: None,
-        signature,
+        approved_at: now.timestamp() as u64,
+        expires_at: expires.timestamp() as u64,
+        extensions: None,
     };
+
+    let approval = SignedApproval::create(payload, &approver);
 
     let sig = warrant.sign(&root_key, "action", &args).unwrap();
     let result = authorizer.authorize(&warrant, "action", &args, Some(&sig), &[approval]);
@@ -120,53 +111,31 @@ fn test_two_of_three_approvals_succeeds() {
     let now = Utc::now();
     let expires = now + chrono::Duration::hours(1);
 
-    const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
-
     // Create approval from approver 1
     let nonce_1: [u8; 16] = rand::random();
-    let mut signable_1 = Vec::new();
-    signable_1.extend_from_slice(APPROVAL_CONTEXT);
-    signable_1.extend_from_slice(&nonce_1);
-    signable_1.extend_from_slice(&request_hash);
-    signable_1.extend_from_slice("approver1@example.com".as_bytes());
-    signable_1.extend_from_slice(&now.timestamp().to_le_bytes());
-    signable_1.extend_from_slice(&expires.timestamp().to_le_bytes());
-    let signature_1 = approver_1.sign(&signable_1);
-
-    let approval_1 = Approval {
+    let payload_1 = ApprovalPayload {
+        version: 1,
         request_hash,
         nonce: nonce_1,
-        approver_key: approver_1.public_key(),
         external_id: "approver1@example.com".to_string(),
-        provider: "test".to_string(),
-        approved_at: now,
-        expires_at: expires,
-        reason: None,
-        signature: signature_1,
+        approved_at: now.timestamp() as u64,
+        expires_at: expires.timestamp() as u64,
+        extensions: None,
     };
+    let approval_1 = SignedApproval::create(payload_1, &approver_1);
 
     // Create approval from approver 2
     let nonce_2: [u8; 16] = rand::random();
-    let mut signable_2 = Vec::new();
-    signable_2.extend_from_slice(APPROVAL_CONTEXT);
-    signable_2.extend_from_slice(&nonce_2);
-    signable_2.extend_from_slice(&request_hash);
-    signable_2.extend_from_slice("approver2@example.com".as_bytes());
-    signable_2.extend_from_slice(&now.timestamp().to_le_bytes());
-    signable_2.extend_from_slice(&expires.timestamp().to_le_bytes());
-    let signature_2 = approver_2.sign(&signable_2);
-
-    let approval_2 = Approval {
+    let payload_2 = ApprovalPayload {
+        version: 1,
         request_hash,
         nonce: nonce_2,
-        approver_key: approver_2.public_key(),
         external_id: "approver2@example.com".to_string(),
-        provider: "test".to_string(),
-        approved_at: now,
-        expires_at: expires,
-        reason: None,
-        signature: signature_2,
+        approved_at: now.timestamp() as u64,
+        expires_at: expires.timestamp() as u64,
+        extensions: None,
     };
+    let approval_2 = SignedApproval::create(payload_2, &approver_2);
 
     let sig = warrant.sign(&root_key, "critical_action", &args).unwrap();
     let result = authorizer.authorize(
@@ -245,30 +214,20 @@ fn test_duplicate_approvals_rejected() {
     let expires = now + chrono::Duration::hours(1);
 
     // Generate nonce for replay protection
-    const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
     let nonce: [u8; 16] = rand::random();
 
-    let mut signable_bytes = Vec::new();
-    signable_bytes.extend_from_slice(APPROVAL_CONTEXT);
-    signable_bytes.extend_from_slice(&nonce);
-    signable_bytes.extend_from_slice(&request_hash);
-    signable_bytes.extend_from_slice("approver_1".as_bytes());
-    signable_bytes.extend_from_slice(&now.timestamp().to_le_bytes());
-    signable_bytes.extend_from_slice(&expires.timestamp().to_le_bytes());
-
-    let signature = approver_1.sign(&signable_bytes);
-
-    let approval = Approval {
+    // Create approval using envelope pattern
+    let payload = ApprovalPayload {
+        version: 1,
         request_hash,
         nonce,
-        approver_key: approver_1.public_key(),
         external_id: "approver_1".to_string(),
-        provider: "test".to_string(),
-        approved_at: now,
-        expires_at: expires,
-        reason: None,
-        signature,
+        approved_at: now.timestamp() as u64,
+        expires_at: expires.timestamp() as u64,
+        extensions: None,
     };
+
+    let approval = SignedApproval::create(payload, &approver_1);
 
     // Submit SAME approval twice
     let approvals = vec![approval.clone(), approval.clone()];
@@ -309,30 +268,20 @@ fn test_insufficient_approvals_rejected() {
     let expires = now + chrono::Duration::hours(1);
 
     // Generate nonce for replay protection
-    const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
     let nonce: [u8; 16] = rand::random();
 
-    let mut signable_bytes = Vec::new();
-    signable_bytes.extend_from_slice(APPROVAL_CONTEXT);
-    signable_bytes.extend_from_slice(&nonce);
-    signable_bytes.extend_from_slice(&request_hash);
-    signable_bytes.extend_from_slice("approver_1".as_bytes());
-    signable_bytes.extend_from_slice(&now.timestamp().to_le_bytes());
-    signable_bytes.extend_from_slice(&expires.timestamp().to_le_bytes());
-
-    let signature = approver_1.sign(&signable_bytes);
-
-    let approval = Approval {
+    // Create approval using envelope pattern
+    let payload = ApprovalPayload {
+        version: 1,
         request_hash,
         nonce,
-        approver_key: approver_1.public_key(),
         external_id: "approver_1".to_string(),
-        provider: "test".to_string(),
-        approved_at: now,
-        expires_at: expires,
-        reason: None,
-        signature,
+        approved_at: now.timestamp() as u64,
+        expires_at: expires.timestamp() as u64,
+        extensions: None,
     };
+
+    let approval = SignedApproval::create(payload, &approver_1);
 
     // Submit only 1 approval
     let sig = warrant.sign(&root_key, "critical_op", &args).unwrap();
@@ -370,30 +319,20 @@ fn test_unauthorized_approver_rejected() {
     let expires = now + chrono::Duration::hours(1);
 
     // Generate nonce for replay protection
-    const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
     let nonce: [u8; 16] = rand::random();
 
-    let mut signable_bytes = Vec::new();
-    signable_bytes.extend_from_slice(APPROVAL_CONTEXT);
-    signable_bytes.extend_from_slice(&nonce);
-    signable_bytes.extend_from_slice(&request_hash);
-    signable_bytes.extend_from_slice("attacker".as_bytes()); // external_id
-    signable_bytes.extend_from_slice(&now.timestamp().to_le_bytes());
-    signable_bytes.extend_from_slice(&expires.timestamp().to_le_bytes());
-
-    let signature = random_attacker.sign(&signable_bytes);
-
-    let approval = Approval {
+    // Create approval using envelope pattern (with unauthorized key)
+    let payload = ApprovalPayload {
+        version: 1,
         request_hash,
         nonce,
-        approver_key: random_attacker.public_key(), // <-- Unauthorized key
         external_id: "attacker".to_string(),
-        provider: "test".to_string(),
-        approved_at: now,
-        expires_at: expires,
-        reason: None,
-        signature,
+        approved_at: now.timestamp() as u64,
+        expires_at: expires.timestamp() as u64,
+        extensions: None,
     };
+
+    let approval = SignedApproval::create(payload, &random_attacker); // <-- Unauthorized key
 
     let sig = warrant.sign(&root_key, "critical_op", &args).unwrap();
     let result = authorizer.authorize(&warrant, "critical_op", &args, Some(&sig), &[approval]);
@@ -430,29 +369,20 @@ fn test_mismatched_request_hash_rejected() {
     let expires = now + chrono::Duration::hours(1);
 
     // Generate nonce for replay protection
-    const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
     let nonce: [u8; 16] = rand::random();
 
-    let mut signable = Vec::new();
-    signable.extend_from_slice(APPROVAL_CONTEXT);
-    signable.extend_from_slice(&nonce);
-    signable.extend_from_slice(&other_hash);
-    signable.extend_from_slice("approver".as_bytes());
-    signable.extend_from_slice(&now.timestamp().to_le_bytes());
-    signable.extend_from_slice(&expires.timestamp().to_le_bytes());
-    let signature = approver.sign(&signable);
-
-    let approval = Approval {
+    // Create approval using envelope pattern (with mismatched hash)
+    let payload = ApprovalPayload {
+        version: 1,
         request_hash: other_hash, // Mismatched hash vs current request
         nonce,
-        approver_key: approver.public_key(),
         external_id: "approver".to_string(),
-        provider: "test".to_string(),
-        approved_at: now,
-        expires_at: expires,
-        reason: None,
-        signature,
+        approved_at: now.timestamp() as u64,
+        expires_at: expires.timestamp() as u64,
+        extensions: None,
     };
+
+    let approval = SignedApproval::create(payload, &approver);
 
     // Request is for "critical_op"
     let sig = warrant.sign(&root_key, "critical_op", &args).unwrap();
@@ -493,29 +423,20 @@ fn test_expired_approval_rejected() {
     let approved_at = now - chrono::Duration::hours(2);
 
     // Generate nonce for replay protection
-    const APPROVAL_CONTEXT: &[u8] = b"tenuo-approval-v1";
     let nonce: [u8; 16] = rand::random();
 
-    let mut signable = Vec::new();
-    signable.extend_from_slice(APPROVAL_CONTEXT);
-    signable.extend_from_slice(&nonce);
-    signable.extend_from_slice(&request_hash);
-    signable.extend_from_slice("approver".as_bytes());
-    signable.extend_from_slice(&approved_at.timestamp().to_le_bytes());
-    signable.extend_from_slice(&expired_time.timestamp().to_le_bytes());
-    let signature = approver.sign(&signable);
-
-    let approval = Approval {
+    // Create approval using envelope pattern (with expired timestamp)
+    let payload = ApprovalPayload {
+        version: 1,
         request_hash,
         nonce,
-        approver_key: approver.public_key(),
         external_id: "approver".to_string(),
-        provider: "test".to_string(),
-        approved_at,
-        expires_at: expired_time, // EXPIRED
-        reason: None,
-        signature,
+        approved_at: approved_at.timestamp() as u64,
+        expires_at: expired_time.timestamp() as u64, // EXPIRED
+        extensions: None,
     };
+
+    let approval = SignedApproval::create(payload, &approver);
 
     let sig = warrant.sign(&root_key, "critical_op", &args).unwrap();
     let result = authorizer.authorize(&warrant, "critical_op", &args, Some(&sig), &[approval]);

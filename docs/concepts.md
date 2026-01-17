@@ -298,6 +298,16 @@ A warrant is **terminal** when `depth >= max_depth`. Terminal execution warrants
 
 Authorization happens **locally** at the tool. No control plane calls during execution. The warrant carries everything needed for verification.
 
+### Zero-Touch Provisioning
+
+Unlike traditional IAM or mTLS, the Authorizer **does not need to know the worker's identity or public key in advance**.
+
+- **Authorizer config**: Needs only **one** key (the Control Plane's public key).
+- **Worker identity**: Carried securely *inside* the warrant chain.
+- **Trust flow**: Authorizer trusts Control Plane → Control Plane trusts Orchestrator → Orchestrator trusts Worker.
+
+This enables **elastic scaling**: you can spin up 1,000 new worker nodes with fresh keys, and they are immediately authorized to execute tasks as long as they hold a valid warrant chain. No database updates, no config pushes, no "service account" provisioning.
+
 ## Architecture (v0.1)
 
 ### SDK Integration (In-Process)

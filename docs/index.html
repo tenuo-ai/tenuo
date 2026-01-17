@@ -440,10 +440,11 @@
 
         /* Integrations */
         .integrations {
-            display: flex;
-            justify-content: center;
-            gap: 40px;
-            flex-wrap: wrap;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+            max-width: 900px;
+            margin: 0 auto;
         }
 
         .integration {
@@ -556,7 +557,8 @@
 
             .features,
             .docs,
-            .attack-grid {
+            .attack-grid,
+            .integrations {
                 grid-template-columns: 1fr;
             }
 
@@ -582,10 +584,7 @@
                 display: flex;
             }
 
-            .integrations {
-                flex-direction: column;
-                align-items: center;
-            }
+
         }
     </style>
 </head>
@@ -656,7 +655,7 @@
         <section class="section">
             <div class="section-header">
                 <h2>Protect your tools in 3 steps</h2>
-                <p>Works with LangChain, LangGraph, and any Python agent</p>
+                <p>Native protection for LangChain, LangGraph, Google ADK, and OpenAI</p>
             </div>
             <div class="code-example">
                 <div class="code-header">

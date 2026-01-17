@@ -629,6 +629,46 @@ http_request:
 
 ---
 
+## Error Handling
+
+MCP integration uses typed `TenuoError` exceptions with canonical wire codes:
+
+```python
+from tenuo.exceptions import (
+    TenuoError,
+    ToolNotAuthorized,
+    ConstraintViolation,
+    ConfigurationError,
+)
+
+try:
+    result = await client.call_protected_tool("read_file", {"path": "/etc/passwd"})
+except ConstraintViolation as e:
+    print(f"Constraint failed: {e}")
+    print(f"Wire code: {e.get_wire_code()}")  # 1501
+    print(f"Wire name: {e.get_wire_name()}")  # "constraint-violation"
+except ConfigurationError as e:
+    print(f"Config error: {e}")
+    print(f"Wire code: {e.get_wire_code()}")  # 1201
+except TenuoError as e:
+    # Catch-all for any Tenuo error
+    print(f"Authorization failed: {e.to_dict()}")
+```
+
+### Common Errors
+
+| Error | Wire Code | Cause | Fix |
+|-------|-----------|-------|-----|
+| `ConfigurationError` | 1201 | Not connected to MCP server | Use `async with` or call `connect()` |
+| `ToolNotAuthorized` | 1500 | Tool not in warrant | Add tool to warrant |
+| `ConstraintViolation` | 1501 | Argument violates constraint | Request within bounds |
+| `ConfigurationError` | 1201 | Extraction failed | Check `extraction_config` |
+| `ExpiredError` | 1300 | TTL exceeded | Request fresh warrant |
+
+See [wire format specification](/docs/spec/wire-format-v1#appendix-a-error-codes) for the complete list.
+
+---
+
 ## Troubleshooting
 
 ### Extraction Errors

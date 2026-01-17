@@ -375,7 +375,7 @@ The server validates:
 
 ## Error Handling
 
-All A2A errors inherit from `A2AError` and map to JSON-RPC error codes:
+All A2A errors inherit from `A2AError` and map to JSON-RPC error codes with canonical wire codes:
 
 ```python
 from tenuo.a2a import (
@@ -399,6 +399,43 @@ except SkillNotGrantedError as e:
 except A2AError as e:
     print(f"A2A error {e.code}: {e.message}")
 ```
+
+### Wire Code Support
+
+A2A error responses now include canonical Tenuo wire codes (1000-2199) for cross-protocol compatibility:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32008,
+    "message": "Constraint violation",
+    "data": {
+      "tenuo_code": 1501,
+      "field": "amount",
+      "reason": "Value exceeds maximum"
+    }
+  },
+  "id": "task_123"
+}
+```
+
+This enables:
+- **Cross-protocol debugging**: Same wire codes used in HTTP, gRPC, and JSON-RPC
+- **Precise error mapping**: JSON-RPC code -32008 maps to canonical code 1501
+- **Machine-readable errors**: Clients can programmatically handle specific error types
+
+| A2A JSON-RPC Code | Canonical Wire Code | Name |
+|-------------------|---------------------|------|
+| -32001 | 1202 | Missing warrant |
+| -32002 | 1100 | Invalid signature |
+| -32003 | 1406 | Untrusted issuer |
+| -32004 | 1300 | Warrant expired |
+| -32007 | 1500 | Tool not authorized |
+| -32008 | 1501 | Constraint violation |
+| -32010 | 1405 | Chain invalid |
+
+See [wire format specification](/docs/spec/wire-format-v1#appendix-a-error-codes) for the complete list.
 
 ---
 
