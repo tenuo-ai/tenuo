@@ -5,7 +5,7 @@ Run: python demo.py
 """
 
 import asyncio
-from tenuo import Warrant, SigningKey, AuthorizationDenied, Pattern, OneOf, Wildcard, UrlPattern
+from tenuo import Warrant, SigningKey, AuthorizationDenied, OneOf, Wildcard, UrlPattern
 from wrapper import TenuoAgentQLAgent
 
 # Mock visualize for demo purposes since it's in the spec but maybe not in main lib yet
@@ -16,7 +16,7 @@ def visualize_warrant(w):
     print("Capabilities:")
     for tool, constraints in w.capabilities.items():
         print(f"  - {tool}: {constraints}")
-    
+
     exp = w.expires_at()
     print(f"Expires:  {exp}")
 
@@ -52,23 +52,23 @@ print("\n[ACT 2] Authorized Actions\n")
 
 async def happy_path():
     agent = TenuoAgentQLAgent(warrant=agent_warrant)
-    
+
     async with agent.start_session() as session:
         print("▶ Navigating to https://example.com...")
         # Note: In our mock, goto returns MockPage which happens to be awaitable or direct
-        # Let's adjust wrapper to match mock behavior if needed. 
+        # Let's adjust wrapper to match mock behavior if needed.
         # The wrapper awaits backend.goto(), mock.goto is async. Correct.
         page = await session.goto("https://example.com")
         print("  ✅ Authorized\n")
-        
+
         print("▶ Filling 'search_box'...")
         await page.locator("search_box").fill("test query")
         print("  ✅ Authorized\n")
-        
+
         print("▶ Clicking 'search_button'...")
         await page.click("search_button")
         print("  ✅ Authorized\n")
-    
+
     print("📋 Audit Trail:")
     for entry in agent.audit_log:
         print(f"  {entry.timestamp} | {entry.action:10} | {entry.target:20} | {entry.result}")
@@ -82,16 +82,16 @@ print("\n[ACT 3] Unauthorized Actions (Blocked)\n")
 
 async def blocked_actions():
     agent = TenuoAgentQLAgent(warrant=agent_warrant)
-    
+
     async with agent.start_session() as session:
         page = await session.goto("https://example.com")
-        
+
         print("▶ Attempting: navigate to https://malicious.com (Expect: BLOCKED)...")
         try:
             await session.goto("https://malicious.com/steal-cookies")
         except AuthorizationDenied as e:
             print(f"  🚫 BLOCKED: {e}\n")
-        
+
         print("▶ Attempting: click 'delete_account_button' (Expect: BLOCKED)...")
         try:
             await page.click("delete_account_button")
@@ -110,7 +110,7 @@ asyncio.run(blocked_actions())
 print("\n[ACT 4] Multi-Agent Delegation with Attenuation\n")
 
 # Orchestrator warrant (broad permissions)
-# Note: 'delegate' capability logic is implicit in Warrant.grant(), 
+# Note: 'delegate' capability logic is implicit in Warrant.grant(),
 # but for the demo ensuring the Orchestrator works is key.
 orchestrator_warrant = (Warrant.mint_builder()
     .capability("navigate", url=UrlPattern("https://*.example.com/*"))
@@ -140,16 +140,16 @@ visualize_warrant(worker_warrant)
 
 async def multi_agent_demo():
     worker = TenuoAgentQLAgent(warrant=worker_warrant)
-    
+
     async with worker.start_session() as session:
         print("\n▶ Worker: navigate to search.example.com...")
         page = await session.goto("https://search.example.com")
         print("  ✅ Authorized\n")
-        
+
         print("▶ Worker: fill 'search_box'...")
         await page.locator("search_box").fill("research query")
         print("  ✅ Authorized\n")
-        
+
         print("▶ Worker: attempting click 'search_button' (Expect: BLOCKED)...")
         try:
             await page.click("search_button")
@@ -158,7 +158,7 @@ async def multi_agent_demo():
             print(f"  🚫 BLOCKED: {msg}\n")
         else:
             print("  ⚠️ UNEXPECTED SUCCESS: Button click was allowed!\n")
-        
+
         print("▶ Worker: attempting navigate to admin.example.com (Expect: BLOCKED)...")
         try:
             await session.goto("https://admin.example.com")

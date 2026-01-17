@@ -112,10 +112,10 @@ def configure_tenuo(
 
     # Store config in app state for access in dependencies
     app.state.tenuo_config = _config
-    
+
     # Register global exception handler for TenuoError
     from tenuo.exceptions import TenuoError
-    
+
     @app.exception_handler(TenuoError)
     async def tenuo_error_handler(request: Request, exc: TenuoError):
         """Handle TenuoError exceptions with canonical wire codes."""

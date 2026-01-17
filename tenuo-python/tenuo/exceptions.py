@@ -78,11 +78,11 @@ from typing import Optional, Any
 
 class ErrorCode:
     """Canonical Tenuo error codes from wire format spec.
-    
+
     These codes (1000-2199) are the single source of truth for error
     representation. Protocol-specific formats (HTTP strings, JSON-RPC
     negative codes) derive from these.
-    
+
     Ranges:
         1000-1099: Envelope errors
         1100-1199: Signature errors
@@ -97,31 +97,31 @@ class ErrorCode:
         2000-2099: Extension errors
         2100-2199: Reserved namespace errors
     """
-    
+
     # Envelope errors (1000-1099)
     UNSUPPORTED_ENVELOPE_VERSION = 1000
     INVALID_ENVELOPE_STRUCTURE = 1001
-    
+
     # Signature errors (1100-1199)
     SIGNATURE_INVALID = 1100
     SIGNATURE_ALGORITHM_MISMATCH = 1101
     UNSUPPORTED_ALGORITHM = 1102
     INVALID_KEY_LENGTH = 1103
     INVALID_SIGNATURE_LENGTH = 1104
-    
+
     # Payload structure errors (1200-1299)
     UNSUPPORTED_PAYLOAD_VERSION = 1200
     INVALID_PAYLOAD_STRUCTURE = 1201
     MALFORMED_CBOR = 1202
     UNKNOWN_PAYLOAD_FIELD = 1203
     MISSING_REQUIRED_FIELD = 1204
-    
+
     # Temporal validation errors (1300-1399)
     WARRANT_EXPIRED = 1300
     WARRANT_NOT_YET_VALID = 1301
     ISSUED_IN_FUTURE = 1302
     TTL_EXCEEDED = 1303
-    
+
     # Chain validation errors (1400-1499)
     INVALID_ISSUER = 1400
     PARENT_HASH_MISMATCH = 1401
@@ -130,19 +130,19 @@ class ErrorCode:
     CHAIN_TOO_LONG = 1404
     CHAIN_BROKEN = 1405
     UNTRUSTED_ROOT = 1406
-    
+
     # Capability errors (1500-1599)
     TOOL_NOT_AUTHORIZED = 1500
     CONSTRAINT_VIOLATION = 1501
     INVALID_ATTENUATION = 1502
     CAPABILITY_EXPANSION = 1503
     UNKNOWN_CONSTRAINT_TYPE = 1504
-    
+
     # PoP errors (1600-1699)
     POP_SIGNATURE_INVALID = 1600
     POP_EXPIRED = 1601
     POP_CHALLENGE_INVALID = 1602
-    
+
     # Multi-sig errors (1700-1799)
     INSUFFICIENT_APPROVALS = 1700
     APPROVAL_INVALID = 1701
@@ -151,12 +151,12 @@ class ErrorCode:
     UNSUPPORTED_APPROVAL_VERSION = 1704
     APPROVAL_PAYLOAD_INVALID = 1705
     APPROVAL_REQUEST_HASH_MISMATCH = 1706
-    
+
     # Revocation errors (1800-1899)
     WARRANT_REVOKED = 1800
     SRL_INVALID = 1801
     SRL_VERSION_ROLLBACK = 1802
-    
+
     # Size limit errors (1900-1999)
     WARRANT_TOO_LARGE = 1900
     CHAIN_TOO_LARGE = 1901
@@ -164,14 +164,14 @@ class ErrorCode:
     TOO_MANY_CONSTRAINTS = 1903
     EXTENSION_TOO_LARGE = 1904
     VALUE_TOO_LARGE = 1905
-    
+
     # Extension errors (2000-2099)
     RESERVED_EXTENSION_KEY = 2000
     INVALID_EXTENSION_VALUE = 2001
-    
+
     # Reserved namespace errors (2100-2199)
     RESERVED_TOOL_NAME = 2100
-    
+
     @staticmethod
     def to_name(code: int) -> str:
         """Convert numeric code to kebab-case string name."""
@@ -228,7 +228,7 @@ class ErrorCode:
             2100: "reserved-tool-name",
         }
         return name_map.get(code, "unknown-error")
-    
+
     @staticmethod
     def to_http_status(code: int) -> int:
         """Get HTTP status code from error code category."""
@@ -261,12 +261,12 @@ ERROR_CODE_REGISTRY: dict[type, int] = {}
 
 def wire_code(code: int):
     """Decorator to assign canonical wire format error code to an exception.
-    
+
     Usage:
         @wire_code(ErrorCode.SIGNATURE_INVALID)
         class SignatureInvalid(CryptoError):
             ...
-    
+
     The decorator registers the exception class in ERROR_CODE_REGISTRY,
     allowing dynamic lookup via exception.get_wire_code().
     """
@@ -315,19 +315,19 @@ class TenuoError(Exception):
             result["wire_code"] = wire_code
             result["wire_name"] = self.get_wire_name()
         return result
-    
+
     def get_wire_code(self) -> int:
         """Get canonical wire format code (1000-2199).
-        
+
         Returns 0 if no wire code registered for this exception class.
         """
         return ERROR_CODE_REGISTRY.get(type(self), 0)
-    
+
     def get_wire_name(self) -> str:
         """Get kebab-case error name derived from wire code."""
         code = self.get_wire_code()
         return ErrorCode.to_name(code) if code > 0 else self.error_code
-    
+
     def get_http_status(self) -> int:
         """Get HTTP status code based on error category."""
         code = self.get_wire_code()

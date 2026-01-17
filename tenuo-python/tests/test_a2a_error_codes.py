@@ -5,8 +5,7 @@ Ensures that A2A JSON-RPC error codes map correctly to canonical
 Tenuo wire format codes.
 """
 
-import pytest
-from tenuo.a2a.errors import A2AErrorCode, A2AError
+from tenuo.a2a.errors import A2AErrorCode
 
 
 class TestA2AErrorCodeMappings:

@@ -50,7 +50,7 @@ __all__ = [
 
 class A2AErrorCode:
     """JSON-RPC error codes for A2A protocol errors.
-    
+
     These codes follow JSON-RPC convention (negative codes in -32xxx range).
     They map to canonical Tenuo wire format codes (1000-2199) defined in
     wire-format-v1.md Appendix A.
@@ -85,7 +85,7 @@ class A2AErrorCode:
     @classmethod
     def to_wire_code(cls, jsonrpc_code: int) -> Optional[int]:
         """Map JSON-RPC code to canonical wire format code.
-        
+
         Returns None if no wire format equivalent exists (A2A-specific error).
         """
         mapping = {
@@ -102,11 +102,11 @@ class A2AErrorCode:
             cls.POP_FAILED: 1600,
         }
         return mapping.get(jsonrpc_code)
-    
+
     @classmethod
     def from_wire_code(cls, wire_code: int) -> int:
         """Map wire format code to JSON-RPC code.
-        
+
         Returns INTERNAL_ERROR if no JSON-RPC equivalent exists.
         """
         mapping = {
@@ -162,7 +162,7 @@ class A2AError(Exception):
 
     def to_jsonrpc_error(self) -> Dict[str, Any]:
         """Convert to JSON-RPC error response.
-        
+
         Includes canonical Tenuo wire format code in data field for
         cross-protocol compatibility.
         """
@@ -170,18 +170,18 @@ class A2AError(Exception):
             "code": self.code,
             "message": ERROR_MESSAGES.get(self.code, str(self.message)),
         }
-        
+
         # Include canonical wire format code if mapping exists
         wire_code = A2AErrorCode.to_wire_code(self.code)
-        
+
         # Merge data with tenuo_code
         error_data = dict(self.data) if self.data else {}
         if wire_code is not None:
             error_data["tenuo_code"] = wire_code
-        
+
         if error_data:
             error["data"] = error_data
-            
+
         return error
 
 
