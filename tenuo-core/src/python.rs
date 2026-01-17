@@ -4374,6 +4374,26 @@ impl PySignedApproval {
             .map_err(|e| PyValueError::new_err(format!("Deserialization failed: {}", e)))?;
         Ok(Self { inner })
     }
+
+    #[getter]
+    fn approval_version(&self) -> u8 {
+        self.inner.approval_version
+    }
+
+    #[getter]
+    fn approver_key(&self) -> PyPublicKey {
+        PyPublicKey {
+            inner: self.inner.approver_key.clone(),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "SignedApproval(version={}, approver={})",
+            self.inner.approval_version,
+            hex::encode(&self.inner.approver_key.to_bytes()[..8])
+        )
+    }
 }
 
 /// Unsigned metadata for an approval (NOT part of the signed payload).

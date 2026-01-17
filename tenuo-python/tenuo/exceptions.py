@@ -301,7 +301,7 @@ class TenuoError(Exception):
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for structured logging."""
-        result = {
+        result: dict[str, Any] = {
             "error_code": self.error_code,  # Legacy string code
             "rust_variant": self.rust_variant,
             "category": self.__class__.__bases__[0].__name__ if self.__class__.__bases__ else "TenuoError",

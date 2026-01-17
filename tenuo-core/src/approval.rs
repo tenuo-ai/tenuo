@@ -327,16 +327,8 @@ impl SignedApproval {
             return Err(Error::UnsupportedVersion(payload.version));
         }
 
-        // 5. Check expiration
-        let now = Utc::now().timestamp() as u64;
-        if now > payload.expires_at {
-            return Err(Error::ApprovalExpired {
-                approved_at: DateTime::from_timestamp(payload.approved_at as i64, 0)
-                    .unwrap_or_else(Utc::now),
-                expired_at: DateTime::from_timestamp(payload.expires_at as i64, 0)
-                    .unwrap_or_else(Utc::now),
-            });
-        }
+        // Note: Expiration checking is done by the caller (e.g., authorizer).
+        // verify() only checks cryptographic validity.
 
         Ok(payload)
     }

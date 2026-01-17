@@ -90,7 +90,7 @@ class TestA2AErrorCodeMappings:
         """Test that A2A-specific errors don't include tenuo_code."""
         from tenuo.a2a.errors import MissingWarrantError
 
-        error = MissingWarrantError()
+        error = MissingWarrantError("Warrant required but not provided")
         jsonrpc_error = error.to_jsonrpc_error()
 
         # Should not include tenuo_code since MISSING_WARRANT is A2A-specific
