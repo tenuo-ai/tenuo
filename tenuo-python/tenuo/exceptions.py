@@ -555,13 +555,18 @@ class RangeExpanded(MonotonicityError):
 
 @wire_code(ErrorCode.CAPABILITY_EXPANSION)
 class PatternExpanded(MonotonicityError):
-    """Pattern child is broader than parent."""
+    """Pattern attenuation cannot be verified (complex patterns with multiple wildcards)."""
 
     error_code = "pattern_expanded"
     rust_variant = "PatternExpanded"
 
     def __init__(self, parent_pattern: str, child_pattern: str, hint: Optional[str] = None):
-        super().__init__(f"Child pattern '{child_pattern}' is broader than parent '{parent_pattern}'", hint=hint)
+        msg = (
+            f"Pattern attenuation cannot be verified: parent pattern '{parent_pattern}' has multiple wildcards "
+            f"(child: '{child_pattern}'). "
+            f"Use UrlPattern for URL constraints, or use exact equality"
+        )
+        super().__init__(msg, hint=hint)
         self.details = {"parent_pattern": parent_pattern, "child_pattern": child_pattern}
 
 

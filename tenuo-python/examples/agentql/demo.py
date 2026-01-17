@@ -5,7 +5,7 @@ Run: python demo.py
 """
 
 import asyncio
-from tenuo import Warrant, SigningKey, AuthorizationDenied, Pattern, OneOf, Wildcard
+from tenuo import Warrant, SigningKey, AuthorizationDenied, Pattern, OneOf, Wildcard, UrlPattern
 from wrapper import TenuoAgentQLAgent
 
 # Mock visualize for demo purposes since it's in the spec but maybe not in main lib yet
@@ -16,7 +16,9 @@ def visualize_warrant(w):
     print("Capabilities:")
     for tool, constraints in w.capabilities.items():
         print(f"  - {tool}: {constraints}")
-    print(f"Expires:  {w.expires_at}")
+    
+    exp = w.expires_at()
+    print(f"Expires:  {exp}")
 
 # === SETUP ===
 print("=" * 60)
@@ -32,7 +34,7 @@ worker_keypair = SigningKey.generate()
 print("\n[ACT 1] Authorization Contract\n")
 
 agent_warrant = (Warrant.mint_builder()
-    .capability("navigate", url=Pattern("https://example.com/*"))
+    .capability("navigate", url=UrlPattern("https://*.example.com/*"))
     .capability("fill", element=OneOf(["search_box", "email_field"]))
     .capability("click", element=OneOf(["submit_button", "search_button"]))
     .holder(orchestrator_keypair.public_key)
@@ -84,17 +86,21 @@ async def blocked_actions():
     async with agent.start_session() as session:
         page = await session.goto("https://example.com")
         
-        print("▶ Attempting: navigate to https://malicious.com...")
+        print("▶ Attempting: navigate to https://malicious.com (Expect: BLOCKED)...")
         try:
             await session.goto("https://malicious.com/steal-cookies")
         except AuthorizationDenied as e:
             print(f"  🚫 BLOCKED: {e}\n")
         
-        print("▶ Attempting: click 'delete_account_button'...")
+        print("▶ Attempting: click 'delete_account_button' (Expect: BLOCKED)...")
         try:
             await page.click("delete_account_button")
         except AuthorizationDenied as e:
-            print(f"  🚫 BLOCKED: {e}\n")
+            # Truncate verbose debug URL
+            msg = str(e).split("Debug at")[0].strip()
+            print(f"  🚫 BLOCKED: {msg}\n")
+        else:
+            print("  ⚠️ UNEXPECTED SUCCESS: Button click was allowed!\n")
 
 asyncio.run(blocked_actions())
 
@@ -107,7 +113,7 @@ print("\n[ACT 4] Multi-Agent Delegation with Attenuation\n")
 # Note: 'delegate' capability logic is implicit in Warrant.grant(), 
 # but for the demo ensuring the Orchestrator works is key.
 orchestrator_warrant = (Warrant.mint_builder()
-    .capability("navigate", url=Pattern("https://*.example.com/*"))
+    .capability("navigate", url=UrlPattern("https://*.example.com/*"))
     # Wildcards for fill/click
     .capability("fill", element=Wildcard())
     .capability("click", element=Wildcard())
@@ -121,17 +127,12 @@ visualize_warrant(orchestrator_warrant)
 
 # Orchestrator delegates to Worker (Attenuated)
 # Using .grant() instead of delegate() as per SDK
-worker_warrant = orchestrator_warrant.grant(
-    to=worker_keypair.public_key,
-    key=orchestrator_keypair,
-    ttl=1800,
-    # Attenuations
-    navigate={"url": Pattern("https://search.example.com/*")},
-    fill={"element": OneOf(["search_box"])},
-    # To remove 'click', we just don't list it? Or grant ONLY what we want?
-    # grant() is additive from scratch or subtractive? 
-    # Current SDK grant() usually specifies what IS allowed. 
-    # So we simply omit 'click'.
+worker_warrant = (orchestrator_warrant.grant_builder()
+    .holder(worker_keypair.public_key)
+    .ttl(1800)
+    .capability("navigate", url=UrlPattern("https://search.example.com/*"))
+    .capability("fill", element=OneOf(["search_box"]))
+    .grant(orchestrator_keypair)
 )
 
 print("\n👷 Worker Warrant (attenuated):")
@@ -149,17 +150,23 @@ async def multi_agent_demo():
         await page.locator("search_box").fill("research query")
         print("  ✅ Authorized\n")
         
-        print("▶ Worker: attempting click 'search_button'...")
+        print("▶ Worker: attempting click 'search_button' (Expect: BLOCKED)...")
         try:
             await page.click("search_button")
         except AuthorizationDenied as e:
-            print(f"  🚫 BLOCKED: {e}\n")
+            msg = str(e).split("Debug at")[0].strip()
+            print(f"  🚫 BLOCKED: {msg}\n")
+        else:
+            print("  ⚠️ UNEXPECTED SUCCESS: Button click was allowed!\n")
         
-        print("▶ Worker: attempting navigate to admin.example.com...")
+        print("▶ Worker: attempting navigate to admin.example.com (Expect: BLOCKED)...")
         try:
             await session.goto("https://admin.example.com")
         except AuthorizationDenied as e:
-            print(f"  🚫 BLOCKED: {e}\n")
+            msg = str(e).split("Debug at")[0].strip()
+            print(f"  🚫 BLOCKED: {msg}\n")
+        else:
+            print("  ⚠️ UNEXPECTED SUCCESS: Navigation was allowed!\n")
 
 asyncio.run(multi_agent_demo())
 

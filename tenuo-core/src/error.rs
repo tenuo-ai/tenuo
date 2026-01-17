@@ -411,8 +411,8 @@ pub enum Error {
         max: Option<f64>,
     },
 
-    /// Pattern child is broader than parent.
-    #[error("pattern expanded: child pattern '{child}' is broader than parent '{parent}'")]
+    /// Pattern attenuation cannot be verified (complex patterns with multiple wildcards).
+    #[error("pattern attenuation cannot be verified: parent pattern '{parent}' has multiple wildcards (child: '{child}'). Use UrlPattern for URL constraints, or use exact equality")]
     PatternExpanded { parent: String, child: String },
 
     /// Invalid CIDR notation.
