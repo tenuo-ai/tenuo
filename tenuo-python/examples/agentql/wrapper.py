@@ -2,7 +2,7 @@ from typing import Any, List, Dict
 from dataclasses import dataclass, field
 from datetime import datetime
 import asyncio
-from tenuo import Warrant, SigningKey, BoundWarrant, UnauthorizedError
+from tenuo import Warrant, SigningKey, BoundWarrant, AuthorizationDenied
 
 @dataclass
 class AuditEntry:
@@ -57,7 +57,7 @@ class TenuoAgentQLAgent:
             msg += f". Suggestion: {denial.suggestion}"
             
         self._log(tool, str(args.get("url") or args.get("element")), False, msg)
-        raise UnauthorizedError(msg)
+        raise AuthorizationDenied(msg)
 
 class SecureSession:
     def __init__(self, agent: TenuoAgentQLAgent):
@@ -66,7 +66,7 @@ class SecureSession:
         try:
             import agentql
         except ImportError:
-            from . import mock_agentql as agentql
+            import mock_agentql as agentql
         
         self._backend = agentql.start_session()
         self._session = None

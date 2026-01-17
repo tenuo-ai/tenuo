@@ -5,15 +5,14 @@ Run: python demo.py
 """
 
 import asyncio
-from tenuo import Warrant, Constraint, SigningKey, UnauthorizedError
-# from tenuo.visualize import visualize_warrant (Not implemented in beta 1, skipping visualization for now or mocking print)
-from agent import TenuoAgentQLAgent
+from tenuo import Warrant, SigningKey, AuthorizationDenied, Pattern, OneOf, Wildcard
+from wrapper import TenuoAgentQLAgent
 
 # Mock visualize for demo purposes since it's in the spec but maybe not in main lib yet
 def visualize_warrant(w):
     print(f"Warrant ID: {w.id[:8]}...")
-    print(f"Issuer:   {w.issuer[:12]}...")
-    print(f"Subject:  {w.subject[:12]}...")
+    print(f"Issuer:   {str(w.issuer)[:12]}...")
+    print(f"Subject:  {str(w.authorized_holder)[:12]}...")
     print("Capabilities:")
     for tool, constraints in w.capabilities.items():
         print(f"  - {tool}: {constraints}")
@@ -33,9 +32,9 @@ worker_keypair = SigningKey.generate()
 print("\n[ACT 1] Authorization Contract\n")
 
 agent_warrant = (Warrant.mint_builder()
-    .capability("navigate", url=Constraint.Pattern("https://example.com/*"))
-    .capability("fill", element=Constraint.Enum(["search_box", "email_field"]))
-    .capability("click", element=Constraint.Enum(["submit_button", "search_button"]))
+    .capability("navigate", url=Pattern("https://example.com/*"))
+    .capability("fill", element=OneOf(["search_box", "email_field"]))
+    .capability("click", element=OneOf(["submit_button", "search_button"]))
     .holder(orchestrator_keypair.public_key)
     .ttl(3600)
     .mint(user_keypair)
@@ -88,13 +87,13 @@ async def blocked_actions():
         print("▶ Attempting: navigate to https://malicious.com...")
         try:
             await session.goto("https://malicious.com/steal-cookies")
-        except UnauthorizedError as e:
+        except AuthorizationDenied as e:
             print(f"  🚫 BLOCKED: {e}\n")
         
         print("▶ Attempting: click 'delete_account_button'...")
         try:
             await page.click("delete_account_button")
-        except UnauthorizedError as e:
+        except AuthorizationDenied as e:
             print(f"  🚫 BLOCKED: {e}\n")
 
 asyncio.run(blocked_actions())
@@ -108,10 +107,10 @@ print("\n[ACT 4] Multi-Agent Delegation with Attenuation\n")
 # Note: 'delegate' capability logic is implicit in Warrant.grant(), 
 # but for the demo ensuring the Orchestrator works is key.
 orchestrator_warrant = (Warrant.mint_builder()
-    .capability("navigate", url=Constraint.Pattern("https://*.example.com/*"))
+    .capability("navigate", url=Pattern("https://*.example.com/*"))
     # Wildcards for fill/click
-    .capability("fill", element=Constraint.Wildcard())
-    .capability("click", element=Constraint.Wildcard())
+    .capability("fill", element=Wildcard())
+    .capability("click", element=Wildcard())
     .holder(orchestrator_keypair.public_key)
     .ttl(3600)
     .mint(user_keypair)
@@ -127,8 +126,8 @@ worker_warrant = orchestrator_warrant.grant(
     key=orchestrator_keypair,
     ttl=1800,
     # Attenuations
-    navigate={"url": Constraint.Pattern("https://search.example.com/*")},
-    fill={"element": Constraint.Enum(["search_box"])},
+    navigate={"url": Pattern("https://search.example.com/*")},
+    fill={"element": OneOf(["search_box"])},
     # To remove 'click', we just don't list it? Or grant ONLY what we want?
     # grant() is additive from scratch or subtractive? 
     # Current SDK grant() usually specifies what IS allowed. 
@@ -153,13 +152,13 @@ async def multi_agent_demo():
         print("▶ Worker: attempting click 'search_button'...")
         try:
             await page.click("search_button")
-        except UnauthorizedError as e:
+        except AuthorizationDenied as e:
             print(f"  🚫 BLOCKED: {e}\n")
         
         print("▶ Worker: attempting navigate to admin.example.com...")
         try:
             await session.goto("https://admin.example.com")
-        except UnauthorizedError as e:
+        except AuthorizationDenied as e:
             print(f"  🚫 BLOCKED: {e}\n")
 
 asyncio.run(multi_agent_demo())
