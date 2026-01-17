@@ -787,6 +787,54 @@ Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetri
 | `"exact"` | `"exact"` | YES | Literal match, equal |
 | `"exact"` | Any other | NO | Exact is terminal |
 
+#### Pattern Attenuation Limitations
+
+Pattern constraints support different levels of attenuation based on wildcard count and position:
+
+**Single Wildcard Patterns (Fully Supported for Attenuation):**
+
+| Pattern Type | Example | Can Attenuate To | Notes |
+|--------------|---------|------------------|-------|
+| Prefix (wildcard at end) | `"staging-*"` | `"staging-web-*"`, `"staging-web"` | Child can extend prefix or remove wildcard |
+| Suffix (wildcard at start) | `"*-safe"` | `"*-extra-safe"`, `"image-safe"` | Child can extend suffix or remove wildcard |
+| Single wildcard alone | `"*"` | `"*"` only | Conservative: requires equality |
+| Exact (no wildcard) | `"production"` | `"production"` only | Terminal: no further narrowing |
+
+**Multiple Wildcard Patterns (Equality Only for Attenuation):**
+
+| Pattern Type | Example | Can Attenuate To | Restriction |
+|--------------|---------|------------------|-------------|
+| Bidirectional | `"*-prod-*"`, `"*safe*"` | Identical pattern only | Multiple wildcards |
+| Middle wildcard | `"prefix-*-suffix"` | Identical pattern only | Wildcard not at edge |
+| Complex paths | `/data/*/file.txt` | Identical pattern only | Internal wildcard |
+| Multiple in path | `/*/reports/*.pdf` | Identical pattern only | 2+ wildcards |
+| URL patterns | `https://*.example.com/*` | Identical pattern only | 2+ wildcards total |
+
+**Key constraint:** Patterns with 2 or more wildcards, or a wildcard in the middle, are classified as `Complex` and can ONLY attenuate to an exact copy of themselves. Any difference results in `PatternExpanded` error.
+
+**Rationale:** Determining subset relationships for complex glob patterns is computationally undecidable. Tenuo uses a conservative approach: reject potentially unsafe attenuation rather than risk privilege escalation.
+
+**Workarounds for complex pattern attenuation:**
+
+1. **Use structured constraints instead of patterns:**
+   ```
+   Instead of: Pattern("https://*.example.com/*")
+   Use: UrlPattern(host="*.example.com", path="/*")
+   ```
+   This separates concerns, allowing independent attenuation of host and path.
+
+2. **Issue specific warrants per subdomain:**
+   ```
+   search_warrant: Pattern("https://search.example.com/*")
+   api_warrant: Pattern("https://api.example.com/*")
+   ```
+
+3. **Use exact patterns in delegation:**
+   ```
+   parent: Pattern("https://search.example.com/*")  # 1 wildcard
+   child: Pattern("https://search.example.com/api/*")  # Still 1 wildcard, can attenuate
+   ```
+
 **`**` (Double-Star) Pattern:** The `**` pattern is **reserved and discouraged**. While `**` conceptually means "match all paths," it creates security risks:
 - **Overly permissive**: Makes it too easy to grant unrestricted access
 - **Attenuation ambiguity**: Unclear if `**` is "broader" or "equal" to `*`
