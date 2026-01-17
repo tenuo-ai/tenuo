@@ -69,6 +69,8 @@ echo -e "\n${GREEN}[3/8] Running Rust Tests...${NC}"
 cd tenuo-core
 echo "  → Running unit tests..."
 cargo test --lib
+echo "  → Running doc tests..."
+cargo test --doc
 echo "  → Running integration tests..."
 cargo test --test invariants
 cargo test --test integration
@@ -111,13 +113,20 @@ if [ -d ".venv" ]; then
     echo "$(pwd)" > "${SITE_PACKAGES}/tenuo.pth"
     
     echo "  → Linting with ruff..."
-    ruff check .
+    if [ "$CHECK_MODE" = "1" ]; then
+        ruff check . --no-fix
+    else
+        ruff check . --fix
+    fi
     
     echo "  → Verifying tenuo_core extension..."
     python3 -c "import tenuo_core; print(f'✓ Found tenuo_core at {tenuo_core.__file__}')" || { echo "❌ Failed to import real tenuo_core"; exit 1; }
 
     echo "  → Type checking with mypy..."
     mypy  # Uses mypy.ini config (files = tenuo/)
+    
+    echo "  → Running doctests..."
+    python -m pytest --doctest-modules tenuo/ --ignore=tenuo/venv || echo "  → Some doctests failed (non-blocking)"
     
     echo "  → Running tests with pytest (isolated)..."
     # Run tests in isolation to avoid pollution on Python 3.9
