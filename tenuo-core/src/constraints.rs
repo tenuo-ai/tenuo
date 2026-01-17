@@ -1750,6 +1750,9 @@ pub struct UrlPattern {
     /// Required port. None means any port (or default for scheme).
     pub port: Option<u16>,
     /// Path pattern (glob-style, e.g., "/api/v1/*").
+    ///
+    /// Note: `https://example.com/` (trailing slash) parses as "Any Path" (Wildcard).
+    /// To enforce a root path, use `https://example.com/*`.
     pub path_pattern: Option<String>,
 }
 
@@ -1787,6 +1790,9 @@ impl UrlPattern {
     /// - `https://api.example.com/*` - HTTPS only, specific host, any path
     /// - `*://example.com/api/v1/*` - Any scheme, specific host/path
     /// - `https://*.example.com:8443/api/*` - HTTPS, any subdomain, specific port
+    ///
+    /// Warning: omitting the path implies a wildcard (any path allowed).
+    /// `https://example.com/` parses as "any path". Use `https://example.com/*` to restrict to root.
     ///
     /// # Errors
     /// Returns error if the pattern is not a valid URL pattern.

@@ -325,6 +325,7 @@ Do not use legacy semantic methods (`contains()`, `is_safe()`, `matches()`) in n
 from tenuo import (
     Subpath,    # Filesystem paths: Subpath("/data")
     UrlSafe,    # Network URLs: UrlSafe(allow_domains=["api.example.com"])
+    UrlPattern, # URL matching: UrlPattern("https://*.example.com/*")
     Shlex,      # Shell commands: Shlex(allow_binaries=["/usr/bin/ls"])
     Pattern,    # Glob patterns: Pattern("*.txt")
     Regex,      # Regular expressions: Regex(r"^[a-z]+$")

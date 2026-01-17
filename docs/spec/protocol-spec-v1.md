@@ -264,7 +264,7 @@ See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-f
 | *Reserved* | 6 | - | Future IntRange (i64) | - |
 | NotOneOf | 7 | `{excluded: [any]}` | Set exclusion | `NotOneOf(["prod"])` |
 | Cidr | 8 | `{network: string}` | IP range | `Cidr("10.0.0.0/8")` |
-| UrlPattern | 9 | `{pattern: string}` | URL matching | `UrlPattern("https://*.example.com/*")` |
+| UrlPattern | 9 | `{pattern: string}` | URL matching. **Note**: `https://example.com/` (trailing slash) parses as "Any Path" (Wildcard). Use `https://example.com/*` to restrict to root. | `UrlPattern("https://*.example.com/*")` |
 | Contains | 10 | `{required: [any]}` | List contains values | `Contains(["admin"])` |
 | Subset | 11 | `{allowed: [any]}` | Array subset | `Subset(["read", "write"])` |
 | All | 12 | `{constraints: [C]}` | Logical AND | `All([...])` |

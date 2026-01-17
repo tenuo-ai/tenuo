@@ -302,6 +302,7 @@ response = client.chat.completions.create(
 | `UrlSafe()` | Blocks SSRF (private IPs, metadata) | `UrlSafe()` blocks `http://169.254.169.254/` |
 | `Shlex(allow)` | Blocks shell injection | `Shlex(allow=["ls"])` blocks `ls; rm -rf /` |
 | `Pattern(glob)` | Glob pattern matching | `Pattern("*@company.com")` |
+| `UrlPattern(url)` | URL matching. **Note**: `https://example.com/` (trailing slash) parses as Wildcard ("Any Path"). Use `/*` to restrict to root. | `UrlPattern("https://*.example.com/*")` |
 
 For Tier 2 (cryptographic authorization with warrants), see [OpenAI Integration](https://tenuo.dev/openai).
 
