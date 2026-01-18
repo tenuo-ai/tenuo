@@ -5,6 +5,10 @@ This directory contains working examples demonstrating how to use the Tenuo Pyth
 ## Prerequisites
 
 ```bash
+# Using uv (recommended)
+uv pip install tenuo
+
+# Or standard pip
 pip install tenuo
 ```
 
@@ -56,17 +60,17 @@ server = (A2AServerBuilder()
 
 ```bash
 # Install core dependencies
-pip install "tenuo[mcp]"
+uv pip install "tenuo[mcp]"
 
 # Run demo (dry-run mode - no API keys needed!)
 python research_agent_demo.py
 
 # Optional: For real LLM integration
-pip install langchain-openai
+uv pip install langchain-openai
 export OPENAI_API_KEY="sk-..."
 
 # Optional: For real web search
-pip install tavily-python
+uv pip install tavily-python
 export TAVILY_API_KEY="tvly-..."  # Free tier: https://tavily.com
 
 # Run with real LLM
@@ -170,35 +174,35 @@ python context_pattern.py
 # Multi-agent delegation (core pattern)
 python orchestrator_worker.py
 
-# Featured MCP demo (requires: pip install "tenuo[mcp,langchain]" langchain-openai langgraph)
+# Featured MCP demo (requires: uv pip install "tenuo[mcp,langchain]" langchain-openai langgraph)
 # Also requires: OPENAI_API_KEY (TAVILY_API_KEY optional for real search)
 python research_agent_demo.py
 
-# LangChain examples (requires: pip install langchain langchain-openai langchain-community)
+# LangChain examples (requires: uv pip install langchain langchain-openai langchain-community)
 python langchain_simple.py
 python langchain_integration.py
 python langchain_protect_tools.py
 python langchain_protect_tools.py
 python langchain_mcp_integration.py  # LangChain + MCP + Tenuo
 
-# LangGraph example (requires: pip install langgraph)
+# LangGraph example (requires: uv pip install langgraph)
 python langgraph_protected.py
 
-# OpenAI examples (requires: pip install openai)
+# OpenAI examples (requires: uv pip install openai)
 python openai_guardrails.py     # Tier 1: runtime guardrails
 python openai_warrant.py        # Tier 2: cryptographic authorization
 python openai_agents_sdk.py     # Agents SDK integration
 
-# Google ADK examples (requires: pip install tenuo[adk])
+# Google ADK examples (requires: uv pip install tenuo[adk])
 python google_adk_incident_response/demo.py  # Multi-agent incident response
 
-# A2A examples (requires: pip install tenuo[a2a])
+# A2A examples (requires: uv pip install tenuo[a2a])
 python a2a_demo.py              # Research pipeline with delegation
 
 # MCP example (uses local config file, no external server needed)
 python mcp_integration.py
 
-# Web framework example (requires: pip install fastapi uvicorn)
+# Web framework example (requires: uv pip install fastapi uvicorn)
 python fastapi_integration.py
 # Or run with: uvicorn fastapi_integration:app --reload
 

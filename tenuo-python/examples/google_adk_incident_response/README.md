@@ -23,14 +23,14 @@ Each agent operates with cryptographically-enforced capabilities using Tenuo war
 
 ```bash
 # Install Google ADK
-pip install google-genai
+uv pip install google-genai
 
 # Install Tenuo
-pip install tenuo
+uv pip install tenuo
 
 # Or install from the repository
 cd tenuo-python
-pip install -e ".[google-adk]"
+uv pip install -e ".[google-adk]"
 ```
 
 ## Usage

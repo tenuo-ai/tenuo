@@ -17,11 +17,11 @@ cd tenuo-python/examples/blog_demos/map_territory
 python streaming_toctou.py
 
 # Full demo suite (simulated attacks)
-pip install tenuo path-jail url-jail proc-jail
+uv pip install tenuo path-jail url-jail proc-jail
 python map_vs_territory.py
 
 # Real LLM demo (requires OpenAI API key)
-pip install openai tenuo
+uv pip install openai tenuo
 export OPENAI_API_KEY=sk-...
 python map_vs_territory.py --openai
 

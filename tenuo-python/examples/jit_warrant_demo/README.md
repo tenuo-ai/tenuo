@@ -13,7 +13,7 @@ This demo showcases production-realistic patterns for AI agent security:
 ## Prerequisites
 
 ```bash
-pip install tenuo rich  # rich is optional but recommended for beautiful output
+uv pip install tenuo rich  # rich is optional but recommended for beautiful output
 ```
 
 For real LLM mode (optional):

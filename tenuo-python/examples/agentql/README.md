@@ -19,11 +19,11 @@ This demo shows how Tenuo provides mathematical security guarantees that prompt 
 
 ```bash
 # Option 1: Install from PyPI (production use)
-pip install tenuo
+uv pip install tenuo  # or: uv pip install tenuo
 
 # Option 2: Install from source (development)
 cd tenuo-python
-pip install -e .
+uv pip install -e .   # or: uv pip install -e .
 ```
 
 ## Quick Start
@@ -52,12 +52,12 @@ python demo.py
 
 ```bash
 # 1. Install Tenuo
-pip install tenuo
+uv pip install tenuo
 # OR for local development:
-# pip install -e ../../
+# uv pip install -e ../../
 
 # 2. Install demo dependencies
-pip install agentql playwright openai anthropic
+uv pip install agentql playwright openai anthropic
 
 # 3. Install Playwright browsers
 playwright install

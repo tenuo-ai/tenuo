@@ -33,7 +33,7 @@ try:
     from langchain_core.runnables import RunnableConfig  # noqa: F401
 except ImportError:
     print("Please install langgraph and langchain-core to run this example.")
-    print("pip install langgraph langchain-core")
+    print("uv pip install langgraph langchain-core")
     exit(1)
 
 

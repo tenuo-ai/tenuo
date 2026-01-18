@@ -70,11 +70,11 @@ All attacks are **blocked by cryptographic authorization**.
 
 ```bash
 # Install Tenuo with A2A support
-pip install tenuo
+uv pip install tenuo
 
 # Optional: For real LLM support
-pip install google-genai  # For --real-llm
-pip install openai        # For --use-openai
+uv pip install google-genai  # For --real-llm
+uv pip install openai        # For --use-openai
 ```
 
 ## Usage

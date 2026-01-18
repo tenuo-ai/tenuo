@@ -6,7 +6,7 @@
 
 ## How to Verify These Claims
 
-**Don't just trust the numbers below—run the benchmarks yourself!**
+**You can run the benchmarks yourself!**
 
 ```bash
 # Run the comprehensive benchmark suite
@@ -372,10 +372,10 @@ python benchmark.py
 The benchmark requires only Tenuo (no browser/LLM dependencies):
 
 ```bash
-pip install tenuo
+uv pip install tenuo
 
 # Optional: For memory measurements
-pip install psutil
+uv pip install psutil
 ```
 
 ### Interpreting Results
