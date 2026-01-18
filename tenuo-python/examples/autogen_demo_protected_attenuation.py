@@ -20,8 +20,9 @@ Run:
     python autogen_demo_protected_attenuation.py attack
 
 Requires:
-    pip install "tenuo[autogen]"
-    # Set OPENAI_API_KEY
+    Python >= 3.10
+    pip install "tenuo[autogen]" "python-dotenv"
+    # Set OPENAI_API_KEY (env or .env file)
 """
 
 from __future__ import annotations

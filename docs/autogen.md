@@ -48,6 +48,14 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## Demos
+
+- `tenuo-python/examples/autogen_demo_unprotected.py` - agentic workflow with no protections
+- `tenuo-python/examples/autogen_demo_protected_tools.py` - guarded tools (URL allowlist + Subpath)
+- `tenuo-python/examples/autogen_demo_protected_attenuation.py` - per-agent attenuation + escalation block
+
+> Tip: these demos use `python-dotenv` to load `OPENAI_API_KEY` and set `tool_choice="required"` for deterministic tool calls.
+
 ## What happens on denial?
 
 - If the tool name is not in `warrant.tools`, Tenuo raises `ToolNotAuthorized`.

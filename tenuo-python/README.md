@@ -461,6 +461,24 @@ async with SecureMCPClient("python", ["mcp_server.py"]) as client:
         result = await tools["read_file"](path="/data/file.txt")
 ```
 
+## AutoGen Integration
+
+_(Requires Python ≥3.10)_
+
+Install dependencies:
+
+```bash
+pip install "tenuo[autogen]" "python-dotenv"
+```
+
+Demos:
+
+- `examples/autogen_demo_unprotected.py` - agentic workflow with no protections
+- `examples/autogen_demo_protected_tools.py` - guarded tools (URL allowlist + Subpath)
+- `examples/autogen_demo_protected_attenuation.py` - per-agent attenuation + escalation block
+
+> Tip: these demos use `python-dotenv` to load `OPENAI_API_KEY` and set `tool_choice="required"` for deterministic tool calls.
+
 ## Security Considerations
 
 ### BoundWarrant Serialization
@@ -544,6 +562,7 @@ python examples/mcp_integration.py
 - **[Quickstart](https://tenuo.dev/quickstart)** - Get running in 5 minutes
 - **[OpenAI](https://tenuo.dev/openai)** - Direct API protection with streaming defense
 - **[Google ADK](https://tenuo.dev/google-adk)** - ADK agent tool protection
+- **[AutoGen](https://tenuo.dev/autogen)** - AgentChat tool protection
 - **[A2A](https://tenuo.dev/a2a)** - Inter-agent delegation with warrants
 - **[FastAPI](https://tenuo.dev/fastapi)** - Zero-boilerplate API protection
 - **[LangChain](https://tenuo.dev/langchain)** - Tool protection
