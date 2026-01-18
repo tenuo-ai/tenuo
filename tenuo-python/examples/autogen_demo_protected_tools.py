@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
-AutoGen AgentChat demo: research pipeline (PROTECTED - URL allowlist + subpath).
+AutoGen AgentChat demo: research pipeline (PROTECTED - tools).
 
 Architecture:
     User -> Orchestrator -> Paper Search Agent -> Summarizer Agent
 
 This mirrors the flow in examples/a2a_demo.py and adds Tenuo protections.
 In this version, URL access is restricted by an allowlist and file reads
-are restricted to a safe subpath.
+are restricted to a safe subpath (no attenuation yet).
 
 Run:
     # Default: run both normal and attack scenarios
-    python autogen_demo_protected.py
+    python autogen_demo_protected_tools.py
 
     # Just normal flow
-    python autogen_demo_protected.py run
+    python autogen_demo_protected_tools.py run
 
     # Just attack simulation
-    python autogen_demo_protected.py attack
+    python autogen_demo_protected_tools.py attack
 
 Requires:
     pip install "tenuo[autogen]"
@@ -146,7 +146,7 @@ async def run_demo(
         print("  This run shows URL allowlist and subpath enforcement.\n")
 
     # ---------------------------------------------------------------------
-    # Setup: Tools (URL allowlist enforced by Tenuo)
+    # Setup: Tools (URL allowlist + subpath)
     # ---------------------------------------------------------------------
     sample_path = "/tmp/papers/toctou.txt"
     if real_tools:
@@ -243,7 +243,9 @@ async def run_demo(
     if not openai_api_key:
         raise RuntimeError("OPENAI_API_KEY not found in .env file")
     model_client = OpenAIChatCompletionClient(
-        model=model, api_key=openai_api_key
+        model=model,
+        api_key=openai_api_key,
+        tool_choice="required",
     )
 
     paper_search_agent = AssistantAgent(
@@ -391,7 +393,7 @@ async def run_comparison(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="AutoGen AgentChat demo - multi-agent delegation without protections"
+        description="AutoGen AgentChat demo - protected tools (URL allowlist + subpath)"
     )
     parser.add_argument(
         "command",
