@@ -1058,11 +1058,15 @@ Where `envelope_version` is `0x01` for v1 warrants.
 
 ### Constraint Type IDs
 
+These test vectors use the following constraint types:
+
 | Type | ID |
 |------|-----|
 | Exact | 1 |
 | Pattern | 2 |
 | Wildcard | 16 |
+
+> **Note:** This table lists only the constraint types used in these test vectors. For the complete list of all 18 constraint types (Range, OneOf, Regex, Cidr, UrlPattern, etc.), see [wire-format-v1.md §5 "Constraint Encoding"](wire-format-v1.md#5-constraint-encoding).
 
 ---
 

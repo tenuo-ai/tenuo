@@ -9,7 +9,8 @@
       "Bash(cargo run:*)",
       "Bash(../docs/spec/test-vectors.md)",
       "Bash(cargo check:*)",
-      "Bash(LC_ALL=C grep:*)"
+      "Bash(LC_ALL=C grep:*)",
+      "Bash(python benchmark.py:*)"
     ],
     "deny": [],
     "ask": []

@@ -78,21 +78,7 @@ Signer                            Verifier
   | sign(bytes) -> sig               |
   | serialize(fields 0-8 + sig)      |
   |                                  |
-  || max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric. wire bytes | max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.>|
+  |           -- wire bytes ------>|
   |                                  |
   |                     deserialize(all)
   |                     strip signature field
@@ -113,21 +99,7 @@ Signer                            Verifier
   | sign(bytes) -> sig               |
   | envelope(bytes, sig)             |
   |                                  |
-  || max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric. wire bytes | max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.>|
+  |           -- wire bytes ------>|
   |                                  |
   |                     unwrap -> (bytes, sig)
   |                     verify(bytes, sig)  <- SAME BYTES
@@ -285,21 +257,7 @@ verify(warrant.holder, challenge, pop_signature)
 Implementations MUST verify ALL invariants. Missing checks create security vulnerabilities.
 
 | Invariant | Builder | Verifier | Test |
-|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|---------|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|------|
+|-----------|---------|----------|------|
 | I1: Delegation Authority | Yes: Sign with parent.holder | Yes: Check issuer == parent.holder | Required |
 | I2: Depth Monotonicity | Yes: Increment & validate | Yes: Check depth rules | Required |
 | I3: TTL Monotonicity | Yes: Cap at parent TTL | Yes: Check expiration | Required |
@@ -323,14 +281,7 @@ Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetri
 Two version fields for independent evolution:
 
 | Field | Location | Purpose |
-|-------|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|---------|
+|-------|----------|---------|
 | `envelope_version` | SignedWarrant | Envelope structure changes |
 | `version` | WarrantPayload | Payload schema changes |
 
@@ -355,21 +306,7 @@ pub struct WarrantPayload {
 **Version handling rules:**
 
 | Version seen | Behavior |
-|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.---|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|
+|--------------|----------|
 | `0` | Invalid, reject |
 | `1` | Current, process normally |
 | `2+` | Unknown, reject (until verifier upgraded) |
@@ -429,28 +366,7 @@ pub struct Signature {
 **Key sizes by algorithm:**
 
 | Algorithm | Public Key | Signature |
-|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.-|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|
+|-----------|------------|-----------|
 | Ed25519 | 32 bytes | 64 bytes |
 | Dilithium2 | 1,312 bytes | 2,420 bytes |
 
@@ -476,14 +392,7 @@ pub struct WarrantPayload {
 **Rules:**
 
 | Field | Validation |
-|-------|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.-|
+|-------|------------|
 | `issued_at` | Must be ≤ current time + clock tolerance |
 | `expires_at` | Must be > current time |
 | `expires_at` | Must be > `issued_at` |
@@ -505,14 +414,7 @@ All integer values in warrants MUST fit within the **signed 64-bit range**: −2
 **Rules by context:**
 
 | Context | Range | Precision | Notes |
-|---------|-------|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|-------|
+|---------|-------|-----------|-------|
 | Timestamps, depth, counts | i64 (−2^63 to 2^63−1) | Exact | Wire encoding validated |
 | Range constraint bounds | i64 range, f64 precision | Lossy for \|n\| > 2^53 | Use Exact/OneOf for large integers |
 | Constraint values (Exact, OneOf) | i64 range | Exact | Opaque comparison |
@@ -521,21 +423,7 @@ Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetri
 **Validation rules:**
 
 | Scenario | Behavior |
-|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|
+|----------|----------|
 | Integer within i64 range | Valid |
 | Integer outside i64 range | Reject warrant |
 | CBOR bignum (tag 2/3) | Reject warrant |
@@ -679,14 +567,7 @@ pub enum Constraint {
 All constraints serialize as `[type_id, value]` tuples. The `value` is the serde serialization of the constraint struct.
 
 | ID | Type | Value Shape | Notes |
-|----|------|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.--|-------|
+|----|------|-------------|-------|
 | 1 | Exact | `{value: any}` | Exact value match |
 | 2 | Pattern | `{pattern: string}` | Glob (`*`, `?`, `**`) |
 | 3 | Range | `{min?: f64, max?: f64}` | Numeric bounds |
@@ -761,21 +642,7 @@ Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetri
 #### Pattern Attenuation Rules
 
 | Parent Pattern | Child Pattern | Valid | Rule |
-|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.----|-------|------|
+|----------------|---------------|-------|------|
 | `"*"` | `"*"` | YES | Single wildcard, equal |
 | `"*"` | Any other | IFF | Equal only (single wildcard is conservative) |
 | `"prefix-*"` | `"prefix-more-*"` | YES | Child prefix extends parent |
@@ -932,14 +799,7 @@ child:  Pattern("/data/reports/file.txt")  # ✗ More specific but different typ
 **Reserved IDs (19-32):**
 
 | ID | Reserved For | Status |
-|----|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.---|--------|
+|----|--------------|--------|
 | 19 | TimeWindow | Planned: day/hour-of-week constraints |
 | 20 | GeoFence | Planned: lat/lon bounding box |
 | 21 | RateLimit | Planned: call frequency limits |
@@ -982,14 +842,7 @@ impl Constraint {
 **Why fail closed:**
 
 | Approach | Problem |
-|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|---------|
+|----------|---------|
 | Ignore unknown | Security hole - skips restrictions |
 | Crash on unknown | Brittle - can't deploy new constraints gradually |
 | Strip unknown | Breaks signature - payload was signed with them |
@@ -1055,21 +908,7 @@ let payload = WarrantPayload {
 **Rules:**
 
 | Scenario | Behavior |
-|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|
+|----------|----------|
 | Tool in warrant, all constraints pass | Authorized |
 | Tool in warrant, constraint fails | Denied |
 | Tool not in warrant | Denied |
@@ -1444,14 +1283,7 @@ Concatenated PEM blocks. Order: Root -> Leaf (parser handles either order; verif
 ## 13. Size Limits
 
 | Limit | Value | Rationale |
-|-------|-------|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|
+|-------|-------|-----------|
 | Max warrant size | 64 KB | Prevents memory exhaustion |
 | Max tools per warrant | 256 | Practical limit |
 | Max constraints per tool | 64 | Practical limit |
@@ -1479,14 +1311,7 @@ Client                          Server
    |                               |
    |--- Supported: [1, 2] -------->|
    |                               |
-   |<-- Selected: 1 | max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.----|
+   |<-- Selected: 1 ---------------|
    |                               |
    |--- Warrant (v1 format) ------>|
 ```
@@ -1587,14 +1412,7 @@ fn generate_offsets(max_windows: usize) -> Vec<i32> {
 ### Configuration
 
 | Parameter | Default | Min | Max | Purpose |
-|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|---------|-----|-----|---------|
+|---------|-----|-----|---------|---------|
 | Context | `tenuo-pop-v1` | - | - | Domain separation (REQUIRED) |
 | Window size | 30 seconds | - | - | Groups signatures into buckets (FIXED) |
 | **max_windows** | **5** | **2** | **10** | **Configurable clock skew tolerance** |
@@ -1602,34 +1420,6 @@ Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetri
 **Clock tolerance formula:** `±(floor(max_windows / 2) × 30)` seconds
 
 | max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|| max_windows | Tolerance | Recommended For |
 |-------------|-----------|-----------------|
 | 2 | ±30s | High-security with strict NTP |
 | **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
@@ -1856,21 +1646,7 @@ CBOR Map {
 The envelope pattern provides several advantages for approvals:
 
 | Aspect | Without Envelope | With Envelope |
-|--------|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.-|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.----|
+|--------|------------------|---------------|
 | **Consistency** | Different pattern from warrants | Matches `SignedWarrant` pattern |
 | **Security boundary** | Unclear which fields are signed | Explicit: payload vs. metadata |
 | **Extensibility** | Changing struct affects signatures | Add metadata without signature changes |
@@ -1940,21 +1716,7 @@ CBOR((warrant_id, reason, requestor, requested_at.timestamp()))
 
 **Authorization:**
 | Requestor | Can Revoke |
-|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.-|
+|-----------|------------|
 | Control Plane | Any warrant |
 | Issuer | Warrants they issued |
 | Holder | Their own warrant (surrender) |
@@ -2279,21 +2041,7 @@ Test vectors MUST include:
 ## Summary
 
 | Feature | Implementation | v1.0 Default |
-|---------|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.----|| max_windows | Tolerance | Recommended For |
-|-------------|-----------|-----------------|
-| 2 | ±30s | High-security with strict NTP |
-| **5** | **±60s** | **Modern cloud/data center (DEFAULT)** |
-| 7 | ±90s | Edge/IoT with clock drift |
-| 10 | ±150s | Legacy systems (max) |
-
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.---|
+|---------|----------------|--------------|
 | Envelope pattern | `SignedWarrant { payload, signature }` | Yes |
 | Envelope version | `envelope_version: u8` | `1` |
 | Payload version | `version: u8` | `1` |

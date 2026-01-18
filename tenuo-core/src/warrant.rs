@@ -62,14 +62,61 @@ pub const WARRANT_VERSION: u32 = 1;
 /// - **ISSUER**: Can issue execution warrants. Used by P-LLM/planner components
 ///   that decide capabilities without executing tools.
 /// - **EXECUTION**: Can invoke specific tools with specific constraints.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum WarrantType {
-    /// Issuer warrant - can issue execution warrants.
-    Issuer,
     /// Execution warrant - can invoke tools.
-    Execution,
+    /// Wire value: 0
+    Execution = 0,
+    /// Issuer warrant - can issue execution warrants.
+    /// Wire value: 1
+    Issuer = 1,
+}
+
+impl Serialize for WarrantType {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_u8(*self as u8)
+    }
+}
+
+impl<'de> Deserialize<'de> for WarrantType {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct WarrantTypeVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for WarrantTypeVisitor {
+            type Value = WarrantType;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("integer 0 (Execution) or 1 (Issuer)")
+            }
+
+            fn visit_u8<E>(self, value: u8) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match value {
+                    0 => Ok(WarrantType::Execution),
+                    1 => Ok(WarrantType::Issuer),
+                    v => Err(E::custom(format!("invalid warrant type: {}", v))),
+                }
+            }
+
+            fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                self.visit_u8(value as u8)
+            }
+        }
+
+        deserializer.deserialize_u8(WarrantTypeVisitor)
+    }
 }
 
 /// Clearance level for warrants.

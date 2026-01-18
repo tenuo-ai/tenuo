@@ -1,7 +1,8 @@
-from typing import Any, List, Dict, Callable, Tuple, Optional
+from typing import Any, List, Dict, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import inspect
+import time
 from tenuo import Warrant, SigningKey, AuthorizationDenied
 from lazy_locator import LazySemanticLocator
 
@@ -11,6 +12,29 @@ class AuditEntry:
     action: str
     target: str
     result: str
+    warrant_depth: int
+    warrant_id: str
+    latency_ms: float
+
+@dataclass
+class PerformanceMetrics:
+    """Track authorization performance metrics."""
+    total_authorizations: int = 0
+    allowed_count: int = 0
+    denied_count: int = 0
+    total_latency_ms: float = 0.0
+
+    @property
+    def avg_latency_ms(self) -> float:
+        return self.total_latency_ms / self.total_authorizations if self.total_authorizations > 0 else 0.0
+
+    def record(self, allowed: bool, latency_ms: float):
+        self.total_authorizations += 1
+        if allowed:
+            self.allowed_count += 1
+        else:
+            self.denied_count += 1
+        self.total_latency_ms += latency_ms
 
 # Method mapping: Maps AgentQL method names to (capability_name, args_extractor)
 # This makes the wrapper adaptable if AgentQL's API changes
@@ -23,6 +47,38 @@ METHOD_TO_CAPABILITY = {
     "query_elements": ("query", lambda a, k: {"query": a[0] if a else k.get("query", "unknown")}),
 }
 
+def format_denial_error(e: AuthorizationDenied) -> str:
+    """
+    Strip debug URL from error message for clean demo output.
+
+    Args:
+        e: The authorization denial exception
+
+    Returns:
+        Cleaned error message without debug URLs
+    """
+    return str(e).split("Debug at")[0].strip()
+
+def normalize_semantic_label(raw_label: str) -> str:
+    """
+    Normalize AgentQL query syntax to semantic label.
+
+    Examples:
+        "{ search_box }" -> "search_box"
+        "search_box" -> "search_box"
+
+    Args:
+        raw_label: Raw selector/query string
+
+    Returns:
+        Normalized semantic label
+    """
+    return raw_label.replace("{", "").replace("}", "").strip()
+
+def is_agentql_query(selector: str) -> bool:
+    """Check if selector looks like an AgentQL semantic query."""
+    return "{" in selector or " " in selector
+
 class TenuoAgentQLAgent:
     """
     A secure wrapper around AgentQL that enforces Tenuo warrants using dynamic proxying.
@@ -32,11 +88,12 @@ class TenuoAgentQLAgent:
         self.keypair = SigningKey.generate()
         self.bound = warrant.bind(self.keypair)
         self.audit_log: List[AuditEntry] = []
+        self.metrics = PerformanceMetrics()
 
     def start_session(self, headless: bool = False, on_page_created: Callable = None):
         try:
-            import agentql
-            from playwright.async_api import async_playwright
+            import agentql  # noqa: F401
+            from playwright.async_api import async_playwright  # noqa: F401
         except ImportError as e:
             raise ImportError(
                 "Real 'agentql' and 'playwright' libraries are required. "
@@ -54,41 +111,112 @@ class TenuoAgentQLAgent:
 
 
 
-    def _log(self, action: str, target: str, allowed: bool, error: str = None):
+    def _log(self, action: str, target: str, allowed: bool, latency_ms: float, error: str = None):
+        """Log authorization decision with full context."""
+        warrant_depth = getattr(self.warrant, 'depth', 0) if hasattr(self.warrant, 'depth') else 0
+        warrant_id = str(self.warrant.id)[:12] if hasattr(self.warrant, 'id') else "unknown"
+
         self.audit_log.append(AuditEntry(
-            timestamp=datetime.now().strftime("%H:%M:%S"),
+            timestamp=datetime.now(timezone.utc).isoformat(timespec='milliseconds'),
             action=action,
             target=target,
-            result="✅ authorized" if allowed else f"🚫 BLOCKED ({error})"
+            result="authorized" if allowed else f"BLOCKED: {error}",
+            warrant_depth=warrant_depth,
+            warrant_id=warrant_id,
+            latency_ms=latency_ms
         ))
+
+    def _build_helpful_error(self, tool: str, args: Dict[str, Any], denial) -> str:
+        """
+        Build a detailed error message with suggestions for denied actions.
+
+        Args:
+            tool: The capability being requested
+            args: Arguments for the capability
+            denial: Denial information from the bound warrant
+
+        Returns:
+            Helpful error message with context and suggestions
+        """
+        # Base message
+        msg = f"Action '{tool}' denied"
+
+        # Add specific context based on tool type
+        if tool == "navigate":
+            url = args.get("url", "unknown")
+            msg += f" for URL: {url}"
+
+            # Check if warrant has navigate capability at all
+            if "navigate" not in self.warrant.capabilities:
+                msg += ". Warrant does not have 'navigate' capability"
+            else:
+                # Show allowed patterns
+                allowed_patterns = self.warrant.capabilities.get("navigate", {})
+                if allowed_patterns:
+                    msg += f". Allowed patterns: {allowed_patterns}"
+
+        elif tool in ["fill", "click"]:
+            element = args.get("element", "unknown")
+            msg += f" for element: '{element}'"
+
+            if tool not in self.warrant.capabilities:
+                msg += f". Warrant does not have '{tool}' capability"
+            else:
+                allowed_elements = self.warrant.capabilities.get(tool, {})
+                if allowed_elements:
+                    msg += f". Allowed elements: {allowed_elements}"
+
+        elif tool == "query":
+            query = args.get("query", "unknown")
+            msg += f" for query: {query}"
+
+            if "query" not in self.warrant.capabilities:
+                msg += ". Warrant does not have 'query' capability (DLP prevention)"
+
+        # Add suggestion if available
+        if denial and hasattr(denial, 'suggestion') and denial.suggestion:
+            msg += f". Suggestion: {denial.suggestion}"
+
+        return msg
 
     def authorize(self, tool: str, args: Dict[str, Any]):
         """
         Check if the action is allowed by the warrant.
-        Raises AuthorizationDenied if not allowed or if warrant is expired.
+        Raises AuthorizationDenied with detailed context if not allowed.
         """
-        # Check warrant expiration first
-        # Note: Expiration checking is typically done by the authorizer during
-        # the allows() call, but we can add an explicit check for clarity
-        try:
-            expires_at = self.warrant.expires_at()
-            # Simple check: if expires_at exists and is in the past
-            # The warrant library should handle this, but explicit is better for demo
-        except Exception:
-            pass  # If expiration check fails, let allows() handle it
+        start_time = time.perf_counter()
 
         # Check authorization
-        if self.bound.allows(tool, args):
-            self._log(tool, str(args.get("url") or args.get("element")), True)
+        allowed = self.bound.allows(tool, args)
+        latency_ms = (time.perf_counter() - start_time) * 1000
+
+        # Record metrics
+        self.metrics.record(allowed, latency_ms)
+
+        if allowed:
+            target = str(args.get("url") or args.get("element") or args.get("query", "unknown"))
+            self._log(tool, target, True, latency_ms)
             return True
 
+        # Build helpful error message
         denial = self.bound.why_denied(tool, args)
-        msg = f"Action '{tool}' denied"
-        if denial.suggestion:
-            msg += f". Suggestion: {denial.suggestion}"
+        msg = self._build_helpful_error(tool, args, denial)
 
-        self._log(tool, str(args.get("url") or args.get("element")), False, msg)
+        target = str(args.get("url") or args.get("element") or args.get("query", "unknown"))
+        self._log(tool, target, False, latency_ms, msg)
         raise AuthorizationDenied(msg)
+
+    def print_metrics(self):
+        """Print performance metrics summary."""
+        print(f"\n{'='*60}")
+        print("PERFORMANCE METRICS")
+        print(f"{'='*60}")
+        print(f"Total authorizations: {self.metrics.total_authorizations}")
+        print(f"Allowed: {self.metrics.allowed_count}")
+        print(f"Denied: {self.metrics.denied_count}")
+        print(f"Average latency: {self.metrics.avg_latency_ms:.3f} ms")
+        print(f"Total overhead: {self.metrics.total_latency_ms:.3f} ms")
+        print(f"{'='*60}\n")
 
 class SecureProxy:
     """
@@ -113,47 +241,60 @@ class SecureProxy:
         item = self._target[key]
         return self._wrap_result(item)
 
+    def _handle_locator_call(self, method: Callable, args: tuple, kwargs: dict) -> Any:
+        """
+        Unified locator handling logic (extracted to avoid duplication).
+
+        Args:
+            method: The locator method being called
+            args: Positional arguments
+            kwargs: Keyword arguments
+
+        Returns:
+            SecureLocatorProxy or LazySemanticLocator wrapping the locator
+        """
+        raw_label = args[0] if args else kwargs.get("selector", "unknown")
+        semantic_label = normalize_semantic_label(raw_label)
+
+        # AgentQL semantic query handling
+        if hasattr(self._target, "get_by_prompt") and is_agentql_query(raw_label):
+            # For async contexts, return lazy locator
+            if inspect.iscoroutinefunction(method):
+                result = self._target.get_by_prompt(semantic_label)
+                return SecureLocatorProxy(result, self._agent, semantic_label)
+            else:
+                # For sync contexts (should not happen in real AgentQL, but defensive)
+                return LazySemanticLocator(self._target, semantic_label, self._agent)
+        else:
+            # Standard Playwright locator
+            result = method(*args, **kwargs)
+            return SecureLocatorProxy(result, self._agent, semantic_label)
+
     def _wrap_method(self, name: str, method: Callable) -> Callable:
+        """
+        Wrap a method to enforce authorization and maintain security context.
+
+        Args:
+            name: Method name
+            method: The callable method
+
+        Returns:
+            Wrapped method (async or sync based on original)
+        """
         async def async_wrapper(*args, **kwargs):
             # Special handling for locator() - preserve semantic label
             if name == "locator":
-                raw_label = args[0] if args else kwargs.get("selector", "unknown")
-                # Normalize label: "{ foo }" -> "foo"
-                semantic_label = raw_label.replace("{", "").replace("}", "").strip()
-                
-                # If it looked like an AgentQL query (had braces) or we want to force semantic lookup:
-                # Use get_by_prompt if available (AgentQL wrapped)
-                if hasattr(self._target, "get_by_prompt") and ("{" in raw_label or " " in raw_label):
-                     result = self._target.get_by_prompt(semantic_label)
-                else:
-                     # Fallback to standard locator (Playwright)
-                     result = await method(*args, **kwargs) if inspect.iscoroutinefunction(method) else method(*args, **kwargs)
-                
-                return SecureLocatorProxy(result, self._agent, semantic_label)
+                return self._handle_locator_call(method, args, kwargs)
 
             # Regular authorization check
             self._authorize_action(name, args, kwargs)
-            if inspect.iscoroutinefunction(method):
-                result = await method(*args, **kwargs)
-            else:
-                result = method(*args, **kwargs)
+            result = await method(*args, **kwargs)
             return self._wrap_result(result)
 
         def sync_wrapper(*args, **kwargs):
             # Special handling for locator() - preserve semantic label
             if name == "locator":
-                raw_label = args[0] if args else kwargs.get("selector", "unknown")
-                # Normalize label: "{ foo }" -> "foo"
-                semantic_label = raw_label.replace("{", "").replace("}", "").strip()
-                
-                # If it looked like an AgentQL query (had braces) or force semantic:
-                if hasattr(self._target, "get_by_prompt") and ("{" in raw_label or " " in raw_label):
-                     # Return Lazy Locator - this resolves the async mismatch
-                     return LazySemanticLocator(self._target, semantic_label, self._agent)
-                else:
-                     result = method(*args, **kwargs)
-                
-                return SecureLocatorProxy(result, self._agent, semantic_label)
+                return self._handle_locator_call(method, args, kwargs)
 
             # Regular authorization check
             self._authorize_action(name, args, kwargs)
@@ -179,33 +320,46 @@ class SecureProxy:
     def _wrap_result(self, result: Any) -> Any:
         """
         Recursively wrap returned objects to maintain security enforcement.
+        Uses duck typing to avoid fragile type name checking.
+
+        Args:
+            result: The result to potentially wrap
+
+        Returns:
+            Wrapped result or original if wrapping not needed
         """
         # Primitive types or None don't need wrapping
         if result is None or isinstance(result, (str, int, float, bool)):
             return result
 
-        # Lists/Dicts might contain objects
+        # Lists might contain objects that need wrapping
         if isinstance(result, list):
              return [self._wrap_result(x) for x in result]
+
+        # Dicts are usually data payloads, don't wrap
         if isinstance(result, dict):
-             # Deep wrap dicts? For now, we only care if they return Locators/proxies
-             # But usually response dict is data.
              return result
 
-        # Wrap Pages, Locators, Sessions using duck typing
-        type_name = type(result).__name__
-        if "Page" in type_name or "Session" in type_name or "ResponseProxy" in type_name:
+        # Use duck typing for object wrapping
+        # Check for page-like objects (has goto and locator methods)
+        if hasattr(result, 'goto') and hasattr(result, 'locator'):
             return SecureProxy(result, self._agent)
 
-        # Locators need special handling (but shouldn't hit this path if locator() is intercepted)
-        if "Locator" in type_name:
+        # Check for locator-like objects (has fill and click methods)
+        # Should rarely hit this path since locator() is intercepted
+        if hasattr(result, 'fill') and hasattr(result, 'click'):
             return SecureLocatorProxy(result, self._agent, "unknown")
 
-        # Catch async context managers
-        if hasattr(result, "__aenter__"):
+        # Check for async context managers (sessions, browsers)
+        if hasattr(result, "__aenter__") and hasattr(result, "__aexit__"):
             return SecureContextProxy(result, self._agent)
 
-        # Return raw for other types (Responses, etc.)
+        # Check for response-like objects (has methods we might want to wrap)
+        # AgentQL response proxies typically have data access methods
+        if hasattr(result, '__getitem__') and not isinstance(result, (list, dict, str, bytes)):
+            return SecureProxy(result, self._agent)
+
+        # Return raw for other types (primitives, unrecognized objects)
         return result
 
 
@@ -253,11 +407,11 @@ class RealAgentQLSession:
     async def __aenter__(self):
         from playwright.async_api import async_playwright
         import agentql
-        
+
         self.playwright = await async_playwright().start()
         self.browser = await self.playwright.chromium.launch(headless=self.headless)
         self.page = await self.browser.new_page()
-        
+
         # Run hook if provided (e.g. to mock routes)
         if self.on_page_created:
             if inspect.iscoroutinefunction(self.on_page_created):
