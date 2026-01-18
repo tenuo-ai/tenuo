@@ -3,7 +3,7 @@
 Tenuo AgentQL Performance Benchmark
 
 Measures and verifies the performance claims made in PERFORMANCE.md:
-- Authorization latency (~0.004ms per check)
+- Authorization latency (~0.005ms per check)
 - Throughput (268,000+ checks per second)
 - Memory overhead (~50 KB per agent)
 - Workflow overhead (<0.03%)
@@ -137,7 +137,7 @@ def benchmark_authorization_latency():
     print("VERIFICATION:")
     print("-"*70)
 
-    claim_latency = 0.1  # Our claim in PERFORMANCE.md
+    claim_latency = 0.005  # Our claim in PERFORMANCE.md (actual ~0.004ms + 20% buffer)
     actual_allowed = results_allowed['mean']
     actual_denied = results_denied['mean']
 
@@ -433,7 +433,7 @@ def print_summary(results):
     overhead = results.get('workflow_overhead', 0)
 
     print("\n1. Authorization Latency:")
-    print("   Claim: ~0.004ms")
+    print("   Claim: ~0.005ms")
     print(f"   Actual: {latency:.3f}ms")
     print(f"   Status: {'✅ PASS' if latency <= 0.01 else '⚠️  REVIEW'}")
 

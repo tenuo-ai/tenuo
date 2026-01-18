@@ -560,13 +560,11 @@ if __name__ == "__main__":
     if provider == "openai":
         if not api_key.startswith("sk-"):
             print("❌ Error: OpenAI API key should start with 'sk-'")
-            print("   Your key starts with:", api_key[:10] + "...")
             print("\n   Get a valid key at: https://platform.openai.com/api-keys")
             sys.exit(1)
     elif provider == "anthropic":
         if not api_key.startswith("sk-ant-"):
             print("❌ Error: Anthropic API key should start with 'sk-ant-'")
-            print("   Your key starts with:", api_key[:10] + "...")
             print("\n   Get a valid key at: https://console.anthropic.com/settings/keys")
             sys.exit(1)
 
