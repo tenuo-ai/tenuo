@@ -1,6 +1,6 @@
 # Tenuo for Browser Agents
 
-Tenuo provides **cryptographic authorization** for browser automation. This demo uses [AgentQL](https://agentql.com) as a concrete example, but the pattern works with any browser library (Playwright, Puppeteer, Selenium).
+Tenuo provides **cryptographic authorization** for browser automation. This demo uses [AgentQL](https://agentql.com) (which extends Playwright) as a concrete example. The same **cryptographic wrapper pattern** can be applied to standard Playwright, Selenium, Puppeteer, or any other browser library.
 
 **The problem**: LLM-powered browser agents can be tricked by prompt injection into visiting malicious sites, clicking dangerous buttons, or exfiltrating data.
 
@@ -163,7 +163,7 @@ async with agent.start_session() as page:
     await page.goto("https://malicious.com")  # 🚫 Blocked
 ```
 
-**The wrapper pattern generalizes.** See `wrapper.py` (~300 lines) for how to adapt this to Playwright, Puppeteer, Selenium, or any browser library.
+**The wrapper pattern generalizes.** See `wrapper.py` (~300 lines) for how to adapt this to standard Playwright, Puppeteer, Selenium, or any browser library.
 
 ---
 
