@@ -9,22 +9,15 @@ The difference: code can be bypassed. Math cannot.
 
 ---
 
-## The Core Problem
+## The Core Problem: Semantic Ambiguity
 
-String validation cannot secure execution. This is the [Map vs Territory](https://niyikiza.com/posts/map-territory/) gap: validation sees the *string*, but security depends on what the system *does* with it.
+Traditional security relies on **syntax**: inspecting inputs to predict safety. We build complex regular expressions, allowlists, and parsers to decide "is this string safe?"
 
-Recent example: [CVE-2025-66032](https://niyikiza.com/posts/cve-2025-66032/) in Claude Code. An allowlist of "safe" commands was bypassed 8 different ways because the regex and the shell interpreted the same string differently.
+But LLM agents operate on **semantics**: intent, reasoning, and goals.
 
-```
-Regex: /^git ls-remote(?!\s+.*--upload-pack)/
-Input: git ls-remote --upload-pa evil-repo
+This creates a fundamental mismatch. A "safe" string (syntactically correct) can have "unsafe" effects (semantically malicious) depending on how the runtime environment interprets it.
 
-Regex says: ✓ No --upload-pack found
-Git says:   --upload-pa IS --upload-pack
-Result:     RCE
-```
-
-Allowlists are policies over **names**. Security needs policies over **effects**.
+We call this the [Map vs Territory](https://niyikiza.com/posts/map-territory/) gap: validation sees the *string* (the map), but security depends on what the system *does* with it (the territory).
 
 ---
 
@@ -135,7 +128,7 @@ See [Capability Delegation](https://niyikiza.com/posts/capability-delegation/) f
 **Validation** = Psychology. Analyzes syntax to predict semantics. Can be bypassed.  
 **Cryptographic authorization** = Physics. Mathematical proof of who granted what to whom.
 
-Tenuo uses the same security model as SSH, Bitcoin, and TLS—not business logic.
+Tenuo uses the same security model as SSH, Bitcoin, and TLS instead of business logic.
 
 ---
 

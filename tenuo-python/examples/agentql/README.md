@@ -4,7 +4,7 @@ Tenuo provides **cryptographic authorization** for browser automation. This demo
 
 **The problem**: LLM-powered browser agents can be tricked by prompt injection into visiting malicious sites, clicking dangerous buttons, or exfiltrating data.
 
-**The solution**: Cryptographically signed warrants that define exactly what an agent can do. The LLM can be fooled—the warrant cannot be forged.
+**The solution**: Cryptographically signed warrants that define exactly what an agent can do. The LLM can be fooled but the warrant cannot be forged.
 
 ## What You'll See
 
@@ -56,7 +56,8 @@ https://github.com/user-attachments/assets/59f6aad0-5d66-4530-bd9e-8bff24403ef1
 
 **Requirements:**
 - Python 3.8+
-- API key (OpenAI or Anthropic)
+- OpenAI API Key (`OPENAI_API_KEY`) or Anthropic API Key (`ANTHROPIC_API_KEY`)
+- AgentQL API Key (`AGENTQL_API_KEY`)
 
 ```bash
 # 1. Install Tenuo
@@ -71,9 +72,10 @@ uv pip install agentql playwright openai anthropic
 playwright install
 
 # 4. Set API key
-export OPENAI_API_KEY="sk-..."
-# OR
-export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="sk-..." # OR export ANTHROPIC_API_KEY="sk-ant-..."
+
+# 5. Set AgentQL API key
+export AGENTQL_API_KEY="sk-agentql-..."
 
 # Run all scenarios (~5 minutes, costs ~$0.02)
 python demo_llm.py
@@ -98,7 +100,7 @@ python demo_llm.py --dlp         # Data loss prevention
 | **Audit Trail** | Every action logged with warrant chain provenance |
 | **Decentralized** | Verification is offline, no auth server needed |
 
-**Performance**: **0.004ms** (logic only), **0.027ms** (full crypto verification). <0.03% overhead.
+**Performance**: **0.004ms** (logic only), **0.027ms** (full crypto verification). <0.1% overhead.
 
 ---
 

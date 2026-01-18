@@ -11,6 +11,7 @@ Requirements:
 
 Usage:
     export OPENAI_API_KEY="your-key"
+    export AGENTQL_API_KEY="your-agentql-key"
     python demo_llm.py                 # Run all scenarios
     python demo_llm.py --simple        # Just the quick demo
     python demo_llm.py --advanced      # Advanced scenarios only
