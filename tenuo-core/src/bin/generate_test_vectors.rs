@@ -66,9 +66,21 @@ fn main() {
 
     println!("# Tenuo Protocol Test Vectors");
     println!();
-    println!("**Version:** 1.0  ");
-    println!("**Generated:** 2024-01-01 (deterministic timestamps for reproducibility)  ");
-    println!("**Specification:** [protocol-spec-v1.md](protocol-spec-v1.md)");
+    println!("**Version:** 1.0");
+    println!("**Documentation Revision:** 2 (2026-01-18)");
+    println!("**Generated:** 2024-01-01 (deterministic timestamps for reproducibility)");
+    println!("**Specification:** [wire-format-v1.md](wire-format-v1.md)");
+    println!();
+    println!("---");
+    println!();
+    println!("## Revision History");
+    println!();
+    println!("- **Rev 2** (2026-01-18): Documentation cleanup");
+    println!("  - Regenerated all test vectors to match current generator output");
+    println!("  - Added cross-reference note to full constraint type list in wire-format-v1.md");
+    println!("  - **No protocol changes** - test vectors remain v1.0 compatible");
+    println!();
+    println!("- **Rev 1** (2025-01-01): Initial release");
     println!();
     println!("---");
     println!();

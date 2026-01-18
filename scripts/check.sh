@@ -21,7 +21,7 @@ done
 echo "[INFO] Starting Pre-commit Checks..."
 
 # 0. Cargo.lock Sync Check
-echo -e "\n${GREEN}[0/8] Checking Cargo.lock sync...${NC}"
+echo -e "\n${GREEN}[0/9] Checking Cargo.lock sync...${NC}"
 cd tenuo-core
 if ! cargo check --locked 2>/dev/null; then
     echo -e "${RED}  → Cargo.lock out of sync! Regenerating...${NC}"
@@ -38,7 +38,7 @@ cd ..
 echo "  → Cargo.lock files in sync"
 
 # 1. Rust Formatting
-echo -e "\n${GREEN}[1/8] Formatting Rust Code...${NC}"
+echo -e "\n${GREEN}[1/9] Formatting Rust Code...${NC}"
 if [ "$CHECK_MODE" = "1" ]; then
     # CI mode: fail if not formatted
     echo "  → Checking format (CI mode)..."
@@ -59,13 +59,13 @@ else
 fi
 
 # 2. Rust Linting (Clippy)
-echo -e "\n${GREEN}[2/8] Running Clippy...${NC}"
+echo -e "\n${GREEN}[2/9] Running Clippy...${NC}"
 cd tenuo-core
 cargo clippy --all-targets --all-features -- -D warnings
 cd ..
 
 # 3. Rust Tests (all tests including integration tests)
-echo -e "\n${GREEN}[3/8] Running Rust Tests...${NC}"
+echo -e "\n${GREEN}[3/9] Running Rust Tests...${NC}"
 cd tenuo-core
 echo "  → Running unit tests..."
 cargo test --lib
@@ -85,9 +85,9 @@ cd ..
 
 # 4. Security Audit (optional - skip with SKIP_AUDIT=1)
 if [ "${SKIP_AUDIT:-0}" = "1" ]; then
-    echo -e "\n${GREEN}[4/8] Skipping Security Audit (SKIP_AUDIT=1)${NC}"
+    echo -e "\n${GREEN}[4/9] Skipping Security Audit (SKIP_AUDIT=1)${NC}"
 else
-    echo -e "\n${GREEN}[4/8] Running Security Audit...${NC}"
+    echo -e "\n${GREEN}[4/9] Running Security Audit...${NC}"
     cd tenuo-core
     if ! command -v cargo-audit &> /dev/null; then
         echo "Installing cargo-audit..."
@@ -138,7 +138,7 @@ if [ -d ".venv" ]; then
     
     cd ..
 else
-    echo -e "\n${RED}[5/8] Skipping Python checks (no .venv found)${NC}"
+    echo -e "\n${RED}[5/9] Skipping Python checks (no .venv found)${NC}"
     echo "To enable Python checks:"
     echo "  1. python3 -m venv .venv"
     echo "  2. source .venv/bin/activate"
@@ -148,19 +148,19 @@ fi
 
 # 6. Explorer Tests (if node_modules exists)
 if [ -d "tenuo-explorer/node_modules" ]; then
-    echo -e "\n${GREEN}[6/8] Running Explorer Tests...${NC}"
+    echo -e "\n${GREEN}[6/9] Running Explorer Tests...${NC}"
     cd tenuo-explorer
     npm test -- --run
     cd ..
 else
-    echo -e "\n${RED}[6/8] Skipping Explorer tests (no node_modules found)${NC}"
+    echo -e "\n${RED}[6/9] Skipping Explorer tests (no node_modules found)${NC}"
     echo "To enable Explorer tests:"
     echo "  1. cd tenuo-explorer && npm install"
 fi
 
 # 7. Explorer Build Sync Check
 if [ -d "tenuo-explorer/node_modules" ]; then
-    echo -e "\n${GREEN}[7/8] Checking Explorer build sync...${NC}"
+    echo -e "\n${GREEN}[7/9] Checking Explorer build sync...${NC}"
     cd tenuo-explorer
     
     # Build explorer (rebuilds WASM too if needed)
@@ -194,11 +194,11 @@ if [ -d "tenuo-explorer/node_modules" ]; then
         echo "  → docs/explorer created"
     fi
 else
-    echo -e "\n${YELLOW}[7/8] Skipping Explorer build sync (no node_modules)${NC}"
+    echo -e "\n${YELLOW}[7/9] Skipping Explorer build sync (no node_modules)${NC}"
 fi
 
 # 8. Version Sync Check
-echo -e "\n${GREEN}[8/8] Checking version sync...${NC}"
+echo -e "\n${GREEN}[8/9] Checking version sync...${NC}"
 
 # Extract versions (normalize Python pre-release format to match Rust)
 PYPROJECT_VER=$(grep '^version = ' tenuo-python/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/' | sed 's/a/-alpha./' | sed 's/b/-beta./')
@@ -225,6 +225,30 @@ if [ "$VERSION_MISMATCH" = "1" ]; then
     exit 1
 fi
 echo "  → All versions in sync: $PYPROJECT_VER"
+
+# 9. Test Vector Sync Check
+echo -e "\n${GREEN}[9/9] Checking Test Vector sync...${NC}"
+cd tenuo-core
+GENERATED=$(cargo run --bin generate_test_vectors 2>/dev/null)
+COMMITTED=$(cat ../docs/spec/test-vectors.md)
+cd ..
+
+if ! diff -b <(echo "$GENERATED") <(echo "$COMMITTED") > /dev/null 2>&1; then
+    if [ "$CHECK_MODE" = "1" ]; then
+        echo -e "${RED}  ✗ docs/spec/test-vectors.md is out of sync with generator${NC}"
+        echo -e "${RED}  → Run: cd tenuo-core && cargo run --bin generate_test_vectors > ../docs/spec/test-vectors.md${NC}"
+        diff -u <(echo "$COMMITTED") <(echo "$GENERATED") | head -100
+        exit 1
+    else
+        echo -e "${YELLOW}  → docs/spec/test-vectors.md out of sync, regenerating...${NC}"
+        cd tenuo-core
+        cargo run --bin generate_test_vectors > ../docs/spec/test-vectors.md 2>/dev/null
+        cd ..
+        echo "  → docs/spec/test-vectors.md updated"
+    fi
+else
+    echo "  → Test vectors in sync"
+fi
 
 echo -e "\n${GREEN}[OK] All checks passed! You are ready to commit.${NC}"
 
