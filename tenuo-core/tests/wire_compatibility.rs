@@ -49,7 +49,12 @@ fn test_unknown_warrant_type_fails_deserialization() {
     let err = result.err().unwrap().to_string();
     // Error message depends on serde impl. Probably "unknown variant `audit`..."
     println!("Error: {}", err);
-    assert!(err.contains("variant") || err.contains("unknown") || err.contains("invalid value") || err.contains("invalid warrant type"));
+    assert!(
+        err.contains("variant")
+            || err.contains("unknown")
+            || err.contains("invalid value")
+            || err.contains("invalid warrant type")
+    );
 }
 
 #[test]
@@ -59,10 +64,7 @@ fn test_unknown_payload_field_fails_deserialization() {
     let map = vec![
         (Value::Integer(0.into()), Value::Integer(1.into())), // Version = 1
         (Value::Integer(1.into()), Value::Bytes(vec![0u8; 16])), // ID
-        (
-            Value::Integer(2.into()),
-            Value::Integer(0.into()),
-        ), // Type = 0 (Execution)
+        (Value::Integer(2.into()), Value::Integer(0.into())), // Type = 0 (Execution)
         (Value::Integer(3.into()), Value::Map(vec![])),       // Tools = {}
         (
             Value::Integer(4.into()),
