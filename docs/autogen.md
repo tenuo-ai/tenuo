@@ -53,6 +53,8 @@ asyncio.run(main())
 - `tenuo-python/examples/autogen_demo_unprotected.py` - agentic workflow with no protections
 - `tenuo-python/examples/autogen_demo_protected_tools.py` - guarded tools (URL allowlist + Subpath)
 - `tenuo-python/examples/autogen_demo_protected_attenuation.py` - per-agent attenuation + escalation block
+- `tenuo-python/examples/autogen_demo_guardbuilder_tier1.py` - same agent flow using GuardBuilder (constraints-only)
+- `tenuo-python/examples/autogen_demo_guardbuilder_tier2.py` - same agent flow using GuardBuilder with warrant + PoP
 
 > Tip: these demos use `python-dotenv` to load `OPENAI_API_KEY` and set `tool_choice="required"` for deterministic tool calls.
 

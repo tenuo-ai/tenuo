@@ -121,6 +121,13 @@ This demo shows Tenuo's key capabilities:
 - **[openai_async.py](openai_async.py)**: **Async Patterns** - Async client wrapping, streaming with TOCTOU protection, concurrent calls, and async error handling.
 - **[openai_agents_sdk.py](openai_agents_sdk.py)**: **Agents SDK Integration** - Using Tenuo guardrails with OpenAI's Agents SDK. Shows `create_tier1_guardrail()` and `create_tier2_guardrail()`.
 
+### AutoGen Integration
+- **[autogen_demo_unprotected.py](autogen_demo_unprotected.py)**: AgentChat workflow with no protections (baseline/attack illustration).
+- **[autogen_demo_protected_tools.py](autogen_demo_protected_tools.py)**: Guarded tools with UrlSafe allowlist + Subpath.
+- **[autogen_demo_protected_attenuation.py](autogen_demo_protected_attenuation.py)**: Per-agent attenuation + escalation blocking.
+- **[autogen_demo_guardbuilder_tier1.py](autogen_demo_guardbuilder_tier1.py)**: GuardBuilder (constraints-only) with on_denial raise/log/skip.
+- **[autogen_demo_guardbuilder_tier2.py](autogen_demo_guardbuilder_tier2.py)**: GuardBuilder with warrant + PoP (Tier 2).
+
 ### Google ADK Integration
 - **[google_adk_incident_response/](google_adk_incident_response/)**: **Multi-Agent Security Demo** - Detector, Analyst, and Responder agents with warrant-based authorization. Shows Tier 2 protection with monotonic attenuation.
 - **[google_adk_a2a_incident/](google_adk_a2a_incident/)**: **Distributed A2A Demo** - Same incident response scenario but with real A2A HTTP calls between separate agent processes. Shows warrant delegation over the network.

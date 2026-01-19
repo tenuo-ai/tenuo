@@ -194,7 +194,14 @@ class BoundWarrant:
     # Convenience methods (use bound key)
     # ========================================================================
 
-    def grant(self, *, to: PublicKey, allow: "Union[str, List[str]]", ttl: int, **constraints) -> Warrant:
+    def grant(
+        self,
+        *,
+        to: PublicKey,
+        allow: "Union[str, List[str]]",
+        ttl: int,
+        **constraints,
+    ) -> Warrant:
         """Grant using the bound key.
 
         Args:
@@ -206,7 +213,9 @@ class BoundWarrant:
         Returns:
             New child warrant (plain Warrant, not BoundWarrant)
         """
-        return self._warrant.grant(to=to, allow=allow, ttl=ttl, key=self._key, **constraints)
+        return self._warrant.grant(
+            to=to, allow=allow, ttl=ttl, key=self._key, **constraints
+        )
 
     def headers(self, tool: str, args: dict) -> Dict[str, str]:
         """
@@ -229,7 +238,10 @@ class BoundWarrant:
         pop_sig = self._warrant.sign(self._key, tool, args)
         # sign returns bytes, encode to base64
         pop_b64 = base64.b64encode(pop_sig).decode("ascii")
-        return {"X-Tenuo-Warrant": self._warrant.to_base64(), "X-Tenuo-PoP": pop_b64}
+        return {
+            "X-Tenuo-Warrant": self._warrant.to_base64(),
+            "X-Tenuo-PoP": pop_b64,
+        }
 
     def validate(self, tool: str, args: dict) -> ValidationResult:
         """
@@ -253,11 +265,17 @@ class BoundWarrant:
             else:
                 print(f"Validation failed: {result.reason}")
         """
-        # 1. Sign
-        pop_signature = self._warrant.sign(self._key, tool, args)
+        try:
+            # 1. Sign
+            pop_signature = self._warrant.sign(self._key, tool, args)
 
-        # 2. Verify (calls Rust authorize)
-        success = self._warrant.authorize(tool=tool, args=args, signature=bytes(pop_signature))
+            # 2. Verify (calls Rust authorize)
+            success = self._warrant.authorize(
+                tool=tool, args=args, signature=bytes(pop_signature)
+            )
+        except Exception as exc:
+            # For expired warrants (or other validation failures), surface as a failed ValidationResult
+            return ValidationResult.fail(reason=str(exc))
 
         if success:
             return ValidationResult.ok()
