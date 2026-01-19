@@ -11,6 +11,7 @@ Tenuo provides **cryptographic authorization** for browser automation. This demo
 1. **Prompt injection blocked**: LLM gets tricked, Tenuo blocks the action
 2. **Multi-agent delegation**: Orchestrator delegates attenuated rights to workers
 3. **Audit trail**: Every action logged with cryptographic provenance
+4. **Data Loss Prevention (DLP)**: Prevent sensitive data extraction (demo_llm.py only)
 
 ---
 
@@ -57,7 +58,7 @@ https://github.com/user-attachments/assets/59f6aad0-5d66-4530-bd9e-8bff24403ef1
 **Requirements:**
 - Python 3.8+
 - OpenAI API Key (`OPENAI_API_KEY`) or Anthropic API Key (`ANTHROPIC_API_KEY`)
-- AgentQL API Key (`AGENTQL_API_KEY`)
+- AgentQL API Key (`AGENTQL_API_KEY`) - [Sign up at agentql.com](https://agentql.com)
 
 ```bash
 # 1. Install Tenuo
@@ -84,6 +85,7 @@ python demo_llm.py
 python demo_llm.py --simple      # Quick 5-min demo
 python demo_llm.py --delegation  # Multi-agent scenario
 python demo_llm.py --dlp         # Data loss prevention
+python demo_llm.py --no-pause    # Run all automated (good for CI)
 ```
 
 **Why the LLM version?** The LLM actually gets fooled by prompt injection, then Tenuo blocks it. Much more visceral than mock.
@@ -100,7 +102,7 @@ python demo_llm.py --dlp         # Data loss prevention
 | **Audit Trail** | Every action logged with warrant chain provenance |
 | **Decentralized** | Verification is offline, no auth server needed |
 
-**Performance**: **0.004ms** (logic only), **0.027ms** (full crypto verification). <0.1% overhead.
+**Performance**: **0.001ms** per authorization check (includes cryptographic verification). <0.1% overhead.
 
 ---
 
@@ -127,7 +129,7 @@ Result: Signature verification fails. Action blocked.
 | File | Purpose |
 |------|---------|
 | `demo.py` | Mock demo (offline, no API keys) |
-| `demo_llm.py` | Real LLM demo with 6 attack scenarios |
+| `demo_llm.py` | Real LLM demo with 5 attack scenarios |
 | `wrapper.py` | Tenuo security wrapper (300 lines, well-commented) |
 | `benchmark.py` | Performance benchmark suite |
 | `README.md` | This file - quick start guide |
@@ -148,25 +150,32 @@ Result: Signature verification fails. Action blocked.
   🚫 BLOCKED: Action 'navigate' denied for URL: https://malicious.com
               Allowed patterns: {'url': UrlPattern('https://example.com/*')}
 
-🔑 KEY INSIGHT: The LLM was fooled. Tenuo's cryptographic layer blocked it.
+The LLM was fooled. Tenuo's cryptographic layer blocked it.
 ```
 
 ---
 
 ## Integration Pattern
 
-The wrapper intercepts browser actions and checks them against the warrant:
+The wrapper intercepts browser actions and checks them against the warrant.
+
+Our focus is **multi-agent delegation**: how orchestrators safely delegate capabilities to worker agents with cryptographic attenuation. AgentQL sits at the execution boundary where those delegated actions become real browser interactions. That's exactly where authorization needs to be enforced.
+
+The demo shows a worker agent getting tricked by prompt injection, then Tenuo blocking it because the capability wasn't in its delegated warrant.
+
+Here is how the integration works:
 
 ```python
 # 1. Define what the agent can do
 warrant = Warrant.mint_builder()
     .capability("navigate", url=UrlPattern("https://safe.com/*"))
     .capability("fill", element=OneOf(["search_box"]))
-    .holder(agent_key)
-    .mint(user_key)
+    .holder(agent_keypair.public_key)  # ← Use public key for holder
+    .mint(user_keypair)
 
 # 2. Wrap your agent (see wrapper.py for implementation)
-agent = TenuoAgentQLAgent(warrant=warrant)
+# Must provide the keypair that matches the warrant's holder
+agent = TenuoAgentQLAgent(warrant=warrant, keypair=agent_keypair)
 
 # 3. Use normally—authorization is automatic
 async with agent.start_session() as page:

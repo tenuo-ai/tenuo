@@ -43,6 +43,8 @@ METHOD_TO_CAPABILITY = {
     "navigate": ("navigate", lambda a, k: {"url": a[0] if a else k.get("url")}),
     "click": ("click", lambda a, k: {"element": a[0] if a else k.get("element", "unknown")}),
     "fill": ("fill", lambda a, k: {"element": a[0] if len(a) > 1 else k.get("element", "unknown")}),
+    # query_data/query_elements are mapped to "query" capability.
+    # This enables Data Loss Prevention (DLP) by restricting which fields can be extracted.
     "query_data": ("query", lambda a, k: {"query": a[0] if a else k.get("query", "unknown")}),
     "query_elements": ("query", lambda a, k: {"query": a[0] if a else k.get("query", "unknown")}),
 }
@@ -83,9 +85,22 @@ class TenuoAgentQLAgent:
     """
     A secure wrapper around AgentQL that enforces Tenuo warrants using dynamic proxying.
     """
-    def __init__(self, warrant: Warrant):
+    def __init__(self, warrant: Warrant, keypair: Optional[SigningKey] = None):
+        """
+        Initialize the secure agent wrapper.
+        
+        Args:
+            warrant: The Tenuo warrant defining allowed capabilities.
+            keypair: The signing key matching the warrant's holder.
+                     If None, a new ephemeral key is generated (ONLY for testing/demos where the warrant is also ephemeral).
+                     In production, YOU MUST provide the keypair that matches the warrant's holder_id.
+        """
         self.warrant = warrant
-        self.keypair = SigningKey.generate()
+        # If keypair is not provided, generate ephemeral one (Demo Mode)
+        # Note: This only works if the warrant is ALSO minted for this new public key immediately after,
+        # or if we are in a mode where we don't strictly enforce PoP (bad practice).
+        # For strict PoP, the warrant MUST be minted for the public key of the keypair provided here.
+        self.keypair = keypair if keypair else SigningKey.generate()
         self.bound = warrant.bind(self.keypair)
         self.audit_log: List[AuditEntry] = []
         self.metrics = PerformanceMetrics()

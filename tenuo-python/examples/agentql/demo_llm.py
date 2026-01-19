@@ -15,6 +15,9 @@ Usage:
     python demo_llm.py                 # Run all scenarios
     python demo_llm.py --simple        # Just the quick demo
     python demo_llm.py --advanced      # Advanced scenarios only
+    python demo_llm.py --delegation    # Multi-agent delegation scenario
+    python demo_llm.py --dlp           # Data Loss Prevention scenario
+    python demo_llm.py --no-pause      # Run without pausing (good for CI)
     python demo_llm.py --anthropic     # Use Claude instead of GPT
 
 Note: This will make real API calls and cost a few cents.
@@ -138,7 +141,7 @@ async def demo_with_real_llm():
     )
 
     llm = SimpleLLMAgent(provider=provider)
-    agent = TenuoAgentQLAgent(warrant=agent_warrant)
+    agent = TenuoAgentQLAgent(warrant=agent_warrant, keypair=agent_keypair)
 
     print("\n[ACT 1] Legitimate Goal\n")
     print("🤖 User asks: 'Navigate to example.com and search for AI'")
@@ -279,7 +282,7 @@ async def scenario_indirect_injection(provider):
     )
 
     llm = SimpleLLMAgent(provider=provider, reasoning=True)
-    agent = TenuoAgentQLAgent(warrant=warrant)
+    agent = TenuoAgentQLAgent(warrant=warrant, keypair=agent_keypair)
 
     malicious_page_content = """
     <div style="border: 2px solid red; padding: 20px; background: #fee;">
@@ -340,7 +343,7 @@ async def scenario_social_engineering(provider):
     )
 
     llm = SimpleLLMAgent(provider=provider, reasoning=True)
-    agent = TenuoAgentQLAgent(warrant=warrant)
+    agent = TenuoAgentQLAgent(warrant=warrant, keypair=agent_keypair)
 
     async with agent.start_session() as session:
         page = session
@@ -419,7 +422,7 @@ async def scenario_delegation(provider):
 
     # 4. Intern Agent Execution
     llm = SimpleLLMAgent(provider=provider, reasoning=True)
-    intern_agent = TenuoAgentQLAgent(warrant=intern_warrant)
+    intern_agent = TenuoAgentQLAgent(warrant=intern_warrant, keypair=intern_key)
 
     async with intern_agent.start_session() as session:
         page = session
@@ -495,7 +498,7 @@ async def scenario_dlp(provider):
     print("   Explicitly NOT Allowed: Querying for '{ user_ssn }' or arbitrary data\n")
 
     # 3. Agent Execution
-    agent = TenuoAgentQLAgent(warrant=warrant)
+    agent = TenuoAgentQLAgent(warrant=warrant, keypair=agent_key)
 
     async with agent.start_session() as session:
         page = session
@@ -524,8 +527,9 @@ async def scenario_dlp(provider):
             await page.query_data(pii_query)
             print("  ❌ Failed: Agent was allowed to extract PII!")
         except AuthorizationDenied as e:
-            print("  🚫 Tenuo Blocked Data Exfiltration!")
-            print(f"     Reason: {format_denial_error(e)}")
+            print("  🛡️  TENUO BLOCKED DATA EXFILTRATION!")
+            print(f"     Engine: {format_denial_error(e)}")
+            print("     (Context: DLP Policy Violation - Querying PII is strictly forbidden)")
 
     print("✅ DLP SCENARIO COMPLETE\n")
 
@@ -577,6 +581,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--delegation", action="store_true")
     parser.add_argument("--dlp", action="store_true")
+    parser.add_argument("--no-pause", action="store_true", help="Run without pausing for user input")
     # partial match to avoid issues with --simple/--advanced/--anthropic
     args, _ = parser.parse_known_args()
 
@@ -588,6 +593,14 @@ if __name__ == "__main__":
     run_social = all_advanced
     run_delegation = all_advanced or args.delegation
     run_dlp = all_advanced or args.dlp
+    no_pause = args.no_pause
+
+    def maybe_pause(message="\nPress Enter for next scenario..."):
+        if not no_pause:
+            print(message)
+            input()
+        else:
+            print("\n[No-Pause Mode: Continuing automatically...]")
 
     print(f"✅ Found {key_var}")
     print("⚠️  Warning: This will make real API calls (costs a few cents)\n")
@@ -601,8 +614,7 @@ if __name__ == "__main__":
 
         if run_advanced:
             if run_simple:
-                print("\n\n" + "Press Enter for advanced scenarios...")
-                input()
+                maybe_pause("\n\nPress Enter for advanced scenarios...")
 
             print("\n" + "=" * 70)
             print("  PART 2: Advanced Attack Scenarios")
@@ -612,20 +624,17 @@ if __name__ == "__main__":
             if run_indirect:
                 asyncio.run(scenario_indirect_injection(provider))
                 if run_social or run_delegation or run_dlp:
-                    print("\n" + "Press Enter for next scenario...")
-                    input()
+                    maybe_pause()
 
             if run_social:
                 asyncio.run(scenario_social_engineering(provider))
                 if run_delegation or run_dlp:
-                    print("\n" + "Press Enter for next scenario...")
-                    input()
+                    maybe_pause()
 
             if run_delegation:
                 asyncio.run(scenario_delegation(provider))
                 if run_dlp:
-                    print("\n" + "Press Enter for next scenario...")
-                    input()
+                    maybe_pause()
 
             if run_dlp:
                 asyncio.run(scenario_dlp(provider))

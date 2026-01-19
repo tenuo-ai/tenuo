@@ -30,7 +30,7 @@ We call this the [Map vs Territory](https://niyikiza.com/posts/map-territory/) g
 | Constitutional AI | ⚠️ Medium | ⚠️ Limited | ❌ 500-2000ms | Ambiguous rules, expensive |
 | Input Validation | ⚠️ Medium | ❌ No | ✅ Low | Parser differentials, TOCTOU |
 | Sandboxing | ✅ High | ❌ No | ❌ High | Coarse-grained, no delegation |
-| **Tenuo** | ✅ High | ✅ Native | ✅ 0.004ms | — |
+| **Tenuo** | ✅ High | ✅ Native | ✅ 0.001ms (logic) / 0.027ms (crypto) | — |
 
 **Key insight:** Only cryptographic authorization provides attack resistance, delegation, AND low overhead.
 

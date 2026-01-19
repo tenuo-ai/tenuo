@@ -3,22 +3,33 @@
 Tenuo × AgentQL Integration Demo
 
 Interactive demo showing cryptographic authorization for browser agents.
-Press Enter between acts to proceed at your own pace.
+
+Usage:
+    python demo.py               # Interactive mode (default)
+    python demo.py --no-pause    # Automated mode (no waiting)
 """
 
 import asyncio
 import time
+import argparse
 from tenuo import Warrant, SigningKey, AuthorizationDenied, OneOf, Wildcard, UrlPattern
 from wrapper import TenuoAgentQLAgent, format_denial_error
+
+# Global flag for no-pause mode
+NO_PAUSE = False
 
 
 def pause_for_readability(seconds=0.5):
     """Brief pause after output for readability."""
-    time.sleep(seconds)
+    if not NO_PAUSE:
+        time.sleep(seconds)
 
 def wait_for_user(prompt="\nPress Enter to continue..."):
     """Wait for user input between major sections."""
-    input(prompt)
+    if not NO_PAUSE:
+        input(prompt)
+    else:
+        print("\n[No-Pause Mode: Continuing automatically...]")
 
 def visualize_warrant(w, show_chain=True):
     """
@@ -96,6 +107,17 @@ def main():
     print("  TENUO × AGENTQL INTEGRATION DEMO")
     print("=" * 60)
 
+    global NO_PAUSE
+    
+    # Parse arguments
+    parser = argparse.ArgumentParser(description="Tenuo x AgentQL Integration Demo")
+    parser.add_argument("--no-pause", action="store_true", help="Run without pausing for user input")
+    args = parser.parse_args()
+    NO_PAUSE = args.no_pause
+
+    if NO_PAUSE:
+        print("⚠️  Running in NO-PAUSE mode (automated execution)")
+
     # Generate demo keys
     user_keypair = SigningKey.generate()
     orchestrator_keypair = SigningKey.generate()
@@ -123,7 +145,7 @@ def main():
     print("\n[ACT 2] Authorized Actions\n")
 
     async def happy_path():
-        agent = TenuoAgentQLAgent(warrant=agent_warrant)
+        agent = TenuoAgentQLAgent(warrant=agent_warrant, keypair=orchestrator_keypair)
 
         # Use mock mode for demo (fast, reliable, no dependencies)
         async with agent.start_session(force_mock=True) as page:
@@ -162,7 +184,7 @@ def main():
     print()
 
     async def blocked_actions():
-        agent = TenuoAgentQLAgent(warrant=agent_warrant)
+        agent = TenuoAgentQLAgent(warrant=agent_warrant, keypair=orchestrator_keypair)
 
         async with agent.start_session(force_mock=True) as page:
             await page.goto("https://example.com")
@@ -199,8 +221,8 @@ def main():
     print("\n[ACT 4] Why Tenuo Is Not 'Just If-Else Statements'\n")
     print("=" * 60)
     print()
-    print("A skeptical engineer might ask:")
-    print("  'Isn't this just access control with fancy wrappers?'")
+    print("Common Question:")
+    print("  'How is this different from standard access control logic?'")
     print()
     print("NO. Tenuo uses CRYPTOGRAPHIC PROOFS, not conditional logic.")
     print("Let's prove it by showing attacks that if-else can't prevent.")
@@ -298,7 +320,7 @@ def main():
     print()
 
     async def multi_agent_demo():
-        worker = TenuoAgentQLAgent(warrant=worker_warrant)
+        worker = TenuoAgentQLAgent(warrant=worker_warrant, keypair=worker_keypair)
 
         async with worker.start_session(force_mock=True) as page:
             print("\n▶ Worker: navigate to search.example.com...")
