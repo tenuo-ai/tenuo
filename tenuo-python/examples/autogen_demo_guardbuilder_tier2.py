@@ -28,7 +28,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-import time
 from typing import Any
 
 try:

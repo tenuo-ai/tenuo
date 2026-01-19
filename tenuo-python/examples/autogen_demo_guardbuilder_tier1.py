@@ -26,7 +26,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-import time
 from typing import Any
 
 try:
@@ -96,10 +95,19 @@ async def run_demo(
                 content = r.text
                 if len(content) > 500:
                     content = content[:500] + "..."
-                return {"status": "success", "url": url, "status_code": r.status_code, "content": content}
+                return {
+                    "status": "success",
+                    "url": url,
+                    "status_code": r.status_code,
+                    "content": content,
+                }
             except Exception as e:
                 return {"status": "error", "url": url, "error": str(e)}
-        return {"status": "success", "url": url, "content": f"[Simulated paper content from {url}]"}
+        return {
+            "status": "success",
+            "url": url,
+            "content": f"[Simulated paper content from {url}]",
+        }
 
     def read_file(path: str) -> dict[str, Any]:
         if real_tools:
@@ -111,12 +119,19 @@ async def run_demo(
                 return {"status": "success", "path": path, "content": content}
             except Exception as e:
                 return {"status": "error", "path": path, "error": str(e)}
-        content = SAMPLE_PAPER_CONTENT if path == sample_path else f"[Simulated file content from {path}]"
+        content = (
+            SAMPLE_PAPER_CONTENT
+            if path == sample_path
+            else f"[Simulated file content from {path}]"
+        )
         return {"status": "success", "path": path, "content": content}
 
     guard = (
         GuardBuilder()
-        .allow("fetch_url", url=UrlSafe(allow_domains=["arxiv.org", "scholar.google.com"]))
+        .allow(
+            "fetch_url",
+            url=UrlSafe(allow_domains=["arxiv.org", "scholar.google.com"]),
+        )
         .allow("read_file", path=Subpath("/tmp/papers"))
         .build()
     )
@@ -128,7 +143,9 @@ async def run_demo(
     if not openai_api_key:
         raise RuntimeError("OPENAI_API_KEY not found in .env file")
 
-    model_client = OpenAIChatCompletionClient(model=model, api_key=openai_api_key, tool_choice="required")
+    model_client = OpenAIChatCompletionClient(
+        model=model, api_key=openai_api_key, tool_choice="required"
+    )
 
     paper_search_agent = AssistantAgent(
         "paper_search",
@@ -214,7 +231,9 @@ async def run_comparison(
     interactive: bool = True, model: str = "gpt-4o", real_tools: bool = False
 ) -> None:
     print("AUTOGEN GUARD BUILDER (TIER 1, CONSTRAINTS ONLY)")
-    print("Scenario: User -> Orchestrator -> Paper Search (fetch_url) -> Summarizer (read_file)")
+    print(
+        "Scenario: User -> Orchestrator -> Paper Search (fetch_url) -> Summarizer (read_file)"
+    )
     if interactive:
         input("Press Enter to run normal flow...\n")
     await run_demo(inject_attack=False, model=model, real_tools=real_tools)
@@ -228,16 +247,45 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="AutoGen AgentChat demo - GuardBuilder Tier 1 (constraints only)"
     )
-    parser.add_argument("command", choices=["run", "attack", "compare"], nargs="?", default="compare")
-    parser.add_argument("--non-interactive", "-n", action="store_true", help="Skip interactive prompts")
-    parser.add_argument("--real-tools", "-r", action="store_true", help="Use real HTTP/file access")
-    parser.add_argument("--model", "-m", default="gpt-4o", help="OpenAI model name")
+    parser.add_argument(
+        "command",
+        choices=["run", "attack", "compare"],
+        nargs="?",
+        default="compare",
+    )
+    parser.add_argument(
+        "--non-interactive",
+        "-n",
+        action="store_true",
+        help="Skip interactive prompts",
+    )
+    parser.add_argument(
+        "--real-tools",
+        "-r",
+        action="store_true",
+        help="Use real HTTP/file access",
+    )
+    parser.add_argument(
+        "--model", "-m", default="gpt-4o", help="OpenAI model name"
+    )
     args = parser.parse_args()
 
     if args.command == "run":
-        asyncio.run(run_demo(inject_attack=False, model=args.model, real_tools=args.real_tools))
+        asyncio.run(
+            run_demo(
+                inject_attack=False,
+                model=args.model,
+                real_tools=args.real_tools,
+            )
+        )
     elif args.command == "attack":
-        asyncio.run(run_demo(inject_attack=True, model=args.model, real_tools=args.real_tools))
+        asyncio.run(
+            run_demo(
+                inject_attack=True,
+                model=args.model,
+                real_tools=args.real_tools,
+            )
+        )
     else:
         asyncio.run(
             run_comparison(
