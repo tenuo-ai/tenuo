@@ -355,6 +355,6 @@ def __getattr__(name: str) -> Any:
 
                 _warrant_class = _Warrant
             except ImportError as e:
-                raise ImportError("tenuo_core is required for Warrant. Install with: pip install tenuo[a2a]") from e
+                raise ImportError("tenuo_core is required for Warrant. Install with: uv pip install tenuo[a2a]") from e
         return _warrant_class
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -29,7 +29,7 @@ This benchmark uses an **LLM as the attacker**:
 
 ```bash
 # Install dependencies
-pip install -r benchmarks/adversarial/requirements.txt
+uv pip install -r benchmarks/adversarial/requirements.txt
 
 # Single run (fast)
 python -m benchmarks.adversarial.evaluate

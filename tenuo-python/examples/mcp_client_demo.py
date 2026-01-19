@@ -5,7 +5,7 @@ Tenuo + MCP Full Integration Example.
 Demonstrates connecting to a real MCP server with Tenuo authorization.
 
 Prerequisites:
-    pip install "tenuo[mcp]"
+    uv pip install "tenuo[mcp]"
 
 Usage:
     # Terminal 1: Start MCP server
@@ -32,7 +32,7 @@ from tenuo.mcp import SecureMCPClient, MCP_AVAILABLE
 async def main():
     if not MCP_AVAILABLE:
         print("❌ MCP SDK not installed")
-        print('   Install with: pip install "tenuo[mcp]"')
+        print('   Install with: uv pip install "tenuo[mcp]"')
         return
 
     print("=== Tenuo + MCP Full Integration Demo ===\n")

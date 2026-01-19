@@ -233,7 +233,7 @@ class A2AClient:
             try:
                 import httpx
             except ImportError:
-                raise ImportError("httpx is required for A2A client. Install with: pip install tenuo[a2a]")
+                raise ImportError("httpx is required for A2A client. Install with: uv pip install tenuo[a2a]")
             self._client = httpx.AsyncClient(timeout=self.timeout)
         return self._client
 
@@ -417,7 +417,7 @@ class A2AClient:
                 args_cv = {k: ConstraintValue.from_any(v) for k, v in args.items()}
             except ImportError as e:
                 raise ImportError(
-                    "tenuo_core.ConstraintValue required for PoP signing. Install with: pip install tenuo[a2a]"
+                    "tenuo_core.ConstraintValue required for PoP signing. Install with: uv pip install tenuo[a2a]"
                 ) from e
 
             # Sign the request
@@ -580,7 +580,7 @@ class A2AClient:
                 args_cv = {k: ConstraintValue.from_any(v) for k, v in args.items()}
             except ImportError as e:
                 raise ImportError(
-                    "tenuo_core.ConstraintValue required for PoP signing. Install with: pip install tenuo[a2a]"
+                    "tenuo_core.ConstraintValue required for PoP signing. Install with: uv pip install tenuo[a2a]"
                 ) from e
 
             pop_signature = warrant.sign(signing_key, skill, args_cv)

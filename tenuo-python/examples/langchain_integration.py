@@ -7,7 +7,7 @@ The warrant is set in context using LangChain callbacks, and all tool
 functions are protected with @guard decorators.
 
 Requirements:
-    pip install langchain langchain-openai tenuo
+    uv pip install langchain langchain-openai tenuo
 
 Note: This example uses OpenAI, but the pattern works with any LLM provider.
 """
@@ -37,7 +37,7 @@ try:
     LANGCHAIN_AVAILABLE = True
 except ImportError:
     LANGCHAIN_AVAILABLE = False
-    print("Warning: LangChain not installed. Install with: pip install langchain langchain-openai")
+    print("Warning: LangChain not installed. Install with: uv pip install langchain langchain-openai")
     print("   This example will show the integration pattern without running the agent.\n")
 
 
@@ -265,7 +265,7 @@ def main():
     # ========================================================================
     if not LANGCHAIN_AVAILABLE:
         print("2. [SIMULATION] LangChain not installed - demonstrating pattern...")
-        print("   Install with: pip install langchain langchain-openai\n")
+        print("   Install with: uv pip install langchain langchain-openai\n")
 
         # Show how it would work
         print("   With LangChain installed, you would:")

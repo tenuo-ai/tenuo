@@ -62,14 +62,61 @@ pub const WARRANT_VERSION: u32 = 1;
 /// - **ISSUER**: Can issue execution warrants. Used by P-LLM/planner components
 ///   that decide capabilities without executing tools.
 /// - **EXECUTION**: Can invoke specific tools with specific constraints.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
 pub enum WarrantType {
-    /// Issuer warrant - can issue execution warrants.
-    Issuer,
     /// Execution warrant - can invoke tools.
-    Execution,
+    /// Wire value: 0
+    Execution = 0,
+    /// Issuer warrant - can issue execution warrants.
+    /// Wire value: 1
+    Issuer = 1,
+}
+
+impl Serialize for WarrantType {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_u8(*self as u8)
+    }
+}
+
+impl<'de> Deserialize<'de> for WarrantType {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct WarrantTypeVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for WarrantTypeVisitor {
+            type Value = WarrantType;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("integer 0 (Execution) or 1 (Issuer)")
+            }
+
+            fn visit_u8<E>(self, value: u8) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match value {
+                    0 => Ok(WarrantType::Execution),
+                    1 => Ok(WarrantType::Issuer),
+                    v => Err(E::custom(format!("invalid warrant type: {}", v))),
+                }
+            }
+
+            fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                self.visit_u8(value as u8)
+            }
+        }
+
+        deserializer.deserialize_u8(WarrantTypeVisitor)
+    }
 }
 
 /// Clearance level for warrants.
@@ -171,13 +218,20 @@ impl std::fmt::Display for Clearance {
 
 /// Size of the timestamp window for PoP signatures in seconds.
 ///
-/// The verifier accepts signatures from 4 consecutive windows (current ± 2),
-/// giving approximately 2 minutes of tolerance for clock skew.
+/// The verifier uses **bidirectional** window checking, accepting signatures from
+/// windows centered on the current time. With default settings (30s windows, 5 total),
+/// tolerance is ±60 seconds to handle clock skew in both directions.
 ///
 /// **Security trade-off**: Larger windows tolerate more clock skew but increase
 /// the replay window. Smaller windows reduce replay risk but may cause false
 /// rejections in distributed systems.
 pub const POP_TIMESTAMP_WINDOW_SECS: i64 = 30;
+
+/// Default number of PoP windows to check (bidirectional).
+///
+/// With 5 windows and 30s window size, the check pattern is:
+/// `[0, -1, +1, -2, +2]` → current time ±60s tolerance.
+pub const POP_MAX_WINDOWS: u32 = 5;
 
 use crate::domain::POP_CONTEXT;
 
@@ -816,7 +870,13 @@ impl Warrant {
         };
 
         // Check Proof-of-Possession (mandatory)
-        self.verify_pop(tool, args, signature, POP_TIMESTAMP_WINDOW_SECS, 4)?;
+        self.verify_pop(
+            tool,
+            args,
+            signature,
+            POP_TIMESTAMP_WINDOW_SECS,
+            POP_MAX_WINDOWS,
+        )?;
 
         // Check constraints
         constraints.matches(args)
@@ -881,6 +941,13 @@ impl Warrant {
     }
 
     /// Verify PoP signature with configurable window.
+    ///
+    /// Uses **bidirectional** window checking to handle clock skew in both directions:
+    /// - If holder's clock is behind verifier's → signature is in a "past" window
+    /// - If holder's clock is ahead of verifier's → signature is in a "future" window
+    ///
+    /// The `max_windows` parameter controls total windows checked (centered on current time).
+    /// With `max_windows = 5` and `window_secs = 30`, we check: -60s, -30s, 0s, +30s, +60s.
     pub fn verify_pop(
         &self,
         tool: &str,
@@ -898,9 +965,32 @@ impl Warrant {
         sorted_args.sort_by_key(|(k, _)| *k);
 
         let mut verified = false;
+
+        // Bidirectional window checking: check current window first, then alternate
+        // between past and future windows. This handles clock skew in both directions.
+        //
+        // With max_windows=5: offsets are [0, -1, +1, -2, +2] → checks ±60s with 30s windows
+        // With max_windows=4: offsets are [0, -1, +1, -2]    → checks -60s to +30s
+        let half = (max_windows / 2) as i64;
         for i in 0..max_windows {
-            // Try current and recent time windows
-            let window_ts = (now / window_secs - i as i64) * window_secs;
+            // Generate offset: 0, -1, +1, -2, +2, -3, +3, ...
+            let offset = if i == 0 {
+                0
+            } else {
+                let abs_offset = i.div_ceil(2) as i64;
+                if i % 2 == 1 {
+                    -abs_offset // Odd indices: past windows
+                } else {
+                    abs_offset // Even indices: future windows
+                }
+            };
+
+            // Skip if offset exceeds our intended range (for asymmetric max_windows)
+            if offset.abs() > half {
+                continue;
+            }
+
+            let window_ts = (now / window_secs + offset) * window_secs;
             let challenge_data = (self.payload.id.to_hex(), tool, &sorted_args, window_ts);
             let mut challenge_bytes = Vec::new();
             if ciborium::ser::into_writer(&challenge_data, &mut challenge_bytes).is_err() {

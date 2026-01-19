@@ -14,8 +14,8 @@ Run:
     python map_vs_territory.py --inject --auto  # Non-interactive (for recording)
     python map_vs_territory.py --openai     # Real LLM demo (requires API key)
 
-Requires: pip install tenuo path-jail url-jail proc-jail
-For --openai: pip install openai tenuo
+Requires: uv pip install tenuo path-jail url-jail proc-jail
+For --openai: uv pip install openai tenuo
 """
 
 import argparse
@@ -128,7 +128,7 @@ def summary(text: str):
 
 
 def not_installed(lib: str):
-    print(f"  {Colors.GRAY}[SKIPPED]{Colors.RESET} {lib} not installed (pip install {lib})")
+    print(f"  {Colors.GRAY}[SKIPPED]{Colors.RESET} {lib} not installed (uv pip install {lib})")
 
 
 # ============================================================================
@@ -615,7 +615,7 @@ def demo_openai():
         print(f"  {Colors.RED}Missing dependencies for --openai mode{Colors.RESET}")
         print()
         print("  Install with:")
-        print("    pip install openai tenuo")
+        print("    uv pip install openai tenuo")
         print()
         print("  Then set your API key:")
         print("    export OPENAI_API_KEY=sk-...")
@@ -1073,22 +1073,22 @@ def check_dependencies():
     if HAS_TENUO:
         print(f"    {Colors.GREEN}✓{Colors.RESET} tenuo (Layer 1.5)")
     else:
-        print(f"    {Colors.RED}✗{Colors.RESET} tenuo — pip install tenuo")
+        print(f"    {Colors.RED}✗{Colors.RESET} tenuo — uv pip install tenuo")
 
     if HAS_PATH_JAIL:
         print(f"    {Colors.GREEN}✓{Colors.RESET} path-jail (Layer 2)")
     else:
-        print(f"    {Colors.RED}✗{Colors.RESET} path-jail — pip install path-jail")
+        print(f"    {Colors.RED}✗{Colors.RESET} path-jail — uv pip install path-jail")
 
     if HAS_URL_JAIL:
         print(f"    {Colors.GREEN}✓{Colors.RESET} url-jail (Layer 2)")
     else:
-        print(f"    {Colors.RED}✗{Colors.RESET} url-jail — pip install url-jail")
+        print(f"    {Colors.RED}✗{Colors.RESET} url-jail — uv pip install url-jail")
 
     if HAS_PROC_JAIL:
         print(f"    {Colors.GREEN}✓{Colors.RESET} proc-jail (Layer 2)")
     else:
-        print(f"    {Colors.RED}✗{Colors.RESET} proc-jail — pip install proc-jail")
+        print(f"    {Colors.RED}✗{Colors.RESET} proc-jail — uv pip install proc-jail")
 
     print()
 

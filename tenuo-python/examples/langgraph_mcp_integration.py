@@ -9,7 +9,7 @@ This example demonstrates a secure multi-agent graph where:
 4. All tool calls are cryptographically authorized and constrained.
 
 Prerequisites:
-    pip install "tenuo[langgraph,mcp]"
+    uv pip install "tenuo[langgraph,mcp]"
 """
 
 import asyncio
@@ -22,7 +22,7 @@ try:
     from tenuo.mcp import SecureMCPClient, MCP_AVAILABLE
     from tenuo import SigningKey, configure, mint, Pattern, Capability
 except ImportError:
-    print('❌ Prerequisites not met. Install with: pip install "tenuo[langgraph,mcp]"')
+    print('❌ Prerequisites not met. Install with: uv pip install "tenuo[langgraph,mcp]"')
     import sys
 
     sys.exit(1)

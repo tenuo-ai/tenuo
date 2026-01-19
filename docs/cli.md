@@ -14,7 +14,7 @@ Developer utilities for inspecting warrants, analyzing logs, and initializing pr
 The CLI is included with the Python package:
 
 ```bash
-pip install tenuo
+uv pip install tenuo
 ```
 
 After installation, the `tenuo` command is available:

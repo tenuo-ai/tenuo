@@ -143,7 +143,8 @@ jobs:
       - name: Install Tenuo and dependencies
         working-directory: tenuo-python
         run: |
-          pip install maturin
+          pip install uv
+          uv pip install --system maturin
           echo "=== Building wheel ==="
           maturin build --release
           echo "=== Wheel files ==="
@@ -151,18 +152,18 @@ jobs:
           echo "=== Wheel contents ==="
           python -c "import zipfile; z=zipfile.ZipFile(list(__import__('pathlib').Path('target/wheels').glob('*.whl'))[0]); print('\n'.join(z.namelist()[:30]))"
           echo "=== Installing wheel ==="
-          pip install target/wheels/*.whl
+          uv pip install --system target/wheels/*.whl
           echo "=== Pip show tenuo ==="
-          pip show tenuo || echo "tenuo not found in pip"
+          uv pip show tenuo || echo "tenuo not found in pip"
           echo "=== Site packages ==="
           ls -la $(python -c "import site; print(site.getsitepackages()[0])") | head -20
           echo "=== Installing other deps ==="
-          pip install pytest pytest-asyncio ruff mypy
-          pip install langchain langchain-core langchain-openai langgraph
-          pip install fastapi uvicorn pydantic PyYAML
-          pip install types-PyYAML types-requests
+          uv pip install --system pytest pytest-asyncio ruff mypy
+          uv pip install --system langchain langchain-core langchain-openai langgraph
+          uv pip install --system fastapi uvicorn pydantic PyYAML
+          uv pip install --system types-PyYAML types-requests
           # MCP SDK requires Python 3.10+
-          python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && pip install mcp || echo "Skipping MCP (requires Python 3.10+)"
+          python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && uv pip install --system mcp || echo "Skipping MCP (requires Python 3.10+)"
 
       - name: Verify import
         run: |
@@ -216,9 +217,10 @@ jobs:
       - name: Install Tenuo
         working-directory: tenuo-python
         run: |
-          pip install maturin
+          pip install uv
+          uv pip install --system maturin
           maturin build --release
-          pip install target/wheels/*.whl
+          uv pip install --system target/wheels/*.whl
 
       - name: Verify import
         run: |
@@ -227,11 +229,11 @@ jobs:
 
       - name: Install LangChain ${{ matrix.langchain-version }}
         run: |
-          pip install pytest pytest-asyncio pydantic PyYAML
+          uv pip install --system pytest pytest-asyncio pydantic PyYAML
           if [ "${{ matrix.langchain-version }}" = "latest" ]; then
-            pip install langchain langchain-core langchain-openai langgraph
+            uv pip install --system langchain langchain-core langchain-openai langgraph
           else
-            pip install langchain-core==${{ matrix.langchain-version }}
+            uv pip install --system langchain-core==${{ matrix.langchain-version }}
           fi
 
       - name: Test LangChain integration
@@ -331,11 +333,12 @@ jobs:
       - name: Install Tenuo and dependencies
         working-directory: tenuo-python
         run: |
-          pip install maturin
+          pip install uv
+          uv pip install --system maturin
           maturin build --release
-          pip install target/wheels/*.whl
-          pip install langchain langchain-core langgraph fastapi httpx pydantic PyYAML
-          pip install nbmake pytest ipykernel
+          uv pip install --system target/wheels/*.whl
+          uv pip install --system langchain langchain-core langgraph fastapi httpx pydantic PyYAML
+          uv pip install --system nbmake pytest ipykernel
 
       - name: Test Notebooks
         run: |
@@ -541,10 +544,11 @@ jobs:
       - name: Install Tenuo and test dependencies
         working-directory: tenuo-python
         run: |
-          pip install maturin pytest pytest-cov pytest-asyncio
-          pip install langchain langchain-core langgraph fastapi pydantic PyYAML
+          pip install uv
+          uv pip install --system maturin pytest pytest-cov pytest-asyncio
+          uv pip install --system langchain langchain-core langgraph fastapi pydantic PyYAML
           maturin build --release
-          pip install target/wheels/*.whl
+          uv pip install --system target/wheels/*.whl
 
       - name: Python coverage
         working-directory: tenuo-python
@@ -657,13 +661,14 @@ jobs:
       - name: Install Tenuo
         working-directory: tenuo-python
         run: |
-          pip install maturin
+          pip install uv
+          uv pip install --system maturin
           maturin build --release
-          pip install target/wheels/*.whl
+          uv pip install --system target/wheels/*.whl
 
       - name: Install benchmark dependencies
         run: |
-          pip install -r benchmarks/agentdojo/requirements.txt
+          uv pip install --system -r benchmarks/agentdojo/requirements.txt
 
       - name: Validate benchmark imports
         run: |

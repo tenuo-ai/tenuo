@@ -355,7 +355,7 @@ def tenant_aware_node(state, bound_warrant):
 
 ## Error Handling
 
-Authorization errors return `ToolMessage` with `status="error"`:
+Authorization errors return `ToolMessage` with `status="error"` and canonical wire codes:
 
 ```python
 # TenuoToolNode returns error messages, not exceptions
@@ -365,15 +365,41 @@ for msg in result["messages"]:
     if hasattr(msg, "status") and msg.status == "error":
         print(f"Authorization denied: {msg.content}")
         # Content includes request_id for log correlation
+        # Parse wire code from content if needed for programmatic handling
+```
+
+### Wire Code Support
+
+For direct exception handling in nodes (using `@authorize_node`), all `TenuoError` exceptions include canonical wire codes:
+
+```python
+from tenuo.exceptions import TenuoError, ConstraintViolation
+
+@authorize_node(tool="transfer_funds")
+def transfer(state: State):
+    # Raises ConstraintViolation, ExpiredError, etc.
+    # These include wire codes:
+    pass
+
+try:
+    result = transfer(state)
+except ConstraintViolation as e:
+    print(f"Wire code: {e.get_wire_code()}")  # 1501
+    print(f"Wire name: {e.get_wire_name()}")  # "constraint-violation"
+    print(f"HTTP status: {e.get_http_status()}")  # 403
 ```
 
 ### Common Errors
 
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `State is missing 'warrant' field` | No warrant in state | Add warrant to state: `{"warrant": str(warrant), ...}` |
-| `Key 'worker' not found` | Key not registered | Register key or use `load_tenuo_keys()` |
-| `Authorization denied` | Warrant doesn't allow action | Check warrant constraints with `why_denied()` |
+| Error | Wire Code | Cause | Fix |
+|-------|-----------|-------|-----|
+| `ConfigurationError` | 1201 | Missing 'warrant' field in state | Add warrant to state: `{"warrant": str(warrant), ...}` |
+| `ConfigurationError` | 1201 | Key not registered | Register key or use `load_tenuo_keys()` |
+| `ToolNotAuthorized` | 1500 | Tool not in warrant | Check warrant constraints with `why_denied()` |
+| `ConstraintViolation` | 1501 | Argument violates constraint | Request within bounds |
+| `ExpiredError` | 1300 | TTL exceeded | Request fresh warrant |
+
+See [wire format specification](/docs/spec/wire-format-v1#appendix-a-error-codes) for the complete list.
 
 ---
 

@@ -15,7 +15,7 @@ try:
     from mcp.server.stdio import stdio_server
     from mcp.types import Tool, TextContent
 except ImportError:
-    print("MCP SDK not installed. Install with: pip install mcp", file=sys.stderr)
+    print("MCP SDK not installed. Install with: uv pip install mcp", file=sys.stderr)
     sys.exit(1)
 
 

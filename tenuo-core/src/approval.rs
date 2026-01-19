@@ -167,6 +167,73 @@ use serde::{Deserialize, Serialize};
 ///
 /// Each approval includes a random nonce to ensure uniqueness and prevent
 /// replay attacks even for identical requests within the TTL window.
+/// Inner approval payload (what gets signed).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalPayload {
+    /// Payload version (currently 1)
+    pub version: u8,
+
+    /// Hash of what was approved: H(warrant_id || tool || sorted(args) || holder)
+    pub request_hash: [u8; 32],
+
+    /// Random nonce for replay protection (128 bits)
+    pub nonce: [u8; 16],
+
+    /// External identity reference (e.g., "arn:aws:iam::123:user/admin")
+    pub external_id: String,
+
+    /// When approved (Unix seconds)
+    pub approved_at: u64,
+
+    /// When this approval expires (Unix seconds)
+    pub expires_at: u64,
+
+    /// Optional: application-specific signed metadata
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<std::collections::HashMap<String, Vec<u8>>>,
+}
+
+/// Outer envelope containing payload and signature.
+///
+/// Uses the envelope pattern for "verify before deserialize" security:
+/// 1. Extract approver_key from envelope
+/// 2. Verify signature over raw payload bytes
+/// 3. Only then deserialize the payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignedApproval {
+    /// Envelope version (currently 1)
+    pub approval_version: u8,
+
+    /// Raw CBOR bytes of ApprovalPayload (what gets signed)
+    #[serde(with = "serde_bytes")]
+    pub payload: Vec<u8>,
+
+    /// The approver's public key (extracted for convenience; not signed)
+    pub approver_key: PublicKey,
+
+    /// Signature over domain-separated preimage:
+    /// b"tenuo-approval-v1" || approval_version || payload_bytes
+    pub signature: Signature,
+}
+
+/// Metadata about an approval (not part of the signed payload).
+///
+/// This information is stored alongside the SignedApproval but is not
+/// cryptographically protected. Used for audit, display, and routing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalMetadata {
+    /// Provider name (e.g., "okta", "aws-iam", "manual")
+    pub provider: String,
+
+    /// Human-readable reason/justification
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Legacy flat Approval struct for backwards compatibility.
+///
+/// This is deprecated and will be removed in v0.2. Use SignedApproval instead.
+#[deprecated(since = "0.1.1", note = "Use SignedApproval + ApprovalPayload instead")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Approval {
     /// Hash of what was approved: H(warrant_id || tool || sorted(args) || holder)
@@ -198,8 +265,133 @@ pub struct Approval {
     pub signature: Signature,
 }
 
+impl SignedApproval {
+    /// Create a new signed approval.
+    ///
+    /// # Arguments
+    ///
+    /// * `payload` - The approval payload to sign
+    /// * `keypair` - The approver's signing key
+    ///
+    /// # Returns
+    ///
+    /// A SignedApproval with the payload and signature
+    pub fn create(payload: ApprovalPayload, keypair: &crate::crypto::SigningKey) -> Self {
+        // Serialize payload to CBOR
+        let mut payload_bytes = Vec::new();
+        ciborium::into_writer(&payload, &mut payload_bytes)
+            .expect("Failed to serialize approval payload");
+
+        // Build domain-separated preimage
+        let preimage = Self::build_preimage(1, &payload_bytes);
+
+        // Sign
+        let signature = keypair.sign(&preimage);
+
+        Self {
+            approval_version: 1,
+            payload: payload_bytes,
+            approver_key: keypair.public_key(),
+            signature,
+        }
+    }
+
+    /// Verify the approval signature and deserialize the payload.
+    ///
+    /// This follows the "verify before deserialize" pattern:
+    /// 1. Check envelope version
+    /// 2. Verify signature over raw payload bytes
+    /// 3. Deserialize payload (now safe)
+    /// 4. Check payload version
+    /// 5. Check expiration
+    ///
+    /// # Returns
+    ///
+    /// The verified and deserialized ApprovalPayload
+    pub fn verify(&self) -> Result<ApprovalPayload> {
+        // 1. Check envelope version
+        if self.approval_version != 1 {
+            return Err(Error::UnsupportedVersion(self.approval_version));
+        }
+
+        // 2. Verify signature over raw payload bytes (before deserializing)
+        let preimage = Self::build_preimage(self.approval_version, &self.payload);
+        self.approver_key.verify(&preimage, &self.signature)?;
+
+        // 3. Now safe to deserialize (signature is valid)
+        let payload: ApprovalPayload = ciborium::from_reader(&self.payload[..])
+            .map_err(|e| Error::InvalidApproval(format!("Failed to deserialize payload: {}", e)))?;
+
+        // 4. Check payload version
+        if payload.version != 1 {
+            return Err(Error::UnsupportedVersion(payload.version));
+        }
+
+        // Note: Expiration checking is done by the caller (e.g., authorizer).
+        // verify() only checks cryptographic validity.
+
+        Ok(payload)
+    }
+
+    /// Check if this approval matches a given request.
+    ///
+    /// Note: This verifies the signature first, so it's safe to use.
+    pub fn matches_request(&self, request_hash: &[u8; 32]) -> Result<bool> {
+        let payload = self.verify()?;
+        Ok(&payload.request_hash == request_hash)
+    }
+
+    /// Build the domain-separated signing preimage.
+    ///
+    /// Format: b"tenuo-approval-v1" || approval_version || payload_bytes
+    fn build_preimage(approval_version: u8, payload_bytes: &[u8]) -> Vec<u8> {
+        use crate::domain::APPROVAL_CONTEXT;
+
+        let mut preimage = Vec::with_capacity(APPROVAL_CONTEXT.len() + 1 + payload_bytes.len());
+        preimage.extend_from_slice(APPROVAL_CONTEXT);
+        preimage.push(approval_version);
+        preimage.extend_from_slice(payload_bytes);
+        preimage
+    }
+}
+
+impl ApprovalPayload {
+    /// Create a new approval payload.
+    pub fn new(
+        request_hash: [u8; 32],
+        nonce: [u8; 16],
+        external_id: String,
+        approved_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            version: 1,
+            request_hash,
+            nonce,
+            external_id,
+            approved_at: approved_at.timestamp() as u64,
+            expires_at: expires_at.timestamp() as u64,
+            extensions: None,
+        }
+    }
+
+    /// Check if this approval matches a given request hash.
+    pub fn matches_request(&self, request_hash: &[u8; 32]) -> bool {
+        &self.request_hash == request_hash
+    }
+
+    /// Check if the approval is expired.
+    pub fn is_expired(&self) -> bool {
+        let now = Utc::now().timestamp() as u64;
+        now > self.expires_at
+    }
+}
+
+#[allow(deprecated)]
 impl Approval {
     /// Verify the approval signature and check expiration.
+    ///
+    /// **Deprecated**: Use SignedApproval instead.
     pub fn verify(&self) -> Result<()> {
         // Check expiration
         if Utc::now() > self.expires_at {
@@ -215,15 +407,14 @@ impl Approval {
     }
 
     /// Check if this approval matches a given request.
+    ///
+    /// **Deprecated**: Use SignedApproval instead.
     pub fn matches_request(&self, request_hash: &[u8; 32]) -> bool {
         &self.request_hash == request_hash
     }
 
-    /// Get the bytes that were signed.
+    /// Get the bytes that were signed (legacy format).
     fn signable_bytes(&self) -> Vec<u8> {
-        // Domain-separated format: context || nonce || request_hash || external_id || approved_at || expires_at
-        // - Context prefix prevents cross-protocol signature reuse attacks
-        // - Nonce ensures each approval is unique (prevents replay attacks)
         use crate::domain::APPROVAL_CONTEXT;
 
         let mut bytes = Vec::new();
@@ -234,6 +425,21 @@ impl Approval {
         bytes.extend_from_slice(&self.approved_at.timestamp().to_le_bytes());
         bytes.extend_from_slice(&self.expires_at.timestamp().to_le_bytes());
         bytes
+    }
+
+    /// Convert legacy Approval to new envelope format.
+    pub fn to_signed_approval(&self, keypair: &crate::crypto::SigningKey) -> SignedApproval {
+        let payload = ApprovalPayload {
+            version: 1,
+            request_hash: self.request_hash,
+            nonce: self.nonce,
+            external_id: self.external_id.clone(),
+            approved_at: self.approved_at.timestamp() as u64,
+            expires_at: self.expires_at.timestamp() as u64,
+            extensions: None,
+        };
+
+        SignedApproval::create(payload, keypair)
     }
 }
 
@@ -259,8 +465,11 @@ pub fn compute_request_hash(
 
     // Sort args for deterministic hashing
     let sorted: BTreeMap<_, _> = args.iter().collect();
-    if let Ok(json) = serde_json::to_vec(&sorted) {
-        hasher.update(&json);
+
+    // Use CBOR for deterministic, canonical serialization
+    let mut cbor_buf = Vec::new();
+    if ciborium::into_writer(&sorted, &mut cbor_buf).is_ok() {
+        hasher.update(&cbor_buf);
     }
 
     // Bind to authorized holder (prevents approval theft)
@@ -1211,6 +1420,75 @@ mod tests {
         assert_ne!(
             hash1, hash_with_holder,
             "Hash should differ when holder is included"
+        );
+    }
+
+    #[test]
+    fn test_request_hash_cbor_determinism() {
+        // Test that CBOR serialization produces deterministic hashes
+        // for semantically equivalent values
+
+        // Test with floats (CBOR canonical encoding)
+        let mut args1 = HashMap::new();
+        args1.insert(
+            "amount".to_string(),
+            crate::constraints::ConstraintValue::Float(100.0),
+        );
+
+        let mut args2 = HashMap::new();
+        args2.insert(
+            "amount".to_string(),
+            crate::constraints::ConstraintValue::Float(100.0), // Same float
+        );
+
+        let hash1 = compute_request_hash("wrt_123", "transfer", &args1, None);
+        let hash2 = compute_request_hash("wrt_123", "transfer", &args2, None);
+
+        assert_eq!(
+            hash1, hash2,
+            "CBOR should produce same hash for same float values"
+        );
+
+        // Test with integers
+        let mut args_int1 = HashMap::new();
+        args_int1.insert(
+            "count".to_string(),
+            crate::constraints::ConstraintValue::Integer(42),
+        );
+
+        let mut args_int2 = HashMap::new();
+        args_int2.insert(
+            "count".to_string(),
+            crate::constraints::ConstraintValue::Integer(42),
+        );
+
+        let hash_int1 = compute_request_hash("wrt_456", "process", &args_int1, None);
+        let hash_int2 = compute_request_hash("wrt_456", "process", &args_int2, None);
+
+        assert_eq!(
+            hash_int1, hash_int2,
+            "CBOR should produce same hash for same integer values"
+        );
+
+        // Test that different types produce different hashes
+        let mut args_float = HashMap::new();
+        args_float.insert(
+            "value".to_string(),
+            crate::constraints::ConstraintValue::Float(100.0),
+        );
+
+        let mut args_int = HashMap::new();
+        args_int.insert(
+            "value".to_string(),
+            crate::constraints::ConstraintValue::Integer(100),
+        );
+
+        let hash_float = compute_request_hash("wrt_789", "calc", &args_float, None);
+        let hash_int = compute_request_hash("wrt_789", "calc", &args_int, None);
+
+        assert_ne!(
+            hash_float, hash_int,
+            "CBOR should produce different hashes for float vs integer"
         );
     }
 

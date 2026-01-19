@@ -6,7 +6,7 @@ This example demonstrates how to use Tenuo guardrails with the OpenAI Agents SDK
 to protect multi-agent workflows from prompt injection and unauthorized tool use.
 
 Requirements:
-    pip install openai-agents tenuo
+    uv pip install openai-agents tenuo
 
 Two tiers of protection:
     - Tier 1: Runtime constraint checking (no cryptography)
@@ -24,7 +24,7 @@ try:
 except ImportError:
     AGENTS_SDK_AVAILABLE = False
     print("Note: openai-agents not installed. Running in demo mode.")
-    print("Install with: pip install openai-agents")
+    print("Install with: uv pip install openai-agents")
     print()
 
 from tenuo.openai import (
@@ -226,7 +226,7 @@ def demo_agents_sdk_integration():
         print("Skipping: openai-agents not installed")
         print()
         print("To run this demo:")
-        print("  1. pip install openai-agents")
+        print("  1. uv pip install openai-agents")
         print("  2. export OPENAI_API_KEY=your-key")
         print("  3. python openai_agents_sdk.py")
         print()

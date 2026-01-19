@@ -733,11 +733,12 @@ async fn handle_request(
             );
 
             // Build response with sanitized error (no internal details)
-            let (error_code, safe_message) = sanitize_error(&e);
+            let (error_code, error_name, safe_message) = sanitize_error(&e);
 
             let mut body = json!({
                 "authorized": false,
-                "error": error_code,
+                "error": error_name,        // String name for backwards compatibility
+                "error_code": error_code,   // Canonical numeric code (new)
                 "message": safe_message,
                 "warrant_id": warrant_id,
                 "tool": extraction_result.tool,
@@ -859,36 +860,16 @@ fn parse_deny_reason(
 }
 
 /// Sanitize error for external API response.
+///
+/// Returns (error_code, error_name, message) using canonical error codes
+/// from the wire format spec (§Appendix A).
+///
 /// Maps internal errors to generic codes without leaking implementation details.
-fn sanitize_error(error: &tenuo::Error) -> (&'static str, &'static str) {
-    use tenuo::Error;
+fn sanitize_error(error: &tenuo::Error) -> (u16, &'static str, &'static str) {
+    let error_code = error.code();
+    let name = error_code.name();
+    let description = error_code.description();
 
-    match error {
-        // Constraint violations - safe to expose field name
-        Error::ConstraintNotSatisfied { .. } => (
-            "constraint_violation",
-            "Request does not satisfy warrant constraints",
-        ),
-        // Expiration - safe to expose
-        Error::WarrantExpired(_) => ("warrant_expired", "Warrant has expired"),
-        // Revocation - safe to expose
-        Error::WarrantRevoked(_) => ("warrant_revoked", "Warrant has been revoked"),
-        // PoP failures - generic message, don't reveal signature details
-        Error::SignatureInvalid(_) => (
-            "invalid_signature",
-            "Proof-of-possession signature is invalid or expired",
-        ),
-        Error::MissingSignature(_) => (
-            "missing_signature",
-            "Proof-of-possession signature is required",
-        ),
-        // Chain verification - generic message
-        Error::ChainVerificationFailed(_) => ("invalid_chain", "Warrant chain verification failed"),
-        // Depth exceeded - safe to expose
-        Error::DepthExceeded(_, _) => ("depth_exceeded", "Delegation depth limit exceeded"),
-        // Generic unauthorized
-        Error::Unauthorized(_) => ("unauthorized", "Authorization denied"),
-        // All other errors - generic message to avoid leaking internals
-        _ => ("authorization_failed", "Authorization check failed"),
-    }
+    // Return canonical code, kebab-case name, and description
+    (error_code.code(), name, description)
 }

@@ -179,7 +179,7 @@ class DistributedDemo:
             return
 
         if not A2A_AVAILABLE:
-            info("A2A not available - install with: pip install tenuo[a2a]")
+            info("A2A not available - install with: uv pip install tenuo[a2a]")
             info("Falling back to simulation mode")
             self.spawn_services = False
             return

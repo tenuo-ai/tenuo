@@ -36,15 +36,15 @@ Tenuo adds a **delegation layer** on top of your existing IAM. It tracks *who* d
 ## Installation
 
 ```bash
-pip install tenuo
+uv pip install tenuo
 ```
 
 **With framework support:**
 ```bash
 pip install "tenuo[autogen]"     # AutoGen (AgentChat) integration (Python >= 3.10)
-pip install "tenuo[langchain]"   # LangChain integration
-pip install "tenuo[langgraph]"   # LangGraph integration (includes LangChain)
-pip install "tenuo[fastapi]"     # FastAPI integration
+uv pip install "tenuo[langchain]"   # LangChain integration
+uv pip install "tenuo[langgraph]"   # LangGraph integration (includes LangChain)
+uv pip install "tenuo[fastapi]"     # FastAPI integration
 ```
 
 > **Note:** Quotes are required in zsh (default macOS shell) since `[]` are glob characters.

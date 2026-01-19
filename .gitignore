@@ -77,3 +77,7 @@ docs/reference/
 docs/vendor/
 docs/explorer/
 tenuo-python/tenuo/openai-adapter-spec-v2.2.md
+tenuo-python/examples/agentql-demo-spec.md
+
+# Claude IDE settings
+.claude/

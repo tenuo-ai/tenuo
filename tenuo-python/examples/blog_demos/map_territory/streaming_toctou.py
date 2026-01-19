@@ -451,7 +451,7 @@ def demo_race(wait=None):
     print(f"    {Colors.CYAN}Layer 1.5:{Colors.RESET} Catches ../encoding/../tricks before they reach tools")
     print(f"    {Colors.CYAN}Layer 2:{Colors.RESET}   Catches TOCTOU races at execution time")
     print()
-    print(f"  {Colors.GRAY}# Install: pip install tenuo path_jail{Colors.RESET}")
+    print(f"  {Colors.GRAY}# Install: uv pip install tenuo path_jail{Colors.RESET}")
     print(f"  {Colors.GRAY}# Docs: https://github.com/tenuo-ai/path-jail-python{Colors.RESET}")
     print()
 

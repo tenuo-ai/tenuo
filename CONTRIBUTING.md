@@ -8,7 +8,7 @@ Thank you for your interest in contributing to Tenuo! We welcome contributions f
 
 - **Rust**: Latest stable version (install via [rustup](https://rustup.rs/))
 - **Python**: 3.9 or higher
-- **maturin**: For building Python bindings (`pip install maturin`)
+- **maturin**: For building Python bindings (`uv pip install maturin`)
 
 ### Setting up the Environment
 
@@ -22,9 +22,9 @@ Thank you for your interest in contributing to Tenuo! We welcome contributions f
     ```bash
     python3 -m venv .venv
     source .venv/bin/activate
-    pip install --upgrade pip
-    cd tenuo-python
-    pip install -e ".[dev]"
+    # Install uv (fast package installer)
+    pip install uv
+    uv pip install -e ".[dev]"
     ```
 
 3.  Build the project:

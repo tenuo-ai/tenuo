@@ -23,7 +23,7 @@ Tenuo integrates with LangChain using a **zero-intrusion** pattern:
 ## Installation
 
 ```bash
-pip install "tenuo[langchain]"
+uv pip install "tenuo[langchain]"
 ```
 
 ---
@@ -287,24 +287,62 @@ with bound:
 
 ## Error Handling
 
+LangChain integration uses typed `TenuoError` exceptions with canonical wire codes:
+
 ```python
-from tenuo.exceptions import AuthorizationDenied
+from tenuo.exceptions import (
+    TenuoError,
+    ToolNotAuthorized,
+    ConstraintViolation,
+    ExpiredError,
+)
 
 try:
     result = protected_tool(path="/etc/passwd")
-except AuthorizationDenied as e:
-    print(f"Denied: {e}")
-    # Use why_denied() for details (internal logging only)
+except ConstraintViolation as e:
+    print(f"Constraint failed: {e}")
+    print(f"Wire code: {e.get_wire_code()}")  # 1501
+    print(f"Wire name: {e.get_wire_name()}")  # "constraint-violation"
+    print(f"HTTP status: {e.get_http_status()}")  # 403
+except ExpiredError as e:
+    print(f"Warrant expired: {e}")
+    print(f"Wire code: {e.get_wire_code()}")  # 1300
+except TenuoError as e:
+    # Catch-all for any Tenuo error
+    print(f"Authorization failed: {e}")
+    print(f"Error details: {e.to_dict()}")
+```
+
+### Wire Code Support
+
+All exceptions include canonical wire codes (1000-2199) for machine-readable error handling:
+
+```python
+try:
+    protected_tool(amount=5000)
+except TenuoError as e:
+    error_dict = e.to_dict()
+    # {
+    #   "error_code": "constraint_violation",  # Legacy snake_case
+    #   "wire_code": 1501,                     # Canonical numeric code
+    #   "wire_name": "constraint-violation",   # Canonical kebab-case
+    #   "message": "...",
+    #   "details": {...}
+    # }
 ```
 
 ### Common Errors
 
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `Tool 'x' not authorized` | Tool not in warrant | Add tool to warrant |
-| `Constraint failed` | Argument violates constraint | Request within bounds |
-| `No warrant in context` | Missing context | Use `warrant_scope()` or pass to `guard()` |
-| `Warrant expired` | TTL exceeded | Request fresh warrant |
+| Error | Wire Code | Cause | Fix |
+|-------|-----------|-------|-----|
+| `ToolNotAuthorized` | 1500 | Tool not in warrant | Add tool to warrant |
+| `ConstraintViolation` | 1501 | Argument violates constraint | Request within bounds |
+| `ConfigurationError` | 1201 | Missing context/warrant | Use `warrant_scope()` or pass to `guard()` |
+| `ExpiredError` | 1300 | TTL exceeded | Request fresh warrant |
+| `SignatureInvalid` | 1100 | Bad PoP signature | Check signing key |
+| `RevokedError` | 1800 | Warrant revoked | Request new warrant |
+
+See [wire format specification](/docs/spec/wire-format-v1#appendix-a-error-codes) for the complete list.
 
 ---
 

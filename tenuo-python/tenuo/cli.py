@@ -393,7 +393,7 @@ def print_warrant_stack(warrants) -> None:
         print()
 
     print(f"Active warrant: {warrants[-1].id[:16]}...")
-    print("\n(Tip: Install 'rich' for a nicer visualization: pip install rich)")
+    print("\n(Tip: Install 'rich' for a nicer visualization: uv pip install rich)")
 
 
 def print_rich_warrant_stack(warrants) -> bool:
@@ -485,7 +485,7 @@ def inspect_warrant(warrant_str: str) -> None:
             print("Explanation:")
             print(warrant.explain(include_chain=True))
 
-        print("\n(Tip: Install 'rich' for a nicer visualization: pip install rich)")
+        print("\n(Tip: Install 'rich' for a nicer visualization: uv pip install rich)")
 
     except Exception as e:
         print(f"Error inspecting warrant: {e}")
@@ -812,21 +812,21 @@ def doctor(verbose: bool = False) -> None:
         except ImportError:
             print("     └─ GuardBuilder not available")
     except ImportError:
-        print("  ⚠️  OpenAI: not installed (pip install openai)")
+        print("  ⚠️  OpenAI: not installed (uv pip install openai)")
 
     try:
         import langchain  # type: ignore[import-not-found]
 
         print(f"  ✅ LangChain: v{langchain.__version__}")
     except ImportError:
-        print("  ⚠️  LangChain: not installed (pip install langchain)")
+        print("  ⚠️  LangChain: not installed (uv pip install langchain)")
 
     try:
         import anthropic  # type: ignore[import-not-found]
 
         print(f"  ✅ Anthropic: v{anthropic.__version__}")
     except ImportError:
-        print("  ⚠️  Anthropic: not installed (pip install anthropic)")
+        print("  ⚠️  Anthropic: not installed (uv pip install anthropic)")
 
     # 5. Summary
     print("\n" + "=" * 50)

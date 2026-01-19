@@ -18,7 +18,7 @@ Result: BLOCKED
 
 ```bash
 # Install
-pip install -r benchmarks/agentdojo/requirements.txt
+uv pip install -r benchmarks/agentdojo/requirements.txt
 export OPENAI_API_KEY="sk-..."
 
 # Run

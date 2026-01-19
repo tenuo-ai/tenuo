@@ -27,7 +27,7 @@ Tenuo provides first-class support for [Google's Agent Development Kit (ADK)](ht
 ## Installation
 
 ```bash
-pip install "tenuo[google_adk]"
+uv pip install "tenuo[google_adk]"
 ```
 
 ---
@@ -396,6 +396,46 @@ guard = GuardBuilder().allow("read_file", path=Subpath("/data")).on_denial("retu
 # Silent skip (not recommended - can confuse LLM)
 guard = GuardBuilder().allow("read_file", path=Subpath("/data")).on_denial("skip").build()
 ```
+
+### Error Handling
+
+Google ADK integration uses custom exceptions (`ToolAuthorizationError`, `MissingSigningKeyError`) for API consistency. However, the underlying Tenuo authorization still uses canonical wire codes internally:
+
+```python
+from tenuo.google_adk import GuardBuilder, ToolAuthorizationError
+
+guard = (GuardBuilder()
+    .allow("transfer", amount=Range(0, 1000))
+    .on_denial("raise")
+    .build())
+
+try:
+    guard.check("transfer", {"amount": 5000})
+except ToolAuthorizationError as e:
+    print(f"Tool denied: {e}")
+    print(f"Tool: {e.tool_name}")
+    print(f"Args: {e.tool_args}")
+    # For programmatic handling, parse the error message
+    # or use on_denial("return") mode for structured responses
+```
+
+**Structured Error Mode:**
+
+Using `on_denial("return")` provides structured error responses:
+
+```python
+guard = GuardBuilder().allow("read_file", path=Subpath("/data")).build()
+
+result = guard.check("read_file", {"path": "/etc/passwd"})
+# {
+#   "authorized": False,
+#   "reason": "Constraint 'path' failed: not contained in /data",
+#   "tool": "read_file",
+#   "details": {...}
+# }
+```
+
+**Note**: Google ADK is designed as a higher-level wrapper with ADK-specific error handling. For direct access to Tenuo's canonical wire codes (1000-2199), use the `tenuo.langchain` integration or raw `Warrant.authorize()` calls.
 
 ---
 

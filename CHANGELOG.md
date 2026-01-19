@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-beta.7] - 2026-01-18
+
+### Core & Protocol
+- **Approval Envelope**: Refactored `Approval` to use the `SignedApproval` envelope pattern (separating `ApprovalPayload` from signature), aligning with the v1.0 spec and matching the Warrant architecture.
+- **Protocol Parity**: Synchronized `tenuo-core` with v1.0 spec, updating `WarrantType` serialization to integers (CBOR) and reconciling all test vectors.
+- **Test Vectors**: Updated `docs/spec/test-vectors.md` and fixed vectors A.12/A.13 to match the canonical generator output.
+
+### Infrastructure
+- **Unified `uv` Toolchain**: Migrated all Python dependency management to `uv` for consistent, fast, and reliable builds.
+- **CI Stability**: Fixed "No virtual environment" errors in GitHub Actions by using `--system` flag with `uv pip install`.
+
+### Documentation
+- **AgentQL Integration**: Added AgentQL integration examples.
+- **Example consistency**: Standardized all `pip install` instructions in examples and notebooks to use `uv pip install`.
+
+---
+
 ## [0.1.0-beta.6] - 2026-01-15
 
 ### Added

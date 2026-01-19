@@ -13,10 +13,10 @@ python -m venv .venv
 source .venv/bin/activate
 
 # Install Tenuo (with CEL support)
-pip install -e "tenuo-python/[cel]"
+uv pip install -e "tenuo-python/[cel]"
 
 # Install benchmark dependencies
-pip install -r benchmarks/adversarial/requirements.txt
+uv pip install -r benchmarks/adversarial/requirements.txt
 
 # Set API key
 export OPENAI_API_KEY="sk-..."

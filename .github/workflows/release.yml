@@ -60,7 +60,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install maturin
-        run: pip install maturin
+        run: |
+          pip install uv
+          uv pip install --system maturin
 
       - name: Build wheel
         working-directory: tenuo-python
@@ -91,7 +93,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install maturin
-        run: pip install maturin
+        run: |
+          pip install uv
+          uv pip install --system maturin
 
       - name: Build sdist
         working-directory: tenuo-python

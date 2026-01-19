@@ -50,10 +50,10 @@ def mcp_tool_to_langchain(
         agent = create_openai_tools_agent(llm, [tool])
     """
     if not LANGCHAIN_AVAILABLE:
-        raise ImportError('LangChain not installed. Install with: pip install "tenuo[langchain]"')
+        raise ImportError('LangChain not installed. Install with: uv pip install "tenuo[langchain]"')
 
     if not MCP_AVAILABLE:
-        raise ImportError('MCP SDK not installed. Install with: pip install "tenuo[mcp]"')
+        raise ImportError('MCP SDK not installed. Install with: uv pip install "tenuo[mcp]"')
 
     # Extract schema from MCP tool
     tool_name = mcp_tool.name
@@ -130,7 +130,7 @@ def guard_mcp_client(client: Any) -> List[Any]:
         List of LangChain StructuredTool objects with Tenuo protection
     """
     if not LANGCHAIN_AVAILABLE:
-        raise ImportError('LangChain not installed. Install with: pip install "tenuo[langchain]"')
+        raise ImportError('LangChain not installed. Install with: uv pip install "tenuo[langchain]"')
 
     # This is a bit tricky because the official client is stateless by default.
     # We need to wrap the tool calls it makes.
@@ -164,7 +164,7 @@ class MCPToolAdapter:
             mcp_client: Connected SecureMCPClient instance
         """
         if not LANGCHAIN_AVAILABLE:
-            raise ImportError('LangChain not installed. Install with: pip install "tenuo[langchain]"')
+            raise ImportError('LangChain not installed. Install with: uv pip install "tenuo[langchain]"')
 
         self.client = mcp_client
 

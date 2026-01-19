@@ -6,7 +6,7 @@ Demonstrates async client wrapping, async streaming with TOCTOU protection,
 and async patterns for production use.
 
 Requirements:
-    pip install tenuo openai
+    uv pip install tenuo openai
 
 Usage:
     # Demo mode (no API key needed)
@@ -35,7 +35,7 @@ try:
 except ImportError:
     OPENAI_AVAILABLE = False
     print("Note: openai not installed. Running in demo mode.")
-    print("Install with: pip install openai")
+    print("Install with: uv pip install openai")
     print()
 
 

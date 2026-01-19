@@ -74,7 +74,7 @@ This directly tests Tenuo's blocking without needing an LLM. Great for quickly s
 ## Installation
 
 ```bash
-pip install -r requirements.txt
+uv pip install -r requirements.txt
 ```
 
 ## Configuration

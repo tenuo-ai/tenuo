@@ -49,7 +49,12 @@ __all__ = [
 
 
 class A2AErrorCode:
-    """JSON-RPC error codes for A2A protocol errors."""
+    """JSON-RPC error codes for A2A protocol errors.
+
+    These codes follow JSON-RPC convention (negative codes in -32xxx range).
+    They map to canonical Tenuo wire format codes (1000-2199) defined in
+    wire-format-v1.md Appendix A.
+    """
 
     # Standard JSON-RPC errors
     PARSE_ERROR = -32700
@@ -59,22 +64,64 @@ class A2AErrorCode:
     INTERNAL_ERROR = -32603
 
     # A2A Tenuo-specific errors (-32001 to -32099)
-    MISSING_WARRANT = -32001
-    INVALID_SIGNATURE = -32002
-    UNTRUSTED_ISSUER = -32003
-    EXPIRED = -32004
-    AUDIENCE_MISMATCH = -32005
-    REPLAY_DETECTED = -32006
-    SKILL_NOT_GRANTED = -32007
-    CONSTRAINT_VIOLATION = -32008
-    REVOKED = -32009
-    CHAIN_INVALID = -32010
-    CHAIN_MISSING = -32011
-    KEY_MISMATCH = -32012
-    SKILL_NOT_FOUND = -32013  # Skill doesn't exist on server (vs not granted in warrant)
-    UNKNOWN_CONSTRAINT = -32014  # Constraint type not recognized
-    POP_REQUIRED = -32015  # Proof-of-Possession required but not provided
-    POP_FAILED = -32016  # Proof-of-Possession verification failed
+    # Mapped to wire format codes:
+    MISSING_WARRANT = -32001          # -> (A2A-specific, no wire equivalent)
+    INVALID_SIGNATURE = -32002        # -> 1100 (SignatureInvalid)
+    UNTRUSTED_ISSUER = -32003         # -> 1406 (UntrustedRoot)
+    EXPIRED = -32004                  # -> 1300 (WarrantExpired)
+    AUDIENCE_MISMATCH = -32005        # -> (A2A-specific, no wire equivalent)
+    REPLAY_DETECTED = -32006          # -> (A2A-specific, no wire equivalent)
+    SKILL_NOT_GRANTED = -32007        # -> 1500 (ToolNotAuthorized)
+    CONSTRAINT_VIOLATION = -32008     # -> 1501 (ConstraintViolation)
+    REVOKED = -32009                  # -> 1800 (WarrantRevoked)
+    CHAIN_INVALID = -32010            # -> 1405 (ChainBroken)
+    CHAIN_MISSING = -32011            # -> (A2A-specific, no wire equivalent)
+    KEY_MISMATCH = -32012             # -> (A2A-specific, no wire equivalent)
+    SKILL_NOT_FOUND = -32013          # -> 1500 (ToolNotAuthorized)
+    UNKNOWN_CONSTRAINT = -32014       # -> 1504 (UnknownConstraintType)
+    POP_REQUIRED = -32015             # -> 1600 (PopSignatureInvalid)
+    POP_FAILED = -32016               # -> 1600 (PopSignatureInvalid)
+
+    @classmethod
+    def to_wire_code(cls, jsonrpc_code: int) -> Optional[int]:
+        """Map JSON-RPC code to canonical wire format code.
+
+        Returns None if no wire format equivalent exists (A2A-specific error).
+        """
+        mapping = {
+            cls.INVALID_SIGNATURE: 1100,
+            cls.UNTRUSTED_ISSUER: 1406,
+            cls.EXPIRED: 1300,
+            cls.SKILL_NOT_GRANTED: 1500,
+            cls.CONSTRAINT_VIOLATION: 1501,
+            cls.REVOKED: 1800,
+            cls.CHAIN_INVALID: 1405,
+            cls.SKILL_NOT_FOUND: 1500,
+            cls.UNKNOWN_CONSTRAINT: 1504,
+            cls.POP_REQUIRED: 1600,
+            cls.POP_FAILED: 1600,
+        }
+        return mapping.get(jsonrpc_code)
+
+    @classmethod
+    def from_wire_code(cls, wire_code: int) -> int:
+        """Map wire format code to JSON-RPC code.
+
+        Returns INTERNAL_ERROR if no JSON-RPC equivalent exists.
+        """
+        mapping = {
+            1100: cls.INVALID_SIGNATURE,
+            1300: cls.EXPIRED,
+            1402: cls.CHAIN_INVALID,
+            1405: cls.CHAIN_INVALID,
+            1406: cls.UNTRUSTED_ISSUER,
+            1500: cls.SKILL_NOT_GRANTED,
+            1501: cls.CONSTRAINT_VIOLATION,
+            1504: cls.UNKNOWN_CONSTRAINT,
+            1600: cls.POP_FAILED,
+            1800: cls.REVOKED,
+        }
+        return mapping.get(wire_code, cls.INTERNAL_ERROR)
 
 
 # Code to name mapping
@@ -114,13 +161,27 @@ class A2AError(Exception):
         self.data = data or {}
 
     def to_jsonrpc_error(self) -> Dict[str, Any]:
-        """Convert to JSON-RPC error response."""
+        """Convert to JSON-RPC error response.
+
+        Includes canonical Tenuo wire format code in data field for
+        cross-protocol compatibility.
+        """
         error = {
             "code": self.code,
             "message": ERROR_MESSAGES.get(self.code, str(self.message)),
         }
-        if self.data:
-            error["data"] = self.data
+
+        # Include canonical wire format code if mapping exists
+        wire_code = A2AErrorCode.to_wire_code(self.code)
+
+        # Merge data with tenuo_code
+        error_data = dict(self.data) if self.data else {}
+        if wire_code is not None:
+            error_data["tenuo_code"] = wire_code
+
+        if error_data:
+            error["data"] = error_data
+
         return error
 
 

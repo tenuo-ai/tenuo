@@ -10,7 +10,7 @@ Key Pattern:
 3. All tool calls are automatically authorized
 
 Requirements:
-    pip install langchain langchain-openai tenuo
+    uv pip install langchain langchain-openai tenuo
 """
 
 from tenuo import (
@@ -33,7 +33,7 @@ try:
     LANGCHAIN_AVAILABLE = True
 except ImportError:
     LANGCHAIN_AVAILABLE = False
-    print("Install LangChain: pip install langchain langchain-openai\n")
+    print("Install LangChain: uv pip install langchain langchain-openai\n")
 
 
 # ============================================================================
@@ -108,7 +108,7 @@ def main():
     # ========================================================================
     if not LANGCHAIN_AVAILABLE:
         print("2. [SIMULATION] Demonstrating protection (LangChain not installed)...")
-        print("   Install with: pip install langchain langchain-openai\n")
+        print("   Install with: uv pip install langchain langchain-openai\n")
 
         # Show it works without LangChain
         try:

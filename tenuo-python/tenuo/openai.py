@@ -2210,7 +2210,7 @@ class GuardrailResult:
         Returns a proper GuardrailFunctionOutput if SDK is installed,
         otherwise returns self (which has the same interface).
 
-        Requires: pip install openai-agents
+        Requires: uv pip install openai-agents
         """
         if _GuardrailFunctionOutput is not None:
             return _GuardrailFunctionOutput(

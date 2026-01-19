@@ -77,7 +77,7 @@ class SecureMCPClient:
             fine-grained control.
         """
         if not MCP_AVAILABLE:
-            raise ImportError('MCP SDK not installed. Install with: pip install "tenuo[mcp]"')
+            raise ImportError('MCP SDK not installed. Install with: uv pip install "tenuo[mcp]"')
 
         self.command = command
         self.args = args

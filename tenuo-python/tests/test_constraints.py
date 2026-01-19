@@ -456,3 +456,136 @@ def test_url_pattern_repr():
     pattern = UrlPattern("https://api.example.com/*")
     assert "https://api.example.com/*" in repr(pattern)
     assert "https://api.example.com/*" in str(pattern)
+
+
+# ============================================================================
+# Bidirectional Wildcard Pattern Tests
+# ============================================================================
+
+
+def test_pattern_bidirectional_wildcard_matching():
+    """Test that bidirectional wildcard patterns (*mid*) match correctly."""
+    # Pattern with wildcards on both sides
+    pattern = Pattern("*-prod-*")
+    assert pattern.matches("db-prod-primary")
+    assert pattern.matches("cache-prod-replica")
+    assert pattern.matches("-prod-")  # Minimal match
+    assert not pattern.matches("db-staging-primary")
+    assert not pattern.matches("prod-only")
+
+    # Another example: *safe*
+    pattern = Pattern("*safe*")
+    assert pattern.matches("unsafe")
+    assert pattern.matches("safeguard")
+    assert pattern.matches("is-safe-mode")
+    assert not pattern.matches("danger")
+
+
+def test_pattern_middle_wildcard_matching():
+    """Test patterns with wildcard in the middle (prefix-*-suffix)."""
+    pattern = Pattern("report-*-2024.pdf")
+    assert pattern.matches("report-Q1-2024.pdf")
+    assert pattern.matches("report-annual-2024.pdf")
+    assert not pattern.matches("report-Q1-2025.pdf")
+    assert not pattern.matches("report-2024.pdf")  # Missing middle part
+
+
+def test_pattern_bidirectional_attenuation():
+    """Test that bidirectional patterns require equality for attenuation."""
+    from tenuo.exceptions import MonotonicityError
+
+    kp = SigningKey.generate()
+
+    # Parent with bidirectional pattern
+    parent = Warrant.mint(
+        keypair=kp,
+        capabilities=Constraints.for_tool("resource_ops", {"name": Pattern("*-prod-*")}),
+        holder=kp.public_key,
+        ttl_seconds=3600,
+    )
+
+    # Same pattern: Should work (equality)
+    child_same = parent.attenuate(
+        capabilities=Constraints.for_tool("resource_ops", {"name": Pattern("*-prod-*")}),
+        signing_key=kp,
+        holder=kp.public_key,
+        ttl_seconds=60,
+    )
+
+    @guard(tool="resource_ops")
+    def access_resource(name: str) -> str:
+        return f"accessed {name}"
+
+    # Child with same pattern works
+    with warrant_scope(child_same), key_scope(kp):
+        assert access_resource(name="db-prod-primary") == "accessed db-prod-primary"
+
+    # Different pattern: Should fail (even if logically narrower)
+    with pytest.raises(MonotonicityError):
+        parent.attenuate(
+            capabilities=Constraints.for_tool("resource_ops", {"name": Pattern("db-prod-*")}),
+            signing_key=kp,
+            holder=kp.public_key,
+            ttl_seconds=60,
+        )
+
+    with pytest.raises(MonotonicityError):
+        parent.attenuate(
+            capabilities=Constraints.for_tool("resource_ops", {"name": Pattern("*-prod-primary")}),
+            signing_key=kp,
+            holder=kp.public_key,
+            ttl_seconds=60,
+        )
+
+
+def test_pattern_complex_path_matching():
+    """Test complex path patterns with multiple wildcards."""
+    pattern = Pattern("/data/*/file.txt")
+    assert pattern.matches("/data/reports/file.txt")
+    assert pattern.matches("/data/x/file.txt")
+    assert not pattern.matches("/data/reports/other.txt")
+    assert not pattern.matches("/data/file.txt")  # Missing middle segment
+
+    pattern = Pattern("/*/reports/*.pdf")
+    assert pattern.matches("/data/reports/q3.pdf")
+    assert pattern.matches("/home/reports/annual.pdf")
+    assert not pattern.matches("/data/reports/q3.txt")
+    assert not pattern.matches("/data/other/q3.pdf")
+
+
+def test_pattern_complex_attenuation():
+    """Test that complex patterns (middle wildcard) require equality."""
+    from tenuo.exceptions import MonotonicityError
+
+    kp = SigningKey.generate()
+
+    parent = Warrant.mint(
+        keypair=kp,
+        capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/*/file.txt")}),
+        holder=kp.public_key,
+        ttl_seconds=3600,
+    )
+
+    # Same pattern: OK
+    child_same = parent.attenuate(
+        capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/*/file.txt")}),
+        signing_key=kp,
+        holder=kp.public_key,
+        ttl_seconds=60,
+    )
+
+    @guard(tool="file_ops")
+    def access_file(path: str) -> str:
+        return f"accessed {path}"
+
+    with warrant_scope(child_same), key_scope(kp):
+        assert access_file(path="/data/reports/file.txt") == "accessed /data/reports/file.txt"
+
+    # Different pattern: Rejected
+    with pytest.raises(MonotonicityError):
+        parent.attenuate(
+            capabilities=Constraints.for_tool("file_ops", {"path": Pattern("/data/reports/file.txt")}),
+            signing_key=kp,
+            holder=kp.public_key,
+            ttl_seconds=60,
+        )

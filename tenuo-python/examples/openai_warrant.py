@@ -16,7 +16,7 @@ When to use Tier 2:
 - Cross-service authorization
 
 Requirements:
-    pip install openai tenuo
+    uv pip install openai tenuo
 """
 
 import os
@@ -37,7 +37,7 @@ try:
     OPENAI_AVAILABLE = True
 except ImportError:
     OPENAI_AVAILABLE = False
-    print("Install OpenAI: pip install openai\n")
+    print("Install OpenAI: uv pip install openai\n")
 
 
 # ============================================================================
@@ -348,7 +348,7 @@ def demo_real_openai(agent_key, warrant):
     print("=" * 60)
 
     if not OPENAI_AVAILABLE:
-        print("  OpenAI not installed. Install with: pip install openai\n")
+        print("  OpenAI not installed. Install with: uv pip install openai\n")
         return
 
     if not os.getenv("OPENAI_API_KEY"):

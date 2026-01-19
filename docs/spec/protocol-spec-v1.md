@@ -113,7 +113,23 @@ SignedWarrant {
 #### 2.3.1 Common Fields
 
 | Field | Type | Required | Description |
-|-------|------|----------|-------------|
+|-------|------|----------|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.|
 | `version` | u8 | Yes | Payload version (currently 1) |
 | `id` | bytes[16] | Yes | UUIDv7 warrant identifier |
 | `warrant_type` | u8 | Yes | 0 = Execution, 1 = Issuer |
@@ -136,13 +152,45 @@ SignedWarrant {
 #### 2.3.2 Execution Warrant Fields
 
 | Field | Type | Description |
-|-------|------|-------------|
+|-------|------|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.|
 | `tools` | map\<string, ConstraintSet\> | Tool name to argument constraints |
 
 #### 2.3.3 Issuer Warrant Fields
 
 | Field | Type | Description |
-|-------|------|-------------|
+|-------|------|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.|
 | `issuable_tools` | array\<string\> | Tools this issuer can grant |
 | `max_issue_depth` | u8 | Max depth for issued warrants |
 | `constraint_bounds` | ConstraintSet | Limits on issued constraints |
@@ -191,7 +239,23 @@ can only issue execution warrants where `path` is *narrower* than `/data/*`:
 ### 3.1 Constraint Types
 
 | Type | ID | Wire Value | Description | Example |
-|------|-----|------------|-------------|---------|
+|------|-----|------------|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.|---------|
 | Exact | 1 | `{value: any}` | Exact value match | `Exact("/data/report.pdf")` |
 | Pattern | 2 | `{pattern: string}` | Glob pattern | `Pattern("/data/*.pdf")` |
 | Range | 3 | `{min?, max?: f64}` | Numeric bounds | `Range(min=0, max=1000)` |
@@ -200,7 +264,7 @@ can only issue execution warrants where `path` is *narrower* than `/data/*`:
 | *Reserved* | 6 | - | Future IntRange (i64) | - |
 | NotOneOf | 7 | `{excluded: [any]}` | Set exclusion | `NotOneOf(["prod"])` |
 | Cidr | 8 | `{network: string}` | IP range | `Cidr("10.0.0.0/8")` |
-| UrlPattern | 9 | `{pattern: string}` | URL matching | `UrlPattern("https://*.example.com/*")` |
+| UrlPattern | 9 | `{pattern: string}` | URL matching. **Note**: `https://example.com/` (trailing slash) parses as "Any Path" (Wildcard). Use `https://example.com/*` to restrict to root. | `UrlPattern("https://*.example.com/*")` |
 | Contains | 10 | `{required: [any]}` | List contains values | `Contains(["admin"])` |
 | Subset | 11 | `{allowed: [any]}` | Array subset | `Subset(["read", "write"])` |
 | All | 12 | `{constraints: [C]}` | Logical AND | `All([...])` |
@@ -208,6 +272,8 @@ can only issue execution warrants where `path` is *narrower* than `/data/*`:
 | Not | 14 | `{constraint: C}` | Logical NOT | `Not(Pattern("*.exe"))` |
 | Cel | 15 | `{expr: string}` | CEL expression | `Cel("size < 1000000")` |
 | Wildcard | 16 | `null` | Any value | `Wildcard()` |
+| Subpath | 17 | `{root: string, ...}` | Path containment | `Subpath("/data")` |
+| UrlSafe | 18 | `{schemes: ["https"], ...}` | SSRF protection | `UrlSafe()` |
 
 > **Security Note (CEL):** CEL expressions execute in a sandbox with limited functions. Implementations SHOULD enforce execution timeouts (recommended: 10ms) and memory limits to prevent resource exhaustion attacks.
 
@@ -222,9 +288,9 @@ Constraints form a partial order. Attenuation moves toward more restrictive type
                              │
         ┌────────────────────┼────────────────────┐
         │                    │                    │
-    Pattern              Range               OneOf
-        │                    │                    │
-        └────────────────────┼────────────────────┘
+     Pattern              Range               OneOf             Subpath           UrlSafe
+        │                    │                    │                    │                 │
+        └────────────────────┼────────────────────┼────────────────────┼─────────────────┘
                              │
                           Exact (⊥)
 ```
@@ -243,12 +309,30 @@ Pattern(2):   [2, {"pattern": "/data/*.pdf"}]
 Range(3):     [3, {"min": 0, "max": 1000}]
 OneOf(4):     [4, {"values": ["dev", "staging"]}]
 Wildcard(16): [16, null]                    // No value needed
+Subpath(17):  [17, {"root": "/data"}]
+UrlSafe(18):  [18, {"schemes": ["https"], "block_private": true}]
 ```
 
 ### 3.4 Unknown Handling
 
 | Location | Unknown Data | Behavior |
-|----------|--------------|----------|
+|----------|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.-|----------|
 | Payload fields | Unknown CBOR keys | **REJECT** |
 | Constraint type IDs | Unrecognized ID | Deserialize to Unknown, **FAIL** at authorization |
 | Extension keys (`tenuo.*`) | Reserved namespace | **REJECT** (fail closed) |
@@ -262,8 +346,8 @@ Unknown constraints participate in attenuation checks as opaque values and MUST 
 
 | Range | Allocation |
 |-------|------------|
-| 1-16 | Core (this spec) |
-| 17-127 | Reserved (future specs) |
+| 1-18 | Core (this spec) |
+| 19-127 | Reserved (future specs) |
 | 128-255 | Experimental (fail closed) |
 
 ---
@@ -470,7 +554,23 @@ Preimage = b"tenuo-pop-v1" || CBOR(PopChallenge)
 ```
 
 | Field | Type | Description |
-|-------|------|-------------|
+|-------|------|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.|
 | warrant_id | string | Hex-encoded UUID of the warrant |
 | tool | string | Tool being invoked |
 | sorted_args | array | `[(key, value), ...]` sorted lexicographically by key |
@@ -483,18 +583,30 @@ Preimage = b"tenuo-pop-v1" || CBOR(PopChallenge)
 ```python
 POP_CONTEXT = b"tenuo-pop-v1"
 
-def verify_pop(warrant, signature, tool, args, max_windows=4):
+def verify_pop(warrant, signature, tool, args, max_windows=5):
+    """
+    Verify Proof-of-Possession signature.
+
+    Args:
+        max_windows: Configurable clock skew tolerance
+                     - Default: 5 (±60s, recommended for production)
+                     - Min: 2 (±30s, controlled environments only)
+                     - Max: 10 (±150s, protocol ceiling)
+    """
     now = int(time.time())
     sorted_args = sorted(args.items())
-    
+
+    # Check windows: 0 (current), -1 (past), +1 (future), -2, +2...
     for i in range(max_windows):
-        window = ((now // 30) - i) * 30
+        offset = 0 if i == 0 else ((i + 1) // 2) * (-1 if i % 2 == 1 else 1)
+        window = ((now // 30) + offset) * 30
+
         challenge = (warrant.id, tool, sorted_args, window)
         preimage = POP_CONTEXT + cbor_serialize(challenge)
-        
+
         if warrant.holder.verify(preimage, signature):
             return True
-    
+
     return False
 ```
 
@@ -502,10 +614,54 @@ def verify_pop(warrant, signature, tool, args, max_windows=4):
 
 | Parameter | Value | Purpose |
 |-----------|-------|---------|
-| Context | `tenuo-pop-v1` | Domain separation |
-| Window size | 30 seconds | Groups signatures into buckets |
-| Max windows | 4 | ~2 minute total validity |
-| Clock tolerance | ±30 seconds | Handles distributed clock skew |
+| Context | `tenuo-pop-v1` | Domain separation (FIXED) |
+| Window size | 30 seconds | Groups signatures into buckets (FIXED) |
+| Max windows | **3** (default) | **Configurable** clock skew tolerance (range: 2-10) |
+| Clock tolerance | ±60 seconds (default) | Handles distributed clock skew |
+
+**Configuration guidance:**
+
+| max_windows | Tolerance | Recommended For |
+|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.|-----------|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.-|
+| 2 | ±30s | High-security with strict NTP (minimal) |
+| 3 | ±30s | Tight control, modern data centers with NTP |
+| **5** | **±60s** | **Modern cloud/data center (RECOMMENDED DEFAULT)** |
+| 7 | ±90s | Edge/IoT with occasional NTP drift |
+| 10 | ±150s | Legacy systems, unreliable clocks (maximum) |
+
+> **Security principle:** Use the smallest `max_windows` value that accommodates your deployment environment. Smaller windows reduce replay attack surface.
 
 ### 7.4 Replay Protection
 
@@ -516,9 +672,107 @@ Tenuo is **stateless by design**. The Verifier does not track used PoP signature
 | Short TTL | Warrants expire in minutes |
 | PoP binding | Signature covers (warrant, tool, args, window) |
 | Holder key | Attacker needs private key to use stolen PoP |
-| Time windows | ~2 minute validity |
+| Time windows | ±60s default (configurable 30s-150s) |
 
 > **SHOULD:** For high-value operations (financial transactions, irreversible actions), applications SHOULD implement server-side idempotency using `extensions["tenuo.dedup_key"]`. The dedup key SHOULD be a hash of `(warrant_id, tool, canonical_args)` and SHOULD be checked before execution.
+
+### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.--|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.
 
 ---
 
@@ -605,15 +859,33 @@ This domain separation prevents cross-protocol signature reuse.
 | MAX_WARRANT_TTL_SECS | 90 days | Protocol ceiling |
 | MAX_WARRANT_SIZE | 64 KB | Memory exhaustion |
 | MAX_STACK_SIZE | 256 KB | Chain size limit |
-| PoP Window | 30 seconds | Replay protection |
-| PoP Max Windows | 4 | Clock skew tolerance |
+| PoP Window | 30 seconds | Replay protection (FIXED) |
+| PoP Max Windows (Default) | 5 | Clock skew tolerance (RECOMMENDED: ±60s) |
+| PoP Max Windows (Min) | 2 | Minimum allowed (±30s) |
+| PoP Max Windows (Max) | 10 | Protocol ceiling (±150s) |
 
 ---
 
 ## 10. Error Codes
 
 | Code | Description |
-|------|-------------|
+|------|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.|
 | `chain_not_anchored` | Root issuer not in trusted_roots |
 | `signature_invalid` | Cryptographic verification failed |
 | `warrant_expired` | Current time > expires_at |
@@ -689,7 +961,23 @@ Verifiers receiving an SRL MUST:
 ### 11.5 Design Trade-offs
 
 | Approach | Tenuo Choice | Rationale |
-|----------|--------------|-----------|
+|----------|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.-|-----------|
 | Online revocation check | No | Breaks stateless verifier design |
 | Bloom filters | No | False positives unacceptable |
 | Full SRL at verifiers | Yes | Simple, deterministic |
@@ -708,7 +996,23 @@ Verifiers receiving an SRL MUST:
 ### 12.2 Implementation Pitfalls
 
 | Pitfall | Consequence | Mitigation |
-|---------|-------------|------------|
+|---------|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.|------------|
 | Deserialize before verify | Signature bypass | Verify raw bytes first |
 | Missing I1 check | Unauthorized delegation | Always verify child.issuer == parent.holder |
 | PoP against issuer | Holder bypass | Always verify against warrant.holder |
@@ -727,7 +1031,23 @@ Verifiers receiving an SRL MUST:
 > The following configurations create security vulnerabilities:
 
 | Misconfiguration | Risk | Mitigation |
-|------------------|------|------------|
+|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.--|------|------------|
 | Empty `trusted_roots` | Accepts any chain | Always configure trusted root keys |
 | Missing PoP verification | Token theft | Require PoP for all agent requests |
 | TTL > 1 hour | Revocation window too large | Use 5-15 minute TTLs |
@@ -784,7 +1104,23 @@ Each test vector includes:
 ## Appendix B: Prior Art
 
 | System | Relationship to Tenuo |
-|--------|----------------------|
+|--------|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.------|
 | **Macaroons** | Inspiration for attenuation; Tenuo adds PoP and structured constraints |
 | **Biscuit** | Similar datalog-based approach; Tenuo is simpler, focused on AI agents |
 | **UCAN** | JWT-based; Tenuo uses CBOR for compactness |
@@ -796,7 +1132,23 @@ Each test vector includes:
 ## Appendix C: Scope Boundaries
 
 | Tenuo Owns | Tenuo Does NOT Own |
-|------------|-------------------|
+|------------|### 7.5 PoP Configuration
+
+The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
+
+- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
+- **High-security 2 (±30s):** For financial transactions with strict NTP
+- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
+- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
+
+**Configuration:**
+```python
+from tenuo import DataPlane
+
+data_plane = DataPlane(pop_max_windows=5)  # Default
+```
+
+See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.---|
 | Warrant format | Tool implementations |
 | Constraint evaluation | Argument extraction |
 | Chain verification | Transport security (TLS) |

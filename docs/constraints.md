@@ -1516,7 +1516,7 @@ if warrant.allows("read_file", &args) {
 ### Recommended Pattern
 
 ```python
-from path_jail import Jail  # pip install path_jail
+from path_jail import Jail  # uv pip install path_jail
 
 jail = Jail("/data")
 

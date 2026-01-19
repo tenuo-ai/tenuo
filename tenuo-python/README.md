@@ -12,17 +12,37 @@ Python bindings for [Tenuo](https://github.com/tenuo-ai/tenuo), providing crypto
 ## Installation
 
 ```bash
-pip install tenuo                  # Core only
-pip install "tenuo[openai]"        # + OpenAI Agents SDK
-pip install "tenuo[google_adk]"    # + Google ADK
-pip install "tenuo[a2a]"           # + Agent-to-Agent (inter-agent delegation)
-pip install "tenuo[langchain]"     # + LangChain / LangGraph
-pip install "tenuo[fastapi]"       # + FastAPI
-pip install "tenuo[mcp]"           # + MCP client (Python ≥3.10)
+uv pip install tenuo                  # Core only
+uv pip install "tenuo[openai]"        # + OpenAI Agents SDK
+uv pip install "tenuo[google_adk]"    # + Google ADK
+uv pip install "tenuo[a2a]"           # + Agent-to-Agent (inter-agent delegation)
+uv pip install "tenuo[langchain]"     # + LangChain / LangGraph
+uv pip install "tenuo[fastapi]"       # + FastAPI
+uv pip install "tenuo[mcp]"           # + MCP client (Python ≥3.10)
 ```
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb)
 [![Explorer](https://img.shields.io/badge/Explorer-decode_warrants-00d4ff)](https://tenuo.dev/explorer/)
+
+## Development
+
+We recommend using [uv](https://github.com/astral-sh/uv) for development. It manages Python versions and dependencies deterministically.
+
+```bash
+# Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Sync environment (creates .venv and installs dependencies)
+uv sync --all-extras
+```
+
+You can still use standard `pip` if you prefer:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+uv pip install -e ".[dev]"
+```
 
 ## Quick Start
 
@@ -302,6 +322,7 @@ response = client.chat.completions.create(
 | `UrlSafe()` | Blocks SSRF (private IPs, metadata) | `UrlSafe()` blocks `http://169.254.169.254/` |
 | `Shlex(allow)` | Blocks shell injection | `Shlex(allow=["ls"])` blocks `ls; rm -rf /` |
 | `Pattern(glob)` | Glob pattern matching | `Pattern("*@company.com")` |
+| `UrlPattern(url)` | URL matching. **Note**: `https://example.com/` (trailing slash) parses as Wildcard ("Any Path"). Use `/*` to restrict to root. | `UrlPattern("https://*.example.com/*")` |
 
 For Tier 2 (cryptographic authorization with warrants), see [OpenAI Integration](https://tenuo.dev/openai).
 

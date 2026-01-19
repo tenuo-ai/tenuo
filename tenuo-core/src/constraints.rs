@@ -1750,6 +1750,9 @@ pub struct UrlPattern {
     /// Required port. None means any port (or default for scheme).
     pub port: Option<u16>,
     /// Path pattern (glob-style, e.g., "/api/v1/*").
+    ///
+    /// Note: `https://example.com/` (trailing slash) parses as "Any Path" (Wildcard).
+    /// To enforce a root path, use `https://example.com/*`.
     pub path_pattern: Option<String>,
 }
 
@@ -1787,6 +1790,9 @@ impl UrlPattern {
     /// - `https://api.example.com/*` - HTTPS only, specific host, any path
     /// - `*://example.com/api/v1/*` - Any scheme, specific host/path
     /// - `https://*.example.com:8443/api/*` - HTTPS, any subdomain, specific port
+    ///
+    /// Warning: omitting the path implies a wildcard (any path allowed).
+    /// `https://example.com/` parses as "any path". Use `https://example.com/*` to restrict to root.
     ///
     /// # Errors
     /// Returns error if the pattern is not a valid URL pattern.
@@ -3619,6 +3625,58 @@ mod tests {
         assert!(pattern.matches(&"/home/reports/annual.pdf".into()).unwrap());
         assert!(!pattern.matches(&"/data/reports/q3.txt".into()).unwrap());
         assert!(!pattern.matches(&"/data/other/q3.pdf".into()).unwrap());
+    }
+
+    #[test]
+    fn test_pattern_bidirectional_wildcard() {
+        // Bidirectional wildcard: *mid*
+        let pattern = Pattern::new("*-prod-*").unwrap();
+        assert!(pattern.matches(&"db-prod-primary".into()).unwrap());
+        assert!(pattern.matches(&"cache-prod-replica".into()).unwrap());
+        assert!(pattern.matches(&"-prod-".into()).unwrap()); // Minimal match
+        assert!(!pattern.matches(&"db-staging-primary".into()).unwrap());
+        assert!(!pattern.matches(&"prod-only".into()).unwrap()); // Missing prefix wildcard match
+
+        // Another example: *safe*
+        let pattern = Pattern::new("*safe*").unwrap();
+        assert!(pattern.matches(&"unsafe".into()).unwrap());
+        assert!(pattern.matches(&"safeguard".into()).unwrap());
+        assert!(pattern.matches(&"is-safe-mode".into()).unwrap());
+        assert!(!pattern.matches(&"danger".into()).unwrap());
+    }
+
+    #[test]
+    fn test_pattern_bidirectional_attenuation() {
+        let parent = Pattern::new("*-prod-*").unwrap();
+
+        // Same pattern: OK (equality)
+        let child_same = Pattern::new("*-prod-*").unwrap();
+        assert!(parent.validate_attenuation(&child_same).is_ok());
+
+        // Different pattern: REJECTED (even if logically narrower)
+        // This is conservative behavior - subset checking is undecidable
+        let child_prefix = Pattern::new("db-prod-*").unwrap();
+        assert!(parent.validate_attenuation(&child_prefix).is_err());
+
+        let child_suffix = Pattern::new("*-prod-primary").unwrap();
+        assert!(parent.validate_attenuation(&child_suffix).is_err());
+
+        let child_exact = Pattern::new("db-prod-primary").unwrap();
+        assert!(parent.validate_attenuation(&child_exact).is_err());
+    }
+
+    #[test]
+    fn test_pattern_complex_attenuation() {
+        // Test middle wildcard (Complex type)
+        let parent = Pattern::new("/data/*/file.txt").unwrap();
+
+        // Same pattern: OK
+        let child_same = Pattern::new("/data/*/file.txt").unwrap();
+        assert!(parent.validate_attenuation(&child_same).is_ok());
+
+        // Different pattern: REJECTED
+        let child_different = Pattern::new("/data/reports/file.txt").unwrap();
+        assert!(parent.validate_attenuation(&child_different).is_err());
     }
 
     #[test]

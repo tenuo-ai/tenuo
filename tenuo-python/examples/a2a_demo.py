@@ -23,7 +23,7 @@ Run:
     python a2a_demo.py attack
 
 Requires:
-    pip install tenuo[a2a]
+    uv pip install tenuo[a2a]
     # This installs: tenuo, starlette, httpx, uvicorn
 """
 
@@ -48,7 +48,7 @@ try:
     import httpx  # noqa: F401 - imported to verify availability
 except ImportError as e:
     print(f"Error: Missing dependency - {e}")
-    print("\nInstall with: pip install tenuo[a2a] uvicorn")
+    print("\nInstall with: uv pip install tenuo[a2a] uvicorn")
     sys.exit(1)
 
 

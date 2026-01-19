@@ -341,7 +341,7 @@ def guard_tools(
         guard_agent: Wraps entire executor with built-in authorization
     """
     if not LANGCHAIN_AVAILABLE:
-        raise ImportError("LangChain is required for guard_tools(). Install with: pip install langchain-core")
+        raise ImportError("LangChain is required for guard_tools(). Install with: uv pip install langchain-core")
 
     if issuer_key is not None:
         from .config import configure, is_configured
@@ -473,7 +473,7 @@ def guard_agent(
         For LangGraph StateGraph agents, use tenuo.langgraph.TenuoToolNode instead.
     """
     if not LANGCHAIN_AVAILABLE:
-        raise ImportError("LangChain is required for guard_agent(). Install with: pip install langchain-core")
+        raise ImportError("LangChain is required for guard_agent(). Install with: uv pip install langchain-core")
 
     # Configure if key provided
     if issuer_key is not None:
@@ -744,7 +744,7 @@ class SecureAgentExecutor:
         **kwargs: Any,
     ):
         if not LANGCHAIN_AVAILABLE:
-            raise ImportError("LangChain not installed. Run: pip install langchain-core")
+            raise ImportError("LangChain not installed. Run: uv pip install langchain-core")
 
         from langchain.agents import AgentExecutor  # type: ignore[import-not-found,attr-defined]
 

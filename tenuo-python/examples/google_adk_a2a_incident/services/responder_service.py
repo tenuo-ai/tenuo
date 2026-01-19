@@ -69,7 +69,7 @@ class ResponderService:
             from starlette.responses import JSONResponse
             from starlette.requests import Request
         except ImportError:
-            raise ImportError("starlette is required: pip install starlette uvicorn")
+            raise ImportError("starlette is required: uv pip install starlette uvicorn")
 
         async def handle_task(request: Request) -> JSONResponse:
             """Handle incoming A2A task request."""
@@ -201,7 +201,7 @@ class ResponderService:
         try:
             import uvicorn
         except ImportError:
-            raise ImportError("uvicorn is required: pip install uvicorn")
+            raise ImportError("uvicorn is required: uv pip install uvicorn")
 
         self.app = self._create_app()
         print(f"🚀 Responder service starting on port {self.port}")

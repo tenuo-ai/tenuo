@@ -1434,7 +1434,7 @@ MAX_DELEGATION_DEPTH = 64    # Protocol maximum
 DEFAULT_TTL = 300            # 5 minutes (recommended)
 MAX_TTL = 7776000            # 90 days (protocol max)
 POP_WINDOW = 30              # PoP bucket size (seconds)
-POP_MAX_WINDOWS = 4          # ~2 minute total validity
+POP_MAX_WINDOWS = 5          # Default: ±60s tolerance (configurable 2-10)
 
 ================================================================================
 QUICK REFERENCE CHEATSHEET

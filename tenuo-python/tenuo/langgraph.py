@@ -383,7 +383,7 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
 
     def __init__(self, tools: List[BaseTool], **kwargs: Any):
         if not LANGGRAPH_AVAILABLE:
-            raise ImportError("LangGraph is required for TenuoToolNode. Install with: pip install langgraph")
+            raise ImportError("LangGraph is required for TenuoToolNode. Install with: uv pip install langgraph")
         super().__init__(tools, **kwargs)
 
     def _run_with_auth(

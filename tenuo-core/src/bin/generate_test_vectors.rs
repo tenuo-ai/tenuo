@@ -5,7 +5,7 @@
 //! - Timestamps (fixed epoch values)
 //! - Warrant IDs (fixed UUIDs)
 //!
-//! Run with: cargo run --example generate_test_vectors
+//! Run with: cargo run --bin generate_test_vectors
 
 use base64::Engine;
 use std::collections::BTreeMap;
@@ -56,17 +56,31 @@ fn main() {
     let orchestrator_seed: [u8; 32] = [0x02; 32];
     let worker_seed: [u8; 32] = [0x03; 32];
     let worker2_seed: [u8; 32] = [0x04; 32];
+    let attacker_seed: [u8; 32] = [0xFF; 32]; // Attacker's key for forged signature tests
 
     let control_plane = SigningKey::from_bytes(&control_plane_seed);
     let orchestrator = SigningKey::from_bytes(&orchestrator_seed);
     let worker = SigningKey::from_bytes(&worker_seed);
     let worker2 = SigningKey::from_bytes(&worker2_seed);
+    let attacker = SigningKey::from_bytes(&attacker_seed);
 
     println!("# Tenuo Protocol Test Vectors");
     println!();
-    println!("**Version:** 1.0  ");
-    println!("**Generated:** 2024-01-01 (deterministic timestamps for reproducibility)  ");
-    println!("**Specification:** [protocol-spec-v1.md](protocol-spec-v1.md)");
+    println!("**Version:** 1.0");
+    println!("**Documentation Revision:** 2 (2026-01-18)");
+    println!("**Generated:** 2024-01-01 (deterministic timestamps for reproducibility)");
+    println!("**Specification:** [wire-format-v1.md](wire-format-v1.md)");
+    println!();
+    println!("---");
+    println!();
+    println!("## Revision History");
+    println!();
+    println!("- **Rev 2** (2026-01-18): Documentation cleanup");
+    println!("  - Regenerated all test vectors to match current generator output");
+    println!("  - Added cross-reference note to full constraint type list in wire-format-v1.md");
+    println!("  - **No protocol changes** - test vectors remain v1.0 compatible");
+    println!();
+    println!("- **Rev 1** (2025-01-01): Initial release");
     println!();
     println!("---");
     println!();
@@ -116,6 +130,13 @@ fn main() {
         worker2_seed[31],
         hex::encode(worker2.public_key().to_bytes())
     );
+    println!(
+        "| Attacker | `{:02x}{:02x}...{:02x}` (32×0xFF) | `{}` |",
+        attacker_seed[0],
+        attacker_seed[1],
+        attacker_seed[31],
+        hex::encode(attacker.public_key().to_bytes())
+    );
     println!();
 
     println!("**Full Seeds:**");
@@ -124,6 +145,7 @@ fn main() {
     println!("Orchestrator:  {}", hex::encode(orchestrator_seed));
     println!("Worker:        {}", hex::encode(worker_seed));
     println!("Worker2:       {}", hex::encode(worker2_seed));
+    println!("Attacker:      {}", hex::encode(attacker_seed));
     println!("```");
     println!();
 
@@ -571,7 +593,878 @@ fn main() {
     );
     println!();
 
-    // Implementation notes
+    // A.7: Extensions with CBOR Values
+    println!("---");
+    println!();
+    println!("## A.7 Extensions with CBOR Values");
+    println!();
+    println!("**Scenario:** Warrant with CBOR-encoded extension values.");
+    println!();
+    println!("Extensions demonstrate:");
+    println!();
+    println!("1. Simple string values (CBOR-encoded)");
+    println!("2. Structured data (CBOR-encoded)");
+    println!("3. Preservation through serialization/deserialization");
+    println!();
+
+    const ID_A7: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x70,
+    ];
+
+    let control_plane = control_plane;
+    let orchestrator = orchestrator;
+
+    // Create CBOR-encoded extensions
+    let mut extensions = BTreeMap::new();
+
+    // Extension 1: Simple string (CBOR-encoded)
+    let trace_id = "request-12345";
+    let mut trace_id_bytes = Vec::new();
+    ciborium::ser::into_writer(&trace_id, &mut trace_id_bytes).expect("Failed to encode trace_id");
+    extensions.insert("com.example.trace_id".to_string(), trace_id_bytes);
+
+    // Extension 2: Structured data (CBOR-encoded)
+    #[derive(serde::Serialize)]
+    struct BillingTag {
+        team: String,
+        project: String,
+        cost_center: u32,
+    }
+    let billing = BillingTag {
+        team: "ml-research".to_string(),
+        project: "warrant-system".to_string(),
+        cost_center: 4201,
+    };
+    let mut billing_bytes = Vec::new();
+    ciborium::ser::into_writer(&billing, &mut billing_bytes).expect("Failed to encode billing");
+    extensions.insert("com.example.billing".to_string(), billing_bytes);
+
+    let mut tools_a7 = BTreeMap::new();
+    let mut cs_a7 = ConstraintSet::new();
+    cs_a7.insert(
+        "path".to_string(),
+        Constraint::Exact(Exact::new("/data/report.pdf")),
+    );
+    tools_a7.insert("read_file".to_string(), cs_a7);
+
+    let payload_a7 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A7),
+        tools: tools_a7,
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions,
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    let warrant_a7 = sign_payload(&payload_a7, &control_plane);
+    print_vector("A.7", &warrant_a7);
+
+    println!("**Extension Values (CBOR-encoded):**");
+    println!();
+    println!("| Key | Type | CBOR Encoding |");
+    println!("|-----|------|---------------|");
+    println!(
+        "| `com.example.trace_id` | String | `{}` |",
+        hex::encode(&warrant_a7.payload.extensions["com.example.trace_id"])
+    );
+    println!(
+        "| `com.example.billing` | Struct | `{}` |",
+        hex::encode(&warrant_a7.payload.extensions["com.example.billing"])
+    );
+    println!();
+
+    println!("**Decoded Extension Values:**");
+    println!();
+    println!("```rust");
+    println!("// com.example.trace_id");
+    println!("let trace_id: String = cbor::decode(extensions[\"com.example.trace_id\"])?;");
+    println!("assert_eq!(trace_id, \"request-12345\");");
+    println!();
+    println!("// com.example.billing");
+    println!("struct BillingTag {{");
+    println!("    team: String,");
+    println!("    project: String,");
+    println!("    cost_center: u32,");
+    println!("}}");
+    println!("let billing: BillingTag = cbor::decode(extensions[\"com.example.billing\"])?;");
+    println!("assert_eq!(billing.team, \"ml-research\");");
+    println!("assert_eq!(billing.project, \"warrant-system\");");
+    println!("assert_eq!(billing.cost_center, 4201);");
+    println!("```");
+    println!();
+
+    println!("**Verification:**");
+    println!();
+    println!("1. Extensions are included in the warrant signature");
+    println!("2. Extension values MUST be CBOR-encoded (not raw bytes)");
+    println!("3. Extensions survive serialization/deserialization round-trip");
+    println!("4. Unknown extension keys are preserved (not stripped)");
+    println!();
+
+    // A.8: WarrantStack Serialization (renumbered from A.7)
+    println!("---");
+    println!();
+    println!("## A.8 WarrantStack Serialization");
+    println!();
+    println!("**Scenario:** Transporting a 3-level delegation chain as a single CBOR array.");
+    println!();
+    println!("A `WarrantStack` is a CBOR array of warrants ordered Root → Leaf:");
+    println!();
+    println!("```");
+    println!("type WarrantStack = Vec<SignedWarrant>;");
+    println!("```");
+    println!();
+
+    // Build the 3-level chain (reuse from A.3)
+    let control_plane = control_plane;
+    let orchestrator = orchestrator;
+    let worker = worker;
+    let worker2 = worker2;
+
+    // Level 0
+    let mut tools_l0 = BTreeMap::new();
+    let mut cs_l0 = ConstraintSet::new();
+    cs_l0.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    tools_l0.insert("read_file".to_string(), cs_l0);
+
+    let payload_l0 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A3_L0),
+        tools: tools_l0,
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    let warrant_l0 = sign_payload(&payload_l0, &control_plane);
+    let parent_hash_l1 = sha256(warrant_l0.payload_bytes());
+
+    // Level 1
+    let mut tools_l1 = BTreeMap::new();
+    let mut cs_l1 = ConstraintSet::new();
+    cs_l1.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/reports/*").unwrap()),
+    );
+    tools_l1.insert("read_file".to_string(), cs_l1);
+
+    let payload_l1 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A3_L1),
+        tools: tools_l1,
+        holder: worker.public_key(),
+        issuer: orchestrator.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 1,
+        parent_hash: Some(parent_hash_l1),
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    let warrant_l1 = sign_payload(&payload_l1, &orchestrator);
+    let parent_hash_l2 = sha256(warrant_l1.payload_bytes());
+
+    // Level 2
+    let mut tools_l2 = BTreeMap::new();
+    let mut cs_l2 = ConstraintSet::new();
+    cs_l2.insert(
+        "path".to_string(),
+        Constraint::Exact(Exact::new("/data/reports/q3.pdf")),
+    );
+    tools_l2.insert("read_file".to_string(), cs_l2);
+
+    let payload_l2 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A3_L2),
+        tools: tools_l2,
+        holder: worker2.public_key(),
+        issuer: worker.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 2,
+        parent_hash: Some(parent_hash_l2),
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    let warrant_l2 = sign_payload(&payload_l2, &worker);
+
+    // Create WarrantStack as CBOR array
+    let warrant_stack = vec![&warrant_l0, &warrant_l1, &warrant_l2];
+    let mut stack_bytes = Vec::new();
+    ciborium::ser::into_writer(&warrant_stack, &mut stack_bytes)
+        .expect("Failed to serialize warrant stack");
+
+    let base64_engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let stack_base64 = base64_engine.encode(&stack_bytes);
+
+    println!("**WarrantStack CBOR ({} bytes):**", stack_bytes.len());
+    println!("```");
+    print_hex_block(&stack_bytes);
+    println!("```");
+    println!();
+
+    println!("**WarrantStack Structure:**");
+    println!("```cbor");
+    println!("83                  # array(3)");
+    println!("   # warrant_l0 (envelope)");
+    println!("   83               # array(3) - SignedWarrant");
+    println!("      01            # envelope_version");
+    println!("      58 AC         # payload (172 bytes)");
+    println!("      82 01 58 40   # signature");
+    println!("   # warrant_l1 (envelope)");
+    println!("   83               # array(3) - SignedWarrant");
+    println!("      01            # envelope_version");
+    println!("      58 F6         # payload (246 bytes)");
+    println!("      82 01 58 40   # signature");
+    println!("   # warrant_l2 (envelope)");
+    println!("   83               # array(3) - SignedWarrant");
+    println!("      01            # envelope_version");
+    println!("      58 F8         # payload (248 bytes)");
+    println!("      82 01 58 40   # signature");
+    println!("```");
+    println!();
+
+    println!("**Base64 (URL-safe, no padding):**");
+    println!("```");
+    for chunk in stack_base64.as_bytes().chunks(76) {
+        println!("{}", std::str::from_utf8(chunk).unwrap());
+    }
+    println!("```");
+    println!();
+
+    println!("**Verification steps:**");
+    println!();
+    println!("1. Deserialize as `Vec<SignedWarrant>` (3 elements)");
+    println!("2. Verify warrant_l0 signature (control plane key)");
+    println!("3. Verify warrant_l1:");
+    println!("   - Issuer = warrant_l0.holder");
+    println!("   - parent_hash = SHA256(warrant_l0.payload)");
+    println!("   - depth = 1, expires_at ≤ warrant_l0.expires_at");
+    println!("   - Signature valid (orchestrator key)");
+    println!("4. Verify warrant_l2:");
+    println!("   - Issuer = warrant_l1.holder");
+    println!("   - parent_hash = SHA256(warrant_l1.payload)");
+    println!("   - depth = 2, expires_at ≤ warrant_l1.expires_at");
+    println!("   - Signature valid (worker key)");
+    println!();
+
+    // A.9: Edge Cases (renumbered from A.8)
+    println!("---");
+    println!();
+    println!("## A.9 Edge Cases");
+    println!();
+    println!("### A.9.1 Terminal Warrant (depth = max_depth)");
+    println!();
+    println!("**Scenario:** Warrant at maximum delegation depth cannot be further attenuated.");
+    println!();
+    println!("| Field | Value |");
+    println!("|-------|-------|");
+    println!("| depth | 3 |");
+    println!("| max_depth | 3 |");
+    println!();
+    println!(
+        "**Expected:** Any attempt to attenuate this warrant MUST fail with `depth_exceeded`."
+    );
+    println!();
+    println!("### A.9.2 Unknown Constraint Type");
+    println!();
+    println!("**Scenario:** Constraint with unrecognized type ID (experimental range).");
+    println!();
+    println!("**CBOR bytes:**");
+    println!("```");
+    println!("82          # array(2)");
+    println!("   18 80    # unsigned(128) - type ID in experimental range");
+    println!("   a1       # map(1)");
+    println!("      66    # text(6)");
+    println!("         637573746f6d  # \"custom\"");
+    println!("      64    # text(4)");
+    println!("         64617461      # \"data\"");
+    println!("```");
+    println!();
+    println!("**Hex:** `821880a166637573746f6d6464617461`");
+    println!();
+    println!("**Expected:** Verifier deserializes as `Constraint::Unknown {{ type_id: 128, payload: ... }}`, authorization MUST fail (fail closed).");
+    println!();
+    println!("### A.9.3 Invalid CBOR: Duplicate Map Keys");
+    println!();
+    println!("**Scenario:** Malformed CBOR payload with duplicate keys.");
+    println!();
+    println!("```hex");
+    println!("# Map with duplicate key 0");
+    println!("a2 00 01 00 02");
+    println!("# {{0: 1, 0: 2}}");
+    println!("```");
+    println!();
+    println!("**Expected:** Senders MUST NOT produce. Verifier behavior is undefined per RFC 8949 §5.6. This is NOT a normative test case.");
+    println!();
+    println!("### A.9.4 SRL Revocation");
+    println!();
+    println!("**Scenario:** Warrant ID appears in Signed Revocation List.");
+    println!();
+    println!("| warrant.id | SRL.revoked_ids |");
+    println!("|------------|-----------------|");
+    println!("| `019471f8-0000-7000-8000-000000000001` | `[..., \"019471f8-0000-7000-8000-000000000001\", ...]` |");
+    println!();
+    println!("**Expected:** Authorization MUST fail with `warrant_revoked`.");
+    println!();
+
+    // A.10: Invalid Depth Monotonicity (I2 Violation)
+    println!("---");
+    println!();
+    println!("## A.10 Invalid Depth Monotonicity (I2 Violation)");
+    println!();
+    println!("**Scenario:** Child warrant skips a depth level (child.depth != parent.depth + 1).");
+    println!();
+
+    const ID_A10_PARENT: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x90,
+    ];
+    const ID_A10_CHILD: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x91,
+    ];
+
+    // Create parent warrant (depth=0)
+    let mut tools_a10_parent = BTreeMap::new();
+    let mut cs_a10_parent = ConstraintSet::new();
+    cs_a10_parent.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    tools_a10_parent.insert("read_file".to_string(), cs_a10_parent);
+
+    let payload_a10_parent = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A10_PARENT),
+        tools: tools_a10_parent,
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    let warrant_a10_parent = sign_payload(&payload_a10_parent, &control_plane);
+    let parent_hash_a10 = sha256(warrant_a10_parent.payload_bytes());
+
+    // Create child with WRONG depth (2 instead of 1)
+    let mut tools_a10_child = BTreeMap::new();
+    let mut cs_a10_child = ConstraintSet::new();
+    cs_a10_child.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/reports/*").unwrap()),
+    );
+    tools_a10_child.insert("read_file".to_string(), cs_a10_child);
+
+    let payload_a10_child = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A10_CHILD),
+        tools: tools_a10_child,
+        holder: worker.public_key(),
+        issuer: orchestrator.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 2, // ← WRONG: should be 1
+        parent_hash: Some(parent_hash_a10),
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    let warrant_a10_child = sign_payload(&payload_a10_child, &orchestrator);
+
+    print_vector("A.10 Parent", &warrant_a10_parent);
+    print_vector("A.10 Child (Invalid)", &warrant_a10_child);
+
+    println!("**Depth Comparison:**");
+    println!();
+    println!("| Warrant | Depth | Expected |");
+    println!("|---------|-------|----------|");
+    println!("| Parent  | 0     | -        |");
+    println!("| Child   | 2     | 1        |");
+    println!();
+    println!("**Expected:** Verification MUST fail with `depth_monotonicity_violated`.");
+    println!();
+    println!("**Invariant I2:** `child.depth == parent.depth + 1`");
+    println!();
+
+    // A.11: Invalid Capability Monotonicity (I4 Violation)
+    println!("---");
+    println!();
+    println!("## A.11 Invalid Capability Monotonicity (I4 Violation)");
+    println!();
+    println!("**Scenario:** Child warrant attempts to expand authority beyond parent's grants.");
+    println!();
+
+    const ID_A11_PARENT: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x92,
+    ];
+    const ID_A11_CHILD: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x93,
+    ];
+
+    // Create parent warrant with NARROW constraint
+    let mut tools_a11_parent = BTreeMap::new();
+    let mut cs_a11_parent = ConstraintSet::new();
+    cs_a11_parent.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/reports/*").unwrap()), // Narrow
+    );
+    tools_a11_parent.insert("read_file".to_string(), cs_a11_parent);
+
+    let payload_a11_parent = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A11_PARENT),
+        tools: tools_a11_parent,
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    let warrant_a11_parent = sign_payload(&payload_a11_parent, &control_plane);
+    let parent_hash_a11 = sha256(warrant_a11_parent.payload_bytes());
+
+    // Create child with BROADER constraint (invalid!)
+    let mut tools_a11_child = BTreeMap::new();
+    let mut cs_a11_child = ConstraintSet::new();
+    cs_a11_child.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()), // ← TOO BROAD!
+    );
+    tools_a11_child.insert("read_file".to_string(), cs_a11_child);
+
+    let payload_a11_child = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A11_CHILD),
+        tools: tools_a11_child,
+        holder: worker.public_key(),
+        issuer: orchestrator.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 1,
+        parent_hash: Some(parent_hash_a11),
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    let warrant_a11_child = sign_payload(&payload_a11_child, &orchestrator);
+
+    print_vector("A.11 Parent", &warrant_a11_parent);
+    print_vector("A.11 Child (Invalid)", &warrant_a11_child);
+
+    println!("**Constraint Comparison:**");
+    println!();
+    println!("| Warrant | path Constraint | Matches |");
+    println!("|---------|-----------------|---------|");
+    println!("| Parent  | `/data/reports/*` | `/data/reports/foo`, `/data/reports/bar` |");
+    println!("| Child   | `/data/*` | `/data/foo`, `/data/reports/foo`, `/data/secret/key` |");
+    println!();
+    println!("**Expected:** Verification MUST fail with `capability_monotonicity_violated`.");
+    println!();
+    println!("**Invariant I4:** Child constraints must be equal or more restrictive than parent.");
+
+    // A.12: Invalid Parent Hash (I5 Violation)
+    println!("---");
+    println!();
+    println!("## A.12 Invalid Parent Hash (I5 Violation)");
+    println!();
+    println!("**Scenario:** Child warrant claims to delegate from parent but parent_hash doesn't match SHA256(parent.payload).");
+    println!();
+
+    const ID_A12_PARENT: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0xA0,
+    ];
+    const ID_A12_CHILD: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0xA1,
+    ];
+
+    // Create parent warrant
+    let mut tools_a12_parent = BTreeMap::new();
+    let mut cs_a12_parent = ConstraintSet::new();
+    cs_a12_parent.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    tools_a12_parent.insert("read_file".to_string(), cs_a12_parent);
+
+    let payload_a12_parent = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A12_PARENT),
+        tools: tools_a12_parent,
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    let warrant_a12_parent = sign_payload(&payload_a12_parent, &control_plane);
+
+    // Create WRONG parent hash (use all zeros instead of actual hash)
+    let wrong_parent_hash = [0u8; 32];
+    let correct_parent_hash = sha256(warrant_a12_parent.payload_bytes());
+
+    // Create child with WRONG parent hash
+    let mut tools_a12_child = BTreeMap::new();
+    let mut cs_a12_child = ConstraintSet::new();
+    cs_a12_child.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/reports/*").unwrap()),
+    );
+    tools_a12_child.insert("read_file".to_string(), cs_a12_child);
+
+    let payload_a12_child = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A12_CHILD),
+        tools: tools_a12_child,
+        holder: worker.public_key(),
+        issuer: orchestrator.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 1,
+        parent_hash: Some(wrong_parent_hash), // ← WRONG HASH
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    let warrant_a12_child = sign_payload(&payload_a12_child, &orchestrator);
+
+    print_vector("A.12 Parent", &warrant_a12_parent);
+    print_vector("A.12 Child (Invalid)", &warrant_a12_child);
+
+    println!("**Parent Hash Comparison:**");
+    println!();
+    println!("| Field | Value |");
+    println!("|-------|-------|");
+    println!(
+        "| Correct parent_hash | `{}` |",
+        hex::encode(correct_parent_hash)
+    );
+    println!(
+        "| Child's parent_hash | `{}` |",
+        hex::encode(wrong_parent_hash)
+    );
+    println!();
+    println!("**Expected:** Verification MUST fail with `parent_hash_mismatch`.");
+    println!();
+    println!("**Invariant I5:** `child.parent_hash == SHA256(parent.payload_bytes)`");
+    println!();
+
+    // A.13: TTL Extension Attack (I3 Violation)
+    println!("---");
+    println!();
+    println!("## A.13 TTL Extension Attack (I3 Violation)");
+    println!();
+    println!("**Scenario:** Child warrant attempts to extend lifetime beyond parent's expiration.");
+    println!();
+
+    const ID_A13_PARENT: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0xB0,
+    ];
+    const ID_A13_CHILD: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0xB1,
+    ];
+
+    // Parent expires at EXPIRES_AT (1704070800)
+    let mut tools_a13_parent = BTreeMap::new();
+    let mut cs_a13_parent = ConstraintSet::new();
+    cs_a13_parent.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    tools_a13_parent.insert("read_file".to_string(), cs_a13_parent);
+
+    let payload_a13_parent = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A13_PARENT),
+        tools: tools_a13_parent,
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT, // 1704070800
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    let warrant_a13_parent = sign_payload(&payload_a13_parent, &control_plane);
+    let parent_hash_a13 = sha256(warrant_a13_parent.payload_bytes());
+
+    // Child attempts to extend TTL by 1 hour (invalid)
+    let extended_expires_at = EXPIRES_AT + 3600;
+
+    let mut tools_a13_child = BTreeMap::new();
+    let mut cs_a13_child = ConstraintSet::new();
+    cs_a13_child.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/reports/*").unwrap()),
+    );
+    tools_a13_child.insert("read_file".to_string(), cs_a13_child);
+
+    let payload_a13_child = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A13_CHILD),
+        tools: tools_a13_child,
+        holder: worker.public_key(),
+        issuer: orchestrator.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: extended_expires_at, // ← EXTENDED TTL (invalid)
+        max_depth: 3,
+        depth: 1,
+        parent_hash: Some(parent_hash_a13),
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    let warrant_a13_child = sign_payload(&payload_a13_child, &orchestrator);
+
+    print_vector("A.13 Parent", &warrant_a13_parent);
+    print_vector("A.13 Child (Invalid)", &warrant_a13_child);
+
+    println!("**TTL Comparison:**");
+    println!();
+    println!("| Field | Parent | Child | Valid? |");
+    println!("|-------|--------|-------|--------|");
+    println!("| issued_at | {} | {} | YES |", ISSUED_AT, ISSUED_AT);
+    println!(
+        "| expires_at | {} | {} | NO (child > parent) |",
+        EXPIRES_AT, extended_expires_at
+    );
+    println!();
+    println!("**Expected:** Verification MUST fail with `ttl_monotonicity_violated`.");
+    println!();
+    println!("**Invariant I3:** `child.expires_at <= parent.expires_at`");
+    println!();
+
+    // A.14: Invalid Signature (Cryptographic Verification)
+    println!("---");
+    println!();
+    println!("## A.14 Invalid Signature (Cryptographic Verification)");
+    println!();
+    println!("**Scenario:** Warrant payload is valid but signature was created by wrong key.");
+    println!();
+    println!("This tests that implementations correctly verify Ed25519 signatures. A common");
+    println!(
+        "implementation bug is to skip signature verification or verify against the wrong key."
+    );
+    println!();
+
+    const ID_A14: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0xC0,
+    ];
+
+    // Create a warrant payload that CLAIMS to be issued by control_plane
+    let mut tools_a14 = BTreeMap::new();
+    let mut cs_a14 = ConstraintSet::new();
+    cs_a14.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    tools_a14.insert("read_file".to_string(), cs_a14);
+
+    let payload_a14 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A14),
+        tools: tools_a14,
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(), // Claims to be from control_plane
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    // But sign with a DIFFERENT key (attacker's key)
+    // This simulates an attacker trying to forge a warrant
+    let warrant_a14_forged = sign_payload(&payload_a14, &attacker);
+
+    // Also create a valid version for comparison
+    let warrant_a14_valid = sign_payload(&payload_a14, &control_plane);
+
+    print_vector("A.14 Forged (Invalid Signature)", &warrant_a14_forged);
+    print_vector("A.14 Valid (Correct Signature)", &warrant_a14_valid);
+
+    println!("**Key Comparison:**");
+    println!();
+    println!("| Field | Value |");
+    println!("|-------|-------|");
+    println!(
+        "| Claimed issuer | `{}` |",
+        hex::encode(control_plane.public_key().to_bytes())
+    );
+    println!(
+        "| Actual signer (forged) | `{}` |",
+        hex::encode(attacker.public_key().to_bytes())
+    );
+    println!(
+        "| Actual signer (valid) | `{}` |",
+        hex::encode(control_plane.public_key().to_bytes())
+    );
+    println!();
+    println!("**Note:** The payload bytes are IDENTICAL between forged and valid warrants.");
+    println!("Only the signature differs.");
+    println!();
+    println!("**Expected:** Verification MUST fail with `signature_invalid` or `signature_verification_failed`.");
+    println!();
+    println!("**Security Note:** This is a critical security check. Implementations that skip");
+    println!("signature verification would accept forged warrants, completely breaking the");
+    println!("security model.");
+    println!();
+
+    // Implementation Notes
     println!("---");
     println!();
     println!("## Implementation Notes");
@@ -620,66 +1513,6 @@ fn main() {
     println!("| Exact | 1 |");
     println!("| Pattern | 2 |");
     println!("| Wildcard | 16 |");
-    println!();
-
-    // A.7: Edge Cases
-    println!("---");
-    println!();
-    println!("## A.7 Edge Cases");
-    println!();
-    println!("### A.7.1 Terminal Warrant (depth = max_depth)");
-    println!();
-    println!("**Scenario:** Warrant at maximum delegation depth cannot be further attenuated.");
-    println!();
-    println!("| Field | Value |");
-    println!("|-------|-------|");
-    println!("| depth | 3 |");
-    println!("| max_depth | 3 |");
-    println!();
-    println!(
-        "**Expected:** Any attempt to attenuate this warrant MUST fail with `depth_exceeded`."
-    );
-    println!();
-    println!("### A.7.2 Unknown Constraint Type");
-    println!();
-    println!("**Scenario:** Constraint with unrecognized type ID (experimental range).");
-    println!();
-    println!("**CBOR bytes:**");
-    println!("```");
-    println!("82          # array(2)");
-    println!("   18 80    # unsigned(128) - type ID in experimental range");
-    println!("   a1       # map(1)");
-    println!("      66    # text(6)");
-    println!("         637573746f6d  # \"custom\"");
-    println!("      64    # text(4)");
-    println!("         64617461      # \"data\"");
-    println!("```");
-    println!();
-    println!("**Hex:** `821880a166637573746f6d6464617461`");
-    println!();
-    println!("**Expected:** Verifier deserializes as `Constraint::Unknown {{ type_id: 128, payload: ... }}`, authorization MUST fail (fail closed).");
-    println!();
-    println!("### A.7.3 Invalid CBOR: Duplicate Map Keys");
-    println!();
-    println!("**Scenario:** Malformed CBOR payload with duplicate keys.");
-    println!();
-    println!("```hex");
-    println!("# Map with duplicate key 0");
-    println!("a2 00 01 00 02");
-    println!("# {{0: 1, 0: 2}}");
-    println!("```");
-    println!();
-    println!("**Expected:** Senders MUST NOT produce. Verifier behavior is undefined per RFC 8949 §5.6. This is NOT a normative test case.");
-    println!();
-    println!("### A.7.4 SRL Revocation");
-    println!();
-    println!("**Scenario:** Warrant ID appears in Signed Revocation List.");
-    println!();
-    println!("| warrant.id | SRL.revoked_ids |");
-    println!("|------------|-----------------|");
-    println!("| `019471f8-0000-7000-8000-000000000001` | `[..., \"019471f8-0000-7000-8000-000000000001\", ...]` |");
-    println!();
-    println!("**Expected:** Authorization MUST fail with `warrant_revoked`.");
     println!();
 
     println!("---");

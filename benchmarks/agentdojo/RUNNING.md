@@ -4,7 +4,7 @@
 
 ### 1. Install AgentDojo
 ```bash
-pip install agentdojo
+uv pip install agentdojo
 ```
 
 ### 2. Set up OpenAI API Key
@@ -21,7 +21,7 @@ source ~/.zshrc
 ### 3. Install Tenuo
 ```bash
 cd /path/to/tenuo
-pip install -e tenuo-python
+uv pip install -e tenuo-python
 ```
 
 ---
@@ -187,7 +187,7 @@ done
 
 ### "AgentDojo not installed"
 ```bash
-pip install agentdojo
+uv pip install agentdojo
 ```
 
 ### "OpenAI API key not found"
@@ -198,7 +198,7 @@ export OPENAI_API_KEY="sk-..."
 ### "Module not found: tenuo"
 ```bash
 cd /path/to/tenuo
-pip install -e tenuo-python
+uv pip install -e tenuo-python
 ```
 
 ### Rate Limits

@@ -12,10 +12,10 @@ This demo showcases what makes Tenuo UNIQUE — things you CAN'T do with simple 
 6. REAL LLM INTEGRATION: See OpenAI GPT make tool calls protected by Tenuo
 
 Requirements:
-    pip install "tenuo[mcp]"
+    uv pip install "tenuo[mcp]"
 
     # Optional: For real LLM integration
-    pip install langchain-openai
+    uv pip install langchain-openai
 
 Environment Variables:
     OPENAI_API_KEY    - Optional: For real LLM calls (uses dry-run simulation if not set)
@@ -96,7 +96,7 @@ def check_dependencies():
 
     if missing:
         print("❌ Missing dependencies:")
-        print('   pip install "tenuo[mcp]"')
+        print('   uv pip install "tenuo[mcp]"')
         return False
     return True
 

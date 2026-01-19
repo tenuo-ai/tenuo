@@ -146,7 +146,7 @@ class IncidentResponseDemo:
         if use_real_llm:
             if not GOOGLE_ADK_AVAILABLE:
                 print(f"{Colors.WARNING}⚠️  --real-llm requested but Google ADK not installed{Colors.ENDC}")
-                print(f"{Colors.WARNING}   Install with: pip install google-genai{Colors.ENDC}")
+                print(f"{Colors.WARNING}   Install with: uv pip install google-genai{Colors.ENDC}")
                 print(f"{Colors.FAIL}   → Falling back to SIMULATION mode{Colors.ENDC}\n")
             elif not os.getenv("GOOGLE_API_KEY"):
                 print(f"{Colors.WARNING}⚠️  --real-llm requested but GOOGLE_API_KEY not set{Colors.ENDC}")

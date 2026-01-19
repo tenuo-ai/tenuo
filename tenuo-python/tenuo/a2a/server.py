@@ -1425,7 +1425,7 @@ class A2AServer:
             from starlette.responses import JSONResponse
             from starlette.routing import Route
         except ImportError:
-            raise ImportError("starlette is required for A2A server. Install with: pip install tenuo[a2a]")
+            raise ImportError("starlette is required for A2A server. Install with: uv pip install tenuo[a2a]")
 
         async def handle_a2a(request: Request) -> JSONResponse:
             """Handle JSON-RPC A2A requests."""

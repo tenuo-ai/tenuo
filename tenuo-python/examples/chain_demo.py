@@ -52,7 +52,7 @@ def main():
         print("\n👀 Visualizing Intern's Warrant with Rich Inspector:\n")
         try:
             if not print_rich_warrant(intern_warrant):
-                print("⚠️  'rich' not installed. Install it for a better visualization: pip install rich")
+                print("⚠️  'rich' not installed. Install it for a better visualization: uv pip install rich")
                 print("\nStandard explain:")
                 print(intern_warrant.explain(include_chain=True))
         except Exception as e:

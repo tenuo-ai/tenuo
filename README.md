@@ -23,6 +23,10 @@ If an agent is prompt-injected, the authority still can't escape its bounds.
 > **Status: v0.1 Beta** - Core semantics are stable. APIs may evolve. See [CHANGELOG](./CHANGELOG.md).
 
 ```bash
+# Using uv (recommended)
+uv pip install tenuo
+
+# Or standard pip
 pip install tenuo
 ```
 
@@ -123,14 +127,14 @@ Tenuo implements **Subtractive Delegation**.
 ### Optional Dependencies
 
 ```bash
-pip install tenuo                  # Core only
-pip install "tenuo[openai]"        # + OpenAI Agents SDK
-pip install "tenuo[google_adk]"    # + Google ADK
-pip install "tenuo[a2a]"           # + A2A (inter-agent delegation)
-pip install "tenuo[fastapi]"       # + FastAPI integration
-pip install "tenuo[langchain]"     # + LangChain (langchain-core ≥0.2)
-pip install "tenuo[langgraph]"     # + LangGraph (includes LangChain)
-pip install "tenuo[mcp]"           # + MCP client (Python ≥3.10 required)
+uv pip install tenuo                  # Core only
+uv pip install "tenuo[openai]"        # + OpenAI Agents SDK
+uv pip install "tenuo[google_adk]"    # + Google ADK
+uv pip install "tenuo[a2a]"           # + A2A (inter-agent delegation)
+uv pip install "tenuo[fastapi]"       # + FastAPI integration
+uv pip install "tenuo[langchain]"     # + LangChain (langchain-core ≥0.2)
+uv pip install "tenuo[langgraph]"     # + LangGraph (includes LangChain)
+uv pip install "tenuo[mcp]"           # + MCP client (Python ≥3.10 required)
 ```
 
 ---
@@ -261,8 +265,8 @@ See [Related Work](https://tenuo.dev/related-work) for detailed comparison.
 
 | Feature | Status |
 |---------|--------|
-| A2A integration | Implemented (`pip install tenuo[a2a]`) |
-| Google ADK integration | Implemented (`pip install tenuo[google_adk]`) |
+| A2A integration | Implemented (`uv pip install tenuo[a2a]`) |
+| Google ADK integration | Implemented (`uv pip install tenuo[google_adk]`) |
 | Multi-sig approvals | Partial (notary in v0.2) |
 | TypeScript/Node SDK | Planned for v0.2 |
 | Context-aware constraints | Spec under development |
