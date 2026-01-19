@@ -108,7 +108,7 @@ def main():
     print("=" * 60)
 
     global NO_PAUSE
-    
+
     # Parse arguments
     parser = argparse.ArgumentParser(description="Tenuo x AgentQL Integration Demo")
     parser.add_argument("--no-pause", action="store_true", help="Run without pausing for user input")

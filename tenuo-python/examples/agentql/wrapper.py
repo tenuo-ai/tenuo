@@ -88,7 +88,7 @@ class TenuoAgentQLAgent:
     def __init__(self, warrant: Warrant, keypair: Optional[SigningKey] = None):
         """
         Initialize the secure agent wrapper.
-        
+
         Args:
             warrant: The Tenuo warrant defining allowed capabilities.
             keypair: The signing key matching the warrant's holder.
