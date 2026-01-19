@@ -57,6 +57,12 @@ pub const WARRANT_ID_PREFIX: &str = "tnu_wrt_";
 /// Incremented when breaking changes are made to the warrant structure.
 pub const WARRANT_VERSION: u32 = 1;
 
+/// Clock skew tolerance for temporal validation (30 seconds).
+///
+/// Warrants issued more than this amount of time in the future are rejected.
+/// This prevents "time travel" attacks while allowing for reasonable clock drift.
+pub const CLOCK_SKEW_TOLERANCE_SECS: u64 = 30;
+
 /// Type of warrant: ISSUER or EXECUTION.
 ///
 /// - **ISSUER**: Can issue execution warrants. Used by P-LLM/planner components
@@ -622,6 +628,29 @@ impl Warrant {
                 "unsupported warrant version: {} (expected {})",
                 self.payload.version, WARRANT_VERSION
             )));
+        }
+
+        // Validate temporal constraints
+        let now = Utc::now().timestamp() as u64;
+
+        // Check 1: Issued in future (Clock Skew)
+        // Strict fail-closed check to prevent "time travel" attacks.
+        if self.payload.issued_at > now.saturating_add(CLOCK_SKEW_TOLERANCE_SECS) {
+            return Err(Error::IssuedInFuture);
+        }
+
+        // Check 2: Expiration > Issued
+        if self.payload.expires_at <= self.payload.issued_at {
+            return Err(Error::Validation(
+                "warrant expires_at must be strictly greater than issued_at".to_string(),
+            ));
+        }
+
+        // Validate expiry (informational check in some contexts, but good to validate structure)
+        if self.is_expired() {
+            // We usually don't fail validation for expiry alone (as historical validation is valid),
+            // but for *new* issuance flows it might be relevant.
+            // Following spec: validation checks invariants. Expiration is a state, not an invariant violation.
         }
 
         // Validate warrant type consistency
@@ -3191,6 +3220,40 @@ mod tests {
         assert_eq!(warrant.depth(), 0);
         assert!(warrant.is_root());
         assert!(!warrant.is_expired());
+    }
+
+    #[test]
+    fn test_issued_in_future_rejection() {
+        let keypair = create_test_keypair();
+
+        let mut warrant = Warrant::builder()
+            .tool("test", ConstraintSet::new())
+            .ttl(Duration::from_secs(300))
+            .holder(keypair.public_key())
+            .build(&keypair)
+            .unwrap();
+
+        // Manipulate timestamps to simulate future issuance
+        // Use a time far in the future > 30s skew
+        let future = Utc::now().timestamp() as u64 + 3600;
+        warrant.payload.issued_at = future;
+        warrant.payload.expires_at = future + 300;
+
+        // Validation must fail
+        match warrant.validate() {
+            Err(Error::IssuedInFuture) => (),
+            res => panic!("Expected IssuedInFuture error, got {:?}", res),
+        }
+
+        // Also verify strict expiration (expires_at > issued_at)
+        let now = Utc::now().timestamp() as u64;
+        warrant.payload.issued_at = now;
+        warrant.payload.expires_at = now; // Equal, should fail
+
+        match warrant.validate() {
+            Err(Error::Validation(msg)) if msg.contains("strictly greater") => (),
+            res => panic!("Expected strict expiry error, got {:?}", res),
+        }
     }
 
     #[test]

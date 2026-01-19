@@ -55,6 +55,24 @@ BOUND WARRANT
   WARNING: BoundWarrant cannot be serialized (contains private key).
 
 ================================================================================
+INSTALLATION & ENVIRONMENT
+================================================================================
+
+We strongly recommend using `uv` (https://github.com/astral-sh/uv) over standard `pip`
+for dependency management in Tenuo projects. `uv` is significantly faster and 
+aligns with our Rust-based core philosophy.
+
+# Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Initialize and add dependency
+uv init
+uv add tenuo
+
+# Run scripts
+uv run example.py
+
+================================================================================
 PYTHON SDK API REFERENCE
 ================================================================================
 

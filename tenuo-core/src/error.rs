@@ -321,6 +321,10 @@ pub enum Error {
     #[error("warrant expired at {0}")]
     WarrantExpired(chrono::DateTime<chrono::Utc>),
 
+    /// Warrant issued in the future (Clock Skew violation).
+    #[error("warrant issued in the future (check system clock)")]
+    IssuedInFuture,
+
     /// Warrant depth exceeds maximum allowed.
     #[error("delegation depth {0} exceeds maximum {1}")]
     DepthExceeded(u32, u32),
@@ -645,6 +649,7 @@ impl Error {
             // Warrant Lifecycle Errors
             Self::WarrantRevoked(_) => ErrorCode::WarrantRevoked,
             Self::WarrantExpired(_) => ErrorCode::WarrantExpired,
+            Self::IssuedInFuture => ErrorCode::IssuedInFuture,
             Self::DepthExceeded(_, _) => ErrorCode::DepthExceeded,
             Self::InvalidWarrantId(_) => ErrorCode::InvalidPayloadStructure,
             Self::InvalidTtl(_) => ErrorCode::TTLExceeded,

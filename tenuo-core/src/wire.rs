@@ -52,6 +52,9 @@ pub fn decode(data: &[u8]) -> Result<Warrant> {
     // Validate constraint depth to prevent stack overflow attacks
     warrant.validate_constraint_depth()?;
 
+    // Validate semantic rules (including temporal checks)
+    warrant.validate()?;
+
     // Validate payload version early (reject unknown versions)
     if warrant.payload.version != crate::warrant::WARRANT_VERSION as u8 {
         return Err(Error::UnsupportedVersion(warrant.payload.version));
