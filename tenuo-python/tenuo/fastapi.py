@@ -27,10 +27,11 @@ import uuid
 import logging
 
 from tenuo_core import Warrant, PublicKey  # type: ignore[import-untyped]
+from tenuo.exceptions import TenuoError
 
 logger = logging.getLogger("tenuo.fastapi")
 
-from tenuo.exceptions import TenuoError
+
 
 # Use string forward refs or try import, FastAPI must be installed
 try:
