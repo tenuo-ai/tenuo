@@ -355,7 +355,7 @@ class TenuoGuard:
                 },
                 headers={"WWW-Authenticate": "Tenuo"},
             )
-        
+
         if not authorized:
             # Generate a request ID for log correlation
             request_id = str(uuid.uuid4())[:8]
