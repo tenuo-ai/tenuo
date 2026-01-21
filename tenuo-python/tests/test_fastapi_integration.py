@@ -157,11 +157,11 @@ class TestFastAPIIntegration:
 
         # Create warrant that expires in 1 second
         warrant = Warrant.mint_builder().tool("search").ttl(1).mint(key)
-        
+
         # Wait for it to expire (add buffer for CI timing)
         import time
         time.sleep(2.0)  # Increased from 1.1 to 2.0 for CI reliability
-        
+
         # Verify it's actually expired
         assert warrant.is_expired(), "Warrant should be expired after 2 second sleep"
 
