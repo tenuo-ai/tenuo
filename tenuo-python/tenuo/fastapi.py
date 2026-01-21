@@ -27,7 +27,7 @@ import uuid
 import logging
 
 from tenuo_core import Warrant, PublicKey  # type: ignore[import-untyped]
-from tenuo.exceptions import TenuoError
+from tenuo.exceptions import TenuoError, DeserializationError
 
 logger = logging.getLogger("tenuo.fastapi")
 
@@ -191,6 +191,9 @@ if FASTAPI_AVAILABLE:
 
         try:
             return Warrant.from_base64(x_tenuo_warrant)
+        except DeserializationError as e:
+            # Client error: malformed warrant
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid X-Tenuo-Warrant header: {str(e)}")
         except TenuoError:
             raise
         except Exception as e:
