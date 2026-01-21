@@ -1184,7 +1184,7 @@ Both `SignedWarrant` and `WarrantStack` are represented as CBOR Arrays.
 
 ### Verification (stack)
 
-1.  **Check limits:** `stack.len()` MUST NOT exceed `MAX_CHAIN_DEPTH`; total encoded size MUST NOT exceed 64 KB.
+1.  **Check limits:** `stack.len()` MUST NOT exceed `MAX_CHAIN_DEPTH`; total encoded size MUST NOT exceed 256 KB.
 2.  **Iterate:** Validate each link $i$ against $i-1$.
     - $i=0$: Must be signed by a trusted root.
     - $i>0$: 
