@@ -27,7 +27,7 @@ import uuid
 import logging
 
 from tenuo_core import Warrant, PublicKey  # type: ignore[import-untyped]
-from tenuo.exceptions import TenuoError, DeserializationError
+from tenuo.exceptions import TenuoError, DeserializationError, ExpiredError
 
 logger = logging.getLogger("tenuo.fastapi")
 
@@ -342,7 +342,21 @@ class TenuoGuard:
             )
 
         # 5. Authorize - 403 for authorization failure
-        if not warrant.authorize(self.tool, auth_args, pop_sig_bytes):
+        try:
+            authorized = warrant.authorize(self.tool, auth_args, pop_sig_bytes)
+        except ExpiredError:
+            # Warrant expired between is_expired() check and authorize() call
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "error": "warrant_expired",
+                    "message": "Warrant has expired",
+                    "suggestion": "Request a fresh warrant from the issuer",
+                },
+                headers={"WWW-Authenticate": "Tenuo"},
+            )
+        
+        if not authorized:
             # Generate a request ID for log correlation
             request_id = str(uuid.uuid4())[:8]
 
