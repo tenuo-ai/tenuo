@@ -30,6 +30,8 @@ from tenuo_core import Warrant, PublicKey  # type: ignore[import-untyped]
 
 logger = logging.getLogger("tenuo.fastapi")
 
+from tenuo.exceptions import TenuoError
+
 # Use string forward refs or try import, FastAPI must be installed
 try:
     from fastapi import FastAPI, Header, HTTPException, Depends, Request, status
@@ -114,8 +116,6 @@ def configure_tenuo(
     app.state.tenuo_config = _config
 
     # Register global exception handler for TenuoError
-    from tenuo.exceptions import TenuoError
-
     @app.exception_handler(TenuoError)
     async def tenuo_error_handler(request: Request, exc: TenuoError):
         """Handle TenuoError exceptions with canonical wire codes."""
@@ -190,6 +190,8 @@ if FASTAPI_AVAILABLE:
 
         try:
             return Warrant.from_base64(x_tenuo_warrant)
+        except TenuoError:
+            raise
         except Exception as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid X-Tenuo-Warrant header: {str(e)}")
 
