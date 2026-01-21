@@ -42,6 +42,9 @@ use crate::constraints::{Constraint, ConstraintSet, ConstraintValue};
 use crate::crypto::{PublicKey, Signature, SigningKey};
 use crate::diff::ClearanceDiff;
 use crate::error::{Error, Result};
+use crate::wire::{
+    MAX_CONSTRAINTS_PER_TOOL, MAX_EXTENSION_KEYS, MAX_EXTENSION_VALUE_SIZE, MAX_TOOLS_PER_WARRANT,
+};
 use crate::MAX_DELEGATION_DEPTH;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -610,7 +613,24 @@ impl Warrant {
 
     /// Validate that constraint nesting depths are within limits.
     pub fn validate_constraint_depth(&self) -> Result<()> {
+        // Validate tools count
+        if self.payload.tools.len() > MAX_TOOLS_PER_WARRANT {
+            return Err(Error::Validation(format!(
+                "tools count {} exceeds limit {}",
+                self.payload.tools.len(),
+                MAX_TOOLS_PER_WARRANT
+            )));
+        }
+
         for constraints in self.payload.tools.values() {
+            // Validate constraints per tool
+            if constraints.len() > MAX_CONSTRAINTS_PER_TOOL {
+                return Err(Error::Validation(format!(
+                    "constraints count {} exceeds limit {}",
+                    constraints.len(),
+                    MAX_CONSTRAINTS_PER_TOOL
+                )));
+            }
             constraints.validate_depth()?;
         }
         if let Some(constraint_bounds) = &self.payload.constraint_bounds {
@@ -700,6 +720,25 @@ impl Warrant {
 
         // Validate constraint depth
         self.validate_constraint_depth()?;
+
+        // Validate extensions
+        if self.payload.extensions.len() > MAX_EXTENSION_KEYS {
+            return Err(Error::Validation(format!(
+                "extensions count {} exceeds limit {}",
+                self.payload.extensions.len(),
+                MAX_EXTENSION_KEYS
+            )));
+        }
+        for (key, val) in &self.payload.extensions {
+            if val.len() > MAX_EXTENSION_VALUE_SIZE {
+                return Err(Error::Validation(format!(
+                    "extension '{}' value size {} exceeds limit {}",
+                    key,
+                    val.len(),
+                    MAX_EXTENSION_VALUE_SIZE
+                )));
+            }
+        }
 
         // Validate expiration is in the future
         if self.is_expired() {
@@ -1377,10 +1416,47 @@ impl WarrantBuilder {
             }
         }
 
+        // Validate tools count
+        if self.tools.len() > MAX_TOOLS_PER_WARRANT {
+            return Err(Error::Validation(format!(
+                "tools count {} exceeds limit {}",
+                self.tools.len(),
+                MAX_TOOLS_PER_WARRANT
+            )));
+        }
+
         // Validate constraint depth in tools
         for constraints in self.tools.values() {
+            // Validate constraints per tool
+            if constraints.len() > MAX_CONSTRAINTS_PER_TOOL {
+                return Err(Error::Validation(format!(
+                    "constraints count {} exceeds limit {}",
+                    constraints.len(),
+                    MAX_CONSTRAINTS_PER_TOOL
+                )));
+            }
             constraints.validate_depth()?;
         }
+
+        // Validate extensions
+        if self.extensions.len() > MAX_EXTENSION_KEYS {
+            return Err(Error::Validation(format!(
+                "extensions count {} exceeds limit {}",
+                self.extensions.len(),
+                MAX_EXTENSION_KEYS
+            )));
+        }
+        for (key, val) in &self.extensions {
+            if val.len() > MAX_EXTENSION_VALUE_SIZE {
+                return Err(Error::Validation(format!(
+                    "extension '{}' value size {} exceeds limit {}",
+                    key,
+                    val.len(),
+                    MAX_EXTENSION_VALUE_SIZE
+                )));
+            }
+        }
+
         if !self.constraint_bounds.is_empty() {
             self.constraint_bounds.validate_depth()?;
         }

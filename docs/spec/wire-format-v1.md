@@ -2,8 +2,8 @@
 
 **Version:** 1.0
 **Status:** Normative
-**Date:** 2025-01-01
-**Documentation Revision:** 2 (2026-01-18)
+**Date:** 2026-01-01
+**Documentation Revision:** 3 (2026-01-21)
 
 **Related Documents:**
 - [protocol-spec-v1.md](protocol-spec-v1.md) - Protocol Specification (concepts, invariants, algorithms)
@@ -13,14 +13,9 @@
 
 ## Revision History
 
-- **Rev 2** (2026-01-18): Documentation cleanup
-  - One reference max_windows table
-  - Added cross-references between test vectors and full constraint type list
-  - Regenerated test vectors to match generator output
-  - Clarified approval envelope structure to match warrant envelope pattern
-  - **No protocol changes** - wire format remains v1.0
-
-- **Rev 1** (2025-01-01): Initial release
+- **Rev 3** (2026-01-21): Verification and enforcement. Fixed `MAX_CONSTRAINT_DEPTH` (16→32), added Size Limits table, and added test vector cross-references.
+- **Rev 2** (2026-01-10): Normative specification updates.
+- **Rev 1** (2026-01-01): Initial release.
 
 ---
 
@@ -163,6 +158,12 @@ fn verify(
 }
 ```
 
+> [!CAUTION]
+> **Security Requirement: Verify BEFORE Deserialize**
+> Implementations MUST verify the signature against the raw payload bytes **before** attempting to full deserialize the payload.
+> Deserializing untrusted input is a common vector for denial-of-service (DoS) and memory exhaustion attacks.
+> Only the minimal information required to verify the signature (the issuer's public key) should be extracted from the untrusted bytes.
+
 ### Testable Invariants (Chain Attenuation Rules)
 
 **Every implementation MUST verify these properties.** Tests should reference these invariants by number.
@@ -235,7 +236,7 @@ child.tools ⊆ parent.tools
 
 **Enforcement points:**
 1. **Builder**: Validate tool subset and constraint narrowing
-2. **Verifier**: Check monotonicity for each tool
+2. **Verifier**: Check tool subset and constraint narrowing
 
 #### I5: Cryptographic Linkage
 ```
@@ -335,10 +336,10 @@ pub enum Algorithm {
     /// Ed25519: 32-byte public keys, 64-byte signatures
     Ed25519 = 1,
     
-    // Reserved for future use:
-    // Ed448 = 2,
-    // Dilithium2 = 3,  // Post-quantum
-    // Dilithium3 = 4,
+    // Reserved for future use (Examples):
+    // Reserved_Ed448 = 2,
+    // Reserved_Dilithium2 = 3,
+    // Reserved_Dilithium3 = 4,
 }
 
 pub struct PublicKey {
@@ -378,9 +379,8 @@ pub struct Signature {
 | Algorithm | Public Key | Signature |
 |-----------|------------|-----------|
 | Ed25519 | 32 bytes | 64 bytes |
-| Dilithium2 | 1,312 bytes | 2,420 bytes |
 
-**Rationale:** Hardcoding `[u8; 32]` for keys prevents migration to post-quantum algorithms. The extra byte for algorithm ID costs nothing and enables future-proofing.
+**Rationale:** Hardcoding `[u8; 32]` would inextricably bind the protocol to Elliptic Curve keys (like Ed25519). Post-Quantum Cryptography (PQC) algorithms require significantly larger keys (e.g., Dilithium2 public keys are ~1,312 bytes). Using variable-length byte arrays (`Vec<u8>`) ensures the wire format remains valid even when we migrate to quantum-resistant primitives.
 
 ---
 
@@ -1299,6 +1299,7 @@ Concatenated PEM blocks. Order: Root -> Leaf (parser handles either order; verif
 | Max constraints per tool | 64 | Practical limit |
 | Max extension keys | 64 | Practical limit |
 | Max extension value size | 8 KB | Prevents abuse |
+| Max constraint nesting depth | 32 | Prevents stack overflow |
 | Max chain depth | 64 | Prevents DoS; typical chains are 3-5 levels |
 | Max TTL | 90 days (7,776,000 seconds) | Protocol ceiling; deployments can enforce stricter |
 | Max tool name length | 256 bytes | Practical limit |
@@ -1838,7 +1839,7 @@ See [Appendix A](#appendix-a-error-code-reference) for the complete error code l
 
 **CBOR parsing:**
 - Use memory-safe CBOR libraries
-- Set maximum recursion depth (recommend: 16)
+- Set maximum recursion depth (recommend: 32)
 - Reject duplicate map keys if supported by library
 - Reject indefinite-length encodings (require deterministic CBOR)
 
@@ -2059,6 +2060,7 @@ Test vectors MUST include:
 | Payload version | `version: u8` | `1` |
 | Algorithm agility | `PublicKey { algorithm, bytes }` | Ed25519 (1) |
 | Timestamps | `u64` | Unix seconds |
+| MAX_CONSTRAINT_DEPTH | 32 | Recursion depth for nested constraints |
 | Tool-scoped constraints | `BTreeMap<String, ConstraintSet>` | Yes |
 | Standard constraints | Type IDs 1-127 | Yes |
 | Experimental constraints | Type IDs 128-255 | Fail closed |
@@ -2088,29 +2090,6 @@ Test vectors MUST include:
 
 - **[Dennis1966]** Dennis, J.B., Van Horn, E.C., "Programming Semantics for Multiprogrammed Computations", Communications of the ACM, Vol. 9, No. 3, March 1966. https://doi.org/10.1145/365230.365252
 - **[Macaroons]** Birgisson, A., Politz, J.G., Erlingsson, U., Taly, A., Vrable, M., Lentczner, M., "Macaroons: Cookies with Contextual Caveats for Decentralized Authorization in the Cloud", NDSS 2014. https://research.google/pubs/pub41892/
-
----
-
-## Changelog
-
-- **1.0.1** - Specification improvements (2026-01-16)
-  - Clarified depth semantics (I2): terminal warrants and delegation capability
-  - Enhanced integer value limits with context-specific precision rules
-  - Improved constraint attenuation matrix: clarified OneOf→NotOneOf rejection rule
-  - Clarified pattern attenuation rules: reserved `**` (discouraged for security), documented `*` and bidirectional wildcards behavior
-  - **Made PoP max_windows configurable**: default 5 (±60s), range 2-10, with deployment guidance and corrected tolerance calculations
-  - **Refactored Approval to envelope pattern**: Changed from flat struct to `SignedApproval` envelope for consistency with `SignedWarrant`; improves security boundaries and extensibility
-  - Added CBOR major type precision to WarrantStack disambiguation
-  - Added ConstraintType enum entries for Subpath (17) and UrlSafe (18)
-  - **New §19**: Error Codes - machine-readable error codes with HTTP mapping
-  - **New §20**: Security Considerations - comprehensive security guidance
-  - **New §21**: Conformance Testing - required test coverage for implementations
-  - Added explanation for different TTL vs PoP clock tolerances
-  - Clarified max TTL as 7,776,000 seconds (90 days)
-  - Added note about parent_hash being None for root warrants
-- **1.0** - Promoted to normative specification (2026-01-10)
-- **0.1.1** - Added PoP, Approval, SRL, RevocationRequest wire formats
-- **0.1** - Initial specification
 
 ---
 

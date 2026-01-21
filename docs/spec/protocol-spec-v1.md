@@ -2,12 +2,21 @@
 
 **Version:** 1.0  
 **Status:** Normative  
-**Date:** 2026-01-10  
-**Authors:** Niki Aimable Niyikiza  
+**Date:** 2026-01-01
+**Documentation Revision:** 3 (2026-01-21)
+**Authors:** Niki Aimable Niyikiza
 
 **Related Documents:**
 - [wire-format-v1.md](wire-format-v1.md) - Wire Format Specification (CBOR encoding, field IDs)
 - [test-vectors.md](test-vectors.md) - Byte-exact test vectors for validation
+
+---
+
+## Revision History
+
+- **Rev 3** (2026-01-21): Verification and enforcement. Confirmed normative invariants (I1-I6) against codebase and test vectors.
+- **Rev 2** (2026-01-10): Reconciled with v1.0 wire format.
+- **Rev 1** (2026-01-01): Initial release.
 
 ---
 
@@ -165,6 +174,9 @@ can only issue execution warrants where `path` is *narrower* than `/data/*`:
 - `Exact("/data/q3.pdf")` - valid (single file within `/data/`)
 - `Pattern("/logs/*")` - REJECTED (not within bounds)
 - `Wildcard` - REJECTED (broader than bounds)
+ 
+> **Enforcement:** Verifiers MUST reject any child warrant that exceeds the constraint bounds or depth limits defined by its parent Issuer warrant.
+
 
 ### 2.5 Example
 
@@ -273,6 +285,11 @@ Unknown constraints participate in attenuation checks as opaque values and MUST 
 ---
 
 ## 4. Attenuation
+ 
+> **Enforcement Lifecycle:**
+> *   **At Attenuation (Issuer):** The issuer MUST ensure all generated child warrants satisfy these invariants.
+> *   **At Verification (Verifier):** The verifier MUST strictly enforce all invariants defined below (I1-I5). Any violation MUST result in chain rejection.
+
 
 ### 4.1 Delegation Authority (Invariant I1)
 
@@ -322,7 +339,7 @@ Every delegation SHOULD narrow at least one dimension:
 - `tools` set is a strict subset, OR
 - Any constraint becomes strictly stronger, OR
 - `expires_at` decreases, OR
-- `max_depth` decreases
+- `clearance` decreases
 
 This is guidance, not a verifier invariant.
 
@@ -332,7 +349,7 @@ This is guidance, not a verifier invariant.
 child.parent_hash == SHA256(parent.payload_bytes)
 ```
 
-Every child warrant is cryptographically bound to its parent via hash of the parent's payload. This prevents chain splicing attacks.
+Every child warrant is cryptographically bound to its parent via hash of the parent's payload. This prevents **chain splicing attacks**, where an attacker attempts to "reparent" a valid child warrant to a different, less restrictive parent warrant (e.g., swapping a production parent for a staging parent) to bypass attenuation or context restrictions.
 
 ---
 
@@ -410,7 +427,7 @@ if chain[0].issuer() not in verifier.trusted_roots:
 |---------|--------|
 | Same warrant ID twice | BLOCKED (cycle detection) |
 | Holder A->B->A (different warrants) | ALLOWED (monotonicity makes it safe) |
-| Self-issuance | BLOCKED (privilege escalation) |
+| Self-issuance | BLOCKED (violates separation of duties; issuer cannot grant execution to themselves) |
 
 ---
 
@@ -546,7 +563,7 @@ Tenuo is **stateless by design**. The Verifier does not track used PoP signature
 | Holder key | Attacker needs private key to use stolen PoP |
 | Time windows | ±60s default (configurable 30s-150s) |
 
-> **SHOULD:** For high-value operations (financial transactions, irreversible actions), applications SHOULD implement server-side idempotency using `extensions["tenuo.dedup_key"]`. The dedup key SHOULD be a hash of `(warrant_id, tool, canonical_args)` and SHOULD be checked before execution.
+> **SHOULD:** For high-value operations (financial transactions, irreversible actions), applications SHOULD implement server-side idempotency. The recommended **dedup key** is a hash of `(warrant_id, tool, canonical_args)` and SHOULD be checked before execution to prevent replay of the same request. SDKs provide a `dedup_key()` helper for this purpose.
 
 ### 7.5 PoP Configuration
 
@@ -559,9 +576,9 @@ The `max_windows` parameter (default 5, range 2-10) configures clock skew tolera
 
 **Configuration:**
 ```python
-from tenuo import DataPlane
+from tenuo import Authorizer
 
-data_plane = DataPlane(pop_max_windows=5)  # Default
+authorizer = Authorizer(pop_max_windows=5)  # Default
 ```
 
 See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.
@@ -866,9 +883,3 @@ Each test vector includes:
 
 - **[Dennis1966]** Dennis, J.B., Van Horn, E.C., "Programming Semantics for Multiprogrammed Computations", Communications of the ACM, Vol. 9, No. 3, March 1966. https://doi.org/10.1145/365230.365252
 - **[Macaroons]** Birgisson, A., Politz, J.G., Erlingsson, U., Taly, A., Vrable, M., Lentczner, M., "Macaroons: Cookies with Contextual Caveats for Decentralized Authorization in the Cloud", NDSS 2014. https://research.google/pubs/pub41892/
-
----
-
-## Changelog
-
-- **1.0 (2026-01-10):** Initial specification
