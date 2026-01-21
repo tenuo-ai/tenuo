@@ -212,7 +212,7 @@ can only issue execution warrants where `path` is *narrower* than `/data/*`:
 | *Reserved* | 6 | - | Future IntRange (i64) | - |
 | NotOneOf | 7 | `{excluded: [any]}` | Set exclusion | `NotOneOf(["prod"])` |
 | Cidr | 8 | `{network: string}` | IP range | `Cidr("10.0.0.0/8")` |
-| UrlPattern | 9 | `{pattern: string}` | URL matching. **Note**: `https://example.com/` (trailing slash) parses as "Any Path" (Wildcard). Use `https://example.com/*` to restrict to root. | `UrlPattern("https://*.example.com/*")` |
+| UrlPattern | 9 | `{pattern: string}` | URL matching | `UrlPattern("https://*.example.com/*")` |
 | Contains | 10 | `{required: [any]}` | List contains values | `Contains(["admin"])` |
 | Subset | 11 | `{allowed: [any]}` | Array subset | `Subset(["read", "write"])` |
 | All | 12 | `{constraints: [C]}` | Logical AND | `All([...])` |
@@ -427,7 +427,8 @@ if chain[0].issuer() not in verifier.trusted_roots:
 |---------|--------|
 | Same warrant ID twice | BLOCKED (cycle detection) |
 | Holder A->B->A (different warrants) | ALLOWED (monotonicity makes it safe) |
-| Self-issuance | BLOCKED (violates separation of duties; issuer cannot grant execution to themselves) |
+| Self-delegation (Execution→Execution) | ALLOWED (holder can narrow their own capabilities) |
+| Self-issuance (Issuer→Execution) | BLOCKED (issuer cannot grant execution to themselves, P-LLM/Q-LLM separation) |
 
 ---
 
@@ -565,24 +566,6 @@ Tenuo is **stateless by design**. The Verifier does not track used PoP signature
 
 > **SHOULD:** For high-value operations (financial transactions, irreversible actions), applications SHOULD implement server-side idempotency. The recommended **dedup key** is a hash of `(warrant_id, tool, canonical_args)` and SHOULD be checked before execution to prevent replay of the same request. SDKs provide a `dedup_key()` helper for this purpose.
 
-### 7.5 PoP Configuration
-
-The `max_windows` parameter (default 5, range 2-10) configures clock skew tolerance for Proof-of-Possession verification:
-
-- **Default 5 (±60s):** Recommended for modern cloud/data center deployments
-- **High-security 2 (±30s):** For financial transactions with strict NTP
-- **Edge/IoT 7 (±90s):** For environments with unreliable time sync
-- **Maximum 10 (±150s):** Only for legacy systems (indicates clock problems)
-
-**Configuration:**
-```python
-from tenuo import Authorizer
-
-authorizer = Authorizer(pop_max_windows=5)  # Default
-```
-
-See [wire-format-v1.md §15](wire-format-v1.md#15-proof-of-possession-pop-wire-format) for complete configuration details, tolerance calculations, and deployment guidance.
-
 ---
 
 ## 8. Serialization
@@ -689,7 +672,7 @@ This domain separation prevents cross-protocol signature reuse.
 | `tool_not_allowed` | Tool not in warrant's capabilities |
 | `constraint_not_satisfied` | Argument violates constraint |
 | `unknown_field` | Payload contains unknown CBOR keys |
-| `self_issuance` | Holder cannot delegate to themselves (child.holder == parent.holder) |
+| `self_issuance` | Issuer→Execution transition where issuer grants execution to themselves (violates P-LLM/Q-LLM separation) |
 | `revoked` | Warrant ID appears in active Signed Revocation List |
 
 ---
