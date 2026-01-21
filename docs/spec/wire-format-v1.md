@@ -210,12 +210,8 @@ Child3: depth=3, max_depth=3  → TERMINAL: Can use, cannot delegate (3 >= 3)
 ```
 
 **Enforcement points:**
-1. **Builder**: Check `parent.depth < parent.max_depth` before allowing delegation
-2. **Verifier**: Reject if `child.depth > parent.max_depth`
-
-**Enforcement points:**
-1. **Builder**: Increment depth, check against limits
-2. **Verifier**: Validate depth increment and limits
+1. **Builder**: Verify `parent.depth < parent.max_depth` (delegation allowed), increment depth, ensure `≤ 64`
+2. **Verifier**: Reject if `child.depth != parent.depth + 1` or `child.depth > parent.max_depth`
 
 #### I3: TTL Monotonicity
 ```
@@ -1431,7 +1427,9 @@ fn generate_offsets(max_windows: usize) -> Vec<i32> {
 | Window size | 30 seconds | - | - | Groups signatures into buckets (FIXED) |
 | **max_windows** | **5** | **2** | **10** | **Configurable clock skew tolerance** |
 
-**Clock tolerance formula:** `±(floor(max_windows / 2) × 30)` seconds
+### Clock Tolerance Formula
+
+Tolerance is calculated as `±(floor(max_windows / 2) × 30)` seconds.
 
 | max_windows | Tolerance | Recommended For |
 |-------------|-----------|-----------------|
@@ -1440,7 +1438,7 @@ fn generate_offsets(max_windows: usize) -> Vec<i32> {
 | 7 | ±90s | Edge/IoT with clock drift |
 | 10 | ±150s | Legacy systems (max) |
 
-Formula: `±(floor(max_windows / 2) × 30)` seconds. Odd values provide symmetric coverage; even values are asymmetric.
+Odd values (3, 5, 7) provide symmetric coverage; even values are asymmetric (checking one more past window than future).
 
 **Configuration scope:**
 - `max_windows` is a **verifier deployment setting** (not per-warrant or per-request)

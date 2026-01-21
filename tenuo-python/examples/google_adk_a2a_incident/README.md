@@ -202,7 +202,7 @@ google_adk_a2a_incident/
 
 - **Single-Process ADK Demo**: `../google_adk_incident_response/` - Simpler, single-process version
 - **A2A Protocol Demo**: `../a2a_demo.py` - Pure A2A without ADK
-- **OpenAI Integration**: `../openai_warrant.py` - OpenAI-specific patterns
+- **OpenAI Integration**: `../openai/warrant.py` - OpenAI-specific patterns
 
 ## Security Notes
 

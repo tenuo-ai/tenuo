@@ -792,10 +792,15 @@ mod tests {
 
         // Revocation errors
         assert_eq!(ErrorCode::WarrantRevoked.code(), 1800);
+        assert_eq!(ErrorCode::SRLVersionRollback.code(), 1802);
 
         // Size limit errors
         assert_eq!(ErrorCode::WarrantTooLarge.code(), 1900);
         assert_eq!(ErrorCode::TooManyConstraints.code(), 1903);
+        assert_eq!(ErrorCode::ExtensionTooLarge.code(), 1904);
+
+        // Reserved namespace errors
+        assert_eq!(ErrorCode::ReservedToolName.code(), 2100);
     }
 
     #[test]
