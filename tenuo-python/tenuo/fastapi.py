@@ -27,8 +27,11 @@ import uuid
 import logging
 
 from tenuo_core import Warrant, PublicKey  # type: ignore[import-untyped]
+from tenuo.exceptions import TenuoError, DeserializationError, ExpiredError
 
 logger = logging.getLogger("tenuo.fastapi")
+
+
 
 # Use string forward refs or try import, FastAPI must be installed
 try:
@@ -114,8 +117,6 @@ def configure_tenuo(
     app.state.tenuo_config = _config
 
     # Register global exception handler for TenuoError
-    from tenuo.exceptions import TenuoError
-
     @app.exception_handler(TenuoError)
     async def tenuo_error_handler(request: Request, exc: TenuoError):
         """Handle TenuoError exceptions with canonical wire codes."""
@@ -190,6 +191,11 @@ if FASTAPI_AVAILABLE:
 
         try:
             return Warrant.from_base64(x_tenuo_warrant)
+        except DeserializationError as e:
+            # Client error: malformed warrant
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid X-Tenuo-Warrant header: {str(e)}")
+        except TenuoError:
+            raise
         except Exception as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid X-Tenuo-Warrant header: {str(e)}")
 
@@ -336,7 +342,21 @@ class TenuoGuard:
             )
 
         # 5. Authorize - 403 for authorization failure
-        if not warrant.authorize(self.tool, auth_args, pop_sig_bytes):
+        try:
+            authorized = warrant.authorize(self.tool, auth_args, pop_sig_bytes)
+        except ExpiredError:
+            # Warrant expired between is_expired() check and authorize() call
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "error": "warrant_expired",
+                    "message": "Warrant has expired",
+                    "suggestion": "Request a fresh warrant from the issuer",
+                },
+                headers={"WWW-Authenticate": "Tenuo"},
+            )
+
+        if not authorized:
             # Generate a request ID for log correlation
             request_id = str(uuid.uuid4())[:8]
 

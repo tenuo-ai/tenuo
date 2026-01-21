@@ -554,7 +554,7 @@ python examples/basic_usage.py
 python examples/fastapi_integration.py
 
 # LangGraph protected
-python examples/langgraph_protected.py
+python examples/langchain/langgraph_protected.py
 
 # MCP integration
 python examples/mcp_integration.py

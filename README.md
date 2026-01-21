@@ -270,7 +270,7 @@ See [Related Work](https://tenuo.dev/related-work) for detailed comparison.
 | Multi-sig approvals | Partial (notary in v0.2) |
 | TypeScript/Node SDK | Planned for v0.2 |
 | Context-aware constraints | Spec under development |
-| Revocation service | Basic revocation via Authorizer; distributed revocation in v0.3 |
+| Revocation service | Planned for v0.2 |
 
 ---
 

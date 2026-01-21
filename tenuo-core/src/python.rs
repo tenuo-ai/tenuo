@@ -141,6 +141,12 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                 PyTuple::new(py, [parent.as_str(), child.as_str()]),
             ),
 
+            // Temporal
+            crate::error::Error::IssuedInFuture => (
+                "ValidationError",
+                PyTuple::new(py, ["Warrant issued in the future (check system clock)"]),
+            ),
+
             // Constraints
             crate::error::Error::ConstraintNotSatisfied { field, reason } => (
                 "ConstraintViolation",

@@ -327,8 +327,31 @@ impl SignedApproval {
             return Err(Error::UnsupportedVersion(payload.version));
         }
 
-        // Note: Expiration checking is done by the caller (e.g., authorizer).
-        // verify() only checks cryptographic validity.
+        // 5. Temporal Sanity Checks
+        let now = Utc::now().timestamp() as u64;
+
+        // Check A: Approved in future (Clock Skew)
+        // Prevent "time travel" attacks where an attacker creates an approval valid in the future
+        // to bypass current valid-time checks or replay protections.
+        use crate::warrant::CLOCK_SKEW_TOLERANCE_SECS;
+        if payload.approved_at > now.saturating_add(CLOCK_SKEW_TOLERANCE_SECS) {
+            return Err(Error::InvalidApproval(format!(
+                "approval timestamp is in the future (skew > {}s)",
+                CLOCK_SKEW_TOLERANCE_SECS
+            )));
+        }
+
+        // Check B: Expiration sanity
+        if payload.expires_at <= payload.approved_at {
+            return Err(Error::InvalidApproval(
+                "approval expires_at must be strictly greater than approved_at".to_string(),
+            ));
+        }
+
+        // Note: Actual expiration checking (is now > expires_at) is done by the caller
+        // (e.g., authorizer) because an expired approval is cryptographically valid
+        // but semantically stale.
+        // verify() checks inherent structure and cryptographic integrity.
 
         Ok(payload)
     }

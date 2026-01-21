@@ -16,6 +16,26 @@ use tenuo::{
     SigningKey,
 };
 
+// Fixed warrant IDs for new tests
+const ID_A15_ISSUER: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD0,
+];
+const ID_A15_CHILD: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD1,
+];
+const ID_A16_CHILD: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE0,
+];
+const ID_A17_PARENT: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0,
+];
+const ID_A17_CHILD: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF1,
+];
+const ID_A18: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18,
+];
+
 // Fixed timestamps (2024-01-01T00:00:00Z and +1 hour)
 const ISSUED_AT: u64 = 1704067200;
 const EXPIRES_AT: u64 = 1704070800;
@@ -67,7 +87,7 @@ fn main() {
     println!("# Tenuo Protocol Test Vectors");
     println!();
     println!("**Version:** 1.0");
-    println!("**Documentation Revision:** 2 (2026-01-18)");
+    println!("**Documentation Revision:** 2 (2026-01-21)");
     println!("**Generated:** 2024-01-01 (deterministic timestamps for reproducibility)");
     println!("**Specification:** [wire-format-v1.md](wire-format-v1.md)");
     println!();
@@ -75,12 +95,12 @@ fn main() {
     println!();
     println!("## Revision History");
     println!();
-    println!("- **Rev 2** (2026-01-18): Documentation cleanup");
+    println!("- **Rev 2** (2026-01-21): Documentation cleanup");
     println!("  - Regenerated all test vectors to match current generator output");
     println!("  - Added cross-reference note to full constraint type list in wire-format-v1.md");
     println!("  - **No protocol changes** - test vectors remain v1.0 compatible");
     println!();
-    println!("- **Rev 1** (2025-01-01): Initial release");
+    println!("- **Rev 1** (2026-01-01): Initial release");
     println!();
     println!("---");
     println!();
@@ -1522,6 +1542,235 @@ fn main() {
     println!("- **[RFC 8032]** Josefsson, S., Liusvaara, I., \"Edwards-Curve Digital Signature Algorithm (EdDSA)\", January 2017. https://datatracker.ietf.org/doc/html/rfc8032");
     println!("- **[RFC 8949]** Bormann, C., Hoffman, P., \"Concise Binary Object Representation (CBOR)\", December 2020. https://datatracker.ietf.org/doc/html/rfc8949");
     println!("- **[protocol-spec-v1.md]** Tenuo Protocol Specification");
+    println!();
+
+    // Recreate tools_l0 as it was moved earlier
+    let mut tools_l0 = BTreeMap::new();
+    let mut cs_l0 = ConstraintSet::new();
+    cs_l0.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    tools_l0.insert("read_file".to_string(), cs_l0);
+
+    // A.15: Issuer Constraint Bounds Violation
+    println!("---");
+    println!();
+    println!("## A.15 Issuer Constraint Violation");
+    println!();
+    println!("**Scenario:** Issuer warrant defines bounds, child exceeds them.");
+    println!();
+
+    let mut bounds_a15 = ConstraintSet::new();
+    bounds_a15.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    // constraint_bounds is Option<ConstraintSet>, which maps field_name -> Constraint.
+    // It assumes all issued tools share these argument bounds (e.g. any tool with 'path' arg must match).
+
+    let payload_a15_issuer = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Issuer,
+        id: WarrantId::from_bytes(ID_A15_ISSUER),
+        tools: BTreeMap::new(),
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 5,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: Some(vec!["read_file".to_string()]),
+        max_issue_depth: Some(3),
+        constraint_bounds: Some(bounds_a15),
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a15_issuer = sign_payload(&payload_a15_issuer, &control_plane);
+    print_vector("A.15 Issuer Warrant", &warrant_a15_issuer);
+
+    println!("**Child Warrant (Invalid - Constraints Outside Bounds):**");
+    println!();
+    let mut tools_a15_child = BTreeMap::new();
+    let mut cs_a15_child = ConstraintSet::new();
+    cs_a15_child.insert(
+        "path".to_string(),
+        Constraint::Exact(Exact::new("/etc/passwd")), // Not in /data/*
+    );
+    tools_a15_child.insert("read_file".to_string(), cs_a15_child);
+
+    let parent_hash_a15 = sha256(warrant_a15_issuer.payload_bytes());
+
+    let payload_a15_child = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A15_CHILD),
+        tools: tools_a15_child,
+        holder: worker.public_key(),
+        issuer: orchestrator.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 1,
+        parent_hash: Some(parent_hash_a15),
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a15_child = sign_payload(&payload_a15_child, &orchestrator);
+    print_vector("A.15 Invalid Child", &warrant_a15_child);
+    println!("**Expected:** Verification MUST fail with `constraint_violation` (Child constraints not subset of Parent bounds).");
+    println!();
+
+    // A.16: Self-Issuance Violation
+    println!("---");
+    println!();
+    println!("## A.16 Self-Issuance Violation");
+    println!();
+    println!("**Scenario:** Holder delegates execution warrant to themselves (Privilege Escalation / Separation of Duties).");
+    println!();
+
+    let parent_hash_l0 = sha256(warrant_l0.payload_bytes());
+    let mut tools_a16 = BTreeMap::new();
+    let mut cs_a16 = ConstraintSet::new();
+    cs_a16.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    tools_a16.insert("read_file".to_string(), cs_a16);
+
+    let payload_a16 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A16_CHILD),
+        tools: tools_a16,
+        holder: orchestrator.public_key(), // Same as issuer (Orchestrator self-signing)
+        issuer: orchestrator.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 1,
+        parent_hash: Some(parent_hash_l0), // Parent is Orchestrator's L0
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a16 = sign_payload(&payload_a16, &orchestrator);
+    print_vector("A.16 Invalid Self-Issuance", &warrant_a16);
+    println!("**Expected:** Verification MUST fail with `self_issuance` error.");
+    println!();
+
+    // A.17: Clearance Monotonicity Violation
+    println!("---");
+    println!();
+    println!("## A.17 Clearance Violation");
+    println!();
+    println!("**Scenario:** Child attempts to increase clearance level.");
+    println!();
+
+    let payload_a17_parent = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A17_PARENT),
+        tools: tools_l0.clone(),
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: Some(tenuo::warrant::Clearance(5)), // Parent clearance = 5
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a17_parent = sign_payload(&payload_a17_parent, &control_plane);
+    print_vector("A.17 Parent (Clearance=5)", &warrant_a17_parent);
+
+    let parent_hash_a17 = sha256(warrant_a17_parent.payload_bytes());
+    let payload_a17_child = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A17_CHILD),
+        tools: tools_l0.clone(),
+        holder: worker.public_key(),
+        issuer: orchestrator.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 1,
+        parent_hash: Some(parent_hash_a17),
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: Some(tenuo::warrant::Clearance(6)), // Child clearance = 6 (Invalid increase)
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a17_child = sign_payload(&payload_a17_child, &orchestrator);
+    print_vector("A.17 Invalid Child (Clearance=6)", &warrant_a17_child);
+    println!("**Expected:** Verification MUST fail with `clearance_monotonicity_violated`.");
+    println!();
+
+    // A.18: Multi-sig Config
+    println!("---");
+    println!();
+    println!("## A.18 Multi-sig Configuration");
+    println!();
+    println!("**Scenario:** Warrant with required approvers.");
+    println!();
+
+    let payload_a18 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A18),
+        tools: tools_l0.clone(),
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: Some(vec![worker.public_key(), worker2.public_key()]),
+        min_approvals: Some(1),
+    };
+    let warrant_a18 = sign_payload(&payload_a18, &control_plane);
+    print_vector("A.18 Multi-sig", &warrant_a18);
+    println!("Verifiers MUST enforce approvals from `worker` or `worker2` before execution.");
 }
 
 fn sign_payload(payload: &WarrantPayload, signing_key: &SigningKey) -> Warrant {

@@ -1,7 +1,7 @@
 # Tenuo Protocol Test Vectors
 
 **Version:** 1.0
-**Documentation Revision:** 2 (2026-01-18)
+**Documentation Revision:** 2 (2026-01-21)
 **Generated:** 2024-01-01 (deterministic timestamps for reproducibility)
 **Specification:** [wire-format-v1.md](wire-format-v1.md)
 
@@ -9,12 +9,12 @@
 
 ## Revision History
 
-- **Rev 2** (2026-01-18): Documentation cleanup
+- **Rev 2** (2026-01-21): Documentation cleanup
   - Regenerated all test vectors to match current generator output
   - Added cross-reference note to full constraint type list in wire-format-v1.md
   - **No protocol changes** - test vectors remain v1.0 compatible
 
-- **Rev 1** (2025-01-01): Initial release
+- **Rev 1** (2026-01-01): Initial release
 
 ---
 
@@ -1080,3 +1080,216 @@ Where `envelope_version` is `0x01` for v1 warrants.
 - **[RFC 8032]** Josefsson, S., Liusvaara, I., "Edwards-Curve Digital Signature Algorithm (EdDSA)", January 2017. https://datatracker.ietf.org/doc/html/rfc8032
 - **[RFC 8949]** Bormann, C., Hoffman, P., "Concise Binary Object Representation (CBOR)", December 2020. https://datatracker.ietf.org/doc/html/rfc8949
 - **[protocol-spec-v1.md]** Tenuo Protocol Specification
+
+---
+
+## A.15 Issuer Constraint Violation
+
+**Scenario:** Issuer warrant defines bounds, child exceeds them.
+
+**A.15 Issuer Warrant**
+
+| Field | Value |
+|-------|-------|
+| ID | `tnu_wrt_019471f80000700080000000000000d0` |
+| Type | Issuer |
+| Depth | 0 |
+| Max Depth | 5 |
+| Issued At | `1704067200` |
+| Expires At | `1704070800` |
+| Holder | `8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394` |
+| Issuer | `8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c` |
+
+**Payload CBOR (168 bytes):**
+```
+ad00010150019471f80000700080000000000000d0020103a004820158208139
+770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b3940582
+0158208a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b4
+0f6f5c061a65920080071a65920e9008050b8169726561645f66696c650d030e
+a16b636f6e73747261696e7473a164706174688202a1677061747465726e672f
+646174612f2a1200
+```
+
+**Signature (64 bytes):**
+```
+72609ed0e640d1ad17fa392ccc8e6457802cfa50c3b29dd20aba5c9eac63c6a4dcaf1e101de97ae2411d2f4a6a9e5b88460019d0423b30a7e2531df828e5ce0e
+```
+
+**Child Warrant (Invalid - Constraints Outside Bounds):**
+
+**A.15 Invalid Child**
+
+| Field | Value |
+|-------|-------|
+| ID | `tnu_wrt_019471f80000700080000000000000d1` |
+| Type | Execution |
+| Depth | 1 |
+| Max Depth | 3 |
+| Issued At | `1704067200` |
+| Expires At | `1704070800` |
+| Holder | `ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1` |
+| Issuer | `8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394` |
+| Parent Hash | `650fa5f9851339e6cba71f5d8384ca826fc4e9038395d127e960e0ec837e8003` |
+
+**Payload CBOR (228 bytes):**
+```
+ab00010150019471f80000700080000000000000d1020003a169726561645f66
+696c65a16b636f6e73747261696e7473a164706174688201a16576616c75656b
+2f6574632f7061737377640482015820ed4928c628d1c2c6eae9033890599561
+2959273a5c63f93636c14614ac8737d105820158208139770ea87d175f56a354
+66c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394061a65920080071a65920e
+90080309982018650f18a518f9188513183918e618cb18a7181f185d18831884
+18ca1882186f18c418e9031883189518d1182718e9186018e018ec1883187e18
+80031201
+```
+
+**Signature (64 bytes):**
+```
+7f1c56d81b94eedd32061bcb56833e6ce00a8db1e2b95d9695e05c6ed744be2397e7746a6eb3faac9958ba0535bd568e5d2f31f302f40168d7dca730469d500e
+```
+
+**Expected:** Verification MUST fail with `constraint_violation` (Child constraints not subset of Parent bounds).
+
+---
+
+## A.16 Self-Issuance Violation
+
+**Scenario:** Holder delegates execution warrant to themselves (Privilege Escalation / Separation of Duties).
+
+**A.16 Invalid Self-Issuance**
+
+| Field | Value |
+|-------|-------|
+| ID | `tnu_wrt_019471f80000700080000000000000e0` |
+| Type | Execution |
+| Depth | 1 |
+| Max Depth | 3 |
+| Issued At | `1704067200` |
+| Expires At | `1704070800` |
+| Holder | `8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394` |
+| Issuer | `8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394` |
+| Parent Hash | `705e79416823ef819a08e0c59feccb5d4baed4a7ebcaca290b014112cec5fc64` |
+
+**Payload CBOR (226 bytes):**
+```
+ab00010150019471f80000700080000000000000e0020003a169726561645f66
+696c65a16b636f6e73747261696e7473a164706174688202a167706174746572
+6e672f646174612f2a04820158208139770ea87d175f56a35466c34c7ecccb8d
+8a91b4ee37a25df60f5b8fc9b39405820158208139770ea87d175f56a35466c3
+4c7ecccb8d8a91b4ee37a25df60f5b8fc9b394061a65920080071a65920e9008
+030998201870185e187918411868182318ef1881189a0818e018c5189f18ec18
+cb185d184b18ae18d418a718eb18ca18ca18290b0118411218ce18c518fc1864
+1201
+```
+
+**Signature (64 bytes):**
+```
+225a01c889e03f912e768a9d0c2431bdce3cac5091d1f01dd45f1105a8127fdea28c039807f878d63af664c4b20aedf7a1a14618f87bf1f1a466f9f03dc27103
+```
+
+**Expected:** Verification MUST fail with `self_issuance` error.
+
+---
+
+## A.17 Clearance Violation
+
+**Scenario:** Child attempts to increase clearance level.
+
+**A.17 Parent (Clearance=5)**
+
+| Field | Value |
+|-------|-------|
+| ID | `tnu_wrt_019471f80000700080000000000000f0` |
+| Type | Execution |
+| Depth | 0 |
+| Max Depth | 3 |
+| Issued At | `1704067200` |
+| Expires At | `1704070800` |
+| Holder | `8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394` |
+| Issuer | `8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c` |
+
+**Payload CBOR (165 bytes):**
+```
+ab00010150019471f80000700080000000000000f0020003a169726561645f66
+696c65a16b636f6e73747261696e7473a164706174688202a167706174746572
+6e672f646174612f2a04820158208139770ea87d175f56a35466c34c7ecccb8d
+8a91b4ee37a25df60f5b8fc9b39405820158208a88e3dd7409f195fd52db2d3c
+ba5d72ca6709bf1d94121bf3748801b40f6f5c061a65920080071a65920e9008
+0311051200
+```
+
+**Signature (64 bytes):**
+```
+8cf891507b235cd48494d35250275063d3d22b119c6eabedc14378503ef288d419b50de5287dbca48d0a3dfebe5709bf26e974f4e1b3fb9ace2d245652174e06
+```
+
+**A.17 Invalid Child (Clearance=6)**
+
+| Field | Value |
+|-------|-------|
+| ID | `tnu_wrt_019471f80000700080000000000000f1` |
+| Type | Execution |
+| Depth | 1 |
+| Max Depth | 3 |
+| Issued At | `1704067200` |
+| Expires At | `1704070800` |
+| Holder | `ed4928c628d1c2c6eae90338905995612959273a5c63f93636c14614ac8737d1` |
+| Issuer | `8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394` |
+| Parent Hash | `a34797bde49e2afc3ca60b623eb75b6c1a4f5188b405d5632565a277a16cf120` |
+
+**Payload CBOR (230 bytes):**
+```
+ac00010150019471f80000700080000000000000f1020003a169726561645f66
+696c65a16b636f6e73747261696e7473a164706174688202a167706174746572
+6e672f646174612f2a0482015820ed4928c628d1c2c6eae90338905995612959
+273a5c63f93636c14614ac8737d105820158208139770ea87d175f56a35466c3
+4c7ecccb8d8a91b4ee37a25df60f5b8fc9b394061a65920080071a65920e9008
+0309982018a31847189718bd18e4189e182a18fc183c18a60b1862183e18b718
+5b186c181a184f1851188818b40518d518631825186518a2187718a1186c18f1
+182011061201
+```
+
+**Signature (64 bytes):**
+```
+7c0e1f803397c26afeaf1bceaec2fce0beef611a5d34745f903e49f8eb811a0b58f5a68d43c114e1ebc82ab04fe2bc6ae32cd5b58c2e3de0da354974dc3b4d02
+```
+
+**Expected:** Verification MUST fail with `clearance_monotonicity_violated`.
+
+---
+
+## A.18 Multi-sig Configuration
+
+**Scenario:** Warrant with required approvers.
+
+**A.18 Multi-sig**
+
+| Field | Value |
+|-------|-------|
+| ID | `tnu_wrt_019471f8000070008000000000000018` |
+| Type | Execution |
+| Depth | 0 |
+| Max Depth | 3 |
+| Issued At | `1704067200` |
+| Expires At | `1704070800` |
+| Holder | `8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394` |
+| Issuer | `8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c` |
+
+**Payload CBOR (239 bytes):**
+```
+ac00010150019471f8000070008000000000000018020003a169726561645f66
+696c65a16b636f6e73747261696e7473a164706174688202a167706174746572
+6e672f646174612f2a04820158208139770ea87d175f56a35466c34c7ecccb8d
+8a91b4ee37a25df60f5b8fc9b39405820158208a88e3dd7409f195fd52db2d3c
+ba5d72ca6709bf1d94121bf3748801b40f6f5c061a65920080071a65920e9008
+030f8282015820ed4928c628d1c2c6eae90338905995612959273a5c63f93636
+c14614ac8737d182015820ca93ac1705187071d67b83c7ff0efe8108e8ec4530
+575d7726879333dbdabe7c10011200
+```
+
+**Signature (64 bytes):**
+```
+cbf183a10dec415c4ce5210e44736f7faac63cc93107cd0d648ededc9dc9e06f6aa1a68bcdb8186ef2032a1dc17efa9434b2915c41954bd0dd1a564a83313101
+```
+
+Verifiers MUST enforce approvals from `worker` or `worker2` before execution.

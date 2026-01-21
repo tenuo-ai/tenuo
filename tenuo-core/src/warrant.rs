@@ -42,6 +42,9 @@ use crate::constraints::{Constraint, ConstraintSet, ConstraintValue};
 use crate::crypto::{PublicKey, Signature, SigningKey};
 use crate::diff::ClearanceDiff;
 use crate::error::{Error, Result};
+use crate::wire::{
+    MAX_CONSTRAINTS_PER_TOOL, MAX_EXTENSION_KEYS, MAX_EXTENSION_VALUE_SIZE, MAX_TOOLS_PER_WARRANT,
+};
 use crate::MAX_DELEGATION_DEPTH;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -56,6 +59,12 @@ pub const WARRANT_ID_PREFIX: &str = "tnu_wrt_";
 ///
 /// Incremented when breaking changes are made to the warrant structure.
 pub const WARRANT_VERSION: u32 = 1;
+
+/// Clock skew tolerance for temporal validation (30 seconds).
+///
+/// Warrants issued more than this amount of time in the future are rejected.
+/// This prevents "time travel" attacks while allowing for reasonable clock drift.
+pub const CLOCK_SKEW_TOLERANCE_SECS: u64 = 30;
 
 /// Type of warrant: ISSUER or EXECUTION.
 ///
@@ -604,7 +613,24 @@ impl Warrant {
 
     /// Validate that constraint nesting depths are within limits.
     pub fn validate_constraint_depth(&self) -> Result<()> {
+        // Validate tools count
+        if self.payload.tools.len() > MAX_TOOLS_PER_WARRANT {
+            return Err(Error::Validation(format!(
+                "tools count {} exceeds limit {}",
+                self.payload.tools.len(),
+                MAX_TOOLS_PER_WARRANT
+            )));
+        }
+
         for constraints in self.payload.tools.values() {
+            // Validate constraints per tool
+            if constraints.len() > MAX_CONSTRAINTS_PER_TOOL {
+                return Err(Error::Validation(format!(
+                    "constraints count {} exceeds limit {}",
+                    constraints.len(),
+                    MAX_CONSTRAINTS_PER_TOOL
+                )));
+            }
             constraints.validate_depth()?;
         }
         if let Some(constraint_bounds) = &self.payload.constraint_bounds {
@@ -622,6 +648,29 @@ impl Warrant {
                 "unsupported warrant version: {} (expected {})",
                 self.payload.version, WARRANT_VERSION
             )));
+        }
+
+        // Validate temporal constraints
+        let now = Utc::now().timestamp() as u64;
+
+        // Check 1: Issued in future (Clock Skew)
+        // Strict fail-closed check to prevent "time travel" attacks.
+        if self.payload.issued_at > now.saturating_add(CLOCK_SKEW_TOLERANCE_SECS) {
+            return Err(Error::IssuedInFuture);
+        }
+
+        // Check 2: Expiration > Issued
+        if self.payload.expires_at <= self.payload.issued_at {
+            return Err(Error::Validation(
+                "warrant expires_at must be strictly greater than issued_at".to_string(),
+            ));
+        }
+
+        // Validate expiry (informational check in some contexts, but good to validate structure)
+        if self.is_expired() {
+            // We usually don't fail validation for expiry alone (as historical validation is valid),
+            // but for *new* issuance flows it might be relevant.
+            // Following spec: validation checks invariants. Expiration is a state, not an invariant violation.
         }
 
         // Validate warrant type consistency
@@ -671,6 +720,25 @@ impl Warrant {
 
         // Validate constraint depth
         self.validate_constraint_depth()?;
+
+        // Validate extensions
+        if self.payload.extensions.len() > MAX_EXTENSION_KEYS {
+            return Err(Error::Validation(format!(
+                "extensions count {} exceeds limit {}",
+                self.payload.extensions.len(),
+                MAX_EXTENSION_KEYS
+            )));
+        }
+        for (key, val) in &self.payload.extensions {
+            if val.len() > MAX_EXTENSION_VALUE_SIZE {
+                return Err(Error::Validation(format!(
+                    "extension '{}' value size {} exceeds limit {}",
+                    key,
+                    val.len(),
+                    MAX_EXTENSION_VALUE_SIZE
+                )));
+            }
+        }
 
         // Validate expiration is in the future
         if self.is_expired() {
@@ -1348,10 +1416,47 @@ impl WarrantBuilder {
             }
         }
 
+        // Validate tools count
+        if self.tools.len() > MAX_TOOLS_PER_WARRANT {
+            return Err(Error::Validation(format!(
+                "tools count {} exceeds limit {}",
+                self.tools.len(),
+                MAX_TOOLS_PER_WARRANT
+            )));
+        }
+
         // Validate constraint depth in tools
         for constraints in self.tools.values() {
+            // Validate constraints per tool
+            if constraints.len() > MAX_CONSTRAINTS_PER_TOOL {
+                return Err(Error::Validation(format!(
+                    "constraints count {} exceeds limit {}",
+                    constraints.len(),
+                    MAX_CONSTRAINTS_PER_TOOL
+                )));
+            }
             constraints.validate_depth()?;
         }
+
+        // Validate extensions
+        if self.extensions.len() > MAX_EXTENSION_KEYS {
+            return Err(Error::Validation(format!(
+                "extensions count {} exceeds limit {}",
+                self.extensions.len(),
+                MAX_EXTENSION_KEYS
+            )));
+        }
+        for (key, val) in &self.extensions {
+            if val.len() > MAX_EXTENSION_VALUE_SIZE {
+                return Err(Error::Validation(format!(
+                    "extension '{}' value size {} exceeds limit {}",
+                    key,
+                    val.len(),
+                    MAX_EXTENSION_VALUE_SIZE
+                )));
+            }
+        }
+
         if !self.constraint_bounds.is_empty() {
             self.constraint_bounds.validate_depth()?;
         }
@@ -3191,6 +3296,40 @@ mod tests {
         assert_eq!(warrant.depth(), 0);
         assert!(warrant.is_root());
         assert!(!warrant.is_expired());
+    }
+
+    #[test]
+    fn test_issued_in_future_rejection() {
+        let keypair = create_test_keypair();
+
+        let mut warrant = Warrant::builder()
+            .tool("test", ConstraintSet::new())
+            .ttl(Duration::from_secs(300))
+            .holder(keypair.public_key())
+            .build(&keypair)
+            .unwrap();
+
+        // Manipulate timestamps to simulate future issuance
+        // Use a time far in the future > 30s skew
+        let future = Utc::now().timestamp() as u64 + 3600;
+        warrant.payload.issued_at = future;
+        warrant.payload.expires_at = future + 300;
+
+        // Validation must fail
+        match warrant.validate() {
+            Err(Error::IssuedInFuture) => (),
+            res => panic!("Expected IssuedInFuture error, got {:?}", res),
+        }
+
+        // Also verify strict expiration (expires_at > issued_at)
+        let now = Utc::now().timestamp() as u64;
+        warrant.payload.issued_at = now;
+        warrant.payload.expires_at = now; // Equal, should fail
+
+        match warrant.validate() {
+            Err(Error::Validation(msg)) if msg.contains("strictly greater") => (),
+            res => panic!("Expected strict expiry error, got {:?}", res),
+        }
     }
 
     #[test]

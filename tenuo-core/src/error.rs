@@ -321,6 +321,10 @@ pub enum Error {
     #[error("warrant expired at {0}")]
     WarrantExpired(chrono::DateTime<chrono::Utc>),
 
+    /// Warrant issued in the future (Clock Skew violation).
+    #[error("warrant issued in the future (check system clock)")]
+    IssuedInFuture,
+
     /// Warrant depth exceeds maximum allowed.
     #[error("delegation depth {0} exceeds maximum {1}")]
     DepthExceeded(u32, u32),
@@ -645,6 +649,7 @@ impl Error {
             // Warrant Lifecycle Errors
             Self::WarrantRevoked(_) => ErrorCode::WarrantRevoked,
             Self::WarrantExpired(_) => ErrorCode::WarrantExpired,
+            Self::IssuedInFuture => ErrorCode::IssuedInFuture,
             Self::DepthExceeded(_, _) => ErrorCode::DepthExceeded,
             Self::InvalidWarrantId(_) => ErrorCode::InvalidPayloadStructure,
             Self::InvalidTtl(_) => ErrorCode::TTLExceeded,
@@ -787,10 +792,15 @@ mod tests {
 
         // Revocation errors
         assert_eq!(ErrorCode::WarrantRevoked.code(), 1800);
+        assert_eq!(ErrorCode::SRLVersionRollback.code(), 1802);
 
         // Size limit errors
         assert_eq!(ErrorCode::WarrantTooLarge.code(), 1900);
         assert_eq!(ErrorCode::TooManyConstraints.code(), 1903);
+        assert_eq!(ErrorCode::ExtensionTooLarge.code(), 1904);
+
+        // Reserved namespace errors
+        assert_eq!(ErrorCode::ReservedToolName.code(), 2100);
     }
 
     #[test]
