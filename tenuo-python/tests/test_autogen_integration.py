@@ -203,6 +203,7 @@ class TestGuardBuilderTier1:
 
     def test_notoneof_constraint_blocks_disallowed_values(self):
         """NotOneOf excludes specific values."""
+
         def operate(operation: str) -> str:
             return operation
 
@@ -220,9 +221,7 @@ class TestGuardBuilderTier1:
     def test_not_constraint_inverts_match(self):
         """Not negates the inner constraint."""
         guard = (
-            GuardBuilder()
-            .allow("search", query=Not(Pattern("bad*")))
-            .build()
+            GuardBuilder().allow("search", query=Not(Pattern("bad*"))).build()
         )
         guarded = guard.guard_tool(search, tool_name="search")
 
@@ -232,10 +231,13 @@ class TestGuardBuilderTier1:
 
     def test_unknown_constraint_type_fails_closed(self):
         """Unknown constraint objects should fail closed."""
+
         class UnknownConstraint:
             pass
 
-        guard = GuardBuilder().allow("search", query=UnknownConstraint()).build()
+        guard = (
+            GuardBuilder().allow("search", query=UnknownConstraint()).build()
+        )
         guarded = guard.guard_tool(search, tool_name="search")
 
         with pytest.raises(ConstraintViolation, match="constraint"):
@@ -243,11 +245,14 @@ class TestGuardBuilderTier1:
 
     def test_constraint_implementation_error_fails_closed(self):
         """Constraint errors should surface as ConstraintViolation."""
+
         class ExplodingConstraint:
             def satisfies(self, _value: str) -> bool:
                 raise ValueError("boom")
 
-        guard = GuardBuilder().allow("search", query=ExplodingConstraint()).build()
+        guard = (
+            GuardBuilder().allow("search", query=ExplodingConstraint()).build()
+        )
         guarded = guard.guard_tool(search, tool_name="search")
 
         with pytest.raises(ConstraintViolation, match="boom"):
@@ -277,11 +282,14 @@ class TestGuardBuilderTier1:
 
     def test_guard_tools_respects_tool_name_fn(self):
         """tool_name_fn should override tool name resolution."""
+
         def internal_tool(query: str) -> str:
             return f"internal:{query}"
 
         guard = GuardBuilder().allow("search", query=Pattern("ok*")).build()
-        wrapped = guard.guard_tools([internal_tool], tool_name_fn=lambda _t: "search")
+        wrapped = guard.guard_tools(
+            [internal_tool], tool_name_fn=lambda _t: "search"
+        )
 
         assert wrapped[0](query="ok") == "internal:ok"
 
@@ -757,6 +765,7 @@ class TestStreamingTier2:
         with pytest.raises(AuthorizationDenied):
             list(guard.guard_stream(iter(chunks)))
 
+
 # =============================================================================
 # Tier 2: guard_tool / guard_tools (BoundWarrant + PoP)
 # =============================================================================
@@ -811,7 +820,7 @@ class TestGuardToolTier2:
             guarded(query="ok", limit=10)
 
     def test_guard_tool_rejects_wrong_signing_key(self):
-        """PoP with the wrong key should raise SignatureInvalid."""
+        """PoP with the wrong key should be denied."""
         holder_key = SigningKey.generate()
         wrong_key = SigningKey.generate()
         warrant = (
@@ -823,7 +832,7 @@ class TestGuardToolTier2:
         bound = warrant.bind(wrong_key)
 
         guarded = guard_tool(search, bound, tool_name="search")
-        with pytest.raises(SignatureInvalid):
+        with pytest.raises(AuthorizationDenied):
             guarded(query="ok")
 
     def test_warrant_expires_mid_execution(self):
