@@ -18,7 +18,18 @@ import time
 import pytest
 from typing import Any, List, Optional
 
-from tenuo import Pattern, SigningKey, Warrant, Wildcard
+from tenuo import (
+    All,
+    AnyOf,
+    Not,
+    NotOneOf,
+    OneOf,
+    Pattern,
+    Range,
+    SigningKey,
+    Warrant,
+    Wildcard,
+)
 from tenuo.autogen import GuardBuilder, guard_tool, guard_tools, protect
 from tenuo.exceptions import (
     AuthorizationDenied,
@@ -134,6 +145,114 @@ class TestGuardBuilderTier1:
         with pytest.raises(ConstraintViolation):
             guarded(query="anything", limit=10)
 
+    def test_range_constraint_allows_and_blocks(self):
+        """Range constraints enforce numeric bounds."""
+        guard = (
+            GuardBuilder()
+            .allow("search", query=Pattern("ok*"), limit=Range(1, 3))
+            .build()
+        )
+        guarded = guard.guard_tool(search, tool_name="search")
+
+        assert guarded(query="ok", limit=2) == "results:ok:2"
+        with pytest.raises(ConstraintViolation):
+            guarded(query="ok", limit=10)
+
+    def test_oneof_constraint_allows_and_blocks(self):
+        """OneOf constraints enforce allowed values."""
+
+        def operate(operation: str) -> str:
+            return operation
+
+        guard = (
+            GuardBuilder()
+            .allow("operate", operation=OneOf(["add", "subtract"]))
+            .build()
+        )
+        guarded = guard.guard_tool(operate, tool_name="operate")
+
+        assert guarded(operation="add") == "add"
+        with pytest.raises(ConstraintViolation):
+            guarded(operation="multiply")
+
+    def test_anyof_constraint_allows_and_blocks(self):
+        """AnyOf constraints allow any matching option."""
+        guard = (
+            GuardBuilder()
+            .allow("search", query=AnyOf([Pattern("ok*"), Pattern("yes*")]))
+            .build()
+        )
+        guarded = guard.guard_tool(search, tool_name="search")
+
+        assert guarded(query="ok-1") == "results:ok-1:0"
+        with pytest.raises(ConstraintViolation):
+            guarded(query="nope")
+
+    def test_all_constraint_requires_all_matches(self):
+        """All constraints require every constraint to pass."""
+        guard = (
+            GuardBuilder()
+            .allow("search", query=All([Pattern("ok*"), Pattern("*ok")]))
+            .build()
+        )
+        guarded = guard.guard_tool(search, tool_name="search")
+
+        assert guarded(query="ok") == "results:ok:0"
+        with pytest.raises(ConstraintViolation):
+            guarded(query="ok-1")
+
+    def test_notoneof_constraint_blocks_disallowed_values(self):
+        """NotOneOf excludes specific values."""
+        def operate(operation: str) -> str:
+            return operation
+
+        guard = (
+            GuardBuilder()
+            .allow("operate", operation=NotOneOf(["delete", "drop"]))
+            .build()
+        )
+        guarded = guard.guard_tool(operate, tool_name="operate")
+
+        assert guarded(operation="list") == "list"
+        with pytest.raises(ConstraintViolation):
+            guarded(operation="delete")
+
+    def test_not_constraint_inverts_match(self):
+        """Not negates the inner constraint."""
+        guard = (
+            GuardBuilder()
+            .allow("search", query=Not(Pattern("bad*")))
+            .build()
+        )
+        guarded = guard.guard_tool(search, tool_name="search")
+
+        assert guarded(query="good") == "results:good:0"
+        with pytest.raises(ConstraintViolation):
+            guarded(query="bad-1")
+
+    def test_unknown_constraint_type_fails_closed(self):
+        """Unknown constraint objects should fail closed."""
+        class UnknownConstraint:
+            pass
+
+        guard = GuardBuilder().allow("search", query=UnknownConstraint()).build()
+        guarded = guard.guard_tool(search, tool_name="search")
+
+        with pytest.raises(ConstraintViolation, match="constraint"):
+            guarded(query="ok")
+
+    def test_constraint_implementation_error_fails_closed(self):
+        """Constraint errors should surface as ConstraintViolation."""
+        class ExplodingConstraint:
+            def satisfies(self, _value: str) -> bool:
+                raise ValueError("boom")
+
+        guard = GuardBuilder().allow("search", query=ExplodingConstraint()).build()
+        guarded = guard.guard_tool(search, tool_name="search")
+
+        with pytest.raises(ConstraintViolation, match="boom"):
+            guarded(query="ok")
+
     def test_unlisted_tool_raises(self):
         """Unlisted tool raises ToolNotAuthorized."""
         guard = GuardBuilder().allow("search", query=Pattern("ok*")).build()
@@ -141,6 +260,30 @@ class TestGuardBuilderTier1:
 
         with pytest.raises(ToolNotAuthorized):
             guarded(path="/data/file.txt")
+
+    def test_guard_tool_rejects_non_callable(self):
+        """Non-callable tools should raise TypeError."""
+        guard = GuardBuilder().allow("search", query=Pattern("ok*")).build()
+
+        with pytest.raises(TypeError):
+            guard.guard_tool(123, tool_name="search")
+
+    def test_guard_tools_rejects_invalid_input(self):
+        """guard_tools should reject invalid input types."""
+        guard = GuardBuilder().allow("search", query=Pattern("ok*")).build()
+
+        with pytest.raises(TypeError):
+            guard.guard_tools(123)
+
+    def test_guard_tools_respects_tool_name_fn(self):
+        """tool_name_fn should override tool name resolution."""
+        def internal_tool(query: str) -> str:
+            return f"internal:{query}"
+
+        guard = GuardBuilder().allow("search", query=Pattern("ok*")).build()
+        wrapped = guard.guard_tools([internal_tool], tool_name_fn=lambda _t: "search")
+
+        assert wrapped[0](query="ok") == "internal:ok"
 
     def test_on_denial_log_allows_execution(self, caplog):
         """on_denial=log allows execution and logs warning."""
@@ -189,6 +332,7 @@ class TestAsyncToolsTier1:
     @pytest.mark.asyncio
     async def test_async_tool_allowed(self):
         """Async tools should be awaited and allowed when valid."""
+
         async def async_search(query: str) -> str:
             return f"async:{query}"
 
@@ -200,6 +344,7 @@ class TestAsyncToolsTier1:
     @pytest.mark.asyncio
     async def test_async_tool_denied(self):
         """Async tools should raise on constraint violations."""
+
         async def async_search(query: str) -> str:
             return f"async:{query}"
 
@@ -220,6 +365,7 @@ class TestArgumentExtractionTier1:
 
     def test_dict_payload(self):
         """Single dict payload should be used for authorization."""
+
         def search_payload(payload: dict) -> str:
             return f"payload:{payload['query']}"
 
@@ -230,6 +376,7 @@ class TestArgumentExtractionTier1:
 
     def test_model_dump_payload(self):
         """model_dump() payloads should be supported."""
+
         class Payload:
             def __init__(self, query: str) -> None:
                 self.query = query
@@ -247,6 +394,7 @@ class TestArgumentExtractionTier1:
 
     def test_dict_fallback_payload(self):
         """__dict__ fallback should be supported for simple objects."""
+
         @dataclass
         class Payload:
             query: str
@@ -261,7 +409,11 @@ class TestArgumentExtractionTier1:
 
     def test_positional_args_bound_by_signature(self):
         """Positional args should be bound to parameter names."""
-        guard = GuardBuilder().allow("search", query=Pattern("ok*"), limit=Wildcard()).build()
+        guard = (
+            GuardBuilder()
+            .allow("search", query=Pattern("ok*"), limit=Wildcard())
+            .build()
+        )
         guarded = guard.guard_tool(search, tool_name="search")
 
         assert guarded("ok", 2) == "results:ok:2"
@@ -296,7 +448,10 @@ class TestStreamingTOCTOUProtection:
                                 MockToolCallDelta(
                                     index=0,
                                     id="call_0",
-                                    function=MockFunction(name="search", arguments='{"query": "no'),
+                                    function=MockFunction(
+                                        name="search",
+                                        arguments='{"query": "no',
+                                    ),
                                 )
                             ]
                         ),
@@ -312,7 +467,10 @@ class TestStreamingTOCTOUProtection:
                         delta=MockStreamDelta(
                             tool_calls=[
                                 MockToolCallDelta(
-                                    index=0, function=MockFunction(name="", arguments='pe"}')
+                                    index=0,
+                                    function=MockFunction(
+                                        name="", arguments='pe"}'
+                                    ),
                                 )
                             ]
                         ),
@@ -322,7 +480,13 @@ class TestStreamingTOCTOUProtection:
             ),
             MockStreamChunk(
                 id="chunk_2",
-                choices=[MockStreamChoice(index=0, delta=MockStreamDelta(), finish_reason="tool_calls")],
+                choices=[
+                    MockStreamChoice(
+                        index=0,
+                        delta=MockStreamDelta(),
+                        finish_reason="tool_calls",
+                    )
+                ],
             ),
         ]
 
@@ -330,6 +494,78 @@ class TestStreamingTOCTOUProtection:
 
         with pytest.raises(ConstraintViolation):
             list(guard.guard_stream(iter(chunks)))
+
+    def test_streaming_invalid_json_raises(self):
+        """Invalid JSON in tool args should be rejected."""
+        chunks = [
+            MockStreamChunk(
+                id="chunk_0",
+                choices=[
+                    MockStreamChoice(
+                        index=0,
+                        delta=MockStreamDelta(
+                            tool_calls=[
+                                MockToolCallDelta(
+                                    index=0,
+                                    id="call_0",
+                                    function=MockFunction(
+                                        name="search",
+                                        arguments='{"query": "ok",}',
+                                    ),
+                                )
+                            ]
+                        ),
+                        finish_reason="tool_calls",
+                    )
+                ],
+            )
+        ]
+
+        guard = GuardBuilder().allow("search", query=Pattern("ok*")).build()
+
+        with pytest.raises(ConstraintViolation, match="Invalid JSON"):
+            list(guard.guard_stream(iter(chunks)))
+
+    def test_streaming_invalid_json_skip_filters_calls(self):
+        """Skip mode should drop tool calls with invalid JSON."""
+        chunks = [
+            MockStreamChunk(
+                id="chunk_0",
+                choices=[
+                    MockStreamChoice(
+                        index=0,
+                        delta=MockStreamDelta(
+                            tool_calls=[
+                                MockToolCallDelta(
+                                    index=0,
+                                    id="call_0",
+                                    function=MockFunction(
+                                        name="search",
+                                        arguments='{"query": "ok",}',
+                                    ),
+                                )
+                            ]
+                        ),
+                        finish_reason="tool_calls",
+                    )
+                ],
+            )
+        ]
+
+        guard = (
+            GuardBuilder()
+            .allow("search", query=Pattern("ok*"))
+            .on_denial("skip")
+            .build()
+        )
+
+        result_chunks = list(guard.guard_stream(iter(chunks)))
+
+        for chunk in result_chunks:
+            for choice in chunk.choices:
+                delta = choice.delta
+                if delta.tool_calls is not None:
+                    assert delta.tool_calls == []
 
     def test_streaming_skip_filters_denied_tool_calls(self):
         """Skip mode should filter denied tool calls."""
@@ -352,7 +588,11 @@ class TestStreamingTOCTOUProtection:
                         delta=MockStreamDelta(
                             tool_calls=[
                                 MockToolCallDelta(
-                                    index=0, id="call_0", function=MockFunction(name="unauthorized", arguments="{}")
+                                    index=0,
+                                    id="call_0",
+                                    function=MockFunction(
+                                        name="unauthorized", arguments="{}"
+                                    ),
                                 )
                             ]
                         ),
@@ -362,11 +602,22 @@ class TestStreamingTOCTOUProtection:
             ),
             MockStreamChunk(
                 id="chunk_2",
-                choices=[MockStreamChoice(index=0, delta=MockStreamDelta(), finish_reason="tool_calls")],
+                choices=[
+                    MockStreamChoice(
+                        index=0,
+                        delta=MockStreamDelta(),
+                        finish_reason="tool_calls",
+                    )
+                ],
             ),
         ]
 
-        guard = GuardBuilder().allow("safe_tool", query=Wildcard()).on_denial("skip").build()
+        guard = (
+            GuardBuilder()
+            .allow("safe_tool", query=Wildcard())
+            .on_denial("skip")
+            .build()
+        )
 
         result_chunks = list(guard.guard_stream(iter(chunks)))
 
@@ -391,7 +642,10 @@ class TestStreamingTOCTOUProtection:
                                 MockToolCallDelta(
                                     index=0,
                                     id="call_0",
-                                    function=MockFunction(name="search", arguments='{"query": "ok"}'),
+                                    function=MockFunction(
+                                        name="search",
+                                        arguments='{"query": "ok"}',
+                                    ),
                                 )
                             ]
                         ),
@@ -401,7 +655,13 @@ class TestStreamingTOCTOUProtection:
             ),
             MockStreamChunk(
                 id="chunk_1",
-                choices=[MockStreamChoice(index=0, delta=MockStreamDelta(), finish_reason="tool_calls")],
+                choices=[
+                    MockStreamChoice(
+                        index=0,
+                        delta=MockStreamDelta(),
+                        finish_reason="tool_calls",
+                    )
+                ],
             ),
         ]
 
@@ -410,6 +670,92 @@ class TestStreamingTOCTOUProtection:
         result_chunks = list(guard.guard_stream(iter(chunks)))
         assert len(result_chunks) == 2
 
+
+# =============================================================================
+# Tier 2: Streaming
+# =============================================================================
+
+
+class TestStreamingTier2:
+    """Streaming behavior with Tier 2 warrants."""
+
+    def test_streaming_with_warrant_allows_valid_call(self):
+        """Tier 2 streaming should allow valid calls."""
+        key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("search", query=Pattern("ok*"))
+            .holder(key.public_key)
+            .mint(key)
+        )
+
+        guard = GuardBuilder().with_warrant(warrant, key).build()
+
+        chunks = [
+            MockStreamChunk(
+                id="chunk_0",
+                choices=[
+                    MockStreamChoice(
+                        index=0,
+                        delta=MockStreamDelta(
+                            tool_calls=[
+                                MockToolCallDelta(
+                                    index=0,
+                                    id="call_0",
+                                    function=MockFunction(
+                                        name="search",
+                                        arguments='{"query": "ok"}',
+                                    ),
+                                )
+                            ]
+                        ),
+                        finish_reason="tool_calls",
+                    )
+                ],
+            )
+        ]
+
+        result_chunks = list(guard.guard_stream(iter(chunks)))
+        assert len(result_chunks) == 1
+
+    def test_streaming_with_warrant_denies_invalid_call(self):
+        """Tier 2 streaming should raise on invalid calls."""
+        key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("search", query=Pattern("ok*"))
+            .holder(key.public_key)
+            .mint(key)
+        )
+
+        guard = GuardBuilder().with_warrant(warrant, key).build()
+
+        chunks = [
+            MockStreamChunk(
+                id="chunk_0",
+                choices=[
+                    MockStreamChoice(
+                        index=0,
+                        delta=MockStreamDelta(
+                            tool_calls=[
+                                MockToolCallDelta(
+                                    index=0,
+                                    id="call_0",
+                                    function=MockFunction(
+                                        name="search",
+                                        arguments='{"query": "nope"}',
+                                    ),
+                                )
+                            ]
+                        ),
+                        finish_reason="tool_calls",
+                    )
+                ],
+            )
+        ]
+
+        with pytest.raises(AuthorizationDenied):
+            list(guard.guard_stream(iter(chunks)))
 
 # =============================================================================
 # Tier 2: guard_tool / guard_tools (BoundWarrant + PoP)
@@ -448,10 +794,65 @@ class TestGuardToolTier2:
         with pytest.raises(AuthorizationDenied):
             guarded(query="nope")
 
+    def test_guard_tool_enforces_range_constraint(self):
+        """Range constraints should be enforced in Tier 2."""
+        key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("search", query=Pattern("ok*"), limit=Range(1, 3))
+            .holder(key.public_key)
+            .mint(key)
+        )
+        bound = warrant.bind(key)
+
+        guarded = guard_tool(search, bound, tool_name="search")
+        assert guarded(query="ok", limit=2) == "results:ok:2"
+        with pytest.raises(AuthorizationDenied):
+            guarded(query="ok", limit=10)
+
+    def test_guard_tool_rejects_wrong_signing_key(self):
+        """PoP with the wrong key should raise SignatureInvalid."""
+        holder_key = SigningKey.generate()
+        wrong_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("search", query=Pattern("ok*"))
+            .holder(holder_key.public_key)
+            .mint(holder_key)
+        )
+        bound = warrant.bind(wrong_key)
+
+        guarded = guard_tool(search, bound, tool_name="search")
+        with pytest.raises(SignatureInvalid):
+            guarded(query="ok")
+
+    def test_warrant_expires_mid_execution(self):
+        """Expired warrants should fail after TTL even if initial call succeeds."""
+        key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("search", query=Pattern("ok*"), limit=Range(1, 3))
+            .holder(key.public_key)
+            .ttl(1)
+            .mint(key)
+        )
+        bound = warrant.bind(key)
+
+        guarded = guard_tool(search, bound, tool_name="search")
+        assert guarded(query="ok", limit=1) == "results:ok:1"
+        time.sleep(2)
+        with pytest.raises(ExpiredError):
+            guarded(query="ok", limit=1)
+
     def test_guard_tool_denies_when_tool_not_in_warrant(self):
         """Tool not in warrant.tools raises ToolNotAuthorized."""
         key = SigningKey.generate()
-        warrant = Warrant.mint_builder().tools(["search"]).holder(key.public_key).mint(key)
+        warrant = (
+            Warrant.mint_builder()
+            .tools(["search"])
+            .holder(key.public_key)
+            .mint(key)
+        )
         bound = warrant.bind(key)
 
         guarded = guard_tool(read_file, bound, tool_name="read_file")
@@ -487,6 +888,7 @@ class TestAsyncToolsTier2:
     @pytest.mark.asyncio
     async def test_async_tool_allows_with_pop(self):
         """Async tools should be awaited and authorized with PoP."""
+
         async def async_search(query: str) -> str:
             return f"async:{query}"
 
@@ -505,6 +907,7 @@ class TestAsyncToolsTier2:
     @pytest.mark.asyncio
     async def test_async_tool_denied_with_pop(self):
         """Async tools should raise on constraint violations."""
+
         async def async_search(query: str) -> str:
             return f"async:{query}"
 
@@ -532,6 +935,7 @@ class TestToolNameResolutionTier2:
 
     def test_uses_tool_name_attribute(self):
         """tool.name should be used when tool_name not provided."""
+
         class NamedTool:
             name = "search"
 
@@ -539,7 +943,12 @@ class TestToolNameResolutionTier2:
                 return f"named:{query}"
 
         key = SigningKey.generate()
-        warrant = Warrant.mint_builder().tools(["search"]).holder(key.public_key).mint(key)
+        warrant = (
+            Warrant.mint_builder()
+            .tools(["search"])
+            .holder(key.public_key)
+            .mint(key)
+        )
         bound = warrant.bind(key)
 
         guarded = guard_tool(NamedTool(), bound)
@@ -547,12 +956,18 @@ class TestToolNameResolutionTier2:
 
     def test_falls_back_to_class_name(self):
         """Class name should be used when no name or __name__ present."""
+
         class ClassNameTool:
             def __call__(self, query: str) -> str:
                 return f"class:{query}"
 
         key = SigningKey.generate()
-        warrant = Warrant.mint_builder().tools(["ClassNameTool"]).holder(key.public_key).mint(key)
+        warrant = (
+            Warrant.mint_builder()
+            .tools(["ClassNameTool"])
+            .holder(key.public_key)
+            .mint(key)
+        )
         bound = warrant.bind(key)
 
         guarded = guard_tool(ClassNameTool(), bound)
@@ -560,6 +975,7 @@ class TestToolNameResolutionTier2:
 
     def test_explicit_tool_name_overrides(self):
         """Explicit tool_name should override auto-resolution."""
+
         class NamedTool:
             name = "internal_name"
 
@@ -567,7 +983,12 @@ class TestToolNameResolutionTier2:
                 return f"override:{query}"
 
         key = SigningKey.generate()
-        warrant = Warrant.mint_builder().tools(["override"]).holder(key.public_key).mint(key)
+        warrant = (
+            Warrant.mint_builder()
+            .tools(["override"])
+            .holder(key.public_key)
+            .mint(key)
+        )
         bound = warrant.bind(key)
 
         guarded = guard_tool(NamedTool(), bound, tool_name="override")
@@ -613,6 +1034,27 @@ class TestGuardBuilderTier2:
         with pytest.raises(AuthorizationDenied):
             guarded(query="nope")
 
+    def test_tier2_oneof_constraint(self):
+        """OneOf constraints should be enforced in Tier 2."""
+
+        def operate(operation: str) -> str:
+            return operation
+
+        key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("operate", operation=OneOf(["add", "subtract"]))
+            .holder(key.public_key)
+            .mint(key)
+        )
+
+        guard = GuardBuilder().with_warrant(warrant, key).build()
+        guarded = guard.guard_tool(operate, tool_name="operate")
+
+        assert guarded(operation="add") == "add"
+        with pytest.raises(AuthorizationDenied):
+            guarded(operation="multiply")
+
     def test_tier2_on_denial_log_allows_execution(self, caplog):
         """on_denial=log should allow execution with PoP."""
         key = SigningKey.generate()
@@ -623,7 +1065,9 @@ class TestGuardBuilderTier2:
             .mint(key)
         )
 
-        guard = GuardBuilder().with_warrant(warrant, key).on_denial("log").build()
+        guard = (
+            GuardBuilder().with_warrant(warrant, key).on_denial("log").build()
+        )
         guarded = guard.guard_tool(search, tool_name="search")
 
         with caplog.at_level(logging.WARNING):
@@ -648,7 +1092,9 @@ class TestGuardBuilderTier2:
             .mint(key)
         )
 
-        guard = GuardBuilder().with_warrant(warrant, key).on_denial("skip").build()
+        guard = (
+            GuardBuilder().with_warrant(warrant, key).on_denial("skip").build()
+        )
         guarded = guard.guard_tool(tracking_tool, tool_name="search")
 
         assert guarded(query="nope") is None
@@ -657,7 +1103,12 @@ class TestGuardBuilderTier2:
     def test_warrant_requires_signing_key(self):
         """Missing signing_key should raise MissingSigningKey."""
         key = SigningKey.generate()
-        warrant = Warrant.mint_builder().tools(["search"]).holder(key.public_key).mint(key)
+        warrant = (
+            Warrant.mint_builder()
+            .tools(["search"])
+            .holder(key.public_key)
+            .mint(key)
+        )
 
         with pytest.raises(MissingSigningKey):
             GuardBuilder().with_warrant(warrant, None).build()
@@ -666,7 +1117,12 @@ class TestGuardBuilderTier2:
         """Signing key must match warrant holder."""
         key = SigningKey.generate()
         wrong_key = SigningKey.generate()
-        warrant = Warrant.mint_builder().tools(["search"]).holder(key.public_key).mint(key)
+        warrant = (
+            Warrant.mint_builder()
+            .tools(["search"])
+            .holder(key.public_key)
+            .mint(key)
+        )
 
         with pytest.raises(ConfigurationError):
             GuardBuilder().with_warrant(warrant, wrong_key).build()
@@ -704,6 +1160,7 @@ class TestProtect:
         """protect() wraps dict of tools."""
         guarded_dict = protect({"search": search}, search=Pattern("ok*"))
         assert guarded_dict["search"](query="ok") == "results:ok:0"
+
 
 # =============================================================================
 # Integration Invariants (from integration guide)
@@ -747,7 +1204,9 @@ class TestIntegrationInvariants:
             .mint(key)
         )
 
-        assert not warrant.allows("read", {"path": "/data/file.txt", "mode": "r"})
+        assert not warrant.allows(
+            "read", {"path": "/data/file.txt", "mode": "r"}
+        )
         assert warrant.allows("read", {"path": "/data/file.txt"})
 
     def test_expiry_enforced(self):
@@ -763,8 +1222,8 @@ class TestIntegrationInvariants:
         time.sleep(2)
 
         bound = warrant.bind(key)
-        result = bound.validate("read", {"path": "/data/file.txt"})
-        assert not result
+        with pytest.raises(ExpiredError):
+            bound.validate("read", {"path": "/data/file.txt"})
 
     def test_pop_required(self):
         """PoP requires signing key in Tier 2."""
@@ -820,4 +1279,3 @@ class TestIntegrationInvariants:
         assert child.depth == 1
         assert child.allows("read", {"path": "/data/file.txt"})
         assert not child.allows("read", {"path": "/etc/passwd"})
-

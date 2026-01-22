@@ -216,16 +216,19 @@ def _check_constraints(
                 field=key, reason="Missing required argument"
             )
         value = auth_args[key]
+        if not hasattr(constraint, "satisfies") or not callable(
+            getattr(constraint, "satisfies")
+        ):
+            raise ConstraintViolation(
+                field=key, reason="Invalid constraint type", value=value
+            )
         try:
-            if hasattr(constraint, "satisfies") and callable(
-                getattr(constraint, "satisfies")
-            ):
-                if not constraint.satisfies(value):  # type: ignore[call-arg]
-                    raise ConstraintViolation(
-                        field=key,
-                        reason=f"Value does not satisfy {constraint}",
-                        value=value,
-                    )
+            if not constraint.satisfies(value):  # type: ignore[call-arg]
+                raise ConstraintViolation(
+                    field=key,
+                    reason=f"Value does not satisfy {constraint}",
+                    value=value,
+                )
         except ConstraintViolation:
             raise
         except Exception as e:  # pragma: no cover - defensive
