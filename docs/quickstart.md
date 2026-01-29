@@ -41,6 +41,7 @@ uv pip install tenuo
 
 **With framework support:**
 ```bash
+pip install "tenuo[autogen]"     # AutoGen (AgentChat) integration (Python >= 3.10)
 uv pip install "tenuo[langchain]"   # LangChain integration
 uv pip install "tenuo[langgraph]"   # LangGraph integration (includes LangChain)
 uv pip install "tenuo[fastapi]"     # FastAPI integration
@@ -639,6 +640,7 @@ See [Constraints](./constraints) for the full list.
 
 - **[AI Agent Patterns](./ai-agents)** — P-LLM/Q-LLM, prompt injection defense
 - **[Concepts](./concepts)** — Why Tenuo? Threat model, core invariants
+- **[AutoGen](./autogen)** — Protect AutoGen AgentChat tools
 - **[LangChain](./langchain)** — Protect LangChain tools
 - **[LangGraph](./langgraph)** — Scope LangGraph nodes
 - **[FastAPI](./fastapi)** — Zero-boilerplate API protection
