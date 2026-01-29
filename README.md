@@ -35,6 +35,10 @@ pip install tenuo
 <a href="https://tenuo.dev/demo.html"><img src="https://img.shields.io/badge/Docker_Demo-delegation_chain-a855f7" alt="Docker Demo"></a>
 <a href="https://niyikiza.com/posts/tenuo-launch/"><img src="https://img.shields.io/badge/Blog-Why_Tenuo%3F-ff6b6b" alt="Blog"></a>
 
+<p align="center">
+  <strong>Deploying agents in production?</strong> <a href="https://calendly.com/tenuo/30min">Book a call</a>
+</p>
+
 ## Quick Start
 
 ```python
