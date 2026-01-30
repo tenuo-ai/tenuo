@@ -2087,14 +2087,10 @@ fn handle_extract(
                         );
 
                         // Show hint on failure
-                        if trace.result.is_none() && trace.hint.is_some() && verbose {
-                            println!(
-                                "      └── 💡 {}",
-                                trace
-                                    .hint
-                                    .as_ref()
-                                    .expect("hint should be present when is_some() is true")
-                            );
+                        if trace.result.is_none() && verbose {
+                            if let Some(hint) = &trace.hint {
+                                println!("      └── 💡 {}", hint);
+                            }
                         }
                     }
 
