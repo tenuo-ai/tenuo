@@ -2456,7 +2456,7 @@ fn main() {
     println!("| Field | Value |");
     println!("|-------|-------|");
     println!("| `version` | 1 |");
-    println!("| `request_hash` | `{}` |", hex::encode(&request_hash));
+    println!("| `request_hash` | `{}` |", hex::encode(request_hash));
     println!("| `nonce` | `{}` |", hex::encode(APPROVAL_NONCE));
     println!("| `external_id` | `arn:aws:iam::123456789012:user/security-admin` |");
     println!("| `approved_at` | `{}` |", ISSUED_AT);
