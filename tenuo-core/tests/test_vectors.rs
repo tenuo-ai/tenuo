@@ -113,15 +113,10 @@ fn attacker_key() -> SigningKey {
     SigningKey::from_bytes(&[0xFF; 32])
 }
 
-/// Returns the spec-defined test vector nonce for A.24 SignedApproval.
-/// This is a deterministic value for byte-exact interoperability testing,
-/// NOT for production cryptographic use.
-fn test_vector_nonce() -> [u8; 16] {
-    [
-        0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7,
-        0xB8,
-    ]
-}
+// Test vector nonce for A.24 SignedApproval - deterministic for byte-exact interop testing
+const TEST_VECTOR_NONCE: [u8; 16] = [
+    0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8,
+];
 
 /// Test Vector A.1: Minimal Valid Execution Warrant
 #[test]
@@ -2910,14 +2905,10 @@ fn test_vector_a24_signed_approval_envelope() {
     // Create approval with proper signature
     let approved_at = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
     let expires_at = Utc.with_ymd_and_hms(2024, 1, 1, 1, 0, 0).unwrap();
-    // Test vector nonce - intentionally deterministic for byte-exact reproducibility.
-    // This is NOT used in production; it's a spec-defined constant for interop testing.
-    // codeql[rust/hard-coded-cryptographic-value] - test vector, not production code
-    let nonce: [u8; 16] = test_vector_nonce();
 
     let payload = ApprovalPayload::new(
         request_hash,
-        nonce,
+        TEST_VECTOR_NONCE,
         "arn:aws:iam::123456789012:user/security-admin".to_string(),
         approved_at,
         expires_at,

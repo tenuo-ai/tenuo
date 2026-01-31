@@ -1,0 +1,30 @@
+# CodeQL configuration for Tenuo
+# https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning/customizing-your-advanced-setup-for-code-scanning
+
+name: "Tenuo CodeQL Config"
+
+# Use default queries plus security-extended
+queries:
+  - uses: security-and-quality
+
+# Exclude false positives in test files
+# Test vectors use deterministic cryptographic values for byte-exact
+# interoperability testing - these are NOT production secrets.
+query-filters:
+  - exclude:
+      id: rust/hard-coded-cryptographic-value
+      paths:
+        - "**/tests/**"
+        - "**/test_*.rs"
+        - "**/*_test.rs"
+  - exclude:
+      id: rust/hardcoded-credentials
+      paths:
+        - "**/tests/**"
+        - "**/test_*.rs"
+
+# Paths to exclude from analysis entirely
+paths-ignore:
+  - "**/target/**"
+  - "**/node_modules/**"
+  - "**/*.min.js"
