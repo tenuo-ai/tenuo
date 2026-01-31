@@ -113,6 +113,16 @@ fn attacker_key() -> SigningKey {
     SigningKey::from_bytes(&[0xFF; 32])
 }
 
+/// Returns the spec-defined test vector nonce for A.24 SignedApproval.
+/// This is a deterministic value for byte-exact interoperability testing,
+/// NOT for production cryptographic use.
+fn test_vector_nonce() -> [u8; 16] {
+    [
+        0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7,
+        0xB8,
+    ]
+}
+
 /// Test Vector A.1: Minimal Valid Execution Warrant
 #[test]
 fn test_vector_a1_minimal_execution_warrant() {
@@ -2900,9 +2910,10 @@ fn test_vector_a24_signed_approval_envelope() {
     // Create approval with proper signature
     let approved_at = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
     let expires_at = Utc.with_ymd_and_hms(2024, 1, 1, 1, 0, 0).unwrap();
-    // Test vector nonce - intentionally deterministic for byte-exact reproducibility
-    #[allow(clippy::unusual_byte_groupings)]
-    let nonce: [u8; 16] = *b"\xA1\xA2\xA3\xA4\xA5\xA6\xA7\xA8\xB1\xB2\xB3\xB4\xB5\xB6\xB7\xB8"; // codegen:ignore
+    // Test vector nonce - intentionally deterministic for byte-exact reproducibility.
+    // This is NOT used in production; it's a spec-defined constant for interop testing.
+    // codeql[rust/hard-coded-cryptographic-value] - test vector, not production code
+    let nonce: [u8; 16] = test_vector_nonce();
 
     let payload = ApprovalPayload::new(
         request_hash,
