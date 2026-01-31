@@ -6,10 +6,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{{ page.title }} | Tenuo</title>
   <meta name="description" content="{{ page.description | default: site.description }}">
+  
+  <!-- Favicons -->
   <link rel="icon" href="{{ site.baseurl }}/favicon.ico" sizes="48x48">
-  <link rel="icon" type="image/png" sizes="96x96" href="{{ site.baseurl }}/images/favicon-96.png">
-  <link rel="icon" type="image/png" sizes="48x48" href="{{ site.baseurl }}/images/favicon-48.png">
   <link rel="icon" type="image/svg+xml" href="{{ site.baseurl }}/images/favicon-t.svg">
+  <link rel="apple-touch-icon" href="{{ site.baseurl }}/images/apple-touch-icon.png">
+  
+  <!-- Open Graph / Social Media -->
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{{ page.title }} | Tenuo">
+  <meta property="og:description" content="{{ page.description | default: site.description }}">
+  <meta property="og:image" content="https://tenuo.dev/images/og-image.png">
+  <meta property="og:url" content="https://tenuo.dev{{ page.url }}">
+  <meta property="og:site_name" content="Tenuo">
+  
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ page.title }} | Tenuo">
+  <meta name="twitter:description" content="{{ page.description | default: site.description }}">
+  <meta name="twitter:image" content="https://tenuo.dev/images/og-image.png">
   <style>
     :root {
       --bg: #0a0a0a;
