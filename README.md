@@ -75,7 +75,7 @@ IAM answers "who are you?" Tenuo answers "what can you do right now?"
 
 ## What Tenuo Is Not
 
-- **Not a sandbox** - Tenuo authorizes actions, it doesn't isolate execution. Pair with containers/VMs for defense in depth.
+- **Not a sandbox** - Tenuo authorizes actions, it doesn't isolate execution. Pair with containers/sandboxes/VMs for defense in depth.
 - **Not prompt engineering** - No "please don't do bad things" instructions. Cryptographic enforcement, not behavioral.
 - **Not an LLM filter** - We don't parse model outputs. We gate tool calls at execution time.
 - **Not a replacement for IAM** - Tenuo *complements* IAM by adding task-scoped, attenuating capabilities on top of identity.

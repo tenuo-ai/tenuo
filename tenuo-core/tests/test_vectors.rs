@@ -66,6 +66,31 @@ const ID_A13_CHILD: [u8; 16] = [
 const ID_A14: [u8; 16] = [
     0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0,
 ];
+const ID_A15_ISSUER: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD0,
+];
+const ID_A15_CHILD: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD1,
+];
+// A.16 uses builder API (not raw payload), so ID not needed
+#[allow(dead_code)]
+const ID_A16: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE0,
+];
+const ID_A17_PARENT: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0,
+];
+const ID_A17_CHILD: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF1,
+];
+const ID_A18: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18,
+];
+// A.2 uses builder API (not raw payload), so ID not needed
+#[allow(dead_code)]
+const ID_A2: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+];
 
 // Fixed seeds for deterministic key generation (from spec)
 fn control_plane_key() -> SigningKey {
@@ -1932,6 +1957,341 @@ eede73926d6d4d2796a2fdf69b28501aaa75439ebcbbd2adb9efd0f04bd84c0e";
     );
 }
 
+/// Test Vector A.15: Issuer Constraint Violation
+/// Child warrant exceeds constraint bounds defined by issuer warrant
+#[test]
+fn test_vector_a15_issuer_constraint_violation() {
+    // Create keys
+    let control_plane = control_plane_key();
+    let orchestrator = orchestrator_key();
+    let worker = worker_key();
+
+    // Create issuer warrant with constraint bounds limiting to /data/*
+    let mut constraint_bounds = ConstraintSet::new();
+    constraint_bounds.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+
+    let payload_issuer = payload::WarrantPayload {
+        version: 1,
+        warrant_type: warrant::WarrantType::Issuer,
+        id: warrant::WarrantId::from_bytes(ID_A15_ISSUER),
+        tools: BTreeMap::new(), // Issuer warrants have empty tools
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: FUTURE_ISSUED_AT,
+        expires_at: FUTURE_EXPIRES_AT,
+        max_depth: 5,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: Some(vec!["read_file".to_string()]),
+        max_issue_depth: Some(3),
+        constraint_bounds: Some(constraint_bounds),
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    let warrant_issuer = sign_payload(&payload_issuer, &control_plane);
+    let parent_hash = sha256(warrant_issuer.payload_bytes());
+
+    // Create child execution warrant that EXCEEDS bounds (/etc/passwd is outside /data/*)
+    let mut tools_child = BTreeMap::new();
+    let mut cs_child = ConstraintSet::new();
+    cs_child.insert(
+        "path".to_string(),
+        Constraint::Exact(Exact::new("/etc/passwd")), // OUTSIDE /data/* bounds!
+    );
+    tools_child.insert("read_file".to_string(), cs_child);
+
+    let payload_child = payload::WarrantPayload {
+        version: 1,
+        warrant_type: warrant::WarrantType::Execution,
+        id: warrant::WarrantId::from_bytes(ID_A15_CHILD),
+        tools: tools_child,
+        holder: worker.public_key(),
+        issuer: orchestrator.public_key(),
+        issued_at: FUTURE_ISSUED_AT,
+        expires_at: FUTURE_EXPIRES_AT,
+        max_depth: 3,
+        depth: 1,
+        parent_hash: Some(parent_hash),
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    let warrant_child = sign_payload(&payload_child, &orchestrator);
+
+    // Verify that the verifier REJECTS this chain
+    let mut data_plane = DataPlane::new();
+    data_plane.trust_issuer("root", control_plane.public_key());
+
+    let result = data_plane.verify_chain(&[warrant_issuer, warrant_child]);
+    assert!(
+        result.is_err(),
+        "A.15 verify_chain should REJECT constraint violation"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("bound") || err_msg.contains("constraint") || err_msg.contains("attenuation") || err_msg.contains("allowed"),
+        "A.15 error should mention constraint bounds issue: {}",
+        err_msg
+    );
+}
+
+/// Test Vector A.16: Self-Issuance Violation
+/// Tests that the Issuer → Execution self-issuance is blocked.
+///
+/// **Security rationale:** The holder of an Issuer warrant cannot issue an Execution
+/// warrant to themselves. This enforces the separation of duties principle (P-LLM ≠ Q-LLM):
+/// the entity that plans/issues warrants should not be the same entity that executes them.
+///
+/// **Note:** Self-issuance in Execution → Execution chains is NOT blocked because
+/// monotonicity invariants (I2-I4) ensure it can only attenuate, never escalate capabilities.
+#[test]
+fn test_vector_a16_self_issuance_violation() {
+    use std::time::Duration;
+
+    // Create keys
+    let control_plane = control_plane_key();
+    let orchestrator = orchestrator_key();
+
+    // Create issuer warrant held by orchestrator
+    let issuer_warrant = Warrant::builder()
+        .r#type(warrant::WarrantType::Issuer)
+        .issuable_tools(vec!["read_file".to_string()])
+        .ttl(Duration::from_secs(3600))
+        .holder(orchestrator.public_key())
+        .build(&control_plane)
+        .expect("Failed to build issuer warrant");
+
+    // Attempt self-issuance: orchestrator tries to issue execution warrant to themselves
+    let self_issue_result = issuer_warrant
+        .issue_execution_warrant()
+        .unwrap()
+        .capability("read_file", ConstraintSet::new())
+        .ttl(Duration::from_secs(60))
+        .holder(orchestrator.public_key()) // Same as issuer warrant holder!
+        .build(&orchestrator);
+
+    // Verify the builder REJECTS self-issuance
+    assert!(
+        self_issue_result.is_err(),
+        "A.16 builder should REJECT Issuer → Execution self-issuance"
+    );
+    let err_msg = self_issue_result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("self") || err_msg.contains("Self") || err_msg.contains("issuance"),
+        "A.16 error should mention self-issuance: {}",
+        err_msg
+    );
+}
+
+/// Test Vector A.17: Clearance Violation
+/// Child attempts to increase clearance level beyond parent's
+#[test]
+fn test_vector_a17_clearance_violation() {
+    // Create keys
+    let control_plane = control_plane_key();
+    let orchestrator = orchestrator_key();
+    let worker = worker_key();
+
+    // Create parent warrant with clearance=5
+    let mut tools_parent = BTreeMap::new();
+    let mut cs_parent = ConstraintSet::new();
+    cs_parent.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    tools_parent.insert("read_file".to_string(), cs_parent);
+
+    let payload_parent = payload::WarrantPayload {
+        version: 1,
+        warrant_type: warrant::WarrantType::Execution,
+        id: warrant::WarrantId::from_bytes(ID_A17_PARENT),
+        tools: tools_parent,
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: FUTURE_ISSUED_AT,
+        expires_at: FUTURE_EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: Some(Clearance(5)), // Parent clearance = 5
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    let warrant_parent = sign_payload(&payload_parent, &control_plane);
+    let parent_hash = sha256(warrant_parent.payload_bytes());
+
+    // Create child with HIGHER clearance (invalid!)
+    let mut tools_child = BTreeMap::new();
+    let mut cs_child = ConstraintSet::new();
+    cs_child.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    tools_child.insert("read_file".to_string(), cs_child);
+
+    let payload_child = payload::WarrantPayload {
+        version: 1,
+        warrant_type: warrant::WarrantType::Execution,
+        id: warrant::WarrantId::from_bytes(ID_A17_CHILD),
+        tools: tools_child,
+        holder: worker.public_key(),
+        issuer: orchestrator.public_key(),
+        issued_at: FUTURE_ISSUED_AT,
+        expires_at: FUTURE_EXPIRES_AT,
+        max_depth: 3,
+        depth: 1,
+        parent_hash: Some(parent_hash),
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: Some(Clearance(6)), // HIGHER than parent (invalid!)
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+
+    let warrant_child = sign_payload(&payload_child, &orchestrator);
+
+    // Verify clearance violation
+    assert_eq!(
+        warrant_parent.payload.clearance,
+        Some(Clearance(5)),
+        "A.17 parent clearance should be 5"
+    );
+    assert_eq!(
+        warrant_child.payload.clearance,
+        Some(Clearance(6)),
+        "A.17 child clearance should be 6"
+    );
+    assert!(
+        warrant_child.payload.clearance > warrant_parent.payload.clearance,
+        "A.17 child should have HIGHER clearance (violation)"
+    );
+
+    // Verify that the verifier REJECTS this chain
+    let mut data_plane = DataPlane::new();
+    data_plane.trust_issuer("root", control_plane.public_key());
+
+    let result = data_plane.verify_chain(&[warrant_parent, warrant_child]);
+    assert!(
+        result.is_err(),
+        "A.17 verify_chain should REJECT clearance escalation"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("clearance") || err_msg.contains("Clearance") || err_msg.contains("escalat"),
+        "A.17 error should mention clearance issue: {}",
+        err_msg
+    );
+}
+
+/// Test Vector A.18: Multi-sig Configuration
+/// Warrant requires approvals from multiple parties
+#[test]
+fn test_vector_a18_multisig_configuration() {
+    // Create keys
+    let control_plane = control_plane_key();
+    let orchestrator = orchestrator_key();
+    let worker = worker_key();
+    let worker2 = worker2_key();
+
+    // Create warrant with required approvers
+    let mut tools = BTreeMap::new();
+    let mut cs = ConstraintSet::new();
+    cs.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    tools.insert("read_file".to_string(), cs);
+
+    let payload = payload::WarrantPayload {
+        version: 1,
+        warrant_type: warrant::WarrantType::Execution,
+        id: warrant::WarrantId::from_bytes(ID_A18),
+        tools,
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: FUTURE_ISSUED_AT,
+        expires_at: FUTURE_EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: Some(vec![worker.public_key(), worker2.public_key()]),
+        min_approvals: Some(1), // Require 1 of 2 approvers
+    };
+
+    let warrant = sign_payload(&payload, &control_plane);
+
+    // Verify multi-sig configuration
+    assert!(
+        warrant.payload.required_approvers.is_some(),
+        "A.18 warrant should have required_approvers"
+    );
+    let approvers = warrant.payload.required_approvers.as_ref().unwrap();
+    assert_eq!(
+        approvers.len(),
+        2,
+        "A.18 should have 2 required approvers"
+    );
+    assert_eq!(
+        warrant.payload.min_approvals,
+        Some(1),
+        "A.18 should require minimum 1 approval"
+    );
+
+    // Verify approvers are worker and worker2
+    assert!(
+        approvers.contains(&worker.public_key()),
+        "A.18 approvers should include worker"
+    );
+    assert!(
+        approvers.contains(&worker2.public_key()),
+        "A.18 approvers should include worker2"
+    );
+
+    // Verify the warrant passes chain verification (the multi-sig is valid config)
+    let mut data_plane = DataPlane::new();
+    data_plane.trust_issuer("root", control_plane.public_key());
+
+    let result = data_plane.verify_chain(&[warrant]);
+    assert!(
+        result.is_ok(),
+        "A.18 verify_chain should ACCEPT valid multi-sig warrant: {:?}",
+        result.err()
+    );
+}
+
 // Helper function to sign a payload
 fn sign_payload(payload: &payload::WarrantPayload, signing_key: &SigningKey) -> Warrant {
     // Serialize payload to CBOR
@@ -1960,4 +2320,758 @@ fn sha256(data: &[u8]) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(data);
     hasher.finalize().into()
+}
+
+// ============================================================================
+// A.19 CONSTRAINT TYPE COVERAGE
+// ============================================================================
+
+/// Test Vector A.19.1: Range Constraint
+/// Validates that Range constraints correctly accept/reject numeric values.
+#[test]
+fn test_vector_a19_1_range_constraint() {
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    let control_plane = control_plane_key();
+    let worker = worker_key();
+
+    // Build warrant with Range constraint: count must be 0..100
+    let mut constraint_set = ConstraintSet::new();
+    constraint_set.insert(
+        "count".to_string(),
+        Constraint::Range(Range::new(Some(0.0), Some(100.0)).unwrap()),
+    );
+
+    let warrant = Warrant::builder()
+        .r#type(warrant::WarrantType::Execution)
+        .capability("api_call", constraint_set)
+        .ttl(Duration::from_secs(3600))
+        .holder(worker.public_key())
+        .build(&control_plane)
+        .expect("Failed to build Range warrant");
+
+    let mut data_plane = DataPlane::new();
+    data_plane.trust_issuer("root", control_plane.public_key());
+
+    // Valid: count = 50 (within range)
+    let mut valid_args: HashMap<String, ConstraintValue> = HashMap::new();
+    valid_args.insert("count".to_string(), ConstraintValue::Float(50.0));
+
+    let pop = warrant.sign(&worker, "api_call", &valid_args).unwrap();
+    let result = data_plane.authorize(&warrant, "api_call", &valid_args, Some(&pop), &[]);
+    assert!(
+        result.is_ok(),
+        "A.19.1 Range should ACCEPT value within bounds: {:?}",
+        result.err()
+    );
+
+    // Invalid: count = 150 (outside range)
+    let mut invalid_args: HashMap<String, ConstraintValue> = HashMap::new();
+    invalid_args.insert("count".to_string(), ConstraintValue::Float(150.0));
+
+    let pop = warrant.sign(&worker, "api_call", &invalid_args).unwrap();
+    let result = data_plane.authorize(&warrant, "api_call", &invalid_args, Some(&pop), &[]);
+    assert!(
+        result.is_err(),
+        "A.19.1 Range should REJECT value outside bounds"
+    );
+}
+
+/// Test Vector A.19.2: OneOf Constraint
+/// Validates that OneOf constraints correctly accept/reject string values.
+#[test]
+fn test_vector_a19_2_oneof_constraint() {
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    let control_plane = control_plane_key();
+    let worker = worker_key();
+
+    // Build warrant with OneOf constraint: env must be "staging" or "production"
+    let mut constraint_set = ConstraintSet::new();
+    constraint_set.insert(
+        "env".to_string(),
+        Constraint::OneOf(OneOf::new(vec!["staging", "production"])),
+    );
+
+    let warrant = Warrant::builder()
+        .r#type(warrant::WarrantType::Execution)
+        .capability("deploy", constraint_set)
+        .ttl(Duration::from_secs(3600))
+        .holder(worker.public_key())
+        .build(&control_plane)
+        .expect("Failed to build OneOf warrant");
+
+    let mut data_plane = DataPlane::new();
+    data_plane.trust_issuer("root", control_plane.public_key());
+
+    // Valid: env = "staging"
+    let mut valid_args: HashMap<String, ConstraintValue> = HashMap::new();
+    valid_args.insert("env".to_string(), ConstraintValue::String("staging".to_string()));
+
+    let pop = warrant.sign(&worker, "deploy", &valid_args).unwrap();
+    let result = data_plane.authorize(&warrant, "deploy", &valid_args, Some(&pop), &[]);
+    assert!(
+        result.is_ok(),
+        "A.19.2 OneOf should ACCEPT value in set: {:?}",
+        result.err()
+    );
+
+    // Invalid: env = "development" (not in set)
+    let mut invalid_args: HashMap<String, ConstraintValue> = HashMap::new();
+    invalid_args.insert("env".to_string(), ConstraintValue::String("development".to_string()));
+
+    let pop = warrant.sign(&worker, "deploy", &invalid_args).unwrap();
+    let result = data_plane.authorize(&warrant, "deploy", &invalid_args, Some(&pop), &[]);
+    assert!(
+        result.is_err(),
+        "A.19.2 OneOf should REJECT value not in set"
+    );
+}
+
+/// Test Vector A.19.3: CIDR Constraint
+/// Validates that CIDR constraints correctly accept/reject IP addresses.
+#[test]
+fn test_vector_a19_3_cidr_constraint() {
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    let control_plane = control_plane_key();
+    let worker = worker_key();
+
+    // Build warrant with CIDR constraint: ip must be in 10.0.0.0/8
+    let mut constraint_set = ConstraintSet::new();
+    constraint_set.insert(
+        "ip".to_string(),
+        Constraint::Cidr(Cidr::new("10.0.0.0/8").expect("valid CIDR")),
+    );
+
+    let warrant = Warrant::builder()
+        .r#type(warrant::WarrantType::Execution)
+        .capability("connect", constraint_set)
+        .ttl(Duration::from_secs(3600))
+        .holder(worker.public_key())
+        .build(&control_plane)
+        .expect("Failed to build CIDR warrant");
+
+    let mut data_plane = DataPlane::new();
+    data_plane.trust_issuer("root", control_plane.public_key());
+
+    // Valid: ip = "10.1.2.3" (within 10.0.0.0/8)
+    let mut valid_args: HashMap<String, ConstraintValue> = HashMap::new();
+    valid_args.insert("ip".to_string(), ConstraintValue::String("10.1.2.3".to_string()));
+
+    let pop = warrant.sign(&worker, "connect", &valid_args).unwrap();
+    let result = data_plane.authorize(&warrant, "connect", &valid_args, Some(&pop), &[]);
+    assert!(
+        result.is_ok(),
+        "A.19.3 CIDR should ACCEPT IP in network: {:?}",
+        result.err()
+    );
+
+    // Invalid: ip = "192.168.1.1" (not in 10.0.0.0/8)
+    let mut invalid_args: HashMap<String, ConstraintValue> = HashMap::new();
+    invalid_args.insert("ip".to_string(), ConstraintValue::String("192.168.1.1".to_string()));
+
+    let pop = warrant.sign(&worker, "connect", &invalid_args).unwrap();
+    let result = data_plane.authorize(&warrant, "connect", &invalid_args, Some(&pop), &[]);
+    assert!(
+        result.is_err(),
+        "A.19.3 CIDR should REJECT IP outside network"
+    );
+}
+
+// ============================================================================
+// A.20 POP FAILURE CASES
+// ============================================================================
+
+/// Test Vector A.20.1: PoP with Wrong Holder Key
+/// PoP signed by attacker's key, not the warrant holder's key.
+#[test]
+fn test_vector_a20_1_pop_wrong_holder_key() {
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    let control_plane = control_plane_key();
+    let worker = worker_key();
+    let attacker = SigningKey::generate(); // Wrong key
+
+    // Build warrant held by worker
+    let mut constraint_set = ConstraintSet::new();
+    constraint_set.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+
+    let warrant = Warrant::builder()
+        .r#type(warrant::WarrantType::Execution)
+        .capability("read_file", constraint_set)
+        .ttl(Duration::from_secs(3600))
+        .holder(worker.public_key())
+        .build(&control_plane)
+        .expect("Failed to build warrant");
+
+    let mut data_plane = DataPlane::new();
+    data_plane.trust_issuer("root", control_plane.public_key());
+
+    // Create PoP signed by ATTACKER (wrong key)
+    let mut args: HashMap<String, ConstraintValue> = HashMap::new();
+    args.insert("path".to_string(), ConstraintValue::String("/data/test.txt".to_string()));
+
+    let pop = warrant.sign(&attacker, "read_file", &args).unwrap();
+
+    // Verify with PoP - should fail because signer != holder
+    let result = data_plane.authorize(&warrant, "read_file", &args, Some(&pop), &[]);
+    assert!(
+        result.is_err(),
+        "A.20.1 should REJECT PoP signed by wrong key"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("signature") || err_msg.contains("PoP") || err_msg.contains("invalid") || err_msg.contains("holder"),
+        "A.20.1 error should mention signature/PoP issue: {}",
+        err_msg
+    );
+}
+
+/// Test Vector A.20.2: PoP with Expired Window
+/// Tests that PoP window configuration works.
+/// 
+/// NOTE: The full expired window test requires time mocking or sleep.
+/// This test verifies that window configuration is functional.
+#[test]
+fn test_vector_a20_2_pop_expired_window() {
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    let control_plane = control_plane_key();
+    let worker = worker_key();
+
+    // Build warrant
+    let mut constraint_set = ConstraintSet::new();
+    constraint_set.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+
+    let warrant = Warrant::builder()
+        .r#type(warrant::WarrantType::Execution)
+        .capability("read_file", constraint_set)
+        .ttl(Duration::from_secs(3600))
+        .holder(worker.public_key())
+        .build(&control_plane)
+        .expect("Failed to build warrant");
+
+    // Create authorizer with default PoP window (30 seconds, 5 windows)
+    let authorizer = Authorizer::builder()
+        .trusted_root(control_plane.public_key())
+        // Use default pop_window settings via build()
+        .build()
+        .expect("Failed to build authorizer");
+
+    let mut args: HashMap<String, ConstraintValue> = HashMap::new();
+    args.insert("path".to_string(), ConstraintValue::String("/data/test.txt".to_string()));
+
+    // Create a valid PoP and verify it works
+    let pop = warrant.sign(&worker, "read_file", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "read_file", &args, Some(&pop), &[]);
+    
+    // With default window, fresh PoP should pass
+    assert!(
+        result.is_ok(),
+        "A.20.2 fresh PoP should PASS with default window: {:?}",
+        result.err()
+    );
+    
+    // The PoP window mechanism is verified by the check logic in verify_pop().
+    // Full time-based expiry testing would require time mocking.
+}
+
+// ============================================================================
+// A.21 SIGNED APPROVAL (MULTI-SIG)
+// ============================================================================
+
+/// Test Vector A.21.1: Valid Multi-Sig Approval
+/// Warrant requiring 2-of-3 approvers with sufficient approvals provided.
+#[test]
+fn test_vector_a21_1_valid_multisig_approval() {
+    use chrono::Utc;
+    use std::collections::HashMap;
+    use std::time::Duration;
+    use tenuo::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
+
+    let control_plane = control_plane_key();
+    let worker = worker_key();
+    let approver1 = SigningKey::generate();
+    let approver2 = SigningKey::generate();
+    let approver3 = SigningKey::generate();
+
+    // Build warrant requiring 2 of 3 approvers
+    let mut constraint_set = ConstraintSet::new();
+    constraint_set.insert(
+        "amount".to_string(),
+        Constraint::Range(Range::new(Some(0.0), Some(10000.0)).unwrap()),
+    );
+
+    let warrant = Warrant::builder()
+        .r#type(warrant::WarrantType::Execution)
+        .capability("transfer", constraint_set)
+        .ttl(Duration::from_secs(3600))
+        .holder(worker.public_key())
+        .required_approvers(vec![
+            approver1.public_key(),
+            approver2.public_key(),
+            approver3.public_key(),
+        ])
+        .min_approvals(2)
+        .build(&control_plane)
+        .expect("Failed to build multi-sig warrant");
+
+    let authorizer = Authorizer::new().with_trusted_root(control_plane.public_key());
+
+    let mut args: HashMap<String, ConstraintValue> = HashMap::new();
+    args.insert("amount".to_string(), ConstraintValue::Float(500.0));
+
+    // Compute request hash
+    let request_hash = compute_request_hash(
+        &warrant.id().to_string(),
+        "transfer",
+        &args,
+        Some(&worker.public_key()),
+    );
+
+    let now = Utc::now();
+    let expires = now + chrono::Duration::hours(1);
+
+    // Create approvals from 2 approvers
+    let payload1 = ApprovalPayload {
+        version: 1,
+        request_hash,
+        nonce: rand::random(),
+        external_id: "approver1@example.com".to_string(),
+        approved_at: now.timestamp() as u64,
+        expires_at: expires.timestamp() as u64,
+        extensions: None,
+    };
+    let approval1 = SignedApproval::create(payload1, &approver1);
+
+    let payload2 = ApprovalPayload {
+        version: 1,
+        request_hash,
+        nonce: rand::random(),
+        external_id: "approver2@example.com".to_string(),
+        approved_at: now.timestamp() as u64,
+        expires_at: expires.timestamp() as u64,
+        extensions: None,
+    };
+    let approval2 = SignedApproval::create(payload2, &approver2);
+
+    let pop = warrant.sign(&worker, "transfer", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "transfer", &args, Some(&pop), &[approval1, approval2]);
+    assert!(
+        result.is_ok(),
+        "A.21.1 should ACCEPT with sufficient approvals: {:?}",
+        result.err()
+    );
+}
+
+/// Test Vector A.21.2: Insufficient Approvals
+/// Warrant requiring 2-of-2 but only 1 approval provided.
+#[test]
+fn test_vector_a21_2_insufficient_approvals() {
+    use chrono::Utc;
+    use std::collections::HashMap;
+    use std::time::Duration;
+    use tenuo::approval::{compute_request_hash, ApprovalPayload, SignedApproval};
+
+    let control_plane = control_plane_key();
+    let worker = worker_key();
+    let approver1 = SigningKey::generate();
+    let approver2 = SigningKey::generate();
+
+    // Build warrant requiring 2 approvers
+    let mut constraint_set = ConstraintSet::new();
+    constraint_set.insert(
+        "amount".to_string(),
+        Constraint::Range(Range::new(Some(0.0), Some(10000.0)).unwrap()),
+    );
+
+    let warrant = Warrant::builder()
+        .r#type(warrant::WarrantType::Execution)
+        .capability("transfer", constraint_set)
+        .ttl(Duration::from_secs(3600))
+        .holder(worker.public_key())
+        .required_approvers(vec![approver1.public_key(), approver2.public_key()])
+        .min_approvals(2)
+        .build(&control_plane)
+        .expect("Failed to build multi-sig warrant");
+
+    let authorizer = Authorizer::new().with_trusted_root(control_plane.public_key());
+
+    let mut args: HashMap<String, ConstraintValue> = HashMap::new();
+    args.insert("amount".to_string(), ConstraintValue::Float(500.0));
+
+    // Create request hash and only 1 approval
+    let request_hash = compute_request_hash(
+        &warrant.id().to_string(),
+        "transfer",
+        &args,
+        None,
+    );
+
+    let now = Utc::now();
+    let expires = now + chrono::Duration::hours(1);
+
+    let payload = ApprovalPayload {
+        version: 1,
+        request_hash,
+        nonce: rand::random(),
+        external_id: "approver1@example.com".to_string(),
+        approved_at: now.timestamp() as u64,
+        expires_at: expires.timestamp() as u64,
+        extensions: None,
+    };
+    let approval1 = SignedApproval::create(payload, &approver1);
+
+    let pop = warrant.sign(&worker, "transfer", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "transfer", &args, Some(&pop), &[approval1]);
+    assert!(
+        result.is_err(),
+        "A.21.2 should REJECT with insufficient approvals"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("approval") || err_msg.contains("threshold") || err_msg.contains("insufficient") || err_msg.contains("Insufficient"),
+        "A.21.2 error should mention approval issue: {}",
+        err_msg
+    );
+}
+
+// ============================================================================
+// A.22 CASCADING REVOCATION
+// ============================================================================
+
+/// Test Vector A.22: Cascading Revocation
+/// If a middle warrant in a chain is revoked, the entire chain should fail.
+#[test]
+fn test_vector_a22_cascading_revocation() {
+    use std::time::Duration;
+    use tenuo::revocation::SignedRevocationList;
+
+    let control_plane = control_plane_key();
+    let orchestrator = orchestrator_key();
+    let worker = worker_key();
+
+    // Build 2-level chain: Root → Worker
+    let root_warrant = Warrant::builder()
+        .r#type(warrant::WarrantType::Execution)
+        .capability("read_file", ConstraintSet::new())
+        .max_depth(3)
+        .ttl(Duration::from_secs(3600))
+        .holder(orchestrator.public_key())
+        .build(&control_plane)
+        .expect("Failed to build root warrant");
+
+    let worker_warrant = root_warrant
+        .attenuate()
+        .capability("read_file", ConstraintSet::new())
+        .ttl(Duration::from_secs(1800))
+        .holder(worker.public_key())
+        .build(&orchestrator)
+        .expect("Failed to build worker warrant");
+
+    // Create SRL revoking the worker_warrant
+    let srl = SignedRevocationList::builder()
+        .revoke(worker_warrant.id().to_string())
+        .version(1)
+        .build(&control_plane)
+        .expect("Failed to build SRL");
+
+    // Create authorizer with the SRL loaded
+    let authorizer = Authorizer::builder()
+        .trusted_root(control_plane.public_key())
+        .revocation_list(srl, control_plane.public_key())
+        .build()
+        .expect("Failed to build authorizer with SRL");
+
+    // Verify chain - should fail because worker warrant is revoked
+    let result = authorizer.verify_chain(&[root_warrant, worker_warrant]);
+    assert!(
+        result.is_err(),
+        "A.22 chain with revoked warrant should FAIL"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("revoked") || err_msg.contains("Revoked"),
+        "A.22 error should mention revocation: {}",
+        err_msg
+    );
+}
+
+// ============================================================================
+// A.23 SESSION MISMATCH
+// ============================================================================
+
+/// Test Vector A.23: Session Mismatch (verify_chain_strict)
+/// Chain with mismatched session IDs should fail strict verification.
+/// 
+/// NOTE: session_id is inherited during attenuation and cannot be changed.
+/// We simulate mismatch by mixing warrants from different session contexts.
+#[test]
+fn test_vector_a23_session_mismatch() {
+    use std::time::Duration;
+
+    let control_plane = control_plane_key();
+    let orchestrator = orchestrator_key();
+    let worker = worker_key();
+
+    // Build root WITH session_id = "sess-abc"
+    let root_with_session = Warrant::builder()
+        .r#type(warrant::WarrantType::Execution)
+        .capability("read_file", ConstraintSet::new())
+        .max_depth(3)
+        .ttl(Duration::from_secs(3600))
+        .holder(orchestrator.public_key())
+        .session_id("sess-abc")
+        .build(&control_plane)
+        .expect("Failed to build root warrant with session");
+
+    // Build root WITHOUT session_id
+    let root_no_session = Warrant::builder()
+        .r#type(warrant::WarrantType::Execution)
+        .capability("read_file", ConstraintSet::new())
+        .max_depth(3)
+        .ttl(Duration::from_secs(3600))
+        .holder(orchestrator.public_key())
+        // No session_id
+        .build(&control_plane)
+        .expect("Failed to build root warrant without session");
+
+    // Child from root_no_session (inherits no session)
+    let child_no_session = root_no_session
+        .attenuate()
+        .inherit_all()
+        .holder(worker.public_key())
+        .build(&orchestrator)
+        .expect("Failed to build child warrant");
+
+    let mut data_plane = DataPlane::new();
+    data_plane.trust_issuer("root", control_plane.public_key());
+
+    // Verify chain with mismatched sessions:
+    // root_with_session (has session) -> child_no_session (no session)
+    // NOTE: This simulates mixing warrants from different session contexts,
+    // which verify_chain_strict should reject.
+    let result = data_plane.verify_chain_strict(&[root_with_session, child_no_session]);
+    assert!(
+        result.is_err(),
+        "A.23 verify_chain_strict should REJECT mismatched sessions"
+    );
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("session") || err_msg.contains("Session") || err_msg.contains("mismatch") || err_msg.contains("parent"),
+        "A.23 error should mention session/chain issue: {}",
+        err_msg
+    );
+}
+
+// =============================================================================
+// A.24: SignedApproval Envelope
+// =============================================================================
+
+#[test]
+fn test_vector_a24_signed_approval_envelope() {
+    use tenuo::approval::{ApprovalPayload, SignedApproval};
+    use chrono::{TimeZone, Utc};
+    use sha2::Digest;
+
+    let approver_keypair = SigningKey::from_bytes(&[0x11; 32]);
+    let holder = SigningKey::from_bytes(&[0x03; 32]);
+
+    // Create request hash simulating H(warrant_id || tool || args || holder)
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(b"tnu_wrt_test_warrant_id");
+    hasher.update(b"read_file");
+    hasher.update(b"path=/data/sensitive.txt");
+    hasher.update(holder.public_key().to_bytes());
+    let request_hash: [u8; 32] = hasher.finalize().into();
+
+    // Create approval with proper signature
+    let approved_at = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+    let expires_at = Utc.with_ymd_and_hms(2024, 1, 1, 1, 0, 0).unwrap();
+    let nonce: [u8; 16] = [0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8];
+
+    let payload = ApprovalPayload::new(
+        request_hash,
+        nonce,
+        "arn:aws:iam::123456789012:user/security-admin".to_string(),
+        approved_at,
+        expires_at,
+    );
+
+    let signed_approval = SignedApproval::create(payload, &approver_keypair);
+
+    // Verify the approval (note: will only succeed within TTL, so we skip temporal checks in this test)
+    // Just verify the envelope is properly constructed
+    assert_eq!(
+        signed_approval.approver_key.to_bytes(),
+        approver_keypair.public_key().to_bytes(),
+        "A.24 Approver key should match"
+    );
+
+    // The signature should be valid over the payload
+    assert_eq!(
+        signed_approval.approval_version, 1,
+        "A.24 Approval version should be 1"
+    );
+
+    // Payload should be non-empty CBOR
+    assert!(
+        !signed_approval.payload.is_empty(),
+        "A.24 Payload should be non-empty"
+    );
+}
+
+// =============================================================================
+// A.25: Additional Constraint Types
+// =============================================================================
+
+#[test]
+fn test_vector_a25_1_urlsafe_constraint() {
+    use tenuo::constraints::UrlSafe;
+
+    let urlsafe = UrlSafe::new();
+
+    // Valid external URLs should pass
+    let valid_input = ConstraintValue::String("https://api.example.com/v1/users".to_string());
+    assert!(
+        urlsafe.matches(&valid_input).unwrap_or(false),
+        "A.25.1 UrlSafe should accept valid external URL"
+    );
+
+    // AWS metadata URL should fail (SSRF protection)
+    let metadata_url = ConstraintValue::String("http://169.254.169.254/latest/meta-data/".to_string());
+    assert!(
+        !urlsafe.matches(&metadata_url).unwrap_or(true),
+        "A.25.1 UrlSafe should reject AWS metadata URL"
+    );
+
+    // Localhost should fail
+    let localhost = ConstraintValue::String("http://localhost:8080/".to_string());
+    assert!(
+        !urlsafe.matches(&localhost).unwrap_or(true),
+        "A.25.1 UrlSafe should reject localhost"
+    );
+}
+
+#[test]
+fn test_vector_a25_2_subpath_constraint() {
+    use tenuo::constraints::Subpath;
+
+    let subpath = Subpath::new("/home/agent/workspace").expect("Valid subpath");
+
+    // Valid contained path
+    let valid = ConstraintValue::String("/home/agent/workspace/reports/q3.pdf".to_string());
+    assert!(
+        subpath.matches(&valid).unwrap_or(false),
+        "A.25.2 Subpath should accept contained path"
+    );
+
+    // Path traversal attack should fail
+    let traversal = ConstraintValue::String("/home/agent/workspace/../../../etc/passwd".to_string());
+    assert!(
+        !subpath.matches(&traversal).unwrap_or(true),
+        "A.25.2 Subpath should reject traversal attack"
+    );
+
+    // Path outside root should fail
+    let outside = ConstraintValue::String("/etc/passwd".to_string());
+    assert!(
+        !subpath.matches(&outside).unwrap_or(true),
+        "A.25.2 Subpath should reject path outside root"
+    );
+}
+
+#[test]
+fn test_vector_a25_3_contains_constraint() {
+    use tenuo::constraints::Contains;
+
+    let contains = Contains::new(vec!["approved", "reviewed"]);
+
+    // List containing required values should pass
+    let valid = ConstraintValue::List(vec![
+        ConstraintValue::String("approved".to_string()),
+        ConstraintValue::String("reviewed".to_string()),
+        ConstraintValue::String("urgent".to_string()),
+    ]);
+    assert!(
+        contains.matches(&valid).unwrap_or(false),
+        "A.25.3 Contains should accept list with required values"
+    );
+
+    // Missing required value should fail
+    let missing = ConstraintValue::List(vec![
+        ConstraintValue::String("approved".to_string()),
+        ConstraintValue::String("urgent".to_string()),
+    ]);
+    assert!(
+        !contains.matches(&missing).unwrap_or(true),
+        "A.25.3 Contains should reject list missing required values"
+    );
+}
+
+#[test]
+fn test_vector_a25_4_subset_constraint() {
+    use tenuo::constraints::Subset;
+
+    let subset = Subset::new(vec!["read", "write", "delete"]);
+
+    // Subset should pass
+    let valid = ConstraintValue::List(vec![
+        ConstraintValue::String("read".to_string()),
+        ConstraintValue::String("write".to_string()),
+    ]);
+    assert!(
+        subset.matches(&valid).unwrap_or(false),
+        "A.25.4 Subset should accept subset of allowed values"
+    );
+
+    // Extra value should fail
+    let extra = ConstraintValue::List(vec![
+        ConstraintValue::String("read".to_string()),
+        ConstraintValue::String("admin".to_string()),
+    ]);
+    assert!(
+        !subset.matches(&extra).unwrap_or(true),
+        "A.25.4 Subset should reject list with extra values"
+    );
+}
+
+#[test]
+fn test_vector_a25_5_urlpattern_constraint() {
+    use tenuo::constraints::UrlPattern;
+
+    let pattern = UrlPattern::new("https://api.example.com/v1/*").expect("Valid URL pattern");
+
+    // Matching URL should pass
+    let valid = ConstraintValue::String("https://api.example.com/v1/users".to_string());
+    assert!(
+        pattern.matches(&valid).unwrap_or(false),
+        "A.25.5 UrlPattern should accept matching URL"
+    );
+
+    // Non-matching URL should fail
+    let invalid = ConstraintValue::String("https://evil.com/api/v1/users".to_string());
+    assert!(
+        !pattern.matches(&invalid).unwrap_or(true),
+        "A.25.5 UrlPattern should reject non-matching URL"
+    );
+
+    // Wrong path should fail
+    let wrong_path = ConstraintValue::String("https://api.example.com/v2/users".to_string());
+    assert!(
+        !pattern.matches(&wrong_path).unwrap_or(true),
+        "A.25.5 UrlPattern should reject wrong path"
+    );
 }

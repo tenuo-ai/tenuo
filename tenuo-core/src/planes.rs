@@ -982,6 +982,9 @@ impl DataPlane {
                         )));
                     }
                 }
+                // NOTE: Self-issuance (holder == issuer) is NOT blocked for Execution → Execution.
+                // Monotonicity invariants (I2-I4) ensure a self-issued delegation can only
+                // attenuate capabilities, not escalate them. Self-delegation is harmless.
             }
             (WarrantType::Issuer, WarrantType::Issuer) => {
                 // For issuer warrants, validate issuable_tools
@@ -2133,6 +2136,9 @@ impl Authorizer {
                         )));
                     }
                 }
+                // NOTE: Self-issuance (holder == issuer) is NOT blocked for Execution → Execution.
+                // Monotonicity invariants (I2-I4) ensure a self-issued delegation can only
+                // attenuate capabilities, not escalate them. Self-delegation is harmless.
             }
             (WarrantType::Issuer, WarrantType::Issuer) => {
                 // For issuer warrants, validate issuable_tools
