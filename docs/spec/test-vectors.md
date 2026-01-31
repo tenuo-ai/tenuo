@@ -1,6 +1,3 @@
-   Compiling tenuo v0.1.0-beta.7 (/Users/aimable/Development/tenuo/tenuo-core)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.26s
-     Running `target/debug/generate_test_vectors`
 # Tenuo Protocol Test Vectors
 
 **Version:** 1.0
