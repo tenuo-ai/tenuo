@@ -1788,7 +1788,8 @@ fn main() {
     println!();
 
     const ID_A19_1: [u8; 16] = [
-        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x19, 0x01,
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x19,
+        0x01,
     ];
 
     let mut tools_a19_1 = BTreeMap::new();
@@ -1834,7 +1835,8 @@ fn main() {
     println!();
 
     const ID_A19_2: [u8; 16] = [
-        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x19, 0x02,
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x19,
+        0x02,
     ];
 
     let mut tools_a19_2 = BTreeMap::new();
@@ -1883,7 +1885,8 @@ fn main() {
     println!();
 
     const ID_A19_3: [u8; 16] = [
-        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x19, 0x03,
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x19,
+        0x03,
     ];
 
     let mut tools_a19_3 = BTreeMap::new();
@@ -1937,7 +1940,8 @@ fn main() {
     println!();
 
     const ID_A20_1: [u8; 16] = [
-        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x01,
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20,
+        0x01,
     ];
 
     let mut tools_a20_1 = BTreeMap::new();
@@ -2016,7 +2020,8 @@ fn main() {
     println!();
 
     const ID_A21_1: [u8; 16] = [
-        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x01,
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21,
+        0x01,
     ];
 
     // Create approver keys (separate from main keys for clarity)
@@ -2033,9 +2038,18 @@ fn main() {
     println!();
     println!("| Role | Seed | Public Key |");
     println!("|------|------|------------|");
-    println!("| Approver1 | `1111...11` (32×0x11) | `{}` |", hex::encode(approver1.public_key().to_bytes()));
-    println!("| Approver2 | `1212...12` (32×0x12) | `{}` |", hex::encode(approver2.public_key().to_bytes()));
-    println!("| Approver3 | `1313...13` (32×0x13) | `{}` |", hex::encode(approver3.public_key().to_bytes()));
+    println!(
+        "| Approver1 | `1111...11` (32×0x11) | `{}` |",
+        hex::encode(approver1.public_key().to_bytes())
+    );
+    println!(
+        "| Approver2 | `1212...12` (32×0x12) | `{}` |",
+        hex::encode(approver2.public_key().to_bytes())
+    );
+    println!(
+        "| Approver3 | `1313...13` (32×0x13) | `{}` |",
+        hex::encode(approver3.public_key().to_bytes())
+    );
     println!();
 
     let mut tools_a21_1 = BTreeMap::new();
@@ -2081,7 +2095,9 @@ fn main() {
     println!("| Required Approvers | 3 |");
     println!("| Min Approvals | 2 |");
     println!();
-    println!("**Expected:** Authorization MUST succeed with 2+ valid approvals from listed approvers.");
+    println!(
+        "**Expected:** Authorization MUST succeed with 2+ valid approvals from listed approvers."
+    );
     println!();
 
     // A.21.2 Insufficient Approvals
@@ -2089,7 +2105,8 @@ fn main() {
     println!();
 
     const ID_A21_2: [u8; 16] = [
-        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21, 0x02,
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21,
+        0x02,
     ];
 
     let mut tools_a21_2 = BTreeMap::new();
@@ -2100,10 +2117,7 @@ fn main() {
     );
     tools_a21_2.insert("read_file".to_string(), cs_a21_2);
 
-    let mut approver_keys_2 = vec![
-        approver1.public_key(),
-        approver2.public_key(),
-    ];
+    let mut approver_keys_2 = vec![approver1.public_key(), approver2.public_key()];
     approver_keys_2.sort_by_key(|k| k.to_bytes());
 
     let payload_a21_2 = WarrantPayload {
@@ -2146,10 +2160,12 @@ fn main() {
     println!();
 
     const ID_A22_ROOT: [u8; 16] = [
-        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x22, 0x00,
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x22,
+        0x00,
     ];
     const ID_A22_CHILD: [u8; 16] = [
-        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x22, 0x01,
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x22,
+        0x01,
     ];
 
     let mut tools_a22 = BTreeMap::new();
@@ -2230,13 +2246,16 @@ fn main() {
     println!();
 
     const ID_A23_ROOT: [u8; 16] = [
-        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x23, 0x00,
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x23,
+        0x00,
     ];
     const ID_A23_ROOT_NO_SESS: [u8; 16] = [
-        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x23, 0x01,
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x23,
+        0x01,
     ];
     const ID_A23_CHILD: [u8; 16] = [
-        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x23, 0x02,
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x23,
+        0x02,
     ];
 
     let mut tools_a23 = BTreeMap::new();
@@ -2327,7 +2346,10 @@ fn main() {
     println!();
     println!("Mix Root (with session) and Child (without session) in a chain:");
     println!();
-    println!("| Root | `{}` (session_id=sess-abc) |", warrant_a23_root.id());
+    println!(
+        "| Root | `{}` (session_id=sess-abc) |",
+        warrant_a23_root.id()
+    );
     println!("| Child | `{}` (session_id=None) |", warrant_a23_child.id());
     println!();
     println!("**Expected:**");
@@ -2351,8 +2373,8 @@ fn main() {
 
     // Use pre-defined IDs and nonce for determinism
     const APPROVAL_NONCE: [u8; 16] = [
-        0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8,
-        0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8,
+        0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7,
+        0xB8,
     ];
 
     // Construct request hash: H(warrant_id || tool || sorted_args || holder)
@@ -2441,7 +2463,10 @@ fn main() {
     println!("| `expires_at` | `{}` |", EXPIRES_AT);
     println!();
 
-    println!("**ApprovalPayload CBOR ({} bytes):**", approval_payload_bytes.len());
+    println!(
+        "**ApprovalPayload CBOR ({} bytes):**",
+        approval_payload_bytes.len()
+    );
     println!("```");
     print_hex_block(&approval_payload_bytes);
     println!("```");
@@ -2459,7 +2484,10 @@ fn main() {
     println!("```");
     println!();
 
-    println!("**Complete SignedApproval Envelope ({} bytes):**", signed_approval_bytes.len());
+    println!(
+        "**Complete SignedApproval Envelope ({} bytes):**",
+        signed_approval_bytes.len()
+    );
     println!("```");
     print_hex_block(&signed_approval_bytes);
     println!("```");
@@ -2523,7 +2551,10 @@ fn main() {
     println!("| `revoked_ids` | `[\"{}\"]` |", warrant_a22_child.id());
     println!("| `version` | 1 |");
     println!("| `issued_at` | `{}` |", ISSUED_AT);
-    println!("| `issuer` | `{}` |", hex::encode(control_plane.public_key().to_bytes()));
+    println!(
+        "| `issuer` | `{}` |",
+        hex::encode(control_plane.public_key().to_bytes())
+    );
     println!();
 
     println!("**SrlPayload CBOR ({} bytes):**", srl_payload_bytes.len());
@@ -2544,7 +2575,10 @@ fn main() {
     println!("```");
     println!();
 
-    println!("**Complete SignedRevocationList ({} bytes):**", signed_srl_bytes.len());
+    println!(
+        "**Complete SignedRevocationList ({} bytes):**",
+        signed_srl_bytes.len()
+    );
     println!("```");
     print_hex_block(&signed_srl_bytes);
     println!("```");
@@ -2565,7 +2599,8 @@ fn main() {
     println!();
 
     const ID_A25_1: [u8; 16] = [
-        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25, 0x01,
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25,
+        0x01,
     ];
 
     let mut tools_a25_1 = BTreeMap::new();
@@ -2611,7 +2646,8 @@ fn main() {
     println!();
 
     const ID_A25_2: [u8; 16] = [
-        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25, 0x02,
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25,
+        0x02,
     ];
 
     let mut tools_a25_2 = BTreeMap::new();
@@ -2657,14 +2693,17 @@ fn main() {
     println!();
 
     const ID_A25_3: [u8; 16] = [
-        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25, 0x03,
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25,
+        0x03,
     ];
 
     let mut tools_a25_3 = BTreeMap::new();
     let mut cs_a25_3 = ConstraintSet::new();
     cs_a25_3.insert(
         "tags".to_string(),
-        Constraint::Contains(tenuo::constraints::Contains::new(vec!["approved", "reviewed"])),
+        Constraint::Contains(tenuo::constraints::Contains::new(vec![
+            "approved", "reviewed",
+        ])),
     );
     tools_a25_3.insert("deploy".to_string(), cs_a25_3);
 
@@ -2703,14 +2742,17 @@ fn main() {
     println!();
 
     const ID_A25_4: [u8; 16] = [
-        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25, 0x04,
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25,
+        0x04,
     ];
 
     let mut tools_a25_4 = BTreeMap::new();
     let mut cs_a25_4 = ConstraintSet::new();
     cs_a25_4.insert(
         "permissions".to_string(),
-        Constraint::Subset(tenuo::constraints::Subset::new(vec!["read", "write", "delete"])),
+        Constraint::Subset(tenuo::constraints::Subset::new(vec![
+            "read", "write", "delete",
+        ])),
     );
     tools_a25_4.insert("set_permissions".to_string(), cs_a25_4);
 
@@ -2749,14 +2791,17 @@ fn main() {
     println!();
 
     const ID_A25_5: [u8; 16] = [
-        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25, 0x05,
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25,
+        0x05,
     ];
 
     let mut tools_a25_5 = BTreeMap::new();
     let mut cs_a25_5 = ConstraintSet::new();
     cs_a25_5.insert(
         "endpoint".to_string(),
-        Constraint::UrlPattern(tenuo::constraints::UrlPattern::new("https://api.example.com/v1/*").unwrap()),
+        Constraint::UrlPattern(
+            tenuo::constraints::UrlPattern::new("https://api.example.com/v1/*").unwrap(),
+        ),
     );
     tools_a25_5.insert("api_call".to_string(), cs_a25_5);
 

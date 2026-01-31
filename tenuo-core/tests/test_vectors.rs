@@ -2049,7 +2049,10 @@ fn test_vector_a15_issuer_constraint_violation() {
     );
     let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("bound") || err_msg.contains("constraint") || err_msg.contains("attenuation") || err_msg.contains("allowed"),
+        err_msg.contains("bound")
+            || err_msg.contains("constraint")
+            || err_msg.contains("attenuation")
+            || err_msg.contains("allowed"),
         "A.15 error should mention constraint bounds issue: {}",
         err_msg
     );
@@ -2208,7 +2211,9 @@ fn test_vector_a17_clearance_violation() {
     );
     let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("clearance") || err_msg.contains("Clearance") || err_msg.contains("escalat"),
+        err_msg.contains("clearance")
+            || err_msg.contains("Clearance")
+            || err_msg.contains("escalat"),
         "A.17 error should mention clearance issue: {}",
         err_msg
     );
@@ -2264,11 +2269,7 @@ fn test_vector_a18_multisig_configuration() {
         "A.18 warrant should have required_approvers"
     );
     let approvers = warrant.payload.required_approvers.as_ref().unwrap();
-    assert_eq!(
-        approvers.len(),
-        2,
-        "A.18 should have 2 required approvers"
-    );
+    assert_eq!(approvers.len(), 2, "A.18 should have 2 required approvers");
     assert_eq!(
         warrant.payload.min_approvals,
         Some(1),
@@ -2413,7 +2414,10 @@ fn test_vector_a19_2_oneof_constraint() {
 
     // Valid: env = "staging"
     let mut valid_args: HashMap<String, ConstraintValue> = HashMap::new();
-    valid_args.insert("env".to_string(), ConstraintValue::String("staging".to_string()));
+    valid_args.insert(
+        "env".to_string(),
+        ConstraintValue::String("staging".to_string()),
+    );
 
     let pop = warrant.sign(&worker, "deploy", &valid_args).unwrap();
     let result = data_plane.authorize(&warrant, "deploy", &valid_args, Some(&pop), &[]);
@@ -2425,7 +2429,10 @@ fn test_vector_a19_2_oneof_constraint() {
 
     // Invalid: env = "development" (not in set)
     let mut invalid_args: HashMap<String, ConstraintValue> = HashMap::new();
-    invalid_args.insert("env".to_string(), ConstraintValue::String("development".to_string()));
+    invalid_args.insert(
+        "env".to_string(),
+        ConstraintValue::String("development".to_string()),
+    );
 
     let pop = warrant.sign(&worker, "deploy", &invalid_args).unwrap();
     let result = data_plane.authorize(&warrant, "deploy", &invalid_args, Some(&pop), &[]);
@@ -2465,7 +2472,10 @@ fn test_vector_a19_3_cidr_constraint() {
 
     // Valid: ip = "10.1.2.3" (within 10.0.0.0/8)
     let mut valid_args: HashMap<String, ConstraintValue> = HashMap::new();
-    valid_args.insert("ip".to_string(), ConstraintValue::String("10.1.2.3".to_string()));
+    valid_args.insert(
+        "ip".to_string(),
+        ConstraintValue::String("10.1.2.3".to_string()),
+    );
 
     let pop = warrant.sign(&worker, "connect", &valid_args).unwrap();
     let result = data_plane.authorize(&warrant, "connect", &valid_args, Some(&pop), &[]);
@@ -2477,7 +2487,10 @@ fn test_vector_a19_3_cidr_constraint() {
 
     // Invalid: ip = "192.168.1.1" (not in 10.0.0.0/8)
     let mut invalid_args: HashMap<String, ConstraintValue> = HashMap::new();
-    invalid_args.insert("ip".to_string(), ConstraintValue::String("192.168.1.1".to_string()));
+    invalid_args.insert(
+        "ip".to_string(),
+        ConstraintValue::String("192.168.1.1".to_string()),
+    );
 
     let pop = warrant.sign(&worker, "connect", &invalid_args).unwrap();
     let result = data_plane.authorize(&warrant, "connect", &invalid_args, Some(&pop), &[]);
@@ -2522,7 +2535,10 @@ fn test_vector_a20_1_pop_wrong_holder_key() {
 
     // Create PoP signed by ATTACKER (wrong key)
     let mut args: HashMap<String, ConstraintValue> = HashMap::new();
-    args.insert("path".to_string(), ConstraintValue::String("/data/test.txt".to_string()));
+    args.insert(
+        "path".to_string(),
+        ConstraintValue::String("/data/test.txt".to_string()),
+    );
 
     let pop = warrant.sign(&attacker, "read_file", &args).unwrap();
 
@@ -2534,7 +2550,10 @@ fn test_vector_a20_1_pop_wrong_holder_key() {
     );
     let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("signature") || err_msg.contains("PoP") || err_msg.contains("invalid") || err_msg.contains("holder"),
+        err_msg.contains("signature")
+            || err_msg.contains("PoP")
+            || err_msg.contains("invalid")
+            || err_msg.contains("holder"),
         "A.20.1 error should mention signature/PoP issue: {}",
         err_msg
     );
@@ -2542,7 +2561,7 @@ fn test_vector_a20_1_pop_wrong_holder_key() {
 
 /// Test Vector A.20.2: PoP with Expired Window
 /// Tests that PoP window configuration works.
-/// 
+///
 /// NOTE: The full expired window test requires time mocking or sleep.
 /// This test verifies that window configuration is functional.
 #[test]
@@ -2576,19 +2595,22 @@ fn test_vector_a20_2_pop_expired_window() {
         .expect("Failed to build authorizer");
 
     let mut args: HashMap<String, ConstraintValue> = HashMap::new();
-    args.insert("path".to_string(), ConstraintValue::String("/data/test.txt".to_string()));
+    args.insert(
+        "path".to_string(),
+        ConstraintValue::String("/data/test.txt".to_string()),
+    );
 
     // Create a valid PoP and verify it works
     let pop = warrant.sign(&worker, "read_file", &args).unwrap();
     let result = authorizer.authorize(&warrant, "read_file", &args, Some(&pop), &[]);
-    
+
     // With default window, fresh PoP should pass
     assert!(
         result.is_ok(),
         "A.20.2 fresh PoP should PASS with default window: {:?}",
         result.err()
     );
-    
+
     // The PoP window mechanism is verified by the check logic in verify_pop().
     // Full time-based expiry testing would require time mocking.
 }
@@ -2673,7 +2695,13 @@ fn test_vector_a21_1_valid_multisig_approval() {
     let approval2 = SignedApproval::create(payload2, &approver2);
 
     let pop = warrant.sign(&worker, "transfer", &args).unwrap();
-    let result = authorizer.authorize(&warrant, "transfer", &args, Some(&pop), &[approval1, approval2]);
+    let result = authorizer.authorize(
+        &warrant,
+        "transfer",
+        &args,
+        Some(&pop),
+        &[approval1, approval2],
+    );
     assert!(
         result.is_ok(),
         "A.21.1 should ACCEPT with sufficient approvals: {:?}",
@@ -2718,12 +2746,7 @@ fn test_vector_a21_2_insufficient_approvals() {
     args.insert("amount".to_string(), ConstraintValue::Float(500.0));
 
     // Create request hash and only 1 approval
-    let request_hash = compute_request_hash(
-        &warrant.id().to_string(),
-        "transfer",
-        &args,
-        None,
-    );
+    let request_hash = compute_request_hash(&warrant.id().to_string(), "transfer", &args, None);
 
     let now = Utc::now();
     let expires = now + chrono::Duration::hours(1);
@@ -2747,7 +2770,10 @@ fn test_vector_a21_2_insufficient_approvals() {
     );
     let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("approval") || err_msg.contains("threshold") || err_msg.contains("insufficient") || err_msg.contains("Insufficient"),
+        err_msg.contains("approval")
+            || err_msg.contains("threshold")
+            || err_msg.contains("insufficient")
+            || err_msg.contains("Insufficient"),
         "A.21.2 error should mention approval issue: {}",
         err_msg
     );
@@ -2820,7 +2846,7 @@ fn test_vector_a22_cascading_revocation() {
 
 /// Test Vector A.23: Session Mismatch (verify_chain_strict)
 /// Chain with mismatched session IDs should fail strict verification.
-/// 
+///
 /// NOTE: session_id is inherited during attenuation and cannot be changed.
 /// We simulate mismatch by mixing warrants from different session contexts.
 #[test]
@@ -2875,7 +2901,10 @@ fn test_vector_a23_session_mismatch() {
     );
     let err_msg = result.unwrap_err().to_string();
     assert!(
-        err_msg.contains("session") || err_msg.contains("Session") || err_msg.contains("mismatch") || err_msg.contains("parent"),
+        err_msg.contains("session")
+            || err_msg.contains("Session")
+            || err_msg.contains("mismatch")
+            || err_msg.contains("parent"),
         "A.23 error should mention session/chain issue: {}",
         err_msg
     );
@@ -2887,9 +2916,9 @@ fn test_vector_a23_session_mismatch() {
 
 #[test]
 fn test_vector_a24_signed_approval_envelope() {
-    use tenuo::approval::{ApprovalPayload, SignedApproval};
     use chrono::{TimeZone, Utc};
     use sha2::Digest;
+    use tenuo::approval::{ApprovalPayload, SignedApproval};
 
     let approver_keypair = SigningKey::from_bytes(&[0x11; 32]);
     let holder = SigningKey::from_bytes(&[0x03; 32]);
@@ -2955,7 +2984,8 @@ fn test_vector_a25_1_urlsafe_constraint() {
     );
 
     // AWS metadata URL should fail (SSRF protection)
-    let metadata_url = ConstraintValue::String("http://169.254.169.254/latest/meta-data/".to_string());
+    let metadata_url =
+        ConstraintValue::String("http://169.254.169.254/latest/meta-data/".to_string());
     assert!(
         !urlsafe.matches(&metadata_url).unwrap_or(true),
         "A.25.1 UrlSafe should reject AWS metadata URL"
@@ -2983,7 +3013,8 @@ fn test_vector_a25_2_subpath_constraint() {
     );
 
     // Path traversal attack should fail
-    let traversal = ConstraintValue::String("/home/agent/workspace/../../../etc/passwd".to_string());
+    let traversal =
+        ConstraintValue::String("/home/agent/workspace/../../../etc/passwd".to_string());
     assert!(
         !subpath.matches(&traversal).unwrap_or(true),
         "A.25.2 Subpath should reject traversal attack"
