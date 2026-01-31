@@ -308,6 +308,12 @@ We're planning a TypeScript/Node SDK for v0.2. If you're interested in leading o
 
 ---
 
+## Deploying Agents in Production?
+
+We'd love to help. [Book a call](https://calendly.com/tenuo/30min) to discuss your use case.
+
+---
+
 ## License
 
 MIT OR Apache-2.0, at your option.
