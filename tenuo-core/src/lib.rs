@@ -72,6 +72,9 @@ pub use mcp::{CompiledMcpConfig, CompiledTool, McpConfig, McpSettings};
 #[cfg(feature = "python")]
 pub mod python;
 
+#[cfg(feature = "server")]
+pub mod heartbeat;
+
 // Re-exports for convenience
 pub use constraints::{
     All, Any, CelConstraint, Cidr, Constraint, ConstraintSet, ConstraintValue, Contains, Exact,

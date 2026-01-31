@@ -36,7 +36,8 @@ python = ["pyo3"]
 python-extension = ["pyo3/extension-module", "python"]
 
 # Server features (adds HTTP/gRPC + structured logging dependencies)
-server = ["tokio", "axum", "tower", "tracing"]
+# Includes reqwest for control plane heartbeat functionality
+server = ["tokio", "axum", "tower", "tracing", "reqwest"]
 
 # HTTP client (for demo agents that call remote services)
 http-client = ["reqwest"]
