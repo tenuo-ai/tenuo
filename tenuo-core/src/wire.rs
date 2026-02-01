@@ -21,6 +21,18 @@ use serde::{Deserialize, Serialize};
 /// policies while protecting against abuse.
 pub const MAX_WARRANT_SIZE: usize = 64 * 1024; // 64 KB
 
+/// Maximum number of tools per warrant.
+pub const MAX_TOOLS_PER_WARRANT: usize = 256;
+
+/// Maximum number of constraints per tool.
+pub const MAX_CONSTRAINTS_PER_TOOL: usize = 64;
+
+/// Maximum number of extension keys.
+pub const MAX_EXTENSION_KEYS: usize = 64;
+
+/// Maximum size of an extension value (8 KB).
+pub const MAX_EXTENSION_VALUE_SIZE: usize = 8 * 1024;
+
 /// Encode a warrant to a compact binary format.
 pub fn encode(warrant: &Warrant) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
@@ -51,6 +63,9 @@ pub fn decode(data: &[u8]) -> Result<Warrant> {
 
     // Validate constraint depth to prevent stack overflow attacks
     warrant.validate_constraint_depth()?;
+
+    // Validate semantic rules (including temporal checks)
+    warrant.validate()?;
 
     // Validate payload version early (reject unknown versions)
     if warrant.payload.version != crate::warrant::WARRANT_VERSION as u8 {

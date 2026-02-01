@@ -2,7 +2,7 @@
 
 ## Reporting Vulnerabilities
 
-If you discover a security vulnerability, please email **security@tenuo.dev** instead of opening a public issue.
+If you discover a security vulnerability, please email **security@tenuo.ai** instead of opening a public issue.
 
 **PGP Key:** [SECURITY_PUBKEY.asc](./SECURITY_PUBKEY.asc)  
 **Fingerprint:** `A5EC 5FE8 E816 8869 62CC  998C 2E98 D3E4 F5F8 0771`

@@ -22,7 +22,7 @@ uv pip install "tenuo[mcp]"           # + MCP client (Python ≥3.10)
 ```
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb)
-[![Explorer](https://img.shields.io/badge/Explorer-decode_warrants-00d4ff)](https://tenuo.dev/explorer/)
+[![Explorer](https://img.shields.io/badge/Explorer-decode_warrants-00d4ff)](https://tenuo.ai/explorer/)
 
 ## Development
 
@@ -324,7 +324,7 @@ response = client.chat.completions.create(
 | `Pattern(glob)` | Glob pattern matching | `Pattern("*@company.com")` |
 | `UrlPattern(url)` | URL matching. **Note**: `https://example.com/` (trailing slash) parses as Wildcard ("Any Path"). Use `/*` to restrict to root. | `UrlPattern("https://*.example.com/*")` |
 
-For Tier 2 (cryptographic authorization with warrants), see [OpenAI Integration](https://tenuo.dev/openai).
+For Tier 2 (cryptographic authorization with warrants), see [OpenAI Integration](https://tenuo.ai/openai).
 
 ## Google ADK Integration
 
@@ -387,7 +387,7 @@ async def search_papers(query: str, sources: list[str]) -> list[dict]:
     return await do_search(query, sources)
 ```
 
-See [A2A Integration](https://tenuo.dev/a2a) for full documentation.
+See [A2A Integration](https://tenuo.ai/a2a) for full documentation.
 
 ## LangGraph Integration
 
@@ -572,7 +572,7 @@ python examples/basic_usage.py
 python examples/fastapi_integration.py
 
 # LangGraph protected
-python examples/langgraph_protected.py
+python examples/langchain/langgraph_protected.py
 
 # MCP integration
 python examples/mcp_integration.py

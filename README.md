@@ -11,7 +11,7 @@
   <a href="https://crates.io/crates/tenuo"><img src="https://img.shields.io/crates/v/tenuo.svg" alt="Crates.io"></a>
   <a href="https://pypi.org/project/tenuo/"><img src="https://img.shields.io/pypi/v/tenuo.svg" alt="PyPI"></a>
   <a href="https://hub.docker.com/r/tenuo/authorizer"><img src="https://img.shields.io/docker/v/tenuo/authorizer?label=docker" alt="Docker"></a>
-  <a href="https://tenuo.dev"><img src="https://img.shields.io/badge/docs-tenuo.dev-blue" alt="Docs"></a>
+  <a href="https://tenuo.ai"><img src="https://img.shields.io/badge/docs-tenuo.ai-blue" alt="Docs"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg" alt="License"></a>
 </p>
 
@@ -31,8 +31,8 @@ pip install tenuo
 ```
 
 <a href="https://colab.research.google.com/github/tenuo-ai/tenuo/blob/main/notebooks/tenuo_demo.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"></a>
-<a href="https://tenuo.dev/explorer/"><img src="https://img.shields.io/badge/Explorer-decode_warrants-00d4ff" alt="Explorer"></a>
-<a href="https://tenuo.dev/demo.html"><img src="https://img.shields.io/badge/Docker_Demo-delegation_chain-a855f7" alt="Docker Demo"></a>
+<a href="https://tenuo.ai/explorer/"><img src="https://img.shields.io/badge/Explorer-decode_warrants-00d4ff" alt="Explorer"></a>
+<a href="https://tenuo.ai/demo.html"><img src="https://img.shields.io/badge/Docker_Demo-delegation_chain-a855f7" alt="Docker Demo"></a>
 <a href="https://niyikiza.com/posts/tenuo-launch/"><img src="https://img.shields.io/badge/Blog-Why_Tenuo%3F-ff6b6b" alt="Blog"></a>
 
 ## Quick Start
@@ -75,7 +75,7 @@ IAM answers "who are you?" Tenuo answers "what can you do right now?"
 
 ## What Tenuo Is Not
 
-- **Not a sandbox** - Tenuo authorizes actions, it doesn't isolate execution. Pair with containers/VMs for defense in depth.
+- **Not a sandbox** - Tenuo authorizes actions, it doesn't isolate execution. Pair with containers/sandboxes/VMs for defense in depth.
 - **Not prompt engineering** - No "please don't do bad things" instructions. Cryptographic enforcement, not behavioral.
 - **Not an LLM filter** - We don't parse model outputs. We gate tool calls at execution time.
 - **Not a replacement for IAM** - Tenuo *complements* IAM by adding task-scoped, attenuating capabilities on top of identity.
@@ -194,7 +194,7 @@ async def search(query: str, ctx: SecurityContext = Depends(TenuoGuard("search")
     return {"results": do_search(query)}
 ```
 
-**More:** [MCP](https://tenuo.dev/mcp) | [Kubernetes](https://tenuo.dev/kubernetes)
+**More:** [MCP](https://tenuo.ai/mcp) | [Kubernetes](https://tenuo.ai/kubernetes)
 
 ---
 
@@ -206,7 +206,7 @@ async def search(query: str, ctx: SecurityContext = Depends(TenuoGuard("search")
 docker compose up
 ```
 
-This runs the [orchestrator -> worker -> authorizer demo](https://tenuo.dev/demo.html) showing warrant issuance, delegation, and verification.
+This runs the [orchestrator -> worker -> authorizer demo](https://tenuo.ai/demo.html) showing warrant issuance, delegation, and verification.
 
 **Official Images** on [Docker Hub](https://hub.docker.com/u/tenuo):
 
@@ -222,7 +222,7 @@ helm install tenuo-authorizer ./charts/tenuo-authorizer \
   --set config.trustedRoots[0]="YOUR_CONTROL_PLANE_PUBLIC_KEY"
 ```
 
-See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https://tenuo.dev/kubernetes).
+See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https://tenuo.ai/kubernetes).
 
 ---
 
@@ -230,16 +230,16 @@ See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https:
 
 | Resource | Description |
 |----------|-------------|
-| **[Quickstart](https://tenuo.dev/quickstart)** | Get running in 5 minutes |
-| **[Concepts](https://tenuo.dev/concepts)** | Why capability tokens? |
-| **[OpenAI](https://tenuo.dev/openai)** | Direct API protection with streaming |
-| **[Google ADK](https://tenuo.dev/google-adk)** | ADK agent tool protection |
-| **[A2A](https://tenuo.dev/a2a)** | Inter-agent delegation |
-| **[FastAPI](https://tenuo.dev/fastapi)** | Zero-boilerplate API protection |
-| **[LangChain](https://tenuo.dev/langchain)** | Tool protection |
-| **[LangGraph](https://tenuo.dev/langgraph)** | Multi-agent graph security |
-| **[MCP](https://tenuo.dev/mcp)** | Model Context Protocol client |
-| **[Security](https://tenuo.dev/security)** | Threat model |
+| **[Quickstart](https://tenuo.ai/quickstart)** | Get running in 5 minutes |
+| **[Concepts](https://tenuo.ai/concepts)** | Why capability tokens? |
+| **[OpenAI](https://tenuo.ai/openai)** | Direct API protection with streaming |
+| **[Google ADK](https://tenuo.ai/google-adk)** | ADK agent tool protection |
+| **[A2A](https://tenuo.ai/a2a)** | Inter-agent delegation |
+| **[FastAPI](https://tenuo.ai/fastapi)** | Zero-boilerplate API protection |
+| **[LangChain](https://tenuo.ai/langchain)** | Tool protection |
+| **[LangGraph](https://tenuo.ai/langgraph)** | Multi-agent graph security |
+| **[MCP](https://tenuo.ai/mcp)** | Model Context Protocol client |
+| **[Security](https://tenuo.ai/security)** | Threat model |
 
 ---
 
@@ -247,7 +247,7 @@ See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https:
 
 Tenuo builds on capability token ideas described in [CaMeL](https://arxiv.org/abs/2503.18813) (Debenedetti et al., 2025). Inspired by [Macaroons](https://research.google/pubs/pub41892/), [Biscuit](https://www.biscuitsec.org/), and [UCAN](https://ucan.xyz/).
 
-See [Related Work](https://tenuo.dev/related-work) for detailed comparison.
+See [Related Work](https://tenuo.ai/related-work) for detailed comparison.
 
 ---
 
@@ -270,7 +270,7 @@ See [Related Work](https://tenuo.dev/related-work) for detailed comparison.
 | Multi-sig approvals | Partial (notary in v0.2) |
 | TypeScript/Node SDK | Planned for v0.2 |
 | Context-aware constraints | Spec under development |
-| Revocation service | Basic revocation via Authorizer; distributed revocation in v0.3 |
+| Revocation service | Planned for v0.2 |
 
 ---
 
@@ -302,9 +302,15 @@ Contributions welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### TypeScript SDK (Help Wanted)
 
-We're planning a TypeScript/Node SDK for v0.2. If you're interested in leading or contributing to this effort, open an issue or email us at [dev@tenuo.dev](mailto:dev@tenuo.dev).
+We're planning a TypeScript/Node SDK for v0.2. If you're interested in leading or contributing to this effort, open an issue or email us at [dev@tenuo.ai](mailto:dev@tenuo.ai).
 
-**Security issues**: Email security@tenuo.dev with PGP ([key](./SECURITY_PUBKEY.asc), not public issues).
+**Security issues**: Email security@tenuo.ai with PGP ([key](./SECURITY_PUBKEY.asc), not public issues).
+
+---
+
+## Deploying to Production?
+
+Self-hosted is free forever. For managed control plane with observability and revocation management, see [Tenuo Cloud](https://tenuo.ai/pricing.html).
 
 ---
 

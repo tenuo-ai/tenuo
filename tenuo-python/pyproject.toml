@@ -91,8 +91,8 @@ dev = [
 tenuo = "tenuo.cli:main"
 
 [project.urls]
-Homepage = "https://tenuo.dev"
-Documentation = "https://tenuo.dev/quickstart"
+Homepage = "https://tenuo.ai"
+Documentation = "https://tenuo.ai/quickstart"
 Repository = "https://github.com/tenuo-ai/tenuo"
 Issues = "https://github.com/tenuo-ai/tenuo/issues"
 

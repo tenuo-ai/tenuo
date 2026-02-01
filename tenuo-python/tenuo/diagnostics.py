@@ -79,7 +79,7 @@ def diagnose(warrant: Warrant) -> str:
     import json
     import base64
 
-    playground_url = "https://tenuo.dev/explorer/"
+    playground_url = "https://tenuo.ai/explorer/"
     try:
         # Construct state object matching App.tsx expectation (warrant only)
         state = {

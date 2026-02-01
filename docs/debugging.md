@@ -166,7 +166,7 @@ See [CLI Reference](./cli) for full command documentation.
 
 ## Explorer Playground
 
-**[🔬 Tenuo Explorer](https://tenuo.dev/explorer/)** — Interactive warrant debugging:
+**[🔬 Tenuo Explorer](https://tenuo.ai/explorer/)** — Interactive warrant debugging:
 
 - **Decode** any warrant visually
 - **Test authorization** with different arguments

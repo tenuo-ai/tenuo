@@ -5,6 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tenuo - Capability Delegation Flow (with Depth Limits)</title>
+    <link rel="icon" href="favicon.ico" sizes="48x48">
+    <link rel="icon" type="image/png" sizes="96x96" href="images/favicon-96.png">
+    <link rel="icon" type="image/svg+xml" href="images/favicon-t.svg">
     <style>
         @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
@@ -477,7 +480,8 @@
 
                 <p style="color: var(--text-secondary); margin-bottom: 16px;">
                     The Control Plane issues a <strong>broad, high-level warrant</strong> with wildcard tool access.
-                    This is the "Root of Trust". The Orchestrator will attenuate into <strong>mission-specific</strong> warrants.
+                    This is the "Root of Trust". The Orchestrator will attenuate into <strong>mission-specific</strong>
+                    warrants.
                 </p>
 
                 <div class="warrant">
@@ -487,11 +491,13 @@
                     </div>
                     <div class="warrant-field">
                         <span class="warrant-key">tool:</span>
-                        <span class="warrant-value" style="color: var(--accent-yellow);">"*" ← wildcard (missions add specific tools)</span>
+                        <span class="warrant-value" style="color: var(--accent-yellow);">"*" ← wildcard (missions add
+                            specific tools)</span>
                     </div>
                     <div class="warrant-field">
                         <span class="warrant-key">constraints:</span>
-                        <span class="warrant-value" style="color: var(--text-muted);">(none - missions add their own)</span>
+                        <span class="warrant-value" style="color: var(--text-muted);">(none - missions add their
+                            own)</span>
                     </div>
                     <div class="warrant-field">
                         <span class="warrant-key">max_depth:</span>
@@ -531,7 +537,8 @@
                     The Orchestrator receives the root warrant and creates <strong
                         style="color: var(--accent-cyan);">mission-specific</strong> warrants for the worker.
                     Each mission gets <strong>different tools</strong> and <strong
-                        style="color: var(--accent-purple);">different constraints</strong>, all bound to the same worker key.
+                        style="color: var(--accent-purple);">different constraints</strong>, all bound to the same
+                    worker key.
                 </p>
 
                 <div class="warrant">
@@ -813,40 +820,56 @@
                 </div>
             </div>
 
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-top: 16px;">
+            <div
+                style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-top: 16px;">
                 <!-- Mission A -->
-                <div style="background: rgba(0, 212, 255, 0.1); border: 1px solid var(--accent-cyan); border-radius: 12px; padding: 20px;">
-                    <div style="font-weight: 600; color: var(--accent-cyan); margin-bottom: 12px;">📁 Mission A: File Operations</div>
+                <div
+                    style="background: rgba(0, 212, 255, 0.1); border: 1px solid var(--accent-cyan); border-radius: 12px; padding: 20px;">
+                    <div style="font-weight: 600; color: var(--accent-cyan); margin-bottom: 12px;">📁 Mission A: File
+                        Operations</div>
                     <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">
-                        <div style="margin-bottom: 4px;"><span style="color: var(--text-muted);">tool:</span> <span style="color: var(--text-primary);">read_file</span></div>
-                        <div style="margin-bottom: 4px;"><span style="color: var(--text-muted);">path:</span> <span style="color: var(--accent-green);">/data/*</span></div>
-                        <div><span style="color: var(--text-muted);">TTL:</span> <span style="color: var(--accent-yellow);">5 min</span></div>
+                        <div style="margin-bottom: 4px;"><span style="color: var(--text-muted);">tool:</span> <span
+                                style="color: var(--text-primary);">read_file</span></div>
+                        <div style="margin-bottom: 4px;"><span style="color: var(--text-muted);">path:</span> <span
+                                style="color: var(--accent-green);">/data/*</span></div>
+                        <div><span style="color: var(--text-muted);">TTL:</span> <span
+                                style="color: var(--accent-yellow);">5 min</span></div>
                     </div>
                     <div style="margin-top: 12px; font-size: 0.8rem;">
                         <span style="color: var(--accent-green);">✓</span> read_file("/data/config.json")<br>
-                        <span style="color: var(--accent-red);">✗</span> manage_infrastructure(...) → <span style="color: var(--accent-red);">DENIED</span>
+                        <span style="color: var(--accent-red);">✗</span> manage_infrastructure(...) → <span
+                            style="color: var(--accent-red);">DENIED</span>
                     </div>
                 </div>
 
                 <!-- Mission B -->
-                <div style="background: rgba(0, 255, 136, 0.1); border: 1px solid var(--accent-green); border-radius: 12px; padding: 20px;">
-                    <div style="font-weight: 600; color: var(--accent-green); margin-bottom: 12px;">🔧 Mission B: Infrastructure</div>
+                <div
+                    style="background: rgba(0, 255, 136, 0.1); border: 1px solid var(--accent-green); border-radius: 12px; padding: 20px;">
+                    <div style="font-weight: 600; color: var(--accent-green); margin-bottom: 12px;">🔧 Mission B:
+                        Infrastructure</div>
                     <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">
-                        <div style="margin-bottom: 4px;"><span style="color: var(--text-muted);">tool:</span> <span style="color: var(--text-primary);">manage_infrastructure</span></div>
-                        <div style="margin-bottom: 4px;"><span style="color: var(--text-muted);">cluster:</span> <span style="color: var(--accent-green);">staging-web</span></div>
-                        <div style="margin-bottom: 4px;"><span style="color: var(--text-muted);">action:</span> <span style="color: var(--accent-green);">[upgrade, restart]</span></div>
-                        <div><span style="color: var(--text-muted);">TTL:</span> <span style="color: var(--accent-yellow);">10 min</span></div>
+                        <div style="margin-bottom: 4px;"><span style="color: var(--text-muted);">tool:</span> <span
+                                style="color: var(--text-primary);">manage_infrastructure</span></div>
+                        <div style="margin-bottom: 4px;"><span style="color: var(--text-muted);">cluster:</span> <span
+                                style="color: var(--accent-green);">staging-web</span></div>
+                        <div style="margin-bottom: 4px;"><span style="color: var(--text-muted);">action:</span> <span
+                                style="color: var(--accent-green);">[upgrade, restart]</span></div>
+                        <div><span style="color: var(--text-muted);">TTL:</span> <span
+                                style="color: var(--accent-yellow);">10 min</span></div>
                     </div>
                     <div style="margin-top: 12px; font-size: 0.8rem;">
                         <span style="color: var(--accent-green);">✓</span> upgrade staging-web<br>
-                        <span style="color: var(--accent-red);">✗</span> read_file(...) → <span style="color: var(--accent-red);">DENIED</span>
+                        <span style="color: var(--accent-red);">✗</span> read_file(...) → <span
+                            style="color: var(--accent-red);">DENIED</span>
                     </div>
                 </div>
             </div>
 
-            <div style="margin-top: 20px; padding: 16px; background: rgba(0,0,0,0.2); border-radius: 8px; font-size: 0.85rem; color: var(--text-secondary);">
+            <div
+                style="margin-top: 20px; padding: 16px; background: rgba(0,0,0,0.2); border-radius: 8px; font-size: 0.85rem; color: var(--text-secondary);">
                 <strong style="color: var(--accent-purple);">Key Insight:</strong>
-                Same worker, same session, but isolated capabilities. If Mission A warrant is stolen, attackers CAN'T access infrastructure.
+                Same worker, same session, but isolated capabilities. If Mission A warrant is stolen, attackers CAN'T
+                access infrastructure.
             </div>
         </div>
 
@@ -1040,7 +1063,8 @@
                     </div>
                 </div>
             </div>
-            <div style="display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; font-size: 0.85rem; margin-bottom: 16px;">
+            <div
+                style="display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; font-size: 0.85rem; margin-bottom: 16px;">
                 <a href="https://github.com/tenuo-ai/tenuo/blob/main/docker-compose.yml"
                     style="color: var(--text-secondary); text-decoration: none; padding: 8px 16px; background: rgba(0,0,0,0.2); border-radius: 8px;">
                     📦 docker-compose.yml
@@ -1061,7 +1085,8 @@
 
             <!-- Python Demo -->
             <p style="color: var(--text-secondary); margin-bottom: 12px; font-size: 0.9rem;">
-                <strong style="color: var(--accent-cyan);">🐍 Python Demo:</strong> High-level features with MCP + LangChain
+                <strong style="color: var(--accent-cyan);">🐍 Python Demo:</strong> High-level features with MCP +
+                LangChain
             </p>
             <div style="display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; font-size: 0.85rem;">
                 <a href="https://github.com/tenuo-ai/tenuo/blob/main/tenuo-python/examples/research_agent_demo.py"
@@ -1086,6 +1111,9 @@
             </p>
         </footer>
     </div>
+
+    <!-- GoatCounter Analytics -->
+    <script data-goatcounter="https://tenuo-ai.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
 </body>
 
 </html>

@@ -15,19 +15,19 @@
 
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website">
-    <meta property="og:url" content="https://tenuo.dev/">
+    <meta property="og:url" content="https://tenuo.ai/">
     <meta property="og:title" content="Tenuo - Capability Tokens for AI Agents">
     <meta property="og:description"
         content="Stop ambient authority. Signed tokens that carry delegation provenance and task context. ~27μs verification.">
-    <meta property="og:image" content="https://tenuo.dev/images/og-preview.png">
+    <meta property="og:image" content="https://tenuo.ai/images/og-preview.png">
 
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:url" content="https://tenuo.dev/">
+    <meta name="twitter:url" content="https://tenuo.ai/">
     <meta name="twitter:title" content="Tenuo - Capability Tokens for AI Agents">
     <meta name="twitter:description"
         content="Stop ambient authority. Signed tokens that carry delegation provenance and task context. ~27μs verification.">
-    <meta name="twitter:image" content="https://tenuo.dev/images/og-preview.png">
+    <meta name="twitter:image" content="https://tenuo.ai/images/og-preview.png">
 
     <!-- Favicon -->
     <link rel="icon" href="favicon.ico" sizes="48x48">
@@ -509,6 +509,23 @@
             color: var(--muted);
         }
 
+        /* Production CTA */
+        .production {
+            text-align: center;
+            padding: 48px 0;
+            color: var(--muted);
+            font-size: 0.95rem;
+        }
+
+        .production a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .production a:hover {
+            text-decoration: underline;
+        }
+
         /* Footer */
         footer {
             padding: 48px 0;
@@ -607,6 +624,7 @@
                 <a href="concepts">Concepts</a>
                 <a href="api-reference">API</a>
                 <a href="/explorer">Explorer</a>
+                <a href="pricing.html">Pricing</a>
                 <a href="https://github.com/tenuo-ai/tenuo">GitHub</a>
             </div>
         </nav>
@@ -620,7 +638,6 @@
             </p>
             <div class="cta">
                 <a href="quickstart" class="btn btn-primary">Get Started</a>
-                <a href="/explorer" class="btn btn-secondary">🔍 Explorer</a>
                 <a href="https://github.com/tenuo-ai/tenuo" class="btn btn-secondary">GitHub</a>
             </div>
         </section>
@@ -784,6 +801,10 @@
                 </a>
             </div>
         </section>
+
+        <section class="production">
+            <p>Deploying to production? Self-hosted is free forever. <a href="pricing.html">See Tenuo Cloud</a> for managed options.</p>
+        </section>
     </div>
 
     <footer>
@@ -797,9 +818,14 @@
             <a href="quickstart">Quick Start</a> ·
             <a href="api-reference">API Reference</a> ·
             <a href="security">Security</a> ·
+            <a href="pricing.html">Pricing</a> ·
             MIT/Apache-2.0
         </p>
     </footer>
+
+    <!-- GoatCounter Analytics -->
+    <script data-goatcounter="https://tenuo-ai.goatcounter.com/count"
+            async src="//gc.zgo.at/count.js"></script>
 </body>
 
 </html>

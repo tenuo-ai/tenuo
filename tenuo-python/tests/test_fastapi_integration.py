@@ -155,30 +155,23 @@ class TestFastAPIIntegration:
         def search(ctx: SecurityContext = Depends(TenuoGuard("search"))):
             pass
 
-        # Expired warrant (TTL=0 is not instantly expired in some impls, using -1 or sleep if needed)
-        # But Warrant.mint(ttl=) usually sets expiry.
-        # Tenuo Core enforces expiry.
-        # Let's assume TTL=0 makes it expire immediately or quickly.
-        # However, `sign()` might fail if expired? No, PoP is signature.
+        # Create warrant that expires in 1 second
+        warrant = Warrant.mint_builder().tool("search").ttl(1).mint(key)
 
+        # Wait for it to expire (add buffer for CI timing)
         import time
+        time.sleep(2.0)  # Increased from 1.1 to 2.0 for CI reliability
 
-        try:
-            warrant = Warrant.mint_builder().tool("search").ttl(0).mint(key)
-            # Wait a bit
-            time.sleep(0.01)
-        except Exception:
-            # Fallback if TTL=0 invalid
-            warrant = Warrant.mint_builder().tool("search").ttl(1).mint(key)
-            time.sleep(1.1)
+        # Verify it's actually expired
+        assert warrant.is_expired(), "Warrant should be expired after 2 second sleep"
 
         args = {"query": "test"}
-        # PoP signing doesn't care about expiry usually
+        # PoP signing works even on expired warrants (signing doesn't check expiry)
         pop_sig = warrant.sign(key, "search", args)
         pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
         headers = {X_TENUO_WARRANT: warrant.to_base64(), X_TENUO_POP: pop_b64}
 
         resp = client.get("/search?query=test", headers=headers)
-        assert resp.status_code == 401
+        assert resp.status_code == 401, f"Expected 401 for expired warrant, got {resp.status_code}: {resp.json()}"
         assert resp.json()["detail"]["error"] == "warrant_expired"

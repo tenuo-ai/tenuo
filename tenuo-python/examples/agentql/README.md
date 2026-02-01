@@ -192,7 +192,7 @@ async with agent.start_session() as page:
 **Understanding Tenuo:**
 - [ARCHITECTURE.md](ARCHITECTURE.md) - Why cryptographic authorization beats if-else
 - [PERFORMANCE.md](PERFORMANCE.md) - Overhead benchmarks and optimization
-- [Tenuo Documentation](https://tenuo.dev) - Full protocol documentation
+- [Tenuo Documentation](https://tenuo.ai) - Full protocol documentation
 - [Wire Format Spec](../../../docs/spec/wire-format-v1.md) - Protocol details
 
 **Other Integrations:**

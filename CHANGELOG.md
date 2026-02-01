@@ -207,8 +207,8 @@ Capability tokens for AI agents. Issue scoped, time-limited warrants that delega
 
 #### Developer Experience
 
-- Interactive Explorer at [tenuo.dev/explorer](https://tenuo.dev/explorer/)
-- Comprehensive documentation at [tenuo.dev](https://tenuo.dev)
+- Interactive Explorer at [tenuo.ai/explorer](https://tenuo.ai/explorer/)
+- Comprehensive documentation at [tenuo.ai](https://tenuo.ai)
 - Jupyter notebooks for quick start
 
 ---

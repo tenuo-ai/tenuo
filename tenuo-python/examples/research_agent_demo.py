@@ -959,7 +959,7 @@ async def main():
   Path mapping: Warrant paths (/data/*) → Physical (/tmp/research/data/*)
 
   Learn more:
-  • Explorer:   https://tenuo.dev/explorer/
+  • Explorer:   https://tenuo.ai/explorer/
   • GitHub:     https://github.com/tenuo-ai/tenuo
     """)
 

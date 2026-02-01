@@ -603,7 +603,7 @@ from tenuo import diagnose
 diagnose(warrant)  # Prints warrant details, TTL, constraints, etc.
 ```
 
-**Interactive Debugging**: Paste your warrant in the [Explorer Playground](https://tenuo.dev/explorer/) to decode it, inspect constraints, and test authorization - warrants contain only signed claims, not secrets, so they're safe to share.
+**Interactive Debugging**: Paste your warrant in the [Explorer Playground](https://tenuo.ai/explorer/) to decode it, inspect constraints, and test authorization - warrants contain only signed claims, not secrets, so they're safe to share.
 
 ---
 

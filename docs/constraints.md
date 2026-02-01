@@ -1597,7 +1597,7 @@ client = auto_guard(
 
 ## See Also
 
-- [🔬 Explorer Playground](https://tenuo.dev/explorer/) — Test constraints interactively
+- [🔬 Explorer Playground](https://tenuo.ai/explorer/) — Test constraints interactively
 - [AI Agent Patterns](./ai-agents) — P-LLM/Q-LLM, prompt injection defense
 - [API Reference](./api-reference) — Full constraint API
 - [Security](./security) — How constraints fit into the security model

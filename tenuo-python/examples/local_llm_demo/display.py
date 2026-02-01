@@ -133,7 +133,7 @@ def print_demo_summary(blocked_count: int, allowed_count: int):
             f"[bold green]✅ Allowed actions:[/bold green] {allowed_count}\n"
             f"[bold red]⛔ Blocked actions:[/bold red] {blocked_count}\n\n"
             "[bold]The warrant enforced security boundaries regardless of what the LLM tried to do.[/bold]\n\n"
-            "Learn more: https://tenuo.dev",
+            "Learn more: https://tenuo.ai",
             title="📊 DEMO SUMMARY",
             border_style="magenta",
         )

@@ -318,7 +318,7 @@ def print_demo_summary(blocked: int, allowed: int):
             f"[bold red]⛔ Blocked actions:[/bold red] {blocked}\n\n"
             "[bold]The task-specific warrant enforced boundaries.[/bold]\n"
             "Even with prompt injection in fetched content, unauthorized actions were blocked.\n\n"
-            "Learn more: https://tenuo.dev",
+            "Learn more: https://tenuo.ai",
             title="📊 DEMO SUMMARY",
             border_style="magenta",
         )

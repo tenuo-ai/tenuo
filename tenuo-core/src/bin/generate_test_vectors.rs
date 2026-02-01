@@ -16,6 +16,26 @@ use tenuo::{
     SigningKey,
 };
 
+// Fixed warrant IDs for new tests
+const ID_A15_ISSUER: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD0,
+];
+const ID_A15_CHILD: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xD1,
+];
+const ID_A16_CHILD: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xE0,
+];
+const ID_A17_PARENT: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0,
+];
+const ID_A17_CHILD: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF1,
+];
+const ID_A18: [u8; 16] = [
+    0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x18,
+];
+
 // Fixed timestamps (2024-01-01T00:00:00Z and +1 hour)
 const ISSUED_AT: u64 = 1704067200;
 const EXPIRES_AT: u64 = 1704070800;
@@ -67,7 +87,7 @@ fn main() {
     println!("# Tenuo Protocol Test Vectors");
     println!();
     println!("**Version:** 1.0");
-    println!("**Documentation Revision:** 2 (2026-01-18)");
+    println!("**Documentation Revision:** 2 (2026-01-21)");
     println!("**Generated:** 2024-01-01 (deterministic timestamps for reproducibility)");
     println!("**Specification:** [wire-format-v1.md](wire-format-v1.md)");
     println!();
@@ -75,12 +95,12 @@ fn main() {
     println!();
     println!("## Revision History");
     println!();
-    println!("- **Rev 2** (2026-01-18): Documentation cleanup");
+    println!("- **Rev 2** (2026-01-21): Documentation cleanup");
     println!("  - Regenerated all test vectors to match current generator output");
     println!("  - Added cross-reference note to full constraint type list in wire-format-v1.md");
     println!("  - **No protocol changes** - test vectors remain v1.0 compatible");
     println!();
-    println!("- **Rev 1** (2025-01-01): Initial release");
+    println!("- **Rev 1** (2026-01-01): Initial release");
     println!();
     println!("---");
     println!();
@@ -1522,6 +1542,1297 @@ fn main() {
     println!("- **[RFC 8032]** Josefsson, S., Liusvaara, I., \"Edwards-Curve Digital Signature Algorithm (EdDSA)\", January 2017. https://datatracker.ietf.org/doc/html/rfc8032");
     println!("- **[RFC 8949]** Bormann, C., Hoffman, P., \"Concise Binary Object Representation (CBOR)\", December 2020. https://datatracker.ietf.org/doc/html/rfc8949");
     println!("- **[protocol-spec-v1.md]** Tenuo Protocol Specification");
+    println!();
+
+    // Recreate tools_l0 as it was moved earlier
+    let mut tools_l0 = BTreeMap::new();
+    let mut cs_l0 = ConstraintSet::new();
+    cs_l0.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    tools_l0.insert("read_file".to_string(), cs_l0);
+
+    // A.15: Issuer Constraint Bounds Violation
+    println!("---");
+    println!();
+    println!("## A.15 Issuer Constraint Violation");
+    println!();
+    println!("**Scenario:** Issuer warrant defines bounds, child exceeds them.");
+    println!();
+
+    let mut bounds_a15 = ConstraintSet::new();
+    bounds_a15.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    // constraint_bounds is Option<ConstraintSet>, which maps field_name -> Constraint.
+    // It assumes all issued tools share these argument bounds (e.g. any tool with 'path' arg must match).
+
+    let payload_a15_issuer = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Issuer,
+        id: WarrantId::from_bytes(ID_A15_ISSUER),
+        tools: BTreeMap::new(),
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 5,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: Some(vec!["read_file".to_string()]),
+        max_issue_depth: Some(3),
+        constraint_bounds: Some(bounds_a15),
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a15_issuer = sign_payload(&payload_a15_issuer, &control_plane);
+    print_vector("A.15 Issuer Warrant", &warrant_a15_issuer);
+
+    println!("**Child Warrant (Invalid - Constraints Outside Bounds):**");
+    println!();
+    let mut tools_a15_child = BTreeMap::new();
+    let mut cs_a15_child = ConstraintSet::new();
+    cs_a15_child.insert(
+        "path".to_string(),
+        Constraint::Exact(Exact::new("/etc/passwd")), // Not in /data/*
+    );
+    tools_a15_child.insert("read_file".to_string(), cs_a15_child);
+
+    let parent_hash_a15 = sha256(warrant_a15_issuer.payload_bytes());
+
+    let payload_a15_child = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A15_CHILD),
+        tools: tools_a15_child,
+        holder: worker.public_key(),
+        issuer: orchestrator.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 1,
+        parent_hash: Some(parent_hash_a15),
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a15_child = sign_payload(&payload_a15_child, &orchestrator);
+    print_vector("A.15 Invalid Child", &warrant_a15_child);
+    println!("**Expected:** Verification MUST fail with `constraint_violation` (Child constraints not subset of Parent bounds).");
+    println!();
+
+    // A.16: Self-Issuance Violation
+    println!("---");
+    println!();
+    println!("## A.16 Self-Issuance Violation");
+    println!();
+    println!("**Scenario:** Holder delegates execution warrant to themselves (Privilege Escalation / Separation of Duties).");
+    println!();
+
+    let parent_hash_l0 = sha256(warrant_l0.payload_bytes());
+    let mut tools_a16 = BTreeMap::new();
+    let mut cs_a16 = ConstraintSet::new();
+    cs_a16.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    tools_a16.insert("read_file".to_string(), cs_a16);
+
+    let payload_a16 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A16_CHILD),
+        tools: tools_a16,
+        holder: orchestrator.public_key(), // Same as issuer (Orchestrator self-signing)
+        issuer: orchestrator.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 1,
+        parent_hash: Some(parent_hash_l0), // Parent is Orchestrator's L0
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a16 = sign_payload(&payload_a16, &orchestrator);
+    print_vector("A.16 Invalid Self-Issuance", &warrant_a16);
+    println!("**Expected:** Verification MUST fail with `self_issuance` error.");
+    println!();
+
+    // A.17: Clearance Monotonicity Violation
+    println!("---");
+    println!();
+    println!("## A.17 Clearance Violation");
+    println!();
+    println!("**Scenario:** Child attempts to increase clearance level.");
+    println!();
+
+    let payload_a17_parent = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A17_PARENT),
+        tools: tools_l0.clone(),
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: Some(tenuo::warrant::Clearance(5)), // Parent clearance = 5
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a17_parent = sign_payload(&payload_a17_parent, &control_plane);
+    print_vector("A.17 Parent (Clearance=5)", &warrant_a17_parent);
+
+    let parent_hash_a17 = sha256(warrant_a17_parent.payload_bytes());
+    let payload_a17_child = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A17_CHILD),
+        tools: tools_l0.clone(),
+        holder: worker.public_key(),
+        issuer: orchestrator.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 1,
+        parent_hash: Some(parent_hash_a17),
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: Some(tenuo::warrant::Clearance(6)), // Child clearance = 6 (Invalid increase)
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a17_child = sign_payload(&payload_a17_child, &orchestrator);
+    print_vector("A.17 Invalid Child (Clearance=6)", &warrant_a17_child);
+    println!("**Expected:** Verification MUST fail with `clearance_monotonicity_violated`.");
+    println!();
+
+    // A.18: Multi-sig Config
+    println!("---");
+    println!();
+    println!("## A.18 Multi-sig Configuration");
+    println!();
+    println!("**Scenario:** Warrant with required approvers.");
+    println!();
+
+    let payload_a18 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A18),
+        tools: tools_l0.clone(),
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: Some(vec![worker.public_key(), worker2.public_key()]),
+        min_approvals: Some(1),
+    };
+    let warrant_a18 = sign_payload(&payload_a18, &control_plane);
+    print_vector("A.18 Multi-sig", &warrant_a18);
+    println!("Verifiers MUST enforce approvals from `worker` or `worker2` before execution.");
+
+    // =========================================================================
+    // A.19 Constraint Type Coverage
+    // =========================================================================
+    println!();
+    println!("---");
+    println!();
+    println!("## A.19 Constraint Type Coverage");
+    println!();
+    println!("Byte-exact test vectors for constraint type validation.");
+    println!();
+
+    // A.19.1 Range Constraint
+    println!("### A.19.1 Range Constraint");
+    println!();
+
+    const ID_A19_1: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x19,
+        0x01,
+    ];
+
+    let mut tools_a19_1 = BTreeMap::new();
+    let mut cs_a19_1 = ConstraintSet::new();
+    cs_a19_1.insert(
+        "count".to_string(),
+        Constraint::Range(tenuo::constraints::Range::new(Some(0.0), Some(100.0)).unwrap()),
+    );
+    tools_a19_1.insert("api_call".to_string(), cs_a19_1);
+
+    let payload_a19_1 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A19_1),
+        tools: tools_a19_1,
+        holder: worker.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a19_1 = sign_payload(&payload_a19_1, &control_plane);
+    print_vector("A.19.1 Range", &warrant_a19_1);
+    println!("| Valid Input | `count = 50.0` |");
+    println!("| Invalid Input | `count = 150.0` |");
+    println!();
+    println!("**Expected:** Valid input MUST succeed, invalid input MUST fail with constraint violation.");
+    println!();
+
+    // A.19.2 OneOf Constraint
+    println!("### A.19.2 OneOf Constraint");
+    println!();
+
+    const ID_A19_2: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x19,
+        0x02,
+    ];
+
+    let mut tools_a19_2 = BTreeMap::new();
+    let mut cs_a19_2 = ConstraintSet::new();
+    cs_a19_2.insert(
+        "env".to_string(),
+        Constraint::OneOf(tenuo::constraints::OneOf::new(vec![
+            "staging".to_string(),
+            "production".to_string(),
+        ])),
+    );
+    tools_a19_2.insert("deploy".to_string(), cs_a19_2);
+
+    let payload_a19_2 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A19_2),
+        tools: tools_a19_2,
+        holder: worker.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a19_2 = sign_payload(&payload_a19_2, &control_plane);
+    print_vector("A.19.2 OneOf", &warrant_a19_2);
+    println!("| Valid Input | `env = \"staging\"` |");
+    println!("| Invalid Input | `env = \"development\"` |");
+    println!();
+    println!("**Expected:** Valid input MUST succeed, invalid input MUST fail with constraint violation.");
+    println!();
+
+    // A.19.3 CIDR Constraint
+    println!("### A.19.3 CIDR Constraint");
+    println!();
+
+    const ID_A19_3: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x19,
+        0x03,
+    ];
+
+    let mut tools_a19_3 = BTreeMap::new();
+    let mut cs_a19_3 = ConstraintSet::new();
+    cs_a19_3.insert(
+        "ip".to_string(),
+        Constraint::Cidr(tenuo::constraints::Cidr::new("10.0.0.0/8").unwrap()),
+    );
+    tools_a19_3.insert("connect".to_string(), cs_a19_3);
+
+    let payload_a19_3 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A19_3),
+        tools: tools_a19_3,
+        holder: worker.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a19_3 = sign_payload(&payload_a19_3, &control_plane);
+    print_vector("A.19.3 CIDR", &warrant_a19_3);
+    println!("| Valid Input | `ip = \"10.1.2.3\"` |");
+    println!("| Invalid Input | `ip = \"192.168.1.1\"` |");
+    println!();
+    println!("**Expected:** Valid input MUST succeed, invalid input MUST fail with constraint violation.");
+    println!();
+
+    // =========================================================================
+    // A.20 PoP Failure Cases
+    // =========================================================================
+    println!("---");
+    println!();
+    println!("## A.20 Proof-of-Possession Failures");
+    println!();
+
+    // A.20.1 Wrong Holder Key
+    println!("### A.20.1 PoP with Wrong Holder Key");
+    println!();
+
+    const ID_A20_1: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20,
+        0x01,
+    ];
+
+    let mut tools_a20_1 = BTreeMap::new();
+    let mut cs_a20_1 = ConstraintSet::new();
+    cs_a20_1.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    tools_a20_1.insert("read_file".to_string(), cs_a20_1);
+
+    let payload_a20_1 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A20_1),
+        tools: tools_a20_1,
+        holder: worker.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a20_1 = sign_payload(&payload_a20_1, &control_plane);
+    print_vector("A.20.1", &warrant_a20_1);
+
+    // Generate PoP signed by ATTACKER (wrong key)
+    let pop_a20_1_challenge = (
+        warrant_a20_1.id().to_string(),
+        "read_file".to_string(),
+        vec![("path".to_string(), "/data/test.txt".to_string())],
+        POP_TIMESTAMP_WINDOW,
+    );
+    let mut pop_a20_1_bytes = Vec::new();
+    ciborium::ser::into_writer(&pop_a20_1_challenge, &mut pop_a20_1_bytes)
+        .expect("Failed to serialize PoP challenge");
+
+    let mut pop_a20_1_preimage = Vec::new();
+    pop_a20_1_preimage.extend_from_slice(POP_CONTEXT);
+    pop_a20_1_preimage.extend_from_slice(&pop_a20_1_bytes);
+
+    let pop_a20_1_sig_wrong = attacker.sign(&pop_a20_1_preimage); // WRONG: signed by attacker
+    let pop_a20_1_sig_correct = worker.sign(&pop_a20_1_preimage); // Correct: signed by holder
+
+    println!("| Holder | Worker |");
+    println!("| PoP Signer (Invalid) | Attacker |");
+    println!();
+    println!("**Invalid PoP Signature (signed by Attacker):**");
+    println!("```");
+    println!("{}", hex::encode(pop_a20_1_sig_wrong.to_bytes()));
+    println!("```");
+    println!();
+    println!("**Valid PoP Signature (signed by Holder/Worker):**");
+    println!("```");
+    println!("{}", hex::encode(pop_a20_1_sig_correct.to_bytes()));
+    println!("```");
+    println!();
+    println!("**Expected:** Invalid PoP MUST fail with signature error.");
+    println!();
+
+    // =========================================================================
+    // A.21 Multi-sig Approval
+    // =========================================================================
+    println!("---");
+    println!();
+    println!("## A.21 Signed Approval (Multi-sig)");
+    println!();
+
+    const ID_A21_1: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21,
+        0x01,
+    ];
+
+    // Create approver keys (separate from main keys for clarity)
+    let approver1_seed: [u8; 32] = [0x11; 32];
+    let approver2_seed: [u8; 32] = [0x12; 32];
+    let approver3_seed: [u8; 32] = [0x13; 32];
+    let approver1 = SigningKey::from_bytes(&approver1_seed);
+    let approver2 = SigningKey::from_bytes(&approver2_seed);
+    let approver3 = SigningKey::from_bytes(&approver3_seed);
+
+    println!("### A.21.1 Valid 2-of-3 Multi-sig");
+    println!();
+    println!("**Additional Key Material:**");
+    println!();
+    println!("| Role | Seed | Public Key |");
+    println!("|------|------|------------|");
+    println!(
+        "| Approver1 | `1111...11` (32×0x11) | `{}` |",
+        hex::encode(approver1.public_key().to_bytes())
+    );
+    println!(
+        "| Approver2 | `1212...12` (32×0x12) | `{}` |",
+        hex::encode(approver2.public_key().to_bytes())
+    );
+    println!(
+        "| Approver3 | `1313...13` (32×0x13) | `{}` |",
+        hex::encode(approver3.public_key().to_bytes())
+    );
+    println!();
+
+    let mut tools_a21_1 = BTreeMap::new();
+    let mut cs_a21_1 = ConstraintSet::new();
+    cs_a21_1.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    tools_a21_1.insert("read_file".to_string(), cs_a21_1);
+
+    // Sort approvers by public key bytes for determinism
+    let mut approver_keys = vec![
+        approver1.public_key(),
+        approver2.public_key(),
+        approver3.public_key(),
+    ];
+    approver_keys.sort_by_key(|k| k.to_bytes());
+
+    let payload_a21_1 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A21_1),
+        tools: tools_a21_1,
+        holder: worker.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: Some(approver_keys),
+        min_approvals: Some(2),
+    };
+    let warrant_a21_1 = sign_payload(&payload_a21_1, &control_plane);
+    print_vector("A.21.1", &warrant_a21_1);
+    println!("| Required Approvers | 3 |");
+    println!("| Min Approvals | 2 |");
+    println!();
+    println!(
+        "**Expected:** Authorization MUST succeed with 2+ valid approvals from listed approvers."
+    );
+    println!();
+
+    // A.21.2 Insufficient Approvals
+    println!("### A.21.2 Insufficient Approvals");
+    println!();
+
+    const ID_A21_2: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x21,
+        0x02,
+    ];
+
+    let mut tools_a21_2 = BTreeMap::new();
+    let mut cs_a21_2 = ConstraintSet::new();
+    cs_a21_2.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    tools_a21_2.insert("read_file".to_string(), cs_a21_2);
+
+    let mut approver_keys_2 = vec![approver1.public_key(), approver2.public_key()];
+    approver_keys_2.sort_by_key(|k| k.to_bytes());
+
+    let payload_a21_2 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A21_2),
+        tools: tools_a21_2,
+        holder: worker.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: Some(approver_keys_2),
+        min_approvals: Some(2),
+    };
+    let warrant_a21_2 = sign_payload(&payload_a21_2, &control_plane);
+    print_vector("A.21.2", &warrant_a21_2);
+    println!("| Required Approvers | 2 |");
+    println!("| Min Approvals | 2 |");
+    println!("| Provided Approvals | 1 (only Approver1) |");
+    println!();
+    println!("**Expected:** Authorization MUST fail with insufficient approvals.");
+    println!();
+
+    // =========================================================================
+    // A.22 Cascading Revocation
+    // =========================================================================
+    println!("---");
+    println!();
+    println!("## A.22 Cascading Revocation");
+    println!();
+
+    const ID_A22_ROOT: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x22,
+        0x00,
+    ];
+    const ID_A22_CHILD: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x22,
+        0x01,
+    ];
+
+    let mut tools_a22 = BTreeMap::new();
+    let mut cs_a22 = ConstraintSet::new();
+    cs_a22.insert(
+        "path".to_string(),
+        Constraint::Pattern(Pattern::new("/data/*").unwrap()),
+    );
+    tools_a22.insert("read_file".to_string(), cs_a22);
+
+    // Root warrant
+    let payload_a22_root = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A22_ROOT),
+        tools: tools_a22.clone(),
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a22_root = sign_payload(&payload_a22_root, &control_plane);
+    print_vector("A.22 Root", &warrant_a22_root);
+
+    let parent_hash_a22 = sha256(warrant_a22_root.payload_bytes());
+
+    // Child warrant
+    let payload_a22_child = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A22_CHILD),
+        tools: tools_a22.clone(),
+        holder: worker.public_key(),
+        issuer: orchestrator.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 1,
+        parent_hash: Some(parent_hash_a22),
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a22_child = sign_payload(&payload_a22_child, &orchestrator);
+    print_vector("A.22 Child", &warrant_a22_child);
+
+    println!("**Revocation Scenario:**");
+    println!();
+    println!("| Revoked Warrant | Child (`{}`) |", warrant_a22_child.id());
+    println!();
+    println!("**Expected:** Chain verification MUST fail when child warrant is revoked.");
+    println!();
+
+    // =========================================================================
+    // A.23 Session Mismatch
+    // =========================================================================
+    println!("---");
+    println!();
+    println!("## A.23 Session Mismatch");
+    println!();
+
+    const ID_A23_ROOT: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x23,
+        0x00,
+    ];
+    const ID_A23_ROOT_NO_SESS: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x23,
+        0x01,
+    ];
+    const ID_A23_CHILD: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x23,
+        0x02,
+    ];
+
+    let mut tools_a23 = BTreeMap::new();
+    let mut cs_a23 = ConstraintSet::new();
+    cs_a23.insert("path".to_string(), Constraint::Wildcard(tenuo::Wildcard));
+    tools_a23.insert("read_file".to_string(), cs_a23);
+
+    // Root WITH session_id
+    let payload_a23_root = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A23_ROOT),
+        tools: tools_a23.clone(),
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: Some("sess-abc".to_string()),
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a23_root = sign_payload(&payload_a23_root, &control_plane);
+    print_vector("A.23 Root (session_id=sess-abc)", &warrant_a23_root);
+
+    // Root WITHOUT session_id
+    let payload_a23_root_no_sess = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A23_ROOT_NO_SESS),
+        tools: tools_a23.clone(),
+        holder: orchestrator.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a23_root_no_sess = sign_payload(&payload_a23_root_no_sess, &control_plane);
+    print_vector("A.23 Root (no session_id)", &warrant_a23_root_no_sess);
+
+    // Child from root WITHOUT session (inherits None)
+    let parent_hash_a23 = sha256(warrant_a23_root_no_sess.payload_bytes());
+    let payload_a23_child = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A23_CHILD),
+        tools: tools_a23.clone(),
+        holder: worker.public_key(),
+        issuer: orchestrator.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 1,
+        parent_hash: Some(parent_hash_a23),
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None, // Inherited from parent (None)
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a23_child = sign_payload(&payload_a23_child, &orchestrator);
+    print_vector("A.23 Child (inherited no session)", &warrant_a23_child);
+
+    println!("**Session Mismatch Scenario:**");
+    println!();
+    println!("Mix Root (with session) and Child (without session) in a chain:");
+    println!();
+    println!(
+        "| Root | `{}` (session_id=sess-abc) |",
+        warrant_a23_root.id()
+    );
+    println!("| Child | `{}` (session_id=None) |", warrant_a23_child.id());
+    println!();
+    println!("**Expected:**");
+    println!("- `verify_chain()`: MAY succeed (session check optional)");
+    println!("- `verify_chain_strict()`: MUST fail with session mismatch error");
+    println!();
+    println!("> [!NOTE]");
+    println!("> `session_id` is inherited during attenuation and cannot be changed.");
+    println!("> Mismatch occurs when mixing warrants from different session contexts.");
+
+    // =========================================================================
+    // A.24 SignedApproval Envelope
+    // =========================================================================
+    println!();
+    println!("---");
+    println!();
+    println!("## A.24 SignedApproval Envelope");
+    println!();
+    println!("Complete wire format for human-in-the-loop approval.");
+    println!();
+
+    // Use pre-defined IDs and nonce for determinism
+    const APPROVAL_NONCE: [u8; 16] = [
+        0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7,
+        0xB8,
+    ];
+
+    // Construct request hash: H(warrant_id || tool || sorted_args || holder)
+    let mut request_preimage = Vec::new();
+    request_preimage.extend_from_slice(b"tnu_wrt_019471f8000070008000000000002101"); // warrant_id
+    request_preimage.extend_from_slice(b"read_file"); // tool
+    request_preimage.extend_from_slice(b"path=/data/sensitive.txt"); // sorted args
+    request_preimage.extend_from_slice(&worker.public_key().to_bytes()); // holder
+    let request_hash = sha256(&request_preimage);
+
+    // Create ApprovalPayload
+    #[derive(serde::Serialize)]
+    struct ApprovalPayloadGen {
+        version: u8,
+        #[serde(with = "serde_bytes")]
+        request_hash: [u8; 32],
+        #[serde(with = "serde_bytes")]
+        nonce: [u8; 16],
+        external_id: String,
+        approved_at: u64,
+        expires_at: u64,
+    }
+
+    let approval_payload = ApprovalPayloadGen {
+        version: 1,
+        request_hash,
+        nonce: APPROVAL_NONCE,
+        external_id: "arn:aws:iam::123456789012:user/security-admin".to_string(),
+        approved_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+    };
+
+    let mut approval_payload_bytes = Vec::new();
+    ciborium::ser::into_writer(&approval_payload, &mut approval_payload_bytes)
+        .expect("Failed to serialize approval payload");
+
+    // Build preimage and sign
+    let mut approval_preimage = Vec::new();
+    approval_preimage.extend_from_slice(b"tenuo-approval-v1");
+    approval_preimage.push(1); // approval_version
+    approval_preimage.extend_from_slice(&approval_payload_bytes);
+    let approval_sig = approver1.sign(&approval_preimage);
+
+    // Build full envelope
+    #[derive(serde::Serialize)]
+    struct SignedApprovalGen {
+        approval_version: u8,
+        #[serde(with = "serde_bytes")]
+        payload: Vec<u8>,
+        #[serde(with = "serde_bytes")]
+        approver_key: [u8; 32],
+        #[serde(with = "serde_bytes")]
+        signature: [u8; 64],
+    }
+
+    let signed_approval = SignedApprovalGen {
+        approval_version: 1,
+        payload: approval_payload_bytes.clone(),
+        approver_key: approver1.public_key().to_bytes(),
+        signature: approval_sig.to_bytes(),
+    };
+
+    let mut signed_approval_bytes = Vec::new();
+    ciborium::ser::into_writer(&signed_approval, &mut signed_approval_bytes)
+        .expect("Failed to serialize signed approval");
+
+    println!("### SignedApproval Structure");
+    println!();
+    println!("| Field | Type | Description |");
+    println!("|-------|------|-------------|");
+    println!("| `approval_version` | u8 | Envelope version (1) |");
+    println!("| `payload` | bytes | CBOR-encoded ApprovalPayload |");
+    println!("| `approver_key` | [u8; 32] | Ed25519 public key |");
+    println!("| `signature` | [u8; 64] | Ed25519 signature |");
+    println!();
+
+    println!("### ApprovalPayload");
+    println!();
+    println!("| Field | Value |");
+    println!("|-------|-------|");
+    println!("| `version` | 1 |");
+    println!("| `request_hash` | `{}` |", hex::encode(request_hash));
+    println!("| `nonce` | `{}` |", hex::encode(APPROVAL_NONCE));
+    println!("| `external_id` | `arn:aws:iam::123456789012:user/security-admin` |");
+    println!("| `approved_at` | `{}` |", ISSUED_AT);
+    println!("| `expires_at` | `{}` |", EXPIRES_AT);
+    println!();
+
+    println!(
+        "**ApprovalPayload CBOR ({} bytes):**",
+        approval_payload_bytes.len()
+    );
+    println!("```");
+    print_hex_block(&approval_payload_bytes);
+    println!("```");
+    println!();
+
+    println!("**Signing Preimage:**");
+    println!("```");
+    println!("b\"tenuo-approval-v1\" || 0x01 || payload_bytes");
+    println!("```");
+    println!();
+
+    println!("**Approver Signature (64 bytes):**");
+    println!("```");
+    println!("{}", hex::encode(approval_sig.to_bytes()));
+    println!("```");
+    println!();
+
+    println!(
+        "**Complete SignedApproval Envelope ({} bytes):**",
+        signed_approval_bytes.len()
+    );
+    println!("```");
+    print_hex_block(&signed_approval_bytes);
+    println!("```");
+    println!();
+
+    // =========================================================================
+    // Update A.22 with SRL CBOR
+    // =========================================================================
+    println!("---");
+    println!();
+    println!("## A.22.b SignedRevocationList (SRL)");
+    println!();
+    println!("Complete wire format for revocation list.");
+    println!();
+
+    #[derive(serde::Serialize)]
+    struct SrlPayloadGen {
+        revoked_ids: Vec<String>,
+        version: u64,
+        issued_at: u64,
+        issuer: [u8; 32],
+    }
+
+    let srl_payload = SrlPayloadGen {
+        revoked_ids: vec![warrant_a22_child.id().to_string()],
+        version: 1,
+        issued_at: ISSUED_AT,
+        issuer: control_plane.public_key().to_bytes(),
+    };
+
+    let mut srl_payload_bytes = Vec::new();
+    ciborium::ser::into_writer(&srl_payload, &mut srl_payload_bytes)
+        .expect("Failed to serialize SRL payload");
+
+    // Sign SRL
+    let mut srl_preimage = Vec::new();
+    srl_preimage.extend_from_slice(b"tenuo-srl-v1");
+    srl_preimage.extend_from_slice(&srl_payload_bytes);
+    let srl_sig = control_plane.sign(&srl_preimage);
+
+    #[derive(serde::Serialize)]
+    struct SignedSrlGen {
+        payload: SrlPayloadGen,
+        #[serde(with = "serde_bytes")]
+        signature: [u8; 64],
+    }
+
+    let signed_srl = SignedSrlGen {
+        payload: srl_payload,
+        signature: srl_sig.to_bytes(),
+    };
+
+    let mut signed_srl_bytes = Vec::new();
+    ciborium::ser::into_writer(&signed_srl, &mut signed_srl_bytes)
+        .expect("Failed to serialize signed SRL");
+
+    println!("### SrlPayload");
+    println!();
+    println!("| Field | Value |");
+    println!("|-------|-------|");
+    println!("| `revoked_ids` | `[\"{}\"]` |", warrant_a22_child.id());
+    println!("| `version` | 1 |");
+    println!("| `issued_at` | `{}` |", ISSUED_AT);
+    println!(
+        "| `issuer` | `{}` |",
+        hex::encode(control_plane.public_key().to_bytes())
+    );
+    println!();
+
+    println!("**SrlPayload CBOR ({} bytes):**", srl_payload_bytes.len());
+    println!("```");
+    print_hex_block(&srl_payload_bytes);
+    println!("```");
+    println!();
+
+    println!("**Signing Preimage:**");
+    println!("```");
+    println!("b\"tenuo-srl-v1\" || payload_bytes");
+    println!("```");
+    println!();
+
+    println!("**Control Plane Signature (64 bytes):**");
+    println!("```");
+    println!("{}", hex::encode(srl_sig.to_bytes()));
+    println!("```");
+    println!();
+
+    println!(
+        "**Complete SignedRevocationList ({} bytes):**",
+        signed_srl_bytes.len()
+    );
+    println!("```");
+    print_hex_block(&signed_srl_bytes);
+    println!("```");
+    println!();
+
+    // =========================================================================
+    // A.25 Additional Constraint Types
+    // =========================================================================
+    println!("---");
+    println!();
+    println!("## A.25 Additional Constraint Types");
+    println!();
+    println!("Byte-exact test vectors for remaining constraint types.");
+    println!();
+
+    // A.25.1 UrlSafe Constraint
+    println!("### A.25.1 UrlSafe Constraint");
+    println!();
+
+    const ID_A25_1: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25,
+        0x01,
+    ];
+
+    let mut tools_a25_1 = BTreeMap::new();
+    let mut cs_a25_1 = ConstraintSet::new();
+    cs_a25_1.insert(
+        "url".to_string(),
+        Constraint::UrlSafe(tenuo::constraints::UrlSafe::new()),
+    );
+    tools_a25_1.insert("http_request".to_string(), cs_a25_1);
+
+    let payload_a25_1 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A25_1),
+        tools: tools_a25_1,
+        holder: worker.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a25_1 = sign_payload(&payload_a25_1, &control_plane);
+    print_vector("A.25.1 UrlSafe", &warrant_a25_1);
+    println!("| Valid Input | `url = \"https://api.example.com/data\"` |");
+    println!("| Invalid Input | `url = \"http://169.254.169.254/\"` (AWS metadata) |");
+    println!();
+    println!("**Expected:** SSRF-safe URLs succeed, internal/metadata URLs fail.");
+    println!();
+
+    // A.25.2 Subpath Constraint
+    println!("### A.25.2 Subpath Constraint");
+    println!();
+
+    const ID_A25_2: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25,
+        0x02,
+    ];
+
+    let mut tools_a25_2 = BTreeMap::new();
+    let mut cs_a25_2 = ConstraintSet::new();
+    cs_a25_2.insert(
+        "path".to_string(),
+        Constraint::Subpath(tenuo::constraints::Subpath::new("/home/agent/workspace").unwrap()),
+    );
+    tools_a25_2.insert("write_file".to_string(), cs_a25_2);
+
+    let payload_a25_2 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A25_2),
+        tools: tools_a25_2,
+        holder: worker.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a25_2 = sign_payload(&payload_a25_2, &control_plane);
+    print_vector("A.25.2 Subpath", &warrant_a25_2);
+    println!("| Valid Input | `path = \"/home/agent/workspace/file.txt\"` |");
+    println!("| Invalid Input | `path = \"/home/agent/workspace/../../../etc/passwd\"` |");
+    println!();
+    println!("**Expected:** Contained paths succeed, traversal attacks fail.");
+    println!();
+
+    // A.25.3 Contains Constraint
+    println!("### A.25.3 Contains Constraint");
+    println!();
+
+    const ID_A25_3: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25,
+        0x03,
+    ];
+
+    let mut tools_a25_3 = BTreeMap::new();
+    let mut cs_a25_3 = ConstraintSet::new();
+    cs_a25_3.insert(
+        "tags".to_string(),
+        Constraint::Contains(tenuo::constraints::Contains::new(vec![
+            "approved", "reviewed",
+        ])),
+    );
+    tools_a25_3.insert("deploy".to_string(), cs_a25_3);
+
+    let payload_a25_3 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A25_3),
+        tools: tools_a25_3,
+        holder: worker.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a25_3 = sign_payload(&payload_a25_3, &control_plane);
+    print_vector("A.25.3 Contains", &warrant_a25_3);
+    println!("| Valid Input | `tags = [\"approved\", \"reviewed\", \"urgent\"]` |");
+    println!("| Invalid Input | `tags = [\"approved\", \"urgent\"]` (missing \"reviewed\") |");
+    println!();
+    println!("**Expected:** Lists containing required values succeed.");
+    println!();
+
+    // A.25.4 Subset Constraint
+    println!("### A.25.4 Subset Constraint");
+    println!();
+
+    const ID_A25_4: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25,
+        0x04,
+    ];
+
+    let mut tools_a25_4 = BTreeMap::new();
+    let mut cs_a25_4 = ConstraintSet::new();
+    cs_a25_4.insert(
+        "permissions".to_string(),
+        Constraint::Subset(tenuo::constraints::Subset::new(vec![
+            "read", "write", "delete",
+        ])),
+    );
+    tools_a25_4.insert("set_permissions".to_string(), cs_a25_4);
+
+    let payload_a25_4 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A25_4),
+        tools: tools_a25_4,
+        holder: worker.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a25_4 = sign_payload(&payload_a25_4, &control_plane);
+    print_vector("A.25.4 Subset", &warrant_a25_4);
+    println!("| Valid Input | `permissions = [\"read\", \"write\"]` |");
+    println!("| Invalid Input | `permissions = [\"read\", \"admin\"]` |");
+    println!();
+    println!("**Expected:** Subset of allowed values succeeds, extras fail.");
+    println!();
+
+    // A.25.5 UrlPattern Constraint
+    println!("### A.25.5 UrlPattern Constraint");
+    println!();
+
+    const ID_A25_5: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25,
+        0x05,
+    ];
+
+    let mut tools_a25_5 = BTreeMap::new();
+    let mut cs_a25_5 = ConstraintSet::new();
+    cs_a25_5.insert(
+        "endpoint".to_string(),
+        Constraint::UrlPattern(
+            tenuo::constraints::UrlPattern::new("https://api.example.com/v1/*").unwrap(),
+        ),
+    );
+    tools_a25_5.insert("api_call".to_string(), cs_a25_5);
+
+    let payload_a25_5 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A25_5),
+        tools: tools_a25_5,
+        holder: worker.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a25_5 = sign_payload(&payload_a25_5, &control_plane);
+    print_vector("A.25.5 UrlPattern", &warrant_a25_5);
+    println!("| Valid Input | `endpoint = \"https://api.example.com/v1/users\"` |");
+    println!("| Invalid Input | `endpoint = \"https://evil.com/api\"` |");
+    println!();
+    println!("**Expected:** URLs matching pattern succeed.");
 }
 
 fn sign_payload(payload: &WarrantPayload, signing_key: &SigningKey) -> Warrant {

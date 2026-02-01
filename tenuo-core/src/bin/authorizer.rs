@@ -61,10 +61,21 @@ use tenuo::{
     constraints::ConstraintValue,
     extraction::RequestContext,
     gateway_config::{CompiledGatewayConfig, GatewayConfig},
+    heartbeat::{self, HeartbeatConfig},
     planes::Authorizer,
     revocation::SignedRevocationList,
     wire, PublicKey,
 };
+
+/// Authorizer-specific build number for independent release cycles.
+/// Increment this when shipping authorizer-only changes without bumping tenuo crate version.
+/// Full version string: `{CARGO_PKG_VERSION}+authz.{AUTHORIZER_BUILD}`
+pub const AUTHORIZER_BUILD: u32 = 1;
+
+/// Get the full authorizer version string with build metadata.
+pub fn authorizer_version() -> String {
+    format!("{}+authz.{}", env!("CARGO_PKG_VERSION"), AUTHORIZER_BUILD)
+}
 
 #[derive(Parser)]
 #[command(name = "tenuo-authorizer")]
@@ -79,6 +90,27 @@ struct Cli {
     /// Can also be set via TENUO_REVOCATION_LIST env var
     #[arg(long, env = "TENUO_REVOCATION_LIST")]
     revocation_list: Option<PathBuf>,
+
+    // === Tenuo Cloud Control Plane Configuration ===
+    /// Tenuo Cloud control plane URL (enables heartbeat when set with api-key and authorizer-name)
+    #[arg(long, env = "TENUO_CONTROL_PLANE_URL")]
+    control_plane_url: Option<String>,
+
+    /// Tenuo Cloud API key for authentication
+    #[arg(long, env = "TENUO_API_KEY")]
+    api_key: Option<String>,
+
+    /// Authorizer name for registration with Tenuo Cloud
+    #[arg(long, env = "TENUO_AUTHORIZER_NAME")]
+    authorizer_name: Option<String>,
+
+    /// Authorizer type (e.g., sidecar, gateway, standalone)
+    #[arg(long, env = "TENUO_AUTHORIZER_TYPE", default_value = "sidecar")]
+    authorizer_type: String,
+
+    /// Heartbeat interval in seconds
+    #[arg(long, env = "TENUO_HEARTBEAT_INTERVAL", default_value = "30")]
+    heartbeat_interval: u64,
 
     #[command(subcommand)]
     command: Commands,
@@ -143,9 +175,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build authorizer from trusted keys and revocation list
     let authorizer = build_authorizer(&cli.trusted_keys, &cli.revocation_list)?;
 
-    match cli.command {
+    match &cli.command {
         Commands::Serve { port, config, bind } => {
-            serve_http(authorizer, &config, &bind, port, &cli.trusted_keys).await?;
+            serve_http(authorizer, config, bind, *port, &cli).await?;
         }
 
         Commands::Verify {
@@ -156,7 +188,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             output,
         } => {
             // Read warrant
-            let warrant_str = read_warrant(warrant)?;
+            let warrant_str = read_warrant(warrant.clone())?;
             let w = wire::decode_base64(&warrant_str)?;
 
             // Parse arguments
@@ -174,7 +206,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // Parse PoP signature (required)
             let pop_bytes =
-                hex::decode(&pop).map_err(|_| "Invalid PoP signature: must be hex-encoded")?;
+                hex::decode(pop).map_err(|_| "Invalid PoP signature: must be hex-encoded")?;
             let pop_arr: [u8; 64] = pop_bytes
                 .try_into()
                 .map_err(|_| "Invalid PoP signature: must be exactly 64 bytes")?;
@@ -182,7 +214,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .map_err(|_| "Invalid PoP signature format")?;
 
             // Check authorization with PoP (no approvals for CLI mode)
-            let result = authorizer.check(&w, &tool, &args, Some(&pop_signature), &[]);
+            let result = authorizer.check(&w, tool, &args, Some(&pop_signature), &[]);
 
             match output.as_str() {
                 "exit-code" => match result {
@@ -211,7 +243,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::Check { warrant } => {
-            let warrant_str = read_warrant(warrant)?;
+            let warrant_str = read_warrant(warrant.clone())?;
             let w = wire::decode_base64(&warrant_str)?;
 
             // Just verify, don't authorize
@@ -237,7 +269,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         Commands::Info => {
-            println!("Tenuo Authorizer v{}", env!("CARGO_PKG_VERSION"));
+            println!("Tenuo Authorizer v{}", authorizer_version());
             println!();
             if let Some(keys) = &cli.trusted_keys {
                 let count = keys.split(',').filter(|s| !s.is_empty()).count();
@@ -348,7 +380,7 @@ use tracing::{debug, info, warn};
 
 /// Shared state for the HTTP server
 struct AppState {
-    authorizer: Authorizer,
+    authorizer: Arc<tokio::sync::RwLock<Authorizer>>,
     config: CompiledGatewayConfig,
     debug_mode: bool,
 }
@@ -419,13 +451,13 @@ async fn serve_http(
     config_path: &PathBuf,
     bind: &str,
     port: u16,
-    trusted_keys_override: &Option<String>,
+    cli: &Cli,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Load and compile gateway configuration
     let mut config = GatewayConfig::from_file(config_path)?;
 
     // Merge trusted keys from env/cli
-    if let Some(keys) = trusted_keys_override {
+    if let Some(keys) = &cli.trusted_keys {
         for key in keys.split(',') {
             if !key.trim().is_empty() {
                 config.settings.trusted_roots.push(key.trim().to_string());
@@ -436,19 +468,59 @@ async fn serve_http(
     let debug_mode = config.settings.debug_mode;
     let compiled = CompiledGatewayConfig::compile(config)?;
 
+    // Check if Tenuo Cloud control plane is configured
+    let control_plane_enabled =
+        cli.control_plane_url.is_some() && cli.api_key.is_some() && cli.authorizer_name.is_some();
+
     eprintln!("┌─────────────────────────────────────────────────────────");
-    eprintln!("│ Tenuo Authorizer Server");
+    eprintln!("│ Tenuo Authorizer Server v{}", authorizer_version());
     eprintln!("├─────────────────────────────────────────────────────────");
     eprintln!("│ Listening on: {}:{}", bind, port);
     eprintln!("│ Config: {}", config_path.display());
     if debug_mode {
         eprintln!("│ ⚠️  Debug mode: ENABLED (not for production!)");
     }
+    if control_plane_enabled {
+        eprintln!(
+            "│ Tenuo Cloud: ENABLED (heartbeat every {}s, SRL sync)",
+            cli.heartbeat_interval
+        );
+    }
     eprintln!("└─────────────────────────────────────────────────────────");
     eprintln!();
 
+    // Wrap authorizer in RwLock for shared access (allows heartbeat to update SRL)
+    let shared_authorizer = Arc::new(tokio::sync::RwLock::new(authorizer));
+
+    // Parse trusted root key for SRL verification (first key is control plane key)
+    let trusted_root = cli.trusted_keys.as_ref().and_then(|keys| {
+        let first = keys.split(',').next()?;
+        let bytes = hex::decode(first.trim()).ok()?;
+        let arr: [u8; 32] = bytes.try_into().ok()?;
+        PublicKey::from_bytes(&arr).ok()
+    });
+
+    // Spawn heartbeat task if control plane is configured
+    if let (Some(url), Some(key), Some(name)) =
+        (&cli.control_plane_url, &cli.api_key, &cli.authorizer_name)
+    {
+        let heartbeat_config = HeartbeatConfig {
+            control_plane_url: url.clone(),
+            api_key: key.clone(),
+            authorizer_name: name.clone(),
+            authorizer_type: cli.authorizer_type.clone(),
+            version: authorizer_version(),
+            interval_secs: cli.heartbeat_interval,
+            authorizer: Some(shared_authorizer.clone()),
+            trusted_root: trusted_root.clone(),
+        };
+
+        tokio::spawn(heartbeat::start_heartbeat_loop(heartbeat_config));
+        info!("Heartbeat task started for Tenuo Cloud");
+    }
+
     let state = Arc::new(AppState {
-        authorizer,
+        authorizer: shared_authorizer,
         config: compiled,
         debug_mode,
     });
@@ -666,13 +738,16 @@ async fn handle_request(
         });
 
     // 8. Authorize
+    // Acquire read lock on authorizer (allows concurrent reads, blocks only during SRL updates)
+    let authorizer = state.authorizer.read().await;
+
     // First, verify the chain (trust anchor -> leaf)
-    let verify_result = state.authorizer.verify_chain(&chain);
+    let verify_result = authorizer.verify_chain(&chain);
 
     let result = match verify_result {
         Ok(_) => {
             // If chain is valid, authorize the specific action against the leaf
-            state.authorizer.authorize(
+            authorizer.authorize(
                 leaf_warrant,
                 &extraction_result.tool,
                 &extraction_result.constraints,
@@ -682,6 +757,9 @@ async fn handle_request(
         }
         Err(e) => Err(e),
     };
+
+    // Release the lock before building the response
+    drop(authorizer);
 
     match result {
         Ok(()) => {

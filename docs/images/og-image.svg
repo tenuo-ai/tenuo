@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a0a0a"/>
+      <stop offset="100%" stop-color="#111"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00d4ff"/>
+      <stop offset="100%" stop-color="#a855f7"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  
+  <!-- Border accent -->
+  <rect x="0" y="0" width="1200" height="4" fill="url(#accent)"/>
+  
+  <!-- Logo "t" -->
+  <text x="600" y="280" text-anchor="middle" font-family="Inter, -apple-system, sans-serif" font-size="180" font-weight="600" fill="url(#accent)">t</text>
+  
+  <!-- Tagline -->
+  <text x="600" y="400" text-anchor="middle" font-family="Inter, -apple-system, sans-serif" font-size="48" font-weight="500" fill="#e8e8e8">tenuo</text>
+  <text x="600" y="470" text-anchor="middle" font-family="Inter, -apple-system, sans-serif" font-size="28" fill="#888">Authorization infrastructure for AI agents</text>
+  
+  <!-- Footer -->
+  <text x="600" y="580" text-anchor="middle" font-family="Inter, -apple-system, sans-serif" font-size="22" fill="#666">tenuo.ai</text>
+</svg>

@@ -1,5 +1,14 @@
 # Enforcement Models
 
+> [!NOTE]
+> **New to Tenuo?** A quick primer:
+> - **Warrant**: A short-lived, cryptographic token that says "this agent may call these tools with these constraints"
+> - **Proof-of-Possession (PoP)**: A signature proving the requester holds the warrant's private key (prevents stolen warrants from being reused)
+> - **Attenuation**: Delegating a warrant with *narrower* permissions — you can never add permissions, only remove them
+> - **Control Plane**: The trusted service that issues warrants (you build this, or use Tenuo Cloud)
+>
+> See [Core Concepts](./concepts.md) for a full introduction.
+
 ## Overview
 
 Tenuo provides **Action-Level Security** for AI Agents. But where exactly does that security live?

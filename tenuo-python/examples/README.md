@@ -107,23 +107,20 @@ This demo shows Tenuo's key capabilities:
 - **[mcp_research_server.py](mcp_research_server.py)**: The MCP server used by `research_agent_demo.py`. Demonstrates `web_search`, `write_file`, `read_file` tools.
 
 ### LangChain Integration
-- **[langchain_simple.py](langchain_simple.py)**: Minimal example of protecting LangChain tools. Shows how to wrap a tool and run an agent with a warrant. **Start here for LangChain integration.**
-- **[langchain_integration.py](langchain_integration.py)**: Advanced LangChain integration with callbacks. Demonstrates warrant context propagation through LangChain's callback system.
-- **[langchain_protect_tools.py](langchain_protect_tools.py)**: Protecting third-party tools (e.g., from `langchain_community`) using `guard()`. Shows how to secure tools you don't control.
-- [langchain_mcp_integration.py](langchain_mcp_integration.py): **LangChain + MCP + Tenuo** - Complete integration showing how to authorize MCP tool calls with Tenuo warrants. Demonstrates constraint extraction, authorization flow, and end-to-end security.
-
-### LangGraph Integration
-- **[langgraph_protected.py](langgraph_protected.py)**: **State-Aware Agent (Advanced)** - Shows how to secure LangGraph agents with checkpointing. Key patterns:
-    1.  **Serialization**: Storing base64 warrant tokens in state (not generic objects) to support `MemorySaver`.
-    2.  **Key Binding**: Binding keys at runtime based on process identity (`KeyRegistry`).
-    3.  **TenuoToolNode**: Drop-in secure tool execution node.
-    4.  **Authorization**: Enforcing capabilities on state transitions.
+- **[langchain/](langchain/)**: Complete LangChain and LangGraph integration examples
+  - **[simple.py](langchain/simple.py)**: Minimal example of protecting LangChain tools. **Start here for LangChain integration.**
+  - **[integration.py](langchain/integration.py)**: Advanced integration with callbacks and context propagation
+  - **[protect_tools.py](langchain/protect_tools.py)**: Securing third-party tools from `langchain_community`
+  - **[mcp_integration.py](langchain/mcp_integration.py)**: LangChain + MCP + Tenuo complete integration
+  - **[langgraph_protected.py](langchain/langgraph_protected.py)**: State-aware agents with checkpointing (serialization, key binding, TenuoToolNode)
+  - **[langgraph_mcp_integration.py](langchain/langgraph_mcp_integration.py)**: LangGraph + MCP integration
 
 ### OpenAI Integration
-- **[openai_guardrails.py](openai_guardrails.py)**: **Tier 1 Protection** - Direct OpenAI API wrapping with `guard()` and `GuardBuilder`. Shows constraint types, denial modes, streaming protection, and audit logging. Demonstrates `Subpath` for path traversal protection.
-- **[openai_warrant.py](openai_warrant.py)**: **Tier 2 Protection** - Full cryptographic authorization with warrants and Proof-of-Possession. Shows key separation, constraint enforcement, and `client.validate()`.
-- **[openai_async.py](openai_async.py)**: **Async Patterns** - Async client wrapping, streaming with TOCTOU protection, concurrent calls, and async error handling.
-- **[openai_agents_sdk.py](openai_agents_sdk.py)**: **Agents SDK Integration** - Using Tenuo guardrails with OpenAI's Agents SDK. Shows `create_tier1_guardrail()` and `create_tier2_guardrail()`.
+- **[openai/](openai/)**: Complete OpenAI integration examples
+  - **[guardrails.py](openai/guardrails.py)**: Tier 1 runtime guardrails (no warrants)
+  - **[warrant.py](openai/warrant.py)**: Tier 2 cryptographic authorization with PoP
+  - **[async_patterns.py](openai/async_patterns.py)**: Async/streaming patterns with TOCTOU protection
+  - **[agents_sdk.py](openai/agents_sdk.py)**: OpenAI Agents SDK integration
 
 ### AutoGen Integration
 - **[autogen_demo_unprotected.py](autogen_demo_unprotected.py)**: AgentChat workflow with no protections (baseline/attack illustration).
@@ -186,19 +183,20 @@ python orchestrator_worker.py
 python research_agent_demo.py
 
 # LangChain examples (requires: uv pip install langchain langchain-openai langchain-community)
-python langchain_simple.py
-python langchain_integration.py
-python langchain_protect_tools.py
-python langchain_protect_tools.py
-python langchain_mcp_integration.py  # LangChain + MCP + Tenuo
+python langchain/simple.py
+python langchain/integration.py
+python langchain/protect_tools.py
+python langchain/mcp_integration.py  # LangChain + MCP + Tenuo
 
 # LangGraph example (requires: uv pip install langgraph)
-python langgraph_protected.py
+python langchain/langgraph_protected.py
+python langchain/langgraph_mcp_integration.py
 
 # OpenAI examples (requires: uv pip install openai)
-python openai_guardrails.py     # Tier 1: runtime guardrails
-python openai_warrant.py        # Tier 2: cryptographic authorization
-python openai_agents_sdk.py     # Agents SDK integration
+python openai/guardrails.py     # Tier 1: runtime guardrails
+python openai/warrant.py        # Tier 2: cryptographic authorization
+python openai/async_patterns.py # Async/streaming patterns
+python openai/agents_sdk.py     # Agents SDK integration
 
 # Google ADK examples (requires: uv pip install tenuo[adk])
 python google_adk_incident_response/demo.py  # Multi-agent incident response
@@ -240,18 +238,18 @@ python kubernetes_integration.py
 
 **Integrating with LangChain?**
 1. `research_agent_demo.py` - **Start here!** Complete runnable demo
-2. `langchain_simple.py` - Basic LangChain protection
-3. `langchain_protect_tools.py` - Protecting third-party tools
-4. `langchain_integration.py` - Advanced callback patterns
+2. `langchain/simple.py` - Basic LangChain protection
+3. `langchain/protect_tools.py` - Protecting third-party tools
+4. `langchain/integration.py` - Advanced callback patterns
 
 **Integrating with OpenAI?**
-1. `openai_guardrails.py` - **Start here!** Tier 1 runtime protection
-2. `openai_warrant.py` - Tier 2 cryptographic authorization
-3. `openai_agents_sdk.py` - Agents SDK guardrails
+1. `openai/guardrails.py` - **Start here!** Tier 1 runtime protection
+2. `openai/warrant.py` - Tier 2 cryptographic authorization
+3. `openai/agents_sdk.py` - Agents SDK guardrails
 
 **Production Patterns:**
 - `orchestrator_worker.py` - **Multi-agent delegation (understand this first!)**
-- `langgraph_protected.py` - **State-aware agents with checkpointing (LangGraph)**
+- `langchain/langgraph_protected.py` - **State-aware agents with checkpointing (LangGraph)**
 - `fastapi_integration.py` - Complete web application with authorization
 - `error_handling_guide.py` - Production error handling strategies
 - `kubernetes_integration.py` - Real-world deployment patterns

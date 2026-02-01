@@ -1365,7 +1365,7 @@ const WarrantBuilder = ({ onGenerate }: { onGenerate: (config: unknown) => void 
         Generate Preview
       </button>
 
-      <Explainer title="Constraint Types" docLink="https://tenuo.dev/constraints">
+      <Explainer title="Constraint Types" docLink="https://tenuo.ai/constraints">
         <p><strong>Pattern</strong>: Glob-style matching (<code>docs/*</code>, <code>*.txt</code>)</p>
         <p><strong>Exact</strong>: Must match exactly (<code>GET</code>, <code>user123</code>)</p>
         <p><strong>Range</strong>: Numeric range (<code>0-1000</code> for amounts)</p>
@@ -1767,7 +1767,7 @@ const ChainTester = () => {
         )}
       </div>
 
-      <Explainer title="How Chain Verification Works" docLink="https://tenuo.dev/concepts#delegation-chains">
+      <Explainer title="How Chain Verification Works" docLink="https://tenuo.ai/concepts#delegation-chains">
         <p>A valid delegation chain requires:</p>
         <ul style={{ marginTop: '8px', paddingLeft: '20px' }}>
           <li><strong>Holder → Issuer</strong>: Each warrant's holder must be the next warrant's issuer</li>
@@ -2314,11 +2314,11 @@ function App() {
         {/* Navigation */}
         <nav style={{ borderBottom: '1px solid var(--border)' }}>
           <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <a href="https://tenuo.dev" style={{ fontSize: '20px', fontWeight: 600, color: 'white', textDecoration: 'none' }}>tenuo</a>
+            <a href="https://tenuo.ai" style={{ fontSize: '20px', fontWeight: 600, color: 'white', textDecoration: 'none' }}>tenuo</a>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <a href="https://tenuo.dev/quickstart" className="nav-link">Quick Start</a>
-              <a href="https://tenuo.dev/concepts" className="nav-link">Concepts</a>
-              <a href="https://tenuo.dev/api-reference" className="nav-link">API</a>
+              <a href="https://tenuo.ai/quickstart" className="nav-link">Quick Start</a>
+              <a href="https://tenuo.ai/concepts" className="nav-link">Concepts</a>
+              <a href="https://tenuo.ai/api-reference" className="nav-link">API</a>
               <a href="https://github.com/tenuo-ai/tenuo" className="nav-link">GitHub</a>
             </div>
           </div>
@@ -2557,7 +2557,7 @@ function App() {
                       />
                     </div>
 
-                    <Explainer title="What is a warrant?" docLink="https://tenuo.dev/concepts#warrants">
+                    <Explainer title="What is a warrant?" docLink="https://tenuo.ai/concepts#warrants">
                       <p>A <strong>warrant</strong> is a cryptographic capability token that grants an AI agent permission to perform specific actions.</p>
                     </Explainer>
                   </div>
@@ -2591,7 +2591,7 @@ function App() {
                         <textarea className="input" style={{ height: '80px', minHeight: '50px', maxHeight: '200px', resize: 'vertical' }} value={argsJson} onChange={(e) => setArgsJson(e.target.value)} />
                       </div>
 
-                      <Explainer title="About Proof-of-Possession (PoP)" docLink="https://tenuo.dev/security">
+                      <Explainer title="About Proof-of-Possession (PoP)" docLink="https://tenuo.ai/security">
                         <p><strong>Proof-of-Possession</strong> prevents stolen warrants from being used by attackers.</p>
                         <p style={{ marginTop: '8px' }}>In production, the holder signs each request with their private key. The signature proves they possess the key matching the warrant's <code>authorized_holder</code>.</p>
                         <p style={{ marginTop: '8px' }}><strong>Why this matters:</strong></p>
@@ -2877,7 +2877,7 @@ function App() {
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '16px', fontSize: '12px', color: 'var(--muted)' }}>
               <a href="https://github.com/tenuo-ai/tenuo" style={{ color: 'var(--muted)', textDecoration: 'none' }}>GitHub</a>
               <span>·</span>
-              <a href="https://tenuo.dev/quickstart" style={{ color: 'var(--muted)', textDecoration: 'none' }}>Docs</a>
+              <a href="https://tenuo.ai/quickstart" style={{ color: 'var(--muted)', textDecoration: 'none' }}>Docs</a>
               <span>·</span>
               <span>MIT / Apache-2.0</span>
             </div>

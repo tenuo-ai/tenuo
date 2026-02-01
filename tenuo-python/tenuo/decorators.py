@@ -861,7 +861,7 @@ def guard(
 
                 # Build explorer URL for debugging
                 warrant_b64 = warrant_to_use.to_base64() if hasattr(warrant_to_use, "to_base64") else ""
-                explorer_url = f"https://tenuo.dev/explorer/#warrant={warrant_b64[:50]}..." if warrant_b64 else None
+                explorer_url = f"https://tenuo.ai/explorer/#warrant={warrant_b64[:50]}..." if warrant_b64 else None
 
                 hint = why.suggestion if hasattr(why, "suggestion") else None
                 if explorer_url:

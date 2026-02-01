@@ -5,7 +5,7 @@ description: Why Tenuo? Problem/solution, threat model, core invariants
 
 # Tenuo Concepts
 
-This page explains the problem Tenuo solves and the core ideas behind it. For a visual walkthrough, see the [Demo](./demo.html), [Architecture Infographic](./architecture-infographic.html), or try the [Explorer Playground](https://tenuo.dev/explorer/) to decode warrants interactively.
+This page explains the problem Tenuo solves and the core ideas behind it. For a visual walkthrough, see the [Demo](./demo.html), [Architecture Infographic](./architecture-infographic.html), or try the [Explorer Playground](https://tenuo.ai/explorer/) to decode warrants interactively.
 
 ## The Problem
 
@@ -381,10 +381,10 @@ Tenuo provides three levels of abstraction. Start at the top and drop down when 
 | Component | Status |
 |-----------|--------|
 | Control plane | Optional; can run fully embedded |
-| Revocation service | Basic revocation via Authorizer; distributed revocation in v0.3 |
+| Revocation service | Planned for v0.2 |
 | Context-aware constraints | Spec under development |
 | Multi-sig with identity binding | Partial (notary in v0.2) |
-| A2A (Agent-to-Agent) | ✅ Available in v0.1.0-beta.6 |
+| A2A (Agent-to-Agent) | Available since v0.1.0-beta.6 |
 | TypeScript/Node SDK | Planned for v0.2 |
 
 ---

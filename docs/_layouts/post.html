@@ -11,13 +11,21 @@
 
     <!-- Open Graph -->
     <meta property="og:type" content="article">
-    <meta property="og:url" content="https://tenuo.dev{{ page.url }}">
+    <meta property="og:url" content="https://tenuo.ai{{ page.url }}">
     <meta property="og:title" content="{{ page.title }}">
     <meta property="og:description" content="{{ page.description | default: 'Tenuo Blog' }}">
-    <meta property="og:image" content="https://tenuo.dev/images/og-preview.png">
+    <meta property="og:image" content="https://tenuo.ai/images/og-image.png">
+    <meta property="og:site_name" content="Tenuo">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="{{ page.title }}">
+    <meta name="twitter:description" content="{{ page.description | default: 'Tenuo Blog' }}">
+    <meta name="twitter:image" content="https://tenuo.ai/images/og-image.png">
 
     <!-- Favicon -->
     <link rel="icon" type="image/svg+xml" href="/images/favicon-t.svg">
+    <link rel="apple-touch-icon" href="/images/apple-touch-icon.png">
 
     <!-- Syntax highlighting -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
@@ -276,6 +284,10 @@
     </footer>
 
     <script>hljs.highlightAll();</script>
+
+    <!-- GoatCounter Analytics -->
+    <script data-goatcounter="https://tenuo-dev.goatcounter.com/count"
+            async src="//gc.zgo.at/count.js"></script>
 </body>
 
 </html>

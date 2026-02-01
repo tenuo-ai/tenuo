@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pricing - Tenuo</title>
+
+    <meta name="description" content="Simple, transparent pricing for Tenuo. Self-hosted is free forever.">
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://tenuo.ai/pricing">
+    <meta property="og:title" content="Pricing - Tenuo">
+    <meta property="og:description" content="Simple, transparent pricing. Self-hosted is free forever.">
+    <meta property="og:image" content="https://tenuo.ai/images/og-image.png">
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Pricing - Tenuo">
+    <meta name="twitter:description" content="Simple, transparent pricing. Self-hosted is free forever.">
+    <meta name="twitter:image" content="https://tenuo.ai/images/og-image.png">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="images/favicon-t.svg">
+    <link rel="apple-touch-icon" href="images/apple-touch-icon.png">
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg: #0a0a0a;
+            --surface: #111;
+            --border: #1e1e1e;
+            --text: #f0f0f0;
+            --muted: #888;
+            --accent: #00d4ff;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* Nav */
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 24px 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .nav-logo {
+            font-size: 1.2rem;
+            font-weight: 600;
+            text-decoration: none;
+            color: var(--text);
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 32px;
+        }
+
+        .nav-links a {
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+
+        .nav-links a:hover {
+            color: var(--text);
+        }
+
+        /* Hero */
+        .hero {
+            text-align: center;
+            padding: 80px 0 64px;
+        }
+
+        .hero h1 {
+            font-size: 2.5rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+
+        .hero p {
+            font-size: 1.1rem;
+            color: var(--muted);
+        }
+
+        /* Self-hosted */
+        .self-hosted {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 64px;
+        }
+
+        .self-hosted .label {
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            letter-spacing: 0.1em;
+            color: var(--muted);
+            margin-bottom: 16px;
+        }
+
+        .self-hosted h2 {
+            font-size: 1.75rem;
+            font-weight: 600;
+            margin-bottom: 24px;
+        }
+
+        .self-hosted h2 span {
+            color: var(--accent);
+        }
+
+        .features {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 12px 24px;
+            margin-bottom: 24px;
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+
+        .license {
+            font-size: 0.85rem;
+            color: var(--muted);
+        }
+
+        /* Cloud */
+        .cloud {
+            margin-bottom: 64px;
+        }
+
+        .cloud-header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .cloud-header .label {
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            letter-spacing: 0.1em;
+            color: var(--muted);
+            margin-bottom: 8px;
+        }
+
+        .cloud-header h2 {
+            font-size: 1.75rem;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .cloud-header .coming-soon {
+            color: var(--accent);
+            font-size: 0.85rem;
+        }
+
+        .cloud-header p {
+            color: var(--muted);
+            margin-top: 12px;
+            font-size: 0.95rem;
+        }
+
+        .sso-note {
+            display: inline-block;
+            margin-top: 16px;
+            font-size: 0.85rem;
+            color: var(--muted);
+            border: 1px solid var(--border);
+            padding: 6px 14px;
+            border-radius: 20px;
+        }
+
+        .tiers {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+        }
+
+        .tier {
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 28px 24px;
+            text-align: center;
+        }
+
+        .tier h3 {
+            font-size: 1rem;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+
+        .tier .price {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: var(--text);
+        }
+
+        .tier p {
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+
+        /* CTA */
+        .cta {
+            text-align: center;
+            padding: 48px 0 80px;
+            border-top: 1px solid var(--border);
+        }
+
+        .cta h2 {
+            font-size: 1.25rem;
+            font-weight: 500;
+            margin-bottom: 20px;
+            color: var(--muted);
+        }
+
+        .cta-links {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+        }
+
+        .cta-links a {
+            padding: 12px 24px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        .cta-links .primary {
+            background: var(--text);
+            color: var(--bg);
+        }
+
+        .cta-links .primary:hover {
+            opacity: 0.9;
+        }
+
+        .cta-links .secondary {
+            border: 1px solid var(--border);
+            color: var(--text);
+        }
+
+        .cta-links .secondary:hover {
+            border-color: var(--muted);
+        }
+
+        /* Footer */
+        footer {
+            border-top: 1px solid var(--border);
+            padding: 24px 0;
+            text-align: center;
+            color: var(--muted);
+            font-size: 0.8rem;
+        }
+
+        footer a {
+            color: var(--muted);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            color: var(--text);
+        }
+
+        /* Responsive */
+        @media (max-width: 640px) {
+            .hero h1 {
+                font-size: 2rem;
+            }
+
+            .tiers {
+                grid-template-columns: 1fr;
+            }
+
+            .self-hosted {
+                padding: 32px 20px;
+            }
+
+            .features {
+                flex-direction: column;
+                gap: 8px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <nav>
+            <a href="/" class="nav-logo">tenuo</a>
+            <div class="nav-links">
+                <a href="/quickstart">Docs</a>
+                <a href="https://github.com/tenuo-ai/tenuo">GitHub</a>
+            </div>
+        </nav>
+
+        <div class="hero">
+            <h1>Pricing</h1>
+            <p>Simple and transparent</p>
+        </div>
+
+        <div class="self-hosted">
+            <div class="label">Self-Hosted</div>
+            <h2>Free. <span>Always.</span></h2>
+            <div class="features">
+                <span>Rust core</span>
+                <span>Python SDK</span>
+                <span>CLI tools</span>
+                <span>Helm charts</span>
+                <span>Full documentation</span>
+            </div>
+            <div class="license">MIT / Apache-2.0 · No telemetry · No limits</div>
+        </div>
+
+        <div class="cloud">
+            <div class="cloud-header">
+                <div class="label">Managed</div>
+                <h2>Tenuo Cloud</h2>
+                <div class="coming-soon">Coming soon</div>
+                <p>Control plane with observability and revocation management.</p>
+                <div class="sso-note">All tiers include SSO</div>
+            </div>
+
+            <div class="tiers">
+                <div class="tier">
+                    <h3>Free</h3>
+                    <div class="price">$0/mo</div>
+                    <p>For experimentation and dev/test.</p>
+                </div>
+
+                <div class="tier">
+                    <h3>Team</h3>
+                    <div class="price">Usage-based</div>
+                    <p>For production workloads.</p>
+                </div>
+
+                <div class="tier">
+                    <h3>Enterprise</h3>
+                    <div class="price">Let's talk</div>
+                    <p>For compliance, SLAs, and custom deployment.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="cta">
+            <h2>Questions?</h2>
+            <div class="cta-links">
+                <a href="mailto:team@tenuo.ai" class="primary">team@tenuo.ai</a>
+                <a href="https://calendly.com/tenuo/30min" class="secondary">Book a call</a>
+            </div>
+        </div>
+
+        <footer>
+            <a href="/">Home</a> · 
+            <a href="/quickstart">Docs</a> · 
+            <a href="https://github.com/tenuo-ai/tenuo">GitHub</a>
+        </footer>
+    </div>
+
+    <!-- GoatCounter Analytics -->
+    <script data-goatcounter="https://tenuo-ai.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+</body>
+
+</html>

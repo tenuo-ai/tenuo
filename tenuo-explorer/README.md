@@ -6,7 +6,7 @@ A browser-based tool for inspecting Tenuo warrants, visualizing constraints, and
 
 ## Live Demo
 
-Visit: `https://tenuo.dev/explorer/` (or run locally)
+Visit: `https://tenuo.ai/explorer/` (or run locally)
 
 ## Features
 
@@ -58,7 +58,7 @@ Constraints marked ❌ for Code Gen will still decode and display correctly—th
 ### 📤 Shareable Deep Links
 Found a suspicious warrant? Click **Share** to generate a URL containing the warrant state. Send it to a colleague so they can debug the exact same warrant without copy-pasting base64.
 
-Example: `tenuo.dev/explorer?s=eyJ3YXJyYW50...`
+Example: `tenuo.ai/explorer?s=eyJ3YXJyYW50...`
 
 Great for:
 - Debugging issues with your team

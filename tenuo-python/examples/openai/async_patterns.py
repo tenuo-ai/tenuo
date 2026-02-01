@@ -398,7 +398,7 @@ Key async patterns:
    - Use try/except as normal
 
 For more information:
-  - Documentation: https://tenuo.dev/docs/openai
+  - Documentation: https://tenuo.ai/docs/openai
   - Examples: https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples
 """
     )

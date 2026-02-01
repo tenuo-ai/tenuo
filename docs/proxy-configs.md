@@ -5,7 +5,9 @@ description: Reference configurations for Envoy, Istio, nginx, and direct SDK
 
 # Proxy Configurations
 
-Copy-paste- **Application Layer**: Python SDK (`@guard` decorator)
+Copy-paste-ready configurations for integrating Tenuo authorization at multiple layers:
+
+- **Application Layer**: Python SDK (`@guard` decorator)
 - **Network Layer**: Envoy Proxy (Sidecar)
 - **Infrastructure Layer**: Kubernetes Network Policies
 

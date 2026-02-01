@@ -60,7 +60,7 @@ authorizer.verify_and_authorize(
 
 ## Documentation
 
-- [tenuo.dev](https://tenuo.dev) - Full documentation
+- [tenuo.ai](https://tenuo.ai) - Full documentation
 - [docs.rs/tenuo](https://docs.rs/tenuo) - API reference
 - [GitHub](https://github.com/tenuo-ai/tenuo) - Source code
 

@@ -526,7 +526,7 @@ def _warrant_why_denied(self: Warrant, tool: str, args: Optional[dict] = None) -
     # Create dynamic playground link
     import json
 
-    playground_url = "https://tenuo.dev/explorer/"
+    playground_url = "https://tenuo.ai/explorer/"
     try:
         # Construct state object matching App.tsx expectation
         state = {

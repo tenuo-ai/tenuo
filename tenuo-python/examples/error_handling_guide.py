@@ -467,7 +467,7 @@ def main():
    - Fatal error - do not retry
    - Occurs when ANY constraint is defined but field is not constrained
    - Fix: Add constraint for field, use Wildcard(), or set _allow_unknown=True
-   - See: https://tenuo.dev/constraints#closed-world-mode-trust-cliff
+   - See: https://tenuo.ai/constraints#closed-world-mode-trust-cliff
 
 6. RETRYABLE ERRORS:
    - Only retry non-security errors (network, transient failures)
