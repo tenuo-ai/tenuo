@@ -7,7 +7,7 @@ Tenuo can protect tools used by [AutoGen AgentChat](https://microsoft.github.io/
 ## Installation
 
 ```bash
-pip install "tenuo[autogen]"
+uv pip install "tenuo[autogen]"
 ```
 
 ## Minimal example (guarded tool)

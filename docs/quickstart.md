@@ -41,7 +41,7 @@ uv pip install tenuo
 
 **With framework support:**
 ```bash
-pip install "tenuo[autogen]"     # AutoGen (AgentChat) integration (Python >= 3.10)
+uv pip install "tenuo[autogen]"     # AutoGen (AgentChat) integration (Python >= 3.10)
 uv pip install "tenuo[langchain]"   # LangChain integration
 uv pip install "tenuo[langgraph]"   # LangGraph integration (includes LangChain)
 uv pip install "tenuo[fastapi]"     # FastAPI integration
