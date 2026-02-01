@@ -509,6 +509,23 @@
             color: var(--muted);
         }
 
+        /* Production CTA */
+        .production {
+            text-align: center;
+            padding: 48px 0;
+            color: var(--muted);
+            font-size: 0.95rem;
+        }
+
+        .production a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .production a:hover {
+            text-decoration: underline;
+        }
+
         /* Footer */
         footer {
             padding: 48px 0;
@@ -782,6 +799,10 @@
                     <p>Complete SDK documentation</p>
                 </a>
             </div>
+        </section>
+
+        <section class="production">
+            <p>Deploying to production? Self-hosted is free forever. <a href="pricing.html">See Tenuo Cloud</a> for managed options.</p>
         </section>
     </div>
 
