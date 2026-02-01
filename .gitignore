@@ -40,6 +40,8 @@ Thumbs.db
 __pycache__/
 *.pyc
 *.pyo
+.python-version
+uv.lock
 .pytest_cache/
 *.egg-info/
 dist/
