@@ -406,12 +406,29 @@ async fn run_audit_flush_loop(
     loop {
         tokio::select! {
             // Receive events from channel
-            Some(event) = rx.recv() => {
-                buffer.push(event);
+            event = rx.recv() => {
+                match event {
+                    Some(e) => {
+                        buffer.push(e);
 
-                // Flush if batch is full
-                if buffer.len() >= config.audit_batch_size {
-                    flush_audit_events(&client, &config, &authorizer_id, &mut buffer).await;
+                        // Flush if batch is full
+                        if buffer.len() >= config.audit_batch_size {
+                            flush_audit_events(&client, &config, &authorizer_id, &mut buffer).await;
+                        }
+                    }
+                    None => {
+                        // Channel closed (sender dropped), flush remaining events and exit
+                        if !buffer.is_empty() {
+                            info!(
+                                authorizer_id = %authorizer_id,
+                                remaining_events = buffer.len(),
+                                "Flushing remaining audit events before shutdown"
+                            );
+                            flush_audit_events(&client, &config, &authorizer_id, &mut buffer).await;
+                        }
+                        info!("Audit channel closed, exiting flush loop");
+                        break;
+                    }
                 }
             }
             // Periodic flush

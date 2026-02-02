@@ -958,13 +958,34 @@ async fn emit_audit_event(state: &AppState, mut event: AuthorizationEvent) {
         if let Some(ref id) = *authorizer_id {
             event.authorizer_id = id.clone();
 
+            // Extract fields for logging before moving event
+            let decision = event.decision;
+            let tool = event.tool.clone();
+
             // Send event (non-blocking, drop if channel is full)
             if let Err(e) = tx.try_send(event) {
-                debug!(error = %e, "Failed to send audit event (channel full or closed)");
+                match e {
+                    tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                        warn!(
+                            decision = decision,
+                            tool = %tool,
+                            "Audit event dropped: channel buffer full (high authorization rate or slow control plane)"
+                        );
+                    }
+                    tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                        debug!("Audit event dropped: channel closed (shutdown in progress)");
+                    }
+                }
             }
+        } else {
+            // Authorizer ID not set yet - control plane registration still in progress
+            warn!(
+                decision = event.decision,
+                tool = %event.tool,
+                request_id = %event.request_id,
+                "Audit event dropped: authorizer not registered with control plane yet (early request)"
+            );
         }
-        // If authorizer_id is not set yet, skip the event
-        // (this happens during the brief window between server start and registration)
     }
 }
 
