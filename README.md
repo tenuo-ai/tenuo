@@ -283,7 +283,7 @@ Building a sidecar or gateway? Use the core directly:
 
 ```toml
 [dependencies]
-tenuo = "0.1.0-beta.6"
+tenuo = "0.1.0-beta.7"
 ```
 
 See [docs.rs/tenuo](https://docs.rs/tenuo) for Rust API.
