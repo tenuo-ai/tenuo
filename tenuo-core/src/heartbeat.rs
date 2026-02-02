@@ -228,9 +228,20 @@ pub struct EnvironmentInfo {
 
 impl EnvironmentInfo {
     /// Create environment info from standard environment variables.
+    ///
+    /// # Security Note
+    ///
+    /// This function ONLY reads non-sensitive metadata variables:
+    /// - Kubernetes identifiers (namespace, pod name, node name)
+    /// - Cloud region names (not credentials)
+    /// - Deployment identifiers (environment name, build ID)
+    ///
+    /// It does NOT read any secrets, tokens, keys, passwords, or credentials.
+    /// If you add new variables here, ensure they are safe to transmit to
+    /// the control plane.
     pub fn from_env() -> Self {
         Self {
-            // Kubernetes (standard downward API env vars)
+            // Kubernetes (standard downward API env vars - non-sensitive identifiers)
             k8s_namespace: std::env::var("TENUO_K8S_NAMESPACE")
                 .or_else(|_| std::env::var("POD_NAMESPACE"))
                 .ok(),
@@ -243,14 +254,14 @@ impl EnvironmentInfo {
                 .ok(),
             k8s_cluster: std::env::var("TENUO_K8S_CLUSTER").ok(),
 
-            // Cloud
+            // Cloud context (region names only - NOT credentials)
             cloud_provider: std::env::var("TENUO_CLOUD_PROVIDER").ok(),
             cloud_region: std::env::var("TENUO_CLOUD_REGION")
                 .or_else(|_| std::env::var("AWS_REGION"))
                 .or_else(|_| std::env::var("GOOGLE_CLOUD_REGION"))
                 .ok(),
 
-            // Deployment
+            // Deployment context (identifiers only - NOT secrets)
             environment: std::env::var("TENUO_ENVIRONMENT")
                 .or_else(|_| std::env::var("ENV"))
                 .or_else(|_| std::env::var("ENVIRONMENT"))
