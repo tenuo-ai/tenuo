@@ -1,12 +1,12 @@
-//! Heartbeat module for Tenuo Cloud control plane integration.
+//! Heartbeat module for control plane integration.
 //!
 //! This module provides automatic registration, heartbeat, SRL synchronization,
-//! and audit event streaming for authorizers connecting to Tenuo Cloud (enterprise feature).
+//! and audit event streaming for authorizers connecting to a control plane.
 //!
 //! # Usage
 //!
 //! The heartbeat is enabled when all three environment variables are set:
-//! - `TENUO_CONTROL_PLANE_URL`: The Tenuo Cloud API endpoint
+//! - `TENUO_CONTROL_PLANE_URL`: The control plane API endpoint
 //! - `TENUO_API_KEY`: API key for authentication
 //! - `TENUO_AUTHORIZER_NAME`: Unique name for this authorizer instance
 //!
@@ -591,7 +591,7 @@ fn get_memory_usage() -> Option<u64> {
 /// Configuration for the heartbeat client.
 #[derive(Clone)]
 pub struct HeartbeatConfig {
-    /// Tenuo Cloud control plane URL (e.g., https://api.tenuo.cloud)
+    /// Control plane URL
     pub control_plane_url: String,
     /// API key for authentication
     pub api_key: String,
@@ -746,7 +746,7 @@ pub async fn start_heartbeat_loop_with_audit_and_id(
         Some(id) => id,
         None => {
             warn!(
-                "Failed to register with Tenuo Cloud after 3 attempts. \
+                "Failed to register with control plane after 3 attempts. \
                  Authorizer will run in standalone mode without heartbeats."
             );
             return;
@@ -756,7 +756,7 @@ pub async fn start_heartbeat_loop_with_audit_and_id(
     info!(
         authorizer_id = %authorizer_id,
         name = %config.authorizer_name,
-        "Registered with Tenuo Cloud"
+        "Registered with control plane"
     );
 
     // Store authorizer_id in shared state for request handlers
@@ -836,7 +836,7 @@ pub async fn start_heartbeat_loop_with_audit_and_id(
                                     info!(
                                         srl_version = new_version,
                                         refresh_required = response.refresh_required,
-                                        "SRL updated from Tenuo Cloud"
+                                        "SRL updated from control plane"
                                     );
                                     // Record successful fetch
                                     if let Some(ref metrics) = config.metrics {
@@ -846,7 +846,7 @@ pub async fn start_heartbeat_loop_with_audit_and_id(
                                 Err(e) => {
                                     warn!(
                                         error = %e,
-                                        "Failed to fetch SRL from Tenuo Cloud"
+                                        "Failed to fetch SRL from control plane"
                                     );
                                     // Record failed fetch
                                     if let Some(ref metrics) = config.metrics {

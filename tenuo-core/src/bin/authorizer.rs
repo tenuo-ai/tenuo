@@ -94,16 +94,16 @@ struct Cli {
     #[arg(long, env = "TENUO_REVOCATION_LIST")]
     revocation_list: Option<PathBuf>,
 
-    // === Tenuo Cloud Control Plane Configuration ===
-    /// Tenuo Cloud control plane URL (enables heartbeat when set with api-key and authorizer-name)
+    // === Control Plane Configuration ===
+    /// Control plane URL (enables heartbeat when set with api-key and authorizer-name)
     #[arg(long, env = "TENUO_CONTROL_PLANE_URL")]
     control_plane_url: Option<String>,
 
-    /// Tenuo Cloud API key for authentication
+    /// API key for control plane authentication
     #[arg(long, env = "TENUO_API_KEY")]
     api_key: Option<String>,
 
-    /// Authorizer name for registration with Tenuo Cloud
+    /// Authorizer name for registration with control plane
     #[arg(long, env = "TENUO_AUTHORIZER_NAME")]
     authorizer_name: Option<String>,
 
@@ -485,7 +485,7 @@ async fn serve_http(
     let debug_mode = config.settings.debug_mode;
     let compiled = CompiledGatewayConfig::compile(config)?;
 
-    // Check if Tenuo Cloud control plane is configured
+    // Check if control plane is configured
     let control_plane_enabled =
         cli.control_plane_url.is_some() && cli.api_key.is_some() && cli.authorizer_name.is_some();
 
@@ -499,7 +499,7 @@ async fn serve_http(
     }
     if control_plane_enabled {
         eprintln!(
-            "│ Tenuo Cloud: ENABLED (heartbeat every {}s, SRL sync)",
+            "│ Control Plane: ENABLED (heartbeat every {}s, SRL sync)",
             cli.heartbeat_interval
         );
     }
@@ -559,7 +559,7 @@ async fn serve_http(
             )
             .await;
         });
-        info!("Heartbeat, metrics, and audit streaming enabled for Tenuo Cloud");
+        info!("Heartbeat, metrics, and audit streaming enabled for control plane");
 
         (Some(tx), Some(metrics))
     } else {

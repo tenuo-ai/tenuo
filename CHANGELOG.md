@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`on_denial` modes**: `raise` (default), `log`, or `skip` for flexible error handling
 - **5 demo files**: Unprotected baseline, protected tools, attenuation, GuardBuilder Tier 1/2
 
-#### Authorizer Observability (Tenuo Cloud)
+#### Authorizer Observability
 - **Audit Event Streaming**: Authorization decisions streamed to control plane with full warrant chain (base64-encoded CBOR `WarrantStack` for chain reconstruction)
 - **Runtime Metrics**: Uptime, request counts, avg/p99 latency, memory usage sent with each heartbeat
 - **Environment Labels**: Auto-detected K8s context (namespace, pod, node), cloud region, and deployment identifiers
