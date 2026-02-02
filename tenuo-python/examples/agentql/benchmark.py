@@ -173,7 +173,7 @@ def benchmark_throughput():
 
     # Note: we use internal allows() for logic-only throughput
     bound = warrant.bind(agent_key)
-    agent = TenuoAgentQLAgent(warrant=warrant)
+    agent = TenuoAgentQLAgent(warrant=warrant, keypair=agent_key)
 
     bench = Benchmark()
 
@@ -410,7 +410,7 @@ def benchmark_delegation_overhead():
 
     # Benchmark root warrant (no delegation)
     print("\n4a. Root warrant (depth=0)...")
-    root_agent = TenuoAgentQLAgent(warrant=root_warrant)
+    root_agent = TenuoAgentQLAgent(warrant=root_warrant, keypair=orchestrator_key)
 
     bench = Benchmark()
     results_root = bench.measure_latency(
@@ -422,7 +422,7 @@ def benchmark_delegation_overhead():
 
     # Benchmark delegated warrant (depth=1)
     print("\n4b. Delegated warrant (depth=1)...")
-    worker_agent = TenuoAgentQLAgent(warrant=delegated_warrant)
+    worker_agent = TenuoAgentQLAgent(warrant=delegated_warrant, keypair=worker_key)
 
     results_delegated = bench.measure_latency(
         lambda: worker_agent.authorize("navigate", {"url": "https://sub.example.com"}),
@@ -550,7 +550,7 @@ def benchmark_memory_usage():
                 .mint(user_key)
             )
 
-            agent = TenuoAgentQLAgent(warrant=warrant)
+            agent = TenuoAgentQLAgent(warrant=warrant, keypair=agent_key)
             agents.append(agent)
 
         # Measure after creating agents
@@ -603,7 +603,7 @@ def benchmark_workflow_overhead():
         .mint(user_key)
     )
 
-    agent = TenuoAgentQLAgent(warrant=warrant)
+    agent = TenuoAgentQLAgent(warrant=warrant, keypair=agent_key)
 
     # Simulate workflow: 10 actions with realistic delays
     actions = [
