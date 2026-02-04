@@ -119,11 +119,11 @@ jobs:
             - [ ] Update compatibility matrix documentation
 
             ### Upstream Resources
-            ${{ matrix.integration === 'openai' && '- [OpenAI Changelog](https://github.com/openai/openai-python/releases)' || '' }}
-            ${{ matrix.integration === 'crewai' && '- [CrewAI Changelog](https://github.com/joaomdmoura/crewAI/releases)' || '' }}
-            ${{ matrix.integration === 'autogen' && '- [AutoGen Changelog](https://github.com/microsoft/autogen/releases)' || '' }}
-            ${{ matrix.integration === 'langchain' && '- [LangChain Changelog](https://python.langchain.com/changelog)' || '' }}
-            ${{ matrix.integration === 'langgraph' && '- [LangGraph Changelog](https://github.com/langchain-ai/langgraph/releases)' || '' }}
+            ${{ matrix.integration == 'openai' && '- [OpenAI Changelog](https://github.com/openai/openai-python/releases)' || '' }}
+            ${{ matrix.integration == 'crewai' && '- [CrewAI Changelog](https://github.com/joaomdmoura/crewAI/releases)' || '' }}
+            ${{ matrix.integration == 'autogen' && '- [AutoGen Changelog](https://github.com/microsoft/autogen/releases)' || '' }}
+            ${{ matrix.integration == 'langchain' && '- [LangChain Changelog](https://python.langchain.com/changelog)' || '' }}
+            ${{ matrix.integration == 'langgraph' && '- [LangGraph Changelog](https://github.com/langchain-ai/langgraph/releases)' || '' }}
             `;
 
             github.rest.issues.create({
