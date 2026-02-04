@@ -1,6 +1,8 @@
 # Tenuo CrewAI Examples
 
-This directory contains examples demonstrating Tenuo's CrewAI integration.
+This directory contains basic examples demonstrating Tenuo's CrewAI integration.
+
+> **Looking for the full interactive demo?** See [`tenuo-python/examples/crewai/`](../../tenuo-python/examples/crewai/) for the comprehensive demo with real LLM integration and attack simulations.
 
 ## Examples
 
@@ -54,4 +56,3 @@ agent = Agent(
 ## See Also
 
 - [Full Documentation](../../docs/crewai.md)
-- [CrewAI Integration Spec](../../tenuo_crewai_spec_v3.md)
