@@ -72,3 +72,21 @@ Tenuo: Enforce constraints regardless of what the LLM decides.
 
 The warrant is the source of truth, not the prompt.
 ```
+
+## Additional APIs (Not Shown in Demos)
+
+These demos focus on security scenarios. For additional integration patterns, see the [full documentation](../../docs/crewai.md):
+
+- **GuardedCrew**: Policy-based protection for entire crews
+- **@guarded_step**: Decorator for protecting CrewAI Flow steps
+- **WarrantDelegator**: Explicit delegation API (shown in research_team_demo.py)
+
+Quick example:
+```python
+from tenuo.crewai import GuardedCrew
+
+crew = (GuardedCrew(agents=[...], tasks=[...])
+    .policy({"Researcher": ["read_file", "search"]})
+    .constraints({"Researcher": {"read_file": {"path": Subpath("/data")}}})
+    .build())
+```
