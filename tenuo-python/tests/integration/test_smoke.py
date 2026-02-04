@@ -97,6 +97,7 @@ def test_crewai_agent_creation():
         agent = Agent(
             role="test",
             goal="test goal",
+            backstory="test backstory",
             tools=[]
         )
 
@@ -112,8 +113,8 @@ def test_crewai_crew_creation():
     try:
         from crewai import Agent, Task, Crew
 
-        agent = Agent(role="test", goal="test goal", tools=[])
-        task = Task(description="test task", agent=agent)
+        agent = Agent(role="test", goal="test goal", backstory="test backstory", tools=[])
+        task = Task(description="test task", expected_output="test output", agent=agent)
         crew = Crew(agents=[agent], tasks=[task])
 
         assert hasattr(crew, 'agents')
@@ -193,7 +194,8 @@ def test_langchain_tool_decorator():
 
         assert hasattr(test_tool, 'name')
         assert hasattr(test_tool, 'description')
-        assert callable(test_tool)
+        # LangChain tools have invoke() method, not direct callable
+        assert hasattr(test_tool, 'invoke') or callable(test_tool)
     except ImportError:
         pytest.skip("langchain not installed")
 

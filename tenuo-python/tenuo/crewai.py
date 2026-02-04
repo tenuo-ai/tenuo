@@ -84,7 +84,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import (
     Any,
     Callable,
@@ -439,7 +439,7 @@ class AuditEvent:
     reason: str
     error_code: Optional[str] = None
     agent_role: Optional[str] = None
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 AuditCallback = Callable[[AuditEvent], None]
