@@ -663,7 +663,7 @@ class CrewAIGuard:
         # Import CrewAI here to avoid hard dependency
         # CrewAI 1.9.x uses crewai.tools.base_tool.Tool
         try:
-            from crewai.tools.base_tool import Tool  # type: ignore[import-not-found]
+            from crewai.tools.base_tool import Tool  # type: ignore[import-not-found,import-untyped]
         except ImportError:
             raise ImportError(
                 "crewai is required for CrewAI integration. "
@@ -1884,7 +1884,7 @@ class _GuardedCrewImpl:
         This is the main entry point that mirrors CrewAI's Crew.kickoff().
         """
         try:
-            from crewai import Crew  # type: ignore[import-not-found]
+            from crewai import Crew  # type: ignore[import-not-found,import-untyped]
         except ImportError:
             raise ImportError(
                 "crewai is required for GuardedCrew. "
