@@ -10,7 +10,7 @@ See docs/compatibility-matrix.md for full details on version compatibility.
 import logging
 import warnings
 from functools import lru_cache
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ def get_package_version(package_name: str) -> Optional[str]:
             return None
 
 
-def check_version_compatibility(package_name: str, warn: bool = True) -> list:
+def check_version_compatibility(package_name: str, warn: bool = True) -> List[Tuple[str, str]]:
     """
     Check if installed package version has known issues.
 
@@ -106,7 +106,7 @@ def check_version_compatibility(package_name: str, warn: bool = True) -> list:
     Returns:
         List of (issue_description, recommendation) tuples for any issues found
     """
-    issues = []
+    issues: List[Tuple[str, str]] = []
 
     version_str = get_package_version(package_name)
     if version_str is None:
