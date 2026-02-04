@@ -196,8 +196,9 @@ pub struct SrlHealth {
     pub fetch_failures_total: u64,
     /// Total SRL verification failures since startup
     pub verification_failures_total: u64,
-    /// Current SRL version (0 if none loaded)
-    pub current_srl_version: u64,
+    /// Current SRL version (None if no SRL loaded)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_srl_version: Option<u64>,
 }
 
 /// Environment information sent during registration.
@@ -536,6 +537,7 @@ impl MetricsCollector {
     /// Collect SRL health status.
     pub async fn collect_srl_health(&self) -> SrlHealth {
         let last_fetch_at = self.inner.srl_last_fetch_at.lock().await.clone();
+        let version = self.inner.srl_current_version.load(Ordering::Relaxed);
         SrlHealth {
             last_fetch_at,
             last_fetch_success: self.inner.srl_last_fetch_success.load(Ordering::Relaxed) == 1,
@@ -544,7 +546,8 @@ impl MetricsCollector {
                 .inner
                 .srl_verification_failures
                 .load(Ordering::Relaxed),
-            current_srl_version: self.inner.srl_current_version.load(Ordering::Relaxed),
+            // Convert 0 to None (0 is internal sentinel for "no SRL")
+            current_srl_version: if version == 0 { None } else { Some(version) },
         }
     }
 }
@@ -668,6 +671,9 @@ struct RegisterResponse {
 /// Request body for heartbeat with metrics.
 #[derive(Serialize)]
 struct HeartbeatRequest {
+    /// Current SRL version (None if no SRL loaded)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    srl_version: Option<u64>,
     /// Runtime metrics
     #[serde(skip_serializing_if = "Option::is_none")]
     metrics: Option<RuntimeMetrics>,
@@ -1101,7 +1107,11 @@ async fn send_heartbeat(
         (None, None, None)
     };
 
+    // Extract srl_version from srl_health for top-level field (Go control plane convenience)
+    let srl_version = srl_health.as_ref().and_then(|h| h.current_srl_version);
+
     let request_body = HeartbeatRequest {
+        srl_version,
         metrics,
         stats,
         srl_health,
@@ -1262,7 +1272,7 @@ mod tests {
         let health = SrlHealth::default();
         assert!(health.last_fetch_at.is_none());
         assert!(!health.last_fetch_success);
-        assert_eq!(health.current_srl_version, 0);
+        assert_eq!(health.current_srl_version, None);
     }
 
     #[tokio::test]
