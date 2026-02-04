@@ -162,6 +162,8 @@ jobs:
           uv pip install --system langchain langchain-core langchain-openai langgraph
           uv pip install --system fastapi uvicorn pydantic PyYAML
           uv pip install --system types-PyYAML types-requests
+          # Install crewai for integration tests (Python 3.10+)
+          python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && uv pip install --system crewai || echo "Skipping crewai (requires Python 3.10+)"
           # MCP SDK requires Python 3.10+
           python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" && uv pip install --system mcp || echo "Skipping MCP (requires Python 3.10+)"
 
@@ -547,6 +549,7 @@ jobs:
           pip install uv
           uv pip install --system maturin pytest pytest-cov pytest-asyncio
           uv pip install --system langchain langchain-core langgraph fastapi pydantic PyYAML
+          uv pip install --system crewai
           maturin build --release
           uv pip install --system target/wheels/*.whl
 
