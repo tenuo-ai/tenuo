@@ -757,39 +757,21 @@ class TestSecurityRegressions:
                 attenuations={"read": {"path": child_constraint}},
             )
 
-    def test_holder_verification_without_raw_method(self):
+    def test_holder_verification_via_rust_core(self):
         """
-        REGRESSION: If keys lack raw() method, must deny (fail-closed).
-        Previously: Skipped verification with debug log.
-        """
-        mock_warrant = MagicMock()
-        mock_warrant.is_expired.return_value = False
-        mock_warrant.holder.return_value = MagicMock(spec=[])  # No raw() method
+        SECURITY: Holder verification is done by Rust core's authorize().
 
-        mock_key = MagicMock()
-        mock_key.public_key = MagicMock(spec=[])  # No raw() method
+        The Rust core's warrant.authorize() cryptographically verifies that
+        the PoP signature was created by the key matching warrant.holder().
+        If signing key doesn't match holder, authorize() fails.
 
-        guard = (GuardBuilder()
-            .allow("read", path=Subpath("/data"))
-            .with_warrant(mock_warrant, mock_key)
-            .on_denial("skip")
-            .build())
-
-        result = guard._authorize("read", {"path": "/data/file.txt"})
-
-        # MUST return denial, not None
-        assert isinstance(result, DenialResult)
-        assert result.error_code == "INVALID_POP"
-        assert "missing raw() method" in result.reason
-
-    def test_holder_verification_exception(self):
-        """
-        REGRESSION: If holder verification raises exception, must deny.
-        Previously: Logged at debug and continued.
+        This test verifies we trust the Rust core's implementation.
         """
         mock_warrant = MagicMock()
         mock_warrant.is_expired.return_value = False
-        mock_warrant.holder.side_effect = RuntimeError("Holder lookup failed")
+        mock_warrant.sign.return_value = b"mock_signature"
+        # Simulate Rust core detecting holder mismatch
+        mock_warrant.authorize.side_effect = Exception("Proof-of-Possession failed")
 
         mock_key = MagicMock()
 
@@ -801,10 +783,39 @@ class TestSecurityRegressions:
 
         result = guard._authorize("read", {"path": "/data/file.txt"})
 
-        # MUST return denial, not None
+        # MUST return denial when Rust core's authorize() fails
         assert isinstance(result, DenialResult)
         assert result.error_code == "INVALID_POP"
-        assert "Holder verification failed" in result.reason
+        # Verify authorize() was called (Rust core does the holder check)
+        assert mock_warrant.authorize.called
+
+    def test_holder_mismatch_detected_by_rust_core(self):
+        """
+        SECURITY: When signing key doesn't match holder, Rust core denies.
+
+        This is a behavioral test to document that holder verification
+        happens in the Rust core, not in Python. The authorize() method
+        will fail with "Proof-of-Possession failed" when keys don't match.
+        """
+        mock_warrant = MagicMock()
+        mock_warrant.is_expired.return_value = False
+        mock_warrant.sign.return_value = b"signature_from_wrong_key"
+        # Rust core's verify_pop() will fail when holder doesn't match signing key
+        mock_warrant.authorize.return_value = False  # Authorization fails
+
+        mock_key = MagicMock()
+
+        guard = (GuardBuilder()
+            .allow("read", path=Subpath("/data"))
+            .with_warrant(mock_warrant, mock_key)
+            .on_denial("skip")
+            .build())
+
+        result = guard._authorize("read", {"path": "/data/file.txt"})
+
+        # MUST deny when Rust core returns False
+        assert isinstance(result, DenialResult)
+        assert result.error_code == "INVALID_POP"
 
 
 # =============================================================================

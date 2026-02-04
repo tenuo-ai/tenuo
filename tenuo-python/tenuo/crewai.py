@@ -839,37 +839,23 @@ class CrewAIGuard:
                 error = WarrantExpired(warrant_id="unknown", reason="Expiry check failed")  # type: ignore[assignment]
                 return self._handle_denial(error, tool_name, args, agent_role)
 
-            # SECURITY: Validate signing key matches warrant holder (PoP requirement)
-            try:
-                if hasattr(self._warrant, 'holder'):
-                    warrant_holder = self._warrant.holder()
-                    signing_pubkey = self._signing_key.public_key
-
-                    # Verify both keys support comparison
-                    if hasattr(warrant_holder, 'raw') and hasattr(signing_pubkey, 'raw'):
-                        # Compare public key bytes
-                        if warrant_holder.raw() != signing_pubkey.raw():
-                            error = InvalidPoP(  # type: ignore[assignment]
-                                reason="Signing key does not match warrant holder"
-                            )
-                            return self._handle_denial(error, tool_name, args, agent_role)
-                    else:
-                        # SECURITY: Fail-closed - if we can't compare keys, deny
-                        logger.warning(
-                            "Cannot verify PoP: keys lack raw() method. "
-                            "This violates PoP requirements."
-                        )
-                        error = InvalidPoP(  # type: ignore[assignment]
-                            reason="Cannot verify signing key matches holder: missing raw() method"
-                        )
-                        return self._handle_denial(error, tool_name, args, agent_role)
-            except Exception as e:
-                # SECURITY: Fail-closed - holder verification failure means deny
-                logger.warning(f"Holder verification failed: {e}")
-                error = InvalidPoP(  # type: ignore[assignment]
-                    reason=f"Holder verification failed: {e}"
-                )
-                return self._handle_denial(error, tool_name, args, agent_role)
+            # SECURITY NOTE: Holder Verification
+            # ===================================
+            # The Rust core's warrant.authorize() cryptographically verifies that
+            # the PoP signature was created by the key matching warrant.holder().
+            # This happens inside verify_pop() via holder.verify(signature).
+            #
+            # From tenuo-core/src/warrant.rs verify_pop():
+            #     if self.payload.holder.verify(&preimage, signature).is_ok() {
+            #         verified = true;
+            #     }
+            #
+            # If signing_key doesn't match the holder, the signature verification
+            # will fail and authorize() will return Error::SignatureInvalid.
+            #
+            # This cryptographic enforcement at the Rust level makes a Python-side
+            # holder check redundant. We trust the Rust core's implementation,
+            # consistent with the A2A and Google ADK integrations.
 
             try:
                 pop = self._warrant.sign(self._signing_key, tool_name, args)
