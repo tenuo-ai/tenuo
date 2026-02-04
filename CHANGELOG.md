@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-beta.8] - 2026-02-04
+
+### Added
+
+#### CrewAI Integration (`tenuo[crewai]`)
+- **GuardBuilder API**: Fluent builder for protecting CrewAI tools with Tenuo authorization
+- **Tier 1 (constraints-only)**: Lightweight validation using `GuardBuilder().allow("tool", arg=Constraint).build()`
+- **Tier 2 (warrants + PoP)**: Cryptographic enforcement with `WarrantDelegator` for hierarchical delegation
+- **GuardedCrew**: Policy-based multi-agent crew protection with seal mode to prevent delegation circumvention
+- **Tool Namespacing**: `agent_role::tool_name` prevents cross-agent confusion in multi-agent scenarios
+- **Hierarchical Delegation**: Manager → Worker patterns with attenuation-only narrowing
+- **`on_denial` modes**: `raise` (default), `log`, or `skip` for flexible error handling
+- **4 complete examples**: Basic protection, hierarchical delegation, guarded crew, and flow integration
+- **3,074 lines of tests**: Comprehensive unit, adversarial, and integration test coverage
+
+#### Version Compatibility System
+- **Runtime Version Warnings**: Non-blocking warnings for known version issues instead of hard failures
+- **Compatibility Matrix Documentation**: Tracks minimum/recommended/latest versions for all integrations (OpenAI, AutoGen, CrewAI, LangChain, LangGraph, MCP, Google ADK)
+- **Automated Monitoring**: Dependabot + CI compatibility matrix + upstream release monitor for early breaking change detection
+- **Integration Maintenance Guide**: `INTEGRATION_MAINTENANCE.md` contributor runbook for managing integration lifecycle
+- **Smoke Tests**: API contract verification across minimum and latest dependency versions
+
+#### Security & Reliability Improvements
+- **A2A Security Fixes**: 4 critical security issues resolved in A2A server
+  - Fail-closed audience validation (missing/mismatched `aud` claims now rejected)
+  - Robust expiry checking with proper None handling
+  - Constraint deserialization support for Range, Cidr, OneOf, NotOneOf, Regex
+  - Config validation with fail-closed behavior for secure defaults
+- **Integration Consistency**: Standardized holder verification approach across CrewAI, A2A, and Google ADK (all now trust Rust core's cryptographic PoP verification)
+- **Google ADK Warnings**: Added security warnings and runtime detection for argument remapping validation bypass risks
+
+### Changed
+- **Version Constraints**: Relaxed to permissive constraints with runtime warnings (e.g., `crewai>=1.0` instead of pinned versions)
+- **Holder Verification**: Removed redundant Python-side holder checks in CrewAI (Rust core's `verify_pop()` provides cryptographic enforcement)
+
+### Documentation
+- Added comprehensive CrewAI integration guide (`docs/crewai.md`, 779 lines)
+- Added compatibility matrix with version recommendations (`docs/compatibility-matrix.md`, 193 lines)
+- Added integration maintenance system documentation (`INTEGRATION_MAINTENANCE.md`, 143 lines)
+- Updated main README to feature CrewAI integration
+- Created security review documentation for all three integrations
+
+---
+
 ## [0.1.0-beta.7] - 2026-02-01
 
 ### Added

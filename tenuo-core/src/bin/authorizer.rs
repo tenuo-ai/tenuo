@@ -184,11 +184,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     // Build authorizer from trusted keys and revocation list
-    let authorizer = build_authorizer(&cli.trusted_keys, &cli.revocation_list)?;
+    let (authorizer, initial_srl_version) = build_authorizer(&cli.trusted_keys, &cli.revocation_list)?;
 
     match &cli.command {
         Commands::Serve { port, config, bind } => {
-            serve_http(authorizer, config, bind, *port, &cli).await?;
+            serve_http(authorizer, initial_srl_version, config, bind, *port, &cli).await?;
         }
 
         Commands::Verify {
@@ -302,7 +302,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn build_authorizer(
     trusted_keys: &Option<String>,
     revocation_path: &Option<PathBuf>,
-) -> Result<Authorizer, Box<dyn std::error::Error>> {
+) -> Result<(Authorizer, Option<u64>), Box<dyn std::error::Error>> {
     // Start with a dummy authorizer if no keys provided
     // This still validates signatures, just doesn't check the issuer
     let first_key = if let Some(keys) = trusted_keys {
@@ -338,15 +338,19 @@ fn build_authorizer(
     }
 
     // Load signed revocation list if provided
-    if let Some(path) = revocation_path {
+    let initial_srl_version = if let Some(path) = revocation_path {
         let srl = load_signed_revocation_list(path)?;
+        let version = srl.version();
 
         // Verify against first trusted key (Control Plane key)
         authorizer.set_revocation_list(srl, &first_key)?;
         eprintln!("Loaded signed revocation list from: {}", path.display());
-    }
+        Some(version)
+    } else {
+        None
+    };
 
-    Ok(authorizer)
+    Ok((authorizer, initial_srl_version))
 }
 
 fn load_signed_revocation_list(
@@ -465,6 +469,7 @@ impl DenyReason {
 /// Start the HTTP authorization server
 async fn serve_http(
     authorizer: Authorizer,
+    initial_srl_version: Option<u64>,
     config_path: &PathBuf,
     bind: &str,
     port: u16,
@@ -530,6 +535,12 @@ async fn serve_http(
 
         // Create metrics collector for runtime stats
         let metrics = MetricsCollector::new();
+
+        // If SRL was loaded from file at startup, record its version in metrics
+        if let Some(version) = initial_srl_version {
+            eprintln!("Initial SRL version: {}", version);
+            metrics.record_srl_fetch(true, Some(version)).await;
+        }
 
         // Get environment info from standard env vars
         let environment = EnvironmentInfo::from_env();
