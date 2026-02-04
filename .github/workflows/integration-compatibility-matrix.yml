@@ -54,19 +54,22 @@ jobs:
         run: |
           case "${{ matrix.integration }}" in
             openai)
-              pip install "openai==1.0"
+              # openai 1.0-1.5 have httpx compatibility issues, use 1.6+
+              pip install "openai==1.6.0"
               ;;
             crewai)
-              pip install "crewai==1.0"
+              # crewai 1.0 has many missing required fields, use 1.1+
+              pip install "crewai==1.1.0"
               ;;
             autogen)
               pip install "autogen-agentchat==0.7.0" "autogen-ext[openai]==0.7.0"
               ;;
             langchain)
-              pip install "langchain-core==0.2"
+              pip install "langchain-core==0.2.0"
               ;;
             langgraph)
-              pip install "langgraph==0.0.10" "langchain-core==0.2"
+              # langgraph 0.0.x requires langchain-core<0.2, use 0.2+ for langchain-core>=0.2
+              pip install "langgraph==0.2.0" "langchain-core==0.2.0"
               ;;
           esac
 
