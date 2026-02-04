@@ -39,7 +39,7 @@ dependencies = [
 [project.optional-dependencies]
 # Feature flags for users
 openai = [
-    "openai>=1.0",
+    "openai>=1.6",  # 1.0-1.5 have httpx compatibility issues
     "openai-agents>=0.1; python_version >= '3.10'",
 ]
 autogen = [
@@ -51,11 +51,11 @@ langchain = [
     "langchain-core>=0.2",
 ]
 langgraph = [
-    "langgraph>=0.0.10",
+    "langgraph>=0.2",  # 0.0.x/0.1.x require langchain-core<0.2
     "tenuo[langchain]",  # LangGraph integration needs LangChain tools
 ]
 crewai = [
-    "crewai>=1.0",
+    "crewai>=1.1",  # 1.0 missing required fields (backstory, expected_output)
 ]
 mcp = [
     "mcp>=1.0.0; python_version >= '3.10'",

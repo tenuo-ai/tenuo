@@ -8,13 +8,15 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 
 | Integration | Minimum | Recommended | Latest Tested | Status | Notes |
 |-------------|---------|-------------|---------------|--------|-------|
-| **OpenAI** | 1.0.0 | 1.50+ | 1.52.0 | ✅ Stable | Full feature support |
-| **CrewAI** | 1.0.0 | 1.9+ | 1.9.4 | ✅ Stable | All tiers supported |
+| **OpenAI** | 1.6.0 | 1.50+ | 1.52.0 | ✅ Stable | Full feature support |
+| **CrewAI** | 1.1.0 | 1.9+ | 1.9.4 | ✅ Stable | All tiers supported |
 | **AutoGen** | 0.7.0 | 0.9+ | 0.9.2 | ✅ Stable | AgentChat integration |
 | **LangChain** | 0.2.0 | 0.3+ | 0.3.5 | ✅ Stable | LangChain Core |
-| **LangGraph** | 0.0.10 | 0.2+ | 0.2.8 | ✅ Stable | StateGraph support |
+| **LangGraph** | 0.2.0 | 0.2+ | 0.2.8 | ✅ Stable | StateGraph support |
 | **MCP** | 1.0.0 | 1.1+ | 1.1.3 | ✅ Stable | Model Context Protocol |
 | **Google ADK** | 0.1.0 | 0.1+ | 0.1.2 | ⚠️ Beta | Early access |
+
+> **Note on Minimum Versions**: These are the oldest versions tested in CI. Earlier versions may have dependency conflicts or missing required features. See [Known Issues](#known-issues) for details.
 
 ### Status Legend
 - ✅ **Stable**: Production-ready, actively tested
@@ -29,9 +31,14 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 ### OpenAI
 **Current Status**: ✅ No known issues
 
+**Minimum Version**: 1.6.0
+- Versions 1.0-1.5 have httpx compatibility issues (`proxies` argument conflict)
+- The `OpenAI()` client constructor fails with `TypeError: Client.__init__() got an unexpected keyword argument 'proxies'`
+
 **Recent Changes**:
 - 1.50.0: Added streaming support for tool calls (✅ Compatible)
 - 1.40.0: Response format changes (✅ Compatible)
+- 1.6.0: Fixed httpx compatibility (✅ Minimum supported)
 
 **Next Breaking Change**: OpenAI 2.0 (TBD)
 - Expected changes: Client constructor signature
@@ -40,9 +47,14 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 ### CrewAI
 **Current Status**: ✅ No known issues
 
+**Minimum Version**: 1.1.0
+- Version 1.0 is missing required fields (`backstory` for Agent, `expected_output` for Task)
+- Agent/Task creation fails with `ValidationError: Field required`
+
 **Recent Changes**:
 - 1.9.0: Added hierarchical process support (✅ Compatible)
 - 1.5.0: Tool signature changes (✅ Backwards compatible)
+- 1.1.0: Added required fields for Agent/Task (✅ Minimum supported)
 
 **Next Breaking Change**: CrewAI 2.0 (Q2 2026 estimated)
 - Expected changes: Async tool support
@@ -70,9 +82,13 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 ### LangGraph
 **Current Status**: ✅ No known issues
 
+**Minimum Version**: 0.2.0
+- Versions 0.0.x and 0.1.x require `langchain-core<0.2.0`
+- Cannot be installed alongside `langchain-core>=0.2` (dependency conflict)
+
 **Recent Changes**:
-- 0.2.0: Persistence layer added (✅ Compatible)
-- 0.1.0: Initial stable release (✅ Compatible)
+- 0.2.0: Updated to support langchain-core>=0.2 (✅ Minimum supported)
+- 0.1.0: Initial stable release (❌ Incompatible with langchain-core>=0.2)
 
 ---
 
