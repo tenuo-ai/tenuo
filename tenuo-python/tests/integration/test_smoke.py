@@ -63,7 +63,7 @@ def test_openai_beta_chat():
 def test_crewai_import():
     """Verify CrewAI can be imported."""
     try:
-        import crewai
+        import crewai  # type: ignore[import-not-found]
         assert crewai is not None
     except ImportError:
         pytest.skip("crewai not installed")
@@ -146,7 +146,7 @@ def test_autogen_import():
         pytest.skip("autogen requires Python 3.10+")
 
     try:
-        import autogen_agentchat
+        import autogen_agentchat  # type: ignore[import-not-found]
         assert autogen_agentchat is not None
     except ImportError:
         pytest.skip("autogen not installed")
@@ -158,8 +158,8 @@ def test_autogen_assistant_agent():
         pytest.skip("autogen requires Python 3.10+")
 
     try:
-        from autogen_agentchat.agents import AssistantAgent
-        from autogen_ext.models import OpenAIChatCompletionClient
+        from autogen_agentchat.agents import AssistantAgent  # type: ignore[import-not-found]
+        from autogen_ext.models import OpenAIChatCompletionClient  # type: ignore[import-not-found]
 
         # Just verify we can create the classes
         assert AssistantAgent is not None

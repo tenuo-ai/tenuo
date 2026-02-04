@@ -663,7 +663,7 @@ class CrewAIGuard:
         # Import CrewAI here to avoid hard dependency
         # CrewAI 1.9.x uses crewai.tools.base_tool.Tool
         try:
-            from crewai.tools.base_tool import Tool
+            from crewai.tools.base_tool import Tool  # type: ignore[import-not-found]
         except ImportError:
             raise ImportError(
                 "crewai is required for CrewAI integration. "
@@ -800,7 +800,7 @@ class CrewAIGuard:
         # Step 2: Check all arguments have constraints (closed-world)
         for arg_name in args:
             if arg_name not in constraints:
-                error = UnlistedArgument(
+                error = UnlistedArgument(  # type: ignore[assignment]
                     tool=tool_name,
                     argument=arg_name,
                     allowed_args=list(constraints.keys()),
@@ -811,7 +811,7 @@ class CrewAIGuard:
         for arg_name, arg_value in args.items():
             constraint = constraints[arg_name]
             if not check_constraint(constraint, arg_value):
-                error = ConstraintViolation(
+                error = ConstraintViolation(  # type: ignore[assignment]
                     tool=tool_name,
                     argument=arg_name,
                     value=arg_value,
@@ -827,12 +827,12 @@ class CrewAIGuard:
                     warrant_id = None
                     if hasattr(self._warrant, 'id'):
                         warrant_id = self._warrant.id()
-                    error = WarrantExpired(warrant_id=warrant_id)
+                    error = WarrantExpired(warrant_id=warrant_id)  # type: ignore[assignment]
                     return self._handle_denial(error, tool_name, args, agent_role)
             except Exception as e:
                 # SECURITY: Fail-closed - if we can't check expiry, deny
                 logger.warning(f"Warrant expiry check failed, denying (fail-closed): {e}")
-                error = WarrantExpired(warrant_id="unknown", reason="Expiry check failed")
+                error = WarrantExpired(warrant_id="unknown", reason="Expiry check failed")  # type: ignore[assignment]
                 return self._handle_denial(error, tool_name, args, agent_role)
 
             # SECURITY: Validate signing key matches warrant holder
@@ -844,7 +844,7 @@ class CrewAIGuard:
                         # Compare public key bytes if available
                         if (hasattr(warrant_holder, 'raw') and hasattr(signing_pubkey, 'raw') and
                                 warrant_holder.raw() != signing_pubkey.raw()):
-                            error = InvalidPoP(
+                            error = InvalidPoP(  # type: ignore[assignment]
                                 reason="Signing key does not match warrant holder"
                             )
                             return self._handle_denial(error, tool_name, args, agent_role)
@@ -856,17 +856,17 @@ class CrewAIGuard:
                 auth_result = self._warrant.authorize(tool_name, args, signature=pop)
                 # SECURITY: Fail-closed - explicitly check return value
                 if auth_result is False:
-                    error = InvalidPoP(reason="Authorization returned False")
+                    error = InvalidPoP(reason="Authorization returned False")  # type: ignore[assignment]
                     return self._handle_denial(error, tool_name, args, agent_role)
             except Exception as e:
                 # Handle warrant authorization failures
                 error_msg = str(e)
                 if "expired" in error_msg.lower():
-                    error = WarrantExpired()
+                    error = WarrantExpired()  # type: ignore[assignment]
                 elif "tool" in error_msg.lower() and "not" in error_msg.lower():
-                    error = WarrantToolDenied(tool=tool_name)
+                    error = WarrantToolDenied(tool=tool_name)  # type: ignore[assignment]
                 else:
-                    error = InvalidPoP(reason=error_msg)
+                    error = InvalidPoP(reason=error_msg)  # type: ignore[assignment]
                 return self._handle_denial(error, tool_name, args, agent_role)
 
         # Authorization granted
@@ -1614,7 +1614,7 @@ def guarded_step(
     return decorator
 
 
-def _parse_ttl(ttl: str) -> float:
+def _parse_ttl(ttl: str) -> int:
     """Parse TTL string to seconds.
 
     Supports: "30s", "10m", "1h", "1d"
@@ -1622,16 +1622,16 @@ def _parse_ttl(ttl: str) -> float:
     ttl = ttl.strip().lower()
 
     if ttl.endswith("s"):
-        return float(ttl[:-1])
+        return int(float(ttl[:-1]))
     elif ttl.endswith("m"):
-        return float(ttl[:-1]) * 60
+        return int(float(ttl[:-1]) * 60)
     elif ttl.endswith("h"):
-        return float(ttl[:-1]) * 3600
+        return int(float(ttl[:-1]) * 3600)
     elif ttl.endswith("d"):
-        return float(ttl[:-1]) * 86400
+        return int(float(ttl[:-1]) * 86400)
     else:
         # Assume seconds
-        return float(ttl)
+        return int(float(ttl))
 
 
 # =============================================================================
@@ -1884,7 +1884,7 @@ class _GuardedCrewImpl:
         This is the main entry point that mirrors CrewAI's Crew.kickoff().
         """
         try:
-            from crewai import Crew
+            from crewai import Crew  # type: ignore[import-not-found]
         except ImportError:
             raise ImportError(
                 "crewai is required for GuardedCrew. "
@@ -1902,14 +1902,14 @@ class _GuardedCrewImpl:
         if self._process is not None:
             crew_kwargs["process"] = self._process
 
-        self._crew = Crew(**crew_kwargs)
+        self._crew = Crew(**crew_kwargs)  # type: ignore[assignment,arg-type]
 
         # Execute in guarded zone if strict mode
         if self._strict:
             # Use first available guard for context (all agents use same strict setting)
             first_guard = list(self._guards.values())[0] if self._guards else None
-            with _guarded_zone(first_guard, strict=True):
-                result = self._crew.kickoff(inputs=inputs)
+            with _guarded_zone(first_guard, strict=True):  # type: ignore[arg-type]
+                result = self._crew.kickoff(inputs=inputs)  # type: ignore[attr-defined]
 
                 # Check for strict mode violations
                 unguarded = get_unguarded_calls()
@@ -1920,7 +1920,7 @@ class _GuardedCrewImpl:
 
                 return result
         else:
-            return self._crew.kickoff(inputs=inputs)
+            return self._crew.kickoff(inputs=inputs)  # type: ignore[attr-defined]
 
     @property
     def guards(self) -> Dict[str, CrewAIGuard]:

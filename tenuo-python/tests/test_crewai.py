@@ -32,9 +32,9 @@ from tenuo.crewai import (
 )
 
 try:
-    from crewai.tools import BaseTool
+    from crewai.tools import BaseTool  # type: ignore[import-not-found]
 except ImportError:
-    class BaseTool:
+    class BaseTool:  # type: ignore[no-redef]
         pass
 
 class RealTool(BaseTool):
@@ -1382,7 +1382,7 @@ class TestPhase5RealCrewAIIntegration:
     def test_crewai_tools_import(self):
         """Can import CrewAI tools module."""
         try:
-            from crewai.tools.base_tool import Tool
+            from crewai.tools.base_tool import Tool  # type: ignore[import-not-found]
             assert Tool is not None
         except ImportError:
             pytest.skip("crewai not installed")

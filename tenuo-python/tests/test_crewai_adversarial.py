@@ -32,7 +32,7 @@ from tenuo.constraints import Subpath
 # =============================================================================
 
 try:
-    from crewai.tools import BaseTool
+    from crewai.tools import BaseTool  # type: ignore[import-not-found]
 except ImportError:
     # Fallback for when crewai is not installed (should not happen in this env)
     class BaseTool:  # type: ignore
