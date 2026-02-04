@@ -1448,6 +1448,8 @@ class TestWarrantValidationUnit:
             mock_warrant.exp = int(time.time()) - 3600  # Expired 1 hour ago
             mock_warrant.is_expired = None  # Force fallback to exp check
             mock_warrant.iss = "z6MkTrustedIssuer"
+            mock_warrant.aud = "https://validation.example.com"  # Match server URL for audience validation
+            mock_warrant.grants = [{"skill": "some_skill"}]  # Grant the skill to pass skill check
             MockWarrant.from_base64.return_value = mock_warrant
 
             with pytest.raises(WarrantExpiredError):
@@ -2111,6 +2113,191 @@ class TestAdversarialDoS:
 
         await cache.check_and_add("test_jti", time.time() + 60)
         assert cache._counter == 1, "Counter should increment on add"
+
+
+# =============================================================================
+# Test: Adversarial A2A Security Fixes
+# =============================================================================
+
+
+class TestAdversarialA2ASecurityFixes:
+    """
+    Tests for A2A security fixes.
+
+    These tests verify the fixes for:
+    1. Audience validation gap (missing aud claim when require_audience=True)
+    2. Constraint deserialization completeness (Range, Cidr, OneOf, NotOneOf, Regex)
+    3. Configuration validation warnings
+    """
+
+    @pytest.mark.asyncio
+    async def test_missing_audience_rejected(self):
+        """Missing aud claim is rejected when require_audience=True."""
+        from tenuo.a2a.errors import AudienceMismatchError
+
+        server = A2AServer(
+            name="Test Agent",
+            url="https://test.example.com",
+            public_key="z6MkTestKey",
+            trusted_issuers=["z6MkTrustedIssuer"],
+            require_warrant=True,
+            require_audience=True,  # Require audience
+        )
+
+        # Mock warrant without aud claim
+        with patch("tenuo_core.Warrant") as MockWarrant:
+            mock_warrant = MagicMock()
+            mock_warrant.exp = int(time.time()) + 3600
+            mock_warrant.is_expired = False
+            mock_warrant.iss = "z6MkTrustedIssuer"
+            # Ensure both aud and audience are None/empty
+            mock_warrant.aud = ""
+            mock_warrant.audience = ""
+            mock_warrant.grants = [{"skill": "test_skill"}]
+            MockWarrant.from_base64.return_value = mock_warrant
+
+            with pytest.raises(AudienceMismatchError) as exc_info:
+                await server.validate_warrant("fake_jwt", "test_skill", {})
+
+            # Verify the error message mentions "missing"
+            assert "missing" in str(exc_info.value).lower() or "required" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_range_constraint_deserialization(self):
+        """Range constraint can be deserialized from wire format."""
+        server = A2AServer(
+            name="Test Agent",
+            url="https://test.example.com",
+            public_key="z6MkTestKey",
+            trusted_issuers=["z6MkTrustedIssuer"],
+            require_warrant=False,
+        )
+
+        # Test Range constraint deserialization
+        range_dict = {"type": "Range", "min": 0, "max": 100}
+        constraint = server._deserialize_constraint(range_dict)
+
+        # Verify it's a Range constraint
+        assert type(constraint).__name__ == "Range"
+        # Verify it can check values
+        assert server._check_constraint(constraint, 50) is True
+        assert server._check_constraint(constraint, 150) is False
+
+    @pytest.mark.asyncio
+    async def test_cidr_constraint_deserialization(self):
+        """Cidr constraint can be deserialized from wire format."""
+        server = A2AServer(
+            name="Test Agent",
+            url="https://test.example.com",
+            public_key="z6MkTestKey",
+            trusted_issuers=["z6MkTrustedIssuer"],
+            require_warrant=False,
+        )
+
+        # Test Cidr constraint deserialization
+        cidr_dict = {"type": "Cidr", "cidr": "192.168.1.0/24"}
+        constraint = server._deserialize_constraint(cidr_dict)
+
+        # Verify it's a Cidr constraint
+        assert type(constraint).__name__ == "Cidr"
+        # Verify it can check IPs
+        assert server._check_constraint(constraint, "192.168.1.10") is True
+        assert server._check_constraint(constraint, "10.0.0.1") is False
+
+    @pytest.mark.asyncio
+    async def test_oneof_constraint_deserialization(self):
+        """OneOf constraint can be deserialized from wire format."""
+        server = A2AServer(
+            name="Test Agent",
+            url="https://test.example.com",
+            public_key="z6MkTestKey",
+            trusted_issuers=["z6MkTrustedIssuer"],
+            require_warrant=False,
+        )
+
+        # Test OneOf constraint deserialization
+        oneof_dict = {"type": "OneOf", "values": ["prod", "staging", "dev"]}
+        constraint = server._deserialize_constraint(oneof_dict)
+
+        # Verify it's a OneOf constraint
+        assert type(constraint).__name__ == "OneOf"
+        # Verify it can check values
+        assert server._check_constraint(constraint, "prod") is True
+        assert server._check_constraint(constraint, "test") is False
+
+    @pytest.mark.asyncio
+    async def test_notoneof_constraint_deserialization(self):
+        """NotOneOf constraint can be deserialized from wire format."""
+        server = A2AServer(
+            name="Test Agent",
+            url="https://test.example.com",
+            public_key="z6MkTestKey",
+            trusted_issuers=["z6MkTrustedIssuer"],
+            require_warrant=False,
+        )
+
+        # Test NotOneOf constraint deserialization
+        notoneof_dict = {"type": "NotOneOf", "values": ["admin", "root"]}
+        constraint = server._deserialize_constraint(notoneof_dict)
+
+        # Verify it's a NotOneOf constraint
+        assert type(constraint).__name__ == "NotOneOf"
+        # Verify it can check values
+        assert server._check_constraint(constraint, "user") is True
+        assert server._check_constraint(constraint, "admin") is False
+
+    @pytest.mark.asyncio
+    async def test_regex_constraint_deserialization(self):
+        """Regex constraint can be deserialized from wire format."""
+        server = A2AServer(
+            name="Test Agent",
+            url="https://test.example.com",
+            public_key="z6MkTestKey",
+            trusted_issuers=["z6MkTrustedIssuer"],
+            require_warrant=False,
+        )
+
+        # Test Regex constraint deserialization
+        regex_dict = {"type": "Regex", "pattern": r"^[a-z]+$"}
+        constraint = server._deserialize_constraint(regex_dict)
+
+        # Verify it's a Regex constraint
+        assert type(constraint).__name__ == "Regex"
+        # Verify it can check values
+        assert server._check_constraint(constraint, "abc") is True
+        assert server._check_constraint(constraint, "ABC123") is False
+
+    def test_insecure_config_warnings(self, caplog):
+        """Server warns about insecure configuration combinations."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        # Test 1: require_audience=True without require_warrant
+        server1 = A2AServer(
+            name="Test Agent",
+            url="https://test.example.com",
+            public_key="z6MkTestKey",
+            trusted_issuers=["z6MkTrustedIssuer"],
+            require_warrant=False,
+            require_audience=True,
+        )
+        assert any("INSECURE CONFIG" in record.message for record in caplog.records)
+        assert any("require_audience" in record.message for record in caplog.records)
+
+        caplog.clear()
+
+        # Test 2: require_warrant=True without require_pop
+        server2 = A2AServer(
+            name="Test Agent",
+            url="https://test.example.com",
+            public_key="z6MkTestKey",
+            trusted_issuers=["z6MkTrustedIssuer"],
+            require_warrant=True,
+            require_pop=False,
+        )
+        assert any("INSECURE CONFIG" in record.message for record in caplog.records)
+        assert any("require_pop" in record.message for record in caplog.records)
 
 
 # =============================================================================

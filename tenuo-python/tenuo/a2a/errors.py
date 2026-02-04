@@ -225,10 +225,12 @@ class AudienceMismatchError(A2AError):
 
     code = A2AErrorCode.AUDIENCE_MISMATCH
 
-    def __init__(self, expected: str, actual: str):
-        super().__init__(
-            f"Audience mismatch: expected {expected}, got {actual}", {"expected": expected, "actual": actual}
-        )
+    def __init__(self, expected: str, actual: str, reason: str = ""):
+        message = reason if reason else f"Audience mismatch: expected {expected}, got {actual}"
+        data = {"expected": expected, "actual": actual}
+        if reason:
+            data["reason"] = reason
+        super().__init__(message, data)
 
 
 class ReplayDetectedError(A2AError):

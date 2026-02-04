@@ -530,6 +530,9 @@ class A2AServer:
         self.audit_format = audit_format
         self.previous_keys = previous_keys or []
 
+        # SECURITY: Validate configuration for insecure combinations
+        self._validate_config()
+
         # Skill registry
         self._skills: Dict[str, SkillDefinition] = {}
 
@@ -551,6 +554,45 @@ class A2AServer:
     def __del__(self) -> None:
         """Cleanup on garbage collection."""
         self.close()
+
+    def _validate_config(self) -> None:
+        """
+        Validate configuration for insecure combinations.
+
+        SECURITY: Certain configuration combinations are ineffective or insecure.
+        This method logs warnings to help operators identify misconfigurations.
+        """
+        # Check 1: require_audience=True without require_warrant is ineffective
+        if self.require_audience and not self.require_warrant:
+            logger.warning(
+                "INSECURE CONFIG: require_audience=True but require_warrant=False. "
+                "Audience validation is ineffective without warrants. "
+                "Set require_warrant=True for secure operation."
+            )
+
+        # Check 2: require_pop=True without require_warrant is ineffective
+        if self.require_pop and not self.require_warrant:
+            logger.warning(
+                "INSECURE CONFIG: require_pop=True but require_warrant=False. "
+                "PoP validation is ineffective without warrants. "
+                "Set require_warrant=True for secure operation."
+            )
+
+        # Check 3: check_replay=True without require_warrant is ineffective
+        if self.check_replay and not self.require_warrant:
+            logger.warning(
+                "INSECURE CONFIG: check_replay=True but require_warrant=False. "
+                "Replay protection is ineffective without warrants. "
+                "Set require_warrant=True for secure operation."
+            )
+
+        # Check 4: Production deployment without PoP
+        if self.require_warrant and not self.require_pop:
+            logger.warning(
+                "INSECURE CONFIG: require_warrant=True but require_pop=False. "
+                "Warrants without Proof-of-Possession can be stolen and reused. "
+                "Set require_pop=True for secure operation."
+            )
 
     # -------------------------------------------------------------------------
     # Configuration Helpers
@@ -744,15 +786,31 @@ class A2AServer:
         except Exception as e:
             raise InvalidSignatureError(f"Failed to decode/verify warrant: {e}")
 
-        # Check expiry
-        # Use is_expired if available, otherwise check exp claim manually
-        is_expired = getattr(warrant, "is_expired", None)
-        if is_expired is True:
-            raise WarrantExpiredError()
-        elif is_expired is None:
+        # Check expiry (SECURITY: use Rust core method when available)
+        # The Rust core's is_expired() method is preferred as it handles
+        # edge cases consistently. We fall back to manual check only if needed.
+        is_expired_attr = getattr(warrant, "is_expired", None)
+        if is_expired_attr is not None:
+            try:
+                # Call the method to get the boolean result
+                if callable(is_expired_attr):
+                    is_expired = is_expired_attr()
+                else:
+                    is_expired = is_expired_attr
+
+                if is_expired:
+                    raise WarrantExpiredError()
+            except WarrantExpiredError:
+                raise  # Re-raise expected errors
+            except Exception as e:
+                # SECURITY: Fail-closed - if we can't check expiry, deny
+                logger.warning(f"Warrant expiry check failed: {e}")
+                raise WarrantExpiredError("Expiry check failed (fail-closed)")
+        else:
             # Fallback: check exp claim manually
+            # Note: This path should rarely be taken with tenuo_core warrants
             now = int(time.time())
-            exp = getattr(warrant, "exp", None)
+            exp = self._get_warrant_prop(warrant, "exp", "expires_at")
             if exp is not None and exp < now:
                 raise WarrantExpiredError()
 
@@ -768,10 +826,17 @@ class A2AServer:
             else:
                 raise UntrustedIssuerError(issuer_normalized)
 
-        # Check audience
+        # Check audience (SECURITY: must be present AND match when required)
         if self.require_audience:
             aud = self._get_warrant_prop(warrant, "aud", "audience")
-            if aud and aud != self.url:
+            if not aud:
+                # SECURITY: Missing aud claim when require_audience=True is a failure
+                raise AudienceMismatchError(
+                    expected=self.url,
+                    actual="",
+                    reason="Audience claim missing but required"
+                )
+            if aud != self.url:
                 raise AudienceMismatchError(expected=self.url, actual=aud)
 
         # Check replay
@@ -1238,8 +1303,8 @@ class A2AServer:
             return constraint.is_safe(str(value))
 
         # Cidr - IP address range (Rust core)
-        if hasattr(constraint, "contains_ip"):
-            return constraint.contains_ip(str(value))
+        if hasattr(constraint, "contains") and constraint_type == "Cidr":
+            return constraint.contains(str(value))
 
         # Pattern - glob matching (Rust core)
         if hasattr(constraint, "matches") and constraint_type == "Pattern":
@@ -1298,8 +1363,21 @@ class A2AServer:
 
         Warrant constraints come over the wire as dicts like:
             {"type": "Subpath", "root": "/data"}
+            {"type": "Range", "min": 0, "max": 100}
+            {"type": "OneOf", "values": ["prod", "staging"]}
 
         This converts them to actual constraint objects for _check_constraint().
+
+        Supported constraint types:
+        - Subpath: Filesystem path containment
+        - UrlSafe: SSRF protection
+        - Pattern: Glob matching
+        - Shlex: Shell command validation
+        - Range: Numeric bounds
+        - Cidr: IP address ranges
+        - OneOf: Set membership
+        - NotOneOf: Exclusion list
+        - Regex: Regular expression matching
 
         Args:
             data: Constraint dict or already-instantiated constraint
@@ -1318,27 +1396,90 @@ class A2AServer:
         constraint_type = data.get("type", "")
 
         try:
+            # Filesystem path containment
             if constraint_type == "Subpath":
                 from tenuo_core import Subpath
 
                 return Subpath(data.get("root", "/"))
+
+            # SSRF protection
             elif constraint_type == "UrlSafe":
                 from tenuo_core import UrlSafe
 
                 return UrlSafe(allow_domains=data.get("allow_domains"))
+
+            # Shell command validation (Python-only)
             elif constraint_type == "Shlex":
                 from tenuo.constraints import Shlex
 
                 return Shlex(allow=data.get("allow", []))
+
+            # Glob pattern matching
             elif constraint_type == "Pattern":
                 from tenuo_core import Pattern
 
                 return Pattern(data.get("pattern", "*"))
+
+            # Numeric range bounds
+            elif constraint_type == "Range":
+                from tenuo_core import Range
+
+                min_val = data.get("min")
+                max_val = data.get("max")
+                if min_val is None or max_val is None:
+                    raise ValueError(f"Range constraint requires 'min' and 'max' fields")
+                return Range(min=float(min_val), max=float(max_val))
+
+            # IP address range (CIDR notation)
+            elif constraint_type == "Cidr":
+                from tenuo_core import Cidr
+
+                cidr = data.get("cidr")
+                if not cidr:
+                    raise ValueError(f"Cidr constraint requires 'cidr' field")
+                return Cidr(cidr)
+
+            # Set membership (allowlist)
+            elif constraint_type == "OneOf":
+                from tenuo_core import OneOf
+
+                values = data.get("values", [])
+                if not values:
+                    raise ValueError(f"OneOf constraint requires non-empty 'values' list")
+                # Convert values to strings for OneOf
+                return OneOf(values=[str(v) for v in values])
+
+            # Exclusion list (blocklist)
+            elif constraint_type == "NotOneOf":
+                from tenuo_core import NotOneOf
+
+                values = data.get("values", [])
+                if not values:
+                    raise ValueError(f"NotOneOf constraint requires non-empty 'values' list")
+                # Convert values to strings for NotOneOf
+                return NotOneOf(values=[str(v) for v in values])
+
+            # Regular expression matching
+            elif constraint_type == "Regex":
+                from tenuo_core import Regex
+
+                pattern = data.get("pattern")
+                if not pattern:
+                    raise ValueError(f"Regex constraint requires 'pattern' field")
+                return Regex(pattern)
+
             else:
                 # Unknown type - fail closed
                 raise UnknownConstraintError(constraint_type=constraint_type, param=param)
+
+        except UnknownConstraintError:
+            raise  # Re-raise expected errors
         except ImportError as e:
             logger.warning(f"Failed to import constraint type {constraint_type}: {e}")
+            raise UnknownConstraintError(constraint_type=constraint_type, param=param)
+        except Exception as e:
+            # SECURITY: Fail-closed - deserialization errors mean we can't validate
+            logger.warning(f"Failed to deserialize {constraint_type} constraint: {e}")
             raise UnknownConstraintError(constraint_type=constraint_type, param=param)
 
     # -------------------------------------------------------------------------
