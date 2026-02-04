@@ -33,10 +33,15 @@ from tenuo.constraints import Subpath
 
 try:
     from crewai.tools import BaseTool  # type: ignore[import-not-found]
+    CREWAI_AVAILABLE = True
 except ImportError:
+    CREWAI_AVAILABLE = False
     # Fallback for when crewai is not installed (should not happen in this env)
-    class BaseTool:  # type: ignore
-        pass
+    class BaseTool:  # type: ignore[no-redef]
+        """Stub for when crewai is not installed."""
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
 
 class RealTool(BaseTool):
     """Real CrewAI Tool for testing."""
@@ -624,6 +629,10 @@ class TestSecurityRegressions:
                 attenuations={"read": {"path": child_constraint}},
             )
 
+    @pytest.mark.skipif(
+        not CREWAI_AVAILABLE,
+        reason="crewai not installed - crew.kickoff() requires real crewai"
+    )
     def test_unguarded_agents_fail_closed(self):
         """
         REGRESSION: Agents not in policy must raise, not proceed unguarded.

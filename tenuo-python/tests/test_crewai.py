@@ -35,7 +35,10 @@ try:
     from crewai.tools import BaseTool  # type: ignore[import-not-found]
 except ImportError:
     class BaseTool:  # type: ignore[no-redef]
-        pass
+        """Stub for when crewai is not installed."""
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
 
 class RealTool(BaseTool):
     """Real CrewAI Tool for testing."""
