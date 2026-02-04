@@ -835,21 +835,37 @@ class CrewAIGuard:
                 error = WarrantExpired(warrant_id="unknown", reason="Expiry check failed")  # type: ignore[assignment]
                 return self._handle_denial(error, tool_name, args, agent_role)
 
-            # SECURITY: Validate signing key matches warrant holder
+            # SECURITY: Validate signing key matches warrant holder (PoP requirement)
             try:
                 if hasattr(self._warrant, 'holder'):
                     warrant_holder = self._warrant.holder()
                     signing_pubkey = self._signing_key.public_key
-                    if hasattr(warrant_holder, 'verify') and hasattr(signing_pubkey, 'verify'):
-                        # Compare public key bytes if available
-                        if (hasattr(warrant_holder, 'raw') and hasattr(signing_pubkey, 'raw') and
-                                warrant_holder.raw() != signing_pubkey.raw()):
+
+                    # Verify both keys support comparison
+                    if hasattr(warrant_holder, 'raw') and hasattr(signing_pubkey, 'raw'):
+                        # Compare public key bytes
+                        if warrant_holder.raw() != signing_pubkey.raw():
                             error = InvalidPoP(  # type: ignore[assignment]
                                 reason="Signing key does not match warrant holder"
                             )
                             return self._handle_denial(error, tool_name, args, agent_role)
+                    else:
+                        # SECURITY: Fail-closed - if we can't compare keys, deny
+                        logger.warning(
+                            "Cannot verify PoP: keys lack raw() method. "
+                            "This violates PoP requirements."
+                        )
+                        error = InvalidPoP(  # type: ignore[assignment]
+                            reason="Cannot verify signing key matches holder: missing raw() method"
+                        )
+                        return self._handle_denial(error, tool_name, args, agent_role)
             except Exception as e:
-                logger.debug(f"Holder verification skipped: {e}")
+                # SECURITY: Fail-closed - holder verification failure means deny
+                logger.warning(f"Holder verification failed: {e}")
+                error = InvalidPoP(  # type: ignore[assignment]
+                    reason=f"Holder verification failed: {e}"
+                )
+                return self._handle_denial(error, tool_name, args, agent_role)
 
             try:
                 pop = self._warrant.sign(self._signing_key, tool_name, args)
@@ -1368,12 +1384,24 @@ class WarrantDelegator:
         return builder.grant(parent_key)
 
     def _get_parent_tools(self, parent_warrant: Warrant) -> set:
-        """Get the set of tools the parent warrant authorizes."""
+        """Get the set of tools the parent warrant authorizes.
+
+        Returns:
+            Set of tool names the parent authorizes
+
+        Raises:
+            EscalationAttempt: If tools cannot be retrieved (fail-closed)
+        """
         if hasattr(parent_warrant, "tools"):
             try:
                 return set(parent_warrant.tools())
             except Exception as e:
-                logger.warning(f"Could not get parent warrant tools: {e}")
+                # SECURITY: Fail-closed - if we can't verify parent tools, deny delegation
+                raise EscalationAttempt(
+                    f"Cannot verify parent warrant tools: {e}. "
+                    "Delegation denied (fail-closed)."
+                )
+        # No tools() method - assume warrant doesn't restrict tools
         return set()
 
     def _validate_tool_delegation(
@@ -1386,13 +1414,17 @@ class WarrantDelegator:
         """Validate that delegation doesn't escalate privileges.
 
         Checks:
-        1. Parent must have the tool
+        1. Parent must have the tool (if parent restricts tools)
         2. Each child constraint must be subset of parent's
 
         Raises:
             EscalationAttempt: If validation fails
+
+        Note:
+            Empty parent_tools set means parent doesn't restrict tools (no tools() method).
+            Non-empty parent_tools means parent explicitly lists allowed tools.
         """
-        # Check parent has this tool
+        # Check parent has this tool (only if parent restricts tools)
         if parent_tools and tool_name not in parent_tools:
             raise EscalationAttempt(
                 f"Cannot grant '{tool_name}': parent warrant doesn't authorize it. "
@@ -1415,15 +1447,23 @@ class WarrantDelegator:
         """Validate that child constraint is subset of parent's.
 
         Raises:
-            EscalationAttempt: If child would widen access
+            EscalationAttempt: If child would widen access or validation fails
         """
         # Try to get parent's constraint for this arg
         parent_constraint = None
         if hasattr(parent_warrant, "constraint_for"):
             try:
                 parent_constraint = parent_warrant.constraint_for(tool_name, arg_name)
-            except Exception:
-                pass
+            except (AttributeError, KeyError, LookupError):
+                # These exceptions mean the arg doesn't exist in parent - OK to proceed
+                # Parent doesn't constrain this arg, so child can add constraints
+                parent_constraint = None
+            except Exception as e:
+                # SECURITY: Fail-closed - unexpected error means we can't verify safety
+                raise EscalationAttempt(
+                    f"Cannot verify parent constraint for {tool_name}.{arg_name}: {e}. "
+                    "Delegation denied (fail-closed)."
+                )
 
         # If we can get parent constraint, verify subset relationship
         if parent_constraint is not None:
@@ -1811,7 +1851,8 @@ class _GuardedCrewImpl:
             if tool_constraints:
                 builder.allow(tool_name, **tool_constraints)
             else:
-                # Allow with wildcard if no specific constraints
+                # Allow tool with no parameter constraints (for zero-arg tools)
+                # Note: With closed-world semantics, any arguments will be rejected
                 builder.allow(tool_name, **{})
 
         builder.on_denial(self._on_denial)

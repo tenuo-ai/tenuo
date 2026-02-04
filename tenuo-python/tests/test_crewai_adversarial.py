@@ -707,9 +707,104 @@ class TestSecurityRegressions:
 
         result = guard._authorize("read", {"path": "/data/file.txt"})
 
-        # MUST return denial when authorize returns False
+        # MUST return denial, not None
         assert isinstance(result, DenialResult)
         assert result.error_code == "INVALID_POP"
+
+    def test_delegation_parent_tools_query_failure(self):
+        """
+        REGRESSION: If parent.tools() fails, must deny (fail-closed).
+        Previously: Returned empty set and skipped validation.
+        """
+        from tenuo.crewai import WarrantDelegator, EscalationAttempt
+
+        delegator = WarrantDelegator()
+
+        mock_parent = MagicMock()
+        mock_parent.is_expired.return_value = False
+        mock_parent.tools.side_effect = RuntimeError("Database connection lost")
+
+        with pytest.raises(EscalationAttempt, match="Cannot verify parent warrant tools"):
+            delegator.delegate(
+                parent_warrant=mock_parent,
+                parent_key=MagicMock(),
+                child_holder=MagicMock(),
+                attenuations={"read": {"path": Subpath("/data")}},
+            )
+
+    def test_delegation_parent_constraint_query_failure(self):
+        """
+        REGRESSION: If parent.constraint_for() fails unexpectedly, must deny.
+        Previously: Set to None and skipped subset validation.
+        """
+        from tenuo.crewai import WarrantDelegator, EscalationAttempt
+
+        delegator = WarrantDelegator()
+
+        mock_parent = MagicMock()
+        mock_parent.is_expired.return_value = False
+        mock_parent.tools.return_value = ["read"]
+        mock_parent.constraint_for.side_effect = RuntimeError("Constraint store corrupted")
+
+        child_constraint = MagicMock()
+        child_constraint.is_subset_of.return_value = True
+
+        with pytest.raises(EscalationAttempt, match="Cannot verify parent constraint"):
+            delegator.delegate(
+                parent_warrant=mock_parent,
+                parent_key=MagicMock(),
+                child_holder=MagicMock(),
+                attenuations={"read": {"path": child_constraint}},
+            )
+
+    def test_holder_verification_without_raw_method(self):
+        """
+        REGRESSION: If keys lack raw() method, must deny (fail-closed).
+        Previously: Skipped verification with debug log.
+        """
+        mock_warrant = MagicMock()
+        mock_warrant.is_expired.return_value = False
+        mock_warrant.holder.return_value = MagicMock(spec=[])  # No raw() method
+
+        mock_key = MagicMock()
+        mock_key.public_key = MagicMock(spec=[])  # No raw() method
+
+        guard = (GuardBuilder()
+            .allow("read", path=Subpath("/data"))
+            .with_warrant(mock_warrant, mock_key)
+            .on_denial("skip")
+            .build())
+
+        result = guard._authorize("read", {"path": "/data/file.txt"})
+
+        # MUST return denial, not None
+        assert isinstance(result, DenialResult)
+        assert result.error_code == "INVALID_POP"
+        assert "missing raw() method" in result.reason
+
+    def test_holder_verification_exception(self):
+        """
+        REGRESSION: If holder verification raises exception, must deny.
+        Previously: Logged at debug and continued.
+        """
+        mock_warrant = MagicMock()
+        mock_warrant.is_expired.return_value = False
+        mock_warrant.holder.side_effect = RuntimeError("Holder lookup failed")
+
+        mock_key = MagicMock()
+
+        guard = (GuardBuilder()
+            .allow("read", path=Subpath("/data"))
+            .with_warrant(mock_warrant, mock_key)
+            .on_denial("skip")
+            .build())
+
+        result = guard._authorize("read", {"path": "/data/file.txt"})
+
+        # MUST return denial, not None
+        assert isinstance(result, DenialResult)
+        assert result.error_code == "INVALID_POP"
+        assert "Holder verification failed" in result.reason
 
 
 # =============================================================================

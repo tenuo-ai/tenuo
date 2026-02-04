@@ -891,10 +891,21 @@ class TestTier2Authorization:
 
     def test_authorize_signs_pop_for_valid_warrant(self):
         """Authorization signs PoP when warrant is valid."""
+        # Setup proper holder verification mocks
+        mock_holder = MagicMock()
+        mock_holder.raw.return_value = b"public_key_bytes"
+
+        mock_pubkey = MagicMock()
+        mock_pubkey.raw.return_value = b"public_key_bytes"  # Match holder
+
+        mock_key = MagicMock()
+        mock_key.public_key = mock_pubkey
+
         mock_warrant = MagicMock()
         mock_warrant.is_expired.return_value = False
+        mock_warrant.holder.return_value = mock_holder
         mock_warrant.sign.return_value = b"signature"
-        mock_key = MagicMock()
+        mock_warrant.authorize.return_value = True
 
         guard = (GuardBuilder()
             .allow("read", path=Subpath("/data"))
@@ -906,13 +917,24 @@ class TestTier2Authorization:
         # Should succeed and call sign
         assert result is None  # None = success
         mock_warrant.sign.assert_called_once_with(mock_key, "read", {"path": "/data/file.txt"})
+        mock_warrant.authorize.assert_called_once()
 
     def test_authorize_handles_sign_failure(self):
         """Authorization handles PoP signing failures gracefully."""
+        # Setup proper holder verification mocks
+        mock_holder = MagicMock()
+        mock_holder.raw.return_value = b"public_key_bytes"
+
+        mock_pubkey = MagicMock()
+        mock_pubkey.raw.return_value = b"public_key_bytes"  # Match holder
+
+        mock_key = MagicMock()
+        mock_key.public_key = mock_pubkey
+
         mock_warrant = MagicMock()
         mock_warrant.is_expired.return_value = False
+        mock_warrant.holder.return_value = mock_holder
         mock_warrant.sign.side_effect = Exception("Invalid key")
-        mock_key = MagicMock()
 
         guard = (GuardBuilder()
             .allow("read", path=Subpath("/data"))
