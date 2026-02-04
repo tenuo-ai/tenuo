@@ -17,7 +17,7 @@ Demos showing Tenuo's value for CrewAI multi-agent systems.
 
 **Recommendation for first-time users:** Start with `demo_simple.py`, then try `demo_live.py` if you have an API key.
 
-## demo_simple.py (205 lines)
+## demo_simple.py (210 lines)
 
 Deterministic demo with real CrewAI components. Uses `guard.protect(tool)` public API.
 
@@ -37,7 +37,7 @@ python demo_simple.py --slow       # Slower for recording
 - Tenuo intercepts at authorization layer
 - Detailed DENY output shows attempted vs allowed paths
 
-## demo_live.py (174 lines)
+## demo_live.py (177 lines)
 
 Real LLM demo with CrewAI agent. Uses `guard.protect(tool)` public API.
 
