@@ -93,12 +93,20 @@ def test_crewai_agent_creation():
     """Verify Agent constructor signature."""
     try:
         from crewai import Agent
+        from unittest.mock import MagicMock
+
+        # Mock LLM for newer CrewAI versions that require it
+        mock_llm = MagicMock()
+        mock_llm.supports_stop_words.return_value = False
 
         agent = Agent(
             role="test",
             goal="test goal",
             backstory="test backstory",
-            tools=[]
+            tools=[],
+            llm=mock_llm,
+            allow_delegation=False,
+            verbose=False
         )
 
         assert hasattr(agent, 'role')
@@ -112,8 +120,21 @@ def test_crewai_crew_creation():
     """Verify Crew constructor signature."""
     try:
         from crewai import Agent, Task, Crew
+        from unittest.mock import MagicMock
 
-        agent = Agent(role="test", goal="test goal", backstory="test backstory", tools=[])
+        # Mock LLM for newer CrewAI versions that require it
+        mock_llm = MagicMock()
+        mock_llm.supports_stop_words.return_value = False
+
+        agent = Agent(
+            role="test",
+            goal="test goal",
+            backstory="test backstory",
+            tools=[],
+            llm=mock_llm,
+            allow_delegation=False,
+            verbose=False
+        )
         task = Task(description="test task", expected_output="test output", agent=agent)
         crew = Crew(agents=[agent], tasks=[task])
 
