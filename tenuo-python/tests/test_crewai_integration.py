@@ -31,7 +31,7 @@ class TestCrewAIToolStructure:
 
     def test_crewai_basetool_structure(self):
         """Verify CrewAI BaseTool has expected structure."""
-        from crewai.tools import BaseTool
+        from crewai.tools import BaseTool  # type: ignore[import-not-found]
 
         class TestTool(BaseTool):
             name: str = "test_tool"
