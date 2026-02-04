@@ -248,7 +248,6 @@ def guard_node(
         config: Optional[Dict[str, Any]] = None,
         **kwargs: Any,
     ) -> Any:
-        # print(f"DEBUG: wrapper called. config type: {type(config)}. kwargs: {kwargs.keys()}")
         if config is None and "config" in kwargs:
             config = kwargs["config"]
 
