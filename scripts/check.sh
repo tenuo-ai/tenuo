@@ -20,6 +20,41 @@ done
 
 echo "[INFO] Starting Pre-commit Checks..."
 
+# Project Structure Validation
+echo -e "\n${GREEN}[0a/9] Validating project structure...${NC}"
+STRUCTURE_OK=1
+
+# Check that we're in repo root
+if [ ! -d "tenuo-core" ] || [ ! -d "tenuo-python" ]; then
+    echo -e "${RED}  ✗ Must run from repository root${NC}"
+    STRUCTURE_OK=0
+fi
+
+# Check pyproject.toml is in the right place (not repo root)
+if [ -f "pyproject.toml" ]; then
+    echo -e "${RED}  ✗ pyproject.toml found in repo root - should only be in tenuo-python/${NC}"
+    echo -e "${RED}  → This causes CI to fail with 'does not appear to be a Python project'${NC}"
+    STRUCTURE_OK=0
+fi
+
+# Check tenuo-python has pyproject.toml
+if [ ! -f "tenuo-python/pyproject.toml" ]; then
+    echo -e "${RED}  ✗ tenuo-python/pyproject.toml not found${NC}"
+    STRUCTURE_OK=0
+fi
+
+# Check tenuo-core has Cargo.toml
+if [ ! -f "tenuo-core/Cargo.toml" ]; then
+    echo -e "${RED}  ✗ tenuo-core/Cargo.toml not found${NC}"
+    STRUCTURE_OK=0
+fi
+
+if [ "$STRUCTURE_OK" = "0" ]; then
+    echo -e "${RED}  → Project structure validation failed!${NC}"
+    exit 1
+fi
+echo "  → Project structure valid"
+
 # 0. Cargo.lock Sync Check
 echo -e "\n${GREEN}[0/9] Checking Cargo.lock sync...${NC}"
 cd tenuo-core
