@@ -5,6 +5,10 @@ on:
     - cron: '0 8 * * *'  # Daily at 8am UTC
   workflow_dispatch:
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   check-releases:
     runs-on: ubuntu-latest
