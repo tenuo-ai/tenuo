@@ -11,7 +11,10 @@ Usage:
     python demo_simple.py --unprotected  # No protection
     python demo_simple.py --slow       # Slower for recording
 """
-import argparse, os, sys, time
+import argparse
+import os
+import sys
+import time
 
 # Suppress CrewAI noise
 os.environ["CREWAI_DISABLE_TELEMETRY"] = "true"
@@ -29,7 +32,8 @@ def main():
     print(f"\n{BOLD}{C}═══ Tenuo CrewAI Demo ═══{END}\n")
 
     # Suppress CrewAI import noise
-    import io, contextlib
+    import io
+    import contextlib
     with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
         from crewai.tools import BaseTool
         from crewai.events.utils import console_formatter
@@ -39,7 +43,8 @@ def main():
         from tenuo import SigningKey, Warrant, Subpath
         from tenuo.crewai import GuardBuilder, ConstraintViolation
     except ImportError:
-        print(f'{R}pip install "tenuo[crewai]"{END}'); sys.exit(1)
+        print(f'{R}pip install "tenuo[crewai]"{END}')
+        sys.exit(1)
 
     # Simulated filesystem
     files = {
@@ -120,7 +125,7 @@ def main():
     try:
         result = manager_tool._run(path="/data/secrets/api-keys.txt")
         print(f"{G}    ✓ Allowed:{END} {result[:30]}...")
-    except ConstraintViolation as e:
+    except ConstraintViolation:
         print(f"{R}    ✗ Blocked{END}")
     print()
     time.sleep(d)
@@ -174,7 +179,7 @@ def main():
 
         try:
             # This should fail - researcher cannot widen scope beyond their warrant
-            escalated = (
+            (
                 researcher_warrant.grant_builder()
                 .holder(SigningKey.generate().public_key)
                 .capability("read_file", path=Subpath("/data"))  # WIDER than /data/papers
@@ -182,7 +187,7 @@ def main():
                 .grant(researcher_key)
             )
             print(f"{R}    ⚠ Escalation worked! (this should never happen){END}")
-        except Exception as e:
+        except Exception:
             print(f"{G}    [TENUO] BLOCKED — cannot widen scope beyond parent warrant{END}")
             print(f"{Y}      Requested: /data/* (wider){END}")
             print(f"{Y}      Parent:    /data/papers/* (researcher's limit){END}")
@@ -195,10 +200,10 @@ def main():
         print(f"{R}{'═'*55}\n  WITHOUT TENUO: Secrets leaked in both scenarios.\n{'═'*55}{END}\n")
     else:
         print(f"{G}{'═'*55}")
-        print(f"  WITH TENUO:")
-        print(f"  • Warrants are cryptographically signed and chained")
-        print(f"  • Attenuation mathematically enforced (can only narrow)")
-        print(f"  • Prompt injection blocked — warrant is source of truth")
+        print("  WITH TENUO:")
+        print("  • Warrants are cryptographically signed and chained")
+        print("  • Attenuation mathematically enforced (can only narrow)")
+        print("  • Prompt injection blocked — warrant is source of truth")
         print(f"{'═'*55}{END}\n")
 
 if __name__ == "__main__":
