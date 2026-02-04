@@ -159,7 +159,7 @@ def main():
         print(f"❌ FAILED: Directories are identical: {baseline_dir}")
         sys.exit(1)
 
-    print(f"✓ PASS: Baseline and Tenuo wrote to different directories")
+    print("✓ PASS: Baseline and Tenuo wrote to different directories")
     print(f"  Baseline: {baseline_dir.name}")
     print(f"  Tenuo:    {tenuo_dir.name}")
     print()
@@ -181,7 +181,7 @@ def main():
         print(f"  File: {baseline_file}")
         sys.exit(1)
 
-    print(f"✓ PASS: Result files have correct format")
+    print("✓ PASS: Result files have correct format")
     print(f"  Utility: {baseline_data.get('utility')}")
     print(f"  Duration: {baseline_data.get('duration')}s")
     print()
@@ -195,7 +195,7 @@ def main():
     print()
     print("Next steps:")
     print("  1. Run full benchmark:")
-    print(f"     python -m benchmarks.agentdojo.evaluate --suite workspace --compare")
+    print("     python -m benchmarks.agentdojo.evaluate --suite workspace --compare")
     print()
     print("  2. Analyze results:")
     print("     python -m benchmarks.agentdojo.analyze results/workspace/<timestamp>/")

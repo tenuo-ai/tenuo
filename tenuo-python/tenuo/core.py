@@ -272,22 +272,22 @@ def _check_url_pattern(constraint: Any, value: Any) -> bool:
 
     try:
         parsed = urlparse(str(value))
-        
+
         # Check scheme if specified
         scheme = _get_attr_safe(constraint, "scheme")
         if scheme and parsed.scheme != scheme:
             return False
-            
+
         # Check host if specified
         host = _get_attr_safe(constraint, "host")
         if host and not fnmatch.fnmatch(parsed.netloc, host):
             return False
-            
+
         # Check path if specified
         path = _get_attr_safe(constraint, "path")
         if path and not fnmatch.fnmatch(parsed.path, path):
             return False
-            
+
         return True
     except Exception:
         return False

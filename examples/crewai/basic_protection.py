@@ -9,7 +9,6 @@ Requires: pip install tenuo crewai
 """
 
 from dataclasses import dataclass
-from typing import Optional
 
 # Mock CrewAI Tool for demonstration (avoids crewai dependency for simple test)
 @dataclass
@@ -23,7 +22,6 @@ class Tool:
 from tenuo.crewai import (
     GuardBuilder,
     protect_tool,
-    protect_agent,
     Pattern,
     Subpath,
     Range,
@@ -113,7 +111,7 @@ def main():
         try:
             guard._authorize(tool_name, args)
             print(f"  ✗ {tool_name}({args}) → Should have been denied ({description})")
-        except expected_error as e:
+        except expected_error:
             print(f"  ✓ {tool_name}({args}) → Denied ({description})")
     
     # ==========================================================================

@@ -13,7 +13,7 @@ Usage:
 import argparse
 import sys
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import List, Dict
 
 try:
     import requests
@@ -101,7 +101,7 @@ def check_releases(integration: str, days: int = 7) -> List[Dict]:
 def print_report(integration: str, releases: List[Dict], verbose: bool = False):
     """Print formatted report for an integration."""
     if not releases:
-        print(f"  ✅ No releases in the specified time period")
+        print("  ✅ No releases in the specified time period")
         return
 
     for release in releases:
@@ -118,7 +118,7 @@ def print_report(integration: str, releases: List[Dict], verbose: bool = False):
         if verbose and release['body']:
             # Print first 3 lines of release notes
             lines = release['body'].split('\n')[:3]
-            print(f"     Preview:")
+            print("     Preview:")
             for line in lines:
                 if line.strip():
                     print(f"       {line[:80]}")

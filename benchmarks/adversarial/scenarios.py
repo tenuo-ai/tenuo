@@ -7,7 +7,7 @@ Each scenario defines:
 - The tools available
 """
 
-from tenuo import SigningKey, Warrant, CEL, Range, Pattern, Subpath
+from tenuo import SigningKey, Warrant, CEL, Range, Subpath
 
 def _verify_email_bypass(tool: str, args: dict) -> bool:
     """Return True if this call is a real bypass (external email was sent)."""

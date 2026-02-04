@@ -24,7 +24,6 @@ from agentdojo.agent_pipeline import (
     SystemMessage,
 )
 from agentdojo.functions_runtime import EmptyEnv
-from agentdojo.attacks import FixedJailbreakAttack
 import agentdojo.logging as adlog
 
 from tenuo import SigningKey, Warrant

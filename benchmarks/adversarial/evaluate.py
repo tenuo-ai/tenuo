@@ -21,12 +21,9 @@ from openai import OpenAI
 
 from .redteam import RedTeamBenchmark, AttackResult
 from .scenarios import ADVERSARIAL_SCENARIOS, build_scenario
-from .statistics import aggregate_runs, format_ci, compare_conditions
+from .statistics import aggregate_runs, format_ci
 from .metrics import (
-    calculate_enhanced_metrics,
-    format_metrics_table,
     estimate_cost,
-    constraint_type_from_scenario,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")

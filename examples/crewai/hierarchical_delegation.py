@@ -11,7 +11,6 @@ Requires: pip install tenuo crewai
 """
 
 from dataclasses import dataclass
-from typing import Optional
 from unittest.mock import MagicMock
 
 # Mock CrewAI Tool
@@ -97,11 +96,11 @@ def main():
         ttl=1800,  # 30 minutes
     )
     
-    print(f"  ✓ Researcher warrant created")
+    print("  ✓ Researcher warrant created")
     print(f"    Tools: {list(researcher_attenuations.keys())}")
-    print(f"    search.query: arxiv:* only")
-    print(f"    read_file.path: /research/papers only")
-    print(f"    TTL: 30 minutes")
+    print("    search.query: arxiv:* only")
+    print("    read_file.path: /research/papers only")
+    print("    TTL: 30 minutes")
     
     # ==========================================================================
     # 3. Delegate to Writer (different narrowing)
@@ -134,10 +133,10 @@ def main():
         ttl=1800,
     )
     
-    print(f"  ✓ Writer warrant created")
+    print("  ✓ Writer warrant created")
     print(f"    Tools: {list(writer_attenuations.keys())}")
-    print(f"    read_file.path: /research/drafts only")
-    print(f"    write_file.path: /research/output only")
+    print("    read_file.path: /research/drafts only")
+    print("    write_file.path: /research/output only")
     
     # ==========================================================================
     # 4. Test Escalation Prevention
@@ -156,9 +155,9 @@ def main():
             attenuations={"delete_all": {"target": Wildcard()}},  # Manager doesn't have this!
         )
         print("  ✗ Should have been rejected")
-    except EscalationAttempt as e:
-        print(f"  ✓ Correctly rejected: EscalationAttempt")
-        print(f"    Reason: Cannot grant tool manager doesn't have")
+    except EscalationAttempt:
+        print("  ✓ Correctly rejected: EscalationAttempt")
+        print("    Reason: Cannot grant tool manager doesn't have")
     
     # Test 2: Show that proper narrowing works
     print("\n  Test 2: Valid narrowing succeeds")
@@ -168,7 +167,7 @@ def main():
         child_holder=MagicMock(),
         attenuations={"search": {"query": Pattern("arxiv:*")}},  # Valid narrowing
     )
-    print(f"  ✓ Delegation succeeded (proper attenuation)")
+    print("  ✓ Delegation succeeded (proper attenuation)")
     
     # ==========================================================================
     # 5. Using Delegated Warrants in Guards
@@ -187,7 +186,7 @@ def main():
         .seal()  # Prevent bypass
         .build())
     
-    print(f"  Researcher Guard:")
+    print("  Researcher Guard:")
     print(f"    Tier: {researcher_guard.tier}")
     print(f"    Has warrant: {researcher_guard.has_warrant}")
     print(f"    Sealed: {researcher_guard._seal_mode}")
@@ -203,17 +202,17 @@ def main():
     from tenuo.crewai import ConstraintViolation
     try:
         researcher_guard._authorize("search", {"query": "pubmed:12345"})
-        print(f"    search('pubmed:12345'): Should be denied!")
+        print("    search('pubmed:12345'): Should be denied!")
     except ConstraintViolation:
-        print(f"    search('pubmed:12345'): DENIED ✓")
+        print("    search('pubmed:12345'): DENIED ✓")
     
     # Denied: write_file (not delegated)
     from tenuo.crewai import ToolDenied
     try:
         researcher_guard._authorize("write_file", {"path": "/any"})
-        print(f"    write_file('/any'): Should be denied!")
+        print("    write_file('/any'): Should be denied!")
     except ToolDenied:
-        print(f"    write_file('/any'): DENIED ✓ (not in researcher's scope)")
+        print("    write_file('/any'): DENIED ✓ (not in researcher's scope)")
     
     print("\n" + "=" * 60)
     print("Demo complete!")

@@ -9,8 +9,7 @@ Features:
 - Audit Logging
 """
 
-import logging
-from crewai import Agent, Crew, Task, Tool, Process
+from crewai import Agent, Task, Process
 try:
     from crewai.tools import BaseTool
 except ImportError:
