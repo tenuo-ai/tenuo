@@ -37,7 +37,7 @@ Security Philosophy (Fail Closed):
 Tool Namespacing:
     CrewAI tool names are not globally unique. Multiple agents may have tools
     named `search` with different implementations and security requirements.
-    
+
     Tenuo internally namespaces tools as `agent_role::tool_name` to prevent
     cross-agent confusion. Resolution order:
     1. Check `agent_role::tool_name` (exact match)
@@ -320,8 +320,8 @@ class WarrantExpired(TenuoCrewAIError):
     error_code = "WARRANT_EXPIRED"
 
     def __init__(
-        self, 
-        warrant_id: Optional[str] = None, 
+        self,
+        warrant_id: Optional[str] = None,
         expired_at: Optional[str] = None,
         reason: Optional[str] = None,
     ):
@@ -608,7 +608,7 @@ class GuardBuilder:
                 "on_denial='skip' without audit callback - denials will be silent. "
                 "Consider adding .audit(callback) or using on_denial='log' for observability."
             )
-        
+
         return CrewAIGuard(
             allowed=self._allowed.copy(),
             warrant=self._warrant,
@@ -673,7 +673,7 @@ class CrewAIGuard:
         original_func = getattr(tool, "func", None)
         if original_func is None:
             original_func = getattr(tool, "_run", None)
-        
+
         if original_func is None:
              raise ConfigurationError(
                 f"Cannot protect tool '{tool.name}': no executable method found. "
@@ -699,7 +699,7 @@ class CrewAIGuard:
                     "Use the protected tool returned by guard.protect() instead. "
                     "This prevents authorization bypass."
                 )
-            
+
             # Seal whichever method was found
             try:
                 if hasattr(tool, "func"):
@@ -927,7 +927,7 @@ class CrewAIGuard:
         agent_role: Optional[str] = None,
     ) -> None:
         """Emit audit event for authorization decision.
-        
+
         Note: Arguments are passed as-is to the audit callback. If sensitive
         data redaction is required, implement it in your callback.
         """
@@ -935,7 +935,7 @@ class CrewAIGuard:
             # SECURITY: Redact potentially sensitive argument values
             # Only include argument names and types, not raw values
             redacted_args = {
-                k: f"<{type(v).__name__}:{len(str(v))} chars>" 
+                k: f"<{type(v).__name__}:{len(str(v))} chars>"
                 for k, v in arguments.items()
             }
             event = AuditEvent(
@@ -1435,7 +1435,7 @@ class WarrantDelegator:
                         f"parent constraint {parent_constraint}"
                     )
             else:
-                # SECURITY: Fail-closed - if constraint doesn't support is_subset_of, 
+                # SECURITY: Fail-closed - if constraint doesn't support is_subset_of,
                 # we cannot verify attenuation. Reject the delegation.
                 raise EscalationAttempt(
                     f"Cannot validate attenuation for {tool_name}.{arg_name}: "
@@ -1448,8 +1448,8 @@ class WarrantDelegator:
 # Phase 5: Strict Mode Context
 # =============================================================================
 
-import contextvars
-from contextlib import contextmanager
+import contextvars  # noqa: E402 - intentionally grouped in Phase 5 section
+from contextlib import contextmanager  # noqa: E402
 
 # Context var to track active guarded zone
 _guarded_context: contextvars.ContextVar[Optional["CrewAIGuard"]] = contextvars.ContextVar(
@@ -1496,7 +1496,7 @@ def _guarded_zone(guard: "CrewAIGuard", strict: bool = False):
 
 def get_active_guard() -> Optional["CrewAIGuard"]:
     """Get the currently active guard in this context.
-    
+
     Returns None if not in a guarded zone.
     """
     return _guarded_context.get()
@@ -1534,10 +1534,10 @@ def guarded_step(
     audit: Optional[Callable[[AuditEvent], None]] = None,
 ):
     """Decorator for guarded CrewAI Flow steps.
-    
+
     Wraps a Flow step with per-step authorization. Creates a scoped guard
     that applies only during step execution.
-    
+
     Args:
         allow: Dict of tool_name -> constraints for Tier 1
         warrant: Warrant for Tier 2 authorization
@@ -1546,7 +1546,7 @@ def guarded_step(
         on_denial: How to handle denials ("raise", "log", "skip")
         strict: If True, fail if any unguarded tool calls detected
         audit: Optional audit callback
-    
+
     Example:
         @guarded_step(
             allow={"web_search": {"query": Wildcard()}},
@@ -1559,35 +1559,35 @@ def guarded_step(
     def decorator(func: Callable) -> Callable:
         import functools
         import time
-        
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             # Build guard for this step
             builder = GuardBuilder()
-            
+
             if allow:
                 for tool_name, constraints in allow.items():
                     builder.allow(tool_name, **constraints)
-            
+
             if warrant and signing_key:
                 builder.with_warrant(warrant, signing_key)
-            
+
             builder.on_denial(on_denial)
-            
+
             if audit:
                 builder.audit(audit)
-            
+
             guard = builder.build()
-            
+
             # Track step start time for TTL enforcement
             step_start = time.time()
             step_name = func.__name__
-            
+
             # Parse TTL if provided
             ttl_seconds = None
             if ttl:
                 ttl_seconds = _parse_ttl(ttl)
-            
+
             # Execute in guarded zone
             with _guarded_zone(guard, strict=strict):
                 try:
@@ -1598,7 +1598,7 @@ def guarded_step(
                         unguarded = get_unguarded_calls()
                         if unguarded:
                             raise UnguardedToolError(unguarded, step_name)
-                    
+
                     # Check TTL if specified
                     if ttl_seconds:
                         elapsed = time.time() - step_start
@@ -1607,20 +1607,20 @@ def guarded_step(
                                 f"Step '{step_name}' exceeded TTL of {ttl}: "
                                 f"elapsed {elapsed:.1f}s. Warrant would be expired."
                             )
-            
+
             return result
-        
+
         return wrapper
     return decorator
 
 
 def _parse_ttl(ttl: str) -> float:
     """Parse TTL string to seconds.
-    
+
     Supports: "30s", "10m", "1h", "1d"
     """
     ttl = ttl.strip().lower()
-    
+
     if ttl.endswith("s"):
         return float(ttl[:-1])
     elif ttl.endswith("m"):
@@ -1640,7 +1640,7 @@ def _parse_ttl(ttl: str) -> float:
 
 class GuardedCrewBuilder:
     """Builder for GuardedCrew with policy-based warrant issuance."""
-    
+
     def __init__(
         self,
         agents: List[Any],
@@ -1648,7 +1648,7 @@ class GuardedCrewBuilder:
         process: Any = None,
     ):
         """Initialize with CrewAI Crew components.
-        
+
         Args:
             agents: List of CrewAI Agent instances
             tasks: List of CrewAI Task instances
@@ -1665,26 +1665,26 @@ class GuardedCrewBuilder:
         self._audit_callback: Optional[Callable[[AuditEvent], None]] = None
         self._strict: bool = False
         self._ttl: Optional[str] = None
-    
+
     def with_issuer(
         self, warrant: Warrant, signing_key: SigningKey
     ) -> "GuardedCrewBuilder":
         """Set the warrant issuer for Tier 2.
-        
+
         The issuer will create per-agent warrants based on the policy.
         """
         self._issuer_warrant = warrant
         self._issuer_key = signing_key
         return self
-    
+
     def policy(
         self, agent_tools: Dict[str, List[str]]
     ) -> "GuardedCrewBuilder":
         """Set which tools each agent is allowed to use.
-        
+
         Args:
             agent_tools: Dict mapping agent role -> list of allowed tools
-            
+
         Example:
             .policy({
                 "researcher": ["web_search", "read_file"],
@@ -1693,15 +1693,15 @@ class GuardedCrewBuilder:
         """
         self._policy = agent_tools
         return self
-    
+
     def constraints(
         self, agent_constraints: Dict[str, Dict[str, Dict[str, Constraint]]]
     ) -> "GuardedCrewBuilder":
         """Set per-tool constraints for each agent.
-        
+
         Args:
             agent_constraints: Dict[agent_role, Dict[tool_name, Dict[arg, constraint]]]
-            
+
         Example:
             .constraints({
                 "researcher": {
@@ -1711,29 +1711,29 @@ class GuardedCrewBuilder:
         """
         self._constraints = agent_constraints
         return self
-    
+
     def on_denial(self, mode: DenialMode) -> "GuardedCrewBuilder":
         """Set denial handling mode."""
         self._on_denial = mode
         return self
-    
+
     def audit(
         self, callback: Callable[[AuditEvent], None]
     ) -> "GuardedCrewBuilder":
         """Set audit callback for all agent guards."""
         self._audit_callback = callback
         return self
-    
+
     def strict(self, enabled: bool = True) -> "GuardedCrewBuilder":
         """Enable strict mode - fail if unguarded tools detected."""
         self._strict = enabled
         return self
-    
+
     def ttl(self, ttl: str) -> "GuardedCrewBuilder":
         """Set TTL for generated warrants."""
         self._ttl = ttl
         return self
-    
+
     def build(self) -> "_GuardedCrewImpl":
         """Build the GuardedCrew instance."""
         return _GuardedCrewImpl(
@@ -1753,13 +1753,13 @@ class GuardedCrewBuilder:
 
 class _GuardedCrewImpl:
     """Crew wrapper with policy-based per-agent authorization.
-    
+
     Automatically issues warrants and protects tools for each agent
     based on the defined policy.
-    
+
     Note: Use GuardedCrew() factory function, not this class directly.
     """
-    
+
     def __init__(
         self,
         agents: List[Any],
@@ -1785,27 +1785,27 @@ class _GuardedCrewImpl:
         self._audit_callback = audit_callback
         self._strict = strict
         self._ttl = ttl
-        
+
         # Built crew instance (created on first kickoff)
         self._crew = None
-        
+
         # Per-agent guards
         self._guards: Dict[str, CrewAIGuard] = {}
-    
+
     def _get_agent_role(self, agent: Any) -> str:
         """Extract role from CrewAI agent."""
         if hasattr(agent, "role"):
             return agent.role
         return str(agent)
-    
+
     def _build_agent_guard(self, agent: Any) -> CrewAIGuard:
         """Build a guard for a specific agent based on policy."""
         role = self._get_agent_role(agent)
         allowed_tools = self._policy.get(role, [])
         agent_constraints = self._constraints.get(role, {})
-        
+
         builder = GuardBuilder()
-        
+
         for tool_name in allowed_tools:
             tool_constraints = agent_constraints.get(tool_name, {})
             if tool_constraints:
@@ -1813,17 +1813,17 @@ class _GuardedCrewImpl:
             else:
                 # Allow with wildcard if no specific constraints
                 builder.allow(tool_name, **{})
-        
+
         builder.on_denial(self._on_denial)
-        
+
         if self._audit_callback:
             builder.audit(self._audit_callback)
-        
+
         # Tier 2: Issue per-agent warrant from issuer
         if self._issuer_warrant and self._issuer_key:
             # Generate agent-specific signing key (in production, agent provides their own)
             agent_key = SigningKey.generate()
-            
+
             # Delegate warrant to this agent with narrowed scope
             delegator = WarrantDelegator()
             try:
@@ -1831,7 +1831,7 @@ class _GuardedCrewImpl:
                     parent_warrant=self._issuer_warrant,
                     parent_key=self._issuer_key,
                     child_holder=agent_key.public_key,
-                    attenuations={tool: agent_constraints.get(tool, {}) 
+                    attenuations={tool: agent_constraints.get(tool, {})
                                   for tool in allowed_tools},
                     ttl=_parse_ttl(self._ttl) if self._ttl else None,
                 )
@@ -1848,16 +1848,16 @@ class _GuardedCrewImpl:
                     "Warrant issuance is required when .with_issuer() is configured. "
                     "Check that the issuer warrant has the necessary capabilities."
                 )
-        
+
         return builder.build()
-    
+
     def _protect_agents(self) -> List[Any]:
         """Protect all agent tools and return modified agent list."""
         protected_agents = []
-        
+
         for agent in self._agents:
             role = self._get_agent_role(agent)
-            
+
             if role not in self._policy:
                 # SECURITY: Fail-closed - agents not in policy cannot execute
                 raise ConfigurationError(
@@ -1865,22 +1865,22 @@ class _GuardedCrewImpl:
                     "All agents must be covered by the policy for security. "
                     f"Add '{role}' to .policy() configuration."
                 )
-            
+
             guard = self._build_agent_guard(agent)
             self._guards[role] = guard
-            
+
             # Protect agent's tools
             if hasattr(agent, "tools") and agent.tools:
                 protected_tools = guard.protect_all(agent.tools, agent_role=role)
                 agent.tools = protected_tools
-            
+
             protected_agents.append(agent)
-        
+
         return protected_agents
-    
+
     def kickoff(self, inputs: Optional[Dict[str, Any]] = None) -> Any:
         """Execute the crew with authorization enforcement.
-        
+
         This is the main entry point that mirrors CrewAI's Crew.kickoff().
         """
         try:
@@ -1890,10 +1890,10 @@ class _GuardedCrewImpl:
                 "crewai is required for GuardedCrew. "
                 "Install with: pip install crewai"
             )
-        
+
         # Protect all agents
         protected_agents = self._protect_agents()
-        
+
         # Build the crew
         crew_kwargs = {
             "agents": protected_agents,
@@ -1901,27 +1901,27 @@ class _GuardedCrewImpl:
         }
         if self._process is not None:
             crew_kwargs["process"] = self._process
-        
+
         self._crew = Crew(**crew_kwargs)
-        
+
         # Execute in guarded zone if strict mode
         if self._strict:
             # Use first available guard for context (all agents use same strict setting)
             first_guard = list(self._guards.values())[0] if self._guards else None
             with _guarded_zone(first_guard, strict=True):
                 result = self._crew.kickoff(inputs=inputs)
-                
+
                 # Check for strict mode violations
                 unguarded = get_unguarded_calls()
                 if unguarded:
                     # Deduplicate and sort for cleaner error
                     unique_unguarded = sorted(set(unguarded))
                     raise UnguardedToolError(unique_unguarded, "GuardedCrew.kickoff")
-                
+
                 return result
         else:
             return self._crew.kickoff(inputs=inputs)
-    
+
     @property
     def guards(self) -> Dict[str, CrewAIGuard]:
         """Get per-agent guards for introspection."""
@@ -1935,7 +1935,7 @@ def GuardedCrew(
     process: Any = None,
 ) -> GuardedCrewBuilder:
     """Create a GuardedCrew builder.
-    
+
     Example:
         crew = (GuardedCrew(
             agents=[researcher, writer],

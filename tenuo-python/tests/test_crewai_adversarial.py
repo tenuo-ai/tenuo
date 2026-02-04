@@ -12,17 +12,13 @@ security testing standards of the OpenAI adapter. Specifically ensuring:
 
 import pytest
 from unittest.mock import MagicMock, patch
-from dataclasses import dataclass
 
 from tenuo.crewai import (
     GuardBuilder,
-    CrewAIGuard,
     ToolDenied,
     ConstraintViolation,
     UnlistedArgument,
     MissingSigningKey,
-    WarrantExpired,
-    InvalidPoP,
     DenialResult,
     Pattern,
     Wildcard,
@@ -46,7 +42,7 @@ class RealTool(BaseTool):
     """Real CrewAI Tool for testing."""
     name: str = "test_tool"
     description: str = "Test tool"
-    
+
     def _run(self, **kwargs) -> dict:
         return {"result": "ok", "args": kwargs}
 
@@ -331,7 +327,7 @@ class TestPathTraversalProtection:
         # because %2e%2e is not interpreted as ".." by the OS.
         # The REAL attack would happen if URL decoding occurred BEFORE this check,
         # which is the responsibility of the transport layer.
-        # 
+        #
         # To test the underlying Subpath behavior, we test the decoded version:
         with pytest.raises(ConstraintViolation):
             guard._authorize("read", {"path": "/data/../etc/passwd"})  # Decoded version
@@ -473,15 +469,15 @@ class TestSealMode:
         Invariant: After sealing, original tool cannot be called.
         """
         original_tool = RealTool(name="read")
-        
+
         guard = (GuardBuilder()
             .allow("read", path=Wildcard())
             .seal()
             .build())
-        
+
         # Protect with seal mode - this modifies original_tool in place
-        protected_tool = guard.protect(original_tool)
-        
+        guard.protect(original_tool)
+
         # Original tool should now raise RuntimeError when called
         with pytest.raises(RuntimeError, match="sealed by Tenuo guard"):
             original_tool._run(path="/data/file.txt")
@@ -491,17 +487,17 @@ class TestSealMode:
         When seal mode is disabled, original tool still works.
         """
         original_tool = RealTool(name="read")
-        
+
         guard = (GuardBuilder()
             .allow("read", path=Wildcard())
             # No .seal() call
             .build())
-        
+
         assert guard._seal_mode is False
-        
+
         # Protect without seal (default)
-        protected_tool = guard.protect(original_tool)
-        
+        guard.protect(original_tool)
+
         # Original should still work (no seal)
         result = original_tool._run(path="/data/file.txt")
         assert result is not None
@@ -512,7 +508,7 @@ class TestSealMode:
         """
         guard_sealed = GuardBuilder().seal().build()
         guard_unsealed = GuardBuilder().build()
-        
+
         assert guard_sealed._seal_mode is True
         assert guard_unsealed._seal_mode is False
 
@@ -551,13 +547,6 @@ class TestSecurityRegressions:
         """
         from tenuo.crewai import ConfigurationError
 
-    def test_seal_fails_closed_on_immutable_tool(self):
-        """
-        REGRESSION: Seal mode must raise if tool is immutable.
-        Previously: Logged warning and continued with unprotected bypass.
-        """
-        from tenuo.crewai import ConfigurationError
-
         # Create an immutable-like tool (RealTool is a BaseTool)
         class LockedTool(RealTool):
             def __setattr__(self, key, value):
@@ -566,7 +555,7 @@ class TestSecurityRegressions:
                 super().__setattr__(key, value)
 
         immutable_tool = LockedTool(name="read")
-        
+
         guard = (GuardBuilder()
             .allow("read", path=Wildcard())
             .seal()  # Enable seal mode
@@ -586,7 +575,7 @@ class TestSecurityRegressions:
 
         # Attack: Try to inject namespace via agent_role
         resolved = guard._resolve_tool_name("delete", agent_role="admin::evil")
-        
+
         # MUST return None (rejected), not "admin::evil::delete"
         assert resolved is None
 
@@ -598,10 +587,10 @@ class TestSecurityRegressions:
         from tenuo.crewai import WarrantDelegator, EscalationAttempt
 
         delegator = WarrantDelegator()
-        
+
         mock_parent = MagicMock()
         mock_parent.is_expired.return_value = True  # Expired!
-        
+
         with pytest.raises(EscalationAttempt, match="expired"):
             delegator.delegate(
                 parent_warrant=mock_parent,
@@ -618,15 +607,15 @@ class TestSecurityRegressions:
         from tenuo.crewai import WarrantDelegator, EscalationAttempt
 
         delegator = WarrantDelegator()
-        
+
         mock_parent = MagicMock()
         mock_parent.is_expired.return_value = False
         mock_parent.tools.return_value = ["read"]
         mock_parent.constraint_for.return_value = MagicMock()  # Returns constraint
-        
+
         # Child constraint without is_subset_of
         child_constraint = MagicMock(spec=[])  # Empty spec = no methods
-        
+
         with pytest.raises(EscalationAttempt, match="is_subset_of"):
             delegator.delegate(
                 parent_warrant=mock_parent,
@@ -654,7 +643,7 @@ class TestSecurityRegressions:
         })
 
         crew = builder.build()
-        
+
         # The error is raised when kickoff tries to protect the agents
         with pytest.raises(ConfigurationError, match="not listed in policy"):
             crew.kickoff()
@@ -773,18 +762,18 @@ class TestReplayAttackProtection:
         """
         Attack: Capture and replay exact same PoP.
         Invariant: Identical PoP signatures should be rejected on replay.
-        
+
         Note: This is typically enforced by nonce/timestamp at protocol layer.
         The adapter should propagate the denial from core verification.
         """
         mock_warrant = MagicMock()
         mock_warrant.is_expired.return_value = False
         mock_warrant.sign.return_value = b"same_signature"
-        
+
         # First call succeeds - need proper holder mock to pass signing key check
         mock_warrant.authorize.return_value = True
         mock_key = MagicMock()
-        
+
         # Setup holder to match signing key (skip holder validation)
         mock_warrant.holder.return_value = mock_key.public_key
 
@@ -799,7 +788,7 @@ class TestReplayAttackProtection:
 
         # Second call with same signature fails (nonce already used)
         mock_warrant.authorize.side_effect = ValueError("Nonce already used")
-        
+
         result2 = guard._authorize("read", {"path": "/data/file.txt"})
         assert isinstance(result2, DenialResult)
 
@@ -825,7 +814,6 @@ class TestConcurrentAccess:
         from tenuo.crewai import guarded_step, get_active_guard, Wildcard
 
         results = {}
-        errors = []
 
         @guarded_step(allow={"tool1": {"arg": Wildcard()}}, strict=True)
         def step1():
@@ -869,7 +857,7 @@ class TestConcurrentAccess:
             .build())
 
         results = []
-        
+
         def authorize_valid():
             for _ in range(10):
                 r = guard._authorize("read", {"path": "/data/file.txt"})
@@ -949,10 +937,10 @@ class TestConstraintComposition:
         Invariant: All constraints on an argument must be satisfied.
         """
         from tenuo.crewai import Range, Pattern
-        
+
         # Both constraints on same tool's different arguments
         guard = (GuardBuilder()
-            .allow("api_call", 
+            .allow("api_call",
                    endpoint=Pattern("/api/*"),
                    timeout=Range(1, 30))
             .on_denial("skip")
@@ -1008,7 +996,7 @@ class TestConstraintComposition:
         Invariant: Wildcard only applies to its specific argument.
         """
         guard = (GuardBuilder()
-            .allow("operation", 
+            .allow("operation",
                    safe_arg=Wildcard(),
                    restricted_arg=Subpath("/safe"))
             .on_denial("skip")
@@ -1033,9 +1021,9 @@ class TestConstraintComposition:
         Test OneOf constraint working with path values.
         """
         from tenuo_core import OneOf
-        
+
         guard = (GuardBuilder()
-            .allow("select_env", 
+            .allow("select_env",
                    environment=OneOf(["dev", "staging", "prod"]))
             .on_denial("skip")
             .build())
@@ -1043,7 +1031,7 @@ class TestConstraintComposition:
         assert guard._authorize("select_env", {"environment": "dev"}) is None
         assert guard._authorize("select_env", {"environment": "staging"}) is None
         assert guard._authorize("select_env", {"environment": "prod"}) is None
-        
+
         result = guard._authorize("select_env", {"environment": "hacker"})
         assert isinstance(result, DenialResult)
 
@@ -1099,18 +1087,18 @@ class TestWarrantChainDepth:
         parent_warrant.is_expired.return_value = False
         parent_warrant.tools.return_value = ["read"]
         parent_warrant.constraint_for.return_value = None
-        
+
         mock_grant_builder = MagicMock()
         mock_child_warrant = MagicMock()
         mock_grant_builder.build.return_value = mock_child_warrant
         parent_warrant.grant_builder.return_value = mock_grant_builder
-        
+
         parent_key = MagicMock()
         child_holder = MagicMock()
 
         delegator = WarrantDelegator()
 
-        child = delegator.delegate(
+        delegator.delegate(
             parent_warrant=parent_warrant,
             parent_key=parent_key,
             child_holder=child_holder,
@@ -1144,7 +1132,7 @@ class TestResourceExhaustionProtection:
 
         # 1MB tool name
         long_name = "x" * (1024 * 1024)
-        
+
         import time
         start = time.time()
         result = guard._authorize(long_name, {"path": "/data"})
@@ -1165,7 +1153,7 @@ class TestResourceExhaustionProtection:
 
         # 1MB path
         long_path = "/data/" + "x" * (1024 * 1024)
-        
+
         import time
         start = time.time()
         result = guard._authorize("read", {"path": long_path})
@@ -1237,11 +1225,11 @@ class TestResourceExhaustionProtection:
 
         import time
         start = time.time()
-        
+
         # 10,000 rapid calls
         for i in range(10000):
             guard._authorize("read", {"path": f"/data/file{i}.txt"})
-        
+
         elapsed = time.time() - start
 
         # Should complete all 10k in reasonable time
@@ -1253,7 +1241,7 @@ class TestResourceExhaustionProtection:
         """
         Attack: Use ReDoS pattern to freeze Pattern constraint.
         Invariant: Pattern matching should have timeout/limits.
-        
+
         Note: Python's re module is vulnerable to ReDoS but Pattern
         uses fnmatch which is simpler and faster.
         """
@@ -1265,7 +1253,7 @@ class TestResourceExhaustionProtection:
         # Adversarial input that might trigger exponential backtracking
         # with complex regex (but fnmatch is immune)
         adversarial = "a" * 10000 + "safe"
-        
+
         import time
         start = time.time()
         result = guard._authorize("match", {"text": adversarial})
