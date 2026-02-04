@@ -1,53 +1,95 @@
 # Integration Maintenance System
 
-**Status**: Implemented
-**Date**: 2026-02-03
-
-## Overview
+**For Tenuo Contributors & Maintainers**
 
 Automated system to track and respond to API changes in upstream integration libraries (OpenAI, CrewAI, AutoGen, LangChain, LangGraph).
 
-## Components
+## Quick Start
 
-### Automated Monitoring
+```bash
+# Run smoke tests
+pytest tenuo-python/tests/integration/test_smoke.py -v
 
-1. **Dependabot** (`.github/dependabot.yml`)
-   - Weekly dependency update PRs (Monday 9am UTC)
-   - Grouped by integration
-   - Ignores patch updates
+# Check for recent upstream changes
+python scripts/check_upstream_changes.py --days 7
+```
 
-2. **Compatibility Matrix** (`.github/workflows/integration-compatibility-matrix.yml`)
-   - Tests minimum and latest versions weekly
-   - Runs on integration file changes
-   - Auto-creates issues on failures
+## Automated Monitoring
 
-3. **Release Monitor** (`.github/workflows/monitor-upstream-releases.yml`)
-   - Daily checks for new releases (8am UTC)
-   - Searches for breaking change keywords
-   - Auto-creates issues with changelogs
+### 1. Dependabot (`.github/dependabot.yml`)
+- Weekly dependency update PRs (Monday 9am UTC)
+- Updates grouped by integration
+- Covers Python, Rust, npm, and GitHub Actions
 
-4. **Smoke Tests** (`tenuo-python/tests/integration/test_smoke.py`)
-   - Verifies API contracts haven't changed
-   - Tests imports, constructors, basic methods
-   - Runs in CI matrix
+### 2. Compatibility Matrix (`.github/workflows/integration-compatibility-matrix.yml`)
+- Tests minimum and latest versions weekly
+- Runs on integration file changes
+- Auto-creates issues on failures
 
-5. **Manual Script** (`scripts/check_upstream_changes.py`)
-   - On-demand changelog checking
-   - Keyword search for breaking changes
-   - Configurable time window
+### 3. Release Monitor (`.github/workflows/monitor-upstream-releases.yml`)
+- Daily checks for new releases (8am UTC)
+- Searches for breaking change keywords
+- Auto-creates issues with changelogs
 
-### Documentation
+### 4. Smoke Tests (`tenuo-python/tests/integration/test_smoke.py`)
+- Verifies API contracts haven't changed
+- Tests imports, class existence, basic methods
+- Runs in CI matrix across Python versions
 
-- `docs/compatibility-matrix.md` - Version compatibility table
-- `docs/integration-monitoring.md` - Maintenance procedures
-- `.github/ISSUE_TEMPLATE/integration-compatibility.md` - Issue template
+## Weekly Routine
 
-## Setup Required
+**Monday Morning** (30-60 minutes):
 
-### GitHub Release Notifications (5 minutes)
+```bash
+# 1. Check Dependabot PRs
+gh pr list --label dependencies
+
+# 2. Review CI results
+gh run list --workflow=integration-compatibility-matrix.yml --limit=1
+
+# 3. Check auto-created issues
+gh issue list --label release-alert
+
+# 4. Manual verification
+python scripts/check_upstream_changes.py --days 7
+```
+
+## Responding to Breaking Changes
+
+1. Review upstream changelog in detail
+2. Run smoke tests: `pytest tests/integration/test_smoke.py -k <integration>`
+3. Update integration code if needed
+4. Update `docs/compatibility-matrix.md`
+5. Test examples to verify
+6. Update version constraints in `pyproject.toml` if needed
+
+### Escalation Policy
+
+| Priority | Definition | Response Time |
+|----------|------------|---------------|
+| **P0** | Blocks users, no workaround | Fix within 48 hours |
+| **P1** | Workaround exists | Fix within 1 week |
+| **P2** | Minor impact | Fix in next release |
+
+## Support Policy
+
+Tenuo maintains compatibility with:
+- Latest major version + previous major
+- Latest 2 minor versions within major
+- Minimum version declared in `pyproject.toml`
+
+**Example**: If latest is 2.5.0, we support:
+- 2.5.x (latest minor)
+- 2.4.x (previous minor)
+- 1.x.x (previous major, best-effort)
+- Declared minimum (always tested)
+
+## Setup (One-Time)
+
+### GitHub Release Notifications
 
 Subscribe to releases for each integration:
-1. Visit repository (e.g., https://github.com/openai/openai-python)
+1. Visit repository
 2. Click "Watch" → "Custom" → "Releases"
 
 Repositories:
@@ -57,7 +99,7 @@ Repositories:
 - https://github.com/langchain-ai/langchain
 - https://github.com/langchain-ai/langgraph
 
-### Community Channels (10 minutes)
+### Community Channels
 
 Join for early announcements:
 - OpenAI Community: https://community.openai.com
@@ -65,58 +107,27 @@ Join for early announcements:
 - AutoGen Discord: https://discord.gg/autogen
 - LangChain Discord: https://discord.gg/langchain
 
-## Usage
+## Files Reference
 
-### Test Locally
-
-```bash
-# Run smoke tests
-pytest tenuo-python/tests/integration/test_smoke.py -v
-
-# Check for recent changes
-python scripts/check_upstream_changes.py --days 7
-
-# Verbose output
-python scripts/check_upstream_changes.py --days 30 -v
 ```
+.github/
+├── dependabot.yml                              # Dependency updates
+├── workflows/
+│   ├── integration-compatibility-matrix.yml   # Version testing
+│   └── monitor-upstream-releases.yml          # Release alerts
+└── ISSUE_TEMPLATE/
+    └── integration-compatibility.md           # Issue template
 
-### Weekly Routine (Monday, 30-60 minutes)
+scripts/
+└── check_upstream_changes.py                  # Manual checking
 
-```bash
-# Check Dependabot PRs
-gh pr list --label dependencies
+tenuo-python/tests/integration/
+├── test_smoke.py                              # API contract tests
+└── README.md                                  # Test documentation
 
-# Review CI results
-gh run list --workflow=integration-compatibility-matrix.yml --limit=1
-
-# Check auto-created issues
-gh issue list --label release-alert
-
-# Manual verification
-python scripts/check_upstream_changes.py --days 7
+docs/
+└── compatibility-matrix.md                    # User-facing version info
 ```
-
-### Respond to Breaking Changes
-
-1. Review upstream changelog
-2. Run tests: `pytest tests/integration/test_smoke.py -k <integration>`
-3. Update integration code if needed
-4. Update `docs/compatibility-matrix.md`
-5. Test examples
-6. Update version metadata in integration file
-
-## Maintenance Policy
-
-Tenuo maintains compatibility with:
-- Latest major version + previous major
-- Latest 2 minor versions within major
-- Minimum version declared in `pyproject.toml`
-
-Example: If latest is 2.5.0, support:
-- 2.5.x (latest minor)
-- 2.4.x (previous minor)
-- 1.x.x (previous major, best-effort)
-- Declared minimum (always tested)
 
 ## Metrics
 
@@ -126,59 +137,7 @@ Track weekly:
 - Integration test pass rate (target: >95%)
 - User-reported compatibility issues (target: <5/month)
 
-## Files
+## Related Documentation
 
-### Configuration
-```
-.github/
-├── dependabot.yml
-├── workflows/
-│   ├── integration-compatibility-matrix.yml
-│   └── monitor-upstream-releases.yml
-└── ISSUE_TEMPLATE/
-    └── integration-compatibility.md
-```
-
-### Scripts & Tests
-```
-scripts/
-└── check_upstream_changes.py
-
-tenuo-python/tests/integration/
-├── test_smoke.py
-└── README.md
-```
-
-### Documentation
-```
-docs/
-├── compatibility-matrix.md
-└── integration-monitoring.md
-```
-
-## Verification
-
-```bash
-# Workflows are valid
-gh workflow list | grep -E "(integration|monitor)"
-
-# Smoke tests pass
-pytest tenuo-python/tests/integration/test_smoke.py -v
-
-# Script works
-python scripts/check_upstream_changes.py --days 7
-```
-
-## Recent Findings
-
-As of 2026-02-03, the script detected:
-- OpenAI v2.16.0: Contains deprecations
-- CrewAI 1.9.0-1.9.3: Multiple releases with changes
-
-Review these releases and test compatibility.
-
-## Support
-
-- Detailed guide: `docs/integration-monitoring.md`
-- Version compatibility: `docs/compatibility-matrix.md`
-- Issues: Use "Integration Compatibility" template
+- **Users**: See `docs/compatibility-matrix.md` for version compatibility
+- **Issues**: Use the "Integration Compatibility" issue template
