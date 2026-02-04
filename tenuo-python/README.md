@@ -17,6 +17,7 @@ uv pip install "tenuo[openai]"        # + OpenAI Agents SDK
 uv pip install "tenuo[google_adk]"    # + Google ADK
 uv pip install "tenuo[a2a]"           # + Agent-to-Agent (inter-agent delegation)
 uv pip install "tenuo[langchain]"     # + LangChain / LangGraph
+uv pip install "tenuo[crewai]"        # + CrewAI
 uv pip install "tenuo[fastapi]"       # + FastAPI
 uv pip install "tenuo[mcp]"           # + MCP client (Python ≥3.10)
 ```
@@ -349,6 +350,34 @@ agent = Agent(
 
 For Tier 2 (warrant + PoP) and multi-agent scenarios, see [Google ADK Integration](https://tenuo.ai/google-adk).
 
+## CrewAI Integration
+
+Capability-based authorization for CrewAI multi-agent crews:
+
+```python
+from crewai import Agent, Task, Crew
+from tenuo.crewai import GuardBuilder
+from tenuo import Pattern, Subpath
+
+guard = (GuardBuilder()
+    .allow("search", query=Pattern("*"))
+    .allow("write_file", path=Subpath("/workspace"))
+    .build())
+
+# Protect an entire crew
+protected_crew = guard.protect(crew)
+result = protected_crew.kickoff()
+
+# Or use with Flows
+from tenuo.crewai import guarded_tool
+
+@guarded_tool(path=Subpath("/data"))
+def read_file(path: str) -> str:
+    return open(path).read()
+```
+
+For warrant-based delegation and per-agent constraints, see [CrewAI Integration](https://tenuo.ai/crewai).
+
 ## AutoGen Integration
 
 _(Requires Python ≥3.10)_
@@ -588,6 +617,7 @@ python examples/mcp_integration.py
 - **[FastAPI](https://tenuo.ai/fastapi)** - Zero-boilerplate API protection
 - **[LangChain](https://tenuo.ai/langchain)** - Tool protection
 - **[LangGraph](https://tenuo.ai/langgraph)** - Multi-agent security
+- **[CrewAI](https://tenuo.ai/crewai)** - Multi-agent crew protection
 - **[Security](https://tenuo.ai/security)** - Threat model, best practices
 - **[API Reference](https://tenuo.ai/api-reference)** - Full SDK docs
 

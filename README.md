@@ -111,7 +111,7 @@ Tenuo implements **Subtractive Delegation**.
 | **Holder binding** | Stolen tokens are useless without the key |
 | **Constraint types** | `Exact`, `Pattern`, `Range`, `OneOf`, `Regex`, `Cidr`, `UrlPattern`, `Subpath`, `UrlSafe`, `Shlex`, `CEL` |
 | **Monotonic attenuation** | Capabilities only shrink, never expand |
-| **Framework integrations** | OpenAI, FastAPI, LangChain, LangGraph, MCP |
+| **Framework integrations** | OpenAI, FastAPI, LangChain, LangGraph, CrewAI, MCP |
 
 ---
 
@@ -134,6 +134,7 @@ uv pip install "tenuo[a2a]"           # + A2A (inter-agent delegation)
 uv pip install "tenuo[fastapi]"       # + FastAPI integration
 uv pip install "tenuo[langchain]"     # + LangChain (langchain-core ≥0.2)
 uv pip install "tenuo[langgraph]"     # + LangGraph (includes LangChain)
+uv pip install "tenuo[crewai]"        # + CrewAI
 uv pip install "tenuo[autogen]"       # + AutoGen AgentChat (Python ≥3.10)
 uv pip install "tenuo[mcp]"           # + MCP client (Python ≥3.10 required)
 ```
@@ -188,6 +189,18 @@ protected = guard_tools([search_tool, email_tool])      # LangChain
 graph.add_node("tools", TenuoToolNode([search, email])) # LangGraph
 ```
 
+**CrewAI** - Multi-agent crews with capability-based authorization
+```python
+from tenuo.crewai import GuardBuilder
+
+guard = (GuardBuilder()
+    .allow("search", query=Pattern("*"))
+    .allow("write_file", path=Subpath("/workspace"))
+    .build())
+
+crew = guard.protect(my_crew)  # All agents get enforced constraints
+```
+
 **FastAPI** - Extracts warrant from headers, verifies PoP offline
 ```python
 @app.get("/search")
@@ -240,6 +253,7 @@ See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https:
 | **[FastAPI](https://tenuo.ai/fastapi)** | Zero-boilerplate API protection |
 | **[LangChain](https://tenuo.ai/langchain)** | Tool protection |
 | **[LangGraph](https://tenuo.ai/langgraph)** | Multi-agent graph security |
+| **[CrewAI](https://tenuo.ai/crewai)** | Multi-agent crew protection |
 | **[MCP](https://tenuo.ai/mcp)** | Model Context Protocol client |
 | **[Security](https://tenuo.ai/security)** | Threat model |
 
