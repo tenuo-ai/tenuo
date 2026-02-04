@@ -65,11 +65,11 @@ jobs:
               pip install "autogen-agentchat==0.7.0" "autogen-ext[openai]==0.7.0"
               ;;
             langchain)
-              pip install "langchain-core==0.2.0"
+              pip install "langchain-core==0.2.27"
               ;;
             langgraph)
-              # langgraph 0.0.x requires langchain-core<0.2, use 0.2+ for langchain-core>=0.2
-              pip install "langgraph==0.2.0" "langchain-core==0.2.0"
+              # langgraph 0.2.0 requires langchain-core>=0.2.27
+              pip install "langgraph==0.2.0" "langchain-core==0.2.27"
               ;;
           esac
 

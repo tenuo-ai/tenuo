@@ -48,7 +48,7 @@ autogen = [
     "autogen-ext[openai]>=0.7.0; python_version >= '3.10'",
 ]
 langchain = [
-    "langchain-core>=0.2",
+    "langchain-core>=0.2.27",  # Required by langgraph>=0.2
 ]
 langgraph = [
     "langgraph>=0.2",  # 0.0.x/0.1.x require langchain-core<0.2

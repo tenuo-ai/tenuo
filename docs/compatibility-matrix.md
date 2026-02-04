@@ -11,7 +11,7 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 | **OpenAI** | 1.6.0 | 1.50+ | 1.52.0 | ✅ Stable | Full feature support |
 | **CrewAI** | 1.1.0 | 1.9+ | 1.9.4 | ✅ Stable | All tiers supported |
 | **AutoGen** | 0.7.0 | 0.9+ | 0.9.2 | ✅ Stable | AgentChat integration |
-| **LangChain** | 0.2.0 | 0.3+ | 0.3.5 | ✅ Stable | LangChain Core |
+| **LangChain** | 0.2.27 | 0.3+ | 0.3.5 | ✅ Stable | LangChain Core |
 | **LangGraph** | 0.2.0 | 0.2+ | 0.2.8 | ✅ Stable | StateGraph support |
 | **MCP** | 1.0.0 | 1.1+ | 1.1.3 | ✅ Stable | Model Context Protocol |
 | **Google ADK** | 0.1.0 | 0.1+ | 0.1.2 | ⚠️ Beta | Early access |
@@ -75,9 +75,14 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 ### LangChain
 **Current Status**: ✅ No known issues
 
+**Minimum Version**: 0.2.27
+- Required by `langgraph>=0.2.0` which depends on `langchain-core>=0.2.27`
+- Earlier 0.2.x versions cannot be used alongside langgraph
+
 **Recent Changes**:
 - 0.3.0: Pydantic v2 migration (✅ Compatible)
-- 0.2.0: Core extraction (✅ Compatible)
+- 0.2.27: Required by langgraph 0.2.0 (✅ Minimum supported)
+- 0.2.0: Core extraction (❌ Incompatible with langgraph>=0.2)
 
 ### LangGraph
 **Current Status**: ✅ No known issues
