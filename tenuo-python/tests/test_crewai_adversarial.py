@@ -463,6 +463,7 @@ class TestAuditIntegrity:
 # =============================================================================
 
 
+@pytest.mark.skipif(not CREWAI_AVAILABLE, reason="crewai not installed - guard.protect() requires crewai")
 class TestSealMode:
     """
     Tests ensuring seal mode prevents original tool bypass.
@@ -545,6 +546,7 @@ class TestSecurityRegressions:
         assert isinstance(result, DenialResult)
         assert result.error_code == "WARRANT_EXPIRED"
 
+    @pytest.mark.skipif(not CREWAI_AVAILABLE, reason="crewai not installed - guard.protect() requires crewai")
     def test_seal_fails_closed_on_immutable_tool(self):
         """
         REGRESSION: Seal mode must raise if tool is immutable.

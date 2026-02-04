@@ -33,7 +33,9 @@ from tenuo.crewai import (
 
 try:
     from crewai.tools import BaseTool  # type: ignore[import-not-found]
+    CREWAI_AVAILABLE = True
 except ImportError:
+    CREWAI_AVAILABLE = False
     class BaseTool:  # type: ignore[no-redef]
         """Stub for when crewai is not installed."""
         def __init__(self, **kwargs):
@@ -401,6 +403,7 @@ class TestAuditCallback:
 # =============================================================================
 
 
+@pytest.mark.skipif(not CREWAI_AVAILABLE, reason="crewai not installed")
 class TestProtectTool:
     """Test the protect_tool zero-config entry point."""
 
