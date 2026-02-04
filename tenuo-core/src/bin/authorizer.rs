@@ -502,6 +502,9 @@ async fn serve_http(
     if debug_mode {
         eprintln!("│ ⚠️  Debug mode: ENABLED (not for production!)");
     }
+    if let Some(version) = initial_srl_version {
+        eprintln!("│ Revocation List: v{} (loaded from file)", version);
+    }
     if control_plane_enabled {
         eprintln!(
             "│ Control Plane: ENABLED (heartbeat every {}s, SRL sync)",
@@ -538,7 +541,6 @@ async fn serve_http(
 
         // If SRL was loaded from file at startup, record its version in metrics
         if let Some(version) = initial_srl_version {
-            eprintln!("Initial SRL version: {}", version);
             metrics.record_srl_fetch(true, Some(version)).await;
         }
 
