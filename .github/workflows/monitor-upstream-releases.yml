@@ -1,0 +1,138 @@
+name: Monitor Upstream Releases
+
+on:
+  schedule:
+    - cron: '0 8 * * *'  # Daily at 8am UTC
+  workflow_dispatch:
+
+jobs:
+  check-releases:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for new releases
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const integrations = [
+              {
+                name: 'OpenAI',
+                repo: 'openai/openai-python',
+                file: 'tenuo-python/tenuo/openai.py',
+                docs: 'https://github.com/openai/openai-python/releases'
+              },
+              {
+                name: 'CrewAI',
+                repo: 'joaomdmoura/crewAI',
+                file: 'tenuo-python/tenuo/crewai.py',
+                docs: 'https://github.com/joaomdmoura/crewAI/releases'
+              },
+              {
+                name: 'AutoGen',
+                repo: 'microsoft/autogen',
+                file: 'tenuo-python/tenuo/autogen.py',
+                docs: 'https://github.com/microsoft/autogen/releases'
+              },
+              {
+                name: 'LangChain',
+                repo: 'langchain-ai/langchain',
+                file: 'tenuo-python/tenuo/langchain.py',
+                docs: 'https://python.langchain.com/changelog'
+              },
+              {
+                name: 'LangGraph',
+                repo: 'langchain-ai/langgraph',
+                file: 'tenuo-python/tenuo/langgraph.py',
+                docs: 'https://github.com/langchain-ai/langgraph/releases'
+              },
+            ];
+
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+            for (const integration of integrations) {
+              try {
+                const [owner, repo] = integration.repo.split('/');
+
+                // Get latest release
+                const { data: release } = await github.rest.repos.getLatestRelease({
+                  owner,
+                  repo
+                });
+
+                const releaseDate = new Date(release.published_at);
+
+                // Only create issue if release is recent
+                if (releaseDate > sevenDaysAgo) {
+                  // Check if issue already exists
+                  const existingIssues = await github.rest.issues.listForRepo({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    state: 'open',
+                    labels: 'release-alert',
+                    per_page: 100
+                  });
+
+                  const alreadyExists = existingIssues.data.some(issue =>
+                    issue.title.includes(integration.name) &&
+                    issue.title.includes(release.tag_name)
+                  );
+
+                  if (!alreadyExists) {
+                    // Search for breaking change keywords
+                    const body = release.body || '';
+                    const breakingKeywords = ['breaking', 'removed', 'deprecated', 'changed'];
+                    const foundKeywords = breakingKeywords.filter(kw =>
+                      body.toLowerCase().includes(kw)
+                    );
+
+                    const hasBreakingChanges = foundKeywords.length > 0;
+                    const priority = hasBreakingChanges ? 'high-priority' : 'normal-priority';
+
+                    await github.rest.issues.create({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      title: `[Release Alert] ${integration.name} ${release.tag_name}`,
+                      body: `
+            ## New ${integration.name} Release: ${release.tag_name}
+
+            **Published**: ${release.published_at}
+            **Integration File**: \`${integration.file}\`
+            ${hasBreakingChanges ? '⚠️ **Potential breaking changes detected!**' : ''}
+            ${hasBreakingChanges ? `**Keywords found**: ${foundKeywords.join(', ')}` : ''}
+
+            ### Release Notes
+            ${body || 'No release notes provided'}
+
+            ### Action Items
+            - [ ] Review changelog for breaking changes
+            - [ ] Test integration with new version
+            - [ ] Run compatibility matrix: \`gh workflow run integration-compatibility-matrix.yml\`
+            - [ ] Update minimum version in pyproject.toml if needed
+            - [ ] Update documentation if API changed
+            - [ ] Update compatibility matrix docs
+
+            ### Resources
+            - **Release URL**: ${release.html_url}
+            - **Changelog**: ${integration.docs}
+            - **Integration File**: [${integration.file}](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/main/${integration.file})
+
+            ### Testing
+            \`\`\`bash
+            # Test with new version
+            pip install ${integration.name.toLowerCase()}==${release.tag_name.replace('v', '')}
+            pytest tenuo-python/tests/test_${integration.name.toLowerCase()}.py -v
+            \`\`\`
+                      `,
+                      labels: ['integration', 'release-alert', integration.name.toLowerCase(), priority],
+                      assignees: ['aimable']
+                    });
+
+                    console.log(`Created issue for ${integration.name} ${release.tag_name}`);
+                  }
+                }
+              } catch (error) {
+                console.log(`Error checking ${integration.name}: ${error.message}`);
+              }
+            }

@@ -2833,6 +2833,161 @@ fn main() {
     println!("| Invalid Input | `endpoint = \"https://evil.com/api\"` |");
     println!();
     println!("**Expected:** URLs matching pattern succeed.");
+    println!();
+
+    // A.25.6 All (AND) Constraint
+    println!("### A.25.6 All (AND) Constraint");
+    println!();
+
+    const ID_A25_6: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25,
+        0x06,
+    ];
+    let mut tools_a25_6 = BTreeMap::new();
+    let mut cs_a25_6 = ConstraintSet::new();
+    // All: amount must be in range AND currency must be one of allowed values
+    cs_a25_6.insert(
+        "amount".to_string(),
+        Constraint::All(tenuo::constraints::All::new([Constraint::Range(
+            tenuo::constraints::Range::new(Some(0.0), Some(10000.0)).unwrap(),
+        )])),
+    );
+    cs_a25_6.insert(
+        "currency".to_string(),
+        Constraint::All(tenuo::constraints::All::new([Constraint::OneOf(
+            tenuo::constraints::OneOf::new(vec!["USD".to_string(), "EUR".to_string()]),
+        )])),
+    );
+    tools_a25_6.insert("transfer".to_string(), cs_a25_6);
+
+    let payload_a25_6 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A25_6),
+        tools: tools_a25_6,
+        holder: worker.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a25_6 = sign_payload(&payload_a25_6, &control_plane);
+    print_vector("A.25.6 All", &warrant_a25_6);
+    println!("| Valid Input | `amount = 500.0, currency = \"USD\"` |");
+    println!("| Invalid Input | `amount = 500.0, currency = \"GBP\"` |");
+    println!();
+    println!("**Expected:** All nested constraints must pass (AND logic).");
+    println!();
+
+    // A.25.7 Any (OR) Constraint
+    println!("### A.25.7 Any (OR) Constraint");
+    println!();
+
+    const ID_A25_7: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25,
+        0x07,
+    ];
+    let mut tools_a25_7 = BTreeMap::new();
+    let mut cs_a25_7 = ConstraintSet::new();
+    // Any: path matches either pattern (OR)
+    cs_a25_7.insert(
+        "path".to_string(),
+        Constraint::Any(tenuo::constraints::Any::new([
+            Constraint::Pattern(tenuo::constraints::Pattern::new("/public/*").unwrap()),
+            Constraint::Pattern(tenuo::constraints::Pattern::new("/shared/*").unwrap()),
+        ])),
+    );
+    tools_a25_7.insert("read_file".to_string(), cs_a25_7);
+
+    let payload_a25_7 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A25_7),
+        tools: tools_a25_7,
+        holder: worker.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a25_7 = sign_payload(&payload_a25_7, &control_plane);
+    print_vector("A.25.7 Any", &warrant_a25_7);
+    println!("| Valid Input | `path = \"/public/readme.txt\"` |");
+    println!("| Valid Input | `path = \"/shared/data.json\"` |");
+    println!("| Invalid Input | `path = \"/private/secret.txt\"` |");
+    println!();
+    println!("**Expected:** At least one nested constraint must pass (OR logic).");
+    println!();
+
+    // A.25.8 Not Constraint
+    println!("### A.25.8 Not Constraint");
+    println!();
+
+    const ID_A25_8: [u8; 16] = [
+        0x01, 0x94, 0x71, 0xf8, 0x00, 0x00, 0x70, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x25,
+        0x08,
+    ];
+    let mut tools_a25_8 = BTreeMap::new();
+    let mut cs_a25_8 = ConstraintSet::new();
+    // Not: path must NOT match the pattern (negation)
+    cs_a25_8.insert(
+        "path".to_string(),
+        Constraint::Not(tenuo::constraints::Not::new(Constraint::Pattern(
+            tenuo::constraints::Pattern::new("/secret/*").unwrap(),
+        ))),
+    );
+    tools_a25_8.insert("read_file".to_string(), cs_a25_8);
+
+    let payload_a25_8 = WarrantPayload {
+        version: WARRANT_VERSION as u8,
+        warrant_type: WarrantType::Execution,
+        id: WarrantId::from_bytes(ID_A25_8),
+        tools: tools_a25_8,
+        holder: worker.public_key(),
+        issuer: control_plane.public_key(),
+        issued_at: ISSUED_AT,
+        expires_at: EXPIRES_AT,
+        max_depth: 3,
+        depth: 0,
+        parent_hash: None,
+        extensions: BTreeMap::new(),
+        issuable_tools: None,
+        max_issue_depth: None,
+        constraint_bounds: None,
+        clearance: None,
+        session_id: None,
+        agent_id: None,
+        required_approvers: None,
+        min_approvals: None,
+    };
+    let warrant_a25_8 = sign_payload(&payload_a25_8, &control_plane);
+    print_vector("A.25.8 Not", &warrant_a25_8);
+    println!("| Valid Input | `path = \"/public/readme.txt\"` |");
+    println!("| Invalid Input | `path = \"/secret/keys.txt\"` |");
+    println!();
+    println!("**Expected:** Constraint passes only when inner constraint fails (negation).");
 }
 
 fn sign_payload(payload: &WarrantPayload, signing_key: &SigningKey) -> Warrant {

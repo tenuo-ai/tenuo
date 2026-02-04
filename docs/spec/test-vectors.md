@@ -1,21 +1,13 @@
 # Tenuo Protocol Test Vectors
 
 **Version:** 1.0
-
-**Documentation Revision:** 3 (2026-02-03)
-
+**Documentation Revision:** 2 (2026-01-21)
 **Generated:** 2024-01-01 (deterministic timestamps for reproducibility)
-
 **Specification:** [wire-format-v1.md](wire-format-v1.md)
 
 ---
 
 ## Revision History
-
-- **Rev 3** (2026-02-03): Added composite constraint test vectors
-  - Added A.25.6 All (AND), A.25.7 Any (OR), A.25.8 Not constraint test vectors
-  - Updated constraint type table in Implementation Notes
-  - **No protocol changes** - test vectors remain v1.0 compatible
 
 - **Rev 2** (2026-01-21): Documentation cleanup
   - Regenerated all test vectors to match current generator output
@@ -1034,6 +1026,63 @@ security model.
 
 ---
 
+## Implementation Notes
+
+### CBOR Wire Format
+
+Payload fields use integer keys:
+
+| Key | Field |
+|-----|-------|
+| 0 | version |
+| 1 | id |
+| 2 | warrant_type |
+| 3 | tools |
+| 4 | holder |
+| 5 | issuer |
+| 6 | issued_at |
+| 7 | expires_at |
+| 8 | max_depth |
+| 9 | parent_hash (optional) |
+| 10 | extensions (optional) |
+| 11 | issuable_tools (optional) |
+| 12 | (reserved) |
+| 13 | max_issue_depth (optional) |
+| 14 | constraint_bounds (optional) |
+| 15 | required_approvers (optional) |
+| 16 | min_approvals (optional) |
+| 17 | clearance (optional) |
+| 18 | depth |
+
+### Signature Message
+
+The signature is computed over a domain-separated message:
+
+```
+message = b"tenuo-warrant-v1" || envelope_version || payload_cbor_bytes
+signature = Ed25519.sign(issuer_key, message)
+```
+
+Where `envelope_version` is `0x01` for v1 warrants.
+
+### Constraint Type IDs
+
+| Type | ID |
+|------|-----|
+| Exact | 1 |
+| Pattern | 2 |
+| Wildcard | 16 |
+
+---
+
+## References
+
+- **[RFC 8032]** Josefsson, S., Liusvaara, I., "Edwards-Curve Digital Signature Algorithm (EdDSA)", January 2017. https://datatracker.ietf.org/doc/html/rfc8032
+- **[RFC 8949]** Bormann, C., Hoffman, P., "Concise Binary Object Representation (CBOR)", December 2020. https://datatracker.ietf.org/doc/html/rfc8949
+- **[protocol-spec-v1.md]** Tenuo Protocol Specification
+
+---
+
 ## A.15 Issuer Constraint Violation
 
 **Scenario:** Issuer warrant defines bounds, child exceeds them.
@@ -1563,52 +1612,6 @@ d5b4237ec474608233c4c3bf5680a8111bf8e186cce1b30dc97c6c810627eee92323a8965ab67a9f
 
 ---
 
-## A.22.b SignedRevocationList (SRL)
-
-Complete wire format for revocation list.
-
-### SrlPayload
-
-| Field | Value |
-|-------|-------|
-| `revoked_ids` | `["tnu_wrt_019471f8000070008000000000002201"]` |
-| `version` | 1 |
-| `issued_at` | `1704067200` |
-| `issuer` | `8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c` |
-
-**SrlPayload CBOR (148 bytes):**
-```
-a46b7265766f6b65645f696473817828746e755f7772745f3031393437316638
-3030303037303030383030303030303030303030323230316776657273696f6e
-01696973737565645f61741a65920080666973737565729820188a188818e318
-dd18740918f1189518fd185218db182d183c18ba185d187218ca18670918bf18
-1d189412181b18f3187418880118b40f186f185c
-```
-
-**Signing Preimage:**
-```
-b"tenuo-srl-v1" || payload_bytes
-```
-
-**Control Plane Signature (64 bytes):**
-```
-b82234fcc8c4dfd49f150cb3fc26e7ebe5f49dedbd9d2c09761a761fa74fcf1d8dbf79533b1031bee8c31f1b234fa179372b55a90e4bf359bc64a02477e74f01
-```
-
-**Complete SignedRevocationList (233 bytes):**
-```
-a2677061796c6f6164a46b7265766f6b65645f696473817828746e755f777274
-5f30313934373166383030303037303030383030303030303030303030323230
-316776657273696f6e01696973737565645f61741a6592008066697373756572
-9820188a188818e318dd18740918f1189518fd185218db182d183c18ba185d18
-7218ca18670918bf181d189412181b18f3187418880118b40f186f185c697369
-676e61747572655840b82234fcc8c4dfd49f150cb3fc26e7ebe5f49dedbd9d2c
-09761a761fa74fcf1d8dbf79533b1031bee8c31f1b234fa179372b55a90e4bf3
-59bc64a02477e74f01
-```
-
----
-
 ## A.23 Session Mismatch
 
 **A.23 Root (session_id=sess-abc)**
@@ -1770,6 +1773,52 @@ a4a5a6a7a8b1b2b3b4b5b6b7b86b65787465726e616c5f6964782d61726e3a61
 7265584043681e09a5ecdd8392eb157f1d8dfe744f37f28030725a1f5c84ad41
 c57574a1d768ba733e8e4052934c96e90b49fb4cfe29d600f4af1afb1b68ea63
 4d6f290a
+```
+
+---
+
+## A.22.b SignedRevocationList (SRL)
+
+Complete wire format for revocation list.
+
+### SrlPayload
+
+| Field | Value |
+|-------|-------|
+| `revoked_ids` | `["tnu_wrt_019471f8000070008000000000002201"]` |
+| `version` | 1 |
+| `issued_at` | `1704067200` |
+| `issuer` | `8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c` |
+
+**SrlPayload CBOR (148 bytes):**
+```
+a46b7265766f6b65645f696473817828746e755f7772745f3031393437316638
+3030303037303030383030303030303030303030323230316776657273696f6e
+01696973737565645f61741a65920080666973737565729820188a188818e318
+dd18740918f1189518fd185218db182d183c18ba185d187218ca18670918bf18
+1d189412181b18f3187418880118b40f186f185c
+```
+
+**Signing Preimage:**
+```
+b"tenuo-srl-v1" || payload_bytes
+```
+
+**Control Plane Signature (64 bytes):**
+```
+b82234fcc8c4dfd49f150cb3fc26e7ebe5f49dedbd9d2c09761a761fa74fcf1d8dbf79533b1031bee8c31f1b234fa179372b55a90e4bf359bc64a02477e74f01
+```
+
+**Complete SignedRevocationList (233 bytes):**
+```
+a2677061796c6f6164a46b7265766f6b65645f696473817828746e755f777274
+5f30313934373166383030303037303030383030303030303030303030323230
+316776657273696f6e01696973737565645f61741a6592008066697373756572
+9820188a188818e318dd18740918f1189518fd185218db182d183c18ba185d18
+7218ca18670918bf181d189412181b18f3187418880118b40f186f185c697369
+676e61747572655840b82234fcc8c4dfd49f150cb3fc26e7ebe5f49dedbd9d2c
+09761a761fa74fcf1d8dbf79533b1031bee8c31f1b234fa179372b55a90e4bf3
+59bc64a02477e74f01
 ```
 
 ---
@@ -2065,73 +2114,3 @@ c598b333e34d6a09f41b3770566b4c621481440fe3ff4a3b2e14a7461c7ac10de5b92a4c5fe3786f
 | Invalid Input | `path = "/secret/keys.txt"` |
 
 **Expected:** Constraint passes only when inner constraint fails (negation).
-
----
-
-## Implementation Notes
-
-### CBOR Wire Format
-
-Payload fields use integer keys:
-
-| Key | Field |
-|-----|-------|
-| 0 | version |
-| 1 | id |
-| 2 | warrant_type |
-| 3 | tools |
-| 4 | holder |
-| 5 | issuer |
-| 6 | issued_at |
-| 7 | expires_at |
-| 8 | max_depth |
-| 9 | parent_hash (optional) |
-| 10 | extensions (optional) |
-| 11 | issuable_tools (optional) |
-| 12 | (reserved) |
-| 13 | max_issue_depth (optional) |
-| 14 | constraint_bounds (optional) |
-| 15 | required_approvers (optional) |
-| 16 | min_approvals (optional) |
-| 17 | clearance (optional) |
-| 18 | depth |
-
-### Signature Message
-
-The signature is computed over a domain-separated message:
-
-```
-message = b"tenuo-warrant-v1" || envelope_version || payload_cbor_bytes
-signature = Ed25519.sign(issuer_key, message)
-```
-
-Where `envelope_version` is `0x01` for v1 warrants.
-
-### Constraint Type IDs
-
-| Type | ID |
-|------|-----|
-| Exact | 1 |
-| Pattern | 2 |
-| Range | 3 |
-| OneOf | 4 |
-| Cidr | 8 |
-| UrlPattern | 9 |
-| Contains | 10 |
-| Subset | 11 |
-| All | 12 |
-| Any | 13 |
-| Not | 14 |
-| Wildcard | 16 |
-| Subpath | 17 |
-| UrlSafe | 18 |
-
-> **Note:** For the complete list of 18 constraint types (IDs 1-18) including Regex (5), NotOneOf (7), and Cel (15), see [wire-format-v1.md §6](wire-format-v1.md#6-constraint-types).
-
----
-
-## References
-
-- **[RFC 8032]** Josefsson, S., Liusvaara, I., "Edwards-Curve Digital Signature Algorithm (EdDSA)", January 2017. https://datatracker.ietf.org/doc/html/rfc8032
-- **[RFC 8949]** Bormann, C., Hoffman, P., "Concise Binary Object Representation (CBOR)", December 2020. https://datatracker.ietf.org/doc/html/rfc8949
-- **[protocol-spec-v1.md]** Tenuo Protocol Specification

@@ -67,6 +67,8 @@ results/
 **/results/
 benchmarks/**/results/
 benchmarks/**/REPORT.md
+benchmarks/**/BENCHMARK_REPORT.md
+MASTER_BENCHMARK_REPORT.md
 tenuo-core/REPORT.md
 security_report.md
 *.log

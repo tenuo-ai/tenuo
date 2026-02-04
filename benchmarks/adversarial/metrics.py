@@ -189,7 +189,7 @@ def constraint_type_from_scenario(scenario_name: str) -> str:
     type_map = {
         "email_exfil": "CEL",
         "financial_limit": "Range",
-        "path_traversal": "Pattern",
+        "path_traversal": "Subpath",
         "url_restriction": "CEL",
         "multi_recipient": "CEL",
         "api_key_exfil": "CEL",

@@ -7,6 +7,7 @@ Tenuo provides three main integrations. This guide helps you choose the right on
 ## TL;DR
 
 - **Using OpenAI?** → [`tenuo.openai`](./openai.md)
+- **Using CrewAI?** → [`tenuo.crewai`](./crewai.md)
 - **Using Google ADK?** → [`tenuo.google_adk`](./google-adk.md)
 - **Agents in separate services?** → Add [`tenuo.a2a`](./a2a.md)
 - **Need crypto?** → Use Tier 2
@@ -20,8 +21,9 @@ Read below for details.
 ### 1. What runtime/framework are you using?
 
 - **OpenAI SDK** (`openai.OpenAI`, `openai.AsyncOpenAI`) → Use [`tenuo.openai`](./openai.md)
+- **CrewAI** (`crewai.Crew`, `crewai.Agent`) → Use [`tenuo.crewai`](./crewai.md)
 - **Google ADK** (`google.adk.agents.Agent`) → Use [`tenuo.google_adk`](./google-adk.md)
-- **LangChain, CrewAI, Autogen, etc.** → See [Framework Integrations](./integrations.md)
+- **LangChain, Autogen, etc.** → See [Framework Integrations](./integrations.md)
 - **Custom/other** → Use [Warrant API](./warrants.md) directly
 
 ### 2. Do you have multiple agents communicating across processes?
@@ -151,19 +153,17 @@ async def search_papers(query: str, sources: list[str]) -> list[dict]:
 
 ---
 
-## Feature Comparison
-
-| Feature | OpenAI | ADK | A2A |
-|---------|--------|-----|-----|
-| **Runtime** | OpenAI SDK | Google ADK | Any (HTTP) |
-| **Deployment** | Single/multi process | Single/multi process | Distributed |
-| **Tier 1 (Guardrails)** | ✅ | ✅ | N/A (Tier 2 required) |
-| **Tier 2 (Warrant + PoP)** | ✅ | ✅ | ✅ |
-| **Tool Filtering** | ❌ (all tools visible) | ✅ `filter_tools()` | ✅ (discovery) |
-| **Streaming** | ✅ | ✅ | ❌ |
-| **Async** | ✅ | ✅ | ✅ |
-| **Discovery** | N/A | N/ | ✅ `AgentCard` |
-| **Learning Curve** | Easy | Medium | Steep |
+| Feature | OpenAI | CrewAI | ADK | A2A |
+|---------|--------|--------|-----|-----|
+| **Runtime** | OpenAI SDK | CrewAI | Google ADK | Any (HTTP) |
+| **Deployment** | Single/multi process | Single/multi process | Single/multi process | Distributed |
+| **Tier 1 (Guardrails)** | ✅ | ✅ | ✅ | N/A (Tier 2 required) |
+| **Tier 2 (Warrant + PoP)** | ✅ | ✅ | ✅ | ✅ |
+| **Delegation** | ❌ | ✅ `WarrantDelegator` | ❌ | ✅ (discovery) |
+| **Agent Namespacing** | ❌ | ✅ `role::tool` | ❌ | N/A |
+| **Streaming** | ✅ | ❌ | ✅ | ❌ |
+| **Seal Mode** | ❌ | ✅ | ❌ | N/A |
+| **Learning Curve** | Easy | Easy | Medium | Steep |
 
 ---
 

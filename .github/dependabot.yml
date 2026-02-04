@@ -1,0 +1,67 @@
+version: 2
+updates:
+  # Python dependencies
+  - package-ecosystem: "pip"
+    directory: "/tenuo-python"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 10
+    groups:
+      # Group integration updates separately for easier review
+      openai-updates:
+        patterns:
+          - "openai*"
+      autogen-updates:
+        patterns:
+          - "autogen*"
+      langchain-updates:
+        patterns:
+          - "langchain*"
+          - "langgraph*"
+      crewai-updates:
+        patterns:
+          - "crewai*"
+      mcp-updates:
+        patterns:
+          - "mcp*"
+      google-updates:
+        patterns:
+          - "google-adk*"
+    # Only notify on major/minor, not patches
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-patch"]
+
+    # Custom commit message
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+    # Assign to maintainer
+    assignees:
+      - "aimable"
+    labels:
+      - "dependencies"
+      - "integrations"
+
+    # Review changes before merging
+    reviewers:
+      - "aimable"
+
+  # Rust dependencies
+  - package-ecosystem: "cargo"
+    directory: "/tenuo-core"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(rust)"
+    assignees:
+      - "aimable"
+    labels:
+      - "dependencies"
+      - "rust"

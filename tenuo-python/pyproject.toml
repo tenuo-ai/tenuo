@@ -54,6 +54,9 @@ langgraph = [
     "langgraph>=0.0.10",
     "tenuo[langchain]",  # LangGraph integration needs LangChain tools
 ]
+crewai = [
+    "crewai>=1.0",
+]
 mcp = [
     "mcp>=1.0.0; python_version >= '3.10'",
 ]
@@ -84,7 +87,7 @@ dev = [
     "uvicorn",
     "langchain-openai",
     # Include ALL optional groups for complete dev environment
-    "tenuo[openai,autogen,langchain,langgraph,a2a,google_adk,fastapi,mcp]",
+    "tenuo[openai,autogen,langchain,langgraph,crewai,a2a,google_adk,fastapi,mcp]",
 ]
 
 [project.scripts]

@@ -56,15 +56,15 @@ def crawl_results(directory: Path) -> list[dict]:
                 continue
 
             # Normalize fields
-            # AgentDojo uses 'security' (True = secure/attack failed)
-            # We want 'attack_success' (True = attack succeeded)
+            # AgentDojo's 'security' field:
+            #   True = injection task completed successfully (attack succeeded)
+            #   False = injection task failed (attack failed, system secure)
+            # So attack_success = security (NOT inverted!)
             is_attack = data.get("attack_type") is not None
 
             normalized = {
                 "attack": is_attack,
-                "attack_success": not data.get("security", True)
-                if is_attack
-                else False,
+                "attack_success": data.get("security", False) if is_attack else False,
                 "utility": float(data.get("utility", 0.0)),
                 "execution_time": data.get("duration", 0.0),
                 "tool_calls": [],  # Populate if we want deeper analysis

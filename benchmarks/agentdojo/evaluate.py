@@ -156,6 +156,13 @@ def parse_args():
         action="store_true",
         help="Validate setup without making API calls (no cost)",
     )
+    parser.add_argument(
+        "--attack-type",
+        type=str,
+        default="fixed_jailbreak",
+        choices=["fixed_jailbreak", "important_instructions", "injecagent", "direct"],
+        help="Attack type to use (default: fixed_jailbreak)",
+    )
     return parser.parse_args()
 
 
@@ -231,6 +238,7 @@ def main():
             user_tasks=task_ids,
             injection_tasks=injection_task_ids,
             logdir=suite_dir / "baseline",
+            attack_type=args.attack_type,
         )
 
         # Save results
@@ -249,6 +257,7 @@ def main():
             user_tasks=task_ids,
             injection_tasks=injection_task_ids,
             logdir=suite_dir / "with_tenuo",
+            attack_type=args.attack_type,
         )
 
         # Save results and metrics
