@@ -89,7 +89,7 @@ def get_package_version(package_name: str) -> Optional[str]:
     except ImportError:
         # Fallback for older Python
         try:
-            import pkg_resources  # type: ignore[import-not-found]
+            import pkg_resources  # type: ignore[import-untyped,import-not-found]
             return pkg_resources.get_distribution(package_name).version
         except Exception:
             return None

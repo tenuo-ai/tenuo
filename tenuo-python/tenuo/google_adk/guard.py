@@ -603,10 +603,28 @@ class TenuoGuard:
         return skill_name in self._get_granted_skills(warrant)
 
     def _remap_args(self, skill_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
-        """Remap tool arguments to constraint parameter names."""
+        """
+        Remap tool arguments to constraint parameter names.
+
+        SECURITY: Detects suspicious cases where both original and remapped
+        argument names are present (potential validation bypass attempt).
+        """
         validation_args = args.copy()
         if skill_name in self._arg_map:
             mapping = self._arg_map[skill_name]
+
+            # SECURITY: Detect if both original and remapped names are present
+            # This could indicate an attempt to bypass validation
+            for tool_arg, constraint_arg in mapping.items():
+                if tool_arg in args and constraint_arg in args:
+                    if tool_arg != constraint_arg:
+                        logger.warning(
+                            f"Security: Both '{tool_arg}' and '{constraint_arg}' "
+                            f"present in args for skill '{skill_name}'. This may "
+                            f"indicate a validation bypass attempt. Consider using "
+                            f"GuardBuilder.allow() instead of map_skill()."
+                        )
+
             for tool_arg, constraint_arg in mapping.items():
                 if tool_arg in args:
                     validation_args[constraint_arg] = args[tool_arg]
@@ -928,12 +946,39 @@ class GuardBuilder:
         """
         Map a tool name to a warrant skill, with optional argument mapping.
 
+        SECURITY WARNING - Argument Remapping Limitation:
+            arg_map is for validation mapping only. ADK's before_tool callback
+            cannot modify the arguments passed to the tool. This can cause
+            validation bypass if an attacker sends both the original and
+            remapped parameter names.
+
+            Attack scenario:
+                Configuration: .map_skill("read_file", "read_file", path="file_path")
+                Attacker sends: {"file_path": "/etc/passwd", "path": "/data/safe.txt"}
+                Validation checks: path="/data/safe.txt" ✅ (passes)
+                Tool receives: file_path="/etc/passwd" ❌ (bypasses constraint!)
+
+        RECOMMENDATION:
+            Use GuardBuilder.allow() instead, which validates on the tool's
+            actual parameter names:
+
+            SECURE:
+                .allow("read_file", file_path=Subpath("/data"))
+
+            INSECURE:
+                .map_skill("read_file", "read_file", path="file_path")
+
+            Only use map_skill() if:
+            - You control the tool implementation and know it ignores extra args
+            - You're mapping between truly different names (e.g., ADK tool wrapper
+              that translates parameter names before calling the real tool)
+
         Args:
             tool_name: The ADK tool function/class name
             skill_name: The warrant skill name
-            **arg_mapping: Map tool arg names to constraint param names
-                          e.g., path="file_path" means tool arg "file_path"
-                          maps to constraint param "path"
+            **arg_mapping: Map constraint param names to tool arg names
+                          e.g., path="file_path" means constraint param "path"
+                          corresponds to tool arg "file_path"
 
         Returns:
             self for chaining
@@ -941,7 +986,7 @@ class GuardBuilder:
         Example:
             .map_skill("read_file_tool", "read_file", path="file_path")
             # Maps: read_file_tool → read_file skill
-            # Maps: file_path arg → path constraint param
+            # Maps: constraint param "path" → tool arg "file_path"
         """
         self._skill_map[tool_name] = skill_name
         if arg_mapping:
