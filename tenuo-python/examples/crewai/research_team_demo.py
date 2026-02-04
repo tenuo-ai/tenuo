@@ -347,11 +347,14 @@ Key models: GPT, BERT, T5, LLaMA
     # Define Tools with Tenuo protection
     # ==========================================================================
 
+    # Tools accept both positional and keyword args for CrewAI compatibility
     class ReadFileTool(BaseTool):
         name: str = "read_file"
-        description: str = "Read contents of a file. Use this to read research papers and documents."
+        description: str = "Read contents of a file. Use this to read research papers and documents. Argument: path (str)"
 
-        def _run(self, path: str) -> str:
+        def _run(self, path: str = "", **kwargs) -> str:
+            if not path:
+                path = kwargs.get("path", "")
             # Authorization check happens via guard
             guard._authorize("read_file", {"path": path})
 
@@ -362,9 +365,13 @@ Key models: GPT, BERT, T5, LLaMA
 
     class WriteFileTool(BaseTool):
         name: str = "write_file"
-        description: str = "Write content to a file. Use this to save reports and summaries."
+        description: str = "Write content to a file. Use this to save reports and summaries. Arguments: path (str), content (str)"
 
-        def _run(self, path: str, content: str) -> str:
+        def _run(self, path: str = "", content: str = "", **kwargs) -> str:
+            if not path:
+                path = kwargs.get("path", "")
+            if not content:
+                content = kwargs.get("content", "")
             guard._authorize("write_file", {"path": path, "content": content})
 
             file_path = Path(path)
@@ -374,9 +381,11 @@ Key models: GPT, BERT, T5, LLaMA
 
     class SearchPapersTool(BaseTool):
         name: str = "search_papers"
-        description: str = "Search for research papers. Returns a list of available papers."
+        description: str = "Search for research papers. Returns a list of available papers. Argument: query (str)"
 
-        def _run(self, query: str) -> str:
+        def _run(self, query: str = "", **kwargs) -> str:
+            if not query:
+                query = kwargs.get("query", "")
             guard._authorize("search_papers", {"query": query})
 
             # Simulated search - returns files from data dir
@@ -562,9 +571,11 @@ STRIPE_SECRET=sk_live_xxxxxxxxxxxxxxxxxxxxx
 
     class ReadFileTool(BaseTool):
         name: str = "read_file"
-        description: str = "Read a file from the filesystem."
+        description: str = "Read a file from the filesystem. Argument: path (str)"
 
-        def _run(self, path: str) -> str:
+        def _run(self, path: str = "", **kwargs) -> str:
+            if not path:
+                path = kwargs.get("path", "")
             guard._authorize("read_file", {"path": path})
             return Path(path).read_text()
 
@@ -862,6 +873,7 @@ async def main():
     parser = argparse.ArgumentParser(description="CrewAI Research Team Demo")
     parser.add_argument("--normal", action="store_true", help="Run normal workflow only (simulation)")
     parser.add_argument("--attacks", action="store_true", help="Run attack simulations only")
+    parser.add_argument("--quick", action="store_true", help="Quick mode: attacks + recap only (for talks)")
     parser.add_argument("--slow", action="store_true", help="Slower pacing for presentations")
     parser.add_argument("--live", action="store_true", help="Use real LLM (requires OPENAI_API_KEY)")
     parser.add_argument("--live-attack", action="store_true", help="Run live attack demo with real LLM")
@@ -901,6 +913,10 @@ async def main():
         await demo_normal_workflow(delay)
     elif args.attacks:
         await demo_attack_scenarios(delay)
+    elif args.quick:
+        # Quick mode: attacks + recap only (for presentations)
+        await demo_attack_scenarios(delay)
+        await demo_comparison()
     else:
         # Run all: show workflow, then attacks, then recap
         await demo_normal_workflow(delay)

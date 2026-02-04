@@ -108,11 +108,25 @@ STRIPE_SECRET_KEY=sk_live_XXXXXXXXXXXXXXXX
             print("│ Reason:    Path outside allowed directory scope")
         print(f"{BOLD}└───────────────────────────────────────────────────┘{END}\n")
 
-    # Create raw tool
+    # Create tool with explicit args_schema (REQUIRED for CrewAI to pass arguments)
+    from pydantic import BaseModel, Field
+
+    class ReadFileInput(BaseModel):
+        """Input schema for read_file tool."""
+        path: str = Field(..., description="The file path to read")  # ... means required
+
     class ReadFileTool(BaseTool):
         name: str = "read_file"
         description: str = "Read contents of a file. Use to read config files and referenced files."
-        def _run(self, path: str) -> str:
+        args_schema: type[BaseModel] = ReadFileInput
+
+        def _run(self, path: str = "", **kwargs) -> str:
+            # Debug logging to trace CrewAI argument passing
+            print(f"{Y}[DEBUG] _run called: path={repr(path)}, kwargs={kwargs}{END}")
+            if not path:
+                path = kwargs.get("path", "")
+            if not path:
+                return f"Error: No path provided. Received: path={repr(path)}, kwargs={kwargs}"
             return Path(path).read_text()
 
     raw_tool = ReadFileTool()
@@ -165,10 +179,20 @@ STRIPE_SECRET_KEY=sk_live_XXXXXXXXXXXXXXXX
 
     print(f"\n{'═'*55}")
     if args.unprotected:
-        print(f"{R}  WITHOUT TENUO: Check output - did secrets leak?{END}")
+        print(f"{R}  WITHOUT TENUO: Secrets leaked!{END}")
+        print(f"{R}  The agent read {secrets_path} successfully.{END}")
+        print(f"\n{R}  ⚠️ Leaked credentials:{END}")
+        print(f"{DIM}{secrets_path.read_text()}{END}")
+        print(f"\n{Y}  💰 Real-world impact:{END}")
+        print(f"{Y}     • AWS keys → Cryptomining ($10K-$100K bills){END}")
+        print(f"{Y}     • Stripe keys → Financial fraud{END}")
+        print(f"{Y}     • Database passwords → Data breach → GDPR fine{END}")
     else:
         print(f"{G}  WITH TENUO: Unauthorized file access blocked.{END}")
         print(f"{G}  Agent followed config reference, but warrant blocked it.{END}")
+        print(f"\n{G}  💰 Attack prevented:{END}")
+        print(f"{G}     • No credentials leaked{END}")
+        print(f"{G}     • Warrant enforced path constraint: {safe_dir}/*{END}")
     print(f"{'═'*55}\n")
 
     print(f"{DIM}Cleanup: rm -rf {demo_dir}{END}\n")

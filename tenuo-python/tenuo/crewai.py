@@ -718,12 +718,18 @@ class CrewAIGuard:
                     "Either use a mutable Tool or disable seal mode."
                 )
 
-        # Create new Tool with wrapped function
-        return Tool(
-            name=tool.name,
-            description=tool.description,
-            func=guarded_func,
-        )
+        # Create new Tool with wrapped function, preserving args_schema
+        # args_schema is REQUIRED for CrewAI to properly extract and pass arguments
+        protected_tool_kwargs = {
+            "name": tool.name,
+            "description": tool.description,
+            "func": guarded_func,
+        }
+        # Preserve args_schema if present (critical for argument passing)
+        if hasattr(tool, "args_schema") and tool.args_schema is not None:
+            protected_tool_kwargs["args_schema"] = tool.args_schema
+
+        return Tool(**protected_tool_kwargs)
 
     def protect_all(
         self, tools: List[Any], *, agent_role: Optional[str] = None

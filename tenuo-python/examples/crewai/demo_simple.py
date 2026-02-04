@@ -29,6 +29,10 @@ def main():
     args = parser.parse_args()
     d = 1.5 if args.slow else 0
 
+    # Quick preview of what we're demonstrating
+    if not args.unprotected:
+        print(f"\n{Y}Preview: LLM will try /data/secrets/... → Tenuo blocks it (warrant: /data/papers/*){END}\n")
+
     print(f"\n{BOLD}{C}═══ Tenuo CrewAI Demo ═══{END}\n")
 
     # Suppress CrewAI import noise
@@ -140,6 +144,7 @@ def main():
         print(f"{G}    [TENUO] BLOCKED — attenuated warrant does not authorize this path{END}")
         print(f"{Y}      Attempted: /data/secrets/api-keys.txt{END}")
         print(f"{Y}      Allowed:   /data/papers/* (cryptographically enforced){END}")
+        print(f"{DIM}      💰 Impact avoided: API key leak → unauthorized cloud spend{END}")
     print()
     time.sleep(d)
 
@@ -165,6 +170,7 @@ def main():
         print(f"{G}    [TENUO] BLOCKED — warrant does not authorize this path (prompt ignored){END}")
         print(f"{Y}      Attempted: /data/secrets/api-keys.txt{END}")
         print(f"{Y}      Allowed:   /data/papers/* (warrant is source of truth){END}")
+        print(f"{DIM}      💰 Impact avoided: Data breach → GDPR fine (4% revenue){END}")
     print()
     time.sleep(d)
 
