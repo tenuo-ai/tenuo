@@ -98,26 +98,26 @@ def get_package_version(package_name: str) -> Optional[str]:
 def check_version_compatibility(package_name: str, warn: bool = True) -> list:
     """
     Check if installed package version has known issues.
-    
+
     Args:
         package_name: Name of the package to check
         warn: If True, emit warnings for known issues
-        
+
     Returns:
         List of (issue_description, recommendation) tuples for any issues found
     """
     issues = []
-    
+
     version_str = get_package_version(package_name)
     if version_str is None:
         return issues
-    
+
     version = parse_version(version_str)
     if version is None:
         return issues
-    
+
     warnings_for_package = VERSION_WARNINGS.get(package_name, [])
-    
+
     for min_ver, max_ver, issue, recommendation in warnings_for_package:
         if version_in_range(version, min_ver, max_ver):
             issues.append((issue, recommendation))
@@ -130,7 +130,7 @@ def check_version_compatibility(package_name: str, warn: bool = True) -> list:
                 )
                 warnings.warn(warning_msg, UserWarning, stacklevel=3)
                 logger.info(warning_msg)
-    
+
     return issues
 
 

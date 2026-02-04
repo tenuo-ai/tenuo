@@ -121,12 +121,12 @@ from tenuo import (
 # Import Python-only security constraints
 from tenuo.constraints import Subpath, UrlSafe, Shlex
 
-# Check version compatibility on import (warns, doesn't fail)
-from tenuo._version_compat import check_crewai_compat
-check_crewai_compat()
-
 # Import shared constraint checking logic from framework-agnostic core
 from tenuo.core import check_constraint
+
+# Check version compatibility on import (warns, doesn't fail)
+from tenuo._version_compat import check_crewai_compat  # noqa: E402
+check_crewai_compat()
 
 logger = logging.getLogger("tenuo.crewai")
 

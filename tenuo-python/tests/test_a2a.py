@@ -2274,7 +2274,7 @@ class TestAdversarialA2ASecurityFixes:
         caplog.set_level(logging.WARNING)
 
         # Test 1: require_audience=True without require_warrant
-        server1 = A2AServer(
+        _server1 = A2AServer(  # noqa: F841 - testing warning on construction
             name="Test Agent",
             url="https://test.example.com",
             public_key="z6MkTestKey",
@@ -2288,7 +2288,7 @@ class TestAdversarialA2ASecurityFixes:
         caplog.clear()
 
         # Test 2: require_warrant=True without require_pop
-        server2 = A2AServer(
+        _server2 = A2AServer(  # noqa: F841 - testing warning on construction
             name="Test Agent",
             url="https://test.example.com",
             public_key="z6MkTestKey",

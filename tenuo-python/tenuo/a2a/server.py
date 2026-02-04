@@ -1427,7 +1427,7 @@ class A2AServer:
                 min_val = data.get("min")
                 max_val = data.get("max")
                 if min_val is None or max_val is None:
-                    raise ValueError(f"Range constraint requires 'min' and 'max' fields")
+                    raise ValueError("Range constraint requires 'min' and 'max' fields")
                 return Range(min=float(min_val), max=float(max_val))
 
             # IP address range (CIDR notation)
@@ -1436,7 +1436,7 @@ class A2AServer:
 
                 cidr = data.get("cidr")
                 if not cidr:
-                    raise ValueError(f"Cidr constraint requires 'cidr' field")
+                    raise ValueError("Cidr constraint requires 'cidr' field")
                 return Cidr(cidr)
 
             # Set membership (allowlist)
@@ -1445,7 +1445,7 @@ class A2AServer:
 
                 values = data.get("values", [])
                 if not values:
-                    raise ValueError(f"OneOf constraint requires non-empty 'values' list")
+                    raise ValueError("OneOf constraint requires non-empty 'values' list")
                 # Convert values to strings for OneOf
                 return OneOf(values=[str(v) for v in values])
 
@@ -1455,7 +1455,7 @@ class A2AServer:
 
                 values = data.get("values", [])
                 if not values:
-                    raise ValueError(f"NotOneOf constraint requires non-empty 'values' list")
+                    raise ValueError("NotOneOf constraint requires non-empty 'values' list")
                 # Convert values to strings for NotOneOf
                 return NotOneOf(values=[str(v) for v in values])
 
@@ -1465,7 +1465,7 @@ class A2AServer:
 
                 pattern = data.get("pattern")
                 if not pattern:
-                    raise ValueError(f"Regex constraint requires 'pattern' field")
+                    raise ValueError("Regex constraint requires 'pattern' field")
                 return Regex(pattern)
 
             else:

@@ -29,10 +29,12 @@ updates:
       google-updates:
         patterns:
           - "google-adk*"
-    # Only notify on major/minor, not patches
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-patch"]
+      dev-dependencies:
+        patterns:
+          - "pytest*"
+          - "ruff*"
+          - "mypy*"
+          - "maturin*"
 
     # Custom commit message
     commit-message:
@@ -41,14 +43,14 @@ updates:
 
     # Assign to maintainer
     assignees:
-      - "aimable"
+      - "aimable100"
     labels:
       - "dependencies"
       - "integrations"
 
     # Review changes before merging
     reviewers:
-      - "aimable"
+      - "aimable100"
 
   # Rust dependencies
   - package-ecosystem: "cargo"
@@ -58,10 +60,77 @@ updates:
       day: "monday"
       time: "09:00"
     open-pull-requests-limit: 5
+    groups:
+      crypto:
+        patterns:
+          - "ed25519*"
+          - "sha2*"
+          - "rand*"
+      serialization:
+        patterns:
+          - "serde*"
+          - "ciborium*"
+      python-bindings:
+        patterns:
+          - "pyo3*"
     commit-message:
       prefix: "deps(rust)"
     assignees:
-      - "aimable"
+      - "aimable100"
+    reviewers:
+      - "aimable100"
     labels:
       - "dependencies"
       - "rust"
+
+  # Frontend dependencies (tenuo-explorer)
+  - package-ecosystem: "npm"
+    directory: "/tenuo-explorer"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    groups:
+      react:
+        patterns:
+          - "react*"
+          - "@types/react*"
+      testing:
+        patterns:
+          - "vitest*"
+          - "@testing-library/*"
+          - "playwright*"
+      build:
+        patterns:
+          - "vite*"
+          - "typescript*"
+          - "tailwind*"
+          - "postcss*"
+    commit-message:
+      prefix: "deps(explorer)"
+    assignees:
+      - "aimable100"
+    reviewers:
+      - "aimable100"
+    labels:
+      - "dependencies"
+      - "frontend"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(actions)"
+    assignees:
+      - "aimable100"
+    reviewers:
+      - "aimable100"
+    labels:
+      - "dependencies"
+      - "ci"
