@@ -129,6 +129,10 @@ from tenuo import (
 # Import Python-only security constraints (defined in constraints.py, re-exported here)
 from tenuo.constraints import Subpath, UrlSafe
 
+# Check version compatibility on import (warns, doesn't fail)
+from tenuo._version_compat import check_openai_compat
+check_openai_compat()
+
 logger = logging.getLogger("tenuo.openai")
 
 

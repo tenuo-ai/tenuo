@@ -36,6 +36,10 @@ import logging
 
 from .config import allow_passthrough
 from .decorators import warrant_scope, key_scope, get_allowed_tools_context
+
+# Check version compatibility on import (warns, doesn't fail)
+from tenuo._version_compat import check_langchain_compat
+check_langchain_compat()
 from .exceptions import (
     ToolNotAuthorized,
     ConstraintViolation,

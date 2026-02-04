@@ -47,6 +47,10 @@ from functools import wraps
 import logging
 import os
 
+# Check version compatibility on import (warns, doesn't fail)
+from tenuo._version_compat import check_langgraph_compat
+check_langgraph_compat()
+
 from .exceptions import ConfigurationError
 from .bound_warrant import BoundWarrant
 from .keys import KeyRegistry, load_signing_key_from_env

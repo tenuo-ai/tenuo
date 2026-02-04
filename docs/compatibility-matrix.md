@@ -6,17 +6,24 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 
 ## Supported Versions
 
-| Integration | Minimum | Recommended | Latest Tested | Status | Notes |
-|-------------|---------|-------------|---------------|--------|-------|
-| **OpenAI** | 1.6.0 | 1.50+ | 1.52.0 | ✅ Stable | Full feature support |
-| **CrewAI** | 1.1.0 | 1.9+ | 1.9.4 | ✅ Stable | All tiers supported |
+| Integration | Minimum (pyproject) | Recommended | Latest Tested | Status | Notes |
+|-------------|---------------------|-------------|---------------|--------|-------|
+| **OpenAI** | 1.0.0 | 1.50+ | 1.52.0 | ✅ Stable | Full feature support |
+| **CrewAI** | 1.0.0 | 1.9+ | 1.9.4 | ✅ Stable | All tiers supported |
 | **AutoGen** | 0.7.0 | 0.9+ | 0.9.2 | ✅ Stable | AgentChat integration |
-| **LangChain** | 0.2.27 | 0.3+ | 0.3.5 | ✅ Stable | LangChain Core |
+| **LangChain** | 0.2.0 | 0.3+ | 0.3.5 | ✅ Stable | LangChain Core |
 | **LangGraph** | 0.2.0 | 0.2+ | 0.2.8 | ✅ Stable | StateGraph support |
 | **MCP** | 1.0.0 | 1.1+ | 1.1.3 | ✅ Stable | Model Context Protocol |
 | **Google ADK** | 0.1.0 | 0.1+ | 0.1.2 | ⚠️ Beta | Early access |
 
-> **Note on Minimum Versions**: These are the oldest versions tested in CI. Earlier versions may have dependency conflicts or missing required features. See [Known Issues](#known-issues) for details.
+> **Version Philosophy**: Tenuo uses **permissive constraints** in `pyproject.toml` to maximize compatibility. We **warn at runtime** (not fail) if you have a version with known issues. This lets you try Tenuo without upgrading your entire stack.
+>
+> **Runtime Warnings**: If you import a Tenuo integration with a version that has known issues, you'll see a warning like:
+> ```
+> Tenuo compatibility notice: openai==1.2.0
+>   Issue: OpenAI 1.0-1.5 may have httpx compatibility issues
+>   Recommendation: Upgrade to openai>=1.6 if you encounter this issue
+> ```
 
 ### Status Legend
 - ✅ **Stable**: Production-ready, actively tested
@@ -29,32 +36,32 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 ## Known Issues
 
 ### OpenAI
-**Current Status**: ✅ No known issues
+**Current Status**: ✅ No known issues (1.6+)
 
-**Minimum Version**: 1.6.0
-- Versions 1.0-1.5 have httpx compatibility issues (`proxies` argument conflict)
-- The `OpenAI()` client constructor fails with `TypeError: Client.__init__() got an unexpected keyword argument 'proxies'`
+**Version Notes**:
+- **1.0-1.5**: May have httpx compatibility issues (`proxies` argument conflict). Tenuo will warn at runtime but allow installation.
+- **1.6+**: Fully compatible, no known issues.
 
 **Recent Changes**:
 - 1.50.0: Added streaming support for tool calls (✅ Compatible)
 - 1.40.0: Response format changes (✅ Compatible)
-- 1.6.0: Fixed httpx compatibility (✅ Minimum supported)
+- 1.6.0: Fixed httpx compatibility
 
 **Next Breaking Change**: OpenAI 2.0 (TBD)
 - Expected changes: Client constructor signature
 - **Tracking**: [Issue TBD](https://github.com/tenuo-ai/tenuo/labels/openai)
 
 ### CrewAI
-**Current Status**: ✅ No known issues
+**Current Status**: ✅ No known issues (1.1+)
 
-**Minimum Version**: 1.1.0
-- Version 1.0 is missing required fields (`backstory` for Agent, `expected_output` for Task)
-- Agent/Task creation fails with `ValidationError: Field required`
+**Version Notes**:
+- **1.0.x**: Requires explicit `backstory` for Agent and `expected_output` for Task. Tenuo's wrapper code works, but you must provide these fields. Tenuo will warn at runtime.
+- **1.1+**: Fully compatible, no known issues.
 
 **Recent Changes**:
 - 1.9.0: Added hierarchical process support (✅ Compatible)
 - 1.5.0: Tool signature changes (✅ Backwards compatible)
-- 1.1.0: Added required fields for Agent/Task (✅ Minimum supported)
+- 1.1.0: Made backstory/expected_output have defaults
 
 **Next Breaking Change**: CrewAI 2.0 (Q2 2026 estimated)
 - Expected changes: Async tool support
@@ -75,25 +82,25 @@ Tracks compatibility between Tenuo and upstream integration libraries.
 ### LangChain
 **Current Status**: ✅ No known issues
 
-**Minimum Version**: 0.2.27
-- Required by `langgraph>=0.2.0` which depends on `langchain-core>=0.2.27`
-- Earlier 0.2.x versions cannot be used alongside langgraph
+**Version Notes**:
+- **0.2.0-0.2.26**: Works standalone, but incompatible with langgraph>=0.2. Tenuo will warn if you use langgraph.
+- **0.2.27+**: Fully compatible with all Tenuo integrations including langgraph.
 
 **Recent Changes**:
 - 0.3.0: Pydantic v2 migration (✅ Compatible)
-- 0.2.27: Required by langgraph 0.2.0 (✅ Minimum supported)
-- 0.2.0: Core extraction (❌ Incompatible with langgraph>=0.2)
+- 0.2.27: Compatible with langgraph 0.2.0
+- 0.2.0: Core extraction
 
 ### LangGraph
 **Current Status**: ✅ No known issues
 
-**Minimum Version**: 0.2.0
-- Versions 0.0.x and 0.1.x require `langchain-core<0.2.0`
-- Cannot be installed alongside `langchain-core>=0.2` (dependency conflict)
+**Version Notes**:
+- **0.2.0+**: Requires `langchain-core>=0.2.27`. Tenuo's `[langgraph]` extra handles this automatically.
+- **0.0.x/0.1.x**: Not supported (requires langchain-core<0.2, which conflicts with our langchain integration).
 
 **Recent Changes**:
-- 0.2.0: Updated to support langchain-core>=0.2 (✅ Minimum supported)
-- 0.1.0: Initial stable release (❌ Incompatible with langchain-core>=0.2)
+- 0.2.0: Updated to support langchain-core>=0.2
+- 0.1.0: Initial stable release (incompatible with our langchain-core requirement)
 
 ---
 
