@@ -14,6 +14,10 @@ on:
       - 'tenuo-python/tenuo/langgraph.py'
       - 'tenuo-python/pyproject.toml'
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   test-compatibility:
     name: ${{ matrix.integration }} @ ${{ matrix.version }}
