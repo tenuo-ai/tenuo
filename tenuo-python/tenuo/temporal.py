@@ -674,6 +674,23 @@ class TenuoInterceptorConfig:
     Requires opentelemetry-api to be installed.
     """
 
+    # Security: Fail-closed options
+    require_warrant: bool = True
+    """
+    Require a warrant for all activities (fail-closed).
+    When True, activities without a warrant are denied.
+    When False, activities without a warrant pass through (opt-in).
+    Default: True (secure by default).
+    """
+
+    redact_args_in_logs: bool = True
+    """
+    Redact argument values in logs and audit events.
+    When True, argument values are replaced with "[REDACTED]".
+    Prevents leaking sensitive data like passwords, tokens, etc.
+    Default: True (secure by default).
+    """
+
 
 # =============================================================================
 # Header Utilities
@@ -1179,10 +1196,25 @@ class TenuoActivityInboundInterceptor:
         except ChainValidationError:
             raise  # Re-raise validation errors
 
-        # If no warrant, pass through (opt-in authorization)
+        # If no warrant, check require_warrant config (fail-closed by default)
         if warrant is None:
-            logger.debug(f"No warrant for activity {info.activity_type}, executing without auth")
-            return await self._next.execute_activity(input)
+            if self._config.require_warrant:
+                # Fail-closed: deny activities without warrant
+                logger.warning(f"No warrant for activity {info.activity_type}, denying (require_warrant=True)")
+                if self._config.on_denial == "raise":
+                    raise ConstraintViolation(
+                        tool=info.activity_type,
+                        arguments={},
+                        constraint="No warrant provided (require_warrant=True)",
+                        warrant_id="none",
+                    )
+                return None
+            else:
+                # Opt-in mode: allow without warrant
+                logger.debug(
+                    f"No warrant for activity {info.activity_type}, executing without auth (require_warrant=False)"
+                )
+                return await self._next.execute_activity(input)
 
         # Resolve tool name
         # Priority: 1) config mapping, 2) @tool() decorator, 3) activity name
@@ -1358,24 +1390,47 @@ class TenuoActivityInboundInterceptor:
         return await self._next.execute_activity(input)
 
     def _extract_arguments(self, input: Any) -> Dict[str, Any]:
-        """Extract arguments from activity input.
+        """Extract arguments from activity input with proper signature mapping.
 
-        Handles various input formats gracefully.
+        Handles various input formats and maps positional args to named params.
         """
-        # Try to get args from input
-        args = getattr(input, "args", ())
+        import inspect
 
-        # If first arg is a dict, use it
+        args = getattr(input, "args", ())
+        activity_fn = getattr(input, "fn", None)
+
+        # If we have the function, use its signature to map args properly
+        if activity_fn and args:
+            try:
+                sig = inspect.signature(activity_fn)
+                params = list(sig.parameters.keys())
+                result = {}
+                for i, arg in enumerate(args):
+                    if i < len(params):
+                        result[params[i]] = arg
+                    else:
+                        result[f"arg{i}"] = arg
+                return result
+            except (ValueError, TypeError):
+                # Fallback if signature inspection fails
+                pass
+
+        # If first arg is a dict, use it (legacy pattern)
         if args and isinstance(args[0], dict):
             return args[0]
 
-        # Otherwise, create a simple dict from positional args
-        # This is a fallback; proper extraction requires knowing the signature
+        # Fallback: create dict from positional args
         result = {}
         for i, arg in enumerate(args):
             result[f"arg{i}"] = arg
 
         return result
+
+    def _redact_args(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Redact argument values for logging (prevent sensitive data leaks)."""
+        if not self._config.redact_args_in_logs:
+            return args
+        return {k: "[REDACTED]" for k in args.keys()}
 
     def _emit_allow_event(
         self,
@@ -1397,7 +1452,7 @@ class TenuoActivityInboundInterceptor:
             task_queue=info.task_queue,
             decision="ALLOW",
             tool=tool,
-            arguments=args,
+            arguments=self._redact_args(args),
             warrant_id=warrant.id(),
             warrant_expires_at=warrant.expires_at(),
             warrant_capabilities=list(warrant.tools()),
@@ -1431,7 +1486,7 @@ class TenuoActivityInboundInterceptor:
             task_queue=info.task_queue,
             decision="DENY",
             tool=tool,
-            arguments=args,
+            arguments=self._redact_args(args),
             warrant_id=warrant.id(),
             warrant_expires_at=warrant.expires_at(),
             warrant_capabilities=list(warrant.tools()),

@@ -719,6 +719,38 @@ class TestPhase4Config:
         assert config.enable_tracing is True
 
 
+class TestSecurityConfig:
+    """Tests for security hardening config options."""
+
+    def test_require_warrant_defaults_to_true(self):
+        """require_warrant defaults to True (fail-closed)."""
+        resolver = MagicMock(spec=KeyResolver)
+        config = TenuoInterceptorConfig(key_resolver=resolver)
+
+        assert config.require_warrant is True
+
+    def test_can_disable_require_warrant(self):
+        """Can disable require_warrant for opt-in mode."""
+        resolver = MagicMock(spec=KeyResolver)
+        config = TenuoInterceptorConfig(key_resolver=resolver, require_warrant=False)
+
+        assert config.require_warrant is False
+
+    def test_redact_args_defaults_to_true(self):
+        """redact_args_in_logs defaults to True (secure by default)."""
+        resolver = MagicMock(spec=KeyResolver)
+        config = TenuoInterceptorConfig(key_resolver=resolver)
+
+        assert config.redact_args_in_logs is True
+
+    def test_can_disable_redact_args(self):
+        """Can disable arg redaction for debugging."""
+        resolver = MagicMock(spec=KeyResolver)
+        config = TenuoInterceptorConfig(key_resolver=resolver, redact_args_in_logs=False)
+
+        assert config.redact_args_in_logs is False
+
+
 # =============================================================================
 # Main
 # =============================================================================
