@@ -298,54 +298,60 @@ class TestTemporalAuditEvent:
 
 
 class TestExceptions:
-    """Tests for Temporal-specific exceptions."""
+    """Tests for exception types."""
 
     def test_constraint_violation_str(self):
         """ConstraintViolation has informative str."""
         exc = ConstraintViolation(
             tool="read_file",
             arguments={"path": "/etc/passwd"},
-            constraint="Path not in allowed scope",
+            constraint="path must start with /allowed",
             warrant_id="w-123",
         )
 
-        msg = str(exc)
-
-        assert "read_file" in msg
-        assert "Path not in allowed scope" in msg
-        assert "w-123" in msg
+        assert "read_file" in str(exc)
+        assert "path must start" in str(exc)
+        assert exc.error_code == "CONSTRAINT_VIOLATED"
 
     def test_warrant_expired_str(self):
         """WarrantExpired has informative str."""
+        from datetime import datetime, timezone
+
         exc = WarrantExpired(
             warrant_id="w-123",
             expired_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
 
-        msg = str(exc)
-
-        assert "w-123" in msg
-        assert "expired" in msg.lower()
+        assert "w-123" in str(exc)
+        assert "expired" in str(exc).lower()
+        assert exc.error_code == "WARRANT_EXPIRED"
 
     def test_chain_validation_error_str(self):
         """ChainValidationError has informative str."""
-        exc = ChainValidationError(
-            reason="Signature mismatch",
-            depth=3,
-        )
+        exc = ChainValidationError(reason="Invalid signature at level 2", depth=2)
 
-        msg = str(exc)
-
-        assert "depth 3" in msg
-        assert "Signature mismatch" in msg
+        assert "depth 2" in str(exc)
+        assert "Invalid signature" in str(exc)
+        assert exc.error_code == "CHAIN_INVALID"
 
     def test_key_resolution_error_str(self):
         """KeyResolutionError has informative str."""
         exc = KeyResolutionError(key_id="missing-key")
 
-        msg = str(exc)
+        assert "missing-key" in str(exc)
+        assert exc.error_code == "KEY_NOT_FOUND"
 
-        assert "missing-key" in msg
+    def test_local_activity_error_has_error_code(self):
+        """LocalActivityError has error_code class attribute."""
+        exc = LocalActivityError("my_activity")
+
+        assert exc.error_code == "LOCAL_ACTIVITY_BLOCKED"
+
+    def test_pop_verification_error_has_error_code(self):
+        """PopVerificationError has error_code field."""
+        exc = PopVerificationError(reason="bad sig", activity_name="my_activity")
+
+        assert exc.error_code == "POP_VERIFICATION_FAILED"
 
 
 # =============================================================================

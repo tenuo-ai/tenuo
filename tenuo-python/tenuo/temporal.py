@@ -14,12 +14,13 @@ Key Concepts:
     - TenuoInterceptor enforces authorization at the activity boundary
     - KeyResolver abstraction for secure key material management
 
-Security Philosophy (Fail Closed):
-    - Missing warrant headers: Activities execute without authorization (opt-in)
+Security Philosophy (Fail-Closed by Default):
+    - Missing warrant headers: Denied (require_warrant=True by default)
     - Invalid warrant: Raises ChainValidationError
     - Expired warrant: Raises WarrantExpired
     - Constraint violation: Raises ConstraintViolation
-    - PoP failure: Raises PopVerificationError (Phase 2)
+    - PoP failure: Raises PopVerificationError
+    - Local activity without @unprotected: Raises LocalActivityError
 
 Phase 1 Features:
     - TenuoInterceptor: Activity-level authorization
@@ -32,6 +33,15 @@ Phase 2 Features:
     - PoP verification using scheduled_time (replay-safe)
     - @unprotected decorator for local activities
     - Fail-closed local activity guard
+
+Phase 3 Features:
+    - @tool() decorator for activity-to-tool mapping
+    - attenuated_headers() for child workflow delegation
+    - workflow_grant() for deterministic single-tool grants
+
+Phase 4 Features:
+    - VaultKeyResolver, KMSKeyResolver, CompositeKeyResolver
+    - TenuoMetrics for Prometheus observability
 """
 
 from __future__ import annotations
@@ -77,6 +87,8 @@ class TenuoContextError(TenuoTemporalError):
 class LocalActivityError(TenuoTemporalError):
     """Raised when a protected activity is used as local activity."""
 
+    error_code = "LOCAL_ACTIVITY_BLOCKED"
+
     def __init__(self, activity_name: str):
         self.activity_name = activity_name
         super().__init__(
@@ -93,10 +105,12 @@ class PopVerificationError(TenuoTemporalError):
     Attributes:
         reason: Why PoP verification failed
         activity_name: The activity that failed PoP
+        error_code: Wire format error code
     """
 
     reason: str
     activity_name: str
+    error_code: str = field(default="POP_VERIFICATION_FAILED", init=False)
 
     def __str__(self) -> str:
         return f"PoP verification failed for '{self.activity_name}': {self.reason}"
@@ -111,12 +125,14 @@ class ConstraintViolation(TenuoTemporalError):
         arguments: The arguments that were checked
         constraint: The constraint that was violated
         warrant_id: The warrant that denied the action
+        error_code: Wire format error code
     """
 
     tool: str
     arguments: Dict[str, Any]
     constraint: str
     warrant_id: str
+    error_code: str = field(default="CONSTRAINT_VIOLATED", init=False)
 
     def __str__(self) -> str:
         return f"Activity '{self.tool}' denied: {self.constraint} (warrant: {self.warrant_id})"
@@ -129,10 +145,12 @@ class WarrantExpired(TenuoTemporalError):
     Attributes:
         warrant_id: The expired warrant
         expired_at: When the warrant expired
+        error_code: Wire format error code
     """
 
     warrant_id: str
     expired_at: datetime
+    error_code: str = field(default="WARRANT_EXPIRED", init=False)
 
     def __str__(self) -> str:
         return f"Warrant '{self.warrant_id}' expired at {self.expired_at}"
@@ -145,10 +163,12 @@ class ChainValidationError(TenuoTemporalError):
     Attributes:
         reason: Description of the validation failure
         depth: The depth at which validation failed
+        error_code: Wire format error code
     """
 
     reason: str
     depth: int
+    error_code: str = field(default="CHAIN_INVALID", init=False)
 
     def __str__(self) -> str:
         return f"Warrant chain invalid at depth {self.depth}: {self.reason}"
@@ -160,9 +180,11 @@ class KeyResolutionError(TenuoTemporalError):
 
     Attributes:
         key_id: The key ID that could not be resolved
+        error_code: Wire format error code
     """
 
     key_id: str
+    error_code: str = field(default="KEY_NOT_FOUND", init=False)
 
     def __str__(self) -> str:
         return f"Cannot resolve key: {self.key_id}"
@@ -1181,9 +1203,17 @@ class TenuoActivityInboundInterceptor:
         activity_fn = getattr(input, "fn", None)
 
         if is_local and self._config.block_local_activities:
-            # Check if activity is marked @unprotected
-            if activity_fn and not is_unprotected(activity_fn):
+            # Fail-closed: if we can't determine protection status, deny
+            if activity_fn is None:
+                logger.warning(
+                    f"Local activity {info.activity_type} denied: cannot determine protection status (fail-closed)"
+                )
                 raise LocalActivityError(info.activity_type)
+
+            # Check if activity is marked @unprotected
+            if not is_unprotected(activity_fn):
+                raise LocalActivityError(info.activity_type)
+
             # Unprotected local activities skip authorization
             return await self._next.execute_activity(input)
 
@@ -1229,9 +1259,25 @@ class TenuoActivityInboundInterceptor:
         )
 
         # Get activity arguments
-        # Note: input.args contains the positional args. We need to map to kwargs.
-        # For Phase 1, we assume first arg is a dict or we extract from input
         args = self._extract_arguments(input)
+
+        # Check chain depth (enforce max_chain_depth config)
+        chain_depth = warrant.chain_depth() if hasattr(warrant, "chain_depth") else 0
+        if chain_depth > self._config.max_chain_depth:
+            self._emit_denial_event(
+                info=info,
+                warrant=warrant,
+                tool=tool_name,
+                args=args,
+                reason=f"Chain depth {chain_depth} exceeds max {self._config.max_chain_depth}",
+                constraint="max_chain_depth_exceeded",
+            )
+            if self._config.on_denial == "raise":
+                raise ChainValidationError(
+                    reason=f"Chain depth {chain_depth} exceeds max {self._config.max_chain_depth}",
+                    depth=chain_depth,
+                )
+            return None
 
         # Check warrant expiry
         if warrant.is_expired():
@@ -1371,12 +1417,54 @@ class TenuoActivityInboundInterceptor:
                     )
                 return None
 
-            # Verify PoP signature
-            # Note: Full PoP verification requires the holder's public key
-            # from the warrant and verifying the signature over the challenge.
-            # For Phase 2, we log the verification step.
-            # Full signature verification will be added in Phase 3.
-            logger.debug(f"PoP verification for {info.activity_type}: challenge={challenge.hex()[:16]}...")
+            # Verify PoP signature against warrant's holder key
+            try:
+                # Decode PoP header (base64-encoded signature)
+                pop_signature = base64.b64decode(pop_header)
+
+                # Get holder's public key from warrant
+                holder_key = warrant.holder_key() if hasattr(warrant, "holder_key") else None
+                if holder_key is None:
+                    raise PopVerificationError(
+                        reason="Warrant has no holder key for PoP verification",
+                        activity_name=info.activity_type,
+                    )
+
+                # Verify signature over challenge
+                if not holder_key.verify(challenge, pop_signature):
+                    raise PopVerificationError(
+                        reason="PoP signature verification failed",
+                        activity_name=info.activity_type,
+                    )
+
+                logger.debug(f"PoP verified for {info.activity_type}: challenge={challenge.hex()[:16]}...")
+
+            except PopVerificationError:
+                self._emit_denial_event(
+                    info=info,
+                    warrant=warrant,
+                    tool=tool_name,
+                    args=args,
+                    reason="PoP signature verification failed",
+                )
+                if self._config.on_denial == "raise":
+                    raise
+                return None
+            except Exception as e:
+                # Fail-closed on any PoP verification error
+                self._emit_denial_event(
+                    info=info,
+                    warrant=warrant,
+                    tool=tool_name,
+                    args=args,
+                    reason=f"PoP verification error: {e}",
+                )
+                if self._config.on_denial == "raise":
+                    raise PopVerificationError(
+                        reason=f"Verification error: {e}",
+                        activity_name=info.activity_type,
+                    )
+                return None
 
         # Authorization passed - emit allow event
         self._emit_allow_event(
