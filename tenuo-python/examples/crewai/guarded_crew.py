@@ -14,7 +14,8 @@ try:
     from crewai.tools import BaseTool
 except ImportError:
     # Handle older crewai versions or mock environment
-    class BaseTool: pass
+    class BaseTool:
+        pass
 
 from tenuo.crewai import (
     GuardedCrew,
@@ -63,7 +64,7 @@ researcher = Agent(
     backstory="You are a meticulous researcher.",
     allow_delegation=False,
     # Note: We pass raw tools here; GuardedCrew will protect them automatically
-    tools=[search_tool, read_tool], 
+    tools=[search_tool, read_tool],
 )
 
 manager = Agent(
