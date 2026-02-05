@@ -9,7 +9,7 @@ import base64
 import gzip
 import os
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, AsyncMock
 from datetime import datetime, timezone
 
 from tenuo.temporal import (
@@ -598,6 +598,125 @@ class TestToolDecorator:
         assert get_tool_name(lookup_config, "default") == "internal_lookup"
         assert is_unprotected(lookup_config) is True
         assert lookup_config("foo") == "value_foo"
+
+
+# =============================================================================
+# Phase 4: Enterprise Key Resolvers & Metrics Tests
+# =============================================================================
+
+
+class TestCompositeKeyResolver:
+    """Tests for CompositeKeyResolver fallback behavior."""
+
+    def test_uses_first_successful_resolver(self):
+        """CompositeKeyResolver uses first resolver that succeeds."""
+        import asyncio
+        from tenuo.temporal import CompositeKeyResolver
+
+        # Mock resolvers
+        failing_resolver = MagicMock(spec=KeyResolver)
+        failing_resolver.resolve = AsyncMock(side_effect=KeyResolutionError("key1"))
+
+        succeeding_resolver = MagicMock(spec=KeyResolver)
+        mock_key = MagicMock()
+        succeeding_resolver.resolve = AsyncMock(return_value=mock_key)
+
+        composite = CompositeKeyResolver([failing_resolver, succeeding_resolver])
+        result = asyncio.run(composite.resolve("key1"))
+
+        assert result == mock_key
+        failing_resolver.resolve.assert_called_once_with("key1")
+        succeeding_resolver.resolve.assert_called_once_with("key1")
+
+    def test_raises_if_all_fail(self):
+        """CompositeKeyResolver raises if all resolvers fail."""
+        import asyncio
+        from tenuo.temporal import CompositeKeyResolver
+
+        resolver1 = MagicMock(spec=KeyResolver)
+        resolver1.resolve = AsyncMock(side_effect=KeyResolutionError("key1"))
+
+        resolver2 = MagicMock(spec=KeyResolver)
+        resolver2.resolve = AsyncMock(side_effect=KeyResolutionError("key1"))
+
+        composite = CompositeKeyResolver([resolver1, resolver2])
+
+        with pytest.raises(KeyResolutionError):
+            asyncio.run(composite.resolve("key1"))
+
+    def test_requires_at_least_one_resolver(self):
+        """CompositeKeyResolver requires at least one resolver."""
+        from tenuo.temporal import CompositeKeyResolver
+
+        with pytest.raises(ValueError):
+            CompositeKeyResolver([])
+
+
+class TestTenuoMetrics:
+    """Tests for TenuoMetrics."""
+
+    def test_records_authorized(self):
+        """TenuoMetrics records authorized activities."""
+        from tenuo.temporal import TenuoMetrics
+
+        metrics = TenuoMetrics(prefix="test")
+        metrics.record_authorized("read_file", "MyWorkflow", 0.005)
+
+        stats = metrics.get_stats()
+        assert "read_file:MyWorkflow" in stats["authorized"]
+        assert stats["authorized"]["read_file:MyWorkflow"] == 1
+        assert stats["latency_count"] == 1
+
+    def test_records_denied(self):
+        """TenuoMetrics records denied activities."""
+        from tenuo.temporal import TenuoMetrics
+
+        metrics = TenuoMetrics(prefix="test")
+        metrics.record_denied("write_file", "expired", "MyWorkflow", 0.003)
+
+        stats = metrics.get_stats()
+        assert "write_file:expired:MyWorkflow" in stats["denied"]
+        assert stats["denied"]["write_file:expired:MyWorkflow"] == 1
+
+    def test_calculates_average_latency(self):
+        """TenuoMetrics calculates average latency."""
+        from tenuo.temporal import TenuoMetrics
+
+        metrics = TenuoMetrics(prefix="test")
+        metrics.record_authorized("read_file", "MyWorkflow", 0.010)
+        metrics.record_authorized("read_file", "MyWorkflow", 0.020)
+
+        stats = metrics.get_stats()
+        assert stats["latency_avg"] == pytest.approx(0.015, rel=0.01)
+
+
+class TestPhase4Config:
+    """Tests for Phase 4 config options."""
+
+    def test_default_phase4_values(self):
+        """Phase 4 config defaults are sensible."""
+        resolver = MagicMock(spec=KeyResolver)
+        config = TenuoInterceptorConfig(key_resolver=resolver)
+
+        assert config.metrics is None
+        assert config.enable_tracing is False
+
+    def test_can_enable_metrics(self):
+        """Can enable metrics in config."""
+        from tenuo.temporal import TenuoMetrics
+
+        resolver = MagicMock(spec=KeyResolver)
+        metrics = TenuoMetrics(prefix="test")
+        config = TenuoInterceptorConfig(key_resolver=resolver, metrics=metrics)
+
+        assert config.metrics is metrics
+
+    def test_can_enable_tracing(self):
+        """Can enable tracing in config."""
+        resolver = MagicMock(spec=KeyResolver)
+        config = TenuoInterceptorConfig(key_resolver=resolver, enable_tracing=True)
+
+        assert config.enable_tracing is True
 
 
 # =============================================================================

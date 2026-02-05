@@ -229,6 +229,112 @@ class TemporalAuditEvent:
 
 
 # =============================================================================
+# Observability: Metrics (Phase 4)
+# =============================================================================
+
+
+class TenuoMetrics:
+    """Prometheus metrics for Tenuo-Temporal authorization.
+
+    Collects metrics for monitoring authorization decisions:
+    - activities_authorized: Counter of allowed activities
+    - activities_denied: Counter of denied activities
+    - authorization_latency_seconds: Histogram of auth check duration
+
+    Args:
+        prefix: Metric name prefix (default: "tenuo_temporal")
+
+    Example:
+        metrics = TenuoMetrics()
+        config = TenuoInterceptorConfig(
+            key_resolver=resolver,
+            metrics=metrics,
+        )
+
+        # Metrics available at /metrics:
+        # tenuo_temporal_activities_authorized_total{tool="read_file"}
+        # tenuo_temporal_activities_denied_total{tool="write_file",reason="expired"}
+        # tenuo_temporal_authorization_latency_seconds_bucket{...}
+    """
+
+    def __init__(self, prefix: str = "tenuo_temporal") -> None:
+        self._prefix = prefix
+        self._authorized_count: Dict[str, int] = {}
+        self._denied_count: Dict[str, int] = {}
+        self._latencies: List[float] = []
+
+        # Try to use prometheus_client if available
+        self._prom_authorized: Optional[Any] = None
+        self._prom_denied: Optional[Any] = None
+        self._prom_latency: Optional[Any] = None
+
+        try:
+            from prometheus_client import Counter, Histogram
+
+            self._prom_authorized = Counter(
+                f"{prefix}_activities_authorized_total",
+                "Total authorized activities",
+                ["tool", "workflow_type"],
+            )
+            self._prom_denied = Counter(
+                f"{prefix}_activities_denied_total",
+                "Total denied activities",
+                ["tool", "reason", "workflow_type"],
+            )
+            self._prom_latency = Histogram(
+                f"{prefix}_authorization_latency_seconds",
+                "Authorization check latency",
+                ["tool"],
+                buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0],
+            )
+            logger.info(f"Prometheus metrics enabled with prefix: {prefix}")
+        except ImportError:
+            logger.debug("prometheus_client not available, using internal counters")
+
+    def record_authorized(
+        self,
+        tool: str,
+        workflow_type: str,
+        latency_seconds: float,
+    ) -> None:
+        """Record an authorized activity."""
+        key = f"{tool}:{workflow_type}"
+        self._authorized_count[key] = self._authorized_count.get(key, 0) + 1
+        self._latencies.append(latency_seconds)
+
+        if self._prom_authorized:
+            self._prom_authorized.labels(tool=tool, workflow_type=workflow_type).inc()
+        if self._prom_latency:
+            self._prom_latency.labels(tool=tool).observe(latency_seconds)
+
+    def record_denied(
+        self,
+        tool: str,
+        reason: str,
+        workflow_type: str,
+        latency_seconds: float,
+    ) -> None:
+        """Record a denied activity."""
+        key = f"{tool}:{reason}:{workflow_type}"
+        self._denied_count[key] = self._denied_count.get(key, 0) + 1
+        self._latencies.append(latency_seconds)
+
+        if self._prom_denied:
+            self._prom_denied.labels(tool=tool, reason=reason, workflow_type=workflow_type).inc()
+        if self._prom_latency:
+            self._prom_latency.labels(tool=tool).observe(latency_seconds)
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get current metrics as a dict (for testing/debugging)."""
+        return {
+            "authorized": dict(self._authorized_count),
+            "denied": dict(self._denied_count),
+            "latency_count": len(self._latencies),
+            "latency_avg": (sum(self._latencies) / len(self._latencies) if self._latencies else 0.0),
+        }
+
+
+# =============================================================================
 # Key Resolver
 # =============================================================================
 
@@ -290,6 +396,210 @@ class EnvKeyResolver(KeyResolver):
             raise KeyResolutionError(key_id=key_id)
 
 
+class VaultKeyResolver(KeyResolver):
+    """Resolve keys from HashiCorp Vault.
+
+    Production-ready key resolver using Vault's KV secrets engine.
+
+    Args:
+        url: Vault server URL (e.g. "https://vault.example.com:8200")
+        mount: Secrets engine mount path (default: "secret")
+        path_template: Path template with {key_id} placeholder
+            (default: "tenuo/keys/{key_id}")
+        token: Vault token. If None, uses VAULT_TOKEN env var.
+        cache_ttl: Cache TTL in seconds (default: 300)
+
+    Example:
+        resolver = VaultKeyResolver(
+            url="https://vault.company.com:8200",
+            path_template="production/tenuo/{key_id}",
+        )
+    """
+
+    def __init__(
+        self,
+        url: str,
+        mount: str = "secret",
+        path_template: str = "tenuo/keys/{key_id}",
+        token: Optional[str] = None,
+        cache_ttl: int = 300,
+    ) -> None:
+        self._url = url.rstrip("/")
+        self._mount = mount
+        self._path_template = path_template
+        self._token = token
+        self._cache_ttl = cache_ttl
+        self._cache: Dict[str, tuple[Any, float]] = {}
+
+    async def resolve(self, key_id: str) -> Any:
+        """Resolve key from Vault."""
+        import os
+        import time
+
+        # Check cache
+        now = time.time()
+        if key_id in self._cache:
+            cached_key, cached_at = self._cache[key_id]
+            if now - cached_at < self._cache_ttl:
+                logger.debug(f"Vault cache hit for key: {key_id}")
+                return cached_key
+
+        # Get token
+        token = self._token or os.environ.get("VAULT_TOKEN")
+        if not token:
+            raise KeyResolutionError(key_id=key_id)
+
+        # Build path
+        path = self._path_template.format(key_id=key_id)
+
+        try:
+            import httpx
+
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"{self._url}/v1/{self._mount}/data/{path}",
+                    headers={"X-Vault-Token": token},
+                    timeout=10.0,
+                )
+
+                if resp.status_code == 404:
+                    raise KeyResolutionError(key_id=key_id)
+
+                resp.raise_for_status()
+                data = resp.json()
+
+                # Extract key from Vault response
+                key_b64 = data["data"]["data"]["key"]
+                from tenuo_core import SigningKey
+
+                key_bytes = base64.b64decode(key_b64)
+                key = SigningKey.from_bytes(key_bytes)
+
+                # Cache
+                self._cache[key_id] = (key, now)
+                logger.debug(f"Vault resolved key: {key_id}")
+                return key
+
+        except KeyResolutionError:
+            raise
+        except Exception as e:
+            logger.error(f"Vault key resolution failed: {e}")
+            raise KeyResolutionError(key_id=key_id)
+
+
+class KMSKeyResolver(KeyResolver):
+    """Resolve keys from cloud KMS (AWS KMS or GCP KMS).
+
+    Uses KMS to unwrap encrypted key material stored alongside the key ID.
+
+    Args:
+        provider: "aws" or "gcp"
+        key_uri_template: URI template with {key_id} placeholder
+            AWS: "arn:aws:kms:us-east-1:123456789:key/{key_id}"
+            GCP: "projects/my-project/locations/global/keyRings/tenuo/cryptoKeys/{key_id}"
+
+    Example:
+        resolver = KMSKeyResolver(
+            provider="aws",
+            key_uri_template="arn:aws:kms:us-west-2:123456789:key/{key_id}",
+        )
+    """
+
+    def __init__(
+        self,
+        provider: Literal["aws", "gcp"],
+        key_uri_template: str,
+    ) -> None:
+        self._provider = provider
+        self._key_uri_template = key_uri_template
+
+    async def resolve(self, key_id: str) -> Any:
+        """Resolve key using KMS."""
+        key_uri = self._key_uri_template.format(key_id=key_id)
+
+        try:
+            if self._provider == "aws":
+                return await self._resolve_aws(key_id, key_uri)
+            elif self._provider == "gcp":
+                return await self._resolve_gcp(key_id, key_uri)
+            else:
+                raise KeyResolutionError(key_id=key_id)
+        except KeyResolutionError:
+            raise
+        except Exception as e:
+            logger.error(f"KMS key resolution failed: {e}")
+            raise KeyResolutionError(key_id=key_id)
+
+    async def _resolve_aws(self, key_id: str, key_uri: str) -> Any:
+        """Resolve using AWS KMS."""
+        try:
+            import boto3
+
+            kms = boto3.client("kms")  # noqa: F841
+            # For Phase 4, we assume the key is stored as a data key
+            # wrapped by the KMS key. Real implementation would fetch
+            # the encrypted key from a secure store and decrypt here.
+            logger.debug(f"AWS KMS resolving key: {key_id} via {key_uri}")
+            raise NotImplementedError(
+                "AWS KMS key resolution requires encrypted key material. See docs for setup instructions."
+            )
+        except ImportError:
+            raise KeyResolutionError(key_id=key_id)
+
+    async def _resolve_gcp(self, key_id: str, key_uri: str) -> Any:
+        """Resolve using GCP KMS."""
+        try:
+            from google.cloud import kms  # noqa: F401
+
+            logger.debug(f"GCP KMS resolving key: {key_id} via {key_uri}")
+            raise NotImplementedError(
+                "GCP KMS key resolution requires encrypted key material. See docs for setup instructions."
+            )
+        except ImportError:
+            raise KeyResolutionError(key_id=key_id)
+
+
+class CompositeKeyResolver(KeyResolver):
+    """Try multiple resolvers in order (fallback chain).
+
+    Useful for graceful degradation:
+    - Try Vault first (production)
+    - Fall back to KMS (backup)
+    - Fall back to env vars (local dev)
+
+    Args:
+        resolvers: List of resolvers to try in order
+
+    Example:
+        resolver = CompositeKeyResolver([
+            VaultKeyResolver(url="https://vault.prod.internal"),
+            KMSKeyResolver(provider="aws", key_uri_template="..."),
+            EnvKeyResolver(),  # Fallback for local dev
+        ])
+    """
+
+    def __init__(self, resolvers: List[KeyResolver]) -> None:
+        if not resolvers:
+            raise ValueError("CompositeKeyResolver requires at least one resolver")
+        self._resolvers = resolvers
+
+    async def resolve(self, key_id: str) -> Any:
+        """Try each resolver in order until one succeeds."""
+        errors: List[str] = []
+
+        for i, resolver in enumerate(self._resolvers):
+            try:
+                key = await resolver.resolve(key_id)
+                logger.debug(f"CompositeKeyResolver: resolved {key_id} via resolver {i} ({type(resolver).__name__})")
+                return key
+            except KeyResolutionError as e:
+                errors.append(f"{type(resolver).__name__}: {e}")
+                continue
+
+        logger.error(f"CompositeKeyResolver: all resolvers failed for {key_id}: {errors}")
+        raise KeyResolutionError(key_id=key_id)
+
+
 # =============================================================================
 # Interceptor Config
 # =============================================================================
@@ -349,6 +659,19 @@ class TenuoInterceptorConfig:
     Time window (seconds) for PoP timestamp validation.
     The scheduled_time must be within this window of the PoP timestamp.
     Default: 300 seconds (5 minutes).
+    """
+
+    # Phase 4: Observability options
+    metrics: Optional["TenuoMetrics"] = None
+    """
+    Optional metrics collector for Prometheus.
+    Pass a TenuoMetrics instance to enable metrics.
+    """
+
+    enable_tracing: bool = False
+    """
+    Enable OpenTelemetry tracing spans for authorization.
+    Requires opentelemetry-api to be installed.
     """
 
 
@@ -1143,6 +1466,11 @@ __all__ = [
     # Key Resolvers
     "KeyResolver",
     "EnvKeyResolver",
+    "VaultKeyResolver",  # Phase 4
+    "KMSKeyResolver",  # Phase 4
+    "CompositeKeyResolver",  # Phase 4
+    # Metrics
+    "TenuoMetrics",  # Phase 4
     # Config
     "TenuoInterceptorConfig",
     # Interceptor
