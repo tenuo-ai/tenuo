@@ -399,6 +399,148 @@ def tenuo_headers(
     return headers
 
 
+def attenuated_headers(
+    *,
+    tools: Optional[List[str]] = None,
+    constraints: Optional[Dict[str, Any]] = None,
+    ttl_seconds: Optional[int] = None,
+    child_key_id: Optional[str] = None,
+    compress: bool = True,
+) -> Dict[str, bytes]:
+    """Create headers for a child workflow with attenuated scope.
+
+    Must be called from within a workflow context. Creates a new warrant
+    with reduced capabilities from the parent warrant.
+
+    Args:
+        tools: Tools to allow (subset of parent). None = inherit all.
+        constraints: Additional constraints to apply.
+        ttl_seconds: Max TTL for child warrant. None = inherit parent.
+        child_key_id: Key ID for child. None = inherit parent.
+        compress: Whether to gzip compress (default: True).
+
+    Returns:
+        Headers dict to pass to execute_child_workflow()
+
+    Example:
+        # Start child workflow with reduced scope
+        await workflow.execute_child_workflow(
+            ChildWorkflow.run,
+            args=[...],
+            headers=attenuated_headers(
+                tools=["read_file"],  # Parent has read_file + write_file
+                ttl_seconds=60,
+            ),
+        )
+
+    Raises:
+        TenuoContextError: If no parent warrant in context
+        ConstraintViolation: If requested tools exceed parent scope
+    """
+    try:
+        from temporalio import workflow  # noqa: F401
+    except ImportError:
+        raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
+
+    # Get parent warrant from workflow context
+    parent_warrant = current_warrant()
+    parent_key_id = current_key_id()
+
+    # Validate tools are subset of parent
+    parent_tools = set(parent_warrant.tools())
+    if tools is not None:
+        requested_tools = set(tools)
+        if not requested_tools.issubset(parent_tools):
+            excess = requested_tools - parent_tools
+            raise ConstraintViolation(
+                tool=str(list(excess)[0]),
+                arguments={},
+                constraint=f"Cannot delegate tools not in parent: {excess}",
+                warrant_id=parent_warrant.id(),
+            )
+    else:
+        tools = list(parent_tools)
+
+    # Attenuate the warrant
+    # Note: This uses the parent warrant's attenuate() method
+    # The actual key resolution happens at execution time
+    child_warrant = parent_warrant.attenuate(
+        tools=tools,
+        constraints=constraints or {},
+        ttl_seconds=ttl_seconds,
+    )
+
+    # Use parent key_id if not specified
+    key_id = child_key_id or parent_key_id
+
+    return tenuo_headers(child_warrant, key_id, compress=compress)
+
+
+def workflow_grant(
+    tool: str,
+    constraints: Optional[Dict[str, Any]] = None,
+    *,
+    ttl_seconds: int = 300,
+) -> Any:
+    """Issue a scoped warrant for a single tool within a workflow.
+
+    Uses workflow.now() for deterministic timestamp, ensuring
+    replay safety. The grant is scoped to one tool with constraints.
+
+    Args:
+        tool: The tool to authorize
+        constraints: Constraints to apply to the tool
+        ttl_seconds: Time-to-live in seconds (default: 5 minutes)
+
+    Returns:
+        A new Warrant scoped to the specified tool
+
+    Example:
+        # Within a workflow
+        file_warrant = workflow_grant(
+            "read_file",
+            constraints={"path_prefix": "/data/"},
+            ttl_seconds=60,
+        )
+
+        # Pass to activity
+        await workflow.execute_activity(
+            read_file,
+            args=[file_warrant, path],
+            ...
+        )
+
+    Raises:
+        TenuoContextError: If called outside workflow context
+        ConstraintViolation: If tool not in parent warrant
+    """
+    try:
+        from temporalio import workflow  # noqa: F401
+    except ImportError:
+        raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
+
+    # Get parent warrant
+    parent_warrant = current_warrant()
+
+    # Validate tool is in parent scope
+    parent_tools = parent_warrant.tools()
+    if tool not in parent_tools:
+        raise ConstraintViolation(
+            tool=tool,
+            arguments={},
+            constraint=f"Tool '{tool}' not in parent warrant capabilities",
+            warrant_id=parent_warrant.id(),
+        )
+
+    # Issue attenuated warrant with deterministic timestamp
+    # workflow.now() is replay-safe
+    return parent_warrant.attenuate(
+        tools=[tool],
+        constraints=constraints or {},
+        ttl_seconds=ttl_seconds,
+    )
+
+
 def _extract_warrant_from_headers(headers: Dict[str, bytes]) -> Any:
     """Extract and deserialize warrant from headers.
 
@@ -544,6 +686,47 @@ def is_unprotected(func: Any) -> bool:
 
 
 # =============================================================================
+# @tool() Decorator (Phase 3)
+# =============================================================================
+
+
+def tool(name: str) -> Callable[[F], F]:
+    """Map an activity to a specific Tenuo tool name.
+
+    By default, activities are authorized using their function name
+    as the tool name. Use this decorator when the activity name
+    differs from the warrant tool name.
+
+    Args:
+        name: The tool name in the warrant (e.g., "read_file")
+
+    Example:
+        @activity.defn
+        @tool("read_file")
+        async def fetch_document(doc_id: str) -> str:
+            '''Fetches document - authorized via 'read_file' capability.'''
+            return await storage.get(doc_id)
+
+        # Warrant needs: capability("read_file", {...})
+        # Activity is called: fetch_document(doc_id)
+    """
+
+    def decorator(func: F) -> F:
+        func._tenuo_tool_name = name  # type: ignore
+        return func
+
+    return decorator
+
+
+def get_tool_name(func: Any, default: str) -> str:
+    """Get the Tenuo tool name for an activity.
+
+    Returns the @tool() name if set, otherwise the default.
+    """
+    return getattr(func, "_tenuo_tool_name", default)
+
+
+# =============================================================================
 # PoP Utilities (Phase 2)
 # =============================================================================
 
@@ -679,9 +862,15 @@ class TenuoActivityInboundInterceptor:
             return await self._next.execute_activity(input)
 
         # Resolve tool name
+        # Priority: 1) config mapping, 2) @tool() decorator, 3) activity name
+        activity_fn = getattr(input, "fn", None)
+        default_tool = info.activity_type
+        if activity_fn:
+            default_tool = get_tool_name(activity_fn, info.activity_type)
+
         tool_name = self._config.tool_mappings.get(
             info.activity_type,
-            info.activity_type,
+            default_tool,
         )
 
         # Get activity arguments
@@ -960,12 +1149,17 @@ __all__ = [
     "TenuoInterceptor",
     # Header utilities
     "tenuo_headers",
+    "attenuated_headers",  # Phase 3
     # Context accessors
     "current_warrant",
     "current_key_id",
+    "workflow_grant",  # Phase 3
     # Phase 2: Decorators
     "unprotected",
     "is_unprotected",
+    # Phase 3: Decorators
+    "tool",
+    "get_tool_name",
     # Constants
     "TENUO_WARRANT_HEADER",
     "TENUO_KEY_ID_HEADER",

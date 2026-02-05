@@ -9,13 +9,11 @@ import base64
 import gzip
 import os
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, patch
 from datetime import datetime, timezone
 
 from tenuo.temporal import (
     # Exceptions
-    TenuoTemporalError,
-    TenuoContextError,
     ConstraintViolation,
     WarrantExpired,
     ChainValidationError,
@@ -37,14 +35,14 @@ from tenuo.temporal import (
     TENUO_WARRANT_HEADER,
     TENUO_KEY_ID_HEADER,
     TENUO_COMPRESSED_HEADER,
-    TENUO_POP_HEADER,
-    # Internal
-    _extract_warrant_from_headers,
     _extract_key_id_from_headers,
     _compute_pop_challenge,
     # Phase 2: Decorators
     unprotected,
     is_unprotected,
+    # Phase 3: Decorators and delegation
+    tool,
+    get_tool_name,
 )
 
 
@@ -543,6 +541,63 @@ class TestPhase2Config:
 
         assert config.require_pop is True
         assert config.pop_window_seconds == 60
+
+
+# =============================================================================
+# Phase 3: @tool() Decorator Tests
+# =============================================================================
+
+
+class TestToolDecorator:
+    """Tests for @tool() decorator."""
+
+    def test_marks_function_with_tool_name(self):
+        """@tool() sets the tool name attribute."""
+
+        @tool("read_file")
+        def fetch_document():
+            pass
+
+        assert hasattr(fetch_document, "_tenuo_tool_name")
+        assert fetch_document._tenuo_tool_name == "read_file"
+
+    def test_get_tool_name_returns_decorated_name(self):
+        """get_tool_name returns the @tool() name."""
+
+        @tool("write_file")
+        def save_document():
+            pass
+
+        assert get_tool_name(save_document, "save_document") == "write_file"
+
+    def test_get_tool_name_returns_default_for_undecorated(self):
+        """get_tool_name returns default for undecorated functions."""
+
+        def my_activity():
+            pass
+
+        assert get_tool_name(my_activity, "my_activity") == "my_activity"
+
+    def test_decorator_preserves_function(self):
+        """@tool() doesn't modify function behavior."""
+
+        @tool("calculator")
+        def multiply(a, b):
+            return a * b
+
+        assert multiply(3, 4) == 12
+
+    def test_decorator_can_stack_with_unprotected(self):
+        """@tool() and @unprotected can be stacked."""
+
+        @unprotected
+        @tool("internal_lookup")
+        def lookup_config(key):
+            return f"value_{key}"
+
+        assert get_tool_name(lookup_config, "default") == "internal_lookup"
+        assert is_unprotected(lookup_config) is True
+        assert lookup_config("foo") == "value_foo"
 
 
 # =============================================================================
