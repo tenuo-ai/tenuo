@@ -698,7 +698,7 @@ class CrewAIGuard:
 
     def as_hook(
         self, *, agent_role: Optional[str] = None
-    ) -> Callable[["ToolCallHookContext"], Optional["ToolCallHookContext"]]:
+    ) -> Callable[["ToolCallHookContext"], Optional[bool]]:
         """Get the hook function for manual registration.
 
         Use this when you need crew-scoped hooks instead of global registration.
@@ -707,7 +707,8 @@ class CrewAIGuard:
             agent_role: Optional agent role for namespaced constraint lookup
 
         Returns:
-            A callable suitable for @before_tool_call_crew decorator
+            A callable suitable for @before_tool_call decorator or manual registration.
+            Returns False to block tool calls, None to allow.
 
         Example:
             @CrewBase
@@ -723,12 +724,12 @@ class CrewAIGuard:
 
     def _create_hook(
         self, *, agent_role: Optional[str] = None
-    ) -> Callable[[Any], Optional[Any]]:
+    ) -> Callable[[Any], Optional[bool]]:
         """Create a before_tool_call hook function.
 
         The hook receives ToolCallHookContext and returns:
-        - The context (possibly modified) to allow the call
-        - None to skip/block the call
+        - False to block/skip the tool call
+        - None (or True) to allow the call to proceed
 
         Args:
             agent_role: Optional agent role for namespaced constraint lookup
@@ -738,11 +739,12 @@ class CrewAIGuard:
         """
         guard = self  # Capture reference for closure
 
-        def tenuo_authorize_hook(context: Any) -> Optional[Any]:
+        def tenuo_authorize_hook(context: Any) -> Optional[bool]:
             """Tenuo authorization hook for CrewAI before_tool_call."""
             # Extract tool name and arguments from context
-            tool_name = getattr(context, 'tool_name', None) or getattr(context, 'name', '')
-            args = getattr(context, 'arguments', {}) or getattr(context, 'args', {})
+            # CrewAI uses 'tool_name' and 'tool_input' attributes
+            tool_name = getattr(context, 'tool_name', None) or ''
+            args = getattr(context, 'tool_input', None) or {}
 
             # Resolve agent role from context if not provided
             effective_role = agent_role
@@ -752,21 +754,25 @@ class CrewAIGuard:
                 if agent and hasattr(agent, 'role'):
                     effective_role = agent.role
 
-            # Authorize the call
-            result = guard._authorize(tool_name, args, agent_role=effective_role)
+            # Authorize the call - catch exceptions for on_denial='raise' mode
+            try:
+                result = guard._authorize(tool_name, args, agent_role=effective_role)
+            except TenuoCrewAIError as e:
+                # on_denial='raise' mode - catch and return False to block
+                logger.info(f"[TENUO] BLOCKED {tool_name}: {e}")
+                return False
 
             if result is not None:
-                # Denial - return None to skip the tool call
-                # The DenialResult contains the reason which was already logged/audited
+                # on_denial='log' or 'skip' mode - result is DenialResult
                 logger.info(f"[TENUO] BLOCKED {tool_name}: {result.reason}")
-                return None
+                return False
 
-            # Authorized - return context to proceed
-            return context
+            # Authorized - return None to allow the call to proceed
+            return None
 
         return tenuo_authorize_hook
 
-    def authorize_hook(self, context: Any, *, agent_role: Optional[str] = None) -> Optional[Any]:
+    def authorize_hook(self, context: Any, *, agent_role: Optional[str] = None) -> Optional[bool]:
         """Authorize a tool call from a CrewAI hook context.
 
         Direct authorization method for use in crew-scoped hooks.
@@ -777,7 +783,7 @@ class CrewAIGuard:
             agent_role: Optional agent role (overrides context-derived role)
 
         Returns:
-            The context if authorized, None if denied
+            None to allow the call, False to block it
 
         Example:
             @CrewBase
