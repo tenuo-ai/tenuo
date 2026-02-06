@@ -157,9 +157,9 @@ def main():
         researcher_read("/data/secrets/api-keys.txt")
         print(f"{R}    ⚠ Leaked secrets!{END}")
     except ConstraintViolation:
-        print(f"{G}    [TENUO] BLOCKED — attenuated warrant does not authorize this path{END}")
+        print(f"{R}    [TENUO] BLOCKED{END} — attenuated warrant does not authorize this path")
         print(f"{Y}      Attempted: /data/secrets/api-keys.txt{END}")
-        print(f"{Y}      Allowed:   /data/papers/* (cryptographically enforced){END}")
+        print(f"{G}      Allowed:   /data/papers/* (cryptographically enforced){END}")
         print(f"{DIM}      💰 Impact avoided: API key leak → unauthorized cloud spend{END}")
     print()
     time.sleep(d)
@@ -183,9 +183,9 @@ def main():
         result = researcher_read("/data/secrets/api-keys.txt")
         print(f"{R}    ⚠ ATTACK SUCCEEDED! {result[:30]}...{END}")
     except ConstraintViolation:
-        print(f"{G}    [TENUO] BLOCKED — warrant does not authorize this path (prompt ignored){END}")
+        print(f"{R}    [TENUO] BLOCKED{END} — warrant does not authorize this path (prompt ignored)")
         print(f"{Y}      Attempted: /data/secrets/api-keys.txt{END}")
-        print(f"{Y}      Allowed:   /data/papers/* (warrant is source of truth){END}")
+        print(f"{G}      Allowed:   /data/papers/* (warrant is source of truth){END}")
         print(f"{DIM}      💰 Impact avoided: Data breach → GDPR fine (4% revenue){END}")
     print()
     time.sleep(d)
@@ -210,10 +210,10 @@ def main():
             )
             print(f"{R}    ⚠ Escalation worked! (this should never happen){END}")
         except Exception:
-            print(f"{G}    [TENUO] BLOCKED — cannot widen scope beyond parent warrant{END}")
+            print(f"{R}    [TENUO] BLOCKED{END} — cannot widen scope beyond parent warrant")
             print(f"{Y}      Requested: /data/* (wider){END}")
-            print(f"{Y}      Parent:    /data/papers/* (researcher's limit){END}")
-            print(f"{Y}      Result:    Cryptographic rejection{END}")
+            print(f"{G}      Parent:    /data/papers/* (researcher's limit){END}")
+            print(f"{G}      Result:    Cryptographic rejection{END}")
         print()
         time.sleep(d)
 
