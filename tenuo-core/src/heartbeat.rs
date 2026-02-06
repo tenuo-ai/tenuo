@@ -18,8 +18,16 @@
 //! 4. If heartbeats fail, logs warnings and continues retrying
 //! 5. On each heartbeat, checks if SRL update is needed (version or urgent flag)
 //! 6. Fetches and applies new SRL when needed
-//! 7. Flushes buffered audit events to the control plane
+//! 7. Flushes buffered audit events to the control plane (signed if key configured)
+//!
+//! # Signed Events (Receipts)
+//!
+//! When `signing_key` is configured, events become cryptographic receipts:
+//! - Each event is signed by the authorizer using Ed25519
+//! - The control plane verifies the signature and stores as a receipt
+//! - This provides non-repudiation: the authorizer (witness) signed the event
 
+use crate::crypto::SigningKey;
 use crate::planes::Authorizer;
 use crate::revocation::SignedRevocationList;
 use crate::PublicKey;
@@ -129,6 +137,47 @@ impl AuthorizationEvent {
             request_id,
         }
     }
+}
+
+/// Signed event envelope for cryptographic receipts.
+///
+/// When the authorizer has a signing key configured, events are wrapped in this
+/// envelope with an Ed25519 signature. The control plane verifies the signature
+/// and stores the event as a non-repudiable receipt.
+#[derive(Clone, Debug, Serialize)]
+pub struct SignedEvent {
+    /// The authorization event data
+    #[serde(flatten)]
+    pub event: AuthorizationEvent,
+    /// Base64-encoded Ed25519 signature over the canonical signing payload.
+    /// Payload format: CBOR({1: authorizer_id, 2: warrant_chain, 3: action, 4: outcome, 5: timestamp})
+    pub signature: String,
+    /// The action that was authorized (for receipt indexing)
+    pub action: String,
+    /// Session ID for grouping related actions (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    /// Action category for filtering (http, file, shell, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action_category: Option<String>,
+}
+
+/// CBOR signing payload format (matches Go control plane's AuthorizerReceiptPayload).
+/// Uses integer keys for compact encoding.
+#[derive(serde::Serialize)]
+struct ReceiptSigningPayload<'a> {
+    #[serde(rename = "1")]
+    authorizer_id: &'a str,
+    #[serde(rename = "2")]
+    warrant_chain: &'a [u8],
+    #[serde(rename = "3")]
+    action: &'a str,
+    #[serde(rename = "4")]
+    outcome: &'a str,
+    #[serde(rename = "5")]
+    timestamp: i64,
+    #[serde(rename = "6", skip_serializing_if = "Option::is_none")]
+    root_principal: Option<&'a str>,
 }
 
 /// Channel-based sender for audit events.
@@ -618,6 +667,10 @@ pub struct HeartbeatConfig {
     pub environment: EnvironmentInfo,
     /// Shared metrics collector (optional, for metrics reporting)
     pub metrics: Option<MetricsCollector>,
+    /// Signing key for cryptographic receipts (optional).
+    /// When set, events are signed by the authorizer and become non-repudiable receipts.
+    /// The public key is sent during registration for verification on the control plane.
+    pub signing_key: Option<SigningKey>,
 }
 
 impl Default for HeartbeatConfig {
@@ -635,6 +688,7 @@ impl Default for HeartbeatConfig {
             audit_flush_interval_secs: 10,
             environment: EnvironmentInfo::default(),
             metrics: None,
+            signing_key: None,
         }
     }
 }
@@ -647,6 +701,10 @@ struct RegisterRequest<'a> {
     #[serde(rename = "type")]
     authorizer_type: &'a str,
     version: &'a str,
+    /// Hex-encoded Ed25519 public key for verifying signed receipts.
+    /// When provided, the authorizer can send signed events that become cryptographic receipts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    public_key: Option<String>,
     // Flattened environment fields (Go control plane expects these at top level)
     #[serde(skip_serializing_if = "Option::is_none")]
     environment: Option<&'a str>,
@@ -940,7 +998,71 @@ async fn run_audit_flush_loop(
     }
 }
 
+/// Sign an authorization event to create a cryptographic receipt.
+///
+/// Creates a CBOR signing payload and signs it with the authorizer's key.
+/// The signature covers: (authorizer_id, warrant_chain, action, outcome, timestamp, root_principal)
+fn sign_event(event: &AuthorizationEvent, signing_key: &SigningKey) -> SignedEvent {
+    // Decode warrant stack if present (base64 -> bytes)
+    let warrant_chain_bytes = event
+        .warrant_stack
+        .as_ref()
+        .and_then(|ws| base64::Engine::decode(&base64::engine::general_purpose::STANDARD, ws).ok())
+        .unwrap_or_default();
+
+    // Build action string from tool
+    let action = format!("tool:{}", event.tool);
+
+    // Parse timestamp to Unix epoch
+    let timestamp = chrono::DateTime::parse_from_rfc3339(&event.timestamp)
+        .map(|dt| dt.timestamp())
+        .unwrap_or_else(|_| chrono::Utc::now().timestamp());
+
+    // Build signing payload (CBOR with integer keys)
+    let payload = ReceiptSigningPayload {
+        authorizer_id: &event.authorizer_id,
+        warrant_chain: &warrant_chain_bytes,
+        action: &action,
+        outcome: event.decision,
+        timestamp,
+        root_principal: event.root_principal.as_deref(),
+    };
+
+    // Encode to CBOR
+    let payload_bytes = ciborium::into_writer(&payload, Vec::new())
+        .map(|mut v| { let _ = std::mem::take(&mut v); v })
+        .unwrap_or_else(|_| {
+            // Fallback: serialize with serde_cbor if ciborium fails
+            let mut buf = Vec::new();
+            ciborium::into_writer(&payload, &mut buf).ok();
+            buf
+        });
+
+    // Actually serialize properly
+    let mut payload_buf = Vec::new();
+    if ciborium::into_writer(&payload, &mut payload_buf).is_err() {
+        // Use empty payload on error (signature will fail verification)
+        payload_buf.clear();
+    }
+
+    // Sign the payload
+    let signature = signing_key.sign(&payload_buf);
+    let signature_b64 = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        signature.as_bytes(),
+    );
+
+    SignedEvent {
+        event: event.clone(),
+        signature: signature_b64,
+        action,
+        session_id: None, // Could be extracted from metadata if present
+        action_category: Some("tool".to_string()),
+    }
+}
+
 /// Flush buffered audit events to the control plane.
+/// If a signing key is configured, events are signed before sending.
 async fn flush_audit_events(
     client: &Client,
     config: &HeartbeatConfig,
@@ -957,13 +1079,30 @@ async fn flush_audit_events(
         config.control_plane_url, authorizer_id
     );
 
-    let result = client
-        .post(&url)
-        .header("Authorization", format!("Bearer {}", config.api_key))
-        .header("Content-Type", "application/json")
-        .json(&buffer)
-        .send()
-        .await;
+    // Sign events if signing key is configured
+    let result = if let Some(ref signing_key) = config.signing_key {
+        let signed_events: Vec<SignedEvent> = buffer
+            .iter()
+            .map(|event| sign_event(event, signing_key))
+            .collect();
+
+        client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", config.api_key))
+            .header("Content-Type", "application/json")
+            .json(&signed_events)
+            .send()
+            .await
+    } else {
+        // Send unsigned events (backward compatible)
+        client
+            .post(&url)
+            .header("Authorization", format!("Bearer {}", config.api_key))
+            .header("Content-Type", "application/json")
+            .json(&buffer)
+            .send()
+            .await
+    };
 
     match result {
         Ok(response) if response.status().is_success() => {
@@ -1043,12 +1182,18 @@ async fn register_with_retry(client: &Client, config: &HeartbeatConfig) -> Optio
 async fn register(client: &Client, config: &HeartbeatConfig) -> Result<String, HeartbeatError> {
     let url = format!("{}/v1/authorizers/register", config.control_plane_url);
 
+    // Get public key hex if signing key is configured
+    let public_key_hex = config.signing_key.as_ref().map(|sk| {
+        hex::encode(sk.public_key().as_bytes())
+    });
+
     // Build request with flattened environment fields
     let env = &config.environment;
     let request_body = RegisterRequest {
         name: &config.authorizer_name,
         authorizer_type: &config.authorizer_type,
         version: &config.version,
+        public_key: public_key_hex,
         environment: env.environment.as_deref(),
         k8s_namespace: env.k8s_namespace.as_deref(),
         k8s_pod_name: env.k8s_pod_name.as_deref(),
