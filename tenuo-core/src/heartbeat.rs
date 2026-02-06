@@ -667,14 +667,16 @@ pub struct HeartbeatConfig {
     pub environment: EnvironmentInfo,
     /// Shared metrics collector (optional, for metrics reporting)
     pub metrics: Option<MetricsCollector>,
-    /// Signing key for cryptographic receipts (optional).
-    /// When set, events are signed by the authorizer and become non-repudiable receipts.
+    /// Signing key for cryptographic receipts.
+    /// Events are signed by the authorizer and become non-repudiable receipts.
     /// The public key is sent during registration for verification on the control plane.
-    pub signing_key: Option<SigningKey>,
+    pub signing_key: SigningKey,
 }
 
 impl Default for HeartbeatConfig {
     fn default() -> Self {
+        // Generate a random signing key for tests/defaults
+        let signing_key = SigningKey::generate();
         Self {
             control_plane_url: String::new(),
             api_key: String::new(),
@@ -688,7 +690,7 @@ impl Default for HeartbeatConfig {
             audit_flush_interval_secs: 10,
             environment: EnvironmentInfo::default(),
             metrics: None,
-            signing_key: None,
+            signing_key,
         }
     }
 }
@@ -1069,30 +1071,19 @@ async fn flush_audit_events(
         config.control_plane_url, authorizer_id
     );
 
-    // Sign events if signing key is configured
-    let result = if let Some(ref signing_key) = config.signing_key {
-        let signed_events: Vec<SignedEvent> = buffer
-            .iter()
-            .map(|event| sign_event(event, signing_key))
-            .collect();
+    // Sign all events with the authorizer's signing key
+    let signed_events: Vec<SignedEvent> = buffer
+        .iter()
+        .map(|event| sign_event(event, &config.signing_key))
+        .collect();
 
-        client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", config.api_key))
-            .header("Content-Type", "application/json")
-            .json(&signed_events)
-            .send()
-            .await
-    } else {
-        // Send unsigned events (backward compatible)
-        client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", config.api_key))
-            .header("Content-Type", "application/json")
-            .json(&buffer)
-            .send()
-            .await
-    };
+    let result = client
+        .post(&url)
+        .header("Authorization", format!("Bearer {}", config.api_key))
+        .header("Content-Type", "application/json")
+        .json(&signed_events)
+        .send()
+        .await;
 
     match result {
         Ok(response) if response.status().is_success() => {
@@ -1172,11 +1163,8 @@ async fn register_with_retry(client: &Client, config: &HeartbeatConfig) -> Optio
 async fn register(client: &Client, config: &HeartbeatConfig) -> Result<String, HeartbeatError> {
     let url = format!("{}/v1/authorizers/register", config.control_plane_url);
 
-    // Get public key hex if signing key is configured
-    let public_key_hex = config
-        .signing_key
-        .as_ref()
-        .map(|sk| hex::encode(sk.public_key().to_bytes()));
+    // Get public key hex from signing key
+    let public_key_hex = hex::encode(config.signing_key.public_key().to_bytes());
 
     // Build request with flattened environment fields
     let env = &config.environment;
@@ -1184,7 +1172,7 @@ async fn register(client: &Client, config: &HeartbeatConfig) -> Result<String, H
         name: &config.authorizer_name,
         authorizer_type: &config.authorizer_type,
         version: &config.version,
-        public_key: public_key_hex,
+        public_key: Some(public_key_hex),
         environment: env.environment.as_deref(),
         k8s_namespace: env.k8s_namespace.as_deref(),
         k8s_pod_name: env.k8s_pod_name.as_deref(),

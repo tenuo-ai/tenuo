@@ -407,7 +407,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::net::SocketAddr;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Shared state for the HTTP server
 struct AppState {
@@ -563,33 +563,36 @@ async fn serve_http(
         // Get environment info from standard env vars
         let environment = EnvironmentInfo::from_env();
 
-        // Parse signing key if provided (enables signed receipts)
-        let signing_key = cli
-            .signing_key
-            .as_ref()
-            .and_then(|hex_key| match hex::decode(hex_key) {
+        // Parse signing key (required for cryptographic receipts)
+        let signing_key = match &cli.signing_key {
+            Some(hex_key) => match hex::decode(hex_key) {
                 Ok(bytes) if bytes.len() == 32 => {
                     let mut arr = [0u8; 32];
                     arr.copy_from_slice(&bytes);
                     let key = SigningKey::from_bytes(&arr);
                     info!(
                         public_key = %hex::encode(key.public_key().to_bytes()),
-                        "Receipt signing enabled - events will be signed"
+                        "Signing key configured"
                     );
-                    Some(key)
+                    key
                 }
                 Ok(bytes) => {
-                    tracing::error!(
+                    error!(
                         got_len = bytes.len(),
-                        "Invalid TENUO_SIGNING_KEY: must be 32 bytes (64 hex chars)"
+                        "TENUO_SIGNING_KEY must be 32 bytes (64 hex chars)"
                     );
-                    None
+                    std::process::exit(1);
                 }
                 Err(e) => {
-                    tracing::error!(error = %e, "Invalid TENUO_SIGNING_KEY: must be hex-encoded");
-                    None
+                    error!(error = %e, "TENUO_SIGNING_KEY must be valid hex");
+                    std::process::exit(1);
                 }
-            });
+            },
+            None => {
+                error!("TENUO_SIGNING_KEY is required. Generate one with: openssl rand -hex 32");
+                std::process::exit(1);
+            }
+        };
 
         let heartbeat_config = HeartbeatConfig {
             control_plane_url: url.clone(),
