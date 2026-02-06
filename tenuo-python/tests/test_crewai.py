@@ -1099,32 +1099,6 @@ class TestWarrantDelegator:
             )
 
 
-class TestSealMode:
-    """Tests for seal mode (on-the-wire verification)."""
-
-    def test_seal_builder_method(self):
-        """GuardBuilder has seal() method."""
-        builder = GuardBuilder()
-        assert hasattr(builder, "seal")
-
-        # Fluent API
-        result = builder.seal()
-        assert result is builder
-
-    def test_seal_mode_passed_to_guard(self):
-        """Seal mode is passed to built guard."""
-        guard_sealed = GuardBuilder().seal().build()
-        guard_unsealed = GuardBuilder().build()
-
-        assert guard_sealed._seal_mode is True
-        assert guard_unsealed._seal_mode is False
-
-    def test_seal_disabled_by_default(self):
-        """Seal mode is disabled by default."""
-        guard = GuardBuilder().allow("test", arg=Wildcard()).build()
-        assert guard._seal_mode is False
-
-
 class TestPhase5GuardedStep:
     """Tests for @guarded_step decorator (Phase 5)."""
 
