@@ -42,8 +42,13 @@ def main():
         from crewai.tools import BaseTool
         from crewai.events.utils import console_formatter
         console_formatter.ConsoleFormatter._show_tracing_disabled_message_if_needed = lambda self: None
-    from tenuo.crewai import GuardBuilder, AuditEvent, ConstraintViolation
+    from tenuo.crewai import GuardBuilder, AuditEvent, ConstraintViolation, HOOKS_AVAILABLE
     from tenuo import Subpath
+
+    if not args.unprotected and not HOOKS_AVAILABLE:
+        print(f"{R}❌ CrewAI hooks API not available. Requires crewai>=0.80.0{END}")
+        print(f"{Y}Install with: pip install 'crewai>=0.80.0'{END}")
+        sys.exit(1)
 
     # Setup temp files
     demo_dir = Path(tempfile.mkdtemp(prefix="tenuo_demo_"))
@@ -131,16 +136,16 @@ STRIPE_SECRET_KEY=sk_live_XXXXXXXXXXXXXXXX
 
     raw_tool = ReadFileTool()
 
-    # Protect tool via public API
-    if args.unprotected:
-        tool = raw_tool
-    else:
+    # Build the guard
+    guard = None
+    if not args.unprotected:
         guard = (GuardBuilder()
             .allow("read_file", path=Subpath(str(safe_dir)))
             .on_denial("raise")
             .audit(on_audit)
             .build())
-        tool = guard.protect(raw_tool)  # <-- Public API
+        # Register as global hook - ALL tool calls go through authorization
+        guard.register()
 
     verbose = not args.quiet
     agent = Agent(
@@ -148,7 +153,7 @@ STRIPE_SECRET_KEY=sk_live_XXXXXXXXXXXXXXXX
         goal="Validate deployment configuration and verify all referenced files are accessible",
         backstory="You are a thorough DevOps engineer preparing for deployment. "
                   "You validate configs by checking that all referenced files exist and are readable.",
-        tools=[tool],
+        tools=[raw_tool],  # Tools are unmodified; guard hooks intercept all calls
         verbose=verbose,
     )
 
@@ -176,6 +181,10 @@ STRIPE_SECRET_KEY=sk_live_XXXXXXXXXXXXXXXX
         crew.kickoff()
     except (ConstraintViolation, PermissionError) as e:
         print(f"\n{Y}Agent stopped by Tenuo: {e}{END}")
+    finally:
+        # Cleanup: unregister the hook
+        if guard:
+            guard.unregister()
 
     print(f"\n{'═'*55}")
     if args.unprotected:
