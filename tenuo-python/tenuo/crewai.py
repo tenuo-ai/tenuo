@@ -673,7 +673,7 @@ class CrewAIGuard:
             self.unregister()
 
         hook = self._create_hook(agent_role=agent_role)
-        register_before_tool_call_hook(hook)
+        register_before_tool_call_hook(hook)  # type: ignore[arg-type]
         self._registered_hook = hook
         logger.info("Registered Tenuo guard as global before_tool_call hook")
         return self
@@ -1893,9 +1893,7 @@ class _GuardedCrewImpl:
         return builder.build()
 
     def _protect_agents(self) -> List[Any]:
-        """Protect all agent tools and return modified agent list."""
-        protected_agents = []
-
+        """Build guards for all agents (tools are protected via hooks)."""
         for agent in self._agents:
             role = self._get_agent_role(agent)
 
@@ -1910,14 +1908,39 @@ class _GuardedCrewImpl:
             guard = self._build_agent_guard(agent)
             self._guards[role] = guard
 
-            # Protect agent's tools
-            if hasattr(agent, "tools") and agent.tools:
-                protected_tools = guard.protect_all(agent.tools, agent_role=role)
-                agent.tools = protected_tools
+        # Return agents unmodified - hooks will intercept tool calls
+        return list(self._agents)
 
-            protected_agents.append(agent)
+    def _create_combined_hook(self) -> Callable[[Any], Optional[bool]]:
+        """Create a hook that routes to the appropriate per-agent guard."""
+        guards = self._guards
 
-        return protected_agents
+        def guarded_crew_hook(context: Any) -> Optional[bool]:
+            """Combined hook for GuardedCrew - routes to per-agent guards."""
+            # Extract agent role from context
+            agent = getattr(context, 'agent', None)
+            role = None
+            if agent:
+                if hasattr(agent, 'role'):
+                    role = agent.role
+                elif hasattr(agent, 'name'):
+                    role = agent.name
+
+            if role is None:
+                # SECURITY: Fail-closed - cannot determine agent, block
+                logger.warning("GuardedCrew hook: cannot determine agent role, blocking")
+                return False
+
+            guard = guards.get(role)
+            if guard is None:
+                # SECURITY: Fail-closed - agent not in policy
+                logger.warning(f"GuardedCrew hook: no guard for role '{role}', blocking")
+                return False
+
+            # Delegate to the agent's guard hook
+            return guard.authorize_hook(context, agent_role=role)
+
+        return guarded_crew_hook
 
     def kickoff(self, inputs: Optional[Dict[str, Any]] = None) -> Any:
         """Execute the crew with authorization enforcement.
@@ -1932,12 +1955,19 @@ class _GuardedCrewImpl:
                 "Install with: pip install crewai"
             )
 
-        # Protect all agents
-        protected_agents = self._protect_agents()
+        if not HOOKS_AVAILABLE:
+            raise ImportError(
+                "CrewAI hooks API not available. "
+                "GuardedCrew requires crewai>=0.80.0. "
+                "Install with: pip install 'crewai>=0.80.0'"
+            )
+
+        # Build guards for all agents
+        agents = self._protect_agents()
 
         # Build the crew
         crew_kwargs = {
-            "agents": protected_agents,
+            "agents": agents,
             "tasks": self._tasks,
         }
         if self._process is not None:
@@ -1945,23 +1975,31 @@ class _GuardedCrewImpl:
 
         self._crew = Crew(**crew_kwargs)  # type: ignore[assignment,arg-type]
 
-        # Execute in guarded zone if strict mode
-        if self._strict:
-            # Use first available guard for context (all agents use same strict setting)
-            first_guard = list(self._guards.values())[0] if self._guards else None
-            with _guarded_zone(first_guard, strict=True):  # type: ignore[arg-type]
-                result = self._crew.kickoff(inputs=inputs)  # type: ignore[attr-defined]
+        # Register combined hook for all agents
+        combined_hook = self._create_combined_hook()
+        register_before_tool_call_hook(combined_hook)  # type: ignore[arg-type]
 
-                # Check for strict mode violations
-                unguarded = get_unguarded_calls()
-                if unguarded:
-                    # Deduplicate and sort for cleaner error
-                    unique_unguarded = sorted(set(unguarded))
-                    raise UnguardedToolError(unique_unguarded, "GuardedCrew.kickoff")
+        try:
+            # Execute in guarded zone if strict mode
+            if self._strict:
+                # Use first available guard for context (all agents use same strict setting)
+                first_guard = list(self._guards.values())[0] if self._guards else None
+                with _guarded_zone(first_guard, strict=True):  # type: ignore[arg-type]
+                    result = self._crew.kickoff(inputs=inputs)  # type: ignore[attr-defined]
 
-                return result
-        else:
-            return self._crew.kickoff(inputs=inputs)  # type: ignore[attr-defined]
+                    # Check for strict mode violations
+                    unguarded = get_unguarded_calls()
+                    if unguarded:
+                        # Deduplicate and sort for cleaner error
+                        unique_unguarded = sorted(set(unguarded))
+                        raise UnguardedToolError(unique_unguarded, "GuardedCrew.kickoff")
+
+                    return result
+            else:
+                return self._crew.kickoff(inputs=inputs)  # type: ignore[attr-defined]
+        finally:
+            # Always unregister the hook
+            unregister_before_tool_call_hook(combined_hook)  # type: ignore[arg-type]
 
     @property
     def guards(self) -> Dict[str, CrewAIGuard]:
