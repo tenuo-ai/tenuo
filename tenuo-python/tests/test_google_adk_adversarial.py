@@ -1,15 +1,12 @@
-
 import pytest
 from unittest.mock import MagicMock, PropertyMock
-from tenuo.google_adk.guard import (
-    TenuoGuard,
-    MissingSigningKeyError
-)
+from tenuo.google_adk.guard import TenuoGuard, MissingSigningKeyError
 from tenuo.google_adk.plugin import TenuoPlugin, ScopedWarrant
 
 # =============================================================================
 # Fixtures & Mocks
 # =============================================================================
+
 
 @pytest.fixture
 def mock_keys():
@@ -20,6 +17,7 @@ def mock_keys():
     # otherwise we mock.
     try:
         from tenuo import SigningKey
+
         sk = SigningKey.generate()
         return sk, sk.public_key
     except ImportError:
@@ -31,12 +29,14 @@ def mock_keys():
         pk.verify.return_value = True
         return sk, pk
 
+
 @pytest.fixture
 def mock_tool():
     """Create a mock tool."""
     tool = MagicMock()
     tool.name = "read_file"
     return tool
+
 
 @pytest.fixture
 def mock_context():
@@ -45,6 +45,7 @@ def mock_context():
     # By default, session_state has a warrant
     ctx.session_state = {}
     return ctx
+
 
 @pytest.fixture
 def valid_warrant():
@@ -66,11 +67,13 @@ def valid_warrant():
 # 2.7 Adapter-Specific Attacks (Google ADK)
 # =============================================================================
 
+
 class TestArgumentConfusion:
     """
     Attack: Pass `{"file_path": "/bad", "path": "/good"}` where `file_path` maps to `path`.
     Invariant: Validator must validate the value the tool *actually receives*.
     """
+
     def test_shadow_argument_remapping(self, mock_tool, mock_context, valid_warrant):
         # Setup: Unmapped tool (default)
         guard = TenuoGuard(arg_map={"read_file": {"file_path": "path"}})
@@ -81,7 +84,7 @@ class TestArgumentConfusion:
 
         # Mock warrant that only allows /data/*
         warrant = valid_warrant
-        warrant.authorize.return_value = True # Assume crypto passes
+        warrant.authorize.return_value = True  # Assume crypto passes
         mock_context.session_state = {"__tenuo_warrant__": warrant}
 
         # Constraints: path must be /data/*
@@ -89,10 +92,11 @@ class TestArgumentConfusion:
         # We'll mock _get_skill_constraints on the guard for easier setup, or mock warrant internal structure
 
         # For this test, we can use Tier 1 to verify remapping logic in python
-        guard.require_pop = False # Disable PoP requirement if it defaults to True
+        guard.require_pop = False  # Disable PoP requirement if it defaults to True
 
         # Let's mock _get_skill_constraints directly to focus on the validation logic
         from tenuo import Pattern
+
         constraints = {"path": Pattern("/data/*")}
         guard._get_skill_constraints = MagicMock(return_value=constraints)
 
@@ -138,11 +142,13 @@ class TestArgumentConfusion:
         # Let's see if TenuoGuard fails closed on unknown args (TestZeroTrust).
         pass
 
+
 class TestZeroTrust:
     """
     Attack: Pass `{"path": "/safe", "admin_flag": "true"}`
     Invariant: Unknown args must be rejected unless explicitly allowed.
     """
+
     def test_unexpected_argument_fails(self, mock_tool, mock_context, valid_warrant):
         # We test Tier 1 (Guardrails) logic primarily for zero trust constraint enforcement
         # because Tier 2 delegates validation to the warrant's authorize() method (often Rust).
@@ -151,7 +157,7 @@ class TestZeroTrust:
 
         # Warrant allows "path"
         guard._get_skill_constraints = MagicMock(return_value={"path": MagicMock()})
-        guard._check_constraint = MagicMock(return_value=True) # path is safe
+        guard._check_constraint = MagicMock(return_value=True)  # path is safe
 
         mock_context.session_state = {"__tenuo_warrant__": valid_warrant}
 
@@ -161,11 +167,13 @@ class TestZeroTrust:
         assert result is not None
         assert "Argument 'admin' violates constraint" in str(result) or "Unknown argument" in str(result)
 
+
 class TestTier2Downgrade:
     """
     Attack: Initialize `TenuoGuard(require_pop=True)` but provide unsigned warrant.
     Invariant: Tier 2 must enforce cryptographic checks.
     """
+
     def test_missing_signature_denies(self, mock_tool, mock_context, valid_warrant):
         # Guard requires PoP, but we provide no signing key (or warrant has no signature capability)
         guard = TenuoGuard(require_pop=True, signing_key=None)
@@ -181,7 +189,7 @@ class TestTier2Downgrade:
         guard = TenuoGuard(require_pop=True, signing_key=sk)
 
         warrant = valid_warrant
-        warrant.authorize.return_value = False # Sig check fails
+        warrant.authorize.return_value = False  # Sig check fails
 
         mock_context.session_state = {"__tenuo_warrant__": warrant}
 
@@ -189,11 +197,13 @@ class TestTier2Downgrade:
         assert result is not None
         assert "Authorization failed" in str(result)
 
+
 class TestFailClosed:
     """
     Attack: Inject unknown constraint object type.
     Invariant: Unknown security primitives must default to deny.
     """
+
     def test_unknown_constraint_type(self, mock_tool, mock_context, valid_warrant):
         guard = TenuoGuard(require_pop=False)
 
@@ -227,11 +237,13 @@ class TestFailClosed:
         assert result is not None
         assert "violates constraint" in str(result)
 
+
 class TestScoping:
     """
     Attack: Inject `ScopedWarrant(warrant, "victim")` into "attacker" agent state.
     Invariant: Warrants must not function in wrong agent context.
     """
+
     def test_cuckoo_warrant_removed(self, mock_context, valid_warrant):
         # We need to test the PLUGIN level, not just guard
         plugin = TenuoPlugin(warrant_key="my_warrant")
@@ -255,10 +267,12 @@ class TestScoping:
         # We check the dict we passed in
         assert "my_warrant" not in cb_context.session_state
 
+
 class TestReplayAndBinding:
     """
     Cryptographic binding and replay tests.
     """
+
     def test_pop_cross_tool_replay(self, mock_tool, mock_context, mock_keys, valid_warrant):
         """
         Scenario: Attacker captures signature for 'read_file' and tries to use it for 'write_file'.
@@ -296,4 +310,3 @@ class TestReplayAndBinding:
         # Verify warrant.authorize called with correct args
         call_args_list = warrant.authorize.call_args
         assert call_args_list[0][1] == args_input
-

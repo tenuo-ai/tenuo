@@ -6,6 +6,7 @@ These tests focus on the protection layer and don't require LLM calls.
 
 Run with: pytest tests/test_crewai_integration.py -v
 """
+
 import pytest
 from unittest.mock import MagicMock
 
@@ -36,15 +37,16 @@ class TestCrewAIToolStructure:
         class TestTool(BaseTool):
             name: str = "test_tool"
             description: str = "A test tool"
+
             def _run(self, arg: str) -> str:
                 return f"Result: {arg}"
 
         tool = TestTool()
 
         # Verify expected CrewAI structure
-        assert hasattr(tool, 'name')
-        assert hasattr(tool, 'description')
-        assert hasattr(tool, '_run')
+        assert hasattr(tool, "name")
+        assert hasattr(tool, "description")
+        assert hasattr(tool, "_run")
         assert tool.name == "test_tool"
 
         # Direct call to _run should work
@@ -58,14 +60,13 @@ class TestCrewAIToolStructure:
         class ReadTool(BaseTool):
             name: str = "read_file"
             description: str = "Read a file"
+
             def _run(self, path: str) -> str:
                 return f"Contents of {path}"
 
         ReadTool()
 
-        guard = (GuardBuilder()
-            .allow("read_file", path=Subpath("/data"))
-            .build())
+        guard = GuardBuilder().allow("read_file", path=Subpath("/data")).build()
 
         # NOTE: CrewAI tools use _run instead of func, so we test with a
         # compatible tool format. The protection mechanism works with
@@ -85,10 +86,7 @@ class TestGuardedStepIntegration:
         guard_inside = None
         strict_inside = None
 
-        @guarded_step(
-            allow={"search": {"query": Wildcard()}},
-            strict=True
-        )
+        @guarded_step(allow={"search": {"query": Wildcard()}}, strict=True)
         def my_step():
             nonlocal guard_inside, strict_inside
             guard_inside = get_active_guard()
@@ -113,10 +111,7 @@ class TestGuardedStepIntegration:
         """@guarded_step parses TTL string."""
         guard_ref = None
 
-        @guarded_step(
-            allow={"tool": {"arg": Wildcard()}},
-            ttl="30s"
-        )
+        @guarded_step(allow={"tool": {"arg": Wildcard()}}, ttl="30s")
         def step_with_ttl():
             nonlocal guard_ref
             guard_ref = get_active_guard()
@@ -144,6 +139,7 @@ class TestGuardedStepIntegration:
 
     def test_guarded_step_exception_cleanup(self):
         """@guarded_step cleans up context on exception."""
+
         @guarded_step(allow={"tool": {"arg": Wildcard()}})
         def failing_step():
             raise ValueError("Test error")
@@ -165,11 +161,13 @@ class TestGuardedCrewBuilder:
         mock_agent.role = "researcher"
         mock_task = MagicMock()
 
-        builder = (GuardedCrew(agents=[mock_agent], tasks=[mock_task])
+        builder = (
+            GuardedCrew(agents=[mock_agent], tasks=[mock_task])
             .policy({"researcher": ["search", "read"]})
             .constraints({"researcher": {"search": {"query": Wildcard()}}})
             .on_denial("log")
-            .strict())
+            .strict()
+        )
 
         # Builder should be chainable
         assert builder is not None
@@ -184,9 +182,11 @@ class TestGuardedCrewBuilder:
         mock_agent.role = "unknown_agent"
         mock_task = MagicMock()
 
-        crew = (GuardedCrew(agents=[mock_agent], tasks=[mock_task])
+        crew = (
+            GuardedCrew(agents=[mock_agent], tasks=[mock_task])
             .policy({"researcher": ["search"]})  # wrong role!
-            .build())
+            .build()
+        )
 
         # Policy validation happens at kickoff
         with pytest.raises(ConfigurationError, match="not listed in policy"):
@@ -200,10 +200,12 @@ class TestGuardedCrewBuilder:
         mock_agent.role = "researcher"
         mock_task = MagicMock()
 
-        crew = (GuardedCrew(agents=[mock_agent], tasks=[mock_task])
+        crew = (
+            GuardedCrew(agents=[mock_agent], tasks=[mock_task])
             .policy({"researcher": ["search"]})
             .audit(lambda e: audit_events.append(e))
-            .build())
+            .build()
+        )
 
         assert crew is not None
 
@@ -213,10 +215,7 @@ class TestSecurityIntegration:
 
     def test_guard_rejects_unlisted_tool(self):
         """Guard correctly rejects tools not in allow list."""
-        guard = (GuardBuilder()
-            .allow("safe_tool", arg=Wildcard())
-            .on_denial("skip")
-            .build())
+        guard = GuardBuilder().allow("safe_tool", arg=Wildcard()).on_denial("skip").build()
 
         result = guard._authorize("dangerous_tool", {"arg": "value"})
 
@@ -225,10 +224,7 @@ class TestSecurityIntegration:
 
     def test_guard_rejects_constraint_violation(self):
         """Guard correctly rejects constraint violations."""
-        guard = (GuardBuilder()
-            .allow("read", path=Subpath("/safe"))
-            .on_denial("skip")
-            .build())
+        guard = GuardBuilder().allow("read", path=Subpath("/safe")).on_denial("skip").build()
 
         result = guard._authorize("read", {"path": "/etc/passwd"})
 
@@ -237,10 +233,7 @@ class TestSecurityIntegration:
 
     def test_guard_rejects_unlisted_argument(self):
         """Guard correctly rejects unlisted arguments (closed-world)."""
-        guard = (GuardBuilder()
-            .allow("tool", known_arg=Wildcard())
-            .on_denial("skip")
-            .build())
+        guard = GuardBuilder().allow("tool", known_arg=Wildcard()).on_denial("skip").build()
 
         result = guard._authorize("tool", {"known_arg": "ok", "injection": "bad"})
 

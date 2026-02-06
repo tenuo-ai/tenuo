@@ -213,9 +213,7 @@ class BoundWarrant:
         Returns:
             New child warrant (plain Warrant, not BoundWarrant)
         """
-        return self._warrant.grant(
-            to=to, allow=allow, ttl=ttl, key=self._key, **constraints
-        )
+        return self._warrant.grant(to=to, allow=allow, ttl=ttl, key=self._key, **constraints)
 
     def headers(self, tool: str, args: dict) -> Dict[str, str]:
         """
@@ -269,9 +267,7 @@ class BoundWarrant:
         pop_signature = self._warrant.sign(self._key, tool, args)
 
         # 2. Verify (calls Rust authorize)
-        success = self._warrant.authorize(
-            tool=tool, args=args, signature=bytes(pop_signature)
-        )
+        success = self._warrant.authorize(tool=tool, args=args, signature=bytes(pop_signature))
 
         if success:
             return ValidationResult.ok()

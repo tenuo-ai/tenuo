@@ -648,10 +648,11 @@ class A2AServer:
             if key.startswith("z"):
                 try:
                     import base58  # type: ignore[import-not-found]
+
                     # Strip multibase prefix and decode
                     decoded = base58.b58decode(key[1:])
                     # Ed25519 multicodec prefix is 0xed01 (2 bytes)
-                    if len(decoded) > 2 and decoded[:2] == b'\xed\x01':
+                    if len(decoded) > 2 and decoded[:2] == b"\xed\x01":
                         return decoded[2:].hex()
                     return decoded.hex()
                 except ImportError:
@@ -831,11 +832,7 @@ class A2AServer:
             aud = self._get_warrant_prop(warrant, "aud", "audience")
             if not aud:
                 # SECURITY: Missing aud claim when require_audience=True is a failure
-                raise AudienceMismatchError(
-                    expected=self.url,
-                    actual="",
-                    reason="Audience claim missing but required"
-                )
+                raise AudienceMismatchError(expected=self.url, actual="", reason="Audience claim missing but required")
             if aud != self.url:
                 raise AudienceMismatchError(expected=self.url, actual=aud)
 
@@ -1009,7 +1006,8 @@ class A2AServer:
 
         if root_issuer_normalized not in self.trusted_issuers:
             raise UntrustedIssuerError(
-                root_issuer_normalized or "unknown", reason=f"Root warrant issuer '{root_issuer_normalized}' is not trusted"
+                root_issuer_normalized or "unknown",
+                reason=f"Root warrant issuer '{root_issuer_normalized}' is not trusted",
             )
 
         # Validate chain linkage

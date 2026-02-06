@@ -58,9 +58,7 @@ def _resolve_tool_name(tool: Any, explicit: Optional[str] = None) -> str:
     return tool.__class__.__name__
 
 
-def _extract_auth_args(
-    fn: Any, args: Tuple[Any, ...], kwargs: Dict[str, Any]
-) -> Dict[str, Any]:
+def _extract_auth_args(fn: Any, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Dict[str, Any]:
     # Common pattern: single dict payload
     if len(args) == 1 and not kwargs and isinstance(args[0], dict):
         return dict(args[0])
@@ -94,9 +92,7 @@ def _extract_auth_args(
     return merged
 
 
-def _raise_from_denial(
-    bound: Any, tool_name: str, auth_args: Dict[str, Any]
-) -> None:
+def _raise_from_denial(bound: Any, tool_name: str, auth_args: Dict[str, Any]) -> None:
     # Tool not in warrant.tools
     try:
         tools = getattr(bound, "tools", None)
@@ -118,11 +114,7 @@ def _raise_from_denial(
         why = None
 
     constraint_results: list[ConstraintResult] = []
-    if (
-        why is not None
-        and hasattr(why, "constraint_failures")
-        and getattr(why, "constraint_failures")
-    ):
+    if why is not None and hasattr(why, "constraint_failures") and getattr(why, "constraint_failures"):
         try:
             for field, info in why.constraint_failures.items():  # type: ignore[union-attr]
                 constraint_results.append(
@@ -131,9 +123,7 @@ def _raise_from_denial(
                         passed=False,
                         constraint_repr=str(info.get("expected", "?")),
                         value=auth_args.get(field, "<not provided>"),
-                        explanation=str(
-                            info.get("reason", "Constraint not satisfied")
-                        ),
+                        explanation=str(info.get("reason", "Constraint not satisfied")),
                     )
                 )
         except Exception:
@@ -160,9 +150,7 @@ def _raise_from_denial(
     )
 
 
-def _ensure_authorized_bound(
-    bound: Any, tool_name: str, auth_args: Dict[str, Any]
-) -> None:
+def _ensure_authorized_bound(bound: Any, tool_name: str, auth_args: Dict[str, Any]) -> None:
     """
     Tier 2 authorization using BoundWarrant.validate() (PoP required).
     Propagates core errors (MissingSigningKey, ExpiredError, SignatureInvalid, etc.).
@@ -207,23 +195,15 @@ def _check_constraints(
     # Unknown arguments
     for key in auth_args:
         if key not in constraints:
-            raise ConstraintViolation(
-                field=key, reason="Argument not allowed", value=auth_args[key]
-            )
+            raise ConstraintViolation(field=key, reason="Argument not allowed", value=auth_args[key])
 
     # Required arguments + constraint checks
     for key, constraint in constraints.items():
         if key not in auth_args:
-            raise ConstraintViolation(
-                field=key, reason="Missing required argument"
-            )
+            raise ConstraintViolation(field=key, reason="Missing required argument")
         value = auth_args[key]
-        if not hasattr(constraint, "satisfies") or not callable(
-            getattr(constraint, "satisfies")
-        ):
-            raise ConstraintViolation(
-                field=key, reason="Invalid constraint type", value=value
-            )
+        if not hasattr(constraint, "satisfies") or not callable(getattr(constraint, "satisfies")):
+            raise ConstraintViolation(field=key, reason="Invalid constraint type", value=value)
         try:
             if not constraint.satisfies(value):  # type: ignore[call-arg]
                 raise ConstraintViolation(
@@ -245,9 +225,7 @@ class _ToolProxy:
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         auth_args = _extract_auth_args(self.wrapped, args, kwargs)
-        return self.guard._execute_call(
-            self.wrapped, self.tool_name, auth_args, args, kwargs
-        )
+        return self.guard._execute_call(self.wrapped, self.tool_name, auth_args, args, kwargs)
 
     def __getattr__(self, item: str) -> Any:
         return getattr(self.wrapped, item)
@@ -281,9 +259,7 @@ class GuardBuilder:
         self._on_denial = mode
         return self
 
-    def with_warrant(
-        self, warrant: Any, signing_key: Optional[Any]
-    ) -> "GuardBuilder":
+    def with_warrant(self, warrant: Any, signing_key: Optional[Any]) -> "GuardBuilder":
         self._warrant = warrant
         self._signing_key = signing_key
         return self
@@ -292,9 +268,7 @@ class GuardBuilder:
         bound = None
         if self._warrant is not None:
             if self._signing_key is None:
-                raise MissingSigningKey(
-                    "Signing key is required for warrant-protected guard"
-                )
+                raise MissingSigningKey("Signing key is required for warrant-protected guard")
 
             # Warrant exposes authorized_holder (PublicKey)
             holder = getattr(self._warrant, "authorized_holder", None)
@@ -306,14 +280,9 @@ class GuardBuilder:
                 except Exception:
                     mismatch = str(holder) != str(pub_key)
                 if mismatch:
-                    raise ConfigurationError(
-                        "Signing key does not match warrant holder"
-                    )
+                    raise ConfigurationError("Signing key does not match warrant holder")
 
-            if (
-                hasattr(self._warrant, "is_expired")
-                and self._warrant.is_expired()
-            ):
+            if hasattr(self._warrant, "is_expired") and self._warrant.is_expired():
                 raise ExpiredError("Warrant is expired")
 
             bound = self._warrant.bind(self._signing_key)
@@ -347,9 +316,7 @@ class _Guard:
     # ------------------------------------------------------------------ #
     # Public API
     # ------------------------------------------------------------------ #
-    def guard_tool(
-        self, fn_or_tool: Any, *, tool_name: Optional[str] = None
-    ) -> Any:
+    def guard_tool(self, fn_or_tool: Any, *, tool_name: Optional[str] = None) -> Any:
         resolved = _resolve_tool_name(fn_or_tool, tool_name)
 
         if callable(fn_or_tool) and inspect.isfunction(fn_or_tool):
@@ -358,25 +325,19 @@ class _Guard:
                 @functools.wraps(fn_or_tool)
                 async def async_wrapper(*args: Any, **kwargs: Any):
                     auth_args = _extract_auth_args(fn_or_tool, args, kwargs)
-                    return await self._execute_call_async(
-                        fn_or_tool, resolved, auth_args, args, kwargs
-                    )
+                    return await self._execute_call_async(fn_or_tool, resolved, auth_args, args, kwargs)
 
                 return async_wrapper
 
             @functools.wraps(fn_or_tool)
             def wrapper(*args: Any, **kwargs: Any):
                 auth_args = _extract_auth_args(fn_or_tool, args, kwargs)
-                return self._execute_call(
-                    fn_or_tool, resolved, auth_args, args, kwargs
-                )
+                return self._execute_call(fn_or_tool, resolved, auth_args, args, kwargs)
 
             return wrapper
 
         if not callable(fn_or_tool):
-            raise TypeError(
-                "guard_tool expects a callable or tool-like object"
-            )
+            raise TypeError("guard_tool expects a callable or tool-like object")
 
         return _ToolProxy(wrapped=fn_or_tool, guard=self, tool_name=resolved)
 
@@ -389,26 +350,18 @@ class _Guard:
         if isinstance(tools, Mapping):
             out: dict[str, Any] = {}
             for name, tool in tools.items():
-                resolved_name_map = (
-                    tool_name_fn(tool) if tool_name_fn else name
-                )
+                resolved_name_map = tool_name_fn(tool) if tool_name_fn else name
                 out[name] = self.guard_tool(tool, tool_name=resolved_name_map)
             return out
 
         if isinstance(tools, Sequence):
             out_list: list[Any] = []
             for tool in tools:
-                resolved_name_list = (
-                    tool_name_fn(tool) if tool_name_fn else None
-                )
-                out_list.append(
-                    self.guard_tool(tool, tool_name=resolved_name_list)
-                )
+                resolved_name_list = tool_name_fn(tool) if tool_name_fn else None
+                out_list.append(self.guard_tool(tool, tool_name=resolved_name_list))
             return out_list
 
-        raise TypeError(
-            "guard_tools expects a list/tuple of tools or a dict of name->tool"
-        )
+        raise TypeError("guard_tools expects a list/tuple of tools or a dict of name->tool")
 
     def guard_stream(self, stream: Iterable[Any]) -> Iterable[Any]:
         """
@@ -443,8 +396,7 @@ class _Guard:
                         arg_buffers[cid].append(args_piece)
 
             finished = any(
-                getattr(choice, "finish_reason", None) == "tool_calls"
-                for choice in getattr(chunk, "choices", []) or []
+                getattr(choice, "finish_reason", None) == "tool_calls" for choice in getattr(chunk, "choices", []) or []
             )
 
             if not finished:
@@ -485,9 +437,7 @@ class _Guard:
                     if self._on_denial == "raise":
                         raise
                     if self._on_denial == "log":
-                        logger.warning(
-                            "Denied tool call %s (%s): %s", cid, name, e
-                        )
+                        logger.warning("Denied tool call %s (%s): %s", cid, name, e)
                     invalid_ids.add(cid)
 
             # Mutate buffered chunks: drop invalid tool calls on skip/log, set full args on valid ones
@@ -549,9 +499,7 @@ class _Guard:
         if self._on_denial == "raise":
             raise exc
         if self._on_denial == "log":
-            logger.warning(
-                "Authorization denied (%s): %s", type(exc).__name__, exc
-            )
+            logger.warning("Authorization denied (%s): %s", type(exc).__name__, exc)
             return None
         # skip
         logger.debug("Authorization denied (skip): %s", exc)
@@ -597,9 +545,7 @@ class _Guard:
         return await fn(*args, **kwargs)
 
 
-def guard_tool(
-    fn_or_tool: Any, bound: Any, *, tool_name: Optional[str] = None
-) -> Any:
+def guard_tool(fn_or_tool: Any, bound: Any, *, tool_name: Optional[str] = None) -> Any:
     """
     Guard a single tool/callable with Tenuo authorization using an explicit BoundWarrant.
     """

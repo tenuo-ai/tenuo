@@ -160,6 +160,7 @@ class TestFastAPIIntegration:
 
         # Wait for it to expire (add buffer for CI timing)
         import time
+
         time.sleep(2.0)  # Increased from 1.1 to 2.0 for CI reliability
 
         # Verify it's actually expired

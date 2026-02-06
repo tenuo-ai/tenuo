@@ -117,9 +117,7 @@ class A2AClientBuilder:
         self._timeout = seconds
         return self
 
-    def warrant(
-        self, warrant: "Warrant", signing_key: Optional["SigningKey"] = None
-    ) -> "A2AClientBuilder":
+    def warrant(self, warrant: "Warrant", signing_key: Optional["SigningKey"] = None) -> "A2AClientBuilder":
         """
         Set default warrant for all requests.
 

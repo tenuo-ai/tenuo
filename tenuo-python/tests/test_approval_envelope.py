@@ -103,10 +103,7 @@ def test_signed_approval_serialization():
 def test_approval_metadata_separate():
     """Test that ApprovalMetadata is separate from signed payload."""
     # Metadata is NOT signed
-    metadata = ApprovalMetadata(
-        provider="okta",
-        reason="Emergency database access"
-    )
+    metadata = ApprovalMetadata(provider="okta", reason="Emergency database access")
 
     assert metadata.provider == "okta"
     assert metadata.reason == "Emergency database access"
@@ -150,7 +147,7 @@ def test_approval_expired_payload():
         nonce=os.urandom(16),
         external_id="admin@company.com",
         approved_at=int(time.time()) - 600,  # 10 minutes ago
-        expires_at=int(time.time()) - 300,   # 5 minutes ago (expired!)
+        expires_at=int(time.time()) - 300,  # 5 minutes ago (expired!)
     )
 
     keypair = SigningKey.generate()
@@ -175,7 +172,7 @@ def test_approval_payload_with_extensions():
         extensions={
             "audit_id": b"audit-12345",
             "session_id": b"sess-abc",
-        }
+        },
     )
 
     keypair = SigningKey.generate()

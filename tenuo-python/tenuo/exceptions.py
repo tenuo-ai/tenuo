@@ -270,9 +270,11 @@ def wire_code(code: int):
     The decorator registers the exception class in ERROR_CODE_REGISTRY,
     allowing dynamic lookup via exception.get_wire_code().
     """
+
     def decorator(cls):
         ERROR_CODE_REGISTRY[cls] = code
         return cls
+
     return decorator
 
 

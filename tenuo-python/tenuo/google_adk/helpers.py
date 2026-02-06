@@ -100,9 +100,8 @@ def chain_callbacks(*callbacks: Callable) -> Callable:
     has_async = any(inspect.iscoroutinefunction(cb) for cb in callbacks)
 
     if has_async:
-        async def chained_async(
-            tool: Any, args: Dict[str, Any], tool_context: Any
-        ) -> Optional[Dict[str, Any]]:
+
+        async def chained_async(tool: Any, args: Dict[str, Any], tool_context: Any) -> Optional[Dict[str, Any]]:
             for cb in callbacks:
                 if inspect.iscoroutinefunction(cb):
                     result = await cb(tool, args, tool_context)
@@ -114,9 +113,8 @@ def chain_callbacks(*callbacks: Callable) -> Callable:
 
         return chained_async
     else:
-        def chained_sync(
-            tool: Any, args: Dict[str, Any], tool_context: Any
-        ) -> Optional[Dict[str, Any]]:
+
+        def chained_sync(tool: Any, args: Dict[str, Any], tool_context: Any) -> Optional[Dict[str, Any]]:
             for cb in callbacks:
                 result = cb(tool, args, tool_context)
                 if result is not None:
@@ -300,13 +298,13 @@ def _format_constraint(constraint: Any) -> str:
     if hasattr(constraint, "allow_domains"):
         domains = getattr(constraint, "allow_domains", [])
         if len(domains) <= 2:
-            return f'{name}({domains})'
-        return f'{name}([{domains[0]!r}, ...+{len(domains)-1}])'
+            return f"{name}({domains})"
+        return f"{name}([{domains[0]!r}, ...+{len(domains) - 1}])"
     if hasattr(constraint, "pattern"):
         return f'{name}("{constraint.pattern}")'
     if hasattr(constraint, "values"):
         vals = list(constraint.values)[:2]
-        return f'{name}({vals}...)'
+        return f"{name}({vals}...)"
     if hasattr(constraint, "min") or hasattr(constraint, "max"):
         min_v = getattr(constraint, "min", None)
         max_v = getattr(constraint, "max", None)
@@ -552,7 +550,7 @@ def generate_hints(
             suggestion = _suggest_similar(tool_name, granted)
             if suggestion:
                 hints.append(f"Did you mean '{suggestion}'?")
-                hints.append(f"Fix: .map_skill(\"{tool_name}\", \"{suggestion}\")")
+                hints.append(f'Fix: .map_skill("{tool_name}", "{suggestion}")')
         elif not granted:
             hints.append("Warrant has no tools granted")
 
@@ -640,4 +638,3 @@ def protect_agent(
         agent.before_tool_callback = guard.before_tool
 
     return agent
-

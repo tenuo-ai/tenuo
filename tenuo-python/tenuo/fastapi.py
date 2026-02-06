@@ -32,7 +32,6 @@ from tenuo.exceptions import TenuoError, DeserializationError, ExpiredError
 logger = logging.getLogger("tenuo.fastapi")
 
 
-
 # Use string forward refs or try import, FastAPI must be installed
 try:
     from fastapi import FastAPI, Header, HTTPException, Depends, Request, status
@@ -193,18 +192,21 @@ if FASTAPI_AVAILABLE:
             return Warrant.from_base64(x_tenuo_warrant)
         except DeserializationError as e:
             # Client error: malformed warrant
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid X-Tenuo-Warrant header: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid X-Tenuo-Warrant header: {str(e)}"
+            )
         except TenuoError:
             raise
         except Exception as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid X-Tenuo-Warrant header: {str(e)}")
-
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid X-Tenuo-Warrant header: {str(e)}"
+            )
 
     def require_warrant(
-            request: Request,
-            warrant: Optional[Warrant] = Depends(get_warrant_header),
-            x_tenuo_pop: Optional[str] = Header(None, alias=X_TENUO_POP),
-        ) -> Warrant:
+        request: Request,
+        warrant: Optional[Warrant] = Depends(get_warrant_header),
+        x_tenuo_pop: Optional[str] = Header(None, alias=X_TENUO_POP),
+    ) -> Warrant:
         """
         FastAPI dependency that REQUIRES a valid warrant and PoP signature.
 
@@ -232,7 +234,6 @@ if FASTAPI_AVAILABLE:
             )
 
         return warrant
-
 
 
 else:

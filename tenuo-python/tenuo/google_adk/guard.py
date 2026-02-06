@@ -353,9 +353,7 @@ class TenuoGuard:
                 return value in constraint.values
 
             # Unknown constraint type - FAIL CLOSED
-            logger.warning(
-                f"Unknown constraint type '{constraint_type}' - failing closed"
-            )
+            logger.warning(f"Unknown constraint type '{constraint_type}' - failing closed")
             return False
 
         except Exception as e:
@@ -408,9 +406,7 @@ class TenuoGuard:
         # MODE DETECTION: Warrant vs Direct Constraints
         # =======================================================================
         warrant = self._get_warrant(tool_context)
-        use_direct_constraints = (
-            warrant is None and (self._constraints or self._allow_tools)
-        )
+        use_direct_constraints = warrant is None and (self._constraints or self._allow_tools)
 
         if warrant is None and not use_direct_constraints:
             return self._deny("No warrant or constraints available", tool.name, args)
@@ -433,15 +429,11 @@ class TenuoGuard:
 
                 # Authorize with PoP - this is the REAL authorization check
                 # It verifies: signature, skill grant, AND constraint satisfaction
-                authorized = warrant.authorize(
-                    skill_name, validation_args, signature=bytes(pop_signature)
-                )
+                authorized = warrant.authorize(skill_name, validation_args, signature=bytes(pop_signature))
 
                 if not authorized:
                     # Get detailed reason using why_denied (debug method)
-                    reason, constraint_param, constraint = self._get_denial_info(
-                        warrant, skill_name, validation_args
-                    )
+                    reason, constraint_param, constraint = self._get_denial_info(warrant, skill_name, validation_args)
                     return self._deny(
                         f"Authorization failed: {reason}",
                         tool.name,
@@ -496,9 +488,7 @@ class TenuoGuard:
         # - Arguments matching constraints must pass
         # - Arguments NOT in constraints are REJECTED (unless Wildcard present)
         if constraints:
-            has_wildcard = any(
-                type(c).__name__ == "Wildcard" for c in constraints.values()
-            )
+            has_wildcard = any(type(c).__name__ == "Wildcard" for c in constraints.values())
             allows_unknown = constraints.get("_allow_unknown", False)
 
             for arg_name, value in validation_args.items():
@@ -524,9 +514,7 @@ class TenuoGuard:
                             args,
                         )
                 except Exception as e:
-                    logger.warning(
-                        f"Constraint implementation bug causing denial for '{arg_name}': {e}"
-                    )
+                    logger.warning(f"Constraint implementation bug causing denial for '{arg_name}': {e}")
                     return self._deny(
                         f"Argument '{arg_name}' violates constraint (internal validation error)",
                         tool.name,
@@ -588,6 +576,7 @@ class TenuoGuard:
 
             # Fallback: check exp claim manually
             import time
+
             exp = getattr(warrant, "exp", None)
             if exp is not None:
                 return time.time() > exp
@@ -633,16 +622,12 @@ class TenuoGuard:
                         validation_args.pop(tool_arg, None)
         return validation_args
 
-    def _get_denial_reason(
-        self, warrant: Any, skill_name: str, args: Dict[str, Any]
-    ) -> str:
+    def _get_denial_reason(self, warrant: Any, skill_name: str, args: Dict[str, Any]) -> str:
         """Get detailed denial reason using why_denied (debug method)."""
         reason, _, _ = self._get_denial_info(warrant, skill_name, args)
         return reason
 
-    def _get_denial_info(
-        self, warrant: Any, skill_name: str, args: Dict[str, Any]
-    ) -> tuple:
+    def _get_denial_info(self, warrant: Any, skill_name: str, args: Dict[str, Any]) -> tuple:
         """Get denial info including constraint details for hints.
 
         Returns:

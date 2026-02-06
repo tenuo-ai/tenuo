@@ -241,9 +241,7 @@ class TestZeroTrust:
         # Create a mock warrant with specific constraints
         mock_warrant = MagicMock()
         mock_warrant.tools = ["read_file"]
-        mock_warrant.capabilities = {
-            "read_file": {"path": Subpath("/data")}
-        }
+        mock_warrant.capabilities = {"read_file": {"path": Subpath("/data")}}
         mock_warrant.is_expired = MagicMock(return_value=False)
 
         guard = TenuoGuard(
@@ -508,12 +506,11 @@ class TestFailClosedUnknownConstraint:
 
         class UnknownConstraint:
             """A constraint type we don't recognize."""
+
             pass
 
         mock_warrant.tools = ["weird_skill"]
-        mock_warrant.capabilities = {
-            "weird_skill": {"param": UnknownConstraint()}
-        }
+        mock_warrant.capabilities = {"weird_skill": {"param": UnknownConstraint()}}
         mock_warrant.is_expired = MagicMock(return_value=False)
 
         guard = TenuoGuard(
@@ -566,23 +563,13 @@ class TestGuardBuilder:
 
     def test_builder_tier1(self, warrant):
         """Test Tier 1 mode via builder."""
-        guard = (
-            GuardBuilder()
-            .with_warrant(warrant)
-            .tier1()
-            .build()
-        )
+        guard = GuardBuilder().with_warrant(warrant).tier1().build()
 
         assert guard._require_pop is False
 
     def test_builder_dry_run(self, warrant, keys):
         """Test dry run mode via builder."""
-        guard = (
-            GuardBuilder()
-            .with_warrant(warrant, keys)
-            .dry_run()
-            .build()
-        )
+        guard = GuardBuilder().with_warrant(warrant, keys).dry_run().build()
 
         assert guard._dry_run is True
 
@@ -593,12 +580,7 @@ class TestGuardBuilder:
 
     def test_builder_on_denial(self, warrant, keys):
         """Test on_denial configuration."""
-        guard = (
-            GuardBuilder()
-            .with_warrant(warrant, keys)
-            .on_denial("raise")
-            .build()
-        )
+        guard = GuardBuilder().with_warrant(warrant, keys).on_denial("raise").build()
 
         assert guard._on_deny == "raise"
 
@@ -837,12 +819,7 @@ class TestDirectConstraints:
 
     def test_allow_with_constraints(self):
         """Test allowing tools with direct constraints."""
-        guard = (
-            GuardBuilder()
-            .allow("read_file", path=Subpath("/data"))
-            .allow("search", query=Pattern("*"))
-            .build()
-        )
+        guard = GuardBuilder().allow("read_file", path=Subpath("/data")).allow("search", query=Pattern("*")).build()
 
         # Allowed: read_file with valid path
         result = guard.before_tool(
@@ -879,11 +856,7 @@ class TestDirectConstraints:
 
     def test_ungranted_tool_denied_by_default(self):
         """Test that tools not explicitly granted are denied (Tenuo philosophy)."""
-        guard = (
-            GuardBuilder()
-            .allow("read_file", path=Subpath("/data"))
-            .build()
-        )
+        guard = GuardBuilder().allow("read_file", path=Subpath("/data")).build()
 
         # Denied: shell is not in allowlist (explicit grants only)
         result = guard.before_tool(
@@ -896,12 +869,7 @@ class TestDirectConstraints:
 
     def test_filter_tools_with_direct_constraints(self):
         """Test filter_tools works with direct constraints."""
-        guard = (
-            GuardBuilder()
-            .allow("read_file", path=Subpath("/data"))
-            .allow("search")
-            .build()
-        )
+        guard = GuardBuilder().allow("read_file", path=Subpath("/data")).allow("search").build()
 
         tools = [
             MockBaseTool("read_file"),
@@ -920,11 +888,7 @@ class TestDirectConstraints:
 
     def test_unknown_tool_denied(self):
         """Test that tools not in allowlist are denied."""
-        guard = (
-            GuardBuilder()
-            .allow("read_file", path=Subpath("/data"))
-            .build()
-        )
+        guard = GuardBuilder().allow("read_file", path=Subpath("/data")).build()
 
         result = guard.before_tool(
             MockBaseTool("shell"),  # Not in allowlist
@@ -936,11 +900,7 @@ class TestDirectConstraints:
 
     def test_zero_trust_unknown_args(self):
         """Test zero-trust rejects unknown arguments."""
-        guard = (
-            GuardBuilder()
-            .allow("read_file", path=Subpath("/data"))
-            .build()
-        )
+        guard = GuardBuilder().allow("read_file", path=Subpath("/data")).build()
 
         result = guard.before_tool(
             MockBaseTool("read_file"),
@@ -1019,11 +979,7 @@ class TestAllowUnknown:
 
     def test_without_allow_unknown_rejects_extra_args(self):
         """Test that without _allow_unknown, extra args are rejected (Zero Trust default)."""
-        guard = (
-            GuardBuilder()
-            .allow("api_call", url=UrlSafe(allow_domains=["api.example.com"]))
-            .build()
-        )
+        guard = GuardBuilder().allow("api_call", url=UrlSafe(allow_domains=["api.example.com"])).build()
 
         # Extra args should be rejected (Zero Trust)
         result = guard.before_tool(
@@ -1161,11 +1117,7 @@ class TestInvariantUrlSafeSSRF:
 
     def test_private_ip_blocked(self):
         """Private IPs MUST be blocked."""
-        guard = (
-            GuardBuilder()
-            .allow("fetch", url=UrlSafe(allow_domains=["api.example.com"]))
-            .build()
-        )
+        guard = GuardBuilder().allow("fetch", url=UrlSafe(allow_domains=["api.example.com"])).build()
 
         result = guard.before_tool(
             MockBaseTool("fetch"),
@@ -1178,11 +1130,7 @@ class TestInvariantUrlSafeSSRF:
 
     def test_localhost_blocked(self):
         """Localhost MUST be blocked."""
-        guard = (
-            GuardBuilder()
-            .allow("fetch", url=UrlSafe(allow_domains=["api.example.com"]))
-            .build()
-        )
+        guard = GuardBuilder().allow("fetch", url=UrlSafe(allow_domains=["api.example.com"])).build()
 
         result = guard.before_tool(
             MockBaseTool("fetch"),
@@ -1195,11 +1143,7 @@ class TestInvariantUrlSafeSSRF:
 
     def test_decimal_ip_blocked(self):
         """Decimal IP encoding (2130706433 = 127.0.0.1) MUST be blocked."""
-        guard = (
-            GuardBuilder()
-            .allow("fetch", url=UrlSafe(allow_domains=["api.example.com"]))
-            .build()
-        )
+        guard = GuardBuilder().allow("fetch", url=UrlSafe(allow_domains=["api.example.com"])).build()
 
         result = guard.before_tool(
             MockBaseTool("fetch"),
@@ -1212,11 +1156,7 @@ class TestInvariantUrlSafeSSRF:
 
     def test_aws_metadata_blocked(self):
         """AWS metadata endpoint MUST be blocked."""
-        guard = (
-            GuardBuilder()
-            .allow("fetch", url=UrlSafe(allow_domains=["api.example.com"]))
-            .build()
-        )
+        guard = GuardBuilder().allow("fetch", url=UrlSafe(allow_domains=["api.example.com"])).build()
 
         result = guard.before_tool(
             MockBaseTool("fetch"),
@@ -1229,11 +1169,7 @@ class TestInvariantUrlSafeSSRF:
 
     def test_unlisted_domain_blocked(self):
         """Domains not in allowlist MUST be blocked."""
-        guard = (
-            GuardBuilder()
-            .allow("fetch", url=UrlSafe(allow_domains=["api.example.com"]))
-            .build()
-        )
+        guard = GuardBuilder().allow("fetch", url=UrlSafe(allow_domains=["api.example.com"])).build()
 
         result = guard.before_tool(
             MockBaseTool("fetch"),
@@ -1531,11 +1467,7 @@ class TestInvariantAttenuation:
 
     def test_cannot_escalate_via_builder(self):
         """Direct constraints in builder CANNOT be bypassed by tool args."""
-        guard = (
-            GuardBuilder()
-            .allow("read_file", path=Subpath("/data"))
-            .build()
-        )
+        guard = GuardBuilder().allow("read_file", path=Subpath("/data")).build()
 
         # Attempt to access outside scope
         result = guard.before_tool(
@@ -1673,11 +1605,7 @@ class TestInvariantWireAuthorization:
     def test_subpath_uses_rust_contains(self):
         """Subpath.contains() MUST be called (Rust binding)."""
         # Use real Subpath to verify it works
-        guard = (
-            GuardBuilder()
-            .allow("read_file", path=Subpath("/data"))
-            .build()
-        )
+        guard = GuardBuilder().allow("read_file", path=Subpath("/data")).build()
 
         # This should call Subpath.contains() which is a Rust binding
         result = guard.before_tool(
@@ -1690,11 +1618,7 @@ class TestInvariantWireAuthorization:
 
     def test_urlsafe_uses_rust_is_safe(self):
         """UrlSafe.is_safe() MUST be called (Rust binding)."""
-        guard = (
-            GuardBuilder()
-            .allow("fetch", url=UrlSafe(allow_domains=["api.example.com"]))
-            .build()
-        )
+        guard = GuardBuilder().allow("fetch", url=UrlSafe(allow_domains=["api.example.com"])).build()
 
         # This should call UrlSafe.is_safe() which is a Rust binding
         result = guard.before_tool(

@@ -284,7 +284,11 @@ class TestConstraints:
         mock_client = make_mock_client(response)
 
         # Use _allow_unknown=True to permit the "query" arg without constraint
-        client = guard(mock_client, allow_tools=["search"], constraints={"search": {"max_results": Range(1, 20), "_allow_unknown": True}})
+        client = guard(
+            mock_client,
+            allow_tools=["search"],
+            constraints={"search": {"max_results": Range(1, 20), "_allow_unknown": True}},
+        )
 
         result = client.chat.completions.create(model="gpt-4o", messages=[])
         assert len(result.choices[0].message.tool_calls) == 1

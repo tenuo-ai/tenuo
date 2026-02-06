@@ -1,4 +1,3 @@
-
 """
 Adversarial Test Suite for Tenuo OpenAI Adapter.
 
@@ -22,6 +21,7 @@ from tenuo import Warrant, SigningKey, Pattern
 # 1. Zero Trust & Argument Validation
 # =============================================================================
 
+
 class TestZeroTrust:
     """
     Tests ensuring that the adapter strictly enforces "unknown = deny".
@@ -35,11 +35,7 @@ class TestZeroTrust:
         Invariant: Unknown args must be rejected unless explicitly allowed.
         """
         tool_name = "read_file"
-        constraints = {
-            "read_file": {
-                "path": Pattern("/safe/*")
-            }
-        }
+        constraints = {"read_file": {"path": Pattern("/safe/*")}}
 
         # 1. Legitimate call
         args_good = {"path": "/safe/data.txt"}
@@ -57,6 +53,7 @@ class TestZeroTrust:
 # 2. Fail Closed Philosophy
 # =============================================================================
 
+
 class TestFailClosed:
     """
     Tests ensuring that ambiguity or internal errors result in denial.
@@ -67,14 +64,11 @@ class TestFailClosed:
         Attack: Inject unknown constraint object type.
         Invariant: Unknown security primitives must default to deny.
         """
+
         class UnknownConstraint:
             pass
 
-        constraints = {
-            "read_file": {
-                "path": UnknownConstraint()
-            }
-        }
+        constraints = {"read_file": {"path": UnknownConstraint()}}
 
         # The check_constraint function handles fail-closed for the constraint check itself,
         # verifying that verify_tool_call propagates that failure.
@@ -98,6 +92,7 @@ class TestFailClosed:
 # =============================================================================
 # 3. Cryptographic Integrity
 # =============================================================================
+
 
 class TestCryptoIntegrity:
     """
@@ -126,6 +121,7 @@ class TestCryptoIntegrity:
 # 4. Streaming Security
 # =============================================================================
 
+
 class TestStreamingSecurity:
     """
     Tests ensuring buffer-verify-emit protects against TOCTOU in streaming.
@@ -146,13 +142,10 @@ class TestStreamingSecurity:
 
         # Parse complete arguments
         import json
+
         args = json.loads(buffer.args_json)
 
-        constraints = {
-            "read_file": {
-                "path": Pattern("/data/*")
-            }
-        }
+        constraints = {"read_file": {"path": Pattern("/data/*")}}
 
         # Should DENY because "admin" is not in constraints (Zero Trust)
         with pytest.raises(ConstraintViolation, match="Unknown argument"):
@@ -169,15 +162,11 @@ class TestStreamingSecurity:
         buffer.args_json = '{"path": "/etc/passwd"}'
 
         import json
+
         args = json.loads(buffer.args_json)
 
-        constraints = {
-            "read_file": {
-                "path": Pattern("/data/*")
-            }
-        }
+        constraints = {"read_file": {"path": Pattern("/data/*")}}
 
         # Should DENY because path violates constraint
         with pytest.raises(ConstraintViolation):
             verify_tool_call("read_file", args, ["read_file"], None, constraints)
-

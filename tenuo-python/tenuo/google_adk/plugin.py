@@ -153,9 +153,9 @@ class TenuoPlugin(BasePlugin):
             3. Prevents cross-agent warrant access
         """
         # Check session_state (standard) then state (fallback)
-        if hasattr(callback_context, 'session_state'):
+        if hasattr(callback_context, "session_state"):
             state = callback_context.session_state
-        elif hasattr(callback_context, 'state'):
+        elif hasattr(callback_context, "state"):
             state = callback_context.state
         else:
             return None  # No state available

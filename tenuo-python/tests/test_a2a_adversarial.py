@@ -1227,11 +1227,7 @@ class TestPoPSignerVerification:
 
             # Delegate warrant to delegate_key
             delegated = (
-                root.grant_builder()
-                .capability("read_file")
-                .holder(delegate_key.public_key)
-                .ttl(60)
-                .build(issuer_key)
+                root.grant_builder().capability("read_file").holder(delegate_key.public_key).ttl(60).build(issuer_key)
             )
 
             # Delegate must sign PoP with their key

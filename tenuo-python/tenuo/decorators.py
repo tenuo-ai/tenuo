@@ -260,9 +260,7 @@ def _check_annotated_constraint(constraint: Any, value: Any) -> bool:
             return constraint.value == value
 
         # Unknown constraint type - FAIL CLOSED
-        logger.warning(
-            f"Unknown constraint type '{constraint_type}' in type annotation - failing closed"
-        )
+        logger.warning(f"Unknown constraint type '{constraint_type}' in type annotation - failing closed")
         return False
 
     except Exception as e:

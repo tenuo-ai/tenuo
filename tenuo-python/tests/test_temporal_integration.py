@@ -60,9 +60,7 @@ class MockWarrant:
         self._id = warrant_id
         self._tools = tools or ["test_activity", "read_file"]
         self._expired = expired
-        self._expires_at = expires_at or (
-            datetime.now(timezone.utc) + timedelta(hours=1)
-        )
+        self._expires_at = expires_at or (datetime.now(timezone.utc) + timedelta(hours=1))
         self._chain_depth = chain_depth
 
     def id(self) -> str:
@@ -235,9 +233,7 @@ class TestExceptionErrorCodes:
 
     def test_warrant_expired_has_error_code(self):
         """WarrantExpired should have error_code field."""
-        exc = WarrantExpired(
-            warrant_id="w-123", expired_at=datetime.now(timezone.utc)
-        )
+        exc = WarrantExpired(warrant_id="w-123", expired_at=datetime.now(timezone.utc))
         assert hasattr(exc, "error_code")
         assert exc.error_code == "WARRANT_EXPIRED"
 

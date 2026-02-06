@@ -29,7 +29,9 @@ class TestA2AErrorCodeMappings:
         }
 
         for a2a_code, wire_code in mappings.items():
-            assert A2AErrorCode.to_wire_code(a2a_code) == wire_code, f"A2A code {a2a_code} should map to wire code {wire_code}"
+            assert A2AErrorCode.to_wire_code(a2a_code) == wire_code, (
+                f"A2A code {a2a_code} should map to wire code {wire_code}"
+            )
 
     def test_a2a_specific_codes_have_no_wire_equivalent(self):
         """Test that A2A-specific codes return None for wire mapping."""
@@ -60,7 +62,9 @@ class TestA2AErrorCodeMappings:
         }
 
         for wire_code, a2a_code in mappings.items():
-            assert A2AErrorCode.from_wire_code(wire_code) == a2a_code, f"Wire code {wire_code} should map to A2A code {a2a_code}"
+            assert A2AErrorCode.from_wire_code(wire_code) == a2a_code, (
+                f"Wire code {wire_code} should map to A2A code {a2a_code}"
+            )
 
     def test_unknown_wire_code_returns_internal_error(self):
         """Test that unknown wire codes map to INTERNAL_ERROR."""

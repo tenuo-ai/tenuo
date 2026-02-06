@@ -147,11 +147,7 @@ class TestGuardBuilderTier1:
 
     def test_range_constraint_allows_and_blocks(self):
         """Range constraints enforce numeric bounds."""
-        guard = (
-            GuardBuilder()
-            .allow("search", query=Pattern("ok*"), limit=Range(1, 3))
-            .build()
-        )
+        guard = GuardBuilder().allow("search", query=Pattern("ok*"), limit=Range(1, 3)).build()
         guarded = guard.guard_tool(search, tool_name="search")
 
         assert guarded(query="ok", limit=2) == "results:ok:2"
@@ -164,11 +160,7 @@ class TestGuardBuilderTier1:
         def operate(operation: str) -> str:
             return operation
 
-        guard = (
-            GuardBuilder()
-            .allow("operate", operation=OneOf(["add", "subtract"]))
-            .build()
-        )
+        guard = GuardBuilder().allow("operate", operation=OneOf(["add", "subtract"])).build()
         guarded = guard.guard_tool(operate, tool_name="operate")
 
         assert guarded(operation="add") == "add"
@@ -177,11 +169,7 @@ class TestGuardBuilderTier1:
 
     def test_anyof_constraint_allows_and_blocks(self):
         """AnyOf constraints allow any matching option."""
-        guard = (
-            GuardBuilder()
-            .allow("search", query=AnyOf([Pattern("ok*"), Pattern("yes*")]))
-            .build()
-        )
+        guard = GuardBuilder().allow("search", query=AnyOf([Pattern("ok*"), Pattern("yes*")])).build()
         guarded = guard.guard_tool(search, tool_name="search")
 
         assert guarded(query="ok-1") == "results:ok-1:0"
@@ -190,11 +178,7 @@ class TestGuardBuilderTier1:
 
     def test_all_constraint_requires_all_matches(self):
         """All constraints require every constraint to pass."""
-        guard = (
-            GuardBuilder()
-            .allow("search", query=All([Pattern("ok*"), Pattern("*ok")]))
-            .build()
-        )
+        guard = GuardBuilder().allow("search", query=All([Pattern("ok*"), Pattern("*ok")])).build()
         guarded = guard.guard_tool(search, tool_name="search")
 
         assert guarded(query="ok") == "results:ok:0"
@@ -207,11 +191,7 @@ class TestGuardBuilderTier1:
         def operate(operation: str) -> str:
             return operation
 
-        guard = (
-            GuardBuilder()
-            .allow("operate", operation=NotOneOf(["delete", "drop"]))
-            .build()
-        )
+        guard = GuardBuilder().allow("operate", operation=NotOneOf(["delete", "drop"])).build()
         guarded = guard.guard_tool(operate, tool_name="operate")
 
         assert guarded(operation="list") == "list"
@@ -220,9 +200,7 @@ class TestGuardBuilderTier1:
 
     def test_not_constraint_inverts_match(self):
         """Not negates the inner constraint."""
-        guard = (
-            GuardBuilder().allow("search", query=Not(Pattern("bad*"))).build()
-        )
+        guard = GuardBuilder().allow("search", query=Not(Pattern("bad*"))).build()
         guarded = guard.guard_tool(search, tool_name="search")
 
         assert guarded(query="good") == "results:good:0"
@@ -235,9 +213,7 @@ class TestGuardBuilderTier1:
         class UnknownConstraint:
             pass
 
-        guard = (
-            GuardBuilder().allow("search", query=UnknownConstraint()).build()
-        )
+        guard = GuardBuilder().allow("search", query=UnknownConstraint()).build()
         guarded = guard.guard_tool(search, tool_name="search")
 
         with pytest.raises(ConstraintViolation, match="constraint"):
@@ -250,9 +226,7 @@ class TestGuardBuilderTier1:
             def satisfies(self, _value: str) -> bool:
                 raise ValueError("boom")
 
-        guard = (
-            GuardBuilder().allow("search", query=ExplodingConstraint()).build()
-        )
+        guard = GuardBuilder().allow("search", query=ExplodingConstraint()).build()
         guarded = guard.guard_tool(search, tool_name="search")
 
         with pytest.raises(ConstraintViolation, match="boom"):
@@ -287,9 +261,7 @@ class TestGuardBuilderTier1:
             return f"internal:{query}"
 
         guard = GuardBuilder().allow("search", query=Pattern("ok*")).build()
-        wrapped = guard.guard_tools(
-            [internal_tool], tool_name_fn=lambda _t: "search"
-        )
+        wrapped = guard.guard_tools([internal_tool], tool_name_fn=lambda _t: "search")
 
         assert wrapped[0](query="ok") == "internal:ok"
 
@@ -301,12 +273,7 @@ class TestGuardBuilderTier1:
             calls.append(query)
             return f"results:{query}:0"
 
-        guard = (
-            GuardBuilder()
-            .allow("search", query=Pattern("ok*"))
-            .on_denial("log")
-            .build()
-        )
+        guard = GuardBuilder().allow("search", query=Pattern("ok*")).on_denial("log").build()
         guarded = guard.guard_tool(tracking_tool, tool_name="search")
 
         with caplog.at_level(logging.WARNING):
@@ -324,12 +291,7 @@ class TestGuardBuilderTier1:
             calls.append(query)
             return f"results:{query}"
 
-        guard = (
-            GuardBuilder()
-            .allow("search", query=Pattern("ok*"))
-            .on_denial("skip")
-            .build()
-        )
+        guard = GuardBuilder().allow("search", query=Pattern("ok*")).on_denial("skip").build()
         guarded = guard.guard_tool(tracking_tool, tool_name="search")
 
         assert guarded(query="nope") is None
@@ -424,11 +386,7 @@ class TestArgumentExtractionTier1:
 
     def test_positional_args_bound_by_signature(self):
         """Positional args should be bound to parameter names."""
-        guard = (
-            GuardBuilder()
-            .allow("search", query=Pattern("ok*"), limit=Wildcard())
-            .build()
-        )
+        guard = GuardBuilder().allow("search", query=Pattern("ok*"), limit=Wildcard()).build()
         guarded = guard.guard_tool(search, tool_name="search")
 
         assert guarded("ok", 2) == "results:ok:2"
@@ -483,9 +441,7 @@ class TestStreamingTOCTOUProtection:
                             tool_calls=[
                                 MockToolCallDelta(
                                     index=0,
-                                    function=MockFunction(
-                                        name="", arguments='pe"}'
-                                    ),
+                                    function=MockFunction(name="", arguments='pe"}'),
                                 )
                             ]
                         ),
@@ -567,12 +523,7 @@ class TestStreamingTOCTOUProtection:
             )
         ]
 
-        guard = (
-            GuardBuilder()
-            .allow("search", query=Pattern("ok*"))
-            .on_denial("skip")
-            .build()
-        )
+        guard = GuardBuilder().allow("search", query=Pattern("ok*")).on_denial("skip").build()
 
         result_chunks = list(guard.guard_stream(iter(chunks)))
 
@@ -605,9 +556,7 @@ class TestStreamingTOCTOUProtection:
                                 MockToolCallDelta(
                                     index=0,
                                     id="call_0",
-                                    function=MockFunction(
-                                        name="unauthorized", arguments="{}"
-                                    ),
+                                    function=MockFunction(name="unauthorized", arguments="{}"),
                                 )
                             ]
                         ),
@@ -627,12 +576,7 @@ class TestStreamingTOCTOUProtection:
             ),
         ]
 
-        guard = (
-            GuardBuilder()
-            .allow("safe_tool", query=Wildcard())
-            .on_denial("skip")
-            .build()
-        )
+        guard = GuardBuilder().allow("safe_tool", query=Wildcard()).on_denial("skip").build()
 
         result_chunks = list(guard.guard_stream(iter(chunks)))
 
@@ -697,12 +641,7 @@ class TestStreamingTier2:
     def test_streaming_with_warrant_allows_valid_call(self):
         """Tier 2 streaming should allow valid calls."""
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .capability("search", query=Pattern("ok*"))
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
 
         guard = GuardBuilder().with_warrant(warrant, key).build()
 
@@ -736,12 +675,7 @@ class TestStreamingTier2:
     def test_streaming_with_warrant_denies_invalid_call(self):
         """Tier 2 streaming should raise on invalid calls."""
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .capability("search", query=Pattern("ok*"))
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
 
         guard = GuardBuilder().with_warrant(warrant, key).build()
 
@@ -784,12 +718,7 @@ class TestGuardToolTier2:
     def test_guard_tool_allows_when_constraints_match(self):
         """Authorized tool call succeeds when constraints pass."""
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .capability("search", query=Pattern("ok*"))
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
         bound = warrant.bind(key)
 
         guarded = guard_tool(search, bound, tool_name="search")
@@ -798,12 +727,7 @@ class TestGuardToolTier2:
     def test_guard_tool_denies_when_constraints_fail(self):
         """Constraint violations raise AuthorizationDenied."""
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .capability("search", query=Pattern("ok*"))
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
         bound = warrant.bind(key)
 
         guarded = guard_tool(search, bound, tool_name="search")
@@ -863,12 +787,7 @@ class TestGuardToolTier2:
     def test_guard_tool_denies_when_tool_not_in_warrant(self):
         """Tool not in warrant.tools raises ToolNotAuthorized."""
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .tools(["search"])
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().tools(["search"]).holder(key.public_key).mint(key)
         bound = warrant.bind(key)
 
         guarded = guard_tool(read_file, bound, tool_name="read_file")
@@ -878,12 +797,7 @@ class TestGuardToolTier2:
     def test_guard_tools_wraps_list_and_dict(self):
         """guard_tools handles list and dict inputs."""
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .capability("search", query=Pattern("ok*"))
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
         bound = warrant.bind(key)
 
         wrapped_list = guard_tools([search], bound)
@@ -909,12 +823,7 @@ class TestAsyncToolsTier2:
             return f"async:{query}"
 
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .capability("search", query=Pattern("ok*"))
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
         bound = warrant.bind(key)
 
         guarded = guard_tool(async_search, bound, tool_name="search")
@@ -928,12 +837,7 @@ class TestAsyncToolsTier2:
             return f"async:{query}"
 
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .capability("search", query=Pattern("ok*"))
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
         bound = warrant.bind(key)
 
         guarded = guard_tool(async_search, bound, tool_name="search")
@@ -959,12 +863,7 @@ class TestToolNameResolutionTier2:
                 return f"named:{query}"
 
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .tools(["search"])
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().tools(["search"]).holder(key.public_key).mint(key)
         bound = warrant.bind(key)
 
         guarded = guard_tool(NamedTool(), bound)
@@ -978,12 +877,7 @@ class TestToolNameResolutionTier2:
                 return f"class:{query}"
 
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .tools(["ClassNameTool"])
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().tools(["ClassNameTool"]).holder(key.public_key).mint(key)
         bound = warrant.bind(key)
 
         guarded = guard_tool(ClassNameTool(), bound)
@@ -999,12 +893,7 @@ class TestToolNameResolutionTier2:
                 return f"override:{query}"
 
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .tools(["override"])
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().tools(["override"]).holder(key.public_key).mint(key)
         bound = warrant.bind(key)
 
         guarded = guard_tool(NamedTool(), bound, tool_name="override")
@@ -1022,12 +911,7 @@ class TestGuardBuilderTier2:
     def test_tier2_allows_with_pop(self):
         """Authorized tool call succeeds with PoP."""
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .capability("search", query=Pattern("ok*"))
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
 
         guard = GuardBuilder().with_warrant(warrant, key).build()
         guarded = guard.guard_tool(search, tool_name="search")
@@ -1037,12 +921,7 @@ class TestGuardBuilderTier2:
     def test_tier2_blocks_constraint_violation(self):
         """Constraint violations raise AuthorizationDenied in Tier 2."""
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .capability("search", query=Pattern("ok*"))
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
 
         guard = GuardBuilder().with_warrant(warrant, key).build()
         guarded = guard.guard_tool(search, tool_name="search")
@@ -1080,16 +959,9 @@ class TestGuardBuilderTier2:
             return f"results:{query}:0"
 
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .capability("search", query=Pattern("ok*"))
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
 
-        guard = (
-            GuardBuilder().with_warrant(warrant, key).on_denial("log").build()
-        )
+        guard = GuardBuilder().with_warrant(warrant, key).on_denial("log").build()
         guarded = guard.guard_tool(tracking_tool, tool_name="search")
 
         with caplog.at_level(logging.WARNING):
@@ -1108,16 +980,9 @@ class TestGuardBuilderTier2:
             return f"results:{query}"
 
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .capability("search", query=Pattern("ok*"))
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().capability("search", query=Pattern("ok*")).holder(key.public_key).mint(key)
 
-        guard = (
-            GuardBuilder().with_warrant(warrant, key).on_denial("skip").build()
-        )
+        guard = GuardBuilder().with_warrant(warrant, key).on_denial("skip").build()
         guarded = guard.guard_tool(tracking_tool, tool_name="search")
 
         assert guarded(query="nope") is None
@@ -1126,12 +991,7 @@ class TestGuardBuilderTier2:
     def test_warrant_requires_signing_key(self):
         """Missing signing_key should raise MissingSigningKey."""
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .tools(["search"])
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().tools(["search"]).holder(key.public_key).mint(key)
 
         with pytest.raises(MissingSigningKey):
             GuardBuilder().with_warrant(warrant, None).build()
@@ -1140,12 +1000,7 @@ class TestGuardBuilderTier2:
         """Signing key must match warrant holder."""
         key = SigningKey.generate()
         wrong_key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .tools(["search"])
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().tools(["search"]).holder(key.public_key).mint(key)
 
         with pytest.raises(ConfigurationError):
             GuardBuilder().with_warrant(warrant, wrong_key).build()
@@ -1153,13 +1008,7 @@ class TestGuardBuilderTier2:
     def test_expired_warrant_rejected(self):
         """Expired warrants should be rejected at build time."""
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .capability("search", query=Wildcard())
-            .holder(key.public_key)
-            .ttl(1)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().capability("search", query=Wildcard()).holder(key.public_key).ttl(1).mint(key)
         time.sleep(2)
 
         with pytest.raises(ExpiredError):
@@ -1220,28 +1069,15 @@ class TestIntegrationInvariants:
     def test_fail_closed_unknown(self):
         """Unknown arguments must be rejected."""
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .capability("read", path=Pattern("/data/*"))
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().capability("read", path=Pattern("/data/*")).holder(key.public_key).mint(key)
 
-        assert not warrant.allows(
-            "read", {"path": "/data/file.txt", "mode": "r"}
-        )
+        assert not warrant.allows("read", {"path": "/data/file.txt", "mode": "r"})
         assert warrant.allows("read", {"path": "/data/file.txt"})
 
     def test_expiry_enforced(self):
         """Expired warrants fail validation."""
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .capability("read", path=Wildcard())
-            .holder(key.public_key)
-            .ttl(1)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().capability("read", path=Wildcard()).holder(key.public_key).ttl(1).mint(key)
         time.sleep(2)
 
         bound = warrant.bind(key)
@@ -1253,12 +1089,7 @@ class TestIntegrationInvariants:
         root_key = SigningKey.generate()
         agent_key = SigningKey.generate()
 
-        warrant = (
-            Warrant.mint_builder()
-            .capability("read")
-            .holder(agent_key.public_key)
-            .mint(root_key)
-        )
+        warrant = Warrant.mint_builder().capability("read").holder(agent_key.public_key).mint(root_key)
 
         with pytest.raises(MissingSigningKey):
             GuardBuilder().with_warrant(warrant, None).build()
@@ -1266,12 +1097,7 @@ class TestIntegrationInvariants:
     def test_tampered_warrant_rejected(self):
         """Tampered warrant should fail signature verification."""
         key = SigningKey.generate()
-        warrant = (
-            Warrant.mint_builder()
-            .capability("read", path=Wildcard())
-            .holder(key.public_key)
-            .mint(key)
-        )
+        warrant = Warrant.mint_builder().capability("read", path=Wildcard()).holder(key.public_key).mint(key)
 
         token = warrant.to_base64()
         tampered = bytearray(token.encode("utf-8"))
@@ -1285,12 +1111,7 @@ class TestIntegrationInvariants:
         root_key = SigningKey.generate()
         child_key = SigningKey.generate()
 
-        root = (
-            Warrant.mint_builder()
-            .capability("read", path=Wildcard())
-            .holder(root_key.public_key)
-            .mint(root_key)
-        )
+        root = Warrant.mint_builder().capability("read", path=Wildcard()).holder(root_key.public_key).mint(root_key)
 
         child = (
             root.grant_builder()

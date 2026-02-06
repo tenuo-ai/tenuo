@@ -31,7 +31,7 @@ Usage:
 
 from typing import Callable, Any, TypeVar
 
-F = TypeVar('F', bound=Callable[..., Any])
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 def guard_tool(**constraints) -> Callable[[F], F]:
@@ -59,14 +59,15 @@ def guard_tool(**constraints) -> Callable[[F], F]:
         - Not suitable for Tier 2 (warrants). Use .with_warrant() instead.
         - Can't be used on third-party functions you don't control.
     """
+
     def decorator(func: F) -> F:
         # Store constraints as metadata on the function
-        if not hasattr(func, '__tenuo_constraints__'):
-            setattr(func, '__tenuo_constraints__', {})
-        getattr(func, '__tenuo_constraints__').update(constraints)
+        if not hasattr(func, "__tenuo_constraints__"):
+            setattr(func, "__tenuo_constraints__", {})
+        getattr(func, "__tenuo_constraints__").update(constraints)
 
         # Mark as Tenuo-protected for introspection
-        setattr(func, '__tenuo_protected__', True)
+        setattr(func, "__tenuo_protected__", True)
 
         return func
 
@@ -87,7 +88,7 @@ def extract_constraints(tool: Callable) -> dict:
         constraints = extract_constraints(read_file)
         # {"path": Subpath("/data")}
     """
-    return getattr(tool, '__tenuo_constraints__', {})
+    return getattr(tool, "__tenuo_constraints__", {})
 
 
 def is_guarded(tool: Callable) -> bool:
@@ -104,4 +105,4 @@ def is_guarded(tool: Callable) -> bool:
         if is_guarded(read_file):
             print("Tool has constraints")
     """
-    return getattr(tool, '__tenuo_protected__', False)
+    return getattr(tool, "__tenuo_protected__", False)

@@ -103,8 +103,9 @@ class TestWireCodeRegistry:
 
         # Filter out base classes and internal classes
         concrete_exceptions = [
-            exc for exc in all_exceptions
-            if not exc.__name__.endswith('Result')  # Skip ConstraintResult
+            exc
+            for exc in all_exceptions
+            if not exc.__name__.endswith("Result")  # Skip ConstraintResult
             and exc is not TenuoError
         ]
 
@@ -353,12 +354,12 @@ class TestErrorCodeClass:
     def test_all_code_constants_exist(self):
         """Test that all ErrorCode constants are defined."""
         # Sample of important codes
-        assert hasattr(ErrorCode, 'SIGNATURE_INVALID')
-        assert hasattr(ErrorCode, 'WARRANT_EXPIRED')
-        assert hasattr(ErrorCode, 'CONSTRAINT_VIOLATION')
-        assert hasattr(ErrorCode, 'TOOL_NOT_AUTHORIZED')
-        assert hasattr(ErrorCode, 'WARRANT_REVOKED')
-        assert hasattr(ErrorCode, 'DEPTH_EXCEEDED')
+        assert hasattr(ErrorCode, "SIGNATURE_INVALID")
+        assert hasattr(ErrorCode, "WARRANT_EXPIRED")
+        assert hasattr(ErrorCode, "CONSTRAINT_VIOLATION")
+        assert hasattr(ErrorCode, "TOOL_NOT_AUTHORIZED")
+        assert hasattr(ErrorCode, "WARRANT_REVOKED")
+        assert hasattr(ErrorCode, "DEPTH_EXCEEDED")
 
         # Verify values
         assert ErrorCode.SIGNATURE_INVALID == 1100
