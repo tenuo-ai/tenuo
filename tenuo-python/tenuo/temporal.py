@@ -291,7 +291,7 @@ class TenuoMetrics:
         self._prom_latency: Optional[Any] = None
 
         try:
-            from prometheus_client import Counter, Histogram
+            from prometheus_client import Counter, Histogram  # type: ignore[import-not-found]
 
             self._prom_authorized = Counter(
                 f"{prefix}_activities_authorized_total",
@@ -555,7 +555,7 @@ class KMSKeyResolver(KeyResolver):
     async def _resolve_aws(self, key_id: str, key_uri: str) -> Any:
         """Resolve using AWS KMS."""
         try:
-            import boto3
+            import boto3  # type: ignore[import-not-found]
 
             kms = boto3.client("kms")  # noqa: F841
             # For Phase 4, we assume the key is stored as a data key
@@ -571,7 +571,7 @@ class KMSKeyResolver(KeyResolver):
     async def _resolve_gcp(self, key_id: str, key_uri: str) -> Any:
         """Resolve using GCP KMS."""
         try:
-            from google.cloud import kms  # noqa: F401
+            from google.cloud import kms  # type: ignore[import-not-found]  # noqa: F401
 
             logger.debug(f"GCP KMS resolving key: {key_id} via {key_uri}")
             raise NotImplementedError(
@@ -800,7 +800,7 @@ def attenuated_headers(
         ConstraintViolation: If requested tools exceed parent scope
     """
     try:
-        from temporalio import workflow  # noqa: F401
+        from temporalio import workflow  # type: ignore[import-not-found]  # noqa: F401
     except ImportError:
         raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
 
@@ -877,7 +877,7 @@ def workflow_grant(
         ConstraintViolation: If tool not in parent warrant
     """
     try:
-        from temporalio import workflow  # noqa: F401
+        from temporalio import workflow  # type: ignore[import-not-found]  # noqa: F401
     except ImportError:
         raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
 
@@ -965,7 +965,7 @@ def current_warrant() -> Any:
         TenuoContextError: If no warrant in context
     """
     try:
-        from temporalio import workflow
+        from temporalio import workflow  # type: ignore[import-not-found]
 
         info = workflow.info()
         headers = getattr(info, "headers", {}) or {}
@@ -992,7 +992,7 @@ def current_key_id() -> str:
         TenuoContextError: If no key ID in context
     """
     try:
-        from temporalio import workflow
+        from temporalio import workflow  # type: ignore[import-not-found]
 
         info = workflow.info()
         headers = getattr(info, "headers", {}) or {}
@@ -1188,7 +1188,7 @@ class TenuoActivityInboundInterceptor:
     async def execute_activity(self, input: Any) -> Any:
         """Intercept activity execution for authorization."""
         try:
-            from temporalio import activity
+            from temporalio import activity  # type: ignore[import-not-found]
         except ImportError:
             # If temporalio not available, pass through
             return await self._next.execute_activity(input)
