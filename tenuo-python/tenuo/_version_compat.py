@@ -82,6 +82,7 @@ def get_package_version(package_name: str) -> Optional[str]:
     try:
         # Try importlib.metadata first (Python 3.8+)
         from importlib.metadata import version, PackageNotFoundError
+
         try:
             return version(package_name)
         except PackageNotFoundError:
@@ -90,6 +91,7 @@ def get_package_version(package_name: str) -> Optional[str]:
         # Fallback for older Python
         try:
             import pkg_resources  # type: ignore
+
             return pkg_resources.get_distribution(package_name).version
         except Exception:
             return None

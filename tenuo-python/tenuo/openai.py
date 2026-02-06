@@ -131,6 +131,7 @@ from tenuo.constraints import Subpath, UrlSafe
 
 # Check version compatibility on import (warns, doesn't fail)
 from tenuo._version_compat import check_openai_compat
+
 check_openai_compat()
 
 logger = logging.getLogger("tenuo.openai")
@@ -872,7 +873,9 @@ def verify_tool_call(
                     # Check compatibility and validity
                     type_mismatch, reason = _check_type_compatibility(constraint, value)
                     if type_mismatch:
-                        raise ConstraintViolation(tool_name, arg_name, value, constraint, type_mismatch=True, reason=reason)
+                        raise ConstraintViolation(
+                            tool_name, arg_name, value, constraint, type_mismatch=True, reason=reason
+                        )
 
                     if not check_constraint(constraint, value):
                         raise ConstraintViolation(tool_name, arg_name, value, constraint)
@@ -884,7 +887,7 @@ def verify_tool_call(
                         arg_name,
                         value,
                         constraint=Wildcard(),  # Dummy for error
-                        reason=f"Unknown argument '{arg_name}' - not in constraints (set _allow_unknown=True to permit)"
+                        reason=f"Unknown argument '{arg_name}' - not in constraints (set _allow_unknown=True to permit)",
                     )
                 # else: allow_unknown=True, so we skip unknown args
             except ConstraintViolation:
@@ -893,11 +896,7 @@ def verify_tool_call(
                 # Fail Closed: Internal error during validation = DENY
                 logger.error(f"Internal validation error for {tool_name}.{arg_name}: {e}")
                 raise ConstraintViolation(
-                    tool_name,
-                    arg_name,
-                    value,
-                    constraint=Wildcard(),
-                    reason=f"internal validation error: {e}"
+                    tool_name, arg_name, value, constraint=Wildcard(), reason=f"internal validation error: {e}"
                 )
 
 

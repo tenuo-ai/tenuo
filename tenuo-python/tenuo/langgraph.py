@@ -54,6 +54,7 @@ from tenuo_core import Warrant
 
 # Check version compatibility on import (warns, doesn't fail)
 from tenuo._version_compat import check_langgraph_compat  # noqa: E402
+
 check_langgraph_compat()
 
 # Optional LangGraph imports

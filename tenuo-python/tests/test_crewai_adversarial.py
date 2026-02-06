@@ -33,18 +33,23 @@ from tenuo.constraints import Subpath
 
 try:
     from crewai.tools import BaseTool  # type: ignore[import-not-found]
+
     CREWAI_AVAILABLE = True
 except ImportError:
     CREWAI_AVAILABLE = False
+
     # Fallback for when crewai is not installed (should not happen in this env)
     class BaseTool:  # type: ignore[no-redef]
         """Stub for when crewai is not installed."""
+
         def __init__(self, **kwargs):
             for key, value in kwargs.items():
                 setattr(self, key, value)
 
+
 class RealTool(BaseTool):
     """Real CrewAI Tool for testing."""
+
     name: str = "test_tool"
     description: str = "Test tool"
 
@@ -133,13 +138,13 @@ class TestFailClosed:
         Attack: Inject unknown constraint object type.
         Invariant: Unknown security primitives must default to deny.
         """
+
         class UnknownConstraint:
             """Custom constraint type not in Tenuo."""
+
             pass
 
-        guard = (GuardBuilder()
-            .allow("read_file", path=UnknownConstraint())
-            .build())
+        guard = GuardBuilder().allow("read_file", path=UnknownConstraint()).build()
 
         # Should reject because UnknownConstraint is not recognized
         with pytest.raises(ConstraintViolation):
@@ -155,9 +160,7 @@ class TestFailClosed:
         broken_constraint = MagicMock()
         broken_constraint.satisfies = MagicMock(side_effect=ValueError("Oops"))
 
-        guard = (GuardBuilder()
-            .allow("read_file", path=broken_constraint)
-            .build())
+        guard = GuardBuilder().allow("read_file", path=broken_constraint).build()
 
         # Mock check_constraint to raise an exception
         # The current implementation lets this crash (fail LOUD)
@@ -208,11 +211,13 @@ class TestCryptoIntegrity:
         mock_warrant.id.return_value = "expired-warrant"
         mock_key = MagicMock()
 
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("read", path=Subpath("/data"))
             .with_warrant(mock_warrant, mock_key)
             .on_denial("skip")
-            .build())
+            .build()
+        )
 
         result = guard._authorize("read", {"path": "/data/file.txt"})
 
@@ -229,11 +234,13 @@ class TestCryptoIntegrity:
         mock_warrant.sign.side_effect = Exception("Invalid key: holder mismatch")
         mock_key = MagicMock()
 
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("read", path=Subpath("/data"))
             .with_warrant(mock_warrant, mock_key)
             .on_denial("skip")
-            .build())
+            .build()
+        )
 
         result = guard._authorize("read", {"path": "/data/file.txt"})
 
@@ -256,10 +263,12 @@ class TestNamespacingSecurity:
         Attack: Agent A claims to be agent B to get B's permissions.
         Invariant: Namespaced constraints apply only to matching agent.
         """
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("admin::delete", target=Wildcard())
             .allow("user::read", path=Subpath("/public"))
-            .build())
+            .build()
+        )
 
         # User agent cannot access admin's delete tool
         with pytest.raises(ToolDenied):
@@ -274,9 +283,7 @@ class TestNamespacingSecurity:
         Attack: Try to inject namespace separator into tool name.
         Invariant: Tool name parsing should be robust.
         """
-        guard = (GuardBuilder()
-            .allow("safe_tool", arg=Wildcard())
-            .build())
+        guard = GuardBuilder().allow("safe_tool", arg=Wildcard()).build()
 
         # Try to confuse parser with :: in requested tool name
         # This should be treated as a tool named "admin::safe_tool" literally
@@ -288,10 +295,12 @@ class TestNamespacingSecurity:
         Attack: Exploit fallback to access more permissive global.
         Invariant: Agent-specific rules take precedence.
         """
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("search", query=Wildcard())  # Global: allows everything
             .allow("researcher::search", query=Pattern("arxiv:*"))  # Restricted
-            .build())
+            .build()
+        )
 
         # Researcher is restricted to arxiv:* even though global allows all
         with pytest.raises(ConstraintViolation):
@@ -427,11 +436,13 @@ class TestAuditIntegrity:
         """
         events = []
 
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("read", path=Subpath("/data"))
             .on_denial("skip")
             .audit(lambda e: events.append(e))
-            .build())
+            .build()
+        )
 
         # Three different denial types
         guard._authorize("unknown_tool", {})  # ToolDenied
@@ -445,13 +456,11 @@ class TestAuditIntegrity:
         """
         Invariant: Audit callback failures must not prevent denial.
         """
+
         def broken_callback(event):
             raise RuntimeError("Callback crashed!")
 
-        guard = (GuardBuilder()
-            .allow("read", path=Subpath("/data"))
-            .audit(broken_callback)
-            .build())
+        guard = GuardBuilder().allow("read", path=Subpath("/data")).audit(broken_callback).build()
 
         # Should still authorize (callback failure is logged, not propagated)
         result = guard._authorize("read", {"path": "/data/file.txt"})
@@ -476,10 +485,7 @@ class TestSealMode:
         """
         original_tool = RealTool(name="read")
 
-        guard = (GuardBuilder()
-            .allow("read", path=Wildcard())
-            .seal()
-            .build())
+        guard = GuardBuilder().allow("read", path=Wildcard()).seal().build()
 
         # Protect with seal mode - this modifies original_tool in place
         guard.protect(original_tool)
@@ -494,10 +500,12 @@ class TestSealMode:
         """
         original_tool = RealTool(name="read")
 
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("read", path=Wildcard())
             # No .seal() call
-            .build())
+            .build()
+        )
 
         assert guard._seal_mode is False
 
@@ -534,11 +542,13 @@ class TestSecurityRegressions:
         mock_warrant.is_expired.side_effect = RuntimeError("Database error")
         mock_key = MagicMock()
 
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("read", path=Subpath("/data"))
             .with_warrant(mock_warrant, mock_key)
             .on_denial("skip")
-            .build())
+            .build()
+        )
 
         result = guard._authorize("read", {"path": "/data/file.txt"})
 
@@ -563,10 +573,12 @@ class TestSecurityRegressions:
 
         immutable_tool = LockedTool(name="read")
 
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("read", path=Wildcard())
             .seal()  # Enable seal mode
-            .build())
+            .build()
+        )
 
         with pytest.raises(ConfigurationError, match="Cannot seal tool"):
             guard.protect(immutable_tool)
@@ -576,9 +588,7 @@ class TestSecurityRegressions:
         REGRESSION: Agent role with '::' must be rejected.
         Previously: Could inject namespaced role like "admin::delete".
         """
-        guard = (GuardBuilder()
-            .allow("admin::delete", target=Wildcard())
-            .build())
+        guard = GuardBuilder().allow("admin::delete", target=Wildcard()).build()
 
         # Attack: Try to inject namespace via agent_role
         resolved = guard._resolve_tool_name("delete", agent_role="admin::evil")
@@ -631,10 +641,7 @@ class TestSecurityRegressions:
                 attenuations={"read": {"path": child_constraint}},
             )
 
-    @pytest.mark.skipif(
-        not CREWAI_AVAILABLE,
-        reason="crewai not installed - crew.kickoff() requires real crewai"
-    )
+    @pytest.mark.skipif(not CREWAI_AVAILABLE, reason="crewai not installed - crew.kickoff() requires real crewai")
     def test_unguarded_agents_fail_closed(self):
         """
         REGRESSION: Agents not in policy must raise, not proceed unguarded.
@@ -649,9 +656,11 @@ class TestSecurityRegressions:
         builder = GuardedCrew(
             agents=[mock_agent],
             tasks=[mock_task],
-        ).policy({
-            "researcher": ["search"],  # unregistered_agent not listed!
-        })
+        ).policy(
+            {
+                "researcher": ["search"],  # unregistered_agent not listed!
+            }
+        )
 
         crew = builder.build()
 
@@ -670,16 +679,10 @@ class TestSecurityRegressions:
             nonlocal captured_event
             captured_event = event
 
-        guard = (GuardBuilder()
-            .allow("api_call", api_key=Wildcard(), data=Wildcard())
-            .audit(capture_callback)
-            .build())
+        guard = GuardBuilder().allow("api_call", api_key=Wildcard(), data=Wildcard()).audit(capture_callback).build()
 
         # Call with sensitive data
-        guard._authorize("api_call", {
-            "api_key": "sk-secret-key-12345",
-            "data": "user_password=hunter2"
-        })
+        guard._authorize("api_call", {"api_key": "sk-secret-key-12345", "data": "user_password=hunter2"})
 
         # Audit event should have redacted arguments
         assert captured_event is not None
@@ -699,11 +702,13 @@ class TestSecurityRegressions:
         mock_warrant.authorize.return_value = False  # Explicit False
         mock_key = MagicMock()
 
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("read", path=Subpath("/data"))
             .with_warrant(mock_warrant, mock_key)
             .on_denial("skip")
-            .build())
+            .build()
+        )
 
         result = guard._authorize("read", {"path": "/data/file.txt"})
 
@@ -775,11 +780,13 @@ class TestSecurityRegressions:
 
         mock_key = MagicMock()
 
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("read", path=Subpath("/data"))
             .with_warrant(mock_warrant, mock_key)
             .on_denial("skip")
-            .build())
+            .build()
+        )
 
         result = guard._authorize("read", {"path": "/data/file.txt"})
 
@@ -805,11 +812,13 @@ class TestSecurityRegressions:
 
         mock_key = MagicMock()
 
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("read", path=Subpath("/data"))
             .with_warrant(mock_warrant, mock_key)
             .on_denial("skip")
-            .build())
+            .build()
+        )
 
         result = guard._authorize("read", {"path": "/data/file.txt"})
 
@@ -842,11 +851,13 @@ class TestReplayAttackProtection:
         mock_warrant.authorize.side_effect = ValueError("Missing timestamp")
         mock_key = MagicMock()
 
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("read", path=Subpath("/data"))
             .with_warrant(mock_warrant, mock_key)
             .on_denial("skip")
-            .build())
+            .build()
+        )
 
         result = guard._authorize("read", {"path": "/data/file.txt"})
 
@@ -865,11 +876,13 @@ class TestReplayAttackProtection:
         mock_warrant.authorize.side_effect = ValueError("Timestamp outside valid window")
         mock_key = MagicMock()
 
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("read", path=Subpath("/data"))
             .with_warrant(mock_warrant, mock_key)
             .on_denial("skip")
-            .build())
+            .build()
+        )
 
         result = guard._authorize("read", {"path": "/data/file.txt"})
 
@@ -894,11 +907,13 @@ class TestReplayAttackProtection:
         # Setup holder to match signing key (skip holder validation)
         mock_warrant.holder.return_value = mock_key.public_key
 
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("read", path=Subpath("/data"))
             .with_warrant(mock_warrant, mock_key)
             .on_denial("skip")
-            .build())
+            .build()
+        )
 
         result1 = guard._authorize("read", {"path": "/data/file.txt"})
         assert result1 is None  # First call allowed
@@ -968,10 +983,7 @@ class TestConcurrentAccess:
         import threading
         import time
 
-        guard = (GuardBuilder()
-            .allow("read", path=Subpath("/data"))
-            .on_denial("skip")
-            .build())
+        guard = GuardBuilder().allow("read", path=Subpath("/data")).on_denial("skip").build()
 
         results = []
 
@@ -1017,11 +1029,7 @@ class TestConcurrentAccess:
             with lock:
                 audit_events.append(event)
 
-        guard = (GuardBuilder()
-            .allow("read", path=Subpath("/safe"))
-            .on_denial("skip")
-            .audit(safe_audit)
-            .build())
+        guard = GuardBuilder().allow("read", path=Subpath("/safe")).on_denial("skip").audit(safe_audit).build()
 
         def trigger_denials():
             for i in range(5):
@@ -1056,32 +1064,32 @@ class TestConstraintComposition:
         from tenuo.crewai import Range, Pattern
 
         # Both constraints on same tool's different arguments
-        guard = (GuardBuilder()
-            .allow("api_call",
-                   endpoint=Pattern("/api/*"),
-                   timeout=Range(1, 30))
-            .on_denial("skip")
-            .build())
+        guard = (
+            GuardBuilder().allow("api_call", endpoint=Pattern("/api/*"), timeout=Range(1, 30)).on_denial("skip").build()
+        )
 
         # Both valid
-        result = guard._authorize("api_call", {
-            "endpoint": "/api/users",
-            "timeout": 10
-        })
+        result = guard._authorize("api_call", {"endpoint": "/api/users", "timeout": 10})
         assert result is None
 
         # Only endpoint valid
-        result = guard._authorize("api_call", {
-            "endpoint": "/api/users",
-            "timeout": 100  # Out of range
-        })
+        result = guard._authorize(
+            "api_call",
+            {
+                "endpoint": "/api/users",
+                "timeout": 100,  # Out of range
+            },
+        )
         assert isinstance(result, DenialResult)
 
         # Only timeout valid
-        result = guard._authorize("api_call", {
-            "endpoint": "/admin/secret",  # Wrong pattern
-            "timeout": 10
-        })
+        result = guard._authorize(
+            "api_call",
+            {
+                "endpoint": "/admin/secret",  # Wrong pattern
+                "timeout": 10,
+            },
+        )
         assert isinstance(result, DenialResult)
 
     def test_nested_path_constraints(self):
@@ -1090,11 +1098,13 @@ class TestConstraintComposition:
         Invariant: Path constraints compose to the intersection.
         """
         # Two tools with different path scopes
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("read_public", path=Subpath("/data/public"))
             .allow("read_internal", path=Subpath("/data/internal"))
             .on_denial("skip")
-            .build())
+            .build()
+        )
 
         # Valid: each tool with its scope
         assert guard._authorize("read_public", {"path": "/data/public/file.txt"}) is None
@@ -1112,25 +1122,19 @@ class TestConstraintComposition:
         Attack: Use Wildcard on one arg to bypass constraints on another.
         Invariant: Wildcard only applies to its specific argument.
         """
-        guard = (GuardBuilder()
-            .allow("operation",
-                   safe_arg=Wildcard(),
-                   restricted_arg=Subpath("/safe"))
+        guard = (
+            GuardBuilder()
+            .allow("operation", safe_arg=Wildcard(), restricted_arg=Subpath("/safe"))
             .on_denial("skip")
-            .build())
+            .build()
+        )
 
         # Wildcard arg can be anything
-        result = guard._authorize("operation", {
-            "safe_arg": "anything_here",
-            "restricted_arg": "/safe/file.txt"
-        })
+        result = guard._authorize("operation", {"safe_arg": "anything_here", "restricted_arg": "/safe/file.txt"})
         assert result is None
 
         # But restricted arg must still satisfy constraint
-        result = guard._authorize("operation", {
-            "safe_arg": "anything",
-            "restricted_arg": "/etc/passwd"
-        })
+        result = guard._authorize("operation", {"safe_arg": "anything", "restricted_arg": "/etc/passwd"})
         assert isinstance(result, DenialResult)
 
     def test_oneof_with_subpath(self):
@@ -1139,11 +1143,9 @@ class TestConstraintComposition:
         """
         from tenuo_core import OneOf
 
-        guard = (GuardBuilder()
-            .allow("select_env",
-                   environment=OneOf(["dev", "staging", "prod"]))
-            .on_denial("skip")
-            .build())
+        guard = (
+            GuardBuilder().allow("select_env", environment=OneOf(["dev", "staging", "prod"])).on_denial("skip").build()
+        )
 
         assert guard._authorize("select_env", {"environment": "dev"}) is None
         assert guard._authorize("select_env", {"environment": "staging"}) is None
@@ -1177,9 +1179,7 @@ class TestWarrantChainDepth:
         parent_warrant.tools.return_value = ["read"]
         parent_warrant.constraint_for.return_value = None
         # Simulate max depth reached
-        parent_warrant.grant_builder = MagicMock(
-            side_effect=ValueError("Max delegation depth (5) exceeded")
-        )
+        parent_warrant.grant_builder = MagicMock(side_effect=ValueError("Max delegation depth (5) exceeded"))
         parent_key = MagicMock()
         child_holder = MagicMock()
 
@@ -1242,15 +1242,13 @@ class TestResourceExhaustionProtection:
         Attack: Pass extremely long tool name to cause memory issues.
         Invariant: Should deny efficiently without excessive allocation.
         """
-        guard = (GuardBuilder()
-            .allow("read", path=Wildcard())
-            .on_denial("skip")
-            .build())
+        guard = GuardBuilder().allow("read", path=Wildcard()).on_denial("skip").build()
 
         # 1MB tool name
         long_name = "x" * (1024 * 1024)
 
         import time
+
         start = time.time()
         result = guard._authorize(long_name, {"path": "/data"})
         elapsed = time.time() - start
@@ -1263,15 +1261,13 @@ class TestResourceExhaustionProtection:
         Attack: Pass extremely long argument value.
         Invariant: Constraint check should handle gracefully.
         """
-        guard = (GuardBuilder()
-            .allow("read", path=Subpath("/data"))
-            .on_denial("skip")
-            .build())
+        guard = GuardBuilder().allow("read", path=Subpath("/data")).on_denial("skip").build()
 
         # 1MB path
         long_path = "/data/" + "x" * (1024 * 1024)
 
         import time
+
         start = time.time()
         result = guard._authorize("read", {"path": long_path})
         elapsed = time.time() - start
@@ -1285,10 +1281,7 @@ class TestResourceExhaustionProtection:
         Attack: Pass thousands of arguments to slow down checking.
         Invariant: Should reject unknown args efficiently.
         """
-        guard = (GuardBuilder()
-            .allow("read", path=Wildcard())
-            .on_denial("skip")
-            .build())
+        guard = GuardBuilder().allow("read", path=Wildcard()).on_denial("skip").build()
 
         # 10,000 extra arguments
         args = {"path": "/data"}
@@ -1296,6 +1289,7 @@ class TestResourceExhaustionProtection:
             args[f"extra_arg_{i}"] = f"value_{i}"
 
         import time
+
         start = time.time()
         result = guard._authorize("read", args)
         elapsed = time.time() - start
@@ -1309,10 +1303,7 @@ class TestResourceExhaustionProtection:
         Attack: Pass deeply nested structures as argument values.
         Invariant: Constraint checking should handle depth limits.
         """
-        guard = (GuardBuilder()
-            .allow("process", data=Wildcard())
-            .on_denial("skip")
-            .build())
+        guard = GuardBuilder().allow("process", data=Wildcard()).on_denial("skip").build()
 
         # Create deeply nested structure
         nested = {"level": 0}
@@ -1322,6 +1313,7 @@ class TestResourceExhaustionProtection:
             current = current["nested"]
 
         import time
+
         start = time.time()
         result = guard._authorize("process", {"data": nested})
         elapsed = time.time() - start
@@ -1335,12 +1327,10 @@ class TestResourceExhaustionProtection:
         Attack: Flood guard with rapid authorization requests.
         Invariant: Should maintain performance under load.
         """
-        guard = (GuardBuilder()
-            .allow("read", path=Subpath("/data"))
-            .on_denial("skip")
-            .build())
+        guard = GuardBuilder().allow("read", path=Subpath("/data")).on_denial("skip").build()
 
         import time
+
         start = time.time()
 
         # 10,000 rapid calls
@@ -1362,16 +1352,14 @@ class TestResourceExhaustionProtection:
         Note: Python's re module is vulnerable to ReDoS but Pattern
         uses fnmatch which is simpler and faster.
         """
-        guard = (GuardBuilder()
-            .allow("match", text=Pattern("*safe*"))
-            .on_denial("skip")
-            .build())
+        guard = GuardBuilder().allow("match", text=Pattern("*safe*")).on_denial("skip").build()
 
         # Adversarial input that might trigger exponential backtracking
         # with complex regex (but fnmatch is immune)
         adversarial = "a" * 10000 + "safe"
 
         import time
+
         start = time.time()
         result = guard._authorize("match", {"text": adversarial})
         elapsed = time.time() - start
@@ -1382,4 +1370,3 @@ class TestResourceExhaustionProtection:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

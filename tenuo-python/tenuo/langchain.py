@@ -46,6 +46,7 @@ from .audit import log_authorization_success
 
 # Check version compatibility on import (warns, doesn't fail)
 from tenuo._version_compat import check_langchain_compat  # noqa: E402
+
 check_langchain_compat()
 
 # Optional LangChain import

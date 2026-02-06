@@ -126,6 +126,7 @@ from tenuo.core import check_constraint
 
 # Check version compatibility on import (warns, doesn't fail)
 from tenuo._version_compat import check_crewai_compat  # noqa: E402
+
 check_crewai_compat()
 
 logger = logging.getLogger("tenuo.crewai")
@@ -360,10 +361,7 @@ class InvalidPoP(TenuoCrewAIError):
 
     def __init__(self, reason: str = "Signature verification failed"):
         self.reason = reason
-        super().__init__(
-            f"Invalid Proof-of-Possession: {reason}\n"
-            "  Docs: https://tenuo.ai/docs/tier2#pop"
-        )
+        super().__init__(f"Invalid Proof-of-Possession: {reason}\n  Docs: https://tenuo.ai/docs/tier2#pop")
 
 
 class WarrantToolDenied(TenuoCrewAIError):
@@ -482,10 +480,7 @@ class ExplanationResult:
     def __repr__(self) -> str:
         if self.status == "ALLOWED":
             return f"ExplanationResult(tool={self.tool!r}, status='ALLOWED')"
-        return (
-            f"ExplanationResult(tool={self.tool!r}, status='DENIED', "
-            f"reason={self.reason!r})"
-        )
+        return f"ExplanationResult(tool={self.tool!r}, status='DENIED', reason={self.reason!r})"
 
 
 # =============================================================================
@@ -539,9 +534,7 @@ class GuardBuilder:
         self._allowed[tool_name] = constraints
         return self
 
-    def with_warrant(
-        self, warrant: Warrant, signing_key: SigningKey
-    ) -> "GuardBuilder":
+    def with_warrant(self, warrant: Warrant, signing_key: SigningKey) -> "GuardBuilder":
         """Enable Tier 2 with warrant and signing key.
 
         Args:
@@ -669,17 +662,14 @@ class CrewAIGuard:
         try:
             from crewai.tools.base_tool import Tool  # type: ignore[import-not-found,import-untyped]
         except ImportError:
-            raise ImportError(
-                "crewai is required for CrewAI integration. "
-                "Install with: pip install crewai"
-            )
+            raise ImportError("crewai is required for CrewAI integration. Install with: pip install crewai")
 
         original_func = getattr(tool, "func", None)
         if original_func is None:
             original_func = getattr(tool, "_run", None)
 
         if original_func is None:
-             raise ConfigurationError(
+            raise ConfigurationError(
                 f"Cannot protect tool '{tool.name}': no executable method found. "
                 "Tool must have 'func' or '_run' method."
             )
@@ -697,6 +687,7 @@ class CrewAIGuard:
         # Seal the original tool if seal_mode is enabled
         # This prevents bypass by calling the original tool directly
         if self._seal_mode:
+
             def sealed_func(**kwargs: Any) -> Any:
                 raise RuntimeError(
                     f"Tool '{tool_name}' has been sealed by Tenuo guard. "
@@ -731,9 +722,7 @@ class CrewAIGuard:
 
         return Tool(**protected_tool_kwargs)
 
-    def protect_all(
-        self, tools: List[Any], *, agent_role: Optional[str] = None
-    ) -> List[Any]:
+    def protect_all(self, tools: List[Any], *, agent_role: Optional[str] = None) -> List[Any]:
         """Wrap multiple CrewAI tools with authorization checks.
 
         Args:
@@ -745,9 +734,7 @@ class CrewAIGuard:
         """
         return [self.protect(t, agent_role=agent_role) for t in tools]
 
-    def _resolve_tool_name(
-        self, tool_name: str, agent_role: Optional[str]
-    ) -> Optional[str]:
+    def _resolve_tool_name(self, tool_name: str, agent_role: Optional[str]) -> Optional[str]:
         """Resolve tool name with namespace fallback.
 
         Resolution order:
@@ -833,9 +820,9 @@ class CrewAIGuard:
         if self._warrant and self._signing_key:
             # Check warrant expiry FIRST - no point validating crypto on expired warrant
             try:
-                if hasattr(self._warrant, 'is_expired') and self._warrant.is_expired():
+                if hasattr(self._warrant, "is_expired") and self._warrant.is_expired():
                     warrant_id = None
-                    if hasattr(self._warrant, 'id'):
+                    if hasattr(self._warrant, "id"):
                         warrant_id = self._warrant.id()
                     error = WarrantExpired(warrant_id=warrant_id)  # type: ignore[assignment]
                     return self._handle_denial(error, tool_name, args, agent_role)
@@ -946,10 +933,7 @@ class CrewAIGuard:
         if self._audit_callback:
             # SECURITY: Redact potentially sensitive argument values
             # Only include argument names and types, not raw values
-            redacted_args = {
-                k: f"<{type(v).__name__}:{len(str(v))} chars>"
-                for k, v in arguments.items()
-            }
+            redacted_args = {k: f"<{type(v).__name__}:{len(str(v))} chars>" for k, v in arguments.items()}
             event = AuditEvent(
                 tool=tool,
                 arguments=redacted_args,
@@ -1097,10 +1081,7 @@ class CrewAIGuard:
                 if r.status == "DENIED":
                     print(f"{r.tool}: {r.reason}")
         """
-        return [
-            self.explain(tool_name, args, agent_role=agent_role)
-            for tool_name, args in tool_calls
-        ]
+        return [self.explain(tool_name, args, agent_role=agent_role) for tool_name, args in tool_calls]
 
     def validate(self) -> List[str]:
         """Validate guard configuration.
@@ -1121,8 +1102,7 @@ class CrewAIGuard:
 
         if not self._allowed:
             warnings.append(
-                "No tools allowed. All tool calls will be denied. "
-                "Add .allow('tool_name', ...) to your GuardBuilder."
+                "No tools allowed. All tool calls will be denied. Add .allow('tool_name', ...) to your GuardBuilder."
             )
 
         for tool_name, constraints in self._allowed.items():
@@ -1172,35 +1152,35 @@ class CrewAIGuard:
         }
 
         # Get warrant ID if available
-        if hasattr(self._warrant, 'id'):
+        if hasattr(self._warrant, "id"):
             try:
                 info["warrant_id"] = self._warrant.id()
             except Exception:
                 pass
 
         # Get TTL info if available
-        if hasattr(self._warrant, 'ttl_seconds'):
+        if hasattr(self._warrant, "ttl_seconds"):
             try:
                 info["ttl_remaining"] = self._warrant.ttl_seconds()
             except Exception:
                 pass
 
         # Get expiry status if available
-        if hasattr(self._warrant, 'is_expired'):
+        if hasattr(self._warrant, "is_expired"):
             try:
                 info["is_expired"] = self._warrant.is_expired()
             except Exception:
                 pass
 
         # Get authorized tools if available
-        if hasattr(self._warrant, 'tools'):
+        if hasattr(self._warrant, "tools"):
             try:
                 info["tools"] = list(self._warrant.tools())
             except Exception:
                 pass
 
         # Get delegation depth if available
-        if hasattr(self._warrant, 'depth'):
+        if hasattr(self._warrant, "depth"):
             try:
                 info["depth"] = self._warrant.depth()
             except Exception:
@@ -1333,7 +1313,7 @@ class WarrantDelegator:
             )
         """
         # SECURITY: Validate parent warrant is not expired before delegation
-        if hasattr(parent_warrant, 'is_expired'):
+        if hasattr(parent_warrant, "is_expired"):
             try:
                 if parent_warrant.is_expired():
                     raise EscalationAttempt(
@@ -1344,27 +1324,21 @@ class WarrantDelegator:
                 raise
             except Exception as e:
                 # Fail-closed: if we can't check expiry, deny delegation
-                raise EscalationAttempt(
-                    f"Cannot verify parent warrant expiry: {e}. "
-                    "Delegation denied (fail-closed)."
-                )
+                raise EscalationAttempt(f"Cannot verify parent warrant expiry: {e}. Delegation denied (fail-closed).")
 
         # Validate parent has tools to delegate
         parent_tools = self._get_parent_tools(parent_warrant)
 
         # Validate each attenuation
         for tool_name, constraints in attenuations.items():
-            self._validate_tool_delegation(
-                parent_warrant, parent_tools, tool_name, constraints
-            )
+            self._validate_tool_delegation(parent_warrant, parent_tools, tool_name, constraints)
 
         # Build the child warrant via parent's grant_builder
         try:
             builder = parent_warrant.grant_builder()
         except AttributeError as e:
             raise ValueError(
-                f"Parent warrant doesn't support delegation: {e}. "
-                "Ensure the warrant was created with grant capability."
+                f"Parent warrant doesn't support delegation: {e}. Ensure the warrant was created with grant capability."
             )
 
         # Add capabilities with attenuated constraints
@@ -1393,10 +1367,7 @@ class WarrantDelegator:
                 return set(parent_warrant.tools())
             except Exception as e:
                 # SECURITY: Fail-closed - if we can't verify parent tools, deny delegation
-                raise EscalationAttempt(
-                    f"Cannot verify parent warrant tools: {e}. "
-                    "Delegation denied (fail-closed)."
-                )
+                raise EscalationAttempt(f"Cannot verify parent warrant tools: {e}. Delegation denied (fail-closed).")
         # No tools() method - assume warrant doesn't restrict tools
         return set()
 
@@ -1423,15 +1394,12 @@ class WarrantDelegator:
         # Check parent has this tool (only if parent restricts tools)
         if parent_tools and tool_name not in parent_tools:
             raise EscalationAttempt(
-                f"Cannot grant '{tool_name}': parent warrant doesn't authorize it. "
-                f"Parent tools: {sorted(parent_tools)}"
+                f"Cannot grant '{tool_name}': parent warrant doesn't authorize it. Parent tools: {sorted(parent_tools)}"
             )
 
         # For each constraint, verify it's a proper subset
         for arg_name, child_constraint in constraints.items():
-            self._validate_constraint_subset(
-                parent_warrant, tool_name, arg_name, child_constraint
-            )
+            self._validate_constraint_subset(parent_warrant, tool_name, arg_name, child_constraint)
 
     def _validate_constraint_subset(
         self,
@@ -1457,8 +1425,7 @@ class WarrantDelegator:
             except Exception as e:
                 # SECURITY: Fail-closed - unexpected error means we can't verify safety
                 raise EscalationAttempt(
-                    f"Cannot verify parent constraint for {tool_name}.{arg_name}: {e}. "
-                    "Delegation denied (fail-closed)."
+                    f"Cannot verify parent constraint for {tool_name}.{arg_name}: {e}. Delegation denied (fail-closed)."
                 )
 
         # If we can get parent constraint, verify subset relationship
@@ -1493,14 +1460,10 @@ _guarded_context: contextvars.ContextVar[Optional["CrewAIGuard"]] = contextvars.
 )
 
 # Strict mode: track all tool calls and verify they're guarded
-_strict_mode: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "tenuo_strict_mode", default=False
-)
+_strict_mode: contextvars.ContextVar[bool] = contextvars.ContextVar("tenuo_strict_mode", default=False)
 
 # Track unguarded calls in strict mode
-_unguarded_calls: contextvars.ContextVar[List[str]] = contextvars.ContextVar(
-    "tenuo_unguarded_calls", default=[]
-)
+_unguarded_calls: contextvars.ContextVar[List[str]] = contextvars.ContextVar("tenuo_unguarded_calls", default=[])
 
 
 class UnguardedToolError(TenuoCrewAIError):
@@ -1560,6 +1523,7 @@ def get_unguarded_calls() -> List[str]:
 # Phase 5: @guarded_step Decorator
 # =============================================================================
 
+
 def guarded_step(
     allow: Optional[Dict[str, Dict[str, Constraint]]] = None,
     warrant: Optional[Warrant] = None,
@@ -1592,6 +1556,7 @@ def guarded_step(
         def research_step(self, state):
             return self.research_crew.kickoff(state)
     """
+
     def decorator(func: Callable) -> Callable:
         import functools
         import time
@@ -1647,6 +1612,7 @@ def guarded_step(
             return result
 
         return wrapper
+
     return decorator
 
 
@@ -1673,6 +1639,7 @@ def _parse_ttl(ttl: str) -> int:
 # =============================================================================
 # Phase 5: GuardedCrew Wrapper
 # =============================================================================
+
 
 class GuardedCrewBuilder:
     """Builder for GuardedCrew with policy-based warrant issuance."""
@@ -1702,9 +1669,7 @@ class GuardedCrewBuilder:
         self._strict: bool = False
         self._ttl: Optional[str] = None
 
-    def with_issuer(
-        self, warrant: Warrant, signing_key: SigningKey
-    ) -> "GuardedCrewBuilder":
+    def with_issuer(self, warrant: Warrant, signing_key: SigningKey) -> "GuardedCrewBuilder":
         """Set the warrant issuer for Tier 2.
 
         The issuer will create per-agent warrants based on the policy.
@@ -1713,9 +1678,7 @@ class GuardedCrewBuilder:
         self._issuer_key = signing_key
         return self
 
-    def policy(
-        self, agent_tools: Dict[str, List[str]]
-    ) -> "GuardedCrewBuilder":
+    def policy(self, agent_tools: Dict[str, List[str]]) -> "GuardedCrewBuilder":
         """Set which tools each agent is allowed to use.
 
         Args:
@@ -1730,9 +1693,7 @@ class GuardedCrewBuilder:
         self._policy = agent_tools
         return self
 
-    def constraints(
-        self, agent_constraints: Dict[str, Dict[str, Dict[str, Constraint]]]
-    ) -> "GuardedCrewBuilder":
+    def constraints(self, agent_constraints: Dict[str, Dict[str, Dict[str, Constraint]]]) -> "GuardedCrewBuilder":
         """Set per-tool constraints for each agent.
 
         Args:
@@ -1753,9 +1714,7 @@ class GuardedCrewBuilder:
         self._on_denial = mode
         return self
 
-    def audit(
-        self, callback: Callable[[AuditEvent], None]
-    ) -> "GuardedCrewBuilder":
+    def audit(self, callback: Callable[[AuditEvent], None]) -> "GuardedCrewBuilder":
         """Set audit callback for all agent guards."""
         self._audit_callback = callback
         return self
@@ -1868,8 +1827,7 @@ class _GuardedCrewImpl:
                     parent_warrant=self._issuer_warrant,
                     parent_key=self._issuer_key,
                     child_holder=agent_key.public_key,
-                    attenuations={tool: agent_constraints.get(tool, {})
-                                  for tool in allowed_tools},
+                    attenuations={tool: agent_constraints.get(tool, {}) for tool in allowed_tools},
                     ttl=_parse_ttl(self._ttl) if self._ttl else None,
                 )
                 builder.with_warrant(agent_warrant, agent_key)
@@ -1923,10 +1881,7 @@ class _GuardedCrewImpl:
         try:
             from crewai import Crew  # type: ignore[import-not-found,import-untyped]
         except ImportError:
-            raise ImportError(
-                "crewai is required for GuardedCrew. "
-                "Install with: pip install crewai"
-            )
+            raise ImportError("crewai is required for GuardedCrew. Install with: pip install crewai")
 
         # Protect all agents
         protected_agents = self._protect_agents()

@@ -3216,13 +3216,7 @@ class TestA2AClientBuilder:
         """Builder supports all configuration options."""
         from tenuo.a2a import A2AClientBuilder
 
-        client = (
-            A2AClientBuilder()
-            .url("https://agent.example.com")
-            .pin_key("expected_key_hex")
-            .timeout(60.0)
-            .build()
-        )
+        client = A2AClientBuilder().url("https://agent.example.com").pin_key("expected_key_hex").timeout(60.0).build()
 
         assert client.url == "https://agent.example.com"
         assert client.pin_key == "expected_key_hex"
@@ -3241,12 +3235,7 @@ class TestA2AClientBuilder:
         warrant = MockWarrant()
         key = MockSigningKey()
 
-        client = (
-            A2AClientBuilder()
-            .url("https://agent.example.com")
-            .warrant(warrant, key)
-            .build()
-        )
+        client = A2AClientBuilder().url("https://agent.example.com").warrant(warrant, key).build()
 
         assert client._default_warrant is warrant
         assert client._default_signing_key is key
@@ -3266,12 +3255,7 @@ class TestA2AClientBuilder:
             def to_bytes(self):
                 return b"\x01\x02\x03\x04"
 
-        client = (
-            A2AClientBuilder()
-            .url("https://agent.example.com")
-            .pin_key(MockPublicKey())
-            .build()
-        )
+        client = A2AClientBuilder().url("https://agent.example.com").pin_key(MockPublicKey()).build()
 
         assert client.pin_key == "01020304"
 
@@ -3286,12 +3270,7 @@ class TestA2AClientBuilder:
 
         warrant = MockWarrant()
 
-        client = (
-            A2AClientBuilder()
-            .url("https://agent.example.com")
-            .warrant(warrant, None)
-            .build()
-        )
+        client = A2AClientBuilder().url("https://agent.example.com").warrant(warrant, None).build()
 
         # The warrant should be set
         assert client._default_warrant is warrant

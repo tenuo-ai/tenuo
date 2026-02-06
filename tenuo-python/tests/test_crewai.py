@@ -33,17 +33,22 @@ from tenuo.crewai import (
 
 try:
     from crewai.tools import BaseTool  # type: ignore[import-not-found]
+
     CREWAI_AVAILABLE = True
 except ImportError:
     CREWAI_AVAILABLE = False
+
     class BaseTool:  # type: ignore[no-redef]
         """Stub for when crewai is not installed."""
+
         def __init__(self, **kwargs):
             for key, value in kwargs.items():
                 setattr(self, key, value)
 
+
 class RealTool(BaseTool):
     """Real CrewAI Tool for testing."""
+
     name: str = "test_tool"
     description: str = "Test tool"
     func: Optional[Callable] = None
@@ -59,7 +64,6 @@ class RealTool(BaseTool):
 # =============================================================================
 # We now use the real crewai.tools.BaseTool to ensure integration works correctly.
 # The mock_crewai_tool fixture has been removed to allow real imports.
-
 
 
 # =============================================================================
@@ -109,9 +113,7 @@ class TestClosedWorldArguments:
 
     def test_all_listed_arguments_accepted(self):
         """All arguments with constraints are accepted."""
-        guard = (GuardBuilder()
-            .allow("read_file", path=Subpath("/data"), mode=Wildcard())
-            .build())
+        guard = GuardBuilder().allow("read_file", path=Subpath("/data"), mode=Wildcard()).build()
 
         result = guard._authorize("read_file", {"path": "/data/file.txt", "mode": "r"})
         assert result is None
@@ -243,6 +245,7 @@ class TestInvariants:
         # This invariant is about delegation - covered in Phase 4
         # For now, just verify the error type exists
         from tenuo.crewai import EscalationAttempt
+
         assert EscalationAttempt is not None
 
 
@@ -256,9 +259,7 @@ class TestToolNamespacing:
 
     def test_namespaced_tool_exact_match(self):
         """Namespaced tools match exactly."""
-        guard = (GuardBuilder()
-            .allow("researcher::search", query=Pattern("arxiv:*"))
-            .build())
+        guard = GuardBuilder().allow("researcher::search", query=Pattern("arxiv:*")).build()
 
         # Exact namespaced match - search without role should fail
         with pytest.raises(ToolDenied):
@@ -266,9 +267,7 @@ class TestToolNamespacing:
 
     def test_namespaced_with_agent_role(self):
         """Namespaced tools resolve with agent_role parameter."""
-        guard = (GuardBuilder()
-            .allow("researcher::search", query=Pattern("arxiv:*"))
-            .build())
+        guard = GuardBuilder().allow("researcher::search", query=Pattern("arxiv:*")).build()
 
         # With agent_role - should match researcher::search
         result = guard._authorize("search", {"query": "arxiv:1234"}, agent_role="researcher")
@@ -276,10 +275,12 @@ class TestToolNamespacing:
 
     def test_fallback_to_global(self):
         """Global tool is used when namespaced version doesn't exist."""
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("search", query=Wildcard())  # Global fallback
             .allow("researcher::search", query=Pattern("arxiv:*"))  # Agent-specific
-            .build())
+            .build()
+        )
 
         # writer has no specific search, falls back to global
         result = guard._authorize("search", {"query": "anything"}, agent_role="writer")
@@ -287,10 +288,12 @@ class TestToolNamespacing:
 
     def test_namespaced_takes_precedence(self):
         """Namespaced tool takes precedence over global."""
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("search", query=Wildcard())  # Global - allows anything
             .allow("researcher::search", query=Pattern("arxiv:*"))  # Specific - restricted
-            .build())
+            .build()
+        )
 
         # researcher::search should use the restricted constraint
         with pytest.raises(ConstraintViolation):
@@ -371,10 +374,7 @@ class TestAuditCallback:
         """Audit callback is called for allowed calls."""
         events = []
 
-        guard = (GuardBuilder()
-            .allow("read", path=Wildcard())
-            .audit(lambda e: events.append(e))
-            .build())
+        guard = GuardBuilder().allow("read", path=Wildcard()).audit(lambda e: events.append(e)).build()
 
         guard._authorize("read", {"path": "/data/file.txt"})
 
@@ -386,10 +386,7 @@ class TestAuditCallback:
         """Audit callback is called for denied calls."""
         events = []
 
-        guard = (GuardBuilder()
-            .on_denial("skip")
-            .audit(lambda e: events.append(e))
-            .build())
+        guard = GuardBuilder().on_denial("skip").audit(lambda e: events.append(e)).build()
 
         guard._authorize("unknown", {})
 
@@ -436,21 +433,19 @@ class TestGuardBuilder:
 
     def test_fluent_chaining(self):
         """Builder supports fluent method chaining."""
-        guard = (GuardBuilder()
-            .allow("tool1", arg=Wildcard())
-            .allow("tool2", arg=Pattern("*"))
-            .on_denial("log")
-            .build())
+        guard = GuardBuilder().allow("tool1", arg=Wildcard()).allow("tool2", arg=Pattern("*")).on_denial("log").build()
 
         assert isinstance(guard, CrewAIGuard)
 
     def test_multiple_tools(self):
         """Multiple tools can be configured."""
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("read", path=Subpath("/data"))
             .allow("write", path=Subpath("/data"))
             .allow("search", query=Wildcard())
-            .build())
+            .build()
+        )
 
         assert guard._authorize("read", {"path": "/data/file.txt"}) is None
         assert guard._authorize("write", {"path": "/data/new.txt"}) is None
@@ -593,10 +588,12 @@ class TestExplainAPI:
 
     def test_explain_with_agent_role(self):
         """explain() respects agent_role namespacing."""
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("search", query=Wildcard())
             .allow("researcher::search", query=Pattern("arxiv:*"))
-            .build())
+            .build()
+        )
 
         # Global search - allows anything
         result1 = guard.explain("search", {"query": "anything"})
@@ -660,10 +657,7 @@ class TestAllowsMethod:
 
     def test_allows_for_ci_policy_test(self):
         """allows() works for CI policy tests."""
-        guard = (GuardBuilder()
-            .allow("read", path=Subpath("/data"))
-            .allow("list", directory=Subpath("/data"))
-            .build())
+        guard = GuardBuilder().allow("read", path=Subpath("/data")).allow("list", directory=Subpath("/data")).build()
 
         # Positive assertions
         assert guard.allows("read", {"path": "/data/reports/q1.txt"})
@@ -679,16 +673,15 @@ class TestExplainAll:
 
     def test_explain_all_returns_list(self):
         """explain_all() returns list of ExplanationResult."""
-        guard = (GuardBuilder()
-            .allow("read", path=Subpath("/data"))
-            .allow("search", query=Wildcard())
-            .build())
+        guard = GuardBuilder().allow("read", path=Subpath("/data")).allow("search", query=Wildcard()).build()
 
-        results = guard.explain_all([
-            ("read", {"path": "/data/file.txt"}),
-            ("search", {"query": "test"}),
-            ("delete", {"path": "/data/file.txt"}),
-        ])
+        results = guard.explain_all(
+            [
+                ("read", {"path": "/data/file.txt"}),
+                ("search", {"query": "test"}),
+                ("delete", {"path": "/data/file.txt"}),
+            ]
+        )
 
         assert len(results) == 3
         assert results[0].status == "ALLOWED"
@@ -697,14 +690,15 @@ class TestExplainAll:
 
     def test_explain_all_with_agent_role(self):
         """explain_all() respects agent_role."""
-        guard = (GuardBuilder()
-            .allow("researcher::search", query=Pattern("arxiv:*"))
-            .build())
+        guard = GuardBuilder().allow("researcher::search", query=Pattern("arxiv:*")).build()
 
-        results = guard.explain_all([
-            ("search", {"query": "arxiv:1234"}),
-            ("search", {"query": "google.com"}),
-        ], agent_role="researcher")
+        results = guard.explain_all(
+            [
+                ("search", {"query": "arxiv:1234"}),
+                ("search", {"query": "google.com"}),
+            ],
+            agent_role="researcher",
+        )
 
         assert results[0].status == "ALLOWED"
         assert results[1].status == "DENIED"
@@ -735,10 +729,7 @@ class TestValidateMethod:
 
     def test_validate_valid_config(self):
         """validate() returns empty list for valid config."""
-        guard = (GuardBuilder()
-            .allow("read", path=Subpath("/data"))
-            .allow("search", query=Wildcard())
-            .build())
+        guard = GuardBuilder().allow("read", path=Subpath("/data")).allow("search", query=Wildcard()).build()
 
         warnings = guard.validate()
 
@@ -877,11 +868,13 @@ class TestTier2Authorization:
         mock_warrant.id.return_value = "expired-warrant"
         mock_key = MagicMock()
 
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("read", path=Subpath("/data"))
             .with_warrant(mock_warrant, mock_key)
             .on_denial("skip")
-            .build())
+            .build()
+        )
 
         result = guard._authorize("read", {"path": "/data/file.txt"})
 
@@ -907,10 +900,7 @@ class TestTier2Authorization:
         mock_warrant.sign.return_value = b"signature"
         mock_warrant.authorize.return_value = True
 
-        guard = (GuardBuilder()
-            .allow("read", path=Subpath("/data"))
-            .with_warrant(mock_warrant, mock_key)
-            .build())
+        guard = GuardBuilder().allow("read", path=Subpath("/data")).with_warrant(mock_warrant, mock_key).build()
 
         result = guard._authorize("read", {"path": "/data/file.txt"})
 
@@ -936,11 +926,13 @@ class TestTier2Authorization:
         mock_warrant.holder.return_value = mock_holder
         mock_warrant.sign.side_effect = Exception("Invalid key")
 
-        guard = (GuardBuilder()
+        guard = (
+            GuardBuilder()
             .allow("read", path=Subpath("/data"))
             .with_warrant(mock_warrant, mock_key)
             .on_denial("skip")
-            .build())
+            .build()
+        )
 
         result = guard._authorize("read", {"path": "/data/file.txt"})
 
@@ -1010,7 +1002,7 @@ class TestWarrantDelegator:
                 child_holder=mock_child_holder,
                 attenuations={
                     "delete": {"target": Wildcard()},  # Escalation!
-                }
+                },
             )
 
     def test_delegation_rejects_widening_constraint(self):
@@ -1039,7 +1031,7 @@ class TestWarrantDelegator:
                 child_holder=mock_child_holder,
                 attenuations={
                     "search": {"query": child_constraint},
-                }
+                },
             )
 
     def test_delegation_succeeds_with_valid_attenuation(self):
@@ -1138,6 +1130,7 @@ class TestPhase5GuardedStep:
     def test_guarded_step_importable(self):
         """guarded_step decorator is importable."""
         from tenuo.crewai import guarded_step
+
         assert callable(guarded_step)
 
     def test_guarded_step_creates_guard(self):
@@ -1197,6 +1190,7 @@ class TestPhase5GuardedCrew:
     def test_guarded_crew_importable(self):
         """GuardedCrew and builder are importable."""
         from tenuo.crewai import GuardedCrew
+
         assert callable(GuardedCrew)
 
     def test_guarded_crew_builder_pattern(self):
@@ -1210,10 +1204,7 @@ class TestPhase5GuardedCrew:
         builder = GuardedCrew(agents=mock_agents, tasks=mock_tasks)
 
         # Fluent API
-        result = (builder
-            .policy({"researcher": ["search"]})
-            .on_denial("log")
-            .strict())
+        result = builder.policy({"researcher": ["search"]}).on_denial("log").strict()
 
         assert result is builder
 
@@ -1225,9 +1216,11 @@ class TestPhase5GuardedCrew:
         mock_tasks = [MagicMock()]
 
         builder = GuardedCrew(agents=mock_agents, tasks=mock_tasks)
-        builder.policy({
-            "researcher": ["search", "read_file"],
-        })
+        builder.policy(
+            {
+                "researcher": ["search", "read_file"],
+            }
+        )
 
         assert builder._policy["researcher"] == ["search", "read_file"]
 
@@ -1247,10 +1240,7 @@ class TestPhase5StrictMode:
         """UnguardedToolError has correct fields."""
         from tenuo.crewai import UnguardedToolError
 
-        error = UnguardedToolError(
-            tools=["dangerous_tool", "another_tool"],
-            step_name="my_step"
-        )
+        error = UnguardedToolError(tools=["dangerous_tool", "another_tool"], step_name="my_step")
 
         assert error.tools == ["dangerous_tool", "another_tool"]
         assert error.step_name == "my_step"
@@ -1344,11 +1334,13 @@ class TestPhase5GuardedCrewAdvanced:
         mock_tasks = [MagicMock()]
 
         builder = GuardedCrew(agents=mock_agents, tasks=mock_tasks)
-        builder.constraints({
-            "researcher": {
-                "search": {"query": Pattern("arxiv:*")},
-            },
-        })
+        builder.constraints(
+            {
+                "researcher": {
+                    "search": {"query": Pattern("arxiv:*")},
+                },
+            }
+        )
 
         assert "researcher" in builder._constraints
         assert "search" in builder._constraints["researcher"]
@@ -1389,10 +1381,7 @@ class TestPhase5StrictModeAdvanced:
         from tenuo.crewai import UnguardedToolError
 
         # Same tool called multiple times
-        error = UnguardedToolError(
-            tools=["tool_a", "tool_b", "tool_a", "tool_b"],
-            step_name="my_step"
-        )
+        error = UnguardedToolError(tools=["tool_a", "tool_b", "tool_a", "tool_b"], step_name="my_step")
 
         # Should report all occurrences (dedup happens in kickoff)
         assert len(error.tools) == 4
@@ -1411,6 +1400,7 @@ class TestPhase5RealCrewAIIntegration:
         """Can import CrewAI tools module."""
         try:
             from crewai.tools.base_tool import Tool  # type: ignore[import-not-found]
+
             assert Tool is not None
         except ImportError:
             pytest.skip("crewai not installed")
