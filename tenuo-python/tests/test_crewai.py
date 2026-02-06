@@ -1099,6 +1099,7 @@ class TestWarrantDelegator:
             )
 
 
+@pytest.mark.skip(reason="seal() removed in hooks API refactoring")
 class TestSealMode:
     """Tests for seal mode (on-the-wire verification)."""
 
