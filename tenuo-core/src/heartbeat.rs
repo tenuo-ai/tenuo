@@ -1029,16 +1029,6 @@ fn sign_event(event: &AuthorizationEvent, signing_key: &SigningKey) -> SignedEve
     };
 
     // Encode to CBOR
-    let payload_bytes = ciborium::into_writer(&payload, Vec::new())
-        .map(|mut v| { let _ = std::mem::take(&mut v); v })
-        .unwrap_or_else(|_| {
-            // Fallback: serialize with serde_cbor if ciborium fails
-            let mut buf = Vec::new();
-            ciborium::into_writer(&payload, &mut buf).ok();
-            buf
-        });
-
-    // Actually serialize properly
     let mut payload_buf = Vec::new();
     if ciborium::into_writer(&payload, &mut payload_buf).is_err() {
         // Use empty payload on error (signature will fail verification)
@@ -1049,7 +1039,7 @@ fn sign_event(event: &AuthorizationEvent, signing_key: &SigningKey) -> SignedEve
     let signature = signing_key.sign(&payload_buf);
     let signature_b64 = base64::Engine::encode(
         &base64::engine::general_purpose::STANDARD,
-        signature.as_bytes(),
+        signature.to_bytes(),
     );
 
     SignedEvent {
@@ -1184,7 +1174,7 @@ async fn register(client: &Client, config: &HeartbeatConfig) -> Result<String, H
 
     // Get public key hex if signing key is configured
     let public_key_hex = config.signing_key.as_ref().map(|sk| {
-        hex::encode(sk.public_key().as_bytes())
+        hex::encode(sk.public_key().to_bytes())
     });
 
     // Build request with flattened environment fields

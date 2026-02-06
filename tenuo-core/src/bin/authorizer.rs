@@ -571,7 +571,7 @@ async fn serve_http(
                     arr.copy_from_slice(&bytes);
                     let key = SigningKey::from_bytes(&arr);
                     info!(
-                        public_key = %hex::encode(key.public_key().as_bytes()),
+                        public_key = %hex::encode(key.public_key().to_bytes()),
                         "Receipt signing enabled - events will be signed"
                     );
                     Some(key)
