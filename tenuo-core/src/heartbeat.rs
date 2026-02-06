@@ -1365,7 +1365,7 @@ mod tests {
             audit_flush_interval_secs: 10,
             environment: EnvironmentInfo::default(),
             metrics: None,
-            signing_key: None,
+            signing_key: SigningKey::generate(),
         }
     }
 
