@@ -1173,9 +1173,10 @@ async fn register(client: &Client, config: &HeartbeatConfig) -> Result<String, H
     let url = format!("{}/v1/authorizers/register", config.control_plane_url);
 
     // Get public key hex if signing key is configured
-    let public_key_hex = config.signing_key.as_ref().map(|sk| {
-        hex::encode(sk.public_key().to_bytes())
-    });
+    let public_key_hex = config
+        .signing_key
+        .as_ref()
+        .map(|sk| hex::encode(sk.public_key().to_bytes()));
 
     // Build request with flattened environment fields
     let env = &config.environment;

@@ -564,8 +564,10 @@ async fn serve_http(
         let environment = EnvironmentInfo::from_env();
 
         // Parse signing key if provided (enables signed receipts)
-        let signing_key = cli.signing_key.as_ref().and_then(|hex_key| {
-            match hex::decode(hex_key) {
+        let signing_key = cli
+            .signing_key
+            .as_ref()
+            .and_then(|hex_key| match hex::decode(hex_key) {
                 Ok(bytes) if bytes.len() == 32 => {
                     let mut arr = [0u8; 32];
                     arr.copy_from_slice(&bytes);
@@ -587,8 +589,7 @@ async fn serve_http(
                     tracing::error!(error = %e, "Invalid TENUO_SIGNING_KEY: must be hex-encoded");
                     None
                 }
-            }
-        });
+            });
 
         let heartbeat_config = HeartbeatConfig {
             control_plane_url: url.clone(),
