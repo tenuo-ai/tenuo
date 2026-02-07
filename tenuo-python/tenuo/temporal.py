@@ -571,7 +571,7 @@ class KMSKeyResolver(KeyResolver):
     async def _resolve_gcp(self, key_id: str, key_uri: str) -> Any:
         """Resolve using GCP KMS."""
         try:
-            from google.cloud import kms  # type: ignore[import-not-found]  # noqa: F401
+            from google.cloud import kms  # type: ignore[import-not-found,import-untyped]  # noqa: F401
 
             logger.debug(f"GCP KMS resolving key: {key_id} via {key_uri}")
             raise NotImplementedError(

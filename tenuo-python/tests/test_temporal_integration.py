@@ -17,7 +17,7 @@ Test Coverage:
 
 import pytest
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock
 
 # Import the modules under test
@@ -52,9 +52,9 @@ class MockWarrant:
     def __init__(
         self,
         warrant_id: str = "w-123",
-        tools: List[str] = None,
+        tools: Optional[List[str]] = None,
         expired: bool = False,
-        expires_at: datetime = None,
+        expires_at: Optional[datetime] = None,
         chain_depth: int = 1,
     ):
         self._id = warrant_id
