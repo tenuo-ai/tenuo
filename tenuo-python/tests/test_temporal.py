@@ -32,9 +32,11 @@ from tenuo.temporal import (
     TenuoInterceptor,
     # Header utilities
     tenuo_headers,
+    tenuo_execute_activity,
     TENUO_WARRANT_HEADER,
     TENUO_KEY_ID_HEADER,
     TENUO_COMPRESSED_HEADER,
+    TENUO_SIGNING_KEY_HEADER,
     _extract_key_id_from_headers,
     _compute_pop_challenge,
     # Phase 2: Decorators
@@ -68,6 +70,7 @@ def mock_warrant():
 def mock_signing_key():
     """Create a mock signing key."""
     key = MagicMock()
+    key.to_bytes.return_value = b"\x00" * 32  # 32-byte signing key
     key.public_key.return_value = MagicMock()
     return key
 
@@ -80,18 +83,19 @@ def mock_signing_key():
 class TestTenuoHeaders:
     """Tests for tenuo_headers() function."""
 
-    def test_creates_headers_with_warrant(self, mock_warrant):
+    def test_creates_headers_with_warrant(self, mock_warrant, mock_signing_key):
         """tenuo_headers creates proper header dict."""
-        headers = tenuo_headers(mock_warrant, "key-123")
+        headers = tenuo_headers(mock_warrant, "key-123", mock_signing_key)
 
         assert TENUO_KEY_ID_HEADER in headers
         assert headers[TENUO_KEY_ID_HEADER] == b"key-123"
         assert TENUO_WARRANT_HEADER in headers
         assert TENUO_COMPRESSED_HEADER in headers
+        assert TENUO_SIGNING_KEY_HEADER in headers
 
-    def test_compresses_by_default(self, mock_warrant):
+    def test_compresses_by_default(self, mock_warrant, mock_signing_key):
         """Warrant is gzip compressed by default."""
-        headers = tenuo_headers(mock_warrant, "key-123")
+        headers = tenuo_headers(mock_warrant, "key-123", mock_signing_key)
 
         assert headers[TENUO_COMPRESSED_HEADER] == b"1"
 
@@ -100,13 +104,21 @@ class TestTenuoHeaders:
         decompressed = gzip.decompress(compressed)
         assert b"eyJ0ZXN0IjogIndhcnJhbnQifQ==" in decompressed
 
-    def test_uncompressed_option(self, mock_warrant):
+    def test_uncompressed_option(self, mock_warrant, mock_signing_key):
         """Can disable compression."""
-        headers = tenuo_headers(mock_warrant, "key-123", compress=False)
+        headers = tenuo_headers(mock_warrant, "key-123", mock_signing_key, compress=False)
 
         assert headers[TENUO_COMPRESSED_HEADER] == b"0"
         # Should be the raw base64
         assert headers[TENUO_WARRANT_HEADER] == b"eyJ0ZXN0IjogIndhcnJhbnQifQ=="
+
+    def test_signing_key_propagated(self, mock_warrant, mock_signing_key):
+        """Signing key is base64-encoded in headers for PoP."""
+        headers = tenuo_headers(mock_warrant, "key-123", mock_signing_key)
+
+        signing_key_b64 = headers[TENUO_SIGNING_KEY_HEADER]
+        decoded = base64.b64decode(signing_key_b64)
+        assert decoded == b"\x00" * 32
 
 
 class TestExtractKeyId:
@@ -532,21 +544,16 @@ class TestPhase2Config:
         resolver = MagicMock(spec=KeyResolver)
         config = TenuoInterceptorConfig(key_resolver=resolver)
 
-        assert config.require_pop is False  # Off for adoption
         assert config.block_local_activities is True  # Secure by default
-        assert config.pop_window_seconds == 300  # 5 minutes
 
-    def test_can_enable_require_pop(self):
-        """Can enable PoP requirement for production."""
+    def test_pop_is_always_mandatory(self):
+        """PoP is always mandatory — no config toggle exists."""
         resolver = MagicMock(spec=KeyResolver)
-        config = TenuoInterceptorConfig(
-            key_resolver=resolver,
-            require_pop=True,
-            pop_window_seconds=60,
-        )
+        config = TenuoInterceptorConfig(key_resolver=resolver)
 
-        assert config.require_pop is True
-        assert config.pop_window_seconds == 60
+        # Verify require_pop is no longer a config option
+        assert not hasattr(config, "require_pop")
+        assert not hasattr(config, "pop_window_seconds")
 
 
 # =============================================================================

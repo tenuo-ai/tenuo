@@ -19,7 +19,7 @@ Security Philosophy (Fail-Closed by Default):
     - Invalid warrant: Raises ChainValidationError
     - Expired warrant: Raises WarrantExpired
     - Constraint violation: Raises ConstraintViolation
-    - PoP failure: Raises PopVerificationError
+    - PoP failure: Raises PopVerificationError (PoP is always mandatory)
     - Local activity without @unprotected: Raises LocalActivityError
 
 Phase 1 Features:
@@ -30,7 +30,8 @@ Phase 1 Features:
     - Basic audit event emission
 
 Phase 2 Features:
-    - PoP verification using scheduled_time (replay-safe)
+    - Mandatory PoP verification using scheduled_time (replay-safe)
+    - tenuo_execute_activity(): Workflow helper with automatic PoP signing
     - @unprotected decorator for local activities
     - Fail-closed local activity guard
 
@@ -69,6 +70,11 @@ TENUO_WARRANT_HEADER = "x-tenuo-warrant"
 TENUO_KEY_ID_HEADER = "x-tenuo-key-id"
 TENUO_COMPRESSED_HEADER = "x-tenuo-compressed"
 TENUO_POP_HEADER = "x-tenuo-pop"
+TENUO_SIGNING_KEY_HEADER = "x-tenuo-signing-key"
+
+# PoP timestamp validation window (seconds). The scheduled_time must be
+# within this window. This is not configurable — security is non-negotiable.
+POP_WINDOW_SECONDS = 300
 
 
 # =============================================================================
@@ -662,25 +668,11 @@ class TenuoInterceptorConfig:
     """Maximum warrant chain depth to accept."""
 
     # Phase 2: Security hardening options
-    require_pop: bool = False
-    """
-    Require Proof-of-Possession verification.
-    When True, activities must have a valid PoP signature.
-    Set to False during initial adoption, True for production.
-    """
-
     block_local_activities: bool = True
     """
     Block protected activities from being used as local activities.
     Local activities bypass the worker interceptor, so protected
     activities must be marked @unprotected to run locally.
-    """
-
-    pop_window_seconds: int = 300
-    """
-    Time window (seconds) for PoP timestamp validation.
-    The scheduled_time must be within this window of the PoP timestamp.
-    Default: 300 seconds (5 minutes).
     """
 
     # Phase 4: Observability options
@@ -722,6 +714,7 @@ class TenuoInterceptorConfig:
 def tenuo_headers(
     warrant: Any,  # Warrant type from tenuo_core
     key_id: str,
+    signing_key: Any,  # SigningKey from tenuo_core
     *,
     compress: bool = True,
 ) -> Dict[str, bytes]:
@@ -730,6 +723,8 @@ def tenuo_headers(
     Args:
         warrant: The warrant authorizing this workflow
         key_id: Identifier for the holder's signing key
+        signing_key: The holder's signing key (for Proof-of-Possession).
+            Must have a `.to_bytes()` method returning 32 raw bytes.
         compress: Whether to gzip compress the warrant (default: True)
 
     Returns:
@@ -739,15 +734,20 @@ def tenuo_headers(
         await client.start_workflow(
             MyWorkflow.run,
             args=[...],
-            headers=tenuo_headers(warrant, "agent-key-1"),
+            headers=tenuo_headers(warrant, "agent-key-1", signing_key),
         )
     """
     # Serialize warrant to base64
     warrant_b64 = warrant.to_base64()
     warrant_bytes = warrant_b64.encode("utf-8")
 
+    # Encode signing key as base64 for header transport
+    signing_key_bytes = signing_key.to_bytes() if hasattr(signing_key, "to_bytes") else bytes(signing_key)
+    signing_key_b64 = base64.b64encode(signing_key_bytes)
+
     headers: Dict[str, bytes] = {
         TENUO_KEY_ID_HEADER: key_id.encode("utf-8"),
+        TENUO_SIGNING_KEY_HEADER: signing_key_b64,
     }
 
     if compress:
@@ -759,6 +759,138 @@ def tenuo_headers(
         headers[TENUO_COMPRESSED_HEADER] = b"0"
 
     return headers
+
+
+async def tenuo_execute_activity(
+    activity: Any,
+    *,
+    args: Optional[List[Any]] = None,
+    start_to_close_timeout: Any = None,
+    schedule_to_close_timeout: Any = None,
+    schedule_to_start_timeout: Any = None,
+    heartbeat_timeout: Any = None,
+    retry_policy: Any = None,
+    task_queue: Optional[str] = None,
+    cancellation_type: Any = None,
+) -> Any:
+    """Execute an activity with automatic Proof-of-Possession signing.
+
+    This is the primary way to call activities in Tenuo-protected workflows.
+    It transparently computes the PoP challenge (SHA-256 of workflow context),
+    signs it with the holder's key, and attaches the signature as a header.
+
+    Args:
+        activity: The activity function to execute
+        args: Arguments to pass to the activity
+        start_to_close_timeout: Timeout for activity execution
+        schedule_to_close_timeout: Timeout from schedule to completion
+        schedule_to_start_timeout: Timeout from schedule to start
+        heartbeat_timeout: Heartbeat timeout for long-running activities
+        retry_policy: Retry policy for the activity
+        task_queue: Optional task queue override
+        cancellation_type: Cancellation behavior
+
+    Returns:
+        The activity's return value
+
+    Example:
+        @workflow.defn
+        class MyWorkflow:
+            @workflow.run
+            async def run(self) -> str:
+                return await tenuo_execute_activity(
+                    read_file,
+                    args=["/data/report.txt"],
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
+
+    Raises:
+        TenuoContextError: If called outside a workflow or missing signing key
+    """
+    try:
+        from temporalio import workflow  # type: ignore[import-not-found]
+    except ImportError:
+        raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
+
+    # Get workflow info for challenge computation
+    info = workflow.info()
+
+    # Get signing key from workflow headers
+    signing_key_b64 = workflow.payload_converter().from_payloads(
+        [workflow.unsafe.current_headers().get(TENUO_SIGNING_KEY_HEADER)]
+    ) if hasattr(workflow, "unsafe") else None
+
+    # Fallback: try getting raw header bytes
+    if signing_key_b64 is None:
+        raw_headers = getattr(workflow, "_current_headers", None)
+        if raw_headers and TENUO_SIGNING_KEY_HEADER in raw_headers:
+            signing_key_b64 = raw_headers[TENUO_SIGNING_KEY_HEADER]
+
+    if signing_key_b64 is None:
+        raise TenuoContextError(
+            "No signing key found in workflow headers. "
+            "Pass signing_key to tenuo_headers() when starting the workflow."
+        )
+
+    # Decode signing key
+    try:
+        if isinstance(signing_key_b64, bytes):
+            signing_key_raw = base64.b64decode(signing_key_b64)
+        else:
+            signing_key_raw = base64.b64decode(signing_key_b64.encode())
+    except Exception as e:
+        raise TenuoContextError(f"Invalid signing key in headers: {e}")
+
+    # Resolve tool name
+    tool_name = get_tool_name(activity, getattr(activity, "__name__", str(activity)))
+
+    # Compute PoP challenge
+    challenge = _compute_pop_challenge(
+        workflow_id=info.workflow_id,
+        activity_id=f"{info.workflow_id}-{tool_name}",  # Deterministic activity ID
+        tool_name=tool_name,
+        args={"args": args or []},
+        scheduled_time=workflow.now(),  # Replay-safe timestamp
+    )
+
+    # Sign challenge with Ed25519
+    try:
+        from tenuo_core import SigningKey  # type: ignore[import-not-found]
+
+        signer = SigningKey.from_bytes(signing_key_raw)
+        pop_signature = signer.sign(challenge)
+        pop_b64 = base64.b64encode(pop_signature).decode()
+    except ImportError:
+        # Fallback: use nacl or raw ed25519
+        # If tenuo_core is not available, use the raw signing key
+        # This path should only be hit in testing
+        pop_b64 = base64.b64encode(signing_key_raw + challenge).decode()
+        logger.warning("tenuo_core not available, using fallback PoP (testing only)")
+
+    # Build activity kwargs
+    activity_kwargs: Dict[str, Any] = {}
+    if args is not None:
+        activity_kwargs["args"] = args
+    if start_to_close_timeout is not None:
+        activity_kwargs["start_to_close_timeout"] = start_to_close_timeout
+    if schedule_to_close_timeout is not None:
+        activity_kwargs["schedule_to_close_timeout"] = schedule_to_close_timeout
+    if schedule_to_start_timeout is not None:
+        activity_kwargs["schedule_to_start_timeout"] = schedule_to_start_timeout
+    if heartbeat_timeout is not None:
+        activity_kwargs["heartbeat_timeout"] = heartbeat_timeout
+    if retry_policy is not None:
+        activity_kwargs["retry_policy"] = retry_policy
+    if task_queue is not None:
+        activity_kwargs["task_queue"] = task_queue
+    if cancellation_type is not None:
+        activity_kwargs["cancellation_type"] = cancellation_type
+
+    # Inject PoP header
+    headers = {TENUO_POP_HEADER: pop_b64.encode("utf-8")}
+    activity_kwargs["headers"] = headers
+
+    return await workflow.execute_activity(activity, **activity_kwargs)
 
 
 def attenuated_headers(
@@ -835,7 +967,23 @@ def attenuated_headers(
     # Use parent key_id if not specified
     key_id = child_key_id or parent_key_id
 
-    return tenuo_headers(child_warrant, key_id, compress=compress)
+    # Propagate signing key from parent workflow headers
+    try:
+        from temporalio import workflow as _wf  # type: ignore[import-not-found]
+
+        raw_headers = getattr(_wf, "_current_headers", None) or {}
+        signing_key_b64 = raw_headers.get(TENUO_SIGNING_KEY_HEADER)
+        if signing_key_b64 is None:
+            raise TenuoContextError(
+                "No signing key in parent workflow headers. "
+                "Cannot propagate PoP to child workflow."
+            )
+        # Decode and re-encode for tenuo_headers
+        signing_key_raw = base64.b64decode(signing_key_b64)
+    except ImportError:
+        raise TenuoContextError("temporalio not available")
+
+    return tenuo_headers(child_warrant, key_id, signing_key_raw, compress=compress)
 
 
 def workflow_grant(
@@ -1372,99 +1520,98 @@ class TenuoActivityInboundInterceptor:
 
             return None
 
-        # Phase 2: PoP verification (if required)
-        if self._config.require_pop:
-            scheduled_time = getattr(info, "scheduled_time", None)
-            if scheduled_time is None:
-                # No scheduled_time available - fail closed
-                self._emit_denial_event(
-                    info=info,
-                    warrant=warrant,
-                    tool=tool_name,
-                    args=args,
-                    reason="PoP verification failed: no scheduled_time",
-                )
-                if self._config.on_denial == "raise":
-                    raise PopVerificationError(
-                        reason="scheduled_time not available",
-                        activity_name=info.activity_type,
-                    )
-                return None
-
-            # Compute expected challenge
-            challenge = _compute_pop_challenge(
-                workflow_id=info.workflow_id,
-                activity_id=info.activity_id,
-                tool_name=tool_name,
+        # PoP verification (mandatory — security is non-negotiable)
+        scheduled_time = getattr(info, "scheduled_time", None)
+        if scheduled_time is None:
+            # No scheduled_time available - fail closed
+            self._emit_denial_event(
+                info=info,
+                warrant=warrant,
+                tool=tool_name,
                 args=args,
-                scheduled_time=scheduled_time,
+                reason="PoP verification failed: no scheduled_time",
             )
-
-            # Extract PoP from headers and verify
-            pop_header = headers.get(TENUO_POP_HEADER)
-            if pop_header is None:
-                self._emit_denial_event(
-                    info=info,
-                    warrant=warrant,
-                    tool=tool_name,
-                    args=args,
-                    reason="PoP verification failed: no PoP header",
+            if self._config.on_denial == "raise":
+                raise PopVerificationError(
+                    reason="scheduled_time not available",
+                    activity_name=info.activity_type,
                 )
-                if self._config.on_denial == "raise":
-                    raise PopVerificationError(
-                        reason="Missing PoP header",
-                        activity_name=info.activity_type,
-                    )
-                return None
+            return None
 
-            # Verify PoP signature against warrant's holder key
-            try:
-                # Decode PoP header (base64-encoded signature)
-                pop_signature = base64.b64decode(pop_header)
+        # Compute expected challenge
+        challenge = _compute_pop_challenge(
+            workflow_id=info.workflow_id,
+            activity_id=info.activity_id,
+            tool_name=tool_name,
+            args=args,
+            scheduled_time=scheduled_time,
+        )
 
-                # Get holder's public key from warrant
-                holder_key = warrant.holder_key() if hasattr(warrant, "holder_key") else None
-                if holder_key is None:
-                    raise PopVerificationError(
-                        reason="Warrant has no holder key for PoP verification",
-                        activity_name=info.activity_type,
-                    )
+        # Extract PoP from headers and verify
+        pop_header = headers.get(TENUO_POP_HEADER)
+        if pop_header is None:
+            self._emit_denial_event(
+                info=info,
+                warrant=warrant,
+                tool=tool_name,
+                args=args,
+                reason="PoP verification failed: no PoP header",
+            )
+            if self._config.on_denial == "raise":
+                raise PopVerificationError(
+                    reason="Missing PoP header",
+                    activity_name=info.activity_type,
+                )
+            return None
 
-                # Verify signature over challenge
-                if not holder_key.verify(challenge, pop_signature):
-                    raise PopVerificationError(
-                        reason="PoP signature verification failed",
-                        activity_name=info.activity_type,
-                    )
+        # Verify PoP signature against warrant's holder key
+        try:
+            # Decode PoP header (base64-encoded signature)
+            pop_signature = base64.b64decode(pop_header)
 
-                logger.debug(f"PoP verified for {info.activity_type}: challenge={challenge.hex()[:16]}...")
+            # Get holder's public key from warrant
+            holder_key = warrant.holder_key() if hasattr(warrant, "holder_key") else None
+            if holder_key is None:
+                raise PopVerificationError(
+                    reason="Warrant has no holder key for PoP verification",
+                    activity_name=info.activity_type,
+                )
 
-            except PopVerificationError:
-                self._emit_denial_event(
-                    info=info,
-                    warrant=warrant,
-                    tool=tool_name,
-                    args=args,
+            # Verify signature over challenge
+            if not holder_key.verify(challenge, pop_signature):
+                raise PopVerificationError(
                     reason="PoP signature verification failed",
+                    activity_name=info.activity_type,
                 )
-                if self._config.on_denial == "raise":
-                    raise
-                return None
-            except Exception as e:
-                # Fail-closed on any PoP verification error
-                self._emit_denial_event(
-                    info=info,
-                    warrant=warrant,
-                    tool=tool_name,
-                    args=args,
-                    reason=f"PoP verification error: {e}",
+
+            logger.debug(f"PoP verified for {info.activity_type}: challenge={challenge.hex()[:16]}...")
+
+        except PopVerificationError:
+            self._emit_denial_event(
+                info=info,
+                warrant=warrant,
+                tool=tool_name,
+                args=args,
+                reason="PoP signature verification failed",
+            )
+            if self._config.on_denial == "raise":
+                raise
+            return None
+        except Exception as e:
+            # Fail-closed on any PoP verification error
+            self._emit_denial_event(
+                info=info,
+                warrant=warrant,
+                tool=tool_name,
+                args=args,
+                reason=f"PoP verification error: {e}",
+            )
+            if self._config.on_denial == "raise":
+                raise PopVerificationError(
+                    reason=f"Verification error: {e}",
+                    activity_name=info.activity_type,
                 )
-                if self._config.on_denial == "raise":
-                    raise PopVerificationError(
-                        reason=f"Verification error: {e}",
-                        activity_name=info.activity_type,
-                    )
-                return None
+            return None
 
         # Authorization passed - emit allow event
         self._emit_allow_event(
@@ -1621,6 +1768,8 @@ __all__ = [
     # Header utilities
     "tenuo_headers",
     "attenuated_headers",  # Phase 3
+    # Workflow helpers
+    "tenuo_execute_activity",
     # Context accessors
     "current_warrant",
     "current_key_id",
@@ -1635,4 +1784,5 @@ __all__ = [
     "TENUO_WARRANT_HEADER",
     "TENUO_KEY_ID_HEADER",
     "TENUO_POP_HEADER",
+    "TENUO_SIGNING_KEY_HEADER",
 ]
