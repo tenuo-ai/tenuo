@@ -120,7 +120,7 @@ matchit = "0.7"
 smallvec = { version = "1.13", features = ["union"] }
 
 # CEL expression evaluation (optional - reduces dependencies for most users)
-cel-interpreter = { version = "0.8", optional = true }
+cel-interpreter = { version = "0.10", optional = true }
 
 # Caching for CEL compiled programs (optional - only with CEL)
 moka = { version = "0.12", features = ["sync"], optional = true }
