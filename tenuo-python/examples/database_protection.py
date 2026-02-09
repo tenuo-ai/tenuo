@@ -614,7 +614,7 @@ def main():
     print("  protect database tools using the STRUCTURED TOOL approach —")
     print("  agents control parameters, not queries.")
     print()
-    print("  See docs/analysis-database-tool-protection.md for full analysis.")
+    print("  Note: this demo intentionally avoids letting agents send raw SQL.")
     print()
 
     demo_tier1_guardrails()
