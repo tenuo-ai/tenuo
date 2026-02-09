@@ -62,6 +62,19 @@ Using Tenuo with OpenAI's Agents SDK. Shows:
 
 **Use when**: Using OpenAI's Agents SDK (Swarm, etc.).
 
+### [database_protection.py](database_protection.py) - Database Tool Protection
+
+Protecting AI agent database access using structured tools. Shows:
+- `OneOf` for table and operation allow-lists
+- `Subset` for column access control
+- `Range` for result set limits
+- Zero-trust rejection of unknown arguments
+- Warrant delegation with attenuation
+- Audit trail for every DB access attempt
+- Current limitations (no `SqlSafe` semantic constraint)
+
+**Use when**: You need to give AI agents database access safely.
+
 ## Security Constraints
 
 These examples demonstrate common security constraints:
