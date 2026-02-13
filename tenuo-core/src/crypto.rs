@@ -18,8 +18,8 @@ use ed25519_dalek::{
 use pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding};
 use rand::rngs::OsRng;
 use secrecy::{CloneableSecret, ExposeSecret, SecretBox};
-use zeroize::Zeroize;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 /// A signing key for creating and signing warrants.
 ///
