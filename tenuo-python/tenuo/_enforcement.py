@@ -51,6 +51,7 @@ class EnforcementResult:
         arguments: Arguments that were passed to the tool
         denial_reason: Human-readable reason for denial (if not allowed)
         constraint_violated: Which constraint failed (if applicable)
+        error_type: Structured error category (e.g. "expired", "tool_not_allowed")
     """
 
     allowed: bool
@@ -58,6 +59,7 @@ class EnforcementResult:
     arguments: Dict[str, Any]
     denial_reason: Optional[str] = None
     constraint_violated: Optional[str] = None
+    error_type: Optional[str] = None
 
     def raise_if_denied(self) -> None:
         """
@@ -156,6 +158,11 @@ def _get_allowed_tools(bound_warrant: BoundWarrant) -> Optional[List[str]]:
 # Main Enforcement Function
 # =============================================================================
 
+try:
+    from typing import Literal
+except ImportError:
+    from typing_extensions import Literal  # type: ignore
+
 
 def enforce_tool_call(
     tool_name: str,
@@ -165,6 +172,8 @@ def enforce_tool_call(
     allowed_tools: Optional[List[str]] = None,
     schemas: Optional[Dict[str, ToolSchema]] = None,
     require_constraints: bool = False,
+    verify_mode: Literal["sign", "verify"] = "sign",
+    precomputed_signature: Optional[bytes] = None,
 ) -> EnforcementResult:
     """
     Core enforcement logic for tool authorization.
@@ -173,7 +182,7 @@ def enforce_tool_call(
     It performs:
     1. Tool allowlist checking
     2. Critical tool constraint requirements
-    3. PoP-authenticated authorization via BoundWarrant.validate()
+    3. PoP-authenticated authorization
 
     Args:
         tool_name: Name of the tool being called
@@ -188,6 +197,10 @@ def enforce_tool_call(
         require_constraints: If True, require at least one constraint for
             tools marked with require_at_least_one in their schema.
             Default False (only enforces critical tool constraints).
+        verify_mode: "sign" (default) to generate PoP signature locally (Local PEP),
+            or "verify" to validate a pre-computed signature (Remote PEP/FastAPI).
+        precomputed_signature: Required if verify_mode="verify". The PoP signature
+            provided by the client.
 
     Returns:
         EnforcementResult with allowed status and denial details.
@@ -221,6 +234,9 @@ def enforce_tool_call(
             "Use warrant.bind(signing_key) to create a BoundWarrant."
         )
 
+    if verify_mode == "verify" and precomputed_signature is None:
+        raise ConfigurationError("precomputed_signature is required when verify_mode='verify'")
+
     schemas = schemas or TOOL_SCHEMAS
     schema = schemas.get(tool_name)
 
@@ -233,6 +249,7 @@ def enforce_tool_call(
                 tool=tool_name,
                 arguments=tool_args,
                 denial_reason=f"Tool '{tool_name}' not in allowed list",
+                error_type="tool_not_allowed",
             )
     else:
         # Check warrant's tool allowlist
@@ -245,6 +262,7 @@ def enforce_tool_call(
                 tool=tool_name,
                 arguments=tool_args,
                 denial_reason=f"Tool '{tool_name}' not in warrant",
+                error_type="tool_not_allowed",
             )
 
     # 2. Critical tool check - MUST have at least one relevant constraint
@@ -267,6 +285,7 @@ def enforce_tool_call(
                     f"{schema.recommended_constraints}"
                 ),
                 constraint_violated="missing_constraints",
+                error_type="constraint_violation",
             )
 
     # 3. Optional strict mode - require constraints for require_at_least_one tools
@@ -279,26 +298,43 @@ def enforce_tool_call(
                 arguments=tool_args,
                 denial_reason=f"Tool '{tool_name}' requires at least one constraint",
                 constraint_violated="missing_constraints",
+                error_type="constraint_violation",
             )
 
-    # 4. Authorize with PoP via BoundWarrant.validate()
+    # 4. Authorize with PoP via BoundWarrant.validate() or authorize()
     try:
-        validation_result: ValidationResult = bound_warrant.validate(tool_name, tool_args)
+        if verify_mode == "sign":
+            validation_result: ValidationResult = bound_warrant.validate(tool_name, tool_args)
 
-        if not validation_result.success:
-            # Extract detailed failure info from ValidationResult
-            violated_field = _extract_violated_field(validation_result.reason)
+            if not validation_result.success:
+                # Extract detailed failure info from ValidationResult
+                violated_field = _extract_violated_field(validation_result.reason)
 
-            logger.debug(
-                f"Authorization denied for {tool_name}: {validation_result.reason}"
-            )
-            return EnforcementResult(
-                allowed=False,
-                tool=tool_name,
-                arguments=tool_args,
-                denial_reason=validation_result.reason or "Authorization failed",
-                constraint_violated=violated_field,
-            )
+                logger.debug(
+                    f"Authorization denied for {tool_name}: {validation_result.reason}"
+                )
+                return EnforcementResult(
+                    allowed=False,
+                    tool=tool_name,
+                    arguments=tool_args,
+                    denial_reason=validation_result.reason or "Authorization failed",
+                    constraint_violated=violated_field,
+                    error_type="authorization_failed",
+                )
+        else:
+            # verify_mode == "verify"
+            # Access underlying warrant directly to verify provided signature
+            # We trust bound_warrant type check above
+            authorized = bound_warrant.warrant.authorize(tool_name, tool_args, precomputed_signature)
+
+            if not authorized:
+                 return EnforcementResult(
+                    allowed=False,
+                    tool=tool_name,
+                    arguments=tool_args,
+                    denial_reason="Authorization denied (invalid PoP or constraint violation)",
+                    error_type="authorization_failed",
+                )
 
         # Success - log for audit trail
         logger.info(
@@ -319,12 +355,23 @@ def enforce_tool_call(
     except (ConstraintViolation, ExpiredError, ToolNotAuthorized) as e:
         # Known authorization failures - expected behavior
         logger.debug(f"Authorization denied for {tool_name}: {e}")
+
+        # Map exceptions to error types
+        err_type = "other"
+        if isinstance(e, ExpiredError) or "expired" in str(e).lower():
+            err_type = "expired"
+        elif isinstance(e, ToolNotAuthorized) or "not authorized" in str(e).lower():
+            err_type = "tool_not_allowed"
+        elif isinstance(e, ConstraintViolation):
+             err_type = "constraint_violation"
+
         return EnforcementResult(
             allowed=False,
             tool=tool_name,
             arguments=tool_args,
             denial_reason=str(e),
             constraint_violated=_extract_violated_field(str(e)),
+            error_type=err_type,
         )
     except TenuoError as e:
         # Other Tenuo errors - log as warning
@@ -334,8 +381,18 @@ def enforce_tool_call(
             tool=tool_name,
             arguments=tool_args,
             denial_reason=str(e),
+            error_type="tenuo_error",
         )
-    # Let other exceptions bubble up (programming errors)
+    except Exception as e:
+        # Catch-all for unexpected runtime errors (fail closed)
+        logger.exception(f"Unexpected error during authorization for {tool_name}")
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=f"Internal enforcement error: {str(e)}",
+            error_type="internal_error",
+        )
 
 
 # =============================================================================

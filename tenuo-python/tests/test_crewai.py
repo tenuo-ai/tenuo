@@ -12,7 +12,7 @@ Covers:
 
 import pytest
 from typing import Optional, Callable
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 # Import the crewai module under test
 from tenuo.crewai import (
@@ -855,11 +855,13 @@ class TestTier2Authorization:
     """Test Tier 2 authorization flow."""
 
     def test_authorize_checks_warrant_expiry(self):
-        """Authorization checks warrant expiry before signing."""
+        """Authorization checks warrant expiry via enforcement."""
         mock_warrant = MagicMock()
-        mock_warrant.is_expired.return_value = True
-        mock_warrant.id.return_value = "expired-warrant"
         mock_key = MagicMock()
+
+        # Setup mocks for binding
+        mock_bound = MagicMock()
+        mock_warrant.bind.return_value = mock_bound
 
         guard = (
             GuardBuilder()
@@ -869,55 +871,63 @@ class TestTier2Authorization:
             .build()
         )
 
-        result = guard._authorize("read", {"path": "/data/file.txt"})
+        # Mock enforcement to return expired result
+        with patch("tenuo.crewai.enforce_tool_call") as mock_enforce:
+            from tenuo._enforcement import EnforcementResult
+            mock_enforce.return_value = EnforcementResult(
+                allowed=False,
+                tool="read",
+                arguments={},
+                denial_reason="Warrant expired",
+                error_type="expired"
+            )
 
-        # Should return DenialResult for expired warrant
-        assert isinstance(result, DenialResult)
-        assert result.error_code == "WARRANT_EXPIRED"
+            result = guard._authorize("read", {"path": "/data/file.txt"})
 
-    def test_authorize_signs_pop_for_valid_warrant(self):
-        """Authorization signs PoP when warrant is valid."""
-        # Setup proper holder verification mocks
-        mock_holder = MagicMock()
-        mock_holder.raw.return_value = b"public_key_bytes"
+            # Should return DenialResult for expired warrant
+            assert isinstance(result, DenialResult)
+            assert result.error_code == "WARRANT_EXPIRED"
 
-        mock_pubkey = MagicMock()
-        mock_pubkey.raw.return_value = b"public_key_bytes"  # Match holder
+            # Verify delegation
+            mock_warrant.bind.assert_called_with(mock_key)
+            mock_enforce.assert_called_once()
 
-        mock_key = MagicMock()
-        mock_key.public_key = mock_pubkey
-
+    def test_authorize_delegates_to_enforcement(self):
+        """Authorization delegates to unified enforcement logic."""
         mock_warrant = MagicMock()
-        mock_warrant.is_expired.return_value = False
-        mock_warrant.holder.return_value = mock_holder
-        mock_warrant.sign.return_value = b"signature"
-        mock_warrant.authorize.return_value = True
+        mock_key = MagicMock()
+        mock_bound = MagicMock()
+        mock_bound.id = "warrant-123"
+        mock_warrant.bind.return_value = mock_bound
 
         guard = GuardBuilder().allow("read", path=Subpath("/data")).with_warrant(mock_warrant, mock_key).build()
 
-        result = guard._authorize("read", {"path": "/data/file.txt"})
+        with patch("tenuo.crewai.enforce_tool_call") as mock_enforce:
+            from tenuo._enforcement import EnforcementResult
+            # Simulate allowed
+            mock_enforce.return_value = EnforcementResult(
+                allowed=True,
+                tool="read",
+                arguments={"path": "/data/file.txt"}
+            )
 
-        # Should succeed and call sign
-        assert result is None  # None = success
-        mock_warrant.sign.assert_called_once_with(mock_key, "read", {"path": "/data/file.txt"})
-        mock_warrant.authorize.assert_called_once()
+            result = guard._authorize("read", {"path": "/data/file.txt"})
 
-    def test_authorize_handles_sign_failure(self):
-        """Authorization handles PoP signing failures gracefully."""
-        # Setup proper holder verification mocks
-        mock_holder = MagicMock()
-        mock_holder.raw.return_value = b"public_key_bytes"
+            # Should succeed
+            assert result is None  # None = success
+            mock_enforce.assert_called_once()
 
-        mock_pubkey = MagicMock()
-        mock_pubkey.raw.return_value = b"public_key_bytes"  # Match holder
+            # Check arguments passed to enforce_tool_call
+            kargs = mock_enforce.call_args[1]
+            assert kargs["tool_name"] == "read"
+            assert kargs["bound_warrant"] == mock_bound
 
-        mock_key = MagicMock()
-        mock_key.public_key = mock_pubkey
-
+    def test_authorize_handles_enforcement_denial(self):
+        """Authorization handles enforcement denial gracefully."""
         mock_warrant = MagicMock()
-        mock_warrant.is_expired.return_value = False
-        mock_warrant.holder.return_value = mock_holder
-        mock_warrant.sign.side_effect = Exception("Invalid key")
+        mock_key = MagicMock()
+        mock_bound = MagicMock()
+        mock_warrant.bind.return_value = mock_bound
 
         guard = (
             GuardBuilder()
@@ -927,11 +937,21 @@ class TestTier2Authorization:
             .build()
         )
 
-        result = guard._authorize("read", {"path": "/data/file.txt"})
+        with patch("tenuo.crewai.enforce_tool_call") as mock_enforce:
+            from tenuo._enforcement import EnforcementResult
+            # Simulate denied (generic)
+            mock_enforce.return_value = EnforcementResult(
+                allowed=False,
+                tool="read",
+                arguments={},
+                denial_reason="Invalid PoP signature"
+            )
 
-        # Should return DenialResult for signing failure
-        assert isinstance(result, DenialResult)
-        assert result.error_code == "INVALID_POP"
+            result = guard._authorize("read", {"path": "/data/file.txt"})
+
+            # Should return DenialResult
+            assert isinstance(result, DenialResult)
+            assert result.error_code == "INVALID_POP"
 
 
 class TestTier2Exports:

@@ -125,6 +125,9 @@ from tenuo.core import check_constraint
 # Check version compatibility on import (warns, doesn't fail)
 from tenuo._version_compat import check_crewai_compat  # noqa: E402
 
+# Import unified enforcement logic
+from tenuo._enforcement import enforce_tool_call, EnforcementResult
+
 check_crewai_compat()
 
 # Import CrewAI hooks API (required for this integration)
@@ -866,56 +869,39 @@ class CrewAIGuard:
                 )
                 return self._handle_denial(error, tool_name, args, agent_role)
 
-        # Step 4: Tier 2 - Warrant authorization with PoP
+        # Step 4: Tier 2 - Warrant authorization with PoP (Unified Enforcement)
         if self._warrant and self._signing_key:
-            # Check warrant expiry FIRST - no point validating crypto on expired warrant
-            try:
-                if hasattr(self._warrant, "is_expired") and self._warrant.is_expired():
-                    warrant_id = None
-                    if hasattr(self._warrant, "id"):
-                        warrant_id = self._warrant.id()
-                    error = WarrantExpired(warrant_id=warrant_id)  # type: ignore[assignment]
-                    return self._handle_denial(error, tool_name, args, agent_role)
-            except Exception as e:
-                # SECURITY: Fail-closed - if we can't check expiry, deny
-                logger.warning(f"Warrant expiry check failed, denying (fail-closed): {e}")
-                error = WarrantExpired(warrant_id="unknown", reason="Expiry check failed")  # type: ignore[assignment]
-                return self._handle_denial(error, tool_name, args, agent_role)
+            bound = self._warrant.bind(self._signing_key)
 
-            # SECURITY NOTE: Holder Verification
-            # ===================================
-            # The Rust core's warrant.authorize() cryptographically verifies that
-            # the PoP signature was created by the key matching warrant.holder().
-            # This happens inside verify_pop() via holder.verify(signature).
-            #
-            # From tenuo-core/src/warrant.rs verify_pop():
-            #     if self.payload.holder.verify(&preimage, signature).is_ok() {
-            #         verified = true;
-            #     }
-            #
-            # If signing_key doesn't match the holder, the signature verification
-            # will fail and authorize() will return Error::SignatureInvalid.
-            #
-            # This cryptographic enforcement at the Rust level makes a Python-side
-            # holder check redundant. We trust the Rust core's implementation,
-            # consistent with the A2A and Google ADK integrations.
+            enforcement: EnforcementResult = enforce_tool_call(
+                tool_name=tool_name,
+                tool_args=args,
+                bound_warrant=bound,
+            )
 
-            try:
-                pop = self._warrant.sign(self._signing_key, tool_name, args)
-                auth_result = self._warrant.authorize(tool_name, args, signature=pop)
-                # SECURITY: Fail-closed - explicitly check return value
-                if auth_result is False:
-                    error = InvalidPoP(reason="Authorization returned False")  # type: ignore[assignment]
-                    return self._handle_denial(error, tool_name, args, agent_role)
-            except Exception as e:
-                # Handle warrant authorization failures
-                error_msg = str(e)
-                if "expired" in error_msg.lower():
-                    error = WarrantExpired()  # type: ignore[assignment]
-                elif "tool" in error_msg.lower() and "not" in error_msg.lower():
-                    error = WarrantToolDenied(tool=tool_name)  # type: ignore[assignment]
+            if not enforcement.allowed:
+                reason = enforcement.denial_reason or "Authorization denied"
+
+                # Map enforcement failures to CrewAI-specific exceptions for compatibility
+                if enforcement.error_type == "expired":
+                    error = WarrantExpired(reason=reason)  # type: ignore[assignment]
+                elif enforcement.error_type == "constraint_violation":
+                     # Best-effort constraint violation mapping
+                     from tenuo import Wildcard
+                     violated_field = enforcement.constraint_violated or "unknown_field"
+                     error = ConstraintViolation(  # type: ignore[assignment]
+                        tool=tool_name,
+                        argument=violated_field,
+                        value=args.get(violated_field),
+                        constraint=Wildcard(),
+                        reason=reason
+                    )
+                elif enforcement.error_type == "tool_not_allowed":
+                     error = WarrantToolDenied(tool=tool_name, warrant_id=bound.id)  # type: ignore[assignment]
                 else:
-                    error = InvalidPoP(reason=error_msg)  # type: ignore[assignment]
+                    # Default fallback for PoP failures etc.
+                    error = InvalidPoP(reason=reason)  # type: ignore[assignment]
+
                 return self._handle_denial(error, tool_name, args, agent_role)
 
         # Authorization granted
