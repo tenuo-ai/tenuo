@@ -31,6 +31,131 @@ Choose based on your threat model. They can be combined for defense in depth.
 
 ---
 
+## Shared Enforcement Core
+
+All in-process integrations (LangGraph, CrewAI, OpenAI, AutoGen, Google ADK) use the same underlying enforcement logic. This ensures:
+
+- **Consistent behavior** across all frameworks
+- **Single code path** through the Rust core for security-critical checks
+- **Unified logging** via `tenuo.enforcement` logger
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Your Integration                         │
+│  (LangGraph / CrewAI / OpenAI / AutoGen / Google ADK)      │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│              enforce_tool_call()                            │
+│  • Allowlist filtering     • Critical tool checks          │
+│  • Constraint extraction   • Unified audit logging         │
+└─────────────────────────┬───────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│              Rust Core (tenuo_core)                         │
+│  • PoP signature verification   • Constraint validation    │
+│  • Expiration checking          • Cryptographic operations │
+└─────────────────────────────────────────────────────────────┘
+```
+
+Remote enforcement (FastAPI, A2A) uses `verify_mode` to validate precomputed signatures from clients, but still goes through the same Rust core for cryptographic verification.
+
+---
+
+## Tool Policies (Defense in Depth)
+
+The Python layer includes optional policy checks that run **before** the Rust core. These are **defense-in-depth** measures—they help catch mistakes early but do not replace the cryptographic guarantees.
+
+> [!IMPORTANT]
+> **These policies do NOT affect security invariants.** The Rust core is the security boundary. Policy checks are UX/operational safeguards that can be bypassed if needed. An attacker who compromises the Python process can skip these checks, but they cannot bypass the Rust core's cryptographic verification.
+
+### Risk Levels and Critical Tools
+
+Tenuo includes built-in risk classification for common tools:
+
+| Risk Level | Behavior | Example Tools |
+|------------|----------|---------------|
+| `critical` | **Denied** if no relevant constraint | `delete_file`, `http_request`, `shell_command`, `execute_sql` |
+| `high` | Warning logged | `write_file`, `send_email`, `fetch_url` |
+| `medium` | No special handling | `read_file`, `query_db` |
+| `low` | No special handling | `web_search`, `list_directory` |
+
+**Example**: A warrant granting `delete_file` with no `path` constraint will be denied by Python policy (before reaching Rust), with a helpful error:
+
+```
+Critical tool 'delete_file' requires at least one of: ['path']
+```
+
+**Why this exists**: Prevents accidentally issuing overly-permissive warrants. The Rust core would technically allow `delete_file: Wildcard()`, but that's almost certainly a mistake.
+
+### Registering Custom Tool Schemas
+
+```python
+from tenuo import ToolSchema, register_schema
+
+# Mark your custom tool as critical
+register_schema("drop_database", ToolSchema(
+    recommended_constraints=["database", "confirm"],
+    require_at_least_one=True,
+    risk_level="critical",
+    description="Drops entire database - requires explicit constraints",
+))
+```
+
+### Task-Scoped Allowlists (`allowed_tools`)
+
+Restrict tools per-task, even when the warrant grants more:
+
+```python
+from tenuo.langgraph import TenuoToolNode
+
+# Warrant allows: ["search", "read_file", "write_file", "delete_file"]
+
+# Task 1: Research phase (read-only)
+node = TenuoToolNode(tools, allowed_tools=["search", "read_file"])
+
+# Task 2: Write phase
+node = TenuoToolNode(tools, allowed_tools=["write_file"])
+
+# Task 3: Cleanup (dangerous - separate approval workflow)
+node = TenuoToolNode(tools, allowed_tools=["delete_file"])
+```
+
+**Key behavior**:
+- `allowed_tools` can only **restrict**, never expand
+- If the warrant doesn't include a tool, `allowed_tools` cannot grant it
+- This is a Python-side policy; the Rust core still verifies the warrant
+
+### Strict Mode
+
+Enable `strict=True` to require constraints on tools marked `require_at_least_one`:
+
+```python
+from tenuo.langchain import guard_tools
+
+# Fail if read_file has no path constraint
+protected = guard_tools(tools, bound, strict=True)
+```
+
+### Invariant Guarantee
+
+These policy checks **do not weaken** Tenuo's security model:
+
+| Check | Enforced By | Bypassable? | Security Impact |
+|-------|-------------|-------------|-----------------|
+| Critical tool constraints | Python | Yes (if process compromised) | None - Rust core still enforces warrant |
+| `allowed_tools` filtering | Python | Yes | None - Rust core still enforces warrant |
+| Warrant expiration | **Rust core** | No | **Security boundary** |
+| Tool in warrant | **Rust core** | No | **Security boundary** |
+| Constraint satisfaction | **Rust core** | No | **Security boundary** |
+| PoP signature | **Rust core** | No | **Security boundary** |
+
+The Rust core is the **only** security boundary. Python policies are convenience features for better DX and operational safety.
+
+---
+
 ## Model 1: In-Process Enforcement (The Library)
 
 *Best for: Preventing Prompt Injection in Monolithic Agents, LangChain/LangGraph, quick integration*

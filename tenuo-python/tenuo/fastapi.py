@@ -65,6 +65,29 @@ else:
 
 
 # =============================================================================
+# Verification-Only Key Sentinel
+# =============================================================================
+
+
+class _VerificationOnlyKey:
+    """
+    Sentinel class used when binding warrants for verification-only mode.
+
+    In FastAPI's client-side PoP pattern (Remote PEP), the server never
+    signs anything - it only verifies precomputed signatures from clients.
+    However, enforce_tool_call() requires a BoundWarrant for type safety.
+
+    This sentinel satisfies the type requirement while making it explicit
+    that the key is not used for cryptographic operations.
+
+    Security Note: This is safe because in verify_mode="verify", the
+    precomputed_signature parameter is used instead of the bound key.
+    """
+
+    pass
+
+
+# =============================================================================
 # Configuration
 # =============================================================================
 
@@ -294,27 +317,20 @@ class TenuoGuard:
 
         Uses enforce_tool_call with verify_mode="verify" to leverage shared
         logic (allowlists, critical tools) with pre-computed signatures.
+
+        Note: This uses _VerificationOnlyKey sentinel since in verify mode,
+        the signing key is never used (precomputed_signature is used instead).
         """
         from tenuo._enforcement import enforce_tool_call
 
-        # We need a bound valid warrant object for the type checker and internal logic
-        # For "verify" mode, the signing key is ignored, so we can bind a dummy key
-        # or use a helper if we exposed one. Here we bind a dummy key.
-        # This is safe because verify_mode="verify" forces usage of the
-        # pre-computed signature and warrants public key, ignoring the bound key.
-
-        # NOTE: We can't easily create a dummy SigningKey without importing cryptography
-        # dependencies that might be heavy. However, assuming warrant.bind doesn't
-        # validate the key deeply until sign() is called...
-
-        # Actually, let's use the provided warrant directly if we can, but enforce_tool_call
-        # strictly requires BoundWarrant for its internal helpers.
-
-        # Optimization: We can mock a minimal key since it won't be used for signing.
-        class DummyKey:
-            pass
-
-        bound = warrant.bind(DummyKey()) # type: ignore
+        # In verify mode, enforce_tool_call() requires a BoundWarrant for type safety
+        # and to access warrant properties (id, tools, etc.), but the signing key
+        # is never used for cryptographic operations. The precomputed_signature
+        # provided by the client is used instead.
+        #
+        # We bind with _VerificationOnlyKey sentinel to make this explicit.
+        # This is safe and intentional - the key is only for type compatibility.
+        bound = warrant.bind(_VerificationOnlyKey())  # type: ignore[arg-type]
 
         return enforce_tool_call(
             tool_name=tool,

@@ -478,17 +478,51 @@ def enforce_tool_call(
                 )
         else:
             # verify_mode == "verify"
-            # Access underlying warrant directly to verify provided signature
-            # We trust bound_warrant type check above
+            # Verify the precomputed signature against the warrant.
+            # Note: We intentionally use warrant.authorize() which returns bool,
+            # not validate() which would generate a new signature.
             authorized = bound_warrant.warrant.authorize(tool_name, tool_args, precomputed_signature)
 
             if not authorized:
+                # Try to determine failure reason for better audit trail.
+                # First check expiration (doesn't require signature).
+                denial_reason = "Authorization denied (invalid PoP or constraint violation)"
+                violated_field = None
+
+                if bound_warrant.warrant.is_expired():
+                    denial_reason = "Warrant has expired"
+                    error_type = "expired"
+                else:
+                    # Could be PoP mismatch or constraint violation.
+                    # Try validating constraints without PoP to distinguish.
+                    try:
+                        # Check if tool is in warrant
+                        tools = getattr(bound_warrant.warrant, "tools", None)
+                        if tools is not None and tool_name not in tools:
+                            denial_reason = f"Tool '{tool_name}' not in warrant"
+                            error_type = "tool_not_allowed"
+                        else:
+                            # Likely constraint violation or invalid PoP.
+                            # We can't distinguish without re-running validation,
+                            # which would require the holder's private key.
+                            #
+                            # SECURITY NOTE: We intentionally keep the error message
+                            # generic here to prevent information disclosure. Revealing
+                            # whether PoP failed vs constraint failed could help
+                            # attackers refine their attacks. Server logs contain
+                            # full details for legitimate debugging.
+                            error_type = "authorization_failed"
+                    except Exception:
+                        # If introspection fails, use generic error
+                        error_type = "authorization_failed"
+
                 return EnforcementResult(
                     allowed=False,
                     tool=tool_name,
                     arguments=tool_args,
-                    denial_reason="Authorization denied (invalid PoP or constraint violation)",
-                    error_type="authorization_failed",
+                    denial_reason=denial_reason,
+                    constraint_violated=violated_field,
+                    error_type=error_type,
                     warrant_id=warrant_id,
                 )
 
