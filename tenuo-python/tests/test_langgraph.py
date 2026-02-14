@@ -328,3 +328,292 @@ class TestKeyRegistry:
 
         with pytest.raises(KeyError):
             registry.get("nonexistent")
+
+
+def _middleware_available() -> bool:
+    """Check if middleware is available."""
+    try:
+        from tenuo.langgraph import MIDDLEWARE_AVAILABLE
+
+        return MIDDLEWARE_AVAILABLE
+    except ImportError:
+        return False
+
+
+class TestTenuoMiddleware:
+    """Tests for TenuoMiddleware (LangChain 1.0+ middleware API)."""
+
+    def test_middleware_available_flag(self):
+        """MIDDLEWARE_AVAILABLE flag reflects import status."""
+        from tenuo.langgraph import MIDDLEWARE_AVAILABLE
+
+        # Should be a boolean
+        assert isinstance(MIDDLEWARE_AVAILABLE, bool)
+
+    @pytest.mark.skipif(
+        not _middleware_available(),
+        reason="LangChain 1.0+ middleware not installed",
+    )
+    def test_middleware_init(self, registry):
+        """TenuoMiddleware can be initialized."""
+        from tenuo.langgraph import TenuoMiddleware
+
+        middleware = TenuoMiddleware()
+        assert middleware is not None
+        assert middleware._filter_tools is True
+        assert middleware._require_constraints is False
+
+    @pytest.mark.skipif(
+        not _middleware_available(),
+        reason="LangChain 1.0+ middleware not installed",
+    )
+    def test_middleware_init_with_options(self, registry):
+        """TenuoMiddleware accepts configuration options."""
+        from tenuo.langgraph import TenuoMiddleware
+
+        middleware = TenuoMiddleware(
+            key_id="my-key",
+            filter_tools=False,
+            require_constraints=True,
+        )
+        assert middleware._key_id == "my-key"
+        assert middleware._filter_tools is False
+        assert middleware._require_constraints is True
+
+    @pytest.mark.skipif(
+        not _middleware_available(),
+        reason="LangChain 1.0+ middleware not installed",
+    )
+    def test_middleware_debug_mode(self, registry):
+        """TenuoMiddleware returns detailed errors in debug mode."""
+        from tenuo.langgraph import TenuoMiddleware
+
+        middleware = TenuoMiddleware(debug=True)
+
+        # Mock request with invalid tool call
+        class MockRequest:
+            state = {"warrant": "invalid-warrant"}  # Will cause config error
+            runtime = None
+            tool_call = {"name": "test", "id": "123"}
+
+        # Should return detailed error
+        response = middleware.wrap_tool_call(MockRequest(), lambda x: x)
+
+        assert response.status == "error"
+        # In debug mode, we expect details
+        assert "Configuration error" in response.content or "Authorization denied" in response.content
+
+
+class TestEnforcementModule:
+    """Tests for the shared _enforcement module."""
+
+    def test_enforce_tool_call_allowed(self, warrant_and_key, registry):
+        """enforce_tool_call returns allowed=True for valid calls."""
+        from tenuo._enforcement import enforce_tool_call
+
+        warrant, key_id = warrant_and_key
+        key = registry.get(key_id)
+        bound = warrant.bind(key)
+
+        result = enforce_tool_call(
+            tool_name="search",
+            tool_args={"query": "test"},
+            bound_warrant=bound,
+        )
+
+        assert result.allowed is True
+        assert result.tool == "search"
+
+    def test_enforce_tool_call_denied_wrong_tool(self, warrant_and_key, registry):
+        """enforce_tool_call returns allowed=False for unauthorized tool."""
+        from tenuo._enforcement import enforce_tool_call
+
+        warrant, key_id = warrant_and_key
+        key = registry.get(key_id)
+        bound = warrant.bind(key)
+
+        result = enforce_tool_call(
+            tool_name="delete_file",  # Not in warrant
+            tool_args={"path": "/etc/passwd"},
+            bound_warrant=bound,
+        )
+
+        assert result.allowed is False
+        assert result.tool == "delete_file"
+        assert "not in warrant" in result.denial_reason
+
+    def test_enforce_tool_call_with_allowlist_override(self, warrant_and_key, registry):
+        """enforce_tool_call respects explicit allowed_tools."""
+        from tenuo._enforcement import enforce_tool_call
+
+        warrant, key_id = warrant_and_key
+        key = registry.get(key_id)
+        bound = warrant.bind(key)
+
+        # Tool is in warrant but not in explicit allowlist
+        result = enforce_tool_call(
+            tool_name="search",
+            tool_args={"query": "test"},
+            bound_warrant=bound,
+            allowed_tools=["read_file"],  # Override
+        )
+
+        assert result.allowed is False
+        assert "not in allowed list" in result.denial_reason
+
+    def test_enforce_requires_bound_warrant(self, warrant_and_key, registry):
+        """enforce_tool_call raises ConfigurationError for plain Warrant."""
+        from tenuo._enforcement import enforce_tool_call
+
+        warrant, key_id = warrant_and_key
+
+        # Pass plain warrant instead of BoundWarrant
+        with pytest.raises(ConfigurationError) as exc_info:
+            enforce_tool_call(
+                tool_name="search",
+                tool_args={"query": "test"},
+                bound_warrant=warrant,  # Not bound!
+            )
+
+        assert "Expected BoundWarrant" in str(exc_info.value)
+        assert "warrant.bind(signing_key)" in str(exc_info.value)
+
+    def test_filter_tools_by_warrant(self, warrant_and_key, registry):
+        """filter_tools_by_warrant filters tool list."""
+        from tenuo._enforcement import filter_tools_by_warrant
+        from dataclasses import dataclass
+
+        @dataclass
+        class MockTool:
+            name: str
+
+        warrant, key_id = warrant_and_key
+        key = registry.get(key_id)
+        bound = warrant.bind(key)
+
+        tools = [
+            MockTool(name="search"),
+            MockTool(name="read_file"),
+            MockTool(name="delete_file"),
+        ]
+
+        filtered = filter_tools_by_warrant(tools, bound)
+
+        # Only search and read_file are in warrant
+        assert len(filtered) == 2
+        assert {t.name for t in filtered} == {"search", "read_file"}
+
+    def test_filter_tools_requires_bound_warrant(self, warrant_and_key, registry):
+        """filter_tools_by_warrant raises ConfigurationError for plain Warrant."""
+        from tenuo._enforcement import filter_tools_by_warrant
+        from dataclasses import dataclass
+
+        @dataclass
+        class MockTool:
+            name: str
+
+        warrant, key_id = warrant_and_key
+        tools = [MockTool(name="search")]
+
+        with pytest.raises(ConfigurationError) as exc_info:
+            filter_tools_by_warrant(tools, warrant)  # Not bound!
+
+        assert "Expected BoundWarrant" in str(exc_info.value)
+
+    def test_filter_tools_with_many_tools(self, registry):
+        """filter_tools_by_warrant handles warrants with many tools."""
+        from tenuo._enforcement import filter_tools_by_warrant
+        from dataclasses import dataclass
+
+        @dataclass
+        class MockTool:
+            name: str
+
+        # Warrant with many tools (all in available list)
+        warrant, key = Warrant.quick_mint(
+            tools=["search", "delete", "anything"],
+            ttl=3600,
+        )
+        registry.register("many-tools-key", key)
+        bound = warrant.bind(key)
+
+        tools = [
+            MockTool(name="search"),
+            MockTool(name="delete"),
+            MockTool(name="anything"),
+        ]
+
+        filtered = filter_tools_by_warrant(tools, bound)
+
+        # All tools should be returned since all are in warrant
+        assert len(filtered) == 3
+
+    def test_enforcement_result_raise_if_denied(self):
+        """EnforcementResult.raise_if_denied raises appropriate exception."""
+        from tenuo._enforcement import EnforcementResult
+        from tenuo.exceptions import ToolNotAuthorized, ConstraintViolation
+
+        # Allowed - should not raise
+        allowed_result = EnforcementResult(
+            allowed=True,
+            tool="test",
+            arguments={},
+        )
+        allowed_result.raise_if_denied()  # No exception
+
+        # Denied without constraint - ToolNotAuthorized
+        denied_result = EnforcementResult(
+            allowed=False,
+            tool="test",
+            arguments={},
+            denial_reason="Not authorized",
+        )
+        with pytest.raises(ToolNotAuthorized):
+            denied_result.raise_if_denied()
+
+        # Denied with constraint - ConstraintViolation
+        constraint_result = EnforcementResult(
+            allowed=False,
+            tool="test",
+            arguments={},
+            denial_reason="Path not allowed",
+            constraint_violated="path",
+        )
+        with pytest.raises(ConstraintViolation):
+            constraint_result.raise_if_denied()
+
+    def test_extract_violated_field(self):
+        """_extract_violated_field extracts field names from error messages."""
+        from tenuo._enforcement import _extract_violated_field
+
+        # Test various error message formats
+        assert _extract_violated_field("Constraint 'path' not satisfied") == "path"
+        assert _extract_violated_field("Range exceeded for 'amount'") == "amount"
+        assert _extract_violated_field("field 'query' invalid") == "query"
+        assert _extract_violated_field(None) is None
+        assert _extract_violated_field("Generic error") is None
+
+    def test_get_constraints_dict_uses_capabilities(self, registry):
+        """_get_constraints_dict properly extracts from capabilities."""
+        from tenuo._enforcement import _get_constraints_dict
+        from tenuo_core import Pattern
+
+        # Create warrant with capabilities-based constraints
+        key = SigningKey.generate()
+        registry.register("cap-test-key", key)
+
+        warrant = (
+            Warrant.mint_builder()
+            .capability("search", query=Pattern("test*"))
+            .capability("read_file", path=Pattern("/data/*"))
+            .holder(key.public_key)
+            .ttl(3600)
+            .mint(key)
+        )
+
+        bound = warrant.bind(key)
+
+        constraints = _get_constraints_dict(bound)
+
+        # Should have flattened constraints from both capabilities
+        assert "query" in constraints or "path" in constraints
