@@ -31,15 +31,13 @@ from typing import (
 
 from .exceptions import (
     AuthorizationDenied,
-    ConfigurationError,
     ConstraintResult,
     ConstraintViolation,
-    ExpiredError,
-    MissingSigningKey,
     ToolNotAuthorized,
 )
 from .validation import ValidationResult
 from ._enforcement import EnforcementResult, handle_denial
+from ._builder import BaseGuardBuilder
 
 # Optional AutoGen availability check (best-effort, for feature detection only)
 AUTOGEN_AVAILABLE = importlib.util.find_spec("autogen_agentchat") is not None
@@ -232,9 +230,14 @@ class _ToolProxy:
         return getattr(self.wrapped, item)
 
 
-class GuardBuilder:
+class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
     """
     Builder for AutoGen guardrails (Tier 1 + Tier 2).
+
+    Inherits common functionality from BaseGuardBuilder:
+    - allow(tool, **constraints) - Register tool with constraints
+    - with_warrant(warrant, signing_key) - Enable Tier 2
+    - on_denial(mode) - Set denial handling
 
     API:
         GuardBuilder()
@@ -245,49 +248,10 @@ class GuardBuilder:
     """
 
     def __init__(self) -> None:
-        self._constraints: Dict[str, Dict[str, Any]] = {}
-        self._warrant = None
-        self._signing_key = None
-        self._on_denial: str = "raise"
-
-    def allow(self, tool: str, **constraints: Any) -> "GuardBuilder":
-        self._constraints[tool] = constraints
-        return self
-
-    def on_denial(self, mode: str) -> "GuardBuilder":
-        if mode not in {"raise", "log", "skip"}:
-            raise ValueError("on_denial must be one of: raise, log, skip")
-        self._on_denial = mode
-        return self
-
-    def with_warrant(self, warrant: Any, signing_key: Optional[Any]) -> "GuardBuilder":
-        self._warrant = warrant
-        self._signing_key = signing_key
-        return self
+        super().__init__()
 
     def build(self) -> "_Guard":
-        bound = None
-        if self._warrant is not None:
-            if self._signing_key is None:
-                raise MissingSigningKey("Signing key is required for warrant-protected guard")
-
-            # Warrant exposes authorized_holder (PublicKey)
-            holder = getattr(self._warrant, "authorized_holder", None)
-            pub_key = getattr(self._signing_key, "public_key", None)
-            if holder is not None and pub_key is not None:
-                mismatch = False
-                try:
-                    mismatch = holder != pub_key
-                except Exception:
-                    mismatch = str(holder) != str(pub_key)
-                if mismatch:
-                    raise ConfigurationError("Signing key does not match warrant holder")
-
-            if hasattr(self._warrant, "is_expired") and self._warrant.is_expired():
-                raise ExpiredError("Warrant is expired")
-
-            bound = self._warrant.bind(self._signing_key)
-
+        bound = self._get_bound_warrant()
         return _Guard(
             constraints=self._constraints,
             bound=bound,

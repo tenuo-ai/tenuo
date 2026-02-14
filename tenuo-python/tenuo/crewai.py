@@ -132,6 +132,7 @@ from tenuo._enforcement import (
     DenialResult,
     handle_denial,
 )
+from tenuo._builder import BaseGuardBuilder
 
 check_crewai_compat()
 
@@ -494,8 +495,13 @@ class ExplanationResult:
 # =============================================================================
 
 
-class GuardBuilder:
+class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
     """Builder for CrewAI tool authorization.
+
+    Inherits common functionality from BaseGuardBuilder:
+    - allow(tool, **constraints) - Register tool with constraints
+    - with_warrant(warrant, signing_key) - Enable Tier 2
+    - on_denial(mode) - Set denial handling
 
     Supports both Tier 1 (constraints only) and Tier 2 (warrant + PoP).
 
@@ -515,10 +521,7 @@ class GuardBuilder:
     """
 
     def __init__(self):
-        self._allowed: Dict[str, Dict[str, Constraint]] = {}
-        self._warrant: Optional[Warrant] = None
-        self._signing_key: Optional[SigningKey] = None
-        self._on_denial: DenialMode = "raise"
+        super().__init__()
         self._audit_callback: Optional[AuditCallback] = None
 
     def allow(self, tool_name: str, **constraints: Constraint) -> "GuardBuilder":
@@ -536,7 +539,8 @@ class GuardBuilder:
             .allow("search", query=Wildcard())
             .allow("researcher::search", query=Pattern("arxiv:*"))
         """
-        self._allowed[tool_name] = constraints
+        # Use parent's _constraints (same semantics as _allowed)
+        self._constraints[tool_name] = constraints
         return self
 
     def with_warrant(self, warrant: Warrant, signing_key: SigningKey) -> "GuardBuilder":
@@ -588,7 +592,7 @@ class GuardBuilder:
             )
 
         return CrewAIGuard(
-            allowed=self._allowed.copy(),
+            allowed=self._constraints.copy(),
             warrant=self._warrant,
             signing_key=self._signing_key,
             on_denial=self._on_denial,
