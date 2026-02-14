@@ -88,7 +88,7 @@ ed25519-dalek = { version = "2.1", features = ["rand_core", "serde", "batch", "p
 rand = "0.8"
 sha2 = "0.10"
 subtle = "2.6"  # Constant-time comparison for secrets
-secrecy = { version = "0.8", features = ["serde"] }
+secrecy = { version = "0.10", features = ["serde"] }
 zeroize = "1.7"
 
 # Serialization
@@ -134,7 +134,7 @@ uuid = { version = "1.6", features = ["v4", "v7", "serde", "js"] }
 # Python bindings (optional)
 # Note: extension-module must NOT be here - it goes in the final cdylib (tenuo-python)
 # abi3-py38 allows building without linking Python at compile time
-pyo3 = { version = "0.24", features = ["abi3-py38"], optional = true }
+pyo3 = { version = "0.24.1", features = ["abi3-py38"], optional = true }
 
 # Server dependencies (optional)
 tokio = { version = "1.35", features = ["full"], optional = true }

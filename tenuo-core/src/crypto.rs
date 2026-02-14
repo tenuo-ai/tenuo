@@ -17,18 +17,19 @@ use ed25519_dalek::{
 };
 use pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey, LineEnding};
 use rand::rngs::OsRng;
-use secrecy::{CloneableSecret, ExposeSecret, Secret, Zeroize};
+use secrecy::{CloneableSecret, ExposeSecret, SecretBox};
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 /// A signing key for creating and signing warrants.
 ///
-/// Contains an Ed25519 private key wrapped in `Secret` for:
+/// Contains an Ed25519 private key wrapped in `SecretBox` for:
 /// 1. Guaranteed zeroization on drop
 /// 2. Prevention of accidental logging (Debug is redacted)
 /// 3. Safe cloning (zeroizes the old memory)
 #[derive(Clone)]
 pub struct SigningKey {
-    signing_key: Secret<Ed25519SigningKeyWrapper>,
+    signing_key: SecretBox<Ed25519SigningKeyWrapper>,
 }
 
 // Wrapper to implement Zeroize and Clone for Ed25519SigningKey
@@ -48,7 +49,7 @@ impl Zeroize for Ed25519SigningKeyWrapper {
     }
 }
 
-/// Marker trait for Secrecy to allow cloning Secret<T>
+/// Marker trait for Secrecy to allow cloning SecretBox<T>
 impl CloneableSecret for Ed25519SigningKeyWrapper {}
 
 // Custom Debug to match secrecy's behavior (redacted)
@@ -65,7 +66,7 @@ impl SigningKey {
     pub fn generate() -> Self {
         let signing_key = Ed25519SigningKey::generate(&mut OsRng);
         Self {
-            signing_key: Secret::new(Ed25519SigningKeyWrapper(signing_key)),
+            signing_key: SecretBox::new(Box::new(Ed25519SigningKeyWrapper(signing_key))),
         }
     }
 
@@ -73,7 +74,7 @@ impl SigningKey {
     pub fn from_bytes(bytes: &[u8; 32]) -> Self {
         let signing_key = Ed25519SigningKey::from_bytes(bytes);
         Self {
-            signing_key: Secret::new(Ed25519SigningKeyWrapper(signing_key)),
+            signing_key: SecretBox::new(Box::new(Ed25519SigningKeyWrapper(signing_key))),
         }
     }
 
@@ -111,7 +112,7 @@ impl SigningKey {
         let signing_key = Ed25519SigningKey::from_pkcs8_pem(pem)
             .map_err(|e| Error::CryptoError(format!("Invalid PEM: {}", e)))?;
         Ok(Self {
-            signing_key: Secret::new(Ed25519SigningKeyWrapper(signing_key)),
+            signing_key: SecretBox::new(Box::new(Ed25519SigningKeyWrapper(signing_key))),
         })
     }
 
