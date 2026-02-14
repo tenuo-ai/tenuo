@@ -5,9 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0-beta.8] - 2026-02-04
+## [0.1.0-beta.8] - 2026-02-14
 
 ### Added
+
+#### Unified Enforcement Module
+- **Shared `enforce_tool_call()` function**: Single code path for all Python integrations (LangGraph, CrewAI, AutoGen, OpenAI, Google ADK)
+- **`_enforcement.py`**: 670+ lines of shared enforcement logic with consistent behavior across frameworks
+- **`BaseGuardBuilder`**: DRY builder pattern extracted to `_builder.py` for all integration guard builders
+- **Defense-in-depth documentation**: Clear separation between Python-side policies (UX) and Rust core (security boundary)
+- **Tool risk schemas**: `ToolSchema` with risk levels (`critical`, `high`, `medium`, `low`) and recommended constraints
+
+#### Temporal Integration (`tenuo[temporal]`)
+- **Workflow authorization**: Warrant-based protection for Temporal workflows
+- **Activity guards**: Constraint enforcement on Temporal activities
+
+#### Authorizer Improvements
+- **Signing key requirement**: Authorizers now require signing keys for cryptographic receipts (breaking change)
+- **Audit events for denials**: Missing/invalid warrant denials now emit audit events
+- **CBOR encoding fix**: Warrant chains encoded as byte strings (not arrays) per spec
 
 #### CrewAI Integration (`tenuo[crewai]`)
 - **GuardBuilder API**: Fluent builder for protecting CrewAI tools with Tenuo authorization
@@ -39,8 +55,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **Version Constraints**: Relaxed to permissive constraints with runtime warnings (e.g., `crewai>=1.0` instead of pinned versions)
 - **Holder Verification**: Removed redundant Python-side holder checks in CrewAI (Rust core's `verify_pop()` provides cryptographic enforcement)
+- **Maturin 1.12 compatibility**: Updated build configuration for latest maturin
+
+### Dependencies
+- Upgraded `axum` from 0.7.9 to 0.8.8
+- Upgraded `cel-interpreter` from 0.8.1 to 0.10.0
+- Upgraded `moka` from 0.12.12 to 0.12.13
+- Upgraded `secrecy` to 0.10.x and `pyo3` to 0.24.1
+- Explorer: React 18 → 19, jsdom 23 → 28, Playwright 1.58
 
 ### Documentation
+- Added "Shared Enforcement Core" section to `enforcement.md`
+- Added "Tool Policies (Defense in Depth)" section explaining risk levels and schemas
+- Added FastAPI/A2A troubleshooting to `debugging.md`
 - Added comprehensive CrewAI integration guide (`docs/crewai.md`, 779 lines)
 - Added compatibility matrix with version recommendations (`docs/compatibility-matrix.md`, 193 lines)
 - Added integration maintenance system documentation (`INTEGRATION_MAINTENANCE.md`, 143 lines)
