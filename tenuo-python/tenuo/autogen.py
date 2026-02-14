@@ -31,14 +31,11 @@ from typing import (
 
 from .exceptions import (
     AuthorizationDenied,
-    ConfigurationError,
-    ConstraintResult,
     ConstraintViolation,
-    ExpiredError,
-    MissingSigningKey,
     ToolNotAuthorized,
 )
-from .validation import ValidationResult
+from ._enforcement import EnforcementResult, handle_denial, enforce_tool_call
+from ._builder import BaseGuardBuilder
 
 # Optional AutoGen availability check (best-effort, for feature detection only)
 AUTOGEN_AVAILABLE = importlib.util.find_spec("autogen_agentchat") is not None
@@ -90,84 +87,6 @@ def _extract_auth_args(fn: Any, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -
     for i, v in enumerate(args):
         merged.setdefault(f"arg{i}", v)
     return merged
-
-
-def _raise_from_denial(bound: Any, tool_name: str, auth_args: Dict[str, Any]) -> None:
-    # Tool not in warrant.tools
-    try:
-        tools = getattr(bound, "tools", None)
-        if isinstance(tools, list) and tool_name not in tools:
-            raise ToolNotAuthorized(
-                tool=tool_name,
-                authorized_tools=tools,
-                hint=f"Add Capability('{tool_name}', ...) to your mint() call",
-            )
-    except ToolNotAuthorized:
-        raise
-    except Exception:
-        pass
-
-    why = None
-    try:
-        why = bound.why_denied(tool_name, auth_args)
-    except Exception:
-        why = None
-
-    constraint_results: list[ConstraintResult] = []
-    if why is not None and hasattr(why, "constraint_failures") and getattr(why, "constraint_failures"):
-        try:
-            for field, info in why.constraint_failures.items():  # type: ignore[union-attr]
-                constraint_results.append(
-                    ConstraintResult(
-                        name=field,
-                        passed=False,
-                        constraint_repr=str(info.get("expected", "?")),
-                        value=auth_args.get(field, "<not provided>"),
-                        explanation=str(info.get("reason", "Constraint not satisfied")),
-                    )
-                )
-        except Exception:
-            constraint_results = []
-
-    if not constraint_results:
-        for k, v in auth_args.items():
-            constraint_results.append(
-                ConstraintResult(
-                    name=k,
-                    passed=False,
-                    constraint_repr="<see warrant>",
-                    value=v,
-                    explanation="Value does not satisfy constraint",
-                )
-            )
-
-    hint = getattr(why, "suggestion", None) if why is not None else None
-    raise AuthorizationDenied(
-        tool=tool_name,
-        constraint_results=constraint_results,
-        reason="Arguments do not satisfy warrant constraints",
-        hint=hint,
-    )
-
-
-def _ensure_authorized_bound(bound: Any, tool_name: str, auth_args: Dict[str, Any]) -> None:
-    """
-    Tier 2 authorization using BoundWarrant.validate() (PoP required).
-    Propagates core errors (MissingSigningKey, ExpiredError, SignatureInvalid, etc.).
-    """
-    validate = getattr(bound, "validate", None)
-    if not callable(validate):
-        raise AuthorizationDenied(
-            tool=tool_name,
-            reason="Bound warrant does not support validate()",
-            constraint_results=[],
-        )
-
-    result: ValidationResult = validate(tool_name, auth_args)
-    if result:
-        return
-
-    _raise_from_denial(bound, tool_name, auth_args)
 
 
 def _check_constraints(
@@ -231,9 +150,14 @@ class _ToolProxy:
         return getattr(self.wrapped, item)
 
 
-class GuardBuilder:
+class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
     """
     Builder for AutoGen guardrails (Tier 1 + Tier 2).
+
+    Inherits common functionality from BaseGuardBuilder:
+    - allow(tool, **constraints) - Register tool with constraints
+    - with_warrant(warrant, signing_key) - Enable Tier 2
+    - on_denial(mode) - Set denial handling
 
     API:
         GuardBuilder()
@@ -244,49 +168,10 @@ class GuardBuilder:
     """
 
     def __init__(self) -> None:
-        self._constraints: Dict[str, Dict[str, Any]] = {}
-        self._warrant = None
-        self._signing_key = None
-        self._on_denial: str = "raise"
-
-    def allow(self, tool: str, **constraints: Any) -> "GuardBuilder":
-        self._constraints[tool] = constraints
-        return self
-
-    def on_denial(self, mode: str) -> "GuardBuilder":
-        if mode not in {"raise", "log", "skip"}:
-            raise ValueError("on_denial must be one of: raise, log, skip")
-        self._on_denial = mode
-        return self
-
-    def with_warrant(self, warrant: Any, signing_key: Optional[Any]) -> "GuardBuilder":
-        self._warrant = warrant
-        self._signing_key = signing_key
-        return self
+        super().__init__()
 
     def build(self) -> "_Guard":
-        bound = None
-        if self._warrant is not None:
-            if self._signing_key is None:
-                raise MissingSigningKey("Signing key is required for warrant-protected guard")
-
-            # Warrant exposes authorized_holder (PublicKey)
-            holder = getattr(self._warrant, "authorized_holder", None)
-            pub_key = getattr(self._signing_key, "public_key", None)
-            if holder is not None and pub_key is not None:
-                mismatch = False
-                try:
-                    mismatch = holder != pub_key
-                except Exception:
-                    mismatch = str(holder) != str(pub_key)
-                if mismatch:
-                    raise ConfigurationError("Signing key does not match warrant holder")
-
-            if hasattr(self._warrant, "is_expired") and self._warrant.is_expired():
-                raise ExpiredError("Warrant is expired")
-
-            bound = self._warrant.bind(self._signing_key)
-
+        bound = self._get_bound_warrant()
         return _Guard(
             constraints=self._constraints,
             bound=bound,
@@ -481,9 +366,48 @@ class _Guard:
     # Internal helpers
     # ------------------------------------------------------------------ #
     def _authorize(self, tool_name: str, auth_args: Dict[str, Any]) -> None:
+        """
+        Authorize a tool call.
+
+        Tier 2 (with bound warrant): Uses shared enforce_tool_call()
+        Tier 1 (no warrant): Uses _check_constraints() for closed-world enforcement
+        """
         if self._bound is not None:
-            _ensure_authorized_bound(self._bound, tool_name, auth_args)
+            # Tier 2: Use shared enforcement logic
+            result = enforce_tool_call(tool_name, auth_args, self._bound)
+            if not result.allowed:
+                # Raise appropriate exception based on error_type
+                from .exceptions import ConstraintResult, ExpiredError
+
+                # Handle specific error types
+                if result.error_type == "expired":
+                    raise ExpiredError(result.denial_reason or "Warrant has expired")
+                elif result.error_type == "tool_not_allowed":
+                    raise ToolNotAuthorized(tool=tool_name)
+                elif "not in warrant" in (result.denial_reason or "").lower():
+                    # Handle tool not in warrant from validation path
+                    raise ToolNotAuthorized(tool=tool_name)
+
+                # Default to AuthorizationDenied for constraint violations and others
+                constraint_results = []
+                if result.constraint_violated:
+                    constraint_results.append(
+                        ConstraintResult(
+                            name=result.constraint_violated,
+                            passed=False,
+                            constraint_repr="<see warrant>",
+                            value=auth_args.get(result.constraint_violated, "<unknown>"),
+                            explanation=result.denial_reason or "Constraint not satisfied",
+                        )
+                    )
+                raise AuthorizationDenied(
+                    tool=tool_name,
+                    constraint_results=constraint_results,
+                    reason=result.denial_reason or "Authorization denied",
+                )
             return
+
+        # Tier 1: Constraint-only enforcement (no warrant)
         constraints = self._constraints.get(tool_name)
         _check_constraints(tool_name, constraints, auth_args)
 
@@ -496,13 +420,21 @@ class _Guard:
         *,
         is_async: bool,
     ) -> Any:
-        if self._on_denial == "raise":
-            raise exc
-        if self._on_denial == "log":
-            logger.warning("Authorization denied (%s): %s", type(exc).__name__, exc)
-            return None
-        # skip
-        logger.debug("Authorization denied (skip): %s", exc)
+        """Handle denial using shared enforcement logic."""
+        # Create pseudo-result for shared handler
+        tool_name = getattr(fn, "__name__", "unknown")
+        pseudo_result = EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=kwargs,
+            denial_reason=str(exc),
+            error_type=type(exc).__name__.lower(),
+        )
+        handle_denial(
+            pseudo_result,
+            self._on_denial,
+            exception_factory=lambda _: exc,
+        )
         return None
 
     def _execute_call(

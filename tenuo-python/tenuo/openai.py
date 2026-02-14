@@ -134,6 +134,9 @@ from tenuo._version_compat import check_openai_compat
 
 check_openai_compat()
 
+# Import shared enforcement logic (after version check)
+from tenuo._enforcement import DenialPolicy, EnforcementResult, handle_denial, enforce_tool_call  # noqa: E402
+
 logger = logging.getLogger("tenuo.openai")
 
 
@@ -816,26 +819,23 @@ def verify_tool_call(
             logger.debug("Tier 2: Missing signing_key for PoP")
             raise MissingSigningKey()
 
-        # Sign Proof-of-Possession
-        logger.debug(f"Tier 2: Signing PoP for '{tool_name}'")
-        pop_signature = warrant.sign(signing_key, tool_name, arguments)
+        # Bind warrant to create BoundWarrant for enforce_tool_call
+        bound_warrant = warrant.bind(signing_key)
 
-        # Authorize with PoP (full cryptographic verification)
-        authorized = warrant.authorize(tool_name, arguments, signature=bytes(pop_signature))
+        # Use shared enforcement logic
+        result = enforce_tool_call(
+            tool_name=tool_name,
+            tool_args=arguments,
+            bound_warrant=bound_warrant,
+        )
 
-        if not authorized:
+        if not result.allowed:
             logger.debug(f"Tier 2: Authorization DENIED for '{tool_name}'")
-            # Get detailed reason for denial
-            why = warrant.why_denied(tool_name, arguments)
-            if why and hasattr(why, "deny_code"):
-                reason = f"{why.deny_code}"
-                if hasattr(why, "field") and why.field:
-                    reason += f" (field: {why.field})"
-                if hasattr(why, "suggestion") and why.suggestion:
-                    reason += f" - {why.suggestion}"
+            # Map error types to OpenAI-specific exceptions
+            if result.error_type == "expired":
+                raise WarrantDenied(tool_name, "warrant expired")
             else:
-                reason = str(why) if why else "not authorized by warrant"
-            raise WarrantDenied(tool_name, reason)
+                raise WarrantDenied(tool_name, result.denial_reason or "not authorized by warrant")
         else:
             logger.debug(f"Tier 2: Authorization GRANTED for '{tool_name}'")
 
@@ -1268,11 +1268,18 @@ class GuardedCompletions:
         return chunk
 
     def _handle_denial(self, error: TenuoOpenAIError) -> None:
-        """Handle a denial according to mode."""
-        if self._on_denial == "log":
-            logger.warning(f"Tool denied: {error}")
-        elif self._on_denial == "skip":
-            logger.debug(f"Tool skipped: {error}")
+        """Handle a denial according to mode using shared handler."""
+        # Note: OpenAI handles "raise" mode separately, so we only handle log/skip here
+        pseudo_result = EnforcementResult(
+            allowed=False,
+            tool=getattr(error, "tool_name", "unknown"),
+            arguments={},
+            denial_reason=str(error),
+            error_type=error.code if hasattr(error, "code") else None,
+        )
+        # Use LOG or SKIP - raise is handled elsewhere in OpenAI flow
+        policy = DenialPolicy.LOG if self._on_denial == "log" else DenialPolicy.SKIP
+        handle_denial(pseudo_result, policy)
 
     async def acreate(self, *args, **kwargs) -> Any:
         """Async wrapped create method with guardrails."""
@@ -1481,11 +1488,16 @@ class GuardedResponses:
             logger.warning(f"Audit callback failed: {e}")
 
     def _handle_denial(self, error: Exception) -> None:
-        """Handle a denial based on on_denial mode."""
-        if self._on_denial == "log":
-            logger.warning(f"Tool denied: {error}")
-        elif self._on_denial == "skip":
-            logger.debug(f"Tool skipped: {error}")
+        """Handle a denial based on on_denial mode using shared handler."""
+        pseudo_result = EnforcementResult(
+            allowed=False,
+            tool=getattr(error, "tool_name", "unknown"),
+            arguments={},
+            denial_reason=str(error),
+            error_type=getattr(error, "code", None),
+        )
+        policy = DenialPolicy.LOG if self._on_denial == "log" else DenialPolicy.SKIP
+        handle_denial(pseudo_result, policy)
 
 
 class GuardedClient:

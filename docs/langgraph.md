@@ -5,7 +5,7 @@ description: Secure LangGraph workflows with Tenuo
 
 # Tenuo LangGraph Integration
 
-> **Status**: ✅ Implemented (v0.1)  
+> **Status**: ✅ Implemented (v0.1)
 
 ---
 
@@ -18,8 +18,12 @@ Without Tenuo, you'd hardcode limits in your tools or add if-statements. But whe
 With Tenuo, the constraint is cryptographically enforced:
 
 ```python
+from langchain.agents import create_agent
 from tenuo import Warrant, Range
-from tenuo.langgraph import TenuoToolNode
+from tenuo.langgraph import TenuoMiddleware, load_tenuo_keys
+
+# Load keys from environment
+load_tenuo_keys()
 
 # Tier 1 agent: can only refund up to $50
 tier1_warrant = (Warrant.mint_builder()
@@ -34,8 +38,18 @@ tier1_warrant = (Warrant.mint_builder()
 def process_refund(order_id: str, amount: float) -> str:
     return f"Refunded ${amount} for order {order_id}"
 
-# LangGraph setup
-graph.add_node("tools", TenuoToolNode([lookup_order, process_refund]))
+# Create agent with TenuoMiddleware
+agent = create_agent(
+    model="gpt-4.1",
+    tools=[lookup_order, process_refund],
+    middleware=[TenuoMiddleware()],  # ← All authorization handled here
+)
+
+# Run with warrant in state
+result = agent.invoke({
+    "messages": [HumanMessage("refund order 123 for $75")],
+    "warrant": tier1_warrant,
+})
 ```
 
 **What happens when the LLM calls `process_refund(amount=75)`?**
@@ -43,26 +57,28 @@ graph.add_node("tools", TenuoToolNode([lookup_order, process_refund]))
 ```
 1. LLM decides to call process_refund(order_id="123", amount=75)
          ↓
-2. TenuoToolNode intercepts the call
+2. TenuoMiddleware.wrap_tool_call() intercepts
          ↓
-3. Extracts warrant from graph state
+3. Extracts warrant from state, binds signing key from KeyRegistry
          ↓
-4. Looks up signing key from KeyRegistry using config["tenuo_key_id"]
+4. Checks: Is process_refund in warrant? Does amount=75 satisfy Range(min=0, max=50)?
          ↓
-5. Checks: Is process_refund in warrant? Does amount=75 satisfy Range(min=0, max=50)?
-         ↓
-6. NO → Returns error ToolMessage. The refund never executes.
+5. NO → Returns error ToolMessage. The refund never executes.
 ```
 
 The warrant is the authority, not the LLM's judgment. Even if the model is tricked into calling `process_refund(amount=10000)`, the warrant says `Range(min=0, max=50)` and the call fails. Period.
 
 ---
 
-## Quick Start
+## Quick Start (Middleware)
+
+The recommended approach uses `TenuoMiddleware` with LangChain's `create_agent()`:
 
 ```python
-from tenuo import Warrant, SigningKey, KeyRegistry
-from tenuo.langgraph import guard_node, TenuoToolNode, load_tenuo_keys
+from langchain.agents import create_agent
+from langchain.messages import HumanMessage
+from tenuo import Warrant
+from tenuo.langgraph import TenuoMiddleware, load_tenuo_keys
 
 # 1. Load keys from environment
 load_tenuo_keys()  # Loads TENUO_KEY_DEFAULT, TENUO_KEY_WORKER_1, etc.
@@ -75,17 +91,65 @@ def search(query: str) -> str:
     """Search the web."""
     return f"Results for {query}"
 
-# 3. Create secure tool node
-tool_node = TenuoToolNode([search])
+@tool
+def read_file(path: str) -> str:
+    """Read a file."""
+    return open(path).read()
 
-# 4. Wrap pure nodes with guard_node()
+# 3. Create agent with middleware
+agent = create_agent(
+    model="gpt-4.1",
+    tools=[search, read_file],
+    middleware=[TenuoMiddleware()],
+)
+
+# 4. Create warrant and invoke
+warrant, key = Warrant.quick_mint(tools=["search", "read_file"], ttl=3600)
+from tenuo import KeyRegistry
+KeyRegistry.get_instance().register("default", key)
+
+result = agent.invoke({
+    "messages": [HumanMessage("search for AI papers")],
+    "warrant": warrant,
+})
+```
+
+### Why Middleware?
+
+| Feature | TenuoMiddleware | TenuoToolNode |
+|---------|-----------------|---------------|
+| **Integration** | Native LangChain middleware API | Custom node replacement |
+| **Tool filtering** | ✅ Auto-hides unauthorized tools from LLM | ❌ |
+| **New graphs** | ✅ Recommended | Legacy support |
+| **Existing graphs** | Requires migration to `create_agent()` | ✅ Drop-in |
+
+**Middleware benefits:**
+- **Framework-agnostic pattern**: Same middleware concept as FastAPI, MCP
+- **Tool filtering**: LLM only sees authorized tools (improves accuracy)
+- **Cleaner code**: No custom node types, just configuration
+
+---
+
+## Alternative: TenuoToolNode (Legacy Graphs)
+
+For existing LangGraph graphs that use `ToolNode`, use `TenuoToolNode` as a drop-in replacement:
+
+```python
+from tenuo.langgraph import TenuoToolNode, guard_node, load_tenuo_keys
+
+load_tenuo_keys()
+
+# Create secure tool node (replaces ToolNode)
+tool_node = TenuoToolNode([search, read_file])
+
+# Wrap pure nodes
 def my_agent(state):
     return {"messages": [...]}
 
 graph.add_node("agent", guard_node(my_agent))
 graph.add_node("tools", tool_node)
 
-# 5. Run with warrant in state (str() converts to base64 for safe serialization)
+# Run with warrant in state
 state = {"warrant": str(warrant), "messages": [...]}
 result = graph.invoke(state, config={"configurable": {"tenuo_key_id": "worker"}})
 ```
@@ -136,6 +200,48 @@ load_tenuo_keys()  # Registers all TENUO_KEY_* vars
 ---
 
 ## API Reference
+
+### `TenuoMiddleware`
+
+**Recommended** — Middleware for securing LangGraph agents with automatic authorization.
+
+```python
+from tenuo.langgraph import TenuoMiddleware
+
+# Basic usage
+middleware = TenuoMiddleware()
+
+# With configuration
+middleware = TenuoMiddleware(
+    key_id="worker",      # Explicit key (default: from config or "default")
+    filter_tools=True,    # Hide unauthorized tools from LLM (default: True)
+    require_constraints=False,  # Require constraints for sensitive tools
+)
+
+# Use with create_agent()
+from langchain.agents import create_agent
+
+agent = create_agent(
+    model="gpt-4.1",
+    tools=[search, calculator],
+    middleware=[middleware],
+)
+```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `key_id` | `str` | `None` | Key ID to use (overrides config) |
+| `filter_tools` | `bool` | `True` | Filter tools shown to LLM based on warrant |
+| `require_constraints` | `bool` | `False` | Require constraints for sensitive tools |
+
+**Hooks:**
+
+| Hook | Purpose |
+|------|---------|
+| `wrap_model_call` | Filters tools to only those in warrant |
+| `wrap_tool_call` | Authorizes each tool call with PoP |
 
 ### `load_tenuo_keys()`
 
@@ -234,6 +340,8 @@ graph.add_node("agent", my_agent)
 
 ### `TenuoToolNode`
 
+> **Note**: For new projects, prefer `TenuoMiddleware`. `TenuoToolNode` is provided for backward compatibility with existing graphs.
+
 Drop-in replacement for LangGraph's `ToolNode` with automatic authorization:
 
 ```python
@@ -251,20 +359,73 @@ def calculator(expression: str) -> str:
 # Create secure tool node
 tool_node = TenuoToolNode([search, calculator])
 
+# With constraint requirement
+tool_node = TenuoToolNode([search, calculator], require_constraints=True)
+
 graph.add_node("tools", tool_node)
 ```
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `tools` | `List[BaseTool]` | required | Tools to make available |
+| `require_constraints` | `bool` | `False` | Require constraints for sensitive tools |
 
 **How it works:**
 1. Extracts warrant from state
 2. Gets key from registry (via `key_id` in config or "default")
-3. Wraps each tool with authorization check
+3. Authorizes each tool call via shared enforcement logic
 4. Returns error ToolMessage if authorization fails
 
 ---
 
 ## Patterns
 
-### Pattern 1: Pure Nodes with `guard_node()`
+### Pattern 1: Middleware with `create_agent()` (Recommended)
+
+The cleanest integration uses middleware:
+
+```python
+from langchain.agents import create_agent
+from langchain.messages import HumanMessage
+from tenuo import Warrant, Range
+from tenuo.langgraph import TenuoMiddleware, load_tenuo_keys
+
+load_tenuo_keys()
+
+# Create agent with Tenuo middleware
+agent = create_agent(
+    model="gpt-4.1",
+    tools=[search, read_file, write_file],
+    middleware=[
+        TenuoMiddleware(filter_tools=True),  # Authorization + tool filtering
+        # Other middleware can go here (logging, caching, etc.)
+    ],
+)
+
+# Run with different warrants for different access levels
+readonly_warrant, key = Warrant.quick_mint(tools=["search", "read_file"], ttl=3600)
+readwrite_warrant, _ = Warrant.quick_mint(
+    tools=["search", "read_file", "write_file"],
+    constraints={"path": "/tmp/*"},
+    ttl=3600,
+)
+
+# Read-only user
+result = agent.invoke({
+    "messages": [HumanMessage("read config.yaml")],
+    "warrant": readonly_warrant,
+})
+
+# Read-write user
+result = agent.invoke({
+    "messages": [HumanMessage("write to /tmp/output.txt")],
+    "warrant": readwrite_warrant,
+})
+```
+
+### Pattern 2: Pure Nodes with `guard_node()`
 
 Keep your node functions pure (no Tenuo imports):
 

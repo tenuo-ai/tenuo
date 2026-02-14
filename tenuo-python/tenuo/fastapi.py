@@ -27,7 +27,8 @@ import uuid
 import logging
 
 from tenuo_core import Warrant, PublicKey  # type: ignore[import-untyped]
-from tenuo.exceptions import TenuoError, DeserializationError, ExpiredError
+from tenuo.exceptions import TenuoError, DeserializationError
+from tenuo._enforcement import EnforcementResult
 
 logger = logging.getLogger("tenuo.fastapi")
 
@@ -61,6 +62,29 @@ if FASTAPI_AVAILABLE:
     api_key_header = APIKeyHeader(name=X_TENUO_WARRANT, auto_error=False)
 else:
     api_key_header = None  # type: ignore[assignment]
+
+
+# =============================================================================
+# Verification-Only Key Sentinel
+# =============================================================================
+
+
+class _VerificationOnlyKey:
+    """
+    Sentinel class used when binding warrants for verification-only mode.
+
+    In FastAPI's client-side PoP pattern (Remote PEP), the server never
+    signs anything - it only verifies precomputed signatures from clients.
+    However, enforce_tool_call() requires a BoundWarrant for type safety.
+
+    This sentinel satisfies the type requirement while making it explicit
+    that the key is not used for cryptographic operations.
+
+    Security Note: This is safe because in verify_mode="verify", the
+    precomputed_signature parameter is used instead of the bound key.
+    """
+
+    pass
 
 
 # =============================================================================
@@ -281,6 +305,41 @@ class TenuoGuard:
         self.tool = tool
         self.extract_args = extract_args
 
+    def _enforce_with_pop_signature(
+        self,
+        warrant: Warrant,
+        tool: str,
+        args: Dict[str, Any],
+        pop_signature: bytes,
+    ) -> EnforcementResult:
+        """
+        Adapter for FastAPI's client-side PoP pattern.
+
+        Uses enforce_tool_call with verify_mode="verify" to leverage shared
+        logic (allowlists, critical tools) with pre-computed signatures.
+
+        Note: This uses _VerificationOnlyKey sentinel since in verify mode,
+        the signing key is never used (precomputed_signature is used instead).
+        """
+        from tenuo._enforcement import enforce_tool_call
+
+        # In verify mode, enforce_tool_call() requires a BoundWarrant for type safety
+        # and to access warrant properties (id, tools, etc.), but the signing key
+        # is never used for cryptographic operations. The precomputed_signature
+        # provided by the client is used instead.
+        #
+        # We bind with _VerificationOnlyKey sentinel to make this explicit.
+        # This is safe and intentional - the key is only for type compatibility.
+        bound = warrant.bind(_VerificationOnlyKey())  # type: ignore[arg-type]
+
+        return enforce_tool_call(
+            tool_name=tool,
+            tool_args=args,
+            bound_warrant=bound,
+            verify_mode="verify",
+            precomputed_signature=pop_signature,
+        )
+
     def __call__(
         self,
         request: Request,
@@ -342,71 +401,60 @@ class TenuoGuard:
                 },
             )
 
-        # 5. Authorize - 403 for authorization failure
-        try:
-            authorized = warrant.authorize(self.tool, auth_args, pop_sig_bytes)
-        except ExpiredError:
-            # Warrant expired between is_expired() check and authorize() call
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={
-                    "error": "warrant_expired",
-                    "message": "Warrant has expired",
-                    "suggestion": "Request a fresh warrant from the issuer",
-                },
-                headers={"WWW-Authenticate": "Tenuo"},
-            )
+        # 5. Authorize using Adapter
+        enforcement = self._enforce_with_pop_signature(
+            warrant=warrant,
+            tool=self.tool,
+            args=auth_args,
+            pop_signature=pop_sig_bytes,
+        )
 
-        if not authorized:
+        if not enforcement.allowed:
             # Generate a request ID for log correlation
             request_id = str(uuid.uuid4())[:8]
+            reason = enforcement.denial_reason or "Authorization denied"
 
             # Log detailed info for operators (never exposed to clients)
             logger.warning(
                 f"[{request_id}] Authorization denied for tool '{self.tool}' "
-                f"with args {auth_args}. Warrant ID: {warrant.id}"
+                f"with args {auth_args}. Reason: {reason}. Warrant ID: {warrant.id}"
             )
 
             # Check if detailed errors are allowed (dev mode only)
             expose_details = _config.get("expose_error_details", False)
 
-            if self.tool not in (warrant.tools or []):
-                if expose_details:
-                    detail = {
-                        "error": "tool_not_authorized",
-                        "message": f"Warrant does not authorize tool '{self.tool}'",
-                        "authorized_tools": warrant.tools,
-                        "request_id": request_id,
-                    }
-                else:
-                    detail = {
-                        "error": "authorization_denied",
-                        "message": "Authorization denied",
-                        "request_id": request_id,
-                    }
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=detail,
+            # Map specific errors to HTTP codes
+            if "expired" in reason.lower():
+                 raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail={
+                        "error": "warrant_expired",
+                        "message": "Warrant has expired",
+                        "suggestion": "Request a fresh warrant from the issuer",
+                    },
+                    headers={"WWW-Authenticate": "Tenuo"},
                 )
+
+            # Standard 403 Forbidden
+            if expose_details:
+                detail = {
+                    "error": "authorization_denied",
+                    "message": f"Authorization denied: {reason}",
+                    "tool": self.tool,
+                    "args": auth_args,
+                    "request_id": request_id,
+                }
             else:
-                if expose_details:
-                    detail = {
-                        "error": "authorization_denied",
-                        "message": f"Authorization denied for tool '{self.tool}'",
-                        "tool": self.tool,
-                        "args": auth_args,
-                        "request_id": request_id,
-                    }
-                else:
-                    detail = {
-                        "error": "authorization_denied",
-                        "message": "Authorization denied",
-                        "request_id": request_id,
-                    }
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=detail,
-                )
+                detail = {
+                    "error": "authorization_denied",
+                    "message": "Authorization denied",
+                    "request_id": request_id,
+                }
+
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=detail,
+            )
 
         return SecurityContext(
             warrant=warrant,

@@ -184,18 +184,29 @@ class TestTier2Downgrade:
         with pytest.raises(MissingSigningKeyError):
             guard.before_tool(mock_tool, {}, mock_context)
 
-    def test_bad_signature_denies(self, mock_tool, mock_context, mock_keys, valid_warrant):
-        sk, pk = mock_keys
-        guard = TenuoGuard(require_pop=True, signing_key=sk)
+    def test_bad_signature_denies(self, mock_tool, mock_context, mock_keys):
+        """Test that a wrong signing key results in denial (invalid PoP)."""
+        from tenuo import SigningKey, Warrant
 
-        warrant = valid_warrant
-        warrant.authorize.return_value = False  # Sig check fails
+        # Create warrant with one key
+        holder_key = SigningKey.generate()
+        warrant = (
+            Warrant.mint_builder()
+            .capability("read_file")
+            .holder(holder_key.public_key)
+            .ttl(3600)
+            .mint(holder_key)
+        )
+
+        # But guard uses a DIFFERENT key - simulating attacker with wrong key
+        attacker_key = SigningKey.generate()
+        guard = TenuoGuard(require_pop=True, signing_key=attacker_key)
 
         mock_context.session_state = {"__tenuo_warrant__": warrant}
 
         result = guard.before_tool(mock_tool, {}, mock_context)
         assert result is not None
-        assert "Authorization failed" in str(result)
+        assert "Authorization failed" in str(result) or "denied" in str(result).lower()
 
 
 class TestFailClosed:
@@ -273,40 +284,62 @@ class TestReplayAndBinding:
     Cryptographic binding and replay tests.
     """
 
-    def test_pop_cross_tool_replay(self, mock_tool, mock_context, mock_keys, valid_warrant):
+    def test_pop_cross_tool_replay(self, mock_tool, mock_context, mock_keys):
         """
-        Scenario: Attacker captures signature for 'read_file' and tries to use it for 'write_file'.
-        We verify that the 'skill' argument to authorize() matches current tool.
+        Scenario: Attacker tries to use a warrant for 'read_file' to call 'write_file'.
+        Verify that calling an unauthorized tool is denied.
         """
-        sk, pk = mock_keys
-        guard = TenuoGuard(require_pop=True, signing_key=sk)
+        from tenuo import SigningKey, Warrant
 
-        warrant = valid_warrant
+        sk = SigningKey.generate()
+        # Warrant only authorizes 'read_file'
+        warrant = (
+            Warrant.mint_builder()
+            .capability("read_file")
+            .holder(sk.public_key)
+            .ttl(3600)
+            .mint(sk)
+        )
+
+        guard = TenuoGuard(require_pop=True, signing_key=sk)
         mock_context.session_state = {"__tenuo_warrant__": warrant}
 
-        # Tool is 'read_file'
+        # Authorized tool works
         mock_tool.name = "read_file"
-        guard.before_tool(mock_tool, {}, mock_context)
+        result = guard.before_tool(mock_tool, {}, mock_context)
+        assert result is None  # Allowed
 
-        # Verify warrant.authorize called with 'read_file'
-        args, _ = warrant.authorize.call_args
-        # args[0] is skill_name
-        assert args[0] == "read_file"
+        # Unauthorized tool is denied
+        mock_tool.name = "write_file"
+        result = guard.before_tool(mock_tool, {}, mock_context)
+        assert result is not None  # Denied
+        assert "not in warrant" in str(result).lower() or "denied" in str(result).lower()
 
-    def test_pop_argument_binding(self, mock_tool, mock_context, mock_keys, valid_warrant):
+    def test_pop_argument_binding(self, mock_tool, mock_context, mock_keys):
         """
-        Scenario: Attacker captures signature for '/tmp/safe' and tries to use it for '/etc/passwd'.
-        We verify that arguments passed to authorize() are the arguments we are validating.
+        Scenario: Warrant constrains path to /tmp/*, attacker tries /etc/passwd.
+        Verify that constraint violations are detected and denied.
         """
-        sk, pk = mock_keys
+        from tenuo import SigningKey, Warrant, Subpath
+
+        sk = SigningKey.generate()
+        # Warrant authorizes read_file but only under /tmp/
+        warrant = (
+            Warrant.mint_builder()
+            .capability("read_file", path=Subpath("/tmp/"))
+            .holder(sk.public_key)
+            .ttl(3600)
+            .mint(sk)
+        )
+
         guard = TenuoGuard(require_pop=True, signing_key=sk)
-
-        warrant = valid_warrant
         mock_context.session_state = {"__tenuo_warrant__": warrant}
+        mock_tool.name = "read_file"
 
-        args_input = {"path": "/etc/passwd"}
-        guard.before_tool(mock_tool, args_input, mock_context)
+        # Safe path works
+        result = guard.before_tool(mock_tool, {"path": "/tmp/safe.txt"}, mock_context)
+        assert result is None  # Allowed
 
-        # Verify warrant.authorize called with correct args
-        call_args_list = warrant.authorize.call_args
-        assert call_args_list[0][1] == args_input
+        # Attack path is denied
+        result = guard.before_tool(mock_tool, {"path": "/etc/passwd"}, mock_context)
+        assert result is not None  # Denied

@@ -7,6 +7,7 @@ Tests SecureMCPClient with a real MCP server.
 import pytest
 import tempfile
 import os
+import sys
 from pathlib import Path
 
 # Check if MCP is available
@@ -32,7 +33,7 @@ async def test_mcp_client_connection(mcp_server_script):
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
 
-    async with SecureMCPClient(command="python", args=[str(mcp_server_script)]) as client:
+    async with SecureMCPClient(command=sys.executable, args=[str(mcp_server_script)]) as client:
         assert client.session is not None
         tools = await client.get_tools()
         assert len(tools) > 0
@@ -44,7 +45,7 @@ async def test_mcp_tool_discovery(mcp_server_script):
     if not mcp_server_script.exists():
         pytest.skip("MCP server script not found")
 
-    async with SecureMCPClient(command="python", args=[str(mcp_server_script)]) as client:
+    async with SecureMCPClient(command=sys.executable, args=[str(mcp_server_script)]) as client:
         tools = await client.get_tools()
         tool_names = [t.name for t in tools]
 
@@ -69,7 +70,7 @@ async def test_mcp_tool_call_authorized(mcp_server_script):
     test_file = Path(test_file_path)
 
     try:
-        async with SecureMCPClient(command="python", args=[str(mcp_server_script)]) as client:
+        async with SecureMCPClient(command=sys.executable, args=[str(mcp_server_script)]) as client:
             # Get protected tool
             protected_tools = client.tools
             read_file = protected_tools["read_file"]
@@ -97,7 +98,7 @@ async def test_mcp_tool_call_blocked(mcp_server_script):
     keypair = SigningKey.generate()
     configure(issuer_key=keypair, dev_mode=True)
 
-    async with SecureMCPClient(command="python", args=[str(mcp_server_script)]) as client:
+    async with SecureMCPClient(command=sys.executable, args=[str(mcp_server_script)]) as client:
         protected_tools = client.tools
         read_file = protected_tools["read_file"]
 
@@ -137,7 +138,7 @@ tools:
         configure(issuer_key=keypair, dev_mode=True)
 
         async with SecureMCPClient(
-            command="python", args=[str(mcp_server_script)], config_path=config_path, register_config=True
+            command=sys.executable, args=[str(mcp_server_script)], config_path=config_path, register_config=True
         ) as client:
             protected_tools = client.tools
             read_file = protected_tools["read_file"]
@@ -168,7 +169,7 @@ async def test_mcp_warrant_injection(mcp_server_script):
     keypair = SigningKey.generate()
     configure(issuer_key=keypair, dev_mode=True)
 
-    async with SecureMCPClient(command="python", args=[str(mcp_server_script)]) as client:
+    async with SecureMCPClient(command=sys.executable, args=[str(mcp_server_script)]) as client:
         # Create test file
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as tf:
             tf.write("injection test")
@@ -240,7 +241,7 @@ async def test_discover_and_protect_usage(mcp_server_script):
         test_file = tf.name
 
     try:
-        async with discover_and_protect("python", [str(mcp_server_script)]) as tools:
+        async with discover_and_protect(sys.executable, [str(mcp_server_script)]) as tools:
             assert "read_file" in tools
             read_file = tools["read_file"]
 
@@ -290,7 +291,7 @@ tools:
     try:
         # Initialize client with config_path (no register_config arg)
         # Should default to registering
-        async with SecureMCPClient(command="python", args=[str(mcp_server_script)], config_path=config_path) as _client:  # noqa: F841
+        async with SecureMCPClient(command=sys.executable, args=[str(mcp_server_script)], config_path=config_path) as _client:  # noqa: F841
             # Check global config
             conf = get_config()
             assert conf.mcp_config is not None

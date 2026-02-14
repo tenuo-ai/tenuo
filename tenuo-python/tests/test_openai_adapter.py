@@ -410,7 +410,8 @@ class TestDenialModes:
         response = make_response([("blocked", {})])
         mock_client = make_mock_client(response)
 
-        with patch("tenuo.openai.logger") as mock_logger:
+        # Logging happens in the shared enforcement module
+        with patch("tenuo._enforcement.logger") as mock_logger:
             client = guard(mock_client, allow_tools=[], on_denial="log")
             result = client.chat.completions.create(model="gpt-4o", messages=[])
 

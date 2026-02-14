@@ -297,6 +297,62 @@ print(f"Key public: {keypair.public_key}")
 
 ---
 
+### FastAPI/A2A: Authorization Denied (Remote PoP)
+
+**Error:** `Authorization denied (invalid PoP or constraint violation)`
+
+**Cause:** In remote verification (FastAPI, A2A), the server verifies a precomputed signature from the client. This generic error can mean:
+
+1. **Wrong signing key** - Client signed with different key than warrant holder
+2. **Constraint violation** - Arguments don't satisfy warrant constraints
+3. **Tool not in warrant** - Requested tool not granted
+
+**Debug (Client side):**
+```python
+# Verify you're using the correct key
+print(f"Warrant holder: {warrant.holder}")
+print(f"Signing with: {my_key.public_key}")
+assert warrant.holder == my_key.public_key
+
+# Test locally before sending
+result = warrant.why_denied("tool_name", {"arg": "value"})
+if result.denied:
+    print(f"Would be denied: {result.deny_code}")
+```
+
+**Debug (Server side):**
+```python
+# Enable debug logging
+import logging
+logging.getLogger("tenuo.fastapi").setLevel(logging.DEBUG)
+logging.getLogger("tenuo.a2a").setLevel(logging.DEBUG)
+```
+
+**Note:** The error message is intentionally generic for security. Detailed reason is logged server-side but not returned to clients (prevents information disclosure).
+
+---
+
+### FastAPI: Missing Headers
+
+**Error:** `401 Unauthorized: Missing X-Tenuo-Warrant header`
+
+**Cause:** Client didn't send required authorization headers.
+
+**Fix:** Include both headers in request:
+```python
+import httpx
+
+response = httpx.get(
+    "https://api.example.com/search",
+    headers={
+        "Authorization": f"TenuoWarrant {warrant.to_base64()}",
+        "X-Tenuo-Pop": base64.urlsafe_b64encode(pop_signature).decode(),
+    }
+)
+```
+
+---
+
 ## Convenience Properties
 
 Quick status checks:

@@ -4,6 +4,7 @@ Secure MCP Client with Tenuo Authorization.
 Wraps the MCP Python SDK to add cryptographic authorization for tool calls.
 """
 
+import sys
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Callable, Dict, List, Optional
 
@@ -11,6 +12,11 @@ from ..config import is_configured
 from ..decorators import guard, warrant_scope, key_scope
 from ..exceptions import ConfigurationError
 from ..validation import ValidationResult
+from .._enforcement import enforce_tool_call, EnforcementResult
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Optional MCP import (requires Python 3.10+)
 try:
@@ -25,7 +31,6 @@ except ImportError:
     StdioServerParameters = object  # type: ignore
     MCPTool = object  # type: ignore
 
-import sys
 
 if sys.version_info < (3, 10) and MCP_AVAILABLE:
     # Should not happen if installed correctly, but guard anyway
@@ -243,6 +248,9 @@ class SecureMCPClient:
                 "No signing key in context", suggestions=["Call configure(issuer_key=...) or use key_scope()"]
             )
 
+        # Create BoundWarrant for enforcement
+        bound_warrant = warrant.bind(keypair)
+
         # Re-map arguments if we have a config
         extraction_args = arguments
         if self.compiled_config:
@@ -252,7 +260,25 @@ class SecureMCPClient:
             except Exception:
                 pass
 
-        return warrant.validate(keypair, tool_name, extraction_args)
+        # Use unified enforcement logic
+        enforcement: EnforcementResult = enforce_tool_call(
+            tool_name=tool_name,
+            tool_args=extraction_args,
+            bound_warrant=bound_warrant,
+        )
+
+        if enforcement.allowed:
+            return ValidationResult.ok()
+        else:
+            logger.warning(
+                f"MCP tool '{tool_name}' denied: {enforcement.denial_reason}",
+                extra={"tool": tool_name, "args_keys": list(arguments.keys())}
+            )
+            return ValidationResult.fail(
+                reason=enforcement.denial_reason or "Authorization denied",
+                # TODO: enforcement module could provide suggestions in the future
+                suggestions=[],
+            )
 
     async def call_tool(
         self,
