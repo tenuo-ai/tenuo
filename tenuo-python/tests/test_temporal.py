@@ -32,7 +32,6 @@ from tenuo.temporal import (
     TenuoInterceptor,
     # Header utilities
     tenuo_headers,
-    tenuo_execute_activity,
     TENUO_WARRANT_HEADER,
     TENUO_KEY_ID_HEADER,
     TENUO_COMPRESSED_HEADER,
@@ -747,6 +746,7 @@ class TestAWSSecretsManagerKeyResolver:
     def test_raises_on_missing_boto3(self):
         """AWSSecretsManagerKeyResolver raises KeyResolutionError if boto3 missing."""
         import asyncio
+        import builtins
         import sys
         from unittest.mock import patch
 
@@ -754,8 +754,15 @@ class TestAWSSecretsManagerKeyResolver:
 
         resolver = AWSSecretsManagerKeyResolver()
 
+        # Mock only boto3 import, not all imports
+        original_import = builtins.__import__
+        def mock_import(name, *args, **kwargs):
+            if name == "boto3":
+                raise ImportError("No module named 'boto3'")
+            return original_import(name, *args, **kwargs)
+
         with patch.dict(sys.modules, {"boto3": None}):
-            with patch("builtins.__import__", side_effect=ImportError("No module named 'boto3'")):
+            with patch("builtins.__import__", side_effect=mock_import):
                 with pytest.raises(KeyResolutionError):
                     asyncio.run(resolver.resolve("key1"))
 
