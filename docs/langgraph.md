@@ -5,8 +5,7 @@ description: Secure LangGraph workflows with Tenuo
 
 # Tenuo LangGraph Integration
 
-> **Status**: ✅ Production Ready  
-> **Requires**: `langchain>=1.0` for TenuoMiddleware (recommended), or `langgraph>=0.2` for TenuoToolNode
+> **Status**: ✅ Implemented (v0.1)
 
 ---
 
