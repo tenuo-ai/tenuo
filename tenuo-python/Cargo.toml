@@ -17,4 +17,4 @@ crate-type = ["cdylib"]
 [dependencies]
 tenuo = { path = "../tenuo-core", features = ["python-extension", "cel"] }
 # pyo3 is re-exported from tenuo crate with python feature
-pyo3 = { version = "0.24", features = ["abi3-py38", "extension-module"] }
+pyo3 = { version = "0.24.1", features = ["abi3-py38", "extension-module"] }

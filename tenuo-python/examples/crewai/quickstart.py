@@ -2,26 +2,15 @@
 """
 Tenuo CrewAI Integration - Basic Protection Example
 
-This example demonstrates Tier 1 (constraint-based) protection for CrewAI tools.
-Run with: python quickstart.py
+This example demonstrates Tier 1 (constraint-based) protection for CrewAI tools
+using CrewAI's native hooks system. Run with: python quickstart.py
 
-Requires: pip install tenuo crewai
+Requires: pip install tenuo crewai>=0.80.0
 """
 
-from dataclasses import dataclass
-
-# Mock CrewAI Tool for demonstration (avoids crewai dependency for simple test)
-@dataclass
-class Tool:
-    name: str
-    description: str
-    func: callable
-
-
 # Import Tenuo CrewAI integration
-from tenuo.crewai import (  # noqa: E402
+from tenuo.crewai import (
     GuardBuilder,
-    protect_tool,
     Pattern,
     Subpath,
     Range,
@@ -29,47 +18,51 @@ from tenuo.crewai import (  # noqa: E402
     ToolDenied,
     ConstraintViolation,
     UnlistedArgument,
+    HOOKS_AVAILABLE,
 )
 
 
 def main():
     print("=" * 60)
-    print("Tenuo CrewAI Integration - Basic Protection Demo")
+    print("Tenuo CrewAI Integration - Hooks API Demo")
     print("=" * 60)
 
     # ==========================================================================
-    # 1. Define Tools
-    # ==========================================================================
-
-    def search_web(query: str, max_results: int = 10) -> str:
-        return f"Found {max_results} results for: {query}"
-
-    def read_file(path: str) -> str:
-        return f"Contents of: {path}"
-
-    def send_email(to: str, subject: str, body: str) -> str:
-        return f"Email sent to: {to}"
-
-    Tool(name="search", description="Search the web", func=search_web)
-    read_tool = Tool(name="read_file", description="Read a file", func=read_file)
-    Tool(name="send_email", description="Send email", func=send_email)
-
-    # ==========================================================================
-    # 2. Create Guard with Constraints
+    # 1. Create Guard with Constraints
     # ==========================================================================
 
     guard = (GuardBuilder()
         .allow("search",
-               query=Pattern("*"),      # Any search query
+               query=Pattern("*"),        # Any search query
                max_results=Range(1, 20))  # But limit results
         .allow("read_file",
-               path=Subpath("/data"))    # Only /data directory
+               path=Subpath("/data"))     # Only /data directory
         .allow("send_email",
-               to=Pattern("*@company.com"),   # Only company emails
+               to=Pattern("*@company.com"),  # Only company emails
                subject=Wildcard(),
                body=Wildcard())
-        .on_denial("raise")              # Raise exception on denial
+        .on_denial("raise")               # Raise exception on denial
         .build())
+
+    # ==========================================================================
+    # 2. Hooks API Usage
+    # ==========================================================================
+
+    print("\n🔌 Hooks API:")
+    print("-" * 40)
+
+    if HOOKS_AVAILABLE:
+        print("  CrewAI hooks API is available (v0.80.0+)")
+        print("  Usage: guard.register() to install global hook")
+        print("  Usage: guard.as_hook() for crew-scoped hooks")
+    else:
+        print("  CrewAI hooks API not available (requires v0.80.0+)")
+        print("  Install with: pip install 'crewai>=0.80.0'")
+
+    # Example of how registration works (commented out to avoid side effects)
+    # guard.register()  # All tool calls now go through authorization
+    # crew.kickoff()
+    # guard.unregister()
 
     # ==========================================================================
     # 3. Test Allowed Calls
@@ -78,7 +71,6 @@ def main():
     print("\n✅ Testing ALLOWED calls:")
     print("-" * 40)
 
-    # These should work
     tests_allowed = [
         ("search", {"query": "machine learning"}),
         ("read_file", {"path": "/data/report.txt"}),
@@ -115,26 +107,7 @@ def main():
             print(f"  ✓ {tool_name}({args}) → Denied ({description})")
 
     # ==========================================================================
-    # 5. Zero-Config Protection
-    # ==========================================================================
-
-    print("\n🔧 Zero-Config Protection:")
-    print("-" * 40)
-
-    # Protect a single tool
-    # Note: This requires the actual crewai package to be installed
-    try:
-        protected_read = protect_tool(read_tool, path=Subpath("/safe"))
-        print(f"  Created protected tool: {protected_read.name}")
-    except ImportError:
-        print("  (Skipped - requires 'pip install crewai')")
-        print("  In production, protect_tool() wraps the tool with authorization checks")
-
-    # The protected tool wraps the original
-    # (In real usage, this would be passed to a CrewAI Agent)
-
-    # ==========================================================================
-    # 6. Introspection
+    # 5. Introspection
     # ==========================================================================
 
     print("\n🔍 Guard Introspection:")

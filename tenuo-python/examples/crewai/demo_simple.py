@@ -104,21 +104,37 @@ def main():
         print(f"                 {Y}↑ cryptographically linked to parent{END}\n")
 
         # Create guards with warrants
+        # In production, these would be registered as hooks:
+        #   guard.register()  # All tool calls authorized via before_tool_call hook
+        # For this demo, we manually authorize calls to show the behavior
         manager_guard = (GuardBuilder()
             .allow("read_file", path=Subpath("/data"))
             .with_warrant(manager_warrant, manager_key)
             .on_denial("raise")
             .build())
-        manager_tool = manager_guard.protect(raw_tool)
 
         researcher_guard = (GuardBuilder()
             .allow("read_file", path=Subpath("/data/papers"))
             .with_warrant(researcher_warrant, researcher_key)
             .on_denial("raise")
             .build())
-        researcher_tool = researcher_guard.protect(raw_tool)
+
+        def guarded_read(guard, path):
+            """Simulate what hooks do: authorize then execute."""
+            guard._authorize("read_file", {"path": path})
+            return raw_tool._run(path=path)
+
+        def manager_read(path):
+            return guarded_read(manager_guard, path)
+
+        def researcher_read(path):
+            return guarded_read(researcher_guard, path)
     else:
-        manager_tool = researcher_tool = raw_tool
+        def manager_read(path):
+            return raw_tool._run(path=path)
+
+        def researcher_read(path):
+            return raw_tool._run(path=path)
         print(f"{DIM}  No warrants (unprotected mode){END}\n")
 
     time.sleep(d)
@@ -127,7 +143,7 @@ def main():
     print(f"{C}[1]{END} Manager reads /data/secrets/api-keys.txt:")
     time.sleep(d * 0.5)
     try:
-        result = manager_tool._run(path="/data/secrets/api-keys.txt")
+        result = manager_read("/data/secrets/api-keys.txt")
         print(f"{G}    ✓ Allowed:{END} {result[:30]}...")
     except ConstraintViolation:
         print(f"{R}    ✗ Blocked{END}")
@@ -138,12 +154,12 @@ def main():
     print(f"{C}[2]{END} Researcher tries /data/secrets/api-keys.txt:")
     time.sleep(d * 0.5)
     try:
-        researcher_tool._run(path="/data/secrets/api-keys.txt")
+        researcher_read("/data/secrets/api-keys.txt")
         print(f"{R}    ⚠ Leaked secrets!{END}")
     except ConstraintViolation:
-        print(f"{G}    [TENUO] BLOCKED — attenuated warrant does not authorize this path{END}")
+        print(f"{R}    [TENUO] BLOCKED{END} — attenuated warrant does not authorize this path")
         print(f"{Y}      Attempted: /data/secrets/api-keys.txt{END}")
-        print(f"{Y}      Allowed:   /data/papers/* (cryptographically enforced){END}")
+        print(f"{G}      Allowed:   /data/papers/* (cryptographically enforced){END}")
         print(f"{DIM}      💰 Impact avoided: API key leak → unauthorized cloud spend{END}")
     print()
     time.sleep(d)
@@ -154,7 +170,7 @@ def main():
 
     print(f"{C}[3]{END} Researcher agent reads notes.txt:")
     time.sleep(d * 0.5)
-    notes = researcher_tool._run(path="/data/papers/notes.txt")
+    notes = researcher_read("/data/papers/notes.txt")
     print(f"{G}    ✓ Got:{END} \"{notes}\"\n")
     time.sleep(d)
 
@@ -164,12 +180,12 @@ def main():
     time.sleep(d * 0.5)
 
     try:
-        result = researcher_tool._run(path="/data/secrets/api-keys.txt")
+        result = researcher_read("/data/secrets/api-keys.txt")
         print(f"{R}    ⚠ ATTACK SUCCEEDED! {result[:30]}...{END}")
     except ConstraintViolation:
-        print(f"{G}    [TENUO] BLOCKED — warrant does not authorize this path (prompt ignored){END}")
+        print(f"{R}    [TENUO] BLOCKED{END} — warrant does not authorize this path (prompt ignored)")
         print(f"{Y}      Attempted: /data/secrets/api-keys.txt{END}")
-        print(f"{Y}      Allowed:   /data/papers/* (warrant is source of truth){END}")
+        print(f"{G}      Allowed:   /data/papers/* (warrant is source of truth){END}")
         print(f"{DIM}      💰 Impact avoided: Data breach → GDPR fine (4% revenue){END}")
     print()
     time.sleep(d)
@@ -194,10 +210,10 @@ def main():
             )
             print(f"{R}    ⚠ Escalation worked! (this should never happen){END}")
         except Exception:
-            print(f"{G}    [TENUO] BLOCKED — cannot widen scope beyond parent warrant{END}")
+            print(f"{R}    [TENUO] BLOCKED{END} — cannot widen scope beyond parent warrant")
             print(f"{Y}      Requested: /data/* (wider){END}")
-            print(f"{Y}      Parent:    /data/papers/* (researcher's limit){END}")
-            print(f"{Y}      Result:    Cryptographic rejection{END}")
+            print(f"{G}      Parent:    /data/papers/* (researcher's limit){END}")
+            print(f"{G}      Result:    Cryptographic rejection{END}")
         print()
         time.sleep(d)
 

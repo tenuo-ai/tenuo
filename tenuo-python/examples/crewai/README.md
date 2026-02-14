@@ -1,14 +1,16 @@
 # Tenuo CrewAI Examples
 
-This directory contains integration examples and security demos for Tenuo's CrewAI integration.
+**These demos show where prompt-based guardrails fail and capability-based authorization holds.**
+
+This directory contains integration examples and security demos for Tenuo's CrewAI integration using the native hooks API (v2.0).
 
 ## Integration Examples
 
 Learn how to use Tenuo's APIs with these focused examples:
 
-### quickstart.py (168 lines)
+### quickstart.py
 
-Basic constraint-based protection using `GuardBuilder`.
+Basic constraint-based protection using `GuardBuilder` and the hooks API.
 
 ```bash
 python quickstart.py
@@ -19,9 +21,9 @@ python quickstart.py
 - Using semantic constraints (Subpath, Pattern, Range, Wildcard)
 - Handling denied tool calls
 - Guard introspection and validation
-- Zero-config protection with `protect_tool()`
+- Hooks API usage (`guard.register()`)
 
-### hierarchical_delegation.py (231 lines)
+### hierarchical_delegation.py
 
 Warrant-based delegation for hierarchical crews using `WarrantDelegator`.
 
@@ -34,7 +36,7 @@ python hierarchical_delegation.py
 - Delegating narrowed authority to worker agents
 - Attenuation-only delegation (scope can only narrow)
 - Escalation prevention
-- Seal mode to prevent guard bypass
+- Hooks-based authorization at the framework level
 
 ### guarded_crew.py (146 lines)
 
@@ -145,16 +147,23 @@ from tenuo.crewai import GuardBuilder, Subpath
 # Create guard with constraints
 guard = (GuardBuilder()
     .allow("read_file", path=Subpath("/data"))
+    .on_denial("raise")
     .build())
 
-# Protect tool
-protected_tool = guard.protect(read_file_tool)
+# Register as global hook - ALL tool calls go through authorization
+guard.register()
 
-# Use in CrewAI agent
+# Use tools directly - hooks intercept all calls
 agent = Agent(
     role="Researcher",
-    tools=[protected_tool],
+    tools=[read_file_tool],  # No wrapping needed
 )
+
+# Run crew
+crew.kickoff()
+
+# Cleanup
+guard.unregister()
 ```
 
 ## Key Concept

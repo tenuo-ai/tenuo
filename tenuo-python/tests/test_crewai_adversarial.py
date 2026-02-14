@@ -467,66 +467,6 @@ class TestAuditIntegrity:
         assert result is None
 
 
-# =============================================================================
-# 8. Seal Mode (On-the-Wire Protection)
-# =============================================================================
-
-
-@pytest.mark.skipif(not CREWAI_AVAILABLE, reason="crewai not installed - guard.protect() requires crewai")
-class TestSealMode:
-    """
-    Tests ensuring seal mode prevents original tool bypass.
-    This is critical for "on-the-wire" verification.
-    """
-
-    def test_seal_mode_blocks_original_tool(self):
-        """
-        Invariant: After sealing, original tool cannot be called.
-        """
-        original_tool = RealTool(name="read")
-
-        guard = GuardBuilder().allow("read", path=Wildcard()).seal().build()
-
-        # Protect with seal mode - this modifies original_tool in place
-        guard.protect(original_tool)
-
-        # Original tool should now raise RuntimeError when called
-        with pytest.raises(RuntimeError, match="sealed by Tenuo guard"):
-            original_tool._run(path="/data/file.txt")
-
-    def test_seal_mode_disabled_allows_original(self):
-        """
-        When seal mode is disabled, original tool still works.
-        """
-        original_tool = RealTool(name="read")
-
-        guard = (
-            GuardBuilder()
-            .allow("read", path=Wildcard())
-            # No .seal() call
-            .build()
-        )
-
-        assert guard._seal_mode is False
-
-        # Protect without seal (default)
-        guard.protect(original_tool)
-
-        # Original should still work (no seal)
-        result = original_tool._run(path="/data/file.txt")
-        assert result is not None
-
-    def test_guard_has_seal_mode_attribute(self):
-        """
-        Guard has seal_mode accessible for inspection.
-        """
-        guard_sealed = GuardBuilder().seal().build()
-        guard_unsealed = GuardBuilder().build()
-
-        assert guard_sealed._seal_mode is True
-        assert guard_unsealed._seal_mode is False
-
-
 class TestSecurityRegressions:
     """
     Regression tests for critical security vulnerabilities.
@@ -555,33 +495,6 @@ class TestSecurityRegressions:
         # MUST return denial, not None
         assert isinstance(result, DenialResult)
         assert result.error_code == "WARRANT_EXPIRED"
-
-    @pytest.mark.skipif(not CREWAI_AVAILABLE, reason="crewai not installed - guard.protect() requires crewai")
-    def test_seal_fails_closed_on_immutable_tool(self):
-        """
-        REGRESSION: Seal mode must raise if tool is immutable.
-        Previously: Logged warning and continued with unprotected bypass.
-        """
-        from tenuo.crewai import ConfigurationError
-
-        # Create an immutable-like tool (RealTool is a BaseTool)
-        class LockedTool(RealTool):
-            def __setattr__(self, key, value):
-                if key in ("_run", "func"):
-                    raise AttributeError(f"{key} is read-only")
-                super().__setattr__(key, value)
-
-        immutable_tool = LockedTool(name="read")
-
-        guard = (
-            GuardBuilder()
-            .allow("read", path=Wildcard())
-            .seal()  # Enable seal mode
-            .build()
-        )
-
-        with pytest.raises(ConfigurationError, match="Cannot seal tool"):
-            guard.protect(immutable_tool)
 
     def test_namespace_injection_rejected(self):
         """

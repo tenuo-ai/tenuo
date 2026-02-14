@@ -183,13 +183,11 @@ def main():
         .allow("search", query=Pattern("arxiv:*"), max_results=Range(1, 20))
         .allow("read_file", path=Subpath("/research/papers"))
         .with_warrant(researcher_warrant, researcher_signing_key)
-        .seal()  # Prevent bypass
         .build())
 
     print("  Researcher Guard:")
     print(f"    Tier: {researcher_guard.tier}")
     print(f"    Has warrant: {researcher_guard.has_warrant}")
-    print(f"    Sealed: {researcher_guard._seal_mode}")
 
     # Test researcher's constraints
     print("\n  Testing researcher's access:")
@@ -222,7 +220,7 @@ Key Takeaways:
 1. WarrantDelegator ensures attenuation-only delegation
 2. Child warrants can ONLY narrow scope, never widen
 3. Escalation attempts are immediately rejected
-4. .seal() prevents bypassing the guard via original tool reference
+4. Hooks API enforces authorization at the framework level
 5. Each agent operates within their cryptographically-enforced scope
 """)
 
