@@ -126,7 +126,12 @@ from tenuo.core import check_constraint
 from tenuo._version_compat import check_crewai_compat  # noqa: E402
 
 # Import unified enforcement logic
-from tenuo._enforcement import enforce_tool_call, EnforcementResult
+from tenuo._enforcement import (
+    enforce_tool_call,
+    EnforcementResult,
+    DenialResult,
+    handle_denial,
+)
 
 check_crewai_compat()
 
@@ -405,22 +410,9 @@ class WarrantToolDenied(TenuoCrewAIError):
 # =============================================================================
 
 
-@dataclass
-class DenialResult:
-    """Sentinel returned when on_denial is 'log' or 'skip'.
-
-    Allows CrewAI agents to detect and react to denials deterministically,
-    rather than receiving ambiguous None values.
-
-    Attributes:
-        tool: Name of the tool that was denied
-        reason: Why the tool was denied
-        error_code: Machine-readable error code
-    """
-
-    tool: str
-    reason: str
-    error_code: str = "DENIAL"
+# DenialResult is now imported from _enforcement module
+# Kept here for backward compatibility docstring reference:
+# DenialResult has: tool, reason, error_type, error_code, warrant_id
 
     def __bool__(self) -> bool:
         """Returns False so `if result:` checks work naturally."""
@@ -919,8 +911,9 @@ class CrewAIGuard:
         """Handle authorization denial based on mode.
 
         Always emits audit event, regardless of mode.
+        Uses shared handle_denial() for consistent behavior across integrations.
         """
-        # Always audit denials
+        # Always audit denials (CrewAI-specific)
         self._emit_audit(
             tool_name,
             args,
@@ -930,26 +923,21 @@ class CrewAIGuard:
             agent_role=agent_role,
         )
 
-        if self._on_denial == "raise":
-            raise error
+        # Create an EnforcementResult-like object for the shared handler
+        # This bridges CrewAI's exception-based flow to the shared denial handler
+        pseudo_result = EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=args,
+            denial_reason=str(error),
+            error_type=error.error_code.lower() if error.error_code else None,
+        )
 
-        elif self._on_denial == "log":
-            logger.warning(f"Authorization denied: {error}")
-            return DenialResult(
-                tool=tool_name,
-                reason=str(error),
-                error_code=error.error_code,
-            )
-
-        elif self._on_denial == "skip":
-            logger.info(f"Authorization skipped: {tool_name}")
-            return DenialResult(
-                tool=tool_name,
-                reason=str(error),
-                error_code=error.error_code,
-            )
-
-        return None  # Should never reach here
+        return handle_denial(
+            pseudo_result,
+            self._on_denial,
+            exception_factory=lambda _: error,  # Re-raise the original CrewAI exception
+        )
 
     def _emit_audit(
         self,

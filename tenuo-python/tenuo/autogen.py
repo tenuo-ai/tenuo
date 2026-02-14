@@ -39,6 +39,7 @@ from .exceptions import (
     ToolNotAuthorized,
 )
 from .validation import ValidationResult
+from ._enforcement import EnforcementResult, handle_denial
 
 # Optional AutoGen availability check (best-effort, for feature detection only)
 AUTOGEN_AVAILABLE = importlib.util.find_spec("autogen_agentchat") is not None
@@ -496,13 +497,21 @@ class _Guard:
         *,
         is_async: bool,
     ) -> Any:
-        if self._on_denial == "raise":
-            raise exc
-        if self._on_denial == "log":
-            logger.warning("Authorization denied (%s): %s", type(exc).__name__, exc)
-            return None
-        # skip
-        logger.debug("Authorization denied (skip): %s", exc)
+        """Handle denial using shared enforcement logic."""
+        # Create pseudo-result for shared handler
+        tool_name = getattr(fn, "__name__", "unknown")
+        pseudo_result = EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=kwargs,
+            denial_reason=str(exc),
+            error_type=type(exc).__name__.lower(),
+        )
+        handle_denial(
+            pseudo_result,
+            self._on_denial,
+            exception_factory=lambda _: exc,
+        )
         return None
 
     def _execute_call(

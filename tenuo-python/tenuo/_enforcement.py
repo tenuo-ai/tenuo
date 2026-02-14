@@ -104,6 +104,125 @@ class EnforcementResult:
 
 
 # =============================================================================
+# Denial Handling (shared across integrations)
+# =============================================================================
+
+
+class DenialPolicy:
+    """
+    How to handle authorization denials.
+
+    Used by all integrations (CrewAI, AutoGen, OpenAI, etc.) for consistent
+    denial handling behavior.
+
+    Attributes:
+        RAISE: Raise an exception immediately (fail-fast)
+        LOG: Log warning and return a denial result (soft failure)
+        SKIP: Log at debug level only (silent skip)
+    """
+
+    RAISE = "raise"
+    LOG = "log"
+    SKIP = "skip"
+
+
+@dataclass
+class DenialResult:
+    """
+    Result returned when authorization is denied (for LOG/SKIP modes).
+
+    This is a framework-agnostic denial result. Integrations may extend this
+    or use it directly.
+
+    DenialResult is falsy (bool(denial) == False) to allow patterns like:
+        result = guard.check(...)
+        if not result:  # True if denied
+            handle_denial(result)
+
+    Attributes:
+        tool: Name of the tool that was denied
+        reason: Human-readable denial reason
+        error_type: Machine-readable error category (e.g., "expired", "constraint_violation")
+        error_code: Legacy error code for backward compatibility (defaults to error_type or "DENIAL")
+        warrant_id: Warrant ID for audit correlation
+    """
+
+    tool: str
+    reason: str
+    error_type: Optional[str] = None
+    error_code: str = "DENIAL"
+    warrant_id: Optional[str] = None
+
+    def __bool__(self) -> bool:
+        """DenialResult is always falsy (represents a denial)."""
+        return False
+
+    @classmethod
+    def from_enforcement(cls, result: EnforcementResult) -> "DenialResult":
+        """Create DenialResult from EnforcementResult."""
+        error_code = result.error_type.upper() if result.error_type else "DENIAL"
+        return cls(
+            tool=result.tool,
+            reason=result.denial_reason or "Authorization denied",
+            error_type=result.error_type,
+            error_code=error_code,
+            warrant_id=result.warrant_id,
+        )
+
+
+def handle_denial(
+    result: EnforcementResult,
+    policy: str,
+    exception_factory: Optional[Callable[[EnforcementResult], Exception]] = None,
+) -> Optional[DenialResult]:
+    """
+    Handle an authorization denial according to the specified policy.
+
+    This is the shared denial handler for all integrations. It provides
+    consistent behavior for raise/log/skip modes.
+
+    Args:
+        result: The EnforcementResult from enforce_tool_call()
+        policy: One of DenialPolicy.RAISE, LOG, or SKIP
+        exception_factory: Optional factory to create framework-specific exceptions.
+            If not provided, uses result.raise_if_denied() which raises
+            ToolNotAuthorized or ConstraintViolation.
+
+    Returns:
+        DenialResult for LOG/SKIP modes, None if allowed
+
+    Raises:
+        Exception from exception_factory (or default) if policy is RAISE
+
+    Example:
+        result = enforce_tool_call("delete", {}, bound_warrant)
+        if not result.allowed:
+            return handle_denial(result, self._on_denial)
+    """
+    if result.allowed:
+        return None
+
+    if policy == DenialPolicy.RAISE:
+        if exception_factory:
+            raise exception_factory(result)
+        else:
+            result.raise_if_denied()
+
+    denial = DenialResult.from_enforcement(result)
+
+    if policy == DenialPolicy.LOG:
+        logger.warning(
+            f"Authorization denied for '{result.tool}': {result.denial_reason}"
+        )
+    else:  # SKIP
+        logger.debug(
+            f"Authorization skipped for '{result.tool}': {result.denial_reason}"
+        )
+
+    return denial
+
+
+# =============================================================================
 # Internal Helpers
 # =============================================================================
 
@@ -509,6 +628,9 @@ def filter_tools_by_warrant(
 
 __all__ = [
     "EnforcementResult",
+    "DenialPolicy",
+    "DenialResult",
     "enforce_tool_call",
     "filter_tools_by_warrant",
+    "handle_denial",
 ]

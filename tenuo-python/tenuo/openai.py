@@ -134,6 +134,9 @@ from tenuo._version_compat import check_openai_compat
 
 check_openai_compat()
 
+# Import shared enforcement logic (after version check)
+from tenuo._enforcement import DenialPolicy, EnforcementResult, handle_denial  # noqa: E402
+
 logger = logging.getLogger("tenuo.openai")
 
 
@@ -1268,11 +1271,18 @@ class GuardedCompletions:
         return chunk
 
     def _handle_denial(self, error: TenuoOpenAIError) -> None:
-        """Handle a denial according to mode."""
-        if self._on_denial == "log":
-            logger.warning(f"Tool denied: {error}")
-        elif self._on_denial == "skip":
-            logger.debug(f"Tool skipped: {error}")
+        """Handle a denial according to mode using shared handler."""
+        # Note: OpenAI handles "raise" mode separately, so we only handle log/skip here
+        pseudo_result = EnforcementResult(
+            allowed=False,
+            tool=getattr(error, "tool_name", "unknown"),
+            arguments={},
+            denial_reason=str(error),
+            error_type=error.code if hasattr(error, "code") else None,
+        )
+        # Use LOG or SKIP - raise is handled elsewhere in OpenAI flow
+        policy = DenialPolicy.LOG if self._on_denial == "log" else DenialPolicy.SKIP
+        handle_denial(pseudo_result, policy)
 
     async def acreate(self, *args, **kwargs) -> Any:
         """Async wrapped create method with guardrails."""
@@ -1481,11 +1491,16 @@ class GuardedResponses:
             logger.warning(f"Audit callback failed: {e}")
 
     def _handle_denial(self, error: Exception) -> None:
-        """Handle a denial based on on_denial mode."""
-        if self._on_denial == "log":
-            logger.warning(f"Tool denied: {error}")
-        elif self._on_denial == "skip":
-            logger.debug(f"Tool skipped: {error}")
+        """Handle a denial based on on_denial mode using shared handler."""
+        pseudo_result = EnforcementResult(
+            allowed=False,
+            tool=getattr(error, "tool_name", "unknown"),
+            arguments={},
+            denial_reason=str(error),
+            error_type=getattr(error, "code", None),
+        )
+        policy = DenialPolicy.LOG if self._on_denial == "log" else DenialPolicy.SKIP
+        handle_denial(pseudo_result, policy)
 
 
 class GuardedClient:
