@@ -1240,8 +1240,94 @@ def current_key_id() -> str:
 
         return key_id
 
+
     except ImportError:
         raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
+
+
+# =============================================================================
+# AuthorizedWorkflow Base Class (Phase 3)
+# =============================================================================
+
+
+class AuthorizedWorkflow:
+    """Base class for Tenuo-authorized workflows.
+
+    Provides convenient authorized activity execution with fail-fast
+    warrant validation. The workflow's warrant is validated at initialization
+    and automatically applied to all activity executions.
+
+    ⚠️ Important: You must use @workflow.defn on your subclass!
+        Temporal Python SDK uses decorators, not inheritance, to define workflows.
+
+    Single Warrant Limitation:
+        This class assumes all activities execute under the SAME warrant.
+        For multi-warrant workflows (delegation chains), use
+        tenuo_execute_activity() directly.
+
+    Example:
+        from temporalio import workflow
+        from tenuo.temporal import AuthorizedWorkflow, tenuo_headers
+
+        @workflow.defn  # ← Required decorator!
+        class MyWorkflow(AuthorizedWorkflow):
+            @workflow.run
+            async def run(self, name: str) -> str:
+                return await self.execute_authorized_activity(
+                    my_activity,
+                    args=[name],
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
+
+    Starting the workflow:
+        await client.execute_workflow(
+            MyWorkflow.run,
+            "input",
+            id="workflow-id",
+            task_queue="my-queue",
+            headers=tenuo_headers(signing_key, warrant),  # Required!
+        )
+
+    Raises:
+        TenuoContextError: If workflow is started without Tenuo headers
+    """
+
+    def __init__(self) -> None:
+        """Validate Tenuo authorization at workflow start.
+
+        This performs fail-fast validation. The warrant is not stored -
+        it will be fetched deterministically from headers during each
+        activity execution.
+        """
+        try:
+            # Fail-fast validation only - don't store
+            # Warrant will be fetched deterministically during activity calls
+            current_warrant()
+            current_key_id()
+        except TenuoContextError as e:
+            raise TenuoContextError(
+                f"AuthorizedWorkflow requires Tenuo headers: {e}"
+            ) from e
+
+    async def execute_authorized_activity(self, activity: Any, **kwargs: Any) -> Any:
+        """Execute activity with automatic Tenuo authorization.
+
+        Convenience wrapper around tenuo_execute_activity() that automatically
+        uses the workflow's warrant validated at initialization.
+
+        Args:
+            activity: The activity function to execute
+            **kwargs: Activity execution options (args, start_to_close_timeout, etc.)
+
+        Returns:
+            The activity result
+
+        Raises:
+            ConstraintViolation: If activity violates warrant constraints
+            WarrantExpired: If warrant has expired
+            ChainValidationError: If warrant chain is invalid
+        """
+        return await tenuo_execute_activity(activity, **kwargs)
 
 
 # =============================================================================
@@ -1864,6 +1950,7 @@ __all__ = [
     "current_warrant",
     "current_key_id",
     "workflow_grant",  # Phase 3
+    "AuthorizedWorkflow",  # Phase 3
     # Phase 2: Decorators
     "unprotected",
     "is_unprotected",
