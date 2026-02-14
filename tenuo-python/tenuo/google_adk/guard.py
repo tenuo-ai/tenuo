@@ -67,6 +67,8 @@ from contextlib import ExitStack
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Union, TYPE_CHECKING
 
+from tenuo._enforcement import enforce_tool_call
+
 if TYPE_CHECKING:
     from google.adk.tools.tool_context import ToolContext  # type: ignore[import-not-found,import-untyped]
     from google.adk.tools.base_tool import BaseTool  # type: ignore[import-not-found,import-untyped]
@@ -415,39 +417,42 @@ class TenuoGuard:
         # Tier 2: Warrant + PoP Authorization (Cryptographic)
         # =======================================================================
         if warrant is not None and self._require_pop:
-            # Check expiry
-            is_expired = self._check_expiry(warrant)
-            if is_expired:
-                return self._deny("Warrant expired", tool.name, args)
-
             if self._signing_key is None:
                 raise MissingSigningKeyError()
 
             try:
-                # Generate Proof-of-Possession signature
-                pop_signature = warrant.sign(self._signing_key, skill_name, validation_args)
+                # Bind warrant to create BoundWarrant for enforce_tool_call
+                bound_warrant = warrant.bind(self._signing_key)
 
-                # Authorize with PoP - this is the REAL authorization check
-                # It verifies: signature, skill grant, AND constraint satisfaction
-                authorized = warrant.authorize(skill_name, validation_args, signature=bytes(pop_signature))
+                # Use shared enforcement logic for PoP authorization
+                # This verifies: signature, skill grant, expiry, AND constraint satisfaction
+                result = enforce_tool_call(
+                    tool_name=skill_name,
+                    tool_args=validation_args,
+                    bound_warrant=bound_warrant,
+                )
 
-                if not authorized:
-                    # Get detailed reason using why_denied (debug method)
-                    reason, constraint_param, constraint = self._get_denial_info(warrant, skill_name, validation_args)
-                    return self._deny(
-                        f"Authorization failed: {reason}",
-                        tool.name,
-                        args,
-                        constraint_param=constraint_param,
-                        constraint=constraint,
-                    )
+                if not result.allowed:
+                    # Map error types to appropriate denial messages
+                    if result.error_type == "expired":
+                        return self._deny("Warrant expired", tool.name, args)
+                    else:
+                        # Get detailed reason for other denial types
+                        reason, constraint_param, constraint = self._get_denial_info(warrant, skill_name, validation_args)
+                        return self._deny(
+                            f"Authorization failed: {reason}",
+                            tool.name,
+                            args,
+                            constraint_param=constraint_param,
+                            constraint=constraint,
+                        )
 
                 # PoP authorized - tool call is allowed
                 self._audit("tool_allowed", tool.name, args, warrant)
                 return None
 
             except AttributeError as e:
-                # Warrant doesn't have sign() or authorize() methods
+                # Warrant doesn't have bind() method
                 logger.warning(f"Warrant missing required methods: {e}")
                 return self._deny(
                     f"Warrant type doesn't support PoP: {type(warrant).__name__}",

@@ -135,7 +135,7 @@ from tenuo._version_compat import check_openai_compat
 check_openai_compat()
 
 # Import shared enforcement logic (after version check)
-from tenuo._enforcement import DenialPolicy, EnforcementResult, handle_denial  # noqa: E402
+from tenuo._enforcement import DenialPolicy, EnforcementResult, handle_denial, enforce_tool_call  # noqa: E402
 
 logger = logging.getLogger("tenuo.openai")
 
@@ -819,26 +819,23 @@ def verify_tool_call(
             logger.debug("Tier 2: Missing signing_key for PoP")
             raise MissingSigningKey()
 
-        # Sign Proof-of-Possession
-        logger.debug(f"Tier 2: Signing PoP for '{tool_name}'")
-        pop_signature = warrant.sign(signing_key, tool_name, arguments)
+        # Bind warrant to create BoundWarrant for enforce_tool_call
+        bound_warrant = warrant.bind(signing_key)
 
-        # Authorize with PoP (full cryptographic verification)
-        authorized = warrant.authorize(tool_name, arguments, signature=bytes(pop_signature))
+        # Use shared enforcement logic
+        result = enforce_tool_call(
+            tool_name=tool_name,
+            tool_args=arguments,
+            bound_warrant=bound_warrant,
+        )
 
-        if not authorized:
+        if not result.allowed:
             logger.debug(f"Tier 2: Authorization DENIED for '{tool_name}'")
-            # Get detailed reason for denial
-            why = warrant.why_denied(tool_name, arguments)
-            if why and hasattr(why, "deny_code"):
-                reason = f"{why.deny_code}"
-                if hasattr(why, "field") and why.field:
-                    reason += f" (field: {why.field})"
-                if hasattr(why, "suggestion") and why.suggestion:
-                    reason += f" - {why.suggestion}"
+            # Map error types to OpenAI-specific exceptions
+            if result.error_type == "expired":
+                raise WarrantDenied(tool_name, "warrant expired")
             else:
-                reason = str(why) if why else "not authorized by warrant"
-            raise WarrantDenied(tool_name, reason)
+                raise WarrantDenied(tool_name, result.denial_reason or "not authorized by warrant")
         else:
             logger.debug(f"Tier 2: Authorization GRANTED for '{tool_name}'")
 

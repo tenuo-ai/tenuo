@@ -391,18 +391,54 @@ class TestArgumentRemapping:
     """Test argument remapping functionality."""
 
     def test_argument_remapping(self, keys):
-        """Test that arguments are remapped and original keys removed."""
-        mock_warrant = MagicMock()
-        mock_warrant.tools = ["read_file"]
-        mock_warrant.capabilities = {"read_file": {"path": Subpath("/tmp/safe")}}
-        mock_warrant.grants = [{"skill": "read_file", "constraints": {"path": Subpath("/tmp/safe")}}]
-        mock_warrant.why_denied.return_value = "ALLOWED"
-        mock_warrant.is_expired = MagicMock(return_value=False)
-        mock_warrant.sign.return_value = b"fake_signature"
-        mock_warrant.authorize.return_value = True
+        """Test that arguments are remapped correctly for authorization.
+
+        When arg_map maps 'file_path' -> 'path', the guard should:
+        1. Remap the incoming args before authorization
+        2. Authorize against the warrant's constraint using the remapped key
+        3. Allow the call if the remapped value satisfies the constraint
+        """
+        # Create a real warrant with capability for read_file
+        warrant = (
+            Warrant.mint_builder()
+            .capability("read_file", path=Subpath("/tmp/safe"))
+            .holder(keys.public_key)
+            .ttl(3600)
+            .mint(keys)
+        )
 
         guard = TenuoGuard(
-            warrant=mock_warrant,
+            warrant=warrant,
+            signing_key=keys,
+            skill_map={"read_file_tool": "read_file"},
+            arg_map={"read_file": {"file_path": "path"}},  # Map file_path -> path
+        )
+
+        tool = MockBaseTool("read_file_tool")
+        context = MockToolContext()
+
+        # Call with original arg name 'file_path', should be remapped to 'path'
+        result = guard.before_tool(
+            tool=tool,
+            args={"file_path": "/tmp/safe/1.txt"},
+            tool_context=context,
+        )
+
+        # Should be allowed (None = no denial)
+        assert result is None, f"Expected authorization to succeed, got: {result}"
+
+    def test_argument_remapping_denied(self, keys):
+        """Test that remapped arguments are properly checked against constraints."""
+        warrant = (
+            Warrant.mint_builder()
+            .capability("read_file", path=Subpath("/tmp/safe"))
+            .holder(keys.public_key)
+            .ttl(3600)
+            .mint(keys)
+        )
+
+        guard = TenuoGuard(
+            warrant=warrant,
             signing_key=keys,
             skill_map={"read_file_tool": "read_file"},
             arg_map={"read_file": {"file_path": "path"}},
@@ -411,21 +447,16 @@ class TestArgumentRemapping:
         tool = MockBaseTool("read_file_tool")
         context = MockToolContext()
 
-        guard.before_tool(
+        # Call with path outside allowed root - should be denied
+        result = guard.before_tool(
             tool=tool,
-            args={"file_path": "/tmp/safe/1.txt"},
+            args={"file_path": "/etc/passwd"},
             tool_context=context,
         )
 
-        # Check that sign() was called with remapped args
-        call_args = mock_warrant.sign.call_args[0]
-        skill_name = call_args[1]
-        args_used = call_args[2]
-
-        assert skill_name == "read_file"
-        assert "path" in args_used
-        assert args_used["path"] == "/tmp/safe/1.txt"
-        assert "file_path" not in args_used
+        # Should be denied
+        assert result is not None, "Expected authorization to fail"
+        assert "error" in result or "denied" in str(result).lower()
 
 
 # --- Plugin Tests ---
@@ -1528,56 +1559,75 @@ class TestInvariantAttenuation:
 
 
 class TestInvariantWireAuthorization:
-    """Invariant: Tier 2 authorization MUST use Rust core (warrant.authorize)."""
+    """Invariant: Tier 2 authorization MUST use Rust core for cryptographic validation."""
 
-    def test_tier2_calls_authorize_method(self, keys):
-        """Tier 2 MUST call warrant.authorize() for authorization."""
-        # Create a mock warrant that tracks method calls
-        mock_warrant = MagicMock()
-        mock_warrant.is_expired = MagicMock(return_value=False)
-        mock_warrant.sign = MagicMock(return_value=b"signature")
-        mock_warrant.authorize = MagicMock(return_value=True)
+    def test_tier2_uses_rust_core_validation(self, keys):
+        """Tier 2 MUST use Rust core for authorization (via enforce_tool_call).
+
+        This test verifies that authorization goes through the Rust core by checking
+        that both valid and invalid calls are correctly handled.
+        """
+        warrant = (
+            Warrant.mint_builder()
+            .capability("read_file", path=Subpath("/data"))
+            .holder(keys.public_key)
+            .ttl(3600)
+            .mint(keys)
+        )
 
         guard = TenuoGuard(
-            warrant=mock_warrant,
+            warrant=warrant,
             signing_key=keys,
             require_pop=True,
         )
 
-        guard.before_tool(
+        # Valid call should be allowed
+        result = guard.before_tool(
+            MockBaseTool("read_file"),
+            {"path": "/data/file.txt"},
+            MockToolContext(),
+        )
+        assert result is None, f"Expected valid call to be allowed, got: {result}"
+
+        # Invalid call (path outside constraint) should be denied
+        result = guard.before_tool(
+            MockBaseTool("read_file"),
+            {"path": "/etc/passwd"},
+            MockToolContext(),
+        )
+        assert result is not None, "Expected invalid call to be denied"
+
+    def test_tier2_requires_correct_signing_key(self, keys):
+        """Tier 2 MUST verify PoP - wrong signing key should fail.
+
+        This verifies that cryptographic verification is happening, not just
+        logical checks.
+        """
+        warrant = (
+            Warrant.mint_builder()
+            .capability("read_file")
+            .holder(keys.public_key)
+            .ttl(3600)
+            .mint(keys)
+        )
+
+        # Use a DIFFERENT key for signing
+        wrong_key = SigningKey.generate()
+
+        guard = TenuoGuard(
+            warrant=warrant,
+            signing_key=wrong_key,  # Wrong key!
+            require_pop=True,
+        )
+
+        result = guard.before_tool(
             MockBaseTool("read_file"),
             {"path": "/data/file.txt"},
             MockToolContext(),
         )
 
-        # Verify authorize() was called (Rust core)
-        mock_warrant.authorize.assert_called_once()
-        # Verify it was called with signature (PoP)
-        call_kwargs = mock_warrant.authorize.call_args
-        assert "signature" in str(call_kwargs)
-
-    def test_tier2_does_not_use_allows(self, keys):
-        """Tier 2 MUST NOT use allows() (debug method)."""
-        mock_warrant = MagicMock()
-        mock_warrant.is_expired = MagicMock(return_value=False)
-        mock_warrant.sign = MagicMock(return_value=b"signature")
-        mock_warrant.authorize = MagicMock(return_value=True)
-        mock_warrant.allows = MagicMock(return_value=True)  # Debug method
-
-        guard = TenuoGuard(
-            warrant=mock_warrant,
-            signing_key=keys,
-            require_pop=True,
-        )
-
-        guard.before_tool(
-            MockBaseTool("read_file"),
-            {"path": "/data/file.txt"},
-            MockToolContext(),
-        )
-
-        # allows() should NOT be called for Tier 2
-        mock_warrant.allows.assert_not_called()
+        # Should be denied because PoP signature is invalid
+        assert result is not None, "Expected PoP with wrong key to be denied"
 
     def test_tier1_uses_constraint_methods(self):
         """Tier 1 constraint checks should call constraint methods (Rust bindings)."""
