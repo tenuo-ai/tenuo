@@ -135,6 +135,7 @@ uv pip install "tenuo[fastapi]"       # + FastAPI integration
 uv pip install "tenuo[langchain]"     # + LangChain (langchain-core ≥0.2)
 uv pip install "tenuo[langgraph]"     # + LangGraph (includes LangChain)
 uv pip install "tenuo[crewai]"        # + CrewAI
+uv pip install "tenuo[temporal]"      # + Temporal workflows
 uv pip install "tenuo[autogen]"       # + AutoGen AgentChat (Python ≥3.10)
 uv pip install "tenuo[mcp]"           # + MCP client (Python ≥3.10 required)
 ```
@@ -201,6 +202,23 @@ guard = (GuardBuilder()
 crew = guard.protect(my_crew)  # All agents get enforced constraints
 ```
 
+**Temporal** - Durable workflows with warrant-based activity authorization
+```python
+from tenuo.temporal import TenuoInterceptor, TenuoInterceptorConfig, EnvKeyResolver
+
+interceptor = TenuoInterceptor(
+    TenuoInterceptorConfig(key_resolver=EnvKeyResolver())
+)
+
+worker = Worker(
+    client,
+    task_queue="queue",
+    workflows=[MyWorkflow],
+    activities=[read_file, write_file],
+    interceptors=[interceptor],  # Activities automatically authorized
+)
+```
+
 **FastAPI** - Extracts warrant from headers, verifies PoP offline
 ```python
 @app.get("/search")
@@ -254,6 +272,7 @@ See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https:
 | **[LangChain](https://tenuo.ai/langchain)** | Tool protection |
 | **[LangGraph](https://tenuo.ai/langgraph)** | Multi-agent graph security |
 | **[CrewAI](https://tenuo.ai/crewai)** | Multi-agent crew protection |
+| **[Temporal](https://tenuo.ai/temporal)** | Durable workflow authorization |
 | **[MCP](https://tenuo.ai/mcp)** | Model Context Protocol client |
 | **[Security](https://tenuo.ai/security)** | Threat model |
 

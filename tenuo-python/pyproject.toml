@@ -71,6 +71,9 @@ a2a = [
 google_adk = [
     "google-adk>=0.1",  # Google Agent Development Kit
 ]
+temporal = [
+    "temporalio>=1.4.0",  # Temporal workflow orchestration
+]
 
 # Development dependencies (includes features + tools)
 dev = [
@@ -88,7 +91,7 @@ dev = [
     "uvicorn",
     "langchain-openai",
     # Include ALL optional groups for complete dev environment
-    "tenuo[openai,autogen,langchain,langgraph,crewai,a2a,google_adk,fastapi,mcp]",
+    "tenuo[openai,autogen,langchain,langgraph,crewai,a2a,google_adk,fastapi,mcp,temporal]",
 ]
 
 [project.scripts]
