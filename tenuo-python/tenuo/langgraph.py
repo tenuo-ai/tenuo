@@ -81,12 +81,12 @@ except (ImportError, TypeError):
 
 # Optional middleware imports (langchain 1.0+)
 try:
-    from langchain.agents.middleware import (
+    from langchain.agents.middleware import (  # type: ignore
         AgentMiddleware,
         ModelRequest,
         ModelResponse,
     )
-    from langchain.tools.tool_node import ToolCallRequest
+    from langchain.tools.tool_node import ToolCallRequest  # type: ignore
 
     MIDDLEWARE_AVAILABLE = True
 except ImportError:
