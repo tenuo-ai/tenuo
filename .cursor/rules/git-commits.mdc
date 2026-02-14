@@ -1,0 +1,18 @@
+---
+description: Git commit conventions
+alwaysApply: true
+---
+
+# Git Commit Rules
+
+- NEVER add `--trailer` flags to git commits
+- NEVER add `Co-authored-by`, `Signed-off-by`, or any other trailers
+- Keep commit messages clean with just the message content
+
+```bash
+# ❌ BAD
+git commit --trailer "Co-authored-by: ..." -m "message"
+
+# ✅ GOOD
+git commit -m "message"
+```
