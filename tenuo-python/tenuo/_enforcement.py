@@ -7,13 +7,34 @@ This module provides the core enforcement primitives used by:
 - guard() decorator (FastAPI, CrewAI)
 - SecureMCPClient (MCP)
 
-The enforcement logic is framework-agnostic and operates on:
-- tool_name: str
-- tool_args: dict
-- bound_warrant: BoundWarrant (warrant + signing key)
+Architecture:
+    ┌─────────────────────────────────────────────────────────────┐
+    │                    Python Layer                              │
+    │  ┌─────────────────────────────────────────────────────────┐│
+    │  │ Policy Checks (non-security-critical)                   ││
+    │  │ - Application-level tool allowlist (allowed_tools)      ││
+    │  │ - Critical tool schema requirements (ToolSchema)        ││
+    │  │ - UX tool filtering (filter_tools_by_warrant)           ││
+    │  └─────────────────────────────────────────────────────────┘│
+    └──────────────────────────┬──────────────────────────────────┘
+                               │
+                               ▼
+    ┌─────────────────────────────────────────────────────────────┐
+    │                    Rust Core (tenuo_core)                    │
+    │  ┌─────────────────────────────────────────────────────────┐│
+    │  │ Security-Critical Enforcement                           ││
+    │  │ - Warrant expiration check                              ││
+    │  │ - Tool in warrant (including wildcard *)                ││
+    │  │ - Proof-of-Possession signature verification            ││
+    │  │ - Constraint satisfaction (Range, Pattern, etc.)        ││
+    │  └─────────────────────────────────────────────────────────┘│
+    └─────────────────────────────────────────────────────────────┘
 
 IMPORTANT: This module requires BoundWarrant instances. Plain Warrant objects
 cannot perform Proof-of-Possession signing and are not accepted.
+
+All cryptographic and security-critical checks are performed by the Rust core.
+Python-side checks are for UX/policy only and can be bypassed if needed.
 """
 
 from dataclasses import dataclass
@@ -52,6 +73,7 @@ class EnforcementResult:
         denial_reason: Human-readable reason for denial (if not allowed)
         constraint_violated: Which constraint failed (if applicable)
         error_type: Structured error category (e.g. "expired", "tool_not_allowed")
+        warrant_id: ID of the warrant for audit correlation
     """
 
     allowed: bool
@@ -60,6 +82,7 @@ class EnforcementResult:
     denial_reason: Optional[str] = None
     constraint_violated: Optional[str] = None
     error_type: Optional[str] = None
+    warrant_id: Optional[str] = None
 
     def raise_if_denied(self) -> None:
         """
@@ -138,7 +161,11 @@ def _get_constraints_dict(bound_warrant: BoundWarrant) -> Dict[str, Any]:
 
 def _get_allowed_tools(bound_warrant: BoundWarrant) -> Optional[List[str]]:
     """
-    Get list of tools allowed by the warrant.
+    Get list of tools allowed by the warrant (for UX filtering only).
+
+    NOTE: This is used by filter_tools_by_warrant() for UX purposes
+    (hiding unauthorized tools from LLM). It is NOT a security boundary.
+    The Rust core performs the authoritative tool check in authorize().
 
     Args:
         bound_warrant: BoundWarrant instance
@@ -237,40 +264,39 @@ def enforce_tool_call(
     if verify_mode == "verify" and precomputed_signature is None:
         raise ConfigurationError("precomputed_signature is required when verify_mode='verify'")
 
+    # Capture warrant_id for audit correlation (available on all results)
+    warrant_id = getattr(bound_warrant, "id", None)
+
     schemas = schemas or TOOL_SCHEMAS
     schema = schemas.get(tool_name)
 
-    # 1. Check tool allowlist (explicit override takes precedence)
-    if allowed_tools is not None:
-        if tool_name not in allowed_tools:
-            logger.debug(f"Tool '{tool_name}' not in explicit allowed_tools: {allowed_tools}")
-            return EnforcementResult(
-                allowed=False,
-                tool=tool_name,
-                arguments=tool_args,
-                denial_reason=f"Tool '{tool_name}' not in allowed list",
-                error_type="tool_not_allowed",
-            )
-    else:
-        # Check warrant's tool allowlist
-        warrant_tools = _get_allowed_tools(bound_warrant)
-        # Note: warrant_tools=[] means block all, warrant_tools=None means allow all
-        if warrant_tools is not None and tool_name not in warrant_tools:
-            logger.debug(f"Tool '{tool_name}' not in warrant tools: {warrant_tools}")
-            return EnforcementResult(
-                allowed=False,
-                tool=tool_name,
-                arguments=tool_args,
-                denial_reason=f"Tool '{tool_name}' not in warrant",
-                error_type="tool_not_allowed",
-            )
+    # =========================================================================
+    # PYTHON-LEVEL POLICY CHECKS (before Rust core)
+    # These are application-level policies, not cryptographic enforcement.
+    # =========================================================================
 
-    # 2. Critical tool check - MUST have at least one relevant constraint
+    # 1. Application-level tool allowlist (scoped_task, per-request restrictions)
+    #    This RESTRICTS beyond what the warrant allows - it's not a security boundary,
+    #    just UX/policy (e.g., "this task can only use search, not delete").
+    #    The Rust core will still verify the tool is in the warrant.
+    if allowed_tools is not None and tool_name not in allowed_tools:
+        logger.debug(f"Tool '{tool_name}' not in application allowed_tools: {allowed_tools}")
+        return EnforcementResult(
+            allowed=False,
+            tool=tool_name,
+            arguments=tool_args,
+            denial_reason=f"Tool '{tool_name}' not in allowed list for this operation",
+            error_type="tool_not_allowed",
+            warrant_id=warrant_id,
+        )
+
+    # 2. Critical tool policy - require relevant constraints for high-risk tools
+    #    This is a Python-side policy decision based on ToolSchema.
+    #    The Rust core enforces the actual constraints; this just ensures they exist.
     if schema and schema.risk_level == "critical":
         constraints = _get_constraints_dict(bound_warrant)
         has_relevant = any(c in constraints for c in schema.recommended_constraints)
 
-        # Critical tools must have relevant constraints - no bypass with unrelated constraints
         if not has_relevant:
             logger.warning(
                 f"Critical tool '{tool_name}' invoked without relevant constraints. "
@@ -285,7 +311,8 @@ def enforce_tool_call(
                     f"{schema.recommended_constraints}"
                 ),
                 constraint_violated="missing_constraints",
-                error_type="constraint_violation",
+                error_type="policy_violation",
+                warrant_id=warrant_id,
             )
 
     # 3. Optional strict mode - require constraints for require_at_least_one tools
@@ -298,10 +325,18 @@ def enforce_tool_call(
                 arguments=tool_args,
                 denial_reason=f"Tool '{tool_name}' requires at least one constraint",
                 constraint_violated="missing_constraints",
-                error_type="constraint_violation",
+                error_type="policy_violation",
+                warrant_id=warrant_id,
             )
 
-    # 4. Authorize with PoP via BoundWarrant.validate() or authorize()
+    # =========================================================================
+    # RUST CORE AUTHORIZATION (cryptographic enforcement)
+    # All security-critical checks happen here:
+    # - Warrant expiration
+    # - Tool in warrant (including wildcard *)
+    # - Proof-of-Possession signature
+    # - Constraint satisfaction
+    # =========================================================================
     try:
         if verify_mode == "sign":
             validation_result: ValidationResult = bound_warrant.validate(tool_name, tool_args)
@@ -320,6 +355,7 @@ def enforce_tool_call(
                     denial_reason=validation_result.reason or "Authorization failed",
                     constraint_violated=violated_field,
                     error_type="authorization_failed",
+                    warrant_id=warrant_id,
                 )
         else:
             # verify_mode == "verify"
@@ -328,12 +364,13 @@ def enforce_tool_call(
             authorized = bound_warrant.warrant.authorize(tool_name, tool_args, precomputed_signature)
 
             if not authorized:
-                 return EnforcementResult(
+                return EnforcementResult(
                     allowed=False,
                     tool=tool_name,
                     arguments=tool_args,
                     denial_reason="Authorization denied (invalid PoP or constraint violation)",
                     error_type="authorization_failed",
+                    warrant_id=warrant_id,
                 )
 
         # Success - log for audit trail
@@ -350,20 +387,22 @@ def enforce_tool_call(
             allowed=True,
             tool=tool_name,
             arguments=tool_args,
+            warrant_id=warrant_id,
         )
 
     except (ConstraintViolation, ExpiredError, ToolNotAuthorized) as e:
         # Known authorization failures - expected behavior
         logger.debug(f"Authorization denied for {tool_name}: {e}")
 
-        # Map exceptions to error types
-        err_type = "other"
-        if isinstance(e, ExpiredError) or "expired" in str(e).lower():
+        # Map exceptions to error types (use isinstance, not string matching)
+        if isinstance(e, ExpiredError):
             err_type = "expired"
-        elif isinstance(e, ToolNotAuthorized) or "not authorized" in str(e).lower():
+        elif isinstance(e, ToolNotAuthorized):
             err_type = "tool_not_allowed"
         elif isinstance(e, ConstraintViolation):
-             err_type = "constraint_violation"
+            err_type = "constraint_violation"
+        else:
+            err_type = "authorization_failed"
 
         return EnforcementResult(
             allowed=False,
@@ -372,6 +411,7 @@ def enforce_tool_call(
             denial_reason=str(e),
             constraint_violated=_extract_violated_field(str(e)),
             error_type=err_type,
+            warrant_id=warrant_id,
         )
     except TenuoError as e:
         # Other Tenuo errors - log as warning
@@ -382,6 +422,7 @@ def enforce_tool_call(
             arguments=tool_args,
             denial_reason=str(e),
             error_type="tenuo_error",
+            warrant_id=warrant_id,
         )
     except Exception as e:
         # Catch-all for unexpected runtime errors (fail closed)
@@ -392,6 +433,7 @@ def enforce_tool_call(
             arguments=tool_args,
             denial_reason=f"Internal enforcement error: {str(e)}",
             error_type="internal_error",
+            warrant_id=warrant_id,
         )
 
 
