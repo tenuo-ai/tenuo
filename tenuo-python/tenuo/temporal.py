@@ -564,7 +564,7 @@ class AWSSecretsManagerKeyResolver(KeyResolver):
         secret_name = f"{self._secret_prefix}{key_id}"
 
         try:
-            import boto3  # type: ignore[import-not-found]
+            import boto3  # type: ignore[import-not-found, import-untyped]
 
             client = boto3.client("secretsmanager", region_name=self._region_name)
             response = client.get_secret_value(SecretId=secret_name)
@@ -906,7 +906,7 @@ async def tenuo_execute_activity(
 
     # Get signing key from workflow headers
     signing_key_b64 = workflow.payload_converter().from_payloads(
-        [workflow.unsafe.current_headers().get(TENUO_SIGNING_KEY_HEADER)]
+        [workflow.unsafe.current_headers().get(TENUO_SIGNING_KEY_HEADER)]  # type: ignore[attr-defined]
     ) if hasattr(workflow, "unsafe") else None
 
     # Fallback: try getting raw header bytes
@@ -926,7 +926,7 @@ async def tenuo_execute_activity(
         if isinstance(signing_key_b64, bytes):
             signing_key_raw = base64.b64decode(signing_key_b64)
         else:
-            signing_key_raw = base64.b64decode(signing_key_b64.encode())
+            signing_key_raw = base64.b64decode(signing_key_b64.encode())  # type: ignore[attr-defined]
     except Exception as e:
         raise TenuoContextError(f"Invalid signing key in headers: {e}")
 

@@ -73,6 +73,8 @@ google_adk = [
 ]
 temporal = [
     "temporalio>=1.4.0",  # Temporal workflow orchestration
+    "boto3>=1.26.0",  # AWS Secrets Manager for key resolution
+    "google-cloud-secret-manager>=2.16.0",  # GCP Secret Manager for key resolution
 ]
 fastapi = [
     "fastapi>=0.100.0",

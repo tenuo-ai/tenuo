@@ -12,7 +12,10 @@ import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 from datetime import datetime, timezone
 
-from tenuo.temporal import (
+# Skip all tests if temporalio is not installed
+pytest.importorskip("temporalio")
+
+from tenuo.temporal import (  # noqa: E402 - must be after importorskip
     # Exceptions
     ConstraintViolation,
     WarrantExpired,
