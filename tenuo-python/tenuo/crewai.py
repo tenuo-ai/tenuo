@@ -407,23 +407,6 @@ class WarrantToolDenied(TenuoCrewAIError):
 
 
 # =============================================================================
-# DenialResult Sentinel
-# =============================================================================
-
-
-# DenialResult is now imported from _enforcement module
-# Kept here for backward compatibility docstring reference:
-# DenialResult has: tool, reason, error_type, error_code, warrant_id
-
-    def __bool__(self) -> bool:
-        """Returns False so `if result:` checks work naturally."""
-        return False
-
-    def __repr__(self) -> str:
-        return f"DenialResult(tool={self.tool!r}, reason={self.reason!r})"
-
-
-# =============================================================================
 # Audit Support
 # =============================================================================
 
@@ -559,7 +542,7 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
         self._signing_key = signing_key
         return self
 
-    def on_denial(self, mode: DenialMode) -> "GuardBuilder":
+    def on_denial(self, mode: str) -> "GuardBuilder":
         """Set denial handling mode.
 
         Args:
@@ -621,7 +604,7 @@ class CrewAIGuard:
         allowed: Dict[str, Dict[str, Constraint]],
         warrant: Optional[Warrant],
         signing_key: Optional[SigningKey],
-        on_denial: DenialMode,
+        on_denial: str,
         audit_callback: Optional[AuditCallback],
     ):
         self._allowed = allowed
@@ -1744,7 +1727,7 @@ class _GuardedCrewImpl:
         issuer_key: Optional[SigningKey],
         policy: Dict[str, List[str]],
         constraints: Dict[str, Dict[str, Dict[str, Constraint]]],
-        on_denial: DenialMode,
+        on_denial: str,
         audit_callback: Optional[Callable[[AuditEvent], None]],
         strict: bool,
         ttl: Optional[str],
