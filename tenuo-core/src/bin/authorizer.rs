@@ -59,6 +59,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tenuo::{
     constraints::ConstraintValue,
+    crypto::SigningKey,
     extraction::RequestContext,
     gateway_config::{CompiledGatewayConfig, GatewayConfig},
     heartbeat::{
@@ -122,6 +123,12 @@ struct Cli {
     /// Audit event flush interval in seconds
     #[arg(long, env = "TENUO_AUDIT_FLUSH_INTERVAL", default_value = "10")]
     audit_flush_interval: u64,
+
+    /// Signing key for cryptographic receipts (hex-encoded 32-byte Ed25519 seed).
+    /// When set, events are signed by the authorizer and become non-repudiable receipts.
+    /// Generate with: openssl rand -hex 32
+    #[arg(long, env = "TENUO_SIGNING_KEY")]
+    signing_key: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -400,7 +407,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::net::SocketAddr;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Shared state for the HTTP server
 struct AppState {
@@ -556,6 +563,37 @@ async fn serve_http(
         // Get environment info from standard env vars
         let environment = EnvironmentInfo::from_env();
 
+        // Parse signing key (required for cryptographic receipts)
+        let signing_key = match &cli.signing_key {
+            Some(hex_key) => match hex::decode(hex_key) {
+                Ok(bytes) if bytes.len() == 32 => {
+                    let mut arr = [0u8; 32];
+                    arr.copy_from_slice(&bytes);
+                    let key = SigningKey::from_bytes(&arr);
+                    info!(
+                        public_key = %hex::encode(key.public_key().to_bytes()),
+                        "Signing key configured"
+                    );
+                    key
+                }
+                Ok(bytes) => {
+                    error!(
+                        got_len = bytes.len(),
+                        "TENUO_SIGNING_KEY must be 32 bytes (64 hex chars)"
+                    );
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    error!(error = %e, "TENUO_SIGNING_KEY must be valid hex");
+                    std::process::exit(1);
+                }
+            },
+            None => {
+                error!("TENUO_SIGNING_KEY is required. Generate one with: openssl rand -hex 32");
+                std::process::exit(1);
+            }
+        };
+
         let heartbeat_config = HeartbeatConfig {
             control_plane_url: url.clone(),
             api_key: key.clone(),
@@ -569,6 +607,7 @@ async fn serve_http(
             audit_flush_interval_secs: cli.audit_flush_interval,
             environment,
             metrics: Some(metrics.clone()),
+            signing_key,
         };
 
         // Clone shared_authorizer_id for the heartbeat task to update
@@ -679,6 +718,39 @@ async fn handle_request(
                 reason = "missing_warrant",
                 "Missing warrant header"
             );
+
+            // Emit audit event for missing warrant (so denials appear in receipts/audit)
+            emit_audit_event(
+                &state,
+                AuthorizationEvent::deny(
+                    String::new(), // Filled by emit_audit_event
+                    String::new(), // No warrant ID
+                    route_match.route.tool.to_string(),
+                    "missing_warrant".to_string(),
+                    None,
+                    0,
+                    None,
+                    None,
+                    0,
+                    request_id.clone(),
+                ),
+            )
+            .await;
+
+            // Record metrics
+            if let Some(ref metrics) = state.metrics {
+                metrics
+                    .record_authorization(
+                        false,
+                        &route_match.route.tool,
+                        0,
+                        "",
+                        None,
+                        Some("missing_warrant"),
+                    )
+                    .await;
+            }
+
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(json!({
@@ -703,6 +775,39 @@ async fn handle_request(
                 error = %e,
                 "Failed to decode warrant/chain"
             );
+
+            // Emit audit event for invalid warrant
+            emit_audit_event(
+                &state,
+                AuthorizationEvent::deny(
+                    String::new(), // Filled by emit_audit_event
+                    String::new(), // No warrant ID
+                    route_match.route.tool.to_string(),
+                    format!("invalid_warrant: {}", e),
+                    None,
+                    0,
+                    None,
+                    None,
+                    0,
+                    request_id.clone(),
+                ),
+            )
+            .await;
+
+            // Record metrics
+            if let Some(ref metrics) = state.metrics {
+                metrics
+                    .record_authorization(
+                        false,
+                        &route_match.route.tool,
+                        0,
+                        "",
+                        None,
+                        Some("invalid_warrant"),
+                    )
+                    .await;
+            }
+
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({
@@ -809,16 +914,21 @@ async fn handle_request(
             }
         });
 
-    // 8. Authorize
-    // Start timing for audit event
-    let auth_start = std::time::Instant::now();
+    // 8. Authorize with detailed timing instrumentation
+    let total_start = std::time::Instant::now();
 
-    // Acquire read lock on authorizer (allows concurrent reads, blocks only during SRL updates)
+    // Phase 1: Lock acquisition
+    let lock_start = std::time::Instant::now();
     let authorizer = state.authorizer.read().await;
+    let lock_us = lock_start.elapsed().as_micros() as u64;
 
-    // First, verify the chain (trust anchor -> leaf)
+    // Phase 2: Chain verification (signature checks, SRL lookup, cycle detection)
+    let verify_start = std::time::Instant::now();
     let verify_result = authorizer.verify_chain(&chain);
+    let verify_us = verify_start.elapsed().as_micros() as u64;
 
+    // Phase 3: Authorization (constraint matching, PoP verification)
+    let authorize_start = std::time::Instant::now();
     let result = match verify_result {
         Ok(_) => {
             // If chain is valid, authorize the specific action against the leaf
@@ -832,12 +942,29 @@ async fn handle_request(
         }
         Err(e) => Err(e),
     };
+    let authorize_us = authorize_start.elapsed().as_micros() as u64;
 
     // Release the lock before building the response
     drop(authorizer);
 
-    // Calculate authorization latency
-    let latency_us = auth_start.elapsed().as_micros() as u64;
+    // Calculate total and core latency
+    let total_us = total_start.elapsed().as_micros() as u64;
+    // Core latency excludes lock acquisition (for accurate benchmarking)
+    let latency_us = verify_us + authorize_us;
+
+    // Log detailed timing breakdown in debug mode (at info level for visibility)
+    if state.debug_mode {
+        info!(
+            request_id = %request_id,
+            lock_us = %lock_us,
+            verify_us = %verify_us,
+            authorize_us = %authorize_us,
+            core_us = %latency_us,
+            total_us = %total_us,
+            chain_depth = %chain.len(),
+            "Timing breakdown"
+        );
+    }
 
     // Extract chain metadata for audit event
     let chain_depth = leaf_warrant.depth() as u8;

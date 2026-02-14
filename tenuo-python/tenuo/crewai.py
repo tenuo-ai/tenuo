@@ -1,21 +1,16 @@
 """
 Tenuo CrewAI Adapter - Tool Authorization for Multi-Agent Workflows
 
+Uses CrewAI's native hooks system for framework-level enforcement.
+All tool calls are intercepted via before_tool_call hooks - no wrapping needed.
+
 Compatibility:
-    CrewAI: 1.0.0 - 1.9.x
-    Last tested: 1.9.4 (2026-02-03)
+    CrewAI: 0.80.0+ (requires hooks API)
     Python: 3.9+
 
-Known Issues:
-    None
-
 Version History:
-    1.0.0: Initial release (Tier 1 + Tier 2)
-    1.9.0: Added hierarchical process support
-
-Next Breaking Change:
-    CrewAI 2.0 (expected Q2 2026): Async tool support
-    Tracking: https://github.com/tenuo-ai/tenuo/labels/crewai
+    1.0.0: Initial release (tool wrapping)
+    2.0.0: Hooks-based integration (breaking change)
 
 Provides constraint enforcement for CrewAI tool calls with two tiers:
 
@@ -44,9 +39,8 @@ Tool Namespacing:
     2. Fall back to `tool_name` (global default)
     3. Reject if neither exists
 
-Usage (Builder Pattern, Recommended):
+Usage (Global Hook - Recommended):
     from tenuo.crewai import GuardBuilder, Subpath, Pattern
-    from crewai import Tool, Agent
 
     guard = (GuardBuilder()
         .allow("read_file", path=Subpath("/data"))
@@ -54,19 +48,21 @@ Usage (Builder Pattern, Recommended):
         .on_denial("raise")
         .build())
 
-    # Protect a single tool
-    protected_tool = guard.protect(my_tool)
+    # Register as global hook - ALL tool calls go through this guard
+    guard.register()
 
-    # Protect all tools on an agent
-    agent = Agent(
-        role="Assistant",
-        tools=guard.protect_all([tool1, tool2])
-    )
+Usage (Crew-Scoped Hook):
+    from crewai import CrewBase
+    from crewai.hooks import before_tool_call_crew
 
-Usage (Zero-Config):
-    from tenuo.crewai import protect_tool, Subpath
+    @CrewBase
+    class MyProjCrew:
+        def __init__(self):
+            self.guard = GuardBuilder().allow(...).build()
 
-    protected = protect_tool(my_tool, path=Subpath("/data"))
+        @before_tool_call_crew
+        def authorize(self, context):
+            return self.guard.authorize_hook(context)
 
 Usage (Tier 2 - Warrant with PoP):
     from tenuo.crewai import GuardBuilder
@@ -78,6 +74,8 @@ Usage (Tier 2 - Warrant with PoP):
     guard = (GuardBuilder()
         .with_warrant(warrant, agent_key)
         .build())
+
+    guard.register()
 """
 
 from __future__ import annotations
@@ -128,6 +126,19 @@ from tenuo.core import check_constraint
 from tenuo._version_compat import check_crewai_compat  # noqa: E402
 
 check_crewai_compat()
+
+# Import CrewAI hooks API (required for this integration)
+try:
+    from crewai.hooks import (  # type: ignore[import-not-found,import-untyped]
+        register_before_tool_call_hook,
+        unregister_before_tool_call_hook,
+        ToolCallHookContext,
+    )
+
+    HOOKS_AVAILABLE = True
+except ImportError:
+    HOOKS_AVAILABLE = False
+    ToolCallHookContext = None  # type: ignore[misc,assignment]
 
 logger = logging.getLogger("tenuo.crewai")
 
@@ -514,7 +525,6 @@ class GuardBuilder:
         self._signing_key: Optional[SigningKey] = None
         self._on_denial: DenialMode = "raise"
         self._audit_callback: Optional[AuditCallback] = None
-        self._seal_mode: bool = False
 
     def allow(self, tool_name: str, **constraints: Constraint) -> "GuardBuilder":
         """Allow a tool with parameter constraints.
@@ -572,30 +582,6 @@ class GuardBuilder:
         self._audit_callback = callback
         return self
 
-    def seal(self, enabled: bool = True) -> "GuardBuilder":
-        """Enable seal mode to prevent original tool bypass.
-
-        When seal mode is enabled, protect() will destructively modify the
-        original tool so it cannot be called directly. This ensures ALL
-        invocations go through the guard.
-
-        Args:
-            enabled: Whether to enable seal mode (default True)
-
-        Warning:
-            This is a destructive operation. The original tool will raise
-            RuntimeError if called directly after being sealed.
-
-        Example:
-            guard = GuardBuilder().allow("read", path=Subpath("/data")).seal().build()
-            protected = guard.protect(original_tool)
-
-            original_tool.func()  # Raises RuntimeError!
-            protected.func()      # Works (goes through guard)
-        """
-        self._seal_mode = enabled
-        return self
-
     def build(self) -> "CrewAIGuard":
         """Build the guard instance."""
         # SECURITY: Warn if skip mode is used without audit callback
@@ -612,7 +598,6 @@ class GuardBuilder:
             signing_key=self._signing_key,
             on_denial=self._on_denial,
             audit_callback=self._audit_callback,
-            seal_mode=self._seal_mode,
         )
 
 
@@ -622,10 +607,14 @@ class GuardBuilder:
 
 
 class CrewAIGuard:
-    """Runtime guard for CrewAI tools.
+    """Runtime guard for CrewAI tools using hooks API.
 
-    Enforces tool allowlisting and argument constraints. Supports both
-    Tier 1 (constraints only) and Tier 2 (warrant + PoP).
+    Enforces tool allowlisting and argument constraints via CrewAI's
+    before_tool_call hooks. Supports both Tier 1 (constraints only)
+    and Tier 2 (warrant + PoP).
+
+    Use register() to install as a global hook, or as_hook() to get
+    the hook function for crew-scoped registration.
     """
 
     def __init__(
@@ -635,104 +624,165 @@ class CrewAIGuard:
         signing_key: Optional[SigningKey],
         on_denial: DenialMode,
         audit_callback: Optional[AuditCallback],
-        seal_mode: bool = False,
     ):
         self._allowed = allowed
         self._warrant = warrant
         self._signing_key = signing_key
         self._on_denial = on_denial
         self._audit_callback = audit_callback
-        self._seal_mode = seal_mode
+        self._registered_hook: Optional[Callable] = None
 
-    def protect(self, tool: Any, *, agent_role: Optional[str] = None) -> Any:
-        """Wrap a CrewAI tool with authorization checks.
+    def register(self, *, agent_role: Optional[str] = None) -> "CrewAIGuard":
+        """Register this guard as a global before_tool_call hook.
+
+        Once registered, ALL tool calls in ANY crew will be authorized
+        through this guard. Use unregister() to remove.
 
         Args:
-            tool: A CrewAI Tool instance
-            agent_role: Optional agent role for namespaced lookup
+            agent_role: Optional agent role for namespaced constraint lookup
 
         Returns:
-            A new Tool with the same name/description but wrapped function
+            Self for chaining
 
         Raises:
-            ToolDenied: If tool is not in the allowed list (unless on_denial != "raise")
+            ImportError: If CrewAI hooks API is not available (requires 0.80.0+)
+
+        Example:
+            guard = GuardBuilder().allow("read_file", path=Subpath("/data")).build()
+            guard.register()
+
+            # All tool calls now go through authorization
+            crew.kickoff()
+
+            guard.unregister()  # Cleanup when done
         """
-        # Import CrewAI here to avoid hard dependency
-        # CrewAI 1.9.x uses crewai.tools.base_tool.Tool
-        try:
-            from crewai.tools.base_tool import Tool  # type: ignore[import-not-found,import-untyped]
-        except ImportError:
-            raise ImportError("crewai is required for CrewAI integration. Install with: pip install crewai")
-
-        original_func = getattr(tool, "func", None)
-        if original_func is None:
-            original_func = getattr(tool, "_run", None)
-
-        if original_func is None:
-            raise ConfigurationError(
-                f"Cannot protect tool '{tool.name}': no executable method found. "
-                "Tool must have 'func' or '_run' method."
+        if not HOOKS_AVAILABLE:
+            raise ImportError(
+                "CrewAI hooks API not available. Requires crewai>=0.80.0. Install with: pip install 'crewai>=0.80.0'"
             )
 
-        tool_name = tool.name
+        if self._registered_hook is not None:
+            logger.warning("Guard already registered, unregistering previous hook")
+            self.unregister()
 
-        def guarded_func(**kwargs: Any) -> Any:
-            result = self._authorize(tool_name, kwargs, agent_role=agent_role)
-            if isinstance(result, DenialResult):
-                return result
-            # Handle potential mismatch in arguments if tool expects specific signature
-            # But simple kwargs forwarding is usually correct for these dynamic tools
-            return original_func(**kwargs)
+        hook = self._create_hook(agent_role=agent_role)
+        register_before_tool_call_hook(hook)  # type: ignore[arg-type]
+        self._registered_hook = hook
+        logger.info("Registered Tenuo guard as global before_tool_call hook")
+        return self
 
-        # Seal the original tool if seal_mode is enabled
-        # This prevents bypass by calling the original tool directly
-        if self._seal_mode:
+    def unregister(self) -> "CrewAIGuard":
+        """Unregister this guard from the global hook.
 
-            def sealed_func(**kwargs: Any) -> Any:
-                raise RuntimeError(
-                    f"Tool '{tool_name}' has been sealed by Tenuo guard. "
-                    "Use the protected tool returned by guard.protect() instead. "
-                    "This prevents authorization bypass."
-                )
-
-            # Seal whichever method was found
-            try:
-                if hasattr(tool, "func"):
-                    tool.func = sealed_func
-                if hasattr(tool, "_run"):
-                    tool._run = sealed_func
-            except AttributeError:
-                # SECURITY: Fail-closed - if seal fails, refuse to protect
-                raise ConfigurationError(
-                    f"Cannot seal tool '{tool_name}': attribute is read-only. "
-                    "Seal mode requires mutable Tool implementation. "
-                    "Either use a mutable Tool or disable seal mode."
-                )
-
-        # Create new Tool with wrapped function, preserving args_schema
-        # args_schema is REQUIRED for CrewAI to properly extract and pass arguments
-        protected_tool_kwargs = {
-            "name": tool.name,
-            "description": tool.description,
-            "func": guarded_func,
-        }
-        # Preserve args_schema if present (critical for argument passing)
-        if hasattr(tool, "args_schema") and tool.args_schema is not None:
-            protected_tool_kwargs["args_schema"] = tool.args_schema
-
-        return Tool(**protected_tool_kwargs)
-
-    def protect_all(self, tools: List[Any], *, agent_role: Optional[str] = None) -> List[Any]:
-        """Wrap multiple CrewAI tools with authorization checks.
-
-        Args:
-            tools: List of CrewAI Tool instances
-            agent_role: Optional agent role for namespaced lookup
+        Safe to call even if not registered.
 
         Returns:
-            List of protected tools
+            Self for chaining
         """
-        return [self.protect(t, agent_role=agent_role) for t in tools]
+        if self._registered_hook is not None:
+            if HOOKS_AVAILABLE:
+                try:
+                    unregister_before_tool_call_hook(self._registered_hook)
+                except Exception as e:
+                    logger.warning(f"Failed to unregister hook: {e}")
+            self._registered_hook = None
+            logger.info("Unregistered Tenuo guard hook")
+        return self
+
+    def as_hook(self, *, agent_role: Optional[str] = None) -> Callable[["ToolCallHookContext"], Optional[bool]]:
+        """Get the hook function for manual registration.
+
+        Use this when you need crew-scoped hooks instead of global registration.
+
+        Args:
+            agent_role: Optional agent role for namespaced constraint lookup
+
+        Returns:
+            A callable suitable for @before_tool_call decorator or manual registration.
+            Returns False to block tool calls, None to allow.
+
+        Example:
+            @CrewBase
+            class MyProjCrew:
+                def __init__(self):
+                    self.guard = GuardBuilder().allow(...).build()
+
+                @before_tool_call_crew
+                def authorize(self, context):
+                    return self.guard.authorize_hook(context)
+        """
+        return self._create_hook(agent_role=agent_role)
+
+    def _create_hook(self, *, agent_role: Optional[str] = None) -> Callable[[Any], Optional[bool]]:
+        """Create a before_tool_call hook function.
+
+        The hook receives ToolCallHookContext and returns:
+        - False to block/skip the tool call
+        - None (or True) to allow the call to proceed
+
+        Args:
+            agent_role: Optional agent role for namespaced constraint lookup
+
+        Returns:
+            Hook function compatible with CrewAI hooks API
+        """
+        guard = self  # Capture reference for closure
+
+        def tenuo_authorize_hook(context: Any) -> Optional[bool]:
+            """Tenuo authorization hook for CrewAI before_tool_call."""
+            # Extract tool name and arguments from context
+            # CrewAI uses 'tool_name' and 'tool_input' attributes
+            tool_name = getattr(context, "tool_name", None) or ""
+            args = getattr(context, "tool_input", None) or {}
+
+            # Resolve agent role from context if not provided
+            effective_role = agent_role
+            if effective_role is None:
+                # Try to get agent role from context
+                agent = getattr(context, "agent", None)
+                if agent and hasattr(agent, "role"):
+                    effective_role = agent.role
+
+            # Authorize the call - catch exceptions for on_denial='raise' mode
+            try:
+                result = guard._authorize(tool_name, args, agent_role=effective_role)
+            except TenuoCrewAIError as e:
+                # on_denial='raise' mode - catch and return False to block
+                logger.info(f"[TENUO] BLOCKED {tool_name}: {e}")
+                return False
+
+            if result is not None:
+                # on_denial='log' or 'skip' mode - result is DenialResult
+                logger.info(f"[TENUO] BLOCKED {tool_name}: {result.reason}")
+                return False
+
+            # Authorized - return None to allow the call to proceed
+            return None
+
+        return tenuo_authorize_hook
+
+    def authorize_hook(self, context: Any, *, agent_role: Optional[str] = None) -> Optional[bool]:
+        """Authorize a tool call from a CrewAI hook context.
+
+        Direct authorization method for use in crew-scoped hooks.
+        This is a convenience wrapper around _create_hook for direct use.
+
+        Args:
+            context: ToolCallHookContext from CrewAI
+            agent_role: Optional agent role (overrides context-derived role)
+
+        Returns:
+            None to allow the call, False to block it
+
+        Example:
+            @CrewBase
+            class MyProjCrew:
+                @before_tool_call_crew
+                def authorize(self, context):
+                    return self.guard.authorize_hook(context)
+        """
+        hook = self._create_hook(agent_role=agent_role)
+        return hook(context)
 
     def _resolve_tool_name(self, tool_name: str, agent_role: Optional[str]) -> Optional[str]:
         """Resolve tool name with namespace fallback.
@@ -1187,54 +1237,6 @@ class CrewAIGuard:
                 pass
 
         return info
-
-
-# =============================================================================
-# Zero-Config Entry Points
-# =============================================================================
-
-
-def protect_tool(tool: Any, **constraints: Constraint) -> Any:
-    """One-liner tool protection.
-
-    Args:
-        tool: A CrewAI Tool instance
-        **constraints: Keyword arguments mapping param names to constraints
-
-    Returns:
-        A new Tool with authorization checks
-
-    Example:
-        protected = protect_tool(my_tool, path=Subpath("/data"))
-    """
-    guard = GuardBuilder().allow(tool.name, **constraints).build()
-    return guard.protect(tool)
-
-
-def protect_agent(agent: Any, **tool_constraints: Dict[str, Constraint]) -> Any:
-    """Protect all tools on an agent.
-
-    Args:
-        agent: A CrewAI Agent instance
-        **tool_constraints: Mapping of tool_name -> {param: constraint}
-
-    Returns:
-        The agent with protected tools
-
-    Example:
-        agent = protect_agent(
-            my_agent,
-            read_file={"path": Subpath("/data")},
-            search={"query": Wildcard()},
-        )
-    """
-    builder = GuardBuilder()
-    for tool_name, constraints in tool_constraints.items():
-        builder.allow(tool_name, **constraints)
-    guard = builder.build()
-
-    agent.tools = guard.protect_all(agent.tools)
-    return agent
 
 
 # =============================================================================
@@ -1847,9 +1849,7 @@ class _GuardedCrewImpl:
         return builder.build()
 
     def _protect_agents(self) -> List[Any]:
-        """Protect all agent tools and return modified agent list."""
-        protected_agents = []
-
+        """Build guards for all agents (tools are protected via hooks)."""
         for agent in self._agents:
             role = self._get_agent_role(agent)
 
@@ -1864,14 +1864,39 @@ class _GuardedCrewImpl:
             guard = self._build_agent_guard(agent)
             self._guards[role] = guard
 
-            # Protect agent's tools
-            if hasattr(agent, "tools") and agent.tools:
-                protected_tools = guard.protect_all(agent.tools, agent_role=role)
-                agent.tools = protected_tools
+        # Return agents unmodified - hooks will intercept tool calls
+        return list(self._agents)
 
-            protected_agents.append(agent)
+    def _create_combined_hook(self) -> Callable[[Any], Optional[bool]]:
+        """Create a hook that routes to the appropriate per-agent guard."""
+        guards = self._guards
 
-        return protected_agents
+        def guarded_crew_hook(context: Any) -> Optional[bool]:
+            """Combined hook for GuardedCrew - routes to per-agent guards."""
+            # Extract agent role from context
+            agent = getattr(context, "agent", None)
+            role = None
+            if agent:
+                if hasattr(agent, "role"):
+                    role = agent.role
+                elif hasattr(agent, "name"):
+                    role = agent.name
+
+            if role is None:
+                # SECURITY: Fail-closed - cannot determine agent, block
+                logger.warning("GuardedCrew hook: cannot determine agent role, blocking")
+                return False
+
+            guard = guards.get(role)
+            if guard is None:
+                # SECURITY: Fail-closed - agent not in policy
+                logger.warning(f"GuardedCrew hook: no guard for role '{role}', blocking")
+                return False
+
+            # Delegate to the agent's guard hook
+            return guard.authorize_hook(context, agent_role=role)
+
+        return guarded_crew_hook
 
     def kickoff(self, inputs: Optional[Dict[str, Any]] = None) -> Any:
         """Execute the crew with authorization enforcement.
@@ -1883,12 +1908,19 @@ class _GuardedCrewImpl:
         except ImportError:
             raise ImportError("crewai is required for GuardedCrew. Install with: pip install crewai")
 
-        # Protect all agents
-        protected_agents = self._protect_agents()
+        if not HOOKS_AVAILABLE:
+            raise ImportError(
+                "CrewAI hooks API not available. "
+                "GuardedCrew requires crewai>=0.80.0. "
+                "Install with: pip install 'crewai>=0.80.0'"
+            )
+
+        # Build guards for all agents
+        agents = self._protect_agents()
 
         # Build the crew
         crew_kwargs = {
-            "agents": protected_agents,
+            "agents": agents,
             "tasks": self._tasks,
         }
         if self._process is not None:
@@ -1896,23 +1928,31 @@ class _GuardedCrewImpl:
 
         self._crew = Crew(**crew_kwargs)  # type: ignore[assignment,arg-type]
 
-        # Execute in guarded zone if strict mode
-        if self._strict:
-            # Use first available guard for context (all agents use same strict setting)
-            first_guard = list(self._guards.values())[0] if self._guards else None
-            with _guarded_zone(first_guard, strict=True):  # type: ignore[arg-type]
-                result = self._crew.kickoff(inputs=inputs)  # type: ignore[attr-defined]
+        # Register combined hook for all agents
+        combined_hook = self._create_combined_hook()
+        register_before_tool_call_hook(combined_hook)  # type: ignore[arg-type]
 
-                # Check for strict mode violations
-                unguarded = get_unguarded_calls()
-                if unguarded:
-                    # Deduplicate and sort for cleaner error
-                    unique_unguarded = sorted(set(unguarded))
-                    raise UnguardedToolError(unique_unguarded, "GuardedCrew.kickoff")
+        try:
+            # Execute in guarded zone if strict mode
+            if self._strict:
+                # Use first available guard for context (all agents use same strict setting)
+                first_guard = list(self._guards.values())[0] if self._guards else None
+                with _guarded_zone(first_guard, strict=True):  # type: ignore[arg-type]
+                    result = self._crew.kickoff(inputs=inputs)  # type: ignore[attr-defined]
 
-                return result
-        else:
-            return self._crew.kickoff(inputs=inputs)  # type: ignore[attr-defined]
+                    # Check for strict mode violations
+                    unguarded = get_unguarded_calls()
+                    if unguarded:
+                        # Deduplicate and sort for cleaner error
+                        unique_unguarded = sorted(set(unguarded))
+                        raise UnguardedToolError(unique_unguarded, "GuardedCrew.kickoff")
+
+                    return result
+            else:
+                return self._crew.kickoff(inputs=inputs)  # type: ignore[attr-defined]
+        finally:
+            # Always unregister the hook
+            unregister_before_tool_call_hook(combined_hook)  # type: ignore[arg-type]
 
     @property
     def guards(self) -> Dict[str, CrewAIGuard]:
@@ -1951,9 +1991,8 @@ __all__ = [
     # Builder
     "GuardBuilder",
     "CrewAIGuard",
-    # Entry points
-    "protect_tool",
-    "protect_agent",
+    # Hooks support
+    "HOOKS_AVAILABLE",
     # Delegation (Phase 4)
     "WarrantDelegator",
     # Crew/Flow (Phase 5)

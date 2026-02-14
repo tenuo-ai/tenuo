@@ -18,7 +18,6 @@ from unittest.mock import MagicMock
 from tenuo.crewai import (
     GuardBuilder,
     CrewAIGuard,
-    protect_tool,
     ToolDenied,
     ConstraintViolation,
     UnlistedArgument,
@@ -396,31 +395,25 @@ class TestAuditCallback:
 
 
 # =============================================================================
-# protect_tool Tests
+# protect_tool Tests (REMOVED - replaced by hooks API)
 # =============================================================================
 
 
-@pytest.mark.skipif(not CREWAI_AVAILABLE, reason="crewai not installed")
+@pytest.mark.skip(reason="protect_tool removed in v2.0 - use guard.register() instead")
 class TestProtectTool:
-    """Test the protect_tool zero-config entry point."""
+    """Test the protect_tool zero-config entry point.
+
+    NOTE: protect_tool was removed in v2.0. Use guard.register() for hooks-based
+    protection instead. These tests are kept for documentation purposes.
+    """
 
     def test_protect_tool_basic(self):
         """protect_tool wraps a tool with constraints."""
-        tool = RealTool(name="read_file")
-        protected = protect_tool(tool, path=Subpath("/data"))
-
-        # Valid call
-        result = protected.func(path="/data/file.txt")
-        assert result == {"result": "ok", "args": {"path": "/data/file.txt"}}
+        pass  # Removed - use guard.register() instead
 
     def test_protect_tool_blocks_violations(self):
         """protect_tool blocks constraint violations."""
-        tool = RealTool(name="read_file")
-        protected = protect_tool(tool, path=Subpath("/data"))
-
-        # Invalid call - should raise
-        with pytest.raises(ConstraintViolation):
-            protected.func(path="/etc/passwd")
+        pass  # Removed - use guard.register() instead
 
 
 # =============================================================================
@@ -1098,32 +1091,6 @@ class TestWarrantDelegator:
             )
 
 
-class TestSealMode:
-    """Tests for seal mode (on-the-wire verification)."""
-
-    def test_seal_builder_method(self):
-        """GuardBuilder has seal() method."""
-        builder = GuardBuilder()
-        assert hasattr(builder, "seal")
-
-        # Fluent API
-        result = builder.seal()
-        assert result is builder
-
-    def test_seal_mode_passed_to_guard(self):
-        """Seal mode is passed to built guard."""
-        guard_sealed = GuardBuilder().seal().build()
-        guard_unsealed = GuardBuilder().build()
-
-        assert guard_sealed._seal_mode is True
-        assert guard_unsealed._seal_mode is False
-
-    def test_seal_disabled_by_default(self):
-        """Seal mode is disabled by default."""
-        guard = GuardBuilder().allow("test", arg=Wildcard()).build()
-        assert guard._seal_mode is False
-
-
 class TestPhase5GuardedStep:
     """Tests for @guarded_step decorator (Phase 5)."""
 
@@ -1405,20 +1372,19 @@ class TestPhase5RealCrewAIIntegration:
         except ImportError:
             pytest.skip("crewai not installed")
 
-    def test_protect_real_crewai_tool(self):
-        """Can protect a real CrewAI tool."""
+    def test_register_hook_with_guard(self):
+        """Can register a guard as a hook."""
         try:
-            from crewai.tools import tool as crewai_tool
-            from tenuo.crewai import protect_tool, Subpath
+            from tenuo.crewai import GuardBuilder, Subpath, HOOKS_AVAILABLE
 
-            @crewai_tool
-            def read_document(path: str) -> str:
-                """Read a document from disk."""
-                return f"Contents of {path}"
+            if not HOOKS_AVAILABLE:
+                pytest.skip("CrewAI hooks API not available")
 
-            protected = protect_tool(read_document, path=Subpath("/data"))
-            assert protected is not None
-            assert protected.name == "read_document"
+            guard = GuardBuilder().allow("read_document", path=Subpath("/data")).build()
+
+            # Test that we can register/unregister without error
+            guard.register()
+            guard.unregister()
         except ImportError:
             pytest.skip("crewai not installed")
 
