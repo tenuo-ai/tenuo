@@ -665,6 +665,185 @@ class TestCompositeKeyResolver:
             CompositeKeyResolver([])
 
 
+class TestAWSSecretsManagerKeyResolver:
+    """Tests for AWSSecretsManagerKeyResolver."""
+
+    def test_resolves_binary_secret(self):
+        """AWSSecretsManagerKeyResolver handles binary secrets."""
+        import asyncio
+        from unittest.mock import patch
+
+        from tenuo.temporal import AWSSecretsManagerKeyResolver
+
+        mock_key_bytes = b"\x00" * 32  # 32-byte key
+        mock_response = {"SecretBinary": mock_key_bytes}
+
+        with patch("boto3.client") as mock_boto:
+            mock_client = MagicMock()
+            mock_client.get_secret_value.return_value = mock_response
+            mock_boto.return_value = mock_client
+
+            with patch("tenuo_core.SigningKey") as mock_signing_key:
+                mock_signing_key.from_bytes.return_value = MagicMock()
+
+                resolver = AWSSecretsManagerKeyResolver(secret_prefix="tenuo/")
+                result = asyncio.run(resolver.resolve("my-key"))
+
+                mock_client.get_secret_value.assert_called_once_with(SecretId="tenuo/my-key")
+                mock_signing_key.from_bytes.assert_called_once_with(mock_key_bytes)
+                assert result is not None
+
+    def test_resolves_string_secret(self):
+        """AWSSecretsManagerKeyResolver handles base64 string secrets."""
+        import asyncio
+        import base64
+        from unittest.mock import patch
+
+        from tenuo.temporal import AWSSecretsManagerKeyResolver
+
+        mock_key_bytes = b"\x00" * 32
+        mock_response = {"SecretString": base64.b64encode(mock_key_bytes).decode()}
+
+        with patch("boto3.client") as mock_boto:
+            mock_client = MagicMock()
+            mock_client.get_secret_value.return_value = mock_response
+            mock_boto.return_value = mock_client
+
+            with patch("tenuo_core.SigningKey") as mock_signing_key:
+                mock_signing_key.from_bytes.return_value = MagicMock()
+
+                resolver = AWSSecretsManagerKeyResolver()
+                result = asyncio.run(resolver.resolve("key1"))
+
+                assert result is not None
+
+    def test_caches_resolved_keys(self):
+        """AWSSecretsManagerKeyResolver caches keys."""
+        import asyncio
+        from unittest.mock import patch
+
+        from tenuo.temporal import AWSSecretsManagerKeyResolver
+
+        mock_response = {"SecretBinary": b"\x00" * 32}
+
+        with patch("boto3.client") as mock_boto:
+            mock_client = MagicMock()
+            mock_client.get_secret_value.return_value = mock_response
+            mock_boto.return_value = mock_client
+
+            with patch("tenuo_core.SigningKey") as mock_signing_key:
+                mock_signing_key.from_bytes.return_value = MagicMock()
+
+                resolver = AWSSecretsManagerKeyResolver(cache_ttl=300)
+
+                # First call
+                asyncio.run(resolver.resolve("key1"))
+                # Second call should use cache
+                asyncio.run(resolver.resolve("key1"))
+
+                # Should only call AWS once
+                assert mock_client.get_secret_value.call_count == 1
+
+    def test_raises_on_missing_boto3(self):
+        """AWSSecretsManagerKeyResolver raises KeyResolutionError if boto3 missing."""
+        import asyncio
+        import sys
+        from unittest.mock import patch
+
+        from tenuo.temporal import AWSSecretsManagerKeyResolver, KeyResolutionError
+
+        resolver = AWSSecretsManagerKeyResolver()
+
+        with patch.dict(sys.modules, {"boto3": None}):
+            with patch("builtins.__import__", side_effect=ImportError("No module named 'boto3'")):
+                with pytest.raises(KeyResolutionError):
+                    asyncio.run(resolver.resolve("key1"))
+
+
+class TestGCPSecretManagerKeyResolver:
+    """Tests for GCPSecretManagerKeyResolver."""
+
+    def test_resolves_secret(self):
+        """GCPSecretManagerKeyResolver resolves secrets."""
+        import asyncio
+        from unittest.mock import patch
+
+        from tenuo.temporal import GCPSecretManagerKeyResolver
+
+        mock_key_bytes = b"\x00" * 32
+
+        with patch("google.cloud.secretmanager.SecretManagerServiceClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_response = MagicMock()
+            mock_response.payload.data = mock_key_bytes
+            mock_client.access_secret_version.return_value = mock_response
+            mock_client_class.return_value = mock_client
+
+            with patch("tenuo_core.SigningKey") as mock_signing_key:
+                mock_signing_key.from_bytes.return_value = MagicMock()
+
+                resolver = GCPSecretManagerKeyResolver(project_id="my-project")
+                result = asyncio.run(resolver.resolve("my-key"))
+
+                expected_name = "projects/my-project/secrets/tenuo-keys-my-key/versions/latest"
+                mock_client.access_secret_version.assert_called_once_with(name=expected_name)
+                assert result is not None
+
+    def test_caches_resolved_keys(self):
+        """GCPSecretManagerKeyResolver caches keys."""
+        import asyncio
+        from unittest.mock import patch
+
+        from tenuo.temporal import GCPSecretManagerKeyResolver
+
+        with patch("google.cloud.secretmanager.SecretManagerServiceClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_response = MagicMock()
+            mock_response.payload.data = b"\x00" * 32
+            mock_client.access_secret_version.return_value = mock_response
+            mock_client_class.return_value = mock_client
+
+            with patch("tenuo_core.SigningKey") as mock_signing_key:
+                mock_signing_key.from_bytes.return_value = MagicMock()
+
+                resolver = GCPSecretManagerKeyResolver(project_id="proj", cache_ttl=300)
+
+                # First call
+                asyncio.run(resolver.resolve("key1"))
+                # Second call should use cache
+                asyncio.run(resolver.resolve("key1"))
+
+                # Should only call GCP once
+                assert mock_client.access_secret_version.call_count == 1
+
+    def test_custom_prefix_and_version(self):
+        """GCPSecretManagerKeyResolver respects custom prefix and version."""
+        import asyncio
+        from unittest.mock import patch
+
+        from tenuo.temporal import GCPSecretManagerKeyResolver
+
+        with patch("google.cloud.secretmanager.SecretManagerServiceClient") as mock_client_class:
+            mock_client = MagicMock()
+            mock_response = MagicMock()
+            mock_response.payload.data = b"\x00" * 32
+            mock_client.access_secret_version.return_value = mock_response
+            mock_client_class.return_value = mock_client
+
+            with patch("tenuo_core.SigningKey") as mock_signing_key:
+                mock_signing_key.from_bytes.return_value = MagicMock()
+
+                resolver = GCPSecretManagerKeyResolver(
+                    project_id="my-proj",
+                    secret_prefix="prod-",
+                    version="5",
+                )
+                asyncio.run(resolver.resolve("key-abc"))
+
+                expected_name = "projects/my-proj/secrets/prod-key-abc/versions/5"
+                mock_client.access_secret_version.assert_called_once_with(name=expected_name)
+
+
 class TestTenuoMetrics:
     """Tests for TenuoMetrics."""
 

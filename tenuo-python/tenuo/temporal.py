@@ -41,7 +41,7 @@ Phase 3 Features:
     - workflow_grant() for deterministic single-tool grants
 
 Phase 4 Features:
-    - VaultKeyResolver, KMSKeyResolver, CompositeKeyResolver
+    - VaultKeyResolver, AWSSecretsManagerKeyResolver, GCPSecretManagerKeyResolver, CompositeKeyResolver
     - TenuoMetrics for Prometheus observability
 """
 
@@ -515,75 +515,164 @@ class VaultKeyResolver(KeyResolver):
             raise KeyResolutionError(key_id=key_id)
 
 
-class KMSKeyResolver(KeyResolver):
-    """Resolve keys from cloud KMS (AWS KMS or GCP KMS).
+class AWSSecretsManagerKeyResolver(KeyResolver):
+    """Resolve keys from AWS Secrets Manager.
 
-    Uses KMS to unwrap encrypted key material stored alongside the key ID.
+    Secrets Manager handles both storage and encryption (via KMS under the hood).
+    Store your signing key as a binary secret.
 
     Args:
-        provider: "aws" or "gcp"
-        key_uri_template: URI template with {key_id} placeholder
-            AWS: "arn:aws:kms:us-east-1:123456789:key/{key_id}"
-            GCP: "projects/my-project/locations/global/keyRings/tenuo/cryptoKeys/{key_id}"
+        secret_prefix: Prefix for secret names (default: "tenuo/keys/")
+            Full secret name will be: {secret_prefix}{key_id}
+        region_name: AWS region (default: uses boto3 default)
+        cache_ttl: Cache TTL in seconds (default: 300)
 
     Example:
-        resolver = KMSKeyResolver(
-            provider="aws",
-            key_uri_template="arn:aws:kms:us-west-2:123456789:key/{key_id}",
+        resolver = AWSSecretsManagerKeyResolver(
+            secret_prefix="prod/tenuo/",
+            region_name="us-west-2",
         )
+
+        # Store key in AWS CLI:
+        # aws secretsmanager create-secret --name prod/tenuo/my-key-id \\
+        #     --secret-binary fileb://signing_key.bin
     """
 
     def __init__(
         self,
-        provider: Literal["aws", "gcp"],
-        key_uri_template: str,
+        secret_prefix: str = "tenuo/keys/",
+        region_name: Optional[str] = None,
+        cache_ttl: int = 300,
     ) -> None:
-        self._provider = provider
-        self._key_uri_template = key_uri_template
+        self._secret_prefix = secret_prefix
+        self._region_name = region_name
+        self._cache_ttl = cache_ttl
+        self._cache: Dict[str, tuple[Any, float]] = {}
 
     async def resolve(self, key_id: str) -> Any:
-        """Resolve key using KMS."""
-        key_uri = self._key_uri_template.format(key_id=key_id)
+        """Resolve key from AWS Secrets Manager."""
+        import time
 
-        try:
-            if self._provider == "aws":
-                return await self._resolve_aws(key_id, key_uri)
-            elif self._provider == "gcp":
-                return await self._resolve_gcp(key_id, key_uri)
-            else:
-                raise KeyResolutionError(key_id=key_id)
-        except KeyResolutionError:
-            raise
-        except Exception as e:
-            logger.error(f"KMS key resolution failed: {e}")
-            raise KeyResolutionError(key_id=key_id)
+        # Check cache
+        now = time.time()
+        if key_id in self._cache:
+            cached_key, cached_at = self._cache[key_id]
+            if now - cached_at < self._cache_ttl:
+                logger.debug(f"AWS Secrets Manager cache hit for key: {key_id}")
+                return cached_key
 
-    async def _resolve_aws(self, key_id: str, key_uri: str) -> Any:
-        """Resolve using AWS KMS."""
+        secret_name = f"{self._secret_prefix}{key_id}"
+
         try:
             import boto3  # type: ignore[import-not-found]
 
-            kms = boto3.client("kms")  # noqa: F841
-            # For Phase 4, we assume the key is stored as a data key
-            # wrapped by the KMS key. Real implementation would fetch
-            # the encrypted key from a secure store and decrypt here.
-            logger.debug(f"AWS KMS resolving key: {key_id} via {key_uri}")
-            raise NotImplementedError(
-                "AWS KMS key resolution requires encrypted key material. See docs for setup instructions."
-            )
+            client = boto3.client("secretsmanager", region_name=self._region_name)
+            response = client.get_secret_value(SecretId=secret_name)
+
+            # Secret can be binary or string (base64)
+            if "SecretBinary" in response:
+                key_bytes = response["SecretBinary"]
+            elif "SecretString" in response:
+                key_bytes = base64.b64decode(response["SecretString"])
+            else:
+                raise KeyResolutionError(key_id=key_id)
+
+            from tenuo_core import SigningKey
+
+            signing_key = SigningKey.from_bytes(key_bytes)
+
+            # Cache the result
+            self._cache[key_id] = (signing_key, now)
+            logger.debug(f"AWS Secrets Manager resolved key: {key_id}")
+            return signing_key
+
         except ImportError:
+            logger.error("boto3 not installed. Install with: pip install boto3")
+            raise KeyResolutionError(key_id=key_id)
+        except KeyResolutionError:
+            raise
+        except Exception as e:
+            logger.error(f"AWS Secrets Manager key resolution failed: {e}")
             raise KeyResolutionError(key_id=key_id)
 
-    async def _resolve_gcp(self, key_id: str, key_uri: str) -> Any:
-        """Resolve using GCP KMS."""
-        try:
-            from google.cloud import kms  # type: ignore[import-not-found,import-untyped]  # noqa: F401
 
-            logger.debug(f"GCP KMS resolving key: {key_id} via {key_uri}")
-            raise NotImplementedError(
-                "GCP KMS key resolution requires encrypted key material. See docs for setup instructions."
-            )
+class GCPSecretManagerKeyResolver(KeyResolver):
+    """Resolve keys from GCP Secret Manager.
+
+    Secret Manager handles both storage and encryption (via Cloud KMS under the hood).
+    Store your signing key as a binary secret.
+
+    Args:
+        project_id: GCP project ID
+        secret_prefix: Prefix for secret names (default: "tenuo-keys-")
+            Full secret name will be: {secret_prefix}{key_id}
+        version: Secret version (default: "latest")
+        cache_ttl: Cache TTL in seconds (default: 300)
+
+    Example:
+        resolver = GCPSecretManagerKeyResolver(
+            project_id="my-project-123",
+            secret_prefix="prod-tenuo-",
+        )
+
+        # Store key in gcloud CLI:
+        # gcloud secrets create prod-tenuo-my-key-id --data-file=signing_key.bin
+    """
+
+    def __init__(
+        self,
+        project_id: str,
+        secret_prefix: str = "tenuo-keys-",
+        version: str = "latest",
+        cache_ttl: int = 300,
+    ) -> None:
+        self._project_id = project_id
+        self._secret_prefix = secret_prefix
+        self._version = version
+        self._cache_ttl = cache_ttl
+        self._cache: Dict[str, tuple[Any, float]] = {}
+
+    async def resolve(self, key_id: str) -> Any:
+        """Resolve key from GCP Secret Manager."""
+        import time
+
+        # Check cache
+        now = time.time()
+        if key_id in self._cache:
+            cached_key, cached_at = self._cache[key_id]
+            if now - cached_at < self._cache_ttl:
+                logger.debug(f"GCP Secret Manager cache hit for key: {key_id}")
+                return cached_key
+
+        secret_name = f"{self._secret_prefix}{key_id}"
+        resource_name = f"projects/{self._project_id}/secrets/{secret_name}/versions/{self._version}"
+
+        try:
+            from google.cloud import secretmanager  # type: ignore[import-not-found,import-untyped]
+
+            client = secretmanager.SecretManagerServiceClient()
+            response = client.access_secret_version(name=resource_name)
+            key_bytes = response.payload.data
+
+            from tenuo_core import SigningKey
+
+            signing_key = SigningKey.from_bytes(key_bytes)
+
+            # Cache the result
+            self._cache[key_id] = (signing_key, now)
+            logger.debug(f"GCP Secret Manager resolved key: {key_id}")
+            return signing_key
+
         except ImportError:
+            logger.error(
+                "google-cloud-secret-manager not installed. "
+                "Install with: pip install google-cloud-secret-manager"
+            )
+            raise KeyResolutionError(key_id=key_id)
+        except KeyResolutionError:
+            raise
+        except Exception as e:
+            logger.error(f"GCP Secret Manager key resolution failed: {e}")
             raise KeyResolutionError(key_id=key_id)
 
 
@@ -592,7 +681,7 @@ class CompositeKeyResolver(KeyResolver):
 
     Useful for graceful degradation:
     - Try Vault first (production)
-    - Fall back to KMS (backup)
+    - Fall back to cloud secrets manager (backup)
     - Fall back to env vars (local dev)
 
     Args:
@@ -601,7 +690,7 @@ class CompositeKeyResolver(KeyResolver):
     Example:
         resolver = CompositeKeyResolver([
             VaultKeyResolver(url="https://vault.prod.internal"),
-            KMSKeyResolver(provider="aws", key_uri_template="..."),
+            AWSSecretsManagerKeyResolver(secret_prefix="tenuo/"),
             EnvKeyResolver(),  # Fallback for local dev
         ])
     """
@@ -1757,7 +1846,8 @@ __all__ = [
     "KeyResolver",
     "EnvKeyResolver",
     "VaultKeyResolver",  # Phase 4
-    "KMSKeyResolver",  # Phase 4
+    "AWSSecretsManagerKeyResolver",  # Phase 4
+    "GCPSecretManagerKeyResolver",  # Phase 4
     "CompositeKeyResolver",  # Phase 4
     # Metrics
     "TenuoMetrics",  # Phase 4
