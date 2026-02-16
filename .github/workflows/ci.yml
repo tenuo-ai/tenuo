@@ -580,7 +580,7 @@ jobs:
           pytest --cov=tenuo --cov-report=xml --cov-report=term-missing -q
 
       - name: Upload Rust coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: tenuo-core/lcov-rust.info
           flags: rust
@@ -588,7 +588,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: Upload Python coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: tenuo-python/coverage.xml
           flags: python
