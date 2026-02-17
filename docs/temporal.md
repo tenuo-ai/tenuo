@@ -119,13 +119,22 @@ async def main():
         )
     )
 
-    # Start worker with interceptor
+    # Start worker with interceptor and sandbox passthrough
+    from temporalio.worker.workflow_sandbox import (
+        SandboxedWorkflowRunner, SandboxRestrictions,
+    )
+
     async with Worker(
         client,
         task_queue="data-processing",
         workflows=[DataProcessingWorkflow],
         activities=[read_file, write_file],
         interceptors=[interceptor],
+        workflow_runner=SandboxedWorkflowRunner(
+            restrictions=SandboxRestrictions.default.with_passthrough_modules(
+                "tenuo", "tenuo_core",  # Required for PoP signing
+            )
+        ),
     ):
         # Set warrant headers, then execute workflow
         client_interceptor.set_headers(
@@ -139,12 +148,17 @@ async def main():
         )
 ```
 
+> **Important:** `tenuo` and `tenuo_core` must be configured as passthrough modules in Temporal's workflow sandbox. Without this, PoP verification will fail with `ImportError: PyO3 modules compiled for CPython 3.8 or older may only be initialized once per interpreter process`.
+
 **What happens:**
 1. `TenuoClientInterceptor` injects warrant + signing key into workflow headers
-2. Each `tenuo_execute_activity()` call computes a PoP signature via `warrant.sign()`
-3. `TenuoActivityInboundInterceptor` extracts the warrant and PoP from module-level stores
-4. `Authorizer.authorize()` verifies chain, expiry, capabilities, constraints, and PoP
-5. Activity executes only if all checks pass
+2. Workflow inbound interceptor extracts Tenuo headers and propagates them to activities via Temporal's header mechanism
+3. Each `self.execute_authorized_activity()` call computes a PoP signature via `warrant.sign()`
+4. Activity inbound interceptor reads the warrant, PoP, and signing key from activity headers
+5. `Authorizer.authorize()` verifies chain, expiry, capabilities, constraints, and PoP
+6. Activity executes only if all checks pass
+
+This works in both single-process demos and distributed deployments where client and worker run in separate processes.
 
 ---
 
@@ -212,27 +226,23 @@ resolver = CompositeKeyResolver([
 
 When `trusted_roots` is configured, Tenuo enforces PoP verification for all activity executions. The challenge is a CBOR-serialized tuple of `(warrant_id, tool, sorted_args, window_ts)` signed with the holder's Ed25519 key.
 
-### Automatic PoP with tenuo_execute_activity
+### Two patterns for PoP
+
+**AuthorizedWorkflow** (recommended) validates headers at workflow start and provides `self.execute_authorized_activity()`:
 
 ```python
-from tenuo.temporal import tenuo_execute_activity
-
 @workflow.defn
-class MyWorkflow:
+class MyWorkflow(AuthorizedWorkflow):
     @workflow.run
-    async def run(self) -> str:
-        # Automatically signs PoP challenge
-        result = await tenuo_execute_activity(
+    async def run(self, path: str) -> str:
+        return await self.execute_authorized_activity(
             read_file,
-            args=["/data/report.txt"],
+            args=[path],
             start_to_close_timeout=timedelta(seconds=30),
         )
-        return result
 ```
 
-## Manual Activity Execution
-
-For advanced use cases (e.g., multi-warrant workflows or delegation) where `AuthorizedWorkflow` is too restrictive, use the `tenuo_execute_activity` helper directly:
+**tenuo_execute_activity()** is a free function for advanced use cases (multi-warrant workflows, per-stage delegation) where you need explicit control:
 
 ```python
 from tenuo.temporal import tenuo_execute_activity
@@ -241,7 +251,6 @@ from tenuo.temporal import tenuo_execute_activity
 class PipelineWorkflow:
     @workflow.run
     async def run(self, path: str) -> str:
-        # Manually specify timeouts and retry policy
         return await tenuo_execute_activity(
             read_file,
             args=[path],
@@ -249,6 +258,8 @@ class PipelineWorkflow:
             retry_policy=RetryPolicy(maximum_attempts=3),
         )
 ```
+
+Both automatically sign PoP challenges — you never need to call `warrant.sign()` directly in Temporal workflows.
 
 ### PoP Challenge Format
 
@@ -406,7 +417,7 @@ All security checks default to deny:
 
 ### Replay Safety
 
-PoP challenges use 30-second time-window bucketing (`floor(unix_now / 30) * 30`) for replay tolerance. Signatures remain valid for 4 windows (2 minutes). The `tenuo_execute_activity()` helper handles PoP signing inside the workflow sandbox via module-level stores, avoiding issues with Temporal's deterministic replay.
+PoP challenges use 30-second time-window bucketing (`floor(unix_now / 30) * 30`) for replay tolerance. Signatures remain valid for 4 windows (2 minutes). The `tenuo_execute_activity()` helper handles PoP signing inside the workflow sandbox, and the workflow outbound interceptor injects signed headers into Temporal's native activity header propagation. This means authorization works correctly even in distributed deployments where the client and worker run in separate processes.
 
 ---
 
@@ -429,13 +440,14 @@ from tenuo.temporal import (
 
 ## Best Practices
 
-1. **Use tenuo_execute_activity()** for automatic PoP signing
-2. **Set up VaultKeyResolver** for production key management
-3. **Enable audit logging** to track authorization decisions
-4. **Use @unprotected** sparingly - only for truly internal operations
-5. **Attenuate warrants** for child workflows to enforce least privilege
-6. **Configure metrics** for observability in production
-7. **Keep TTLs short** for sensitive operations (minutes, not hours)
+1. **Use AuthorizedWorkflow** as your base class for fail-fast validation and automatic PoP
+2. **Use tenuo_execute_activity()** for advanced multi-warrant or delegation patterns
+3. **Always configure passthrough modules** (`tenuo`, `tenuo_core`) in the workflow sandbox
+4. **Set up VaultKeyResolver** for production key management
+5. **Enable audit logging** to track authorization decisions
+6. **Use @unprotected** sparingly - only for truly internal operations
+7. **Attenuate warrants** for child workflows to enforce least privilege
+8. **Keep TTLs short** for sensitive operations (minutes, not hours)
 
 ---
 
@@ -443,7 +455,8 @@ from tenuo.temporal import (
 
 | Example | Description |
 |---------|-------------|
-| [`demo.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/demo.py) | Basic warrant enforcement with authorized / unauthorized access |
+| [`authorized_workflow_demo.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/authorized_workflow_demo.py) | **Recommended starting point.** AuthorizedWorkflow base class with parallel reads and fail-fast validation |
+| [`demo.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/demo.py) | Lower-level `tenuo_execute_activity()` API with sequential + parallel reads |
 | [`multi_warrant.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/multi_warrant.py) | Multi-tenant isolation: separate warrants per workflow |
 | [`delegation.py`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/temporal/delegation.py) | Per-stage pipeline authorization with least-privilege warrants |
 

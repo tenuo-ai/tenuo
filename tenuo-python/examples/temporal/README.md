@@ -102,19 +102,30 @@ worker = Worker(
 ## Architecture
 
 ```
-Client                 Worker                  Activity
-  |                      |                        |
-  |-- set_headers() ---->|                        |
-  |-- execute_workflow ->|                        |
-  |                      |-- schedule activity -->|
-  |                      |                        |
-  |                      |<-- Interceptor --------|
-  |                      |    Check warrant       |
-  |                      |    Verify PoP          |
-  |                      |    Check constraints   |
-  |                      |                        |
-  |                      |--- Execute if OK ----->|
+Client                    Workflow                    Activity
+  |                          |                           |
+  |-- set_headers()          |                           |
+  |-- execute_workflow() --->|                           |
+  |                          |                           |
+  |                    Inbound interceptor:              |
+  |                    Extract Tenuo headers             |
+  |                          |                           |
+  |                    execute_authorized_activity()     |
+  |                    Sign PoP challenge                |
+  |                          |                           |
+  |                    Outbound interceptor:             |
+  |                    Inject headers into activity  --->|
+  |                          |                           |
+  |                          |    Activity interceptor:  |
+  |                          |    Verify warrant chain   |
+  |                          |    Verify PoP signature   |
+  |                          |    Check constraints      |
+  |                          |                           |
+  |                          |<--- Execute if OK --------|
 ```
+
+Headers propagate through Temporal's native header mechanism,
+so this works in distributed deployments (separate client/worker processes).
 
 ## Security defaults
 
