@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0-beta.9] - 2026-02-17
+
+### Added
+- **Temporal distributed deployment**: Header propagation via outbound interceptor — works when client and worker are separate processes
+- **`AuthorizedWorkflow`**: Base class with fail-fast validation and automatic PoP
+- **`TenuoClientInterceptor`**: Client-side warrant header injection
+- **Live integration tests**: 36 tests including 5 against an in-process Temporal server
+- **Examples**: `authorized_workflow_demo.py`, `multi_warrant.py`, `delegation.py`
+
+### Fixed
+- Broken header propagation in distributed Temporal deployments
+- AWS/GCP key resolver tests on CI without cloud SDKs installed
+- mypy errors for optional dependencies (`temporalio`, `google.adk`, `agents`)
+
 ## [0.1.0-beta.8] - 2026-02-14
 
 ### Added

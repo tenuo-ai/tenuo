@@ -1290,7 +1290,7 @@ checksum = "b1dd07eb858a2067e2f3c7155d54e929265c264e6f37efe3ee7a8d1b5a1dd0ba"
 
 [[package]]
 name = "tenuo"
-version = "0.1.0-beta.8"
+version = "0.1.0-beta.9"
 dependencies = [
  "base64",
  "cel-interpreter",
@@ -1328,7 +1328,7 @@ dependencies = [
 
 [[package]]
 name = "tenuo-python"
-version = "0.1.0-beta.8"
+version = "0.1.0-beta.9"
 dependencies = [
  "pyo3",
  "tenuo",
