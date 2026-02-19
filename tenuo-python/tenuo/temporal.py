@@ -106,7 +106,7 @@ Proof-of-Possession (PoP) Challenge Format:
         activities (e.g. via ``asyncio.gather``) don't overwrite each
         other's signatures.  The activity interceptor computes the same
         key, pops the oldest entry, decodes the base64, and passes the
-        raw 64-byte signature to ``Authorizer.authorize(..., signature=pop_bytes)``.
+        raw 64-byte signature to ``Authorizer.check_chain()`` or ``Authorizer.authorize_one()``.
 
 Troubleshooting:
     ``ImportError: PyO3 modules ... may only be initialized once``
@@ -161,6 +161,7 @@ TENUO_KEY_ID_HEADER = "x-tenuo-key-id"
 TENUO_COMPRESSED_HEADER = "x-tenuo-compressed"
 TENUO_POP_HEADER = "x-tenuo-pop"
 TENUO_SIGNING_KEY_HEADER = "x-tenuo-signing-key"
+TENUO_CHAIN_HEADER = "x-tenuo-warrant-chain"
 
 # PoP timestamp validation window (seconds). The scheduled_time must be
 # within this window. This is not configurable — security is non-negotiable.
@@ -196,6 +197,12 @@ POP_WINDOW_SECONDS = 300
 _store_lock = threading.Lock()
 _workflow_headers_store: Dict[str, Dict[str, bytes]] = {}
 _pending_pop: Dict[str, Deque[bytes]] = {}
+_pending_child_headers: Dict[str, Dict[str, bytes]] = {}
+_pop_dedup_cache: Dict[str, float] = {}
+_pop_dedup_last_evict: float = 0.0
+_DEDUP_EVICT_INTERVAL: float = 60.0
+_interceptor_config: Optional["TenuoInterceptorConfig"] = None
+_workflow_config_store: Dict[str, "TenuoInterceptorConfig"] = {}
 
 
 def _pop_key(wf_id: str, tool_name: str, args: Any) -> str:
@@ -948,6 +955,20 @@ class TenuoInterceptorConfig:
     public key so the full chain can be validated.
     """
 
+    authorized_signals: Optional[List[str]] = None
+    """
+    When set, only signals whose name is in this list are accepted.
+    Unrecognized signals are denied and logged. When None (default),
+    all signals pass through (backward compatible).
+    """
+
+    authorized_updates: Optional[List[str]] = None
+    """
+    When set, only workflow updates whose name is in this list are
+    accepted.  Unrecognized updates are rejected at the validator
+    stage.  When None (default), all updates pass through.
+    """
+
 
 # =============================================================================
 # Client Interceptor — injects Tenuo headers into workflow start
@@ -1252,24 +1273,20 @@ def attenuated_headers(
 
     Args:
         tools: Tools to allow (subset of parent). None = inherit all.
-        constraints: Additional constraints to apply.
+        constraints: Per-tool constraint overrides, e.g.
+            ``{"read_file": {"path": Pattern("/safe/*")}}``.
+            Merged on top of the parent's constraints (must be narrower).
         ttl_seconds: Max TTL for child warrant. None = inherit parent.
         child_key_id: Key ID for child. None = inherit parent.
         compress: Whether to gzip compress (default: True).
 
     Returns:
-        Headers dict to pass to execute_child_workflow()
+        Headers dict with attenuated warrant
 
-    Example:
-        # Start child workflow with reduced scope
-        await workflow.execute_child_workflow(
-            ChildWorkflow.run,
-            args=[...],
-            headers=attenuated_headers(
-                tools=["read_file"],  # Parent has read_file + write_file
-                ttl_seconds=60,
-            ),
-        )
+    NOTE: Temporal's ``execute_child_workflow()`` does not accept a
+    ``headers`` kwarg directly.  Use ``tenuo_execute_child_workflow()``
+    instead — it calls ``attenuated_headers()`` internally and injects
+    the attenuated warrant via the outbound workflow interceptor.
 
     Raises:
         TenuoContextError: If no parent warrant in context
@@ -1299,35 +1316,179 @@ def attenuated_headers(
     else:
         tools = list(parent_tools)
 
-    # Attenuate the warrant
-    # Note: This uses the parent warrant's attenuate() method
-    # The actual key resolution happens at execution time
+    # Get workflow ID to retrieve headers from store
+    try:
+        from temporalio import workflow as _wf  # type: ignore[import-not-found]
+        info = _wf.info()
+        wf_id = info.workflow_id
+    except ImportError:
+        raise TenuoContextError("temporalio not available")
+
+    # Retrieve signing key from workflow headers store
+    # (Same pattern as tenuo_execute_activity)
+    with _store_lock:
+        raw_headers = _workflow_headers_store.get(wf_id, {})
+    if not raw_headers:
+        raise TenuoContextError(
+            "No Tenuo headers in store. Ensure TenuoInterceptor is "
+            "registered and tenuo_headers() was passed at workflow start."
+        )
+
+    sk_b64 = raw_headers.get(TENUO_SIGNING_KEY_HEADER)
+    if sk_b64 is None:
+        raise TenuoContextError(
+            "No signing key found in parent workflow headers. "
+            "Cannot propagate PoP to child workflow."
+        )
+    from tenuo_core import SigningKey  # type: ignore[import-not-found]
+
+    try:
+        signing_key_raw = base64.b64decode(sk_b64)
+        signer = SigningKey.from_bytes(signing_key_raw)
+    except Exception as e:
+        raise TenuoContextError(f"Failed to decode signing key: {e}")
+
+    # Build capabilities dict: start from parent's per-tool constraints,
+    # then overlay any caller-supplied narrowing constraints.
+    parent_caps = parent_warrant.capabilities or {}
+    extra = constraints or {}
+    capabilities = {}
+    for tool in tools:
+        base = dict(parent_caps.get(tool, {}))
+        # Monotonic narrowing is enforced by attenuate(), not by this merge.
+        # The Rust core rejects any capability that widens the parent scope.
+        base.update(extra.get(tool, {}))
+        capabilities[tool] = base
+
     child_warrant = parent_warrant.attenuate(
-        tools=tools,
-        constraints=constraints or {},
+        capabilities=capabilities,
+        signing_key=signer,
         ttl_seconds=ttl_seconds,
     )
 
     # Use parent key_id if not specified
     key_id = child_key_id or parent_key_id
 
-    # Propagate signing key from parent workflow headers
+    hdrs = tenuo_headers(child_warrant, key_id, signing_key_raw, compress=compress)
+
+    # Propagate the delegation chain so the activity interceptor
+    # can call check_chain() for full trust-root verification.
+    existing_chain_b64 = raw_headers.get(TENUO_CHAIN_HEADER)
+    if existing_chain_b64:
+        parent_chain = json.loads(base64.b64decode(existing_chain_b64))
+    else:
+        parent_chain = [parent_warrant.to_base64()]
+    parent_chain.append(child_warrant.to_base64())
+    hdrs[TENUO_CHAIN_HEADER] = base64.b64encode(
+        json.dumps(parent_chain).encode()
+    )
+
+    return hdrs
+
+
+async def tenuo_execute_child_workflow(
+    workflow_fn: Any,
+    *,
+    args: Optional[List[Any]] = None,
+    id: Optional[str] = None,
+    tools: Optional[List[str]] = None,
+    constraints: Optional[Dict[str, Any]] = None,
+    ttl_seconds: Optional[int] = None,
+    child_key_id: Optional[str] = None,
+    task_queue: Optional[str] = None,
+    execution_timeout: Any = None,
+    run_timeout: Any = None,
+    task_timeout: Any = None,
+    cancellation_type: Any = None,
+    parent_close_policy: Any = None,
+    retry_policy: Any = None,
+    id_reuse_policy: Any = None,
+    cron_schedule: str = "",
+    memo: Any = None,
+    search_attributes: Any = None,
+) -> Any:
+    """Execute a child workflow with an attenuated Tenuo warrant.
+
+    Creates a narrowed warrant via ``attenuated_headers()`` and injects it
+    into the child workflow through the outbound interceptor.
+
+    Args:
+        workflow_fn: The child workflow function/class to execute.
+        args: Arguments to pass to the child workflow.
+        id: Workflow ID for the child. Auto-generated if not provided.
+        tools: Tools to allow (subset of parent). None = inherit all.
+        constraints: Per-tool constraint overrides (must narrow parent).
+        ttl_seconds: Max TTL for child warrant.
+        child_key_id: Key ID for child. None = inherit parent.
+        task_queue: Task queue override.
+        execution_timeout: Workflow execution timeout.
+        run_timeout: Single workflow run timeout.
+        task_timeout: Workflow task timeout.
+        cancellation_type: Child workflow cancellation type.
+        parent_close_policy: What happens to child when parent closes.
+        retry_policy: Retry policy for the child workflow.
+        id_reuse_policy: Workflow ID reuse policy.
+        cron_schedule: Cron schedule string.
+        memo: Memo fields.
+        search_attributes: Search attributes.
+
+    Returns:
+        The child workflow's return value.
+
+    Example::
+
+        data = await tenuo_execute_child_workflow(
+            ReaderChild.run,
+            args=[source_dir],
+            id=f"reader-{workflow.info().workflow_id}",
+            tools=["read_file", "list_directory"],
+            ttl_seconds=60,
+        )
+    """
     try:
-        from temporalio import workflow as _wf  # type: ignore[import-not-found]
-
-        raw_headers = getattr(_wf, "_current_headers", None) or {}
-        signing_key_b64 = raw_headers.get(TENUO_SIGNING_KEY_HEADER)
-        if signing_key_b64 is None:
-            raise TenuoContextError(
-                "No signing key in parent workflow headers. "
-                "Cannot propagate PoP to child workflow."
-            )
-        # Decode and re-encode for tenuo_headers
-        signing_key_raw = base64.b64decode(signing_key_b64)
+        from temporalio import workflow  # type: ignore[import-not-found]
     except ImportError:
-        raise TenuoContextError("temporalio not available")
+        raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
 
-    return tenuo_headers(child_warrant, key_id, signing_key_raw, compress=compress)
+    hdrs = attenuated_headers(
+        tools=tools,
+        constraints=constraints,
+        ttl_seconds=ttl_seconds,
+        child_key_id=child_key_id,
+    )
+
+    child_id = id or f"{workflow.info().workflow_id}-child-{workflow.uuid4()}"
+
+    with _store_lock:
+        _pending_child_headers[child_id] = hdrs
+
+    kwargs: Dict[str, Any] = {"id": child_id}
+    if args is not None:
+        kwargs["args"] = args
+    if task_queue is not None:
+        kwargs["task_queue"] = task_queue
+    if execution_timeout is not None:
+        kwargs["execution_timeout"] = execution_timeout
+    if run_timeout is not None:
+        kwargs["run_timeout"] = run_timeout
+    if task_timeout is not None:
+        kwargs["task_timeout"] = task_timeout
+    if cancellation_type is not None:
+        kwargs["cancellation_type"] = cancellation_type
+    if parent_close_policy is not None:
+        kwargs["parent_close_policy"] = parent_close_policy
+    if retry_policy is not None:
+        kwargs["retry_policy"] = retry_policy
+    if id_reuse_policy is not None:
+        kwargs["id_reuse_policy"] = id_reuse_policy
+    if cron_schedule:
+        kwargs["cron_schedule"] = cron_schedule
+    if memo is not None:
+        kwargs["memo"] = memo
+    if search_attributes is not None:
+        kwargs["search_attributes"] = search_attributes
+
+    return await workflow.execute_child_workflow(workflow_fn, **kwargs)
 
 
 def workflow_grant(
@@ -1343,25 +1504,28 @@ def workflow_grant(
 
     Args:
         tool: The tool to authorize
-        constraints: Constraints to apply to the tool
+        constraints: Per-tool constraint overrides, e.g.
+            ``{"path_prefix": "/data/"}``. Merged on top of the
+            parent's constraints for this tool (must be narrower).
         ttl_seconds: Time-to-live in seconds (default: 5 minutes)
 
     Returns:
         A new Warrant scoped to the specified tool
 
     Example:
-        # Within a workflow
+        # Within a workflow — issue a scoped grant for a single tool
         file_warrant = workflow_grant(
             "read_file",
             constraints={"path_prefix": "/data/"},
             ttl_seconds=60,
         )
 
-        # Pass to activity
-        await workflow.execute_activity(
+        # Activities are authorized via the interceptor automatically;
+        # use tenuo_execute_activity() to add PoP signing:
+        await tenuo_execute_activity(
             read_file,
-            args=[file_warrant, path],
-            ...
+            args=[path],
+            start_to_close_timeout=timedelta(seconds=30),
         )
 
     Raises:
@@ -1373,10 +1537,8 @@ def workflow_grant(
     except ImportError:
         raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
 
-    # Get parent warrant
     parent_warrant = current_warrant()
 
-    # Validate tool is in parent scope
     parent_tools = parent_warrant.tools or []
     if tool not in parent_tools:
         raise ConstraintViolation(
@@ -1386,11 +1548,37 @@ def workflow_grant(
             warrant_id=parent_warrant.id,
         )
 
-    # Issue attenuated warrant with deterministic timestamp
-    # workflow.now() is replay-safe
+    wf_id = workflow.info().workflow_id
+    with _store_lock:
+        raw_headers = _workflow_headers_store.get(wf_id, {})
+    if not raw_headers:
+        raise TenuoContextError(
+            "No Tenuo headers in store. Ensure TenuoInterceptor is "
+            "registered and tenuo_headers() was passed at workflow start."
+        )
+
+    sk_b64 = raw_headers.get(TENUO_SIGNING_KEY_HEADER)
+    if sk_b64 is None:
+        raise TenuoContextError(
+            "No signing key found in workflow headers. "
+            "Cannot issue attenuated grant."
+        )
+    from tenuo_core import SigningKey  # type: ignore[import-not-found]
+
+    try:
+        signer = SigningKey.from_bytes(base64.b64decode(sk_b64))
+    except Exception as e:
+        raise TenuoContextError(f"Failed to decode signing key: {e}")
+
+    parent_caps = parent_warrant.capabilities or {}
+    base = dict(parent_caps.get(tool, {}))
+    if constraints:
+        base.update(constraints)
+    capabilities = {tool: base}
+
     return parent_warrant.attenuate(
-        tools=[tool],
-        constraints=constraints or {},
+        capabilities=capabilities,
+        signing_key=signer,
         ttl_seconds=ttl_seconds,
     )
 
@@ -1561,7 +1749,7 @@ class AuthorizedWorkflow:
             "input",
             id="workflow-id",
             task_queue="my-queue",
-            headers=tenuo_headers(signing_key, warrant),  # Required!
+            headers=tenuo_headers(warrant, "agent-key-1", signing_key),
         )
 
     Raises:
@@ -1790,6 +1978,61 @@ class _TenuoWorkflowOutboundInterceptor:
 
         return self._next.start_activity(input)
 
+    def start_child_workflow(self, input: Any) -> Any:
+        """Inject attenuated Tenuo headers into child workflow starts."""
+        try:
+            from temporalio.api.common.v1 import Payload  # type: ignore
+        except ImportError:
+            return self._next.start_child_workflow(input)
+
+        child_id = input.id
+        with _store_lock:
+            raw_headers = _pending_child_headers.pop(child_id, None)
+
+        if raw_headers:
+            child_headers = dict(input.headers or {})
+            for k, v in raw_headers.items():
+                child_headers[k] = Payload(data=v)
+            input = _replace_field(input, "headers", child_headers)
+
+        return self._next.start_child_workflow(input)
+
+    def continue_as_new(self, input: Any) -> None:
+        """Re-inject Tenuo headers so the next run keeps its warrant."""
+        try:
+            from temporalio import workflow as _wf  # type: ignore[import-not-found]
+            from temporalio.api.common.v1 import Payload  # type: ignore
+        except ImportError:
+            return self._next.continue_as_new(input)
+
+        wf_id = _wf.info().workflow_id
+        with _store_lock:
+            raw_headers = _workflow_headers_store.get(wf_id, {})
+
+        if raw_headers:
+            can_headers = dict(input.headers or {})
+            for k, v in raw_headers.items():
+                can_headers[k] = Payload(data=v)
+            input = _replace_field(input, "headers", can_headers)
+
+        return self._next.continue_as_new(input)
+
+    def start_nexus_operation(self, input: Any) -> Any:
+        """Propagate Tenuo headers into Nexus cross-namespace operations."""
+        from temporalio import workflow as _wf  # type: ignore[import-not-found]
+
+        wf_id = _wf.info().workflow_id
+        with _store_lock:
+            raw_headers = _workflow_headers_store.get(wf_id, {})
+
+        if raw_headers:
+            nexus_headers = dict(input.headers or {})
+            for k, v in raw_headers.items():
+                nexus_headers[k] = base64.b64encode(v).decode()
+            input = _replace_field(input, "headers", nexus_headers)
+
+        return self._next.start_nexus_operation(input)
+
     def start_local_activity(self, input: Any) -> Any:
         return self._next.start_local_activity(input)
 
@@ -1822,6 +2065,8 @@ class _TenuoWorkflowInboundInterceptor:
     through Temporal's standard header propagation.
     """
 
+    _config: Optional["TenuoInterceptorConfig"] = None
+
     def __init__(self, next_interceptor: Any) -> None:
         self.next = next_interceptor
 
@@ -1849,20 +2094,76 @@ class _TenuoWorkflowInboundInterceptor:
             with _store_lock:
                 _workflow_headers_store[wf_id] = incoming
 
+        if self._config is not None:
+            with _store_lock:
+                _workflow_config_store[wf_id] = self._config
+
         try:
             return await self.next.execute_workflow(input)
         finally:
             with _store_lock:
                 _workflow_headers_store.pop(wf_id, None)
+                _workflow_config_store.pop(wf_id, None)
                 stale = [k for k in _pending_pop if k.startswith(f"{wf_id}:")]
                 for k in stale:
                     del _pending_pop[k]
 
+    def _resolve_config(self) -> Optional["TenuoInterceptorConfig"]:
+        from temporalio import workflow as _wf  # type: ignore[import-not-found]
+
+        wf_id = _wf.info().workflow_id
+        with _store_lock:
+            cfg = _workflow_config_store.get(wf_id)
+        return cfg or _interceptor_config
+
     async def handle_signal(self, input: Any) -> None:
+        config = self._resolve_config()
+        if config and config.authorized_signals is not None:
+            signal_name = getattr(input, "signal", None)
+            if signal_name not in config.authorized_signals:
+                logger.warning(
+                    f"Signal '{signal_name}' denied: not in authorized_signals"
+                )
+                raise ConstraintViolation(
+                    tool=f"signal:{signal_name}",
+                    arguments={},
+                    constraint=f"Signal not authorized: {signal_name}",
+                    warrant_id="workflow",
+                )
         return await self.next.handle_signal(input)
 
     async def handle_query(self, input: Any) -> Any:
         return await self.next.handle_query(input)
+
+    def handle_update_validator(self, input: Any) -> None:
+        config = self._resolve_config()
+        if config and config.authorized_updates is not None:
+            update_name = getattr(input, "update", None)
+            if update_name not in config.authorized_updates:
+                logger.warning(
+                    f"Update '{update_name}' rejected at validation: "
+                    "not in authorized_updates"
+                )
+                raise ConstraintViolation(
+                    tool=f"update:{update_name}",
+                    arguments={},
+                    constraint=f"Update not authorized: {update_name}",
+                    warrant_id="workflow",
+                )
+        return self.next.handle_update_validator(input)
+
+    async def handle_update_handler(self, input: Any) -> Any:
+        config = self._resolve_config()
+        if config and config.authorized_updates is not None:
+            update_name = getattr(input, "update", None)
+            if update_name not in config.authorized_updates:
+                raise ConstraintViolation(
+                    tool=f"update:{update_name}",
+                    arguments={},
+                    constraint=f"Update not authorized: {update_name}",
+                    warrant_id="workflow",
+                )
+        return await self.next.handle_update_handler(input)
 
 
 class TenuoInterceptor:
@@ -1904,7 +2205,9 @@ class TenuoInterceptor:
     """
 
     def __init__(self, config: TenuoInterceptorConfig) -> None:
+        global _interceptor_config
         self._config = config
+        _interceptor_config = config
         self._version = self._get_version()
 
     def _get_version(self) -> str:
@@ -1937,6 +2240,7 @@ class TenuoInterceptor:
         dict so the activity interceptor can read them. This sidesteps the
         fact that workflow.execute_activity() does not accept ``headers``.
         """
+        _TenuoWorkflowInboundInterceptor._config = self._config
         return _TenuoWorkflowInboundInterceptor
 
 
@@ -2092,7 +2396,7 @@ class TenuoActivityInboundInterceptor:
         # --- Full Authorizer path (with PoP verification) ---
         if self._config.trusted_roots:
             try:
-                from tenuo_core import Authorizer  # type: ignore[import-not-found]
+                from tenuo_core import Authorizer, Warrant as CoreWarrant  # type: ignore[import-not-found]
 
                 authorizer = Authorizer(trusted_roots=self._config.trusted_roots)
 
@@ -2102,11 +2406,48 @@ class TenuoActivityInboundInterceptor:
                 if pop_header:
                     pop_bytes = base64.b64decode(pop_header)
 
-                # authorizer.authorize() checks: signature chain, expiry,
-                # capabilities, constraints, and PoP — all in one call.
-                authorizer.authorize(
-                    warrant, tool_name, args, signature=pop_bytes,
-                )
+                # check_chain() is the single authorization entry point.
+                # For delegation chains it verifies transitive trust;
+                # for standalone warrants authorize_one() wraps it as
+                # a single-element chain.
+                chain_header = headers.get(TENUO_CHAIN_HEADER)
+                if chain_header:
+                    chain_list = json.loads(base64.b64decode(chain_header))
+                    chain = [CoreWarrant.from_base64(w) for w in chain_list]
+                    authorizer.check_chain(
+                        chain, tool_name, args, signature=pop_bytes,
+                    )
+                else:
+                    authorizer.authorize_one(
+                        warrant, tool_name, args, signature=pop_bytes,
+                    )
+
+                # PoP replay detection: reject if the same dedup key
+                # was seen within the dedup TTL window.  Skip on
+                # Temporal retries (attempt > 1) which reuse the same
+                # headers legitimately.
+                if info.attempt <= 1:
+                    global _pop_dedup_last_evict
+                    base_dedup = warrant.dedup_key(tool_name, args)
+                    dedup_key = f"{base_dedup}:{info.workflow_id}:{info.activity_id}"
+                    now = datetime.now(timezone.utc).timestamp()
+                    ttl = float(warrant.dedup_ttl_secs())
+                    with _store_lock:
+                        last_seen = _pop_dedup_cache.get(dedup_key)
+                        if last_seen is not None and (now - last_seen) < ttl:
+                            raise PopVerificationError(
+                                reason=f"replay detected (dedup_key seen {now - last_seen:.1f}s ago)",
+                                activity_name=tool_name,
+                            )
+                        _pop_dedup_cache[dedup_key] = now
+                        if (now - _pop_dedup_last_evict) >= _DEDUP_EVICT_INTERVAL:
+                            _pop_dedup_last_evict = now
+                            expired = [
+                                k for k, t in _pop_dedup_cache.items()
+                                if (now - t) >= ttl
+                            ]
+                            for k in expired:
+                                del _pop_dedup_cache[k]
 
             except Exception as e:
                 self._emit_denial_event(
@@ -2360,11 +2701,13 @@ __all__ = [
     # Interceptors
     "TenuoInterceptor",
     "TenuoClientInterceptor",
+    "TenuoActivityInboundInterceptor",
     # Header utilities
     "tenuo_headers",
     "attenuated_headers",  # Phase 3
     # Workflow helpers
     "tenuo_execute_activity",
+    "tenuo_execute_child_workflow",
     # Context accessors
     "current_warrant",
     "current_key_id",
@@ -2381,4 +2724,6 @@ __all__ = [
     "TENUO_KEY_ID_HEADER",
     "TENUO_POP_HEADER",
     "TENUO_SIGNING_KEY_HEADER",
+    "TENUO_COMPRESSED_HEADER",
+    "TENUO_CHAIN_HEADER",
 ]

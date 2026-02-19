@@ -4345,6 +4345,34 @@ pub struct PySignedApproval {
 
 #[pymethods]
 impl PySignedApproval {
+    #[new]
+    fn new(
+        approval_version: u8,
+        payload: &[u8],
+        approver_key: &PyPublicKey,
+        signature: &[u8],
+    ) -> PyResult<Self> {
+        if signature.len() != 64 {
+            return Err(PyValueError::new_err(format!(
+                "Invalid signature length: expected 64 bytes, got {}",
+                signature.len()
+            )));
+        }
+        let mut sig_bytes = [0u8; 64];
+        sig_bytes.copy_from_slice(signature);
+
+        let sig = crate::crypto::Signature::from_bytes(&sig_bytes)
+            .map_err(|e| PyValueError::new_err(format!("Invalid signature bytes: {}", e)))?;
+
+        Ok(Self {
+            inner: RustSignedApproval {
+                approval_version,
+                payload: payload.to_vec(),
+                approver_key: approver_key.inner.clone(),
+                signature: sig,
+            },
+        })
+    }
     /// Create (sign) a new approval.
     #[staticmethod]
     fn create(payload: &PyApprovalPayload, keypair: &PySigningKey) -> Self {
@@ -4393,6 +4421,16 @@ impl PySignedApproval {
         }
     }
 
+    #[getter]
+    fn payload(&self) -> &[u8] {
+        &self.inner.payload
+    }
+
+    #[getter]
+    fn signature(&self) -> PyResult<Vec<u8>> {
+        Ok(self.inner.signature.to_bytes().to_vec())
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "SignedApproval(version={}, approver={})",
@@ -4400,6 +4438,39 @@ impl PySignedApproval {
             hex::encode(&self.inner.approver_key.to_bytes()[..8])
         )
     }
+}
+
+/// Compute the request hash that binds an approval to a specific tool call.
+///
+/// The hash covers (warrant_id, tool, sorted args, holder), ensuring an approval
+/// cannot be reused across different calls, warrants, or agents.
+///
+/// Args:
+///     warrant_id: The warrant ID (e.g., "tnu_wrt_...")
+///     tool: The tool name being approved
+///     args: Dictionary of tool arguments (values must be str, int, float, bool, or list)
+///     holder: Optional PublicKey of the warrant holder (binds approval to agent)
+///
+/// Returns:
+///     32-byte hash as bytes
+#[pyfunction]
+#[pyo3(signature = (warrant_id, tool, args, holder=None))]
+fn py_compute_request_hash(
+    warrant_id: &str,
+    tool: &str,
+    args: &Bound<'_, PyDict>,
+    holder: Option<&PyPublicKey>,
+) -> PyResult<[u8; 32]> {
+    let mut rust_args = std::collections::HashMap::new();
+    for (key, value) in args.iter() {
+        let k: String = key.extract()?;
+        let v = py_to_constraint_value(&value)?;
+        rust_args.insert(k, v);
+    }
+    let holder_ref = holder.map(|h| &h.inner);
+    Ok(crate::approval::compute_request_hash(
+        warrant_id, tool, &rust_args, holder_ref,
+    ))
 }
 
 /// Unsigned metadata for an approval (NOT part of the signed payload).
@@ -4733,6 +4804,53 @@ impl PyAuthorizer {
                 &rust_approvals,
             )
             .map_err(to_py_err)
+    }
+
+    /// Authorize a single warrant with full verification.
+    ///
+    /// Wraps the warrant as a single-element chain and calls check_chain().
+    /// This is the recommended entry point for standalone warrants — it
+    /// provides signature verification, issuer trust, revocation, clearance,
+    /// capabilities, constraints, PoP, and multi-sig in one call.
+    ///
+    /// Args:
+    ///     warrant: The warrant to authorize
+    ///     tool: Tool name being invoked
+    ///     args: Dictionary of argument name -> value
+    ///     signature: Optional PoP signature bytes (64 bytes)
+    ///
+    /// Returns:
+    ///     ChainVerificationResult on success, raises exception on failure
+    #[pyo3(signature = (warrant, tool, args, signature=None))]
+    fn authorize_one(
+        &self,
+        warrant: &PyWarrant,
+        tool: &str,
+        args: &Bound<'_, PyDict>,
+        signature: Option<&[u8]>,
+    ) -> PyResult<PyChainVerificationResult> {
+        let mut rust_args = HashMap::new();
+        for (key, value) in args.iter() {
+            let field: String = key.extract()?;
+            let cv = py_to_constraint_value(&value)?;
+            rust_args.insert(field, cv);
+        }
+
+        let sig = match signature {
+            Some(bytes) => {
+                let arr: [u8; 64] = bytes
+                    .try_into()
+                    .map_err(|_| PyValueError::new_err("signature must be exactly 64 bytes"))?;
+                Some(RustSignature::from_bytes(&arr).map_err(to_py_err)?)
+            }
+            None => None,
+        };
+
+        let result = self
+            .inner
+            .authorize_one(&warrant.inner, tool, &rust_args, sig.as_ref(), &[])
+            .map_err(to_py_err)?;
+        Ok(PyChainVerificationResult { inner: result })
     }
 
     /// Verify a complete delegation chain.
@@ -5145,6 +5263,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Functions
     m.add_function(wrap_pyfunction!(py_compute_diff, m)?)?;
     m.add_function(wrap_pyfunction!(py_decode_warrant_stack_base64, m)?)?;
+    m.add_function(wrap_pyfunction!(py_compute_request_hash, m)?)?;
 
     Ok(())
 }

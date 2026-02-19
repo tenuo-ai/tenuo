@@ -1775,21 +1775,86 @@ impl Authorizer {
     /// 1. The warrant is signed by a trusted issuer
     /// 2. The warrant has not expired
     /// 3. The warrant is not revoked
+    /// Authorize a single warrant.
+    ///
+    /// This is a convenience wrapper around `check_chain()` that treats
+    /// the warrant as a single-element chain. It provides the complete
+    /// security boundary in one call: signature verification, issuer
+    /// trust, revocation, clearance, capabilities, constraints, PoP,
+    /// and multi-sig.
+    ///
+    /// For delegation chains, use `check_chain()` directly.
+    pub fn authorize_one(
+        &self,
+        warrant: &Warrant,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+        signature: Option<&crate::crypto::Signature>,
+        approvals: &[crate::approval::SignedApproval],
+    ) -> Result<ChainVerificationResult> {
+        self.check_chain(&[warrant.clone()], tool, args, signature, approvals)
+    }
+
+    // -- Deprecated methods --------------------------------------------------
+    // These are retained for backward compatibility but should not be used
+    // in new code. Use `authorize_one()` or `check_chain()` instead.
+
+    /// **Deprecated**: Use `authorize_one()` instead, which includes
+    /// signature verification. This method does NOT verify the warrant
+    /// signature — a caller who skips `verify()` gets no cryptographic
+    /// guarantee.
+    #[deprecated(note = "Use authorize_one() which includes signature verification")]
+    pub fn authorize(
+        &self,
+        warrant: &Warrant,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+        holder_signature: Option<&crate::crypto::Signature>,
+        approvals: &[crate::approval::SignedApproval],
+    ) -> Result<()> {
+        if !self.trusted_keys.is_empty() {
+            let issuer = warrant.issuer();
+            if !self.trusted_keys.iter().any(|k| k == issuer) {
+                return Err(Error::SignatureInvalid(
+                    "warrant issuer not in trusted roots".to_string(),
+                ));
+            }
+        }
+
+        if let Some(required_trust) = self.get_required_clearance(tool) {
+            let warrant_trust = warrant.clearance().unwrap_or(Clearance::UNTRUSTED);
+            if warrant_trust < required_trust {
+                return Err(Error::InsufficientClearance {
+                    tool: tool.to_string(),
+                    required: format!("{:?}", required_trust),
+                    actual: format!("{:?}", warrant_trust),
+                });
+            }
+        }
+
+        warrant.authorize_with_pop_config(
+            tool,
+            args,
+            holder_signature,
+            self.pop_window_secs,
+            self.pop_max_windows,
+        )?;
+
+        self.verify_approvals(warrant, tool, args, approvals)
+    }
+
+    /// **Deprecated**: Use `authorize_one()` instead, which combines
+    /// verification and authorization in a single call.
+    #[deprecated(note = "Use authorize_one() which combines verify + authorize")]
     pub fn verify(&self, warrant: &Warrant) -> Result<()> {
-        // Check revocation first
         if self.is_revoked(warrant) {
             return Err(Error::WarrantRevoked(warrant.id().to_string()));
         }
 
-        // Check expiration first (fast path), with clock tolerance
         if warrant.is_expired_with_tolerance(self.clock_tolerance) {
             return Err(Error::WarrantExpired(warrant.expires_at()));
         }
 
-        // Check if issuer is trusted
-        // 1. Verify the warrant signature
-        // If trusted_issuers is empty, we skip the trust check (debug mode)
-        // If trusted_issuers is not empty, we require the issuer to be trusted
         let issuer = warrant.issuer();
         if !self.trusted_keys.is_empty() && !self.trusted_keys.contains(issuer) {
             return Err(Error::Validation(format!(
@@ -1802,71 +1867,8 @@ impl Authorizer {
         warrant.verify(issuer)
     }
 
-    /// Authorize an action against a warrant.
-    ///
-    /// This is the main authorization entry point. It checks:
-    /// 1. **Issuer trust** - warrant must be from a trusted root
-    /// 2. Trust level requirements (if configured)
-    /// 3. Tool name matches
-    /// 4. All constraints are satisfied
-    /// 5. Holder signature (if warrant has `authorized_holder`)
-    /// 6. Multi-sig approvals (if warrant has `required_approvers`)
-    ///
-    /// This is an **offline operation** - no network calls.
-    ///
-    /// # Arguments
-    ///
-    /// * `warrant` - The warrant authorizing the action
-    /// * `tool` - The tool being invoked
-    /// * `args` - The arguments to the tool
-    /// * `holder_signature` - PoP signature (required if holder-bound)
-    /// * `approvals` - Approval attestations (required if multi-sig)
-    pub fn authorize(
-        &self,
-        warrant: &Warrant,
-        tool: &str,
-        args: &HashMap<String, ConstraintValue>,
-        holder_signature: Option<&crate::crypto::Signature>,
-        approvals: &[crate::approval::SignedApproval],
-    ) -> Result<()> {
-        // 0. CRITICAL: Verify warrant issuer is trusted (fast fail)
-        // If trusted_keys is configured, warrant must be signed by one of them.
-        // This check must come FIRST to prevent accepting warrants from untrusted sources.
-        if !self.trusted_keys.is_empty() {
-            let issuer = warrant.issuer();
-            if !self.trusted_keys.iter().any(|k| k == issuer) {
-                return Err(Error::SignatureInvalid(
-                    "warrant issuer not in trusted roots".to_string(),
-                ));
-            }
-        }
-
-        // 1. Check trust level requirements (fast fail)
-        if let Some(required_trust) = self.get_required_clearance(tool) {
-            let warrant_trust = warrant.clearance().unwrap_or(Clearance::UNTRUSTED);
-            if warrant_trust < required_trust {
-                return Err(Error::InsufficientClearance {
-                    tool: tool.to_string(),
-                    required: format!("{:?}", required_trust),
-                    actual: format!("{:?}", warrant_trust),
-                });
-            }
-        }
-
-        // 2. Standard constraint authorization with configured PoP window
-        warrant.authorize_with_pop_config(
-            tool,
-            args,
-            holder_signature,
-            self.pop_window_secs,
-            self.pop_max_windows,
-        )?;
-
-        // 3. Multi-sig verification (if required)
-        self.verify_approvals(warrant, tool, args, approvals)
-    }
-
-    /// Convenience: verify warrant and authorize in one call.
+    /// **Deprecated**: Use `authorize_one()` instead.
+    #[deprecated(note = "Use authorize_one() instead")]
     pub fn check(
         &self,
         warrant: &Warrant,
@@ -1875,8 +1877,11 @@ impl Authorizer {
         holder_signature: Option<&crate::crypto::Signature>,
         approvals: &[crate::approval::SignedApproval],
     ) -> Result<()> {
-        self.verify(warrant)?;
-        self.authorize(warrant, tool, args, holder_signature, approvals)
+        #[allow(deprecated)]
+        {
+            self.verify(warrant)?;
+            self.authorize(warrant, tool, args, holder_signature, approvals)
+        }
     }
 
     /// Verify multi-sig approvals against a warrant.
@@ -2235,6 +2240,16 @@ impl Authorizer {
     ///
     /// Convenience method combining chain verification and authorization
     /// against the leaf warrant.
+    /// Verify a delegation chain and authorize the leaf warrant.
+    ///
+    /// This is the **primary authorization entry point**. For single
+    /// warrants, use `authorize_one()` which wraps this method.
+    ///
+    /// Complete security boundary in one call:
+    /// - `verify_chain()`: signature verification, issuer trust,
+    ///   revocation, chain linkage, monotonic narrowing, expiry
+    /// - Leaf authorization: clearance, capabilities, constraints,
+    ///   PoP, and multi-sig
     pub fn check_chain(
         &self,
         chain: &[Warrant],
@@ -2246,7 +2261,29 @@ impl Authorizer {
         let result = self.verify_chain(chain)?;
 
         if let Some(leaf) = chain.last() {
-            self.authorize(leaf, tool, args, signature, approvals)?;
+            // Clearance check
+            if let Some(required) = self.get_required_clearance(tool) {
+                let actual = leaf.clearance().unwrap_or(Clearance::UNTRUSTED);
+                if actual < required {
+                    return Err(Error::InsufficientClearance {
+                        tool: tool.to_string(),
+                        required: format!("{:?}", required),
+                        actual: format!("{:?}", actual),
+                    });
+                }
+            }
+
+            // Capability, constraint, and PoP verification
+            leaf.authorize_with_pop_config(
+                tool,
+                args,
+                signature,
+                self.pop_window_secs,
+                self.pop_max_windows,
+            )?;
+
+            // Multi-sig verification
+            self.verify_approvals(leaf, tool, args, approvals)?;
         }
 
         Ok(result)

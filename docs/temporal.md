@@ -15,7 +15,12 @@ Tenuo integrates with [Temporal](https://temporal.io) to bring warrant-based aut
 - **Activity-level authorization**: Each activity execution is authorized against warrant constraints
 - **Proof-of-Possession (PoP)**: Ed25519 signature verification when `trusted_roots` is configured
 - **Warrant propagation**: Warrants flow through workflow headers automatically
-- **Child workflow delegation**: Attenuate warrants when spawning child workflows
+- **Child workflow delegation**: Attenuate warrants when spawning child workflows via `tenuo_execute_child_workflow()`
+- **Delegation chain verification**: Full chain-of-trust validation back to trusted roots
+- **Signal & update guards**: Restrict which signals and updates a workflow accepts
+- **Nexus header propagation**: Warrant context flows through Nexus operations
+- **PoP replay protection**: In-memory dedup cache prevents signature replay attacks
+- **Continue-as-new support**: Warrant headers survive workflow continuation
 - **Fail-closed**: Missing or invalid warrants block execution by default
 - **Enterprise key management**: VaultKeyResolver, KMSKeyResolver, CompositeKeyResolver
 
@@ -286,10 +291,10 @@ pop_signature = warrant.sign(signing_key, "read_file", {"path": "/data/file.txt"
 
 ## Child Workflow Delegation
 
-Attenuate warrants when spawning child workflows:
+Attenuate warrants when spawning child workflows with `tenuo_execute_child_workflow()`:
 
 ```python
-from tenuo.temporal import attenuated_headers
+from tenuo.temporal import tenuo_execute_child_workflow
 
 @workflow.defn
 class ParentWorkflow:
@@ -298,16 +303,52 @@ class ParentWorkflow:
         # Parent has: read_file + write_file
 
         # Child gets only read_file with reduced TTL
-        result = await workflow.execute_child_workflow(
+        result = await tenuo_execute_child_workflow(
             ChildWorkflow.run,
+            tools=["read_file"],   # Subset of parent tools
+            ttl_seconds=60,        # Shorter than parent
             args=["/data/input"],
-            headers=attenuated_headers(
-                tools=["read_file"],  # Subset of parent tools
-                ttl_seconds=60,       # Shorter than parent
-            ),
+            id=f"child-{workflow.info().workflow_id}",
+            task_queue=workflow.info().task_queue,
         )
         return result
 ```
+
+The wrapper calls `attenuated_headers()` internally and injects the attenuated warrant via the outbound workflow interceptor — Temporal's `execute_child_workflow()` does not accept a `headers` kwarg directly.
+
+### Delegation Chain Verification
+
+When warrants are attenuated, the full delegation chain is propagated via the `x-tenuo-warrant-chain` header. The activity interceptor calls `Authorizer.check_chain()` to verify every link in the chain back to a trusted root, ensuring no intermediate warrant was forged or widened.
+
+---
+
+## Signal & Update Authorization
+
+Control which signals and workflow updates are allowed:
+
+```python
+config = TenuoInterceptorConfig(
+    key_resolver=EnvKeyResolver(),
+    on_denial="raise",
+    trusted_roots=[control_key.public_key],
+    authorized_signals=["approve", "reject"],     # Only these signals allowed
+    authorized_updates=["update_config"],          # Only these updates allowed
+)
+```
+
+Unrecognized signals raise `ConstraintViolation`. Unrecognized updates are rejected at the validator stage before the handler runs. When set to `None` (default), all signals and updates pass through for backward compatibility.
+
+---
+
+## Nexus Operation Headers
+
+When starting Nexus operations from a Tenuo-protected workflow, the outbound interceptor automatically propagates warrant headers to the Nexus service. Headers are base64-encoded into Nexus's string-based header format.
+
+---
+
+## PoP Replay Protection
+
+The activity interceptor maintains an in-memory dedup cache to detect replayed PoP signatures within the same time window. Each unique `(warrant, tool, args, workflow_id, activity_id)` combination is tracked. Retries (`attempt > 1`) bypass dedup since Temporal legitimately re-delivers the same activity. The cache is periodically evicted (every 60 seconds) to prevent unbounded memory growth.
 
 ---
 

@@ -40,6 +40,7 @@ from tenuo.temporal import (  # noqa: E402
     TENUO_COMPRESSED_HEADER,
     _workflow_headers_store,
     _pending_pop,
+    _pop_dedup_cache,
     _pop_key,
     _store_lock,
     _extract_warrant_from_headers,
@@ -76,9 +77,11 @@ def headers_dict(warrant, agent_key):
 def clean_stores():
     _workflow_headers_store.clear()
     _pending_pop.clear()
+    _pop_dedup_cache.clear()
     yield
     _workflow_headers_store.clear()
     _pending_pop.clear()
+    _pop_dedup_cache.clear()
 
 
 # -- Helpers -----------------------------------------------------------------
@@ -97,6 +100,7 @@ class FakeActivityInfo:
     workflow_run_id: str = "run-001"
     task_queue: str = "test-queue"
     is_local: bool = False
+    attempt: int = 1
 
 @dataclass
 class FakeExecuteActivityInput:
@@ -576,8 +580,11 @@ class TestActivityRetries:
         _set_pop(wf, warrant, agent_key, "read_file",
                  {"path": "/tmp/demo/f.txt"})
 
+        retry_info = FakeActivityInfo(
+            activity_type="read_file", activity_id="1",
+            workflow_id=wf, attempt=2)
         with patch("temporalio.activity.info") as m:
-            m.return_value = info
+            m.return_value = retry_info
             r = _run(ai.execute_activity(inp))
         assert r == "ok"
 
