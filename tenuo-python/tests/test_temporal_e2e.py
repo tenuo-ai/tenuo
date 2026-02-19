@@ -7,16 +7,17 @@ required.
 
 Covers:
   - TenuoClientInterceptor header injection + module-level store
-  - tenuo_execute_activity() PoP signing via warrant.sign()
+  - Transparent PoP: outbound interceptor computes PoP inline
   - TenuoActivityInboundInterceptor authorization (Authorizer path)
   - Constraint enforcement (authorized vs. unauthorized)
-  - PoP round-trip: workflow signs -> interceptor verifies
-  - Module-level store lifecycle (_workflow_headers_store, _pending_pop)
+  - PoP round-trip: interceptor signs -> activity interceptor verifies
+  - Module-level store lifecycle (_workflow_headers_store)
   - Audit event emission
 """
 
 import asyncio
 import base64
+import time
 import pytest
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -39,9 +40,7 @@ from tenuo.temporal import (  # noqa: E402
     TENUO_SIGNING_KEY_HEADER,
     TENUO_COMPRESSED_HEADER,
     _workflow_headers_store,
-    _pending_pop,
     _pop_dedup_cache,
-    _pop_key,
     _store_lock,
     _extract_warrant_from_headers,
     _TenuoWorkflowInboundInterceptor,
@@ -76,11 +75,9 @@ def headers_dict(warrant, agent_key):
 @pytest.fixture(autouse=True)
 def clean_stores():
     _workflow_headers_store.clear()
-    _pending_pop.clear()
     _pop_dedup_cache.clear()
     yield
     _workflow_headers_store.clear()
-    _pending_pop.clear()
     _pop_dedup_cache.clear()
 
 
@@ -103,6 +100,11 @@ class FakeActivityInfo:
     attempt: int = 1
 
 @dataclass
+class FakePayload:
+    """Mimics temporalio.api.common.v1.Payload for testing."""
+    data: bytes = b""
+
+@dataclass
 class FakeExecuteActivityInput:
     fn: Any = None
     args: tuple = ()
@@ -116,19 +118,20 @@ def _populate_store(wf_id, hdict):
             raw[k] = raw_v
     _workflow_headers_store[wf_id] = raw
 
-def _set_pop(wf_id, warrant, agent_key, tool, args_dict, raw_args=None):
-    """Store a PoP signature in the new queue-based _pending_pop.
+def _make_activity_headers(hdict, warrant, signer, tool, args_dict):
+    """Build FakePayload headers for an activity, including PoP.
 
-    raw_args: positional args tuple as passed to execute_activity (for key computation).
-              Defaults to the values of args_dict.
+    Simulates what the outbound workflow interceptor injects: all
+    x-tenuo-* headers from the workflow, plus a freshly computed PoP.
     """
-    from collections import deque
-    pop = warrant.sign(agent_key, tool, args_dict)
-    if raw_args is None:
-        raw_args = tuple(args_dict.values())
-    key = _pop_key(wf_id, tool, raw_args)
-    with _store_lock:
-        _pending_pop.setdefault(key, deque()).append(base64.b64encode(bytes(pop)))
+    pop = warrant.sign(signer, tool, args_dict, int(time.time()))
+    raw = {}
+    for k, v in hdict.items():
+        raw_v = v if isinstance(v, bytes) else str(v).encode("utf-8")
+        if k.startswith("x-tenuo-"):
+            raw[k] = raw_v
+    raw[TENUO_POP_HEADER] = base64.b64encode(bytes(pop))
+    return {k: FakePayload(data=v) for k, v in raw.items()}
 
 
 def _run(coro):
@@ -208,7 +211,7 @@ class TestTenuoHeadersReal:
 class TestPopRoundTrip:
     def test_sign_verify(self, warrant, agent_key, control_key):
         from tenuo_core import Authorizer
-        pop = warrant.sign(agent_key, "read_file", {"path": "/tmp/demo/f.txt"})
+        pop = warrant.sign(agent_key, "read_file", {"path": "/tmp/demo/f.txt"}, int(time.time()))
         assert len(pop) == 64
         auth = Authorizer(trusted_roots=[control_key.public_key])
         auth.authorize(warrant, "read_file", {"path": "/tmp/demo/f.txt"}, signature=pop)
@@ -216,14 +219,14 @@ class TestPopRoundTrip:
     def test_wrong_key_rejected(self, warrant, control_key):
         from tenuo_core import Authorizer
         wrong = SigningKey.generate()
-        pop = warrant.sign(wrong, "read_file", {"path": "/tmp/demo/f.txt"})
+        pop = warrant.sign(wrong, "read_file", {"path": "/tmp/demo/f.txt"}, int(time.time()))
         auth = Authorizer(trusted_roots=[control_key.public_key])
         with pytest.raises(Exception):
             auth.authorize(warrant, "read_file", {"path": "/tmp/demo/f.txt"}, signature=pop)
 
     def test_wrong_tool_rejected(self, warrant, agent_key, control_key):
         from tenuo_core import Authorizer
-        pop = warrant.sign(agent_key, "read_file", {"path": "/tmp/demo/f.txt"})
+        pop = warrant.sign(agent_key, "read_file", {"path": "/tmp/demo/f.txt"}, int(time.time()))
         auth = Authorizer(trusted_roots=[control_key.public_key])
         with pytest.raises(Exception):
             auth.authorize(warrant, "list_directory", {"path": "/tmp/demo"}, signature=pop)
@@ -244,14 +247,15 @@ class TestActivityInterceptorAuthorizer:
         events = []
         ti = self._make(control_key, events)
         wf = "wf-ok"
-        _populate_store(wf, headers_dict)
-        _set_pop(wf, warrant, agent_key, "read_file", {"path": "/tmp/demo/f.txt"})
+        act_headers = _make_activity_headers(
+            headers_dict, warrant, agent_key, "read_file", {"path": "/tmp/demo/f.txt"})
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="content")
         nxt.init = MagicMock()
         ai = ti.intercept_activity(nxt)
         info = FakeActivityInfo(activity_type="read_file", workflow_id=wf)
-        inp = FakeExecuteActivityInput(fn=lambda path: path, args=("/tmp/demo/f.txt",))
+        inp = FakeExecuteActivityInput(
+            fn=lambda path: path, args=("/tmp/demo/f.txt",), headers=act_headers)
         with patch("temporalio.activity.info") as mock_info:
             mock_info.return_value = info
             r = _run(ai.execute_activity(inp))
@@ -262,14 +266,15 @@ class TestActivityInterceptorAuthorizer:
         events = []
         ti = self._make(control_key, events)
         wf = "wf-deny"
-        _populate_store(wf, headers_dict)
-        _set_pop(wf, warrant, agent_key, "read_file", {"path": "/etc/passwd"})
+        act_headers = _make_activity_headers(
+            headers_dict, warrant, agent_key, "read_file", {"path": "/etc/passwd"})
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock()
         nxt.init = MagicMock()
         ai = ti.intercept_activity(nxt)
         info = FakeActivityInfo(activity_type="read_file", workflow_id=wf)
-        inp = FakeExecuteActivityInput(fn=lambda path: path, args=("/etc/passwd",))
+        inp = FakeExecuteActivityInput(
+            fn=lambda path: path, args=("/etc/passwd",), headers=act_headers)
         with patch("temporalio.activity.info") as mock_info:
             mock_info.return_value = info
             with pytest.raises(ConstraintViolation):
@@ -293,14 +298,15 @@ class TestActivityInterceptorAuthorizer:
     def test_denies_unknown_tool(self, warrant, agent_key, control_key, headers_dict):
         ti = self._make(control_key)
         wf = "wf-tool"
-        _populate_store(wf, headers_dict)
-        _set_pop(wf, warrant, agent_key, "delete_file", {"path": "/tmp/demo/f"})
+        act_headers = _make_activity_headers(
+            headers_dict, warrant, agent_key, "delete_file", {"path": "/tmp/demo/f"})
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock()
         nxt.init = MagicMock()
         ai = ti.intercept_activity(nxt)
         info = FakeActivityInfo(activity_type="delete_file", workflow_id=wf)
-        inp = FakeExecuteActivityInput(fn=lambda path: path, args=("/tmp/demo/f",))
+        inp = FakeExecuteActivityInput(
+            fn=lambda path: path, args=("/tmp/demo/f",), headers=act_headers)
         with patch("temporalio.activity.info") as mock_info:
             mock_info.return_value = info
             with pytest.raises(ConstraintViolation):
@@ -310,28 +316,6 @@ class TestActivityInterceptorAuthorizer:
 # -- Store lifecycle ---------------------------------------------------------
 
 class TestStoreLifecycle:
-    def test_pop_consumed_on_read(self, warrant, agent_key, headers_dict):
-        _populate_store("wf-pop", headers_dict)
-        _set_pop("wf-pop", warrant, agent_key, "read_file", {"path": "/tmp/demo/f"})
-        key = _pop_key("wf-pop", "read_file", ("/tmp/demo/f",))
-        assert key in _pending_pop
-        with _store_lock:
-            _pending_pop[key].popleft()
-            if not _pending_pop[key]:
-                del _pending_pop[key]
-        assert key not in _pending_pop
-
-    def test_pop_keyed_by_tool_and_args(self, warrant, agent_key, headers_dict):
-        """Different (tool, args) get different slots — no collision."""
-        _populate_store("wf-k", headers_dict)
-        _set_pop("wf-k", warrant, agent_key, "read_file", {"path": "/tmp/demo/a"})
-        _set_pop("wf-k", warrant, agent_key, "list_directory", {"path": "/tmp/demo"})
-        k1 = _pop_key("wf-k", "read_file", ("/tmp/demo/a",))
-        k2 = _pop_key("wf-k", "list_directory", ("/tmp/demo",))
-        assert k1 != k2
-        assert k1 in _pending_pop
-        assert k2 in _pending_pop
-
     def test_workflows_isolated(self, headers_dict):
         a = {k: v for k, v in headers_dict.items() if k.startswith("x-tenuo-")}
         b = dict(a)
@@ -354,14 +338,15 @@ class TestAuditEvents:
         )
         ti = TenuoInterceptor(cfg)
         wf = "wf-ae"
-        _populate_store(wf, headers_dict)
-        _set_pop(wf, warrant, agent_key, "read_file", {"path": "/tmp/demo/a.txt"})
+        act_headers = _make_activity_headers(
+            headers_dict, warrant, agent_key, "read_file", {"path": "/tmp/demo/a.txt"})
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="ok")
         nxt.init = MagicMock()
         ai = ti.intercept_activity(nxt)
         info = FakeActivityInfo(activity_type="read_file", workflow_id=wf)
-        inp = FakeExecuteActivityInput(fn=lambda path: path, args=("/tmp/demo/a.txt",))
+        inp = FakeExecuteActivityInput(
+            fn=lambda path: path, args=("/tmp/demo/a.txt",), headers=act_headers)
         with patch("temporalio.activity.info") as mock_info:
             mock_info.return_value = info
             _run(ai.execute_activity(inp))
@@ -381,14 +366,15 @@ class TestAuditEvents:
         )
         ti = TenuoInterceptor(cfg)
         wf = "wf-de"
-        _populate_store(wf, headers_dict)
-        _set_pop(wf, warrant, agent_key, "read_file", {"path": "/etc/shadow"})
+        act_headers = _make_activity_headers(
+            headers_dict, warrant, agent_key, "read_file", {"path": "/etc/shadow"})
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock()
         nxt.init = MagicMock()
         ai = ti.intercept_activity(nxt)
         info = FakeActivityInfo(activity_type="read_file", workflow_id=wf)
-        inp = FakeExecuteActivityInput(fn=lambda path: path, args=("/etc/shadow",))
+        inp = FakeExecuteActivityInput(
+            fn=lambda path: path, args=("/etc/shadow",), headers=act_headers)
         with patch("temporalio.activity.info") as mock_info:
             mock_info.return_value = info
             with pytest.raises(ConstraintViolation):
@@ -401,7 +387,7 @@ class TestAuditEvents:
 # -- Parallel activities (race condition regression) -------------------------
 
 class TestParallelActivities:
-    """Verify that parallel activities get independent PoP slots."""
+    """Verify that parallel activities each get independent PoP via headers."""
 
     def _make(self, ck):
         cfg = TenuoInterceptorConfig(
@@ -416,13 +402,6 @@ class TestParallelActivities:
         """Simulates asyncio.gather(read_file(a), list_directory(b))."""
         ti = self._make(control_key)
         wf = "wf-par-1"
-        _populate_store(wf, headers_dict)
-
-        # Both PoPs stored before either activity runs (simulates gather)
-        _set_pop(wf, warrant, agent_key, "read_file",
-                 {"path": "/tmp/demo/f.txt"})
-        _set_pop(wf, warrant, agent_key, "list_directory",
-                 {"path": "/tmp/demo"})
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="ok")
@@ -430,20 +409,24 @@ class TestParallelActivities:
         ai = ti.intercept_activity(nxt)
 
         # Activity 1: read_file
+        h1 = _make_activity_headers(
+            headers_dict, warrant, agent_key, "read_file", {"path": "/tmp/demo/f.txt"})
         info1 = FakeActivityInfo(
             activity_type="read_file", activity_id="1", workflow_id=wf)
         inp1 = FakeExecuteActivityInput(
-            fn=lambda path: path, args=("/tmp/demo/f.txt",))
+            fn=lambda path: path, args=("/tmp/demo/f.txt",), headers=h1)
         with patch("temporalio.activity.info") as m:
             m.return_value = info1
             r1 = _run(ai.execute_activity(inp1))
         assert r1 == "ok"
 
         # Activity 2: list_directory
+        h2 = _make_activity_headers(
+            headers_dict, warrant, agent_key, "list_directory", {"path": "/tmp/demo"})
         info2 = FakeActivityInfo(
             activity_type="list_directory", activity_id="2", workflow_id=wf)
         inp2 = FakeExecuteActivityInput(
-            fn=lambda path: path, args=("/tmp/demo",))
+            fn=lambda path: path, args=("/tmp/demo",), headers=h2)
         with patch("temporalio.activity.info") as m:
             m.return_value = info2
             r2 = _run(ai.execute_activity(inp2))
@@ -455,12 +438,6 @@ class TestParallelActivities:
         """gather(read_file(a.txt), read_file(b.txt)) — same tool, diff args."""
         ti = self._make(control_key)
         wf = "wf-par-2"
-        _populate_store(wf, headers_dict)
-
-        _set_pop(wf, warrant, agent_key, "read_file",
-                 {"path": "/tmp/demo/a.txt"})
-        _set_pop(wf, warrant, agent_key, "read_file",
-                 {"path": "/tmp/demo/b.txt"})
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="data")
@@ -468,31 +445,23 @@ class TestParallelActivities:
         ai = ti.intercept_activity(nxt)
 
         for aid, path in [("1", "/tmp/demo/a.txt"), ("2", "/tmp/demo/b.txt")]:
+            h = _make_activity_headers(
+                headers_dict, warrant, agent_key, "read_file", {"path": path})
             info = FakeActivityInfo(
                 activity_type="read_file", activity_id=aid, workflow_id=wf)
             inp = FakeExecuteActivityInput(
-                fn=lambda path: path, args=(path,))
+                fn=lambda path: path, args=(path,), headers=h)
             with patch("temporalio.activity.info") as m:
                 m.return_value = info
                 r = _run(ai.execute_activity(inp))
             assert r == "data"
 
-    def test_same_tool_same_args_queued(
+    def test_same_tool_same_args_both_authorized(
         self, warrant, agent_key, control_key, headers_dict
     ):
-        """Exact duplicate calls share a key — FIFO queue handles both."""
+        """Exact duplicate calls — each gets its own PoP in headers."""
         ti = self._make(control_key)
         wf = "wf-par-3"
-        _populate_store(wf, headers_dict)
-
-        # Two identical calls
-        _set_pop(wf, warrant, agent_key, "read_file",
-                 {"path": "/tmp/demo/f.txt"})
-        _set_pop(wf, warrant, agent_key, "read_file",
-                 {"path": "/tmp/demo/f.txt"})
-
-        key = _pop_key(wf, "read_file", ("/tmp/demo/f.txt",))
-        assert len(_pending_pop[key]) == 2
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="x")
@@ -500,33 +469,30 @@ class TestParallelActivities:
         ai = ti.intercept_activity(nxt)
 
         for aid in ["1", "2"]:
+            h = _make_activity_headers(
+                headers_dict, warrant, agent_key, "read_file",
+                {"path": "/tmp/demo/f.txt"})
             info = FakeActivityInfo(
                 activity_type="read_file", activity_id=aid, workflow_id=wf)
             inp = FakeExecuteActivityInput(
-                fn=lambda path: path, args=("/tmp/demo/f.txt",))
+                fn=lambda path: path, args=("/tmp/demo/f.txt",), headers=h)
             with patch("temporalio.activity.info") as m:
                 m.return_value = info
                 r = _run(ai.execute_activity(inp))
             assert r == "x"
 
-        # Queue fully consumed
-        assert key not in _pending_pop
-
     def test_no_pop_leaks_across_workflows(
         self, warrant, agent_key, control_key, headers_dict
     ):
-        """PoP for wf-A is invisible to wf-B."""
+        """PoP for wf-A is invisible to wf-B (no module-level stores)."""
         ti = self._make(control_key)
-        _populate_store("wf-A", headers_dict)
-        _set_pop("wf-A", warrant, agent_key, "read_file",
-                 {"path": "/tmp/demo/f.txt"})
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock()
         nxt.init = MagicMock()
         ai = ti.intercept_activity(nxt)
 
-        # Activity runs under wf-B which has NO store entry → denial
+        # Activity runs under wf-B which has NO headers → denial
         info = FakeActivityInfo(
             activity_type="read_file", activity_id="1", workflow_id="wf-B")
         inp = FakeExecuteActivityInput(
@@ -540,7 +506,7 @@ class TestParallelActivities:
 # -- Activity retries --------------------------------------------------------
 
 class TestActivityRetries:
-    """PoP must survive retries (same tool + same args = same queue slot)."""
+    """PoP is per-invocation via headers, so retries just need fresh headers."""
 
     def _make(self, ck):
         cfg = TenuoInterceptorConfig(
@@ -552,40 +518,39 @@ class TestActivityRetries:
     def test_retry_with_fresh_pop(
         self, warrant, agent_key, control_key, headers_dict
     ):
-        """If the workflow re-signs before retry, a fresh PoP is available."""
+        """Each attempt gets fresh PoP in its headers."""
         ti = self._make(control_key)
         wf = "wf-retry"
-        _populate_store(wf, headers_dict)
-
-        # First attempt — stores PoP
-        _set_pop(wf, warrant, agent_key, "read_file",
-                 {"path": "/tmp/demo/f.txt"})
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="ok")
         nxt.init = MagicMock()
         ai = ti.intercept_activity(nxt)
 
+        # First attempt
+        h1 = _make_activity_headers(
+            headers_dict, warrant, agent_key, "read_file",
+            {"path": "/tmp/demo/f.txt"})
         info = FakeActivityInfo(
             activity_type="read_file", activity_id="1", workflow_id=wf)
         inp = FakeExecuteActivityInput(
-            fn=lambda path: path, args=("/tmp/demo/f.txt",))
-
-        # First attempt succeeds
+            fn=lambda path: path, args=("/tmp/demo/f.txt",), headers=h1)
         with patch("temporalio.activity.info") as m:
             m.return_value = info
             _run(ai.execute_activity(inp))
 
-        # Queue drained — simulate retry by adding another PoP
-        _set_pop(wf, warrant, agent_key, "read_file",
-                 {"path": "/tmp/demo/f.txt"})
-
+        # Retry — fresh PoP in headers
+        h2 = _make_activity_headers(
+            headers_dict, warrant, agent_key, "read_file",
+            {"path": "/tmp/demo/f.txt"})
         retry_info = FakeActivityInfo(
             activity_type="read_file", activity_id="1",
             workflow_id=wf, attempt=2)
+        inp2 = FakeExecuteActivityInput(
+            fn=lambda path: path, args=("/tmp/demo/f.txt",), headers=h2)
         with patch("temporalio.activity.info") as m:
             m.return_value = retry_info
-            r = _run(ai.execute_activity(inp))
+            r = _run(ai.execute_activity(inp2))
         assert r == "ok"
 
 
@@ -603,22 +568,19 @@ class TestConcurrentWorkflows:
         )
         ti = TenuoInterceptor(ti_cfg)
 
-        for wf in ["wf-c1", "wf-c2"]:
-            _populate_store(wf, headers_dict)
-            _set_pop(wf, warrant, agent_key, "read_file",
-                     {"path": "/tmp/demo/f.txt"})
-
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="data")
         nxt.init = MagicMock()
         ai = ti.intercept_activity(nxt)
 
-        # Each workflow's activity succeeds independently
         for wf in ["wf-c1", "wf-c2"]:
+            h = _make_activity_headers(
+                headers_dict, warrant, agent_key, "read_file",
+                {"path": "/tmp/demo/f.txt"})
             info = FakeActivityInfo(
                 activity_type="read_file", activity_id="1", workflow_id=wf)
             inp = FakeExecuteActivityInput(
-                fn=lambda path: path, args=("/tmp/demo/f.txt",))
+                fn=lambda path: path, args=("/tmp/demo/f.txt",), headers=h)
             with patch("temporalio.activity.info") as m:
                 m.return_value = info
                 r = _run(ai.execute_activity(inp))
@@ -631,11 +593,7 @@ class TestWarrantExpiration:
     """Expired warrants must be denied regardless of valid PoP."""
 
     def test_expired_warrant_denied_authorizer_path(self, agent_key, control_key):
-        """Authorizer path: expired warrant is rejected even with valid PoP.
-
-        We mint with ttl=1 and sleep so the warrant is valid at serialization
-        time but expired by the time the activity interceptor runs.
-        """
+        """Authorizer path: expired warrant is rejected even with valid PoP."""
         import time
 
         expired = (
@@ -645,7 +603,6 @@ class TestWarrantExpiration:
             .ttl(1)
             .mint(control_key)
         )
-        # Serialize headers while warrant is still valid
         h = tenuo_headers(expired, "agent1", agent_key)
 
         # Wait for expiration
@@ -658,8 +615,9 @@ class TestWarrantExpiration:
         )
         ti = TenuoInterceptor(cfg)
         wf = "wf-exp-auth"
-        _populate_store(wf, h)
-        _set_pop(wf, expired, agent_key, "read_file", {"path": "/tmp/demo/f"})
+
+        act_headers = _make_activity_headers(
+            h, expired, agent_key, "read_file", {"path": "/tmp/demo/f"})
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock()
@@ -668,7 +626,7 @@ class TestWarrantExpiration:
 
         info = FakeActivityInfo(activity_type="read_file", workflow_id=wf)
         inp = FakeExecuteActivityInput(
-            fn=lambda path: path, args=("/tmp/demo/f",))
+            fn=lambda path: path, args=("/tmp/demo/f",), headers=act_headers)
         with patch("temporalio.activity.info") as m:
             m.return_value = info
             with pytest.raises(ConstraintViolation, match="expired"):
@@ -698,7 +656,14 @@ class TestWarrantExpiration:
         )
         ti = TenuoInterceptor(cfg)
         wf = "wf-exp-light"
-        _populate_store(wf, h)
+
+        # Build headers without PoP (lightweight path doesn't need it)
+        raw = {}
+        for k, v in h.items():
+            raw_v = v if isinstance(v, bytes) else str(v).encode("utf-8")
+            if k.startswith("x-tenuo-"):
+                raw[k] = raw_v
+        warrant_headers = {k: FakePayload(data=v) for k, v in raw.items()}
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock()
@@ -707,7 +672,7 @@ class TestWarrantExpiration:
 
         info = FakeActivityInfo(activity_type="read_file", workflow_id=wf)
         inp = FakeExecuteActivityInput(
-            fn=lambda path: path, args=("/tmp/demo/f",))
+            fn=lambda path: path, args=("/tmp/demo/f",), headers=warrant_headers)
         with patch("temporalio.activity.info") as m:
             m.return_value = info
             with pytest.raises(WarrantExpired):
@@ -733,10 +698,9 @@ class TestPopValidation:
         wrong_key = SigningKey.generate()
         ti = self._make(control_key)
         wf = "wf-pop-wrong"
-        _populate_store(wf, headers_dict)
-        # Sign PoP with the wrong key
-        _set_pop(wf, warrant, wrong_key, "read_file",
-                 {"path": "/tmp/demo/f.txt"})
+        act_headers = _make_activity_headers(
+            headers_dict, warrant, wrong_key, "read_file",
+            {"path": "/tmp/demo/f.txt"})
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock()
@@ -745,7 +709,7 @@ class TestPopValidation:
 
         info = FakeActivityInfo(activity_type="read_file", workflow_id=wf)
         inp = FakeExecuteActivityInput(
-            fn=lambda path: path, args=("/tmp/demo/f.txt",))
+            fn=lambda path: path, args=("/tmp/demo/f.txt",), headers=act_headers)
         with patch("temporalio.activity.info") as m:
             m.return_value = info
             with pytest.raises(ConstraintViolation):
@@ -758,11 +722,10 @@ class TestPopValidation:
         """PoP signed for different args than the actual call is rejected."""
         ti = self._make(control_key)
         wf = "wf-pop-args"
-        _populate_store(wf, headers_dict)
         # Sign PoP for a.txt but activity will be called with b.txt
-        _set_pop(wf, warrant, agent_key, "read_file",
-                 {"path": "/tmp/demo/a.txt"},
-                 raw_args=("/tmp/demo/b.txt",))  # key uses the actual args
+        act_headers = _make_activity_headers(
+            headers_dict, warrant, agent_key, "read_file",
+            {"path": "/tmp/demo/a.txt"})
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock()
@@ -771,7 +734,7 @@ class TestPopValidation:
 
         info = FakeActivityInfo(activity_type="read_file", workflow_id=wf)
         inp = FakeExecuteActivityInput(
-            fn=lambda path: path, args=("/tmp/demo/b.txt",))
+            fn=lambda path: path, args=("/tmp/demo/b.txt",), headers=act_headers)
         with patch("temporalio.activity.info") as m:
             m.return_value = info
             with pytest.raises(ConstraintViolation):
@@ -783,8 +746,13 @@ class TestPopValidation:
         """Activity without PoP is rejected when trusted_roots is set."""
         ti = self._make(control_key)
         wf = "wf-no-pop"
-        _populate_store(wf, headers_dict)
-        # Intentionally don't call _set_pop — no PoP available
+        # Build headers WITHOUT PoP
+        raw = {}
+        for k, v in headers_dict.items():
+            raw_v = v if isinstance(v, bytes) else str(v).encode("utf-8")
+            if k.startswith("x-tenuo-"):
+                raw[k] = raw_v
+        no_pop_headers = {k: FakePayload(data=v) for k, v in raw.items()}
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock()
@@ -793,7 +761,7 @@ class TestPopValidation:
 
         info = FakeActivityInfo(activity_type="read_file", workflow_id=wf)
         inp = FakeExecuteActivityInput(
-            fn=lambda path: path, args=("/tmp/demo/f.txt",))
+            fn=lambda path: path, args=("/tmp/demo/f.txt",), headers=no_pop_headers)
         with patch("temporalio.activity.info") as m:
             m.return_value = info
             with pytest.raises(ConstraintViolation):
@@ -831,13 +799,8 @@ class TestConcurrentWorkflowsFullRoundTrip:
         )
         ti = TenuoInterceptor(cfg)
 
-        # Populate stores for both workflows
-        _populate_store("wf-A", tenuo_headers(warrant1, "a1", agent1))
-        _populate_store("wf-B", tenuo_headers(warrant2, "a2", agent2))
-        _set_pop("wf-A", warrant1, agent1, "read_file",
-                 {"path": "/tmp/project-a/data.txt"})
-        _set_pop("wf-B", warrant2, agent2, "read_file",
-                 {"path": "/tmp/project-b/data.txt"})
+        h1 = tenuo_headers(warrant1, "a1", agent1)
+        h2 = tenuo_headers(warrant2, "a2", agent2)
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock(return_value="content")
@@ -845,20 +808,24 @@ class TestConcurrentWorkflowsFullRoundTrip:
         ai = ti.intercept_activity(nxt)
 
         # wf-A reads from project-a: allowed
+        ah_a = _make_activity_headers(
+            h1, warrant1, agent1, "read_file", {"path": "/tmp/project-a/data.txt"})
         info_a = FakeActivityInfo(
             activity_type="read_file", workflow_id="wf-A")
         inp_a = FakeExecuteActivityInput(
-            fn=lambda path: path, args=("/tmp/project-a/data.txt",))
+            fn=lambda path: path, args=("/tmp/project-a/data.txt",), headers=ah_a)
         with patch("temporalio.activity.info") as m:
             m.return_value = info_a
             r = _run(ai.execute_activity(inp_a))
         assert r == "content"
 
         # wf-B reads from project-b: allowed
+        ah_b = _make_activity_headers(
+            h2, warrant2, agent2, "read_file", {"path": "/tmp/project-b/data.txt"})
         info_b = FakeActivityInfo(
             activity_type="read_file", workflow_id="wf-B")
         inp_b = FakeExecuteActivityInput(
-            fn=lambda path: path, args=("/tmp/project-b/data.txt",))
+            fn=lambda path: path, args=("/tmp/project-b/data.txt",), headers=ah_b)
         with patch("temporalio.activity.info") as m:
             m.return_value = info_b
             r = _run(ai.execute_activity(inp_b))
@@ -882,10 +849,11 @@ class TestConcurrentWorkflowsFullRoundTrip:
         )
         ti = TenuoInterceptor(cfg)
 
-        _populate_store("wf-cross", tenuo_headers(warrant1, "a1", agent1))
+        h1 = tenuo_headers(warrant1, "a1", agent1)
         # PoP for an out-of-scope path
-        _set_pop("wf-cross", warrant1, agent1, "read_file",
-                 {"path": "/tmp/project-b/secret.txt"})
+        act_headers = _make_activity_headers(
+            h1, warrant1, agent1, "read_file",
+            {"path": "/tmp/project-b/secret.txt"})
 
         nxt = MagicMock()
         nxt.execute_activity = AsyncMock()
@@ -895,7 +863,8 @@ class TestConcurrentWorkflowsFullRoundTrip:
         info = FakeActivityInfo(
             activity_type="read_file", workflow_id="wf-cross")
         inp = FakeExecuteActivityInput(
-            fn=lambda path: path, args=("/tmp/project-b/secret.txt",))
+            fn=lambda path: path, args=("/tmp/project-b/secret.txt",),
+            headers=act_headers)
         with patch("temporalio.activity.info") as m:
             m.return_value = info
             with pytest.raises(ConstraintViolation):
@@ -904,11 +873,6 @@ class TestConcurrentWorkflowsFullRoundTrip:
 
 
 # -- Distributed header propagation (workflow interceptor) --------------------
-
-@dataclass
-class FakePayload:
-    """Mimics temporalio.api.common.v1.Payload for testing."""
-    data: bytes = b""
 
 @dataclass
 class FakeExecuteWorkflowInput:
@@ -942,7 +906,6 @@ class TestDistributedHeaderPropagation:
 
     def test_workflow_interceptor_extracts_headers(self, warrant, agent_key):
         """Worker-only test: store is empty, headers arrive via Payload."""
-        # Ensure store is empty (simulates separate process)
         assert "wf-dist-001" not in _workflow_headers_store
 
         h = tenuo_headers(warrant, "agent1", agent_key)
@@ -961,7 +924,6 @@ class TestDistributedHeaderPropagation:
             result = _run(wi.execute_workflow(wf_input))
 
         assert result == "done"
-        # Store should have been populated then cleaned up (finally block)
         assert "wf-dist-001" not in _workflow_headers_store
 
     def test_workflow_interceptor_populates_store_for_activity(
@@ -973,9 +935,6 @@ class TestDistributedHeaderPropagation:
 
         wf_id = "wf-dist-rt"
 
-        # Workflow interceptor: extract headers into store, but DON'T
-        # clean up (we need to test the activity interceptor reading).
-        # We'll manually simulate the "before finally" state.
         with _store_lock:
             incoming = {}
             for key, payload in payload_headers.items():
@@ -983,16 +942,15 @@ class TestDistributedHeaderPropagation:
                     incoming[key] = payload.data
             _workflow_headers_store[wf_id] = incoming
 
-        # Verify the store has the warrant
         extracted = _extract_warrant_from_headers(
             _workflow_headers_store[wf_id]
         )
         assert extracted is not None
         assert extracted.id == warrant.id
 
-        # Now run an activity against this store
-        _set_pop(wf_id, warrant, agent_key, "read_file",
-                 {"path": "/tmp/demo/f.txt"})
+        # Now run an activity with headers (transparent PoP)
+        act_headers = _make_activity_headers(
+            h, warrant, agent_key, "read_file", {"path": "/tmp/demo/f.txt"})
 
         cfg = TenuoInterceptorConfig(
             key_resolver=EnvKeyResolver(), on_denial="raise",
@@ -1008,7 +966,7 @@ class TestDistributedHeaderPropagation:
         info = FakeActivityInfo(
             activity_type="read_file", workflow_id=wf_id)
         inp = FakeExecuteActivityInput(
-            fn=lambda path: path, args=("/tmp/demo/f.txt",))
+            fn=lambda path: path, args=("/tmp/demo/f.txt",), headers=act_headers)
 
         with patch("temporalio.activity.info") as m:
             m.return_value = info
@@ -1022,7 +980,6 @@ class TestDistributedHeaderPropagation:
         nxt.init = MagicMock()
 
         wi = _TenuoWorkflowInboundInterceptor(nxt)
-        # Only non-Tenuo headers
         wf_input = FakeExecuteWorkflowInput(
             headers={"x-custom-header": FakePayload(data=b"value")}
         )
@@ -1037,7 +994,6 @@ class TestDistributedHeaderPropagation:
         """If client store has stale data, Payload headers take precedence."""
         wf_id = "wf-override"
 
-        # Stale entry
         with _store_lock:
             _workflow_headers_store[wf_id] = {
                 TENUO_KEY_ID_HEADER: b"stale-key"
@@ -1047,7 +1003,6 @@ class TestDistributedHeaderPropagation:
         payload_headers = self._make_payload_headers(h)
 
         nxt = MagicMock()
-        # Capture the store state during workflow execution
         captured = {}
         async def capture_and_return(inp):
             captured.update(_workflow_headers_store.get(wf_id, {}))
@@ -1062,7 +1017,6 @@ class TestDistributedHeaderPropagation:
             mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
             _run(wi.execute_workflow(wf_input))
 
-        # During execution, the key_id should be "fresh-agent", not "stale-key"
         assert captured.get(TENUO_KEY_ID_HEADER) == b"fresh-agent"
 
 
@@ -1076,15 +1030,12 @@ class TestOutboundInterceptorHeaderInjection:
     def test_activity_input_receives_headers_via_outbound(
         self, warrant, agent_key, headers_dict
     ):
-        """Outbound interceptor reads store + PoP and injects into activity headers."""
+        """Outbound interceptor computes PoP transparently and injects into activity headers."""
         from tenuo.temporal import _TenuoWorkflowOutboundInterceptor
 
         wf_id = "wf-outbound"
         _populate_store(wf_id, headers_dict)
-        _set_pop(wf_id, warrant, agent_key, "read_file",
-                 {"path": "/tmp/demo/f.txt"})
 
-        # Fake outbound that captures the modified input
         captured_input = {}
         class FakeNextOutbound:
             def start_activity(self, input):
@@ -1096,6 +1047,7 @@ class TestOutboundInterceptorHeaderInjection:
         @dataclass
         class FakeStartActivityInput:
             activity: str = "read_file"
+            fn: Any = lambda path: path
             args: tuple = ("/tmp/demo/f.txt",)
             headers: Optional[Dict[str, Any]] = None
 
@@ -1103,7 +1055,10 @@ class TestOutboundInterceptorHeaderInjection:
 
         with patch("temporalio.workflow.info") as mock_info:
             mock_info.return_value = FakeWorkflowInfo(workflow_id=wf_id)
-            outbound.start_activity(inp)
+            with patch("temporalio.workflow.now") as mock_now:
+                import datetime
+                mock_now.return_value = datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+                outbound.start_activity(inp)
 
         h = captured_input["headers"]
         assert TENUO_WARRANT_HEADER in h
@@ -1111,7 +1066,6 @@ class TestOutboundInterceptorHeaderInjection:
         assert TENUO_SIGNING_KEY_HEADER in h
         assert TENUO_POP_HEADER in h
 
-        # Verify warrant can be extracted from the injected Payload headers
         raw = {k: v.data for k, v in h.items() if hasattr(v, "data")}
         extracted = _extract_warrant_from_headers(raw)
         assert extracted is not None
@@ -1125,10 +1079,8 @@ class TestOutboundInterceptorHeaderInjection:
         """
         wf_id = "wf-cross-worker"
 
-        # Store is EMPTY — simulates a different worker process.
         assert wf_id not in _workflow_headers_store
 
-        # Build Payload headers as the outbound interceptor would
         from temporalio.api.common.v1 import Payload  # type: ignore
 
         raw_h = {}
@@ -1137,8 +1089,7 @@ class TestOutboundInterceptorHeaderInjection:
             if k.startswith("x-tenuo-"):
                 raw_h[k] = raw_v
 
-        # Compute PoP manually
-        pop = warrant.sign(agent_key, "read_file", {"path": "/tmp/demo/f.txt"})
+        pop = warrant.sign(agent_key, "read_file", {"path": "/tmp/demo/f.txt"}, int(time.time()))
         raw_h[TENUO_POP_HEADER] = base64.b64encode(bytes(pop))
 
         payload_headers = {k: Payload(data=v) for k, v in raw_h.items()}

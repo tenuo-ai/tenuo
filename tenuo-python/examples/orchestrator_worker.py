@@ -14,6 +14,8 @@ This is the "temporal mismatch" solution: same agent identity,
 different authority per task phase.
 """
 
+import time
+
 from tenuo import Warrant, SigningKey, guard, Pattern, Range, Authorizer, warrant_scope, key_scope
 from tenuo_core import Wildcard, ChainVerificationResult  # Constraint for "any value"
 
@@ -139,7 +141,7 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
         try:
             print("  > Attempting: search(query='competitor analysis', max_results=3)")
             args = {"query": "competitor analysis", "max_results": 3}
-            sig = warrant.sign(keypair, "search", args)
+            sig = warrant.sign(keypair, "search", args, int(time.time()))
             if warrant.authorize("search", args, signature=bytes(sig)):
                 print("    [Allowed] Search executed")
                 search(query="competitor analysis", max_results=3)  # Execute the actual tool
@@ -152,7 +154,7 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
         try:
             print("  > Attempting: search(query='internal salary data', max_results=3)")
             args = {"query": "internal salary data", "max_results": 3}
-            sig = warrant.sign(keypair, "search", args)
+            sig = warrant.sign(keypair, "search", args, int(time.time()))
             if warrant.authorize("search", args, signature=bytes(sig)):
                 print("    [Allowed] Search executed (unexpected)")
             else:
@@ -164,7 +166,7 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
         try:
             print("  > Attempting: fetch(url='https://public.example.com/report')")
             args = {"url": "https://public.example.com/report"}
-            sig = warrant.sign(keypair, "fetch", args)
+            sig = warrant.sign(keypair, "fetch", args, int(time.time()))
             if warrant.authorize("fetch", args, signature=bytes(sig)):
                 print("    [Allowed] Fetch executed")
                 fetch(url="https://public.example.com/report")  # Execute the actual tool
@@ -177,7 +179,7 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
         try:
             print("  > Attempting: fetch(url='https://internal.example.com/secret')")
             args = {"url": "https://internal.example.com/secret"}
-            sig = warrant.sign(keypair, "fetch", args)
+            sig = warrant.sign(keypair, "fetch", args, int(time.time()))
             if warrant.authorize("fetch", args, signature=bytes(sig)):
                 print("    [Allowed] Fetch executed (unexpected)")
             else:
@@ -189,7 +191,7 @@ def worker_research(warrant: Warrant, keypair: SigningKey):
         try:
             print("  > Attempting: write(path='/output/reports/research.txt', content='data')")
             args = {"path": "/output/reports/research.txt", "content": "data"}
-            sig = warrant.sign(keypair, "write", args)
+            sig = warrant.sign(keypair, "write", args, int(time.time()))
             if warrant.authorize("write", args, signature=bytes(sig)):
                 print("    [Allowed] Write executed (unexpected)")
             else:
@@ -210,7 +212,7 @@ def worker_write(warrant: Warrant, keypair: SigningKey):
         try:
             print("  > Attempting: write(path='/output/reports/q3-analysis.txt', content='Q3 competitor analysis...')")
             args = {"path": "/output/reports/q3-analysis.txt", "content": "Q3 competitor analysis..."}
-            sig = warrant.sign(keypair, "write", args)
+            sig = warrant.sign(keypair, "write", args, int(time.time()))
             if warrant.authorize("write", args, signature=bytes(sig)):
                 print("    [Allowed] Write executed")
                 write(
@@ -225,7 +227,7 @@ def worker_write(warrant: Warrant, keypair: SigningKey):
         try:
             print("  > Attempting: write(path='/etc/passwd', content='malicious')")
             args = {"path": "/etc/passwd", "content": "malicious"}
-            sig = warrant.sign(keypair, "write", args)
+            sig = warrant.sign(keypair, "write", args, int(time.time()))
             if warrant.authorize("write", args, signature=bytes(sig)):
                 print("    [Allowed] Write executed (unexpected)")
             else:
@@ -237,7 +239,7 @@ def worker_write(warrant: Warrant, keypair: SigningKey):
         try:
             print("  > Attempting: search(query='more data', max_results=1)")
             args = {"query": "more data", "max_results": 1}
-            sig = warrant.sign(keypair, "search", args)
+            sig = warrant.sign(keypair, "search", args, int(time.time()))
             if warrant.authorize("search", args, signature=bytes(sig)):
                 print("    [Allowed] Search executed (unexpected)")
             else:

@@ -8,6 +8,7 @@ Tests verifying:
 """
 
 import pytest
+import time
 
 from tenuo import (
     Warrant,
@@ -41,7 +42,7 @@ class TestPopBinding:
         print("  [Attack 7] Attacker stolen warrant, trying to use with wrong keypair...")
 
         args = {"action": "delete"}
-        attacker_pop = warrant.sign(attacker_keypair, "admin_access", args)
+        attacker_pop = warrant.sign(attacker_keypair, "admin_access", args, int(time.time()))
 
         # Should fail - signature doesn't match holder
         authorized = warrant.authorize("admin_access", args, signature=bytes(attacker_pop))
@@ -66,7 +67,7 @@ class TestPopBinding:
 
         # Create valid PoP for "search"
         search_args = {"query": "test"}
-        search_pop = warrant.sign(keypair, "search", search_args)
+        search_pop = warrant.sign(keypair, "search", search_args, int(time.time()))
 
         # Attack: Use that signature for "delete"
         print("  [Attack 13] Using 'search' PoP for 'delete' tool...")
@@ -97,7 +98,7 @@ class TestPopBinding:
 
         # Create valid PoP for small amount
         small_args = {"amount": 10}
-        small_pop = warrant.sign(keypair, "transfer", small_args)
+        small_pop = warrant.sign(keypair, "transfer", small_args, int(time.time()))
 
         # Attack: Use that signature for large amount
         print("  [Attack 14] Using PoP for amount=10 with amount=10000...")
@@ -148,7 +149,7 @@ class TestPopBinding:
         )
 
         args = {"amount": 100}
-        pop_sig = warrant.sign(keypair, "transfer", args)
+        pop_sig = warrant.sign(keypair, "transfer", args, int(time.time()))
 
         # Immediately verify - should work
         print("  [Check] Verifying fresh PoP...")
@@ -179,9 +180,9 @@ class TestPopBinding:
         args3 = {"b": 2, "c": 3, "a": 1}
 
         print("  [Attack] Creating PoP signatures with different arg orderings...")
-        sig1 = warrant.sign(keypair, "test", args1)
-        sig2 = warrant.sign(keypair, "test", args2)
-        sig3 = warrant.sign(keypair, "test", args3)
+        sig1 = warrant.sign(keypair, "test", args1, int(time.time()))
+        sig2 = warrant.sign(keypair, "test", args2, int(time.time()))
+        sig3 = warrant.sign(keypair, "test", args3, int(time.time()))
 
         print(f"  [Check] sig1 == sig2: {sig1 == sig2}")
         print(f"  [Check] sig2 == sig3: {sig2 == sig3}")

@@ -243,15 +243,16 @@ class BaseGuardBuilder(Generic[T]):
 
         Args:
             handler: Callable that receives an ApprovalRequest and returns
-                an ApprovalResponse. Built-in handlers: cli_prompt(),
-                auto_approve(), auto_deny(), webhook().
+                a SignedApproval (or raises ApprovalDenied). Built-in
+                handlers: cli_prompt(), auto_approve(), auto_deny().
 
         Returns:
             self for method chaining
 
         Example:
             from tenuo.approval import cli_prompt
-            builder.on_approval(cli_prompt())
+            approver_key = SigningKey.generate()
+            builder.on_approval(cli_prompt(approver_key=approver_key))
         """
         self._approval_handler = handler
         return self

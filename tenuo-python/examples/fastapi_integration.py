@@ -21,6 +21,7 @@ Run with: uvicorn fastapi_integration:app --reload
 
 import os
 import logging
+import time
 from pathlib import Path
 from typing import Dict
 
@@ -356,7 +357,7 @@ if __name__ == "__main__":
 
     # Create PoP signature for this specific call
     args = {"file_path": "test.txt"}
-    pop_sig = read_warrant.sign(client_key, "read_file", args)
+    pop_sig = read_warrant.sign(client_key, "read_file", args, int(time.time()))
     pop_b64 = base64.b64encode(bytes(pop_sig)).decode("utf-8")
 
     print(f'   curl -H "X-Tenuo-Warrant: {read_b64[:60]}..." \\')
@@ -366,7 +367,7 @@ if __name__ == "__main__":
     print("\n# 2. Write file:")
     write_warrant, write_b64, write_key = warrants["write_file"]
     write_args = {"file_path": "output.txt"}
-    write_pop = write_warrant.sign(write_key, "write_file", write_args)
+    write_pop = write_warrant.sign(write_key, "write_file", write_args, int(time.time()))
     write_pop_b64 = base64.b64encode(bytes(write_pop)).decode("utf-8")
 
     print(f'   curl -X POST -H "X-Tenuo-Warrant: {write_b64[:60]}..." \\')
@@ -378,7 +379,7 @@ if __name__ == "__main__":
     print("\n# 3. Manage cluster:")
     cluster_warrant, cluster_b64, cluster_key = warrants["manage_cluster"]
     cluster_args = {"cluster": "staging-web", "action": "scale", "replicas": 5}
-    cluster_pop = cluster_warrant.sign(cluster_key, "manage_cluster", cluster_args)
+    cluster_pop = cluster_warrant.sign(cluster_key, "manage_cluster", cluster_args, int(time.time()))
     cluster_pop_b64 = base64.b64encode(bytes(cluster_pop)).decode("utf-8")
 
     print(f'   curl -X POST -H "X-Tenuo-Warrant: {cluster_b64[:60]}..." \\')

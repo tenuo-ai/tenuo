@@ -8,14 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **`ApprovalPolicy`**: Human-in-the-loop authorization layer — define when tool calls require human confirmation without reissuing warrants
+- **Cryptographic human approvals**: Every approval is a `SignedApproval` (Ed25519 over SHA-256 request hash). No unsigned `approved=True` path exists
+- **`compute_request_hash()`**: Exposed from Rust core via PyO3 — binds approval to exact `(warrant_id, tool, args, holder)` tuple
+- **`sign_approval()`**: Canonical helper to create `SignedApproval` from an `ApprovalRequest` (handles nonce, timestamps, signing)
+- **`ApprovalVerificationError`**: New exception for crypto failures (invalid signature, hash mismatch, untrusted key, expired)
+- **`trusted_approvers`**: `ApprovalPolicy` accepts list of `PublicKey`s — only these keys can sign valid approvals
+- **Verification pipeline**: `_check_approval()` verifies signature, hash match, expiry, and key trust before allowing execution
+- **`ApprovalPolicy`**: Runtime approval rules — define when tool calls require human confirmation without reissuing warrants
 - **`require_approval()`**: Conditional rules with optional `when` predicates (e.g., `when=lambda args: args["amount"] > 10_000`)
-- **Built-in approval handlers**: `cli_prompt()`, `auto_approve()`, `auto_deny()`, `webhook()` (placeholder)
+- **Built-in handlers**: `cli_prompt(approver_key=key)`, `auto_approve(approver_key=key)`, `auto_deny()`, `webhook()` (placeholder)
 - **`ApprovalRequired` / `ApprovalDenied` / `ApprovalTimeout`**: Exception hierarchy for approval outcomes
 - **Builder API**: `.approval_policy()` and `.on_approval()` on all `BaseGuardBuilder` subclasses
-- **Enforcement integration**: `enforce_tool_call()` accepts `approval_policy` and `approval_handler` — checks run after warrant authorization, fail-closed on handler errors
-- **Async handler support**: Approval handlers can be sync or async coroutines
-- **44 tests**: Rules, policy, handlers, exceptions, enforcement integration, async, fail-closed behavior
+- **80 tests**: Rules, policy, handlers, crypto verification, tamper resistance (wrong hash, untrusted key, expired), serialization roundtrip, replay prevention, multi-approver, custom handlers, async, edge cases
+- **`docs/approvals.md`**: Standalone documentation for the cryptographic approval model
+
+### Removed
+- **`ApprovalResponse`**: Replaced by mandatory `SignedApproval` — no unsigned approval path
 
 ## [0.1.0-beta.9] - 2026-02-17
 

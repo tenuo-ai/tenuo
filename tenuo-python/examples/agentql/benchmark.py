@@ -477,14 +477,14 @@ def benchmark_pop_overhead():
     # 1. Sign only
     print("\n5a. Signing only (Client side)...")
     results_sign = bench.measure_latency(
-        lambda: warrant.sign(agent_key, "navigate", {"url": "https://example.com"}),
+        lambda: warrant.sign(agent_key, "navigate", {"url": "https://example.com"}, int(time.time())),
         iterations=1000
     )
     print(f"  Mean latency: {results_sign['mean']:.3f} ms")
 
     # 2. Verify only (Server side)
     # Generate a signature first to reuse
-    sig = warrant.sign(agent_key, "navigate", {"url": "https://example.com"})
+    sig = warrant.sign(agent_key, "navigate", {"url": "https://example.com"}, int(time.time()))
 
     print("\n5b. Verify only (Server side)...")
     results_verify = bench.measure_latency(

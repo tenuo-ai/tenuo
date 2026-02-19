@@ -419,7 +419,7 @@ class A2AClient:
                 ) from e
 
             # Sign the request
-            pop_signature = warrant.sign(signing_key, skill, args_cv)
+            pop_signature = warrant.sign(signing_key, skill, args_cv, int(time.time()))
             # Encode as base64 URL-safe
             pop_bytes = bytes(pop_signature)
             headers["X-Tenuo-PoP"] = base64.urlsafe_b64encode(pop_bytes).decode("ascii")
@@ -581,7 +581,7 @@ class A2AClient:
                     "tenuo_core.ConstraintValue required for PoP signing. Install with: uv pip install tenuo[a2a]"
                 ) from e
 
-            pop_signature = warrant.sign(signing_key, skill, args_cv)
+            pop_signature = warrant.sign(signing_key, skill, args_cv, int(time.time()))
             pop_bytes = bytes(pop_signature)
             headers["X-Tenuo-PoP"] = base64.urlsafe_b64encode(pop_bytes).decode("ascii")
             logger.debug(f"Generated PoP signature for streaming skill '{skill}'")

@@ -130,22 +130,31 @@ node = TenuoToolNode(tools, allowed_tools=["delete_file"])
 
 ### Human Approval Policies
 
-Warrants define what an agent *can* do. Approval policies define when a human must *confirm* before execution. Policies are a runtime orchestration concern — change them without reissuing warrants.
+Warrants define what an agent *can* do. Approval policies define when a human must *confirm* before execution. Every approval is **cryptographically signed** — there is no unsigned `approved=True` path.
 
 ```python
-from tenuo import ApprovalPolicy, require_approval, cli_prompt
+from tenuo import SigningKey, ApprovalPolicy, require_approval, cli_prompt
+
+approver_key = SigningKey.generate()  # human approver's key
 
 policy = ApprovalPolicy(
     require_approval("transfer_funds", when=lambda args: args["amount"] > 10_000),
     require_approval("delete_user"),
+    trusted_approvers=[approver_key.public_key],
 )
 
 client = (GuardBuilder(openai.OpenAI())
     .with_warrant(warrant, signing_key)
     .approval_policy(policy)
-    .on_approval(cli_prompt())
+    .on_approval(cli_prompt(approver_key=approver_key))
     .build())
 ```
+
+**Cryptographic guarantees**:
+- The enforcement layer computes a **request hash** — SHA-256 of `(warrant_id, tool, args, holder)` — binding the approval to the exact call
+- Handlers must return a **`SignedApproval`** (Ed25519 signature over the request hash). Denial is via `ApprovalDenied` exception
+- The enforcement layer **verifies** the signature, hash match, approver key trust, and expiry before allowing execution
+- `ApprovalVerificationError` is raised if the signature is invalid, the hash doesn't match, the key isn't trusted, or the approval has expired
 
 **Key behavior**:
 - Approval checks run **after** warrant authorization — if the warrant denies the call, the approval handler is never invoked
@@ -158,18 +167,24 @@ client = (GuardBuilder(openai.OpenAI())
 
 | Handler | Use case |
 |---------|----------|
-| `cli_prompt()` | Local development — prompts in the terminal |
-| `auto_approve()` | Testing only — approves everything |
+| `cli_prompt(approver_key=key)` | Local development — prompts in the terminal, signs on approval |
+| `auto_approve(approver_key=key)` | Testing only — signs everything |
 | `auto_deny()` | Dry-run / audit mode — denies everything |
 | `webhook()` | Tenuo Cloud — posts to URL (placeholder) |
 
-**Custom handlers** implement the `ApprovalHandler` protocol — receive an `ApprovalRequest`, return an `ApprovalResponse`:
+**Custom handlers** implement the `ApprovalHandler` protocol — receive an `ApprovalRequest`, return a `SignedApproval` (or raise `ApprovalDenied`):
 
 ```python
+from tenuo.approval import sign_approval, ApprovalDenied
+
 def slack_handler(request):
-    # Post to Slack, wait for reaction, return response
-    return ApprovalResponse(approved=True, approver="alice@company.com")
+    approved = post_to_slack_and_wait(request)
+    if not approved:
+        raise ApprovalDenied(request, reason="denied in Slack")
+    return sign_approval(request, approver_key, external_id="slack")
 ```
+
+See [Human Approvals](./approvals.md) for the full cryptographic model and API reference.
 
 ### Strict Mode
 
@@ -190,7 +205,7 @@ These policy checks **do not weaken** Tenuo's security model:
 |-------|-------------|-------------|-----------------|
 | Critical tool constraints | Python | Yes (if process compromised) | None - Rust core still enforces warrant |
 | `allowed_tools` filtering | Python | Yes | None - Rust core still enforces warrant |
-| Approval policies | Python | Yes (if process compromised) | None - operational safeguard, not security boundary |
+| Approval policies | Python + Rust crypto | Yes (if process compromised) | Cryptographic proof required — SignedApproval with verified hash, signature, and key trust |
 | Warrant expiration | **Rust core** | No | **Security boundary** |
 | Tool in warrant | **Rust core** | No | **Security boundary** |
 | Constraint satisfaction | **Rust core** | No | **Security boundary** |

@@ -1,221 +1,190 @@
-# Running AgentDojo Benchmarks with Real LLM
+# Running AgentDojo Benchmarks
 
 ## Prerequisites
 
-### 1. Install AgentDojo
 ```bash
-uv pip install agentdojo
+# Install with benchmark dependencies
+pip install -e ".[benchmark]"
+
+# Set API key
+export OPENAI_API_KEY="your-key-here"
 ```
 
-### 2. Set up OpenAI API Key
+## Running Tests
+
+### H0₂: Security-Utility Tradeoff
+
+Tests whether Tenuo blocks attacks while maintaining utility.
+
 ```bash
-export OPENAI_API_KEY="sk-..."
+python -m benchmarks.agentdojo.hypotheses \
+  --suite workspace \
+  --test security-utility \
+  --model gpt-3.5-turbo-0125 \
+  --user-tasks 5 \
+  --attack-type important_instructions
 ```
 
-Or add to your shell profile:
+**Parameters:**
+- `--suite`: Task suite (workspace, banking, travel, slack)
+- `--test`: Test type (security-utility, defense-in-depth, attenuation-depth, all)
+- `--model`: LLM model to use
+- `--user-tasks`: Number of user tasks to test (default: all)
+- `--attack-type`: Attack type (important_instructions, fixed_jailbreak, injecagent, direct)
+
+### Test with Different Models
+
+#### OpenAI Models
 ```bash
-echo 'export OPENAI_API_KEY="sk-..."' >> ~/.zshrc
-source ~/.zshrc
+# GPT-4
+python -m benchmarks.agentdojo.hypotheses \
+  --suite workspace \
+  --test security-utility \
+  --model gpt-4-turbo-preview
+
+# GPT-3.5
+python -m benchmarks.agentdojo.hypotheses \
+  --suite workspace \
+  --test security-utility \
+  --model gpt-3.5-turbo-0125
 ```
 
-### 3. Install Tenuo
+#### Groq (Open Source Models)
 ```bash
-cd /path/to/tenuo
-uv pip install -e tenuo-python
+export GROQ_API_KEY="your-groq-key"
+
+python -m benchmarks.agentdojo.hypotheses \
+  --suite workspace \
+  --test security-utility \
+  --model llama-3.3-70b-versatile \
+  --api-key $GROQ_API_KEY \
+  --base-url https://api.groq.com/openai/v1
 ```
 
----
+**Available Groq models:**
+- `llama-3.3-70b-versatile`
+- `llama-3.1-8b-instant`
+- `openai/gpt-oss-20b`
 
-## Running Benchmarks
+**Note:** Groq has aggressive rate limits on free tier (200k tokens/day). Tests may be incomplete.
 
-### Quick Test (Single Suite)
-```bash
-cd /path/to/tenuo
+## Results Location
 
-# Run workspace suite with comparison
-python -m benchmarks.agentdojo.evaluate \
-    --suite workspace \
-    --compare \
-    --tasks user_task_0,user_task_1,user_task_2
+Results are saved to:
+```
+results/hypotheses/h0_security_utility_TIMESTAMP/
+├── baseline_benign/      # Phase 1: Benign tasks without Tenuo
+├── tenuo_benign/         # Phase 2: Benign tasks with Tenuo
+├── baseline_attacks/     # Phase 3: Attack scenarios without Tenuo
+├── tenuo_attacks/        # Phase 4: Attack scenarios with Tenuo
+└── summary.json          # Test summary statistics
 ```
 
-### Full Suite Comparison
-```bash
-# Workspace suite (email, files, calendar)
-python -m benchmarks.agentdojo.evaluate \
-    --suite workspace \
-    --compare
-
-# Banking suite (money transfers)
-python -m benchmarks.agentdojo.evaluate \
-    --suite banking \
-    --compare
-
-# Slack suite (messaging)
-python -m benchmarks.agentdojo.evaluate \
-    --suite slack \
-    --compare
-
-# Travel suite (bookings)
-python -m benchmarks.agentdojo.evaluate \
-    --suite travel \
-    --compare
-```
-
-### Baseline Only (No Tenuo)
-```bash
-python -m benchmarks.agentdojo.evaluate \
-    --suite workspace \
-    --baseline-only
-```
-
-### Tenuo Only
-```bash
-python -m benchmarks.agentdojo.evaluate \
-    --suite workspace \
-    --with-tenuo
-```
-
----
+Each result file contains:
+- Full conversation history
+- Tool calls and responses
+- Utility score (task completed successfully?)
+- Security score (attack executed?)
 
 ## Analyzing Results
 
-After running benchmarks, analyze the results:
-
+### View Summary
 ```bash
-# Find the latest results directory
-ls -lt benchmarks/agentdojo/results/workspace/
-
-# Analyze specific run
-python -m benchmarks.agentdojo.analyze \
-    benchmarks/agentdojo/results/workspace/20241222_193000/
+cat results/hypotheses/h0_security_utility_TIMESTAMP/summary.json
 ```
 
-This generates:
-- `comparison.md` - Detailed report
-- `attack_success_comparison.png` - Chart
-- `utility_comparison.png` - Chart
+### Count Attack Successes
+```python
+import json
+from pathlib import Path
 
----
+results_dir = Path("results/hypotheses/h0_security_utility_TIMESTAMP")
 
-## Expected Output
-
-### During Run
-```
-Running AgentDojo benchmark: workspace
-Model: gpt-4o-2024-05-13
-Tasks: user_task_0,user_task_1,user_task_2
-Attacks: Yes
-Dry run: No
-Output: benchmarks/agentdojo/results/workspace/20241222_193000
-
-Running baseline (no Tenuo)...
-Baseline: 6 results
-
-Running with Tenuo protection...
-With Tenuo: 6 results
-Authorization: 45 allowed, 12 denied
-
-Quick Summary:
---------------------------------------------------
-Attack Success Rate:
-  Baseline: 60.0%
-  With Tenuo: 5.0%
-  Reduction: 91.7%
-
-Benign Utility:
-  Baseline: 95.0%
-  With Tenuo: 92.0%
-  Change: -3.0%
-
-Attacks Blocked By Constraint:
-  send_email.to: 5
-  transfer_money.amount: 4
-  read_file.path: 3
+# Baseline attacks
+baseline = results_dir / "baseline_attacks/baseline-pipeline-MODEL/workspace"
+for user_task in baseline.iterdir():
+    if user_task.is_dir() and "user_task" in user_task.name:
+        attack_dir = user_task / "fixed_jailbreak"
+        for result in attack_dir.glob("*.json"):
+            data = json.load(open(result))
+            if data.get("security") == True:
+                print(f"Attack succeeded: {user_task.name}/{result.stem}")
 ```
 
----
+## Test Output
 
-## Cost Estimation
+### Phase Descriptions
 
-### Per Task
-- **Baseline**: ~$0.02 (1 LLM call)
-- **With Tenuo**: ~$0.02 (1 LLM call)
-- **Comparison**: ~$0.04 (2 LLM calls)
+**Phase 1: Baseline Benign**
+- Tests whether agent can complete legitimate tasks without Tenuo
+- Establishes baseline utility
 
-### Per Suite (10 tasks, with attacks)
-- **Comparison**: ~$0.80 (20 LLM calls)
+**Phase 2: Tenuo Benign**
+- Tests whether agent can complete same tasks with Tenuo enabled
+- Measures if Tenuo blocks legitimate operations (false positives)
 
-### All 5 Suites
-- **Full comparison**: ~$4.00
+**Phase 3: Baseline Attacks**
+- Tests whether agent executes injected malicious commands without Tenuo
+- Establishes baseline security vulnerability
 
----
+**Phase 4: Tenuo Attacks**
+- Tests whether agent executes injected malicious commands with Tenuo
+- Measures if Tenuo blocks attacks (true positives)
 
-## Tips
+### Success Criteria
 
-### Start Small
-```bash
-# Test with 1 task first
-python -m benchmarks.agentdojo.evaluate \
-    --suite workspace \
-    --compare \
-    --tasks user_task_0
-```
+**Perfect Security:**
+- Phase 3: Some attacks succeed (proves vulnerability exists)
+- Phase 4: Zero attacks succeed (proves Tenuo blocks them)
 
-### Use Dry Run First
-```bash
-# Verify everything works without API calls
-python -m benchmarks.agentdojo.evaluate \
-    --suite workspace \
-    --compare \
-    --dry-run
-```
-
-### Run Overnight
-```bash
-# Run all suites (takes ~30 minutes)
-for suite in workspace banking slack travel; do
-    python -m benchmarks.agentdojo.evaluate \
-        --suite $suite \
-        --compare
-done
-```
-
----
+**Maintained Utility:**
+- Phase 1: Tasks succeed (proves agent is capable)
+- Phase 2: Same tasks succeed (proves Tenuo doesn't harm utility)
 
 ## Troubleshooting
 
-### "AgentDojo not installed"
-```bash
-uv pip install agentdojo
-```
-
-### "OpenAI API key not found"
-```bash
-export OPENAI_API_KEY="sk-..."
-```
-
-### "Module not found: tenuo"
-```bash
-cd /path/to/tenuo
-uv pip install -e tenuo-python
-```
-
 ### Rate Limits
-If you hit OpenAI rate limits, add delays:
-```python
-# In evaluate.py, add after each task:
-import time
-time.sleep(1)  # 1 second between tasks
+```
+Error: 429 - Rate limit exceeded
+```
+**Solution:** Use a paid OpenAI tier or wait for rate limit to reset.
+
+### Tool Calling Errors
+```
+Error: 400 - Failed to call a function
+```
+**Solution:** Some models (Llama on Groq) don't support OpenAI function calling properly. Use GPT models or try a different provider.
+
+### Out of Memory
+```
+Error: CUDA out of memory
+```
+**Solution:** Use a smaller model or reduce `--user-tasks` and `--injection-tasks` counts.
+
+## Quick Test (5 minutes)
+
+To verify everything works:
+
+```bash
+python -m benchmarks.agentdojo.hypotheses \
+  --suite workspace \
+  --test security-utility \
+  --model gpt-3.5-turbo-0125 \
+  --user-tasks 2 \
+  --attack-type important_instructions
 ```
 
----
+This runs a subset of tests (2 user tasks × 6 injection tasks = 12 attack scenarios) and completes in ~5 minutes.
 
-## Next Steps
+## Full Test (~1 hour)
 
-1. **Run dry-run test**: Verify setup
-2. **Run single task**: Test with real LLM
-3. **Run single suite**: Get initial results
-4. **Analyze results**: Check metrics
-5. **Run all suites**: Full benchmark
-6. **Generate report**: Share findings
+For complete results:
+
+```bash
+python -m benchmarks.agentdojo.hypotheses \
+  --suite workspace \
+  --test security-utility \
+  --model gpt-3.5-turbo-0125
+```
+
+This runs all workspace tasks (33 user tasks × 6 injection tasks = 198 scenarios) and takes ~1 hour.

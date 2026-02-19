@@ -10,6 +10,7 @@ Tests the "Trust Cliff" behavior:
 """
 
 import pytest
+import time
 from tenuo import (
     Warrant,
     SigningKey,
@@ -40,7 +41,7 @@ class TestTrustCliffBasics:
 
         # Any arguments should pass
         args = {"url": "https://any.com", "timeout": 999, "random_field": "anything"}
-        pop = warrant.sign(keypair, "api_call", args)
+        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
         assert warrant.authorize("api_call", args, bytes(pop)) is True
 
     def test_one_constraint_blocks_unknown_fields(self, keypair):
@@ -55,7 +56,7 @@ class TestTrustCliffBasics:
 
         # Unknown field 'timeout' should be blocked
         args = {"url": "https://api.example.com/v1", "timeout": 30}
-        pop = warrant.sign(keypair, "api_call", args)
+        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
         assert warrant.authorize("api_call", args, bytes(pop)) is False
 
         # Detailed error check
@@ -75,7 +76,7 @@ class TestTrustCliffBasics:
 
         # Only the constrained field - should pass
         args = {"url": "https://api.example.com/v1"}
-        pop = warrant.sign(keypair, "api_call", args)
+        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
         assert warrant.authorize("api_call", args, bytes(pop)) is True
 
 
@@ -100,7 +101,7 @@ class TestAllowUnknownOptOut:
 
         # Unknown fields should now pass
         args = {"url": "https://api.example.com/v1", "timeout": 30, "retries": 5}
-        pop = warrant.sign(keypair, "api_call", args)
+        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
         assert warrant.authorize("api_call", args, bytes(pop)) is True
 
     def test_allow_unknown_still_enforces_defined_constraints(self, keypair):
@@ -121,7 +122,7 @@ class TestAllowUnknownOptOut:
 
         # Unknown field OK, but defined constraint must still be satisfied
         args = {"url": "https://evil.com/attack", "timeout": 30}
-        pop = warrant.sign(keypair, "api_call", args)
+        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
         assert warrant.authorize("api_call", args, bytes(pop)) is False
 
 
@@ -140,7 +141,7 @@ class TestWildcardVsAllowUnknown:
 
         # timeout can be any value
         args = {"url": "https://api.example.com/v1", "timeout": 999999}
-        pop = warrant.sign(keypair, "api_call", args)
+        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
         assert warrant.authorize("api_call", args, bytes(pop)) is True
 
     def test_wildcard_does_not_allow_other_unknown_fields(self, keypair):
@@ -155,7 +156,7 @@ class TestWildcardVsAllowUnknown:
 
         # 'retries' is still unknown and should be blocked
         args = {"url": "https://api.example.com/v1", "timeout": 30, "retries": 5}
-        pop = warrant.sign(keypair, "api_call", args)
+        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
         assert warrant.authorize("api_call", args, bytes(pop)) is False
 
     def test_wildcard_with_other_constraints(self, keypair):
@@ -172,12 +173,12 @@ class TestWildcardVsAllowUnknown:
 
         # All fields constrained - should pass
         args = {"url": "https://api.example.com/v1", "timeout": 9999, "retries": 2}
-        pop = warrant.sign(keypair, "api_call", args)
+        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
         assert warrant.authorize("api_call", args, bytes(pop)) is True
 
         # retries exceeds range - should fail
         args_bad = {"url": "https://api.example.com/v1", "timeout": 30, "retries": 10}
-        pop_bad = warrant.sign(keypair, "api_call", args_bad)
+        pop_bad = warrant.sign(keypair, "api_call", args_bad, int(time.time()))
         assert warrant.authorize("api_call", args_bad, bytes(pop_bad)) is False
 
 
@@ -211,12 +212,12 @@ class TestAllowUnknownInheritance:
 
         # Parent allows unknown fields
         parent_args = {"url": "https://any.com/path", "unknown_field": True}
-        parent_pop = parent.sign(keypair, "api_call", parent_args)
+        parent_pop = parent.sign(keypair, "api_call", parent_args, int(time.time()))
         assert parent.authorize("api_call", parent_args, bytes(parent_pop)) is True
 
         # Child blocks unknown fields
         child_args = {"url": "https://api.example.com/v1", "unknown_field": True}
-        child_pop = child.sign(keypair, "api_call", child_args)
+        child_pop = child.sign(keypair, "api_call", child_args, int(time.time()))
         assert child.authorize("api_call", child_args, bytes(child_pop)) is False
 
     def test_child_can_explicitly_set_allow_unknown(self, keypair):
@@ -252,7 +253,7 @@ class TestAllowUnknownInheritance:
 
         # Child should allow unknown fields
         args = {"url": "https://api.example.com/v1", "unknown_field": True}
-        pop = child.sign(keypair, "api_call", args)
+        pop = child.sign(keypair, "api_call", args, int(time.time()))
         assert child.authorize("api_call", args, bytes(pop)) is True
 
 
@@ -278,12 +279,12 @@ class TestEdgeCases:
 
         # read_file is closed (no _allow_unknown)
         read_args = {"path": "/data/file.txt", "encoding": "utf-8"}
-        read_pop = warrant.sign(keypair, "read_file", read_args)
+        read_pop = warrant.sign(keypair, "read_file", read_args, int(time.time()))
         assert warrant.authorize("read_file", read_args, bytes(read_pop)) is False
 
         # write_file is open (_allow_unknown: True)
         write_args = {"path": "/output/file.txt", "encoding": "utf-8"}
-        write_pop = warrant.sign(keypair, "write_file", write_args)
+        write_pop = warrant.sign(keypair, "write_file", write_args, int(time.time()))
         assert warrant.authorize("write_file", write_args, bytes(write_pop)) is True
 
     def test_empty_args_with_constraints(self, keypair):
@@ -298,7 +299,7 @@ class TestEdgeCases:
 
         # Empty args - missing required 'url'
         args = {}
-        pop = warrant.sign(keypair, "api_call", args)
+        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
         assert warrant.authorize("api_call", args, bytes(pop)) is False
 
         reason = warrant.check_constraints("api_call", args)
@@ -316,5 +317,5 @@ class TestEdgeCases:
 
         # String value for Range constraint - should fail
         args = {"count": "five"}
-        pop = warrant.sign(keypair, "api_call", args)
+        pop = warrant.sign(keypair, "api_call", args, int(time.time()))
         assert warrant.authorize("api_call", args, bytes(pop)) is False

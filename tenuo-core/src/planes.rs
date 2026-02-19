@@ -1769,12 +1769,6 @@ impl Authorizer {
             .unwrap_or(false)
     }
 
-    /// Verify a warrant.
-    ///
-    /// This checks:
-    /// 1. The warrant is signed by a trusted issuer
-    /// 2. The warrant has not expired
-    /// 3. The warrant is not revoked
     /// Authorize a single warrant.
     ///
     /// This is a convenience wrapper around `check_chain()` that treats
@@ -1792,7 +1786,13 @@ impl Authorizer {
         signature: Option<&crate::crypto::Signature>,
         approvals: &[crate::approval::SignedApproval],
     ) -> Result<ChainVerificationResult> {
-        self.check_chain(&[warrant.clone()], tool, args, signature, approvals)
+        self.check_chain(
+            std::slice::from_ref(warrant),
+            tool,
+            args,
+            signature,
+            approvals,
+        )
     }
 
     // -- Deprecated methods --------------------------------------------------

@@ -8,6 +8,8 @@ Demonstrates:
 - Authorizing MCP operations
 """
 
+import time
+
 from tenuo import Authorizer, SigningKey, Warrant, Pattern, Range
 from tenuo_core import CompiledMcpConfig, McpConfig
 
@@ -124,7 +126,7 @@ def main():
     # Note: constraints_dict already has the correct names from MCP extraction
     try:
         # Create PoP signature
-        pop_signature = warrant.sign(control_keypair, "filesystem_read", constraints_dict)
+        pop_signature = warrant.sign(control_keypair, "filesystem_read", constraints_dict, int(time.time()))
 
         authorized = warrant.authorize(
             tool="filesystem_read",
@@ -195,7 +197,7 @@ def demo_without_config(control_keypair):
 
     # Authorize
     try:
-        pop_sig = warrant.sign(control_keypair, "filesystem_read", extracted_constraints)
+        pop_sig = warrant.sign(control_keypair, "filesystem_read", extracted_constraints, int(time.time()))
         authorized = warrant.authorize("filesystem_read", extracted_constraints, bytes(pop_sig))
         print(f"\n✓ Warrant authorization: {authorized}")
 

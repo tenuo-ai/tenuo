@@ -111,7 +111,7 @@ Tenuo implements **Subtractive Delegation**.
 | **Holder binding** | Stolen tokens are useless without the key |
 | **Constraint types** | `Exact`, `Pattern`, `Range`, `OneOf`, `Regex`, `Cidr`, `UrlPattern`, `Subpath`, `UrlSafe`, `Shlex`, `CEL` |
 | **Monotonic attenuation** | Capabilities only shrink, never expand |
-| **Human approval policies** | Conditional human-in-the-loop gating without reissuing warrants |
+| **Human approval policies** | Cryptographically signed human-in-the-loop gating with Ed25519 `SignedApproval` |
 | **Framework integrations** | OpenAI, CrewAI, Temporal, LangChain, LangGraph, FastAPI, MCP |
 
 ---
@@ -283,26 +283,29 @@ See [Helm chart README](./charts/tenuo-authorizer) and [Kubernetes guide](https:
 
 ## Human Approval Policies
 
-Warrants define what an agent *can* do. Approval policies define when a human must confirm. Policies are a runtime concern — change them without reissuing warrants.
+Warrants define what an agent *can* do. Approval policies define when a human must confirm. Every approval is **cryptographically signed** — there is no unsigned `approved=True` path.
 
 ```python
-from tenuo import ApprovalPolicy, require_approval, cli_prompt
+from tenuo import SigningKey, ApprovalPolicy, require_approval, cli_prompt
+
+approver_key = SigningKey.generate()  # human approver's key
 
 policy = ApprovalPolicy(
     require_approval("transfer_funds", when=lambda args: args["amount"] > 10_000),
     require_approval("delete_user"),
+    trusted_approvers=[approver_key.public_key],
 )
 
 client = (GuardBuilder(openai.OpenAI())
     .with_warrant(warrant, signing_key)
     .approval_policy(policy)
-    .on_approval(cli_prompt())    # or: auto_approve(), webhook(), custom handler
+    .on_approval(cli_prompt(approver_key=approver_key))
     .build())
 ```
 
-When `transfer_funds` is called with `amount > 10_000`, the handler prompts for confirmation before execution. Below the threshold, it passes through. If the warrant itself denies the call (wrong tool, expired, constraint violation), the approval policy is never checked.
+When `transfer_funds` is called with `amount > 10_000`, the handler prompts for confirmation. If approved, a `SignedApproval` is created (Ed25519 signature over a SHA-256 request hash binding to the exact call). The enforcement layer verifies the signature, hash match, approver key trust, and expiry before allowing execution.
 
-Built-in handlers: `cli_prompt()`, `auto_approve()` (testing), `auto_deny()` (dry-run), `webhook()` (Tenuo Cloud).
+Built-in handlers: `cli_prompt(approver_key=key)`, `auto_approve(approver_key=key)` (testing), `auto_deny()` (dry-run), `webhook()` (Tenuo Cloud). See [docs/approvals.md](docs/approvals.md) for the full cryptographic model.
 
 ---
 
@@ -352,7 +355,7 @@ See [Related Work](https://tenuo.ai/related-work) for detailed comparison.
 | A2A integration | Implemented (`uv pip install tenuo[a2a]`) |
 | AutoGen integration | Implemented (`uv pip install tenuo[autogen]`) |
 | Google ADK integration | Implemented (`uv pip install tenuo[google_adk]`) |
-| Human approval policies | Implemented (`ApprovalPolicy`, `require_approval()`) |
+| Human approval policies | Implemented (`ApprovalPolicy`, `SignedApproval`, `compute_request_hash`) |
 | Multi-sig approvals | Partial (notary in v0.2) |
 | TypeScript/Node SDK | Planned for v0.2 |
 | Context-aware constraints | Spec under development |

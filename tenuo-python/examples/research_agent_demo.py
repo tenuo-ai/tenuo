@@ -32,6 +32,7 @@ Usage:
 
 import os
 import sys
+import time
 import asyncio
 from pathlib import Path
 from datetime import datetime
@@ -330,7 +331,7 @@ async def main():
 
     # Generate PoP (Proof of Possession) for an action
     action_args = {"path": "summary.md", "content": "Research findings..."}
-    pop_signature = research_warrant.sign(research_worker_key, "write_file", action_args)
+    pop_signature = research_warrant.sign(research_worker_key, "write_file", action_args, int(time.time()))
 
     print("  🔐 PROOF OF POSSESSION (PoP) for write_file('summary.md'):")
     print(f"     Warrant:   {research_warrant.id[:30]}...")

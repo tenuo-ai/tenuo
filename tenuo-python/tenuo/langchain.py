@@ -183,9 +183,10 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                 authorized = warrant.validate(self.name, constraint_args)
             else:
                 # Plain Warrant - need to sign with key from context
+                import time
                 signing_key = key_scope()
                 if signing_key:
-                    pop_signature = bytes(warrant.sign(signing_key, self.name, constraint_args))
+                    pop_signature = bytes(warrant.sign(signing_key, self.name, constraint_args, int(time.time())))
                     authorized = warrant.authorize(self.name, constraint_args, pop_signature)
                 else:
                     # No key context - cannot authorize

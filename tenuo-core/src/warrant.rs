@@ -1091,10 +1091,24 @@ impl Warrant {
         tool: &str,
         args: &HashMap<String, ConstraintValue>,
     ) -> Result<Signature> {
+        self.sign_with_timestamp(keypair, tool, args, None)
+    }
+
+    /// Sign with an explicit timestamp for deterministic replay.
+    ///
+    /// This is the internal implementation that accepts an optional timestamp.
+    /// Used by Temporal workflows to ensure replay safety.
+    pub fn sign_with_timestamp(
+        &self,
+        keypair: &SigningKey,
+        tool: &str,
+        args: &HashMap<String, ConstraintValue>,
+        timestamp: Option<i64>,
+    ) -> Result<Signature> {
         let mut sorted_args: Vec<(&String, &ConstraintValue)> = args.iter().collect();
         sorted_args.sort_by_key(|(k, _)| *k);
 
-        let now = Utc::now().timestamp();
+        let now = timestamp.unwrap_or_else(|| Utc::now().timestamp());
         let window_ts = (now / POP_TIMESTAMP_WINDOW_SECS) * POP_TIMESTAMP_WINDOW_SECS;
 
         let challenge_data = (self.payload.id.to_hex(), tool, sorted_args, window_ts);

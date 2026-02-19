@@ -13,6 +13,7 @@ Note:
 
 import os
 import base64
+import time
 from contextlib import contextmanager
 from typing import Tuple, List, Optional
 from tenuo_core import Warrant, SigningKey  # type: ignore[import-untyped]
@@ -124,13 +125,10 @@ def deterministic_headers(
     """
     # Use fixed timestamp for deterministic PoP
     if timestamp is None:
-        timestamp = 0
+        timestamp = 1234567890
 
     # Create PoP signature with fixed timestamp
-    # Note: This requires Rust support for custom timestamps
-    # For now, use regular PoP (will be non-deterministic)
-    # Create PoP signature
-    pop_sig = warrant.sign(key, tool, args)
+    pop_sig = warrant.sign(key, tool, args, timestamp)
     # sign returns bytes, encode to base64
     pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
@@ -273,7 +271,7 @@ def assert_authorized(
 
         args = args or {}
         try:
-            pop_sig = warrant.sign(key, tool, args)
+            pop_sig = warrant.sign(key, tool, args, int(time.time()))
             result = warrant.authorize(tool, args, pop_sig)
             if not result:
                 raise AuthorizationAssertionError(
@@ -329,7 +327,7 @@ def assert_denied(
 
         args = args or {}
         try:
-            pop_sig = warrant.sign(key, tool, args)
+            pop_sig = warrant.sign(key, tool, args, int(time.time()))
             result = warrant.authorize(tool, args, pop_sig)
             if result:
                 raise AuthorizationAssertionError(

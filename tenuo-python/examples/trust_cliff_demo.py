@@ -13,6 +13,8 @@ Run:
     python trust_cliff_demo.py
 """
 
+import time
+
 from tenuo import (
     Warrant,
     SigningKey,
@@ -45,7 +47,7 @@ def main():
 
     # Create PoP and authorize
     args = {"url": "https://any.com", "timeout": 999, "retries": 100}
-    pop = open_warrant.sign(key, "api_call", args)
+    pop = open_warrant.sign(key, "api_call", args, int(time.time()))
     result = open_warrant.authorize("api_call", args, bytes(pop))
     if result:
         print("   ✅ ALLOWED: url=https://any.com, timeout=999, retries=100")
@@ -69,7 +71,7 @@ def main():
 
     # Try with unknown field 'timeout' - should be BLOCKED
     args = {"url": "https://api.example.com/v1", "timeout": 30}
-    pop = closed_warrant.sign(key, "api_call", args)
+    pop = closed_warrant.sign(key, "api_call", args, int(time.time()))
     result = closed_warrant.authorize("api_call", args, bytes(pop))
     if not result:
         # Get detailed reason
@@ -101,7 +103,7 @@ def main():
     )
 
     args = {"url": "https://api.example.com/v1", "timeout": 30, "retries": 5}
-    pop = permissive_warrant.sign(key, "api_call", args)
+    pop = permissive_warrant.sign(key, "api_call", args, int(time.time()))
     result = permissive_warrant.authorize("api_call", args, bytes(pop))
     if result:
         print("   ✅ ALLOWED: url, timeout=30, retries=5")
@@ -130,7 +132,7 @@ def main():
 
     # All fields constrained (even if Wildcard) → allowed
     args = {"url": "https://api.example.com/v1", "timeout": 9999, "retries": 2}
-    pop = selective_warrant.sign(key, "api_call", args)
+    pop = selective_warrant.sign(key, "api_call", args, int(time.time()))
     result = selective_warrant.authorize("api_call", args, bytes(pop))
     if result:
         print("   ✅ ALLOWED: timeout=9999, retries=2")
@@ -141,7 +143,7 @@ def main():
 
     # Try with retries too high
     args_bad = {"url": "https://api.example.com/v1", "timeout": 30, "retries": 10}
-    pop_bad = selective_warrant.sign(key, "api_call", args_bad)
+    pop_bad = selective_warrant.sign(key, "api_call", args_bad, int(time.time()))
     result_bad = selective_warrant.authorize("api_call", args_bad, bytes(pop_bad))
     if not result_bad:
         print("   ❌ BLOCKED: retries=10 exceeds Range.max_value(3)")
@@ -151,7 +153,7 @@ def main():
 
     # Try with unknown field - should be blocked even though others have Wildcard
     args_unknown = {"url": "https://api.example.com/v1", "timeout": 30, "retries": 2, "unknown_field": True}
-    pop_unknown = selective_warrant.sign(key, "api_call", args_unknown)
+    pop_unknown = selective_warrant.sign(key, "api_call", args_unknown, int(time.time()))
     result_unknown = selective_warrant.authorize("api_call", args_unknown, bytes(pop_unknown))
     if not result_unknown:
         print("   ❌ BLOCKED: 'unknown_field' not in constraint set")
@@ -194,7 +196,7 @@ def main():
 
     # Child will block unknown fields even though parent allowed them
     args = {"url": "https://api.example.com/v1", "timeout": 30}
-    pop = child.sign(key, "api_call", args)
+    pop = child.sign(key, "api_call", args, int(time.time()))
     result = child.authorize("api_call", args, bytes(pop))
     if not result:
         reason = child.check_constraints("api_call", args)

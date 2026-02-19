@@ -1,6 +1,6 @@
 # Tenuo Temporal Integration Examples
 
-Warrant-based authorization for Temporal workflows and activities.
+Warrant-based authorization for Temporal workflows and activities with **transparent PoP**.
 
 ## Prerequisites
 
@@ -19,53 +19,69 @@ pip install "tenuo[temporal]"
 
 ## Examples
 
-| Example | Pattern | What it demonstrates |
+Three examples showing a clean progression from basic transparent authorization to advanced patterns:
+
+| Example | Concept | What it demonstrates |
 |---------|---------|---------------------|
-| [`authorized_workflow_demo.py`](authorized_workflow_demo.py) | **AuthorizedWorkflow** (recommended) | Base class with `self.execute_authorized_activity()`, parallel reads via `asyncio.gather`, fail-fast header validation |
-| [`demo.py`](demo.py) | `tenuo_execute_activity()` | Lower-level API, sequential + parallel reads, unauthorized access denial |
-| [`multi_warrant.py`](multi_warrant.py) | Multi-tenant isolation | Concurrent workflows with distinct warrants scoped to separate directories |
-| [`delegation.py`](delegation.py) | Warrant delegation | Per-stage pipeline authorization with attenuated warrants |
+| [`demo.py`](demo.py) | **Transparent authorization** | Standard `workflow.execute_activity()`, zero workflow changes, sequential + parallel reads, unauthorized access denial |
+| [`multi_warrant.py`](multi_warrant.py) | **Multi-tenant isolation** | Identical workflow code for different tenants, isolation via warrant only, cross-access denial |
+| [`delegation.py`](delegation.py) | **Inline attenuation** | Per-stage pipeline authorization with attenuated child workflows via `tenuo_execute_child_workflow()` |
 
 ### Quick start
 
 ```bash
 temporal server start-dev        # Terminal 1
-python authorized_workflow_demo.py  # Terminal 2
+python demo.py                   # Terminal 2
 ```
 
-## Two workflow patterns
+## Transparent Authorization Pattern
 
-### AuthorizedWorkflow (recommended)
-
-Subclass `AuthorizedWorkflow` for automatic header validation and PoP:
+The TenuoInterceptor computes Proof-of-Possession signatures transparently - just use standard Temporal APIs:
 
 ```python
 @workflow.defn
-class MyWorkflow(AuthorizedWorkflow):
+class MyWorkflow:
     @workflow.run
     async def run(self, path: str) -> str:
-        return await self.execute_authorized_activity(
-            read_file, args=[path],
+        # Standard Temporal API - no Tenuo imports needed!
+        return await workflow.execute_activity(
+            read_file,
+            args=[path],
             start_to_close_timeout=timedelta(seconds=30),
         )
 ```
 
-`AuthorizedWorkflow` validates Tenuo headers at workflow start — if they're missing, the workflow fails immediately instead of mid-execution.
+The interceptor automatically:
+- Computes PoP with deterministic timestamps (`workflow.now()`)
+- Injects warrant and PoP into activity headers
+- Works with `asyncio.gather()` for parallel activities
+- Ensures replay safety
 
-### tenuo_execute_activity (advanced)
+### When to use Tenuo-specific functions
 
-Use the free function when you need multi-warrant or delegation patterns:
+Most workflows use standard `workflow.execute_activity()`. The only exception is **inline attenuation** for child workflows:
 
 ```python
-@workflow.defn
-class PipelineWorkflow:
-    @workflow.run
-    async def run(self, path: str) -> str:
-        return await tenuo_execute_activity(
-            read_file, args=[path],
-            start_to_close_timeout=timedelta(seconds=30),
-        )
+# Only needed for per-child authorization decisions
+await tenuo_execute_child_workflow(
+    ReaderChild.run,
+    args=[source_dir],
+    id=f"reader-{workflow.info().workflow_id}",
+    tools=["read_file", "list_directory"],  # Subset of parent's tools
+    ttl_seconds=60,                          # Scoped lifetime
+)
 ```
+
+This is an authorization decision (choosing what scope and duration to delegate), not infrastructure.
+
+**How it works:**
+1. Reads the parent warrant from workflow context
+2. Calls `parent_warrant.attenuate(tools=..., ttl_seconds=...)` internally
+3. Validates that requested tools are a subset of parent's tools
+4. Injects the attenuated child warrant via the outbound interceptor
+5. Child workflow receives ONLY the narrowed capabilities
+
+The child never sees the parent's full warrant - it's attenuated before injection.
 
 ## Worker setup (required)
 
@@ -110,10 +126,10 @@ Client                    Workflow                    Activity
   |                    Inbound interceptor:              |
   |                    Extract Tenuo headers             |
   |                          |                           |
-  |                    execute_authorized_activity()     |
-  |                    Sign PoP challenge                |
+  |                    workflow.execute_activity()       |
   |                          |                           |
   |                    Outbound interceptor:             |
+  |                    Compute PoP (transparent)         |
   |                    Inject headers into activity  --->|
   |                          |                           |
   |                          |    Activity interceptor:  |
@@ -126,6 +142,10 @@ Client                    Workflow                    Activity
 
 Headers propagate through Temporal's native header mechanism,
 so this works in distributed deployments (separate client/worker processes).
+
+The key innovation: PoP computation happens **transparently** in the outbound
+interceptor using `workflow.now()` for deterministic replay. Workflow code uses
+standard Temporal APIs with zero Tenuo imports.
 
 ## Security defaults
 
@@ -150,7 +170,7 @@ pytest tests/test_temporal_e2e.py -v    # 31 integration tests
 | `ImportError: PyO3 modules ... initialized once` | Missing passthrough modules | Add `with_passthrough_modules("tenuo", "tenuo_core")` to sandbox config |
 | `TenuoContextError: No Tenuo headers in store` | Workflow started without headers | Call `client_interceptor.set_headers(tenuo_headers(...))` before `execute_workflow` |
 | `ConstraintViolation: No warrant provided` | Headers not reaching worker | Ensure `TenuoClientInterceptor` is in the client's interceptor list |
-| `Incorrect padding` / `signature must be 64 bytes` | Direct `workflow.execute_activity()` call | Use `tenuo_execute_activity()` or `self.execute_authorized_activity()` instead |
+| Activity denied despite valid warrant | PoP computation failed | Check worker logs for WARNING messages from outbound interceptor |
 
 ## Learn More
 

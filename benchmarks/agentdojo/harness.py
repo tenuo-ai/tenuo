@@ -174,6 +174,7 @@ class TenuoAgentDojoHarness:
         model: str = "gpt-4o-mini",
         benchmark_version: str = "v1",
         api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
     ):
         """
         Args:
@@ -181,11 +182,13 @@ class TenuoAgentDojoHarness:
             model: LLM model to use
             benchmark_version: AgentDojo benchmark version
             api_key: OpenAI API key (if None, uses OPENAI_API_KEY env var)
+            base_url: Optional base URL for OpenAI-compatible APIs (e.g., Groq, Together)
         """
         self.suite_name = suite_name
         self.model = model
         self.benchmark_version = benchmark_version
         self.api_key = api_key
+        self.base_url = base_url
 
         # Generate keys for this benchmark run
         self.issuer_key = SigningKey.generate()
@@ -201,11 +204,13 @@ class TenuoAgentDojoHarness:
 
     def _create_pipeline(self, with_tenuo: bool = True) -> BasePipelineElement:
         """Create agent pipeline with or without Tenuo protection."""
-        # Create OpenAI client
+        # Create OpenAI client (or compatible client like Groq)
+        client_kwargs = {}
         if self.api_key:
-            client = OpenAI(api_key=self.api_key)
-        else:
-            client = OpenAI()  # Uses OPENAI_API_KEY from environment
+            client_kwargs["api_key"] = self.api_key
+        if self.base_url:
+            client_kwargs["base_url"] = self.base_url
+        client = OpenAI(**client_kwargs)
 
         # Create LLM
         llm = OpenAILLM(client, model=self.model)

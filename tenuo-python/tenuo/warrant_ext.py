@@ -308,8 +308,8 @@ def _warrant_validate(
     Returns:
         ValidationResult
     """
-    # 1. Sign
-    pop_signature = self.sign(key, tool, args)
+    import time as _time
+    pop_signature = self.sign(key, tool, args, int(_time.time()))
 
     # 2. Verify
     success = self.authorize(tool=tool, args=args, signature=bytes(pop_signature))
@@ -364,7 +364,8 @@ def _warrant_headers(
         # Actionable but security-safe error msg
         raise RuntimeError(f"Authorization failed: {validation.reason}")
 
-    pop_sig = self.sign(key, tool, args)
+    import time as _time
+    pop_sig = self.sign(key, tool, args, int(_time.time()))
     pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
     return {"X-Tenuo-Warrant": self.to_base64(), "X-Tenuo-PoP": pop_b64}

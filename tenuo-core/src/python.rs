@@ -3879,14 +3879,28 @@ impl PyWarrant {
     ///     keypair: The PySigningKey to sign with
     ///     tool: Tool name being called
     ///     args: Dictionary of argument name -> value
+    ///     timestamp: Unix timestamp (use int(time.time()) or workflow.now().timestamp())
     ///
     /// Returns:
     ///     64-byte signature as bytes
+    ///
+    /// IMPORTANT - Temporal Workflows:
+    ///     DO NOT call sign() directly inside Temporal workflows!
+    ///     Always use workflow.execute_activity() - the TenuoInterceptor
+    ///     will compute PoP transparently with deterministic timestamps.
+    ///
+    /// For non-Temporal use cases (MCP, FastAPI, testing):
+    ///     import time
+    ///     pop = warrant.sign(key, tool, args, timestamp=int(time.time()))
+    ///
+    ///     Or use the helper: from tenuo import now
+    ///     pop = warrant.sign(key, tool, args, timestamp=now())
     fn sign(
         &self,
         keypair: &PySigningKey,
         tool: &str,
         args: &Bound<'_, PyDict>,
+        timestamp: i64,
     ) -> PyResult<Vec<u8>> {
         let mut rust_args = HashMap::new();
         for (key, value) in args.iter() {
@@ -3897,7 +3911,7 @@ impl PyWarrant {
 
         let sig = self
             .inner
-            .sign(&keypair.inner, tool, &rust_args)
+            .sign_with_timestamp(&keypair.inner, tool, &rust_args, Some(timestamp))
             .map_err(to_py_err)?;
         Ok(sig.to_bytes().to_vec())
     }

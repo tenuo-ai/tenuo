@@ -1,5 +1,5 @@
 """
-Tenuo Approval Policy - Human-in-the-loop authorization for tool calls.
+Tenuo Approval Policy - Cryptographically verified human-in-the-loop authorization.
 
 The approval layer sits between warrant authorization and tool execution.
 Warrants define *what* an agent can do. Approval policies define *when*
@@ -8,46 +8,59 @@ a human must confirm before execution proceeds.
     warrant: "You can transfer up to $100K"
     policy:  "Amounts over $10K need human approval"
 
-The policy is an orchestration concern, not a capability. It can be changed
-at runtime without reissuing warrants.
+Every approval is cryptographically signed. There is no unsigned "approved=True"
+path. The approver's SigningKey produces a SignedApproval that binds to the
+exact (warrant, tool, args, holder) tuple via a SHA-256 request hash. The
+enforcement layer verifies the signature, hash, and approver key before
+allowing execution.
 
 Architecture:
-    enforce_tool_call()  ->  warrant says OK  ->  check approval policy
+    enforce_tool_call()  ->  warrant says OK  ->  compute request hash
                                                         |
-                                    no rule matches: proceed
-                                    rule matches: call approval handler
+                                    check approval policy
                                         |
-                                handler approves: proceed
-                                handler denies/times out: raise ApprovalDenied
+                                    no rule matches: proceed
+                                    rule matches: call handler
+                                        |
+                                handler signs: verify -> proceed
+                                handler denies: raise ApprovalDenied
 
 Usage:
+    from tenuo import SigningKey
     from tenuo.approval import ApprovalPolicy, require_approval, cli_prompt
+
+    approver_key = SigningKey.generate()  # human approver's key
 
     policy = ApprovalPolicy(
         require_approval("transfer_funds", when=lambda args: args["amount"] > 10_000),
-        require_approval("delete_user"),  # always requires approval
+        require_approval("delete_user"),
+        trusted_approvers=[approver_key.public_key],
     )
 
-    # In a GuardBuilder:
     guard = (GuardBuilder(client)
         .allow("transfer_funds", amount=Range(0, 100_000))
         .approval_policy(policy)
-        .on_approval(cli_prompt())
+        .on_approval(cli_prompt(approver_key=approver_key))
         .build())
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import sys
+import time
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, List, Optional, Protocol, Union
+
+if TYPE_CHECKING:
+    from tenuo_core import PublicKey, SignedApproval, SigningKey
 
 logger = logging.getLogger("tenuo.approval")
 
 
 # =============================================================================
-# Approval Request / Response
+# Approval Request
 # =============================================================================
 
 
@@ -55,32 +68,23 @@ logger = logging.getLogger("tenuo.approval")
 class ApprovalRequest:
     """Context passed to an approval handler when a rule triggers.
 
+    The request_hash cryptographically binds this approval to the exact
+    (warrant_id, tool, args, holder) tuple. Handlers must embed this hash
+    in the ApprovalPayload they sign.
+
     Attributes:
         tool: Name of the tool requiring approval.
         arguments: Arguments the agent wants to pass.
-        warrant_id: ID of the warrant authorizing this call (if available).
+        warrant_id: ID of the warrant authorizing this call.
+        request_hash: SHA-256 hash binding approval to this specific call (32 bytes).
         rule: The ApprovalRule that triggered this request.
     """
 
     tool: str
     arguments: Dict[str, Any]
-    warrant_id: Optional[str] = None
+    warrant_id: str
+    request_hash: bytes
     rule: Optional[ApprovalRule] = None
-
-
-@dataclass(frozen=True)
-class ApprovalResponse:
-    """Result returned by an approval handler.
-
-    Attributes:
-        approved: Whether the human approved the call.
-        approver: Identifier of the approver (email, key ID, etc.).
-        reason: Optional reason for approval or denial.
-    """
-
-    approved: bool
-    approver: Optional[str] = None
-    reason: Optional[str] = None
 
 
 # =============================================================================
@@ -89,9 +93,9 @@ class ApprovalResponse:
 
 
 class ApprovalRequired(Exception):
-    """Raised when a tool call requires human approval.
+    """Raised when a tool call requires human approval but no handler is set.
 
-    This is not an authorization failure — the warrant permits the call.
+    This is not an authorization failure -- the warrant permits the call.
     The approval policy requires a human to confirm before execution.
 
     Attributes:
@@ -102,7 +106,7 @@ class ApprovalRequired(Exception):
         self.request = request
         super().__init__(
             f"Approval required for '{request.tool}' "
-            f"(warrant: {request.warrant_id or 'unknown'})"
+            f"(warrant: {request.warrant_id})"
         )
 
 
@@ -111,16 +115,13 @@ class ApprovalDenied(Exception):
 
     Attributes:
         request: The original ApprovalRequest.
-        response: The denial ApprovalResponse.
+        reason: Human-readable denial reason.
     """
 
-    def __init__(self, request: ApprovalRequest, response: ApprovalResponse):
+    def __init__(self, request: ApprovalRequest, *, reason: str = "denied by approver"):
         self.request = request
-        self.response = response
-        reason = response.reason or "denied by approver"
-        super().__init__(
-            f"Approval denied for '{request.tool}': {reason}"
-        )
+        self.reason = reason
+        super().__init__(f"Approval denied for '{request.tool}': {reason}")
 
 
 class ApprovalTimeout(ApprovalDenied):
@@ -128,11 +129,26 @@ class ApprovalTimeout(ApprovalDenied):
 
     def __init__(self, request: ApprovalRequest, timeout_seconds: float):
         self.timeout_seconds = timeout_seconds
-        response = ApprovalResponse(
-            approved=False,
-            reason=f"timed out after {timeout_seconds}s",
+        super().__init__(request, reason=f"timed out after {timeout_seconds}s")
+
+
+class ApprovalVerificationError(Exception):
+    """Raised when a SignedApproval fails cryptographic verification.
+
+    This indicates tampering, hash mismatch, untrusted approver key,
+    or expired approval.
+
+    Attributes:
+        request: The original ApprovalRequest.
+        reason: What failed verification.
+    """
+
+    def __init__(self, request: ApprovalRequest, *, reason: str):
+        self.request = request
+        self.reason = reason
+        super().__init__(
+            f"Approval verification failed for '{request.tool}': {reason}"
         )
-        super().__init__(request, response)
 
 
 # =============================================================================
@@ -181,7 +197,7 @@ def require_approval(
 
     Args:
         tool: Tool name that requires approval.
-        when: Optional predicate — if provided, approval is only required
+        when: Optional predicate -- if provided, approval is only required
             when the predicate returns True. If omitted, approval is
             always required for this tool.
         description: Human-readable description shown to the approver.
@@ -202,29 +218,40 @@ def require_approval(
 
 
 class ApprovalPolicy:
-    """Collection of approval rules checked after warrant authorization.
+    """Collection of approval rules with trusted approver keys.
 
     The policy does not affect what an agent *can* do (that's the warrant).
     It gates *when* a human must confirm before execution proceeds.
+    Trusted approvers define *whose* signature is accepted.
 
     Args:
         *rules: One or more ApprovalRule instances.
+        trusted_approvers: Public keys of trusted approvers. If set,
+            only SignedApprovals from these keys are accepted.
+            If None, any valid signature is accepted.
 
     Example:
         policy = ApprovalPolicy(
             require_approval("transfer_funds", when=lambda a: a["amount"] > 10_000),
             require_approval("delete_user"),
+            trusted_approvers=[admin_key.public_key],
         )
     """
 
-    def __init__(self, *rules: ApprovalRule) -> None:
+    def __init__(
+        self,
+        *rules: ApprovalRule,
+        trusted_approvers: Optional[List[PublicKey]] = None,
+    ) -> None:
         self._rules: List[ApprovalRule] = list(rules)
+        self._trusted_approvers = list(trusted_approvers) if trusted_approvers else None
 
     def check(
         self,
         tool_name: str,
         args: Dict[str, Any],
-        warrant_id: Optional[str] = None,
+        warrant_id: str,
+        request_hash: bytes,
     ) -> Optional[ApprovalRequest]:
         """Check if a tool call requires approval.
 
@@ -237,9 +264,15 @@ class ApprovalPolicy:
                     tool=tool_name,
                     arguments=args,
                     warrant_id=warrant_id,
+                    request_hash=request_hash,
                     rule=rule,
                 )
         return None
+
+    @property
+    def trusted_approvers(self) -> Optional[List[PublicKey]]:
+        """Public keys of trusted approvers, or None if any key is accepted."""
+        return list(self._trusted_approvers) if self._trusted_approvers else None
 
     @property
     def rules(self) -> List[ApprovalRule]:
@@ -250,39 +283,101 @@ class ApprovalPolicy:
 
 
 # =============================================================================
-# Approval Handlers
+# Approval Handler Protocol
 # =============================================================================
 
 
 class ApprovalHandler(Protocol):
     """Protocol for approval handlers.
 
-    Handlers receive an ApprovalRequest and return an ApprovalResponse.
-    They can be sync or async — the enforcement layer handles both.
+    Handlers receive an ApprovalRequest and MUST return a SignedApproval.
+    To deny, raise ApprovalDenied. There is no unsigned approval path.
+
+    The handler is responsible for:
+    1. Presenting the request to a human (or automated policy)
+    2. If approved: creating an ApprovalPayload with the request_hash,
+       signing it with the approver's SigningKey -> SignedApproval
+    3. If denied: raising ApprovalDenied
+
+    Handlers can be sync or async -- the enforcement layer handles both.
     """
 
     def __call__(self, request: ApprovalRequest) -> Union[
-        ApprovalResponse, Awaitable[ApprovalResponse]
+        SignedApproval, Awaitable[SignedApproval]
     ]: ...
+
+
+# =============================================================================
+# Helper: create a SignedApproval from a request
+# =============================================================================
+
+
+def sign_approval(
+    request: ApprovalRequest,
+    approver_key: SigningKey,
+    *,
+    external_id: str = "",
+    ttl_seconds: int = 300,
+) -> SignedApproval:
+    """Create a SignedApproval for the given request.
+
+    This is the canonical way to produce a signed approval. It:
+    - Creates an ApprovalPayload with the request_hash
+    - Generates a random nonce (replay protection)
+    - Sets approved_at to now, expires_at to now + ttl_seconds
+    - Signs with the approver's key
+
+    Args:
+        request: The ApprovalRequest to approve.
+        approver_key: The approver's SigningKey.
+        external_id: Identity of the approver (e.g., email).
+        ttl_seconds: How long the signed approval is valid.
+
+    Returns:
+        A SignedApproval (from tenuo_core).
+    """
+    from tenuo_core import ApprovalPayload, SignedApproval
+
+    now = int(time.time())
+    nonce = os.urandom(16)
+
+    payload = ApprovalPayload(
+        request_hash=request.request_hash,
+        nonce=nonce,
+        external_id=external_id,
+        approved_at=now,
+        expires_at=now + ttl_seconds,
+    )
+
+    return SignedApproval.create(payload, approver_key)
+
+
+# =============================================================================
+# Built-in Handlers
+# =============================================================================
 
 
 def cli_prompt(
     *,
+    approver_key: SigningKey,
     show_args: bool = True,
+    ttl_seconds: int = 300,
 ) -> ApprovalHandler:
     """Create a CLI-based approval handler for local development.
 
     Displays the tool call details in the terminal and waits for
-    the user to type 'y' or 'n'.
+    the user to type 'y' or 'n'. If approved, produces a SignedApproval.
 
     Args:
+        approver_key: The approver's signing key (used to sign approvals).
         show_args: Whether to display tool arguments (may contain PII).
+        ttl_seconds: How long the signed approval is valid.
 
     Returns:
         An ApprovalHandler that prompts in the terminal.
     """
 
-    def _handle(request: ApprovalRequest) -> ApprovalResponse:
+    def _handle(request: ApprovalRequest) -> SignedApproval:
         print(f"\n{'=' * 60}", file=sys.stderr)
         print("  APPROVAL REQUIRED", file=sys.stderr)
         print(f"{'=' * 60}", file=sys.stderr)
@@ -292,8 +387,8 @@ def cli_prompt(
                 print(f"  {k:>8s}: {v}", file=sys.stderr)
         if request.rule and request.rule.description:
             print(f"  Reason:  {request.rule.description}", file=sys.stderr)
-        if request.warrant_id:
-            print(f"  Warrant: {request.warrant_id}", file=sys.stderr)
+        print(f"  Warrant: {request.warrant_id}", file=sys.stderr)
+        print(f"  Hash:    {request.request_hash.hex()[:16]}...", file=sys.stderr)
         print(f"{'=' * 60}", file=sys.stderr)
 
         try:
@@ -301,22 +396,39 @@ def cli_prompt(
         except (EOFError, KeyboardInterrupt):
             answer = "n"
 
-        approved = answer in ("y", "yes")
-        return ApprovalResponse(
-            approved=approved,
-            approver="cli",
-            reason="approved via CLI" if approved else "denied via CLI",
+        if answer not in ("y", "yes"):
+            raise ApprovalDenied(request, reason="denied via CLI")
+
+        return sign_approval(
+            request,
+            approver_key,
+            external_id="cli",
+            ttl_seconds=ttl_seconds,
         )
 
     return _handle
 
 
-def auto_approve() -> ApprovalHandler:
-    """Create a handler that auto-approves everything. For testing only."""
+def auto_approve(
+    *,
+    approver_key: SigningKey,
+    ttl_seconds: int = 300,
+) -> ApprovalHandler:
+    """Create a handler that auto-approves everything. For testing only.
 
-    def _handle(request: ApprovalRequest) -> ApprovalResponse:
+    Args:
+        approver_key: The approver's signing key (produces real SignedApprovals).
+        ttl_seconds: How long the signed approval is valid.
+    """
+
+    def _handle(request: ApprovalRequest) -> SignedApproval:
         logger.info(f"Auto-approving '{request.tool}' (testing mode)")
-        return ApprovalResponse(approved=True, approver="auto", reason="auto-approved")
+        return sign_approval(
+            request,
+            approver_key,
+            external_id="auto-approve",
+            ttl_seconds=ttl_seconds,
+        )
 
     return _handle
 
@@ -324,9 +436,9 @@ def auto_approve() -> ApprovalHandler:
 def auto_deny(*, reason: str = "auto-denied by policy") -> ApprovalHandler:
     """Create a handler that auto-denies everything. For dry-run / audit mode."""
 
-    def _handle(request: ApprovalRequest) -> ApprovalResponse:
+    def _handle(request: ApprovalRequest) -> SignedApproval:
         logger.info(f"Auto-denying '{request.tool}' (dry-run mode)")
-        return ApprovalResponse(approved=False, approver="auto", reason=reason)
+        raise ApprovalDenied(request, reason=reason)
 
     return _handle
 
@@ -337,22 +449,18 @@ def webhook(
     timeout: float = 300,
     headers: Optional[Dict[str, str]] = None,
 ) -> ApprovalHandler:
-    """Create a webhook-based approval handler.
+    """Create a webhook-based approval handler (placeholder).
 
-    Posts the approval request to a URL and polls for a response.
-    This is a placeholder — full implementation requires async polling
-    or a callback endpoint.
+    Posts the approval request to a URL and polls for a SignedApproval.
+    Full implementation requires Tenuo Cloud.
 
     Args:
         url: Webhook URL to POST the approval request to.
         timeout: Timeout in seconds waiting for approval.
         headers: Optional HTTP headers (e.g., auth tokens).
-
-    Returns:
-        An ApprovalHandler that sends requests via webhook.
     """
 
-    def _handle(request: ApprovalRequest) -> ApprovalResponse:
+    def _handle(request: ApprovalRequest) -> SignedApproval:
         raise NotImplementedError(
             "Webhook approval handler is a placeholder. "
             "Use tenuo.cloud or implement a custom handler."
@@ -364,13 +472,14 @@ def webhook(
 __all__ = [
     "ApprovalPolicy",
     "ApprovalRequest",
-    "ApprovalResponse",
     "ApprovalRequired",
     "ApprovalDenied",
     "ApprovalTimeout",
+    "ApprovalVerificationError",
     "ApprovalRule",
     "ApprovalHandler",
     "require_approval",
+    "sign_approval",
     "cli_prompt",
     "auto_approve",
     "auto_deny",

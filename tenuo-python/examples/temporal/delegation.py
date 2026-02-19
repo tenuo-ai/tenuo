@@ -1,7 +1,12 @@
 """
 Warrant Delegation Patterns with Temporal
 
-Demonstrates warrant delegation patterns for multi-stage workflows:
+Demonstrates warrant delegation patterns for multi-stage workflows.
+
+NOTE: All workflows use standard workflow.execute_activity() - the interceptor
+handles PoP transparently. The ONLY Tenuo-specific call is tenuo_execute_child_workflow()
+in OrchestratorWorkflow, which exists because choosing what scope to delegate to a
+child is an authorization decision, not infrastructure.
 
   Pattern 1 — Per-stage warrant rotation:
      A pipeline with distinct stages (ingest, transform) where each stage
@@ -43,7 +48,6 @@ from tenuo.temporal import (
     TenuoClientInterceptor,
     EnvKeyResolver,
     tenuo_headers,
-    tenuo_execute_activity,
     tenuo_execute_child_workflow,
     TemporalAuditEvent,
 )
@@ -83,19 +87,22 @@ async def list_directory(path: str) -> list[str]:
 
 @workflow.defn
 class IngestWorkflow:
-    """Stage 1: Reads source files. Warrant scoped to read_file only."""
+    """Stage 1: Reads source files. Warrant scoped to read_file only.
+
+    Uses standard workflow.execute_activity() - interceptor handles PoP.
+    """
 
     @workflow.run
     async def run(self, source_dir: str) -> list[str]:
         no_retry = RetryPolicy(maximum_attempts=1)
-        files = await tenuo_execute_activity(
+        files = await workflow.execute_activity(
             list_directory, args=[source_dir],
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=no_retry,
         )
         results = []
         for f in files:
-            content = await tenuo_execute_activity(
+            content = await workflow.execute_activity(
                 read_file, args=[f],
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=no_retry,
@@ -106,14 +113,17 @@ class IngestWorkflow:
 
 @workflow.defn
 class TransformWorkflow:
-    """Stage 2: Writes transformed output. Warrant scoped to write_file only."""
+    """Stage 2: Writes transformed output. Warrant scoped to write_file only.
+
+    Uses standard workflow.execute_activity() - interceptor handles PoP.
+    """
 
     @workflow.run
     async def run(self, output_dir: str, data: list[str]) -> str:
         no_retry = RetryPolicy(maximum_attempts=1)
         for i, content in enumerate(data):
             transformed = content.upper()
-            await tenuo_execute_activity(
+            await workflow.execute_activity(
                 write_file,
                 args=[f"{output_dir}/output_{i}.txt", transformed],
                 start_to_close_timeout=timedelta(seconds=10),
@@ -134,19 +144,23 @@ class TransformWorkflow:
 
 @workflow.defn
 class ReaderChild:
-    """Child workflow that can only read. Gets attenuated warrant from parent."""
+    """Child workflow that can only read. Gets attenuated warrant from parent.
+
+    Uses standard workflow.execute_activity() - interceptor handles PoP.
+    The attenuated warrant comes from tenuo_execute_child_workflow() in the parent.
+    """
 
     @workflow.run
     async def run(self, source_dir: str) -> list[str]:
         no_retry = RetryPolicy(maximum_attempts=1)
-        files = await tenuo_execute_activity(
+        files = await workflow.execute_activity(
             list_directory, args=[source_dir],
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=no_retry,
         )
         results = []
         for f in files:
-            content = await tenuo_execute_activity(
+            content = await workflow.execute_activity(
                 read_file, args=[f],
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=no_retry,
@@ -157,13 +171,17 @@ class ReaderChild:
 
 @workflow.defn
 class WriterChild:
-    """Child workflow that can only write. Gets attenuated warrant from parent."""
+    """Child workflow that can only write. Gets attenuated warrant from parent.
+
+    Uses standard workflow.execute_activity() - interceptor handles PoP.
+    The attenuated warrant comes from tenuo_execute_child_workflow() in the parent.
+    """
 
     @workflow.run
     async def run(self, output_dir: str, data: list[str]) -> str:
         no_retry = RetryPolicy(maximum_attempts=1)
         for i, content in enumerate(data):
-            await tenuo_execute_activity(
+            await workflow.execute_activity(
                 write_file,
                 args=[f"{output_dir}/result_{i}.txt", content.upper()],
                 start_to_close_timeout=timedelta(seconds=10),
@@ -174,25 +192,40 @@ class WriterChild:
 
 @workflow.defn
 class OrchestratorWorkflow:
-    """Broad warrant (read + write + list). Delegates narrower warrants to children."""
+    """Broad warrant (read + write + list). Delegates narrower warrants to children.
+
+    Uses tenuo_execute_child_workflow() to make authorization decisions about
+    what scope to delegate to each child. This is the ONLY Tenuo-specific call
+    in this example - everything else uses standard workflow.execute_activity().
+
+    HOW IT WORKS:
+    1. This workflow receives a broad warrant (read + write + list) from the client
+    2. tenuo_execute_child_workflow() reads that parent warrant from context
+    3. It calls parent_warrant.attenuate(tools=..., ttl_seconds=...) internally
+    4. The attenuated child warrant is injected into the child workflow via interceptor
+    5. Child workflow receives ONLY the narrowed capabilities
+    """
 
     @workflow.run
     async def run(self, source_dir: str, output_dir: str) -> str:
-        # Grant reader child only read + list, 60-second TTL
+        # AUTHORIZATION DECISION: Grant reader child only read + list, 60-second TTL
+        # tenuo_execute_child_workflow() reads the parent warrant from context,
+        # attenuates it to only these tools, and injects it into the child
         data = await tenuo_execute_child_workflow(
             ReaderChild.run,
             args=[source_dir],
             id=f"reader-{workflow.info().workflow_id}",
-            tools=["read_file", "list_directory"],
-            ttl_seconds=60,
+            tools=["read_file", "list_directory"],  # Subset of parent's tools
+            ttl_seconds=60,                          # Shorter than parent
         )
 
-        # Grant writer child only write, 60-second TTL
+        # AUTHORIZATION DECISION: Grant writer child only write, 60-second TTL
+        # Parent had (read + write + list), child gets ONLY (write)
         result = await tenuo_execute_child_workflow(
             WriterChild.run,
             args=[output_dir, data],
             id=f"writer-{workflow.info().workflow_id}",
-            tools=["write_file"],
+            tools=["write_file"],     # Just write, no read or list
             ttl_seconds=60,
         )
 

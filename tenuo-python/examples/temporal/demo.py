@@ -1,15 +1,24 @@
 """
-Tenuo-Temporal Integration Demo
+Tenuo-Temporal Integration Demo - Transparent Authorization
 
-Demonstrates warrant-based authorization for Temporal workflows using
-the production tenuo.temporal module:
+Demonstrates TRANSPARENT warrant-based authorization for Temporal workflows.
+Authorization is completely invisible - just use standard Temporal APIs!
 
-  - TenuoInterceptor enforces per-activity authorization at the worker level
-  - TenuoClientInterceptor injects warrant headers at workflow start
-  - tenuo_headers() serializes warrant + signing key for header transport
-  - tenuo_execute_activity() propagates headers and adds Proof-of-Possession
+Key features:
+  - ✨ NO special wrapper functions needed (workflow.execute_activity just works!)
+  - ✨ TenuoInterceptor handles PoP computation transparently
+  - ✨ Works with standard Temporal code - zero changes to workflows
+  - ✨ Parallel activities via asyncio.gather work perfectly
   - EnvKeyResolver resolves signing keys from environment variables
-  - Parallel activity execution via asyncio.gather (each gets its own PoP)
+  - Full cryptographic chain-of-trust validation with PoP
+
+IMPORTANT - Do NOT call warrant.sign() directly in workflows:
+  ❌ BAD:  pop = warrant.sign(key, tool, args)  # Non-deterministic!
+  ✅ GOOD: await workflow.execute_activity(...)  # Interceptor handles it
+
+The TenuoInterceptor automatically computes PoP with deterministic timestamps
+(workflow.now()) to ensure replay safety. Manual sign() calls will use
+wall-clock time and cause replay failures.
 
 Requirements:
     pip install temporalio tenuo
@@ -45,7 +54,6 @@ from tenuo.temporal import (
     TenuoClientInterceptor,
     EnvKeyResolver,
     tenuo_headers,
-    tenuo_execute_activity,
     TemporalAuditEvent,
 )
 
@@ -84,18 +92,23 @@ async def list_directory(path: str) -> list[str]:
 
 
 # =============================================================================
-# Workflow — uses tenuo_execute_activity() for PoP-signed activity calls
+# Workflow — uses STANDARD Temporal API (authorization is transparent!)
 # =============================================================================
 
 @workflow.defn
 class ResearchWorkflow:
-    """Researches files within the scope authorized by its warrant."""
+    """Researches files within the scope authorized by its warrant.
+
+    ✨ Notice: This is standard Temporal code! No Tenuo-specific functions.
+    The TenuoInterceptor transparently computes PoP for every activity.
+    """
 
     @workflow.run
     async def run(self, data_dir: str) -> str:
         no_retry = RetryPolicy(maximum_attempts=1)
 
-        files = await tenuo_execute_activity(
+        # ✨ Standard Temporal API - interceptor handles PoP transparently
+        files = await workflow.execute_activity(
             list_directory,
             args=[data_dir],
             start_to_close_timeout=timedelta(seconds=30),
@@ -105,7 +118,8 @@ class ResearchWorkflow:
         results = []
         for file_path in files:
             if file_path.endswith(".txt"):
-                content = await tenuo_execute_activity(
+                # ✨ Again, standard API - no Tenuo imports needed!
+                content = await workflow.execute_activity(
                     read_file,
                     args=[file_path],
                     start_to_close_timeout=timedelta(seconds=30),
@@ -118,26 +132,29 @@ class ResearchWorkflow:
 
 @workflow.defn
 class ParallelResearchWorkflow:
-    """Reads multiple files in parallel — each gets its own PoP signature."""
+    """Reads multiple files in parallel — each gets its own PoP signature.
+
+    ✨ Parallel activities just work! The interceptor computes PoP inline
+    for each activity call, so there's no queue races or signature collision.
+    """
 
     @workflow.run
     async def run(self, data_dir: str) -> str:
         no_retry = RetryPolicy(maximum_attempts=1)
         timeout = timedelta(seconds=30)
 
-        # Parallel reads: each tenuo_execute_activity() call gets an
-        # independent PoP slot keyed by (workflow_id, tool, args), so
-        # asyncio.gather works correctly without signature collision.
+        # ✨ Standard asyncio.gather with standard Temporal API
+        # Each interceptor call computes its own PoP - no shared state!
         contents = await asyncio.gather(
-            tenuo_execute_activity(
+            workflow.execute_activity(
                 read_file, args=[f"{data_dir}/paper1.txt"],
                 start_to_close_timeout=timeout, retry_policy=no_retry,
             ),
-            tenuo_execute_activity(
+            workflow.execute_activity(
                 read_file, args=[f"{data_dir}/paper2.txt"],
                 start_to_close_timeout=timeout, retry_policy=no_retry,
             ),
-            tenuo_execute_activity(
+            workflow.execute_activity(
                 read_file, args=[f"{data_dir}/notes.txt"],
                 start_to_close_timeout=timeout, retry_policy=no_retry,
             ),

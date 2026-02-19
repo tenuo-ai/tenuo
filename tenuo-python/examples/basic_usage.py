@@ -9,6 +9,8 @@ Demonstrates:
 - Authorization checks with Proof-of-Possession
 """
 
+import time
+
 from tenuo import SigningKey, Warrant, Pattern, Exact, Range
 
 
@@ -62,7 +64,7 @@ def main():
     # Helper to authorize with PoP
     def check_auth(warrant, tool, args, signing_key):
         # Create Proof-of-Possession signature
-        signature = warrant.sign(signing_key, tool, args)
+        signature = warrant.sign(signing_key, tool, args, int(time.time()))
         # Authorize returns True/False based on constraint check
         return warrant.authorize(tool, args, bytes(signature))
 

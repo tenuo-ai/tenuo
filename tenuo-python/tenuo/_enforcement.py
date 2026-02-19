@@ -44,7 +44,7 @@ import inspect
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING
+from typing import Any, Callable, Dict, List, Optional, Set, TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from .approval import ApprovalHandler, ApprovalPolicy
@@ -315,28 +315,40 @@ def _get_allowed_tools(bound_warrant: BoundWarrant) -> Optional[List[str]]:
 def _check_approval(
     tool_name: str,
     tool_args: Dict[str, Any],
-    warrant_id: Optional[str],
+    bound_warrant: BoundWarrant,
     policy: ApprovalPolicy,
     handler: Optional[ApprovalHandler],
 ) -> Optional[EnforcementResult]:
-    """Run the approval policy check and invoke the handler if needed.
+    """Run the approval policy check, invoke handler, and verify SignedApproval.
 
-    Returns None to proceed (no rule matched or handler approved).
-    Returns an EnforcementResult to deny (handler denied or missing).
+    Returns None to proceed (no rule matched or approval verified).
     Raises ApprovalRequired if no handler is configured.
+    Raises ApprovalDenied if handler denies.
+    Raises ApprovalVerificationError if signature/hash/key fails verification.
     """
-    from .approval import ApprovalRequired, ApprovalDenied
+    import time
+    from tenuo_core import py_compute_request_hash as _compute_hash
+    from .approval import (
+        ApprovalRequired,
+        ApprovalVerificationError,
+    )
 
-    request = policy.check(tool_name, tool_args, warrant_id)
+    warrant_id = getattr(bound_warrant, "id", None) or ""
+    holder_key = getattr(bound_warrant._key, "public_key", None)
+
+    request_hash = _compute_hash(warrant_id, tool_name, tool_args, holder_key)
+
+    request = policy.check(tool_name, tool_args, warrant_id, request_hash)
     if request is None:
         return None
 
     if handler is None:
         raise ApprovalRequired(request)
 
-    result = handler(request)
+    signed_approval = handler(request)
 
-    if inspect.isawaitable(result):
+    if inspect.isawaitable(signed_approval):
+        coro = cast("Any", signed_approval)
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
@@ -345,22 +357,46 @@ def _check_approval(
         if loop and loop.is_running():
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                result = pool.submit(asyncio.run, result).result()
+                signed_approval = pool.submit(asyncio.run, coro).result()
         else:
-            result = asyncio.run(result)
+            signed_approval = asyncio.run(coro)
 
-    if result.approved:
-        logger.info(
-            f"Approval granted for '{tool_name}' by {result.approver or 'unknown'}",
-            extra={"tool": tool_name, "warrant_id": warrant_id},
+    # --- Cryptographic verification ---
+
+    try:
+        payload = signed_approval.verify()
+    except Exception as e:
+        raise ApprovalVerificationError(
+            request, reason=f"invalid signature: {e}"
         )
-        return None
 
-    logger.warning(
-        f"Approval denied for '{tool_name}': {result.reason}",
+    if payload.request_hash != request_hash:
+        raise ApprovalVerificationError(
+            request,
+            reason="request hash mismatch (approval bound to different call)",
+        )
+
+    now = int(time.time())
+    if payload.expires_at <= now:
+        raise ApprovalVerificationError(
+            request, reason="signed approval has expired"
+        )
+
+    trusted = policy.trusted_approvers
+    if trusted is not None:
+        approver_key = signed_approval.approver_key
+        if not any(approver_key == k for k in trusted):
+            raise ApprovalVerificationError(
+                request, reason="approver key not in trusted_approvers"
+            )
+
+    logger.info(
+        f"Approval verified for '{tool_name}' "
+        f"(approver={payload.external_id or 'unknown'}, "
+        f"hash={request_hash.hex()[:16]}...)",
         extra={"tool": tool_name, "warrant_id": warrant_id},
     )
-    raise ApprovalDenied(request, result)
+    return None
 
 
 # =============================================================================
@@ -414,17 +450,18 @@ def enforce_tool_call(
             provided by the client.
         approval_policy: Optional ApprovalPolicy to check after warrant authorization.
             If a rule matches, the approval_handler is invoked.
-        approval_handler: Callable that handles approval requests (e.g., cli_prompt).
-            Required if approval_policy is set and a rule matches.
+        approval_handler: Callable that handles approval requests and returns a
+            SignedApproval. Required if approval_policy is set and a rule matches.
 
     Returns:
         EnforcementResult with allowed status and denial details.
-        If approval was required, approval_required=True on the result.
 
     Raises:
         ConfigurationError: If bound_warrant is not a BoundWarrant instance.
         ApprovalRequired: If approval_policy triggers but no handler is provided.
         ApprovalDenied: If the handler denies the request.
+        ApprovalVerificationError: If the SignedApproval fails cryptographic
+            verification (invalid signature, hash mismatch, untrusted key, expired).
 
     Example:
         from tenuo import Warrant, SigningKey
@@ -619,7 +656,7 @@ def enforce_tool_call(
         # =================================================================
         if approval_policy is not None:
             approval_result = _check_approval(
-                tool_name, tool_args, warrant_id,
+                tool_name, tool_args, bound_warrant,
                 approval_policy, approval_handler,
             )
             if approval_result is not None:
@@ -667,9 +704,8 @@ def enforce_tool_call(
             warrant_id=warrant_id,
         )
     except Exception as e:
-        # Let approval exceptions propagate — they are not authorization failures
-        from .approval import ApprovalRequired, ApprovalDenied
-        if isinstance(e, (ApprovalRequired, ApprovalDenied)):
+        from .approval import ApprovalRequired, ApprovalDenied, ApprovalVerificationError
+        if isinstance(e, (ApprovalRequired, ApprovalDenied, ApprovalVerificationError)):
             raise
 
         # Catch-all for unexpected runtime errors (fail closed)

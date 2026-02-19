@@ -325,10 +325,11 @@ class SecureMCPClient:
 
                 if warrant is not None and keypair is not None:
                     import base64
+                    import time
 
                     warrant_base64 = warrant.to_base64()
                     # Create PoP signature for this specific call
-                    pop_sig = warrant.sign(keypair, tool_name, args)
+                    pop_sig = warrant.sign(keypair, tool_name, args, int(time.time()))
                     signature_base64 = base64.b64encode(bytes(pop_sig)).decode("utf-8")
 
                     call_args["_tenuo"] = {"warrant": warrant_base64, "signature": signature_base64}

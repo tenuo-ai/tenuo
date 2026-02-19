@@ -1,3 +1,5 @@
+import time
+
 from tenuo import SigningKey, Warrant, Pattern, Exact, Range
 from tenuo.constraints import Constraints
 
@@ -49,7 +51,7 @@ def test_full_warrant_lifecycle():
 
     # Helper to authorize with PoP
     def check_auth(warrant, tool, args, keypair):
-        signature = warrant.sign(keypair, tool, args)
+        signature = warrant.sign(keypair, tool, args, int(time.time()))
         return warrant.authorize(tool, args, bytes(signature))
 
     # Allowed: matches constraints

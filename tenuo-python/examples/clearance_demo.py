@@ -39,6 +39,8 @@ REAL-WORLD USE CASES:
 This demo shows how to enforce these boundaries at the gateway level.
 """
 
+import time
+
 from tenuo import (
     SigningKey,
     Warrant,
@@ -134,7 +136,7 @@ def main():
     print("-" * 70)
 
     args = {"cluster": "production"}
-    pop_sig = system_warrant.sign(system_kp, "admin_reset", args)
+    pop_sig = system_warrant.sign(system_kp, "admin_reset", args, int(time.time()))
 
     try:
         authorizer.authorize(system_warrant, "admin_reset", args, bytes(pop_sig))
@@ -167,7 +169,7 @@ def main():
     print("-" * 70)
 
     args = {"name": "test_db"}
-    pop_sig = privileged_warrant.sign(privileged_kp, "delete_database", args)
+    pop_sig = privileged_warrant.sign(privileged_kp, "delete_database", args, int(time.time()))
 
     try:
         authorizer.authorize(privileged_warrant, "delete_database", args, bytes(pop_sig))
@@ -183,7 +185,7 @@ def main():
     print("-" * 70)
 
     args = {"path": "/public/readme.txt"}
-    pop_sig = system_warrant.sign(system_kp, "read_file", args)
+    pop_sig = system_warrant.sign(system_kp, "read_file", args, int(time.time()))
 
     try:
         authorizer.authorize(system_warrant, "read_file", args, bytes(pop_sig))
@@ -200,7 +202,7 @@ def main():
     print("-" * 70)
 
     args = {"path": "/public/data.json"}
-    pop_sig = external_warrant.sign(external_kp, "read_file", args)
+    pop_sig = external_warrant.sign(external_kp, "read_file", args, int(time.time()))
 
     try:
         authorizer.authorize(external_warrant, "read_file", args, bytes(pop_sig))

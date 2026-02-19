@@ -1918,14 +1918,14 @@ class TestAdversarialPoP:
             )
 
             # Sign for one set of args
-            pop1 = warrant.sign(key, "read_file", {"path": "/data/file1.txt"})
+            pop1 = warrant.sign(key, "read_file", {"path": "/data/file1.txt"}, int(time.time()))
 
             # PoP exists and has content
             pop1_bytes = bytes(pop1)
             assert len(pop1_bytes) > 0, "PoP signature should have content"
 
             # A different set of args would produce different signature
-            pop2 = warrant.sign(key, "read_file", {"path": "/data/file2.txt"})
+            pop2 = warrant.sign(key, "read_file", {"path": "/data/file2.txt"}, int(time.time()))
             pop2_bytes = bytes(pop2)
 
             # The key point is: server verifies PoP against the actual args received
@@ -1955,7 +1955,7 @@ class TestAdversarialPoP:
 
             # Attacker can create a PoP signature, but it won't verify
             # because it's not signed by holder_key
-            attacker_pop = warrant.sign(attacker_key, "read_file", {"path": "/data"})
+            attacker_pop = warrant.sign(attacker_key, "read_file", {"path": "/data"}, int(time.time()))
 
             # Signing succeeds (it's just bytes), but server verification would fail
             assert attacker_pop is not None

@@ -1,14 +1,19 @@
 """
-Multi-Warrant Workflows with Temporal
+Multi-Warrant Workflows with Temporal - Transparent Authorization
 
-Demonstrates assigning different warrants to different workflows running
-concurrently on the same worker.  Each workflow receives its own
-scoped warrant via TenuoClientInterceptor, ensuring isolation:
+Demonstrates multi-tenant isolation: different warrants for different workflows
+running concurrently on the same worker. Each workflow receives its own scoped
+warrant via TenuoClientInterceptor:
 
   - Workflow A: can read /tmp/tenuo-demo/project-a/**
   - Workflow B: can read /tmp/tenuo-demo/project-b/**
 
 Neither can access the other's directory.
+
+KEY POINT: The workflow code is identical for both tenants. Isolation comes
+entirely from the warrant assigned at workflow start, not from code changes.
+Both workflows use standard workflow.execute_activity() - the TenuoInterceptor
+handles authorization transparently.
 
 Requirements:
     temporal server start-dev   # Terminal 1
@@ -40,7 +45,6 @@ from tenuo.temporal import (
     TenuoClientInterceptor,
     EnvKeyResolver,
     tenuo_headers,
-    tenuo_execute_activity,
     TemporalAuditEvent,
 )
 
@@ -68,13 +72,19 @@ async def read_file(path: str) -> str:
 
 @workflow.defn
 class ScopedReadWorkflow:
-    """Reads all .txt files within its warrant-scoped directory."""
+    """Reads all .txt files within its warrant-scoped directory.
+
+    Uses standard workflow.execute_activity() - the TenuoInterceptor
+    handles authorization transparently. This same workflow code works
+    for all tenants; isolation comes from the warrant, not the code.
+    """
 
     @workflow.run
     async def run(self, data_dir: str) -> str:
         no_retry = RetryPolicy(maximum_attempts=1)
 
-        files = await tenuo_execute_activity(
+        # Standard Temporal API - interceptor handles PoP transparently
+        files = await workflow.execute_activity(
             list_directory, args=[data_dir],
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=no_retry,
@@ -83,7 +93,8 @@ class ScopedReadWorkflow:
         contents = []
         for f in files:
             if f.endswith(".txt"):
-                text = await tenuo_execute_activity(
+                # Same standard API - works identically for all tenants
+                text = await workflow.execute_activity(
                     read_file, args=[f],
                     start_to_close_timeout=timedelta(seconds=10),
                     retry_policy=no_retry,

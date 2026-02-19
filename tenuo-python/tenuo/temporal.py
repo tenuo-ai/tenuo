@@ -99,14 +99,13 @@ Proof-of-Possession (PoP) Challenge Format:
         - CBOR (RFC 8949) is the canonical serialisation format.
 
     Wire encoding:
-        ``tenuo_execute_activity()`` computes the signature via
-        ``warrant.sign(signing_key, tool, args_dict)`` and stores it as
-        base64-encoded bytes in a per-``(workflow_id, tool, args)`` FIFO
-        queue (``_pending_pop``).  This keying scheme ensures parallel
-        activities (e.g. via ``asyncio.gather``) don't overwrite each
-        other's signatures.  The activity interceptor computes the same
-        key, pops the oldest entry, decodes the base64, and passes the
-        raw 64-byte signature to ``Authorizer.check_chain()`` or ``Authorizer.authorize_one()``.
+        The outbound workflow interceptor computes the PoP signature
+        transparently for every ``workflow.execute_activity()`` call using
+        ``warrant.sign(signing_key, tool, args_dict, timestamp=workflow.now())``.
+        The deterministic timestamp ensures replay safety. The signature is
+        base64-encoded and injected into activity headers as
+        ``x-tenuo-pop``, which the activity interceptor decodes and passes
+        to ``Authorizer.check_chain()`` or ``Authorizer.authorize_one()``.
 
 Troubleshooting:
     ``ImportError: PyO3 modules ... may only be initialized once``
@@ -142,10 +141,9 @@ import json
 import logging
 import threading
 from abc import ABC, abstractmethod
-from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Deque, Dict, List, Literal, Optional, TypeVar
+from typing import Any, Callable, Dict, List, Literal, Optional, TypeVar
 
 logger = logging.getLogger("tenuo.temporal")
 
@@ -162,59 +160,41 @@ TENUO_COMPRESSED_HEADER = "x-tenuo-compressed"
 TENUO_POP_HEADER = "x-tenuo-pop"
 TENUO_SIGNING_KEY_HEADER = "x-tenuo-signing-key"
 TENUO_CHAIN_HEADER = "x-tenuo-warrant-chain"
+TENUO_ARG_KEYS_HEADER = "x-tenuo-arg-keys"
 
 # PoP timestamp validation window (seconds). The scheduled_time must be
 # within this window. This is not configurable — security is non-negotiable.
 POP_WINDOW_SECONDS = 300
 
 # =============================================================================
-# Module-level stores for warrant propagation
+# Module-level stores for transparent authorization
 # =============================================================================
-# Temporal's workflow.execute_activity() does not accept a headers kwarg, and
-# workflow-start headers are not automatically forwarded to activities.
+# Tenuo authorization is completely transparent - developers use standard
+# workflow.execute_activity() and the interceptor handles everything.
 #
 # The TenuoClientInterceptor populates _workflow_headers_store when a workflow
-# is started (runs in the main process, outside any sandbox).  The activity
-# interceptor reads from the same dict.
+# starts. The outbound workflow interceptor (in the sandbox) reads this store,
+# computes PoP signatures inline using deterministic timestamps, and injects
+# them into activity headers. No queue machinery needed.
 #
-# tenuo_execute_activity() (inside the sandbox, accessing tenuo as a
-# passthrough module) writes PoP signatures to _pending_pop for the
-# activity interceptor to consume.
+# _workflow_headers_store: workflow_id → {warrant, signing_key, key_id}
+# _pending_child_headers:  child_wf_id → attenuated headers
+# _pop_dedup_cache:        dedup_key → timestamp (replay protection)
+# _workflow_config_store:  workflow_id → TenuoInterceptorConfig
 #
-# _workflow_headers_store: workflow_id → raw Tenuo header bytes
-# _pending_pop:           pop_key → FIFO queue of PoP signatures
-#
-# The pop_key is computed from (workflow_id, tool_name, positional_args)
-# so that parallel activities (e.g. via asyncio.gather) each get their
-# own PoP slot.  For identical calls (same tool + same args), the PoP
-# signatures are deterministic within a 30-second window, so FIFO order
-# is safe.
-#
-# Thread safety: _store_lock protects all mutations.  Temporal workers
+# Thread safety: _store_lock protects all mutations. Temporal workers
 # may execute activities from different workflows concurrently on
 # separate threads.
 
 _store_lock = threading.Lock()
 _workflow_headers_store: Dict[str, Dict[str, bytes]] = {}
-_pending_pop: Dict[str, Deque[bytes]] = {}
 _pending_child_headers: Dict[str, Dict[str, bytes]] = {}
 _pop_dedup_cache: Dict[str, float] = {}
 _pop_dedup_last_evict: float = 0.0
 _DEDUP_EVICT_INTERVAL: float = 60.0
 _interceptor_config: Optional["TenuoInterceptorConfig"] = None
 _workflow_config_store: Dict[str, "TenuoInterceptorConfig"] = {}
-
-
-def _pop_key(wf_id: str, tool_name: str, args: Any) -> str:
-    """Compute a deterministic key for PoP storage.
-
-    The key uniquely identifies a (workflow, tool, arguments) triple so
-    that parallel activity calls don't collide.
-    """
-    args_tuple = tuple(args) if isinstance(args, (list, tuple)) else (args,)
-    args_str = ":".join(str(a) for a in args_tuple)
-    h = hashlib.sha256(f"{tool_name}:{args_str}".encode()).hexdigest()
-    return f"{wf_id}:{h}"
+_pending_activity_fn: Dict[str, Any] = {}  # workflow_id → activity function ref
 
 
 # =============================================================================
@@ -969,6 +949,30 @@ class TenuoInterceptorConfig:
     stage.  When None (default), all updates pass through.
     """
 
+    activity_fns: Optional[List[Callable]] = None
+    """
+    Activity functions registered with the Worker.  When provided,
+    the outbound workflow interceptor can resolve parameter names
+    for transparent PoP signing even when using plain
+    ``workflow.execute_activity()``.
+
+    Without this, the outbound interceptor must fall back to
+    positional keys (``arg0``, ``arg1``, ...) which will fail
+    constraint checks if the warrant uses named parameters.
+
+    Pass the same list you give to ``Worker(activities=...)``.
+    """
+
+    def __post_init__(self) -> None:
+        self._activity_registry: Dict[str, Callable] = {}
+        if self.activity_fns:
+            for fn in self.activity_fns:
+                name = getattr(fn, "__temporal_activity_definition", None)
+                if name and hasattr(name, "name"):
+                    self._activity_registry[name.name] = fn
+                else:
+                    self._activity_registry[getattr(fn, "__name__", str(fn))] = fn
+
 
 # =============================================================================
 # Client Interceptor — injects Tenuo headers into workflow start
@@ -1133,12 +1137,23 @@ async def tenuo_execute_activity(
     task_queue: Optional[str] = None,
     cancellation_type: Any = None,
 ) -> Any:
-    """Execute an activity with automatic Proof-of-Possession signing.
+    """Execute an activity with Tenuo authorization (legacy wrapper).
 
-    This is the primary way to call activities in Tenuo-protected workflows.
-    It reconstructs the warrant and signing key from workflow headers,
-    computes a PoP signature using ``warrant.sign()``, and forwards all
-    Tenuo headers plus the PoP signature to the activity interceptor.
+    **Note:** This function is now a thin wrapper around the standard
+    ``workflow.execute_activity()``. Authorization is handled transparently
+    by the outbound workflow interceptor, so you can use standard Temporal
+    APIs directly:
+
+        # Recommended (transparent):
+        await workflow.execute_activity(read_file, args=[path], ...)
+
+        # Legacy (still works):
+        await tenuo_execute_activity(read_file, args=[path], ...)
+
+    Both are equivalent. The interceptor computes PoP signatures automatically.
+
+    This function is kept for backward compatibility and advanced use cases
+    where explicit control is needed (future: custom warrants, multi-warrant).
 
     Args:
         activity: The activity function to execute
@@ -1159,84 +1174,19 @@ async def tenuo_execute_activity(
         class MyWorkflow:
             @workflow.run
             async def run(self) -> str:
-                return await tenuo_execute_activity(
+                # Both work - use standard Temporal API:
+                return await workflow.execute_activity(
                     read_file,
                     args=["/data/report.txt"],
                     start_to_close_timeout=timedelta(seconds=30),
                 )
-
-    Raises:
-        TenuoContextError: If called outside a workflow or missing signing key
     """
-    import inspect
-
     try:
         from temporalio import workflow  # type: ignore[import-not-found]
     except ImportError:
         raise TenuoContextError("temporalio not available. Install with: pip install temporalio")
 
-    from tenuo_core import SigningKey  # type: ignore[import-not-found]
-
-    info = workflow.info()
-    wf_id = info.workflow_id
-
-    # --- Read Tenuo headers from module-level store ---
-    # The _TenuoWorkflowInboundInterceptor populates this when the
-    # workflow starts. Using the store avoids the fact that
-    # workflow.execute_activity() does not accept a headers kwarg.
-    with _store_lock:
-        raw_headers = _workflow_headers_store.get(wf_id, {})
-    if not raw_headers:
-        raise TenuoContextError(
-            "No Tenuo headers in store. Ensure TenuoInterceptor is "
-            "registered and tenuo_headers() was passed at workflow start."
-        )
-
-    # --- Reconstruct warrant from headers ---
-    warrant = _extract_warrant_from_headers(raw_headers)
-    if warrant is None:
-        raise TenuoContextError("No warrant found in workflow headers.")
-
-    # --- Reconstruct signing key from headers ---
-    sk_b64 = raw_headers.get(TENUO_SIGNING_KEY_HEADER)
-    if sk_b64 is None:
-        raise TenuoContextError(
-            "No signing key found in workflow headers. "
-            "Pass signing_key to tenuo_headers() when starting the workflow."
-        )
-    try:
-        signing_key_raw = base64.b64decode(sk_b64)
-        signer = SigningKey.from_bytes(signing_key_raw)
-    except Exception as e:
-        raise TenuoContextError(f"Invalid signing key in headers: {e}")
-
-    # --- Resolve tool name and build args dict for PoP ---
-    tool_name = get_tool_name(activity, getattr(activity, "__name__", str(activity)))
-    args_dict: Dict[str, Any] = {}
-    if args:
-        try:
-            sig = inspect.signature(activity)
-            params = list(sig.parameters.keys())
-            for i, arg in enumerate(args):
-                if i < len(params):
-                    args_dict[params[i]] = arg
-                else:
-                    args_dict[f"arg{i}"] = arg
-        except (ValueError, TypeError):
-            for i, arg in enumerate(args):
-                args_dict[f"arg{i}"] = arg
-
-    # --- Compute PoP signature using warrant.sign() ---
-    pop_signature = warrant.sign(signer, tool_name, args_dict)
-
-    # Store PoP in a per-(workflow, tool, args) FIFO queue so that
-    # parallel activities (asyncio.gather) don't overwrite each other.
-    pop_encoded = base64.b64encode(bytes(pop_signature))
-    key = _pop_key(wf_id, tool_name, args or [])
-    with _store_lock:
-        _pending_pop.setdefault(key, deque()).append(pop_encoded)
-
-    # --- Build activity kwargs ---
+    # Build activity kwargs
     activity_kwargs: Dict[str, Any] = {}
     if args is not None:
         activity_kwargs["args"] = args
@@ -1255,7 +1205,16 @@ async def tenuo_execute_activity(
     if cancellation_type is not None:
         activity_kwargs["cancellation_type"] = cancellation_type
 
-    return await workflow.execute_activity(activity, **activity_kwargs)
+    # Store function reference so outbound interceptor can inspect parameters
+    wf_id = workflow.info().workflow_id
+    with _store_lock:
+        _pending_activity_fn[wf_id] = activity
+
+    try:
+        return await workflow.execute_activity(activity, **activity_kwargs)
+    finally:
+        with _store_lock:
+            _pending_activity_fn.pop(wf_id, None)
 
 
 def attenuated_headers(
@@ -1921,60 +1880,126 @@ def _compute_pop_challenge(
 
 
 class _TenuoWorkflowOutboundInterceptor:
-    """Outbound workflow interceptor — injects Tenuo headers into activity scheduling.
+    """Outbound workflow interceptor — transparently computes and injects PoP.
 
-    When ``start_activity()`` is called (from ``tenuo_execute_activity()``
-    or ``AuthorizedWorkflow.execute_authorized_activity()``), this
-    interceptor reads the workflow's Tenuo headers from
-    ``_workflow_headers_store`` and the pending PoP signature from
-    ``_pending_pop``, wraps them as ``Payload`` objects, and injects
-    them into ``StartActivityInput.headers``.
+    This interceptor makes Tenuo authorization completely transparent.
+    When ``workflow.execute_activity()`` is called (standard Temporal API),
+    this interceptor automatically:
+    1. Retrieves the warrant and signing key from workflow headers
+    2. Computes the Proof-of-Possession signature using deterministic time
+    3. Injects warrant + PoP into activity headers
 
-    This ensures the activity interceptor on **any** worker — even a
-    different process or machine — receives the warrant and PoP via
-    Temporal's standard header propagation, rather than relying on
-    in-process shared memory.
+    No special wrapper functions needed — works with standard Temporal code.
+    This follows the OpenTelemetry pattern: add interceptor, everything works.
     """
 
-    def __init__(self, next_outbound: Any) -> None:
+    def __init__(self, next_outbound: Any, config: Optional["TenuoInterceptorConfig"] = None) -> None:
         self._next = next_outbound
+        self.__dict__["_config"] = config
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._next, name)
 
     def start_activity(self, input: Any) -> Any:
+        """Transparently compute and inject PoP for every activity.
+
+        This is the key to transparent authorization. Standard
+        workflow.execute_activity() calls go through this interceptor,
+        which computes PoP inline with no queue machinery needed.
+        """
         from temporalio import workflow as _wf  # type: ignore[import-not-found]
+        import inspect
 
         try:
             from temporalio.api.common.v1 import Payload  # type: ignore
+            from tenuo_core import SigningKey  # type: ignore[import-not-found]
         except ImportError:
             return self._next.start_activity(input)
 
-        wf_id = _wf.info().workflow_id
-        tool_name = input.activity
+        try:
+            wf_id = _wf.info().workflow_id
+            tool_name = input.activity
 
-        # Read Tenuo headers from the store (populated by inbound interceptor)
-        with _store_lock:
-            raw_headers = dict(_workflow_headers_store.get(wf_id, {}))
-
-        if raw_headers:
-            # Pop the PoP signature for this specific activity call
-            raw_args = getattr(input, "args", ())
-            key = _pop_key(wf_id, tool_name, raw_args)
+            # Read warrant and signing key from headers store
             with _store_lock:
-                q = _pending_pop.get(key)
-                pop = q.popleft() if q else None
-                if q is not None and not q:
-                    del _pending_pop[key]
+                raw_headers = dict(_workflow_headers_store.get(wf_id, {}))
 
-            # Build Payload headers for the activity
-            activity_headers = dict(input.headers or {})
-            for k, v in raw_headers.items():
-                activity_headers[k] = Payload(data=v)
-            if pop is not None:
-                activity_headers[TENUO_POP_HEADER] = Payload(data=pop)
+            if raw_headers:
+                # Extract warrant and signing key
+                warrant = _extract_warrant_from_headers(raw_headers)
+                sk_b64 = raw_headers.get(TENUO_SIGNING_KEY_HEADER)
 
-            input = _replace_field(input, "headers", activity_headers)
+                if warrant and sk_b64:
+                    # Decode signing key
+                    signer = SigningKey.from_bytes(base64.b64decode(sk_b64))
+
+                    # Convert positional args to dict for PoP signature.
+                    # Resolution order for the activity function reference:
+                    #   1. input.fn (Temporal SDK, if available)
+                    #   2. _pending_activity_fn (set by tenuo_execute_activity)
+                    #   3. config.activity_fns registry (transparent mode)
+                    #   4. Positional keys (arg0, arg1, ...)
+                    args_dict: Dict[str, Any] = {}
+                    raw_args = getattr(input, "args", ())
+                    if raw_args:
+                        activity_fn = getattr(input, "fn", None)
+                        if activity_fn is None:
+                            with _store_lock:
+                                activity_fn = _pending_activity_fn.get(wf_id)
+                        if activity_fn is None and self._config is not None:
+                            activity_fn = self._config._activity_registry.get(
+                                tool_name
+                            )
+                        if activity_fn:
+                            try:
+                                sig = inspect.signature(activity_fn)
+                                params = list(sig.parameters.keys())
+                                for i, arg in enumerate(raw_args):
+                                    if i < len(params):
+                                        args_dict[params[i]] = arg
+                                    else:
+                                        args_dict[f"arg{i}"] = arg
+                            except (ValueError, TypeError):
+                                for i, arg in enumerate(raw_args):
+                                    args_dict[f"arg{i}"] = arg
+                        else:
+                            # No function reference - use positional keys (consistent with inbound)
+                            for i, arg in enumerate(raw_args):
+                                args_dict[f"arg{i}"] = arg
+
+                    # ✨ TRANSPARENT POP COMPUTATION ✨
+                    # Use workflow.now() for deterministic replay safety.
+                    # CRITICAL: timestamp MUST be provided for Temporal workflows
+                    # to ensure identical PoP signatures during replay.
+                    timestamp = int(_wf.now().timestamp())
+                    pop_signature = warrant.sign(signer, tool_name, args_dict, timestamp)
+                    pop_encoded = base64.b64encode(bytes(pop_signature))
+
+
+                    # Inject all headers into activity
+                    activity_headers = dict(input.headers or {})
+                    for k, v in raw_headers.items():
+                        activity_headers[k] = Payload(data=v)
+                    activity_headers[TENUO_POP_HEADER] = Payload(data=pop_encoded)
+
+                    # Include the arg keys used for signing so the inbound
+                    # interceptor reconstructs the same dict for verification,
+                    # even when it has access to the real function signature.
+                    arg_keys_csv = ",".join(args_dict.keys())
+                    activity_headers[TENUO_ARG_KEYS_HEADER] = Payload(
+                        data=arg_keys_csv.encode("utf-8")
+                    )
+
+                    input = _replace_field(input, "headers", activity_headers)
+
+        except Exception as e:
+            # FAIL-CLOSED: If PoP computation fails, log at WARNING level.
+            # The inbound interceptor will deny this activity (if require_warrant=True),
+            # but the error message will correctly indicate the outbound failure.
+            logger.warning(
+                f"Failed to compute PoP in outbound interceptor for {tool_name}: {e}. "
+                f"Activity will likely be denied by inbound interceptor."
+            )
 
         return self._next.start_activity(input)
 
@@ -2073,7 +2098,7 @@ class _TenuoWorkflowInboundInterceptor:
     def init(self, outbound: Any) -> None:
         # Wrap the outbound interceptor so activity scheduling carries
         # Tenuo headers through Temporal's header propagation.
-        self.next.init(_TenuoWorkflowOutboundInterceptor(outbound))
+        self.next.init(_TenuoWorkflowOutboundInterceptor(outbound, self._config))
 
     async def execute_workflow(self, input: Any) -> Any:
         from temporalio import workflow as _wf  # type: ignore[import-not-found]
@@ -2104,9 +2129,6 @@ class _TenuoWorkflowInboundInterceptor:
             with _store_lock:
                 _workflow_headers_store.pop(wf_id, None)
                 _workflow_config_store.pop(wf_id, None)
-                stale = [k for k in _pending_pop if k.startswith(f"{wf_id}:")]
-                for k in stale:
-                    del _pending_pop[k]
 
     def _resolve_config(self) -> Optional["TenuoInterceptorConfig"]:
         from temporalio import workflow as _wf  # type: ignore[import-not-found]
@@ -2182,11 +2204,13 @@ class TenuoInterceptor:
             SandboxedWorkflowRunner, SandboxRestrictions,
         )
 
+        activities = [read_file, write_file]
         interceptor = TenuoInterceptor(
             TenuoInterceptorConfig(
                 key_resolver=EnvKeyResolver(),
                 on_denial="raise",
                 trusted_roots=[control_key.public_key],
+                activity_fns=activities,
             )
         )
 
@@ -2194,7 +2218,7 @@ class TenuoInterceptor:
             client,
             task_queue="my-queue",
             workflows=[MyWorkflow],
-            activities=[read_file, write_file],
+            activities=activities,
             interceptors=[interceptor],
             workflow_runner=SandboxedWorkflowRunner(
                 restrictions=SandboxRestrictions.default.with_passthrough_modules(
@@ -2294,13 +2318,10 @@ class TenuoActivityInboundInterceptor:
             return await self._next.execute_activity(input)
 
         # --- Read Tenuo headers ---
-        # Primary path (distributed): the outbound workflow interceptor
-        # injects headers into StartActivityInput.headers as Payloads.
-        # These travel through Temporal's standard header propagation
-        # and arrive here in input.headers on ANY worker.
-        #
-        # Fallback path (legacy / single-process): read from the
-        # module-level _workflow_headers_store and _pending_pop dicts.
+        # The outbound workflow interceptor transparently computes PoP
+        # and injects all Tenuo headers into StartActivityInput.headers
+        # as Payloads. These travel through Temporal's standard header
+        # propagation and arrive here in input.headers on ANY worker.
 
         headers: Dict[str, bytes] = {}
         input_headers = getattr(input, "headers", None) or {}
@@ -2310,32 +2331,6 @@ class TenuoActivityInboundInterceptor:
                     headers[k] = v
                 elif hasattr(v, "data") and isinstance(getattr(v, "data", None), bytes):
                     headers[k] = v.data
-
-        if not headers:
-            # Fallback: module-level store (single-process path)
-            with _store_lock:
-                headers = dict(
-                    _workflow_headers_store.get(info.workflow_id, {})
-                )
-
-            # Resolve tool name for PoP lookup from _pending_pop
-            activity_fn = getattr(input, "fn", None)
-            default_tool = info.activity_type
-            if activity_fn:
-                default_tool = get_tool_name(activity_fn, info.activity_type)
-            tool_for_pop = self._config.tool_mappings.get(
-                info.activity_type, default_tool,
-            )
-
-            raw_args = getattr(input, "args", ())
-            key = _pop_key(info.workflow_id, tool_for_pop, raw_args)
-            with _store_lock:
-                q = _pending_pop.get(key)
-                pop = q.popleft() if q else None
-                if q is not None and not q:
-                    del _pending_pop[key]
-            if pop is not None:
-                headers[TENUO_POP_HEADER] = pop
 
         # Extract warrant (if present)
         try:
@@ -2372,8 +2367,9 @@ class TenuoActivityInboundInterceptor:
             info.activity_type, default_tool,
         )
 
-        # Get activity arguments
-        args = self._extract_arguments(input)
+        # Get activity arguments, using outbound-supplied arg keys for
+        # PoP consistency when the outbound lacked the function reference.
+        args = self._extract_arguments(input, headers)
 
         # Check chain depth (enforce max_chain_depth config)
         chain_depth = warrant.depth if hasattr(warrant, "depth") else 0
@@ -2406,10 +2402,6 @@ class TenuoActivityInboundInterceptor:
                 if pop_header:
                     pop_bytes = base64.b64decode(pop_header)
 
-                # check_chain() is the single authorization entry point.
-                # For delegation chains it verifies transitive trust;
-                # for standalone warrants authorize_one() wraps it as
-                # a single-element chain.
                 chain_header = headers.get(TENUO_CHAIN_HEADER)
                 if chain_header:
                     chain_list = json.loads(base64.b64decode(chain_header))
@@ -2558,17 +2550,35 @@ class TenuoActivityInboundInterceptor:
         # Execute the activity
         return await self._next.execute_activity(input)
 
-    def _extract_arguments(self, input: Any) -> Dict[str, Any]:
+    def _extract_arguments(
+        self, input: Any, headers: Optional[Dict[str, bytes]] = None,
+    ) -> Dict[str, Any]:
         """Extract arguments from activity input with proper signature mapping.
 
-        Handles various input formats and maps positional args to named params.
+        When the outbound interceptor includes ``x-tenuo-arg-keys`` (because
+        ``StartActivityInput`` lacked the function reference), those keys take
+        precedence so the inbound reconstructs the exact same dict that was
+        signed.  This guarantees PoP consistency for both
+        ``tenuo_execute_activity()`` and plain ``workflow.execute_activity()``.
         """
         import inspect
 
         args = getattr(input, "args", ())
+
+        # Outbound-supplied arg keys override local resolution so the
+        # signed dict and the verified dict always match.
+        if headers and TENUO_ARG_KEYS_HEADER in headers:
+            keys = headers[TENUO_ARG_KEYS_HEADER].decode("utf-8").split(",")
+            result: Dict[str, Any] = {}
+            for i, arg in enumerate(args):
+                if i < len(keys):
+                    result[keys[i]] = arg
+                else:
+                    result[f"arg{i}"] = arg
+            return result
+
         activity_fn = getattr(input, "fn", None)
 
-        # If we have the function, use its signature to map args properly
         if activity_fn and args:
             try:
                 sig = inspect.signature(activity_fn)
@@ -2581,14 +2591,11 @@ class TenuoActivityInboundInterceptor:
                         result[f"arg{i}"] = arg
                 return result
             except (ValueError, TypeError):
-                # Fallback if signature inspection fails
                 pass
 
-        # If first arg is a dict, use it (legacy pattern)
         if args and isinstance(args[0], dict):
             return args[0]
 
-        # Fallback: create dict from positional args
         result = {}
         for i, arg in enumerate(args):
             result[f"arg{i}"] = arg

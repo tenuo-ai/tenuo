@@ -773,7 +773,8 @@ def guard(
                                 ],
                             )
 
-            pop_signature = warrant_to_use.sign(keypair_to_use, tool_name, auth_args)
+            import time as _time
+            pop_signature = warrant_to_use.sign(keypair_to_use, tool_name, auth_args, int(_time.time()))
 
             # pop_signature is list[int], convert to bytes
             if not warrant_to_use.authorize(tool_name, auth_args, signature=bytes(pop_signature)):

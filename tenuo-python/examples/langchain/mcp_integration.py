@@ -16,6 +16,8 @@ This example shows how to combine:
 Pattern: LangChain connects → Tenuo authorizes → MCP executes
 """
 
+import time
+
 from tenuo import (
     Authorizer,
     SigningKey,
@@ -206,7 +208,7 @@ def main():
     print(f"   Extracted constraints: {dict(result.constraints)}")
 
     # Authorize with extracted constraints
-    pop_sig = root_warrant.sign(worker_keypair, "filesystem_read", dict(result.constraints))
+    pop_sig = root_warrant.sign(worker_keypair, "filesystem_read", dict(result.constraints), int(time.time()))
 
     try:
         authorizer.check(

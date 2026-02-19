@@ -9,6 +9,8 @@ Tests cover:
 - Authorization failures
 """
 
+import time
+
 import pytest
 from tenuo import (
     Warrant,
@@ -198,14 +200,15 @@ def test_pop_signature_must_match_authorized_holder():
     args = {"action": "test"}
 
     # Create PoP with WRONG keypair
-    wrong_pop = warrant.sign(wrong_kp, "test_tool", args)
+    now = int(time.time())
+    wrong_pop = warrant.sign(wrong_kp, "test_tool", args, now)
 
     # Try to authorize with wrong signature - MUST fail
     result = warrant.authorize("test_tool", args, signature=bytes(wrong_pop))
     assert result is False, "Wrong keypair should NOT be accepted!"
 
     # Create PoP with CORRECT keypair
-    correct_pop = warrant.sign(correct_kp, "test_tool", args)
+    correct_pop = warrant.sign(correct_kp, "test_tool", args, now)
 
     # Authorize with correct signature - should succeed
     result = warrant.authorize("test_tool", args, signature=bytes(correct_pop))

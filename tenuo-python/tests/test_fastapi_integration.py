@@ -1,4 +1,5 @@
 import pytest
+import time
 import base64
 from typing import Any, Dict
 
@@ -76,7 +77,7 @@ class TestFastAPIIntegration:
         # Sign PoP
         # Args matched by default logic: query params + path params
         args = {"query": "test"}
-        pop_sig = warrant.sign(key, "search", args)
+        pop_sig = warrant.sign(key, "search", args, int(time.time()))
         pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
         headers = {X_TENUO_WARRANT: warrant.to_base64(), X_TENUO_POP: pop_b64}
@@ -94,7 +95,7 @@ class TestFastAPIIntegration:
 
         # Sign for WRONG args
         args = {"query": "malicious"}
-        pop_sig = warrant.sign(key, "search", args)
+        pop_sig = warrant.sign(key, "search", args, int(time.time()))
         pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
         headers = {X_TENUO_WARRANT: warrant.to_base64(), X_TENUO_POP: pop_b64}
@@ -113,7 +114,7 @@ class TestFastAPIIntegration:
         warrant = Warrant.mint_builder().tool("search").mint(key)
 
         args = {}
-        pop_sig = warrant.sign(key, "admin", args)
+        pop_sig = warrant.sign(key, "admin", args, int(time.time()))
         pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
         headers = {X_TENUO_WARRANT: warrant.to_base64(), X_TENUO_POP: pop_b64}
@@ -142,7 +143,7 @@ class TestFastAPIIntegration:
 
         # Sign for custom arg
         args = {"query": "secret"}
-        pop_sig = warrant.sign(key, "custom", args)
+        pop_sig = warrant.sign(key, "custom", args, int(time.time()))
         pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
         headers = {X_TENUO_WARRANT: warrant.to_base64(), X_TENUO_POP: pop_b64, "X-Query": "secret"}
@@ -168,7 +169,7 @@ class TestFastAPIIntegration:
 
         args = {"query": "test"}
         # PoP signing works even on expired warrants (signing doesn't check expiry)
-        pop_sig = warrant.sign(key, "search", args)
+        pop_sig = warrant.sign(key, "search", args, int(time.time()))
         pop_b64 = base64.b64encode(pop_sig).decode("ascii")
 
         headers = {X_TENUO_WARRANT: warrant.to_base64(), X_TENUO_POP: pop_b64}

@@ -26,6 +26,25 @@ For advanced usage, import from submodules:
 """
 
 # =============================================================================
+# Helpers
+# =============================================================================
+
+def now() -> int:
+    """Return current Unix timestamp for PoP signatures.
+
+    This is a convenience helper for non-Temporal use cases.
+
+    Usage:
+        from tenuo import now
+        pop = warrant.sign(key, "tool", args, timestamp=now())
+
+    For Temporal workflows, use workflow.now().timestamp() instead.
+    """
+    import time
+    return int(time.time())
+
+
+# =============================================================================
 # Core Types (from Rust)
 # =============================================================================
 from tenuo_core import (  # type: ignore
@@ -33,10 +52,11 @@ from tenuo_core import (  # type: ignore
     PublicKey,
     Warrant,
     Authorizer,
-    # Multi-sig (envelope pattern only)
+    # Approval cryptography
     ApprovalPayload,
     SignedApproval,
     ApprovalMetadata,
+    py_compute_request_hash as compute_request_hash,
     # Revocation
     RevocationRequest,
     SignedRevocationList,
@@ -156,11 +176,12 @@ from tenuo.approval import (  # noqa: E402
     ApprovalPolicy,
     ApprovalRule,
     ApprovalRequest,
-    ApprovalResponse,
     ApprovalRequired,
     ApprovalDenied,
     ApprovalTimeout,
+    ApprovalVerificationError,
     require_approval,
+    sign_approval,
     cli_prompt,
     auto_approve,
     auto_deny,
@@ -179,10 +200,11 @@ __all__ = [
     # Core types
     "BoundWarrant",
     "Authorizer",
-    # Multi-sig
+    # Approval cryptography
     "ApprovalPayload",
     "SignedApproval",
     "ApprovalMetadata",
+    "compute_request_hash",
     # Revocation
     "RevocationRequest",
     "SignedRevocationList",
@@ -257,15 +279,17 @@ __all__ = [
     # Key management
     "KeyRegistry",
     "Keyring",
-    # Approval policy (human-in-the-loop)
+    # Approval policy (cryptographically verified human-in-the-loop)
     "ApprovalPolicy",
     "ApprovalRule",
     "ApprovalRequest",
-    "ApprovalResponse",
     "ApprovalRequired",
     "ApprovalDenied",
     "ApprovalTimeout",
+    "ApprovalVerificationError",
     "require_approval",
+    "sign_approval",
+    "compute_request_hash",
     "cli_prompt",
     "auto_approve",
     "auto_deny",

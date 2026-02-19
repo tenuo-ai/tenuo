@@ -1167,7 +1167,7 @@ class TestPoPSignerVerification:
             )
 
             # Attacker signs PoP with their key (not holder's)
-            attacker_pop = warrant.sign(attacker_key, "test_skill", {"arg": "value"})
+            attacker_pop = warrant.sign(attacker_key, "test_skill", {"arg": "value"}, int(time.time()))
 
             # Try to authorize with attacker's PoP
             from tenuo_core import ConstraintValue, Signature
@@ -1197,7 +1197,7 @@ class TestPoPSignerVerification:
             )
 
             # Holder signs PoP
-            holder_pop = warrant.sign(holder_key, "test_skill", {"arg": "value"})
+            holder_pop = warrant.sign(holder_key, "test_skill", {"arg": "value"}, int(time.time()))
 
             args_cv = {"arg": ConstraintValue.from_any("value")}
             pop_sig = Signature.from_bytes(bytes(holder_pop))
