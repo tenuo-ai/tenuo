@@ -12,7 +12,6 @@ Tests cover:
 - Constraint violation priority over approval
 """
 
-import asyncio
 import pytest
 from unittest.mock import patch
 
