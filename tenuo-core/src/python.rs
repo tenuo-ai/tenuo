@@ -3890,11 +3890,11 @@ impl PyWarrant {
     ///     will compute PoP transparently with deterministic timestamps.
     ///
     /// For non-Temporal use cases (MCP, FastAPI, testing):
-    ///     import time
-    ///     pop = warrant.sign(key, tool, args, timestamp=int(time.time()))
     ///
-    ///     Or use the helper: from tenuo import now
-    ///     pop = warrant.sign(key, tool, args, timestamp=now())
+    /// ```python
+    /// import time
+    /// pop = warrant.sign(key, tool, args, timestamp=int(time.time()))
+    /// ```
     fn sign(
         &self,
         keypair: &PySigningKey,

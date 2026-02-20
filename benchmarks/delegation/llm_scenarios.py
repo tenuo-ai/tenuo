@@ -328,26 +328,31 @@ class DelegationChainScenario:
 
         # Manager: department scope
         manager_warrant = (
-            Warrant.mint_builder()
+            Warrant.builder()
             .capability("transfer_money", {"amount": Range(0, 100000)})
             .holder(self.manager_key.public_key)
             .ttl(3600)
-            .mint(self.org_key)
+            .issue(self.org_key)
         )
 
         # Assistant: team scope
-        ab1 = manager_warrant.attenuate_builder()
-        ab1.with_capability("transfer_money", {"amount": Range(0, 1000)})
-        ab1.with_holder(self.assistant_key.public_key)
-        ab1.with_ttl(1800)
-        assistant_warrant = ab1.delegate(self.manager_key)
+        assistant_warrant = (
+            manager_warrant.grant_builder()
+            .inherit_all()
+            .capability("transfer_money", {"amount": Range(0, 1000)})
+            .holder(self.assistant_key.public_key)
+            .ttl(1800)
+            .delegate(self.manager_key)
+        )
 
         # Bot: minimal scope
-        ab2 = assistant_warrant.attenuate_builder()
-        ab2.with_capability("transfer_money", {"amount": Range(0, 50)})
-        ab2.with_holder(self.bot_key.public_key)
-        ab2.with_ttl(300)
-        bot_warrant = ab2.delegate(self.assistant_key)
+        bot_warrant = (
+            assistant_warrant.grant_builder()
+            .capability("transfer_money", {"amount": Range(0, 50)})
+            .holder(self.bot_key.public_key)
+            .ttl(300)
+            .delegate(self.assistant_key)
+        )
 
         return {
             "manager": (manager_warrant, self.manager_key),
