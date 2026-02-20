@@ -69,7 +69,7 @@ jobs:
         run: maturin build --release
 
       - name: Upload wheel
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@47309c993abb98030a35d55ef7ff34b7fa1074b5 # v4.6.2
         with:
           name: wheel-${{ matrix.os }}
           path: tenuo-python/target/wheels/*.whl
@@ -102,7 +102,7 @@ jobs:
         run: maturin sdist
 
       - name: Upload sdist
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@47309c993abb98030a35d55ef7ff34b7fa1074b5 # v4.6.2
         with:
           name: sdist
           path: tenuo-python/target/wheels/*.tar.gz
