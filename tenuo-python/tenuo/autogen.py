@@ -176,6 +176,9 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
             constraints=self._constraints,
             bound=bound,
             on_denial=self._on_denial,
+            approval_policy=self._approval_policy,
+            approval_handler=self._approval_handler,
+            approvals=self._approvals,
         )
 
 
@@ -193,10 +196,16 @@ class _Guard:
         constraints: Dict[str, Dict[str, Any]],
         bound: Any,
         on_denial: str,
+        approval_policy: Any = None,
+        approval_handler: Any = None,
+        approvals: Any = None,
     ) -> None:
         self._constraints = constraints
         self._bound = bound
         self._on_denial = on_denial
+        self._approval_policy = approval_policy
+        self._approval_handler = approval_handler
+        self._approvals = approvals
 
     # ------------------------------------------------------------------ #
     # Public API
@@ -374,7 +383,12 @@ class _Guard:
         """
         if self._bound is not None:
             # Tier 2: Use shared enforcement logic
-            result = enforce_tool_call(tool_name, auth_args, self._bound)
+            result = enforce_tool_call(
+                tool_name, auth_args, self._bound,
+                approval_policy=self._approval_policy,
+                approval_handler=self._approval_handler,
+                approvals=self._approvals,
+            )
             if not result.allowed:
                 # Raise appropriate exception based on error_type
                 from .exceptions import ConstraintResult, ExpiredError

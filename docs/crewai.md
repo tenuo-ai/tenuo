@@ -124,6 +124,18 @@ guard = (GuardBuilder()
 protected_tool = guard.protect(my_tool)
 ```
 
+### Human Approval
+
+Add human-in-the-loop approval with `.approval_policy()` and `.on_approval()`. See [Human Approvals](approvals.md) for the full guide.
+
+```python
+guard = (GuardBuilder()
+    ...
+    .approval_policy(policy)
+    .on_approval(cli_prompt(approver_key=key))
+    .build())
+```
+
 ---
 
 ## Warrant Lifecycle

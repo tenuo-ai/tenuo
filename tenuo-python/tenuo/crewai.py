@@ -134,6 +134,10 @@ from tenuo._enforcement import (
 )
 from tenuo._builder import BaseGuardBuilder
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from tenuo.approval import ApprovalHandler, ApprovalPolicy
+
 check_crewai_compat()
 
 # Import CrewAI hooks API (required for this integration)
@@ -580,6 +584,9 @@ class GuardBuilder(BaseGuardBuilder["GuardBuilder"]):
             signing_key=self._signing_key,
             on_denial=self._on_denial,
             audit_callback=self._audit_callback,
+            approval_policy=self._approval_policy,
+            approval_handler=self._approval_handler,
+            approvals=self._approvals,
         )
 
 
@@ -606,12 +613,18 @@ class CrewAIGuard:
         signing_key: Optional[SigningKey],
         on_denial: str,
         audit_callback: Optional[AuditCallback],
+        approval_policy: Optional["ApprovalPolicy"] = None,
+        approval_handler: Optional["ApprovalHandler"] = None,
+        approvals: Optional[list] = None,
     ):
         self._allowed = allowed
         self._warrant = warrant
         self._signing_key = signing_key
         self._on_denial = on_denial
         self._audit_callback = audit_callback
+        self._approval_policy = approval_policy
+        self._approval_handler = approval_handler
+        self._approvals = approvals
         self._registered_hook: Optional[Callable] = None
 
     def register(self, *, agent_role: Optional[str] = None) -> "CrewAIGuard":
@@ -856,6 +869,9 @@ class CrewAIGuard:
                 tool_name=tool_name,
                 tool_args=args,
                 bound_warrant=bound,
+                approval_policy=self._approval_policy,
+                approval_handler=self._approval_handler,
+                approvals=self._approvals,
             )
 
             if not enforcement.allowed:

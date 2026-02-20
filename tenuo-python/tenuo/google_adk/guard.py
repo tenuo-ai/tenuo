@@ -126,6 +126,9 @@ class TenuoGuard:
         require_pop: bool = True,  # Default to secure mode
         dry_run: bool = False,  # Log denials but don't block
         include_hints: bool = True,  # Include recovery hints in denials
+        approval_policy: Optional[Any] = None,
+        approval_handler: Optional[Any] = None,
+        approvals: Optional[list] = None,
     ):
         """
         Initialize TenuoGuard.
@@ -159,6 +162,9 @@ class TenuoGuard:
         self._require_pop = require_pop
         self._dry_run = dry_run
         self._include_hints = include_hints
+        self._approval_policy = approval_policy
+        self._approval_handler = approval_handler
+        self._approvals = approvals
 
         # Handle audit log: string path or file-like object
         self._exit_stack = ExitStack()
@@ -430,6 +436,9 @@ class TenuoGuard:
                     tool_name=skill_name,
                     tool_args=validation_args,
                     bound_warrant=bound_warrant,
+                    approval_policy=self._approval_policy,
+                    approval_handler=self._approval_handler,
+                    approvals=self._approvals,
                 )
 
                 if not result.allowed:
@@ -823,6 +832,9 @@ class GuardBuilder:
         self._dry_run: bool = False
         self._include_hints: bool = True
         self._audit_log: Union[None, str, Any] = None
+        self._approval_policy: Optional[Any] = None
+        self._approval_handler: Optional[Any] = None
+        self._approvals = None
 
     @classmethod
     def from_tools(cls, tools: List[Callable]) -> "GuardBuilder":
@@ -1077,6 +1089,38 @@ class GuardBuilder:
         self._include_hints = False
         return self
 
+    def approval_policy(self, policy: Any) -> "GuardBuilder":
+        """Set an approval policy for human-in-the-loop authorization.
+
+        When a tool call matches a policy rule, the approval handler is
+        invoked before execution proceeds. Requires Tier 2 (warrant).
+
+        Args:
+            policy: ApprovalPolicy with one or more rules.
+
+        Returns:
+            self for chaining
+        """
+        self._approval_policy = policy
+        return self
+
+    def on_approval(self, handler: Any) -> "GuardBuilder":
+        """Set the handler invoked when a tool call requires approval.
+
+        Args:
+            handler: Callable that receives an ApprovalRequest and returns
+                a SignedApproval (or raises ApprovalDenied).
+
+        Returns:
+            self for chaining
+        """
+        self._approval_handler = handler
+        return self
+
+    def with_approvals(self, approvals: Any) -> "GuardBuilder":
+        self._approvals = approvals
+        return self
+
     def build(self) -> TenuoGuard:
         """
         Build the TenuoGuard instance.
@@ -1104,4 +1148,7 @@ class GuardBuilder:
             dry_run=self._dry_run,
             include_hints=self._include_hints,
             audit_log=self._audit_log,
+            approval_policy=self._approval_policy,
+            approval_handler=self._approval_handler,
+            approvals=self._approvals,
         )

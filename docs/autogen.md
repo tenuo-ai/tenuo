@@ -58,6 +58,18 @@ asyncio.run(main())
 
 > Tip: these demos use `python-dotenv` to load `OPENAI_API_KEY` and set `tool_choice="required"` for deterministic tool calls.
 
+## Human Approval
+
+Add human-in-the-loop approval with `.approval_policy()` and `.on_approval()` when using GuardBuilder. See [Human Approvals](approvals.md) for the full guide.
+
+```python
+guard = (GuardBuilder()
+    ...
+    .approval_policy(policy)
+    .on_approval(cli_prompt(approver_key=key))
+    .build())
+```
+
 ## What happens on denial?
 
 - If the tool name is not in `warrant.tools`, Tenuo raises `ToolNotAuthorized`.

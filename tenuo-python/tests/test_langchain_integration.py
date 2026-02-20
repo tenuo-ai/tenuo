@@ -10,6 +10,7 @@ from tenuo import (
     reset_config,
     mint_sync,
     SigningKey,
+    Warrant,
     ConfigurationError,
     LANGCHAIN_AVAILABLE,
     Capability,
@@ -276,3 +277,121 @@ class TestWithScopedTask:
                 # read_file is blocked
                 with pytest.raises(ToolNotAuthorized):
                     tools[1].invoke({"path": "/data/test.txt"})
+
+
+class TestLangChainApproval:
+    """Tests for approval policy flowing through LangChain TenuoTool."""
+
+    def test_guard_with_approval_stores_params(self):
+        """guard() passes approval params to TenuoTool."""
+        from tenuo.langchain import guard
+        from tenuo.approval import ApprovalPolicy, require_approval, auto_approve
+
+        agent_key = SigningKey.generate()
+        approver_key = SigningKey.generate()
+        w = Warrant.issue(
+            agent_key,
+            capabilities={"search": {}},
+            ttl_seconds=3600,
+            holder=agent_key.public_key,
+        )
+        bound = w.bind(agent_key)
+        policy = ApprovalPolicy(
+            require_approval("search"),
+            trusted_approvers=[approver_key.public_key],
+        )
+        handler = auto_approve(approver_key=approver_key)
+
+        tools = guard(
+            [search], bound,
+            approval_policy=policy,
+            approval_handler=handler,
+        )
+        assert len(tools) == 1
+        assert tools[0]._approval_policy is policy
+        assert tools[0]._approval_handler is handler
+
+    def test_tenuo_tool_with_bound_warrant_and_approval(self):
+        """TenuoTool uses enforce_tool_call with approval when given BoundWarrant."""
+        from tenuo.approval import (
+            ApprovalPolicy, ApprovalRequired, require_approval, auto_approve,
+        )
+        from tenuo.langchain import guard
+
+        agent_key = SigningKey.generate()
+        approver_key = SigningKey.generate()
+        w = Warrant.issue(
+            agent_key,
+            capabilities={"search": {}},
+            ttl_seconds=3600,
+            holder=agent_key.public_key,
+        )
+        bound = w.bind(agent_key)
+        policy = ApprovalPolicy(
+            require_approval("search"),
+            trusted_approvers=[approver_key.public_key],
+        )
+
+        # No handler -> ApprovalRequired
+        tools = guard([search], bound, approval_policy=policy)
+        with pytest.raises(ApprovalRequired):
+            tools[0].invoke({"query": "test"})
+
+    def test_tenuo_tool_approval_auto_approve_succeeds(self):
+        """TenuoTool with auto_approve handler executes successfully."""
+        from tenuo.approval import (
+            ApprovalPolicy, require_approval, auto_approve,
+        )
+        from tenuo.langchain import guard
+
+        agent_key = SigningKey.generate()
+        approver_key = SigningKey.generate()
+        w = Warrant.issue(
+            agent_key,
+            capabilities={"search": {}},
+            ttl_seconds=3600,
+            holder=agent_key.public_key,
+        )
+        bound = w.bind(agent_key)
+        policy = ApprovalPolicy(
+            require_approval("search"),
+            trusted_approvers=[approver_key.public_key],
+        )
+        handler = auto_approve(approver_key=approver_key)
+
+        tools = guard(
+            [search], bound,
+            approval_policy=policy,
+            approval_handler=handler,
+        )
+        result = tools[0].invoke({"query": "test"})
+        assert "Results for" in result
+
+    def test_tenuo_tool_approval_denied_raises(self):
+        """TenuoTool with auto_deny handler raises ApprovalDenied."""
+        from tenuo.approval import (
+            ApprovalPolicy, ApprovalDenied, require_approval, auto_deny,
+        )
+        from tenuo.langchain import guard
+
+        agent_key = SigningKey.generate()
+        approver_key = SigningKey.generate()
+        w = Warrant.issue(
+            agent_key,
+            capabilities={"search": {}},
+            ttl_seconds=3600,
+            holder=agent_key.public_key,
+        )
+        bound = w.bind(agent_key)
+        policy = ApprovalPolicy(
+            require_approval("search"),
+            trusted_approvers=[approver_key.public_key],
+        )
+
+        tools = guard(
+            [search], bound,
+            approval_policy=policy,
+            approval_handler=auto_deny(),
+        )
+        with pytest.raises(ApprovalDenied):
+            tools[0].invoke({"query": "test"})
