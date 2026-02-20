@@ -89,7 +89,7 @@ def main():
         },
     }
 
-    researcher_warrant = delegator.delegate(
+    delegator.delegate(
         parent_warrant=manager_warrant,
         parent_key=manager_key,
         child_holder=researcher_pubkey,
