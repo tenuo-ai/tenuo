@@ -226,6 +226,7 @@ async def main():
             on_denial="raise",
             audit_callback=on_audit,
             trusted_roots=[control_key.public_key],
+            activity_fns=[read_file, write_file, list_directory],
         )
     )
 

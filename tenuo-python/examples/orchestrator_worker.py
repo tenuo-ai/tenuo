@@ -16,8 +16,8 @@ different authority per task phase.
 
 import time
 
-from tenuo import Warrant, SigningKey, guard, Pattern, Range, Authorizer, warrant_scope, key_scope
-from tenuo_core import Wildcard, ChainVerificationResult  # Constraint for "any value"
+from tenuo import Warrant, SigningKey, guard, Pattern, Range, Authorizer, warrant_scope, key_scope, Wildcard
+from tenuo_core import ChainVerificationResult
 
 # ============================================================================
 # Protected Tools

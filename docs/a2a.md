@@ -212,6 +212,175 @@ If the stream exceeds `stream_timeout`, a `TimeoutError` is raised. This prevent
 
 ---
 
+## Proof-of-Possession (PoP)
+
+Proof-of-Possession adds an additional security layer by requiring the client to prove they control the private key associated with the warrant's holder.
+
+### When to Use PoP
+
+**Require PoP when:**
+- ✅ Agents communicate over untrusted networks (Internet, shared infrastructure)
+- ✅ Compliance requires cryptographic proof of authorization
+- ✅ Protection against warrant theft is critical
+- ✅ Multi-hop delegation across organizational boundaries
+
+**PoP is optional when:**
+- ⚠️ All agents run on trusted infrastructure (same data center, VPC)
+- ⚠️ Network isolation provides security (private network, mTLS)
+- ⚠️ Performance is critical and risk is low (microsecond latency matters)
+
+**Never skip PoP when:**
+- ❌ Agents are on the public Internet
+- ❌ Warrants have long TTLs (hours/days)
+- ❌ Untrusted intermediaries exist in the call chain
+
+### How PoP Works
+
+PoP signatures prove that the caller possesses the private key corresponding to the warrant's `sub` (holder) field:
+
+```
+┌──────────────────────────────────────────────────────┐
+│ Warrant (JWT):                                       │
+│   sub: "z6Mk..."  ← Orchestrator's public key       │
+│   grants: ["search"]                                 │
+│   exp: 1234567890                                    │
+│   Signature: <signed by control plane>              │
+└──────────────────────────────────────────────────────┘
+                       +
+┌──────────────────────────────────────────────────────┐
+│ PoP Signature:                                       │
+│   sign(orchestrator_private_key, "search", args, ts) │
+│   → Proves orchestrator controls the private key     │
+└──────────────────────────────────────────────────────┘
+                       =
+               Authorization Proof
+```
+
+**What PoP Prevents:**
+- **Warrant Theft**: If an attacker intercepts a warrant, they can't use it without the private key
+- **Replay Attacks**: Each PoP signature includes a timestamp and is checked once
+- **Man-in-the-Middle**: Modified arguments invalidate the PoP signature
+
+### Client Usage
+
+Enable PoP by passing `signing_key` to `send_task()`:
+
+```python
+from tenuo.a2a import A2AClient
+
+client = A2AClient("https://worker.example.com")
+
+# Without PoP (only warrant validation)
+result = await client.send_task(
+    warrant=my_warrant,
+    skill="search",
+    arguments={"query": "papers"},
+)
+
+# With PoP (warrant + signature proof)
+result = await client.send_task(
+    warrant=my_warrant,
+    skill="search",
+    arguments={"query": "papers"},
+    signing_key=orchestrator_key,  # ← Proves possession
+)
+```
+
+Or configure PoP by default using the builder:
+
+```python
+from tenuo.a2a import A2AClientBuilder
+
+client = (A2AClientBuilder()
+    .url("https://worker.example.com")
+    .warrant(my_warrant, orchestrator_key)  # ← Pre-configure PoP
+    .build())
+
+# All requests automatically include PoP
+result = await client.send_task(
+    skill="search",
+    arguments={"query": "papers"},
+)
+```
+
+### Server Configuration
+
+Control PoP requirements on the server:
+
+```python
+server = A2AServer(
+    name="Worker",
+    url="https://worker.example.com",
+    public_key=worker_public_key,
+    trusted_issuers=[control_plane_key],
+
+    # PoP configuration
+    require_pop=True,          # Reject requests without PoP (default: True)
+    trusted_roots=[...],       # Required for PoP verification
+)
+```
+
+**Security Defaults:**
+- `require_pop=True` by default (fail-safe)
+- Can be disabled via `TENUO_A2A_REQUIRE_POP=false` environment variable
+- If `require_pop=True` but client doesn't provide PoP → `PopRequiredError`
+
+### Performance Impact
+
+PoP adds cryptographic overhead:
+
+```
+Without PoP:
+  - Warrant verification: ~0.5ms (Ed25519 signature check)
+
+With PoP:
+  - Warrant verification: ~0.5ms
+  - PoP signature generation (client): ~0.3ms
+  - PoP signature verification (server): ~0.3ms
+  - Total overhead: ~1.1ms per request
+```
+
+**Recommendation:** Always use PoP in production unless you have network-level security (mTLS + VPC).
+
+### Error Handling
+
+```python
+from tenuo.a2a import PopRequiredError, PopVerificationError
+
+try:
+    result = await client.send_task(warrant=warrant, skill="search", arguments={})
+except PopRequiredError:
+    print("Server requires PoP signature - add signing_key parameter")
+except PopVerificationError as e:
+    print(f"PoP signature invalid: {e}")
+    # Possible causes:
+    #   - Wrong signing key (not matching warrant.sub)
+    #   - Arguments modified after signing
+    #   - Clock skew between client/server
+```
+
+### Debugging PoP Issues
+
+**Issue:** `PopVerificationError: Signature verification failed`
+
+**Causes:**
+1. **Wrong signing key**: Key doesn't match warrant's `sub` field
+2. **Modified arguments**: Arguments changed after PoP computation
+3. **Clock skew**: Client/server clocks differ significantly
+
+**Debug:**
+```python
+# Verify signing key matches warrant holder
+assert warrant.sub == signing_key.public_key.to_did()
+
+# Log PoP computation
+import logging
+logging.getLogger("tenuo.a2a.client").setLevel(logging.DEBUG)
+# Shows: "Generated PoP signature for skill 'search'"
+```
+
+---
+
 ## Server Configuration
 
 ```python

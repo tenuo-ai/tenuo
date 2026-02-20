@@ -616,6 +616,144 @@ session_state = {"agent_warrant": scoped}
 
 ---
 
+## MCP Tools with ADK
+
+ADK agents can use [Model Context Protocol (MCP)](https://modelcontextprotocol.io) tools with Tenuo authorization. MCP provides a standard protocol for AI agents to access tools like filesystems, databases, and APIs.
+
+### Pattern: ADK Agent + MCP Tools
+
+```python
+from google.adk.agents import Agent
+from tenuo.mcp import SecureMCPClient
+from tenuo import configure, mint, Capability, Subpath, SigningKey
+
+# Configure Tenuo
+key = SigningKey.generate()
+configure(issuer_key=key)
+
+# Connect to MCP server with automatic tool discovery
+async with SecureMCPClient("python", ["mcp_server.py"], register_config=True) as mcp:
+    # Get protected MCP tools
+    mcp_tools = mcp.tools
+
+    # Create ADK agent with MCP tools
+    agent = Agent(
+        name="assistant",
+        tools=[mcp_tools["read_file"], mcp_tools["search"]],
+    )
+
+    # Execute with warrant scoping
+    async with mint(Capability("read_file", path=Subpath("/data"))):
+        result = await agent.run("Read the configuration file")
+```
+
+### Example: Research Agent with MCP
+
+See [`examples/mcp/`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/mcp) for complete examples:
+- **`langchain_mcp_demo.py`** - LangChain + MCP integration (similar pattern applies to ADK)
+- **`mcp_a2a_delegation.py`** - Multi-agent system with MCP tools via A2A
+- **`crewai_mcp_demo.py`** - CrewAI crew workflow with MCP tools
+
+**When to use ADK + MCP:**
+- Agent needs standardized tool access (filesystem, databases, APIs)
+- Tools exposed via MCP protocol from other services
+- Want automatic tool discovery and protection
+- Need to constrain MCP tool arguments (paths, URLs, etc.)
+
+**See also:** [MCP Integration Guide](./mcp.md) for complete MCP documentation.
+
+---
+
+## Multi-Agent Systems with A2A
+
+For systems where ADK agents delegate tasks to other agents, use [Tenuo's A2A integration](./a2a.md) for warrant-based authorization across agent boundaries.
+
+### Example: Incident Response with A2A
+
+See [`examples/google_adk_a2a_incident/`](https://github.com/tenuo-ai/tenuo/tree/main/tenuo-python/examples/google_adk_a2a_incident) for a complete multi-agent system:
+
+**Architecture:**
+```
+Control Plane
+     │
+     ├─→ Analyst Agent (ADK + A2A server)
+     │   - Reads logs (Subpath constraint)
+     │   - Queries threat DB
+     │   - Can delegate block_ip to Responder
+     │
+     └─→ Responder Agent (ADK + A2A server)
+         - Blocks IPs (Cidr constraint)
+         - Quarantines users
+```
+
+**Key Features:**
+- **Multi-process**: Agents run as separate Python processes communicating via HTTP
+- **Warrant attenuation**: Analyst narrows privileges when delegating to Responder
+- **Real A2A calls**: Demonstrates production architecture with network communication
+- **Attack scenarios**: Shows prompt injection, warrant replay, and privilege escalation attempts
+
+**Run the demo:**
+```bash
+cd tenuo-python/examples/google_adk_a2a_incident
+python demo_distributed.py               # Full demo with real HTTP
+python demo_distributed.py --no-services # Simulation mode
+```
+
+**What it demonstrates:**
+1. **Detection Phase**: Detector analyzes logs for suspicious activity
+2. **Investigation Phase**: Analyst queries threat DB via A2A
+3. **Response Phase**: Analyst delegates to Responder with attenuated warrant
+4. **Attack Defense**:
+   - Prompt injection tries to block entire Internet → blocked by Exact constraint
+   - Forged warrant → blocked by signature verification
+   - Privilege escalation → blocked by monotonicity checks
+
+### When to Use ADK + A2A
+
+**Use A2A when:**
+- Multiple ADK agents delegate tasks to each other
+- Agents run in separate processes/services
+- Need cryptographic proof of delegation
+- Cross-organizational boundaries
+
+**Use ADK alone when:**
+- Single ADK agent with local tools
+- All tools in same process
+- No delegation needed
+
+**Pattern:**
+```python
+# Orchestrator agent (ADK + A2A client)
+from google.adk.agents import Agent
+from tenuo.google_adk import GuardBuilder
+from tenuo.a2a import A2AClient
+
+# Guard for orchestrator's own tools
+guard = GuardBuilder().with_warrant(orchestrator_warrant, key).build()
+
+orchestrator = Agent(
+    name="orchestrator",
+    tools=guard.filter_tools([local_tool1, local_tool2]),
+    before_tool_callback=guard.before_tool,
+)
+
+# Delegate to worker via A2A
+async def delegate_to_worker(task):
+    task_warrant = orchestrator_warrant.attenuate(
+        signing_key=key,
+        holder=worker_key.public_key,
+        capabilities={"analyze": {}},
+        ttl_seconds=300,
+    )
+
+    client = A2AClient("https://worker.example.com")
+    return await client.send_task(
+        warrant=task_warrant,
+        skill="analyze",
+        arguments={"data": task},
+        signing_key=key,
+    )
+```
 
 ---
 

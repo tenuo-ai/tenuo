@@ -41,7 +41,7 @@ from typing import Any, Dict
 # =============================================================================
 
 try:
-    from tenuo_core import SigningKey, Warrant
+    from tenuo import SigningKey, Warrant
     from tenuo.constraints import Subpath, UrlSafe
     from tenuo.a2a import A2AServer, A2AClient
     import uvicorn
@@ -340,15 +340,12 @@ async def run_demo(inject_attack: bool = False, port_offset: int = 0, real_skill
 
         step(2, "Control Plane issues root warrant to Orchestrator")
 
-        root_warrant = Warrant.issue(
-            keypair=control_key,
-            holder=orchestrator_key.public_key,
-            capabilities={
-                "fetch_url": {"url": UrlSafe(allow_domains=["arxiv.org", "scholar.google.com"])},
-                "read_file": {"path": Subpath("/tmp/papers")},
-            },
-            ttl_seconds=3600,
-        )
+        root_warrant = (Warrant.mint_builder()
+            .capability("fetch_url", url=UrlSafe(allow_domains=["arxiv.org", "scholar.google.com"]))
+            .capability("read_file", path=Subpath("/tmp/papers"))
+            .holder(orchestrator_key.public_key)
+            .ttl(3600)
+            .mint(control_key))
 
         warrant_info(
             "Root (Orchestrator)",

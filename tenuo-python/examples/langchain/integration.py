@@ -141,7 +141,7 @@ class TenuoWarrantCallback(BaseCallbackHandler if LANGCHAIN_AVAILABLE else objec
     via ContextVar, even when called from within LangChain's execution flow.
 
     Usage:
-        warrant = Warrant.issue(...)
+        warrant = Warrant.mint_builder()...mint(key)
         callback = TenuoWarrantCallback(warrant)
         agent_executor.invoke(inputs, {"callbacks": [callback]})
     """

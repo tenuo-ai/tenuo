@@ -100,7 +100,6 @@ async def main():
                     inject_warrant=True,  # ← Injects _tenuo field
                 )
                 print("   ✓ Warrant injected into arguments._tenuo")
-                print("   ✓ Warrant injected into arguments._tenuo")
                 print("   (MCP server can extract and verify if configured)")
                 print("   ⚠️  Note: If the server uses strict JSON schema validation (additionalProperties: false),")
                 print("       this call might fail. Ensure your server allows the '_tenuo' field.")

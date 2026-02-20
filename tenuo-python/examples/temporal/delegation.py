@@ -298,6 +298,7 @@ async def main():
             on_denial="raise",
             audit_callback=on_audit,
             trusted_roots=[control_key.public_key],
+            activity_fns=[read_file, write_file, list_directory],
         )
     )
 
@@ -325,7 +326,7 @@ async def main():
         client_interceptor.set_headers(tenuo_headers(ingest_warrant, "ingest", ingest_key))
         data = await client.execute_workflow(
             IngestWorkflow.run,
-            args=[str(source_dir)],
+            arg=str(source_dir),
             id=f"ingest-{uuid.uuid4().hex[:8]}",
             task_queue=task_queue,
         )
@@ -348,7 +349,7 @@ async def main():
             from temporalio.client import WorkflowFailureError
             await client.execute_workflow(
                 IngestWorkflow.run,
-                args=[str(source_dir)],
+                arg=str(source_dir),
                 id=f"bad-{uuid.uuid4().hex[:8]}",
                 task_queue=task_queue,
             )

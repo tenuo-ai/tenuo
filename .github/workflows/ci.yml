@@ -410,14 +410,11 @@ jobs:
         run: |
           pytest --nbmake notebooks/*.ipynb -v --nbmake-timeout=120
 
-      - name: Test Examples (syntax check)
-        working-directory: tenuo-python/examples
+      - name: Test Examples (syntax, imports, deprecated APIs)
+        working-directory: tenuo-python
         run: |
-          # Syntax check all examples
-          for f in *.py; do
-            echo "Checking $f..."
-            python -m py_compile "$f"
-          done
+          uv pip install --system pytest pytest-asyncio
+          pytest tests/test_examples.py -v
 
       - name: Run Self-Contained Examples
         working-directory: tenuo-python/examples

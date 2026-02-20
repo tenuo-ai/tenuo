@@ -19,7 +19,7 @@ Pattern demonstrated:
 """
 
 from typing import List, Dict, Any, Optional
-from tenuo import SigningKey, PublicKey, Approval, Warrant
+from tenuo import SigningKey, PublicKey, SignedApproval, Warrant
 import display
 from rich.prompt import Confirm
 
@@ -51,9 +51,9 @@ class HumanApprover:
         proposed_capabilities: List[Dict[str, Any]],
         allowed_urls: List[str],
         interactive: bool = True,
-    ) -> Optional[Approval]:
+    ) -> Optional[SignedApproval]:
         """
-        Review a capability proposal and create a cryptographic Approval.
+        Review a capability proposal and create a cryptographic SignedApproval.
 
         Args:
             warrant: The warrant being approved
@@ -85,7 +85,7 @@ class HumanApprover:
             return None
 
         # Create a real Tenuo Approval object
-        approval = Approval.create(
+        approval = SignedApproval.create(
             warrant=warrant,
             tool=tool,
             args=args,
@@ -137,7 +137,7 @@ class MultiSigApprovalFlow:
         proposed_capabilities: List[Dict[str, Any]],
         allowed_urls: List[str],
         interactive: bool = True,
-    ) -> Optional[List[Approval]]:
+    ) -> Optional[List[SignedApproval]]:
         """
         Execute the full approval flow.
 
@@ -163,7 +163,7 @@ class MultiSigApprovalFlow:
         # Step 1: System approval (policy check)
         display.print_system_approval(self.system_key.public_key)
 
-        system_approval = Approval.create(
+        system_approval = SignedApproval.create(
             warrant=warrant,
             tool=tool,
             args=args,

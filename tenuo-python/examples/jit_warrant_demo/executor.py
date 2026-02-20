@@ -16,7 +16,7 @@ This is NOT just a constraint check - it's a cryptographic proof that:
 import functools
 import time
 from typing import Callable, Dict, List, Optional
-from tenuo import Warrant, SigningKey, Approval, Authorizer
+from tenuo import Warrant, SigningKey, SignedApproval, Authorizer
 import display
 
 
@@ -35,7 +35,7 @@ class WarrantExecutor:
         self,
         warrant: Warrant,
         signing_key: SigningKey,
-        approvals: Optional[List[Approval]] = None,
+        approvals: Optional[List[SignedApproval]] = None,
     ):
         """
         Initialize executor with warrant and signing key.
