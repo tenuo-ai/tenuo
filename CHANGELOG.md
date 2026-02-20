@@ -5,15 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.0-beta.10] - 2026-02-20
 
 ### Added
+- **ApprovalPolicy**: Human-in-the-loop authorization for sensitive tool calls
 - **Transparent PoP in Temporal**: Outbound workflow interceptor computes Proof-of-Possession automatically for `workflow.execute_activity()` — no wrapper needed
 - **`activity_fns` config**: `TenuoInterceptorConfig` accepts activity functions for parameter name resolution in transparent PoP
 - **`x-tenuo-arg-keys` header**: Ensures outbound/inbound PoP signing consistency
 - **Authorizer API hardening**: `check_chain()` and `authorize_one()` — two independent security boundaries
 - **Mandatory PoP timestamp**: `warrant.sign()` requires explicit `timestamp` argument for replay safety
 - **Wire fidelity tests**: Verify all constraint types survive serialization roundtrip
+- **Example rot detection**: `test_examples.py` validates all examples import and parse correctly
+- **Website**: Replace pricing page with "Request Early Access" form, feature CrewAI and Temporal on landing page
+
+### Fixed
+- Temporal demo: correct API usage (`Warrant.mint_builder()`, property access, sandbox passthrough, Payload headers)
+- Temporal interceptor: add missing `init()` and `workflow_interceptor_class()` methods
+- `tenuo_headers()`: use `secret_key_bytes()` for `SigningKey`
+- Deprecated `.attenuate()` calls in Google ADK docs
+- Deprecated `Warrant.issue()` in docs and notebook
+- 6 stale examples fixed, ruff lint errors in A2A and MCP examples resolved
 
 ## [0.1.0-beta.9] - 2026-02-17
 
