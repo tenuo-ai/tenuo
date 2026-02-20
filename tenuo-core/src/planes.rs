@@ -88,52 +88,126 @@ fn verify_approvals_with_tolerance(
         Some(warrant.authorized_holder()),
     );
 
-    // Count valid approvals from required approvers
+    #[derive(Debug)]
+    enum Rejection {
+        InvalidSignature,
+        NotAuthorized,
+        Duplicate,
+        Expired,
+        HashMismatch,
+    }
+
     let mut valid_count = 0u32;
     let mut seen_approvers = std::collections::HashSet::new();
-    let now = chrono::Utc::now().timestamp() as u64; // Use u64 timestamp for new payload
+    let now = chrono::Utc::now().timestamp() as u64;
     let tolerance_secs = clock_tolerance.num_seconds() as u64;
+    let mut rejections: Vec<Rejection> = Vec::new();
 
     for approval in approvals {
-        // Enforce "verify before deserialize" pattern
         let payload = match approval.verify() {
             Ok(p) => p,
-            Err(_) => continue, // Invalid signature or version
+            Err(_) => {
+                rejections.push(Rejection::InvalidSignature);
+                continue;
+            }
         };
 
-        // Check if approver is in the required set (using key from envelope)
         if !required_approvers.contains(&approval.approver_key) {
-            continue; // Not a required approver, skip
+            rejections.push(Rejection::NotAuthorized);
+            continue;
         }
 
-        // Check if we've already counted this approver
         if seen_approvers.contains(&approval.approver_key) {
-            continue; // Duplicate approval from same approver
+            rejections.push(Rejection::Duplicate);
+            continue;
         }
 
-        // Check expiration (with clock tolerance)
         if payload.expires_at + tolerance_secs < now {
-            continue; // Expired approval
+            rejections.push(Rejection::Expired);
+            continue;
         }
 
-        // Verify request hash matches
         if payload.request_hash != request_hash {
-            continue; // Wrong request
+            rejections.push(Rejection::HashMismatch);
+            continue;
         }
 
-        // Valid!
         valid_count = valid_count.saturating_add(1);
         seen_approvers.insert(approval.approver_key.clone());
 
-        // Early exit: we have enough
         if valid_count >= threshold {
             return Ok(());
         }
     }
 
+    // 1-of-1 diagnostic: surface the exact rejection reason
+    if threshold == 1 && approvals.len() == 1 && rejections.len() == 1 {
+        let reason = match &rejections[0] {
+            Rejection::InvalidSignature => "invalid signature on approval",
+            Rejection::NotAuthorized => "approver not in trusted set",
+            Rejection::Duplicate => "duplicate approval from same approver",
+            Rejection::Expired => "approval expired (beyond clock tolerance)",
+            Rejection::HashMismatch => {
+                "request hash mismatch (approval was signed for a different request)"
+            }
+        };
+        return Err(Error::InvalidApproval(reason.to_string()));
+    }
+
+    // m-of-n: build rejection summary
+    let mut parts = Vec::new();
+    let counts: [(usize, &str); 5] = [
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::InvalidSignature))
+                .count(),
+            "invalid signature",
+        ),
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::NotAuthorized))
+                .count(),
+            "untrusted",
+        ),
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::Duplicate))
+                .count(),
+            "duplicate",
+        ),
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::Expired))
+                .count(),
+            "expired",
+        ),
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::HashMismatch))
+                .count(),
+            "hash mismatch",
+        ),
+    ];
+    for (count, label) in &counts {
+        if *count > 0 {
+            parts.push(format!("{count} {label}"));
+        }
+    }
+    let detail = if parts.is_empty() {
+        None
+    } else {
+        Some(format!(" [rejected: {}]", parts.join(", ")))
+    };
+
     Err(Error::InsufficientApprovals {
         required: threshold,
         received: valid_count,
+        detail,
     })
 }
 

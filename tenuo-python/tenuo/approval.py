@@ -10,9 +10,15 @@ a human must confirm before execution proceeds.
 
 Every approval is cryptographically signed. There is no unsigned "approved=True"
 path. The approver's SigningKey produces a SignedApproval that binds to the
-exact (warrant, tool, args, holder) tuple via a SHA-256 request hash. The
-enforcement layer verifies the signature, hash, and approver key before
-allowing execution.
+exact (warrant, tool, args, holder) tuple via a SHA-256 request hash.
+
+ALL cryptographic verification is performed by the Rust core:
+- Signature validity (verify-before-deserialize)
+- Approver membership in the trusted set
+- Request hash binding (prevents replay across warrants/tools)
+- Expiration with 30-second clock tolerance (for distributed deployments)
+- Duplicate detection (one vote per approver key)
+- m-of-n threshold satisfaction
 
 Architecture:
     enforce_tool_call()  ->  warrant says OK  ->  compute request hash
@@ -20,21 +26,83 @@ Architecture:
                                     check approval policy
                                         |
                                     no rule matches: proceed
-                                    rule matches: call handler
+                                    rule matches: collect approvals
                                         |
-                                handler signs: verify -> proceed
-                                handler denies: raise ApprovalDenied
+                                ┌──────────────┐
+                                │ Rust core     │
+                                │ verify_approvals() │
+                                │ (m-of-n, sigs,│
+                                │  hash, expiry)│
+                                └──────┬───────┘
+                                       |
+                                    pass: proceed
+                                    fail: ApprovalVerificationError
+
+M-of-N Multi-sig:
+    Require multiple approvers to sign before execution proceeds.
+    Set ``threshold`` on the policy (default 1):
+
+        policy = ApprovalPolicy(
+            require_approval("deploy_prod"),
+            trusted_approvers=[alice.public_key, bob.public_key, carol.public_key],
+            threshold=2,  # any 2-of-3 must approve
+        )
+
+    Handlers can return a list of SignedApprovals for m-of-n, or
+    callers can provide pre-signed approvals via the ``approvals`` parameter.
+
+TTL (Time-to-Live) Configuration:
+    Controls how long a signed approval is valid. Configurable at three
+    levels with a clear resolution order:
+
+    1. Policy level (recommended for org-wide defaults):
+        ApprovalPolicy(..., default_ttl=86400)  # 24 hours for async workflows
+
+    2. Handler level (overrides policy):
+        cli_prompt(approver_key=key, ttl_seconds=60)
+
+    3. Call level (overrides everything):
+        sign_approval(request, key, ttl_seconds=30)
+
+    Resolution in sign_approval(): explicit ttl_seconds > request.suggested_ttl > 300s
+
+    For inline handlers (cli_prompt), the TTL starts when the human approves.
+    For async/cloud workflows (caller-provided approvals), the TTL starts when
+    the external system signs -- use longer TTLs (hours/days) for approval
+    boards, Slack bots, or ticketing systems.
+
+Error Diagnostics:
+    Verification errors are specific to help debug configuration issues:
+
+    1-of-1 (single approval): the exact reason is surfaced:
+        - "approver not in trusted set"
+        - "approval expired (beyond clock tolerance)"
+        - "request hash mismatch (approval was signed for a different request)"
+        - "invalid signature on approval"
+
+    m-of-n (multiple approvals): a rejection summary is included:
+        - "Insufficient approvals: required 3, received 1
+           [rejected: 1 expired, 1 untrusted]"
 
 Usage:
     from tenuo import SigningKey
     from tenuo.approval import ApprovalPolicy, require_approval, cli_prompt
 
-    approver_key = SigningKey.generate()  # human approver's key
+    approver_key = SigningKey.generate()
 
+    # Simple: single approver, default TTL
     policy = ApprovalPolicy(
         require_approval("transfer_funds", when=lambda args: args["amount"] > 10_000),
         require_approval("delete_user"),
         trusted_approvers=[approver_key.public_key],
+    )
+
+    # Enterprise: 2-of-3 multi-sig with 1-hour approval window
+    policy = ApprovalPolicy(
+        require_approval("deploy_prod"),
+        trusted_approvers=[alice.public_key, bob.public_key, carol.public_key],
+        threshold=2,
+        default_ttl=3600,
     )
 
     guard = (GuardBuilder(client)
@@ -78,6 +146,9 @@ class ApprovalRequest:
         warrant_id: ID of the warrant authorizing this call.
         request_hash: SHA-256 hash binding approval to this specific call (32 bytes).
         rule: The ApprovalRule that triggered this request.
+        suggested_ttl: Policy-recommended TTL in seconds for the signed approval.
+            Handlers should use this unless they have a reason to override.
+            Set from ApprovalPolicy.default_ttl. None means use handler default.
     """
 
     tool: str
@@ -85,6 +156,7 @@ class ApprovalRequest:
     warrant_id: str
     request_hash: bytes
     rule: Optional[ApprovalRule] = None
+    suggested_ttl: Optional[int] = None
 
 
 # =============================================================================
@@ -222,19 +294,34 @@ class ApprovalPolicy:
 
     The policy does not affect what an agent *can* do (that's the warrant).
     It gates *when* a human must confirm before execution proceeds.
-    Trusted approvers define *whose* signature is accepted.
+    Trusted approvers define *whose* signature is accepted, and
+    ``threshold`` specifies how many must sign (m-of-n multi-sig).
 
     Args:
         *rules: One or more ApprovalRule instances.
         trusted_approvers: Public keys of trusted approvers. If set,
             only SignedApprovals from these keys are accepted.
             If None, any valid signature is accepted.
+        threshold: Minimum number of valid approvals required (m-of-n).
+            Defaults to 1. Must be <= len(trusted_approvers) when set.
+        default_ttl: Default TTL in seconds for signed approvals created
+            by handlers. Propagated to handlers via ApprovalRequest.suggested_ttl.
+            None means handlers use their own default (typically 300s).
+            Set to longer values for async/cloud workflows (e.g. 86400 for 24h).
 
     Example:
+        # 1-of-1 (single approver)
         policy = ApprovalPolicy(
-            require_approval("transfer_funds", when=lambda a: a["amount"] > 10_000),
             require_approval("delete_user"),
             trusted_approvers=[admin_key.public_key],
+        )
+
+        # 2-of-3 multi-sig with 1-hour approval window
+        policy = ApprovalPolicy(
+            require_approval("transfer_funds", when=lambda a: a["amount"] > 10_000),
+            trusted_approvers=[alice.public_key, bob.public_key, carol.public_key],
+            threshold=2,
+            default_ttl=3600,
         )
     """
 
@@ -242,9 +329,22 @@ class ApprovalPolicy:
         self,
         *rules: ApprovalRule,
         trusted_approvers: Optional[List[PublicKey]] = None,
+        threshold: int = 1,
+        default_ttl: Optional[int] = None,
     ) -> None:
+        if threshold < 1:
+            raise ValueError("threshold must be >= 1")
+        if trusted_approvers is not None and threshold > len(trusted_approvers):
+            raise ValueError(
+                f"threshold ({threshold}) exceeds number of "
+                f"trusted_approvers ({len(trusted_approvers)})"
+            )
+        if default_ttl is not None and default_ttl < 1:
+            raise ValueError("default_ttl must be >= 1 second")
         self._rules: List[ApprovalRule] = list(rules)
         self._trusted_approvers = list(trusted_approvers) if trusted_approvers else None
+        self._threshold = threshold
+        self._default_ttl = default_ttl
 
     def check(
         self,
@@ -266,6 +366,7 @@ class ApprovalPolicy:
                     warrant_id=warrant_id,
                     request_hash=request_hash,
                     rule=rule,
+                    suggested_ttl=self._default_ttl,
                 )
         return None
 
@@ -273,6 +374,16 @@ class ApprovalPolicy:
     def trusted_approvers(self) -> Optional[List[PublicKey]]:
         """Public keys of trusted approvers, or None if any key is accepted."""
         return list(self._trusted_approvers) if self._trusted_approvers else None
+
+    @property
+    def threshold(self) -> int:
+        """Minimum number of valid approvals required (m-of-n)."""
+        return self._threshold
+
+    @property
+    def default_ttl(self) -> Optional[int]:
+        """Default TTL in seconds for signed approvals, or None for handler default."""
+        return self._default_ttl
 
     @property
     def rules(self) -> List[ApprovalRule]:
@@ -317,7 +428,7 @@ def sign_approval(
     approver_key: SigningKey,
     *,
     external_id: str = "",
-    ttl_seconds: int = 300,
+    ttl_seconds: Optional[int] = None,
 ) -> SignedApproval:
     """Create a SignedApproval for the given request.
 
@@ -327,16 +438,24 @@ def sign_approval(
     - Sets approved_at to now, expires_at to now + ttl_seconds
     - Signs with the approver's key
 
+    TTL resolution order:
+    1. Explicit ``ttl_seconds`` argument (highest priority)
+    2. ``request.suggested_ttl`` from the ApprovalPolicy.default_ttl
+    3. 300 seconds (5 minutes) as the fallback default
+
     Args:
         request: The ApprovalRequest to approve.
         approver_key: The approver's SigningKey.
         external_id: Identity of the approver (e.g., email).
-        ttl_seconds: How long the signed approval is valid.
+        ttl_seconds: How long the signed approval is valid. None uses
+            the policy's suggested TTL, or 300s as fallback.
 
     Returns:
         A SignedApproval (from tenuo_core).
     """
     from tenuo_core import ApprovalPayload, SignedApproval
+
+    effective_ttl = ttl_seconds or request.suggested_ttl or 300
 
     now = int(time.time())
     nonce = os.urandom(16)
@@ -346,7 +465,7 @@ def sign_approval(
         nonce=nonce,
         external_id=external_id,
         approved_at=now,
-        expires_at=now + ttl_seconds,
+        expires_at=now + effective_ttl,
     )
 
     return SignedApproval.create(payload, approver_key)
@@ -361,7 +480,7 @@ def cli_prompt(
     *,
     approver_key: SigningKey,
     show_args: bool = True,
-    ttl_seconds: int = 300,
+    ttl_seconds: Optional[int] = None,
 ) -> ApprovalHandler:
     """Create a CLI-based approval handler for local development.
 
@@ -371,7 +490,8 @@ def cli_prompt(
     Args:
         approver_key: The approver's signing key (used to sign approvals).
         show_args: Whether to display tool arguments (may contain PII).
-        ttl_seconds: How long the signed approval is valid.
+        ttl_seconds: How long the signed approval is valid. None uses
+            the policy's default_ttl, or 300s as fallback.
 
     Returns:
         An ApprovalHandler that prompts in the terminal.
@@ -412,16 +532,27 @@ def cli_prompt(
 def auto_approve(
     *,
     approver_key: SigningKey,
-    ttl_seconds: int = 300,
+    ttl_seconds: Optional[int] = None,
 ) -> ApprovalHandler:
     """Create a handler that auto-approves everything. For testing only.
 
     Args:
         approver_key: The approver's signing key (produces real SignedApprovals).
-        ttl_seconds: How long the signed approval is valid.
+        ttl_seconds: How long the signed approval is valid. None uses
+            the policy's default_ttl, or 300s as fallback.
     """
 
+    _warned = False
+
     def _handle(request: ApprovalRequest) -> SignedApproval:
+        nonlocal _warned
+        if not _warned:
+            logger.warning(
+                "AUTO-APPROVE HANDLER ACTIVE — DO NOT USE IN PRODUCTION. "
+                "All approval requests are being automatically approved. "
+                "Replace with cli_prompt() or a custom handler before deploying."
+            )
+            _warned = True
         logger.info(f"Auto-approving '{request.tool}' (testing mode)")
         return sign_approval(
             request,

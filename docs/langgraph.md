@@ -639,9 +639,38 @@ graph.invoke({"warrant": str(warrant), "messages": [...]})
 
 ---
 
+## Human Approval
+
+Add human-in-the-loop approval for sensitive tool calls. Both `TenuoMiddleware` and `TenuoToolNode` accept `approval_policy` and `approval_handler` parameters. See [Human Approvals](approvals.md) for the full guide.
+
+```python
+from tenuo.approval import ApprovalPolicy, require_approval, cli_prompt
+
+policy = ApprovalPolicy(
+    require_approval("delete_database"),
+    trusted_approvers=[approver_key.public_key],
+)
+
+# Middleware pattern
+middleware = TenuoMiddleware(
+    approval_policy=policy,
+    approval_handler=cli_prompt(approver_key=approver_key),
+)
+
+# Or TenuoToolNode pattern
+tool_node = TenuoToolNode(
+    tools,
+    approval_policy=policy,
+    approval_handler=cli_prompt(approver_key=approver_key),
+)
+```
+
+---
+
 ## See Also
 
 - [LangChain Integration](./langchain) — Tool protection for LangChain
+- [Human Approvals](./approvals) — Approval policy guide
 - [FastAPI Integration](./fastapi) — Zero-boilerplate API protection
 - [Security](./security) — Threat model, best practices
 - [API Reference](./api-reference) — Full Python API documentation

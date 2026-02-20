@@ -775,6 +775,9 @@ def verify_tool_call(
     constraints: Optional[Dict[str, Dict[str, Constraint]]],
     warrant: Optional[Warrant] = None,
     signing_key: Optional[SigningKey] = None,
+    approval_policy: Optional[Any] = None,
+    approval_handler: Optional[Any] = None,
+    approvals: Optional[list] = None,
 ) -> None:
     """Verify a tool call against guardrails and/or warrant.
 
@@ -827,6 +830,9 @@ def verify_tool_call(
             tool_name=tool_name,
             tool_args=arguments,
             bound_warrant=bound_warrant,
+            approval_policy=approval_policy,
+            approval_handler=approval_handler,
+            approvals=approvals,
         )
 
         if not result.allowed:
@@ -986,6 +992,9 @@ class GuardedCompletions:
         audit_callback: Optional[AuditCallback] = None,
         session_id: Optional[str] = None,
         constraint_hash: Optional[str] = None,
+        approval_policy: Optional[Any] = None,
+        approval_handler: Optional[Any] = None,
+        approvals: Optional[list] = None,
     ):
         self._original = original
         self._allow_tools = allow_tools
@@ -998,6 +1007,9 @@ class GuardedCompletions:
         self._audit_callback = audit_callback
         self._session_id = session_id or str(uuid.uuid4())[:8]
         self._constraint_hash = constraint_hash
+        self._approval_policy = approval_policy
+        self._approval_handler = approval_handler
+        self._approvals = approvals
         # Freeze warrant_id at init time for consistent audit trail
         self._warrant_id = warrant.id if warrant and hasattr(warrant, "id") else None
 
@@ -1069,6 +1081,9 @@ class GuardedCompletions:
                 self._constraints,
                 self._warrant,
                 self._signing_key,
+                self._approval_policy,
+                self._approval_handler,
+                self._approvals,
             )
             # Emit audit event for allowed call
             self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
@@ -1165,6 +1180,9 @@ class GuardedCompletions:
                     self._constraints,
                     self._warrant,
                     self._signing_key,
+                    self._approval_policy,
+                    self._approval_handler,
+                    self._approvals,
                 )
                 verified_indices.add(index)
             except (ToolDenied, WarrantDenied, ConstraintViolation, MalformedToolCall) as e:
@@ -1332,6 +1350,9 @@ class GuardedCompletions:
                     self._constraints,
                     self._warrant,
                     self._signing_key,
+                    self._approval_policy,
+                    self._approval_handler,
+                    self._approvals,
                 )
                 verified_indices.add(index)
             except (ToolDenied, WarrantDenied, ConstraintViolation, MalformedToolCall) as e:
@@ -1377,6 +1398,9 @@ class GuardedResponses:
         audit_callback: Optional[AuditCallback] = None,
         session_id: Optional[str] = None,
         constraint_hash: Optional[str] = None,
+        approval_policy: Optional[Any] = None,
+        approval_handler: Optional[Any] = None,
+        approvals: Optional[list] = None,
     ):
         self._original = original
         self._allow_tools = allow_tools
@@ -1388,6 +1412,9 @@ class GuardedResponses:
         self._audit_callback = audit_callback
         self._session_id = session_id or str(uuid.uuid4())[:8]
         self._constraint_hash = constraint_hash
+        self._approval_policy = approval_policy
+        self._approval_handler = approval_handler
+        self._approvals = approvals
         # Freeze warrant_id at init time for consistent audit trail
         self._warrant_id = warrant.id if warrant and hasattr(warrant, "id") else None
 
@@ -1451,6 +1478,9 @@ class GuardedResponses:
                 self._constraints,
                 self._warrant,
                 self._signing_key,
+                self._approval_policy,
+                self._approval_handler,
+                self._approvals,
             )
             self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")
         except (ToolDenied, WarrantDenied, ConstraintViolation) as e:
@@ -1521,6 +1551,9 @@ class GuardedClient:
         warrant: Optional[Warrant] = None,
         signing_key: Optional[SigningKey] = None,
         audit_callback: Optional[AuditCallback] = None,
+        approval_policy: Optional[Any] = None,
+        approval_handler: Optional[Any] = None,
+        approvals: Optional[list] = None,
     ):
         self._client = client
         self._allow_tools = allow_tools
@@ -1531,6 +1564,9 @@ class GuardedClient:
         self._warrant = warrant
         self._signing_key = signing_key
         self._audit_callback = audit_callback
+        self._approval_policy = approval_policy
+        self._approval_handler = approval_handler
+        self._approvals = approvals
 
         # Generate session ID and constraint hash for audit trail
         self.session_id = "sess_" + str(uuid.uuid4())[:8]
@@ -1551,6 +1587,8 @@ class GuardedClient:
                     audit_callback,
                     self.session_id,
                     self.constraint_hash,
+                    approval_policy,
+                    approval_handler,
                 )
             )
 
@@ -1567,6 +1605,8 @@ class GuardedClient:
                 audit_callback,
                 self.session_id,
                 self.constraint_hash,
+                approval_policy,
+                approval_handler,
             )
 
         # Pass through other attributes
@@ -1707,6 +1747,9 @@ class GuardBuilder:
         self._audit_callback: Optional[AuditCallback] = None
         self._warrant: Optional[Warrant] = None
         self._signing_key: Optional[SigningKey] = None
+        self._approval_policy: Optional[Any] = None
+        self._approval_handler: Optional[Any] = None
+        self._approvals: Optional[list] = None
         # Tool schema validation
         self._tool_schemas: Dict[str, Dict[str, Any]] = {}
         self._validate_mode: Literal["warn", "strict", False] = "warn"
@@ -1863,6 +1906,61 @@ class GuardBuilder:
         """
         self._warrant = warrant
         self._signing_key = signing_key
+        return self
+
+    def approval_policy(self, policy: Any) -> "GuardBuilder":
+        """Set an approval policy for human-in-the-loop authorization.
+
+        When a tool call matches a policy rule, the approval handler is
+        invoked before execution proceeds. Requires Tier 2 (warrant).
+
+        Args:
+            policy: ApprovalPolicy with one or more rules.
+
+        Returns:
+            self for chaining
+
+        Example:
+            from tenuo.approval import ApprovalPolicy, require_approval
+
+            builder.approval_policy(ApprovalPolicy(
+                require_approval("send_email", when=lambda a: not a["to"].endswith("@company.com")),
+            ))
+        """
+        self._approval_policy = policy
+        return self
+
+    def on_approval(self, handler: Any) -> "GuardBuilder":
+        """Set the handler invoked when a tool call requires approval.
+
+        Args:
+            handler: Callable that receives an ApprovalRequest and returns
+                a SignedApproval (or raises ApprovalDenied). Built-in
+                handlers: cli_prompt(), auto_approve(), auto_deny().
+
+        Returns:
+            self for chaining
+
+        Example:
+            from tenuo.approval import cli_prompt
+            builder.on_approval(cli_prompt(approver_key=approver_key))
+        """
+        self._approval_handler = handler
+        return self
+
+    def with_approvals(self, approvals: list) -> "GuardBuilder":
+        """Set pre-collected approvals for human-in-the-loop.
+
+        When using an ApprovalPolicy, approvals can be gathered ahead of time
+        and passed here. These will be passed through to verify_tool_call.
+
+        Args:
+            approvals: List of pre-collected approval objects
+
+        Returns:
+            self for chaining
+        """
+        self._approvals = approvals
         return self
 
     def with_tools(self, tools: List[Dict[str, Any]]) -> "GuardBuilder":
@@ -2046,6 +2144,9 @@ class GuardBuilder:
             warrant=self._warrant,
             signing_key=self._signing_key,
             audit_callback=self._audit_callback,
+            approval_policy=self._approval_policy,
+            approval_handler=self._approval_handler,
+            approvals=self._approvals,
         )
 
 
@@ -2266,6 +2367,9 @@ class TenuoToolGuardrail:
         signing_key: Optional[SigningKey] = None,
         tripwire: bool = True,
         audit_callback: Optional[AuditCallback] = None,
+        approval_policy: Optional[Any] = None,
+        approval_handler: Optional[Any] = None,
+        approvals: Optional[list] = None,
     ):
         """Initialize the guardrail.
 
@@ -2277,6 +2381,8 @@ class TenuoToolGuardrail:
             signing_key: Required if warrant is provided (for PoP)
             tripwire: If True, halt agent on violation. If False, log and continue.
             audit_callback: Optional callback for audit events
+            approval_policy: Optional ApprovalPolicy for human-in-the-loop (Tier 2 only)
+            approval_handler: Handler invoked when approval policy triggers
         """
         self.allow_tools = allow_tools
         self.deny_tools = deny_tools
@@ -2285,6 +2391,9 @@ class TenuoToolGuardrail:
         self.signing_key = signing_key
         self.tripwire = tripwire
         self.audit_callback = audit_callback
+        self.approval_policy = approval_policy
+        self.approval_handler = approval_handler
+        self.approvals = approvals
         self.name = "tenuo_tool_guardrail"
 
         # Generate session ID and constraint hash for audit trail
@@ -2335,6 +2444,9 @@ class TenuoToolGuardrail:
                     self.constraints,
                     self.warrant,
                     self.signing_key,
+                    self.approval_policy,
+                    self.approval_handler,
+                    self.approvals,
                 )
                 # Emit audit event for allowed call
                 self._emit_audit(tool_name, arguments, "ALLOW", "passed all checks")

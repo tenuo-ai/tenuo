@@ -399,6 +399,37 @@ async def main():
         )
         logger.info(f"  Result: {result}")
 
+        # -- Verify: writer child cannot read (attenuation enforced) --
+        logger.info("  Verify: writer-scoped child cannot read (should be denied)")
+        try:
+            from temporalio.client import WorkflowFailureError
+
+            # Mint a write-only attenuated warrant (simulating what the orchestrator does)
+            write_only_key = SigningKey.generate()
+            os.environ["TENUO_KEY_writeonly"] = base64.b64encode(
+                write_only_key.secret_key_bytes()
+            ).decode()
+            write_only_warrant = (
+                Warrant.mint_builder()
+                .holder(write_only_key.public_key)
+                .capability("write_file", path=Subpath(str(data_dir)), content=Pattern("*"))
+                .ttl(60)
+                .mint(control_key)
+            )
+            client_interceptor.set_headers(
+                tenuo_headers(write_only_warrant, "writeonly", write_only_key)
+            )
+            # ReaderChild needs read_file + list_directory, but warrant only has write_file
+            await client.execute_workflow(
+                ReaderChild.run,
+                arg=str(source_dir),
+                id=f"bad-reader-{uuid.uuid4().hex[:8]}",
+                task_queue=task_queue,
+            )
+            logger.error("  BUG: should have been denied")
+        except (WorkflowFailureError, Exception) as e:
+            logger.info(f"  Correctly denied: {type(e).__name__}")
+
     # -- Verify output --
     logger.info("\nOutput files (Pattern 1):")
     for p in sorted(output_dir.iterdir()):

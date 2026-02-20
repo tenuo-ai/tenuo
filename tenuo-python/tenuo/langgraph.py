@@ -202,6 +202,9 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         filter_tools: bool = True,
         require_constraints: bool = False,
         debug: bool = False,
+        approval_policy: Optional[Any] = None,
+        approval_handler: Optional[Any] = None,
+        approvals: Optional[Any] = None,
     ):
         """
         Initialize TenuoMiddleware.
@@ -211,6 +214,8 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
             filter_tools: Filter tools presented to LLM based on warrant
             require_constraints: Require constraints for sensitive tools
             debug: If True, returns detailed error messages to the LLM (DEV ONLY)
+            approval_policy: Optional ApprovalPolicy for human-in-the-loop (Tier 2 only)
+            approval_handler: Handler invoked when approval policy triggers
         """
         if not MIDDLEWARE_AVAILABLE:
             raise ImportError(
@@ -222,6 +227,9 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
         self._filter_tools = filter_tools
         self._require_constraints = require_constraints
         self._debug = debug
+        self._approval_policy = approval_policy
+        self._approval_handler = approval_handler
+        self._approvals = approvals
 
     def _get_bound_warrant_from_request(
         self,
@@ -289,6 +297,9 @@ class TenuoMiddleware(AgentMiddleware if MIDDLEWARE_AVAILABLE else object):  # t
                 tool_args=tool_args,
                 bound_warrant=bw,
                 require_constraints=self._require_constraints,
+                approval_policy=self._approval_policy,
+                approval_handler=self._approval_handler,
+                approvals=self._approvals,
             )
 
             if not result.allowed:
@@ -610,6 +621,9 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         tools: List[BaseTool],
         *,
         require_constraints: bool = False,
+        approval_policy: Optional[Any] = None,
+        approval_handler: Optional[Any] = None,
+        approvals: Optional[Any] = None,
         **kwargs: Any,
     ):
         """
@@ -618,6 +632,8 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
         Args:
             tools: List of tools to make available
             require_constraints: Require constraints for sensitive tools
+            approval_policy: Optional ApprovalPolicy for human-in-the-loop (Tier 2 only)
+            approval_handler: Handler invoked when approval policy triggers
         """
         if not LANGGRAPH_AVAILABLE:
             raise ImportError(
@@ -626,6 +642,9 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
             )
         super().__init__(tools, **kwargs)
         self._require_constraints = require_constraints
+        self._approval_policy = approval_policy
+        self._approval_handler = approval_handler
+        self._approvals = approvals
 
     def _run_with_auth(
         self,
@@ -682,6 +701,9 @@ class TenuoToolNode(ToolNode if LANGGRAPH_AVAILABLE else object):  # type: ignor
                 tool_args=tool_args,
                 bound_warrant=bw,
                 require_constraints=self._require_constraints,
+                approval_policy=self._approval_policy,
+                approval_handler=self._approval_handler,
+                approvals=self._approvals,
             )
 
             if not enforcement_result.allowed:

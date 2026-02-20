@@ -130,6 +130,18 @@ client = (GuardBuilder(openai.OpenAI())
 response = client.chat.completions.create(...)
 ```
 
+### Human Approval
+
+Add human-in-the-loop approval with `.approval_policy()` and `.on_approval()`. See [Human Approvals](approvals.md) for the full guide.
+
+```python
+client = (GuardBuilder(openai.OpenAI())
+    ...
+    .approval_policy(policy)
+    .on_approval(cli_prompt(approver_key=key))
+    .build())
+```
+
 ---
 
 ## Tier 1 Security Model

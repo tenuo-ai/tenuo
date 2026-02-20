@@ -64,12 +64,17 @@ def main():
         warrant = (
             Warrant.mint_builder()
             .capability(
-                "upgrade_cluster",
-                cluster=Pattern("staging-*"),  # HARDCODED: Only staging clusters for demo
+                "scale_cluster",
+                cluster=Pattern("staging-*"),
                 replicas=Range.max_value(15),
-            )  # HARDCODED: Max 15 replicas for demo
+            )
+            .capability(
+                "manage_infrastructure",
+                cluster=Pattern("staging-*"),
+                action=Pattern("*"),
+            )
             .holder(key.public_key)
-            .ttl(3600)  # HARDCODED: 1 hour TTL.
+            .ttl(3600)
             .mint(key)
         )
     except Exception as e:
@@ -148,14 +153,14 @@ def main():
     print("4. Testing nested contexts...")
     warrant1 = (
         Warrant.mint_builder()
-        .capability("scale_cluster", cluster=Pattern("staging-*"))
+        .capability("scale_cluster", cluster=Pattern("staging-*"), replicas=Range.max_value(20))
         .holder(key.public_key)
         .ttl(3600)
         .mint(key)
     )
     warrant2 = (
         Warrant.mint_builder()
-        .capability("scale_cluster", cluster=Pattern("production-*"))
+        .capability("scale_cluster", cluster=Pattern("production-*"), replicas=Range.max_value(20))
         .holder(key.public_key)
         .ttl(3600)
         .mint(key)

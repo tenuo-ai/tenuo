@@ -93,27 +93,47 @@ This demo shows Tenuo's key capabilities:
 
 ### Basics
 - **[basic_usage.py](basic_usage.py)**: The "Hello World" of Tenuo. Shows how to create a keypair, issue a warrant, and authorize a tool call. Demonstrates POLA (Principle of Least Authority) with explicit capabilities.
+- **[tier1_demo.py](tier1_demo.py)**: Tier 1 API — constraints-only protection without warrants. Simplest way to add guardrails.
 - **[trust_cliff_demo.py](trust_cliff_demo.py)**: Demonstrates the "Trust Cliff" - once you add ANY constraint, unknown arguments are rejected. Shows `_allow_unknown`, `Wildcard()`, and non-inheritance during attenuation.
 - **[clearance_demo.py](clearance_demo.py)**: Shows how to assign clearance levels to warrants and configure clearance requirements per tool (gateway policy). Demonstrates clearance hierarchy enforcement and defense in depth.
 - **[issuer_execution_pattern.py](issuer_execution_pattern.py)**: **RECOMMENDED PATTERN** - Shows the production best practice: ISSUER warrants for planners, EXECUTION warrants for workers. Demonstrates clearance levels and separation of concerns. **Start here for production deployments.**
 - **[decorator_example.py](decorator_example.py)**: Demonstrates the `@guard` decorator pattern for protecting functions with minimal boilerplate.
 - **[context_pattern.py](context_pattern.py)**: Shows how to use `warrant_scope` for thread-safe/async-safe warrant passing (essential for web frameworks like FastAPI).
+- **[chain_demo.py](chain_demo.py)**: Demonstrates warrant chaining and delegation depth.
 
 ### Multi-Agent Delegation
 - **[orchestrator_worker.py](orchestrator_worker.py)**: **Core delegation pattern** - Shows how orchestrators attenuate warrants for workers. Demonstrates Tenuo's key value: authority that shrinks as it flows through the system. Essential for understanding multi-agent workflows.
+- **[delegation_patterns.py](delegation_patterns.py)**: Advanced delegation patterns including multi-hop chains and constraint narrowing.
+- **[delegation_receipts.py](delegation_receipts.py)**: Cryptographic delegation receipts for audit trails.
 
-### MCP Integration
+### Approval Policy (Human-in-the-Loop)
+- **[approval_policy_demo.py](approval_policy_demo.py)**: Demonstrates m-of-n multi-sig approval policies — single approver and multi-sig scenarios with configurable TTL.
+- **[jit_warrant_demo/](jit_warrant_demo/)**: **JIT Warrant Demo** - Complete just-in-time warrant issuance with human multi-sig approval. Run with `python jit_warrant_demo/demo.py --simulate`.
+  - `demo.py` — Main entry point (use `--simulate` for no-LLM mode)
+  - `human_approval.py` — Multi-sig approval flow
+  - `executor.py` — Warrant-enforced tool execution
+  - `orchestrator.py` — Agent orchestration with approval gates
+  - `control_plane.py` — Warrant issuance authority
+
+### MCP (Model Context Protocol)
+- **[mcp/](mcp/)**: MCP server and client integration examples
+  - **[mcp_server_demo.py](mcp/mcp_server_demo.py)**: MCP server with `read_file` and `list_directory` tools
+  - **[mcp_client_demo.py](mcp/mcp_client_demo.py)**: MCP client with Tenuo-protected tool calls
+  - **[mcp_integration.py](mcp/mcp_integration.py)**: Complete MCP + Tenuo integration
+  - **[mcp_research_server.py](mcp/mcp_research_server.py)**: MCP server used by `research_agent_demo.py`
+  - **[crewai_mcp_demo.py](mcp/crewai_mcp_demo.py)**: CrewAI + MCP + Tenuo integration
+  - **[langchain_mcp_demo.py](mcp/langchain_mcp_demo.py)**: LangChain + MCP + Tenuo integration
+  - **[mcp_a2a_delegation.py](mcp/mcp_a2a_delegation.py)**: MCP with A2A warrant delegation
 - **[research_agent_demo.py](research_agent_demo.py)**: **RUNNABLE DEMO** - Pure Python MCP demo with delegation chains, attenuation, and cryptographic audit. Uses mock or real Tavily search. **Best first demo!**
-- **[mcp_research_server.py](mcp_research_server.py)**: The MCP server used by `research_agent_demo.py`. Demonstrates `web_search`, `write_file`, `read_file` tools.
 
-### LangChain Integration
+### LangChain / LangGraph Integration
 - **[langchain/](langchain/)**: Complete LangChain and LangGraph integration examples
   - **[simple.py](langchain/simple.py)**: Minimal example of protecting LangChain tools. **Start here for LangChain integration.**
   - **[integration.py](langchain/integration.py)**: Advanced integration with callbacks and context propagation
   - **[protect_tools.py](langchain/protect_tools.py)**: Securing third-party tools from `langchain_community`
   - **[mcp_integration.py](langchain/mcp_integration.py)**: LangChain + MCP + Tenuo complete integration
   - **[langgraph_protected.py](langchain/langgraph_protected.py)**: State-aware agents with checkpointing (serialization, key binding, TenuoToolNode)
-  - **[langgraph_mcp_integration.py](langchain/langgraph_mcp_integration.py)**: LangGraph + MCP integration
+  - **[langgraph_mcp_integration.py](langchain/langgraph_mcp_integration.py)**: LangGraph + MCP multi-agent graph with context-based authorization
 
 ### OpenAI Integration
 - **[openai/](openai/)**: Complete OpenAI integration examples
@@ -121,6 +141,16 @@ This demo shows Tenuo's key capabilities:
   - **[warrant.py](openai/warrant.py)**: Tier 2 cryptographic authorization with PoP
   - **[async_patterns.py](openai/async_patterns.py)**: Async/streaming patterns with TOCTOU protection
   - **[agents_sdk.py](openai/agents_sdk.py)**: OpenAI Agents SDK integration
+
+### CrewAI Integration
+- **[crewai/](crewai/)**: Complete CrewAI integration examples
+  - **[quickstart.py](crewai/quickstart.py)**: Minimal CrewAI + Tenuo quickstart
+  - **[demo_simple.py](crewai/demo_simple.py)**: Simple guarded crew with constraint enforcement
+  - **[guarded_crew.py](crewai/guarded_crew.py)**: Full crew with GuardBuilder and tool protection
+  - **[guarded_flow.py](crewai/guarded_flow.py)**: CrewAI Flow with Tenuo guards (requires crewai with Flow support)
+  - **[hierarchical_delegation.py](crewai/hierarchical_delegation.py)**: Tier 2 hierarchical delegation with WarrantDelegator and escalation prevention
+  - **[research_team_demo.py](crewai/research_team_demo.py)**: Multi-agent research team with delegation chains
+  - **[demo_live.py](crewai/demo_live.py)**: Live demo with real LLM (requires API key)
 
 ### AutoGen Integration
 - **[autogen_demo_unprotected.py](autogen_demo_unprotected.py)**: AgentChat workflow with no protections (baseline/attack illustration).
@@ -134,22 +164,34 @@ This demo shows Tenuo's key capabilities:
 - **[google_adk_a2a_incident/](google_adk_a2a_incident/)**: **Distributed A2A Demo** - Same incident response scenario but with real A2A HTTP calls between separate agent processes. Shows warrant delegation over the network.
 
 ### A2A (Agent-to-Agent) Integration
-- **[a2a_demo.py](a2a_demo.py)**: **Research Pipeline Demo** - Multi-agent delegation with warrant-based authorization. Shows User -> Orchestrator -> Worker flow with constraint attenuation and attack scenarios.
+- **[a2a/](a2a/)**: Agent-to-agent communication examples
+  - **[demo.py](a2a/demo.py)**: **Research Pipeline Demo** - Multi-agent delegation with warrant-based authorization. Shows User -> Orchestrator -> Worker flow with constraint attenuation and attack scenarios.
+  - **[crewai_delegation.py](a2a/crewai_delegation.py)**: CrewAI + A2A warrant delegation
+  - **[multi_hop_delegation.py](a2a/multi_hop_delegation.py)**: Multi-hop delegation chains across agents
+  - **[streaming_demo.py](a2a/streaming_demo.py)**: Streaming A2A communication with warrants
 
-**Security Constraints:**
-- `Subpath("/data")` - Blocks path traversal attacks (normalizes `../` before checking containment)
-- `UrlSafe()` - Blocks SSRF attacks (private IPs, metadata endpoints, IP encoding bypasses)
+### Temporal Integration
+- **[temporal/](temporal/)**: Temporal workflow integration examples
+  - **[demo.py](temporal/demo.py)**: Basic Temporal workflow with Tenuo warrant protection
+  - **[delegation.py](temporal/delegation.py)**: Warrant delegation across Temporal activities
+  - **[multi_warrant.py](temporal/multi_warrant.py)**: Multiple warrants in Temporal workflow chains
 
-### MCP (Model Context Protocol)
-- **[mcp_integration.py](mcp_integration.py)**: Demonstrates how to integrate Tenuo with MCP servers, extracting constraints from MCP tool calls.
+### AgentQL Integration
+- **[agentql/](agentql/)**: Browser automation with Tenuo guardrails
+  - **[demo.py](agentql/demo.py)**: AgentQL browser agent with Tenuo-enforced tool constraints
+  - **[demo_llm.py](agentql/demo_llm.py)**: AgentQL with live LLM integration
+  - **[benchmark.py](agentql/benchmark.py)**: Performance benchmarks for guarded browser automation
+
+### Local LLM Integration
+- **[local_llm_demo/](local_llm_demo/)**: LM Studio integration for fully local AI agents with Tenuo security. Run with `python local_llm_demo/demo.py` (requires LM Studio running locally).
 
 ### Web Frameworks
 - **[fastapi_integration.py](fastapi_integration.py)**: Complete FastAPI application with Tenuo authorization. Shows:
-    - Middleware for warrant extraction and context setting
-    - Multiple protected endpoints
+    - SecureAPIRouter for automatic route protection
+    - Multiple protected endpoints with auto-inferred tool names
     - Error handling and proper HTTP responses
     - SigningKey loading from secrets
-    - Request-scoped warrant validation
+    - Client-side PoP signature verification
 
 ### Error Handling
 - **[error_handling_guide.py](error_handling_guide.py)**: Comprehensive error handling patterns. Covers:
@@ -164,6 +206,13 @@ This demo shows Tenuo's key capabilities:
     - Read warrants from headers
     - Use the context pattern in a mock service
 
+### Blog Demos
+- **[blog_demos/map_territory/](blog_demos/map_territory/)**: Supporting examples for the "Map vs Territory" blog post on TOCTOU attacks and streaming safety.
+
+**Security Constraints:**
+- `Subpath("/data")` - Blocks path traversal attacks (normalizes `../` before checking containment)
+- `UrlSafe()` - Blocks SSRF attacks (private IPs, metadata endpoints, IP encoding bypasses)
+
 ## Running Examples
 
 All examples are standalone scripts. You can run them directly:
@@ -171,45 +220,62 @@ All examples are standalone scripts. You can run them directly:
 ```bash
 # Basic examples (no dependencies beyond tenuo)
 python basic_usage.py
-python clearance_demo.py  # Clearance level enforcement
+python tier1_demo.py
+python clearance_demo.py
 python decorator_example.py
 python context_pattern.py
+python chain_demo.py
 
 # Multi-agent delegation (core pattern)
 python orchestrator_worker.py
+python delegation_patterns.py
+
+# Approval policy (human-in-the-loop)
+python approval_policy_demo.py
+python jit_warrant_demo/demo.py --simulate
 
 # Featured MCP demo (requires: uv pip install "tenuo[mcp,langchain]" langchain-openai langgraph)
-# Also requires: OPENAI_API_KEY (TAVILY_API_KEY optional for real search)
 python research_agent_demo.py
+
+# MCP examples
+python mcp/mcp_client_demo.py
+python mcp/mcp_integration.py
 
 # LangChain examples (requires: uv pip install langchain langchain-openai langchain-community)
 python langchain/simple.py
 python langchain/integration.py
 python langchain/protect_tools.py
-python langchain/mcp_integration.py  # LangChain + MCP + Tenuo
+python langchain/mcp_integration.py
 
-# LangGraph example (requires: uv pip install langgraph)
+# LangGraph examples (requires: uv pip install langgraph)
 python langchain/langgraph_protected.py
 python langchain/langgraph_mcp_integration.py
 
 # OpenAI examples (requires: uv pip install openai)
-python openai/guardrails.py     # Tier 1: runtime guardrails
-python openai/warrant.py        # Tier 2: cryptographic authorization
-python openai/async_patterns.py # Async/streaming patterns
-python openai/agents_sdk.py     # Agents SDK integration
+python openai/guardrails.py
+python openai/warrant.py
+python openai/async_patterns.py
+python openai/agents_sdk.py
+
+# CrewAI examples (requires: uv pip install crewai)
+python crewai/quickstart.py
+python crewai/demo_simple.py
+python crewai/guarded_crew.py
+python crewai/hierarchical_delegation.py
 
 # Google ADK examples (requires: uv pip install tenuo[adk])
-python google_adk_incident_response/demo.py  # Multi-agent incident response
+python google_adk_incident_response/demo.py
 
 # A2A examples (requires: uv pip install tenuo[a2a])
-python a2a_demo.py              # Research pipeline with delegation
+python a2a/demo.py
 
-# MCP example (uses local config file, no external server needed)
-python mcp_integration.py
+# Temporal examples (requires: uv pip install tenuo[temporal])
+python temporal/demo.py
+python temporal/delegation.py
+python temporal/multi_warrant.py
 
 # Web framework example (requires: uv pip install fastapi uvicorn)
 python fastapi_integration.py
-# Or run with: uvicorn fastapi_integration:app --reload
 
 # Error handling guide
 python error_handling_guide.py
@@ -225,6 +291,7 @@ python kubernetes_integration.py
 3. **Fail-Closed**: Missing warrants block execution. If no warrant is in context, authorization fails by default.
 4. **PoP Automation**: Proof-of-Possession signatures are generated automatically by the SDK when using `@guard` or `guard()`.
 5. **Closed-World Constraints (Trust Cliff)**: Once you add ANY constraint, unknown arguments are rejected. Use `_allow_unknown=True` to opt out, or `Wildcard()` to explicitly allow fields. See [trust_cliff_demo.py](trust_cliff_demo.py).
+6. **M-of-N Approvals**: Human-in-the-loop authorization with configurable multi-sig thresholds and TTL. See [approval_policy_demo.py](approval_policy_demo.py).
 
 ## Learning Path
 
@@ -247,12 +314,17 @@ python kubernetes_integration.py
 2. `openai/warrant.py` - Tier 2 cryptographic authorization
 3. `openai/agents_sdk.py` - Agents SDK guardrails
 
+**Integrating with CrewAI?**
+1. `crewai/quickstart.py` - **Start here!** Minimal integration
+2. `crewai/guarded_crew.py` - Full crew with constraints
+3. `crewai/hierarchical_delegation.py` - Warrant delegation between agents
+
 **Production Patterns:**
 - `orchestrator_worker.py` - **Multi-agent delegation (understand this first!)**
 - `langchain/langgraph_protected.py` - **State-aware agents with checkpointing (LangGraph)**
+- `approval_policy_demo.py` - Human-in-the-loop m-of-n approvals
 - `fastapi_integration.py` - Complete web application with authorization
 - `error_handling_guide.py` - Production error handling strategies
 - `kubernetes_integration.py` - Real-world deployment patterns
-- `mcp_integration.py` - MCP server integration
 
 **Note:** Queue integration patterns (RabbitMQ, SQS, etc.) will be available in v0.2 with framework-specific packages to reduce boilerplate.

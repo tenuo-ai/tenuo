@@ -1093,9 +1093,12 @@ class InsufficientApprovals(ApprovalError):
     error_code = "insufficient_approvals"
     rust_variant = "InsufficientApprovals"
 
-    def __init__(self, required: int, received: int, hint: Optional[str] = None):
-        super().__init__(f"Insufficient approvals: required {required}, received {received}", hint=hint)
-        self.details = {"required": required, "received": received}
+    def __init__(self, required: int, received: int, detail: str = "", hint: Optional[str] = None):
+        msg = f"Insufficient approvals: required {required}, received {received}"
+        if detail:
+            msg = f"{msg}{detail}"
+        super().__init__(msg, hint=hint)
+        self.details = {"required": required, "received": received, "detail": detail}
 
 
 @wire_code(ErrorCode.APPROVAL_INVALID)

@@ -154,6 +154,7 @@ class BaseGuardBuilder(Generic[T]):
         self._on_denial: str = DenialPolicy.RAISE
         self._approval_policy: Optional[ApprovalPolicy] = None
         self._approval_handler: Optional[ApprovalHandler] = None
+        self._approvals: Optional[list] = None
 
     def allow(self: T, tool_name: str, **constraints: Any) -> T:
         """
@@ -255,6 +256,22 @@ class BaseGuardBuilder(Generic[T]):
             builder.on_approval(cli_prompt(approver_key=approver_key))
         """
         self._approval_handler = handler
+        return self
+
+    def with_approvals(self: T, approvals: list) -> T:
+        """Provide pre-obtained SignedApproval objects (spec §6).
+
+        Use this for cloud/async workflows where approvals were obtained
+        out-of-band (e.g., from Tenuo Cloud). These take precedence
+        over the approval_handler when a policy rule matches.
+
+        Args:
+            approvals: List of SignedApproval objects.
+
+        Returns:
+            self for method chaining
+        """
+        self._approvals = approvals
         return self
 
     def _get_bound_warrant(

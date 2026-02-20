@@ -521,9 +521,33 @@ result = protected.invoke({"input": "Read /data/report.txt"})
 
 ---
 
+## Human Approval
+
+Add human-in-the-loop approval with `approval_policy` and `approval_handler` parameters on `guard()` or `TenuoTool`. See [Human Approvals](approvals.md) for the full guide.
+
+```python
+from tenuo.approval import ApprovalPolicy, require_approval, cli_prompt
+from tenuo.langchain import guard
+
+policy = ApprovalPolicy(
+    require_approval("delete_database"),
+    trusted_approvers=[approver_key.public_key],
+)
+
+tools = guard(
+    [search, delete_database],
+    bound_warrant,
+    approval_policy=policy,
+    approval_handler=cli_prompt(approver_key=approver_key),
+)
+```
+
+---
+
 ## See Also
 
 - [LangGraph Integration](./langgraph) — Multi-agent graph security
+- [Human Approvals](./approvals) — Approval policy guide
 - [Argument Extraction](./argument-extraction) — How extraction works
 - [Security](./security) — Threat model, best practices
 - [API Reference](./api-reference) — Full Python API documentation
