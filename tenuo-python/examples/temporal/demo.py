@@ -12,25 +12,27 @@ Usage:
     temporal server start-dev
 
     # Run this example
-    python temporal_example.py
+    python demo.py
 """
 
 import asyncio
 import logging
+import uuid
 from datetime import timedelta
 from pathlib import Path
 
 # Temporal imports
 try:
     from temporalio import activity, workflow
-    from temporalio.client import Client
+    from temporalio.client import Client, Interceptor as ClientInterceptor
     from temporalio.worker import Worker
 except ImportError:
     print("Please install temporalio: pip install temporalio")
     raise
 
 # Tenuo imports
-from tenuo_core import SigningKey, IssuanceBuilder
+from tenuo import SigningKey, Warrant
+from tenuo_core import Subpath
 from tenuo.temporal import (
     TenuoInterceptor,
     TenuoInterceptorConfig,
@@ -44,6 +46,47 @@ from tenuo.temporal import (
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Client Interceptor - injects Tenuo headers into workflow starts
+# =============================================================================
+
+class TenuoHeaderInjector(ClientInterceptor):
+    """Client interceptor that injects Tenuo warrant headers into workflows."""
+
+    def __init__(self):
+        self._headers = {}
+
+    def set_headers(self, headers: dict):
+        """Set the headers to inject on the next workflow start."""
+        self._headers = headers
+
+    def intercept_client(self, next_interceptor):
+        return _TenuoOutbound(next_interceptor, self)
+
+
+class _TenuoOutbound:
+    """Outbound interceptor that adds Tenuo headers to StartWorkflow calls."""
+
+    def __init__(self, next_interceptor, injector: TenuoHeaderInjector):
+        self._next = next_interceptor
+        self._injector = injector
+
+    def __getattr__(self, name):
+        return getattr(self._next, name)
+
+    async def start_workflow(self, input):
+        if self._injector._headers:
+            from temporalio.api.common.v1 import Payload
+
+            payload_headers = {}
+            for k, v in self._injector._headers.items():
+                raw = v if isinstance(v, bytes) else v.encode("utf-8")
+                payload_headers[k] = Payload(data=raw)
+
+            input.headers = {**(input.headers or {}), **payload_headers}
+        return await self._next.start_workflow(input)
 
 
 # =============================================================================
@@ -82,11 +125,6 @@ class ResearchWorkflow:
 
     @workflow.run
     async def run(self, data_dir: str) -> str:
-        # Get the warrant for this workflow
-        warrant = current_warrant()
-        logger.info(f"Workflow running with warrant: {warrant.id()}")
-        logger.info(f"Allowed tools: {warrant.tools()}")
-
         # List files in the data directory
         files = await workflow.execute_activity(
             list_directory,
@@ -132,8 +170,14 @@ def on_audit(event: TemporalAuditEvent):
 
 async def main():
     """Run the example workflow."""
-    # Connect to Temporal
-    client = await Client.connect("localhost:7233")
+    # Create the client interceptor for header injection
+    header_injector = TenuoHeaderInjector()
+
+    # Connect to Temporal with the header injector
+    client = await Client.connect(
+        "localhost:7233",
+        interceptors=[header_injector],
+    )
     logger.info("Connected to Temporal server")
 
     # Generate keys for this example
@@ -144,18 +188,16 @@ async def main():
 
     # Create a warrant authorizing the agent
     # This would normally be issued by a control plane
-    from tenuo_core import Subpath
-
     warrant = (
-        IssuanceBuilder()
-        .holder(agent_key.public_key())
-        .capability("read_file", {"path": Subpath("/tmp/tenuo-demo")})
-        .capability("list_directory", {"path": Subpath("/tmp/tenuo-demo")})
+        Warrant.mint_builder()
+        .holder(agent_key.public_key)
+        .capability("read_file", path=Subpath("/tmp/tenuo-demo"))
+        .capability("list_directory", path=Subpath("/tmp/tenuo-demo"))
         .ttl(3600)  # 1 hour
         .mint(control_key)
     )
-    logger.info(f"Created warrant: {warrant.id()}")
-    logger.info(f"  Tools: {warrant.tools()}")
+    logger.info(f"Created warrant: {warrant.id}")
+    logger.info(f"  Tools: {warrant.tools}")
     logger.info(f"  Expires: {warrant.expires_at()}")
 
     # Set up the key resolver
@@ -167,8 +209,8 @@ async def main():
         agent_key.secret_key_bytes()
     ).decode()
 
-    # Create the interceptor
-    interceptor = TenuoInterceptor(
+    # Create the worker interceptor
+    worker_interceptor = TenuoInterceptor(
         TenuoInterceptorConfig(
             key_resolver=EnvKeyResolver(),
             on_denial="raise",
@@ -183,23 +225,39 @@ async def main():
     (demo_dir / "paper2.txt").write_text("Content of paper 2")
     (demo_dir / "notes.txt").write_text("Research notes")
 
-    # Start the worker with Tenuo interceptor
+    # Pass through tenuo modules so Temporal's workflow sandbox
+    # doesn't try to re-initialize the PyO3 Rust extension
+    from temporalio.worker.workflow_sandbox import (
+        SandboxedWorkflowRunner,
+        SandboxRestrictions,
+    )
+
+    sandbox_runner = SandboxedWorkflowRunner(
+        restrictions=SandboxRestrictions.default.with_passthrough_modules(
+            "tenuo", "tenuo_core",
+        )
+    )
+
     async with Worker(
         client,
         task_queue="tenuo-demo-queue",
         workflows=[ResearchWorkflow],
         activities=[read_file, write_file, list_directory],
-        interceptors=[interceptor],
+        interceptors=[worker_interceptor],
+        workflow_runner=sandbox_runner,
     ):
         logger.info("Worker started, executing workflow...")
 
-        # Execute the workflow with the warrant
+        # Inject Tenuo warrant headers and execute the workflow
+        header_injector.set_headers(
+            tenuo_headers(warrant, "agent1", agent_key)
+        )
+
         result = await client.execute_workflow(
             ResearchWorkflow.run,
             args=[str(demo_dir)],
-            id="research-demo-001",
+            id=f"research-demo-{uuid.uuid4().hex[:8]}",
             task_queue="tenuo-demo-queue",
-            headers=tenuo_headers(warrant, "agent1"),
         )
 
         logger.info(f"Workflow completed: {result}")
@@ -207,13 +265,11 @@ async def main():
         # Try to access a file outside the allowed scope - should fail
         logger.info("\n--- Attempting unauthorized access ---")
         try:
-            # This should be blocked by Tenuo
             await client.execute_workflow(
                 ResearchWorkflow.run,
                 args=["/etc"],  # Not in allowed path
-                id="research-demo-002",
+                id=f"research-demo-{uuid.uuid4().hex[:8]}",
                 task_queue="tenuo-demo-queue",
-                headers=tenuo_headers(warrant, "agent1"),
             )
         except ConstraintViolation as e:
             logger.warning(f"Access correctly denied: {e}")

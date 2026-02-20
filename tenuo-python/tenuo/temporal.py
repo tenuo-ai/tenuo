@@ -831,7 +831,12 @@ def tenuo_headers(
     warrant_bytes = warrant_b64.encode("utf-8")
 
     # Encode signing key as base64 for header transport
-    signing_key_bytes = signing_key.to_bytes() if hasattr(signing_key, "to_bytes") else bytes(signing_key)
+    if hasattr(signing_key, "secret_key_bytes"):
+        signing_key_bytes = signing_key.secret_key_bytes()
+    elif hasattr(signing_key, "to_bytes"):
+        signing_key_bytes = signing_key.to_bytes()
+    else:
+        signing_key_bytes = bytes(signing_key)
     signing_key_b64 = base64.b64encode(signing_key_bytes)
 
     headers: Dict[str, bytes] = {
@@ -1494,6 +1499,13 @@ class TenuoInterceptor:
             self._version,
         )
 
+    def workflow_interceptor_class(
+        self,
+        input: Any,  # WorkflowInterceptorClassInput
+    ) -> Optional[type]:
+        """Return workflow interceptor class (no workflow-level interception needed)."""
+        return None
+
 
 class TenuoActivityInboundInterceptor:
     """Activity-level interceptor that performs authorization checks."""
@@ -1507,6 +1519,10 @@ class TenuoActivityInboundInterceptor:
         self._next = next_interceptor
         self._config = config
         self._version = version
+
+    def init(self, outbound: Any) -> None:
+        """Called by Temporal to initialize the interceptor with an outbound impl."""
+        self._next.init(outbound)
 
     async def execute_activity(self, input: Any) -> Any:
         """Intercept activity execution for authorization."""
