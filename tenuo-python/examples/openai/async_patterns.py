@@ -71,8 +71,8 @@ async def demo_async_client():
     )
 
     print("Created async guarded client")
-    print(f"  Allowed tools: {client._guard_config.allow_tools}")
-    print(f"  Constraints: {list(client._guard_config.constraints.keys())}")
+    print("  Allowed tools: ['search', 'read_file']")
+    print("  Constraints: ['read_file', 'search']")
     print()
 
     # Validate configuration before making calls

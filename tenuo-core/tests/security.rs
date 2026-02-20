@@ -445,6 +445,462 @@ fn test_expired_approval_rejected() {
 }
 
 // ============================================================================
+// M-of-N Multi-sig - Comprehensive Tests
+// ============================================================================
+
+/// Helper: create a warrant with m-of-n approval requirements.
+fn make_multisig_warrant(
+    root_key: &SigningKey,
+    tool: &str,
+    approver_keys: &[&SigningKey],
+    min_approvals: u32,
+) -> Warrant {
+    let approver_pks: Vec<_> = approver_keys.iter().map(|k| k.public_key()).collect();
+    Warrant::builder()
+        .capability(tool, ConstraintSet::new())
+        .ttl(Duration::from_secs(3600))
+        .required_approvers(approver_pks)
+        .min_approvals(min_approvals)
+        .holder(root_key.public_key())
+        .build(root_key)
+        .unwrap()
+}
+
+/// Helper: create a valid SignedApproval for a given warrant + tool.
+fn make_approval(
+    root_key: &SigningKey,
+    approver: &SigningKey,
+    warrant: &Warrant,
+    tool: &str,
+    external_id: &str,
+) -> SignedApproval {
+    let args = HashMap::new();
+    let request_hash = compute_request_hash(
+        &warrant.id().to_string(),
+        tool,
+        &args,
+        Some(&root_key.public_key()),
+    );
+    let now = Utc::now();
+    let payload = ApprovalPayload {
+        version: 1,
+        request_hash,
+        nonce: rand::random(),
+        external_id: external_id.to_string(),
+        approved_at: now.timestamp() as u64,
+        expires_at: (now + chrono::Duration::hours(1)).timestamp() as u64,
+        extensions: None,
+    };
+    SignedApproval::create(payload, approver)
+}
+
+/// 3-of-5: exactly 3 valid approvals from 5 possible → succeeds.
+#[test]
+fn test_three_of_five_exact_threshold() {
+    let root = SigningKey::generate();
+    let approvers: Vec<_> = (0..5).map(|_| SigningKey::generate()).collect();
+    let approver_refs: Vec<&SigningKey> = approvers.iter().collect();
+
+    let warrant = make_multisig_warrant(&root, "deploy", &approver_refs, 3);
+    let authorizer = Authorizer::new().with_trusted_root(root.public_key());
+
+    let a0 = make_approval(&root, &approvers[0], &warrant, "deploy", "alice");
+    let a1 = make_approval(&root, &approvers[1], &warrant, "deploy", "bob");
+    let a2 = make_approval(&root, &approvers[2], &warrant, "deploy", "carol");
+
+    let args = HashMap::new();
+    let sig = warrant.sign(&root, "deploy", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "deploy", &args, Some(&sig), &[a0, a1, a2]);
+
+    assert!(
+        result.is_ok(),
+        "3-of-5 with 3 valid should succeed: {:?}",
+        result.err()
+    );
+}
+
+/// 3-of-5: all 5 approve → succeeds (early exit after 3).
+#[test]
+fn test_three_of_five_all_approve() {
+    let root = SigningKey::generate();
+    let approvers: Vec<_> = (0..5).map(|_| SigningKey::generate()).collect();
+    let approver_refs: Vec<&SigningKey> = approvers.iter().collect();
+
+    let warrant = make_multisig_warrant(&root, "deploy", &approver_refs, 3);
+    let authorizer = Authorizer::new().with_trusted_root(root.public_key());
+
+    let all: Vec<_> = approvers
+        .iter()
+        .enumerate()
+        .map(|(i, k)| make_approval(&root, k, &warrant, "deploy", &format!("approver-{i}")))
+        .collect();
+
+    let args = HashMap::new();
+    let sig = warrant.sign(&root, "deploy", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "deploy", &args, Some(&sig), &all);
+
+    assert!(
+        result.is_ok(),
+        "3-of-5 with all 5 should succeed: {:?}",
+        result.err()
+    );
+}
+
+/// 3-of-5: only 2 valid → fails with InsufficientApprovals.
+#[test]
+fn test_three_of_five_insufficient() {
+    let root = SigningKey::generate();
+    let approvers: Vec<_> = (0..5).map(|_| SigningKey::generate()).collect();
+    let approver_refs: Vec<&SigningKey> = approvers.iter().collect();
+
+    let warrant = make_multisig_warrant(&root, "deploy", &approver_refs, 3);
+    let authorizer = Authorizer::new().with_trusted_root(root.public_key());
+
+    let a0 = make_approval(&root, &approvers[0], &warrant, "deploy", "alice");
+    let a1 = make_approval(&root, &approvers[1], &warrant, "deploy", "bob");
+
+    let args = HashMap::new();
+    let sig = warrant.sign(&root, "deploy", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "deploy", &args, Some(&sig), &[a0, a1]);
+
+    assert!(result.is_err(), "3-of-5 with only 2 valid should fail");
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("insufficient approvals"),
+        "Error should say 'insufficient approvals', got: {err_msg}"
+    );
+    assert!(
+        err_msg.contains("required 3") && err_msg.contains("received 2"),
+        "Error should include counts, got: {err_msg}"
+    );
+}
+
+/// 2-of-3: mix of valid + expired + untrusted → still succeeds if 2 valid.
+#[test]
+fn test_two_of_three_with_mixed_invalid() {
+    let root = SigningKey::generate();
+    let a1 = SigningKey::generate();
+    let a2 = SigningKey::generate();
+    let a3 = SigningKey::generate();
+    let outsider = SigningKey::generate();
+
+    let warrant = make_multisig_warrant(&root, "op", &[&a1, &a2, &a3], 2);
+    let authorizer = Authorizer::new().with_trusted_root(root.public_key());
+
+    let args = HashMap::new();
+    let request_hash = compute_request_hash(
+        &warrant.id().to_string(),
+        "op",
+        &args,
+        Some(&root.public_key()),
+    );
+    let now = Utc::now();
+
+    // Valid approval from a1
+    let valid = make_approval(&root, &a1, &warrant, "op", "alice");
+
+    // Expired approval from a2
+    let expired_payload = ApprovalPayload {
+        version: 1,
+        request_hash,
+        nonce: rand::random(),
+        external_id: "bob-expired".to_string(),
+        approved_at: (now - chrono::Duration::hours(3)).timestamp() as u64,
+        expires_at: (now - chrono::Duration::hours(1)).timestamp() as u64,
+        extensions: None,
+    };
+    let expired = SignedApproval::create(expired_payload, &a2);
+
+    // Untrusted approval from outsider
+    let untrusted = make_approval(&root, &outsider, &warrant, "op", "outsider");
+
+    // Valid approval from a3
+    let valid2 = make_approval(&root, &a3, &warrant, "op", "carol");
+
+    let sig = warrant.sign(&root, "op", &args).unwrap();
+    let result = authorizer.authorize(
+        &warrant,
+        "op",
+        &args,
+        Some(&sig),
+        &[valid, expired, untrusted, valid2],
+    );
+
+    assert!(
+        result.is_ok(),
+        "Should succeed with 2 valid despite invalid ones: {:?}",
+        result.err()
+    );
+}
+
+/// 2-of-3: all invalid → fails with rejection summary.
+#[test]
+fn test_two_of_three_all_invalid_shows_summary() {
+    let root = SigningKey::generate();
+    let a1 = SigningKey::generate();
+    let a2 = SigningKey::generate();
+    let a3 = SigningKey::generate();
+    let outsider = SigningKey::generate();
+
+    let warrant = make_multisig_warrant(&root, "op", &[&a1, &a2, &a3], 2);
+    let authorizer = Authorizer::new().with_trusted_root(root.public_key());
+
+    let args = HashMap::new();
+    let request_hash = compute_request_hash(
+        &warrant.id().to_string(),
+        "op",
+        &args,
+        Some(&root.public_key()),
+    );
+    let now = Utc::now();
+
+    // Expired approval from a1
+    let expired_payload = ApprovalPayload {
+        version: 1,
+        request_hash,
+        nonce: rand::random(),
+        external_id: "alice-expired".to_string(),
+        approved_at: (now - chrono::Duration::hours(3)).timestamp() as u64,
+        expires_at: (now - chrono::Duration::hours(1)).timestamp() as u64,
+        extensions: None,
+    };
+    let expired = SignedApproval::create(expired_payload, &a1);
+
+    // Untrusted approval
+    let untrusted = make_approval(&root, &outsider, &warrant, "op", "rogue");
+
+    let sig = warrant.sign(&root, "op", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "op", &args, Some(&sig), &[expired, untrusted]);
+
+    assert!(result.is_err());
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("insufficient approvals"),
+        "m-of-n error should say 'insufficient approvals', got: {err_msg}"
+    );
+    assert!(
+        err_msg.contains("rejected"),
+        "m-of-n error should include rejection details, got: {err_msg}"
+    );
+}
+
+/// 1-of-1 diagnostic: untrusted key → specific error message.
+#[test]
+fn test_one_of_one_untrusted_key_specific_error() {
+    let root = SigningKey::generate();
+    let authorized = SigningKey::generate();
+    let rogue = SigningKey::generate();
+
+    let warrant = make_multisig_warrant(&root, "op", &[&authorized], 1);
+    let authorizer = Authorizer::new().with_trusted_root(root.public_key());
+
+    let rogue_approval = make_approval(&root, &rogue, &warrant, "op", "rogue");
+
+    let args = HashMap::new();
+    let sig = warrant.sign(&root, "op", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "op", &args, Some(&sig), &[rogue_approval]);
+
+    assert!(result.is_err());
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("approver not in trusted set"),
+        "1-of-1 untrusted should give specific reason, got: {err_msg}"
+    );
+}
+
+/// 1-of-1 diagnostic: expired → specific error message.
+#[test]
+fn test_one_of_one_expired_specific_error() {
+    let root = SigningKey::generate();
+    let approver = SigningKey::generate();
+
+    let warrant = make_multisig_warrant(&root, "op", &[&approver], 1);
+    let authorizer = Authorizer::new().with_trusted_root(root.public_key());
+
+    let args = HashMap::new();
+    let request_hash = compute_request_hash(
+        &warrant.id().to_string(),
+        "op",
+        &args,
+        Some(&root.public_key()),
+    );
+    let now = Utc::now();
+
+    let expired_payload = ApprovalPayload {
+        version: 1,
+        request_hash,
+        nonce: rand::random(),
+        external_id: "slow".to_string(),
+        approved_at: (now - chrono::Duration::hours(3)).timestamp() as u64,
+        expires_at: (now - chrono::Duration::hours(1)).timestamp() as u64,
+        extensions: None,
+    };
+    let expired = SignedApproval::create(expired_payload, &approver);
+
+    let sig = warrant.sign(&root, "op", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "op", &args, Some(&sig), &[expired]);
+
+    assert!(result.is_err());
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("expired"),
+        "1-of-1 expired should give specific reason, got: {err_msg}"
+    );
+}
+
+/// 1-of-1 diagnostic: request hash mismatch → specific error message.
+#[test]
+fn test_one_of_one_hash_mismatch_specific_error() {
+    let root = SigningKey::generate();
+    let approver = SigningKey::generate();
+
+    let warrant = make_multisig_warrant(&root, "op", &[&approver], 1);
+    let authorizer = Authorizer::new().with_trusted_root(root.public_key());
+
+    // Approval signed for a DIFFERENT tool
+    let args = HashMap::new();
+    let wrong_hash = compute_request_hash(
+        &warrant.id().to_string(),
+        "different_op",
+        &args,
+        Some(&root.public_key()),
+    );
+    let now = Utc::now();
+    let wrong_payload = ApprovalPayload {
+        version: 1,
+        request_hash: wrong_hash,
+        nonce: rand::random(),
+        external_id: "approver".to_string(),
+        approved_at: now.timestamp() as u64,
+        expires_at: (now + chrono::Duration::hours(1)).timestamp() as u64,
+        extensions: None,
+    };
+    let wrong_approval = SignedApproval::create(wrong_payload, &approver);
+
+    let sig = warrant.sign(&root, "op", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "op", &args, Some(&sig), &[wrong_approval]);
+
+    assert!(result.is_err());
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("request hash mismatch"),
+        "1-of-1 hash mismatch should give specific reason, got: {err_msg}"
+    );
+}
+
+/// Duplicate attack on m-of-n: same approver signs twice, counted only once.
+#[test]
+fn test_m_of_n_duplicate_counted_once() {
+    let root = SigningKey::generate();
+    let a1 = SigningKey::generate();
+    let a2 = SigningKey::generate();
+
+    let warrant = make_multisig_warrant(&root, "op", &[&a1, &a2], 2);
+    let authorizer = Authorizer::new().with_trusted_root(root.public_key());
+
+    // a1 signs twice with different nonces
+    let approval_1a = make_approval(&root, &a1, &warrant, "op", "alice-attempt-1");
+    let approval_1b = make_approval(&root, &a1, &warrant, "op", "alice-attempt-2");
+
+    let args = HashMap::new();
+    let sig = warrant.sign(&root, "op", &args).unwrap();
+    let result = authorizer.authorize(
+        &warrant,
+        "op",
+        &args,
+        Some(&sig),
+        &[approval_1a, approval_1b],
+    );
+
+    assert!(
+        result.is_err(),
+        "Duplicate approver should not count twice for 2-of-2"
+    );
+}
+
+/// Zero approvals provided for m-of-n → fails.
+#[test]
+fn test_m_of_n_no_approvals_provided() {
+    let root = SigningKey::generate();
+    let a1 = SigningKey::generate();
+
+    let warrant = make_multisig_warrant(&root, "op", &[&a1], 1);
+    let authorizer = Authorizer::new().with_trusted_root(root.public_key());
+
+    let args = HashMap::new();
+    let sig = warrant.sign(&root, "op", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "op", &args, Some(&sig), &[]);
+
+    assert!(result.is_err(), "No approvals should fail m-of-n");
+}
+
+/// DoS protection: too many approvals (>2× approver count) → rejected.
+#[test]
+fn test_dos_protection_too_many_approvals() {
+    let root = SigningKey::generate();
+    let a1 = SigningKey::generate();
+
+    let warrant = make_multisig_warrant(&root, "op", &[&a1], 1);
+    let authorizer = Authorizer::new().with_trusted_root(root.public_key());
+
+    // Create 3 approvals for 1 trusted approver (limit is 2× = 2)
+    let a = make_approval(&root, &a1, &warrant, "op", "alice-1");
+    let b = make_approval(&root, &a1, &warrant, "op", "alice-2");
+    let c = make_approval(&root, &a1, &warrant, "op", "alice-3");
+
+    let args = HashMap::new();
+    let sig = warrant.sign(&root, "op", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "op", &args, Some(&sig), &[a, b, c]);
+
+    assert!(result.is_err(), "Too many approvals should be rejected");
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("too many approvals"),
+        "Should mention DoS protection, got: {err_msg}"
+    );
+}
+
+/// Clock tolerance: approval that expired 20s ago (within 30s tolerance) → succeeds.
+#[test]
+fn test_clock_tolerance_allows_near_expiry() {
+    let root = SigningKey::generate();
+    let approver = SigningKey::generate();
+
+    let warrant = make_multisig_warrant(&root, "op", &[&approver], 1);
+    let authorizer = Authorizer::new().with_trusted_root(root.public_key());
+
+    let args = HashMap::new();
+    let request_hash = compute_request_hash(
+        &warrant.id().to_string(),
+        "op",
+        &args,
+        Some(&root.public_key()),
+    );
+    let now = Utc::now();
+
+    // Expired 20 seconds ago — within default 30s tolerance
+    let payload = ApprovalPayload {
+        version: 1,
+        request_hash,
+        nonce: rand::random(),
+        external_id: "approver".to_string(),
+        approved_at: (now - chrono::Duration::minutes(5)).timestamp() as u64,
+        expires_at: (now - chrono::Duration::seconds(20)).timestamp() as u64,
+        extensions: None,
+    };
+    let approval = SignedApproval::create(payload, &approver);
+
+    let sig = warrant.sign(&root, "op", &args).unwrap();
+    let result = authorizer.authorize(&warrant, "op", &args, Some(&sig), &[approval]);
+
+    assert!(
+        result.is_ok(),
+        "Approval within clock tolerance should succeed: {:?}",
+        result.err()
+    );
+}
+
+// ============================================================================
 // Pattern Attenuation Security
 // ============================================================================
 

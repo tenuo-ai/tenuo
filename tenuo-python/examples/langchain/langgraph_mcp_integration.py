@@ -18,7 +18,6 @@ from typing import TypedDict
 
 try:
     from langgraph.graph import StateGraph, START, END
-    from tenuo.langgraph import tenuo_node
     from tenuo.mcp import SecureMCPClient, MCP_AVAILABLE
     from tenuo import SigningKey, configure, mint, Pattern, Capability
 except ImportError:
@@ -36,8 +35,7 @@ class AgentState(TypedDict):
 
 
 # 2. Setup MCP Server (Simulated)
-# We'll use the demo server from the previous examples
-SERVER_SCRIPT = Path(__file__).parent / "mcp_server_demo.py"
+SERVER_SCRIPT = Path(__file__).parent.parent / "mcp" / "mcp_server_demo.py"
 
 
 async def main():
@@ -60,29 +58,23 @@ async def main():
     async with SecureMCPClient("python", [str(SERVER_SCRIPT)], register_config=True) as mcp_client:
         print("   ✓ Connected to MCP server and registered config")
 
-        # Get protected tools via sync property
         protected_tools = mcp_client.tools
         print(f"   ✓ Discovered {len(protected_tools)} MCP tools")
 
         # 5. Define Graph Nodes
+        # The MCP tools are already guarded by Tenuo. The mint() context manager
+        # sets the warrant in context, and MCP tool calls check it automatically.
 
-        @tenuo_node(Capability("read_file", path=Pattern("/tmp/*")))
         async def researcher_node(state: AgentState):
-            """Researcher node with limited authority."""
+            """Researcher node — MCP tools enforce authorization via context warrant."""
             print("\n   [Node: Researcher] Executing with restricted warrant...")
 
             query = state["query"]
-            # Simulate choosing a file based on query
-            # In a real app, the LLM would decide which tool to call
             target_file = "/tmp/research_data.txt"
             Path(target_file).write_text(f"Research data for: {query}")
 
             print(f"   Calling read_file(path='{target_file}')...")
 
-            # Call the MCP tool
-            # Authorization is checked LOCALLY by @guard
-            # If authorized, the tool is called
-            # If denied, AuthorizationError is raised (caught by LangGraph)
             result = await protected_tools["read_file"](path=target_file)
 
             content = result[0].text if result else "No content"
@@ -108,14 +100,15 @@ async def main():
         print("   ✓ LangGraph application built")
 
         # 7. Run with Task Scoping
+        # mint() creates a root warrant and sets it in context.
+        # The MCP protected tools pick it up automatically.
         print("\n7. Running graph with root task authority...")
 
-        # We grant broad authority at the root, which the researcher node narrows
         async with mint(
             Capability("read_file", path=Pattern("/tmp/*")),
             Capability("list_directory", path=Pattern("/tmp/*")),
         ):
-            input_state = {"query": "Tenuo Security"}
+            input_state = {"query": "Tenuo Security", "research_results": "", "final_answer": ""}
             final_state = await app.ainvoke(input_state)
 
             print("\n=== Final Graph Output ===")
@@ -126,7 +119,6 @@ async def main():
         print("\n8. Testing security boundary...")
         async with mint(Capability("read_file", path=Pattern("/tmp/*"))):
             try:
-                # Malicious node tries to escape /tmp/
                 print("   Researcher attempting to read /etc/passwd...")
                 await protected_tools["read_file"](path="/etc/passwd")
             except Exception as e:

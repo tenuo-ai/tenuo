@@ -80,6 +80,9 @@ pub struct GatewaySettings {
     /// Header containing the PoP signature
     #[serde(default = "default_pop_header")]
     pub pop_header: String,
+    /// Header containing signed approvals (base64 CBOR array of SignedApproval)
+    #[serde(default = "default_approval_header")]
+    pub approval_header: String,
     /// Clock tolerance for expiration checks (seconds)
     #[serde(default = "default_clock_tolerance")]
     pub clock_tolerance_secs: u64,
@@ -102,6 +105,10 @@ fn default_pop_header() -> String {
     "X-Tenuo-PoP".into()
 }
 
+fn default_approval_header() -> String {
+    "X-Tenuo-Approvals".into()
+}
+
 fn default_clock_tolerance() -> u64 {
     30
 }
@@ -111,6 +118,7 @@ impl Default for GatewaySettings {
         Self {
             warrant_header: default_warrant_header(),
             pop_header: default_pop_header(),
+            approval_header: default_approval_header(),
             clock_tolerance_secs: default_clock_tolerance(),
             trusted_roots: Vec::new(),
             debug_mode: false,

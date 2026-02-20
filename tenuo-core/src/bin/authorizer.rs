@@ -58,6 +58,7 @@ use std::io::{self, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tenuo::{
+    approval::SignedApproval,
     constraints::ConstraintValue,
     crypto::SigningKey,
     extraction::RequestContext,
@@ -914,6 +915,42 @@ async fn handle_request(
             }
         });
 
+    // 7b. Extract signed approvals from header (if present)
+    // Format: base64-encoded CBOR — either a single SignedApproval or array of SignedApproval
+    let approval_header = &state.config.settings.approval_header;
+    let approvals: Vec<SignedApproval> = headers
+        .get(approval_header)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|encoded| {
+            let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(encoded)
+                .or_else(|_| base64::engine::general_purpose::STANDARD.decode(encoded))
+                .ok()?;
+
+            // Try array first, then single approval
+            if let Ok(vec) = ciborium::de::from_reader::<Vec<SignedApproval>, _>(&bytes[..]) {
+                Some(vec)
+            } else if let Ok(single) = ciborium::de::from_reader::<SignedApproval, _>(&bytes[..]) {
+                Some(vec![single])
+            } else {
+                warn!(
+                    request_id = %request_id,
+                    "Failed to deserialize approvals from {} header",
+                    approval_header
+                );
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    if !approvals.is_empty() {
+        debug!(
+            request_id = %request_id,
+            count = approvals.len(),
+            "Extracted signed approvals from header"
+        );
+    }
+
     // 8. Authorize with detailed timing instrumentation
     let total_start = std::time::Instant::now();
 
@@ -927,19 +964,16 @@ async fn handle_request(
     let verify_result = authorizer.verify_chain(&chain);
     let verify_us = verify_start.elapsed().as_micros() as u64;
 
-    // Phase 3: Authorization (constraint matching, PoP verification)
+    // Phase 3: Authorization (constraint matching, PoP verification, approval verification)
     let authorize_start = std::time::Instant::now();
     let result = match verify_result {
-        Ok(_) => {
-            // If chain is valid, authorize the specific action against the leaf
-            authorizer.authorize(
-                leaf_warrant,
-                &extraction_result.tool,
-                &extraction_result.constraints,
-                pop_signature.as_ref(),
-                &[], // No approvals in HTTP mode
-            )
-        }
+        Ok(_) => authorizer.authorize(
+            leaf_warrant,
+            &extraction_result.tool,
+            &extraction_result.constraints,
+            pop_signature.as_ref(),
+            &approvals,
+        ),
         Err(e) => Err(e),
     };
     let authorize_us = authorize_start.elapsed().as_micros() as u64;
@@ -1065,6 +1099,32 @@ async fn handle_request(
                 "tool": extraction_result.tool,
                 "request_id": request_id
             });
+
+            // Enrich approval errors with actionable data so the client
+            // (or a K8s controller) can obtain the required signatures.
+            if let tenuo::Error::InsufficientApprovals {
+                required, received, ..
+            } = &e
+            {
+                let request_hash = tenuo::approval::compute_request_hash(
+                    &warrant_id,
+                    &extraction_result.tool,
+                    &extraction_result.constraints,
+                    Some(leaf_warrant.authorized_holder()),
+                );
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("request_hash".to_string(), json!(hex::encode(request_hash)));
+                    obj.insert("required_approvals".to_string(), json!(required));
+                    obj.insert("received_approvals".to_string(), json!(received));
+                    if let Some(approvers) = leaf_warrant.required_approvers() {
+                        let keys: Vec<String> = approvers
+                            .iter()
+                            .map(|k| hex::encode(k.to_bytes()))
+                            .collect();
+                        obj.insert("required_approvers".to_string(), json!(keys));
+                    }
+                }
+            }
 
             if state.debug_mode {
                 if let Some(obj) = body.as_object_mut() {

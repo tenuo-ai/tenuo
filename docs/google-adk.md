@@ -108,6 +108,18 @@ agent = Agent(
 
 **Why Tier 2?** Constraints live in the warrant (signed by control plane), not in your code. Even if an attacker modifies your Python, they can't change what the warrant allows.
 
+### Human Approval
+
+Add human-in-the-loop approval with `.approval_policy()` and `.on_approval()`. See [Human Approvals](approvals.md) for the full guide.
+
+```python
+guard = (GuardBuilder()
+    ...
+    .approval_policy(policy)
+    .on_approval(cli_prompt(approver_key=key))
+    .build())
+```
+
 ---
 
 ## Skill Mapping (When Names Don't Match)

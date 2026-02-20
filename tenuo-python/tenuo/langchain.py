@@ -43,6 +43,7 @@ from .exceptions import (
 )
 from .schemas import ToolSchema, TOOL_SCHEMAS, _get_tool_name
 from .audit import log_authorization_success
+from ._enforcement import enforce_tool_call
 
 # Check version compatibility on import (warns, doesn't fail)
 from tenuo._version_compat import check_langchain_compat  # noqa: E402
@@ -95,6 +96,9 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         strict: bool = False,
         schemas: Optional[Dict[str, ToolSchema]] = None,
         bound_warrant: Optional[Any] = None,
+        approval_policy: Optional[Any] = None,
+        approval_handler: Optional[Any] = None,
+        approvals: Optional[Any] = None,
         **kwargs: Any,
     ):
         """
@@ -105,6 +109,8 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
             strict: Enforce constraints for require_at_least_one tools
             schemas: Tool schemas for risk level checking
             bound_warrant: Explicit BoundWarrant to use (optional, overrides context)
+            approval_policy: Optional ApprovalPolicy for human-in-the-loop (Tier 2 only)
+            approval_handler: Handler invoked when approval policy triggers
         """
         # Get tool name and description
         tool_name = _get_tool_name(wrapped)
@@ -118,6 +124,9 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
         object.__setattr__(self, "strict", strict)
         object.__setattr__(self, "_schemas", schemas or TOOL_SCHEMAS)
         object.__setattr__(self, "_bound_warrant", bound_warrant)
+        object.__setattr__(self, "_approval_policy", approval_policy)
+        object.__setattr__(self, "_approval_handler", approval_handler)
+        object.__setattr__(self, "_approvals", approvals)
 
         # Copy args_schema if present
         if hasattr(wrapped, "args_schema"):
@@ -179,8 +188,19 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
             is_bound = hasattr(warrant, "warrant") and hasattr(warrant, "_key")
 
             if is_bound:
-                # BoundWarrant - handles PoP signing internally
-                authorized = warrant.validate(self.name, constraint_args)
+                # BoundWarrant — use shared enforcement (includes approval support)
+                approval_policy = getattr(self, "_approval_policy", None)
+                approval_handler = getattr(self, "_approval_handler", None)
+                result = enforce_tool_call(
+                    tool_name=self.name,
+                    tool_args=constraint_args,
+                    bound_warrant=warrant,
+                    approval_policy=approval_policy,
+                    approval_handler=approval_handler,
+                    approvals=getattr(self, "_approvals", None),
+                )
+                if not result.allowed:
+                    raise ToolNotAuthorized(tool=self.name)
             else:
                 # Plain Warrant - need to sign with key from context
                 import time
@@ -189,18 +209,19 @@ class TenuoTool(BaseTool):  # type: ignore[misc]
                     pop_signature = bytes(warrant.sign(signing_key, self.name, constraint_args, int(time.time())))
                     authorized = warrant.authorize(self.name, constraint_args, pop_signature)
                 else:
-                    # No key context - cannot authorize
-                    # Rust core expects pop_signature, so we can't authorize without a key
                     authorized = False
 
-            if not authorized:
-                raise ToolNotAuthorized(tool=self.name)
+                if not authorized:
+                    raise ToolNotAuthorized(tool=self.name)
 
             log_authorization_success(warrant, self.name, tool_input)
 
         except (ToolNotAuthorized, ConstraintViolation, ConfigurationError):
             raise
         except Exception as e:
+            from .approval import ApprovalRequired, ApprovalDenied, ApprovalVerificationError
+            if isinstance(e, (ApprovalRequired, ApprovalDenied, ApprovalVerificationError)):
+                raise
             raise ConstraintViolation(
                 field="unknown",
                 reason=f"Authorization error: {str(e)}",
@@ -381,6 +402,9 @@ def guard(
     bound: Optional[Any] = None,
     *,
     strict: bool = False,
+    approval_policy: Optional[Any] = None,
+    approval_handler: Optional[Any] = None,
+    approvals: Optional[Any] = None,
 ) -> List[Any]:
     """
     Guard tools with Tenuo authorization (unified API).
@@ -392,6 +416,8 @@ def guard(
         bound: Optional BoundWarrant for explicit auth.
                If None, uses context.
         strict: Require constraints for critical tools
+        approval_policy: Optional ApprovalPolicy for human-in-the-loop (Tier 2 only)
+        approval_handler: Handler invoked when approval policy triggers
 
     Returns:
         List of guarded TenuoTool wrappers
@@ -409,7 +435,14 @@ def guard(
     if not tools:
         return []
 
-    return [TenuoTool(t, strict=strict, bound_warrant=bound) for t in tools]
+    return [
+        TenuoTool(
+            t, strict=strict, bound_warrant=bound,
+            approval_policy=approval_policy, approval_handler=approval_handler,
+            approvals=approvals,
+        )
+        for t in tools
+    ]
 
 
 # =============================================================================

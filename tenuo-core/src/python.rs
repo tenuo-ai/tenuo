@@ -207,10 +207,19 @@ fn to_py_err(e: crate::error::Error) -> PyErr {
                     ],
                 ),
             ),
-            crate::error::Error::InsufficientApprovals { required, received } => (
-                "InsufficientApprovals",
-                PyTuple::new(py, [*required, *received]),
-            ),
+            crate::error::Error::InsufficientApprovals {
+                required,
+                received,
+                ref detail,
+            } => {
+                let detail_str = detail.as_deref().unwrap_or("");
+                let elements: [pyo3::PyObject; 3] = [
+                    required.into_py(py),
+                    received.into_py(py),
+                    detail_str.into_py(py),
+                ];
+                ("InsufficientApprovals", PyTuple::new(py, elements))
+            }
             crate::error::Error::InvalidApproval(m) => {
                 ("InvalidApproval", PyTuple::new(py, [m.as_str()]))
             }
@@ -4487,6 +4496,198 @@ fn py_compute_request_hash(
     ))
 }
 
+/// Verify a set of signed approvals against a request hash (m-of-n multi-sig).
+///
+/// ALL approval verification must go through this function — it is the single
+/// cryptographic enforcement point for approvals, matching the Rust core's
+/// `verify_approvals_with_tolerance()`.
+///
+/// Checks performed (in Rust, not Python):
+///   - Signature validity (verify-before-deserialize pattern)
+///   - Approver is in the required set
+///   - Request hash matches the expected value
+///   - Expiration with configurable clock tolerance
+///   - Duplicate detection (one approval per approver key)
+///   - DoS protection (max 2× approver count)
+///   - Threshold satisfaction (m-of-n)
+///
+/// Args:
+///     request_hash: 32-byte SHA-256 hash binding approval to a specific call
+///     approvals: List of SignedApproval objects to verify
+///     trusted_approvers: Public keys of accepted approvers
+///     threshold: Minimum number of valid approvals required (default 1)
+///     clock_tolerance_secs: Tolerance for clock skew on expiration (default 30)
+///
+/// Returns:
+///     List of verified ApprovalPayload objects (one per valid approval)
+///
+/// Raises:
+///     ValueError: If request_hash is not 32 bytes, threshold is 0, or too many approvals
+///     ValidationError: If insufficient valid approvals meet the threshold
+#[pyfunction(name = "verify_approvals")]
+#[pyo3(signature = (request_hash, approvals, trusted_approvers, threshold=1, clock_tolerance_secs=30))]
+fn py_verify_approvals(
+    request_hash: &[u8],
+    approvals: Vec<PySignedApproval>,
+    trusted_approvers: Vec<PyPublicKey>,
+    threshold: u32,
+    clock_tolerance_secs: u64,
+) -> PyResult<Vec<PyApprovalPayload>> {
+    if request_hash.len() != 32 {
+        return Err(PyValueError::new_err(format!(
+            "request_hash must be 32 bytes, got {}",
+            request_hash.len()
+        )));
+    }
+    let mut hash_arr = [0u8; 32];
+    hash_arr.copy_from_slice(request_hash);
+
+    if threshold == 0 {
+        return Err(PyValueError::new_err("threshold must be >= 1"));
+    }
+
+    // DoS protection: limit approval count to 2× approver set
+    let max_approvals = trusted_approvers.len().saturating_mul(2);
+    if approvals.len() > max_approvals {
+        return Err(PyValueError::new_err(format!(
+            "too many approvals: {} provided, max {} (2× trusted_approvers)",
+            approvals.len(),
+            max_approvals
+        )));
+    }
+
+    #[derive(Debug)]
+    enum Rejection {
+        InvalidSignature,
+        NotTrusted,
+        Duplicate,
+        Expired,
+        HashMismatch,
+    }
+
+    let now = chrono::Utc::now().timestamp() as u64;
+    let mut valid_payloads = Vec::new();
+    let mut seen_approvers = std::collections::HashSet::new();
+    let mut rejections: Vec<Rejection> = Vec::new();
+
+    for approval in &approvals {
+        let payload = match approval.inner.verify() {
+            Ok(p) => p,
+            Err(_) => {
+                rejections.push(Rejection::InvalidSignature);
+                continue;
+            }
+        };
+
+        if !trusted_approvers
+            .iter()
+            .any(|k| k.inner == approval.inner.approver_key)
+        {
+            rejections.push(Rejection::NotTrusted);
+            continue;
+        }
+
+        let key_bytes = approval.inner.approver_key.to_bytes();
+        if seen_approvers.contains(&key_bytes) {
+            rejections.push(Rejection::Duplicate);
+            continue;
+        }
+
+        if payload.expires_at + clock_tolerance_secs < now {
+            rejections.push(Rejection::Expired);
+            continue;
+        }
+
+        if payload.request_hash != hash_arr {
+            rejections.push(Rejection::HashMismatch);
+            continue;
+        }
+
+        seen_approvers.insert(key_bytes);
+        valid_payloads.push(PyApprovalPayload { inner: payload });
+
+        if valid_payloads.len() as u32 >= threshold {
+            return Ok(valid_payloads);
+        }
+    }
+
+    // 1-of-1 diagnostic: surface the exact rejection reason
+    if threshold == 1 && approvals.len() == 1 && rejections.len() == 1 {
+        let reason = match &rejections[0] {
+            Rejection::InvalidSignature => "invalid signature on approval",
+            Rejection::NotTrusted => "approver not in trusted set",
+            Rejection::Duplicate => "duplicate approval from same approver",
+            Rejection::Expired => "approval expired (beyond clock tolerance)",
+            Rejection::HashMismatch => {
+                "request hash mismatch (approval was signed for a different request)"
+            }
+        };
+        return Err(to_py_err(crate::error::Error::InvalidApproval(
+            reason.to_string(),
+        )));
+    }
+
+    // m-of-n: include rejection summary for diagnostics
+    let mut parts = Vec::new();
+    let counts: [(usize, &str); 5] = [
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::InvalidSignature))
+                .count(),
+            "invalid signature",
+        ),
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::NotTrusted))
+                .count(),
+            "untrusted",
+        ),
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::Duplicate))
+                .count(),
+            "duplicate",
+        ),
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::Expired))
+                .count(),
+            "expired",
+        ),
+        (
+            rejections
+                .iter()
+                .filter(|r| matches!(r, Rejection::HashMismatch))
+                .count(),
+            "hash mismatch",
+        ),
+    ];
+    for (count, label) in &counts {
+        if *count > 0 {
+            parts.push(format!("{count} {label}"));
+        }
+    }
+    let detail = if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" [rejected: {}]", parts.join(", "))
+    };
+
+    Err(to_py_err(crate::error::Error::InsufficientApprovals {
+        required: threshold,
+        received: valid_payloads.len() as u32,
+        detail: if detail.is_empty() {
+            None
+        } else {
+            Some(detail)
+        },
+    }))
+}
+
 /// Unsigned metadata for an approval (NOT part of the signed payload).
 ///
 /// Provider and reason are metadata, not part of the approval semantics.
@@ -5278,6 +5479,7 @@ pub fn tenuo_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_compute_diff, m)?)?;
     m.add_function(wrap_pyfunction!(py_decode_warrant_stack_base64, m)?)?;
     m.add_function(wrap_pyfunction!(py_compute_request_hash, m)?)?;
+    m.add_function(wrap_pyfunction!(py_verify_approvals, m)?)?;
 
     Ok(())
 }

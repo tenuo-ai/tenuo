@@ -584,8 +584,12 @@ pub enum Error {
     },
 
     /// Insufficient approvals for multi-sig.
-    #[error("insufficient approvals: required {required}, received {received}")]
-    InsufficientApprovals { required: u32, received: u32 },
+    #[error("insufficient approvals: required {required}, received {received}{}", .detail.as_deref().unwrap_or(""))]
+    InsufficientApprovals {
+        required: u32,
+        received: u32,
+        detail: Option<String>,
+    },
 
     /// Invalid approval (bad format, DoS attempt, etc.).
     #[error("invalid approval: {0}")]
@@ -952,6 +956,7 @@ mod tests {
             Error::InsufficientApprovals {
                 required: 2,
                 received: 1,
+                detail: None,
             },
             Error::InvalidApproval("test".into()),
             Error::Unauthorized("test".into()),

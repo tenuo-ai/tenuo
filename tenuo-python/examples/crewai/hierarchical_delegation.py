@@ -37,13 +37,14 @@ def create_mock_warrant(tools: list, constraints: dict = None):
     """Create a mock warrant for demonstration."""
     mock = MagicMock()
     mock.tools.return_value = tools
-    mock.constraint_for.return_value = None  # No constraint checking in demo
-    mock.grant_builder.return_value = MagicMock(
-        capability=lambda *a, **kw: mock.grant_builder.return_value,
-        holder=lambda *a: mock.grant_builder.return_value,
-        ttl=lambda *a: mock.grant_builder.return_value,
-        grant=lambda *a: MagicMock(),  # Returns child warrant
-    )
+    mock.is_expired.return_value = False
+    mock.constraint_for.return_value = None
+    grant_builder = MagicMock()
+    grant_builder.capability = lambda *a, **kw: grant_builder
+    grant_builder.holder = lambda *a: grant_builder
+    grant_builder.ttl = lambda *a: grant_builder
+    grant_builder.grant = lambda *a: MagicMock()
+    mock.grant_builder.return_value = grant_builder
     return mock
 
 
@@ -88,7 +89,7 @@ def main():
         },
     }
 
-    researcher_warrant = delegator.delegate(
+    delegator.delegate(
         parent_warrant=manager_warrant,
         parent_key=manager_key,
         child_holder=researcher_pubkey,
@@ -170,42 +171,33 @@ def main():
     print("  ✓ Delegation succeeded (proper attenuation)")
 
     # ==========================================================================
-    # 5. Using Delegated Warrants in Guards
+    # 5. Using Delegated Warrants in Guards (Tier 1 constraint checking)
     # ==========================================================================
 
     print("\n🛡️ Building Guards with Delegated Warrants:")
     print("-" * 40)
 
-    # In real usage, agents would have their own signing keys
-    researcher_signing_key = MagicMock()
-
     researcher_guard = (GuardBuilder()
         .allow("search", query=Pattern("arxiv:*"), max_results=Range(1, 20))
         .allow("read_file", path=Subpath("/research/papers"))
-        .with_warrant(researcher_warrant, researcher_signing_key)
         .build())
 
-    print("  Researcher Guard:")
+    print("  Researcher Guard (Tier 1 constraints):")
     print(f"    Tier: {researcher_guard.tier}")
-    print(f"    Has warrant: {researcher_guard.has_warrant}")
 
-    # Test researcher's constraints
     print("\n  Testing researcher's access:")
 
-    # Allowed: arxiv search
+    from tenuo.crewai import ConstraintViolation, ToolDenied
+
     result = researcher_guard._authorize("search", {"query": "arxiv:2301.00001"})
     print(f"    search('arxiv:2301.00001'): {'ALLOWED' if result is None else 'DENIED'}")
 
-    # Denied: non-arxiv search
-    from tenuo.crewai import ConstraintViolation
     try:
         researcher_guard._authorize("search", {"query": "pubmed:12345"})
         print("    search('pubmed:12345'): Should be denied!")
     except ConstraintViolation:
         print("    search('pubmed:12345'): DENIED ✓")
 
-    # Denied: write_file (not delegated)
-    from tenuo.crewai import ToolDenied
     try:
         researcher_guard._authorize("write_file", {"path": "/any"})
         print("    write_file('/any'): Should be denied!")

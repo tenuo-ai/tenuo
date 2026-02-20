@@ -318,16 +318,38 @@ def _check_approval(
     bound_warrant: BoundWarrant,
     policy: ApprovalPolicy,
     handler: Optional[ApprovalHandler],
+    approvals: Optional[List[Any]] = None,
 ) -> Optional[EnforcementResult]:
-    """Run the approval policy check, invoke handler, and verify SignedApproval.
+    """Run the approval policy check, obtain approvals, verify via Rust core.
+
+    Resolution order when a rule matches:
+      1. ``approvals`` — caller-provided SignedApprovals (spec §6 path)
+      2. ``handler``   — inline callback (cli_prompt / auto_approve)
+      3. raise ApprovalRequired
+
+    ALL cryptographic verification is delegated to the Rust core via
+    ``tenuo_core.verify_approvals()``:
+      - Signature validity (verify-before-deserialize)
+      - Approver membership in trusted set
+      - Request hash binding
+      - Expiration with 30-second clock tolerance
+      - Duplicate detection (one vote per approver key)
+      - DoS protection (max 2x trusted_approvers count)
+      - m-of-n threshold (policy.threshold, default 1)
+
+    Error diagnostics from the Rust core:
+      - 1-of-1: specific reason (e.g. "approver not in trusted set")
+      - m-of-n: rejection summary (e.g. "1 expired, 1 untrusted")
 
     Returns None to proceed (no rule matched or approval verified).
-    Raises ApprovalRequired if no handler is configured.
+    Raises ApprovalRequired if no approvals and no handler.
     Raises ApprovalDenied if handler denies.
-    Raises ApprovalVerificationError if signature/hash/key fails verification.
+    Raises ApprovalVerificationError if Rust core rejects the approvals.
     """
-    import time
-    from tenuo_core import py_compute_request_hash as _compute_hash
+    from tenuo_core import (
+        py_compute_request_hash as _compute_hash,
+        verify_approvals as _verify_approvals,
+    )
     from .approval import (
         ApprovalRequired,
         ApprovalVerificationError,
@@ -342,57 +364,80 @@ def _check_approval(
     if request is None:
         return None
 
-    if handler is None:
+    # --- Collect SignedApprovals ---
+
+    collected: List[Any] = []
+
+    # Path 1: caller-provided approvals (spec §6 — the cloud / async path)
+    if approvals:
+        collected = list(approvals)
+
+    # Path 2: handler callback (local / inline path)
+    elif handler is not None:
+        result = handler(request)
+
+        if inspect.isawaitable(result):
+            coro = cast("Any", result)
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop and loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    result = pool.submit(asyncio.run, coro).result()
+            else:
+                result = asyncio.run(coro)
+
+        # Handler may return a single SignedApproval or a list (for m-of-n)
+        if isinstance(result, list):
+            collected = result
+        else:
+            collected = [result]
+
+    # Path 3: nothing available
+    else:
         raise ApprovalRequired(request)
 
-    signed_approval = handler(request)
+    if not collected:
+        raise ApprovalRequired(request)
 
-    if inspect.isawaitable(signed_approval):
-        coro = cast("Any", signed_approval)
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                signed_approval = pool.submit(asyncio.run, coro).result()
-        else:
-            signed_approval = asyncio.run(coro)
-
-    # --- Cryptographic verification ---
-
-    try:
-        payload = signed_approval.verify()
-    except Exception as e:
-        raise ApprovalVerificationError(
-            request, reason=f"invalid signature: {e}"
-        )
-
-    if payload.request_hash != request_hash:
-        raise ApprovalVerificationError(
-            request,
-            reason="request hash mismatch (approval bound to different call)",
-        )
-
-    now = int(time.time())
-    if payload.expires_at <= now:
-        raise ApprovalVerificationError(
-            request, reason="signed approval has expired"
-        )
+    # --- Cryptographic verification (ALL done in Rust core) ---
 
     trusted = policy.trusted_approvers
-    if trusted is not None:
-        approver_key = signed_approval.approver_key
-        if not any(approver_key == k for k in trusted):
-            raise ApprovalVerificationError(
-                request, reason="approver key not in trusted_approvers"
-            )
+    if trusted is None:
+        # No trusted set specified — extract unique keys from the approvals.
+        # This is the permissive mode (any valid signature accepted).
+        seen_keys: set[bytes] = set()
+        trusted = []
+        for a in collected:
+            key_bytes = bytes(a.approver_key.to_bytes())
+            if key_bytes not in seen_keys:
+                seen_keys.add(key_bytes)
+                trusted.append(a.approver_key)
+
+    threshold = policy.threshold
+
+    try:
+        verified_payloads = _verify_approvals(
+            request_hash,
+            collected,
+            trusted,
+            threshold,
+        )
+    except Exception as e:
+        raise ApprovalVerificationError(
+            request, reason=str(e),
+        )
+
+    first_payload = verified_payloads[0] if verified_payloads else None
+    external_id = getattr(first_payload, "external_id", "unknown") if first_payload else "unknown"
 
     logger.info(
         f"Approval verified for '{tool_name}' "
-        f"(approver={payload.external_id or 'unknown'}, "
+        f"({len(verified_payloads)}/{threshold} approvals, "
+        f"approver={external_id}, "
         f"hash={request_hash.hex()[:16]}...)",
         extra={"tool": tool_name, "warrant_id": warrant_id},
     )
@@ -421,6 +466,7 @@ def enforce_tool_call(
     precomputed_signature: Optional[bytes] = None,
     approval_policy: Optional[ApprovalPolicy] = None,
     approval_handler: Optional[ApprovalHandler] = None,
+    approvals: Optional[List[Any]] = None,
 ) -> EnforcementResult:
     """
     Core enforcement logic for tool authorization.
@@ -451,14 +497,19 @@ def enforce_tool_call(
         approval_policy: Optional ApprovalPolicy to check after warrant authorization.
             If a rule matches, the approval_handler is invoked.
         approval_handler: Callable that handles approval requests and returns a
-            SignedApproval. Required if approval_policy is set and a rule matches.
+            SignedApproval. Used for inline/local approval (cli_prompt, auto_approve).
+        approvals: List of caller-provided SignedApproval objects (spec §6).
+            When a policy rule matches, these are checked first — the first
+            approval whose request_hash matches is verified. This is the
+            primary path for cloud/async workflows where the approval was
+            obtained out-of-band. Takes precedence over approval_handler.
 
     Returns:
         EnforcementResult with allowed status and denial details.
 
     Raises:
         ConfigurationError: If bound_warrant is not a BoundWarrant instance.
-        ApprovalRequired: If approval_policy triggers but no handler is provided.
+        ApprovalRequired: If approval_policy triggers but no approvals or handler.
         ApprovalDenied: If the handler denies the request.
         ApprovalVerificationError: If the SignedApproval fails cryptographic
             verification (invalid signature, hash mismatch, untrusted key, expired).
@@ -657,7 +708,7 @@ def enforce_tool_call(
         if approval_policy is not None:
             approval_result = _check_approval(
                 tool_name, tool_args, bound_warrant,
-                approval_policy, approval_handler,
+                approval_policy, approval_handler, approvals,
             )
             if approval_result is not None:
                 return approval_result

@@ -23,11 +23,11 @@ import os
 import logging
 import time
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict
 
 from fastapi import FastAPI, HTTPException
 from tenuo import SigningKey, Warrant, Pattern, Range
-from tenuo.fastapi import SecureAPIRouter, configure_tenuo, SecurityContext
+from tenuo.fastapi import SecureAPIRouter, configure_tenuo
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -182,7 +182,7 @@ router = SecureAPIRouter(
 
 
 @router.get("/files/{file_path:path}", tool="read_file")
-async def read_file_endpoint(file_path: str, ctx: SecurityContext):
+async def read_file_endpoint(file_path: str):
     """
     Read file endpoint with automatic Tenuo protection.
 
@@ -194,20 +194,16 @@ async def read_file_endpoint(file_path: str, ctx: SecurityContext):
 
     Returns file content if authorized.
     """
-    # SecurityContext provides access to verified warrant and args
-    logger.info(f"File read authorized by warrant {ctx.warrant.id}")
-
     content = read_file_internal(file_path)
     return {
         "status": "success",
         "file_path": file_path,
         "content": content[:100] + "..." if len(content) > 100 else content,
-        "warrant_holder": ctx.holder,
     }
 
 
 @router.post("/files/{file_path:path}", tool="write_file")
-async def write_file_endpoint(file_path: str, body: Dict[str, str], ctx: SecurityContext):
+async def write_file_endpoint(file_path: str, body: Dict[str, str]):
     """
     Write file endpoint with automatic Tenuo protection.
 
@@ -223,12 +219,11 @@ async def write_file_endpoint(file_path: str, body: Dict[str, str], ctx: Securit
         "status": "success",
         "file_path": file_path,
         "message": "File written successfully",
-        "warrant_id": ctx.warrant.id,
     }
 
 
 @router.post("/cluster/{cluster}", tool="manage_cluster")
-async def manage_cluster_endpoint(cluster: str, request: Dict[str, any], ctx: SecurityContext):
+async def manage_cluster_endpoint(cluster: str, request: Dict[str, Any]):
     """
     Cluster management endpoint with automatic Tenuo protection.
 
@@ -241,7 +236,6 @@ async def manage_cluster_endpoint(cluster: str, request: Dict[str, any], ctx: Se
     replicas = request.get("replicas", 1)
 
     result = manage_cluster_internal(cluster, action, replicas)
-    result["warrant_holder"] = ctx.holder
     return result
 
 
