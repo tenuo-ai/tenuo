@@ -102,11 +102,12 @@ agent_key = SigningKey.generate()      # the AI agent
 approver_key = SigningKey.generate()   # the human approver
 
 # 2. Warrant (what the agent can do)
-warrant = Warrant.issue(
-    agent_key,
-    capabilities={"transfer": {}, "search": {}},
-    ttl_seconds=3600,
-    holder=agent_key.public_key,
+warrant = (Warrant.mint_builder()
+    .capability("transfer")
+    .capability("search")
+    .holder(agent_key.public_key)
+    .ttl(3600)
+    .mint(agent_key)
 )
 bound = warrant.bind(agent_key)
 
