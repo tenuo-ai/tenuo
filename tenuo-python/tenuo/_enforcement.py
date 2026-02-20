@@ -356,7 +356,7 @@ def _check_approval(
     )
 
     warrant_id = getattr(bound_warrant, "id", None) or ""
-    holder_key = getattr(bound_warrant._key, "public_key", None)
+    holder_key = getattr(bound_warrant, "holder_key", None)
 
     request_hash = _compute_hash(warrant_id, tool_name, tool_args, holder_key)
 

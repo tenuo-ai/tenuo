@@ -401,8 +401,9 @@ class ApprovalPolicy:
 class ApprovalHandler(Protocol):
     """Protocol for approval handlers.
 
-    Handlers receive an ApprovalRequest and MUST return a SignedApproval.
-    To deny, raise ApprovalDenied. There is no unsigned approval path.
+    Handlers receive an ApprovalRequest and MUST return a SignedApproval
+    (or a list for m-of-n). To deny, raise ApprovalDenied.
+    There is no unsigned approval path.
 
     The handler is responsible for:
     1. Presenting the request to a human (or automated policy)
@@ -410,11 +411,18 @@ class ApprovalHandler(Protocol):
        signing it with the approver's SigningKey -> SignedApproval
     3. If denied: raising ApprovalDenied
 
+    Return types:
+    - Single approver: return ``SignedApproval``
+    - M-of-N multi-sig: return ``List[SignedApproval]``
+
     Handlers can be sync or async -- the enforcement layer handles both.
     """
 
     def __call__(self, request: ApprovalRequest) -> Union[
-        SignedApproval, Awaitable[SignedApproval]
+        SignedApproval,
+        List[SignedApproval],
+        Awaitable[SignedApproval],
+        Awaitable[List[SignedApproval]],
     ]: ...
 
 
@@ -455,7 +463,14 @@ def sign_approval(
     """
     from tenuo_core import ApprovalPayload, SignedApproval
 
-    effective_ttl = ttl_seconds or request.suggested_ttl or 300
+    if ttl_seconds is not None:
+        if ttl_seconds < 1:
+            raise ValueError("ttl_seconds must be >= 1")
+        effective_ttl = ttl_seconds
+    elif request.suggested_ttl:
+        effective_ttl = request.suggested_ttl
+    else:
+        effective_ttl = 300
 
     now = int(time.time())
     nonce = os.urandom(16)

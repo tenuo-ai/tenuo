@@ -174,8 +174,13 @@ class BoundWarrant:
         return self._warrant.warrant_type
 
     # ========================================================================
-    # Access to inner warrant
+    # Access to inner warrant and key metadata
     # ========================================================================
+
+    @property
+    def holder_key(self) -> PublicKey:
+        """The holder's public key (derived from the bound signing key)."""
+        return self._key.public_key
 
     @property
     def warrant(self) -> Warrant:

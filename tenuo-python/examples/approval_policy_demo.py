@@ -41,7 +41,6 @@ from tenuo.approval import (
     sign_approval,
 )
 from tenuo.autogen import GuardBuilder
-from tenuo._enforcement import enforce_tool_call
 from tenuo import compute_request_hash
 
 
@@ -167,23 +166,31 @@ def demo_multisig(agent_key, warrant):
     print(f"  Alice signed: expires_at = approved_at + {policy.default_ttl}s")
     print(f"  Bob signed:   expires_at = approved_at + {policy.default_ttl}s")
 
-    # Pass pre-signed approvals (spec §6 path)
+    # Pass pre-signed approvals via GuardBuilder (spec §6 path)
     print("\n--- deploy_prod with 2-of-3 caller-provided approvals ---")
-    result = enforce_tool_call(
-        "deploy_prod", {}, bound,
-        approval_policy=policy,
-        approvals=[alice_approval, bob_approval],
+    guard_2of3 = (
+        GuardBuilder()
+        .allow("deploy_prod")
+        .with_warrant(warrant, agent_key)
+        .approval_policy(policy)
+        .with_approvals([alice_approval, bob_approval])
+        .build()
     )
-    print(f"  -> Authorized: {result.allowed} (2-of-3 threshold met)")
+    guard_2of3._authorize("deploy_prod", {})
+    print("  -> Authorized (2-of-3 threshold met)")
 
     # Try with only 1 approval (insufficient)
     print("\n--- deploy_prod with only 1-of-3 (insufficient) ---")
     try:
-        enforce_tool_call(
-            "deploy_prod", {}, bound,
-            approval_policy=policy,
-            approvals=[alice_approval],
+        guard_1of3 = (
+            GuardBuilder()
+            .allow("deploy_prod")
+            .with_warrant(warrant, agent_key)
+            .approval_policy(policy)
+            .with_approvals([alice_approval])
+            .build()
         )
+        guard_1of3._authorize("deploy_prod", {})
     except ApprovalVerificationError as e:
         print(f"  -> Rejected: {e.reason}")
 
@@ -192,11 +199,15 @@ def demo_multisig(agent_key, warrant):
     outsider_approval = sign_approval(request, outsider, external_id="rogue@attacker.com")
     print("\n--- deploy_prod with outsider approval (untrusted) ---")
     try:
-        enforce_tool_call(
-            "deploy_prod", {}, bound,
-            approval_policy=policy,
-            approvals=[alice_approval, outsider_approval],
+        guard_outsider = (
+            GuardBuilder()
+            .allow("deploy_prod")
+            .with_warrant(warrant, agent_key)
+            .approval_policy(policy)
+            .with_approvals([alice_approval, outsider_approval])
+            .build()
         )
+        guard_outsider._authorize("deploy_prod", {})
     except ApprovalVerificationError as e:
         print(f"  -> Rejected: {e.reason}")
 

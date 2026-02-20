@@ -8,23 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0-beta.10] - 2026-02-20
 
 ### Added
-- **ApprovalPolicy**: Human-in-the-loop authorization for sensitive tool calls
-- **Transparent PoP in Temporal**: Outbound workflow interceptor computes Proof-of-Possession automatically for `workflow.execute_activity()` — no wrapper needed
-- **`activity_fns` config**: `TenuoInterceptorConfig` accepts activity functions for parameter name resolution in transparent PoP
-- **`x-tenuo-arg-keys` header**: Ensures outbound/inbound PoP signing consistency
+
+#### Human-in-the-Loop Approvals
+- **ApprovalPolicy**: Cryptographically verified human authorization for sensitive tool calls
+- **M-of-N multi-sig**: `threshold` parameter on `ApprovalPolicy` — require multiple approvers (e.g., 2-of-3) before execution
+- **Configurable TTL hierarchy**: Policy `default_ttl` → handler `ttl_seconds` → 300s fallback
+- **Diagnostic error messages**: Specific rejection reasons for 1-of-1 failures; summary for m-of-n (e.g., "required 2, received 1 [rejected: 1 expired, 1 not trusted]")
+- **Built-in handlers**: `cli_prompt()`, `auto_approve()`, `auto_deny()`, `sign_approval()` — all produce real Ed25519 `SignedApproval` tokens
+- **Framework integration**: `.approval_policy()` and `.on_approval()` on all GuardBuilders (CrewAI, AutoGen, OpenAI, Google ADK, LangGraph, LangChain)
+- **13 Rust security tests** for m-of-n verification, **11 Python m-of-n tests**, **9 TTL propagation tests**
+
+#### Temporal Integration Improvements
+- **Transparent PoP**: Outbound workflow interceptor computes Proof-of-Possession automatically for `workflow.execute_activity()` — no wrapper needed
+- **`activity_fns` config**: `TenuoInterceptorConfig` accepts activity functions for parameter name resolution
 - **Authorizer API hardening**: `check_chain()` and `authorize_one()` — two independent security boundaries
 - **Mandatory PoP timestamp**: `warrant.sign()` requires explicit `timestamp` argument for replay safety
+
+#### Developer Experience
 - **Wire fidelity tests**: Verify all constraint types survive serialization roundtrip
 - **Example rot detection**: `test_examples.py` validates all examples import and parse correctly
-- **Website**: Replace pricing page with "Request Early Access" form, feature CrewAI and Temporal on landing page
+- **Examples README**: Comprehensive listing of all 80+ examples across all integrations
 
 ### Fixed
-- Temporal demo: correct API usage (`Warrant.mint_builder()`, property access, sandbox passthrough, Payload headers)
 - Temporal interceptor: add missing `init()` and `workflow_interceptor_class()` methods
 - `tenuo_headers()`: use `secret_key_bytes()` for `SigningKey`
-- Deprecated `.attenuate()` calls in Google ADK docs
-- Deprecated `Warrant.issue()` in docs and notebook
-- 6 stale examples fixed, ruff lint errors in A2A and MCP examples resolved
+- Deprecated `.attenuate()` calls in Google ADK docs, `Warrant.issue()` in docs and notebook
+- Runtime errors in 7 examples: context_pattern, hierarchical_delegation, fastapi_integration, approval_policy_demo, jit_warrant_demo, async_patterns, langgraph_mcp_integration
+- Python 3.9 dropped from macOS/ARM CI runners (EOL, prebuilt packages broken on newer macOS)
+
+### Documentation
+- **`docs/approvals.md`**: Complete approval policy guide with m-of-n, TTL hierarchy, framework integration, and security properties
 
 ## [0.1.0-beta.9] - 2026-02-17
 
