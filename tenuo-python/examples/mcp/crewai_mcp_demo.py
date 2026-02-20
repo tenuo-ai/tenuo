@@ -28,23 +28,22 @@ Usage:
 """
 
 import asyncio
-import io
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 # Ensure we can import from tenuo
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 try:
-    from crewai import Agent, Task, Crew, Process
+    from crewai import Agent, Task, Crew, Process  # noqa: F401
     CREWAI_AVAILABLE = True
 except ImportError:
     CREWAI_AVAILABLE = False
     print("⚠️  CrewAI not installed. Install with: uv pip install crewai")
     print("   Running in simulation mode...\n")
 
-from tenuo import SigningKey, Warrant, Pattern, Subpath, Range
+from tenuo import SigningKey, Warrant, Pattern, Subpath
 from tenuo.mcp import SecureMCPClient, MCP_AVAILABLE
 
 # Colors
@@ -166,7 +165,7 @@ async def run_demo():
         log("\n🔐 Crew Orchestrator attenuates warrants for crew members...")
 
         # Researcher: search + read only
-        researcher_warrant = orchestrator_warrant.attenuate(
+        researcher_warrant = orchestrator_warrant.attenuate(  # noqa: F841
             signing_key=crew_orchestrator_key,
             holder=crew_orchestrator_key.public_key,  # Same holder for demo
             capabilities={
@@ -178,7 +177,7 @@ async def run_demo():
         log("   ✓ Researcher: web_search (*.org only), read_file (sources only)")
 
         # Writer: write only
-        writer_warrant = orchestrator_warrant.attenuate(
+        writer_warrant = orchestrator_warrant.attenuate(  # noqa: F841
             signing_key=crew_orchestrator_key,
             holder=crew_orchestrator_key.public_key,
             capabilities={
@@ -190,7 +189,7 @@ async def run_demo():
         log("   ✓ Writer: write_file (output only), read_file (sources for reference)")
 
         # Editor: read only
-        editor_warrant = orchestrator_warrant.attenuate(
+        editor_warrant = orchestrator_warrant.attenuate(  # noqa: F841
             signing_key=crew_orchestrator_key,
             holder=crew_orchestrator_key.public_key,
             capabilities={
@@ -211,18 +210,18 @@ async def run_demo():
         log("   Using warrant: web_search + read_file (sources)")
 
         # Search web
-        search_result = await mcp_client.tools["web_search"](
+        search_result = await mcp_client.tools["web_search"](  # noqa: F841
             query="AI agent security best practices",
             domain="arxiv.org"
         )
-        log(f"   ✓ Web search complete", C.GREEN)
-        log(f"   Found research on AI security", C.BLUE)
+        log("   ✓ Web search complete", C.GREEN)
+        log("   Found research on AI security", C.BLUE)
 
         # Read reference
-        read_result = await mcp_client.tools["read_file"](
+        read_result = await mcp_client.tools["read_file"](  # noqa: F841
             path="/tmp/research/sources/reference.txt"
         )
-        log(f"   ✓ Read reference file", C.GREEN)
+        log("   ✓ Read reference file", C.GREEN)
 
         # Phase 2: Writer
         log("\n✍️  Phase 2: Writer creates content...")
@@ -255,7 +254,7 @@ Security must be built into agent architectures from the ground up.
             path="/tmp/research/output/article.md",
             content=article_content
         )
-        log(f"   ✓ Article written to output/article.md", C.GREEN)
+        log("   ✓ Article written to output/article.md", C.GREEN)
         log(f"   {write_result[0].text}", C.BLUE)
 
         # Phase 3: Editor

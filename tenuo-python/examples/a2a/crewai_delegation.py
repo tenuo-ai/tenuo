@@ -36,7 +36,7 @@ from typing import Any, Dict
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 try:
-    from crewai import Agent, Task, Crew, Process
+    from crewai import Agent, Task, Crew, Process  # noqa: F401
     CREWAI_AVAILABLE = True
 except ImportError:
     CREWAI_AVAILABLE = False

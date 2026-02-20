@@ -28,7 +28,6 @@ Usage:
 import asyncio
 import sys
 from pathlib import Path
-from typing import Any
 
 # Check dependencies
 try:
@@ -44,7 +43,7 @@ except ImportError:
 # Ensure we can import from tenuo
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from tenuo import SigningKey, configure, mint, Capability, Subpath, Range, Pattern
+from tenuo import SigningKey, configure, mint, Capability, Subpath, Range
 from tenuo.mcp import SecureMCPClient, MCPToolAdapter, MCP_AVAILABLE
 
 # Colors
@@ -94,7 +93,7 @@ async def run_with_langchain():
         log("   Ensure mcp_server_demo.py is in the same directory")
         return
 
-    log(f"2. Connecting to MCP server...")
+    log("2. Connecting to MCP server...")
 
     try:
         async with SecureMCPClient(
@@ -192,7 +191,7 @@ Question: {input}
                     "input": f"Read the file {test_dir}/research.txt and tell me what it contains"
                 })
 
-                log(f"\n✅ Agent Result:", C.GREEN)
+                log("\n✅ Agent Result:", C.GREEN)
                 log(f"   {result['output']}", C.BLUE)
 
             # Test constraint enforcement
@@ -209,7 +208,7 @@ Question: {input}
                 log("   ❌ Should have been blocked!", C.YELLOW)
             except Exception as e:
                 log(f"   ✅ BLOCKED: {type(e).__name__}", C.GREEN)
-                log(f"   Subpath constraint prevented path traversal")
+                log("   Subpath constraint prevented path traversal")
 
             log("\n🔒 Attack 2: Try to read without warrant")
             try:
@@ -220,7 +219,7 @@ Question: {input}
                 log("   ❌ Should have been blocked!", C.YELLOW)
             except Exception as e:
                 log(f"   ✅ BLOCKED: {type(e).__name__}", C.GREEN)
-                log(f"   No warrant in scope")
+                log("   No warrant in scope")
 
             header("Summary")
             log("✅ LangChain agent used MCP tools successfully")

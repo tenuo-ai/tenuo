@@ -27,7 +27,6 @@ import io
 import sys
 import time
 from pathlib import Path
-from typing import Optional
 
 # Ensure we can import from tenuo
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -238,11 +237,11 @@ async def run_demo():
             .ttl(3600)
             .mint(control_key))
 
-        log(f"📜 Root warrant issued", C.GREEN)
+        log("📜 Root warrant issued", C.GREEN)
         log(f"   ID: {orchestrator_warrant.id[:16]}...", indent=2)
         log(f"   Depth: {orchestrator_warrant.depth}", indent=2)
-        log(f"   Tools: read_logs, query_threat_db, block_ip, quarantine_user", indent=2)
-        log(f"   TTL: 3600s\n", indent=2)
+        log("   Tools: read_logs, query_threat_db, block_ip, quarantine_user", indent=2)
+        log("   TTL: 3600s\n", indent=2)
 
         # =================================================================
         # Hop 2: Orchestrator → Analyst
@@ -263,12 +262,12 @@ async def run_demo():
             ttl_seconds=1800,  # Shorter TTL
         )
 
-        log(f"📜 Analyst warrant created", C.GREEN)
+        log("📜 Analyst warrant created", C.GREEN)
         log(f"   ID: {analyst_warrant.id[:16]}...", indent=2)
         log(f"   Depth: {analyst_warrant.depth}", indent=2)
-        log(f"   Tools: read_logs, query_threat_db, block_ip", indent=2)
-        log(f"   Removed: quarantine_user (narrowed scope)", indent=2, color=C.YELLOW)
-        log(f"   TTL: 1800s (shorter than parent)\n", indent=2)
+        log("   Tools: read_logs, query_threat_db, block_ip", indent=2)
+        log("   Removed: quarantine_user (narrowed scope)", indent=2, color=C.YELLOW)
+        log("   TTL: 1800s (shorter than parent)\n", indent=2)
 
         # Orchestrator calls Analyst
         log("📞 Orchestrator delegates investigation to Analyst...")
@@ -284,7 +283,7 @@ async def run_demo():
             signing_key=orchestrator_key,
         )
 
-        log(f"✅ Logs retrieved", C.GREEN)
+        log("✅ Logs retrieved", C.GREEN)
         log(f"   Suspicious IPs: {logs_result.output.get('suspicious_ips', [])}", indent=2)
 
         # Query threat DB
@@ -297,7 +296,7 @@ async def run_demo():
         )
 
         threat_data = threat_result.output
-        log(f"✅ Threat intel retrieved", C.GREEN)
+        log("✅ Threat intel retrieved", C.GREEN)
         log(f"   IP: {threat_data.get('ip')}", indent=2)
         log(f"   Threat Level: {threat_data.get('threat_level')}", indent=2)
         log(f"   Category: {threat_data.get('category')}", indent=2)
@@ -321,12 +320,12 @@ async def run_demo():
             ttl_seconds=600,  # Even shorter TTL
         )
 
-        log(f"📜 Responder warrant created", C.GREEN)
+        log("📜 Responder warrant created", C.GREEN)
         log(f"   ID: {responder_warrant.id[:16]}...", indent=2)
         log(f"   Depth: {responder_warrant.depth}", indent=2)
-        log(f"   Tools: block_ip (single IP only)", indent=2)
-        log(f"   IP narrowed: Cidr(0.0.0.0/0) → Exact(203.0.113.5)", indent=2, color=C.YELLOW)
-        log(f"   TTL: 600s (shortest)\n", indent=2)
+        log("   Tools: block_ip (single IP only)", indent=2)
+        log("   IP narrowed: Cidr(0.0.0.0/0) → Exact(203.0.113.5)", indent=2, color=C.YELLOW)
+        log("   TTL: 600s (shortest)\n", indent=2)
 
         # Build warrant chain for Responder
         # Chain format: [root, intermediate, ...] (parent-first, excluding leaf)
@@ -354,11 +353,11 @@ async def run_demo():
             signing_key=analyst_key,  # Analyst signs the request
         )
 
-        log(f"✅ IP blocked successfully", C.GREEN)
+        log("✅ IP blocked successfully", C.GREEN)
         log(f"   IP: {block_result.output.get('ip')}", indent=2)
         log(f"   Rule ID: {block_result.output.get('rule_id')}", indent=2)
         log(f"   Status: {block_result.output.get('status')}", indent=2)
-        log(f"   ✅ Chain validated (3 hops)\n", indent=2)
+        log("   ✅ Chain validated (3 hops)\n", indent=2)
 
         # =================================================================
         # Security Demonstrations
@@ -380,7 +379,7 @@ async def run_demo():
             )
             log("   ❌ ERROR: Should have been blocked!", C.RED)
         except Exception as e:
-            log(f"   ✅ BLOCKED: Exact(203.0.113.5) constraint", C.GREEN)
+            log("   ✅ BLOCKED: Exact(203.0.113.5) constraint", C.GREEN)
             log(f"   Reason: {str(e)[:60]}...", indent=2, color=C.DIM)
 
         # Attack 2: Forged warrant without proper chain
@@ -405,7 +404,7 @@ async def run_demo():
             )
             log("   ❌ ERROR: Should have been blocked!", C.RED)
         except Exception as e:
-            log(f"   ✅ BLOCKED: Untrusted issuer", C.GREEN)
+            log("   ✅ BLOCKED: Untrusted issuer", C.GREEN)
             log(f"   Reason: {str(e)[:60]}...", indent=2, color=C.DIM)
 
         # Attack 3: Broken chain (missing intermediate)
@@ -423,9 +422,9 @@ async def run_demo():
                 signing_key=analyst_key,
             )
             log("   ❌ ERROR: Should have been blocked!", C.RED)
-        except Exception as e:
-            log(f"   ✅ BLOCKED: Chain validation failed", C.GREEN)
-            log(f"   Reason: Responder doesn't trust analyst directly", indent=2, color=C.DIM)
+        except Exception:
+            log("   ✅ BLOCKED: Chain validation failed", C.GREEN)
+            log("   Reason: Responder doesn't trust analyst directly", indent=2, color=C.DIM)
 
         # =================================================================
         # Summary

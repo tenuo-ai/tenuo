@@ -168,7 +168,7 @@ async def run_demo():
             .mint(control_key))
 
         log(f"   Warrant ID: {orchestrator_warrant.id[:12]}...")
-        log(f"   Tools: analyze_data, process_file\n")
+        log("   Tools: analyze_data, process_file\n")
 
         # Create client
         client = A2AClient("http://localhost:8000")
