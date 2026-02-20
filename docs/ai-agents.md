@@ -215,42 +215,15 @@ Tenuo is powerful, but it is not a silver bullet. Use the **4-Layer Defense Stra
 3.  **Layer 3: Output Monitoring** (DLP and anomaly detection)
 4.  **Layer 4: Human Oversight** (Approval for sensitive ops)
 
-### Layer 4: Human Approval Policies
+### Layer 4: Human Oversight
 
-Tenuo provides `ApprovalPolicy` for Layer 4. Warrants already limit *what* the agent can do. Approval policies add a human gate for *when* confirmation is needed — without reissuing warrants. Every approval is **cryptographically signed** and bound to the exact call.
-
-```python
-from tenuo import SigningKey, ApprovalPolicy, require_approval, cli_prompt
-
-approver_key = SigningKey.generate()
-
-policy = ApprovalPolicy(
-    require_approval("transfer_funds", when=lambda args: args["amount"] > 10_000),
-    require_approval("delete_user"),
-    trusted_approvers=[approver_key.public_key],
-)
-```
-
-The policy is a runtime concern. You can:
-- Change thresholds without touching warrants
-- Use different handlers per environment (`cli_prompt(approver_key=key)` locally, `webhook()` in production)
-- Fail-closed: buggy handlers deny the call, never allow it
-- Trust only specific approver keys via `trusted_approvers`
-
-The cryptographic model ensures:
-- Approvals cannot be replayed across different calls (SHA-256 request hash binding)
-- Approvals cannot be forged (Ed25519 signature verification)
-- Approvals cannot be used after expiry (time-bound)
-- Only trusted keys are accepted (approver key verification)
-
-See [Human Approvals](approvals.md) for the full cryptographic model and API reference.
+Human approval for sensitive operations is coming soon via Tenuo Cloud. The cryptographic foundation (Ed25519 signed approvals bound to exact call parameters) is built into the Rust core. Stay tuned.
 
 ### Checklist
 - [ ] Use **P-LLM/Q-LLM** separation for complex tasks.
 - [ ] Set **short TTLs** (minutes, not hours).
 - [ ] Make worker warrants **terminal** (prevent further delegation).
 - [ ] Log all **denied** authorization attempts as potential attacks.
-- [ ] Add **approval policies** for high-value operations (transfers, deletions, external API calls).
 
 ---
 
