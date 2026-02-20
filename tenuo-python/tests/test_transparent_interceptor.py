@@ -33,6 +33,7 @@ try:
     from temporalio import activity, workflow
     from temporalio.client import Client
     from temporalio.common import RetryPolicy
+    from temporalio.testing import WorkflowEnvironment
     from temporalio.worker import Worker
     TEMPORAL_AVAILABLE = True
 except ImportError:
@@ -116,7 +117,7 @@ def test_sign_deterministic_timestamps():
 
 
 # =============================================================================
-# Temporal integration tests (require Temporal server)
+# Temporal integration tests (require embedded Temporal server)
 # =============================================================================
 
 if TEMPORAL_AVAILABLE:
@@ -144,7 +145,6 @@ if TEMPORAL_AVAILABLE:
 
         @workflow.run
         async def run(self, test_dir: str) -> str:
-            # ✨ Standard Temporal API - interceptor handles PoP transparently
             files = await workflow.execute_activity(
                 list_files,
                 args=[test_dir],
@@ -167,7 +167,6 @@ if TEMPORAL_AVAILABLE:
 
         @workflow.run
         async def run(self, test_dir: str) -> str:
-            # Each activity gets its own PoP computed inline
             contents = await asyncio.gather(
                 workflow.execute_activity(
                     read_file,
@@ -191,97 +190,93 @@ if TEMPORAL_AVAILABLE:
             return f"Read {len(contents)} files in parallel"
 
     @pytest.mark.asyncio
+    @pytest.mark.temporal_live
     @pytest.mark.skipif(not TEMPORAL_AVAILABLE, reason="Temporal not installed")
     async def test_transparent_interceptor_basic():
         """Test transparent PoP computation with standard Temporal API."""
-        # Setup test directory
         test_dir = Path("/tmp/tenuo-test-transparent")
         test_dir.mkdir(exist_ok=True)
         (test_dir / "test.txt").write_text("Test content")
 
         try:
-            client_interceptor = TenuoClientInterceptor()
-            client = await Client.connect(
-                "localhost:7233",
-                interceptors=[client_interceptor],
-            )
-
-            # Generate keys
-            control_key = SigningKey.generate()
-            agent_key = SigningKey.generate()
-
-            # Publish agent key for worker's EnvKeyResolver
-            os.environ["TENUO_KEY_agent1"] = base64.b64encode(
-                agent_key.secret_key_bytes()
-            ).decode()
-
-            # Mint warrant
-            warrant = (
-                Warrant.mint_builder()
-                .holder(agent_key.public_key)
-                .capability("read_file", path=Subpath(str(test_dir)))
-                .capability("list_files", path=Subpath(str(test_dir)))
-                .ttl(3600)
-                .mint(control_key)
-            )
-
-            task_queue = f"test-transparent-{uuid.uuid4().hex[:8]}"
-
-            # Worker with transparent interceptor
-            activities = [read_file, write_file, list_files]
-            worker_interceptor = TenuoInterceptor(
-                TenuoInterceptorConfig(
-                    key_resolver=EnvKeyResolver(),
-                    on_denial="raise",
-                    trusted_roots=[control_key.public_key],
-                    activity_fns=activities,
-                )
-            )
-
-            from temporalio.worker.workflow_sandbox import (
-                SandboxedWorkflowRunner,
-                SandboxRestrictions,
-            )
-            sandbox_runner = SandboxedWorkflowRunner(
-                restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                    "tenuo", "tenuo_core",
-                )
-            )
-
-            async with Worker(
-                client,
-                task_queue=task_queue,
-                workflows=[TransparentWorkflow],
-                activities=activities,
-                interceptors=[worker_interceptor],
-                workflow_runner=sandbox_runner,
-            ):
-                client_interceptor.set_headers(
-                    tenuo_headers(warrant, "agent1", agent_key)
+            async with await WorkflowEnvironment.start_local() as env:
+                client_interceptor = TenuoClientInterceptor()
+                client = await Client.connect(
+                    env.client.service_client.config.target_host,
+                    interceptors=[client_interceptor],
                 )
 
-                result = await client.execute_workflow(
-                    TransparentWorkflow.run,
-                    args=[str(test_dir)],
-                    id=f"test-{uuid.uuid4().hex[:8]}",
+                control_key = SigningKey.generate()
+                agent_key = SigningKey.generate()
+
+                os.environ["TENUO_KEY_agent1"] = base64.b64encode(
+                    agent_key.secret_key_bytes()
+                ).decode()
+
+                warrant = (
+                    Warrant.mint_builder()
+                    .holder(agent_key.public_key)
+                    .capability("read_file", path=Subpath(str(test_dir)))
+                    .capability("list_files", path=Subpath(str(test_dir)))
+                    .ttl(3600)
+                    .mint(control_key)
+                )
+
+                task_queue = f"test-transparent-{uuid.uuid4().hex[:8]}"
+
+                activities = [read_file, write_file, list_files]
+                worker_interceptor = TenuoInterceptor(
+                    TenuoInterceptorConfig(
+                        key_resolver=EnvKeyResolver(),
+                        on_denial="raise",
+                        trusted_roots=[control_key.public_key],
+                        activity_fns=activities,
+                    )
+                )
+
+                from temporalio.worker.workflow_sandbox import (
+                    SandboxedWorkflowRunner,
+                    SandboxRestrictions,
+                )
+                sandbox_runner = SandboxedWorkflowRunner(
+                    restrictions=SandboxRestrictions.default.with_passthrough_modules(
+                        "tenuo", "tenuo_core",
+                    )
+                )
+
+                async with Worker(
+                    client,
                     task_queue=task_queue,
-                )
+                    workflows=[TransparentWorkflow],
+                    activities=activities,
+                    interceptors=[worker_interceptor],
+                    workflow_runner=sandbox_runner,
+                ):
+                    client_interceptor.set_headers(
+                        tenuo_headers(warrant, "agent1", agent_key)
+                    )
 
-                assert "Read" in result
-                assert "chars" in result
+                    result = await client.execute_workflow(
+                        TransparentWorkflow.run,
+                        args=[str(test_dir)],
+                        id=f"test-{uuid.uuid4().hex[:8]}",
+                        task_queue=task_queue,
+                    )
+
+                    assert "Read" in result
+                    assert "chars" in result
 
         finally:
-            # Cleanup
             if test_dir.exists():
                 for f in test_dir.iterdir():
                     f.unlink()
                 test_dir.rmdir()
 
     @pytest.mark.asyncio
+    @pytest.mark.temporal_live
     @pytest.mark.skipif(not TEMPORAL_AVAILABLE, reason="Temporal not installed")
     async def test_transparent_interceptor_parallel():
         """Test parallel activities each get their own PoP signature."""
-        # Setup test directory
         test_dir = Path("/tmp/tenuo-test-parallel")
         test_dir.mkdir(exist_ok=True)
         (test_dir / "file1.txt").write_text("Content 1")
@@ -289,73 +284,72 @@ if TEMPORAL_AVAILABLE:
         (test_dir / "file3.txt").write_text("Content 3")
 
         try:
-            client_interceptor = TenuoClientInterceptor()
-            client = await Client.connect(
-                "localhost:7233",
-                interceptors=[client_interceptor],
-            )
-
-            control_key = SigningKey.generate()
-            agent_key = SigningKey.generate()
-
-            os.environ["TENUO_KEY_agent1"] = base64.b64encode(
-                agent_key.secret_key_bytes()
-            ).decode()
-
-            warrant = (
-                Warrant.mint_builder()
-                .holder(agent_key.public_key)
-                .capability("read_file", path=Subpath(str(test_dir)))
-                .ttl(3600)
-                .mint(control_key)
-            )
-
-            task_queue = f"test-parallel-{uuid.uuid4().hex[:8]}"
-
-            parallel_activities = [read_file]
-            worker_interceptor = TenuoInterceptor(
-                TenuoInterceptorConfig(
-                    key_resolver=EnvKeyResolver(),
-                    on_denial="raise",
-                    trusted_roots=[control_key.public_key],
-                    activity_fns=parallel_activities,
-                )
-            )
-
-            from temporalio.worker.workflow_sandbox import (
-                SandboxedWorkflowRunner,
-                SandboxRestrictions,
-            )
-            sandbox_runner = SandboxedWorkflowRunner(
-                restrictions=SandboxRestrictions.default.with_passthrough_modules(
-                    "tenuo", "tenuo_core",
-                )
-            )
-
-            async with Worker(
-                client,
-                task_queue=task_queue,
-                workflows=[ParallelWorkflow],
-                activities=[read_file],
-                interceptors=[worker_interceptor],
-                workflow_runner=sandbox_runner,
-            ):
-                client_interceptor.set_headers(
-                    tenuo_headers(warrant, "agent1", agent_key)
+            async with await WorkflowEnvironment.start_local() as env:
+                client_interceptor = TenuoClientInterceptor()
+                client = await Client.connect(
+                    env.client.service_client.config.target_host,
+                    interceptors=[client_interceptor],
                 )
 
-                # Execute parallel workflow - each activity should get its own PoP
-                result = await client.execute_workflow(
-                    ParallelWorkflow.run,
-                    args=[str(test_dir)],
-                    id=f"test-parallel-{uuid.uuid4().hex[:8]}",
+                control_key = SigningKey.generate()
+                agent_key = SigningKey.generate()
+
+                os.environ["TENUO_KEY_agent1"] = base64.b64encode(
+                    agent_key.secret_key_bytes()
+                ).decode()
+
+                warrant = (
+                    Warrant.mint_builder()
+                    .holder(agent_key.public_key)
+                    .capability("read_file", path=Subpath(str(test_dir)))
+                    .ttl(3600)
+                    .mint(control_key)
+                )
+
+                task_queue = f"test-parallel-{uuid.uuid4().hex[:8]}"
+
+                parallel_activities = [read_file]
+                worker_interceptor = TenuoInterceptor(
+                    TenuoInterceptorConfig(
+                        key_resolver=EnvKeyResolver(),
+                        on_denial="raise",
+                        trusted_roots=[control_key.public_key],
+                        activity_fns=parallel_activities,
+                    )
+                )
+
+                from temporalio.worker.workflow_sandbox import (
+                    SandboxedWorkflowRunner,
+                    SandboxRestrictions,
+                )
+                sandbox_runner = SandboxedWorkflowRunner(
+                    restrictions=SandboxRestrictions.default.with_passthrough_modules(
+                        "tenuo", "tenuo_core",
+                    )
+                )
+
+                async with Worker(
+                    client,
                     task_queue=task_queue,
-                )
+                    workflows=[ParallelWorkflow],
+                    activities=[read_file],
+                    interceptors=[worker_interceptor],
+                    workflow_runner=sandbox_runner,
+                ):
+                    client_interceptor.set_headers(
+                        tenuo_headers(warrant, "agent1", agent_key)
+                    )
 
-                assert "3 files" in result
+                    result = await client.execute_workflow(
+                        ParallelWorkflow.run,
+                        args=[str(test_dir)],
+                        id=f"test-parallel-{uuid.uuid4().hex[:8]}",
+                        task_queue=task_queue,
+                    )
+
+                    assert "3 files" in result
 
         finally:
-            # Cleanup
             if test_dir.exists():
                 for f in test_dir.iterdir():
                     f.unlink()
@@ -371,25 +365,17 @@ def test_parameter_name_resolution_consistency():
     from tenuo.temporal import TenuoActivityInboundInterceptor, _TenuoWorkflowOutboundInterceptor
     import inspect
 
-    # Both should have matching logic for converting args to dict
-    # Check that both use inspect.signature() and fall back to arg0, arg1, etc.
-
     outbound_source = inspect.getsource(_TenuoWorkflowOutboundInterceptor.start_activity)
     inbound_source = inspect.getsource(TenuoActivityInboundInterceptor._extract_arguments)
 
-    # Both should use inspect.signature
     assert "inspect.signature" in outbound_source, "Outbound should use inspect.signature"
     assert "inspect.signature" in inbound_source, "Inbound should use inspect.signature"
 
-    # Both should have arg{i} fallback
     assert "arg{i}" in outbound_source or 'f"arg{i}"' in outbound_source
     assert "arg{i}" in inbound_source or 'f"arg{i}"' in inbound_source
 
-    # Both should check for activity_fn
     assert "activity_fn" in outbound_source
     assert "activity_fn" in inbound_source
-
-    print("✅ Parameter name resolution is consistent between outbound and inbound")
 
 
 def test_fail_closed_warning():
@@ -399,33 +385,5 @@ def test_fail_closed_warning():
 
     source = inspect.getsource(_TenuoWorkflowOutboundInterceptor.start_activity)
 
-    # Should have WARNING level logging for exceptions
     assert "logger.warning" in source, "Should log PoP failures at WARNING level"
     assert "except Exception" in source, "Should catch exceptions"
-
-    # Should NOT have logger.debug for PoP failures (fail-open indicator)
-    # The debug logging should only be for other things, not PoP computation failures
-
-    print("✅ Fail-closed behavior: PoP failures log at WARNING level")
-
-
-if __name__ == "__main__":
-    # Run basic tests without pytest
-    print("Running basic tests...\n")
-
-    test_sign_backward_compatibility()
-    print("✅ sign() backward compatibility")
-
-    test_sign_deterministic_timestamps()
-    print("✅ Deterministic timestamps")
-
-    test_parameter_name_resolution_consistency()
-    print("✅ Parameter name resolution consistency")
-
-    test_fail_closed_warning()
-    print("✅ Fail-closed warning behavior")
-
-    print("\n✅ All basic tests passed!")
-    print("\nNote: Temporal integration tests require:")
-    print("  1. temporal server start-dev")
-    print("  2. pytest -xvs tests/test_transparent_interceptor.py")
