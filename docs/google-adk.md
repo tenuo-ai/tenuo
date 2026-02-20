@@ -739,11 +739,12 @@ orchestrator = Agent(
 
 # Delegate to worker via A2A
 async def delegate_to_worker(task):
-    task_warrant = orchestrator_warrant.attenuate(
-        signing_key=key,
-        holder=worker_key.public_key,
-        capabilities={"analyze": {}},
-        ttl_seconds=300,
+    task_warrant = (
+        orchestrator_warrant.grant_builder()
+        .holder(worker_key.public_key)
+        .capability("analyze")
+        .ttl(300)
+        .grant(key)
     )
 
     client = A2AClient("https://worker.example.com")
