@@ -1392,6 +1392,8 @@ RUST_ERROR_MAP: dict[str, type[TenuoError]] = {
     # Runtime errors
     "RuntimeError": RuntimeError,
     "FeatureNotEnabled": FeatureNotEnabled,
+    # Configuration errors
+    "NoTrustedRootsConfigured": ConfigurationError,
 }
 
 # All Rust Error variants that must have Python equivalents
@@ -1458,6 +1460,10 @@ def categorize_rust_error(error_message: str) -> TenuoError:
         if "trusted" in msg or "issuer" in msg:
             return UntrustedRoot()
         return ChainError(error_message)
+
+    # No trusted roots configured (fail-closed)
+    if "no trusted roots configured" in msg:
+        return ConfigurationError(error_message)
 
     # Untrusted root (can appear without "chain" in message)
     if "issuer" in msg and "not trusted" in msg:

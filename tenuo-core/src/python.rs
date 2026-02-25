@@ -4535,6 +4535,18 @@ impl PyAuthorizer {
         self.inner.add_trusted_root(key.inner.clone());
     }
 
+    /// **DEV/TESTING ONLY**: Disable issuer trust checks.
+    ///
+    /// When enabled, the authorizer accepts warrants from ANY issuer without
+    /// verifying trusted roots. DO NOT use in production.
+    ///
+    /// Example:
+    ///     authorizer = Authorizer()
+    ///     authorizer.trust_any()  # Dangerous! Dev/testing only.
+    fn trust_any(&mut self) {
+        self.inner.set_trust_any(true);
+    }
+
     /// Set the clock tolerance for expiration checks.
     ///
     /// Args:

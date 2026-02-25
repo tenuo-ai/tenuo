@@ -1430,9 +1430,7 @@ impl AuthorizerBuilder {
     /// - The revocation list signature is invalid
     pub fn build(self) -> Result<Authorizer> {
         if self.trusted_keys.is_empty() {
-            return Err(crate::error::Error::Validation(
-                "Authorizer requires at least one trusted root".to_string(),
-            ));
+            return Err(crate::error::Error::NoTrustedRootsConfigured);
         }
 
         let revocation_list = if let Some((srl, issuer)) = self.pending_srl {
@@ -1449,6 +1447,7 @@ impl AuthorizerBuilder {
             pop_window_secs: self.pop_window_secs,
             pop_max_windows: self.pop_max_windows,
             tool_clearance_requirements: self.tool_clearance_requirements,
+            trust_any_issuer: false,
         })
     }
 }
@@ -1485,8 +1484,15 @@ pub struct Authorizer {
     pop_max_windows: u32,
     /// Tool trust requirements: minimum trust level required per tool.
     tool_clearance_requirements: HashMap<String, Clearance>,
+    /// When true, skip issuer trust checks. **Unsafe for production.**
+    /// Set via `trust_any()` for dev/testing only.
+    trust_any_issuer: bool,
 }
 
+/// **Note:** The default Authorizer has no trusted roots and will reject all
+/// warrants until roots are configured via [`Authorizer::with_trusted_root`].
+/// Prefer [`Authorizer::builder()`] for production use, which validates
+/// configuration at build time.
 impl Default for Authorizer {
     fn default() -> Self {
         Self::new()
@@ -1513,6 +1519,7 @@ impl Authorizer {
             pop_window_secs: DEFAULT_POP_WINDOW_SECS,
             pop_max_windows: DEFAULT_POP_MAX_WINDOWS,
             tool_clearance_requirements: HashMap::new(),
+            trust_any_issuer: false,
         }
     }
 
@@ -1521,6 +1528,29 @@ impl Authorizer {
     /// The builder validates configuration on `build()`.
     pub fn builder() -> AuthorizerBuilder {
         AuthorizerBuilder::new()
+    }
+
+    /// **DEV/TESTING ONLY**: Disable issuer trust checks entirely.
+    ///
+    /// When enabled, the authorizer will accept warrants from ANY issuer
+    /// without verifying the issuer is in the trusted roots set. This is
+    /// equivalent to having no authentication on the authorization layer.
+    ///
+    /// # Security Warning
+    ///
+    /// **DO NOT use in production.** This completely disables the root-of-trust
+    /// verification that is fundamental to Tenuo's security model. Any party
+    /// can forge warrants that this authorizer will accept.
+    ///
+    /// Use this only for:
+    /// - Local development and prototyping
+    /// - Unit tests that don't test trust verification
+    /// - Debugging constraint logic in isolation
+    ///
+    /// For production, always configure trusted roots via [`with_trusted_root`].
+    pub fn trust_any(mut self) -> Self {
+        self.trust_any_issuer = true;
+        self
     }
 
     /// Add a trusted root public key (chainable).
@@ -1592,6 +1622,20 @@ impl Authorizer {
     /// Set the clock tolerance (mutable version).
     pub fn set_clock_tolerance(&mut self, tolerance: chrono::Duration) {
         self.clock_tolerance = tolerance;
+    }
+
+    /// **DEV/TESTING ONLY**: Set whether to disable issuer trust checks.
+    ///
+    /// # Security Warning
+    ///
+    /// **DO NOT use `set_trust_any(true)` in production.** This completely
+    /// disables the root-of-trust verification that is fundamental to Tenuo's
+    /// security model. Any party can forge warrants that this authorizer will
+    /// accept. See [`trust_any`] for full documentation.
+    ///
+    /// Passing `false` re-enables fail-closed enforcement (the default).
+    pub fn set_trust_any(&mut self, trust_any: bool) {
+        self.trust_any_issuer = trust_any;
     }
 
     /// Set minimum clearance required for a tool (builder style).
@@ -1786,16 +1830,18 @@ impl Authorizer {
             return Err(Error::WarrantExpired(warrant.expires_at()));
         }
 
-        // Check if issuer is trusted
-        // 1. Verify the warrant signature
-        // If trusted_issuers is empty, we skip the trust check (debug mode)
-        // If trusted_issuers is not empty, we require the issuer to be trusted
+        // Check if issuer is trusted (fail-closed)
         let issuer = warrant.issuer();
-        if !self.trusted_keys.is_empty() && !self.trusted_keys.contains(issuer) {
-            return Err(Error::Validation(format!(
-                "warrant issuer is not trusted: {:?}",
-                issuer
-            )));
+        if !self.trust_any_issuer {
+            if self.trusted_keys.is_empty() {
+                return Err(Error::NoTrustedRootsConfigured);
+            }
+            if !self.trusted_keys.contains(issuer) {
+                return Err(Error::Validation(format!(
+                    "warrant issuer is not trusted: {:?}",
+                    issuer
+                )));
+            }
         }
 
         warrant.verify_signature()?;
@@ -1829,15 +1875,18 @@ impl Authorizer {
         holder_signature: Option<&crate::crypto::Signature>,
         approvals: &[crate::approval::SignedApproval],
     ) -> Result<()> {
-        // 0. CRITICAL: Verify warrant issuer is trusted (fast fail)
-        // If trusted_keys is configured, warrant must be signed by one of them.
+        // 0. CRITICAL: Verify warrant issuer is trusted (fail-closed)
         // This check must come FIRST to prevent accepting warrants from untrusted sources.
-        if !self.trusted_keys.is_empty() {
+        if !self.trust_any_issuer {
+            if self.trusted_keys.is_empty() {
+                return Err(Error::NoTrustedRootsConfigured);
+            }
             let issuer = warrant.issuer();
             if !self.trusted_keys.iter().any(|k| k == issuer) {
-                return Err(Error::SignatureInvalid(
-                    "warrant issuer not in trusted roots".to_string(),
-                ));
+                return Err(Error::Validation(format!(
+                    "warrant issuer is not trusted: {:?}",
+                    issuer
+                )));
             }
         }
 
@@ -1987,12 +2036,18 @@ impl Authorizer {
             verified_steps: Vec::new(),
         };
 
-        // Root must be from a trusted key
+        // Root must be from a trusted key (fail-closed)
         let issuer = root.issuer();
-        if !self.trusted_keys.iter().any(|k| k == issuer) {
-            return Err(Error::SignatureInvalid(
-                "root warrant issuer not trusted".to_string(),
-            ));
+        if !self.trust_any_issuer {
+            if self.trusted_keys.is_empty() {
+                return Err(Error::NoTrustedRootsConfigured);
+            }
+            if !self.trusted_keys.iter().any(|k| k == issuer) {
+                return Err(Error::Validation(format!(
+                    "warrant issuer is not trusted: {:?}",
+                    issuer
+                )));
+            }
         }
 
         // Batch verify all signatures in the chain (3x faster than sequential)
@@ -4031,7 +4086,7 @@ mod tests {
         );
         let err = result.unwrap_err();
         assert!(
-            format!("{}", err).contains("not in trusted roots"),
+            format!("{}", err).contains("is not trusted"),
             "Error should mention untrusted issuer: {}",
             err
         );
@@ -4072,10 +4127,9 @@ mod tests {
         );
     }
 
-    /// SECURITY: Empty trusted_keys means no trust check (backwards compatibility).
-    /// This allows gradual adoption - users can start without trusted roots.
+    /// SECURITY: Authorizer with no trusted roots rejects all warrants (fail-closed).
     #[test]
-    fn test_authorizer_no_trusted_roots_allows_any() {
+    fn test_authorizer_no_trusted_roots_rejects_all() {
         use crate::crypto::SigningKey;
         use std::time::Duration;
 
@@ -4098,13 +4152,135 @@ mod tests {
         let args = std::collections::HashMap::new();
         let pop_sig = warrant.sign(&holder_key, "read_file", &args).unwrap();
 
-        // Should be allowed (no trust check performed when no roots configured)
-        let result = authorizer.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
-
+        // verify() should fail with NoTrustedRootsConfigured
+        let verify_result = authorizer.verify(&warrant);
         assert!(
-            result.is_ok(),
-            "Empty trusted_keys should allow any issuer for backwards compatibility: {:?}",
-            result.err()
+            matches!(verify_result, Err(Error::NoTrustedRootsConfigured)),
+            "verify() with no trusted roots should return NoTrustedRootsConfigured, got: {:?}",
+            verify_result
+        );
+
+        // authorize() should also fail with NoTrustedRootsConfigured
+        let auth_result =
+            authorizer.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
+        assert!(
+            matches!(auth_result, Err(Error::NoTrustedRootsConfigured)),
+            "authorize() with no trusted roots should return NoTrustedRootsConfigured, got: {:?}",
+            auth_result
+        );
+    }
+
+    /// SECURITY: trust_any() is an explicit opt-in escape hatch for dev/testing.
+    /// It disables issuer trust checks in verify(), authorize(), and verify_chain().
+    #[test]
+    fn test_authorizer_trust_any_allows_any_issuer() {
+        use crate::crypto::SigningKey;
+        use std::time::Duration;
+
+        let any_key = SigningKey::generate();
+        let holder_key = SigningKey::generate();
+
+        // Authorizer with trust_any() — explicit dev/testing opt-in
+        let authorizer = Authorizer::new().trust_any();
+        assert!(!authorizer.has_trusted_roots());
+
+        // Warrant from any issuer with holder binding
+        let warrant = crate::Warrant::builder()
+            .capability("read_file", crate::ConstraintSet::new())
+            .ttl(Duration::from_secs(3600))
+            .holder(holder_key.public_key())
+            .build(&any_key)
+            .expect("warrant creation should work");
+
+        // Create PoP signature
+        let args = std::collections::HashMap::new();
+        let pop_sig = warrant.sign(&holder_key, "read_file", &args).unwrap();
+
+        // verify() should succeed with trust_any
+        let verify_result = authorizer.verify(&warrant);
+        assert!(
+            verify_result.is_ok(),
+            "trust_any() verify() should allow any issuer: {:?}",
+            verify_result.err()
+        );
+
+        // authorize() should succeed with trust_any
+        let auth_result = authorizer.authorize(&warrant, "read_file", &args, Some(&pop_sig), &[]);
+        assert!(
+            auth_result.is_ok(),
+            "trust_any() authorize() should allow any issuer: {:?}",
+            auth_result.err()
+        );
+
+        // verify_chain() should succeed with trust_any
+        let chain_result = authorizer.verify_chain(&[warrant]);
+        assert!(
+            chain_result.is_ok(),
+            "trust_any() verify_chain() should allow any issuer: {:?}",
+            chain_result.err()
+        );
+    }
+
+    /// SECURITY: verify_chain() with no trusted roots rejects (fail-closed).
+    #[test]
+    fn test_authorizer_no_trusted_roots_rejects_chain() {
+        use crate::crypto::SigningKey;
+        use std::time::Duration;
+
+        let any_key = SigningKey::generate();
+        let holder_key = SigningKey::generate();
+
+        let authorizer = Authorizer::new();
+
+        let warrant = crate::Warrant::builder()
+            .capability("read_file", crate::ConstraintSet::new())
+            .ttl(Duration::from_secs(3600))
+            .holder(holder_key.public_key())
+            .build(&any_key)
+            .expect("warrant creation should work");
+
+        let chain_result = authorizer.verify_chain(&[warrant]);
+        assert!(
+            matches!(chain_result, Err(Error::NoTrustedRootsConfigured)),
+            "verify_chain() with no trusted roots should return NoTrustedRootsConfigured, got: {:?}",
+            chain_result
+        );
+    }
+
+    /// SECURITY: set_trust_any(false) re-enables fail-closed enforcement.
+    #[test]
+    fn test_authorizer_set_trust_any_false_reenables_enforcement() {
+        use crate::crypto::SigningKey;
+        use std::time::Duration;
+
+        let any_key = SigningKey::generate();
+        let holder_key = SigningKey::generate();
+
+        let mut authorizer = Authorizer::new();
+        authorizer.set_trust_any(true);
+
+        let warrant = crate::Warrant::builder()
+            .capability("read_file", crate::ConstraintSet::new())
+            .ttl(Duration::from_secs(3600))
+            .holder(holder_key.public_key())
+            .build(&any_key)
+            .expect("warrant creation should work");
+
+        // With trust_any(true), verify should pass
+        assert!(
+            authorizer.verify(&warrant).is_ok(),
+            "set_trust_any(true) should allow any issuer"
+        );
+
+        // Re-enable enforcement
+        authorizer.set_trust_any(false);
+
+        // Now verify should fail
+        let result = authorizer.verify(&warrant);
+        assert!(
+            matches!(result, Err(Error::NoTrustedRootsConfigured)),
+            "set_trust_any(false) should re-enable fail-closed enforcement, got: {:?}",
+            result
         );
     }
 

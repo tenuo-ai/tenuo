@@ -319,8 +319,8 @@ fn build_authorizer(
     trusted_keys: &Option<String>,
     revocation_path: &Option<PathBuf>,
 ) -> Result<(Authorizer, Option<u64>), Box<dyn std::error::Error>> {
-    // Start with a dummy authorizer if no keys provided
-    // This still validates signatures, just doesn't check the issuer
+    // Start with a dummy key if TENUO_TRUSTED_KEYS is not set.
+    // The authorizer will only accept warrants signed by this key.
     let first_key = if let Some(keys) = trusted_keys {
         let first = keys.split(',').next().unwrap_or("");
         if first.is_empty() {

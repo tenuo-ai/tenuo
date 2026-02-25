@@ -607,6 +607,14 @@ pub enum Error {
     #[error("configuration error: {0}")]
     ConfigurationError(String),
 
+    /// Authorizer has no trusted roots configured.
+    ///
+    /// This error is returned when an Authorizer with no trusted root keys
+    /// attempts to verify or authorize a warrant. Configure trusted roots
+    /// via `with_trusted_root()`, or use `trust_any()` for dev/testing only.
+    #[error("no trusted roots configured: add trusted roots via with_trusted_root() or use trust_any() for dev/testing")]
+    NoTrustedRootsConfigured,
+
     // =========================================================================
     // Feature Flag Errors
     // =========================================================================
@@ -723,6 +731,7 @@ impl Error {
             Self::Unauthorized(_) => ErrorCode::ToolNotAuthorized,
             Self::Validation(_) => ErrorCode::InvalidPayloadStructure,
             Self::ConfigurationError(_) => ErrorCode::InvalidPayloadStructure,
+            Self::NoTrustedRootsConfigured => ErrorCode::UntrustedRoot,
 
             // Feature Flag Errors
             Self::FeatureNotEnabled { .. } => ErrorCode::UnknownConstraintType,
