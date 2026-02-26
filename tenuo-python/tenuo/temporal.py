@@ -540,7 +540,7 @@ class KeyResolver(ABC):
         import concurrent.futures
 
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
             # We're in a running loop (e.g., Temporal workflow)
             # Must use thread pool to avoid "loop already running" error
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
@@ -2134,7 +2134,6 @@ class _TenuoWorkflowOutboundInterceptor:
 
         try:
             from temporalio.api.common.v1 import Payload  # type: ignore
-            from tenuo_core import SigningKey  # type: ignore[import-not-found]
         except ImportError:
             return self._next.start_activity(input)
 
