@@ -650,7 +650,7 @@ class A2AServer:
             raise RuntimeError("tenuo_core is required for A2A server authorization") from e
 
         parsed_keys = []
-        failed_keys = []
+        failed_reasons = []  # Only store reasons, not keys (security)
 
         for raw_key in self.trusted_issuers:
             try:
@@ -664,11 +664,12 @@ class A2AServer:
                     # Try hex anyway — raises ValueError on malformed input.
                     parsed_keys.append(_PublicKey.from_bytes(bytes.fromhex(raw_key)))
             except Exception as exc:
-                failed_keys.append((raw_key, str(exc)))
+                # Security: Don't store the key, only the parse error reason
+                failed_reasons.append(str(exc))
 
-        if failed_keys:
+        if failed_reasons:
             # Security: Log failures without exposing key material
-            for _, reason in failed_keys:
+            for reason in failed_reasons:
                 logger.warning(
                     f"A2A: trusted issuer key could not be parsed and will NOT be trusted: "
                     f"reason={reason}"
