@@ -136,7 +136,7 @@ from .bound_warrant import BoundWarrant
 
 # Protection decorator
 from .decorators import (
-    guard,
+    guard as _guard_decorator,  # Import with temp name to avoid module shadowing
     key_scope,
     warrant_scope,
 )
@@ -156,6 +156,8 @@ from .exceptions import (
 
 # Error explanation
 from .explain import explain, explain_str
+
+# Auto-guard (import with alias to avoid shadowing decorator.guard)
 from .guard import guard as auto_guard
 
 # Key management
@@ -173,6 +175,11 @@ from .langchain import (
 from .validation import ValidationResult
 
 Warrant.bind = BoundWarrant.bind_warrant
+
+# Ensure guard refers to the decorator function, not the guard module
+# The guard module is available as auto_guard
+guard = _guard_decorator
+del _guard_decorator  # Clean up temporary name
 
 from tenuo.approval import (  # noqa: E402
     ApprovalDenied,

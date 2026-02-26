@@ -2365,8 +2365,13 @@ fn test_vector_a19_1_range_constraint() {
     valid_args.insert("count".to_string(), ConstraintValue::Float(50.0));
 
     let pop = warrant.sign(&worker, "api_call", &valid_args).unwrap();
-    let result =
-        data_plane.check_chain(&[warrant.clone()], "api_call", &valid_args, Some(&pop), &[]);
+    let result = data_plane.check_chain(
+        std::slice::from_ref(&warrant),
+        "api_call",
+        &valid_args,
+        Some(&pop),
+        &[],
+    );
     assert!(
         result.is_ok(),
         "A.19.1 Range should ACCEPT value within bounds: {:?}",
@@ -2421,7 +2426,13 @@ fn test_vector_a19_2_oneof_constraint() {
     );
 
     let pop = warrant.sign(&worker, "deploy", &valid_args).unwrap();
-    let result = data_plane.check_chain(&[warrant.clone()], "deploy", &valid_args, Some(&pop), &[]);
+    let result = data_plane.check_chain(
+        std::slice::from_ref(&warrant),
+        "deploy",
+        &valid_args,
+        Some(&pop),
+        &[],
+    );
     assert!(
         result.is_ok(),
         "A.19.2 OneOf should ACCEPT value in set: {:?}",
@@ -2479,8 +2490,13 @@ fn test_vector_a19_3_cidr_constraint() {
     );
 
     let pop = warrant.sign(&worker, "connect", &valid_args).unwrap();
-    let result =
-        data_plane.check_chain(&[warrant.clone()], "connect", &valid_args, Some(&pop), &[]);
+    let result = data_plane.check_chain(
+        std::slice::from_ref(&warrant),
+        "connect",
+        &valid_args,
+        Some(&pop),
+        &[],
+    );
     assert!(
         result.is_ok(),
         "A.19.3 CIDR should ACCEPT IP in network: {:?}",

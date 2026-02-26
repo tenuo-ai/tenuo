@@ -657,6 +657,7 @@ def enforce_tool_call(
             # clearance, capabilities, constraints, and PoP — all in one call.
             # authorizer is required (validated above).
             try:
+                assert authorizer is not None  # For type checker (validated above)
                 authorizer.check_chain(
                     [bound_warrant.warrant],
                     tool_name,

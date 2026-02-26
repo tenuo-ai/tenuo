@@ -35,7 +35,9 @@ fn test_single_warrant_revocation() {
     data_plane.trust_issuer("root", kp.public_key());
 
     // Initially valid
-    assert!(data_plane.verify_chain(&[warrant.clone()]).is_ok());
+    assert!(data_plane
+        .verify_chain(std::slice::from_ref(&warrant))
+        .is_ok());
 
     // Revoke the warrant
     let srl = SignedRevocationList::builder()
@@ -174,8 +176,12 @@ fn test_cascading_revocation_multiple_warrants() {
         .build(&issuer_keypair)
         .unwrap();
 
-    assert!(data_plane.verify_chain(&[warrant1.clone()]).is_ok());
-    assert!(data_plane.verify_chain(&[warrant2.clone()]).is_ok());
+    assert!(data_plane
+        .verify_chain(std::slice::from_ref(&warrant1))
+        .is_ok());
+    assert!(data_plane
+        .verify_chain(std::slice::from_ref(&warrant2))
+        .is_ok());
 
     // Revoke both via cascade (simulating key revocation)
     let affected_ids = vec![warrant1.id().to_string(), warrant2.id().to_string()];

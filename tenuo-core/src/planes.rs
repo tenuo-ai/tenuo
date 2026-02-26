@@ -2237,7 +2237,9 @@ mod tests {
         data_plane.trust_issuer("control-plane", root_public_key);
 
         // Verify chain (offline - no network call)
-        assert!(data_plane.verify_chain(&[warrant.clone()]).is_ok());
+        assert!(data_plane
+            .verify_chain(std::slice::from_ref(&warrant))
+            .is_ok());
 
         // Full check_chain (offline - no network call)
         let mut args = HashMap::new();
@@ -3522,8 +3524,13 @@ mod tests {
         let pop_sig = warrant.sign(&kp, "read_file", &args).expect("sign pop");
 
         // read_file should succeed (External >= External)
-        let result =
-            data_plane.check_chain(&[warrant.clone()], "read_file", &args, Some(&pop_sig), &[]);
+        let result = data_plane.check_chain(
+            std::slice::from_ref(&warrant),
+            "read_file",
+            &args,
+            Some(&pop_sig),
+            &[],
+        );
         assert!(
             result.is_ok(),
             "read_file should be authorized: {:?}",
@@ -3531,7 +3538,13 @@ mod tests {
         );
 
         // delete_file should fail (External < Privileged) - trust check happens before PoP
-        let result = data_plane.check_chain(&[warrant.clone()], "delete_file", &args, None, &[]);
+        let result = data_plane.check_chain(
+            std::slice::from_ref(&warrant),
+            "delete_file",
+            &args,
+            None,
+            &[],
+        );
         assert!(result.is_err(), "delete_file should be denied");
         let err = result.unwrap_err().to_string();
         assert!(
@@ -3545,7 +3558,13 @@ mod tests {
         );
 
         // admin_reset should fail (External < System, via glob pattern)
-        let result = data_plane.check_chain(&[warrant.clone()], "admin_reset", &args, None, &[]);
+        let result = data_plane.check_chain(
+            std::slice::from_ref(&warrant),
+            "admin_reset",
+            &args,
+            None,
+            &[],
+        );
         assert!(result.is_err(), "admin_reset should be denied");
         let err = result.unwrap_err().to_string();
         assert!(

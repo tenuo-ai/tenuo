@@ -21,7 +21,9 @@ fn test_parental_revocation() {
         .unwrap();
 
     // 3. Verify Initial State (Valid)
-    assert!(data_plane.verify_chain(&[warrant.clone()]).is_ok());
+    assert!(data_plane
+        .verify_chain(std::slice::from_ref(&warrant))
+        .is_ok());
     assert!(!data_plane.is_revoked(&warrant));
 
     // 4. Submit Revocation (Parent)
