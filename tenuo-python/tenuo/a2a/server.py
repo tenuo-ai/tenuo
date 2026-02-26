@@ -668,9 +668,11 @@ class A2AServer:
 
         if failed_keys:
             for key, reason in failed_keys:
+                # Security: Don't log key material, only metadata
+                key_preview = f"<{len(key)} bytes>" if isinstance(key, bytes) else f"<{type(key).__name__}>"
                 logger.warning(
                     f"A2A: trusted issuer key could not be parsed and will NOT be trusted: "
-                    f"key={str(key)!r:.40} reason={reason}"
+                    f"key_type={key_preview} reason={reason}"
                 )
 
         if not parsed_keys and self.trusted_issuers:
