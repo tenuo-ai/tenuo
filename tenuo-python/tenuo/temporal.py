@@ -158,9 +158,14 @@ TENUO_WARRANT_HEADER = "x-tenuo-warrant"
 TENUO_KEY_ID_HEADER = "x-tenuo-key-id"
 TENUO_COMPRESSED_HEADER = "x-tenuo-compressed"
 TENUO_POP_HEADER = "x-tenuo-pop"
-TENUO_SIGNING_KEY_HEADER = "x-tenuo-signing-key"
 TENUO_CHAIN_HEADER = "x-tenuo-warrant-chain"
 TENUO_ARG_KEYS_HEADER = "x-tenuo-arg-keys"
+TENUO_WIRE_FORMAT_HEADER = "x-tenuo-wire-format"
+
+# Wire format versions:
+#   "1" (or absent): legacy base64(cbor) warrant encoding
+#   "2": raw CBOR bytes (no intermediate base64 layer)
+_WIRE_FORMAT_V2 = b"2"
 
 # PoP timestamp validation window (seconds). The scheduled_time must be
 # within this window. This is not configurable — security is non-negotiable.
@@ -177,7 +182,7 @@ POP_WINDOW_SECONDS = 300
 # computes PoP signatures inline using deterministic timestamps, and injects
 # them into activity headers. No queue machinery needed.
 #
-# _workflow_headers_store: workflow_id → {warrant, signing_key, key_id}
+# _workflow_headers_store: workflow_id → {warrant, key_id}
 # _pending_child_headers:  child_wf_id → attenuated headers
 # _pop_dedup_cache:        dedup_key → timestamp (replay protection)
 # _workflow_config_store:  workflow_id → TenuoInterceptorConfig
@@ -192,7 +197,7 @@ _pending_child_headers: Dict[str, Dict[str, bytes]] = {}
 _pop_dedup_cache: Dict[str, float] = {}
 _pop_dedup_last_evict: float = 0.0
 _DEDUP_EVICT_INTERVAL: float = 60.0
-_interceptor_config: Optional["TenuoInterceptorConfig"] = None
+_DEDUP_MAX_SIZE: int = 10_000
 _workflow_config_store: Dict[str, "TenuoInterceptorConfig"] = {}
 _pending_activity_fn: Dict[str, Any] = {}  # workflow_id → activity function ref
 
@@ -496,7 +501,7 @@ class KeyResolver(ABC):
 
     @abstractmethod
     async def resolve(self, key_id: str) -> Any:  # Returns SigningKey
-        """Resolve a key ID to a signing key.
+        """Resolve a key ID to a signing key (async).
 
         Args:
             key_id: The key identifier
@@ -509,6 +514,50 @@ class KeyResolver(ABC):
         """
         ...
 
+    def resolve_sync(self, key_id: str) -> Any:  # Returns SigningKey
+        """Resolve a key ID to a signing key (synchronous).
+
+        This method handles the async->sync conversion and is safe to call
+        from both sync and async contexts, including from within running
+        event loops (e.g., Temporal workflows).
+
+        Default implementation:
+        - If no event loop is running: creates temporary loop and runs resolve()
+        - If event loop is running: spawns thread pool to run resolve() in new loop
+
+        Subclasses can override this for more efficient sync implementations.
+
+        Args:
+            key_id: The key identifier
+
+        Returns:
+            The signing key (tenuo_core.SigningKey)
+
+        Raises:
+            KeyResolutionError: If key cannot be resolved
+        """
+        import asyncio
+        import concurrent.futures
+
+        try:
+            loop = asyncio.get_running_loop()
+            # We're in a running loop (e.g., Temporal workflow)
+            # Must use thread pool to avoid "loop already running" error
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(self._resolve_in_new_loop, key_id).result()
+        except RuntimeError:
+            # No running loop - safe to create one
+            return self._resolve_in_new_loop(key_id)
+
+    def _resolve_in_new_loop(self, key_id: str) -> Any:
+        """Helper to run resolve() in a new event loop."""
+        import asyncio
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(self.resolve(key_id))
+        finally:
+            loop.close()
+
 
 class EnvKeyResolver(KeyResolver):
     """Resolves keys from environment variables.
@@ -519,14 +568,39 @@ class EnvKeyResolver(KeyResolver):
 
     Args:
         prefix: Environment variable prefix (default: "TENUO_KEY_")
+        warn_in_production: Emit a WARNING log at first resolution if the
+            environment does not look like a development setup (i.e.
+            the ``TENUO_ENV`` env var is not ``"development"`` or
+            ``"test"``).  Default: True.
     """
 
-    def __init__(self, prefix: str = "TENUO_KEY_") -> None:
+    _DEV_ENVS = {"development", "dev", "test", "testing", "local"}
+
+    def __init__(self, prefix: str = "TENUO_KEY_", *, warn_in_production: bool = True) -> None:
         self._prefix = prefix
+        self._warn_in_production = warn_in_production
+        self._warned = False
+
+    def _maybe_warn(self) -> None:
+        """Emit a one-time production warning if not suppressed."""
+        if self._warned or not self._warn_in_production:
+            return
+        import os
+        env = os.environ.get("TENUO_ENV", "").strip().lower()
+        if env not in self._DEV_ENVS:
+            logger.warning(
+                "EnvKeyResolver is designed for development and testing only. "
+                "In production, use VaultKeyResolver, AWSSecretsManagerKeyResolver, "
+                "or GCPSecretManagerKeyResolver to fetch keys from secure storage. "
+                "Set TENUO_ENV=development to suppress this warning in local environments."
+            )
+        self._warned = True
 
     async def resolve(self, key_id: str) -> Any:
         """Resolve key from environment variable."""
         import os
+
+        self._maybe_warn()
 
         env_name = f"{self._prefix}{key_id}"
         value = os.environ.get(env_name)
@@ -578,19 +652,20 @@ class VaultKeyResolver(KeyResolver):
         self._token = token
         self._cache_ttl = cache_ttl
         self._cache: Dict[str, tuple[Any, float]] = {}
+        self._cache_lock = threading.Lock()
 
     async def resolve(self, key_id: str) -> Any:
         """Resolve key from Vault."""
         import os
         import time
 
-        # Check cache
         now = time.time()
-        if key_id in self._cache:
-            cached_key, cached_at = self._cache[key_id]
-            if now - cached_at < self._cache_ttl:
-                logger.debug(f"Vault cache hit for key: {key_id}")
-                return cached_key
+        with self._cache_lock:
+            if key_id in self._cache:
+                cached_key, cached_at = self._cache[key_id]
+                if now - cached_at < self._cache_ttl:
+                    logger.debug(f"Vault cache hit for key: {key_id}")
+                    return cached_key
 
         # Get token
         token = self._token or os.environ.get("VAULT_TOKEN")
@@ -616,15 +691,14 @@ class VaultKeyResolver(KeyResolver):
                 resp.raise_for_status()
                 data = resp.json()
 
-                # Extract key from Vault response
                 key_b64 = data["data"]["data"]["key"]
                 from tenuo_core import SigningKey
 
                 key_bytes = base64.b64decode(key_b64)
                 key = SigningKey.from_bytes(key_bytes)
 
-                # Cache
-                self._cache[key_id] = (key, now)
+                with self._cache_lock:
+                    self._cache[key_id] = (key, now)
                 logger.debug(f"Vault resolved key: {key_id}")
                 return key
 
@@ -668,28 +742,38 @@ class AWSSecretsManagerKeyResolver(KeyResolver):
         self._region_name = region_name
         self._cache_ttl = cache_ttl
         self._cache: Dict[str, tuple[Any, float]] = {}
+        self._cache_lock = threading.Lock()
 
     async def resolve(self, key_id: str) -> Any:
-        """Resolve key from AWS Secrets Manager."""
+        """Resolve key from AWS Secrets Manager.
+
+        The boto3 client is synchronous; this runs it in an executor to avoid
+        blocking the event loop.
+        """
+        import asyncio
         import time
 
-        # Check cache
         now = time.time()
-        if key_id in self._cache:
-            cached_key, cached_at = self._cache[key_id]
-            if now - cached_at < self._cache_ttl:
-                logger.debug(f"AWS Secrets Manager cache hit for key: {key_id}")
-                return cached_key
+        with self._cache_lock:
+            if key_id in self._cache:
+                cached_key, cached_at = self._cache[key_id]
+                if now - cached_at < self._cache_ttl:
+                    logger.debug(f"AWS Secrets Manager cache hit for key: {key_id}")
+                    return cached_key
 
         secret_name = f"{self._secret_prefix}{key_id}"
 
         try:
             import boto3  # type: ignore[import-not-found, import-untyped]
 
-            client = boto3.client("secretsmanager", region_name=self._region_name)
-            response = client.get_secret_value(SecretId=secret_name)
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: boto3.client(
+                    "secretsmanager", region_name=self._region_name
+                ).get_secret_value(SecretId=secret_name),
+            )
 
-            # Secret can be binary or string (base64)
             if "SecretBinary" in response:
                 key_bytes = response["SecretBinary"]
             elif "SecretString" in response:
@@ -701,8 +785,8 @@ class AWSSecretsManagerKeyResolver(KeyResolver):
 
             signing_key = SigningKey.from_bytes(key_bytes)
 
-            # Cache the result
-            self._cache[key_id] = (signing_key, now)
+            with self._cache_lock:
+                self._cache[key_id] = (signing_key, now)
             logger.debug(f"AWS Secrets Manager resolved key: {key_id}")
             return signing_key
 
@@ -751,18 +835,24 @@ class GCPSecretManagerKeyResolver(KeyResolver):
         self._version = version
         self._cache_ttl = cache_ttl
         self._cache: Dict[str, tuple[Any, float]] = {}
+        self._cache_lock = threading.Lock()
 
     async def resolve(self, key_id: str) -> Any:
-        """Resolve key from GCP Secret Manager."""
+        """Resolve key from GCP Secret Manager.
+
+        The GCP client is synchronous; this runs it in an executor to avoid
+        blocking the event loop.
+        """
+        import asyncio
         import time
 
-        # Check cache
         now = time.time()
-        if key_id in self._cache:
-            cached_key, cached_at = self._cache[key_id]
-            if now - cached_at < self._cache_ttl:
-                logger.debug(f"GCP Secret Manager cache hit for key: {key_id}")
-                return cached_key
+        with self._cache_lock:
+            if key_id in self._cache:
+                cached_key, cached_at = self._cache[key_id]
+                if now - cached_at < self._cache_ttl:
+                    logger.debug(f"GCP Secret Manager cache hit for key: {key_id}")
+                    return cached_key
 
         secret_name = f"{self._secret_prefix}{key_id}"
         resource_name = f"projects/{self._project_id}/secrets/{secret_name}/versions/{self._version}"
@@ -770,16 +860,21 @@ class GCPSecretManagerKeyResolver(KeyResolver):
         try:
             from google.cloud import secretmanager  # type: ignore[import-not-found,import-untyped]
 
-            client = secretmanager.SecretManagerServiceClient()
-            response = client.access_secret_version(name=resource_name)
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: secretmanager.SecretManagerServiceClient().access_secret_version(
+                    name=resource_name
+                ),
+            )
             key_bytes = response.payload.data
 
             from tenuo_core import SigningKey
 
             signing_key = SigningKey.from_bytes(key_bytes)
 
-            # Cache the result
-            self._cache[key_id] = (signing_key, now)
+            with self._cache_lock:
+                self._cache[key_id] = (signing_key, now)
             logger.debug(f"GCP Secret Manager resolved key: {key_id}")
             return signing_key
 
@@ -815,10 +910,16 @@ class CompositeKeyResolver(KeyResolver):
         ])
     """
 
-    def __init__(self, resolvers: List[KeyResolver]) -> None:
+    def __init__(
+        self,
+        resolvers: List[KeyResolver],
+        *,
+        warn_on_fallback: bool = True,
+    ) -> None:
         if not resolvers:
             raise ValueError("CompositeKeyResolver requires at least one resolver")
         self._resolvers = resolvers
+        self._warn_on_fallback = warn_on_fallback
 
     async def resolve(self, key_id: str) -> Any:
         """Try each resolver in order until one succeeds."""
@@ -827,7 +928,15 @@ class CompositeKeyResolver(KeyResolver):
         for i, resolver in enumerate(self._resolvers):
             try:
                 key = await resolver.resolve(key_id)
-                logger.debug(f"CompositeKeyResolver: resolved {key_id} via resolver {i} ({type(resolver).__name__})")
+                if i > 0 and self._warn_on_fallback:
+                    failed_names = [type(self._resolvers[j]).__name__ for j in range(i)]
+                    logger.warning(
+                        f"CompositeKeyResolver: primary resolver(s) failed ({', '.join(failed_names)}), "
+                        f"resolved {key_id} via fallback {type(resolver).__name__}. "
+                        f"Errors: {errors}"
+                    )
+                else:
+                    logger.debug(f"CompositeKeyResolver: resolved {key_id} via resolver {i} ({type(resolver).__name__})")
                 return key
             except KeyResolutionError as e:
                 errors.append(f"{type(resolver).__name__}: {e}")
@@ -963,7 +1072,34 @@ class TenuoInterceptorConfig:
     Pass the same list you give to ``Worker(activities=...)``.
     """
 
+    strict_mode: bool = False
+    """
+    Enforce production-safe configuration at startup.  When ``True``:
+
+    * ``trusted_roots`` **must** be provided.  Omitting it raises
+      ``ValueError`` immediately so a misconfigured worker fails fast
+      rather than silently running in lightweight (no-PoP) mode.
+
+    Recommended for all production deployments::
+
+        config = TenuoInterceptorConfig(
+            key_resolver=VaultKeyResolver(url="..."),
+            trusted_roots=[root_key.public_key],
+            strict_mode=True,
+        )
+    """
+
     def __post_init__(self) -> None:
+        # F1: enforce strict_mode invariants before anything else
+        if self.strict_mode and not self.trusted_roots:
+            raise ValueError(
+                "TenuoInterceptorConfig: strict_mode=True requires trusted_roots to be set. "
+                "Without trusted_roots, PoP and chain-of-trust verification are skipped, "
+                "reducing security to lightweight constraint checks only. "
+                "Pass trusted_roots=[control_key.public_key] or set strict_mode=False "
+                "to acknowledge running in lightweight mode."
+            )
+
         self._activity_registry: Dict[str, Callable] = {}
         if self.activity_fns:
             for fn in self.activity_fns:
@@ -995,7 +1131,7 @@ class TenuoClientInterceptor:
                                       interceptors=[client_interceptor])
 
         # Before starting a workflow, set the headers:
-        client_interceptor.set_headers(tenuo_headers(warrant, key_id, key))
+        client_interceptor.set_headers(tenuo_headers(warrant, key_id))
 
         await client.execute_workflow(MyWorkflow.run, ...)
     """
@@ -1073,7 +1209,6 @@ class _TenuoClientOutbound:
 def tenuo_headers(
     warrant: Any,  # Warrant type from tenuo_core
     key_id: str,
-    signing_key: Any,  # SigningKey from tenuo_core
     *,
     compress: bool = True,
 ) -> Dict[str, bytes]:
@@ -1081,42 +1216,66 @@ def tenuo_headers(
 
     Args:
         warrant: The warrant authorizing this workflow
-        key_id: Identifier for the holder's signing key
-        signing_key: The holder's signing key (for Proof-of-Possession).
-            Must have a `.to_bytes()` method returning 32 raw bytes.
+        key_id: Identifier for the holder's signing key. The actual signing
+            key is resolved at runtime by workers via KeyResolver from secure
+            storage (Vault, AWS Secrets Manager, GCP Secret Manager, etc.).
         compress: Whether to gzip compress the warrant (default: True)
 
     Returns:
         Headers dict to pass to client.start_workflow()
 
+    Security:
+        **CRITICAL**: Private keys are NEVER transmitted in headers. Workers
+        resolve keys from secure storage using the key_id. This ensures:
+        - Keys never leave secure boundaries (HSM, KMS, Vault)
+        - Keys are not persisted in Temporal's database
+        - Keys are not transmitted over the network
+        - Compliance with NIST SP 800-57, OWASP, SOC2 requirements
+
     Example:
+        # Client side - only passes key_id
         await client.start_workflow(
             MyWorkflow.run,
             args=[...],
-            headers=tenuo_headers(warrant, "agent-key-1", signing_key),
+            headers=tenuo_headers(warrant, "prod-agent-2024"),
+        )
+
+        # Worker side - resolves key from Vault
+        config = TenuoInterceptorConfig(
+            key_resolver=VaultKeyResolver(url="https://vault.company.com"),
         )
     """
-    # Serialize warrant to base64
-    warrant_b64 = warrant.to_base64()
-    warrant_bytes = warrant_b64.encode("utf-8")
+    # Defensive check: reject SigningKey objects passed as key_id.
+    # key_id must be a plain string identifier, never a key object.
+    try:
+        from tenuo_core import SigningKey
+        if isinstance(key_id, SigningKey):
+            raise TypeError(
+                "key_id must be a string identifier, not a SigningKey. "
+                "Private keys must never be transmitted in headers. "
+                "Use a string key ID and configure KeyResolver on workers."
+            )
+    except ImportError:
+        pass
+    if not isinstance(key_id, str):
+        raise TypeError(
+            f"key_id must be a string identifier, got {type(key_id).__name__}. "
+            "Private keys must never be transmitted in headers."
+        )
 
-    # Encode signing key as base64 for header transport
-    if hasattr(signing_key, "secret_key_bytes"):
-        signing_key_bytes = signing_key.secret_key_bytes()
-    elif hasattr(signing_key, "to_bytes"):
-        signing_key_bytes = signing_key.to_bytes()
-    else:
-        signing_key_bytes = bytes(signing_key)
-    signing_key_b64 = base64.b64encode(signing_key_bytes)
+    # Serialize warrant to raw CBOR bytes (v2 wire format).
+    # Previous format (v1) double-encoded: base64(gzip(utf8(base64(cbor)))).
+    # V2 eliminates the intermediate base64 layer: gzip(cbor) or raw cbor.
+    warrant_bytes = bytes(warrant.to_bytes())
 
     headers: Dict[str, bytes] = {
         TENUO_KEY_ID_HEADER: key_id.encode("utf-8"),
-        TENUO_SIGNING_KEY_HEADER: signing_key_b64,
+        TENUO_WIRE_FORMAT_HEADER: _WIRE_FORMAT_V2,
     }
 
     if compress:
         compressed = gzip.compress(warrant_bytes, compresslevel=9)
-        headers[TENUO_WARRANT_HEADER] = base64.b64encode(compressed)
+        headers[TENUO_WARRANT_HEADER] = compressed
         headers[TENUO_COMPRESSED_HEADER] = b"1"
     else:
         headers[TENUO_WARRANT_HEADER] = warrant_bytes
@@ -1283,41 +1442,72 @@ def attenuated_headers(
     except ImportError:
         raise TenuoContextError("temporalio not available")
 
-    # Retrieve signing key from workflow headers store
+    # Retrieve key_id from workflow headers store
     # (Same pattern as tenuo_execute_activity)
     with _store_lock:
         raw_headers = _workflow_headers_store.get(wf_id, {})
+        config_store_entry = _workflow_config_store.get(wf_id)
+
     if not raw_headers:
         raise TenuoContextError(
             "No Tenuo headers in store. Ensure TenuoInterceptor is "
             "registered and tenuo_headers() was passed at workflow start."
         )
 
-    sk_b64 = raw_headers.get(TENUO_SIGNING_KEY_HEADER)
-    if sk_b64 is None:
+    if not config_store_entry:
         raise TenuoContextError(
-            "No signing key found in parent workflow headers. "
-            "Cannot propagate PoP to child workflow."
+            "No interceptor config found. Ensure TenuoInterceptor is registered."
         )
-    from tenuo_core import SigningKey  # type: ignore[import-not-found]
+
+    parent_key_id = raw_headers.get(TENUO_KEY_ID_HEADER, b"").decode("utf-8")
+    if not parent_key_id:
+        raise TenuoContextError(
+            "No key_id found in parent workflow headers."
+        )
+
+    # Resolve signing key from secure storage via KeyResolver
+    config = config_store_entry
+    if not config.key_resolver:
+        raise TenuoContextError(
+            "key_resolver not configured in TenuoInterceptorConfig. "
+            "Required for child workflow delegation."
+        )
 
     try:
-        signing_key_raw = base64.b64decode(sk_b64)
-        signer = SigningKey.from_bytes(signing_key_raw)
+        # Use resolve_sync() to safely handle event loop (may be in Temporal workflow)
+        signer = config.key_resolver.resolve_sync(parent_key_id)
     except Exception as e:
-        raise TenuoContextError(f"Failed to decode signing key: {e}")
+        raise TenuoContextError(
+            f"Failed to resolve signing key for '{parent_key_id}': {e}"
+        )
 
     # Build capabilities dict: start from parent's per-tool constraints,
     # then overlay any caller-supplied narrowing constraints.
     parent_caps = parent_warrant.capabilities or {}
     extra = constraints or {}
     capabilities = {}
-    for tool in tools:
-        base = dict(parent_caps.get(tool, {}))
-        # Monotonic narrowing is enforced by attenuate(), not by this merge.
-        # The Rust core rejects any capability that widens the parent scope.
-        base.update(extra.get(tool, {}))
-        capabilities[tool] = base
+    for tool_key in tools:
+        base = dict(parent_caps.get(tool_key, {}))
+        narrowing = extra.get(tool_key, {})
+        # F4: give a clear Python-level error if the caller introduces a
+        # constraint key that does not exist in the parent.  Widening of
+        # existing keys is still caught by tenuo_core.attenuate(), but
+        # introducing *unknown* keys surfaces a confusing FFI error without
+        # this check.
+        unknown_keys = set(narrowing) - set(base)
+        if unknown_keys:
+            raise ConstraintViolation(
+                tool=tool_key,
+                arguments={},
+                constraint=(
+                    f"Cannot introduce constraint keys not present in parent warrant: "
+                    f"{sorted(unknown_keys)}.  Only existing constraint keys may be "
+                    "narrowed in a child warrant."
+                ),
+                warrant_id=parent_warrant.id,
+            )
+        base.update(narrowing)
+        capabilities[tool_key] = base
 
     child_warrant = parent_warrant.attenuate(
         capabilities=capabilities,
@@ -1328,7 +1518,7 @@ def attenuated_headers(
     # Use parent key_id if not specified
     key_id = child_key_id or parent_key_id
 
-    hdrs = tenuo_headers(child_warrant, key_id, signing_key_raw, compress=compress)
+    hdrs = tenuo_headers(child_warrant, key_id, compress=compress)
 
     # Propagate the delegation chain so the activity interceptor
     # can call check_chain() for full trust-root verification.
@@ -1447,7 +1637,14 @@ async def tenuo_execute_child_workflow(
     if search_attributes is not None:
         kwargs["search_attributes"] = search_attributes
 
-    return await workflow.execute_child_workflow(workflow_fn, **kwargs)
+    try:
+        return await workflow.execute_child_workflow(workflow_fn, **kwargs)
+    finally:
+        # Clean up pending headers regardless of success or failure.
+        # On success the outbound interceptor already consumed the entry
+        # via pop(); this handles the case where the child never started.
+        with _store_lock:
+            _pending_child_headers.pop(child_id, None)
 
 
 def workflow_grant(
@@ -1510,24 +1707,38 @@ def workflow_grant(
     wf_id = workflow.info().workflow_id
     with _store_lock:
         raw_headers = _workflow_headers_store.get(wf_id, {})
+        config_store_entry = _workflow_config_store.get(wf_id)
+
     if not raw_headers:
         raise TenuoContextError(
             "No Tenuo headers in store. Ensure TenuoInterceptor is "
             "registered and tenuo_headers() was passed at workflow start."
         )
 
-    sk_b64 = raw_headers.get(TENUO_SIGNING_KEY_HEADER)
-    if sk_b64 is None:
+    if not config_store_entry:
         raise TenuoContextError(
-            "No signing key found in workflow headers. "
-            "Cannot issue attenuated grant."
+            "No interceptor config found. Ensure TenuoInterceptor is registered."
         )
-    from tenuo_core import SigningKey  # type: ignore[import-not-found]
+
+    key_id = raw_headers.get(TENUO_KEY_ID_HEADER, b"").decode("utf-8")
+    if not key_id:
+        raise TenuoContextError(
+            "No key_id found in workflow headers. Cannot issue attenuated grant."
+        )
+
+    # Resolve signing key from secure storage via KeyResolver
+    config = config_store_entry
+    if not config.key_resolver:
+        raise TenuoContextError(
+            "key_resolver not configured in TenuoInterceptorConfig. "
+            "Required for attenuated grants."
+        )
 
     try:
-        signer = SigningKey.from_bytes(base64.b64decode(sk_b64))
+        # Use resolve_sync() to safely handle event loop (may be in Temporal workflow)
+        signer = config.key_resolver.resolve_sync(key_id)
     except Exception as e:
-        raise TenuoContextError(f"Failed to decode signing key: {e}")
+        raise TenuoContextError(f"Failed to resolve signing key for '{key_id}': {e}")
 
     parent_caps = parent_warrant.capabilities or {}
     base = dict(parent_caps.get(tool, {}))
@@ -1545,6 +1756,10 @@ def workflow_grant(
 def _extract_warrant_from_headers(headers: Dict[str, bytes]) -> Any:
     """Extract and deserialize warrant from headers.
 
+    Supports both wire formats:
+      - v2 (x-tenuo-wire-format: "2"): raw CBOR bytes (optionally gzipped)
+      - v1 (absent or "1"): base64-encoded CBOR (optionally base64(gzipped(base64)))
+
     Returns:
         Warrant object, or None if no warrant header present.
 
@@ -1558,19 +1773,25 @@ def _extract_warrant_from_headers(headers: Dict[str, bytes]) -> Any:
         return None
 
     try:
-        # Check if compressed
         is_compressed = headers.get(TENUO_COMPRESSED_HEADER, b"0") == b"1"
+        wire_format = headers.get(TENUO_WIRE_FORMAT_HEADER, b"1")
 
-        if is_compressed:
-            # Decode base64 then decompress
-            compressed = base64.b64decode(raw)
-            warrant_bytes = gzip.decompress(compressed)
+        if wire_format == _WIRE_FORMAT_V2:
+            # V2: raw CBOR bytes, optionally gzip-compressed
+            if is_compressed:
+                cbor_bytes = gzip.decompress(raw)
+            else:
+                cbor_bytes = raw
+            return Warrant.from_bytes(cbor_bytes)
         else:
-            warrant_bytes = raw
-
-        # Parse base64-encoded warrant
-        warrant_b64 = warrant_bytes.decode("utf-8")
-        return Warrant.from_base64(warrant_b64)
+            # V1 (legacy): base64-encoded CBOR, optionally base64(gzip(base64))
+            if is_compressed:
+                compressed = base64.b64decode(raw)
+                warrant_bytes = gzip.decompress(compressed)
+            else:
+                warrant_bytes = raw
+            warrant_b64 = warrant_bytes.decode("utf-8")
+            return Warrant.from_base64(warrant_b64)
 
     except Exception as e:
         raise ChainValidationError(
@@ -1708,7 +1929,7 @@ class AuthorizedWorkflow:
             "input",
             id="workflow-id",
             task_queue="my-queue",
-            headers=tenuo_headers(warrant, "agent-key-1", signing_key),
+            headers=tenuo_headers(warrant, "agent-key-1"),
         )
 
     Raises:
@@ -1885,7 +2106,7 @@ class _TenuoWorkflowOutboundInterceptor:
     This interceptor makes Tenuo authorization completely transparent.
     When ``workflow.execute_activity()`` is called (standard Temporal API),
     this interceptor automatically:
-    1. Retrieves the warrant and signing key from workflow headers
+    1. Retrieves the warrant and key_id from workflow headers, resolves signing key via KeyResolver
     2. Computes the Proof-of-Possession signature using deterministic time
     3. Injects warrant + PoP into activity headers
 
@@ -1920,18 +2141,27 @@ class _TenuoWorkflowOutboundInterceptor:
             wf_id = _wf.info().workflow_id
             tool_name = input.activity
 
-            # Read warrant and signing key from headers store
+            # Read warrant and key_id from headers store
             with _store_lock:
                 raw_headers = dict(_workflow_headers_store.get(wf_id, {}))
 
             if raw_headers:
-                # Extract warrant and signing key
+                # Extract warrant and key_id
                 warrant = _extract_warrant_from_headers(raw_headers)
-                sk_b64 = raw_headers.get(TENUO_SIGNING_KEY_HEADER)
+                key_id_bytes = raw_headers.get(TENUO_KEY_ID_HEADER)
 
-                if warrant and sk_b64:
-                    # Decode signing key
-                    signer = SigningKey.from_bytes(base64.b64decode(sk_b64))
+                if warrant and key_id_bytes:
+                    key_id = key_id_bytes.decode("utf-8")
+
+                    # Resolve signing key from secure storage via KeyResolver
+                    if not self._config or not self._config.key_resolver:
+                        raise TenuoContextError(
+                            "key_resolver not configured in TenuoInterceptorConfig. "
+                            "Required for PoP signature generation."
+                        )
+
+                    # Use resolve_sync() to safely handle event loop (may be in Temporal workflow)
+                    signer = self._config.key_resolver.resolve_sync(key_id)
 
                     # Convert positional args to dict for PoP signature.
                     # Resolution order for the activity function reference:
@@ -1992,14 +2222,17 @@ class _TenuoWorkflowOutboundInterceptor:
 
                     input = _replace_field(input, "headers", activity_headers)
 
+        except TenuoContextError:
+            raise
         except Exception as e:
-            # FAIL-CLOSED: If PoP computation fails, log at WARNING level.
-            # The inbound interceptor will deny this activity (if require_warrant=True),
-            # but the error message will correctly indicate the outbound failure.
-            logger.warning(
-                f"Failed to compute PoP in outbound interceptor for {tool_name}: {e}. "
-                f"Activity will likely be denied by inbound interceptor."
-            )
+            # FAIL-CLOSED: Abort the activity instead of proceeding without PoP.
+            # Proceeding would let the inbound interceptor see a request with
+            # no PoP, which is indistinguishable from a real attack.
+            activity = getattr(input, "activity", "<unknown>")
+            raise TenuoContextError(
+                f"PoP computation failed for activity '{activity}': {e}. "
+                f"Activity aborted (fail-closed)."
+            ) from e
 
         return self._next.start_activity(input)
 
@@ -2135,8 +2368,7 @@ class _TenuoWorkflowInboundInterceptor:
 
         wf_id = _wf.info().workflow_id
         with _store_lock:
-            cfg = _workflow_config_store.get(wf_id)
-        return cfg or _interceptor_config
+            return _workflow_config_store.get(wf_id)
 
     async def handle_signal(self, input: Any) -> None:
         config = self._resolve_config()
@@ -2229,10 +2461,14 @@ class TenuoInterceptor:
     """
 
     def __init__(self, config: TenuoInterceptorConfig) -> None:
-        global _interceptor_config
         self._config = config
-        _interceptor_config = config
         self._version = self._get_version()
+        if not config.trusted_roots:
+            logger.warning(
+                "TenuoInterceptor initialized WITHOUT trusted_roots. "
+                "Running in lightweight mode: no PoP verification, no chain-of-trust checks. "
+                "Set trusted_roots=[control_key.public_key] for production security."
+            )
 
     def _get_version(self) -> str:
         """Get Tenuo version for audit events."""
@@ -2263,9 +2499,21 @@ class TenuoInterceptor:
         The returned class stores workflow-start headers in a module-level
         dict so the activity interceptor can read them. This sidesteps the
         fact that workflow.execute_activity() does not accept ``headers``.
+
+        A new subclass is created for every ``TenuoInterceptor`` instance so
+        that two interceptors with different configs (e.g. different
+        ``trusted_roots`` for different task queues) cannot accidentally
+        share or overwrite each other's configuration (F3).
         """
-        _TenuoWorkflowInboundInterceptor._config = self._config
-        return _TenuoWorkflowInboundInterceptor
+        # F3: create a per-instance subclass so the class-level _config
+        # is not shared across multiple TenuoInterceptor instances.
+        bound_config = self._config
+        interceptor_cls = type(
+            "_TenuoWorkflowInboundInterceptor",
+            (_TenuoWorkflowInboundInterceptor,),
+            {"_config": bound_config},
+        )
+        return interceptor_cls
 
 
 class TenuoActivityInboundInterceptor:
@@ -2280,6 +2528,13 @@ class TenuoActivityInboundInterceptor:
         self._next = next_interceptor
         self._config = config
         self._version = version
+        self._authorizer: Optional[Any] = None
+        if config.trusted_roots:
+            try:
+                from tenuo_core import Authorizer
+                self._authorizer = Authorizer(trusted_roots=config.trusted_roots)
+            except ImportError:
+                logger.warning("tenuo_core not available; Authorizer not cached")
 
     def init(self, outbound: Any) -> None:
         """Called by Temporal to initialize the interceptor with an outbound impl."""
@@ -2390,11 +2645,11 @@ class TenuoActivityInboundInterceptor:
             return None
 
         # --- Full Authorizer path (with PoP verification) ---
-        if self._config.trusted_roots:
+        if self._authorizer is not None:
             try:
-                from tenuo_core import Authorizer, Warrant as CoreWarrant  # type: ignore[import-not-found]
+                from tenuo_core import Warrant as CoreWarrant  # type: ignore[import-not-found]
 
-                authorizer = Authorizer(trusted_roots=self._config.trusted_roots)
+                authorizer = self._authorizer
 
                 # Extract PoP signature (base64-encoded in headers)
                 pop_bytes = None
@@ -2432,7 +2687,12 @@ class TenuoActivityInboundInterceptor:
                                 activity_name=tool_name,
                             )
                         _pop_dedup_cache[dedup_key] = now
-                        if (now - _pop_dedup_last_evict) >= _DEDUP_EVICT_INTERVAL:
+
+                        # Periodic eviction of expired entries
+                        needs_evict = (now - _pop_dedup_last_evict) >= _DEDUP_EVICT_INTERVAL
+                        # Emergency eviction if cache exceeds size cap
+                        needs_evict = needs_evict or len(_pop_dedup_cache) > _DEDUP_MAX_SIZE
+                        if needs_evict:
                             _pop_dedup_last_evict = now
                             expired = [
                                 k for k, t in _pop_dedup_cache.items()
@@ -2440,25 +2700,50 @@ class TenuoActivityInboundInterceptor:
                             ]
                             for k in expired:
                                 del _pop_dedup_cache[k]
+                            # If still over cap after TTL eviction, drop oldest entries
+                            if len(_pop_dedup_cache) > _DEDUP_MAX_SIZE:
+                                by_age = sorted(_pop_dedup_cache.items(), key=lambda x: x[1])
+                                excess = len(_pop_dedup_cache) - _DEDUP_MAX_SIZE
+                                for k, _ in by_age[:excess]:
+                                    del _pop_dedup_cache[k]
 
+            except (ConstraintViolation, PopVerificationError, ChainValidationError, WarrantExpired):
+                raise
             except Exception as e:
-                self._emit_denial_event(
-                    info=info,
-                    warrant=warrant,
-                    tool=tool_name,
-                    args=args,
-                    reason=str(e),
-                )
-                if self._config.on_denial == "raise":
-                    raise ConstraintViolation(
+                # Distinguish authorization denials (from tenuo_core or Temporal
+                # integration) from genuine internal errors (bugs).
+                is_auth_denial = False
+                try:
+                    from tenuo.exceptions import TenuoError  # base class for all tenuo_core errors
+                    is_auth_denial = isinstance(e, (TenuoTemporalError, TenuoError))
+                except ImportError:
+                    is_auth_denial = isinstance(e, TenuoTemporalError)
+
+                if is_auth_denial:
+                    self._emit_denial_event(
+                        info=info,
+                        warrant=warrant,
                         tool=tool_name,
-                        arguments=args,
-                        constraint=str(e),
-                        warrant_id=warrant.id,
+                        args=args,
+                        reason=str(e),
                     )
-                elif self._config.on_denial == "log":
-                    logger.warning(f"Authorization denied for {tool_name}: {e}")
-                return None
+                    if self._config.on_denial == "raise":
+                        raise ConstraintViolation(
+                            tool=tool_name,
+                            arguments=args,
+                            constraint=str(e),
+                            warrant_id=warrant.id,
+                        )
+                    elif self._config.on_denial == "log":
+                        logger.warning(f"Authorization denied for {tool_name}: {e}")
+                    return None
+                else:
+                    # Internal error — always propagate regardless of on_denial.
+                    logger.error(
+                        f"Internal error during authorization for {tool_name}: {e}",
+                        exc_info=True,
+                    )
+                    raise
 
         else:
             # --- Lightweight path (no trusted_roots, no PoP) ---
@@ -2730,7 +3015,7 @@ __all__ = [
     "TENUO_WARRANT_HEADER",
     "TENUO_KEY_ID_HEADER",
     "TENUO_POP_HEADER",
-    "TENUO_SIGNING_KEY_HEADER",
     "TENUO_COMPRESSED_HEADER",
     "TENUO_CHAIN_HEADER",
+    "TENUO_WIRE_FORMAT_HEADER",
 ]

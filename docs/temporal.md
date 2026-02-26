@@ -22,7 +22,8 @@ Tenuo integrates with [Temporal](https://temporal.io) to bring warrant-based aut
 - **PoP replay protection**: In-memory dedup cache prevents signature replay attacks
 - **Continue-as-new support**: Warrant headers survive workflow continuation
 - **Fail-closed**: Missing or invalid warrants block execution by default
-- **Enterprise key management**: VaultKeyResolver, KMSKeyResolver, CompositeKeyResolver
+- **🔒 Secure key management**: Private keys NEVER transmitted in headers - resolved from Vault/KMS/Secret Manager
+- **Enterprise key resolvers**: `VaultKeyResolver`, `AWSSecretsManagerKeyResolver`, `GCPSecretManagerKeyResolver`, `CompositeKeyResolver`
 
 ---
 
@@ -98,6 +99,16 @@ class DataProcessingWorkflow(AuthorizedWorkflow):
 async def main():
     # Client interceptor injects warrant headers into workflow start
     client_interceptor = TenuoClientInterceptor()
+
+    # IMPORTANT: Configure KeyResolver for secure key management
+    # Workers use this to fetch signing keys from secure storage
+    from tenuo.temporal import VaultKeyResolver
+
+    key_resolver = VaultKeyResolver(
+        url="https://vault.company.com:8200",
+        path_template="production/tenuo/{key_id}",
+        cache_ttl=300,  # Cache keys for 5 minutes
+    )
     client = await Client.connect("localhost:7233",
                                   interceptors=[client_interceptor])
 
@@ -141,9 +152,9 @@ async def main():
             )
         ),
     ):
-        # Set warrant headers, then execute workflow
+        # Set warrant headers (only key_id, NOT the private key)
         client_interceptor.set_headers(
-            tenuo_headers(warrant, "agent-key-1", agent_key)
+            tenuo_headers(warrant, "agent-key-1")  # ✅ Only key ID transmitted
         )
         result = await client.execute_workflow(
             DataProcessingWorkflow.run,
@@ -155,12 +166,14 @@ async def main():
 
 > **Important:** `tenuo` and `tenuo_core` must be configured as passthrough modules in Temporal's workflow sandbox. Without this, PoP verification will fail with `ImportError: PyO3 modules compiled for CPython 3.8 or older may only be initialized once per interpreter process`.
 
+> **🔒 Security:** Private keys are **NEVER** transmitted in headers. Only the `key_id` is sent. Workers use `KeyResolver` to fetch the actual signing key from secure storage (Vault, AWS Secrets Manager, GCP Secret Manager, etc.).
+
 **What happens:**
-1. `TenuoClientInterceptor` injects warrant + signing key into workflow headers
-2. Workflow inbound interceptor extracts Tenuo headers and propagates them to activities via Temporal's header mechanism
-3. Each `self.execute_authorized_activity()` call computes a PoP signature via `warrant.sign()`
-4. Activity inbound interceptor reads the warrant, PoP, and signing key from activity headers
-5. `Authorizer.authorize()` verifies chain, expiry, capabilities, constraints, and PoP
+1. `TenuoClientInterceptor` injects warrant + key_id into workflow headers (NO private key)
+2. Workflow inbound interceptor extracts Tenuo headers and propagates them to activities
+3. Each activity call triggers `KeyResolver.resolve(key_id)` to fetch the signing key from secure storage
+4. PoP signature is computed locally on the worker using the resolved key
+5. Activity inbound interceptor verifies warrant, PoP, and constraints
 6. Activity executes only if all checks pass
 
 This works in both single-process demos and distributed deployments where client and worker run in separate processes.
@@ -168,6 +181,122 @@ This works in both single-process demos and distributed deployments where client
 ---
 
 ## Configuration
+
+### Key Management (REQUIRED)
+
+**🔒 Security Requirement:** Tenuo NEVER transmits private keys in headers. Workers must be configured with a `KeyResolver` to fetch signing keys from secure storage.
+
+#### Production: Vault
+
+```python
+from tenuo.temporal import VaultKeyResolver, TenuoInterceptorConfig
+
+resolver = VaultKeyResolver(
+    url="https://vault.company.com:8200",
+    path_template="production/tenuo/{key_id}",  # e.g., "production/tenuo/agent-2024"
+    token=None,  # Uses VAULT_TOKEN env var
+    mount="secret",  # KV secrets engine mount
+    cache_ttl=300,  # Cache keys for 5 minutes
+)
+
+config = TenuoInterceptorConfig(
+    key_resolver=resolver,  # ✅ REQUIRED
+    trusted_roots=[root_key.public_key],
+)
+```
+
+Store keys in Vault:
+```bash
+# Store signing key in Vault
+vault kv put secret/production/tenuo/agent-2024 \
+  data=@signing_key.bin
+```
+
+#### Production: AWS Secrets Manager
+
+```python
+from tenuo.temporal import AWSSecretsManagerKeyResolver
+
+resolver = AWSSecretsManagerKeyResolver(
+    secret_prefix="tenuo/keys/",  # e.g., "tenuo/keys/agent-2024"
+    region_name="us-west-2",
+    cache_ttl=300,
+)
+
+config = TenuoInterceptorConfig(key_resolver=resolver)
+```
+
+Store keys in AWS:
+```bash
+# Store signing key in AWS Secrets Manager
+aws secretsmanager create-secret \
+  --name tenuo/keys/agent-2024 \
+  --secret-binary fileb://signing_key.bin \
+  --region us-west-2
+```
+
+#### Production: GCP Secret Manager
+
+```python
+from tenuo.temporal import GCPSecretManagerKeyResolver
+
+resolver = GCPSecretManagerKeyResolver(
+    project_id="my-project",
+    secret_prefix="tenuo-keys-",  # e.g., "tenuo-keys-agent-2024"
+    cache_ttl=300,
+)
+
+config = TenuoInterceptorConfig(key_resolver=resolver)
+```
+
+Store keys in GCP:
+```bash
+# Store signing key in GCP Secret Manager
+gcloud secrets create tenuo-keys-agent-2024 \
+  --data-file=signing_key.bin \
+  --project=my-project
+```
+
+#### Development: Environment Variables
+
+```python
+from tenuo.temporal import EnvKeyResolver
+
+# ⚠️ DEVELOPMENT ONLY - DO NOT USE IN PRODUCTION
+# A WARNING is emitted at first key resolution unless TENUO_ENV=development.
+resolver = EnvKeyResolver(
+    prefix="TENUO_KEY_",
+    warn_in_production=True,  # Default; set False to suppress explicitly
+)
+
+config = TenuoInterceptorConfig(key_resolver=resolver)
+```
+
+Set environment variable:
+```bash
+# Export base64-encoded signing key
+export TENUO_KEY_agent1=$(cat signing_key.bin | base64)
+# Suppress the production warning in local dev:
+export TENUO_ENV=development
+```
+
+> **Warning:** `EnvKeyResolver` is for development only. In production, use Vault, AWS Secrets Manager, or GCP Secret Manager.
+
+#### Composite Resolver (Fallback Chain)
+
+```python
+from tenuo.temporal import CompositeKeyResolver, VaultKeyResolver, EnvKeyResolver
+
+resolver = CompositeKeyResolver(
+    resolvers=[
+        VaultKeyResolver(url="https://vault.company.com"),  # Try Vault first
+        EnvKeyResolver(),                                    # Fallback to env vars
+    ],
+    warn_on_fallback=True,  # Log a WARNING whenever a fallback resolver is used
+)
+
+config = TenuoInterceptorConfig(key_resolver=resolver)
+```
 
 ### Interceptor Config
 
@@ -178,52 +307,34 @@ config = TenuoInterceptorConfig(
     key_resolver=EnvKeyResolver(),        # Required: key resolution strategy
     on_denial="raise",                    # "raise" | "log" | "skip"
     trusted_roots=[control_key.public_key],  # Enables Authorizer + PoP verification
+    strict_mode=True,                     # Raise ValueError at startup if trusted_roots absent
     require_warrant=True,                 # Fail-closed: deny if no warrant
     block_local_activities=True,          # Prevent local activity bypass
     redact_args_in_logs=True,             # Prevent secret leaks in logs
     max_chain_depth=10,                   # Max delegation depth
     audit_callback=on_audit,              # Optional audit event handler
     metrics=TenuoMetrics(),               # Optional Prometheus metrics
+    authorized_signals=["approve"],       # Optional signal allowlist
+    authorized_updates=["update_config"], # Optional update allowlist
 )
 ```
 
-### Key Resolvers
+> **Production hardening:** Set `strict_mode=True` in production configs. It raises `ValueError` at worker startup if `trusted_roots` is absent, preventing accidental deployment in lightweight (no-PoP) mode.
 
-**Development: EnvKeyResolver**
+### Denial Handling
+
+Control what happens when authorization fails:
+
 ```python
-from tenuo.temporal import EnvKeyResolver
-import os
-import base64
-
-# Set environment variable
-os.environ["TENUO_KEY_agent1"] = base64.b64encode(
-    agent_key.secret_key_bytes()
-).decode()
-
-resolver = EnvKeyResolver()  # Reads from TENUO_KEY_{key_id}
-```
-
-**Production: VaultKeyResolver**
-```python
-from tenuo.temporal import VaultKeyResolver
-
-resolver = VaultKeyResolver(
-    url="https://vault.company.com:8200",
-    mount="secret",
-    path_template="tenuo/keys/{key_id}",
-    cache_ttl=300,  # 5 minute cache
+# "raise" (default): raise ConstraintViolation — workflow fails fast
+# "log":             log the denial and continue execution
+# "skip":            silently return None
+config = TenuoInterceptorConfig(
+    key_resolver=resolver,
+    on_denial="raise",
 )
 ```
 
-**Fallback Chain: CompositeKeyResolver**
-```python
-from tenuo.temporal import CompositeKeyResolver
-
-resolver = CompositeKeyResolver([
-    VaultKeyResolver(url="https://vault.prod"),  # Try Vault first
-    EnvKeyResolver(),                            # Fallback to env vars
-])
-```
 
 ---
 
@@ -348,7 +459,9 @@ When starting Nexus operations from a Tenuo-protected workflow, the outbound int
 
 ## PoP Replay Protection
 
-The activity interceptor maintains an in-memory dedup cache to detect replayed PoP signatures within the same time window. Each unique `(warrant, tool, args, workflow_id, activity_id)` combination is tracked. Retries (`attempt > 1`) bypass dedup since Temporal legitimately re-delivers the same activity. The cache is periodically evicted (every 60 seconds) to prevent unbounded memory growth.
+The activity interceptor maintains an in-memory dedup cache to detect replayed PoP signatures within the same time window. Each unique `(warrant, tool, args, workflow_id, activity_id)` combination is tracked. Retries (`attempt > 1`) bypass dedup since Temporal legitimately re-delivers the same activity. The cache is periodically evicted (every 60 seconds) and hard-capped at 10,000 entries to prevent unbounded memory growth.
+
+> **Distributed deployments:** The dedup cache is **process-local**. In a horizontally scaled worker fleet (multiple replicas), a captured PoP token could be replayed against a different replica within the warrant TTL window. For single-process workers or development, the in-memory cache is sufficient. For multi-replica production deployments, plan to implement a shared dedup backend (e.g., Redis) when this replay surface becomes a concern.
 
 ---
 
@@ -387,6 +500,31 @@ await workflow.execute_local_activity(
     args=["database_url"],
 )
 ```
+
+### workflow_grant() - Scoped In-Workflow Grants
+
+Issue a narrowed warrant for a single tool within a running workflow:
+
+```python
+from tenuo.temporal import workflow_grant
+
+@workflow.defn
+class MyWorkflow(AuthorizedWorkflow):
+    @workflow.run
+    async def run(self, path: str) -> str:
+        # Issue a 60-second, read-only grant for exactly one tool,
+        # narrower than the workflow's own warrant.
+        file_warrant = workflow_grant(
+            "read_file",
+            constraints={"path": path},  # Must be keys the parent already has
+            ttl_seconds=60,
+        )
+        # file_warrant is a Warrant object; use it in a custom activity call
+        # or pass it via tenuo_headers() to an external service.
+        ...
+```
+
+> `workflow_grant()` is useful when you need to hand off a scoped credential to a sub-process or external call. Constraint keys in `constraints` must already exist in the parent warrant; introducing new keys raises `ConstraintViolation`.
 
 ---
 
@@ -484,11 +622,12 @@ from tenuo.temporal import (
 1. **Use AuthorizedWorkflow** as your base class for fail-fast validation and automatic PoP
 2. **Use tenuo_execute_activity()** for advanced multi-warrant or delegation patterns
 3. **Always configure passthrough modules** (`tenuo`, `tenuo_core`) in the workflow sandbox
-4. **Set up VaultKeyResolver** for production key management
-5. **Enable audit logging** to track authorization decisions
-6. **Use @unprotected** sparingly - only for truly internal operations
-7. **Attenuate warrants** for child workflows to enforce least privilege
-8. **Keep TTLs short** for sensitive operations (minutes, not hours)
+4. **Set `strict_mode=True`** in production to fail fast if `trusted_roots` is accidentally omitted
+5. **Set up VaultKeyResolver** (or AWS/GCP) for production key management; never use `EnvKeyResolver` in production
+6. **Enable audit logging** to track authorization decisions
+7. **Use @unprotected** sparingly - only for truly internal operations
+8. **Attenuate warrants** for child workflows to enforce least privilege
+9. **Keep TTLs short** for sensitive operations (minutes, not hours)
 
 ---
 
@@ -526,10 +665,10 @@ transform_warrant = (
 )
 
 # Switch warrant between stages
-client_interceptor.set_headers(tenuo_headers(ingest_warrant, "ingest", ingest_key))
+client_interceptor.set_headers(tenuo_headers(ingest_warrant, "ingest"))
 data = await client.execute_workflow(IngestWorkflow.run, ...)
 
-client_interceptor.set_headers(tenuo_headers(transform_warrant, "transform", transform_key))
+client_interceptor.set_headers(tenuo_headers(transform_warrant, "transform"))
 await client.execute_workflow(TransformWorkflow.run, ...)
 ```
 
