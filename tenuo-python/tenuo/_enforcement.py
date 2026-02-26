@@ -655,9 +655,10 @@ def enforce_tool_call(
             # verify_mode == "verify"
             # Full chain verification: issuer trust, chain linkage, revocation,
             # clearance, capabilities, constraints, and PoP — all in one call.
-            # authorizer is required (validated above).
+            # Defense in depth: re-check authorizer even though validated above
+            if authorizer is None:
+                raise ConfigurationError("authorizer required for verify_mode='verify'")
             try:
-                assert authorizer is not None  # For type checker (validated above)
                 authorizer.check_chain(
                     [bound_warrant.warrant],
                     tool_name,
